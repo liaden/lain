@@ -319,11 +319,13 @@ RSpec.describe Lain::Middleware::ResolveAttachments, :seam do
     # records every receiver over 10 KB, is what says there is no third.
     #
     # The child is the subject because it renders the parent's history through
-    # the real, pure {Lain::Context#render}. The positive halves keep the
-    # negative from being vacuous: normalization happened, and the address itself
-    # did pass through it.
-    it "lets no payload reach Canonical.normalize, on the one path that renders a picture", dag: :ruby do
-      seen = { base64 => 0, digest => 0 }
+    # the real, pure {Lain::Context#render}. The positive half keeps the
+    # negative from being vacuous: normalization ran on this path, over the
+    # child's own prompt. The history itself is canonical inside the extension
+    # and never passes through it.
+    it "lets no payload reach Canonical.normalize, on the one path that renders a picture" do
+      prompt = "describe it"
+      seen = { base64 => 0, prompt => 0 }
       allow(Lain::Canonical).to receive(:normalize).and_wrap_original do |original, value|
         seen[value] += 1 if value.is_a?(String) && seen.key?(value)
         original.call(value)
@@ -331,7 +333,7 @@ RSpec.describe Lain::Middleware::ResolveAttachments, :seam do
 
       spawn_child
 
-      expect(seen[digest]).to be_positive
+      expect(seen[prompt]).to be_positive
       expect(seen[base64]).to eq(0)
       expect(Lain::Attachment::Reference.each_in(child_provider.last_request.messages).to_a).to be_empty
     end

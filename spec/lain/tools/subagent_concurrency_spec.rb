@@ -2,23 +2,6 @@
 
 require "async"
 
-# A transparent Store that also keeps the objects it was handed, so a spec can
-# inspect the lineage events the children put concurrently (the Store itself
-# exposes no enumeration -- deliberately, it is content-addressed storage).
-class RecordingStore < Lain::Store
-  attr_reader :recorded
-
-  def initialize
-    super
-    @recorded = []
-  end
-
-  def put(object)
-    @recorded << object
-    super
-  end
-end
-
 # A child provider whose latency is scripted by the order it is CALLED, so the
 # children finish in the reverse of the order they were spawned. The delay is
 # taken (with no yield point) before the sleep, so the shift order equals the
@@ -229,10 +212,19 @@ RSpec.describe "Lain::Tools::Subagent async fan-out" do
   # ---- Scenario: attribution survives concurrency ----------------------------
 
   describe "interleaved child events keep their attribution" do
-    # The recording store reads every put, which only the Ruby timeline makes in Ruby.
-    let(:store) { RecordingStore.new }
+    # Lineage events reach the store through its own `put`, and the store
+    # enumerates nothing, deliberately, so recording that message is how the
+    # children's concurrent writes are seen.
+    let(:recorded) { [] }
 
-    it "pairs every :message's result with its OWN child's final turn, no torn writes", dag: :ruby do
+    before do
+      allow(store).to receive(:put).and_wrap_original do |put, object|
+        recorded << object
+        put.call(object)
+      end
+    end
+
+    it "pairs every :message's result with its OWN child's final turn, no torn writes" do
       prompts = %w[go-1 go-2 go-3]
       child_provider = ReverseOrderProvider.new(delays: [0.06, 0.04, 0.02])
       parent_agent, = fanout_parent(child_provider:, prompts:)
@@ -240,7 +232,7 @@ RSpec.describe "Lain::Tools::Subagent async fan-out" do
       parent_agent.ask("please spawn")
 
       # A :message payload shares its envelope's kind, so select envelopes only.
-      messages = store.recorded.select { |object| object.is_a?(Lain::Event) && object.kind == :message }
+      messages = recorded.select { |object| object.respond_to?(:payload_digest) && object.kind == :message }
       expect(messages.size).to eq(3)
 
       # Each :message names a distinct child final turn, and that turn's own text

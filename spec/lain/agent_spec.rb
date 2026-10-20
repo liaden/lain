@@ -241,54 +241,6 @@ module T6Interrupts
   end
 end
 
-# A real Store that refuses any payload carrying its marker: a tool result the
-# Timeline cannot commit, whatever upstream made it so. In a module body for
-# the reason the fixtures above are.
-module UncommittableResults
-  class Store < Lain::Store
-    REFUSAL = "this store refuses that result"
-
-    attr_reader :refusals
-
-    def initialize(*markers)
-      super()
-      @markers = markers
-      @refusals = []
-    end
-
-    def put(object)
-      refuse(object) if object.is_a?(Lain::Event::Payload)
-
-      super
-    end
-
-    private
-
-    def refuse(payload)
-      body = JSON.generate(payload.body)
-      marker = @markers.find { |candidate| body.include?(candidate) }
-      return if marker.nil?
-
-      @refusals << marker
-      raise Lain::Error, @refusals.one? ? REFUSAL : "#{REFUSAL} (refusal #{@refusals.size})"
-    end
-  end
-
-  # A Store that runs a one-shot race on its next read. A rewind's first read
-  # is its walk back, the instant after any guard and before the move, which is
-  # where a check-then-act guard lets a racing run in.
-  class RacedStore < Lain::Store
-    def arm(&race) = @race = race
-
-    def fetch(digest)
-      race = @race
-      @race = nil
-      race&.call
-      super
-    end
-  end
-end
-
 RSpec.describe Lain::Agent do
   # ---- fixtures -------------------------------------------------------------
 
@@ -590,12 +542,11 @@ RSpec.describe Lain::Agent do
       Lain::Effect::Handler::Mock.new { |effect, _| Lain::Tool::Result.ok("poison #{effect.tool_use_id}") }
     end
 
-    context "when the tool results cannot be committed", dag: :ruby do
+    context "when the tool results cannot be committed" do
       let(:raised) { [] }
       let(:torn) do
         agent([tool_response(["tu_1", "echo", { "text" => "a" }], ["tu_2", "echo", { "text" => "b" }]), text_response],
-              handler: poisoned_results,
-              timeline: CoreGraph.timeline(store: UncommittableResults::Store.new("poison")))
+              handler: poisoned_results, timeline: TappedTimeline.refusing(CoreGraph.timeline, "poison"))
       end
 
       before do
@@ -605,7 +556,7 @@ RSpec.describe Lain::Agent do
       end
 
       it "lets the commit's own refusal through to the caller" do
-        expect(raised.map(&:message)).to eq([UncommittableResults::Store::REFUSAL])
+        expect(raised.map(&:message)).to eq([TappedTimeline::REFUSAL])
       end
 
       it "heads the timeline with a user turn answering every call with the errored notice" do
@@ -629,23 +580,24 @@ RSpec.describe Lain::Agent do
     # A repair runs on the way out of another failure, so its own failure must
     # never be what the caller sees: the original goes through, and the head is
     # left for the next ask to answer.
-    context "when the repair is refused too", dag: :ruby do
+    context "when the repair is refused too" do
       let(:notice) { Lain::Tool::Cancellation::NOTICES.fetch(:errored) }
-      let(:store) { UncommittableResults::Store.new("poison", notice) }
+      let(:refusals) { [] }
       let(:doubly_torn) do
         agent([tool_response(["tu_1", "echo", { "text" => "a" }]), text_response("after")],
-              handler: poisoned_results, timeline: CoreGraph.timeline(store:))
+              handler: poisoned_results,
+              timeline: TappedTimeline.refusing(CoreGraph.timeline, "poison", notice, refusals:))
       end
 
       it "lets the original refusal reach the caller, and the next ask answers the call once" do
-        expect { doubly_torn.ask("hi") }.to raise_error(Lain::Error, UncommittableResults::Store::REFUSAL)
+        expect { doubly_torn.ask("hi") }.to raise_error(Lain::Error, TappedTimeline::REFUSAL)
         expect(Lain::EventLog::Guards.pending_tool_use?(doubly_torn.timeline.head)).to be(true)
 
         doubly_torn.ask("again")
 
         expect(doubly_torn.timeline.to_a.map(&:role)).to eq(%w[user assistant user user assistant])
         expect(conversation_of(doubly_torn).violations).to be_empty
-        expect(store.refusals).to eq(["poison", notice])
+        expect(refusals).to eq(["poison", notice])
       end
 
       it "still surfaces the budget refusal when the budget stop's repair is refused" do
@@ -654,7 +606,7 @@ RSpec.describe Lain::Agent do
                                         stop_reason: :tool_use,
                                         usage: Lain::Usage.new(input_tokens: 100, output_tokens: 100)),
                      budget: Lain::Budget.ceilings(tokens: 50),
-                     timeline: CoreGraph.timeline(store: UncommittableResults::Store.new(notice)))
+                     timeline: TappedTimeline.refusing(CoreGraph.timeline, notice))
 
         expect { over.ask("hi") }.to raise_error(Lain::Budget::Exceeded)
         expect(Lain::EventLog::Guards.pending_tool_use?(over.timeline.head)).to be(true)
@@ -1804,12 +1756,16 @@ RSpec.describe Lain::Agent do
 
     # Forced at the instant between the guard and the move: a run that could
     # take the lock there would settle over the head this rewind is moving.
-    it "holds the dispatch lock from its guard through the move", dag: :ruby do
-      store = UncommittableResults::RacedStore.new
-      a = agent([text_response("one")], timeline: CoreGraph.timeline(store:))
+    it "holds the dispatch lock from its guard through the move" do
+      race = nil
+      raced_on_rewind = TappedTimeline.new(CoreGraph.timeline) { |name| race&.call if name == :rewind }
+      a = agent([text_response("one")], timeline: raced_on_rewind)
       a.ask("hi")
       raced = []
-      store.arm { raced << Thread.new { a.dispatch_lock.try_enter.tap { |got| a.dispatch_lock.exit if got } }.value }
+      race = lambda do
+        race = nil
+        raced << Thread.new { a.dispatch_lock.try_enter.tap { |got| a.dispatch_lock.exit if got } }.value
+      end
 
       a.rewind(1)
 
@@ -1829,19 +1785,14 @@ RSpec.describe Lain::Agent do
   end
 
   describe "the rendered prefix" do
-    it "asks its timeline only for the turns after the head it last rendered", dag: :ruby do
+    it "asks its timeline only for the turns after the head it last rendered" do
       provider = CoreGraph.provider(text_response("one"), text_response("two"))
-      a = described_class.new(provider:, toolset:, context:)
       asked = []
-      trace = TracePoint.new(:call) do |point|
-        projecting = point.defined_class == Lain::Timeline && point.method_id == :messages
-        asked << point.binding.local_variable_get(:after) if projecting
-      end
+      timeline = TappedTimeline.new(CoreGraph.timeline) { |name, after: nil, **| asked << after if name == :messages }
+      a = described_class.new(provider:, toolset:, context:, timeline:)
 
-      trace.enable do
-        a.ask("hi")
-        a.ask("again")
-      end
+      a.ask("hi")
+      a.ask("again")
 
       expect(asked).to eq([nil, a.timeline.to_a.first.digest])
       expect(provider.last_request.messages.map { |message| message["content"].first["text"] }).to eq(%w[hi one again])

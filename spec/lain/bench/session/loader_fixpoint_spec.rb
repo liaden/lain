@@ -175,81 +175,66 @@ RSpec.describe Lain::Bench::Session::Loader do
     end
   end
 
-  # Timeline#commit puts the payload BEFORE the envelope, and only the
-  # envelope's put validates the causal edge -- so discovering a blocked turn by
-  # attempting the commit and rescuing strands an Event::Payload in the Store,
-  # once per sweep of a fixpoint. The fold must pre-check instead.
-  #
-  # Panel fix round: an earlier version of this pinned only "the loaded Store
-  # holds exactly the journal's objects", which CANNOT fail -- a turn's payload
-  # digest is independent of the chain head and Store#put is idempotent, so a
-  # speculative implementation that retried would leave the same Store. So the
-  # guard now instruments the PUTS, one level down at the fold itself, where the
-  # speculative commit would actually show.
-  describe "what a blocked turn puts before it is unblocked", dag: :ruby do
-    # Anonymous rather than a named constant: it exists for this describe and
-    # has no business in the global namespace (RSpec/LeakyConstantDeclaration),
-    # the same shape message_replay_spec's counting store uses.
-    logging_store = Class.new(SimpleDelegator) do
-      attr_reader :puts_log
-
-      def initialize(store)
-        super
-        @puts_log = []
-      end
-
-      def put(object)
-        @puts_log << object.digest
-        __getobj__.put(object)
-      end
-    end
-
-    let(:logged) { logging_store.new(Lain::Dag::Factory.store) }
+  # Discovering a blocked turn by attempting its commit and rescuing would pay
+  # a refused commit on every sweep of the fixpoint, and a store that puts the
+  # payload before it checks the envelope would strand that payload each time.
+  # The fold pre-checks instead. What a refused commit leaves in the Store
+  # cannot tell the two apart -- a payload digest does not depend on the chain
+  # head, and a store that checks first leaves nothing -- so these count the
+  # commits the fold attempts.
+  describe "what a blocked turn commits before it is unblocked" do
+    let(:landed) { Lain::Dag::Factory.store }
 
     # The chain alone, with the message record withheld: turn 0 lands, turn 1 is
     # blocked on a message only MessageReplay can land.
     let(:fold) do
       records = roundtrip([turn_record(asked), turn_record(folded)])
-      Lain::Bench::Session::ChainFold.new(records:, base: Lain::Dag::Factory.timeline(store: logged))
+      Lain::Bench::Session::ChainFold.new(records:, base: Lain::Dag::Factory.timeline(store: landed))
     end
 
     # Landing the blocking message the way MessageReplay lands one: payload
-    # first, then the envelope. Rebuilt rather than carried -- EventLog::ChainWriter
-    # addresses its payload by digest instead of holding it.
+    # first, then the envelope.
     def land(event)
-      logged.put(Lain::Event::Payload.new(kind: event.kind, body: event.body))
-      logged.put(event)
+      landed.put(event.carried_payload)
+      landed.put(event)
     end
 
-    it "puts nothing at all for the blocked turn, and leaves its payload out of the Store" do
+    it "attempts no commit for the blocked turn, and leaves its payload out of the Store" do
       fold.advance
-      after_first = logged.puts_log.size
+      moved = nil
 
-      expect(fold.advance).to be(false)
-      expect(logged.puts_log.size).to eq(after_first)
-      expect(logged.key?(folded.head.payload_digest)).to be(false)
+      commits = count_commits { moved = fold.advance }
+
+      expect([moved, commits]).to eq([false, 0])
+      expect(landed.key?(folded.head.payload_digest)).to be(false)
     end
 
-    it "puts the blocked turn exactly once, when the message it cites finally lands" do
+    it "commits the blocked turn exactly once, when the message it cites finally lands" do
       fold.advance
       land(question)
       land(answer)
+      moved = nil
 
-      expect(fold.advance).to be(true)
-      expect(logged.key?(folded.head.payload_digest)).to be(true)
-      expect(logged.puts_log.tally.select { |_, count| count > 1 }).to be_empty
+      commits = count_commits { moved = fold.advance }
+
+      expect([moved, commits]).to eq([true, 1])
+      expect(landed.key?(folded.head.payload_digest)).to be(true)
     end
 
     # The boundary the pre-check draws, stated from the other side: the forced
-    # pass DOES strand the payload of a turn that can never commit. That is the
-    # one tolerated orphan, and it is tolerated because the load refuses -- the
-    # Store is thrown away. Doing it once per sweep, on a load that then
-    # succeeds, is what the pre-check prevents.
-    it "strands that payload only on the forced pass, which refuses" do
+    # pass DOES attempt the commit of a turn that can never land, once, and
+    # the load refuses -- the Store is thrown away.
+    it "attempts that commit once, on the forced pass, which refuses" do
       fold.advance
+      refusal = nil
 
-      expect { fold.timeline }.to raise_error(Lain::Bench::Session::Corrupt, /never landed/)
-      expect(logged.key?(folded.head.payload_digest)).to be(true)
+      commits = count_commits do
+        fold.timeline
+      rescue Lain::Bench::Session::Corrupt => e
+        refusal = e
+      end
+
+      expect([refusal&.message, commits]).to match([/never landed/, 1])
     end
   end
 

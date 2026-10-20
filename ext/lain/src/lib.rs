@@ -413,7 +413,9 @@ mod ffi {
         typed_data::{self, Obj},
         value::Opaque,
     };
+    use std::cell::RefCell;
     use std::collections::HashMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
     /// `Lain::Canonical`'s content-addressing hash. Thin FFI wrapper over
@@ -1491,6 +1493,54 @@ mod ffi {
         }
     }
 
+    /// The state of one lazy `Timeline#ancestors` walk: a snapshot of the
+    /// store's event map and the digest still to visit. A Ruby object so the
+    /// collector frees it with a fiber dropped mid-walk (see `ancestors`).
+    /// Holds no Ruby reference, so it needs no `mark`.
+    #[derive(TypedData)]
+    #[magnus(class = "Lain::Ext::Timeline::Walk", free_immediately)]
+    struct Walk {
+        events: StoreMap,
+        cursor: RefCell<Option<Digest>>,
+    }
+
+    /// Walks built and not yet dropped. The leak `Walk` exists to prevent is
+    /// Rust memory, which no Ruby-side count can see, so the count lives here.
+    static LIVE_WALKS: AtomicUsize = AtomicUsize::new(0);
+
+    impl DataTypeFunctions for Walk {}
+
+    impl Drop for Walk {
+        fn drop(&mut self) {
+            LIVE_WALKS.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+
+    impl Walk {
+        fn new(events: StoreMap, head: Option<Digest>) -> Self {
+            LIVE_WALKS.fetch_add(1, Ordering::Relaxed);
+            Walk {
+                events,
+                cursor: RefCell::new(head),
+            }
+        }
+
+        /// `Walk.live`: how many walks hold a snapshot right now.
+        fn live() -> usize {
+            LIVE_WALKS.load(Ordering::Relaxed)
+        }
+
+        /// The next node, head first, or `None` past the root.
+        fn step(&self) -> Result<Option<Arc<EventData>>, dag::DanglingDigest> {
+            let Some(digest) = self.cursor.borrow_mut().take() else {
+                return Ok(None);
+            };
+            let turn = dag::node(&self.events, &digest)?;
+            *self.cursor.borrow_mut() = turn.render_parent.clone();
+            Ok(Some(turn))
+        }
+    }
+
     /// An immutable `(head, store)` handle over the DAG. References the Store
     /// Ruby object (hence `mark`), so it is not shareable -- like Ruby's.
     #[derive(TypedData)]
@@ -1764,40 +1814,38 @@ mod ffi {
         /// `map_err` closure, so `missing_object`'s `const_get` would run --
         /// raising, allocating, and inviting GC -- with the store locked.
         ///
-        /// `ancestors` is the one walk with a block form, and that rule shapes
-        /// it: materialize the chain, drop the guard, then yield. Yielding
-        /// under the lock would run arbitrary Ruby -- a `commit` on the same
-        /// store included -- against a non-reentrant `std::sync::Mutex`.
+        /// `ancestors` is the one walk with a block form, and it is lazy: it
+        /// wraps one node per yield, as the block asks, so a caller that stops
+        /// early (`take_while`, `find`) pays only for the nodes it read. Three
+        /// things make that safe:
         ///
-        /// So **neither form is lazy**, where Ruby's fetches one turn per
-        /// yield. The Enumerator is no escape: it is a view over this same
-        /// eager walk. Matching that laziness would mean one FFI crossing per
-        /// node, which `docs/rust-bindings.md`'s fourth admission test rules
-        /// out -- the whole walk beats plain Ruby by a margin a per-node
-        /// crossing would spend many times over. The answers agree; only the
-        /// fetch count does.
+        /// - The walk reads an O(1) snapshot of the persistent map, taken with
+        ///   the lock held and released before the first yield, so the block
+        ///   may run any Ruby, a `commit` on the same store included, against
+        ///   the non-reentrant `std::sync::Mutex`.
+        /// - The snapshot and the cursor live in a [`Walk`], an object Ruby's
+        ///   collector owns, held only on this frame's stack. An Enumerator
+        ///   stepped from outside (`next`, `peek`, `zip`) runs this frame on a
+        ///   fiber, and a fiber dropped mid-walk is collected without
+        ///   unwinding, so Rust memory owned by the frame would never be
+        ///   freed; the `Walk` is freed with the fiber.
+        /// - Each node's wrapper goes straight to `rb_yield`, so no Ruby value
+        ///   sits on the Rust heap, which the conservative collector does not
+        ///   scan, across a yield that can collect.
         fn ancestors(ruby: &Ruby, rb_self: Obj<Timeline>) -> Result<Value, Error> {
-            // `enum_for` before the store is read, where
-            // `lib/lain/timeline.rb` puts it -- the placement IS the parity
-            // claim, and it keeps the no-block form O(1).
+            // `enum_for` before the store is read keeps the no-block form O(1).
             if !ruby.block_given() {
                 return Ok(rb_self.enumeratorize("ancestors", ()).as_value());
             }
 
-            let store: &Store = store_ref(ruby, &rb_self)?;
-            let walked = dag::ancestor_turns(&store.locked().events, rb_self.head.as_ref());
-            let arcs = walked.map_err(|e| missing_object(ruby, e))?;
-            let turns = turns_to_array(ruby, arcs)?;
-            // Guard dropped with the statement above, so these yields re-enter
-            // Ruby unlocked. Indexed off the Array rather than iterating it or
-            // using `magnus::block::Yield`: both hold the wrapped `Turn`s on
-            // the Rust heap, which Ruby's conservative collector does not scan,
-            // across a `rb_yield` that can collect. The Array roots its own
-            // elements from this frame.
-            for offset in 0..turns.len() {
-                let turn: Value = turns.entry(offset as isize)?;
-                let _: Value = ruby.yield_value(turn)?;
+            let events = store_ref(ruby, &rb_self)?.locked().events.clone();
+            let walk = ruby.obj_wrap(Walk::new(events, rb_self.head.clone()));
+            while let Some(turn) = walk.step().map_err(|e| missing_object(ruby, e))? {
+                let _: Value = ruby.yield_value(Turn::wrap(ruby, turn))?;
             }
+            // Keeps `walk` in this frame's memory, where the collector scans
+            // it, until the loop is done with it.
+            std::hint::black_box(walk.as_value());
             // Ruby's block form ends on a `while`, so it answers nil.
             Ok(ruby.qnil().as_value())
         }
@@ -2429,6 +2477,10 @@ mod ffi {
 
         let timeline = ext.define_class("Timeline", ruby.class_object())?;
         timeline.define_error("CrossStore", lain_error)?;
+        // Built only by `ancestors`; nothing constructs one from Ruby.
+        let walk = timeline.define_class("Walk", ruby.class_object())?;
+        walk.undef_default_alloc_func();
+        walk.define_singleton_method("live", function!(Walk::live, 0))?;
         timeline.define_singleton_method("empty", function!(Timeline::empty, -1))?;
         timeline.define_singleton_method("new", function!(Timeline::new, 1))?;
         timeline.define_method("correlation", method!(Timeline::correlation, 0))?;

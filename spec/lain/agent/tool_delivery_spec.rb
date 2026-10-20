@@ -30,24 +30,6 @@ module ToolDeliverySpecSupport
       @hook&.call
     end
   end
-
-  # A real Store that refuses to hold any payload carrying `marker`: a result
-  # the Timeline cannot commit, whatever made it so, without depending on
-  # which bytes a text boundary upstream happens to let through.
-  class RefusingStore < Lain::Store
-    REFUSAL = "this store refuses that result"
-
-    def initialize(marker)
-      super()
-      @marker = marker
-    end
-
-    def put(object)
-      raise Lain::Error, REFUSAL if object.is_a?(Lain::Event::Payload) && JSON.generate(object.body).include?(@marker)
-
-      super
-    end
-  end
 end
 
 # Where ONE tool-calling turn's results land on the Timeline: settled, or torn
@@ -97,6 +79,14 @@ RSpec.describe Lain::Agent::ToolDelivery do
   end
 
   def echoing = Lain::Effect::Handler::Mock.new { |effect, _| Lain::Tool::Result.ok("ran #{effect.tool_use_id}") }
+
+  # A chain asking for `answering`'s calls, over a timeline that refuses to
+  # commit any result carrying `marker`.
+  def refusing(marker, answering)
+    TappedTimeline.refusing(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store), marker)
+                  .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                  .commit(role: :assistant, content: answering.content)
+  end
 
   # `Async::Stop` is not a StandardError, so it travels straight through the
   # handler's gate-3 conversion -- which is exactly how a real interrupt reaches
@@ -263,13 +253,8 @@ RSpec.describe Lain::Agent::ToolDelivery do
   # committed user text over them, so every later derivation refused the chain.
   # The repair answers with a sentence of its own and none of the refused
   # blocks: re-committing those would raise again.
-  describe "a turn whose results cannot be committed", dag: :ruby do
-    let(:refusing_store) { ToolDeliverySpecSupport::RefusingStore.new("ran tu_2") }
-    let(:timeline) do
-      Lain::Dag::Factory.timeline(store: refusing_store)
-                        .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
-                        .commit(role: :assistant, content: response.content)
-    end
+  describe "a turn whose results cannot be committed" do
+    let(:timeline) { refusing("ran tu_2", response) }
     let(:outcome) do
       committed = nil
       Sync do
@@ -293,7 +278,7 @@ RSpec.describe Lain::Agent::ToolDelivery do
     it "lets the commit's own failure through" do
       outcome
 
-      expect(raised.map(&:message)).to eq([ToolDeliverySpecSupport::RefusingStore::REFUSAL])
+      expect(raised.map(&:message)).to eq([TappedTimeline::REFUSAL])
     end
 
     it "writes no snapshot and journals no cancellation" do
@@ -307,9 +292,7 @@ RSpec.describe Lain::Agent::ToolDelivery do
     # never replaces the failure it was repairing.
     it "lets the original failure through when the calls cannot be paired" do
       unpairable = tool_response(["tu_1", "echo", { "text" => "a" }], ["", "echo", {}])
-      chain = Lain::Dag::Factory.timeline(store: ToolDeliverySpecSupport::RefusingStore.new("ran tu_1"))
-                                .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
-                                .commit(role: :assistant, content: unpairable.content)
+      chain = refusing("ran tu_1", unpairable)
       committed = nil
 
       Sync do
@@ -319,7 +302,7 @@ RSpec.describe Lain::Agent::ToolDelivery do
         raised << e
       end
 
-      expect(raised.map(&:message)).to eq([ToolDeliverySpecSupport::RefusingStore::REFUSAL])
+      expect(raised.map(&:message)).to eq([TappedTimeline::REFUSAL])
       expect(committed).to be_nil
     end
 
@@ -360,10 +343,8 @@ RSpec.describe Lain::Agent::ToolDelivery do
 
   # A stop landing on the repair itself must not re-enter the cancellation arm:
   # the errored commit sits in the settled branch, outside that rescue.
-  it "does not answer the calls a second time when a stop follows the errored commit", dag: :ruby do
-    chain = Lain::Dag::Factory.timeline(store: ToolDeliverySpecSupport::RefusingStore.new("ran tu_2"))
-                              .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
-                              .commit(role: :assistant, content: response.content)
+  it "does not answer the calls a second time when a stop follows the errored commit" do
+    chain = refusing("ran tu_2", response)
     commits = []
 
     Sync do
@@ -495,10 +476,8 @@ RSpec.describe Lain::Agent::ToolDelivery do
       expect([read_on?(committed, "tu_1"), session.read?("/tmp/tu_2.rb")]).to eq([true, false])
     end
 
-    it "withholds every read of a round whose results could not be committed", dag: :ruby do
-      chain = Lain::Dag::Factory.timeline(store: ToolDeliverySpecSupport::RefusingStore.new("ran tu_2"))
-                                .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
-                                .commit(role: :assistant, content: response.content)
+    it "withholds every read of a round whose results could not be committed" do
+      chain = refusing("ran tu_2", response)
       committed = nil
       Sync do
         delivery_over(reading).perform(response, timeline: chain, session:) { |turn| committed = turn }

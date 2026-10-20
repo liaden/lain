@@ -245,18 +245,17 @@ RSpec.describe Lain::SessionRecord::Scribe do
   # The walk is BOUNDED, not merely correct. catch_up used to read the
   # whole ancestor chain and filter out what it had already written -- O(n) per
   # commit, so O(n^2) over a session, on the durability path every ask waits on.
-  # The records are identical either way, so only the fetch count can tell a
-  # bounded walk from a full one (spec/support/store_fetch_count.rb).
-  describe "the catch_up walk is bounded by what is new", dag: :ruby do
+  # The records are identical either way, so only the events read can tell a
+  # bounded walk from a full one (spec/support/dag_cost.rb).
+  describe "the catch_up walk is bounded by what is new" do
     it "visits only the new turn on a second catch_up, not the whole chain" do
       scribe.catch_up(timeline)
       grown = timeline.commit(role: :user, content: text("more"))
-      fetches = count_store_fetches(store)
 
-      scribe.catch_up(grown)
+      reads = count_dag_reads(store) { scribe.catch_up(grown) }
 
       # The new turn, then the last-written head the walk stops on.
-      expect(fetches.count).to eq(2)
+      expect(reads).to eq(2)
     end
 
     it "costs the same on a chain of forty as on a chain of four -- O(1) in the prefix" do
@@ -264,12 +263,11 @@ RSpec.describe Lain::SessionRecord::Scribe do
     end
 
     it "still visits the whole chain when there is no written head yet" do
-      timeline # built BEFORE the count starts: every commit derives a correlation, which fetches
-      fetches = count_store_fetches(store)
+      timeline # built BEFORE the count starts: a commit can read the head it extends
 
-      scribe.catch_up(timeline)
+      reads = count_dag_reads(store) { scribe.catch_up(timeline) }
 
-      expect(fetches.count).to eq(4)
+      expect(reads).to eq(4)
     end
 
     # A caught-up scribe on a chain `length` long, then the cost of catching it
@@ -281,7 +279,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
       caught_up.catch_up(chain)
       grown = chain.commit(role: :assistant, content: text("one more"))
 
-      count_store_fetches(chain.store) { caught_up.catch_up(grown) }.count
+      count_dag_reads(chain.store) { caught_up.catch_up(grown) }
     end
 
     def chain_of(length)
@@ -397,14 +395,14 @@ RSpec.describe Lain::SessionRecord::Scribe do
     # The check walks the seed, so it has to be worth its cost: it runs against
     # the FIRST chain that can adjudicate it and never again. Per session, not
     # per ask -- which is exactly the budget the old filtered walk blew.
-    it "checks the seed once, leaving later catch_ups at the bounded cost", dag: :ruby do
+    it "checks the seed once, leaving later catch_ups at the bounded cost" do
       chain = chain_of(40)
       scribe = described_class.new(journal:, context:, toolset:, workspace:,
                                    written: chain.to_a.map(&:digest))
       scribe.catch_up(chain)
       grown = chain.commit(role: :user, content: text("more"))
 
-      expect(count_store_fetches(chain.store) { scribe.catch_up(grown) }.count).to eq(2)
+      expect(count_dag_reads(chain.store) { scribe.catch_up(grown) }).to eq(2)
     end
 
     def chain_of(length)

@@ -184,18 +184,17 @@ RSpec.describe Lain::Compaction::Derivation do
     # projection byte-identical to the one it was holding. Handed the walk, this
     # object reads only the chain it WRITES.
     describe "a walk it is handed" do
-      it "derives from it rather than walking the source again", dag: :ruby do
+      it "derives from it rather than walking the source again" do
         source = fixtures.history(9)
         walk = Lain::Compaction::Derivation::Walk.of(source)
         derivation = described_class.new(strategy: fixtures.summarizing, keep_last: 3)
-        derived = nil
 
-        tally = count_store_fetches(source.store) { derived = derivation.derive(source, walk:) }
+        handed = count_dag_reads(source.store) { derivation.derive(source, walk:) }
+        walking = count_dag_reads(source.store) { derivation.derive(source) }
 
-        # The chain it WRITES, and nothing else: one head read per commit that
-        # had a predecessor to take its correlation from. Not one read of the
-        # nine source turns, which is what walking again would have cost.
-        expect(tally.count).to eq(derived.length - 1)
+        # Whatever writing the derived chain reads, both pay alike; what the
+        # handed walk saves is one read of each of the nine source turns.
+        expect(walking - handed).to eq(source.length)
       end
 
       it "derives exactly what walking itself would have derived" do
@@ -547,8 +546,8 @@ RSpec.describe Lain::Compaction::Derivation do
       end
 
       # A correct resume and a full derivation write the same digests, so only
-      # the work done can tell them apart: the envelopes put into the store.
-      describe "resuming an earlier derivation", dag: :ruby do
+      # the work done can tell them apart: the commits made.
+      describe "resuming an earlier derivation" do
         let(:holding) { described_class.new(strategy: Lain::Compaction::Strategy::Identity.new, keep_last: 3) }
         let(:earlier) { fixtures.history(9) }
         let(:later) { extended(earlier, 3) }
@@ -556,16 +555,6 @@ RSpec.describe Lain::Compaction::Derivation do
         let(:first) { holding.derive(earlier, cut:) }
         let(:resume) do
           described_class::Resume.new(head: earlier.head_digest, size: earlier.length, seam: cut, derived: first)
-        end
-
-        def envelopes_put(store)
-          written = []
-          allow(store).to receive(:put).and_wrap_original do |put, object|
-            written << object
-            put.call(object)
-          end
-          yield
-          written.grep(Lain::Event)
         end
 
         def edge_of(derivation_journal, **options)
@@ -577,7 +566,7 @@ RSpec.describe Lain::Compaction::Derivation do
         def full_and_resumed(stale, derivation:, held:)
           full = derivation.derive(later, cut: held)
           resumed = nil
-          written = envelopes_put(later.store) { resumed = derivation.derive(later, cut: held, resume: stale) }
+          written = count_commits { resumed = derivation.derive(later, cut: held, resume: stale) }
           [full, resumed, written]
         end
 
@@ -585,7 +574,7 @@ RSpec.describe Lain::Compaction::Derivation do
           full, resumed, written = full_and_resumed(stale, derivation:, held:)
 
           expect([resumed.head_digest, resumed.store]).to eq([full.head_digest, later.store])
-          expect(written.size).to eq(full.length)
+          expect(written).to eq(full.length)
         end
 
         it "derives the head digest a full derivation does, and journals the same edge" do
@@ -601,9 +590,9 @@ RSpec.describe Lain::Compaction::Derivation do
           first
           objects = later.store.size
 
-          written = envelopes_put(later.store) { holding.derive(later, cut:, resume:) }
+          written = count_commits { holding.derive(later, cut:, resume:) }
 
-          expect(written.size).to eq(3)
+          expect(written).to eq(3)
           expect(later.store.size - objects).to eq(3)
         end
 

@@ -252,17 +252,6 @@ RSpec.describe "a tool run torn by a real interrupt", :seam do
   # The two must mint one shape: only the sentence may say which repair it was.
   describe "agreement between a torn settle and a resumed session" do
     let(:marker) { "unstorable result" }
-    let(:refusing_store) do
-      Class.new(Lain::Store) do
-        define_method(:put) do |object|
-          if object.is_a?(Lain::Event::Payload) && JSON.generate(object.body).include?("unstorable result")
-            raise Lain::Error, "refused"
-          end
-
-          super(object)
-        end
-      end.new
-    end
     let(:calls) { [["tu_1", "echo", { "text" => "first" }], ["tu_2", "echo", { "text" => "second" }]] }
     # The result is read into a local before the run: a `let` first read from
     # inside the reactor parks on RSpec's memoization lock.
@@ -271,7 +260,8 @@ RSpec.describe "a tool run torn by a real interrupt", :seam do
       agent = Lain::Agent.new(
         provider: Lain::Provider::Mock.new(responses: [tool_response(*calls), text_response]),
         handler: Lain::Effect::Handler::Mock.new { |_, _| Lain::Tool::Result.ok(unstorable) },
-        toolset:, context:, timeline: Lain::Dag::Factory.timeline(store: refusing_store)
+        toolset:, context:,
+        timeline: TappedTimeline.refusing(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store), unstorable)
       )
       refused_ask(agent)
     end
@@ -285,7 +275,7 @@ RSpec.describe "a tool run torn by a real interrupt", :seam do
       agent.ask("hi")
       raise "the ask was expected to be refused"
     rescue Lain::Error => e
-      raise unless e.message == "refused"
+      raise unless e.message == TappedTimeline::REFUSAL
 
       agent
     end
@@ -307,7 +297,7 @@ RSpec.describe "a tool run torn by a real interrupt", :seam do
       Lain::CLI::Resume.new(paths:).call.timeline.head.content
     end
 
-    it "repairs a resumed head with the blocks a torn settle commits, apart from the notice kind", dag: :ruby do
+    it "repairs a resumed head with the blocks a torn settle commits, apart from the notice kind" do
       at_load = resumed_head_blocks
       at_tear = settle_torn.timeline.head.content
 

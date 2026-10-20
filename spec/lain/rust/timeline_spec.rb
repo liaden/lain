@@ -224,6 +224,28 @@ RSpec.describe Lain::Ext::Timeline do
       expect(walk.take(2).map { |turn| turn.content.first["text"] }).to eq(%w[c b])
     end
 
+    # An enumerator stepped from outside walks on a fiber of its own, and one
+    # dropped mid-walk is collected without unwinding that fiber. So the walk's
+    # snapshot has to be freed by Ruby's collector, never held by a frame that
+    # will not return; `Walk.live` counts the snapshots on the Rust side, where
+    # the memory is. The steps run on a thread of their own, ended before the
+    # count, because the collector scans live stacks conservatively and a
+    # stale word on this one could keep a walk reachable.
+    it "frees every walk behind enumerators dropped mid-walk" do
+      line = three
+      before = live_walks
+      Thread.new { 20.times { step_once(line) } }.join
+
+      expect(live_walks).to eq(before)
+    end
+
+    def step_once(line) = line.ancestors.tap(&:next) && nil
+
+    def live_walks
+      GC.start(full_mark: true, immediate_sweep: true)
+      described_class::Walk.live
+    end
+
     # The digests are content addresses, so agreeing on them is agreeing on
     # both the walk order and what each node is -- the port's own oracle.
     it "yields the same digests the Ruby timeline yields for the same commits" do

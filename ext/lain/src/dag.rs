@@ -329,6 +329,16 @@ fn walk<'a>(
     })
 }
 
+/// The event `digest` names: one step of a walk, for the one FFI caller that
+/// yields its walk a node at a time and so cannot hold [`walk`]'s borrow across
+/// a yield. A digest the map does not hold is the same [`DanglingDigest`] the
+/// walk raises.
+pub fn node(map: &StoreMap, digest: &Digest) -> Result<Arc<EventData>, DanglingDigest> {
+    map.get(digest)
+        .map(Arc::clone)
+        .ok_or_else(|| DanglingDigest(digest.clone()))
+}
+
 /// The first digest on `head`'s chain that `wanted` accepts, or `None` when
 /// none does. THE short-circuiting primitive, shared by [`includes`] (hence
 /// [`ancestor_of`]) and by [`meet`]'s find side, so one implementation carries
@@ -720,6 +730,22 @@ pub(crate) mod tests {
         assert_eq!(
             parent_of(&map, &digest("blake3:absent")),
             Err(DanglingDigest(digest("blake3:absent")))
+        );
+    }
+
+    #[test]
+    fn node_answers_the_event_a_digest_names_and_refuses_an_absent_one() {
+        let map = StoreMap::new_sync();
+        let (map, a) = commit(&map, None, "a");
+        let (map, b) = commit(&map, Some(&a), "b");
+        let stepped = node(&map, &b).expect("b is stored");
+        assert_eq!(
+            (stepped.digest.clone(), stepped.render_parent.clone()),
+            (b, Some(a))
+        );
+        assert_eq!(
+            node(&map, &digest("blake3:absent")).unwrap_err(),
+            DanglingDigest(digest("blake3:absent"))
         );
     }
 

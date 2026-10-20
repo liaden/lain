@@ -2838,23 +2838,21 @@ RSpec.describe Lain::Compaction::Source do
   # turn used to pay for THREE of each over the source chain: this object's own,
   # the {Lain::Compaction::Derivation}'s, and -- built, discarded unread --
   # {Lain::Context#render}'s. The rendered bytes are identical either way, so no
-  # assertion over the messages can tell the two apart; the fetch count is the
-  # only observable that can.
-  describe "what one rendered turn costs", dag: :ruby do
+  # assertion over the messages can tell the two apart; the walks counted are
+  # the only observable that can.
+  describe "what one rendered turn costs" do
     def forcing = source(need: build_need(byte_threshold: 100), hard_cap: 100)
 
     it "walks the source chain once and the derived chain once" do
       line = timeline
       built = forcing
 
-      tally = count_store_fetches(line.store) { render(context_for(built, line), line) }
+      walks = count_walks { render(context_for(built, line), line) }
 
-      # One fetch per source turn (6) as the decision is made; one per derived
-      # event (3: a summary and the two retained) as the chain is projected into
-      # the messages a render sends; and one per derived commit that had a head
-      # to take its correlation from (2 -- the first lands on the empty Timeline
-      # and reads nothing).
-      expect(tally.count).to eq(6 + 3 + 2)
+      # The source once, as the decision is made; the derived chain once, as it
+      # is projected into the messages a render sends.
+      source_walks = walks.delete(line.head_digest)
+      expect([source_walks, walks.values]).to eq([1, [1]])
     end
 
     # The DEFERRING path still walks twice, and that is the pure seam's price
@@ -2866,9 +2864,9 @@ RSpec.describe Lain::Compaction::Source do
     it "walks the source chain twice on a deferring turn: once to decide, once to render" do
       line = timeline
 
-      tally = count_store_fetches(line.store) { render(context_for(source, line), line) }
+      walks = count_walks { render(context_for(source, line), line) }
 
-      expect(tally.count).to eq(6 * 2)
+      expect(walks).to eq(line.head_digest => 2)
     end
 
     # The same duplication in `Canonical.dump`: {Lain::Compaction::Head}

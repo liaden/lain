@@ -428,16 +428,9 @@ RSpec.describe Lain::Session do
 
     # The chain is walked once per head, not once per question: a read/edit
     # loop asks on every call, and a long conversation is a long walk.
-    it "walks the store once per head, and a grown head only back to the last one walked", dag: :ruby do
-      counting = Class.new(Lain::Store) do
-        attr_reader :fetches
-
-        def fetch(digest)
-          @fetches = (@fetches || 0) + 1
-          super
-        end
-      end.new
-      line = (1..20).inject(Lain::Dag::Factory.timeline(store: counting)) do |chain, index|
+    it "walks the store once per head, and a grown head only back to the last one walked" do
+      store = Lain::Dag::Factory.store
+      line = (1..20).inject(Lain::Dag::Factory.timeline(store:)) do |chain, index|
         chain.commit(role: index.odd? ? :user : :assistant, content: [{ "type" => "text", "text" => index.to_s }])
       end
       after = round(line, "tu_1")
@@ -445,9 +438,11 @@ RSpec.describe Lain::Session do
       session.on_chain(after)
       session.read?("/tmp/app.rb")
 
-      expect { 5.times { session.read?("/tmp/app.rb") } }.not_to(change { counting.fetches })
+      asked_again = count_dag_reads(store) { 5.times { session.read?("/tmp/app.rb") } }
       session.on_chain(grown)
-      expect { session.read?("/tmp/app.rb") }.to change { counting.fetches }.by(2)
+      grown_by_one = count_dag_reads(store) { session.read?("/tmp/app.rb") }
+
+      expect([asked_again, grown_by_one]).to eq([0, 2])
     end
   end
 
