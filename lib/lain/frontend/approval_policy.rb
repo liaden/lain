@@ -53,9 +53,6 @@ module Lain
       REASONED_NO = /\A(?:nope|nah|no?)(?:(?:[[:punct:]]*\s+)+|[[:punct:]]+)(?<reason>\S.*)\z/i
       private_constant :REASONED_NO
 
-      # What a surface says of a call the judge looked at and left for a human.
-      JUDGE_DEFERRED = "the judge deferred this"
-
       REFUSED = "a y or n answers the approval"
 
       # How a prompt another surface decided ends its line.
@@ -297,7 +294,7 @@ module Lain
       end
 
       def judged(pending)
-        "#{"; #{JUDGE_DEFERRED}" if pending.judge_deferred?}#{pending.notes.map { "; #{_1.inspect}" }.join}"
+        pending.reasons.map { "; #{_1}" }.join
       end
 
       # Where a linked path lands, because its name says nothing about what it

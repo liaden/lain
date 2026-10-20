@@ -971,6 +971,38 @@ RSpec.describe Lain::Approval::Queue do
     it "gives a pending parked with none an empty list" do
       expect(notes_of(nil)).to eq([])
     end
+
+    it "answers reasons with lain's words plain and everyone else's quoted, in the order given" do
+      deferred = Lain::Approval::Judged::Deferred.new(noted)
+      reasons = Sync do |task|
+        run = task.async { queue.adjudicate(tool_call, deferred) }
+        pending = task.with_timeout(1) { queue.dequeue }
+        pending.deny(surface: "spec")
+        run.wait
+        pending.reasons
+      end
+
+      expect(reasons.map(&:to_s)).to eq(['"cat is /repo/bin/cat"', Lain::Approval::Judged::DEFERRAL_NOTE])
+      expect(reasons.map(&:own?)).to eq([false, true])
+    end
+
+    it "journals the deferral in the pending record's notes" do
+      deferred = Lain::Approval::Judged::Deferred.new(noted)
+      Sync do |task|
+        run = task.async { queue.adjudicate(tool_call, deferred) }
+        task.with_timeout(1) { queue.dequeue }.deny(surface: "spec")
+        run.wait
+      end
+
+      expect(pending_records.sole["notes"]).to eq(["cat is /repo/bin/cat", Lain::Approval::Judged::DEFERRAL_NOTE])
+    end
+
+    it "keeps the deferral among the notes the journal records" do
+      pending = described_class::Pending.new(effect: tool_call, requester: "agent", clock: -> { 0.0 },
+                                             notes: ["a path", described_class::Reason.own("lain says")])
+
+      expect(pending.notes).to eq(["a path", "lain says"])
+    end
   end
 
   # gate.rb's doctrine, applied to the queue's OWN writes: an unattended gate
@@ -1345,7 +1377,7 @@ RSpec.describe Lain::Approval::Queue do
       expect(described_class::Pending.instance_method(:initialize).parameters)
         .to eq([%i[keyreq effect], %i[keyreq requester], %i[keyreq clock], %i[key label], %i[key timeout],
                 %i[key outstanding], %i[key humans_only], %i[key cwd], %i[key within], %i[key wall],
-                %i[key judge_deferred], %i[key notes]])
+                %i[key notes]])
     end
 
     # The other half of the same ruling, one level up: a queue that constructed

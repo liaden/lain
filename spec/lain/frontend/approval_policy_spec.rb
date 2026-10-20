@@ -41,7 +41,8 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
   end
 
   it "says in the question when the judge deferred the call" do
-    deferred = Lain::Approval::Queue::Pending.new(effect:, requester: "agent", clock: -> { 0.0 }, judge_deferred: true)
+    deferred = Lain::Approval::Queue::Pending.new(effect:, requester: "agent", clock: -> { 0.0 },
+                                                  notes: [Lain::Approval::Queue::Reason.own("the judge deferred this")])
     policy_for("n\n").decide(deferred)
 
     expect(output.string).to include("the judge deferred this")
@@ -53,6 +54,16 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     policy_for("n\n").decide(noted)
 
     expect(output.string).to include("; \"cat resolved to /repo/bin/cat (project)\"")
+  end
+
+  it "shows a path reason before the judge's deferral, the judge's words unquoted and lain's quoted apart" do
+    both = Lain::Approval::Queue::Pending.new(
+      effect:, requester: "agent", clock: -> { 0.0 },
+      notes: ["cat is /x/", Lain::Approval::Queue::Reason.own("the judge deferred this")]
+    )
+    policy_for("n\n").decide(both)
+
+    expect(output.string).to include('; "cat is /x/"; the judge deferred this')
   end
 
   it "renders a planted path in a note inspected, on one line" do

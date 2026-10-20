@@ -171,8 +171,7 @@ module Lain
           end
 
           def said(pending)
-            deferral = "; #{Frontend::ApprovalPolicy::JUDGE_DEFERRED}" if pending.judge_deferred?
-            "#{deferral}#{pending.notes.map { "; #{_1.inspect}" }.join}"
+            pending.reasons.map { "; #{_1}" }.join
           end
 
           def stamp(line) = "#{@wall_clock.call.strftime("%H:%M:%S")} #{line}"

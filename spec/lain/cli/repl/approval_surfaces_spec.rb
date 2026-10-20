@@ -246,13 +246,14 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
         watched.each(&:stop)
       end
 
-      expect(notes.sole.scan(Lain::Frontend::ApprovalPolicy::JUDGE_DEFERRED).size).to eq(1)
+      expect(notes.sole.scan(Lain::Approval::Judged::DEFERRAL_NOTE).size).to eq(1)
+      expect(notes.sole).to include('; "cat is /x/"; the judge deferred this')
     end
 
     it "does not claim a deferral for a call the judge never saw" do
       fan_out(attached: editor)
 
-      expect(notes.sole).not_to include(Lain::Frontend::ApprovalPolicy::JUDGE_DEFERRED)
+      expect(notes.sole).not_to include(Lain::Approval::Judged::DEFERRAL_NOTE)
     end
 
     it "says once, in the chat, that the clock denied a call nobody answered" do

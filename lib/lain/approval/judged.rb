@@ -33,6 +33,7 @@ module Lain
       TOO_MANY = "it reaches more files than the judge weighs"
       UNWEIGHABLE = "%<path>s is not a path it may weigh"
       DEFERRED = "deferred"
+      DEFERRAL_NOTE = "the judge deferred this"
       BAR = "bar"
       OVERRULED = "the judge approved this, but what lain resolved the command to bars an automatic approval"
       FAULT = "fault"
@@ -148,7 +149,10 @@ module Lain
 
       # The ladder reads contexts by respond_to?, so this wrapper stays invisible to it.
       class Deferred < SimpleDelegator
-        def judge_deferred? = true
+        def parked_because
+          inner = __getobj__
+          [*(inner.parked_because if inner.respond_to?(:parked_because)), Queue::Reason.own(DEFERRAL_NOTE)]
+        end
       end
 
       # A call the judge approved and the bar stopped: not deferred by the

@@ -51,6 +51,21 @@ module Lain
 
       Outstanding = Data.define(:path, :regions)
 
+      # One line of why a call was parked. `own` marks lain's words, which a
+      # surface shows plain; any other may carry a model-influenced path, so it
+      # shows `inspect`ed and cannot open a line of its own.
+      Reason = Data.define(:text, :own) do
+        def self.own(text) = new(text:, own: true)
+
+        def self.of(note) = note.is_a?(self) ? note : new(text: note, own: false)
+
+        def initialize(text:, own: false) = super(text: -text.to_s, own: own == true)
+
+        def own? = own
+
+        def to_s = own? ? text : text.inspect
+      end
+
       # The sensitive regions of one file that approving a {Pending} would
       # release, and the file they were found in. A CAPABILITY a pending can
       # carry, not a flow: this queue sits BELOW the read and holds only a path,
@@ -160,10 +175,10 @@ module Lain
         # gate counted directory names from, see {Sensitivity::Policy.base_of}.
         def initialize(effect:, requester:, clock:, label: requester, timeout: DEFAULT_TIMEOUT,
                        outstanding: Outstanding::NONE, humans_only: false, cwd: ::Lain::Session.cwd_of(nil),
-                       within: cwd, wall: -> { Time.now }, judge_deferred: false, notes: [])
+                       within: cwd, wall: -> { Time.now }, notes: [])
           @timeout = timeout
-          @judge_deferred = judge_deferred == true
-          @notes = notes.map { -_1.to_s }.freeze
+          @reasons = notes.map { Reason.of(_1) }.freeze
+          @notes = @reasons.map(&:text).freeze
           @wall = wall
           @humans_only = humans_only == true
           @cwd = cwd
@@ -225,12 +240,10 @@ module Lain
 
         def humans_only? = @humans_only
 
-        # Whether the judge looked at this call and left it for a human.
-        def judge_deferred? = @judge_deferred
+        # @return [Array<Reason>] why the ladder parked this call, in order
+        attr_reader :reasons
 
-        # Why the ladder left this call for a human, one line of words per rung
-        # that said. Model-influenced (a path), so a surface renders each `inspect`ed.
-        # @return [Array<String>]
+        # @return [Array<String>] the words of each reason, for the journal
         attr_reader :notes
 
         # A surface that asks one call at a time says when this one reached the
@@ -510,7 +523,6 @@ module Lain
                               timeout: @timeout, wall: @wall, outstanding:,
                               humans_only: context.respond_to?(:automatic_approval_barred?) &&
                                            context.automatic_approval_barred?,
-                              judge_deferred: context.respond_to?(:judge_deferred?) && context.judge_deferred?,
                               notes: context.respond_to?(:parked_because) ? context.parked_because : [],
                               cwd: ::Lain::Session.cwd_of(context),
                               within: ::Lain::Sensitivity::Policy.base_of(context))

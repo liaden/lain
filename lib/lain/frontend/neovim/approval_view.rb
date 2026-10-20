@@ -574,7 +574,7 @@ module Lain
         end
 
         def judged(pending)
-          said = [*(ApprovalPolicy::JUDGE_DEFERRED if pending.judge_deferred?), *pending.notes.map(&:inspect)]
+          said = pending.reasons.map(&:to_s)
           said.empty? ? "" : "(#{said.join("; ")}) "
         end
       end

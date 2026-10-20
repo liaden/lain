@@ -206,7 +206,7 @@ RSpec.describe Lain::Approval::Judged do
 
     it "marks the parked call as one the judge deferred" do
       ruled(rung(spawn_answering("defer")), bash) do |pending|
-        expect(pending.judge_deferred?).to be(true)
+        expect(pending.reasons.map(&:to_s)).to eq([described_class::DEFERRAL_NOTE])
         pending.approve(surface: "human_spec")
       end
     end
@@ -220,14 +220,14 @@ RSpec.describe Lain::Approval::Judged do
 
     it "does not mark a call the judge faulted on" do
       ruled(rung(spawn_answering { Lain::Tool::Result.error("approve") }), bash) do |pending|
-        expect(pending.judge_deferred?).to be(false)
+        expect(pending.reasons.map(&:own?)).not_to include(true)
         pending.deny(surface: "human_spec")
       end
     end
 
     it "does not mark a call it never judged" do
       ruled(rung(spawn_answering("approve")), bash("cat ~/.ssh/id_rsa")) do |pending|
-        expect(pending.judge_deferred?).to be(false)
+        expect(pending.reasons.map(&:own?)).not_to include(true)
         pending.deny(surface: "human_spec")
       end
     end
@@ -238,7 +238,7 @@ RSpec.describe Lain::Approval::Judged do
         task.with_timeout(1) { queue.dequeue }.tap { _1.deny(surface: "human_spec") }
       end
 
-      expect(parked.judge_deferred?).to be(false)
+      expect(parked.reasons.map(&:own?)).not_to include(true)
     end
   end
 
@@ -521,7 +521,7 @@ RSpec.describe Lain::Approval::Judged do
     it "tells the human the judge approved and what lain's bar stopped, never that the judge deferred" do
       ruling, pending = parked(stage(:project, fresh: true), stage(:system, anomalies: [:relative_path_entry]))
 
-      expect([ruling.verdict, pending.judge_deferred?]).to eq([:deny, false])
+      expect([ruling.verdict, pending.reasons.map(&:own?).include?(true)]).to eq([:deny, false])
       expect(pending.notes).to eq([described_class::OVERRULED,
                                    "make -> /somewhere/project/bin/make: written this session",
                                    "PATH has a relative entry"])

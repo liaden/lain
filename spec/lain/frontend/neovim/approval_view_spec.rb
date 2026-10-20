@@ -512,7 +512,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     end
 
     describe "a call the judge deferred" do
-      let(:marked) { Class.new { def judge_deferred? = true }.new }
+      let(:marked) { Lain::Approval::Judged::Deferred.new(nil) }
 
       def deferred = Lain::Approval::PolicySwitch::Requested.new(marked, "researcher")
 
@@ -529,6 +529,14 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
 
       it "says so on its row" do
         expect(row_of(deferred)).to include("the judge deferred this")
+      end
+
+      it "shows a path reason first and the deferral after it, only the path quoted" do
+        both = Lain::Approval::PolicySwitch::Requested.new(
+          Lain::Approval::Judged::Deferred.new(Lain::Approval::Escalation::Noted.new(nil, "cat is /x/")), "researcher"
+        )
+
+        expect(row_of(both)).to include('("cat is /x/"; the judge deferred this) bash(')
       end
 
       it "leaves a call parked at ask unmarked" do
