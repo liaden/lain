@@ -7,7 +7,7 @@ module Lain
     # One approval rule: a PARTIAL predicate over a parsed tool call.
     #
     # Emacs' keymap lookup chain applied to approval. A rule with nothing to
-    # say answers nothing at all and {RuleChain} asks the next one -- most
+    # say answers nothing at all and the rules {Ladder} asks the next one -- most
     # policy engines force every rule to be TOTAL, which makes "no opinion"
     # indistinguishable from "allow" and buries the interesting rule under a
     # pile of `true`s.

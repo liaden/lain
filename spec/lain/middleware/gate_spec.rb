@@ -378,12 +378,43 @@ RSpec.describe Lain::Middleware::Gate do
       expect(held).to be_a(described_class::Callable).and have_attributes(policy:)
     end
 
-    it "is approved by a truthy answer and refused in the injected sentence by a falsy one" do
+    it "is approved by true and refused in the injected sentence by a falsy one" do
       _, reached = through(described_class.new(policy: ->(_e, _c) { true }), tool_call("dangerous"))
       refused, = through(described_class.new(policy: ->(_e, _c) {}), tool_call("dangerous"))
 
       expect(reached).to eq([tool_call("dangerous")])
       expect(refused).to eq(Lain::Tool::Result.error('approval denied for tool "dangerous"'))
+    end
+
+    it "is refused by an answer that is truthy without being true" do
+      refused, reached = through(described_class.new(policy: ->(_e, _c) { "yes" }), tool_call("dangerous"))
+
+      expect([refused.is_error, reached]).to eq([true, []])
+    end
+
+    it "is held to the ruling it answers, so a deny is never read as an approval" do
+      deny = Lain::Approval::Escalation::Ruling.deny(rung: "surfaces", because: "a human said no", said: "not now")
+      allow = Lain::Approval::Escalation::Ruling.allow(rung: "surfaces", because: "a human said yes")
+
+      refused, = through(described_class.new(policy: ->(_e, _c) { deny }), tool_call("dangerous"))
+      _, reached = through(described_class.new(policy: ->(_e, _c) { allow }), tool_call("dangerous"))
+
+      expect(refused).to eq(Lain::Tool::Result.error('approval denied for tool "dangerous": not now'))
+      expect(reached).to eq([tool_call("dangerous")])
+    end
+
+    it "refuses a call a bare asking rung's queue denied" do
+      queue = Lain::Approval::Queue.new(journal: Lain::Journal.new(io: StringIO.new), timeout: 1)
+      gate = described_class.new(policy: Lain::Approval::Escalation::Surfaces.new(queue))
+      outcome = nil
+      Sync do |task|
+        asked = task.async { outcome = through(gate, tool_call("dangerous")) }
+        task.with_timeout(1) { queue.dequeue }.deny(surface: "tty", authority: :human)
+        task.with_timeout(1) { asked.wait }
+      end
+
+      expect(outcome.first.is_error).to be(true)
+      expect(outcome.last).to be_empty
     end
   end
 

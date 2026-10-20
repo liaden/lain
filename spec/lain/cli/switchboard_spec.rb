@@ -273,6 +273,23 @@ RSpec.describe Lain::CLI::Switchboard do
                           .map { |record| record["verdict"] }.to_a).to eq(%w[allow])
     end
 
+    # Scenario: the chat ladder decides at the first rung that answers
+    it "denies at the rules rung when triage abstains, and parks nothing" do
+      denier = Class.new(Lain::Approval::Rule) do
+        def name = "spec_deny"
+        def decide(call) = deny(call, because: "the session remembered a no")
+      end.new
+      board = switchboard(rules: [denier])
+
+      ruling = board.policy_switch.rule(gated_call, nil)
+
+      expect([ruling.verdict, ruling.rung]).to eq([:deny, "rules"])
+      expect(board.approvals.to_a).to be_empty
+      expect(Lain::Journal.records(journal_io.string.lines, type: "escalation")
+                          .map { |record| [record["rung"], record["verdict"]] }.to_a)
+        .to eq([%w[triage abstain], %w[rules deny]])
+    end
+
     # The third vocabulary on this board, and the one that had no wiring at all
     # until this board grew it: `sensitivity:` is the run's PATH BOUNDARY (a
     # policy, asked `gates?`), and `classifiers:` is a FACTORY the triage rung

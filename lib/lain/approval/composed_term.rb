@@ -478,8 +478,8 @@ module Lain
       #
       #   It must be TOTAL, for the security reason {Escalation::Triage} states
       #   at length about the same seam. Measured, the failure direction here is
-      #   at least safe: a raise reaches {RuleChain} as a fault and a fault
-      #   suppresses the allow (`Poisoned(decision: nil)`). Under `classes:` it
+      #   at least safe: a raise reaches the rules {Ladder} as a fault, and its edge
+      #   suppresses the allow ({Ladder::Poisoning}). Under `classes:` it
       #   also answers `#executables(term, cwd)`, one resolved stage per stage.
       # @param classes [Boolean] whether predicate 12 rules; off, the bench arm's
       #   baseline, approves by name as before it existed
@@ -614,7 +614,7 @@ module Lain
 
       # Both spellings of the landing, for the reason the header gives, and
       # false for a word that resolves nowhere: `#landing_of` raises where no
-      # prefix is on disk, and a raise here would reach {RuleChain} as a fault
+      # prefix is on disk, and a raise here would reach the rules {Ladder} as a fault
       # rather than as the refusal it means.
       #
       # The base the relative spelling is measured from is the confinement's own

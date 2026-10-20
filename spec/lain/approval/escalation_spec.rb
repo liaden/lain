@@ -22,6 +22,48 @@ module EscalationSpecSupport
     def decide(_call) = nil
   end
 
+  # Abstains, and raises when asked why.
+  class BrokenExplainer < Lain::Approval::Rule
+    def decide(_call) = nil
+    def why_not(_call) = raise("broken")
+  end
+
+  # The mistake a rule author from a total-predicate world makes.
+  class TrueRule < Lain::Approval::Rule
+    def decide(_call) = true # rubocop:disable Naming/PredicateMethod
+  end
+
+  # Names itself once and refuses afterwards: the fault path must not ask a
+  # rule anything it can fail at a second time.
+  class LateNamer < Lain::Approval::Rule
+    class Boom < StandardError; end
+
+    def initialize
+      super
+      @named = false
+    end
+
+    def name
+      raise Lain::Approval::Rule::NotImplemented, "asked for a name twice" if @named
+
+      @named = true
+      super
+    end
+
+    def decide(_call) = raise(Boom, "broken after naming")
+  end
+
+  # A recorder on its way to a full disk.
+  class RaisingRecorder
+    def call(_fault, **) = raise(IOError, "the journal is broken")
+  end
+
+  # A rung handing up its own ladder's outcome, which decided nothing.
+  class Undecided
+    def name = "undecided"
+    def call(_effect, _context) = Lain::Approval::Escalation::Rules.ladder([Explaining.new]).call(nil)
+  end
+
   # A rung with one fixed answer, named at construction so a spec can read the
   # attribution back out of the journal.
   class Fixed
@@ -85,16 +127,15 @@ module EscalationSpecSupport
     def decide(call) = deny(call, because: "spec denies everything")
   end
 
-  # The card's literal illustration: a rule that OWNS an inner chain. The
-  # laundering it can do is one level below the ladder, which is where the fix
-  # has to live.
+  # A rule that OWNS an inner ladder and hands its raw outcome up, so the
+  # rules ladder's edge poisons it as if its rungs were written flat.
   class Delegating < Lain::Approval::Rule
     def initialize(inner)
       super()
       @inner = inner
     end
 
-    def decide(call) = @inner.decide(call)
+    def decide(call) = @inner.call(call)
   end
 
   # Reads the input the way a real rule does, which is what detonates on the
@@ -583,7 +624,7 @@ RSpec.describe Lain::Approval::Escalation do
     # The illustrating case, one level below the rung: a Rule that owns
     # an inner chain. Closing this at the rung only was not closing it.
     it "does not launder a fault through a rule that owns an inner chain" do
-      inner = Lain::Approval::RuleChain.new([EscalationSpecSupport::Raiser.new, EscalationSpecSupport::Allower.new])
+      inner = described_class::Rules.ladder([EscalationSpecSupport::Raiser.new, EscalationSpecSupport::Allower.new])
       built = ladder(rules_rung(EscalationSpecSupport::Delegating.new(inner), EscalationSpecSupport::Allower.new))
 
       expect(built.call(effect, nil)).to be(false)
@@ -592,6 +633,23 @@ RSpec.describe Lain::Approval::Escalation do
 
     # A deny reached after a fault is still a deny -- and the stream must say
     # a fault happened, or a reader sees a clean denial that was not one.
+    it "settles a post-fault deny as faulted" do
+      built = ladder(rules_rung(EscalationSpecSupport::Raiser.new, EscalationSpecSupport::Denier.new))
+
+      ruling = built.rule(effect, nil)
+
+      expect([ruling.deny?, ruling.fault?]).to eq([true, true])
+    end
+
+    it "reads a rung's own ladder that decided nothing as an abstention, keeping its reason as the note" do
+      queue = Lain::Approval::Queue.new(journal:, timeout: 0.05)
+
+      ladder(EscalationSpecSupport::Undecided.new, described_class::Surfaces.new(queue)).call(effect, nil)
+
+      expect(rulings.first).to include("rung" => "undecided", "verdict" => "abstain", "faulted" => false,
+                                       "note" => "cat resolved to /repo/bin/cat (project)")
+    end
+
     it "marks a post-fault deny as faulted in the record" do
       ladder(rules_rung(EscalationSpecSupport::Raiser.new, EscalationSpecSupport::Denier.new)).call(effect, nil)
 
@@ -735,6 +793,65 @@ RSpec.describe Lain::Approval::Escalation do
 
   # The MEASURED table: Rule::Call.for is not total, and a rescue list is
   # not a substitute for a total classifier.
+  describe "the rules rung, over a rule that breaks" do
+    it "faults a rule answering something that is not a decision, naming the error" do
+      ruling = rules_rung(EscalationSpecSupport::TrueRule.new).call(effect, nil)
+
+      expect([ruling.abstain?, ruling.fault?]).to eq([true, true])
+      expect(faults.first).to include("rule" => "true_rule", "error" => "Lain::Approval::Ladder::NotADecision")
+    end
+
+    it "faults a rule that does not implement the seam" do
+      expect(rules_rung(Lain::Approval::Rule.new).call(effect, nil)).to be_fault
+      expect(faults.first).to include("error" => "Lain::Approval::Rule::NotImplemented")
+    end
+
+    it "faults a rule raising an anonymously-classed error, whose class name is nil" do
+      nameless = Class.new(StandardError)
+      rule = Class.new(EscalationSpecSupport::Mute) { define_method(:decide) { |_c| raise nameless, "boom" } }
+      stub_const("EscalationSpecSupport::NamelessRaiser", rule)
+
+      expect(rules_rung(rule.new).call(effect, nil)).to be_fault
+      expect(faults.first["error"]).to include("Class")
+    end
+
+    it "names a rule by the name it gave when wired, never asking again at fault time" do
+      rules_rung(EscalationSpecSupport::LateNamer.new).call(effect, nil)
+
+      expect(faults.first).to include("rule" => "late_namer", "error" => "EscalationSpecSupport::LateNamer::Boom")
+    end
+
+    it "reports a rule that raises while explaining, and parks without its note" do
+      ruling = rules_rung(EscalationSpecSupport::BrokenExplainer.new).call(effect, nil)
+
+      expect([ruling.abstain?, ruling.fault?, ruling.note]).to eq([true, false, nil])
+      expect(faults.map { _1["rule"] }).to eq(["broken_explainer"])
+    end
+
+    it "takes the next rule's note past one that raised while explaining" do
+      ruling = rules_rung(EscalationSpecSupport::BrokenExplainer.new, EscalationSpecSupport::Explaining.new)
+               .call(effect, nil)
+
+      expect(ruling.note).to eq("cat resolved to /repo/bin/cat (project)")
+    end
+
+    it "still denies past a broken rule, flagged, when the recorder itself raises" do
+      rung = described_class::Rules.new(rules: [EscalationSpecSupport::Raiser.new, EscalationSpecSupport::Denier.new],
+                                        tools:, faults: EscalationSpecSupport::RaisingRecorder.new)
+
+      ruling = rung.call(effect, nil)
+
+      expect([ruling.deny?, ruling.final?, ruling.fault?]).to eq([true, true, true])
+    end
+
+    it "still abstains, and raises nothing, when the recorder raises over a broken explanation" do
+      rung = described_class::Rules.new(rules: [EscalationSpecSupport::BrokenExplainer.new], tools:,
+                                        faults: EscalationSpecSupport::RaisingRecorder.new)
+
+      expect(rung.call(effect, nil)).to be_abstain
+    end
+  end
+
   describe "the rules rung, over a rule that says why it abstained" do
     it "abstains with the note" do
       ruling = rules_rung(EscalationSpecSupport::Explaining.new).call(effect, nil)
@@ -1459,7 +1576,7 @@ RSpec.describe Lain::Approval::Escalation do
       expect(built.map(&:name)).to eq(%w[triage rules surfaces])
     end
 
-    it "wires a real fault recorder, never RuleChain::Faults::Null" do
+    it "wires a real fault recorder, never a silent one" do
       built.call(effect, nil)
 
       expect(faults.first).to include("rule" => "raiser", "tool" => "bash", "tool_use_id" => "tu_1")

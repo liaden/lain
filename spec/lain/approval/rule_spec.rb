@@ -46,6 +46,20 @@ module RuleSpecSupport
   end
 end
 
+module RuleSpecSupport
+  # Decides by its class-derived name; none of these override #name, so the
+  # derivation is what the examples read.
+  class Denier < Lain::Approval::Rule
+    def decide(call) = deny(call, because: "spec denies everything")
+  end
+
+  class BashOnly < Lain::Approval::Rule
+    def decide(call)
+      deny(call, because: "bash is denied") if call.tool_name == "bash"
+    end
+  end
+end
+
 RSpec.describe Lain::Approval::Rule do
   let(:bash) { Lain::Tools::Bash.new }
   let(:read_file) { Lain::Tools::ReadFile.new }
@@ -56,6 +70,84 @@ RSpec.describe Lain::Approval::Rule do
   describe ".rule_name" do
     it "is the name every decision the rule makes carries" do
       expect(Lain::Approval::ComposedTerm.rule_name).to eq("composed_term")
+    end
+
+    it "refuses to name an anonymous rule, since nobody could attribute its decision" do
+      anonymous = Class.new(described_class) { def decide(call) = allow(call, because: "anonymous") }
+
+      expect { anonymous.new.name }.to raise_error(described_class::NotImplemented, /anonymous rule/)
+    end
+  end
+
+  describe "a rule asked directly" do
+    it "fails loudly when it does not implement the seam" do
+      expect { described_class.new.decide(call_for(read_file, { "path" => "README.md" })) }
+        .to raise_error(described_class::NotImplemented, /decide/)
+    end
+  end
+
+  describe "a decision" do
+    let(:call) { call_for(read_file, { "path" => "README.md" }) }
+    let(:gated_call) { call_for(bash, { "command" => "ls" }) }
+
+    it "names the rule that made it, derived from the rule's own class" do
+      decision = RuleSpecSupport::Denier.new.decide(call)
+
+      expect([decision.deny?, decision.rule, decision.reason]).to eq([true, "denier", "spec denies everything"])
+    end
+
+    it "names a multi-word rule in snake_case, like a journal discriminator" do
+      expect(RuleSpecSupport::BashOnly.new.decide(gated_call).rule).to eq("bash_only")
+    end
+
+    it "names the tool and the tier the call was decided at" do
+      decision = RuleSpecSupport::Denier.new.decide(gated_call)
+
+      expect([decision.tool, decision.gated]).to eq(["bash", true])
+      expect(RuleSpecSupport::Denier.new.decide(call).gated).to be(false)
+    end
+
+    it "is a deeply frozen value, so it is safe to journal and share" do
+      expect(RuleSpecSupport::Denier.new.decide(call)).to be_deeply_frozen
+    end
+
+    it "refuses a verdict outside the closed set" do
+      expect { described_class::Decision.new(verdict: :maybe, rule: "r", tool: "t", gated: false, reason: "") }
+        .to raise_error(described_class::UnknownVerdict, /maybe/)
+    end
+  end
+
+  describe "what a rule is handed" do
+    # Declared here rather than borrowed: every shipped tool now declares an
+    # input model, and the name must be one only this tool could carry.
+    let(:nameless_probe) do
+      Class.new(Lain::Tool) do
+        def name = "nameless_probe"
+        def description = "declares no Tool::Input, so it falls back to Tool#input_schema's empty default"
+      end.new
+    end
+
+    it "cannot be built around a raw Hash through the constructor or Data's own door" do
+      shadow = { "path" => "/etc/shadow" }
+
+      expect { described_class::Call.new(tool: read_file, input: shadow) }
+        .to raise_error(NoMethodError, /private method 'new'/)
+      expect { described_class::Call[tool: read_file, input: shadow] }
+        .to raise_error(NoMethodError, /private method '\[\]'/)
+    end
+
+    it "still refuses a raw Hash at the constructor itself" do
+      expect { described_class::Call.send(:new, tool: read_file, input: { "path" => "x" }) }
+        .to raise_error(Lain::Error, /a Call carries a validated Tool::Input, got Hash/)
+    end
+
+    it "refuses to build a call whose input does not validate" do
+      expect { call_for(read_file, {}) }.to raise_error(Lain::Tool::InvalidInput, /read_file: Path can't be blank/)
+    end
+
+    it "refuses to build a call for a tool that declares no input model" do
+      expect { call_for(nameless_probe, { "anything" => 1 }) }
+        .to raise_error(described_class::Call::Undeclared, /nameless_probe/)
     end
   end
 

@@ -794,7 +794,7 @@ RSpec.describe Lain::Approval::ComposedTerm do
 
     # A dangling link has no landing, so this predicate cannot classify one:
     # the answer is an abstention, and never a raise that would reach
-    # {Lain::Approval::RuleChain} as a fault.
+    # the rules {Lain::Approval::Ladder} as a fault.
     it "abstains rather than raising on a word whose prefix resolves nowhere" do
       in_tree do |root, home|
         File.symlink(File.join(home, "absent"), File.join(root, "dangling"))

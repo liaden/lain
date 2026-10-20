@@ -120,9 +120,7 @@ module Lain
 
           # Evidence about the facts must never cost the call.
           def faulted(error, tool_use_id)
-            fault = RuleChain::Fault.new(rule: FAULT_RULE, tool: TOOL,
-                                         error: -(error.class.name || error.class.inspect),
-                                         message: -error.message.to_s)
+            fault = Escalation::Faults::Broken.of(Ladder::Fault.for(rung: FAULT_RULE, error:), tool: TOOL)
             @faults.call(fault, tool_use_id:)
           rescue StandardError
             nil

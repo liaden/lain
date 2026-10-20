@@ -556,11 +556,12 @@ fixed when it is spawned, so a child's call parked across a flip is not withdraw
 `Middleware::Gate` (`lib/lain/middleware/gate.rb`) is the approval layer. It holds no `Toolset`: it
 judges the tool the env carries, on 2 axes OR'd together — the tier the tool declares
 (`#requires_approval?`) and the path this call names (`Sensitivity::Policy#gates?`) — and asks an
-injected `policy` (`ApproveAll`, `DenyAll`, or a real interactive queue). Its guarantee is
-**positional**: what it approved is what runs only while it is the last layer before the
-interpreter, since a layer after it could rewrite the tool or the input. `Middleware::Sensitivity`
-sits just ahead of it and refuses a *denied* path outright, because a denied path is not approvable
-and a policy's answer is a Boolean, which is approvable by construction.
+injected `policy` answering `#rule(effect, context) -> Ruling` (`ApproveAll`, `DenyAll`, or an
+`Approval::Escalation` ladder); a bare callable is adapted once, and only `true` or an allow Ruling
+approves, so a rung's deny Ruling is never read as a yes. Its guarantee is **positional**: what it
+approved is what runs only while it is the last layer before the interpreter, since a layer after it
+could rewrite the tool or the input. `Middleware::Sensitivity` sits just ahead of it and refuses a
+*denied* path outright, because a denied path is not approvable and no ruling should be asked for it.
 
 **One builder assembles every agent's tool stack.** `CLI::ToolGuard` (`lib/lain/cli/tool_guard.rb`)
 builds it for a chat's agent (`.stack`), for each of that chat's children (`ToolGuard::Spawned`, the
@@ -676,17 +677,23 @@ instead. **It is confinement, not a sandbox**: a human-approved shell command's 
 still write anywhere, because only the named location is checked.
 
 All three approval levels run one ladder, and a rung above the bottom refuses under every one:
-`Escalation::Triage` (argv words that name a denied path), then the rule chain. They differ at the
-bottom. `ask` parks on `Approval::Surfaces`. `auto` puts `Approval::Judged` there: tier 0 first,
+`Escalation::Triage` (argv words that name a denied path), then the rules. `Approval::Ladder` is the
+first-decisive fold behind both: `Escalation` builds one over its rungs per call, and the rules rung
+builds one over its rules; nesting is a monoid, and `Ladder::Poisoning` runs once at the edge of each,
+so a fault suppresses a later automatic allow and never a human's. A rule's allow over a broken rule
+is suppressed into a faulted abstention, so the call reaches the bottom: a human under `ask`, and a
+refusal under `bypass`. Under `auto` the judge is still consulted, but the edge turns its approve
+into a refusal, so after a broken rule it can only deny or defer, and a defer reaches a human. They
+differ at the bottom. `ask` parks on `Approval::Surfaces`. `auto` puts `Approval::Judged` there: tier 0 first,
 which sends a call barred from automatic approval, or one whose path is a credential, named,
 configured, protected or malformed, to the asking rung without a model; then `Approval::Judge`,
 a fresh-root `auto_approver` child bounded at 30 seconds that answers approve, deny or defer. Defer,
 and a fault (an error or the bound running out), hand the call to the asking rung, which is
-`Surfaces` in a chat and `Judged::Unattended`, a refusal, under `--non-interactive`. A fault also
-suppresses an automatic allow below it. `bypass` takes `Escalation::Bypass` and approves what the
-rules left open. A launched chat starts in `auto`; `Mode.new` itself still defaults to `ask`, and
-`/mode !` resets to `ask`. A scope never changes the toolset, so a flip cannot move the tool block
-a prompt cache keys on.
+`Surfaces` in a chat and `Judged::Unattended`, a refusal, under `--non-interactive`. A judge fault
+travels in the outcome beside the asking rung's answer, and the edge suppresses an automatic allow
+below it. `bypass` takes `Escalation::Bypass` and approves what the rules left open. A launched
+chat starts in `auto`; `Mode.new` itself still defaults to `ask`, and `/mode !` resets to `ask`. A
+scope never changes the toolset, so a flip cannot move the tool block a prompt cache keys on.
 
 **Triage is not a shell boundary.** It reads the words of a term `Shell::Verdict` parsed, and a
 verdict that abstains leaves it nothing to read, so quoted paths, redirects, globs, `sudo`, `cd /etc

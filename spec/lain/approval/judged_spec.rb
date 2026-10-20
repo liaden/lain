@@ -245,11 +245,23 @@ RSpec.describe Lain::Approval::Judged do
   it "parks after the bound when the judge hangs, journaling a fault" do
     hung = spawn_answering { sleep 5 }
 
-    ruling = ruled(rung(hung, timeout: 0.05), bash) { |pending| pending.deny(surface: "human_spec") }
+    outcome = ruled(rung(hung, timeout: 0.05), bash) { |pending| pending.deny(surface: "human_spec") }
 
-    expect([ruling.verdict, ruling.rung]).to eq([:deny, "surfaces"])
+    expect([outcome.decision.verdict, outcome.by]).to eq([:deny, "surfaces"])
     expect(escalations.sole).to include("rung" => "auto", "verdict" => "abstain", "reason" => "fault",
                                         "faulted" => true)
+  end
+
+  # The fault travels beside the asking rung's answer, so that answer is the
+  # surface's own and the ladder's edge decides what a fault suppresses.
+  it "hands a judge fault up in the outcome, leaving the asking rung's ruling as it was" do
+    spawn = spawn_answering { raise IOError, "provider down" }
+
+    outcome = ruled(rung(spawn), bash) { |pending| pending.approve(surface: "tty", authority: :human) }
+
+    expect(outcome).to be_a(Lain::Approval::Ladder::Outcome)
+    expect([outcome.decision.verdict, outcome.decision.fault?, outcome.faults.map(&:rung)])
+      .to eq([:allow, false, ["auto"]])
   end
 
   it "tells the parked row the judge could not be asked, without the exception text" do

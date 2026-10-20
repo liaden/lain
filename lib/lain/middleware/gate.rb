@@ -61,15 +61,18 @@ module Lain
       end
 
       # A bare callable policy, answering the ruling its Boolean implies and
-      # nothing more: no reason, and never final.
+      # nothing more: no reason, and never final. Only `true` approves: a
+      # rung's deny Ruling is truthy, and reading it as a Boolean approved it.
       Callable = Data.define(:policy) do
         # The one normalisation, shared by every slot a policy is handed to:
         # a policy answering `#rule` as it is, anything else wrapped.
         def self.of(policy) = policy.respond_to?(:rule) ? policy : new(policy)
 
         def rule(effect, context)
-          verdict = policy.call(effect, context) ? :allow : :deny
-          Approval::Escalation::Ruling.public_send(verdict, rung: "callable", because: "")
+          answer = policy.call(effect, context)
+          return answer if answer.is_a?(Approval::Escalation::Ruling)
+
+          Approval::Escalation::Ruling.public_send(answer == true ? :allow : :deny, rung: "callable", because: "")
         end
       end
 

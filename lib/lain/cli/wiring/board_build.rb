@@ -127,7 +127,7 @@ module Lain
         # The deterministic rung's chain: this root's remembered answers, and
         # then the rule that can approve a parsed term with no human.
         #
-        # APPENDED, and the order is the precedence. {Approval::RuleChain}
+        # APPENDED, and the order is the precedence. {Approval::Ladder}
         # settles on the first rule with an opinion, so a human's remembered
         # `deny` still outranks anything the allowlist would have approved. Prepending would silently overturn an
         # answer a person gave.

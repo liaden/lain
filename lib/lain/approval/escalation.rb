@@ -8,7 +8,7 @@ module Lain
     # idiom. A ladder is a VALUE -- an ordered list of named rungs -- and every
     # verdict it reaches is journaled attributed to the rung that reached it.
     #
-    #   Shell::Verdict / RuleChain  ->  surfaces (the human, the oracle)  ->  timeout
+    #   Shell::Verdict / the rules  ->  surfaces (the human, the oracle)  ->  timeout
     #        deterministic                        asking                     fail-closed
     #
     # It presents to {Middleware::Gate} as a ruling policy, `#rule(effect,
@@ -31,7 +31,7 @@ module Lain
     #
     # An allow reached after ANY rung faulted is suppressed, and the denial is
     # attributed to the rung that faulted rather than to the rung that was about
-    # to say yes -- {RuleChain}'s poisoning, applied one level up.
+    # to say yes -- {Ladder::Poisoning} at this ladder's edge, exempting a human.
     #
     # == ...and the poison STOPS at the asking rung, if a human answered
     #
@@ -82,6 +82,7 @@ module Lain
       RUNG_BROKE = "the rung itself failed, which is not an answer"
       BARRED = "an automatic allow does not answer for a command whose automatically approved output was withheld"
       ABANDONED = "the requester was stopped during this rung, so nobody answered"
+      UNDECIDED = "the rung's own ladder decided nothing"
       TYPE = "escalation"
 
       # What one rung said, and everything a journal needs to attribute it.
@@ -263,26 +264,18 @@ module Lain
       #   unexamined; forwarded to every rung's own `#call` untouched
       # @return [Ruling] the settled allow or deny, never an abstention
       def rule(effect, context)
-        # A local rather than instance state: #initialize freezes the ladder, so
-        # a `@faulted` would be a FrozenError on the first broken rung -- and it
-        # would be shared between concurrently gated fibers besides.
-        faulted = nil
-        # The FIRST fault is what suppresses, remembered rather than counted: a
-        # suppression has to name the rung that broke.
-        remember = ->(ruling) { faulted ||= ruling }
         # The context grows by one {Noted} per abstaining rung that left a note,
-        # so the rung that parks the call reads every reason above it.
+        # so the rung that parks the call reads every reason above it. A local,
+        # built per call, because the ladder is frozen and shared between fibers.
         handed = context
-        step = lambda do |rung, name|
-          ruling = consult(rung, name, effect, handed)
-          handed = Noted.new(handed, ruling.note) if ruling.abstain? && ruling.note
-          decisive(ruling, &remember)
+        steps = @consulted.map do |rung, name|
+          Step.new(name) do
+            ruling = consult(rung, name, effect, handed)
+            handed = Noted.new(handed, ruling.note) if ruling.is_a?(Ruling) && ruling.abstain? && ruling.note
+            climbed(ruling, name)
+          end
         end
-        # Lazy, so rungs past the deciding one are never consulted: parking a
-        # human on a call an earlier rung already settled is what this ladder
-        # exists to avoid.
-        decided = @consulted.lazy.filter_map { |pair| step.call(*pair) }.first
-        answer(decided, faulted, effect, context)
+        answer(Ladder::Poisoning.new(Ladder.new(steps), exempt: :human).call, effect, context)
       end
 
       # @return [Boolean] whether the call may be performed
@@ -290,8 +283,25 @@ module Lain
 
       private
 
+      # Built per call, because each rung is asked over the context the rungs
+      # above it grew, and the ladder hands every rung the same input.
+      class Step
+        attr_reader :name
+
+        def initialize(name, &ask)
+          @name = name
+          @ask = ask
+        end
+
+        def call = @ask.call
+      end
+
+      # Every rung's answer is journaled as it comes, an {Ladder::Outcome}'s
+      # decision included, faulted if it carries a fault.
       def consult(rung, name, effect, context)
-        record(ask(rung, name, effect, context), effect, context)
+        answer = ask(rung, name, effect, context)
+        record(shown(answer), effect, context)
+        answer
       rescue Async::Stop
         # Stopped while parked: the queue journals the abandonment, but the
         # ladder's own stream would otherwise show a call that never settled.
@@ -302,6 +312,7 @@ module Lain
       def ask(rung, name, effect, context)
         ruling = rung.call(effect, context)
         return barred(ruling, context) if ruling.is_a?(Ruling)
+        return undecided(ruling, name) if ruling.is_a?(Ladder::Outcome)
 
         # Raised INSIDE the consult, so a rung answering a non-Ruling becomes a
         # fault like any other broken rung rather than a NoMethodError far from
@@ -319,21 +330,38 @@ module Lain
         Ruling.abstain(rung: ruling.rung, because: "#{BARRED}: #{ruling.reason}", rule: ruling.rule)
       end
 
-      def decisive(ruling)
-        yield ruling if ruling.fault?
+      # A rung's own ladder that decided nothing, cleanly, abstained, as a
+      # nested ladder does inside {Ladder}.
+      def undecided(outcome, name)
+        return outcome if outcome.decided? || outcome.faulted?
 
-        ruling.abstain? ? nil : ruling
+        Ruling.abstain(rung: name, because: UNDECIDED, note: outcome.why_not)
       end
 
-      # An allow reached over a fault is suppressed -- UNLESS a human made it,
-      # in which case it stands and is re-recorded saying so. Everything else
-      # passes straight through.
-      def answer(decided, faulted, effect, context)
-        return record(synthesized(nil, faulted), effect, context) if decided.nil?
-        return decided unless faulted && decided.allow?
-        return record(honoured(decided, faulted), effect, context) if decided.human?
+      def shown(answer)
+        return answer if answer.is_a?(Ruling)
 
-        record(synthesized(decided, faulted), effect, context)
+        ruling = answer.decision || answer.faults.first
+        answer.faulted? ? ruling.with(fault: true) : ruling
+      end
+
+      def climbed(answer, name)
+        return answer if answer.is_a?(Ladder::Outcome)
+        return (answer.abstain? ? Ladder::ABSTAIN : answer) unless answer.fault?
+        return Ladder::Outcome.new(decision: nil, by: nil, faults: [answer], why_not: nil) if answer.abstain?
+
+        Ladder::Outcome.new(decision: answer.with(fault: false), by: name, faults: [answer], why_not: nil)
+      end
+
+      # The edge has already suppressed an automatic allow over a fault; a
+      # human's allow over one stands and is re-recorded saying so.
+      def answer(outcome, effect, context)
+        faulted = outcome.faults.first
+        return record(synthesized(outcome, faulted), effect, context) unless outcome.decided?
+        return outcome.decision.with(fault: true) if faulted && !outcome.allow?
+        return outcome.decision unless faulted
+
+        record(honoured(outcome.decision, faulted), effect, context)
       end
 
       # The three rulings nobody made as such: a human's allow restated so the
@@ -348,8 +376,8 @@ module Lain
       # by rung must not be told a rung that abstained refused. The fault is
       # still named, because a fail-closed denial that omits the reason a rung
       # had nothing to say makes the record less useful than it can be.
-      def synthesized(decided, faulted)
-        return Ruling.deny(rung: faulted.rung, because: "#{LAUNDERED}: #{faulted.reason}") if decided
+      def synthesized(outcome, faulted)
+        return Ruling.deny(rung: faulted.rung, because: "#{LAUNDERED}: #{faulted.reason}") if outcome.suppressed?
         return Ruling.deny(rung: LADDER, because: NOTHING_ANSWERED) unless faulted
 
         Ruling.deny(rung: LADDER, fault: true,
@@ -362,34 +390,92 @@ module Lain
         ruling
       end
 
-      # Where a broken RULE is reported. Under {RuleChain}'s Null default the
-      # chain still refuses to promote an allow past a fault, but nobody is ever
-      # told the rule is broken. A live wiring passes this.
+      # Where a broken RULE is reported: the rules rung reads the faults off its
+      # ladder's {Ladder::Outcome} and hands each here, with this call's id.
       class Faults
         TYPE = "escalation_fault"
+
+        Broken = Data.define(:rule, :tool, :error, :message)
+
+        # A rule that raised, as the journal names it.
+        class Broken
+          # @param fault [Ladder::Fault] what the ladder caught
+          # @param tool [#to_s] the tool the call named
+          # @return [Broken]
+          def self.of(fault, tool:)
+            new(rule: fault.rung, tool: -tool.to_s, error: fault.error, message: fault.message)
+          end
+        end
 
         def initialize(journal)
           @journal = journal
           freeze
         end
 
-        # `tool_use_id` is the CALL's, not the fault's: a {RuleChain::Fault} is
-        # built from a {Rule::Call}, which carries no identity for the
-        # invocation. Without it a reader cannot join a fault to the ruling it
-        # poisoned once parallel tools put two bash calls in flight.
+        # `tool_use_id` is the CALL's, not the fault's: a fault is built from a
+        # {Rule::Call}, which carries no identity for the invocation. Without it
+        # a reader cannot join a fault to the ruling it poisoned once parallel
+        # tools put two bash calls in flight.
         def call(fault, tool_use_id: nil)
           @journal.record({ "type" => TYPE, "tool_use_id" => tool_use_id }
                             .merge(fault.to_h.transform_keys(&:to_s)))
         end
       end
 
-      # The deterministic rung over a {RuleChain}: the remembered answers and any
-      # other predicate a session declares.
+      # The deterministic rung over the rules ladder: the remembered answers and
+      # any other predicate a session declares, poisoned once at that ladder's
+      # edge so a fault followed by an allow escalates rather than settles.
       class Rules
         NAME = "rules"
         NO_OPINION = "no rule had an opinion"
         NO_SUBJECT = "no rule could be shown this call"
         BROKEN = "the rung could not build a subject to judge"
+
+        # One {Rule} as a {Ladder} rung: its decision, its raw inner outcome
+        # when it owns a ladder, or an abstention whose reason is its `why_not`.
+        class Consulted
+          attr_reader :name
+
+          def initialize(rule, report)
+            @rule = rule
+            @name = -rule.name.to_s
+            @report = report
+            freeze
+          end
+
+          # @param call [Rule::Call]
+          # @return [Rule::Decision, Ladder::Outcome, Ladder::Reasoned]
+          # @raise [Ladder::NotADecision] when the rule answers anything else; the
+          #   ladder catches it as this rule's fault
+          def call(call)
+            answer = @rule.decide(call)
+            return Ladder.abstain { explain(call) } if answer.nil?
+            return answer if answer.is_a?(Rule::Decision) || answer.is_a?(Ladder::Outcome)
+
+            raise Ladder::NotADecision, "#{@name} answered #{answer.class}; a rule decides or says nothing"
+          end
+
+          private
+
+          # A rule that raises while explaining has no reason, and the call is
+          # already parking; the fault is reported and decides nothing.
+          def explain(call)
+            @rule.why_not(call)
+          rescue StandardError => e
+            @report.call(Ladder::Fault.for(rung: @name, error: e))
+            nil
+          end
+        end
+
+        UNREPORTED = ->(_fault) {}
+
+        # The rules as one ladder, unpoisoned: what a rule owning an inner
+        # ladder hands up, and what this rung poisons at its edge.
+        #
+        # @param rules [Enumerable<Rule>]
+        # @param report [#call] told a fault raised while explaining
+        # @return [Ladder]
+        def self.ladder(rules, report: UNREPORTED) = Ladder.new(rules.map { Consulted.new(_1, report) })
 
         # @param rules [Enumerable<Approval::Rule>] consulted in order
         # @param tools [#fetch] the LIVE capability set, so the tier a rule reads
@@ -397,8 +483,8 @@ module Lain
         #   {Rule::Call#term}, which that tool derives from its own
         #   {Shell::Verdict} rather than this rung threading one down
         # @param faults [#call] where a broken rule is reported; REQUIRED, with
-        #   no Null default, because a ladder wired with the Null is silently
-        #   lenient in exactly the way {RuleChain}'s poisoning exists to prevent
+        #   no Null default, because a ladder wired with a silent recorder is
+        #   lenient in exactly the way poisoning exists to prevent
         def initialize(rules:, tools:, faults:)
           @rules = rules.to_a.freeze
           @tools = tools
@@ -408,14 +494,12 @@ module Lain
 
         def name = NAME
 
-        # Built PER CALL only because its fault recorder is stamped with THIS
-        # call's `tool_use_id`. The poisoning is the chain's own, so nothing
-        # here tallies the fault stream to tell an abstention from a
-        # suppression.
         def call(effect, _context)
           call = subject(effect)
-          chain = RuleChain.new(@rules, faults: recorder(effect))
-          ruling(chain.decide(call)) { Ruling.abstain(rung: NAME, because: NO_OPINION, note: chain.why_not(call)) }
+          report = recorder(effect)
+          outcome = Ladder::Poisoning.new(Rules.ladder(@rules, report:)).call(call)
+          outcome.faults.each { report.call(_1) }
+          ruling(outcome)
         rescue Rule::Call::Undeclared, Tool::InvalidInput, Toolset::UnknownTool => e
           # Structural, expected, and not a bug: a tool with no declaration, an
           # input the tool itself will refuse, a name this session does not hold.
@@ -434,40 +518,38 @@ module Lain
         def subject(effect) = Rule::Call.for(tool: @tools.fetch(effect.name), input: effect.input)
 
         # Stateless and per call, so two gated fibers never share one: it
-        # carries this call's identity onto whatever the chain reports.
-        def recorder(effect) = ->(fault) { @faults.call(fault, tool_use_id: effect.tool_use_id) }
+        # carries this call's identity onto whatever the ladder reports. A
+        # recorder that fails costs the record, never the call.
+        def recorder(effect)
+          lambda do |fault|
+            @faults.call(Faults::Broken.of(fault, tool: effect.name), tool_use_id: effect.tool_use_id)
+          rescue StandardError
+            nil
+          end
+        end
 
-        # A deny after a fault still denies and is still attributed --
-        # poisoning suppresses the ALLOW side and only that -- but the record
-        # says a fault happened, or a reader sees a clean denial that was not.
-        # Either way it is final: a rule is the session's remembered answer,
-        # and no human is asked over it.
-        def ruling(answer)
-          faulted = answer.is_a?(RuleChain::Poisoned)
-          return refusal(answer, faulted) if answer&.deny?
-          return Ruling.fault(rung: NAME, because: broke(answer.fault)) if faulted
-          return yield if answer.nil?
+        # A deny after a fault still denies and is still attributed, and says
+        # a fault happened, or a reader sees a clean denial that was not. Either
+        # way it is final: a rule is the session's remembered answer, and no
+        # human is asked over it.
+        def ruling(outcome)
+          return refusal(outcome.decision, outcome.faulted?) if outcome.deny?
+          return Ruling.fault(rung: NAME, because: broke(outcome.faults.first)) if outcome.faulted? && !outcome.allow?
+          return Ruling.abstain(rung: NAME, because: NO_OPINION, note: outcome.why_not) unless outcome.decided?
 
-          Ruling.allow(rung: NAME, because: attributed(answer), rule: decided(answer).rule)
+          Ruling.allow(rung: NAME, because: attributed(outcome.decision), rule: outcome.decision.rule)
         end
 
         # The model is told the rule's own reason: the journal's attribution
         # prefixes a name the reason usually already starts with.
-        def refusal(answer, faulted)
-          Ruling.deny(rung: NAME, because: attributed(answer), fault: faulted, final: true,
-                      told: decided(answer).reason, rule: decided(answer).rule)
+        def refusal(decision, faulted)
+          Ruling.deny(rung: NAME, because: attributed(decision), fault: faulted, final: true,
+                      told: decision.reason, rule: decision.rule)
         end
 
-        def attributed(answer)
-          decision = decided(answer)
-          "#{decision.rule}: #{decision.reason}"
-        end
+        def attributed(decision) = "#{decision.rule}: #{decision.reason}"
 
-        # A {RuleChain::Poisoned} carries the surviving decision; an unpoisoned
-        # answer IS one.
-        def decided(answer) = answer.is_a?(RuleChain::Poisoned) ? answer.decision : answer
-
-        def broke(fault) = "#{fault.rule} raised #{fault.error}: #{fault.message}"
+        def broke(fault) = "#{fault.rung} raised #{fault.error}: #{fault.message}"
       end
 
       # The deterministic rung over {Shell::Verdict}, which asks *"is this

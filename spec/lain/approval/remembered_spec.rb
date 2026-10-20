@@ -76,9 +76,9 @@ RSpec.describe Lain::Approval::Remembered do
           end
         RUBY
 
-        chain = Lain::Approval::RuleChain.new([remembered_at(root)])
+        chain = Lain::Approval::Escalation::Rules.ladder([remembered_at(root)])
 
-        expect(chain.decide(call_for(read_file, { "path" => "README.md" }))).to be_allow
+        expect(chain.call(call_for(read_file, { "path" => "README.md" }))).to be_allow
       end
     end
 

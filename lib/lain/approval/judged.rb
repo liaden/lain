@@ -187,7 +187,8 @@ module Lain
 
       # @param effect [Effect::ToolCall]
       # @param context [Object, nil] as {Middleware::Gate} threads it through
-      # @return [Escalation::Ruling]
+      # @return [Escalation::Ruling, Ladder::Outcome] an outcome when the judge
+      #   faulted, carrying that fault beside the asking rung's ruling
       def call(effect, context)
         unlooked = unlooked(effect, context)
         return unjudged(effect, context, format(UNLOOKED, why: unlooked)) if unlooked
@@ -235,12 +236,13 @@ module Lain
                     Escalation::Ruling.abstain(rung: NAME, because: UNJUDGEABLE, note:))
       end
 
-      # Marked faulted so the ladder suppresses an automatic allow from below,
-      # as it would had the judge been a rung of its own.
+      # The fault travels beside the asking rung's answer, so the ladder's edge
+      # suppresses an automatic allow from below, as it would had the judge
+      # been a rung of its own, and a human's allow still stands.
       def faulted(effect, context, cause)
-        handed_down(effect, Escalation::Noted.new(context, FAULT_NOTE),
-                    Escalation::Ruling.fault(rung: NAME, because: FAULT), error: cause)
-          .with(fault: true)
+        fault = Escalation::Ruling.fault(rung: NAME, because: FAULT)
+        asked = handed_down(effect, Escalation::Noted.new(context, FAULT_NOTE), fault, error: cause)
+        Ladder::Outcome.new(decision: asked, by: asked.rung, faults: [fault], why_not: nil)
       end
 
       def abstain(reason) = Escalation::Ruling.abstain(rung: NAME, because: reason)
