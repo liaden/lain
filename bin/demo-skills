@@ -61,10 +61,10 @@ check(results, "loud response names the unknown skill", unknown[:response].text.
 
 # --- 3. @role/skill folds a persona'd subagent, out-of-band ----------------
 puts "\n@researcher/create-plan draft it  (role-bound, OM-2)"
-store  = Lain::Store.new
-parent = Lain::Timeline.empty(store:)
-                       .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
-                       .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
+store  = Lain::Dag::Factory.store
+parent = Lain::Dag::Factory.timeline(store:)
+                           .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                           .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
 head_before = parent.head_digest
 
 union = Lain::Toolset.new([Lain::Tools::ReadFile.new, Lain::Tools::ListFiles.new,

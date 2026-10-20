@@ -206,7 +206,7 @@ module Lain
       end
 
       def index
-        @index ||= items.inject(Memory::Index.empty(store: Store.new)) { |acc, item| acc.write(item) }
+        @index ||= items.inject(Memory::Index.empty(store: Dag::Factory.store)) { |acc, item| acc.write(item) }
       end
 
       def items

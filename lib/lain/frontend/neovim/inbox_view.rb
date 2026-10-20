@@ -368,7 +368,7 @@ module Lain
         # wide: a rescue that differs between them is a difference the parity
         # spec cannot see.
         def cited_by_chain(head_digest)
-          Timeline.new(head_digest:, store: @store).to_a.flat_map(&:causal_parents)
+          Dag::Factory.timeline(head_digest:, store: @store).to_a.flat_map(&:causal_parents)
         rescue StandardError
           []
         end

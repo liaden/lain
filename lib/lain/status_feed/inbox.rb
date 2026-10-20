@@ -55,7 +55,7 @@ module Lain
       #   owns this object before `Wiring` exists at all. An empty Store is a real
       #   object that resolves no head, so an unbound inbox counts arrivals and
       #   retires nothing -- no caller asks whether it has a store yet.
-      def initialize(store: Store.new)
+      def initialize(store: Dag::Factory.store)
         @store = store
         # Consumption is a STANDING set rather than "remove from whatever is
         # pending right now" because a replayed log can deliver the turn before
@@ -126,7 +126,7 @@ module Lain
       # costing a turn to draw a number, and it is why this class derives the
       # payment BEFORE calling the walk ({StatusFeed#observe_commit}).
       def cited_by_chain(head_digest)
-        Timeline.new(head_digest:, store: @store).to_a.flat_map(&:causal_parents)
+        Dag::Factory.timeline(head_digest:, store: @store).to_a.flat_map(&:causal_parents)
       rescue StandardError
         []
       end

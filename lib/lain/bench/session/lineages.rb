@@ -120,7 +120,9 @@ module Lain
         # file's lineages. Every record kept is forced, which is what refuses
         # damage.
         def self.from(records, resolve:, whole:)
-          return new(messages: [], store: Store.new) unless records.any? { |record| completion_record?(record) }
+          unless records.any? { |record| completion_record?(record) }
+            return new(messages: [], store: Dag::Factory.store)
+          end
 
           loader = Loader.new(records, resolve:)
           settle(loader, whole:)
@@ -187,8 +189,8 @@ module Lain
 
         def child_turns(completion, spawn)
           stop = spawn.body.fetch("spawned_from")
-          Timeline.new(head_digest: completion.body.fetch("final"), store: @store)
-                  .ancestors.take_while { |turn| turn.digest != stop }.reverse
+          Dag::Factory.timeline(head_digest: completion.body.fetch("final"), store: @store)
+                      .ancestors.take_while { |turn| turn.digest != stop }.reverse
         end
       end
     end

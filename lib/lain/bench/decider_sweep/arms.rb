@@ -131,7 +131,7 @@ module Lain
         # `base_conversation`. Every arm gets a FRESH Store: nothing here is
         # shared across arms.
         def base_timeline(arm)
-          fresh = Timeline.empty(store: Store.new)
+          fresh = Dag::Factory.timeline(store: Dag::Factory.store)
           return fresh unless TAIL_WARMING_ARMS.include?(arm)
 
           @fixture.base_conversation.inject(fresh) do |timeline, msg|

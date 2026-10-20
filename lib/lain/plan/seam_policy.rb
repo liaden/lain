@@ -34,7 +34,7 @@ module Lain
       # is pointer movement -- O(1), no copy -- exactly because a Timeline owns
       # nothing but its head digest. +nil+ yields the empty Timeline.
       def timeline(store)
-        Timeline.new(head_digest:, store:)
+        Dag::Factory.timeline(head_digest:, store:)
       end
     end
 

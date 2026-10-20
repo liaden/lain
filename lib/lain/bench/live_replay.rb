@@ -79,7 +79,7 @@ module Lain
       def build_agent
         recorder = Memory::Recorder.new
         Agent.new(provider: @provider, toolset: @toolset, context: @context,
-                  timeline: Timeline.empty(store: Store.new), workspace: @workspace,
+                  timeline: Dag::Factory.timeline(store: Dag::Factory.store), workspace: @workspace,
                   journal: Memory::JournalMemoryRoot.new(journal: @journal, recorder:),
                   tool_middleware: Middleware::Stack.new([Middleware::RefuseSecretWrites.new(journal: @journal)]))
       end

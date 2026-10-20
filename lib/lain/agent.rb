@@ -222,7 +222,7 @@ module Lain
       super() # state_machines sets the initial state through the super chain.
       @toolset = toolset
       @context = context
-      @timeline = timeline || Timeline.empty(store: Store.new)
+      @timeline = timeline || Dag::Factory.timeline(store: Dag::Factory.store)
       @workspace = workspace
       @mailbox = mailbox
       @context_window = context_window

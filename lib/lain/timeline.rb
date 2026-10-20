@@ -21,7 +21,7 @@ module Lain
 
     attr_reader :head_digest, :store
 
-    def self.empty(store: Store.new)
+    def self.empty(store: Dag::Factory.store)
       new(head_digest: nil, store:)
     end
 

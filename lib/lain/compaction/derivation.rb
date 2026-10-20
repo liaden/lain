@@ -251,7 +251,7 @@ module Lain
 
       def committed(writes, into)
         refuse_invalid(writes)
-        writes.inject(Timeline.empty(store: into)) { |chain, write| write.onto(chain) }
+        writes.inject(Dag::Factory.timeline(store: into)) { |chain, write| write.onto(chain) }
       end
 
       def refuse_foreign(source, into)

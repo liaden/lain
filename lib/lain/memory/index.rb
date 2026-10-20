@@ -68,7 +68,7 @@ module Lain
 
       attr_reader :root, :store
 
-      def self.empty(store: Store.new)
+      def self.empty(store: Dag::Factory.store)
         new(root: nil, store:)
       end
 

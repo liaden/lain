@@ -903,7 +903,7 @@ module Lain
       # back to it; any other head -- a rewind, a checkout -- is walked whole.
       class Chain
         def initialize
-          @timeline = Timeline.empty
+          @timeline = Dag::Factory.timeline(store: Dag::Factory.store)
           @walked_to = nil
           @digests = Set.new
         end

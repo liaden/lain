@@ -295,7 +295,7 @@ module Lain
         # `message` record on either side of the file boundary can name a
         # causal_parent that crosses it.
         def fold_base
-          resume_chain.present? ? resume_chain.prior_timeline : Timeline.empty(store:)
+          resume_chain.present? ? resume_chain.prior_timeline : Dag::Factory.timeline(store:)
         end
 
         # Memoized like {#header}, since both are asked more than once per

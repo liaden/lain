@@ -90,7 +90,7 @@ module Lain
         # @return [Store] the ONE store this file (and every prior one in its
         #   chain) rebuilds into
         def store
-          @store ||= present? ? prior_loader.store : Store.new
+          @store ||= present? ? prior_loader.store : Dag::Factory.store
         end
 
         # The prior file's own rebuilt Timeline, checked out at the head THIS

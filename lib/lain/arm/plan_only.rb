@@ -102,7 +102,10 @@ module Lain
       # The arm's own lead: one user turn naming the task, and the head every
       # re-attributed payment is keyed onto.
       def lead_for(task)
-        Timeline.empty(store: Store.new).commit(role: :user, content: [{ "type" => "text", "text" => task }])
+        Dag::Factory.timeline(store: Dag::Factory.store).commit(role: :user,
+                                                                content: [{
+                                                                  "type" => "text", "text" => task
+                                                                }])
       end
 
       # A run-level seam WINS over the constructed one, {OneShot}'s rule and for

@@ -84,7 +84,7 @@ module Lain
 
           # `parent` is unused here but part of the uniform strategy duck.
           def base_timeline(store:, **)
-            Timeline.empty(store:)
+            Dag::Factory.timeline(store:)
           end
 
           def child_context(context, **) = context
@@ -165,7 +165,7 @@ module Lain
           # over the shared Store, so `meet(child, parent)` stays bottom.
           # `parent` is unused here but part of the uniform strategy duck.
           def base_timeline(store:, **)
-            Timeline.empty(store:)
+            Dag::Factory.timeline(store:)
           end
 
           # The factory's Context with the template appended as the LAST

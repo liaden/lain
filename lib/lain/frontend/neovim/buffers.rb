@@ -109,7 +109,7 @@ module Lain
           def update(event)
             return nil unless event.is_a?(Telemetry::TurnUsage)
 
-            render_chain(Timeline.new(head_digest: event.digest, store: @store).to_a)
+            render_chain(Dag::Factory.timeline(head_digest: event.digest, store: @store).to_a)
           rescue Store::MissingObject
             unavailable(event.digest)
           end

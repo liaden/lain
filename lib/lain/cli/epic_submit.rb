@@ -860,8 +860,8 @@ module Lain
           # default: this command runs out of chat, so there is no queue a
           # child's escalation could reach and no directory an answer could
           # come back through. The refusal its asker gives says exactly that.
-          @seam = Lain::Tools::Subagent::Seam.new(provider:, context_factory:, parent: Lain::Timeline.empty,
-                                                  tool_middleware:, attachments:,
+          @seam = Lain::Tools::Subagent::Seam.new(provider:, context_factory:, tool_middleware:, attachments:,
+                                                  parent: Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store),
                                                   askers: Lain::Tools::Subagent::NoAskers,
                                                   twins: Lain::Tools::Subagent::Lineage::Twins.new)
           @slots = slots

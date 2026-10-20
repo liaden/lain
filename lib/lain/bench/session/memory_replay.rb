@@ -83,7 +83,7 @@ module Lain
           def initialize
             @views = {}
             @roots = {}
-            @store = Lain::Store.new
+            @store = Lain::Dag::Factory.store
           end
 
           # Opens a file. A turn looks its parent's view up among THIS file's

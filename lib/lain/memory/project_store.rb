@@ -102,7 +102,7 @@ module Lain
         # through.
         #
         # @param store [Lain::Store] where the folded nodes land
-        def index(store: Store.new)
+        def index(store: Dag::Factory.store)
           items.inject(Index.empty(store:)) { |folded, item| folded.write(item) }
         end
 

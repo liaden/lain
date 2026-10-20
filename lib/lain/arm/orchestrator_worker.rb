@@ -54,8 +54,8 @@ module Lain
       # @param isolation [#acquire] the injected backend (Null by default)
       # @return [Run]
       def run(task, spawn_seam:, grader:, isolation: NoIsolation)
-        lead = Timeline.empty(store: Store.new)
-                       .commit(role: :user, content: [{ "type" => "text", "text" => task }])
+        lead = Dag::Factory.timeline(store: Dag::Factory.store)
+                           .commit(role: :user, content: [{ "type" => "text", "text" => task }])
         elapsed, results = @instrument.timed { fan_out(@decompose.call(task), spawn_seam:, isolation:, lead:) }
         folded = @synthesis.fold(lead, results)
         # Priced as its own statement before grading, matching the other arms.
@@ -131,7 +131,7 @@ module Lain
       # not an omission.
       def settle(subtask, spawn_seam:, lease:, lead:)
         journal = Channel.new
-        agent = spawn_seam.call(journal:, base_timeline: Timeline.empty(store: lead.store),
+        agent = spawn_seam.call(journal:, base_timeline: Dag::Factory.timeline(store: lead.store),
                                 worker_env: lease.worker_env, spawned_from: lead.head_digest)
         text = agent.ask!(subtask)
         Synthesis::Result.ok(head_digest: agent.timeline.head_digest, text:,

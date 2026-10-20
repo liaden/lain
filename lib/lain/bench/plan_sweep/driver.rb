@@ -112,9 +112,10 @@ module Lain
         # policy, measuring tokens inside the scripted step and cache-writes over
         # the mainline continuation chain the run reports.
         def plan_shaped(shape, density, run)
-          store = Store.new
+          store = Dag::Factory.store
           step = ScriptedStep.new(run:, gold: @fixture.gold, toolset: @toolset)
-          report = runner(shape, density, store, step).run(timeline: Timeline.empty(store:), pipeline: BASE_PIPELINE)
+          report = runner(shape, density, store, step).run(timeline: Dag::Factory.timeline(store:),
+                                                           pipeline: BASE_PIPELINE)
           [score(run), step.tokens, mainline_writes(report.continuations, store)]
         end
 
@@ -124,7 +125,7 @@ module Lain
         end
 
         def policy_for(shape, store)
-          return Plan::ForkPerStep.new(mainline: Timeline.empty(store:)) if shape == :fork
+          return Plan::ForkPerStep.new(mainline: Dag::Factory.timeline(store:)) if shape == :fork
           return Plan::LinearRewrite.new if shape == :linear
 
           raise ArgumentError, "unknown shape #{shape.inspect}"
@@ -146,7 +147,7 @@ module Lain
           [score(run), folded.fetch(:tokens), Rewrites.new(chains: folded.fetch(:chain)).count]
         end
 
-        def reactive_seed = { timeline: Timeline.empty, tokens: 0, chain: [] }
+        def reactive_seed = { timeline: Dag::Factory.timeline(store: Dag::Factory.store), tokens: 0, chain: [] }
 
         def reactive_turn(state, run, step_id, scheduler, need)
           timeline = state.fetch(:timeline)

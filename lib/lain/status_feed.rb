@@ -211,7 +211,7 @@ module Lain
     #   because the live chat has none yet at this object's construction point;
     #   see {#bind_store}.
     def initialize(path: default_path, clock: -> { Time.now }, cache_profile: DEFAULT_CACHE_PROFILE,
-                   run_clock: RunClock.new, context_window: ContextWindow.default, store: Store.new)
+                   run_clock: RunClock.new, context_window: ContextWindow.default, store: Dag::Factory.store)
       @publication = Publication.new(path)
       @clock = clock
       @cache_profile = cache_profile
@@ -503,7 +503,7 @@ module Lain
     # Never raises, for {Inbox#cited_by_chain}'s reason: a chain this sink
     # cannot walk reads as one the reading is not on.
     def stands?(tag, head)
-      tag.nil? || Timeline.new(head_digest: head, store: @store).include?(tag)
+      tag.nil? || Dag::Factory.timeline(head_digest: head, store: @store).include?(tag)
     rescue StandardError
       false
     end

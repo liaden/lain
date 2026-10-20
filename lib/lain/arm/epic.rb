@@ -144,7 +144,10 @@ module Lain
       # The arm's own lead: one user turn naming the run, and the head every
       # re-attributed payment is keyed onto.
       def lead_for(task)
-        Timeline.empty(store: Store.new).commit(role: :user, content: [{ "type" => "text", "text" => task }])
+        Dag::Factory.timeline(store: Dag::Factory.store).commit(role: :user,
+                                                                content: [{
+                                                                  "type" => "text", "text" => task
+                                                                }])
       end
 
       # `head_digest: nil` because the driver's actors commit into Stores this

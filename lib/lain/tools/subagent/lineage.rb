@@ -221,7 +221,7 @@ module Lain
           # A spawn whose child was never built -- its context would not render,
           # its stack would not close -- has no head and asked nothing.
           module Unbuilt
-            def self.settled = Timeline.empty
+            def self.settled = Dag::Factory.timeline(store: Dag::Factory.store)
             def self.asked = []
           end
 

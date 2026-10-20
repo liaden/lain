@@ -50,7 +50,7 @@ class DemoSupervision
 
   def initialize(dir:)
     @dir = dir
-    @store = Lain::Store.new
+    @store = Lain::Dag::Factory.store
     @context = Lain::Context.new(model: "demo-actor", max_tokens: 128)
     @toolset = Lain::Toolset.new([ScribbleTool.new(root: dir)])
     @record_io = StringIO.new
@@ -89,7 +89,7 @@ class DemoSupervision
     @scribe = scribe
     observer = Lain::Supervisor::Restart::JournalBlobs.new(journal: @journal, store: @store, observer: scribe)
     agent = Lain::Agent.new(provider: @provider, toolset: @toolset, context: @context,
-                            timeline: Lain::Timeline.empty(store: @store),
+                            timeline: Lain::Dag::Factory.timeline(store: @store),
                             snapshot_slot: Lain::Agent::SnapshotSlot.new(
                               root: @dir, log: Lain::Workspace::SnapshotLog.new(observer:)
                             ))
@@ -97,8 +97,8 @@ class DemoSupervision
   end
 
   def parent_timeline
-    Lain::Timeline.empty(store: @store)
-                  .commit(role: :user, content: [{ "type" => "text", "text" => "keep notes" }])
+    Lain::Dag::Factory.timeline(store: @store)
+                      .commit(role: :user, content: [{ "type" => "text", "text" => "keep notes" }])
   end
 
   def lineage

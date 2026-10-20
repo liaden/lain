@@ -28,8 +28,8 @@ require "lain"
 
 TASK = "restate the concrete task this harness is specialized for"
 
-store    = Lain::Store.new
-timeline = Lain::Timeline.empty(store:)
+store    = Lain::Dag::Factory.store
+timeline = Lain::Dag::Factory.timeline(store:)
 
 context = Lain::Context.new(
   model: "claude-opus-4-8",

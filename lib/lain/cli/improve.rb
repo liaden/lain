@@ -282,7 +282,7 @@ module Lain
       # Routed through the role's own policy so the fresh-root decision has one
       # owner ({Role#spawn_policy}'s default), not a bare `Timeline.empty` that
       # could drift from it.
-      def fresh_root = role.spawn_policy(prefix: :fresh).prefix.base_timeline(store: Store.new)
+      def fresh_root = role.spawn_policy(prefix: :fresh).prefix.base_timeline(store: Dag::Factory.store)
 
       # Refusals and masks are recorded into the pass's own journal.
       def guard_stack(journal) = ToolGuard.detached(journal:).call(WorkerEnv.default)

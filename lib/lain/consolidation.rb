@@ -162,7 +162,7 @@ module Lain
 
     # Routed through the role's own policy so the fresh-root decision has one
     # owner, not a bare `Timeline.empty` that could drift from it.
-    def fresh_root = role.spawn_policy(prefix: :fresh).prefix.base_timeline(store: Store.new)
+    def fresh_root = role.spawn_policy(prefix: :fresh).prefix.base_timeline(store: Dag::Factory.store)
 
     def clerk_session(view) = Session.new(memory: view, worker_env: WorkerEnv.default)
 
