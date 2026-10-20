@@ -301,7 +301,7 @@ mod ffi {
     use crate::canonical::{self, Canon};
     use crate::dag::{self, StoreMap};
     use crate::digest::Digest;
-    use crate::event::{EventData, PayloadData, Role};
+    use crate::event::{EventData, Kind, PayloadData, Role};
     use magnus::{
         DataTypeFunctions, Error, ExceptionClass, Float, Integer, RArray, RClass, RHash, RModule,
         RString, Ruby, Symbol, TryConvert, TypedData, Value, function, gc, method,
@@ -700,6 +700,22 @@ mod ffi {
         })
     }
 
+    /// Read a kind argument (String or Symbol) into a [`Kind`], raising
+    /// `Lain::Error` with Ruby's message, offender quoted as Ruby would.
+    fn read_kind(ruby: &Ruby, value: Value) -> Result<Kind, Error> {
+        let text = match coerce_text(ruby, value)? {
+            Some(text) => text,
+            None => value.funcall::<_, _, RString>("to_s", ())?.to_string()?,
+        };
+        text.parse::<Kind>().map_err(|invalid| {
+            let got = value
+                .funcall::<_, _, RString>("inspect", ())
+                .and_then(|inspected| inspected.to_string())
+                .unwrap_or_else(|_| invalid.0.clone());
+            lookup_error(ruby, &["Lain", "Error"], invalid.message(&got))
+        })
+    }
+
     /// A parent/head digest argument: `nil` (or absent) is a root/empty head, a
     /// String is a digest, anything else is a type error. This is the FFI-in
     /// boundary where a Ruby String becomes a [`Digest`].
@@ -743,9 +759,13 @@ mod ffi {
     /// is, in the same message any other non-Array gets.
     fn read_optional_text(ruby: &Ruby, value: Option<Value>) -> Result<Option<String>, Error> {
         match value {
-            Some(value) if !value.is_nil() => {
-                validated_utf8(ruby, RString::try_convert(value)?).map(Some)
-            }
+            Some(value) if !value.is_nil() => match coerce_text(ruby, value)? {
+                Some(text) => Ok(Some(text)),
+                None => Err(Error::new(
+                    ruby.exception_type_error(),
+                    "from and to must be a String, Symbol or nil",
+                )),
+            },
             _ => Ok(None),
         }
     }
@@ -811,6 +831,109 @@ mod ffi {
         }
 
         fn new(ruby: &Ruby, kw: RHash) -> Result<Obj<Self>, Error> {
+            if kw.get(ruby.to_symbol("kind")).is_some() {
+                return Self::new_event(ruby, kw);
+            }
+            Self::new_turn(ruby, kw)
+        }
+
+        /// The kind-general constructor, mirroring Ruby `Event.new`. A detached
+        /// envelope (a digest with no body) has no Rust representation, so it
+        /// is refused rather than half-built.
+        fn new_event(ruby: &Ruby, kw: RHash) -> Result<Obj<Self>, Error> {
+            type OptionalArgs = (
+                Option<Value>,
+                Option<Value>,
+                Option<Value>,
+                Option<Value>,
+                Option<Value>,
+                Option<Value>,
+                Option<Value>,
+                Option<Value>,
+            );
+            let args = get_kwargs::<_, (Value,), OptionalArgs, ()>(
+                kw,
+                &["kind"],
+                &[
+                    "payload_digest",
+                    "body",
+                    "carried_payload",
+                    "from",
+                    "to",
+                    "render_parent",
+                    "causal_parents",
+                    "correlation",
+                ],
+            )?;
+            let (kind_value,) = args.required;
+            let (
+                digest_value,
+                body_value,
+                carried_value,
+                from_value,
+                to_value,
+                parent_value,
+                causal_value,
+                correlation_value,
+            ) = args.optional;
+            let kind = read_kind(ruby, kind_value)?;
+            let payload = Self::read_payload(ruby, kind, digest_value, body_value, carried_value)?;
+            let inner = EventData::new(
+                read_optional_text(ruby, from_value)?,
+                read_optional_text(ruby, to_value)?,
+                read_optional_digest(ruby, parent_value)?,
+                read_causal_parents(ruby, causal_value)?,
+                read_optional_digest(ruby, correlation_value)?,
+                payload,
+            );
+            Ok(Turn::wrap(ruby, inner))
+        }
+
+        fn read_payload(
+            ruby: &Ruby,
+            kind: Kind,
+            digest: Option<Value>,
+            body: Option<Value>,
+            carried: Option<Value>,
+        ) -> Result<Arc<PayloadData>, Error> {
+            let present = |value: Option<Value>| value.filter(|inner| !inner.is_nil());
+            let argument_error =
+                |message: &str| Error::new(ruby.exception_arg_error(), message.to_string());
+            match (present(carried), present(digest), present(body)) {
+                (Some(_), Some(_), _) | (Some(_), _, Some(_)) => Err(argument_error(
+                    "carried_payload already names the digest and body; pass one, not both",
+                )),
+                (Some(carried), None, None) => {
+                    let payload = Obj::<Payload>::try_convert(carried)?;
+                    if payload.inner.kind == kind {
+                        Ok(Arc::clone(&payload.inner))
+                    } else {
+                        Err(argument_error(
+                            "carried_payload's kind must match the event's kind",
+                        ))
+                    }
+                }
+                (None, passed, Some(body)) => {
+                    let payload = PayloadData::new(kind, ruby_to_canon(ruby, body)?);
+                    match read_optional_digest(ruby, passed)? {
+                        Some(named) if named != payload.digest => Err(argument_error(&format!(
+                            "payload_digest {} disagrees with the body's digest {}",
+                            named.as_str(),
+                            payload.digest.as_str()
+                        ))),
+                        _ => Ok(payload),
+                    }
+                }
+                (None, Some(_), None) => Err(argument_error(
+                    "an Ext event cannot be built from a payload_digest alone; pass body or carried_payload",
+                )),
+                (None, None, None) => Err(argument_error(
+                    "an Event needs its payload: pass payload_digest or carried_payload",
+                )),
+            }
+        }
+
+        fn new_turn(ruby: &Ruby, kw: RHash) -> Result<Obj<Self>, Error> {
             type OptionalArgs = (
                 Option<Value>,
                 Option<Value>,
@@ -1894,6 +2017,7 @@ mod ffi {
         treesitter.define_singleton_method("query", function!(crate::treesitter::ffi::query, 3))?;
 
         let turn = ext.define_class("Turn", ruby.class_object())?;
+        ext.const_set("Event", turn)?;
         turn.define_error("InvalidRole", lain_error)?;
         turn.define_singleton_method("new", function!(Turn::new, 1))?;
         turn.define_method("role", method!(Turn::role, 0))?;

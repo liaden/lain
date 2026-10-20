@@ -103,25 +103,13 @@ impl std::error::Error for InvalidRole {}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     Turn,
-    // The three non-:turn members are constructed today only by the cargo
-    // byte-parity tests (the FFI surface builds :turn events alone until the
-    // :message/:spawn ports land). The enum stays total over `Event::KINDS`
-    // regardless -- the closed set IS the type, same doctrine as
-    // `classify_num` being defined on all input -- so the variants carry a
-    // deliberate allow rather than waiting for their first lib-build caller.
-    #[allow(dead_code)]
     Spawn,
-    #[allow(dead_code)]
     Message,
-    #[allow(dead_code)]
     Snapshot,
 }
 
 impl Kind {
-    /// Every kind, in `Event::KINDS` order. Read today only by the per-kind
-    /// byte-parity test (see the variants' allow above for why the total
-    /// surface outlives its current callers).
-    #[allow(dead_code)]
+    /// Every kind, in `Event::KINDS` order.
     pub const ALL: [Kind; 4] = [Kind::Turn, Kind::Spawn, Kind::Message, Kind::Snapshot];
 
     /// The wire string -- the serialized kind byte-for-byte in BOTH content
@@ -134,6 +122,30 @@ impl Kind {
             Kind::Message => "message",
             Kind::Snapshot => "snapshot",
         }
+    }
+}
+
+impl std::str::FromStr for Kind {
+    type Err = InvalidKind;
+
+    fn from_str(kind: &str) -> Result<Self, InvalidKind> {
+        Kind::ALL
+            .into_iter()
+            .find(|candidate| candidate.as_str() == kind)
+            .ok_or_else(|| InvalidKind(kind.to_string()))
+    }
+}
+
+/// A kind string that is not one of the [`Kind`] variants. Its `Display` is the
+/// message Ruby's `Event.normalize_kind` raises, minus the quoting of the
+/// offender, which the FFI layer adds from the original Ruby value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InvalidKind(pub String);
+
+impl InvalidKind {
+    pub fn message(&self, got: &str) -> String {
+        let names = Kind::ALL.map(Kind::as_str).join(", ");
+        format!("kind must be one of {names}, got {got}")
     }
 }
 
@@ -649,6 +661,18 @@ mod tests {
             );
             assert_eq!(payload.digest.as_str(), vector, "kind {:?}", kind);
         }
+    }
+
+    #[test]
+    fn parses_wire_kinds_and_rejects_the_rest() {
+        for kind in Kind::ALL {
+            assert_eq!(kind.as_str().parse::<Kind>(), Ok(kind));
+        }
+        let invalid = "bogus".parse::<Kind>().unwrap_err();
+        assert_eq!(
+            invalid.message(":bogus"),
+            "kind must be one of turn, spawn, message, snapshot, got :bogus"
+        );
     }
 
     #[test]
