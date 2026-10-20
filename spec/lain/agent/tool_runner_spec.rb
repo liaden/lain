@@ -720,7 +720,7 @@ RSpec.describe Lain::Agent::ToolRunner do
 
   describe "a round budget" do
     let(:journal) { [] }
-    let(:room) { ->(usage) { { window: 32_768, usage: usage + Lain::Usage.new(input_tokens: 7_492), reserve: 4_096 } } }
+    let(:room) { ->(usage) { Lain::Tool::Room.new(window: 32_768, usage: usage + Lain::Usage.new(input_tokens: 7_492), ceiling: 16_384, head: nil) } }
 
     def reader(name, body, release: ToolRunnerSpecSupport::OpenGate.new)
       ToolRunnerSpecSupport::RerunnableProbe.new(name:, safe: true, log: [], release:, body: -> { body })
@@ -794,6 +794,16 @@ RSpec.describe Lain::Agent::ToolRunner do
       blocks = runner.run(tool_response(["tu_1", "ghost", {}]), context: nil)
 
       expect(blocks.map { |block| block["is_error"] }).to eq([false])
+    end
+
+    it "withholds under the window budget when no room is given, because the default room has no window" do
+      runner = described_class.new(handler: Lain::Effect::Handler::Live.new, round_budget: Lain::Tool::RoundBudget.window,
+                                   toolset: Lain::Toolset.new([reader("one", "a" * 2_000)]))
+
+      blocks = runner.run(tool_response(["tu_1", "one", {}]), context: nil)
+
+      expect(blocks.first).to include("is_error" => true,
+                                      "content" => start_with("not delivered: this round reached its 0-byte budget"))
     end
 
     it "changes nothing with no budget" do

@@ -4,11 +4,8 @@ module Lain
   OutputCeiling = Data.define(:tokens, :source) do
     # @param model [String] the model the ceiling is for
     # @param window [ContextWindow::WindowResolution] that model's window
-    # @param typed [Integer, nil] a validated `--max-tokens`, which wins
     # @return [OutputCeiling]
-    def self.for(model:, window:, typed: nil)
-      return OutputCeiling.typed(typed) unless typed.nil?
-
+    def self.for(model:, window:)
       table = OutputCeiling.table_tokens(model)
       return new(tokens: table, source: :table) if table
       return new(tokens: window.window_tokens, source: :served_window) if window.provenance == ContextWindow::PROBED

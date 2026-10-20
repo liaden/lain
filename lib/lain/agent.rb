@@ -540,9 +540,9 @@ module Lain
     # that turn while its round runs, the settled path and the torn one alike.
     def round_room(usage)
       window = @context_window.window_tokens(context.model)
-      { window:, reserve: ReplyReserve.for(window:, ceiling: context.max_tokens).tokens, head: @timeline.head_digest,
-        usage: Usage.new(input_tokens: accounting.last_turn_usage(on: @timeline).to_i,
-                         output_tokens: usage.output_tokens) }
+      Tool::Room.new(window:, ceiling: context.max_tokens, head: @timeline.head_digest,
+                     usage: Usage.new(input_tokens: accounting.last_turn_usage(on: @timeline).to_i,
+                                      output_tokens: usage.output_tokens))
     end
 
     def built_accounting(given) = Accounting.new(journal: given.fetch(:journal) { @instrumentation.journal })

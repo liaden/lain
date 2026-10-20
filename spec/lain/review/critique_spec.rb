@@ -305,9 +305,10 @@ RSpec.describe Lain::Review::Critique do
     it "refuses naming the reserve and the window before any file is blamed" do
       big = CritiqueSpecSpawn.new(context: Lain::Context.new(model: "critic-model", max_tokens: 16_384))
 
-      expect { critique(changeset_of({ "lib/a.rb" => 4 }), window: window(4_096), spawn: big).call }
+      expect { critique(changeset_of({ "lib/a.rb" => 4 }), window: window(1_024), spawn: big).call }
         .to raise_error(described_class::Refused) { |error|
-          expect(error.message).to include("2048-token response reserve", "4096-token window")
+          # The reserve floor is a quarter of a small window, so 256 here, not half the window.
+          expect(error.message).to include("256-token response reserve", "1024-token window")
           expect(error.message).not_to include("lib/a.rb")
         }
       expect(big.calls).to be_empty

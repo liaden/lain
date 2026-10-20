@@ -168,6 +168,11 @@ RSpec.describe Lain::Compaction::Need do
       expect(fires?(28_671)).to be(false)
     end
 
+    it "scales the reserve down on a small window, so it fires at window minus a quarter-window floor" do
+      expect(fires?(6_144, window: 8_192)).to be(true)
+      expect(fires?(6_143, window: 8_192)).to be(false)
+    end
+
     it "keeps the ratio when it is the earlier of the two" do
       expect(fires?(900_000, ceiling: 32_768, window: 1_000_000)).to be(true)
       expect(fires?(899_999, ceiling: 32_768, window: 1_000_000)).to be(false)

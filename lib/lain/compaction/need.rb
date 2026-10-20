@@ -106,8 +106,8 @@ module Lain
         def reserve_eaten?(state)
           return false unless state.reply_ceiling && state.used_tokens
 
-          reserve = ReplyReserve.for(window: state.window_tokens, ceiling: state.reply_ceiling)
-          state.used_tokens >= state.window_tokens - reserve.tokens
+          reserve = ReplyReserve.tokens(window: state.window_tokens, ceiling: state.reply_ceiling)
+          state.used_tokens >= state.window_tokens - reserve
         end
       end
 

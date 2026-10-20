@@ -6,19 +6,16 @@ module Lain
   # starve a small window, so the reserve is an eighth of it, floored, and never
   # over half: a reserve the size of the window puts the compaction trigger at
   # zero.
-  #
-  # @!attribute [r] tokens
-  #   @return [Integer]
-  # @!attribute [r] basis
-  #   @return [Symbol, nil] the provenance of the window it was computed from
-  ReplyReserve = Data.define(:tokens, :basis) do
+  module ReplyReserve
+    # Below a 32,768-token window the floor term decides and the eighth never binds.
+    FLOOR_TOKENS = 4_096
+
     # @param window [Integer] the context window in tokens
     # @param ceiling [Integer] the output cap in tokens
-    # @param basis [Symbol, nil] the window's provenance, carried not interpreted
-    # @return [ReplyReserve]
-    def self.for(window:, ceiling:, basis: nil)
-      share = [4_096, window / 8].max
-      new(tokens: [ceiling, share, window / 2].min, basis:)
+    # @return [Integer] tokens held back for the next reply
+    def self.tokens(window:, ceiling:)
+      floor = [FLOOR_TOKENS, window / 4].min
+      [ceiling, [floor, window / 8].max, window / 2].min
     end
   end
 end

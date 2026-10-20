@@ -2776,6 +2776,25 @@ RSpec.describe Lain::Agent do
         .to eq([[a.timeline.to_a[1].digest, %w[tu_4 tu_5 tu_9 tu_10 tu_14 tu_15]]])
     end
 
+    it "hands the budget the room as a value with the window, usage, ceiling and head" do
+      rooms = []
+      spy = Lain::Tool::RoundBudget.new(:spy) do |room|
+        rooms << room
+        Lain::Tool::RoundBudget::Limit.new(bytes: 1_000_000, scope: "spy")
+      end
+      a = described_class.new(provider: CoreGraph.provider(fifteen_reads, text_response), journal:,
+                              toolset: CoreGraph.toolset([Lain::Tools::ReadFile.new]),
+                              context: CoreGraph.context(model: "qwen3-coder:30b", max_tokens: 16_384),
+                              context_window: Lain::ContextWindow.new(windows: { "qwen3" => 32_768 }),
+                              round_budget: spy)
+      a.ask("read them all")
+
+      expect(rooms).to contain_exactly(have_attributes(
+                                         window: 32_768, ceiling: 16_384, head: a.timeline.to_a[1].digest,
+                                         usage: have_attributes(output_tokens: 300)
+                                       ))
+    end
+
     it "runs a tool round with no budget on a window book that cannot name the model's window" do
       a = described_class.new(provider: CoreGraph.provider(tool_response(["tu_1", "echo", { "text" => "x" }]),
                                                            text_response),

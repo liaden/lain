@@ -2490,7 +2490,8 @@ RSpec.describe Lain::CLI::Wiring do
     end
 
     def basis_of_two_equal_results(budget)
-      room = { window: 32_768, usage: Lain::Usage.new(input_tokens: 100, output_tokens: 10), reserve: 4_096, head: "h" }
+      room = Lain::Tool::Room.new(window: 32_768, usage: Lain::Usage.new(input_tokens: 100, output_tokens: 10),
+                                  ceiling: 16_384, head: "h")
       tool = Struct.new(:name) { def rerunnable? = true }.new("read_file")
       calls = %w[a b].map { |id| Lain::Tool::RoundBudget::Call.new(id:, tool:) }
       blocks = calls.map { |call| { "type" => "tool_result", "tool_use_id" => call.id, "content" => "x" * 400 } }

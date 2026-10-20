@@ -183,7 +183,7 @@ module Lain
 
       # The room a runner told nothing about its window has: none, so a budget
       # handed to it errs toward withholding.
-      ROOMLESS = ->(usage) { { window: 0, usage:, reserve: 0 } }
+      ROOMLESS = ->(usage) { Tool::Room.new(window: 0, usage:, ceiling: 0, head: nil) }
 
       # `toolset:` is what a call's name resolves against -- ONCE per call, in
       # {#dispatch} -- and what {#answered_questions} harvests from. `handler`

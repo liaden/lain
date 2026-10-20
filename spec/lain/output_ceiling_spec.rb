@@ -3,8 +3,8 @@
 RSpec.describe Lain::OutputCeiling do
   def window(tokens, provenance) = Lain::ContextWindow::WindowResolution.new(window_tokens: tokens, provenance:)
 
-  def ceiling(model, resolution = window(1_000_000, :published), **)
-    described_class.for(model:, window: resolution, **)
+  def ceiling(model, resolution = window(1_000_000, :published))
+    described_class.for(model:, window: resolution)
   end
 
   it "takes an Anthropic 4.6 model's ceiling from the table" do
@@ -23,10 +23,6 @@ RSpec.describe Lain::OutputCeiling do
 
   it "gives a first-party model the table does not carry the same fallback" do
     expect(ceiling("claude-fable-5")).to eq(described_class.new(tokens: 32_768, source: :fallback))
-  end
-
-  it "lets a typed flag win over the table" do
-    expect(ceiling("claude-opus-4-6", typed: 4_096)).to eq(described_class.new(tokens: 4_096, source: :typed))
   end
 
   it "never clamps the ceiling to a guessed window" do

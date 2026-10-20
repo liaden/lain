@@ -15,11 +15,15 @@ RSpec.describe Lain::Tool::RoundBudget do
     { "type" => "tool_result", "tool_use_id" => id, "content" => content, "is_error" => is_error }
   end
 
+  def room(window:, usage: Lain::Usage.zero, ceiling: 16_384, head: nil)
+    Lain::Tool::Room.new(window:, usage:, ceiling:, head:)
+  end
+
   def call(id, tool = read_file) = described_class::Call.new(id:, tool:)
 
   def round26
     described_class.window.for do
-      { window: 32_768, usage: Lain::Usage.new(input_tokens: 7_492), reserve: 4_096, head: "blake3:asked" }
+      room(window: 32_768, usage: Lain::Usage.new(input_tokens: 7_492), head: "blake3:asked")
     end
   end
 
@@ -125,7 +129,7 @@ RSpec.describe Lain::Tool::RoundBudget do
   end
 
   it "holds a static budget to twice the per-result ceiling whatever the window" do
-    budget = described_class.static.for { { window: 1_000_000, usage: Lain::Usage.zero, reserve: 0 } }
+    budget = described_class.static.for { room(window: 1_000_000) }
     blocks = [result("tu_1", "a" * 20_000), result("tu_2", "b" * 20_000)]
 
     delivered, records = bounded(budget, blocks, [call("tu_1"), call("tu_2")])
@@ -136,7 +140,7 @@ RSpec.describe Lain::Tool::RoundBudget do
 
   it "takes the last turn's output and the reply reserve out of the window before converting to bytes" do
     usage = Lain::Usage.new(input_tokens: 2_000, output_tokens: 1_000)
-    budget = described_class.window.for { { window: 20_000, usage:, reserve: 2_000 } }
+    budget = described_class.window.for { room(window: 20_000, usage:, ceiling: 2_000) }
 
     _, records = bounded(budget, [result("tu_1", "a" * 25_000)], [call("tu_1")])
 
@@ -145,7 +149,7 @@ RSpec.describe Lain::Tool::RoundBudget do
 
   it "leaves a small window room for a small result despite the reply reserve's floor" do
     usage = Lain::Usage.new(input_tokens: 5_084, output_tokens: 643)
-    budget = described_class.window.for { { window: 8_192, usage:, reserve: 4_096 } }
+    budget = described_class.window.for { room(window: 8_192, usage:) }
 
     blocks = [result("tu_1", "a" * 60)]
 
@@ -156,7 +160,7 @@ RSpec.describe Lain::Tool::RoundBudget do
 
   it "holds back the whole reserve on a large window" do
     usage = Lain::Usage.new(input_tokens: 5_000, output_tokens: 1_000)
-    budget = described_class.window.for { { window: 200_000, usage:, reserve: 4_096 } }
+    budget = described_class.window.for { room(window: 200_000, usage:, ceiling: 4_096) }
 
     _, records = bounded(budget, [result("tu_1", "a" * 100), result("tu_2", "a" * 100)],
                          [call("tu_1"), call("tu_2")])
@@ -164,8 +168,36 @@ RSpec.describe Lain::Tool::RoundBudget do
     expect(records.first.budget).to eq(((200_000 - 6_000 - 4_096) * 1.31).floor)
   end
 
+  it "keeps the reserve the compaction trigger keeps, on an 8,192-token window" do
+    reserve = Lain::ReplyReserve.tokens(window: 8_192, ceiling: 16_384)
+    need = Lain::Compaction::Need.new(byte_threshold: 1_000_000, approaching_ratio: 0.99)
+    fires = lambda { |used|
+      need.check(window_tokens: 8_192, used_tokens: used, reply_ceiling: 16_384).signals.include?(:approaching_window)
+    }
+    budget = described_class.window.for { room(window: 8_192) }
+    _, records = bounded(budget, [result("tu_1", "a" * 20_000)], [call("tu_1")])
+
+    expect([fires.call(8_192 - reserve), fires.call(8_192 - reserve - 1)]).to eq([true, false])
+    expect(records.first.budget).to eq(((8_192 - reserve) * Rational(131, 100)).floor)
+  end
+
+  # A Float and the Rational floor alike at every window, so only the absence of a second constant pins it.
+  it "converts at the one shared density, not a constant of its own" do
+    expect(described_class.const_defined?(:BYTES_PER_TOKEN, false)).to be(false)
+  end
+
+  it "delivers a result on an 8,192-token window after a 2,000-token last turn" do
+    usage = Lain::Usage.new(input_tokens: 2_000)
+    budget = described_class.window.for { room(window: 8_192, usage:) }
+    blocks = [result("tu_1", "a" * 4_000)]
+
+    delivered, = bounded(budget, blocks, [call("tu_1")])
+
+    expect(delivered).to eq(blocks)
+  end
+
   it "never answers a budget below nothing when the last turn already overfilled the window" do
-    budget = described_class.window.for { { window: 1_000, usage: Lain::Usage.new(input_tokens: 5_000), reserve: 0 } }
+    budget = described_class.window.for { room(window: 1_000, usage: Lain::Usage.new(input_tokens: 5_000), ceiling: 0) }
 
     _, records = bounded(budget, [result("tu_1", "a")], [call("tu_1")])
 
@@ -174,7 +206,7 @@ RSpec.describe Lain::Tool::RoundBudget do
 
   it "delivers everything and journals nothing with no budget" do
     blocks = [result("tu_1", "a" * 50_000), result("tu_2", "a" * 50_000)]
-    budget = described_class::NONE.for { { window: 1, usage: Lain::Usage.new(input_tokens: 5), reserve: 1 } }
+    budget = described_class::NONE.for { room(window: 1, usage: Lain::Usage.new(input_tokens: 5), ceiling: 1) }
 
     delivered, records = bounded(budget, blocks, [call("tu_1"), call("tu_2")])
 

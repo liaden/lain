@@ -13,10 +13,6 @@ module Lain
     # stays larger than the window. Every call is still answered; only what the
     # answer says gets shorter.
     class RoundBudget
-      # The worst density {Bounds::RESULT_BYTES} records, digit-heavy text, on
-      # purpose: a bound that guesses wrong should withhold, not overfill.
-      BYTES_PER_TOKEN = 1.31
-
       # The second action a withheld result offers, for the tools that have a
       # narrower form of the same call.
       NARROWER = { "read_file" => "narrower with offset and limit" }.freeze
@@ -45,22 +41,21 @@ module Lain
       #
       # @return [RoundBudget]
       def self.window
-        new(:window) do |window:, usage:, reserve:|
-          # The reply reserve's 4096 floor is half of a small window, which would starve every round.
-          room = window - usage.total_input_tokens - usage.output_tokens - [reserve, window / 8].min
-          Limit.new(bytes: [(room * BYTES_PER_TOKEN).floor, 0].max, scope: "window #{window} tokens")
+        new(:window) do |room|
+          left = room.window - room.usage.total_input_tokens - room.usage.output_tokens -
+                 ReplyReserve.tokens(window: room.window, ceiling: room.ceiling)
+          Limit.new(bytes: [(left * Oracle::Handoff::BYTES_PER_TOKEN).floor, 0].max,
+                    scope: "window #{room.window} tokens")
         end
       end
 
       # Twice the per-result ceiling, whatever the window.
       #
       # @return [RoundBudget]
-      def self.static = new(:static) { |**| Limit.new(bytes: 2 * Bounds::RESULT_BYTES, scope: "static") }
+      def self.static = new(:static) { |_room| Limit.new(bytes: 2 * Bounds::RESULT_BYTES, scope: "static") }
 
       # @param basis [Symbol] the name the record gives this policy
-      # @yieldparam window [Integer] the context window in tokens
-      # @yieldparam usage [Usage] the turn that made the calls
-      # @yieldparam reserve [Integer] the tokens held back for the next reply
+      # @yieldparam room [Room]
       # @yieldreturn [Limit]
       def initialize(basis, &limit)
         @basis = -basis.to_s
@@ -71,14 +66,11 @@ module Lain
       # The room is a block because only a real budget needs it, and working it
       # out can raise.
       #
-      # @yieldreturn [Hash] `window:` in tokens, `usage:` of the turn that made
-      #   the calls, `reserve:` in tokens held back for the next reply, and
-      #   `head:`, that turn's digest, which the record names because a provider
-      #   may reuse call ids round after round
+      # @yieldreturn [Room]
       # @return [Round] this round's budget
       def for
         room = yield
-        Round.new(@basis, @limit.call(**room.slice(:window, :usage, :reserve)), room[:head])
+        Round.new(@basis, @limit.call(room), room.head)
       end
 
       # One round's budget.

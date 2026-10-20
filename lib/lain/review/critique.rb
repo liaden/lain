@@ -238,7 +238,7 @@ module Lain
                                              window: resolution.window_tokens)
           end
 
-          response_tokens = ReplyReserve.for(window: resolution.window_tokens, ceiling: Integer(max_tokens)).tokens
+          response_tokens = ReplyReserve.tokens(window: resolution.window_tokens, ceiling: Integer(max_tokens))
           new(model: -model.to_s, window_tokens: resolution.window_tokens, response_tokens:,
               reserved_tokens: response_tokens + Critique.tokens(prelude) + SCHEMA_RESERVE_TOKENS)
         end
