@@ -340,6 +340,39 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Drain, :seam do
     end
   end
 
+  describe "asking whether a queued entry continues a later one" do
+    it "asks git once per pair of shas however many batches it takes" do
+      configure(verify: passing)
+      base = git("rev-parse", "main")
+      chain = [worker("w1", from: base, file: "w1-old"), worker("w1", from: base)]
+      2.times { |index| chain << worker("w1", from: chain.last.sha, file: "w1-#{index}") }
+      chain.each { |each| spool.enqueue(each) }
+      real = Lain::Isolation::Checkout.new(@repo)
+      asked = []
+      counting = Object.new
+      counting.define_singleton_method(:run) do |*args|
+        asked << args.last(2) if args.first.eql?("merge-base")
+        real.run(*args)
+      end
+      isolation = Lain::Config::Isolation.from({ "verify" => passing }, path: nil)
+      base = Lain::Isolation::WorkingBranch.new("main", repo_root: @repo, git: real)
+      queue_for = lambda do |journal:, verify:|
+        Lain::Isolation::LandingQueue.candidate(root: @repo, base:, journal:, isolation:, paths:, verify:,
+                                                lock: described_class::AlreadyHeld)
+      end
+      journal = []
+      journal.define_singleton_method(:close) { nil }
+
+      batches = described_class.new(lock: home.drain_lock, branch: "main", spool:, isolation:,
+                                    journal: -> { journal }, queue_for:, git: counting,
+                                    verify: Lain::Isolation::Verifier.from(isolation, paths:)).call
+
+      expect(batches).to eq(3)
+      expect(asked).not_to be_empty
+      expect(asked.tally.values.max).to eq(1)
+    end
+  end
+
   describe "a git failure while telling whether an entry is superseded" do
     def drainer(git:, notice:)
       isolation = Lain::Config::Isolation.from({ "verify" => passing }, path: nil)

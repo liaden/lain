@@ -87,6 +87,7 @@ module Lain
           @wall_clock = wall_clock
           @sleeper = sleeper
           @interval = interval
+          @continuations = {}
         end
 
         # Each entry's result names its batch by its ordinal within this run,
@@ -129,21 +130,32 @@ module Lain
 
         # Landing an amended branch's abandoned commits too would land work its owner discarded.
         def superseded_by(waiting)
-          waiting.each_with_index.filter_map do |entry, index|
-            later = waiting.drop(index + 1).reverse.find { |each| each.worker.id == entry.worker.id }
-            [entry, later] if later && !continues?(entry, later)
+          waiting.group_by { |entry| entry.worker.id }.values.flat_map do |group|
+            later = group.last
+            group.first(group.size - 1).reject { |entry| continues?(entry, later) }.map { |entry| [entry, later] }
           end.to_h
+        end
+
+        # Ancestry between two fixed shas never changes, so only a definite answer is kept; a git
+        # error is asked again next batch.
+        def continues?(entry, later)
+          key = [entry.worker.sha, later.worker.sha]
+          @continuations.fetch(key) do
+            shell = @git.run("merge-base", "--is-ancestor", *key)
+            unless [0, 1].include?(shell.exitstatus)
+              say_unanswered(entry, later, shell)
+              return true
+            end
+
+            @continuations[key] = shell.exitstatus.eql?(0)
+          end
         end
 
         # A git error leaves the pair as it was before supersession was checked, since
         # declining a valid entry on a guess loses work.
-        def continues?(entry, later)
-          shell = @git.run("merge-base", "--is-ancestor", entry.worker.sha, later.worker.sha)
-          return shell.exitstatus.eql?(0) if [0, 1].include?(shell.exitstatus)
-
+        def say_unanswered(entry, later, shell)
           @notice.call("worker #{entry.worker.id}: cannot tell whether entry #{entry.id} is superseded by " \
                        "entry #{later.id}, landing both: #{shell.stderr.strip}")
-          true
         end
 
         def decline_superseded(entry, later)
