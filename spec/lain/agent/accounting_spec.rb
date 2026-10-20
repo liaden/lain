@@ -301,4 +301,29 @@ RSpec.describe Lain::Agent::Accounting do
       expect(accounting.last_turn_usage(on: line)).to eq(7_000)
     end
   end
+
+  describe "dollars" do
+    it "prices each observed response and adds it to the spend" do
+      accounting = described_class.new
+      accounting.observe(response(input: 1_000_000, output: 0), digest: "blake3:d1")
+
+      expect(accounting.spent.dollars).to eq(Lain::Friction::CacheWaste::Dollars.of(BigDecimal(5)))
+    end
+
+    it "marks the total incomplete for a model the book has no row for, keeping the priced part" do
+      accounting = described_class.new
+      accounting.observe(response(input: 1_000_000, output: 0), digest: "blake3:d1")
+      accounting.observe(response(input: 1_000_000, output: 0, model: "qwen3:4b"), digest: "blake3:d2")
+
+      expect(accounting.spent.dollars).to have_attributes(amount: BigDecimal(5), complete: false)
+    end
+
+    it "journals and sums the turn of an unpriced model rather than failing it" do
+      accounting = described_class.new(journal:)
+
+      accounting.observe(response(model: "qwen3:4b"), digest: "blake3:d1")
+
+      expect(records.size).to eq(1)
+    end
+  end
 end

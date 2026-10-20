@@ -618,7 +618,7 @@ module Lain
         Lain::Agent.new(toolset: board.toolset, context: board.graft(backend.context), handler: live, session:,
                         timeline:, request_override: Lain::Agent::RequestOverride.new, # ResendBridge's slot
                         round_budget: arms.round_budget_policy,
-                        budget: Lain::Budget.ceilings.with(depth: 1), # one level of children below the chat
+                        budget: backend.ceilings.with(depth: 1), # one level of children below the chat
                         display: channel, mailbox: notes.mailbox,
                         snapshot_slot: snapshot_slot(board, session:, journal: chronicle.record_journal, channel:),
                         **backing(backend, channel, -> { agent.timeline }, board:)).tap { |built| agent = built }

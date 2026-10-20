@@ -1008,6 +1008,45 @@ RSpec.describe Lain::Agent do
     end
   end
 
+  describe "a dollar ceiling" do
+    def priced(output, model: "claude-opus-4-8")
+      text_response("done", model:, usage: Lain::Usage.new(output_tokens: output))
+    end
+
+    it "refuses the reply that passes it, naming dollars and the amount spent" do
+      a = agent(priced(1_000), budget: Lain::Budget.ceilings.with(dollars: BigDecimal("0.01")))
+
+      expect { a.ask("go") }
+        .to raise_error(Lain::Budget::Exceeded, "spent 0.025 dollars, ceiling is 0.01") { |error| expect(error.kind).to eq(:dollars) }
+    end
+
+    it "makes no further provider call once the ceiling is passed" do
+      provider = Lain::Provider::Mock.new(responses: [priced(1_000), priced(1_000)])
+      a = described_class.new(provider:, toolset:, context:,
+                              budget: Lain::Budget.ceilings.with(dollars: BigDecimal("0.01")))
+      expect { a.ask("one") }.to raise_error(Lain::Budget::Exceeded)
+
+      expect { a.ask("two") }.to raise_error(Lain::Budget::Exceeded) { |error| expect(error.kind).to eq(:dollars) }
+      expect(provider.call_count).to eq(1)
+    end
+
+    it "enforces on the priced part and says the total is incomplete" do
+      a = agent([priced(1_000, model: "qwen3:4b"), priced(1_000)],
+                budget: Lain::Budget.ceilings.with(dollars: BigDecimal("0.01")))
+      a.ask("one")
+
+      expect(a.spent.dollars.complete?).to be(false)
+      expect { a.ask("two") }.to raise_error(Lain::Budget::Exceeded, /0\.025 dollars.*unpriced/)
+    end
+
+    it "grants a child the remainder" do
+      a = agent(priced(400), budget: Lain::Budget.ceilings.with(dollars: BigDecimal("0.02")))
+      a.ask("go")
+
+      expect(a.room.dollars).to eq(BigDecimal("0.01"))
+    end
+  end
+
   describe "a subtree's spend" do
     def spend_of(tokens)
       Lain::Budget::Shared.new.tap do |spend|

@@ -54,11 +54,14 @@ module Lain
       # Checked before each call: a ceiling met exactly leaves nothing to pay
       # the next call with.
       # @raise [Lain::Budget::Exceeded] when `count` has reached the iteration
-      #   ceiling, or no tokens are left
+      #   ceiling, or no tokens or dollars are left
       def check_step!(count)
         check_iterations!(count)
         left = remaining(:tokens)
         raise Exceeded.new(spent_tokens, kind: :tokens) if left && !left.positive?
+
+        dollars_left = remaining(:dollars)
+        raise ceilings.dollars_refusal(spent) if dollars_left && !dollars_left.positive?
       end
 
       # Checked after each response: a turn's cost is only known once paid.

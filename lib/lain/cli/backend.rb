@@ -211,6 +211,7 @@ module Lain
         @compaction = compaction
         summarizer_name
         summarizer_max_tokens
+        max_cost
         compact_fallback
         # BOTH arms, built for their refusals and dropped: `--summarizer-provider
         # ollama-cloud` is the same credential on the same wire as `--provider`,
@@ -421,10 +422,19 @@ module Lain
       #
       # @return [Array<String>]
       def startup_notices
-        return [*ollama_tier(provider_name).startup_notices] if OllamaTier::NAMES.include?(provider_name)
+        if OllamaTier::NAMES.include?(provider_name)
+          return [*ollama_tier(provider_name).startup_notices, *unpriced_cost_notice]
+        end
 
-        [*stranded_base_notice]
+        [*stranded_base_notice, *unpriced_cost_notice]
       end
+
+      # The chat's ceilings: `--max-cost` is the root's dollar ceiling, which
+      # a child inherits through attenuation.
+      #
+      # @return [Budget::Ceilings]
+      # @raise [InvalidCeiling] on a `--max-cost` that is not positive
+      def ceilings = Budget.ceilings.with(dollars: max_cost)
 
       # `--num-ctx`, through the same {Ceiling} both `--max-tokens` flags go
       # through, and OPTIONAL: unset means "serve the model's own". What is NOT
@@ -752,6 +762,24 @@ module Lain
       def ollama_tier(name) = OllamaTier.new(name:, chat: chat_name?(name), api_base: ollama_base(name))
 
       def ollama_base(name) = OllamaTier.claims_base?(name, run_profile.provider) ? api_base : nil
+
+      def max_cost
+        cost = @options[:max_cost]
+        return if cost.nil?
+
+        raise InvalidCeiling, "--max-cost must be positive, got #{cost}" unless cost.positive?
+
+        BigDecimal(cost.to_s)
+      end
+
+      def unpriced_cost_notice
+        return if @options[:max_cost].nil?
+
+        PriceBook.default.price(model)
+        nil
+      rescue PriceBook::UnknownModel
+        "--max-cost cannot bind: #{model} has no price, so its turns count as free"
+      end
 
       # Only a non-ollama chat can strand the flag, so the ollama chat arm never
       # reaches this.

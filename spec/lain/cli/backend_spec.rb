@@ -116,6 +116,31 @@ RSpec.describe Lain::CLI::Backend do
     end
   end
 
+  describe "--max-cost" do
+    it "sets the dollar ceiling of the chat's budget" do
+      expect(backend_for(provider: "anthropic", max_cost: 0.5).ceilings.dollars).to eq(BigDecimal("0.5"))
+    end
+
+    it "leaves the dollars unlimited when unset" do
+      expect(backend_for(provider: "anthropic").ceilings.dollars).to be_nil
+    end
+
+    it "refuses a ceiling that is not positive, in the flag's name" do
+      expect { backend_for(provider: "anthropic", max_cost: 0) }
+        .to raise_error(Lain::CLI::Backend::InvalidCeiling, /--max-cost must be positive/)
+    end
+
+    it "tells once that the ceiling cannot bind for an unpriced model" do
+      notices = backend_for(provider: "ollama", model: "qwen3:4b", max_cost: 1).startup_notices
+
+      expect(notices).to contain_exactly(/--max-cost cannot bind.*qwen3:4b.*no price/)
+    end
+
+    it "says nothing for a priced model" do
+      expect(backend_for(provider: "anthropic", model: "claude-opus-4-8", max_cost: 1).startup_notices).to eq([])
+    end
+  end
+
   describe "#startup_notices for --api-base" do
     let(:base) { "http://h:11434" }
 

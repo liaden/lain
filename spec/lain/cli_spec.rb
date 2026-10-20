@@ -158,6 +158,12 @@ RSpec.describe LainCLI do
       expect(description).not_to match(/bedrock/i)
     end
 
+    it "declares --max-cost DOLLARS as a numeric chat flag" do
+      option = described_class.commands.fetch("chat").options.fetch(:max_cost)
+
+      expect([option.type, option.banner]).to eq([:numeric, "DOLLARS"])
+    end
+
     # Both approval surfaces race the human's own; neither goes first.
     it "does not say the secret oracle answers ahead of the human" do
       description = described_class.commands.fetch("chat").options.fetch(:secret_oracle).description

@@ -1186,6 +1186,9 @@ class LainCLI < Thor
       thor.method_option :approval, type: :string, default: "auto", enum: %w[ask auto bypass],
                                     desc: "Who decides a gated call the rules left open: ask parks it for " \
                                           "a human, auto asks a model judge first, bypass approves it"
+      thor.method_option :max_cost, type: :numeric, banner: "DOLLARS",
+                                    desc: "Stop the run once its priced turns, children included, have cost this " \
+                                          "many dollars; a model with no price counts nothing against it"
     end
   end
 

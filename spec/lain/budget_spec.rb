@@ -45,6 +45,23 @@ RSpec.describe Lain::Budget do
       expect(account(limited, priced).remaining(:dollars)).to eq(BigDecimal("0.75"))
     end
 
+    describe "#check_step! under a dollar ceiling" do
+      def dollars_spent(amount)
+        Lain::Budget::Spent.new(usage: Lain::Usage.zero, dollars: Lain::Friction::CacheWaste::Dollars.of(BigDecimal(amount)))
+      end
+
+      let(:limited) { Lain::Budget::Ceilings.unlimited.with(dollars: BigDecimal("0.01")) }
+
+      it "refuses the next call once the dollars are spent, naming dollars" do
+        expect { account(limited, dollars_spent("0.01")).check_step!(0) }
+          .to raise_error(Lain::Budget::Exceeded, /0\.01 dollars/) { |error| expect(error.kind).to eq(:dollars) }
+      end
+
+      it "lets a call through while there is room" do
+        expect { account(limited, dollars_spent("0.005")).check_step!(0) }.not_to raise_error
+      end
+    end
+
     it "counts nothing spent against width and depth" do
       limited = Lain::Budget::Ceilings.unlimited.with(width: 3, depth: 2)
       held = account(limited, spent(tokens: 10))

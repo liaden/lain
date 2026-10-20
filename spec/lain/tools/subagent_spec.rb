@@ -1922,6 +1922,36 @@ RSpec.describe Lain::Tools::Subagent do
       expect(spawned_result(parent_agent)["content"]).to start_with("spent 700 tokens, ceiling is 600")
     end
 
+    it "gives a child what the parent has left of its dollars" do
+      parent_agent = nil
+      reply = text_response("done", model: "claude-opus-4-8", usage: Lain::Usage.new(output_tokens: 1_000))
+      tool = build_subagent(provider: mock(reply), holder: Lain::Tools::Subagent::Holder.of(-> { parent_agent }))
+      spending = tool_response(["s1", "subagent", { "prompt" => "go" }], model: "claude-opus-4-8",
+                                                                         usage: Lain::Usage.new(output_tokens: 400))
+      parent_agent = holding(tool, [spending, text_response("parent done")],
+                             Lain::Budget.ceilings.with(dollars: BigDecimal("0.02"), depth: 1))
+
+      parent_agent.ask("spawn")
+
+      expect(spawned_result(parent_agent)["content"]).to start_with("spent 0.025 dollars, ceiling is 0.01")
+    end
+
+    it "refuses the spawn of a child with no dollars left, before any provider call" do
+      parent_agent = nil
+      provider = mock(text_response("child paid", model: "claude-opus-4-8"))
+      tool = build_subagent(provider:, holder: Lain::Tools::Subagent::Holder.of(-> { parent_agent }))
+      spending = tool_response(["s1", "subagent", { "prompt" => "go" }], model: "claude-opus-4-8",
+                                                                         usage: Lain::Usage.new(output_tokens: 400))
+      parent_agent = holding(tool, [spending, text_response("parent done")],
+                             Lain::Budget.ceilings.with(dollars: BigDecimal("0.01"), depth: 1))
+
+      expect { parent_agent.ask("spawn") }.to raise_error(Lain::Budget::Exceeded)
+
+      expect(spawned_result(parent_agent)["content"])
+        .to eq("subagent spawn refused: a child with no dollars left cannot run. Do the task yourself instead.")
+      expect(provider.call_count).to eq(0)
+    end
+
     it "gives a child and a grandchild of a parent at depth 2 depth ceilings of 1 and 0" do
       provider = mock(tool_response(["c1", "depth_probe", {}]), tool_response(["c2", "subagent", { "prompt" => "on" }]),
                       tool_response(["g1", "depth_probe", {}]), text_response("grandchild done"),
