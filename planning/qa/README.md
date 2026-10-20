@@ -724,5 +724,6 @@ a full directory does not read as completeness:
 - **Compaction strategies `identity`, `replacement` and `elide_tool_observations` by name.**
   `session-and-window.md` §7 resolves the names it resolves; these three are never named in any
   scenario, so `--compact-strategy` coverage is narrower than it looks.
-- **`bench variance`, `bench record`, `bench plan-sweep`.** `bench-arms.md` covers `arms` and
-  `memory-and-dogfood.md` §6 covers `sweep`; the other three have one prose mention between them.
+- **`bench plan-sweep`, and `bench record` as a subject.** `bench-arms.md` covers `arms`,
+  `memory-and-dogfood.md` §6 covers `sweep`, and `session-and-window.md` drives `variance`'s refusals;
+  `failure-injection.md` uses `record` only as a vehicle, and no scenario names `plan-sweep`.

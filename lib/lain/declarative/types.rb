@@ -40,21 +40,11 @@ module Lain
       # that `Canonicalized` still let its own three error classes escape raw, which is the same
       # defect this class exists to close, just relocated to the other type.
       #
-      # Subclasses `Lain::Error`, not `ArgumentError`: this is the project-wide boundary, decided
-      # for both `Declarative` cards together (quoted from the ruling, because both cards need the
-      # same policy) --
-      #
-      #   "A malformed VALUE is a user-facing failure. Somebody typed or configured a bad number.
-      #   It should be a Lain::Error, so the exe turns it into a clean one-line message... A
-      #   malformed DECLARATION is a programmer error. An undeclared attribute, or an attribute
-      #   holding something unsettleable, is a bug in lib code and deserves a full backtrace with
-      #   file and line -- so it must stay outside Lain::Error's reach."
-      #
-      # A bad value coerced by one of these types is squarely the first case: `exe/lain`'s command
-      # bodies rescue `Lain::Error` (see `render`/`exit_status` in `lib/lain/cli/command.rb`) to
-      # turn it into `Thor::Error` rather than a raw backtrace, exactly as `project.rb:18` already
-      # does for its own user-facing failures. `ArgumentError`
-      # is not in that rescue's reach, so a `CoercionError < ArgumentError` would have bypassed it.
+      # Subclasses `Lain::Error`, not `ArgumentError`: a malformed VALUE is a user-facing failure
+      # that `exe/lain` (`render`/`exit_status`) rescues as `Lain::Error` and turns into a
+      # one-line `Thor::Error`, as `Project` does for its own failures. `ArgumentError` is outside
+      # that rescue, so a `CoercionError < ArgumentError` would have surfaced as a raw backtrace.
+      # A malformed DECLARATION is a programmer error and stays outside `Lain::Error` on purpose.
       class CoercionError < Lain::Error; end
 
       # `Integer(value, 10)` for strings, matching the existing call site this file
