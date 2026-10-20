@@ -161,7 +161,7 @@ module Lain
         # scheduler's force check, and Compact all threshold the SAME bytes and
         # never disagree about whether this turn compacts.
         def reactive_pipeline(timeline, scheduler, need)
-          candidate = timeline_messages(timeline)[0...-REACTIVE_KEEP_LAST]
+          candidate = timeline.messages[0...-REACTIVE_KEEP_LAST]
           # ONE measurement of the candidate span, which the threshold, the
           # force check and the journalled accounting all read -- the same
           # single-measurement discipline {Compaction::Source} follows, where
@@ -203,10 +203,6 @@ module Lain
         end
 
         def step_ids = @fixture.document_for(:none).map(&:id)
-
-        def timeline_messages(timeline)
-          timeline.to_a.map { |turn| { "role" => turn.role, "content" => turn.content } }
-        end
 
         def commit_step(timeline, run, step_id)
           timeline

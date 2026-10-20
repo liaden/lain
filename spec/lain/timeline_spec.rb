@@ -146,6 +146,53 @@ RSpec.describe Lain::Timeline do
     end
   end
 
+  describe "#messages" do
+    let(:line) { say(say(say(timeline, "ask"), "answer", role: :assistant), "next") }
+    let(:expected) { line.to_a.map { |turn| { "role" => turn.role, "content" => turn.content } } }
+
+    it "is the root-first role and content of every turn" do
+      expect(line.messages).to eq(expected)
+    end
+
+    it "is Ractor shareable" do
+      expect(Ractor.shareable?(line.messages)).to be(true)
+    end
+
+    it "is empty for an empty timeline" do
+      expect(timeline.messages).to eq([])
+    end
+
+    it "is what the compaction head and the derivation walk hold" do
+      head = Lain::Compaction::Head.from_timeline(timeline: line, keep_last: 1)
+
+      expect(head.messages).to eq(line.messages.first(2))
+      expect(Lain::Compaction::Derivation::Walk.of(line).messages).to eq(line.messages)
+    end
+
+    # The last block carries the render's own cache marker, which is not the projection's.
+    it "is the one projection the context, the head and the derivation walk consume" do
+      allow(described_class).to receive(:project) do |turns|
+        turns.map { |_| { "role" => "user", "content" => [{ "type" => "text", "text" => "marked" }] }.freeze }.freeze
+      end
+      texts = ->(messages) { messages.flat_map { |message| message.fetch("content").map { |b| b.fetch("text") } }.uniq }
+
+      rendered = Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024)
+                              .render(timeline: line, toolset: Lain::Toolset.new)
+
+      expect(texts.call(rendered.messages)).to eq(["marked"])
+      expect(texts.call(Lain::Compaction::Head.from_timeline(timeline: line, keep_last: 1).messages)).to eq(["marked"])
+      expect(texts.call(Lain::Compaction::Derivation::Walk.of(line).messages)).to eq(["marked"])
+    end
+
+    it "is the messages a real Context sends, byte for byte" do
+      context = Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024)
+      request = context.render(timeline: line, toolset: Lain::Toolset.new)
+
+      expect(Lain::Canonical.dump(request.messages.first(2))).to eq(Lain::Canonical.dump(line.messages.first(2)))
+      expect(request.messages.last.fetch("role")).to eq(line.messages.last.fetch("role"))
+    end
+  end
+
   # A Timeline is an element of the DAG's render order, not its owner: the
   # meet and the divergence are {Lain::Dag::RenderAncestry}'s to answer.
   describe "the render meet" do

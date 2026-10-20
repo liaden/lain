@@ -12,7 +12,7 @@ module Lain
   # TWO COMPACTION DESIGNS SHIP AND ONLY ONE IS ON THE CHAT PATH. The shipped one
   # is the DERIVED chain: {Source} builds a {Source::Derived}, which materializes
   # a second lineage in the session's own Store and replays
-  # `Derivation.projected` as the rendered messages. {Context::Compact} -- the
+  # `Timeline.project` as the rendered messages. {Context::Compact} -- the
   # render-time projection most of this module's doc comments were written
   # against -- is a BENCH ARM, reached only from offline constructors and
   # deliberately not retired.

@@ -112,6 +112,16 @@ module Lain
       ancestors.to_a.reverse
     end
 
+    # Shareable without a deep copy because a Turn's content is already frozen.
+    def messages
+      self.class.project(to_a)
+    end
+
+    # @param turns [Array<Event>] already walked, for a caller that needs them beside the messages
+    def self.project(turns)
+      turns.map { |turn| { "role" => turn.role, "content" => turn.content }.freeze }.freeze
+    end
+
     def length
       ancestors.count
     end

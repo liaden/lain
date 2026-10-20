@@ -194,10 +194,9 @@ module Lain
     NO_MESSAGES = [].freeze
     private_constant :NO_MESSAGES
 
-    # The Timeline as the message list a Provider sees. {Compaction::Head} and
-    # {Compaction::Derivation.projected} project the same two keys the same way,
-    # deliberately: a head must be measured, and a derived chain validated, in
-    # the very bytes this line produces.
+    # The Timeline as the message list a Provider sees: {Timeline#messages},
+    # which {Compaction::Head} and {Compaction::Derivation::Walk} also take, so
+    # a head is measured and a derived chain validated in the very bytes sent.
     #
     # NOT MADE AT ALL for a pipeline whose first stage substitutes its own list.
     # The walk is O(n) in history length and its result is discarded unread on
@@ -207,7 +206,7 @@ module Lain
     def projected(timeline, pipeline)
       return NO_MESSAGES if substituting?(pipeline)
 
-      timeline.to_a.map { |turn| { "role" => turn.role, "content" => turn.content } }
+      timeline.messages
     end
 
     # `respond_to?` and not a bare send, because the injected-pipeline duck is

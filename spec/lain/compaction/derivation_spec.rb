@@ -54,7 +54,7 @@ module DerivationFixtures
   def tool_result(id) = { "type" => "tool_result", "tool_use_id" => "toolu_#{id}", "content" => "ok" }
 
   def projected(timeline)
-    timeline.to_a.map { |turn| { "role" => turn.role, "content" => turn.content } }
+    timeline.messages
   end
 
   # Collapses the whole span it is offered, into one block naming how many
@@ -233,6 +233,12 @@ RSpec.describe Lain::Compaction::Derivation do
         walk = walk_of(9)
 
         expect(walk.messages.size).to eq(walk.turns.size)
+      end
+
+      it "takes its messages from the timeline's one projection" do
+        history = fixtures.history(9)
+
+        expect(described_class.of(history).messages).to eq(history.messages)
       end
 
       it "refuses a mismatched pair rather than zipping nil onto a turn" do

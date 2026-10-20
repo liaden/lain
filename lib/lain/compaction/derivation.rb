@@ -176,12 +176,6 @@ module Lain
         block_given? ? yield(derived, plan.seam(collapsed), plan.resume(derived)) : derived
       end
 
-      # {Head}'s projection verbatim: the derived chain has to be validated in
-      # the very bytes a render will send.
-      def self.projected(turns)
-        turns.map { |turn| { "role" => turn.role, "content" => turn.content } }
-      end
-
       # ONE walk of a chain, as a value: the turns it yielded and their
       # projection. Both are O(n) in history length and every consumer on the
       # render path needs both -- {Head} slices the projection, {Need} and
@@ -197,7 +191,7 @@ module Lain
       Walk = Data.define(:turns, :messages) do
         def self.of(timeline)
           turns = timeline.to_a
-          new(turns:, messages: Derivation.projected(turns))
+          new(turns:, messages: Timeline.project(turns))
         end
 
         # Both invariants live in the OBJECT and not in `.of`, so no Walk can
@@ -277,7 +271,7 @@ module Lain
       # way in, so these are the bytes the provider would have seen and this is
       # the SAME judgement the committed chain would get.
       def refuse_invalid(writes, before: NO_RANGES)
-        messages = Canonical.normalize(Derivation.projected(before) + writes.map(&:projection))
+        messages = Canonical.normalize(Timeline.project(before) + writes.map(&:projection))
         conversation = Context::Conversation.new(messages)
         return if conversation.valid?
 

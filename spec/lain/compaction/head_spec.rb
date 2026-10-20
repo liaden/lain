@@ -168,15 +168,13 @@ RSpec.describe Lain::Compaction::Head do
   # to the head and to the Compact. These examples build one by hand because
   # that is what the spec is about; nothing in `lib/` builds one anywhere else.
   describe "pins" do
-    def projected(line) = line.to_a.map { |turn| { "role" => turn.role, "content" => turn.content } }
-
     def pins_for(*pinned) = Lain::Context::PinnedMessages.new(pinned)
 
     # Scenario: the candidate head excludes pinned messages
     it "excludes a pinned turn, and its bytesize counts only the rest" do
       line = timeline_of(6)
-      pinned = projected(line)[2]
-      rest = projected(line)[0..3] - [pinned]
+      pinned = line.messages[2]
+      rest = line.messages[0..3] - [pinned]
       head = described_class.from_timeline(timeline: line, keep_last: 2, pins: pins_for(pinned))
 
       expect(head.messages).to eq(rest)
@@ -189,23 +187,23 @@ RSpec.describe Lain::Compaction::Head do
       unpinned = described_class.from_timeline(timeline: line, keep_last: 2,
                                                pins: Lain::Context::PinnedMessages::NONE)
 
-      expect(unpinned.messages).to eq(projected(line)[0..3])
+      expect(unpinned.messages).to eq(line.messages[0..3])
       expect(unpinned.messages).to eq(described_class.from_timeline(timeline: line, keep_last: 2).messages)
       expect(unpinned.bytesize).to eq(described_class.from_timeline(timeline: line, keep_last: 2).bytesize)
     end
 
     it "is empty when every droppable turn is pinned, which is what makes Source decline" do
       line = timeline_of(4)
-      head = described_class.from_timeline(timeline: line, keep_last: 2, pins: pins_for(*projected(line)[0..1]))
+      head = described_class.from_timeline(timeline: line, keep_last: 2, pins: pins_for(*line.messages[0..1]))
 
       expect(head).to be_empty
     end
 
     it "leaves a pinned turn inside the kept tail alone -- the tail is sliced off the FULL list" do
       line = timeline_of(6)
-      head = described_class.from_timeline(timeline: line, keep_last: 2, pins: pins_for(projected(line)[5]))
+      head = described_class.from_timeline(timeline: line, keep_last: 2, pins: pins_for(line.messages[5]))
 
-      expect(head.messages).to eq(projected(line)[0..3])
+      expect(head.messages).to eq(line.messages[0..3])
       expect(head.messages).to eq(described_class.from_timeline(timeline: line, keep_last: 2).messages)
     end
 

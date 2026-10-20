@@ -282,7 +282,7 @@ RSpec.describe Lain::Compaction::Source do
     snapshot = Lain::Compaction::SummarySnapshot.take(messages: head.messages,
                                                       eager: Lain::Compaction::Source::NoSummaries)
     derived = Lain::Compaction::Derivation.new(strategy: SourceSpecHeldSpan.new(snapshot), keep_last:).derive(line)
-    Lain::Canonical.dump(Lain::Compaction::Derivation.projected(derived.to_a)).bytesize -
+    Lain::Canonical.dump(Lain::Timeline.project(derived.to_a)).bytesize -
       Lain::Canonical.dump(messages).bytesize
   end
 
@@ -1407,7 +1407,7 @@ RSpec.describe Lain::Compaction::Source do
     def chain_at(digest, store) = Lain::Timeline.new(head_digest: digest, store:)
 
     def projection_of(digest, store)
-      Lain::Compaction::Derivation.projected(chain_at(digest, store).to_a)
+      Lain::Timeline.project(chain_at(digest, store).to_a)
     end
 
     it "renders the projection of the derived head the journal names" do

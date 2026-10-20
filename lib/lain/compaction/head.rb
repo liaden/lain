@@ -13,9 +13,9 @@ module Lain
     # and the measurement live here, and both collaborators are handed the same
     # object.
     #
-    # The projection in {.from_timeline} is `Context#render`'s, deliberately
-    # verbatim -- the head must be the bytes that will actually be rendered,
-    # not a parallel rendering of the same turns.
+    # {.from_timeline} takes {Timeline#messages}, the same projection
+    # `Context#render` sends, so the head is the bytes that will actually be
+    # rendered.
     #
     # This head is the candidate span MINUS whatever the pin policy exempts,
     # and NARROWED to what the configured strategy claims: a pinned message
@@ -48,7 +48,7 @@ module Lain
       #   `protected_patterns:`
       # @return [Head]
       def self.from_timeline(timeline:, keep_last:, pins: Context::PinnedMessages::NONE)
-        new(messages: timeline.to_a.map { |turn| { "role" => turn.role, "content" => turn.content } },
+        new(messages: timeline.messages,
             keep_last:, pins:)
       end
 

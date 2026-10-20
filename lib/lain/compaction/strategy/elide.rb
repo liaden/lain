@@ -17,7 +17,7 @@ module Lain
       # span.
       #
       # THE DIGEST IS A FINGERPRINT, NOT A STORE KEY. It hashes the RENDERED
-      # message ({Derivation.projected}'s shape) while the Store is keyed by
+      # message ({Timeline.project}'s shape) while the Store is keyed by
       # `Event#digest`, the digest of an event's PAYLOAD: different bytes,
       # different hash, so `store.key?` on one of these lines is false and
       # `store.fetch` raises MissingObject. What it buys is verifying that a
