@@ -554,6 +554,10 @@ Scenario: the chat ladder decides at the first rung that answers
 Spec file: `spec/lain/approval/ladder_spec.rb` (AC 1 to AC 5), `spec/lain/cli/switchboard_spec.rb` (AC 6, real `Switchboard`)
 
 **Stop and report if:**
+- `Middleware::Gate` treats any truthy answer from its rule as an approve, so a Gate handed a bare `Escalation::Surfaces`
+  (a Ruling, denials included) approves every call; production is safe only because the switchboard wraps the rung.
+  Found while executing T3: the Gate must read the ladder's `Outcome` decision, never truthiness, and the card may edit
+  `lib/lain/middleware/gate.rb` and its spec for it.
 - `Rules` requires a faults recorder with no Null default (`escalation.rb:411-413`); if `Faults` must survive as a journal sink for fault records, it becomes a reader of `Outcome#faults` at the edge, never a rung collaborator.
 - `spec/approval_consumer_discipline_spec.rb` enumerates who may build a ladder; the new builder is `Switchboard` only, and the spec is updated here.
 - `Judged#faulted` returns the asking rung's Ruling `.with(fault: true)` (`judged.rb:240-244`); under the value that is `Outcome#faults`, and if any surface reads `ruling.fault?` directly, name it.
@@ -2755,3 +2759,15 @@ After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]
   explicit tag); T43 landed `7879af7f`; T34 landed `77896a54`; T18 landed `c6a32e91`; T2 landed `da728e6b`; T27 landed `a448774c`
   (cargo test about 3.8 s warm); T29 landed `1c35cbf3`. Review rulings: T10's `Masking.render` keeps taking a plain list (AC 3
   needs the refusal), and the `Rows::Row` reference in `text_mask.rb` moves with T11.
+- 2026-10-19 21:17 started T3 (opus), T19, T44, T28, T30, T14, T15, T16, T17 (sonnet), cut at `4bd8a379`; T1 review (opus, high).
+- 2026-10-19 T17 stopped: DualLedger writes transitions before the seam hands over a journal. Ruled: one `Telemetry::Stamped` used at both sites (Driver for Sandbox and grades, the DualLedger tee for transitions), task the digest at both; `arm.rb` untouched. T10 approved on second review (touching regions are unreachable from `detect` today; the merge rule is held at `Spans` and `render`).
+- 2026-10-19 T28: AC 3's compile-fail case waived (cdylib-only crate cannot run doctests; trybuild not worth its dependency tree; the seal already refuses an impl without the macro).
+- 2026-10-19 T3 stopped on scope. Ruled: `authority:` defaults to `:automatic` on `decide`, `approve` and `deny` (omission fails safe, which is AC 2), every human surface passes `:human`; `Queue#rule` goes and the 6 specs handing a bare queue to a Gate wrap it as the switchboard does.
+- 2026-10-19 T30's AC 3 (mailbox round trip through `ChainWriter` over Rust events) moves to T37: `ChainWriter` builds Ruby events until the factory flips, and the flipped suite covers it. T30 found a digests-only `Ext::Event` raises ArgumentError (`EventData` always holds a payload); T31 owns that.
+- 2026-10-19 follow-up owed: T15 keeps `Compare::Priced`/`Unpriced` as aliases because `arm/driver.rb:393` (T17's file, in flight) names them; whichever of T15 and T17 lands second drops them.
+- 2026-10-19 T1 review (opus, high) REQUEST-CHANGES: `Triage#outside?` compared reasons, so under the join a protected word run from ~/.ssh or ~/Documents lost its final triage deny and bypass approved it. Fix: Triage asks a containment predicate on `Confined`. T1 edits `approval/escalation.rb` (Triage only) while T3 holds the same file; the second to land applies by 3-way patch.
+- 2026-10-19 T28 approved after a generator fix: a direct-parent-only below passed the generated transitivity test until plans gained a 3-commit chain (red in 3 of 3 fresh seeds after). cargo test measured 9.3 s once on a loaded box, close to the 10 s budget.
+- 2026-10-19 T44 approved; AC 1 is met through the exception path (`NoRemote` still raises and render maps it to status 1 with its words); the status-1 example uses the stopped case. `declarative/types.rb:54` stays with T42, whose Files list holds it.
+- 2026-10-19 21:50 landing window, hook green each, runtime log 983 spec files: T10 landed `1a3bb76d`; T16 landed `29b74d1e`;
+  T15 landed `8b7a0215`; T44 landed `f0f073eb`; T28 landed `0ef887a1`; T30 landed `39a564ac`. T3's implementer ran specs
+  during part of this window (a resume raced the watcher); every hook was green, so no red needed the flaky procedure.
