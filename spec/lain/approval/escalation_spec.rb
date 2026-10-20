@@ -12,17 +12,6 @@ require "tmpdir"
 module EscalationSpecSupport
   Ruling = Lain::Approval::Escalation::Ruling
 
-  # The surface nobody remembered to classify -- a machine judge added after
-  # `Surfaces::AUTOMATIC` was last read, which is exactly how the secret oracle
-  # surface arrived. It exists so the generating-rule guard can be shown to
-  # FIRE, rather than merely to pass; deliberately outside the `Lain::`
-  # namespace so it is not itself mistaken for a surface the harness ships.
-  class UnclassifiedSurface < Lain::Approval::QueueSurface
-    SURFACE = "unclassified_spec_surface"
-
-    def judges?(_outstanding) = false
-  end
-
   # A rule with no opinion that says why, and one with neither.
   class Explaining < Lain::Approval::Rule
     def decide(_call) = nil
@@ -614,14 +603,14 @@ RSpec.describe Lain::Approval::Escalation do
   # rung. A human is not a later rule -- they are the authority the whole ladder
   # exists to escalate to, and suppressing their answer inverts it.
   describe "a fault, and who is entitled to answer over one" do
-    def settled_by(rung, surface:, approve: true, context: nil)
+    def settled_by(rung, surface:, approve: true, context: nil, **authority)
       queue = Lain::Approval::Queue.new(journal:, timeout: 1)
       built = ladder(rung, described_class::Surfaces.new(queue))
       answer = nil
       Sync do |task|
         asked = task.async { answer = built.call(effect, context) }
         pending = task.with_timeout(1) { queue.dequeue }
-        approve ? pending.approve(surface:) : pending.deny(surface:)
+        approve ? pending.approve(surface:, **authority) : pending.deny(surface:, **authority)
         task.with_timeout(1) { asked.wait }
       end
       answer
@@ -630,18 +619,18 @@ RSpec.describe Lain::Approval::Escalation do
     let(:faulting) { rules_rung(EscalationSpecSupport::Raiser.new) }
 
     it "honours a human surface's allow over a fault, rather than wedging the session" do
-      expect(settled_by(faulting, surface: "tty")).to be(true)
+      expect(settled_by(faulting, surface: "tty", authority: :human)).to be(true)
     end
 
     it "records that allow as faulted, naming the rung that broke" do
-      settled_by(faulting, surface: "tty")
+      settled_by(faulting, surface: "tty", authority: :human)
 
       expect(rulings.last).to include("rung" => "surfaces", "verdict" => "allow", "faulted" => true)
       expect(rulings.last["reason"]).to include("rules")
     end
 
     it "names the requester on the human allow it honours over a fault" do
-      settled_by(faulting, surface: "tty", context: Struct.new(:requester).new("researcher"))
+      settled_by(faulting, surface: "tty", authority: :human, context: Struct.new(:requester).new("researcher"))
 
       expect(rulings.last).to include("verdict" => "allow", "faulted" => true, "requester" => "researcher")
     end
@@ -679,77 +668,35 @@ RSpec.describe Lain::Approval::Escalation do
                                       "tool_use_id" => "tu_1")
     end
 
-    # `AUTOMATIC`'s own comment predicted this exactly -- "an unlisted
-    # automatic surface's allow survives a fault, and that one fails visibly in
-    # a review of a file whose whole subject is adjudication" -- and one card
-    # later a LOCAL 4B MODEL releasing credential-bearing files was that
-    # surface. Unlisted, it counted as human, so the one surface built to
-    # release secrets was the one this ladder trusted MOST.
     it "suppresses the secret oracle's allow too: a local model is a machine, not a person" do
       expect(settled_by(faulting, surface: Lain::Approval::SecretSurface::SURFACE)).to be(false)
       expect(rulings.last).to include("rung" => "rules", "verdict" => "deny")
     end
 
-    # THE GENERATING RULE, and it has to actually generate. A first version of
-    # this guard listed the decider names by hand -- which re-stated exactly
-    # what AUTOMATIC already said, so a NEW machine surface was accounted for by
-    # a literal that did not know about it, and the guard stayed green while the
-    # ladder called it human. That is the same defect, one surface later.
-    #
-    # {Approval::QueueSurface}'s subclass list is the generator, and it covers
-    # precisely the risky class: a surface that is a MACHINE judge. Descended
-    # rather than direct, so subclassing a surface does not escape it.
-    #
-    # Filtered to the `Lain::` namespace because a spec's own fixture surfaces
-    # (queue_surface_spec's, and {EscalationSpecSupport::UnclassifiedSurface}
-    # below) are subclasses too, and would otherwise make this guard depend on
-    # which files share a worker. Every surface this harness SHIPS is defined
-    # under `Lain::Approval::`; the two examples after the guard pin both halves
-    # of that filter, so it cannot quietly widen or empty.
-    def machine_surfaces
-      descended(Lain::Approval::QueueSurface)
-        .select { |klass| klass.name.to_s.start_with?("Lain::") }
-        .map { |klass| klass::SURFACE }
+    # Scenario: a new machine surface cannot count as human by omission
+    it "suppresses an allow from a surface the ladder has never heard of, answering as automatic" do
+      expect(settled_by(faulting, surface: "unclassified_spec_surface", authority: :automatic)).to be(false)
+      expect(rulings.last).to include("rung" => "rules", "verdict" => "deny")
     end
 
-    def descended(klass) = klass.subclasses.flat_map { |sub| [sub, *descended(sub)] }
-
-    def human_surfaces
-      [Lain::Frontend::ApprovalPolicy::SURFACE, Lain::Frontend::Neovim::ApprovalView::SURFACE]
+    it "suppresses that allow when the surface declares no authority at all" do
+      expect(settled_by(faulting, surface: "unclassified_spec_surface")).to be(false)
     end
 
-    def unaccounted(names) = names - described_class::Surfaces::AUTOMATIC - human_surfaces
-
-    it "accounts for every machine surface the harness ships, without being told their names" do
-      expect(unaccounted(machine_surfaces)).to be_empty
-    end
-
-    it "derives from the subclass list, so a surface added later is seen with nobody editing this spec" do
-      expect(descended(Lain::Approval::QueueSurface))
-        .to include(EscalationSpecSupport::UnclassifiedSurface, Lain::Approval::SecretSurface)
-    end
-
-    it "reports an unclassified machine surface rather than passing it as a person" do
-      expect(unaccounted([EscalationSpecSupport::UnclassifiedSurface::SURFACE]))
-        .to contain_exactly(EscalationSpecSupport::UnclassifiedSurface::SURFACE)
-    end
-
-    it "does not mistake a spec's own fixture for a surface this harness ships" do
-      expect(machine_surfaces).to include("secret_oracle")
-      expect(machine_surfaces).not_to include(EscalationSpecSupport::UnclassifiedSurface::SURFACE)
-    end
-
-    it "never files one name as both a machine and a person" do
-      expect(described_class::Surfaces::AUTOMATIC & human_surfaces).to be_empty
+    # Scenario: a human's approve after a fault still stands
+    it "honours a human's allow from any surface name, and records the fault" do
+      expect(settled_by(faulting, surface: "secret_oracle", authority: :human)).to be(true)
+      expect(rulings.last).to include("rung" => "surfaces", "verdict" => "allow", "faulted" => true,
+                                      "authority" => "human")
     end
 
     it "leaves a clean human allow unmarked" do
-      expect(settled_by(EscalationSpecSupport::Silent.new, surface: "tty")).to be(true)
+      expect(settled_by(EscalationSpecSupport::Silent.new, surface: "tty", authority: :human)).to be(true)
       expect(rulings.last).to include("rung" => "surfaces", "verdict" => "allow", "faulted" => false)
     end
 
     it "does not resurrect a human's denial into an approval" do
-      expect(settled_by(faulting, surface: "tty", approve: false)).to be(false)
+      expect(settled_by(faulting, surface: "tty", authority: :human, approve: false)).to be(false)
     end
   end
 
@@ -1413,7 +1360,7 @@ RSpec.describe Lain::Approval::Escalation do
         built = ladder(EscalationSpecSupport::Fixed.new("rules", :allow), described_class::Surfaces.new(queue))
         parked = task.async { built.rule(effect, carried(barred: true)) }
         pending = task.with_timeout(1) { queue.dequeue }
-        pending.approve(surface: Lain::Frontend::ApprovalPolicy::SURFACE)
+        pending.approve(surface: Lain::Frontend::ApprovalPolicy::SURFACE, authority: :human)
 
         expect(task.with_timeout(1) { parked.wait }).to be_allow.and be_human
         expect(rulings.first).to include("rung" => "rules", "verdict" => "abstain")

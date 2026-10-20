@@ -244,6 +244,14 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       expect(described_class::SURFACE).not_to eq(Lain::Frontend::ApprovalPolicy::SURFACE)
     end
 
+    it "signs its answer as a person's, approve or deny" do
+      signed = %w[approve deny].map do |verdict|
+        gated { |queue| queue.first.tap { view.decide(1, verdict, generation:) }.authority }[:outcome]
+      end
+
+      expect(signed).to eq(%i[human human])
+    end
+
     it "answers the row the cursor is on, not the first one" do
       result = gated(await: true, calls: [effect("bash", { "command" => "one" }, "tu_1"),
                                           effect("write", { "path" => "two" }, "tu_2")]) do |_queue|

@@ -31,6 +31,10 @@ module Lain
       # by the cancellation itself.
       ABANDONED_SURFACE = "abandoned"
 
+      # Who stood behind an answer. Declared by the surface that gave it, never
+      # read off the surface's name, so a surface nobody classified is a machine.
+      AUTHORITIES = %i[automatic human].freeze
+
       # Generous because the answerer is a human at a terminal: a bound, not a
       # hurry -- an abandoned session must eventually refuse.
       DEFAULT_TIMEOUT = 300
@@ -132,7 +136,7 @@ module Lain
       # under and what the journal keeps.
       class Pending
         attr_reader :requester, :label, :tool, :tool_use_id, :input, :outstanding, :surface, :decision, :latency, :cwd,
-                    :within, :timeout, :reason
+                    :within, :timeout, :reason, :authority
 
         # Defaulting here is NOT the ledger's no-default rule bent: a defaulted
         # LEDGER lets a forgotten injection become a second ledger whose
@@ -196,13 +200,21 @@ module Lain
         # `reason` is the human's own words for a denial, which the model reads
         # as the last clause of its tool result. Flattened to one line with no
         # control bytes, so it cannot open a line or a sequence of its own.
+        #
+        # `authority` defaults to automatic so that a surface which forgets to
+        # declare fails safe: its allow is suppressed over a fault like any
+        # machine's. Only a surface a person answers passes `:human`.
+        #
+        # @raise [ArgumentError] for an authority outside {AUTHORITIES}
         # rubocop:disable Naming/PredicateMethod -- a COMMAND whose Boolean
         # reports whether it won the race, not a query; `decide?` would misname
         # the mutation the way `Timeline#commit`'s rename lesson warns about.
-        def decide(verdict, surface:, reason: nil)
+        def decide(verdict, surface:, authority: :automatic, reason: nil)
+          raise ArgumentError, "unknown authority #{authority.inspect}" unless AUTHORITIES.include?(authority)
           return false if decided?
 
           @surface = surface.to_s
+          @authority = authority
           @decision = verdict ? :approve : :deny
           @reason = flattened(reason) unless verdict
           @latency = @clock.call - @asked_at
@@ -265,8 +277,9 @@ module Lain
           value if value.is_a?(String)
         end
 
-        def approve(surface:) = decide(true, surface:)
-        def deny(surface:, reason: nil) = decide(false, surface:, reason:)
+        def approve(surface:, authority: :automatic) = decide(true, surface:, authority:)
+        def deny(surface:, authority: :automatic, reason: nil) = decide(false, surface:, authority:, reason:)
+        def human? = authority == :human
         def decided? = @promise.resolved?
         def approved? = @decision == :approve
         def timed_out? = @surface == TIMEOUT_SURFACE
@@ -341,9 +354,6 @@ module Lain
         @parked = []
         @denials = {}
         @calls = {}
-        # Built here, not as a constant: {Escalation::Surfaces} names this
-        # class's surfaces in its own body, so a constant here is a load cycle.
-        @machine_surfaces = [*Escalation::Surfaces::AUTOMATIC, ::Lain::Frontend::ApprovalPolicy::FAULT_SURFACE].freeze
       end
 
       # @param seconds [Numeric]
@@ -358,18 +368,12 @@ module Lain
       # the surface that answers runs as a SIBLING fiber in the same reactor.
       def call(effect, context) = adjudicate(effect, context).approved?
 
-      # The same lifecycle as a ruling, for a Gate that holds the queue
-      # directly. Settled exactly as the ladder's asking rung settles it, so
-      # the surface's authority is read in one place, and never final: a
-      # surface that said no this time can say yes the next.
-      def rule(effect, context) = Escalation::Surfaces.new(self).call(effect, context)
-
       # The same lifecycle, answering the SETTLED {Pending} instead of its
       # Boolean. A caller that has to attribute the verdict needs the SURFACE
-      # that made it -- {Approval::Escalation} treats a human's approval and an
-      # {SecretSurface}'s as different kinds of authority -- and a Boolean cannot
-      # carry that. {#rule} is what a {Middleware::Gate} holding the queue
-      # asks, and {#call} the Boolean for a caller that needs only the answer.
+      # that made it, and the authority that surface declared -- the ladder
+      # honours a human's allow over a fault and suppresses a machine's -- and
+      # a Boolean cannot carry that. {#call} is the Boolean for a caller that
+      # needs only the answer.
       #
       # `outstanding:` is how the one arm holding a file's bytes tells the
       # surfaces what a yes would release. Answering the settled {Pending} is
@@ -503,7 +507,9 @@ module Lain
       def admit(effect, context, outstanding)
         pending = Pending.new(effect:, requester: Queue.requester_for(context, @requester),
                               label: Queue.label_for(context, @requester), clock: @clock,
-                              timeout: @timeout, wall: @wall, outstanding:, humans_only: Escalation.barred?(context),
+                              timeout: @timeout, wall: @wall, outstanding:,
+                              humans_only: context.respond_to?(:automatic_approval_barred?) &&
+                                           context.automatic_approval_barred?,
                               judge_deferred: context.respond_to?(:judge_deferred?) && context.judge_deferred?,
                               notes: context.respond_to?(:parked_because) ? context.parked_because : [],
                               cwd: ::Lain::Session.cwd_of(context),
@@ -580,7 +586,7 @@ module Lain
 
       # A machine's no, the clock's, or one a fault forced, is not a person's
       # judgement about a path, so none of these is held against later calls.
-      def human_denial?(pending) = !pending.approved? && !@machine_surfaces.include?(pending.surface)
+      def human_denial?(pending) = pending.human? && !pending.approved?
 
       def below(path) = path.end_with?("/") ? path : "#{path}/"
 

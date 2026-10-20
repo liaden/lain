@@ -23,10 +23,9 @@ module Lain
     # and first-answer-wins makes a human who answered first the winner. Under
     # `--non-interactive` no queue exists at all, so this surface never runs.
     class SecretSurface < QueueSurface
-      # Listed in {Escalation::Surfaces::AUTOMATIC}, which is what stops the
-      # ladder from reading a 4B model's release of a credential as a person's:
-      # an unlisted surface counts as HUMAN there, and a human allow survives a
-      # fault that an automatic one does not.
+      # Decides with the automatic authority, which is what stops the ladder
+      # from reading a 4B model's release of a credential as a person's: a
+      # human allow survives a fault that an automatic one does not.
       SURFACE = "secret_oracle"
 
       # Deliberately provisional: a local model's self-reported confidence is a

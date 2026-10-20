@@ -461,7 +461,8 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # model reads rather than the Boolean beneath it.
   def refusal_through_gate(queue, effect)
     call = Lain::Effect::ToolCall.new(tool_use_id: effect.tool_use_id, name: effect.name, input: effect.input)
-    env = Lain::Middleware::Gate.new(policy: queue).call({ effect: Lain::Effect::Approval.new(effect: call) }) do
+    gate = Lain::Middleware::Gate.new(policy: asking_ladder(queue))
+    env = gate.call({ effect: Lain::Effect::Approval.new(effect: call) }) do
       raise "a denied call reached the tool"
     end
     env.fetch(:result)

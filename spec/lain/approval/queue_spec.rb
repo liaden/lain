@@ -75,11 +75,11 @@ RSpec.describe Lain::Approval::Queue do
     end.new
   end
 
-  # The queue as a gate's policy, in front of the one gated tool, driven the
+  # The ask ladder over the queue, in front of the one gated tool, driven the
   # way a turn drives a call: through the runner, into a real Live.
   def gate_over(runs)
     toolset = Lain::Toolset.new([gated_tool(runs)])
-    gate = Lain::Middleware::Gate.new(policy: queue)
+    gate = Lain::Middleware::Gate.new(policy: asking_ladder(queue))
     ->(effect) { dispatch_call(effect.name, effect.input, id: effect.tool_use_id, toolset:, layers: [gate]) }
   end
 
@@ -171,15 +171,15 @@ RSpec.describe Lain::Approval::Queue do
       expect(runs).to be_empty
     end
 
-    # The queue as a Gate policy answers a ruling itself, so it is never
-    # adapted, and its refusal is never final: a surface answering no this
+    # A refusal through the queue is never final: a surface answering no this
     # time could answer yes the next.
-    it "answers #rule with the surface's ruling, never a final one" do
+    it "rules through the asking rung with the surface's answer, never a final one" do
+      asking = Lain::Approval::Escalation::Surfaces.new(queue)
       Sync do |task|
-        denied = task.async { queue.rule(tool_call, nil) }
-        queue.dequeue.deny(surface: "tty")
-        approved = task.async { queue.rule(tool_call, nil) }
-        queue.dequeue.approve(surface: "tty")
+        denied = task.async { asking.call(tool_call, nil) }
+        queue.dequeue.deny(surface: "tty", authority: :human)
+        approved = task.async { asking.call(tool_call, nil) }
+        queue.dequeue.approve(surface: "tty", authority: :human)
 
         expect(denied.wait).to have_attributes(verdict: :deny, authority: :human, final?: false)
         expect(approved.wait).to be_allow
@@ -312,6 +312,50 @@ RSpec.describe Lain::Approval::Queue do
       end
 
       expect(seen.window_face).to eq("1:30")
+    end
+  end
+
+  # Scenario: a surface's authority travels with its answer
+  # Scenario: the queue no longer names the ladder
+  describe "who decided a parked call" do
+    def ruled(surface:, **answered)
+      asking = Lain::Approval::Escalation::Surfaces.new(queue)
+      Sync do |task|
+        ruling = task.async { asking.call(tool_call, nil) }
+        queue.dequeue.approve(surface:, **answered)
+        ruling.wait
+      end
+    end
+
+    it "names the authority each surface declared, not one read off its name" do
+      machine = ruled(surface: "tty", authority: :automatic)
+      person = ruled(surface: Lain::Approval::SecretSurface::SURFACE, authority: :human)
+
+      expect([machine.authority, person.authority]).to eq(%i[automatic human])
+    end
+
+    it "counts a surface that declares nothing as automatic" do
+      expect(ruled(surface: "tty")).not_to be_human
+    end
+
+    it "refuses an authority no ruling knows" do
+      pending = described_class::Pending.new(effect: tool_call, requester: "agent", clock: -> { 0.0 })
+
+      expect { pending.decide(true, surface: "tty", authority: :person) }.to raise_error(ArgumentError, /person/)
+      expect(pending).not_to be_decided
+    end
+
+    it "decides as automatic when the surface names no authority" do
+      pending = described_class::Pending.new(effect: tool_call, requester: "agent", clock: -> { 0.0 })
+      pending.decide(true, surface: "tty")
+
+      expect(pending.authority).to eq(:automatic)
+    end
+
+    it "references no Escalation constant in its own source" do
+      source = File.read(described_class.instance_method(:adjudicate).source_location.first)
+
+      expect(source.scan(/Escalation\S*/)).to be_empty
     end
   end
 
@@ -575,7 +619,7 @@ RSpec.describe Lain::Approval::Queue do
     end
 
     def denied_by_human(effect, context = nil, reason: "not your business")
-      settled(effect, context) { |pending| pending.deny(surface: "spec", reason:) }
+      settled(effect, context) { |pending| pending.deny(surface: "spec", authority: :human, reason:) }
     end
 
     it "answers the human's reason for the denied path and anything under it, for the same requester" do
@@ -628,7 +672,7 @@ RSpec.describe Lain::Approval::Queue do
       homed = described_class.new(journal:, home: "/home/u")
       Sync do |task|
         run = task.async { homed.adjudicate(lists("~/notes"), in_dir("/srv/p")) }
-        homed.dequeue.deny(surface: "spec", reason: "mine")
+        homed.dequeue.deny(surface: "spec", authority: :human, reason: "mine")
         run.wait
       end
 
@@ -675,7 +719,7 @@ RSpec.describe Lain::Approval::Queue do
         homed = described_class.new(journal:, home: "/home/u")
         Sync do |task|
           run = task.async { homed.adjudicate(runs("cat ~/notes"), in_dir("/srv/p")) }
-          homed.dequeue.deny(surface: "spec", reason: "mine")
+          homed.dequeue.deny(surface: "spec", authority: :human, reason: "mine")
           run.wait
         end
 
@@ -833,6 +877,12 @@ RSpec.describe Lain::Approval::Queue do
       denied_by_human(lists("/home/\0x"))
 
       expect(queue.denied(requester: "agent", path: "/home")).to be_nil
+    end
+
+    it "remembers no deny a surface left undeclared" do
+      settled(lists("/tmp/x")) { |pending| pending.deny(surface: "tty") }
+
+      expect(queue.denied(requester: "agent", path: "/tmp/x")).to be_nil
     end
 
     it "remembers nothing a machine or a fault decided" do

@@ -55,7 +55,7 @@ RSpec.describe "auto approval asks the judge before a human", :seam do
     Sync do |task|
       asked = task.async { agent.ask("clean the build") }
       parked = task.with_timeout(5) { wiring.approvals.dequeue }
-      parked.deny(surface: "tty")
+      parked.deny(surface: "tty", authority: :human)
       task.with_timeout(5) { asked.wait }
       parked
     end
@@ -118,7 +118,7 @@ RSpec.describe "auto approval asks the judge before a human", :seam do
       Sync do |task|
         asked = task.async { agent.ask("show me the env file") }
         parked = task.with_timeout(5) { wiring.approvals.dequeue }
-        parked.deny(surface: "tty")
+        parked.deny(surface: "tty", authority: :human)
         task.with_timeout(5) { asked.wait }
         parked
       end
@@ -175,7 +175,7 @@ RSpec.describe "auto approval asks the judge before a human", :seam do
       agent = chat_agent
       Sync do |task|
         asked = task.async { agent.ask("look around") }
-        task.with_timeout(5) { wiring.approvals.dequeue }.deny(surface: "tty", reason:)
+        task.with_timeout(5) { wiring.approvals.dequeue }.deny(surface: "tty", authority: :human, reason:)
         later = task.async { loop { wiring.approvals.dequeue.deny(surface: "tty") } }
         task.with_timeout(5) { asked.wait }
         later.stop

@@ -298,12 +298,12 @@ RSpec.describe Lain::CLI::ToolGuard do
     end
 
     it "refuses the child's later call under the denied path without parking it", :seam do
-      board = ToolGuardSpecBoard.new(approvals: queue, policy: queue)
+      board = ToolGuardSpecBoard.new(approvals: queue, policy: asking_ladder(queue))
       child = described_class.child_stack(chronicle, board, Lain::WorkerEnv.default, requester: "researcher")
 
       later = Sync do |task|
         first = task.async { listed(child, "/home") }
-        queue.dequeue.deny(surface: "tty", reason: "not your business")
+        queue.dequeue.deny(surface: "tty", authority: :human, reason: "not your business")
         first.wait
         task.with_timeout(5) { listed(child, "/home/joel") }
       end
@@ -591,7 +591,8 @@ RSpec.describe Lain::CLI::ToolGuard do
     end
 
     it "refuses a write outside it by name, before any approval is asked" do
-      refused = written(held(ToolGuardSpecBoard.new(approvals: queue, policy: queue)), "/home/tester/project/a.rb")
+      board = ToolGuardSpecBoard.new(approvals: queue, policy: asking_ladder(queue))
+      refused = written(held(board), "/home/tester/project/a.rb")
 
       expect(refused).to have_attributes(is_error: true, content: start_with("write_file refused"))
       expect(refused.content).to include(@lease)
@@ -691,7 +692,7 @@ RSpec.describe Lain::CLI::ToolGuard do
   describe "the builder an approval judge spawns through" do
     let(:toolset) { Lain::Toolset.new([Lain::Tools::ReadFile.new]) }
     let(:secret) { "AKIAIOSFODNN7EXAMPLE" }
-    let(:parking) { ToolGuardSpecBoard.new(approvals: queue, policy: queue) }
+    let(:parking) { ToolGuardSpecBoard.new(approvals: queue, policy: asking_ladder(queue)) }
 
     around do |example|
       Dir.mktmpdir do |dir|
@@ -1401,7 +1402,7 @@ RSpec.describe Lain::CLI::ToolGuard do
       Sync do |task|
         ran = task.async { run_bash(board, command, id: "tu_2", **) }
         pending = task.with_timeout(5) { board.approvals.dequeue }
-        pending.decide(approve, surface: Lain::Frontend::ApprovalPolicy::SURFACE)
+        pending.decide(approve, surface: Lain::Frontend::ApprovalPolicy::SURFACE, authority: :human)
         [pending, task.with_timeout(30) { ran.wait }]
       end
     end

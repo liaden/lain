@@ -222,7 +222,14 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     approval = pending
     policy_for("").decide(approval)
 
-    expect(approval).to have_attributes(surface: described_class::FAULT_SURFACE)
+    expect(approval).to have_attributes(surface: described_class::FAULT_SURFACE, authority: :automatic)
+  end
+
+  it "signs a typed answer as a person's, approve or deny" do
+    approved = pending.tap { policy_for("y\n").decide(_1) }
+    denied = pending.tap { policy_for("n\n").decide(_1) }
+
+    expect([approved, denied].map(&:authority)).to eq(%i[human human])
   end
 
   it "is a no-op on a pending another surface already decided" do

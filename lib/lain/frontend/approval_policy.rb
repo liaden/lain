@@ -34,9 +34,9 @@ module Lain
       # {Approval::Escalation} weighs a person's authority differently from a
       # machine's.
       #
-      # Listed in {Approval::Escalation::Surfaces::AUTOMATIC}, so the ladder weighs
-      # it as a machine's. EOF at the prompt is signed with it too: a closed
-      # stdin is nobody answering.
+      # Decided with the automatic authority, so the ladder weighs it as a
+      # machine's. EOF at the prompt is signed with it too: a closed stdin is
+      # nobody answering.
       FAULT_SURFACE = "tty_fault"
 
       # Anything else -- a bare "enter", "n", garbage, or EOF -- denies. Approving
@@ -193,7 +193,9 @@ module Lain
         return false if pending.decided?
 
         answer = read_until_decided(pending)
-        pending.decide(affirmative?(answer), surface: answer.nil? ? FAULT_SURFACE : SURFACE, reason: reason_in(answer))
+        return pending.deny(surface: FAULT_SURFACE) if answer.nil?
+
+        pending.decide(affirmative?(answer), surface: SURFACE, authority: :human, reason: reason_in(answer))
       end
 
       private

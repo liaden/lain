@@ -1074,8 +1074,9 @@ chat's `num_batch`/`num_ctx`/`temperature` — it still evicts the resident mode
 round 17), which is residency, not the re-key the chunk fixed.
 
 Finally, the provenance rule: every decision from this surface wears `secret_oracle` in the journal,
-and `secret_oracle` is listed in `Escalation::Surfaces::AUTOMATIC`. **An unlisted surface counts as
-human there**, and a human allow survives a fault that an automatic one does not — so a 4B model's
+and the oracle decides with the automatic authority. **Each surface declares its own authority when
+it decides, and nothing is inferred from a list**: a surface that declares none is automatic, and a
+human allow survives a fault that an automatic one does not — so a 4B model's
 release of a credential reading as a person's is a real, checkable defect. Confirm the surface name
 on the record, and confirm a fault after an oracle allow does **not** survive.
 

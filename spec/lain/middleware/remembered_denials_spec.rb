@@ -251,7 +251,7 @@ RSpec.describe Lain::Middleware::RememberedDenials do
     def denied_by_human(effect)
       Sync do |task|
         run = task.async { queue.adjudicate(effect, in_project) }
-        queue.dequeue.deny(surface: "spec", reason: "keep out")
+        queue.dequeue.deny(surface: "spec", authority: :human, reason: "keep out")
         run.wait
       end
     end

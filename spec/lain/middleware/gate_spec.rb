@@ -539,7 +539,7 @@ RSpec.describe Lain::Middleware::Gate do
       it "reaches the parked Pending and its approval_pending record", :seam do
         journal = StringIO.new
         queue = Lain::Approval::Queue.new(journal: Lain::Journal.new(io: journal), timeout: 0.05)
-        gate = described_class.new(policy: queue, sensitivity:)
+        gate = described_class.new(policy: asking_ladder(queue), sensitivity:)
 
         result, = Sync do
           through(gate, tool_call("read_file", { "path" => ".env.local" }), tool: shipped.fetch("read_file"))

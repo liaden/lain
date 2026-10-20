@@ -153,7 +153,7 @@ RSpec.describe "Subagent gating" do
     let(:queue) { Lain::Approval::Queue.new(journal: Lain::Journal.new(io: journal_io)) }
 
     it "parks its bash call on the same queue the parent's gate holds" do
-      tool = build_subagent(provider: mock(*calls("bash", { "text" => "rm -rf /" })), gate_policy: queue)
+      tool = build_subagent(provider: mock(*calls("bash", { "text" => "rm -rf /" })), gate_policy: asking_ladder(queue))
 
       Sync do |task|
         spawn = task.async { tool.call({ "prompt" => "go" }, invocation) }
@@ -170,7 +170,7 @@ RSpec.describe "Subagent gating" do
     end
 
     it "runs the call once the queue approves it, so the gate is a gate and not a wall" do
-      tool = build_subagent(provider: mock(*calls("bash")), gate_policy: queue)
+      tool = build_subagent(provider: mock(*calls("bash")), gate_policy: asking_ladder(queue))
 
       Sync do |task|
         spawn = task.async { tool.call({ "prompt" => "go" }, invocation) }

@@ -67,7 +67,7 @@ RSpec.describe "A human's deny on a gated path, remembered for its requester", :
         loop do
           pending = wiring.approvals.dequeue
           seen << [pending.tool, pending.requester]
-          pending.deny(surface: "spec", reason: "not your business")
+          pending.deny(surface: "spec", authority: :human, reason: "not your business")
         end
       end
       task.with_timeout(30) { agent.ask("look around") }

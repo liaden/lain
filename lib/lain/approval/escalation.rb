@@ -104,7 +104,7 @@ module Lain
         # on which surface won the race for the pending, and this is the whole
         # reason a {SecretSurface}'s allow is suppressed over a fault where a
         # human's is honoured.
-        AUTHORITIES = %i[automatic human].freeze
+        AUTHORITIES = Queue::AUTHORITIES
 
         def self.allow(rung:, because:, **rest) = new(verdict: :allow, rung:, reason: because, **rest)
         def self.deny(rung:, because:, **rest) = new(verdict: :deny, rung:, reason: because, **rest)
@@ -775,36 +775,6 @@ module Lain
       class Surfaces
         NAME = "surfaces"
 
-        # THE GENERATING RULE: a surface belongs here when no person is behind
-        # it. Every surface that decides a {Queue::Pending} today is accounted
-        # for; the human ones are `Frontend::ApprovalPolicy::SURFACE` and
-        # `Frontend::Neovim::ApprovalView::SURFACE`.
-        #
-        # An unknown name therefore counts as HUMAN. The two failure modes are
-        # structurally symmetric, so what decides it is WHICH WAY the error
-        # runs. Reading an unlisted surface as automatic would suppress its
-        # allow over a fault -- the wedge this class's comment refuses, reopened
-        # at the frontend boundary, where an author has least reason to suspect
-        # that the NAME of an approval surface is security-relevant. Reading it
-        # as human costs the other direction, and that one fails visibly in a
-        # review of a file whose whole subject is adjudication.
-        #
-        # The deeper defect is that authority is INFERRED from a surface name
-        # one layer down, when the decider always knew what it was -- which is
-        # why {Ruling} needed an `authority` member at all. The fix is
-        # `Pending#decide(verdict, surface:, authority:)` with NO default, so a
-        # surface that forgot to declare is a loud ArgumentError at one of five
-        # call sites rather than a silent reclassification here.
-        #
-        # `secret_oracle` is what that predicted: a 4B LOCAL MODEL releasing
-        # files the detector flagged as holding credentials, and unlisted it
-        # counted as HUMAN -- so the one surface built to release secrets was
-        # the one this ladder trusted most, its allow surviving a fault that
-        # any other machine's does not. Listed here, it is
-        # `:automatic` like every other machine.
-        AUTOMATIC = [SecretSurface::SURFACE, Queue::TIMEOUT_SURFACE, Queue::ABANDONED_SURFACE,
-                     ::Lain::Frontend::ApprovalPolicy::FAULT_SURFACE].freeze
-
         APPROVED = "a surface approved this call"
         REFUSED = "a surface refused this call, or the window closed and the fail-closed doctrine did"
 
@@ -813,9 +783,8 @@ module Lain
         # rather than a shape it must trust.
         attr_reader :queue
 
-        def initialize(queue, automatic: AUTOMATIC)
+        def initialize(queue)
           @queue = queue
-          @automatic = automatic.to_a.map { |surface| -surface.to_s }.freeze
           freeze
         end
 
@@ -826,7 +795,7 @@ module Lain
         # throw a person's approval away.
         def call(effect, context)
           pending = @queue.adjudicate(effect, context)
-          authority = @automatic.include?(pending.surface) ? :automatic : :human
+          authority = pending.authority
           return Ruling.allow(rung: NAME, because: "#{APPROVED} (#{pending.surface})", authority:) if pending.approved?
 
           Ruling.deny(rung: NAME, because: "#{REFUSED} (#{pending.surface})", authority:,

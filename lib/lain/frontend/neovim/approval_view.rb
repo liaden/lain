@@ -419,7 +419,7 @@ module Lain
         end
 
         def settled(pending, answer, line, said)
-          return lost(pending, line) unless pending.decide(answer, surface: SURFACE, reason: said)
+          return lost(pending, line) unless pending.decide(answer, surface: SURFACE, authority: :human, reason: said)
 
           Decided.new(pending:, report: "#{pending.tool} #{outcome(pending)}")
         end

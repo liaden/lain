@@ -97,7 +97,9 @@ RSpec.describe Lain::Approval::Judged do
   end
 
   it "parks an unsure call for the human, journaling that the judge deferred" do
-    ruling = ruled(rung(spawn_answering("defer")), bash) { |pending| pending.approve(surface: "human_spec") }
+    ruling = ruled(rung(spawn_answering("defer")), bash) do |pending|
+      pending.approve(surface: "human_spec", authority: :human)
+    end
 
     expect([ruling.verdict, ruling.authority]).to eq(%i[allow human])
     expect(escalations.sole).to include("rung" => "auto", "verdict" => "abstain", "reason" => "deferred",
@@ -900,7 +902,7 @@ RSpec.describe Lain::Approval::Judged do
 
     ruling = ruled(rung(spawn), bash, within: barred) do |pending|
       humans_only = pending.humans_only?
-      pending.approve(surface: "human_spec")
+      pending.approve(surface: "human_spec", authority: :human)
     end
 
     expect([spawn.calls, humans_only, ruling.authority]).to eq([[], true, :human])

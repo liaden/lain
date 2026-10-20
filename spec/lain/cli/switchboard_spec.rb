@@ -232,7 +232,7 @@ RSpec.describe Lain::CLI::Switchboard do
 
       Sync do |task|
         asked = task.async { board.approvals.adjudicate(reads, nil) }
-        task.with_timeout(1) { board.approvals.dequeue }.deny(surface: "tty", reason: "mine")
+        task.with_timeout(1) { board.approvals.dequeue }.deny(surface: "tty", authority: :human, reason: "mine")
         asked.wait
       end
 
@@ -946,7 +946,7 @@ RSpec.describe Lain::CLI::Switchboard do
             dispatch_call("bash", { "command" => "rm -rf build" }, toolset: board.toolset, layers: tool_stack(board),
                                                                    handler: recording([]))
           end
-          task.with_timeout(1) { board.approvals.dequeue }.deny(surface: "tty")
+          task.with_timeout(1) { board.approvals.dequeue }.deny(surface: "tty", authority: :human)
           task.with_timeout(1) { call.wait }
         end
 
@@ -1563,7 +1563,7 @@ RSpec.describe Lain::CLI::Switchboard do
         plan!(:bypass)
         Sync do |task|
           call = task.async { board.policy_switch.call(gated_call, session) }
-          task.with_timeout(1) { board.approvals.dequeue }.deny(surface: "tty")
+          task.with_timeout(1) { board.approvals.dequeue }.deny(surface: "tty", authority: :human)
           call.wait
         end
 

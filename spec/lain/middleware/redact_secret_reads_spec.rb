@@ -562,7 +562,7 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
     # its records in order within the id.
     it "parks twice under one call's id behind a path gate, and each decision follows its own park" do
       sensitivity = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home: "/home/nobody", cwd: dir))
-      gate = Lain::Middleware::Gate.new(policy: queue, sensitivity:, denial: "denied %<name>s")
+      gate = Lain::Middleware::Gate.new(policy: asking_ladder(queue), sensitivity:, denial: "denied %<name>s")
       gated = Lain::Middleware::Stack.new([middleware, gate])
       env = { effect: effect(write(".env", one_secret), tool_use_id: "tu_env"), tool: Lain::Tools::ReadFile.new,
               context: session }
