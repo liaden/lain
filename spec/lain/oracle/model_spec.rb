@@ -266,9 +266,9 @@ RSpec.describe Lain::Oracle::Model do
       # reader takes no arguments -- so the double has to speak the real message
       # or it has stopped standing in for the thing it doubles.
       backend = Struct.new(:summarizer_provider, :summarizer_model, :summarizer_max_tokens, :summarizer_options,
-                           :journal) do
+                           :journal_slot) do
         def summarizer_provider(queue: true) = self[:summarizer_provider] # rubocop:disable Lint/UnusedMethodArgument
-      end.new(provider, model, max_tokens, {}, Lain::Channel::Null::INSTANCE)
+      end.new(provider, model, max_tokens, {}, Lain::CLI::Backend::Summarizer::Slot.new)
       Lain::CLI::Backend::Summarizer.new(backend:).oracle
     end
 

@@ -8,8 +8,8 @@ module Lain
       # Its own object because resolving a denominator is a second, independent
       # question from resolving a provider and a model, with three moving parts
       # of its own -- an operator flag, a live server, and the shipped table. It
-      # depends on MESSAGES -- `#provider`, `#model`, `#num_ctx` -- not on
-      # {Backend}'s internals.
+      # reads a {Run}, the provider and three values {Backend} resolved, and
+      # holds nothing else of the {Backend}.
       #
       # == Why this exists at all
       #
@@ -292,15 +292,39 @@ module Lain
           end
         end
 
-        # @param backend [#provider, #model, #num_ctx] the run's flag
-        #   resolution. All three are sent from inside {#book}'s rescue: an
+        # What a window lookup reads of a run, taken once so the book never holds the
+        # {Backend} that answered.
+        Run = Data.define(:provider, :model, :cloud, :num_ctx) do
+          def cloud? = cloud
+        end
+
+        # A run whose flags resolved no provider: every read raises the refusal
+        # the {Backend} gave, and {WindowBook} turns that into the shipped book.
+        class Unresolved
+          # @param error [Lain::Error, URI::Error] the refusal to raise on each read
+          def initialize(error) = @error = error
+
+          # @raise [Lain::Error, URI::Error] the original refusal
+          def provider = raise(@error)
+
+          # @raise [Lain::Error, URI::Error] the original refusal
+          def model = raise(@error)
+
+          # @raise [Lain::Error, URI::Error] the original refusal
+          def num_ctx = raise(@error)
+
+          def cloud? = false
+        end
+
+        # @param run [Run, Unresolved] the run's flag
+        #   resolution. Its reads are sent from inside {#book}'s rescue: an
         #   option hash naming no `--provider` at all (a bench arm, a spec)
         #   makes `#provider` AND `#model` raise {UnknownProvider}, and a
         #   denominator lookup is not where that refusal belongs
         # @param clock [#call] monotonic seconds, read either side of a probe to
         #   price it
-        def initialize(backend:, clock: RunClock::MONOTONIC)
-          @backend = backend
+        def initialize(run:, clock: RunClock::MONOTONIC)
+          @run = run
           @clock = clock
         end
 
@@ -324,9 +348,9 @@ module Lain
         # @param model [String] the model to probe for; the run's own by default
         # @return [Lookup]
         def lookup(model: nil)
-          model ||= @backend.model
-          provider = @backend.provider
-          shipped = @backend.cloud? ? ContextWindow.cloud : ContextWindow.default
+          model ||= @run.model
+          provider = @run.provider
+          shipped = @run.cloud? ? ContextWindow.cloud : ContextWindow.default
           started = @clock.call
           probe = provider.window_probe(model)
           Lookup.new(book: book_from(model, probe.window_tokens, shipped), seconds: @clock.call - started)
@@ -341,8 +365,8 @@ module Lain
         #
         # @return [String, nil]
         def model
-          @backend.model
-        rescue UnknownProvider
+          @run.model
+        rescue UnknownProvider, Backend::MissingAPIKey, URI::Error
           nil
         end
 
@@ -380,11 +404,10 @@ module Lain
         # never fires at all, which `context_window.rb` ranks as worse than the
         # crash the conservative fallback replaces.
         #
-        # The provider {#book} asks is a THROWAWAY, deliberately, and the
-        # exception to the rule {Wiring#journal_degradation} states:
-        # a served window is a fact about a live SERVER and there is no asking
-        # one without a client.
-        def narrowest(reported) = [@backend.num_ctx, reported].compact.min
+        # The provider {#book} asks is the {Run}'s own, built without a spool or
+        # a stream: a served window is a fact about a live SERVER and there is
+        # no asking one without a client, which is not worth a second provider.
+        def narrowest(reported) = [@run.num_ctx, reported].compact.min
       end
     end
   end

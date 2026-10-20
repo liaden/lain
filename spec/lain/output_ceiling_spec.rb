@@ -56,7 +56,7 @@ RSpec.describe Lain::OutputCeiling do
 
   describe "a per-model ceiling" do
     it "resolves the ceiling of whichever model it is asked about" do
-      per_model = Lain::OutputCeiling::PerModel.new(window: ->(_model) { window(32_768, :probed) })
+      per_model = Lain::OutputCeiling::PerModel.new(window: double(resolve: window(32_768, :probed)))
 
       expect([per_model.ceiling_for("claude-opus-4-6").tokens, per_model.ceiling_for("qwen3:4b").tokens])
         .to eq([128_000, 32_768])

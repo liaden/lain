@@ -316,9 +316,8 @@ RSpec.describe Lain::Provider::Admitted do
       # {Backend::Summarizer::RunJournal}'s late binding: the run's journal is
       # resolved per EVENT, because nothing orders {Backend#pipeline_source} --
       # where it gets bound -- against the provider construction in
-      # `wiring.rb`. This stubs the one message that forwarder
-      # sends, which is the message a bound run would answer.
-      allow(backend).to receive(:journal).and_return(journal)
+      # `wiring.rb`. This binds the slot, as a bound run would.
+      backend.journal_slot.bind(journal)
     end
 
     it "journals the wait it queued for, to the run's own journal" do

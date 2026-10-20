@@ -82,7 +82,7 @@ RSpec.describe "a --num-ctx window self-corrects once its runner is resident", :
       define_method(:context_window) do
         @context_window ||= begin
           now = 0.0
-          book = Lain::CLI::Backend::WindowBook.new(backend: self, clock: -> { now += seconds })
+          book = Lain::CLI::Backend::WindowBook.new(run: window_run, clock: -> { now += seconds })
           Lain::CLI::Backend::WindowBook::Live.new(source: book)
         end
       end

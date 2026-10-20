@@ -379,7 +379,10 @@ module Lain
       # call (the run has exactly one wiring site) and the Null channel until
       # then, so a path that never wires compaction -- bench, `--no-journal` --
       # reads a destination rather than a nil to guard.
-      def journal = @journal || Channel::Null.instance
+      def journal = journal_slot.journal
+
+      # @return [Summarizer::Slot] what a late-bound journal reader holds instead of this Backend
+      def journal_slot = @journal_slot ||= Summarizer::Slot.new
 
       # `--model` defaults to the SELECTED provider's own default (resolved here,
       # not in the Thor flag, whose default is fixed at load before `--provider`
@@ -412,7 +415,7 @@ module Lain
       # trigger is what keeps them agreeing WITHIN a turn.
       #
       # @return [WindowBook::Live]
-      def context_window = @context_window ||= WindowBook::Live.new(source: WindowBook.new(backend: self))
+      def context_window = @context_window ||= WindowBook::Live.new(source: WindowBook.new(run: window_run))
 
       # Whether this run's chat provider is the hosted ollama arm.
       def cloud? = provider_name == OllamaTier::CLOUD
@@ -529,7 +532,7 @@ module Lain
       # @raise [Rebound] on a second call with different arguments
       def pipeline_source(cache_profile:, journal: Channel::Null.instance, sink: Sink::Null.new)
         bind_once(:pipeline_source, cache_profile:, journal:)
-        @journal = journal
+        journal_slot.bind(journal)
         @pipeline_source ||= if compaction?
                                compaction_source(cache_profile:, journal:, sink:)
                              else
@@ -671,6 +674,16 @@ module Lain
 
       private
 
+      # Taken once, so the book holds these values and not this Backend. A refusal is
+      # kept as the run's answer for its life, so a key exported after launch is never
+      # seen: a window lookup is not where a launch refusal belongs, and re-asking per
+      # lookup would rebuild a provider each turn.
+      def window_run
+        WindowBook::Run.new(provider:, model:, cloud: cloud?, num_ctx:)
+      rescue UnknownProvider, MissingAPIKey, URI::Error => e
+        WindowBook::Unresolved.new(e)
+      end
+
       def epic_home
         @epic_home ||= ::Lain::Epic::Home.container(config: Config.load(root: @root), paths: @paths, root: @root)
       end
@@ -733,7 +746,7 @@ module Lain
       # a line later, through {CompactionMount}. A provider handed `journal` by
       # value would hold {Channel::Null} for the whole session: every wait
       # served, none recorded, nothing raised.
-      def run_journal = Summarizer::RunJournal.new(self)
+      def run_journal = Summarizer::RunJournal.new(journal_slot)
 
       # Validated once, so #provider and #default_model both key off a name
       # already known to be in PROVIDERS.
@@ -819,7 +832,7 @@ module Lain
         return OutputCeiling.command_default(typed) if typed && typed == @ceiling_default
         return OutputCeiling.typed(typed) if typed
 
-        OutputCeiling::PerModel.new(window: ->(name) { context_window.resolve(name) })
+        OutputCeiling::PerModel.new(window: context_window)
       end
 
       # The context window is not resolved PER TURN here: the Source asks

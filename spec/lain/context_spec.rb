@@ -564,7 +564,8 @@ RSpec.describe Lain::Context do
   describe "a per-model output ceiling" do
     let(:per_model) do
       Lain::OutputCeiling::PerModel.new(
-        window: ->(_model) { Lain::ContextWindow::WindowResolution.new(window_tokens: 1_000_000, provenance: :published) }
+        window: double(resolve: Lain::ContextWindow::WindowResolution.new(window_tokens: 1_000_000,
+                                                                          provenance: :published))
       )
     end
 

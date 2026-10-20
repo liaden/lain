@@ -550,6 +550,15 @@ RSpec.describe Lain::CLI::Backend do
   describe "#context_window" do
     let(:model) { "qwen3-coder:30b" }
 
+    # A launch refusal is the run's answer for its life; a key exported later is not looked for.
+    it "keeps answering the shipped book after a key arrives that the first read lacked" do
+      backend = with_env("ANTHROPIC_API_KEY" => nil) { backend_for(provider: "anthropic", model: "claude-opus-4-6") }
+      before = with_env("ANTHROPIC_API_KEY" => nil) { backend.context_window.resolve("claude-opus-4-6") }
+      reader = with_env("ANTHROPIC_API_KEY" => "sk-ant-dummy") { backend.context_window.reresolve }
+
+      expect([reader.resolve("claude-opus-4-6"), reader]).to eq([before, backend.context_window])
+    end
+
     def ps_entry(name, context_length)
       { "name" => name, "model" => name, "size" => 18_000_000_000,
         "digest" => "abc123", "context_length" => context_length }
@@ -1058,6 +1067,57 @@ RSpec.describe Lain::CLI::Backend do
 
         expect([request_of(context).max_tokens, context.output_ceiling.to_header])
           .to eq([128_000, { "max_tokens_source" => "table" }])
+      end
+
+      def held_by(object)
+        case object
+        when Module, String, Symbol, Numeric, nil, true, false then []
+        when Proc then held_by_proc(object)
+        when Method then [object.receiver]
+        when Hash then object.to_a.flatten(1)
+        when Data then object.to_h.values
+        when Array, Struct then object.to_a
+        else object.instance_variables.map { |name| object.instance_variable_get(name) }
+        end
+      end
+
+      def held_by_proc(proc)
+        binding = proc.binding
+        [binding.receiver, *binding.local_variables.map { |name| binding.local_variable_get(name) }]
+      rescue ArgumentError
+        proc.respond_to?(:receiver) ? [proc.receiver] : []
+      end
+
+      def reachable_from(root)
+        seen = {}
+        queue = [root]
+        until queue.empty?
+          held = queue.shift
+          seen[held.__id__] ||= queue.concat(held_by(held)) && held
+        end
+        seen.values
+      end
+
+      # Run once with no Anthropic key, where the book falls back to Unresolved, and once with one, where it
+      # holds a real provider: the second is the path a live run takes.
+      [nil, "sk-ant-dummy"].each do |key|
+        it "holds no backend in its per-model ceiling (ANTHROPIC_API_KEY #{key.inspect})" do
+          with_env("ANTHROPIC_API_KEY" => key) do
+            backend = backend_for(provider: "anthropic", model: "claude-opus-4-6")
+            reached = reachable_from(backend.context.instance_variable_get(:@ceiling))
+
+            expect(reached.any? { |held| held.equal?(backend) }).to be(false)
+            expect(reached.grep(Lain::CLI::Backend::WindowBook::Run)).not_to be_empty if key
+          end
+        end
+      end
+
+      it "holds no backend in its per-model ceiling on a local ollama run" do
+        backend = backend_for(provider: "ollama", model: "qwen3-coder:30b")
+        reached = reachable_from(backend.context.instance_variable_get(:@ceiling))
+
+        expect([reached.any? { |held| held.equal?(backend) }, reached.grep(Lain::CLI::Backend::WindowBook::Run).size])
+          .to eq([false, 1])
       end
 
       it "sends a local ollama model the window its server says it serves" do

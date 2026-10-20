@@ -139,13 +139,13 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
     # how long it took decides whether asking again is affordable.
     describe "#lookup" do
       it "charges a probe that took longer than the threshold, whatever it answered" do
-        lookup = described_class.new(backend: probed_by(probe::NONE_RESIDENT), clock: clock_costing(0.25)).lookup
+        lookup = described_class.new(run: probed_by(probe::NONE_RESIDENT), clock: clock_costing(0.25)).lookup
 
         expect(lookup).to be_costly
       end
 
       it "charges nothing for a fast refused connection, so an ollama started later is still learned" do
-        lookup = described_class.new(backend: probed_by(probe::UNREACHABLE), clock: clock_costing(0.001)).lookup
+        lookup = described_class.new(run: probed_by(probe::UNREACHABLE), clock: clock_costing(0.001)).lookup
 
         expect(lookup).not_to be_costly
         expect(lookup.book).to equal(Lain::ContextWindow.default)
@@ -155,12 +155,12 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
         timeout = Lain::Provider::Ollama::Transport::PROBE_TIMEOUT_SECONDS
 
         expect(timeout).to be > costly
-        expect(described_class.new(backend: probed_by(probe::UNREACHABLE), clock: clock_costing(timeout)).lookup)
+        expect(described_class.new(run: probed_by(probe::UNREACHABLE), clock: clock_costing(timeout)).lookup)
           .to be_costly
       end
 
       it "keeps an unconfirmed --num-ctx as the guess, whoever failed to confirm it" do
-        lookup = described_class.new(backend: probed_by(probe::UNREACHABLE, num_ctx: 16_384)).lookup
+        lookup = described_class.new(run: probed_by(probe::UNREACHABLE, num_ctx: 16_384)).lookup
 
         expect(lookup.book.resolve("qwen3:4b").window_tokens).to eq(16_384)
         expect(lookup.book.resolve("qwen3:4b")).not_to be_authoritative
@@ -168,14 +168,14 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
     end
 
     it "answers the bench's own book when the provider reports no served window" do
-      expect(described_class.new(backend: backend(served_window: nil)).book)
+      expect(described_class.new(run: backend(served_window: nil)).book)
         .to equal(Lain::ContextWindow.default)
     end
 
     # The guessed-window path in one line: no runner resident, an ollama id no
     # Anthropic-shaped table carries, so the number is a floor somebody picked.
     it "resolves an unknown model through that book as a guess" do
-      resolution = described_class.new(backend: backend(served_window: nil)).book.resolve("qwen3:4b")
+      resolution = described_class.new(run: backend(served_window: nil)).book.resolve("qwen3:4b")
 
       expect(resolution.window_tokens).to eq(Lain::ContextWindow::CONSERVATIVE_FALLBACK)
       expect(resolution).not_to be_authoritative
@@ -194,7 +194,7 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
     end
 
     it "resolves a shipped cloud model authoritatively, given no --num-ctx" do
-      resolution = described_class.new(backend: cloud_backend(num_ctx: nil)).book.resolve("gpt-oss:120b-cloud")
+      resolution = described_class.new(run: cloud_backend(num_ctx: nil)).book.resolve("gpt-oss:120b-cloud")
 
       expect(resolution).to be_authoritative
       expect(resolution.provenance).to eq(Lain::ContextWindow::PUBLISHED)
@@ -209,7 +209,7 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
     # local arm; the cloud catalogue publishes windows, it does not change who
     # vouches for one. Pinned so the day it changes, it changes here first.
     it "resolves a bare cloud name published on the cloud arm" do
-      resolution = described_class.new(backend: cloud_backend(num_ctx: nil)).book.resolve("glm-5.3")
+      resolution = described_class.new(run: cloud_backend(num_ctx: nil)).book.resolve("glm-5.3")
 
       expect([resolution.window_tokens, resolution.provenance]).to eq([1_000_000, Lain::ContextWindow::PUBLISHED])
     end
@@ -222,20 +222,20 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
       end
 
       it "still guesses a name that has a cloud row" do
-        resolution = described_class.new(backend: local).book.resolve("gpt-oss:20b")
+        resolution = described_class.new(run: local).book.resolve("gpt-oss:20b")
 
         expect(resolution.provenance).to eq(Lain::ContextWindow::GUESSED)
       end
 
       it "keeps re-asking until the runner answers" do
-        live = Lain::CLI::Backend::WindowBook::Live.new(source: described_class.new(backend: local))
+        live = Lain::CLI::Backend::WindowBook::Live.new(source: described_class.new(run: local))
 
         expect(live.reresolve.resolve("gpt-oss:20b").provenance).to eq(Lain::ContextWindow::PROBED)
       end
     end
 
     it "falls back to an unauthoritative --num-ctx for the same cloud model" do
-      resolution = described_class.new(backend: cloud_backend(num_ctx: 16_384)).book.resolve("gpt-oss:120b-cloud")
+      resolution = described_class.new(run: cloud_backend(num_ctx: 16_384)).book.resolve("gpt-oss:120b-cloud")
 
       expect(resolution.window_tokens).to eq(16_384)
       expect(resolution.provenance).to eq(Lain::ContextWindow::GUESSED)
@@ -243,7 +243,7 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
     end
 
     it "resolves the served model as probed once a runner answers" do
-      resolution = described_class.new(backend: backend(served_window: 32_768)).book.resolve("qwen3:4b")
+      resolution = described_class.new(run: backend(served_window: 32_768)).book.resolve("qwen3:4b")
 
       expect(resolution.window_tokens).to eq(32_768)
       expect(resolution.provenance).to eq(Lain::ContextWindow::PROBED)
@@ -253,7 +253,7 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
     # what the next request is served -- but the smaller is still a MEASURED
     # ceiling on a runner that answered, so it keeps its authority.
     it "keeps a num-ctx-limited window probed" do
-      resolution = described_class.new(backend: backend(served_window: 32_768, num_ctx: 8_192))
+      resolution = described_class.new(run: backend(served_window: 32_768, num_ctx: 8_192))
                                   .book.resolve("qwen3:4b")
 
       expect(resolution.window_tokens).to eq(8_192)
@@ -272,7 +272,7 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
     # authorise an irreversible lossy rewrite.
     describe "a --num-ctx no server has confirmed" do
       let(:resolution) do
-        described_class.new(backend: backend(served_window: nil, num_ctx: 16_384)).book.resolve("qwen3:4b")
+        described_class.new(run: backend(served_window: nil, num_ctx: 16_384)).book.resolve("qwen3:4b")
       end
 
       it "is still the denominator" do
@@ -400,7 +400,7 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
       describe "over a timed lookup" do
         def live_over(*probes, seconds:)
           backend = probed_by(*probes)
-          book = Lain::CLI::Backend::WindowBook.new(backend:, clock: clock_costing(seconds))
+          book = Lain::CLI::Backend::WindowBook.new(run: backend, clock: clock_costing(seconds))
           [described_class.new(source: book), backend.provider]
         end
 
@@ -559,7 +559,7 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
         provider = instance_double(Lain::Provider::Ollama)
         allow(provider).to receive(:window_probe) { |model| probe.resident(model == "qwen3:4b" ? 21_432 : 32_768) }
         backend = instance_double(Lain::CLI::Backend, model: "qwen3-coder:30b", num_ctx: nil, provider:, cloud?: false)
-        [described_class.new(source: Lain::CLI::Backend::WindowBook.new(backend:)), provider]
+        [described_class.new(source: Lain::CLI::Backend::WindowBook.new(run: backend)), provider]
       end
 
       it "reads the window its own probe served, not a guess" do
@@ -584,7 +584,7 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
         allow(provider).to receive(:window_probe).with("qwen3:4b")
                                                  .and_return(probe::NONE_RESIDENT, probe.resident(21_432))
         backend = instance_double(Lain::CLI::Backend, model: "qwen3-coder:30b", num_ctx: nil, provider:, cloud?: false)
-        live = described_class.new(source: Lain::CLI::Backend::WindowBook.new(backend:))
+        live = described_class.new(source: Lain::CLI::Backend::WindowBook.new(run: backend))
 
         live.reresolve.resolve("qwen3:4b")
         live.reresolve
@@ -600,7 +600,7 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
         allow(provider).to receive(:window_probe).with("qwen3-coder:30b").and_return(probe.resident(32_768))
         allow(provider).to receive(:window_probe).with("qwen3:4b").and_return(probe::NONE_RESIDENT)
         backend = instance_double(Lain::CLI::Backend, model: "qwen3-coder:30b", num_ctx: nil, provider:, cloud?: false)
-        [described_class.new(source: Lain::CLI::Backend::WindowBook.new(backend:)), provider]
+        [described_class.new(source: Lain::CLI::Backend::WindowBook.new(run: backend)), provider]
       end
 
       it "asks again once the switched model has served, within the same turn" do
@@ -609,7 +609,7 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
         allow(provider).to receive(:window_probe).with("qwen3:4b")
                                                  .and_return(probe::NONE_RESIDENT, probe.resident(21_432))
         backend = instance_double(Lain::CLI::Backend, model: "qwen3-coder:30b", num_ctx: nil, provider:, cloud?: false)
-        live = described_class.new(source: Lain::CLI::Backend::WindowBook.new(backend:))
+        live = described_class.new(source: Lain::CLI::Backend::WindowBook.new(run: backend))
 
         live.reresolve.resolve("qwen3:4b")
         occupancy = live.occupancy(4_296, model: "qwen3:4b")
@@ -644,7 +644,7 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
           allow(provider).to receive(:window_probe).with("qwen3:4b").and_return(switched)
           backend = instance_double(Lain::CLI::Backend, model: "qwen3-coder:30b", num_ctx: nil, provider:,
                                                         cloud?: false)
-          book = Lain::CLI::Backend::WindowBook.new(backend:, clock: clock_costing(0.25))
+          book = Lain::CLI::Backend::WindowBook.new(run: backend, clock: clock_costing(0.25))
           [described_class.new(source: book), provider]
         end
 

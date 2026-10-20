@@ -91,7 +91,7 @@ module Lain
     # An untyped ceiling, resolved for whichever model a {Context} renders, so
     # a `/model` switch moves it.
     class PerModel
-      # @param window [#call] model name to {ContextWindow::WindowResolution}
+      # @param window [#resolve] a window book: model name to {ContextWindow::WindowResolution}
       def initialize(window:)
         @window = window
         freeze
@@ -99,7 +99,7 @@ module Lain
 
       # @param model [String]
       # @return [OutputCeiling]
-      def ceiling_for(model) = OutputCeiling.for(model:, window: @window.call(model))
+      def ceiling_for(model) = OutputCeiling.for(model:, window: @window.resolve(model))
     end
   end
 end

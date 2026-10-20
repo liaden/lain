@@ -12,7 +12,7 @@ module Lain
       # flags cannot come to mean different things.
       class Summarizer
         # @param backend [#summarizer_provider, #summarizer_model,
-        #   #summarizer_max_tokens, #summarizer_options, #journal] the run's
+        #   #summarizer_max_tokens, #summarizer_options, #journal_slot] the run's
         #   flag resolution
         def initialize(backend:)
           @backend = backend
@@ -26,7 +26,7 @@ module Lain
         def oracle
           definition = Oracle::Summarize.definition
           Oracle::Recorded::Journaling.new(inner: tier(definition), definition:,
-                                           journal: RunJournal.new(@backend))
+                                           journal: RunJournal.new(@backend.journal_slot))
         end
 
         private
@@ -48,10 +48,23 @@ module Lain
         # the record is cut from the Request the provider was actually handed.
         def tier(definition)
           provider = Provider::Journaled.new(provider: @backend.summarizer_provider(queue: false),
-                                             journal: RunJournal.new(@backend),
+                                             journal: RunJournal.new(@backend.journal_slot),
                                              requester: :summarizer)
           Oracle::Model.new(definition:, provider:, model: @backend.summarizer_model,
                             max_tokens: @backend.summarizer_max_tokens, extra: @backend.summarizer_options)
+        end
+
+        # Where the run's journal gets bound, held apart from the {Backend} so a
+        # provider that writes to it does not keep the whole Backend alive.
+        class Slot
+          # @return [#<<] the bound journal; {Channel::Null} until one is
+          attr_reader :journal
+
+          def initialize = @journal = Channel::Null.instance
+
+          # @param journal [#<<]
+          # @return [#<<]
+          def bind(journal) = @journal = journal
         end
 
         # The run's journal, resolved per EVENT instead of captured at
@@ -65,9 +78,10 @@ module Lain
         # eagerly would hold `Channel::Null` for the whole run under any other
         # call order: every summary answered, none recorded, nothing raised.
         class RunJournal
-          def initialize(backend) = @backend = backend
+          # @param slot [Slot] the run's journal slot
+          def initialize(slot) = @slot = slot
 
-          def <<(event) = @backend.journal << event
+          def <<(event) = @slot.journal << event
         end
       end
     end

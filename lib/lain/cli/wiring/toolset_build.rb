@@ -422,7 +422,7 @@ module Lain
         def role_spawn_seam(base)
           placed = { RESEARCHER => Lain::Skill::RoleSpawn::Placed.new(seam: researcher_seam, kept: research_leases) }
           Lain::Skill::RoleSpawn.new(seam:, toolset: base, slots: library.slots, compaction: @parent_view, placed:,
-                                     worker_env: -> { @session.worker_env })
+                                     worker_env: @session.method(:worker_env))
         end
 
         # The chat's held cuts, read by a child at its spawn, over a Source of

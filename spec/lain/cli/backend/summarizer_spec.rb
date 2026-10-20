@@ -18,13 +18,12 @@ module SummarizerSpecSupport
   # late-bound: {Lain::CLI::Backend} does not know its destination until
   # `#pipeline_source` runs, which nothing orders against `#tool_observer`.
   class BackendDouble
-    attr_reader :queue_answers, :summarizer_model, :summarizer_max_tokens, :summarizer_options
-    attr_accessor :journal
+    attr_reader :queue_answers, :summarizer_model, :summarizer_max_tokens, :summarizer_options, :journal_slot
 
     def initialize(provider:, journal:, summarizer_model: "qwen3:4b", summarizer_max_tokens: 256,
                    summarizer_options: {})
       @provider = provider
-      @journal = journal
+      @journal_slot = Lain::CLI::Backend::Summarizer::Slot.new.tap { |slot| slot.bind(journal) }
       @summarizer_model = summarizer_model
       @summarizer_max_tokens = summarizer_max_tokens
       @summarizer_options = summarizer_options
@@ -91,7 +90,7 @@ RSpec.describe Lain::CLI::Backend::Summarizer do
     it "resolves the run's journal per record, not at construction" do
       built = oracle
       bound = RecordingChannel.new
-      backend.journal = bound
+      backend.journal_slot.bind(bound)
 
       summarize(built)
 
