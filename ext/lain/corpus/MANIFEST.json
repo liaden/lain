@@ -1,5 +1,5 @@
 {
-  "about": "A regression oracle, not a discovery one: these vectors record what the Ruby implementation answered at the commit named here, so a change in either implementation shows up as a mismatch. They cannot find a bug both implementations share.",
+  "about": "A regression oracle, not a discovery one: the canonical vectors record what the Ruby implementation answered at the commit named here, so a change in either implementation shows up as a mismatch. The other 4 files are frozen fixtures whose Ruby is gone (see ruby_oracle_retired); only their digests hold them still. They cannot find a bug both implementations share.",
   "seed": 20261019,
   "sha": "b541b418f3108c5b963404e42984ea484b5f627e",
   "ruby": "4.0.6",
@@ -26,6 +26,16 @@
       "blake3": "blake3:b3c10bc2f657c52081ecd21e14808521176b8e1e29f2a6785d28e8ef1992548f",
       "records": 400
     }
+  },
+  "ruby_oracle_retired": {
+    "sha": "a62537cad4fe16747d961a41d262eb1f7b6961d0",
+    "vectors": [
+      "event_digest",
+      "dag",
+      "store",
+      "errors"
+    ],
+    "why": "the Ruby implementations these vectors were derived from are deleted; only the digests hold them still"
   },
   "divergences": [
     {

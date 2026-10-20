@@ -41,6 +41,12 @@ RSpec.describe ConformanceCorpus do
     expect(described_class.tampered(described_class::DIR)).to be_empty
   end
 
+  it "records the commit at which the dag, store, event and errors vectors stopped re-deriving from Ruby" do
+    retired = described_class.recorded.fetch("ruby_oracle_retired")
+    expect(retired.fetch("sha")).to match(/\A\h{40}\z/)
+    expect(retired.fetch("vectors")).to contain_exactly("dag", "store", "event_digest", "errors")
+  end
+
   it "refuses a corpus file with one byte changed, naming the file and its expected digest" do
     Dir.mktmpdir("corpus") do |dir|
       FileUtils.cp_r("#{described_class::DIR}/.", dir)
