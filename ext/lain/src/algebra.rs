@@ -20,14 +20,15 @@
 //! **Declaration and proof are one expansion.** [`MeetSemilattice`] has a
 //! private supertrait, `sealed::Proven`, and only [`declare_meet_semilattice!`]
 //! writes its impl -- in the same expansion that emits the `#[cfg(test)]`
-//! module carrying the four laws. An `impl MeetSemilattice` outside this file
+//! module carrying the 4 meet laws and the 4 order laws. An `impl MeetSemilattice` outside this file
 //! cannot name the supertrait, so it cannot compile; a type cannot claim the
 //! structure without the laws being stated over it. What the seal does NOT do
 //! is run them: outside `--cfg test` only the marker exists. And it binds every
-//! module but this one -- a hand-written `impl sealed::Proven` here compiles,
-//! which is why the macro is the only impl this file contains.
+//! module but this one and its children -- a hand-written `impl sealed::Proven`
+//! here or in `strategy` compiles, which is why the macro is the only impl this
+//! file contains.
 //!
-//! **Four laws, and no fifth:** idempotent, commutative, associative, and "a
+//! **Four meet laws, and no fifth:** idempotent, commutative, associative, and "a
 //! meet sits below both operands", named to match
 //! `spec/support/shared_examples/meet_semilattice.rb`. Those names are the whole
 //! cross-language contract. `cargo test` proves the ALGORITHM obeys them;
@@ -169,9 +170,78 @@ impl MaximalLowerBounds for CausalAncestry {
     }
 }
 
+/// The partial-order laws of `below`, stated once over any semilattice order
+/// so each declared order is held to them over its own population.
+#[cfg(test)]
+mod order_laws {
+    use super::*;
+
+    type Population = (StoreMap, Vec<Option<Digest>>);
+
+    fn below<S: MeetSemilattice<Ctx = StoreMap, Elem = Option<Digest>>>(
+        map: &StoreMap,
+        a: &Option<Digest>,
+        b: &Option<Digest>,
+    ) -> bool {
+        S::below(map, a, b).expect("the population is well-formed")
+    }
+
+    pub(super) fn reflexive<S: MeetSemilattice<Ctx = StoreMap, Elem = Option<Digest>>>(
+        (map, heads): Population,
+    ) {
+        for a in &heads {
+            assert!(below::<S>(&map, a, a), "{a:?} is not below itself");
+        }
+    }
+
+    pub(super) fn antisymmetric<S: MeetSemilattice<Ctx = StoreMap, Elem = Option<Digest>>>(
+        (map, heads): Population,
+    ) {
+        for a in &heads {
+            for b in &heads {
+                if below::<S>(&map, a, b) && below::<S>(&map, b, a) {
+                    assert_eq!(a, b, "mutually below but unequal");
+                }
+            }
+        }
+    }
+
+    pub(super) fn transitive<S: MeetSemilattice<Ctx = StoreMap, Elem = Option<Digest>>>(
+        (map, heads): Population,
+    ) {
+        for a in &heads {
+            for b in &heads {
+                for c in &heads {
+                    if below::<S>(&map, a, b) && below::<S>(&map, b, c) {
+                        assert!(
+                            below::<S>(&map, a, c),
+                            "{a:?} <= {b:?} <= {c:?} but {a:?} is not below {c:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    pub(super) fn bottom_is_below_everything<
+        S: MeetSemilattice<Ctx = StoreMap, Elem = Option<Digest>>,
+    >(
+        (map, heads): Population,
+    ) {
+        for head in &heads {
+            assert!(
+                below::<S>(&map, &None, head),
+                "bottom is not below {head:?}"
+            );
+        }
+    }
+}
+
 /// Declares `$order` a meet-semilattice in one expansion: the `sealed::Proven`
 /// impl its `MeetSemilattice` impl needs to compile, and a `#[cfg(test)]` module
-/// `$tests` running the four laws exhaustively over `$population`, a function
+/// `$tests` running the 4 meet laws and the 4 order laws (reflexive,
+/// antisymmetric, transitive, bottom below everything, which hold `below` to
+/// a partial order) exhaustively over `$population`, a function
 /// answering `(Ctx, Vec<Elem>)`.
 ///
 /// The `impl MeetSemilattice` itself stays hand-written, so the delegation reads
@@ -263,6 +333,53 @@ macro_rules! declare_meet_semilattice {
                 #[test]
                 fn meet_orders_below_both_operands_over_generated_graphs(plan in strategy::plan()) {
                     strategy::laws::below_both::<$order>(&plan)?;
+                }
+            }
+
+            #[test]
+            fn below_is_reflexive() {
+                order_laws::reflexive::<$order>(population());
+            }
+
+            #[test]
+            fn below_is_antisymmetric() {
+                order_laws::antisymmetric::<$order>(population());
+            }
+
+            #[test]
+            fn below_is_transitive() {
+                order_laws::transitive::<$order>(population());
+            }
+
+            #[test]
+            fn the_empty_head_is_below_every_head() {
+                order_laws::bottom_is_below_everything::<$order>(population());
+            }
+
+            ::proptest::proptest! {
+                #![proptest_config(::proptest::prelude::ProptestConfig {
+                    failure_persistence: None,
+                    ..::proptest::prelude::ProptestConfig::default()
+                })]
+
+                #[test]
+                fn below_is_reflexive_over_generated_graphs(plan in strategy::plan()) {
+                    order_laws::reflexive::<$order>(plan.build());
+                }
+
+                #[test]
+                fn below_is_antisymmetric_over_generated_graphs(plan in strategy::plan()) {
+                    order_laws::antisymmetric::<$order>(plan.build());
+                }
+
+                #[test]
+                fn below_is_transitive_over_generated_graphs(plan in strategy::plan()) {
+                    order_laws::transitive::<$order>(plan.build());
+                }
+
+                #[test]
+                fn the_empty_head_is_below_every_generated_head(plan in strategy::plan()) {
+                    order_laws::bottom_is_below_everything::<$order>(plan.build());
                 }
             }
 

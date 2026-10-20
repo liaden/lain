@@ -99,8 +99,32 @@ pub(super) fn plan() -> impl Strategy<Value = DagPlan> {
             causal,
             body,
         });
-    (vec(op, 0..=MAX_OPS), vec(option::of(any::<u16>()), 3..=3))
-        .prop_map(|(ops, heads)| DagPlan { ops, heads })
+    (
+        any::<bool>(),
+        vec(op, 0..=MAX_OPS),
+        vec(option::of(any::<u16>()), 3..=8),
+    )
+        .prop_map(|(chained, ops, heads)| {
+            if chained {
+                with_chain(ops, heads)
+            } else {
+                DagPlan { ops, heads }
+            }
+        })
+}
+
+/// Puts a 3-commit linear run first and names its three commits as the first
+/// heads, because random indices rarely land three heads on one ancestor chain.
+fn with_chain(ops: Vec<Op>, heads: Vec<Option<u16>>) -> DagPlan {
+    let run = (0u16..3).map(|step| Op {
+        parent: step.checked_sub(1),
+        causal: Vec::new(),
+        body: 0,
+    });
+    DagPlan {
+        ops: run.chain(ops).collect(),
+        heads: (0u16..3).map(Some).chain(heads).collect(),
+    }
 }
 
 /// Every digest an event names, and every head, is in the store.
