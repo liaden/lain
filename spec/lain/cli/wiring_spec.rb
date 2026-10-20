@@ -315,6 +315,8 @@ class WiringAgentSpecBoard
     )
   end
 
+  def live_display = Lain::Sensitivity::Display::NULL
+
   def graft(context)
     @grafted << context
     context
@@ -1592,6 +1594,29 @@ RSpec.describe Lain::CLI::Wiring do
 
       expect(streamed(channel.events).map(&:bytes).join).to include("hello")
       expect(tool_results(agent)).to include("hello")
+    end
+
+    describe "a command that prints a session secret" do
+      let(:secret) { "hunterhunterhunter" }
+      let(:bash_use) do
+        { "type" => "tool_use", "id" => "tu_bash", "name" => "bash",
+          "input" => { "command" => "echo #{secret}" } }
+      end
+
+      around do |example|
+        ENV["LAIN_WIRING_SPEC_TOKEN"] = secret
+        example.run
+      ensure
+        ENV.delete("LAIN_WIRING_SPEC_TOKEN")
+      end
+
+      it "masks the same bytes on the live channel as in the model's copy" do
+        agent = dispatch(nil)
+        shown = streamed(channel.events).map(&:bytes).join
+
+        expect([shown, tool_results(agent)]).to all(include("<redacted:1>"))
+        expect([shown, tool_results(agent)]).to all(satisfy { |text| !text.include?(secret) })
+      end
     end
   end
 

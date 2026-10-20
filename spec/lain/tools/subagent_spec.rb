@@ -322,6 +322,22 @@ RSpec.describe Lain::Tools::Subagent do
     expect(tool.description).not_to include("cannot run commands")
   end
 
+  # A child's live channel is Null, so a live mask would be detection nothing shows.
+  it "runs no live detection for a child's bash, and builds the child no display" do
+    secret = "ghp_aB3dE5gH7jK9mN1pQ3sT5vX7zA9cE1gI3kM5"
+    allow(Lain::Sensitivity::Display).to receive(:new).and_call_original
+    allow(Lain::Sensitivity::TextMask::Stream).to receive(:new).and_call_original
+    provider = mock(tool_response(["tu_b", "bash", { "command" => "echo #{secret}" }]), text_response("done"))
+    tool = build_subagent(provider:, policy: spawn_policy(only: %i[bash]),
+                          toolset: Lain::Toolset.new([Lain::Tools::Bash.new]))
+
+    tool.call({ "prompt" => "print it" }, invocation)
+
+    expect(provider.last_request.messages.to_s).to include("exit status: 0")
+    expect(Lain::Sensitivity::TextMask::Stream).not_to have_received(:new)
+    expect(Lain::Sensitivity::Display).not_to have_received(:new)
+  end
+
   # Retiring an actor rebases its work first, and a conflict is put to the
   # actor itself -- which only an actor holding a shell could act on.
   describe "a name the model gives its child" do

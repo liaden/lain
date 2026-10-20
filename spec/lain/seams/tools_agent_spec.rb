@@ -93,7 +93,8 @@ RSpec.describe "tools x Agent loop", :seam do
 
   describe "Tools::Bash x Sink x Channel" do
     let(:toolset) { Lain::Toolset.new([Lain::Tools::Bash.new]) }
-    let(:handler) { Lain::Effect::Handler::Live.new(channel:) }
+    let(:display) { Lain::Sensitivity::Display.new(child_env: Lain::Exec::ChildEnv::DEFAULT) }
+    let(:handler) { Lain::Effect::Handler::Live.new(channel:, display:) }
     let(:approving) { [Lain::Middleware::Gate.new(policy: Lain::Middleware::Gate::ApproveAll.new)] }
 
     it "attributes live_stdout bytes to the tool_use_id that asked for them" do

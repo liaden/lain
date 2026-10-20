@@ -34,8 +34,8 @@ module Lain
     #
     # Nor does it cover the live display. `bash` streams its output to the
     # human's own pane as it runs, before the result reaches this layer, masked
-    # there by {Tools::Bash} itself; what is withheld here is the model's copy
-    # and the record's.
+    # there by the boundary, {Sensitivity::Display}; what is withheld here is
+    # the model's copy and the record's.
     #
     # == How it learns who approved the call
     #

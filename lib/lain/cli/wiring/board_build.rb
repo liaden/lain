@@ -57,7 +57,7 @@ module Lain
         # @param identity [Hash] `resolver:` and `worker_env:`, on {Classifiers#initialize}'s
         #   terms: the session's ONE resolver, the instance the bash tool holds,
         #   and the session's own env, whose PATH the main agent's stages resolve through
-        # @param child_env [Lain::Exec::ChildEnv] the launch's, which the bash masker reads
+        # @param child_env [Lain::Exec::ChildEnv] the launch's, which the result masker and live display read
         # @option options [Boolean] :non_interactive no human is at this
         #   session's terminal -- read by {Switchboard.for}, never here
         # @return [Switchboard]

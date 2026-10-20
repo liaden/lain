@@ -1054,7 +1054,7 @@ RSpec.describe Lain::CLI::ToolGuard do
     end
   end
 
-  describe "the child env the bash masker reads" do
+  describe "the child env the result masker and live display read" do
     let(:child_env) { Lain::Exec::ChildEnv.new(env: { "API_TOKEN" => "tok-abc123lowentropy" }) }
 
     it "is the one the board's inputs carry" do

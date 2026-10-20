@@ -12,13 +12,17 @@ module Lain
     # `channel` defaults to a Null Object rather than `nil` so a tool that
     # emits nothing (ReadFile, ListFiles) can push to it unconditionally --
     # no `if channel` guard needed anywhere, matching {Sink::Null}'s role
-    # for IO-shaped writers.
-    Invocation = Data.define(:tool_use_id, :context, :channel) do
+    # for IO-shaped writers. `live_display` defaults to the one that shows
+    # nothing, so an invocation nobody wired one into never shows unmasked
+    # bytes. It is not named `display`, which would override Kernel#display.
+    Invocation = Data.define(:tool_use_id, :context, :channel, :live_display) do
       # @param tool_use_id [String, nil] the `tool_use` block this call answers
       # @param context [Object, nil] whatever the caller threads through (the
       #   Agent, a read-set, nil in a bare spec)
       # @param channel [Lain::Channel] where attributed output goes
-      def initialize(tool_use_id: nil, context: nil, channel: Channel::Null.instance)
+      # @param live_display [#sinks] builds the live sinks a streaming tool writes to
+      def initialize(tool_use_id: nil, context: nil, channel: Channel::Null.instance,
+                     live_display: Sensitivity::Display::NULL)
         super
       end
     end

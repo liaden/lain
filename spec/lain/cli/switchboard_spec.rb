@@ -114,6 +114,18 @@ RSpec.describe Lain::CLI::Switchboard do
         expect(board_for.guard_inputs.child_env).to be(Lain::Exec::ChildEnv::DEFAULT)
       end
 
+      it "builds its live display over the child env its guard's inputs carry" do
+        token = "zq7lowentropyprobevalue42"
+        child_env = Lain::Exec::ChildEnv.new(env: { "PROBE_API_TOKEN" => token })
+        board = described_class.for(chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base,
+                                    test_layout: layout_run, child_env:)
+        channel = RecordingChannel.new
+        sink = board.live_display.sinks(Lain::Tool::Invocation.new(tool_use_id: "tu_1", channel:)).fetch(:stdout_sink)
+        sink << "#{token}\n"
+
+        expect(channel.events.map(&:bytes).join).to eq("<redacted:1>\n")
+      end
+
       it "carries the configured middleware among the guard's inputs, by identity" do
         middleware = Lain::Config::Middleware.new
         board = described_class.for(chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base,

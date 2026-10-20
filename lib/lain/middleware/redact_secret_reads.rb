@@ -67,8 +67,9 @@ module Lain
     # whoever approved the call and nothing parks. The detector misses a secret
     # with no recognisable shape, so the value of every secret-named variable in
     # the process environment is masked wherever it appears too. The live pane
-    # is masked for the same secrets by {Tools::Bash} as the command runs, so
-    # the channel the pane and `lain://journal` read never carries them raw.
+    # is masked as the command runs by {Sensitivity::Display}, which reads the
+    # same {Sensitivity::Secrets}, so the channel the pane and `lain://journal`
+    # read never carries them raw.
     #
     # == A memory item's body masks on every read, with no release
     #
@@ -348,7 +349,10 @@ module Lain
         end
       end
 
-      def text_mask(carried) = ::Lain::Sensitivity::TextMask.new(secrets: session_secrets(carried.fetch(:context)))
+      def text_mask(carried)
+        secrets = ::Lain::Sensitivity::Secrets.for(child_env: @child_env, context: carried.fetch(:context))
+        ::Lain::Sensitivity::TextMask.new(secrets:)
+      end
 
       def with_trailer(masked, trailer = OUTPUT_TRAILER)
         text = masked.text
@@ -356,11 +360,6 @@ module Lain
         count = masked.fresh
         lead + format(trailer, count:, noun: count == 1 ? "region was" : "regions were",
                                prior: masked.prior.positive? ? ", #{masked.prior} already redacted" : "")
-      end
-
-      def session_secrets(context)
-        lent = (context || Session::Null.instance).worker_env.env
-        ::Lain::Sensitivity::Literals.new(child_env: @child_env, lent:).to_a
       end
 
       # Content this class cannot scan cannot be vouched for, so it is not sent.

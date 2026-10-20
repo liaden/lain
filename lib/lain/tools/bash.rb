@@ -437,15 +437,15 @@ module Lain
       def runtime(input, invocation)
         worker_env = session_of(invocation).worker_env
         { cwd: worker_env.resolve(input.cwd), env: worker_env.env, timeout: seconds(input),
-          **output_sinks(invocation, worker_env) }
+          **invocation.live_display.sinks(invocation) }
       end
 
-      # A stream holds a line until it ends, so what is still held is shown,
-      # masked, however the command stopped, a timeout included.
+      # A live sink may hold bytes until the command stops, so it is flushed
+      # however the command stopped, a timeout included.
       def executed(command, confinement, run)
         @exec.call(command:, confinement:, **run)
       ensure
-        run.values_at(:stdout_sink, :stderr_sink).each(&:finish)
+        run.values_at(:stdout_sink, :stderr_sink).each(&:flush)
       end
 
       def seconds(input) = input.timeout || DEFAULT_TIMEOUT
@@ -469,71 +469,6 @@ module Lain
 
         text = Tool::ResultBlock::Text.new(message)
         text.text? ? text.to_s : TIMEOUT_OUTPUT_NOT_TEXT
-      end
-
-      # Bytes are attributed to their tool_use_id AT THE SOURCE, as produced,
-      # rather than reconstructed afterwards from a buffer shared with whatever
-      # else is running -- see {Lain::Channel} on why that destroys provenance.
-      #
-      # The pane and `lain://journal` show what the channel carries, so it carries
-      # the masked copy. Its secrets are the ones {Middleware::RedactSecretReads}
-      # masks the model's copy for, and both streams draw on one numbering.
-      def output_sinks(invocation, worker_env)
-        secrets = ::Lain::Sensitivity::Literals.new(child_env: @exec.child_env, lent: worker_env.env).to_a
-        mask = ::Lain::Sensitivity::TextMask.new(secrets:)
-        ordinals = (1..).each
-        %i[stdout stderr].to_h do |stream|
-          adapter = Sink::IOAdapter.new(invocation.channel, tool_use_id: invocation.tool_use_id, stream:)
-          [:"#{stream}_sink", MaskedSink.new(adapter, mask.stream(ordinals:))]
-        end
-      end
-
-      # A live sink showing a {Sensitivity::TextMask::Stream}'s masked text
-      # rather than the bytes it is handed, up to {CAP}.
-      #
-      # Masking runs on the thread that drains the command's pipes, at a few
-      # megabytes a second, so past the cap nothing is masked or shown: a flood
-      # is not slowed, and nothing unmasked is drawn. The chunk that crosses the
-      # cap is dropped whole.
-      class MaskedSink
-        CAP = 1024 * 1024
-        NOTE = "[the live display stopped here; the result is bounded as before]\n"
-
-        # @param sink [#<<] where the masked text goes
-        # @param stream [Sensitivity::TextMask::Stream]
-        def initialize(sink, stream)
-          @sink = sink
-          @stream = stream
-          @seen = 0
-        end
-
-        # @param chunk [String] bytes as the command printed them
-        # @return [self]
-        def <<(chunk)
-          @seen += chunk.bytesize
-          if @seen <= CAP
-            @sink << (@stream << chunk)
-          elsif @stream
-            stop
-          end
-          self
-        end
-
-        # @return [self] once the held rest has been shown, masked
-        def finish
-          @sink << @stream.finish if @stream
-          @stream = nil
-          self
-        end
-
-        private
-
-        def stop
-          rest = @stream.finish
-          @stream = nil
-          @sink << rest
-          @sink << (rest.empty? || rest.end_with?("\n") ? NOTE : "\n#{NOTE}")
-        end
       end
 
       # The stages the string arm will hand a shell, each resolved in the

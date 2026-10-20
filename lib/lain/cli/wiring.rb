@@ -617,7 +617,7 @@ module Lain
       # reads, so left as a bare return expression the local stays nil forever
       # and the first turn raises NoMethodError on it.
       def agent_over(board:, channel:, session:, backend:, timeline: nil, views: nil)
-        live = Lain::Effect::Handler::Live.new(channel: LiveViews.tool_output(channel, views))
+        live = Effect::Handler::Live.new(channel: LiveViews.tool_output(channel, views), display: board.live_display)
         agent = nil
         Lain::Agent.new(toolset: board.toolset, context: board.graft(backend.context), handler: live, session:,
                         timeline:, request_override: Lain::Agent::RequestOverride.new, # ResendBridge's slot

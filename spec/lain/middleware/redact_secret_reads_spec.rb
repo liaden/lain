@@ -1382,6 +1382,30 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       end
     end
 
+    describe "the live display built over the same launch environment" do
+      let(:value) { "lowentropy-lent-2" }
+      let(:session) { Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: dir, env: { "LENT_TOKEN" => value })) }
+      let(:channel) { RecordingChannel.new }
+      let(:live) { Lain::Effect::Handler::Live.new(channel:, display: Lain::Sensitivity::Display.new(child_env:)) }
+
+      def run_live(command)
+        call = Lain::Effect::ToolCall.new(tool_use_id: "tu_bash", name: "bash", input: { "command" => command })
+        Sync do
+          stack.call({ effect: call, context: session }) do |inner|
+            inner.merge(result: live.call(inner.merge(tool: Lain::Tools::Bash.new)))
+          end
+        end.fetch(:result)
+      end
+
+      it "masks a value lent to the call's context on the live channel as on the result" do
+        result = run_live("printenv LENT_TOKEN")
+        shown = channel.events.map(&:bytes).join
+
+        expect([shown, result.content]).to all(include("<redacted:1>"))
+        expect([shown, result.content]).to all(satisfy { |text| !text.include?(value) })
+      end
+    end
+
     describe "a call with no session" do
       let(:session) { nil }
 

@@ -107,7 +107,8 @@ module Lain
       # @param arms [Arms] the bench arms; `judge_facts` decides whether the judge is told the facts
       # @param request [#call] `context -> Approval::Judge::Request or nil`, what a judged call was made
       #   for; read only under `--judge-facts request`
-      # @param child_env [Exec::ChildEnv] the launch's, which the bash masker reads; the process default by default
+      # @param child_env [Exec::ChildEnv] the launch's, which the result masker and the live display read;
+      #   the process default by default
       # @param denied_tools [Enumerable<String>] the tools the trusted config refuses with `deny_tool`; none by default
       # @option options [Boolean] :non_interactive no human is at this
       #   session's terminal
@@ -145,6 +146,10 @@ module Lain
       # reported as ({#denial}). The parent's stack and every child's read it,
       # so they hold one of each and say an absence once.
       attr_reader :guard_inputs
+
+      # @return [Sensitivity::Display] the chat's live mask, over the child
+      #   environment its result masker is built from
+      def live_display = Sensitivity::Display.new(child_env: guard_inputs.child_env)
 
       delegate :ledger, :sensitivity, :test_layout, to: :guard_inputs
 

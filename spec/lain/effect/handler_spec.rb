@@ -114,6 +114,17 @@ RSpec.describe Lain::Effect::Handler do
         described_class.new(channel:).call(env_for(tool_call("capturing"), tool: capturing))
         expect(capturing.captured.channel).to be(channel)
       end
+
+      it "defaults the display to the one that shows nothing" do
+        described_class.new.call(env_for(tool_call("capturing"), tool: capturing))
+        expect(capturing.captured.live_display).to be(Lain::Sensitivity::Display::NULL)
+      end
+
+      it "threads the handler's injected display through" do
+        display = Lain::Sensitivity::Display.new(child_env: Lain::Exec::ChildEnv::DEFAULT)
+        described_class.new(display:).call(env_for(tool_call("capturing"), tool: capturing))
+        expect(capturing.captured.live_display).to be(display)
+      end
     end
 
     describe "correctness gate 3 -- a failure never raises past the loop" do

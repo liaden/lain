@@ -599,7 +599,7 @@ a25-4, fixed). A command's output has no release: nothing parks asking for one.
 
 1. Approve it. The tool result the model sees, the journal's `tool_result` and the chat display carry `<redacted:1>` in place of the
    token, and the result ends with `1 region was masked in this command's output; a command's output cannot be released.` No approval
-   prompt follows. The live pane is masked as it streams, by `Tools::Bash` itself (a26-3 fixed, T27, T28), so it shows `<redacted:N>` too; past about 1 MiB of live output the display stops with one note line (`[the live display stopped here; the result is bounded as before]`), and the recorded result keeps its bound and masking.
+   prompt follows. The live pane is masked as it streams, by the boundary (`Sensitivity::Display`; a26-3 fixed, T27, T28), so it shows `<redacted:N>` too; past about 1 MiB of live output the display stops with one note line (`[the live display stopped here; the result is bounded as before]`), and the recorded result keeps its bound and masking.
 2. **A session secret masks even when no pattern matches it.** With `OLLAMA_API_KEY=abc123lowentropyvalue` in the launching environment,
    `echo abc123lowentropyvalue` comes back masked. A secret-named variable whose value is under 8 bytes (`1`, `true`) is not a mask.
 3. **Clean output is untouched**: `echo hello` has no `<redacted:N>` and no trailer.
@@ -1097,7 +1097,7 @@ three places at once.
 
 - **The live display is masked, not withheld (changed in round 26, T27, T28).** Under `/mode bypass`, `cat server.pem` used to stream the key into the
   chat pane and `lain://journal` while the model's copy and the session record were withheld. The pane now shows the
-  masked stream (`withhold_automatic_output.rb`: "masked there by Bash itself"), so a scrollback capture taken after a
+  masked stream (`withhold_automatic_output.rb`: "masked there by the boundary, {Sensitivity::Display}"), so a scrollback capture taken after a
   gated credential ran holds `<redacted:N>`. Keep grepping the session file, the journal and the requests, and still
   check a pane capture: the display is the one copy a bug in the masker would leak.
 - **Values a human released.** A region the human released at the gate is meant to reach the model;

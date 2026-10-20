@@ -21,15 +21,20 @@ module Lain
       # the *conversion* happens here, once, at the boundary the loop trusts.
       #
       # A tool's second argument is a {Tool::Invocation}, built here from the
-      # effect plus the injected `channel` -- never the bare context the env
-      # threads through. That is what lets Tools::Bash attribute its
-      # `live_stdout` bytes to the exact `tool_use_id` that asked for them.
+      # effect plus the injected `channel` and `display` -- never the bare
+      # context the env threads through. That is what lets Tools::Bash
+      # attribute its `live_stdout` bytes to the exact `tool_use_id` that asked
+      # for them, masked by a display it knows nothing about.
       class Live < Handler
         # @param channel [Lain::Channel] where tool output is attributed; defaults
         #   to a Null Object so a deployment with no live consumer needs no guard
-        def initialize(channel: Channel::Null.instance)
+        # @param display [#sinks] masks the live copy over the invocation's
+        #   channel; the default shows nothing, so an unwired live channel is
+        #   never shown unmasked bytes
+        def initialize(channel: Channel::Null.instance, display: Sensitivity::Display::NULL)
           super()
           @channel = channel
+          @display = display
         end
 
         private
@@ -38,7 +43,8 @@ module Lain
         # is a wiring defect, and converting its KeyError into a tool_result
         # would hand the model a sentence about our plumbing.
         def interpret(effect, env)
-          invocation = Tool::Invocation.new(tool_use_id: effect.tool_use_id, context: env[:context], channel: @channel)
+          invocation = Tool::Invocation.new(tool_use_id: effect.tool_use_id, context: env[:context], channel: @channel,
+                                            live_display: @display)
           run(env.fetch(:tool), effect.input, invocation)
         end
 
