@@ -281,7 +281,8 @@ sit above `out_of_scope` and `outside_project`; within `ordinary`, `exempt` sits
 `BoardBuild::Strictest` already requires); `account_database` is `denied` and ranks by level. The rank is
 this table, stricter first, and it is injective so that `|` is commutative (a `Comparable` tie between 2
 unequal `Data` values would break it): denied: `account_database`, `protected`, `system`, `configured`;
-gated: `credential`, `named`, `configured`, `protected`, `malformed`, `out_of_scope`, `outside_project`;
+gated: `named`, `credential`, `configured`, `protected`, `malformed`, `out_of_scope`, `outside_project` (`named` above
+`credential` by the 2026-10-19 execution ruling: a named file is masked whole, a credential only where secrets are found);
 ordinary: `exempt`, `none`. The join `a | b` is the max. The 4 rankers disagree today (`Walk` puts `named`
 over everything in a level, `BoardBuild` puts `exempt` over `none`, `Policy` is left-biased, `Filter` answers
 the first found), so each gets a differential example on the verdicts `classify` emits. `Policy#judge`'s
@@ -1554,7 +1555,8 @@ Spec file: `spec/lain/budget/ceilings_spec.rb` (AC 1 to AC 4), `spec/lain/budget
 
 **Depends on:** T22, T19
 **Files:** `lib/lain/agent.rb`, `lib/lain/agent/budget.rb`, `lib/lain/agent/accounting.rb`, `lib/lain/cli/goal_driver.rb`, `lib/lain/cli/conductor.rb`, `lib/lain/cli/shutdown.rb`,
-`lib/lain/cli/wiring/toolset_build.rb`, `lib/lain/role.rb`, `spec/lain/agent_spec.rb`, `spec/lain/agent/budget_spec.rb`, `spec/lain/agent/accounting_spec.rb`,
+`lib/lain/cli/wiring/toolset_build.rb`, `lib/lain/role.rb`, `lib/lain/budget.rb` (the `Budget = (ceilings, spent)` pair with
+`remaining` and `exceeded?`, deferred here from T22), `spec/lain/budget_spec.rb` (new), `spec/lain/agent_spec.rb`, `spec/lain/agent/budget_spec.rb`, `spec/lain/agent/accounting_spec.rb`,
 `spec/lain/role_spec.rb`, `spec/lain/cli/goal_driver_spec.rb`
 **Reuse:** `Agent::Budget` (`budget.rb:11-57`: `check_iterations!` `:26`, `check_tokens!` `:33`, `interrupt` `:55`), its readers (`agent.rb:589,663,816-821`,
 `goal_driver.rb:256,324`, `shutdown.rb:204,225`, `toolset_build.rb:50,289`, `conductor.rb:157`), `Role#budget` (`role.rb:27`), `Accounting#observe` (`accounting.rb:50-60`)
@@ -1607,7 +1609,7 @@ the stale comment at `wrap_up.rb:6` ("a one-shot child") is corrected here
 **Shared-file wiring:** `lib/lain/cli/wiring/toolset_build.rb:53,290,455,490` (`EPIC_DEPTH` and the `max_depth:` wiring become a `depth` kind on the ceilings)
 **Reachable from:** `Tools::Subagent#spawn_one_shot` (`subagent.rb:295-303`) and `launch_actor` (`:208`) build every child through `ChildBuilder#build`
 
-The child's ceilings are `parent.remaining.descend.attenuate(role.budget)`: iterations, tokens, dollars and
+The child's ceilings are `parent.remaining.attenuate(role.budget)` (`attenuate` already descends, so no separate `descend`): iterations, tokens, dollars and
 width clamped to what the parent has left, depth decremented, a nil in the role's request inheriting the
 parent's. A spawn whose child could not run (0 iterations or 0 depth left) is refused by kind, in words the
 model can act on, and no spawn event is recorded. `max_depth` plumbing goes. `WrapUp` reads the child's own ceiling.
@@ -1957,6 +1959,9 @@ Scenario: a digest disagreement on a float-free object is refused
   Then it is refused
 ```
 Spec file: `spec/lain/rust/store_spec.rb` (AC 1, AC 2, AC 5), `spec/lain/rust/timeline_spec.rb` (AC 3), `spec/lain/memory/index_spec.rb` (AC 4)
+
+T29's AC 2 (a digests-only envelope raises on `role`, `content` and `meta`) lands here: no FFI path builds a detached envelope
+until fetch answers an envelope apart from its payload.
 
 **Stop and report if:**
 - A generic arm would need to read edges back over FFI per object; that fails `docs/rust-bindings.md` rule 4 and the 4-arm enum exists to avoid it.
@@ -2739,3 +2744,9 @@ After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]
 - The suite cannot run beside other tests (shared `TMPDIR`, contention flakes): every landing runs alone. Each worktree gets its
   own `TMPDIR` under `~/tmp/lain/` and a copy of the main checkout's `lib/lain/lain.so` (Ruby cards need no rebuild).
 - Paths needing user approval: none known. `cargo-mutants` is not installed (T33 stop condition).
+- 2026-10-19 20:45 started T1 (opus), T2, T10, T18, T22, T27, T29, T43, T34, T52 (sonnet), each in `tmp/worktrees/<card>` cut at `ad17f057`.
+- 2026-10-19 T1 stopped on its policy_spec stop condition. Ruled: the link-loop and mode-0 examples (`policy_spec.rb:975-976`) move from
+  `outside_project` to `malformed`, because `outside_project` is oracle-approvable and an unreadable path must not be; and `named`
+  ranks above `credential` (card text amended). T22 deferred the `(ceilings, spent)` pair; T23's Files gain `lib/lain/budget.rb`.
+  T24's formula loses its double descend. T29's AC 2 moves to T31. All worktrees get `target/release/lain-fence` linked in;
+  `confinement_spec.rb` fails 5 of 14 in any worktree and passes on main.
