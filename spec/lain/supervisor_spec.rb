@@ -6,6 +6,7 @@ require "async"
 require "async/queue"
 require "json"
 require "stringio"
+require "timeout"
 require "tmpdir"
 
 # The orchestration reactor ABOVE the Agent. Actor#launch spawns its
@@ -66,6 +67,20 @@ RSpec.describe Lain::Supervisor do
   # ---- Scenario: the reactor task outlives the launching scope ---------------
 
   describe "owning the reactor" do
+    # A body that raises before #stop leaves the supervisor's park waiting on a
+    # notification nothing will signal, so a raw Sync never ends and the run
+    # hangs with the raise unreported. The helper stops in an ensure.
+    it "fails a supervised body that raises before #stop, rather than hanging the reactor" do
+      supervisor = described_class.new
+      outcome = Timeout.timeout(10) do
+        supervised(supervisor) { raise Lain::Error, "the body failed before #stop" }
+      rescue Lain::Error => e
+        e.message
+      end
+
+      expect([outcome, supervisor.running?]).to eq(["the body failed before #stop", false])
+    end
+
     it "keeps an adopted actor alive past the launching task, and ends it under #stop" do
       supervised do |supervisor, task|
         tool = actor_tool(text_response("actor ready"))
@@ -239,8 +254,7 @@ RSpec.describe Lain::Supervisor do
   describe "the bounded drain" do
     it "caps a hung fleet at the window and journals drain_timed_out with the fleet's roles" do
       journal = Lain::Channel.new
-      Sync do |task|
-        supervisor = described_class.new(journal:).run(task)
+      supervised(described_class.new(journal:)) do |supervisor, _task|
         entered = Async::Queue.new
         release = Async::Queue.new
         supervisor.adopt(role: "hung") { parking_tool(entered:, release:).launch_actor("go", worker_env: Lain::WorkerEnv.default) }
@@ -261,8 +275,7 @@ RSpec.describe Lain::Supervisor do
 
     it "settles a healthy fleet without journaling a timeout" do
       journal = Lain::Channel.new
-      Sync do |task|
-        supervisor = described_class.new(journal:).run(task)
+      supervised(described_class.new(journal:)) do |supervisor, _task|
         actor = supervisor.adopt(role: "prompt") { actor_tool(text_response("ok")).launch_actor("go", worker_env: Lain::WorkerEnv.default) }
 
         supervisor.drain(within: 5).each(&:settle)
@@ -499,8 +512,7 @@ RSpec.describe Lain::Supervisor do
     it "acquires a lease on adopt, runs the worker's tools under its WorkerEnv, and releases on stop" do
       backend = RecordingIsolation.new(leased_env)
       seen = []
-      Sync do |task|
-        supervisor = described_class.new(isolation: backend).run(task)
+      supervised(described_class.new(isolation: backend)) do |supervisor, _task|
         tool = probing_actor_tool(seen)
 
         actor = supervisor.adopt(role: "worker") { |worker_env| tool.launch_actor("go", worker_env:) }
@@ -516,8 +528,7 @@ RSpec.describe Lain::Supervisor do
 
     it "releases a distinct lease per adopted worker on stop" do
       backend = RecordingIsolation.new(leased_env)
-      Sync do |task|
-        supervisor = described_class.new(isolation: backend).run(task)
+      supervised(described_class.new(isolation: backend)) do |supervisor, _task|
         supervisor.adopt(role: "a") do
           actor_tool(text_response("ok")).launch_actor("go", worker_env: Lain::WorkerEnv.default)
         end.settle
@@ -536,9 +547,7 @@ RSpec.describe Lain::Supervisor do
     # was acquired must not leak the provisioned resource.
     it "releases the lease when the launch fails, leaking nothing" do
       backend = RecordingIsolation.new(leased_env)
-      Sync do |task|
-        supervisor = described_class.new(isolation: backend).run(task)
-
+      supervised(described_class.new(isolation: backend)) do |supervisor, _task|
         expect { supervisor.adopt(role: "doomed") { raise Lain::Error, "launch blew up" } }
           .to raise_error(Lain::Error, /blew up/)
 
@@ -555,8 +564,7 @@ RSpec.describe Lain::Supervisor do
     # orphan worktree invisible to #stop -- the reclaim must ride `ensure`.
     it "releases the lease when the adopted task is cancelled after acquire, registering nothing" do
       backend = RecordingIsolation.new(leased_env)
-      Sync do |task|
-        supervisor = described_class.new(isolation: backend).run(task)
+      supervised(described_class.new(isolation: backend)) do |supervisor, task|
         acquired = Async::Queue.new
         adopter = task.async do
           supervisor.adopt(role: "cancelled") do |_worker_env|
@@ -874,9 +882,8 @@ RSpec.describe Lain::Supervisor do
 
     it "surrenders the dead worker's lease before the replacement acquires -- ref first, then release" do
       log = []
-      Sync do |task|
-        supervisor = described_class.new(isolation: LoggingIsolation.new(shared_env, log),
-                                         handoff: RecordingHandoff.new(log)).run(task)
+      supervised(described_class.new(isolation: LoggingIsolation.new(shared_env, log),
+                                     handoff: RecordingHandoff.new(log))) do |supervisor, _task|
         crash(supervisor)
         healthy(supervisor)
 
@@ -892,9 +899,8 @@ RSpec.describe Lain::Supervisor do
     # The panel's first probe: the reap is not a first-crash special case.
     it "surrenders a SECOND crash too, and re-surrenders no lease it already gave up" do
       log = []
-      Sync do |task|
-        supervisor = described_class.new(isolation: LoggingIsolation.new(shared_env, log),
-                                         handoff: RecordingHandoff.new(log)).run(task)
+      supervised(described_class.new(isolation: LoggingIsolation.new(shared_env, log),
+                                     handoff: RecordingHandoff.new(log))) do |supervisor, _task|
         crash(supervisor)
         crash(supervisor)
         healthy(supervisor)
@@ -908,9 +914,8 @@ RSpec.describe Lain::Supervisor do
 
     it "leaves a LIVE worker's lease alone -- only the crashed row is reaped" do
       log = []
-      Sync do |task|
-        supervisor = described_class.new(isolation: LoggingIsolation.new(shared_env, log),
-                                         handoff: RecordingHandoff.new(log)).run(task)
+      supervised(described_class.new(isolation: LoggingIsolation.new(shared_env, log),
+                                     handoff: RecordingHandoff.new(log))) do |supervisor, _task|
         healthy(supervisor, role: "alive")
         crash(supervisor, role: "doomed")
         healthy(supervisor, role: "replacement")
@@ -927,8 +932,7 @@ RSpec.describe Lain::Supervisor do
     # idle worktree until #stop is the cost; the worker's commits are not.
     it "retains a crashed worker's lease when no handoff is wired -- #stop is what reclaims it" do
       log = []
-      Sync do |task|
-        supervisor = described_class.new(isolation: LoggingIsolation.new(shared_env, log)).run(task)
+      supervised(described_class.new(isolation: LoggingIsolation.new(shared_env, log))) do |supervisor, _task|
         crash(supervisor)
         healthy(supervisor)
 
@@ -948,9 +952,8 @@ RSpec.describe Lain::Supervisor do
 
     it "surrenders a crashed row at #stop, and bare-releases only the live ones" do
       log = []
-      Sync do |task|
-        supervisor = described_class.new(isolation: LoggingIsolation.new(shared_env, log),
-                                         handoff: RecordingHandoff.new(log)).run(task)
+      supervised(described_class.new(isolation: LoggingIsolation.new(shared_env, log),
+                                     handoff: RecordingHandoff.new(log))) do |supervisor, _task|
         healthy(supervisor, role: "alive")
         crash(supervisor, role: "doomed")
 
@@ -966,9 +969,8 @@ RSpec.describe Lain::Supervisor do
     # bug above wearing a different hat.
     it "reads the crashed row's state BEFORE the farewell that would hide it" do
       log = []
-      Sync do |task|
-        supervisor = described_class.new(isolation: LoggingIsolation.new(shared_env, log),
-                                         handoff: RecordingHandoff.new(log)).run(task)
+      supervised(described_class.new(isolation: LoggingIsolation.new(shared_env, log),
+                                     handoff: RecordingHandoff.new(log))) do |supervisor, _task|
         crashed = crash(supervisor)
         expect(crashed).to eq(shared_env)
 
@@ -984,8 +986,7 @@ RSpec.describe Lain::Supervisor do
     # that nothing lain provisioned is left standing.
     it "still releases a retained crashed lease at #stop when no handoff is wired" do
       log = []
-      Sync do |task|
-        supervisor = described_class.new(isolation: LoggingIsolation.new(shared_env, log)).run(task)
+      supervised(described_class.new(isolation: LoggingIsolation.new(shared_env, log))) do |supervisor, _task|
         crash(supervisor)
 
         supervisor.stop
@@ -1007,9 +1008,8 @@ RSpec.describe Lain::Supervisor do
     it "tears down a row whose actor cannot answer the reap predicates, without wedging #stop" do
       journal = []
       log = []
-      Sync do |task|
-        supervisor = described_class.new(journal:, isolation: LoggingIsolation.new(shared_env, log),
-                                         handoff: RecordingHandoff.new(log)).run(task)
+      supervised(described_class.new(journal:, isolation: LoggingIsolation.new(shared_env, log),
+                                     handoff: RecordingHandoff.new(log))) do |supervisor, task|
         supervisor.adopt(role: "minimal") { StopOnlyWorker.new(log) }
 
         bounded(task) { supervisor.stop }
@@ -1043,9 +1043,8 @@ RSpec.describe Lain::Supervisor do
     # discoverable only when the next handback mysteriously declines.
     it "journals the reap's Report, carrying a STRANDED parent onto the record" do
       journal = []
-      Sync do |task|
-        supervisor = described_class.new(journal:, isolation: LoggingIsolation.new(shared_env, []),
-                                         handoff: stranding_handoff).run(task)
+      supervised(described_class.new(journal:, isolation: LoggingIsolation.new(shared_env, []),
+                                     handoff: stranding_handoff)) do |supervisor, _task|
         crash(supervisor)
         healthy(supervisor)
         supervisor.stop
@@ -1063,9 +1062,8 @@ RSpec.describe Lain::Supervisor do
     # put one noise line per adoption into the experiment record.
     it "journals nothing for a reap with nothing to report" do
       journal = []
-      Sync do |task|
-        supervisor = described_class.new(journal:, isolation: LoggingIsolation.new(shared_env, []),
-                                         handoff: RecordingHandoff.new([])).run(task)
+      supervised(described_class.new(journal:, isolation: LoggingIsolation.new(shared_env, []),
+                                     handoff: RecordingHandoff.new([]))) do |supervisor, _task|
         crash(supervisor)
         healthy(supervisor)
         healthy(supervisor)
@@ -1084,9 +1082,8 @@ RSpec.describe Lain::Supervisor do
     it "survives a handoff that RAISES: the replacement is adopted and the raise is journalled" do
       journal = []
       log = []
-      Sync do |task|
-        supervisor = described_class.new(journal:, isolation: LoggingIsolation.new(shared_env, log),
-                                         handoff: ExplodingHandoff.new).run(task)
+      supervised(described_class.new(journal:, isolation: LoggingIsolation.new(shared_env, log),
+                                     handoff: ExplodingHandoff.new)) do |supervisor, task|
         crash(supervisor)
 
         # Bounded: an intolerant reap does not fail this example, it HANGS it --
@@ -1108,9 +1105,8 @@ RSpec.describe Lain::Supervisor do
     # {Isolation::WorkerHandoff}'s own posture on a refusal it cannot retry.
     it "attempts a raising handoff exactly once, however many adoptions follow" do
       journal = []
-      Sync do |task|
-        supervisor = described_class.new(journal:, isolation: LoggingIsolation.new(shared_env, []),
-                                         handoff: ExplodingHandoff.new).run(task)
+      supervised(described_class.new(journal:, isolation: LoggingIsolation.new(shared_env, []),
+                                     handoff: ExplodingHandoff.new)) do |supervisor, task|
         crash(supervisor)
         bounded(task) do
           healthy(supervisor)
@@ -1130,9 +1126,8 @@ RSpec.describe Lain::Supervisor do
     # takes its claim synchronously, which is what makes the reap happen once.
     it "reaps a crashed row exactly once across two concurrent adoptions" do
       surrenders = []
-      Sync do |task|
-        supervisor = described_class.new(isolation: LoggingIsolation.new(shared_env, []),
-                                         handoff: SuspendingHandoff.new(surrenders)).run(task)
+      supervised(described_class.new(isolation: LoggingIsolation.new(shared_env, []),
+                                     handoff: SuspendingHandoff.new(surrenders))) do |supervisor, task|
         crash(supervisor)
 
         [task.async { healthy(supervisor, role: "a") },
@@ -1148,9 +1143,8 @@ RSpec.describe Lain::Supervisor do
     it "reaps the worker a Restart replaces, and the replacement holds the fresh lease" do
       log = []
       record = killed_session_record
-      Sync do |task|
-        supervisor = described_class.new(isolation: LoggingIsolation.new(shared_env, log),
-                                         handoff: RecordingHandoff.new(log)).run(task)
+      supervised(described_class.new(isolation: LoggingIsolation.new(shared_env, log),
+                                     handoff: RecordingHandoff.new(log))) do |supervisor, _task|
         crash(supervisor, role: "researcher")
         restart(record, supervisor:)
 
@@ -1236,8 +1230,7 @@ RSpec.describe Lain::Supervisor do
 
       it "reaps the dead worker's checkout, keeps its commit on refs/lain/worker/, " \
          "and gives the replacement a fresh lease" do
-        Sync do |task|
-          supervisor = described_class.new(isolation: backend, handoff:).run(task)
+        supervised(described_class.new(isolation: backend, handoff:)) do |supervisor, _task|
           crashed = crash(supervisor)
           commit = commit_work(crashed.cwd)
 
@@ -1257,8 +1250,7 @@ RSpec.describe Lain::Supervisor do
       # supervised fleet shutting down is the most likely path there is.
       it "surrenders a crashed worker at #stop, keeping its commits when no adoption follows" do
         commit = nil
-        Sync do |task|
-          supervisor = described_class.new(isolation: backend, handoff:).run(task)
+        supervised(described_class.new(isolation: backend, handoff:)) do |supervisor, _task|
           crashed = crash(supervisor)
           commit = commit_work(crashed.cwd)
 
@@ -1273,8 +1265,7 @@ RSpec.describe Lain::Supervisor do
       end
 
       it "leaves no lain-owned worktree standing after #stop" do
-        Sync do |task|
-          supervisor = described_class.new(isolation: backend, handoff:).run(task)
+        supervised(described_class.new(isolation: backend, handoff:)) do |supervisor, _task|
           commit_work(crash(supervisor).cwd)
           healthy(supervisor)
 
@@ -1290,8 +1281,7 @@ RSpec.describe Lain::Supervisor do
       # HEAD, so the handback is :nothing_to_do -- never a :failed outcome left
       # behind in the record for someone to chase.
       it "releases a crashed worker that committed NOTHING cleanly, anchoring no ref" do
-        Sync do |task|
-          supervisor = described_class.new(isolation: backend, handoff:).run(task)
+        supervised(described_class.new(isolation: backend, handoff:)) do |supervisor, _task|
           crashed = crash(supervisor)
 
           healthy(supervisor)
@@ -1394,9 +1384,8 @@ RSpec.describe Lain::Supervisor do
 
     it "self-syncs a settled actor while its lease is live, anchors, releases, and returns the ref and SHA" do
       log = []
-      Sync do |task|
-        supervisor = described_class.new(isolation: RetireIsolation.new(shared_env, log),
-                                         retirement: retirement(log)).run(task)
+      supervised(described_class.new(isolation: RetireIsolation.new(shared_env, log),
+                                     retirement: retirement(log))) do |supervisor, _task|
         actor = adopted(supervisor, retiring_tool(text_response("done"), tools: [RetireShell.new]))
 
         supervisor.retire(row_of(supervisor, actor))
@@ -1410,9 +1399,8 @@ RSpec.describe Lain::Supervisor do
 
     it "offers the self-sync nobody to ask when the actor holds no shell" do
       log = []
-      Sync do |task|
-        supervisor = described_class.new(isolation: RetireIsolation.new(shared_env, log),
-                                         retirement: retirement(log)).run(task)
+      supervised(described_class.new(isolation: RetireIsolation.new(shared_env, log),
+                                     retirement: retirement(log))) do |supervisor, _task|
         supervisor.retire(row_of(supervisor, adopted(supervisor, retiring_tool(text_response("done")))))
         supervisor.stop
       end
@@ -1424,9 +1412,8 @@ RSpec.describe Lain::Supervisor do
     # last turn left it: anchored as it stands, with nothing spawned.
     it "surrenders an actor whose first turn raised: anchored with no self-sync, then released" do
       log = []
-      Sync do |task|
-        supervisor = described_class.new(isolation: RetireIsolation.new(shared_env, log),
-                                         retirement: retirement(log)).run(task)
+      supervised(described_class.new(isolation: RetireIsolation.new(shared_env, log),
+                                     retirement: retirement(log))) do |supervisor, _task|
         actor = adopted(supervisor, retiring_tool)
         expect(actor).to be_dead
 
@@ -1439,9 +1426,8 @@ RSpec.describe Lain::Supervisor do
 
     it "records the anchor on one handback record, carrying what the self-sync did" do
       journal = Lain::Channel.new
-      Sync do |task|
-        supervisor = described_class.new(isolation: RetireIsolation.new(shared_env, []),
-                                         retirement: retirement([], journal:)).run(task)
+      supervised(described_class.new(isolation: RetireIsolation.new(shared_env, []),
+                                     retirement: retirement([], journal:))) do |supervisor, _task|
         supervisor.retire(row_of(supervisor, adopted(supervisor, retiring_tool(text_response("done")))))
         supervisor.stop
       end
@@ -1453,9 +1439,8 @@ RSpec.describe Lain::Supervisor do
 
     it "retires a row once: a second retire is refused by name, and #stop skips the row" do
       log = []
-      Sync do |task|
-        supervisor = described_class.new(isolation: RetireIsolation.new(shared_env, log),
-                                         retirement: retirement(log)).run(task)
+      supervised(described_class.new(isolation: RetireIsolation.new(shared_env, log),
+                                     retirement: retirement(log))) do |supervisor, _task|
         row = row_of(supervisor, adopted(supervisor, retiring_tool(text_response("done"))))
         supervisor.retire(row)
         retired = log.dup
@@ -1471,8 +1456,7 @@ RSpec.describe Lain::Supervisor do
     end
 
     it "refuses a registration it never adopted" do
-      Sync do |task|
-        supervisor = described_class.new(retirement: retirement([])).run(task)
+      supervised(described_class.new(retirement: retirement([]))) do |supervisor, task|
         stranger = described_class.new.run(task)
         row = row_of(stranger, adopted(stranger, retiring_tool(text_response("done"))))
 
@@ -1485,9 +1469,8 @@ RSpec.describe Lain::Supervisor do
 
     it "retires a revived actor as one nobody may ask" do
       log = []
-      Sync do |task|
-        supervisor = described_class.new(isolation: RetireIsolation.new(shared_env, log),
-                                         retirement: retirement(log)).run(task)
+      supervised(described_class.new(isolation: RetireIsolation.new(shared_env, log),
+                                     retirement: retirement(log))) do |supervisor, _task|
         revived = supervisor.adopt(role: "issue") do
           Lain::Supervisor::Restart::Revived.new(agent: nil, address: "blake3:revived")
         end
@@ -1505,8 +1488,7 @@ RSpec.describe Lain::Supervisor do
     # ref is refused before anything is leased.
     it "keys an adopted actor on the worker id its caller names, and refuses one git could not put in a ref" do
       log = []
-      Sync do |task|
-        supervisor = described_class.new(isolation: RetireIsolation.new(shared_env, log)).run(task)
+      supervised(described_class.new(isolation: RetireIsolation.new(shared_env, log))) do |supervisor, _task|
         supervisor.adopt(role: "issue_orchestrator", worker_id: "issue.demo.a") do |worker_env|
           retiring_tool(text_response("done")).launch_actor("go", worker_env:)
         end
@@ -1523,9 +1505,9 @@ RSpec.describe Lain::Supervisor do
     # write -- may move it.
     it "refuses before any self-sync when the worker's ref already anchors work this checkout does not hold" do
       log = []
-      Sync do |task|
-        supervisor = described_class.new(isolation: RetireIsolation.new(shared_env, log),
-                                         retirement: retirement(log, taken: true)).run(task)
+      supervised(described_class.new(isolation: RetireIsolation.new(shared_env, log),
+                                     retirement: retirement(log,
+                                                            taken: true))) do |supervisor, _task|
         actor = adopted(supervisor, retiring_tool(text_response("done"), tools: [RetireShell.new]))
 
         report = supervisor.retire(row_of(supervisor, actor))
@@ -1542,9 +1524,8 @@ RSpec.describe Lain::Supervisor do
       log = []
       entered = Async::Queue.new
       release = Async::Queue.new
-      Sync do |task|
-        supervisor = described_class.new(isolation: RetireIsolation.new(shared_env, log),
-                                         retirement: retirement(log)).run(task)
+      supervised(described_class.new(isolation: RetireIsolation.new(shared_env, log),
+                                     retirement: retirement(log))) do |supervisor, task|
         actor = supervisor.adopt(role: "issue") do |worker_env|
           parking_tool(entered:, release:).launch_actor("go", worker_env:)
         end
@@ -1560,9 +1541,8 @@ RSpec.describe Lain::Supervisor do
     end
 
     it "refuses by name a row whose lease was already given up" do
-      Sync do |task|
-        supervisor = described_class.new(isolation: RetireIsolation.new(shared_env, []),
-                                         retirement: retirement([])).run(task)
+      supervised(described_class.new(isolation: RetireIsolation.new(shared_env, []),
+                                     retirement: retirement([]))) do |supervisor, _task|
         row = row_of(supervisor, adopted(supervisor, retiring_tool(text_response("done"))))
         row.release
 
@@ -1576,10 +1556,9 @@ RSpec.describe Lain::Supervisor do
     # reached the journal says so on the report it hands back.
     it "says on its report when its handback record could not be journaled" do
       closed = Class.new { def <<(_record) = raise(IOError, "journal closed") }.new
-      Sync do |task|
-        supervisor = described_class.new(isolation: RetireIsolation.new(shared_env, []),
-                                         retirement: retirement([], journal: closed)).run(task)
-
+      supervised(described_class.new(isolation: RetireIsolation.new(shared_env, []),
+                                     retirement: retirement([],
+                                                            journal: closed))) do |supervisor, _task|
         report = supervisor.retire(row_of(supervisor, adopted(supervisor, retiring_tool(text_response("done")))))
 
         expect(report.detail).to include("the handback record was not journaled: IOError: journal closed")
@@ -1603,6 +1582,8 @@ RSpec.describe Lain::Supervisor do
           end
         end
         [wired, bare].each(&:stop)
+      ensure
+        [wired, bare].compact.each(&:stop)
       end
 
       expect(seen).to eq([Lain::Isolation::SelfSync::EDITORLESS, {}])
@@ -1682,8 +1663,8 @@ RSpec.describe Lain::Supervisor do
       def records = @records ||= journal.drain
 
       it "anchors a settled actor's commit and returns its SHA, leaving the parent checkout as it was" do
-        Sync do |task|
-          supervisor = described_class.new(journal:, isolation: backend, retirement: real_retirement).run(task)
+        supervised(described_class.new(journal:, isolation: backend,
+                                       retirement: real_retirement)) do |supervisor, _task|
           actor, env = committed(supervisor, commits)
           actor.settle
           expect(git(env.cwd, "log", "-1", "--format=%s")).to eq("actor-work")
@@ -1702,8 +1683,8 @@ RSpec.describe Lain::Supervisor do
 
       it "journals the actor's farewell, so the fleet no longer counts it" do
         actor = nil
-        Sync do |task|
-          supervisor = described_class.new(journal:, isolation: backend, retirement: real_retirement).run(task)
+        supervised(described_class.new(journal:, isolation: backend,
+                                       retirement: real_retirement)) do |supervisor, _task|
           actor, = committed(supervisor, commits)
           supervisor.retire(row_of(supervisor, actor))
           supervisor.stop
@@ -1724,9 +1705,8 @@ RSpec.describe Lain::Supervisor do
         failed_commit = nil
         report = nil
         addresses = []
-        Sync do |task|
-          supervisor = described_class.new(journal:, isolation: backend, handoff:, retirement: real_retirement)
-                                      .run(task)
+        supervised(described_class.new(journal:, isolation: backend, handoff:,
+                                       retirement: real_retirement)) do |supervisor, _task|
           settled, = committed(supervisor, commits)
           addresses << settled.address
           supervisor.retire(row_of(supervisor, settled))
@@ -1763,8 +1743,8 @@ RSpec.describe Lain::Supervisor do
         shas = []
         reports = []
         2.times do
-          Sync do |task|
-            supervisor = described_class.new(journal:, isolation: backend, retirement: real_retirement).run(task)
+          supervised(described_class.new(journal:, isolation: backend,
+                                         retirement: real_retirement)) do |supervisor, _task|
             actor, env = committed(supervisor, commits)
             actor.settle
             shas << git(env.cwd, "rev-parse", "HEAD")
@@ -1806,6 +1786,8 @@ RSpec.describe Lain::Supervisor do
           end
           report = supervisor.retire(row_of(supervisor, actor))
           supervisor.stop
+        ensure
+          supervisor&.stop
         end
 
         expect([report.kind, report.ref, report.sha]).to eq([:nothing_to_do, nil, nil])
@@ -1839,9 +1821,8 @@ RSpec.describe Lain::Supervisor do
 
         Dir.mktmpdir("lain-elsewhere") do |dir|
           elsewhere = File.realpath(dir)
-          Sync do |task|
-            supervisor = described_class.new(journal:, isolation: backend, retirement: real_retirement).run(task)
-
+          supervised(described_class.new(journal:, isolation: backend,
+                                         retirement: real_retirement)) do |supervisor, _task|
             expect do
               supervisor.adopt(role: "issue") do
                 marker.launch_actor("go", worker_env: Lain::WorkerEnv.default.with(cwd: elsewhere))
@@ -1861,9 +1842,8 @@ RSpec.describe Lain::Supervisor do
           def stopped? = true
           def dead? = true
         end)
-        Sync do |task|
-          supervisor = described_class.new(journal:, isolation: backend, retirement: real_retirement).run(task)
-
+        supervised(described_class.new(journal:, isolation: backend,
+                                       retirement: real_retirement)) do |supervisor, _task|
           expect { supervisor.adopt(role: "issue") { RetireStandIn.new } }
             .to raise_error(Lain::Error, /answers no session/)
           expect(supervisor.to_a).to be_empty
@@ -1876,8 +1856,8 @@ RSpec.describe Lain::Supervisor do
       it "retires a failed actor that a later adoption reaped with nothing to hand back, and keeps its work" do
         failing = RetireFailingProvider.new(responses: [tool_response(["c1", "commit", {}])])
         report = failed_sha = nil
-        Sync do |task|
-          supervisor = described_class.new(journal:, isolation: backend, retirement: real_retirement).run(task)
+        supervised(described_class.new(journal:, isolation: backend,
+                                       retirement: real_retirement)) do |supervisor, _task|
           env = nil
           failed = supervisor.adopt(role: "issue", worker_id: "issue.demo.a") do |worker_env|
             env = worker_env
