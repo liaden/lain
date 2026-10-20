@@ -244,7 +244,7 @@ RSpec.describe Lain::Event do
   # the refusal record so a live view reads the same answer rather than guessing.
   describe ".stands_on" do
     let(:line) do
-      Lain::Timeline.empty.commit(role: :user, content: block("ask"))
+      Lain::Timeline.empty(store: Lain::Store.new).commit(role: :user, content: block("ask"))
                     .commit(role: :assistant, content: block("answer"))
     end
 

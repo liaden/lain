@@ -68,7 +68,8 @@ RSpec.describe Lain::Ext::Timeline do
     end
 
     it "equals the Ruby timeline's answer over the same chain" do
-      ruby = Lain::Timeline.empty.commit(role: :user, content: text("a")).commit(role: :assistant, content: text("b"))
+      ruby = Lain::Timeline.empty(store: Lain::Store.new).commit(role: :user, content: text("a"))
+                           .commit(role: :assistant, content: text("b"))
       ext = described_class.empty(store:).commit(role: :user, content: text("a"))
                            .commit(role: :assistant, content: text("b"))
       expect(ext.correlation).to eq(ruby.correlation)
@@ -149,7 +150,7 @@ RSpec.describe Lain::Ext::Timeline do
 
     it "addresses a causally-parented turn exactly as the Ruby timeline does" do
       expect(causal_head_digest(described_class.empty(store: Lain::Ext::Store.new)))
-        .to eq(causal_head_digest(Lain::Timeline.empty))
+        .to eq(causal_head_digest(Lain::Timeline.empty(store: Lain::Store.new)))
     end
 
     it "refuses a causal parent the store has never seen" do
@@ -159,7 +160,7 @@ RSpec.describe Lain::Ext::Timeline do
 
     it "renders that refusal byte-identical to the Ruby commit" do
       expect(commit_refusal_message(described_class.empty(store: Lain::Ext::Store.new), Lain::Ext::Store))
-        .to eq(commit_refusal_message(Lain::Timeline.empty, Lain::Store))
+        .to eq(commit_refusal_message(Lain::Timeline.empty(store: Lain::Store.new), Lain::Store))
     end
   end
 

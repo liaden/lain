@@ -21,7 +21,9 @@ module Lain
 
     attr_reader :head_digest, :store
 
-    def self.empty(store: Dag::Factory.store)
+    # The store is required: a default from {Dag::Factory} is the Rust store
+    # once that is selected, and this timeline cannot commit into it.
+    def self.empty(store:)
       new(head_digest: nil, store:)
     end
 
