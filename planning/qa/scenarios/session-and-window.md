@@ -342,7 +342,7 @@ Two launch-level checks, both free:
   exception to the bullet above: the schedule that runs is always written (`idle` for an unflagged
   launch, `turn` when typed so), so a reader can tell the two arms apart. `--no-compact` writes `compact_schedule: "turn"` (`UNCOMPACTED_SCHEDULE`), so its schedule is identical to `--compact-schedule turn`'s, but the header also writes `"compact": false`, and only a run with compaction off writes that key (a26-2 fixed, T58). A resume of such a session now runs with compaction off and says `running without compaction, as recorded (pass --compact to compact)`; a typed `--compact` wins with `recorded with --compact false; continuing with true (the current flags win)`. `lain bench variance` refuses to pool a compaction-off recording with a compaction-on one: `cannot compare runs where one ran without compaction: compaction off vs compaction on` (T59). A header with no key at all predates the field, and those runs compacted on
   the turn. `lain bench variance` refuses recordings made under different schedules, ending
-  `cannot compare runs under different compaction schedules: idle vs turn` (exit 1); a recording
+  `cannot compare runs that differ in compaction schedule: idle vs turn` (exit 1); a recording
   without the key counts as `turn`.
 - **The header also records which STRATEGY ran, as `compact_strategy` — present only when
   `--compact-strategy` was typed.** Like every other compaction key now, an unflagged launch writes no key at
@@ -350,7 +350,7 @@ Two launch-level checks, both free:
   (`Telemetry::Compaction::EAGER_CONTROL_ARM`, `"eager"`) rather than confusing it with a stated
   `"summarizing"` or similar — the same absent-versus-default distinction §9 draws for
   `context_pipeline`. And `lain bench variance` refuses to compare two recordings whose headers
-  name different strategies, ending `cannot compare runs under different compaction arms: elide vs
+  name different strategies, ending `cannot compare runs that differ in compaction arm: elide vs
   summarizing` (exit 1); a recording with no key compares fine against one explicitly naming the
   eager arm, because both ran the same arm.
 
@@ -585,7 +585,7 @@ lain bench variance <the unset session> <the default session>
 ```
 
 Verified 2026-09-14: the first exits **1**, no backtrace, ending
-`cannot compare runs under different context pipelines: prune vs unset`; the second **reports**,
+`cannot compare runs that differ in context pipeline: <prune's stages> vs reminder+cache-breakpoints` (an unset pipeline is named by its default stages); the second **reports**,
 because an unset flag and `default` render the same stages. A table for the first pair is the
 regression; a refusal for the second is too.
 
@@ -599,7 +599,7 @@ records only the arms that are on, as `"arms":{"confine":"reader","tripwire":"ob
 a launch with every arm off writes no `arms` key at all. The arms act: `--confine` and `--tripwire` change what
 a bash call runs under and what the journal holds, so a header that names an arm is evidence the arm was built,
 but not that it ran. A box that cannot build the sandbox still records `confine: reader` in the header, with a
-`capability_degraded` record and a startup notice that bash runs unconfined. `bench variance` refuses recordings made under different arms (`cannot compare runs under different bench arms`), and under different opaque policies (`cannot compare runs under different opaque policies: refused vs unrecorded`; a leased arm records `"opaque": "refused"`, T20, T59). **A `--resume` or
+`capability_degraded` record and a startup notice that bash runs unconfined. `bench variance` refuses recordings made under different arms (`cannot compare runs that differ in bench arms`), and under different opaque policies (`cannot compare runs that differ in opaque policy: refused vs unrecorded`; a leased arm records `"opaque": "refused"`, T20, T59). **A `--resume` or
 `--fork` keeps the recorded arms** (round 25, a25-2, fixed), with a flag typed on the resume winning over the record: an arm the old header
 did not record is off, and a header with no `arms` key at all (every session on disk before the arms existed) resumes with every arm off,
 not with today's defaults. An arm that resumes weaker than a fresh chat's default and was not typed gets one notice, for example

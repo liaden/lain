@@ -39,14 +39,7 @@ module Lain
       #   whose baseline cannot line up 1:1 with its model calls
       # @raise [Capability::Guard::Mismatch] when the recordings degraded different sets
       # @raise [Lain::Error] when the recordings walked different modes
-      # @raise [Lain::Error] when the recordings rendered through different
-      #   context pipeline stages
-      # @raise [Lain::Error] when the recordings declared different compaction
-      #   arms
-      # @raise [Lain::Error] when the recordings compacted on different schedules
-      # @raise [Lain::Error] when the recordings ran under different bench arms
-      # @raise [Lain::Error] when one recording ran without compaction and another did not
-      # @raise [Lain::Error] when the recordings recorded different opaque-command policies
+      # @raise [Lain::Error] when the recordings differ on a comparability axis
       def initialize(recordings:, price_book: PriceBook.default, set_aside: [])
         @recordings = Array(recordings).freeze
         raise ArgumentError, "variance needs at least two recordings; one run is not an experiment" if
@@ -54,12 +47,7 @@ module Lain
 
         @price_book = price_book
         @set_aside = set_aside.dup.freeze
-        guard_pipelines!
-        guard_compaction!
-        guard_schedule!
-        guard_arms!
-        guard_compact!
-        guard_opaque!
+        guard_comparable!
         @compare = build_compare
         @diffs = @recordings.map { |recording| recording.dry_replay.diff(recording.context) }.freeze
       end
@@ -137,69 +125,15 @@ module Lain
         end)
       end
 
-      # The pipeline decides the bytes every model call sends, so two arms held
-      # together would report it as the model's variance. Judged on the stages
-      # that rendered rather than the recorded words: an unset flag and
-      # `default` send the same bytes, and bytes are what this report reads.
-      def guard_pipelines!
-        names = @recordings.map { |recording| recording.context.pipeline_name }
-        mismatch = names.combination(2).find { |(one, other)| stages(one) != stages(other) }
-        return if mismatch.nil?
+      # Pooling is a partial monoid: defined only where every label agrees.
+      def guard_comparable!
+        labels = @recordings.map(&:comparability)
+        axis = labels.first.keys.find { |name| labels.map { |entry| entry.fetch(name) }.uniq.size > 1 }
+        return if axis.nil?
 
-        raise ::Lain::Error, "cannot compare runs under different context pipelines: " \
-                             "#{mismatch.map { |name| name || "unset" }.join(" vs ")}"
+        pair = labels.map { |entry| entry.fetch(axis) }.uniq.first(2)
+        raise ::Lain::Error, "cannot compare runs that differ in #{axis}: #{pair.join(" vs ")}"
       end
-
-      def stages(name) = ::Lain::CLI::ContextPipeline.named(name).stages
-
-      # The compaction arm is a different axis from the pipeline, and NOT
-      # judged by the pipeline's stages-not-names rule: an unset strategy and
-      # `summarizing` are genuinely different span-collapse policies, unlike an
-      # unset pipeline and `default`, which send identical bytes. So the names
-      # compare VERBATIM once absence is normalized to the run's own eager
-      # control arm -- {Telemetry::Compaction::EAGER_CONTROL_ARM}, the same
-      # name a reader everywhere else in `lib/` normalizes an unset flag to.
-      def guard_compaction!
-        names = @recordings.map { |recording| recording.compaction || Telemetry::Compaction::EAGER_CONTROL_ARM }
-        mismatch = names.combination(2).find { |(one, other)| one != other }
-        return if mismatch.nil?
-
-        raise ::Lain::Error, "cannot compare runs under different compaction arms: #{mismatch.join(" vs ")}"
-      end
-
-      def guard_schedule!
-        names = @recordings.map(&:schedule)
-        mismatch = names.combination(2).find { |(one, other)| one != other }
-        return if mismatch.nil?
-
-        raise ::Lain::Error, "cannot compare runs under different compaction schedules: #{mismatch.join(" vs ")}"
-      end
-
-      def guard_arms!
-        names = @recordings.map { |recording| arms_label(recording.arms) }
-        mismatch = names.combination(2).find { |(one, other)| one != other }
-        return if mismatch.nil?
-
-        raise ::Lain::Error, "cannot compare runs under different bench arms: #{mismatch.join(" vs ")}"
-      end
-
-      def guard_compact!
-        names = @recordings.map { |recording| recording.compact == false ? "compaction off" : "compaction on" }
-        mismatch = names.combination(2).find { |(one, other)| one != other }
-        return if mismatch.nil?
-
-        raise ::Lain::Error, "cannot compare runs where one ran without compaction: #{mismatch.join(" vs ")}"
-      end
-
-      def guard_opaque!
-        names = @recordings.map { |recording| recording.opaque || "unrecorded" }
-        mismatch = names.combination(2).find { |(one, other)| one != other }
-        return if mismatch.nil?
-
-        raise ::Lain::Error, "cannot compare runs under different opaque policies: #{mismatch.join(" vs ")}"
-      end
-
-      def arms_label(arms) = arms.empty? ? "none" : arms.sort.map { |name, value| "#{name}=#{value}" }.join(",")
 
       # One candidate baseline held against the reference's: the first model
       # call whose request digest differs, the fields that changed there, and

@@ -246,6 +246,24 @@ RSpec.describe Lain::Bench::Session do
     end
   end
 
+  describe "#comparability" do
+    it "answers one label per axis a pooled run must agree on" do
+      write_session
+      expect(load_session.comparability).to eq(
+        "context pipeline" => "reminder+cache-breakpoints", "compaction arm" => "eager",
+        "compaction schedule" => "turn", "bench arms" => "none", "compaction" => "on", "opaque policy" => "unrecorded"
+      )
+    end
+
+    it "refuses through Variance on an axis only a new entry names, with no other change" do
+      one, other = %w[a b].map do |label|
+        Struct.new(:comparability).new({ "context pipeline" => "default", "sandbox" => label })
+      end
+      expect { Lain::Bench::Variance.new(recordings: [one, other]) }
+        .to raise_error(Lain::Error, /differ in sandbox: a vs b/)
+    end
+  end
+
   # A request_sent with no following turn_usage is how a failed call reads
   # (JournalRequests records BEFORE dispatch). The attempt is part of the
   # record, so loading must succeed; a consumer detects the failure because the

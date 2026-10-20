@@ -204,7 +204,7 @@ module Lain
       # `compaction` is the header's recorded `compact_strategy`, another
       # comparability axis on {Compare}'s own argument and so required on the
       # same no-default rule. Unlike `mode` its Null value is a plain `nil` --
-      # an unset flag ran the eager tool-result tier, and {Variance} is where
+      # an unset flag ran the eager tool-result tier, and {Recording#comparability} is where
       # that absence is normalized to the named control arm, not here, because
       # this member is what the header actually recorded, nothing folded in.
       # `compaction_tally` is the {Compare::CompactionTally} of the journal's compaction records.
@@ -237,6 +237,20 @@ module Lain
         # DryReplay's 1:1 guard raises on it -- loudly, by design.
         def dry_replay
           DryReplay.new(timeline:, baseline:, toolset:, workspace:)
+        end
+
+        # What two runs must agree on before their numbers pool; {Variance} refuses
+        # the first axis that differs. The pipeline label is its rendered stages,
+        # not its word: an unset flag and `default` send the same bytes.
+        #
+        # @return [Hash{String => String, nil}] axis => label
+        def comparability
+          { "context pipeline" => ::Lain::CLI::ContextPipeline.named(context.pipeline_name).stages.join("+"),
+            "compaction arm" => compaction || Telemetry::Compaction::EAGER_CONTROL_ARM,
+            "compaction schedule" => schedule || "unrecorded",
+            "bench arms" => arms.empty? ? "none" : arms.sort.map { |name, value| "#{name}=#{value}" }.join(","),
+            "compaction" => compact == false ? "off" : "on",
+            "opaque policy" => opaque || "unrecorded" }
         end
 
         def memory_root_at(turn_digest) = memory.root_at(turn_digest)

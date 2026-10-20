@@ -47,7 +47,7 @@ module Lain
       # The `--confine` values a bench arm takes; a chat's `classes` would change nothing here.
       CONFINES = %w[off reader].freeze
 
-      # Informational until a reader exists: nothing yet compares it, so variance still pools across it.
+      # {Variance} compares it, so runs under different opaque policies are refused rather than pooled.
       OPAQUE_REFUSED = { "opaque" => "refused" }.freeze
 
       WORKTREE_REACH = "--isolation worktree holds the paths the tools name inside each arm's worktree; a shell " \
@@ -690,12 +690,9 @@ module Lain
       # Variance's construction-time guards (n>=2) speak in recordings; the
       # experimenter typed paths, so restore them to the message.
       #
-      # Compare's two COMPARABILITY guards are here for the same reason and were
-      # not: each names the runs it refused ("manual → plan vs manual → auto",
-      # "[] vs [:prompt_caching]") and neither names a file, so pointing this at
-      # a directory of a dozen sessions refused with nothing to act on. Both are
-      # Lain::Errors rather than ArgumentErrors, which is how they sailed past
-      # the narrower rescue this widens.
+      # The comparability refusal names the runs it refused ("prune vs reminder+cache-breakpoints") and
+      # no file, so the paths are restored here; it is a Lain::Error, not an
+      # ArgumentError, hence the wider rescue.
       def build_variance(recordings, paths, price_book, set_aside)
         Variance.new(recordings:, price_book:, set_aside:)
       rescue ArgumentError, Error => e

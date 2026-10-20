@@ -267,7 +267,7 @@ RSpec.describe Lain::Bench::Variance do
     it "raises when the recordings rendered through different context pipelines" do
       pruned = record([tool_response("tu_1", "hi"), text_response("done")], under: named("prune"))
       expect { described_class.new(recordings: [reference, pruned]) }
-        .to raise_error(Lain::Error, /cannot compare runs under different context pipelines: .*prune/)
+        .to raise_error(Lain::Error, /cannot compare runs that differ in context pipeline: .*prune/)
     end
 
     it "compares a recording named default with an unset one, which rendered the same stages" do
@@ -289,7 +289,7 @@ RSpec.describe Lain::Bench::Variance do
     it "raises when the recordings declared different compaction arms" do
       elided = record([tool_response("tu_1", "hi"), text_response("done")], compact_strategy: "elide")
       expect { described_class.new(recordings: [reference, elided]) }
-        .to raise_error(Lain::Error, /cannot compare runs under different compaction arms: eager vs elide/)
+        .to raise_error(Lain::Error, /cannot compare runs that differ in compaction arm: eager vs elide/)
     end
 
     # An unset flag is the run's own eager control arm, not "no arm" -- so a
@@ -306,7 +306,7 @@ RSpec.describe Lain::Bench::Variance do
 
     it "raises when the recordings ran under different schedules" do
       expect { described_class.new(recordings: [scheduled("idle"), reference]) }
-        .to raise_error(Lain::Error, /cannot compare runs under different compaction schedules: idle vs turn/)
+        .to raise_error(Lain::Error, /cannot compare runs that differ in compaction schedule: idle vs turn/)
     end
 
     it "pools recordings that ran under the same schedule" do
@@ -324,7 +324,7 @@ RSpec.describe Lain::Bench::Variance do
 
     it "raises when one recording ran without compaction and one recorded nothing" do
       expect { described_class.new(recordings: [compacting(false), reference]) }
-        .to raise_error(Lain::Error, /one ran without compaction: compaction off vs compaction on/)
+        .to raise_error(Lain::Error, /differ in compaction: off vs on/)
     end
 
     it "pools recordings that both ran without compaction" do
@@ -335,7 +335,7 @@ RSpec.describe Lain::Bench::Variance do
     it "refuses a recording that named the turn schedule against one with compaction off" do
       turn = record([tool_response("tu_1", "hi"), text_response("done")], schedule: "turn")
       expect { described_class.new(recordings: [turn, compacting(false)]) }
-        .to raise_error(Lain::Error, /without compaction/)
+        .to raise_error(Lain::Error, /differ in compaction: on vs off/)
     end
   end
 
@@ -344,12 +344,12 @@ RSpec.describe Lain::Bench::Variance do
 
     it "raises when only one recording recorded the opaque policy" do
       expect { described_class.new(recordings: [opaque({ "opaque" => "refused" }), reference]) }
-        .to raise_error(Lain::Error, /different opaque policies: refused vs unrecorded/)
+        .to raise_error(Lain::Error, /differ in opaque policy: refused vs unrecorded/)
     end
 
     it "raises when the recorded policies differ" do
       expect { described_class.new(recordings: [opaque({ "opaque" => "refused" }), opaque({ "opaque" => "open" })]) }
-        .to raise_error(Lain::Error, /different opaque policies: refused vs open/)
+        .to raise_error(Lain::Error, /differ in opaque policy: refused vs open/)
     end
 
     it "pools recordings that both refused opaque commands" do
@@ -364,7 +364,7 @@ RSpec.describe Lain::Bench::Variance do
 
     it "raises when the recordings ran under different bench arms, naming both" do
       expect { described_class.new(recordings: [armed({ "confine" => "reader" }), reference]) }
-        .to raise_error(Lain::Error, /different bench arms: confine=reader vs none/)
+        .to raise_error(Lain::Error, /differ in bench arms: confine=reader vs none/)
     end
 
     it "pools recordings that ran under the same bench arms" do
@@ -375,7 +375,7 @@ RSpec.describe Lain::Bench::Variance do
 
     it "raises when the recordings differ only in an arm's value" do
       expect { described_class.new(recordings: [armed({ "confine" => "reader" }), armed({ "confine" => "full" })]) }
-        .to raise_error(Lain::Error, /different bench arms: confine=reader vs confine=full/)
+        .to raise_error(Lain::Error, /differ in bench arms: confine=reader vs confine=full/)
     end
 
     it "pools recordings that recorded no arms" do
