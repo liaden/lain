@@ -2175,6 +2175,8 @@ Spec file: `spec/lain/dag/factory_spec.rb` (AC 1 as an enumeration over `lib/`, 
 **Stop and report if:**
 - A site constructs inside a class body or a constant (`memory/index.rb:59`, `status_feed.rb:206` are default arguments); a load-order `NameError` at boot means the default must become lazy.
 - `Timeline#==` is `other.is_a?(Timeline)` (`timeline.rb:147`) and `Ext::Timeline::CrossStore` is a separate class from `Dag::CrossStore`; both are T37's parity list, named here so it does not find them late.
+- Found while executing T31: a fetched `Blob` is a frozen binary String, and `snapshot_log`, `restore` and `restart` call
+  `.bytes` on a fetch; they break at the flip and join T37's parity list.
 
 ### T37: Flip the factory          [risk: high]
 
@@ -2771,3 +2773,10 @@ After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]
 - 2026-10-19 21:50 landing window, hook green each, runtime log 983 spec files: T10 landed `1a3bb76d`; T16 landed `29b74d1e`;
   T15 landed `8b7a0215`; T44 landed `f0f073eb`; T28 landed `0ef887a1`; T30 landed `39a564ac`. T3's implementer ran specs
   during part of this window (a resume raced the watcher); every hook was green, so no red needed the flaky procedure.
+- 2026-10-19 21:55 started T11, T45, T42, T48, T50, T53 (sonnet), T31 (opus), cut at `294ad51c`; reviews of T3 (opus, high), T14, T19; second reviews of T1 and T17.
+- 2026-10-19 22:40 landing window 3, hook green each, runtime log 988 spec files: T42 `3648ccc0`; T53 `e993dac3`; T48 `b305d1ca`;
+  T14 `9879e496`; T50 `284c6cea`; T1 `2e94d841`; T17 `2640cd88`; T19 `fb883359`; T45 `a745137f`; T11 `64e25d1f`; T3 `377ca484`.
+  Follow-up `45013b6b` drops the `Compare::Priced`/`Unpriced` aliases (T15 and T17 both landed). Rulings this window: T11's
+  stream may still collide with a placeholder arriving in a later chunk after a fresh slot was shown (a stream cannot see
+  ahead; the live copy is its own numbering); T50's `ProcessGroup` got its own file and an injected sleeper instead of an
+  inline rubocop disable; T45's `REMEDY` goes through `Epic::Remedy`; T3's ladder helper lives once in `spec/support`.
