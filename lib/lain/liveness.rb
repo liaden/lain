@@ -38,6 +38,9 @@ module Lain
       # which may itself hold spaces and parentheses.
       START_FIELD = 19
 
+      # Field 5 of the same file, counted the same way.
+      GROUP_FIELD = 2
+
       # @param proc_root [String] where `<pid>/stat` is read from
       # @param signal [#call] `Process.kill`; signal 0 delivers nothing
       def initialize(proc_root: "/proc", signal: Process.public_method(:kill))
@@ -60,13 +63,22 @@ module Lain
       # @param pid [Integer]
       # @return [String] the process's start field, or {UNKNOWN_START}
       def start_of(pid)
-        fields = File.read(File.join(@proc_root, pid.to_s, "stat")).rpartition(")").last.split
-        fields.fetch(START_FIELD, UNKNOWN_START)
+        fields(pid).fetch(START_FIELD, UNKNOWN_START)
       rescue SystemCallError
         UNKNOWN_START
       end
 
+      # @param pid [Integer]
+      # @return [Integer, nil] the process's group, or nil when its stat cannot be read
+      def group_of(pid)
+        fields(pid)[GROUP_FIELD]&.to_i
+      rescue SystemCallError
+        nil
+      end
+
       private
+
+      def fields(pid) = File.read(File.join(@proc_root, pid.to_s, "stat")).rpartition(")").last.split
 
       # A pid too large for the kernel's type is one no process can hold.
       def exists?(pid)

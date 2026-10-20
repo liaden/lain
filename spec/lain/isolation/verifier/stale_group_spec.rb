@@ -69,6 +69,16 @@ RSpec.describe Lain::Isolation::Verifier::StaleGroup, :seam do
     expect(notices).to contain_exactly(a_string_including("stopped verify group #{pid}"))
   end
 
+  it "sends the group TERM, then KILL when it lives past the grace" do
+    pid = ready(group(plain, "exec sleep 60"))
+    sent = []
+    deaf = ->(signal, target) { signal == 0 ? Process.kill(0, target) : sent << [signal, target] }
+
+    stale_group(signal: deaf).call(line(pid, probe.start_of(pid)))
+
+    expect(sent).to eq([["TERM", -pid], ["KILL", -pid]])
+  end
+
   it "reads the recorded group off the line's end, whatever the command before it holds" do
     pid = ready(group(plain, "exec sleep 60"))
     decoy = "pid=999999999 command=lain verify_pgid=1 start=2 verify_pgid=#{pid} start=#{probe.start_of(pid)}"

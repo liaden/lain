@@ -259,18 +259,9 @@ module Lain
         nil
       end
 
-      # The group outlives its leader when a descendant ignores TERM, so the
-      # grace is spent until the whole group is gone, and KILL goes to the group
-      # even after the leader has been reaped.
       def terminate(pid)
-        deadline = clock + GRACE
-        signal(pid, "TERM")
-        reap_exited(pid)
-        while group_alive?(pid) && clock < deadline
-          sleep(POLL)
-          reap_exited(pid)
-        end
-        signal(pid, "KILL") if group_alive?(pid)
+        group = ProcessGroup.new(clock: @clock, grace: GRACE, poll: POLL)
+        group.terminate(pid, reaper: -> { reap_exited(pid) })
         reap(pid)
       end
 
@@ -280,21 +271,6 @@ module Lain
         Process.waitpid(pid, Process::WNOHANG)
       rescue Errno::ECHILD
         nil
-      end
-
-      def group_alive?(pid)
-        Process.kill(0, -pid)
-        true
-      rescue Errno::ESRCH
-        false
-      rescue Errno::EPERM
-        true
-      end
-
-      def signal(pid, name)
-        Process.kill(name, -pid)
-      rescue Errno::ESRCH, Errno::EPERM
-        nil # already reaped, or no longer ours to signal
       end
 
       def reap(pid)

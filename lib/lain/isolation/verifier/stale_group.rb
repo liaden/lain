@@ -33,9 +33,7 @@ module Lain
           @notice = notice
           @proc_root = proc_root
           @probe = Liveness::Probe.new(proc_root:)
-          @signal = signal
-          @grace = grace
-          @clock = clock
+          @group = Shell::ProcessGroup.new(signal:, clock:, grace:, poll: POLL)
         end
 
         # @param pgid [Integer] the verify's process group, which is its leader's pid
@@ -65,15 +63,13 @@ module Lain
         end
 
         def verify_members?(pgid)
-          Dir.children(@proc_root).grep(/\A\d+\z/).any? { |pid| in_group?(pid, pgid) && marked?(pid) }
+          Dir.children(@proc_root).grep(/\A\d+\z/).any? { |pid| in_group?(Integer(pid), pgid) && marked?(pid) }
         rescue SystemCallError
           false
         end
 
         def in_group?(pid, pgid)
-          File.read(File.join(@proc_root, pid, "stat")).rpartition(")").last.split[2] == pgid.to_s
-        rescue SystemCallError
-          false
+          @probe.group_of(pid) == pgid
         end
 
         def marked?(pid)
@@ -83,9 +79,8 @@ module Lain
         end
 
         def stop(pgid)
-          send_group(pgid, "TERM")
-          send_group(pgid, "KILL") unless ended?(pgid)
-          @notice.call(ended?(pgid) ? stopped(pgid) : unstoppable(pgid))
+          @group.terminate(pgid)
+          @notice.call(@group.ended?(pgid) ? stopped(pgid) : unstoppable(pgid))
         end
 
         def stopped(pgid) = "stopped verify group #{pgid}, left running by a dead suite lock holder"
@@ -94,29 +89,6 @@ module Lain
           "verify group #{pgid}, left running by a dead suite lock holder, could not be stopped; " \
             "this verify runs beside it"
         end
-
-        def ended?(pgid)
-          deadline = clock + @grace
-          sleep(POLL) while group?(pgid) && clock < deadline
-          !group?(pgid)
-        end
-
-        def group?(pgid)
-          @signal.call(0, -pgid)
-          true
-        rescue Errno::ESRCH
-          false
-        rescue Errno::EPERM
-          true
-        end
-
-        def send_group(pgid, name)
-          @signal.call(name, -pgid)
-        rescue Errno::ESRCH, Errno::EPERM
-          nil # already gone, or no longer ours to signal
-        end
-
-        def clock = @clock.call
       end
     end
   end

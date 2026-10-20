@@ -44,6 +44,16 @@ RSpec.describe Lain::Liveness do
       described_class.new(proc_root: @proc_root, signal:)
     end
 
+    it "reads the process group of a pid off its stat, past a command name that holds parentheses" do
+      stat(42, 777)
+
+      expect(probe.group_of(42)).to eq(5)
+    end
+
+    it "answers no group for a pid whose stat cannot be read" do
+      expect(probe.group_of(43)).to be_nil
+    end
+
     it "calls a pid live when it exists and its start matches" do
       stat(42, 777)
 
