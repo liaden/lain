@@ -80,8 +80,8 @@ module Lain
       # it, or an unpriceable model takes score, tokens and wall-time down with
       # it after every run was already paid for. So reports read {#compare_run}
       # instead, whose {Compare::Run.from_timeline} turns this refusal into a
-      # {Compare::Unpriced} carrying the Ledger's message, and
-      # {Compare::Unpriced.describe} is the one wording every report refuses
+      # {Compare::Cost::Unpriced} carrying the Ledger's message, and
+      # {Compare::Cost::Unpriced.describe} is the one wording every report refuses
       # in. The escape is a {PriceBook} built with a `fallback:`, handed to this
       # arm's {Instrument} -- injectable by a library caller and by nothing on
       # the command line, which is why reports degrade rather than raise.

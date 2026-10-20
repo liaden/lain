@@ -32,10 +32,6 @@ module Lain
   class Compare
     include Declarative
 
-    # Kept for callers outside Compare that still name them; drop once they move to Cost.
-    Priced = Cost::Priced
-    Unpriced = Cost::Unpriced
-
     # Why a cache hit ratio over these runs would be a zero nobody measured.
     NO_PROMPT_CACHE = "not measured — every run records prompt_caching degraded, so there was no cache to hit"
     private_constant :NO_PROMPT_CACHE
@@ -53,7 +49,7 @@ module Lain
     # either directly from measured metrics or, more usually, from a recorded
     # Timeline via {.from_timeline}, which prices it through the {Ledger}.
     #
-    # `price` is {Priced} or {Unpriced}, never a bare number, so a run the book
+    # `price` is {Cost::Priced} or {Cost::Unpriced}, never a bare number, so a run the book
     # cannot price is still a run: the refusal travels with it to the report
     # instead of unwinding the whole comparison from its constructor.
     Run = Data.define(:name, :usage, :price, :score, :degraded, :mode, :compaction) do
@@ -80,9 +76,9 @@ module Lain
       # The Ledger keeps raising on a model its book has no row for; this is the
       # one place that refusal becomes a value rather than an unwound report.
       def self.price_of(ledger, timeline)
-        Priced.new(amount: ledger.cost(timeline))
+        Cost::Priced.new(amount: ledger.cost(timeline))
       rescue PriceBook::UnknownModel => e
-        Unpriced.new(reason: e.message)
+        Cost::Unpriced.new(reason: e.message)
       end
       private_class_method :price_of
 
@@ -91,7 +87,7 @@ module Lain
       end
 
       # @return [BigDecimal]
-      # @raise [PriceBook::UnknownModel] when this run is {Unpriced}
+      # @raise [PriceBook::UnknownModel] when this run is {Cost::Unpriced}
       def cost = price.amount
 
       def total_tokens = usage.total_tokens
@@ -255,7 +251,7 @@ module Lain
 
     def unpriced_reason
       unpriced = @runs.map(&:price).select(&:refuses?)
-      Unpriced.describe(unpriced) unless unpriced.empty?
+      Cost::Unpriced.describe(unpriced) unless unpriced.empty?
     end
 
     def unquoted_compaction_reason
