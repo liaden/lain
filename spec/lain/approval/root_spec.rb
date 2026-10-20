@@ -38,4 +38,16 @@ RSpec.describe Lain::Approval::Root do
     expect(described_class::NOWHERE.contains?("/project", from: "/project")).to be(false)
     expect(root).to be_deeply_frozen
   end
+
+  it "decides containment through Landing, the one order" do
+    allow(Lain::Landing).to receive(:under?).and_call_original
+
+    root.contains?("lib/x.rb")
+
+    expect(Lain::Landing).to have_received(:under?).with("/project/lib/x.rb", "/project")
+  end
+
+  it "admits what lies under the filesystem root" do
+    expect(described_class.new("/").contains?("/etc/hosts")).to be(true)
+  end
 end

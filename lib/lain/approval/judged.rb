@@ -322,7 +322,7 @@ module Lain
       end
 
       def within?(roots, path)
-        roots.any? { path == _1 || path.start_with?(File.join(_1, "")) } || @policy.in_related_tree?(path)
+        roots.any? { ::Lain::Landing.under?(path, _1) } || @policy.in_related_tree?(path)
       end
 
       def named_by_field(effect) = ::Lain::Sensitivity::Policy.path_in(effect)

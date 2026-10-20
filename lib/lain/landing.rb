@@ -101,8 +101,15 @@ module Lain
       nil
     end
 
-    def under?(path, anchor) = path == anchor || path.start_with?(File.join(anchor, ""))
+    # A trailing slash is only a spelling, so `/a/` and `/a` answer alike.
+    #
+    # @param path [String] absolute
+    # @param anchor [String] absolute
+    # @return [Boolean]
+    def under?(path, anchor) = directory(path).start_with?(directory(anchor))
 
-    private_class_method :resolve, :through, :respell, :under?
+    def directory(path) = path.end_with?(File::SEPARATOR) ? path : "#{path}#{File::SEPARATOR}"
+
+    private_class_method :resolve, :through, :respell, :directory
   end
 end

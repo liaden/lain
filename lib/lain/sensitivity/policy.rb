@@ -302,7 +302,7 @@ module Lain
           landings(named).any? { under_root?(_1) || @policy.in_related_tree?(_1) }
         end
 
-        def under_root?(path) = @roots.any? { |root| path == root || path.start_with?(File.join(root, "")) }
+        def under_root?(path) = @roots.any? { |root| Landing.under?(path, root) }
 
         def spellings(root)
           expanded = File.expand_path(root)

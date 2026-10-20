@@ -132,4 +132,35 @@ RSpec.describe Lain::Landing do
     expect(described_class.of("a", cwd: @root, home: real("home"), root: @root))
       .to eq([File.join(@root, "a")])
   end
+
+  describe ".under?" do
+    let(:population) { %w[/ /a /a/ /a/b /a/b/ /ab /a/b/c /lib /library /library/x.rb] }
+
+    def same_place?(left, right) = left.chomp("/") == right.chomp("/")
+
+    it "puts every absolute path under the root directory" do
+      expect(population.map { described_class.under?(_1, "/") }).to all(be(true))
+    end
+
+    it "answers a root spelled with a trailing slash as the same root without one" do
+      expect(%w[/a/b /a/b/c /a /ab /lib].map { [described_class.under?(_1, "/a/"), described_class.under?(_1, "/a")] })
+        .to all(satisfy { |with, without| with == without })
+    end
+
+    it "does not count a sibling sharing a prefix as under" do
+      expect(described_class.under?("library/x.rb", "lib")).to be(false)
+      expect(described_class.under?("/library/x.rb", "/lib")).to be(false)
+    end
+
+    it "is reflexive, antisymmetric and transitive over the population" do
+      pairs = population.product(population)
+      under = ->(low, high) { described_class.under?(low, high) }
+
+      expect(population.map { under.call(_1, _1) }).to all(be(true))
+      expect(pairs.select { |low, high| under.call(low, high) && under.call(high, low) })
+        .to all(satisfy { |low, high| same_place?(low, high) })
+      expect(population.product(population, population).select { |a, b, c| under.call(a, b) && under.call(b, c) })
+        .to all(satisfy { |a, _b, c| under.call(a, c) })
+    end
+  end
 end

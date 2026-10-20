@@ -387,6 +387,26 @@ RSpec.describe Lain::Isolation::Gc, :seam do
       end
     end
 
+    it "never judges a checkout registered at the root itself, which is a container and not a lease" do
+      run_git(@repo_root, "worktree", "add", "-q", "--detach", @root, "main")
+
+      records = gc(at: now + (30 * day))
+
+      expect(record_for(records, @root)).to be_nil
+      expect(registered).to include(@root)
+    ensure
+      try_git(@repo_root, "worktree", "remove", "--force", @root)
+      FileUtils.mkdir_p(@root)
+    end
+
+    it "decides what lies inside its root through Landing" do
+      allow(Lain::Landing).to receive(:under?).and_call_original
+
+      gc(at: now + (30 * day))
+
+      expect(Lain::Landing).to have_received(:under?).at_least(:once)
+    end
+
     it "keeps an anchor whose commit no branch reaches" do
       tree = sha("main^{tree}")
       orphan = run_git(@repo_root, "commit-tree", tree, "-p", "main", "-m", "orphan").strip

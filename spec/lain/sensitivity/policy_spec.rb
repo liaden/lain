@@ -1038,6 +1038,16 @@ RSpec.describe Lain::Sensitivity::Policy do
       expect(null.judge(File.join(root, "a.rb"), cwd: worker)).to have_attributes(reason: :outside_project)
     end
 
+    it "holds a path under a root spelled with a trailing slash, and the root itself" do
+      slashed = policy.confined(roots: ["#{worker}/"])
+
+      expect([File.join(worker, "a.rb"), worker].map { slashed.gates?(read(_1), cwd: worker) }).to eq([false, false])
+    end
+
+    it "holds every path under the filesystem root" do
+      expect(policy.confined(roots: ["/"]).gates?(read(File.join(@base, "elsewhere", "a.md")), cwd: root)).to be(false)
+    end
+
     it "confines a policy with no project root to the roots it is given" do
       rootless = described_class.new(sensitivity: Lain::Sensitivity.new(home:, cwd: worker), home:)
 

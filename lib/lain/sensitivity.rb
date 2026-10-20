@@ -735,7 +735,7 @@ module Lain
       def relating_directories!(non_directory, home:, path: nil)
         home = Pathname.new(home).cleanpath.to_s
         expanded = related.to_h { |entry| [entry, entry.sub(Sensitivity::TILDE_SEGMENT) { home }] }
-        unspecific = expanded.find { |_entry, absolute| home == absolute || home.start_with?("#{absolute}#{ROOT}") }
+        unspecific = expanded.find { |_entry, absolute| Landing.under?(home, absolute) }
         raise self.class.malformed(RELATED, unspecific.first, UNSPECIFIC, path:) if unspecific
 
         found = expanded.find { |_entry, absolute| non_directory.call(absolute) }&.first
@@ -1010,7 +1010,7 @@ module Lain
 
     def under_related?(written, itself: false)
       clean = lexical(written)
-      @related.any? { |directory| clean.start_with?("#{directory}#{ROOT}") || (itself && clean == directory) }
+      @related.any? { |directory| Landing.under?(clean, directory) && (itself || clean != directory) }
     rescue ArgumentError, EncodingError
       false
     end

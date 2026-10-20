@@ -42,7 +42,7 @@ module Lain
         return false unless resolvable?(path, from)
 
         expanded = File.expand_path(path, from)
-        expanded == @path || expanded.start_with?("#{@path}#{File::SEPARATOR}")
+        Landing.under?(expanded, @path)
       rescue ArgumentError, EncodingError
         # A NUL byte is the one input known to reach this, as an
         # ArgumentError. Unresolvable is exactly the case that must not be

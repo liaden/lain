@@ -267,7 +267,8 @@ module Lain
 
         def inside?(path)
           Project::Resolver.spellings(path, File).any? do |spelling|
-            @roots.any? { |root| spelling.start_with?("#{root}/") }
+            # The root is a container, not a lease.
+            @roots.any? { |root| spelling != root && Landing.under?(spelling, root) }
           end
         end
 

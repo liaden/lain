@@ -1065,14 +1065,12 @@ module Lain
         # Both sides by real path, so a link cannot carry a researcher out.
         def admitted(extends)
           dir = File.realpath(File.expand_path(extends, @root))
-          return dir if inside?(dir, File.realpath(@root)) || @related.call(dir)
+          return dir if Landing.under?(dir, File.realpath(@root)) || @related.call(dir)
 
           raise Refused, "extends #{extends.inspect} is neither inside the project #{@root} nor a related directory"
         rescue SystemCallError, ArgumentError
           raise Refused, "extends #{extends.inspect} names no directory"
         end
-
-        def inside?(dir, root) = dir == root || dir.start_with?(File.join(root, ""))
 
         def repository(dir)
           nearest = Project::Repository.nearest(dir, paths: @paths, home: @paths.home_or_nil)

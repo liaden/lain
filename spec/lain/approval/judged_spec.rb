@@ -418,6 +418,16 @@ RSpec.describe Lain::Approval::Judged do
       expect(spawn.calls.sole[:prompt]).to include("outside the project root: none")
     end
 
+    it "shows the project root itself as not outside when the root is spelled with a trailing slash" do
+      slashed = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root, root: "#{root}/"),
+                                              home:, root: "#{root}/")
+      spawn = spawn_answering("approve")
+
+      settled(rung(spawn, under: slashed), bash("ls #{root}"))
+
+      expect(spawn.calls.sole[:prompt]).to include("outside the project root: none")
+    end
+
     it "shows a path inside the project as not outside" do
       expect(prompt_for(bash("ls src"))).to include("outside the project root: none")
     end
