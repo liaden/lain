@@ -236,7 +236,7 @@ module Lain
       attr_reader :label
 
       # @param rungs [Enumerable<#call, #name>] consulted in order
-      # @param journal [#record] where every ruling lands as evidence
+      # @param journal [#<<, #record] where every ruling lands as evidence; {Faults} still calls `record`
       # @param label [String] the name a policy flip journals this ladder under
       def initialize(rungs = [], journal:, label: TYPE)
         @label = -label.to_s
@@ -356,23 +356,11 @@ module Lain
                     because: "#{NOTHING_ANSWERED} -- and #{faulted.rung} faulted: #{faulted.reason}")
       end
 
-      # Evidence about a turn must never COST the turn: this ladder sits ABOVE
-      # {Effect::Handler::Live}, so nothing below is left to turn an exception
-      # into a {Tool::Result}, and a closed Journal would hand the user a dead
-      # turn instead of the denial an unanswerable approval is owed.
-      #
-      # `tool_use_id` rather than the tool name alone: parallel tool calls put
-      # several gated calls of the SAME tool in flight, so the name cannot
-      # attribute a ruling -- or a fault -- to the call it belongs to.
+      # Never costs the turn: see {Telemetry::Escalation.write}.
       def record(ruling, effect, context)
-        @journal.record({ "type" => TYPE, "tool" => effect.name, "tool_use_id" => effect.tool_use_id,
-                          "requester" => requester_of(context), "rule" => ruling.rule }.compact.merge(ruling.record))
-        ruling
-      rescue StandardError
+        ::Lain::Telemetry::Escalation.write(@journal, ruling, effect, context)
         ruling
       end
-
-      def requester_of(context) = Queue.requester_for(context)
 
       # Where a broken RULE is reported. Under {RuleChain}'s Null default the
       # chain still refuses to promote an allow past a fault, but nobody is ever

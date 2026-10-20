@@ -148,6 +148,57 @@ RSpec.describe Lain::Middleware::Gate do
     end
   end
 
+  describe "a configured deny_tool when the journal is closed" do
+    let(:dead) { Class.new { def <<(_entry) = raise(IOError, "the journal is gone") }.new }
+
+    it "still refuses with the configured reason, raising nothing" do
+      gate = described_class.new(denied_tools: Set["safe"], journal: dead)
+
+      result, reached = through(gate, tool_call("safe"))
+
+      expect(result).to have_attributes(is_error: true, content: include("`deny_tool`"))
+      expect(reached).to be_empty
+    end
+
+    it "journals the requester the context names when the gate was built for none" do
+      journal = []
+      context = Struct.new(:requester).new("researcher")
+
+      through(described_class.new(denied_tools: Set["safe"], journal:), tool_call("safe"), context:)
+
+      expect(journal.sole).to include("requester" => "researcher")
+    end
+  end
+
+  describe "a configured deny_tool through a chat's guard stack" do
+    let(:detached) { Lain::CLI::ToolGuard.detached(journal:) }
+    let(:inputs) { detached.guard_inputs.with(denied_tools: Set["safe"]) }
+    let(:layers) do
+      Lain::CLI::ToolGuard.layered(detached.chronicle, inputs, [], inputs.policy).to_a
+    end
+
+    def refused(context: nil) = dispatch_call("safe", {}, toolset:, layers:, context:)
+
+    context "when the journal is closed" do
+      let(:journal) { Class.new { def <<(_entry) = raise(IOError, "the journal is gone") }.new }
+
+      it "refuses with the configured reason and raises nothing" do
+        expect(refused).to have_attributes(is_error: true, content: include("`deny_tool`"))
+      end
+    end
+
+    context "when the context names a requester" do
+      let(:journal) { [] }
+
+      it "journals that name on the escalation record" do
+        refused(context: Struct.new(:requester).new("researcher"))
+
+        expect(journal).to include(a_hash_including("type" => "escalation", "rung" => "config",
+                                                    "requester" => "researcher"))
+      end
+    end
+  end
+
   describe "a gated tool, denied" do
     it "answers an is_error Result rather than raising, and nothing reaches downstream" do
       result, reached = through(described_class.new(policy: described_class::DenyAll.new), tool_call("dangerous"))

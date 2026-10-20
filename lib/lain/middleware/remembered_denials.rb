@@ -117,11 +117,10 @@ module Lain
 
       def record(effect, reason, because, requester)
         ruling = Approval::Escalation::Ruling.deny(rung: RUNG, because:, authority: :human, said: reason)
-        @journal << { "type" => Approval::Escalation::TYPE, "tool" => effect.name,
-                      "tool_use_id" => effect.tool_use_id, "requester" => requester }.merge(ruling.record)
+        Telemetry::Escalation.write(@journal, ruling, effect, nil, requester:)
       end
 
-      def requester_of(context) = @requester || Approval::Queue.requester_for(context, Approval::Queue::REQUESTER)
+      def requester_of(context) = Telemetry::Escalation.requester_of(context, @requester)
     end
   end
 end

@@ -146,7 +146,7 @@ module EscalationSpecSupport
   # A journal whose every write fails: evidence about a turn must never cost
   # the turn.
   class DeadJournal
-    def record(_entry) = raise(IOError, "the journal is gone")
+    def <<(_entry) = raise(IOError, "the journal is gone")
   end
 
   # A real {Lain::Sensitivity} with every path it was asked about written down,

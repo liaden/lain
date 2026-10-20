@@ -176,12 +176,9 @@ module Lain
       def refused_by_config(env, effect)
         ruling = Approval::Escalation::Ruling.deny(rung: CONFIG_RUNG, because: format(TOOL_REFUSED, effect.name),
                                                    final: true)
-        @journal << { "type" => Approval::Escalation::TYPE, "tool" => effect.name, "tool_use_id" => effect.tool_use_id,
-                      "requester" => requester_of(env[:context]) }.merge(ruling.record)
+        Telemetry::Escalation.write(@journal, ruling, effect, env[:context], requester: @requester)
         env.merge(result: Tool::Result.error(refusal(ruling, effect.name.inspect)))
       end
-
-      def requester_of(context) = @requester || Approval::Queue.requester_for(context, Approval::Queue::REQUESTER)
 
       # Inside the one tool result, so the model reads them as the reason.
       def refusal(ruling, name)

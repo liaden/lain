@@ -79,7 +79,7 @@ module Lain
 
       private
 
-      def requester_of(context) = @requester || Approval::Queue.requester_for(context, Approval::Queue::REQUESTER)
+      def requester_of(context) = Telemetry::Escalation.requester_of(context, @requester)
 
       def refuse(denial, requester)
         @journal << Telemetry::ReadRefused.new(tool_use_id: denial.tool_use_id, tool: denial.tool,

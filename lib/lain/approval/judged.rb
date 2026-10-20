@@ -167,7 +167,7 @@ module Lain
       # @param policy [Sensitivity::Policy] what decides whether a call's path may be judged
       # @param asking [#call] the rung a call goes to when the judge does not
       #   settle it: {Escalation::Surfaces}, or {Unattended}
-      # @param journal [#record]
+      # @param journal [#<<]
       # @param display [#<<] told a {Telemetry::JudgeRuled} for each call the judge approves or denies
       # @param facts [#call] `(command, cwd, tool_use_id:) -> Judge::Facts` for a bash call; none by default
       # @param request [#call] `context -> Judge::Request or nil`, what the call was made for; none by default
@@ -349,15 +349,8 @@ module Lain
         @asking.call(effect, context)
       end
 
-      def requester_of(context) = Queue.requester_for(context)
-
-      # Evidence about a call must never cost the call.
       def record(ruling, effect, context, error, bar)
-        @journal.record({ "type" => Escalation::TYPE, "tool" => effect.name, "tool_use_id" => effect.tool_use_id,
-                          "requester" => requester_of(context),
-                          "error" => error, "bar" => bar }.compact.merge(ruling.record))
-      rescue StandardError
-        nil
+        ::Lain::Telemetry::Escalation.write(@journal, ruling, effect, context, error:, bar:)
       end
     end
   end
