@@ -101,7 +101,7 @@ RSpec.describe "A leased child's shell calls are judged in its own worktree", :s
       told = task.with_timeout(2) { heard.dequeue }
       raise told if told.is_a?(Exception)
 
-      told.is_a?(Lain::Approval::Queue::Pending) ? :parked : verdict(told)
+      told.is_a?(Lain::Approval::Parked::Queue::Pending) ? :parked : verdict(told)
     ensure
       call&.stop
       waiting&.stop

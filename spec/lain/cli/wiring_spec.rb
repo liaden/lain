@@ -1109,7 +1109,7 @@ RSpec.describe Lain::CLI::Wiring do
       expect(wiring.ask_human).to be_a(Lain::Tools::AskHuman)
       expect(wiring.questions).to be_a(Async::Queue)
       expect(wiring.supervisor).to be_a(Lain::Supervisor)
-      expect(wiring.approvals).to be_a(Lain::Approval::Queue)
+      expect(wiring.approvals).to be_a(Lain::Approval::Parked::Queue)
     end
 
     # The session Toolset is built ONCE (toolset_build.rb:61-64) and the
@@ -1229,14 +1229,14 @@ RSpec.describe Lain::CLI::Wiring do
       end
 
       it "constructs the triage surface" do
-        expect(wiring.secret_surface(backend)).to be_a(Lain::Approval::SecretSurface)
+        expect(wiring.secret_surface(backend)).to be_a(Lain::Approval::Parked::SecretSurface)
       end
 
       it "claims a call parked at the path gate, but not an ordinary one, through the session's own policy" do
         surface = wiring.secret_surface(backend)
         parked = lambda do |path|
           effect = Struct.new(:name, :input, :tool_use_id).new("read_file", { "path" => path }, "tu_1")
-          Lain::Approval::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 })
+          Lain::Approval::Parked::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 })
         end
 
         expect([".env.local", "lib/lain.rb"].map { |path| surface.mine?(parked.call(path)) }).to eq([true, false])
@@ -3137,7 +3137,7 @@ RSpec.describe Lain::CLI::Wiring do
       wiring = run_wiring
       board = wiring.instance_variable_get(:@switchboard)
 
-      expect(board.policy_switch).to be_a(Lain::Approval::PolicySwitch)
+      expect(board.policy_switch).to be_a(Lain::Approval::Parked::PolicySwitch)
       expect(board.policy_switch.current).to be_a(Lain::Approval::Escalation)
       expect(board.policy_switch.current.find { |rung| rung.name == "surfaces" }.queue).to be(wiring.approvals)
       # The queue /approve actually drains, reached the way the command does.
@@ -4740,7 +4740,7 @@ RSpec.describe Lain::CLI::Wiring do
         call&.stop
       end
 
-      expect(pending).to be_a(Lain::Approval::Queue::Pending)
+      expect(pending).to be_a(Lain::Approval::Parked::Queue::Pending)
       expect(journal_records(journal_io, "escalation"))
         .to include(a_hash_including("rung" => "auto", "reason" => "fault", "error" => "IOError: no spawn seam"))
     end
@@ -5122,7 +5122,7 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
     it "is assigned by the time the parked-approval queue is read" do
       wire
 
-      expect(wiring.approvals).to be_a(Lain::Approval::Queue)
+      expect(wiring.approvals).to be_a(Lain::Approval::Parked::Queue)
     end
 
     # Reaching {Command::Env}'s own refusal AT ALL is the assertion:

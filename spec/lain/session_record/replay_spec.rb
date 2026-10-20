@@ -322,7 +322,7 @@ RSpec.describe Lain::SessionRecord::Replay do
 
       it "still parks a read_file of the file after the resume" do
         searched
-        queue = Lain::Approval::Queue.new(journal: Lain::Journal.new(io: approvals_io), timeout: 0.1)
+        queue = Lain::Approval::Parked::Queue.new(journal: Lain::Journal.new(io: approvals_io), timeout: 0.1)
         resumed = described_class.new(journal_io.string.each_line).session
 
         through(guard(queue), "read_file", { "path" => path }, Lain::Tools::ReadFile.new, resumed)

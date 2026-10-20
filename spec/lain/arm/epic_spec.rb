@@ -60,8 +60,8 @@ RSpec.describe Lain::Arm::Epic do
   # The epic's own gate decisions, as a run of it really journals them: one per
   # stage, each naming the policy that reached it.
   def decide(stage, policy:, approved: true, issue_id: nil, digest: "blake3:#{stage}")
-    Lain::Approval::GateDecision.new(artifact_digest: digest, epic_slug: "demo", stage:, approved:,
-                                     answered_by: policy, policy:, latency: 0.0, issue_id:)
+    Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: "demo", stage:, approved:,
+                                 answered_by: policy, policy:, latency: 0.0, issue_id:)
   end
 
   def driver_for(**) = EpicSpecDriver.new(result, journal:, **)
@@ -169,7 +169,7 @@ RSpec.describe Lain::Arm::Epic do
   # Scenario: hands-off runs the whole ladder with no human, and progressive
   # replays recorded answers.
   describe "who answers the gates" do
-    def journalled = Lain::Journal.records(records, type: Lain::Approval::SignoffQueue::JOURNAL_TYPE).to_a
+    def journalled = Lain::Journal.records(records, type: Lain::Epic::SignoffQueue::JOURNAL_TYPE).to_a
 
     it "has every hands-off decision carry the hands_off policy, with no human asked" do
       run_arm(driver_for(decisions: Lain::Epic::STAGES.map { |stage| decide(stage, policy: "hands_off") }))

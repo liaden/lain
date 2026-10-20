@@ -11,7 +11,7 @@ module Lain
     class EpicSubmit < Tool
       # `implementation` gates a changeset address only the epic driver holds.
       STAGES = %w[research epic_plan issue_plan].freeze
-      ADJUDICATED = Approval::Gate::Policy::Adjudicated::NAME
+      ADJUDICATED = Epic::Gate::Policy::Adjudicated::NAME
 
       # Only the shape is checked here; whether the epic, the issue and the
       # artifact exist is the submitter's to refuse, by name.
@@ -47,7 +47,7 @@ module Lain
 
       def perform(input, _invocation)
         Tool::Result.ok(@submitter.submit(input.stage, input.slug, issue: input.issue))
-      rescue Approval::Gate::Policies::Refusal => e
+      rescue Epic::Gate::Policies::Refusal => e
         Tool::Result.error("#{unwirable(e)}; ask the user to run `#{shell_command(input)}` from a shell")
       rescue Lain::Error, SystemCallError => e
         Tool::Result.error(e.message)

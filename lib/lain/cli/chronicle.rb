@@ -148,7 +148,7 @@ module Lain
       # from, refused by every later catch_up, or a session never closed.
       #
       # Not silent either: the fault lands in the session file in the
-      # Journal's own `journal_error` shape, as {Approval::Queue}'s degraded
+      # Journal's own `journal_error` shape, as {Approval::Parked::Queue}'s degraded
       # evidence does, so a reader has one failure record to know. When even
       # that write fails the journal is gone, and the record it would describe
       # already failed to land with it.

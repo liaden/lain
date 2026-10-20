@@ -88,7 +88,7 @@ module Lain
       # The gate policy a child is asked through: the board's own, handed a
       # context that names the child, so a park says which of a fleet is asking
       # while the verdict is still the one policy the parent asks. The name
-      # rides the context ({Approval::PolicySwitch::Requested}) rather than a
+      # rides the context ({Approval::Parked::PolicySwitch::Requested}) rather than a
       # new parameter, because `rule(effect, context)` is what every policy on
       # this seam already answers. What it wraps is adapted the way the Gate
       # adapts what it is handed, since the Gate only ever sees this wrapper.
@@ -105,7 +105,7 @@ module Lain
 
         private
 
-        def requested(context) = Approval::PolicySwitch::Requested.new(context, requester, task:)
+        def requested(context) = Approval::Parked::PolicySwitch::Requested.new(context, requester, task:)
       end
 
       # What a chat's spawn seam carries as its tool middleware: a builder over
@@ -384,7 +384,7 @@ module Lain
 
       # A gate policy asked in `requester`'s name, or as it is when nobody is
       # named: {Asking} refuses a nil name, and the approval queue reads a bare
-      # context as the run's own agent ({Approval::Queue::REQUESTER}).
+      # context as the run's own agent ({Approval::Parked::Queue::REQUESTER}).
       #
       # @param policy [#rule]
       # @param requester [Requester, String, nil]

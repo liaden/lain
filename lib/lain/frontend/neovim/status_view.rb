@@ -181,7 +181,7 @@ module Lain
         # event.
         def refold_types
           @refold_types ||= [Telemetry::TurnUsage, Lain::Epic::IssueTransition,
-                             Lain::Epic::StageTransition, Lain::Approval::GateDecision].freeze
+                             Lain::Epic::StageTransition, Lain::Epic::GateDecision].freeze
         end
 
         # The two kinds that start and end a spawn, and the record that says

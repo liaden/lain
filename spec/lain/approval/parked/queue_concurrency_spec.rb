@@ -31,7 +31,7 @@ module QueueConcurrencySpecSupport
   end
 end
 
-# Pins the fiber-safety invariant on {Approval::Queue}'s side. `@parked`
+# Pins the fiber-safety invariant on {Approval::Parked::Queue}'s side. `@parked`
 # is a plain Array on purpose: its mutations (`<<` in admit, `delete` in
 # settle's ensure) are straight-line Ruby with no yield point, and every park
 # happens on an Async primitive BETWEEN those mutations -- so N gated fibers
@@ -42,10 +42,10 @@ end
 # list, then restored.
 #
 # ESCALATION RULE (the card's whole point): if this spec ever needs a NEW lock
-# in Approval::Queue to pass, the between-IO-yields claim has failed and the
+# in Approval::Parked::Queue to pass, the between-IO-yields claim has failed and the
 # lock-free gating design is unsound -- that diagnosis belongs to a human,
 # not to a patch.
-RSpec.describe "Approval::Queue pendings under concurrent gather" do
+RSpec.describe "Approval::Parked::Queue pendings under concurrent gather" do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
   # Bounded is a number, not a mood (the flood spec's precedent): gated_a's
@@ -55,7 +55,7 @@ RSpec.describe "Approval::Queue pendings under concurrent gather" do
   # is a >100ms process stall (major GC, CI preemption) landing inside that
   # microseconds-wide critical window; the injectable clock cannot close this,
   # because the AC demands the REAL timeout path for gated_b.
-  let(:queue) { Lain::Approval::Queue.new(journal:, timeout: 0.1) }
+  let(:queue) { Lain::Approval::Parked::Queue.new(journal:, timeout: 0.1) }
 
   def runner_over(queue)
     toolset = Lain::Toolset.new(

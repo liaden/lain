@@ -28,7 +28,7 @@ module PolicySwitchSpecSupport
   end
 end
 
-RSpec.describe Lain::Approval::PolicySwitch do
+RSpec.describe Lain::Approval::Parked::PolicySwitch do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
   let(:queue) { PolicySwitchSpecSupport::RecordingPolicy.new(false) }
@@ -164,7 +164,7 @@ RSpec.describe Lain::Approval::PolicySwitch do
   # the class was added to -- the queue's spec keeps the three ATTRIBUTION
   # scenarios, because those are the Queue's behaviour and these are this
   # value's.
-  describe Lain::Approval::PolicySwitch::Requested do
+  describe Lain::Approval::Parked::PolicySwitch::Requested do
     let(:session) { Lain::Session.new }
 
     def wrapped(requester, context = session) = described_class.new(context, requester)
@@ -203,7 +203,7 @@ RSpec.describe Lain::Approval::PolicySwitch do
     end
 
     # A blank requester cannot be left to {Telemetry::Carriers::ApprovalPending}:
-    # its raise lands inside {Approval::Queue#record_evidence}, which RESCUES
+    # its raise lands inside {Approval::Parked::Queue#record_evidence}, which RESCUES
     # and degrades. Measured end-to-end, a blank one therefore deletes the
     # approval_pending record -- "something is WAITING", the one state a human
     # is asked to act on -- journals a decision naming nobody, and renders
@@ -225,7 +225,7 @@ RSpec.describe Lain::Approval::PolicySwitch do
     # splits one row across two buffer lines while `@renderings` stays
     # one-per-pending, so a cursor resolves to the WRONG pending -- the exact
     # failure that view's `row_at` exists to prevent. Mechanical, not
-    # documentary: the sibling of {Approval::Queue::Outstanding}'s refusal of a
+    # documentary: the sibling of {Approval::Parked::Queue::Outstanding}'s refusal of a
     # blank path.
     describe "a requester that could forge a line is refused at construction" do
       {

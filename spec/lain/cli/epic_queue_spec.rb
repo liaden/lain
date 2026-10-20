@@ -42,9 +42,9 @@ RSpec.describe Lain::CLI::EpicQueue do
   # shape production actually writes (the sessions_spec `header` idiom).
   def decision(digest:, at:, policy:, approved: false, slug: "alpha", stage: "research",
                answered_by: "gate_adjudicator", evidence_digest: nil, reason: nil, **scope)
-    Lain::Approval::GateDecision.new(artifact_digest: digest, epic_slug: slug, stage:, approved:,
-                                     answered_by:, policy:, latency: 1.5, evidence_digest:, reason:, **scope)
-                                .to_journal.merge("ts" => at)
+    Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: slug, stage:, approved:,
+                                 answered_by:, policy:, latency: 1.5, evidence_digest:, reason:, **scope)
+                            .to_journal.merge("ts" => at)
   end
 
   # The approvals a later stage's sign-off stands on: approving it opens its
@@ -58,8 +58,8 @@ RSpec.describe Lain::CLI::EpicQueue do
 
   def evidence(digest:, at:, question:, slug: "alpha", stage: "research", text: "the spike found two answers")
     gated = { artifact_digest: digest, epic_slug: slug, stage:, question: }
-    Lain::Approval::Gate::Adjudicator::GateEvidence.gathered(text, gated, latency: 2.0)
-                                                   .to_journal.merge("ts" => at)
+    Lain::Epic::Gate::Adjudicator::GateEvidence.gathered(text, gated, latency: 2.0)
+                                               .to_journal.merge("ts" => at)
   end
 
   # A String goes down verbatim, so a fixture can write a genuinely damaged line
@@ -78,7 +78,7 @@ RSpec.describe Lain::CLI::EpicQueue do
 
   def gate_decisions = journal_records.select { |record| record["type"] == "gate_decision" }
 
-  def refolded = Lain::Approval::SignoffQueue.from_journal(journal_records)
+  def refolded = Lain::Epic::SignoffQueue.from_journal(journal_records)
 
   # An approved issue plan puts its issue in flight whichever surface approved
   # it: the epic driver launches only issues in flight, so a plan signed off
@@ -208,7 +208,7 @@ RSpec.describe Lain::CLI::EpicQueue do
     end
 
     it "says the spike did not answer when one ran and gathered nothing" do
-      spike = Lain::Approval::Gate::Adjudicator::GateEvidence.missing(
+      spike = Lain::Epic::Gate::Adjudicator::GateEvidence.missing(
         "no findings", { artifact_digest: digest_a, epic_slug: "alpha", stage: "research", question: "q" },
         latency: 1.0
       ).to_journal.merge("ts" => "2026-07-28T05:59:00.000000Z")
@@ -749,7 +749,7 @@ RSpec.describe Lain::CLI::EpicQueue do
   # The evidence discriminator is a literal here because GateEvidence ships no
   # constant for it. Pinned against a real record so the two cannot drift.
   it "spells the evidence journal type the way the producing record does" do
-    record = Lain::Approval::Gate::Adjudicator::GateEvidence.missing(
+    record = Lain::Epic::Gate::Adjudicator::GateEvidence.missing(
       "no findings", { artifact_digest: digest_a, epic_slug: "alpha", stage: "research", question: "q" }, latency: 1.0
     )
 

@@ -366,7 +366,7 @@ module Lain
       # An issue-scoped earlier stage is approved per issue, so no single
       # answer exists for the epic as a whole and it is left out.
       def closed_stage_note(slug, stage, records)
-        blocked = stage.blocked_by(Approval::SignoffQueue.from_journal(records), epic_slug: slug)
+        blocked = stage.blocked_by(Lain::Epic::SignoffQueue.from_journal(records), epic_slug: slug)
         parked = blocked[:parked].map(&:name)
         unapproved = blocked[:unapproved].reject(&:issue_scoped?).map(&:name)
         reasons = [("#{parked.join(", ")} still holds parked sign-offs" unless parked.empty?),
@@ -565,7 +565,7 @@ module Lain
                           "#{remedy} before editing this epic's graph"
       end
 
-      # Parked first -- {Approval::SignoffQueue} is the live fold and answers
+      # Parked first -- {Lain::Epic::SignoffQueue} is the live fold and answers
       # from the same records {SessionJournals} already walked for this epic --
       # and only once nothing is parked does a raw scan ask whether the issue
       # ever carried a terminal APPROVAL: the queue itself forgets an address
@@ -575,11 +575,11 @@ module Lain
       # @return [Array(String, String, String), nil] state, stage and digest,
       #   or nil when the issue holds no gate at all
       def held_gate(records, slug, issue_id)
-        queue = Approval::SignoffQueue.from_journal(records)
+        queue = Lain::Epic::SignoffQueue.from_journal(records)
         parked = Lain::Epic::ISSUE_STAGES.filter_map { |stage| queue.parked(slug, stage, issue_id:).first }.first
         return ["parked", parked.stage, parked.artifact_digest] if parked
 
-        approved = Journal.records(records, type: Approval::SignoffQueue::JOURNAL_TYPE).find do |record|
+        approved = Journal.records(records, type: Lain::Epic::SignoffQueue::JOURNAL_TYPE).find do |record|
           record["issue_id"] == issue_id && Lain::Epic::ISSUE_STAGES.include?(record["stage"].to_s) &&
             record["approved"] == true
         end
@@ -689,7 +689,7 @@ module Lain
         def epic_types
           [Lain::Epic::IssueTransition::JOURNAL_TYPE,
            Lain::Epic::StageTransition::JOURNAL_TYPE,
-           Approval::SignoffQueue::JOURNAL_TYPE]
+           Lain::Epic::SignoffQueue::JOURNAL_TYPE]
         end
 
         # {SessionJournals} has already put every epic record in `ts` order; the

@@ -7,7 +7,7 @@ require "stringio"
 # Support kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
 module ApprovalSeamSupport
   # The gated call this editor is asked about. A Struct rather than a real
-  # {Lain::Effect} for {Lain::Approval::Queue::Pending}'s own reason: it reads a
+  # {Lain::Effect} for {Lain::Approval::Parked::Queue::Pending}'s own reason: it reads a
   # name, an input and a tool_use_id, and nothing else.
   Effect = Struct.new(:name, :input, :tool_use_id)
 end
@@ -33,7 +33,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # names it -- and nothing had ever written one, so a gated call parked the
   # agent with the question visible in the chat pane alone.
   #
-  # It drives a REAL {Lain::Approval::Queue} with a REAL fiber parked in it,
+  # It drives a REAL {Lain::Approval::Parked::Queue} with a REAL fiber parked in it,
   # the REAL consumer ({Lain::CLI::HumanReplies}, bound as `Repl#run` binds
   # it), and a REAL editor, because the verdict reaching the parked call is the
   # only claim worth making: a view that renders rows and wires nothing renders
@@ -251,7 +251,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     before { allow(conductor).to receive(:read_command) { Async::Task.current.sleep(60) } }
 
     it "renders it in lain://approval and answers it with y, with nobody having wired the view by hand" do
-      queue = Lain::Approval::Queue.new(journal:, timeout: 60)
+      queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 60)
       settled = Thread::Queue.new
       allow(agent).to receive(:ask) do
         settled.push(queue.call(ApprovalSeamSupport::Effect.new("bash", { "command" => "pwd" }, "tu_1"), nil))
@@ -286,7 +286,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # y/N read for neither. The reader records before it parks, so a y/N read
     # that opened is seen even though nobody answers it.
     it "announces the second gated call too, once the editor answered the first, and asks y/N about neither" do
-      queue = Lain::Approval::Queue.new(journal:, timeout: 60)
+      queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 60)
       settled = Thread::Queue.new
       prompts = []
       chat = StringIO.new
@@ -449,7 +449,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # fail-closed denial can never stand in for a deny the human pressed.
   def serve_approval(frontend, effect, settled, grace, ask)
     Sync do |task|
-      queue = Lain::Approval::Queue.new(journal:, timeout: 60)
+      queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 60)
       surfaces = approval_surfaces(task, frontend, queue)
       gated = task.async { ask.call(queue, effect) }
       settled.push(within(task, grace) { gated.finished? } ? gated.wait : :unsettled)
@@ -471,7 +471,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # {#serve_approval}'s shape, widened to the pair {#parked_pair} admits.
   def two_parked_approvals(frontend, settled)
     Sync do |task|
-      queue = Lain::Approval::Queue.new(journal:, timeout: 60)
+      queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 60)
       surfaces = approval_surfaces(task, frontend, queue)
       gated = parked_pair(task, queue)
       settled.push(within(task, 0.1) { gated.all?(&:finished?) } ? gated.map(&:wait) : :unsettled)

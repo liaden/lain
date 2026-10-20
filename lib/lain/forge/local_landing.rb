@@ -94,7 +94,7 @@ module Lain
       # @param sha [String] the full object name of the worker's commit
       # @param ref [String] the ref the commit is anchored under
       # @return [Admission]
-      # @raise [NotInFlight, Approval::Gate::NotApproved, MisplacedTests, AlreadyOnBranch] before anything merges
+      # @raise [NotInFlight, Epic::Gate::NotApproved, MisplacedTests, AlreadyOnBranch] before anything merges
       def admit(issue_id, sha:, ref:)
         ready!(issue_id)
         approved!(issue_id, sha)
@@ -165,11 +165,11 @@ module Lain
       end
 
       def approved!(issue_id, sha)
-        raise Approval::Gate::NotApproved, "#{sha} #{failing_tests(issue_id)}" if @red.only?(sha)
+        raise Epic::Gate::NotApproved, "#{sha} #{failing_tests(issue_id)}" if @red.only?(sha)
         return if gate_approved?(issue_id, sha)
 
-        raise Approval::Gate::NotApproved, "issue #{issue_id}'s implementation gate has not approved #{sha}, so " \
-                                           "nothing landed -- #{approve(issue_id, sha)}"
+        raise Epic::Gate::NotApproved, "issue #{issue_id}'s implementation gate has not approved #{sha}, so " \
+                                       "nothing landed -- #{approve(issue_id, sha)}"
       end
 
       def placed!(issue_id, sha)
@@ -181,7 +181,7 @@ module Lain
       # which work lands to whichever the listing happened to name first.
       def approved_commit(issue_id, candidates)
         approved = candidates.select { |sha, _| approved?(issue_id, sha) }.group_by(&:first)
-        raise Approval::Gate::NotApproved, missing_approval(issue_id, candidates) if approved.empty?
+        raise Epic::Gate::NotApproved, missing_approval(issue_id, candidates) if approved.empty?
         raise Ambiguous, ambiguous(issue_id, approved.keys) unless approved.one?
 
         sha, found = approved.first
@@ -319,10 +319,10 @@ module Lain
       # their journal may already hold a decision on.
       class Approvals
         # @param entries [Enumerable<Hash, String>] journal records or lines
-        # @raise [Approval::SignoffQueue::UnreadableRecord] naming a decision
+        # @raise [Epic::SignoffQueue::UnreadableRecord] naming a decision
         #   whose `approved` is not a boolean
         def self.from(entries)
-          new(Journal.records(entries, type: Approval::SignoffQueue::JOURNAL_TYPE)
+          new(Journal.records(entries, type: Epic::SignoffQueue::JOURNAL_TYPE)
                      .map { |decision| readable!(decision) }
                      .select { |decision| implementation?(decision) }
                      .to_set { |decision| [decision["issue_id"], decision["artifact_digest"]] })
@@ -337,8 +337,8 @@ module Lain
           return decision if [true, false].include?(decision["approved"])
 
           address = decision.values_at("epic_slug", "stage", "issue_id").compact.join("/")
-          raise Approval::SignoffQueue::UnreadableRecord,
-                "the #{Approval::SignoffQueue::JOURNAL_TYPE} record for #{decision["artifact_digest"].inspect} in " \
+          raise Epic::SignoffQueue::UnreadableRecord,
+                "the #{Epic::SignoffQueue::JOURNAL_TYPE} record for #{decision["artifact_digest"].inspect} in " \
                 "#{address.inspect} cannot be read (approved = #{decision["approved"].inspect} is neither true nor " \
                 "false) -- repair the line or move its session file aside; nothing landed"
         end

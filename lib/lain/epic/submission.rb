@@ -42,7 +42,7 @@ module Lain
         # `#digest` canonicalizes `slug`, and `Canonical.normalize` raises on a
         # String that cannot be re-encoded to UTF-8. Unchecked, that turns
         # `#digest` -- relied on as TOTAL over every constructible Submission --
-        # into a method that raises deep inside `Approval::Gate#call`, whose
+        # into a method that raises deep inside `Epic::Gate#call`, whose
         # first line is `artifact.digest`, three frames before the asker is ever
         # reached. A slug plausibly arrives via a Linux directory name
         # ({Epic::Home}), which is arbitrary bytes and not guaranteed UTF-8.
@@ -135,15 +135,15 @@ module Lain
 
       # @param words [String, nil] what the human wrote; nil when nothing was
       # @param surface [String] who is credited with a recognised verdict
-      # @return [Approval::Gate::Answer]
+      # @return [Epic::Gate::Answer]
       def self.answer(words, surface:)
-        return Approval::Gate::Answer.deny(EOF) if words.nil?
+        return Epic::Gate::Answer.deny(EOF) if words.nil?
 
         word = words.to_s.strip.downcase.sub(TRAILING_PUNCTUATION, "")
-        return Approval::Gate::Answer.approve(surface) if APPROVALS.include?(word)
-        return Approval::Gate::Answer.deny(surface) if DENIALS.include?(word)
+        return Epic::Gate::Answer.approve(surface) if APPROVALS.include?(word)
+        return Epic::Gate::Answer.deny(surface) if DENIALS.include?(word)
 
-        Approval::Gate::Answer.new(approved: false, surface: UNRECOGNISED, reason: unrecognised(words))
+        Epic::Gate::Answer.new(approved: false, surface: UNRECOGNISED, reason: unrecognised(words))
       end
 
       def self.unrecognised(words)
@@ -154,10 +154,10 @@ module Lain
 
     # One artifact bound to one stage of an epic's pipeline: the gate's whole
     # duck ({#digest}, {#gate_question}), for the four shapes the pipeline
-    # produces. {Approval::Gate} never learns which constructor built the value.
+    # produces. {Epic::Gate} never learns which constructor built the value.
     #
     # `#digest` composes `(stage, slug, artifact)` and not the artifact alone,
-    # because {Approval::Gate}'s registry is keyed on `#digest` and knows nothing
+    # because {Epic::Gate}'s registry is keyed on `#digest` and knows nothing
     # of stages or epics. Answering the content address alone would make two
     # different (stage, epic) pairs wrapping the SAME bytes one key: approving
     # epic `alpha`'s 3-issue plan would silently open `beta`'s identical plan,
@@ -297,14 +297,14 @@ module Lain
               changeset: changeset && -changeset.to_s)
       end
 
-      # THE GATE IDENTITY, which {Approval::Gate#call}/`#ensure_approved!` key
+      # THE GATE IDENTITY, which {Epic::Gate#call}/`#ensure_approved!` key
       # their registry on. See the class header for why it composes stage + slug
       # + artifact rather than the artifact's content address alone.
       def digest
         Canonical.digest("stage" => stage, "epic" => slug, "artifact" => content_digest)
       end
 
-      # The one rendering {Approval::Gate#call} asks through the artifact duck:
+      # The one rendering {Epic::Gate#call} asks through the artifact duck:
       # the stage, the slug, and the one concrete fact that distinguishes this
       # submission from another at the same stage.
       def gate_question

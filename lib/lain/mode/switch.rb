@@ -5,7 +5,7 @@ require "active_support/core_ext/module/delegation"
 module Lain
   class Mode
     # The delegating slot `/mode` writes and every mode-aware surface reads --
-    # the same shape as {Approval::PolicySwitch} and {Context::ModelSwitch},
+    # the same shape as {Approval::Parked::PolicySwitch} and {Context::ModelSwitch},
     # because the seam reality is the same: a {Mode} is a frozen value and the
     # objects that consult one are construction-fixed, so a live mode change has
     # to be a slot the holder ALREADY has, never a setter on the holder.

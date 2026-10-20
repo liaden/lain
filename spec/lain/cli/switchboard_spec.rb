@@ -207,7 +207,7 @@ RSpec.describe Lain::CLI::Switchboard do
     it "wires the approval queue and starts in checkout ask, with no flag to skip either" do
       board = board_for
 
-      expect(board.approvals).to be_a(Lain::Approval::Queue)
+      expect(board.approvals).to be_a(Lain::Approval::Parked::Queue)
       expect(board.mode_switch.current).to eq(Lain::Mode.new)
     end
 
@@ -229,7 +229,7 @@ RSpec.describe Lain::CLI::Switchboard do
     it "wires the queue as the parked list and the ladder over it as the gate's starting policy" do
       board = switchboard
 
-      expect(board.approvals).to be_a(Lain::Approval::Queue)
+      expect(board.approvals).to be_a(Lain::Approval::Parked::Queue)
       expect(board.ladder).to be_a(Lain::Approval::Escalation)
       expect(board.policy_switch.current).to be(board.ladder)
     end
@@ -420,19 +420,19 @@ RSpec.describe Lain::CLI::Switchboard do
     it "parks what the judge defers on the board's one queue" do
       board = switchboard(approval: :auto, judge: judge_answering(:defer))
 
-      expect(parked_under(board)).to be_a(Lain::Approval::Queue::Pending)
+      expect(parked_under(board)).to be_a(Lain::Approval::Parked::Queue::Pending)
     end
 
     # A board nobody handed a judge must not approve on a model's behalf.
     it "defers when no judge was given, so the call parks" do
-      expect(parked_under(switchboard(approval: :auto))).to be_a(Lain::Approval::Queue::Pending)
+      expect(parked_under(switchboard(approval: :auto))).to be_a(Lain::Approval::Parked::Queue::Pending)
     end
 
     it "keeps a credential path from the judge by the board's own policy, and parks it" do
       asked = []
       board = switchboard(approval: :auto, judge: judge_answering(:approve, asked), sensitivity: home_policy)
 
-      expect(parked_under(board, secret_write)).to be_a(Lain::Approval::Queue::Pending)
+      expect(parked_under(board, secret_write)).to be_a(Lain::Approval::Parked::Queue::Pending)
       expect(asked).to eq([])
     end
 
@@ -524,7 +524,7 @@ RSpec.describe Lain::CLI::Switchboard do
         call&.stop
       end
 
-      expect(pending).to be_a(Lain::Approval::Queue::Pending)
+      expect(pending).to be_a(Lain::Approval::Parked::Queue::Pending)
       expect(asked).to eq([])
     end
 
@@ -1078,7 +1078,7 @@ RSpec.describe Lain::CLI::Switchboard do
   it "hands /approve a tty-signing drain prompt whose reads route through the conductor" do
     conductor = instance_double(Lain::CLI::Conductor)
     prompt = switchboard.surface_kwargs(conductor:).fetch(:approval_prompt)
-    pending = Lain::Approval::Queue::Pending.new(
+    pending = Lain::Approval::Parked::Queue::Pending.new(
       effect: Struct.new(:name, :input, :tool_use_id).new("bash", { "command" => "ls" }, "tu_1"),
       identity: Lain::Requester.main, clock: -> { 0.0 }
     )

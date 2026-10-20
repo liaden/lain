@@ -220,7 +220,7 @@ RSpec.describe Lain::Arm::PlanOnly do
                           journal_factory: -> { tee })
                      .run("add a refund to Order", spawn_seam:, grader:)
 
-      expect(tee.seen.grep(Lain::Approval::GateDecision)).to be_empty
+      expect(tee.seen.grep(Lain::Epic::GateDecision)).to be_empty
       expect(tee.seen.map { |event| event.to_journal["type"] }).not_to include("gate_decision")
     end
 

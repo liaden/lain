@@ -52,7 +52,7 @@ module Lain
     end
 
     # A /mode flip: both exclusive axes and both layer sets, on each side. The
-    # layer pair is why this record is not the three-field twin of {PolicySwitch}
+    # layer pair is why this record is not the three-field twin of {Approval::Parked::PolicySwitch}
     # and {ModelSwitch}: `/mode +notify` moves neither axis, and recording
     # only the resulting set would leave the FIRST flip of a session unable to
     # say what was active before it, since construction journals nothing.

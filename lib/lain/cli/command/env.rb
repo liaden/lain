@@ -36,7 +36,7 @@ module Lain
         # Reopened after the `Data.define` block: a constant written inside that
         # block would land on the enclosing module, not on Env.
 
-        # An unattended run (`--non-interactive`) wires no {Approval::Queue} --
+        # An unattended run (`--non-interactive`) wires no {Approval::Parked::Queue} --
         # nobody is there to answer a parked call -- so this answers the queue's
         # read duck with nothing parked, and an approvals-reading command
         # degrades to an honest empty listing instead of a nil guard. Named for

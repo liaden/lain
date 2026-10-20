@@ -10,7 +10,7 @@ module Lain
     #   the only one that can consume it -- and that turn is kept off the
     #   telemetry tee, which left the live inbox surfaces listing a question
     #   nothing ever retired.
-    # * a settled {Approval::Gate}, with `turn: nil`. A gate is no tool call, so
+    # * a settled {Epic::Gate}, with `turn: nil`. A gate is no tool call, so
     #   no committed turn ever cites the question it asked; the gate names it
     #   consumed itself, however its wait ended. A nil `turn` means exactly
     #   that no turn did the consuming -- read `digests`, never `turn`, to

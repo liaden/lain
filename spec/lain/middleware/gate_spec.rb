@@ -162,7 +162,7 @@ RSpec.describe Lain::Middleware::Gate do
 
     it "journals the requester the context names when the gate was built for none" do
       journal = []
-      context = Lain::Approval::PolicySwitch::Requested.new(nil, "researcher")
+      context = Lain::Approval::Parked::PolicySwitch::Requested.new(nil, "researcher")
 
       through(described_class.new(denied_tools: Set["safe"], journal:), tool_call("safe"), context:)
 
@@ -191,7 +191,7 @@ RSpec.describe Lain::Middleware::Gate do
       let(:journal) { [] }
 
       it "journals that name on the escalation record" do
-        refused(context: Lain::Approval::PolicySwitch::Requested.new(nil, "researcher"))
+        refused(context: Lain::Approval::Parked::PolicySwitch::Requested.new(nil, "researcher"))
 
         expect(journal).to include(a_hash_including("type" => "escalation", "rung" => "config",
                                                     "requester" => "researcher"))
@@ -404,7 +404,7 @@ RSpec.describe Lain::Middleware::Gate do
     end
 
     it "refuses a call a bare asking rung's queue denied" do
-      queue = Lain::Approval::Queue.new(journal: Lain::Journal.new(io: StringIO.new), timeout: 1)
+      queue = Lain::Approval::Parked::Queue.new(journal: Lain::Journal.new(io: StringIO.new), timeout: 1)
       gate = described_class.new(policy: Lain::Approval::Escalation::Surfaces.new(queue))
       outcome = nil
       Sync do |task|
@@ -569,7 +569,7 @@ RSpec.describe Lain::Middleware::Gate do
 
       it "reaches the parked Pending and its approval_pending record", :seam do
         journal = StringIO.new
-        queue = Lain::Approval::Queue.new(journal: Lain::Journal.new(io: journal), timeout: 0.05)
+        queue = Lain::Approval::Parked::Queue.new(journal: Lain::Journal.new(io: journal), timeout: 0.05)
         gate = described_class.new(policy: asking_ladder(queue), sensitivity:)
 
         result, = Sync do

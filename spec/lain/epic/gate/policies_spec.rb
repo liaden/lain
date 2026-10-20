@@ -5,7 +5,7 @@ require "stringio"
 # Policies is the factory between `[epics.gates]` and the Policy family: config
 # names a policy per stage, one dependencies value carries every seam any policy
 # could need, and the factory refuses loudly when the two do not line up.
-RSpec.describe Lain::Approval::Gate::Policies do
+RSpec.describe Lain::Epic::Gate::Policies do
   def artifact(digest: "blake3:plan", question: "Approve the epic plan? Reply approve or deny.")
     Data.define(:digest, :gate_question).new(digest:, gate_question: question)
   end
@@ -30,14 +30,14 @@ RSpec.describe Lain::Approval::Gate::Policies do
   let(:plan) { artifact }
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
-  let(:gate) { Lain::Approval::Gate.new(journal:, timeout: 0.5) }
+  let(:gate) { Lain::Epic::Gate.new(journal:, timeout: 0.5) }
   let(:queue) { approved_queue }
   let(:asked) { [] }
   let(:asker) do
     questions = asked
     scripted_asker do |promise, question|
       questions << question
-      promise.resolve(Lain::Approval::Gate::Answer.approve("human"))
+      promise.resolve(Lain::Epic::Gate::Answer.approve("human"))
     end
   end
   let(:deps) { described_class::Deps.new(queue:, asker:, journal:) }
@@ -49,10 +49,10 @@ RSpec.describe Lain::Approval::Gate::Policies do
   # The stage boundary opens only over approved earlier stages, so the queue
   # starts with alpha's research and epic plan approved.
   def approved_queue(epic_slug = "alpha")
-    %w[research epic_plan].each_with_object(Lain::Approval::SignoffQueue.new) do |stage, folded|
-      folded.apply(Lain::Approval::GateDecision.new(artifact_digest: "blake3:#{stage}-approved", epic_slug:, stage:,
-                                                    approved: true, answered_by: "human", policy: "signoff",
-                                                    latency: 1.0).to_journal)
+    %w[research epic_plan].each_with_object(Lain::Epic::SignoffQueue.new) do |stage, folded|
+      folded.apply(Lain::Epic::GateDecision.new(artifact_digest: "blake3:#{stage}-approved", epic_slug:, stage:,
+                                                approved: true, answered_by: "human", policy: "signoff",
+                                                latency: 1.0).to_journal)
     end
   end
 
@@ -61,12 +61,12 @@ RSpec.describe Lain::Approval::Gate::Policies do
 
     it "builds a HandsOff for a stage the table names hands_off" do
       expect(described_class.for(stage: "research", config:, deps:))
-        .to be_a(Lain::Approval::Gate::Policy::HandsOff)
+        .to be_a(Lain::Epic::Gate::Policy::HandsOff)
     end
 
     it "builds a Deferred for a stage the table names deferred" do
       expect(described_class.for(stage: "epic_plan", config:, deps:))
-        .to be_a(Lain::Approval::Gate::Policy::Deferred)
+        .to be_a(Lain::Epic::Gate::Policy::Deferred)
     end
 
     # "holding the injected queue", asked behaviourally: a deferral parks onto
@@ -85,18 +85,18 @@ RSpec.describe Lain::Approval::Gate::Policies do
 
     it "defaults an unnamed stage to Interactive" do
       expect(described_class.for(stage: "issue_plan", config:, deps:))
-        .to be_a(Lain::Approval::Gate::Policy::Interactive)
+        .to be_a(Lain::Epic::Gate::Policy::Interactive)
     end
 
     it "defaults every stage to Interactive when no config names any" do
       built = Lain::Epic::STAGES.map { |stage| described_class.for(stage:, config: Lain::Config.empty, deps:) }
 
-      expect(built).to all(be_a(Lain::Approval::Gate::Policy::Interactive))
+      expect(built).to all(be_a(Lain::Epic::Gate::Policy::Interactive))
     end
 
     it "accepts a Stage value as readily as its name" do
       expect(described_class.for(stage: Lain::Epic::Stage.new("research"), config:, deps:))
-        .to be_a(Lain::Approval::Gate::Policy::HandsOff)
+        .to be_a(Lain::Epic::Gate::Policy::HandsOff)
     end
   end
 
@@ -106,7 +106,7 @@ RSpec.describe Lain::Approval::Gate::Policies do
     end
 
     it "defaults to interactive, the label Gate's own un-wrapped path journals" do
-      expect(described_class::DEFAULT).to eq(Lain::Approval::Gate::DEFAULT_POLICY)
+      expect(described_class::DEFAULT).to eq(Lain::Epic::Gate::DEFAULT_POLICY)
     end
 
     it "agrees with what Config validates against -- one list, widened in one place" do
@@ -131,7 +131,7 @@ RSpec.describe Lain::Approval::Gate::Policies do
       askerless = described_class::Deps.new(queue:, asker: nil, journal:)
 
       expect(described_class.for(stage: "research", config: config_with(research: "hands_off"), deps: askerless))
-        .to be_a(Lain::Approval::Gate::Policy::HandsOff)
+        .to be_a(Lain::Epic::Gate::Policy::HandsOff)
     end
 
     it "refuses a policy that does declare it, naming the stage, the policy, and the seam" do
@@ -271,7 +271,7 @@ RSpec.describe Lain::Approval::Gate::Policies do
       config = config_with(research: "hands_off", epic_plan: "hands_off", issue_plan: "hands_off")
 
       expect(described_class.for(stage: "research", config:, deps: askerless))
-        .to be_a(Lain::Approval::Gate::Policy::HandsOff)
+        .to be_a(Lain::Epic::Gate::Policy::HandsOff)
     end
 
     it "hands back a frozen map, so a caller cannot edit the session's wiring" do
@@ -314,9 +314,9 @@ RSpec.describe Lain::Approval::Gate::Policies do
       built = described_class.for_all(config: config_with(research: "hands_off"), deps: askerless,
                                       asking: ["research"])
 
-      expect(built.fetch("research")).to be_a(Lain::Approval::Gate::Policy::HandsOff)
+      expect(built.fetch("research")).to be_a(Lain::Epic::Gate::Policy::HandsOff)
       expect(built.values_at("epic_plan", "issue_plan", "implementation"))
-        .to all(be_a(Lain::Approval::Gate::Policy::Interactive))
+        .to all(be_a(Lain::Epic::Gate::Policy::Interactive))
     end
 
     it "refuses the missing asker at the one stage it decides, naming the seam" do
@@ -370,20 +370,20 @@ RSpec.describe Lain::Approval::Gate::Policies do
   end
 
   describe "Recipe#runs_on?" do
-    let(:recipe) { Lain::Approval::Gate::Policies::CATALOG.fetch("interactive") }
+    let(:recipe) { Lain::Epic::Gate::Policies::CATALOG.fetch("interactive") }
 
     it "answers true when every declared seam is present" do
       expect(recipe.runs_on?(deps)).to be(true)
     end
 
     it "answers false when a declared seam is nil" do
-      expect(recipe.runs_on?(Lain::Approval::Gate::Policies::Deps.new(queue:, asker: nil, journal:))).to be(false)
+      expect(recipe.runs_on?(Lain::Epic::Gate::Policies::Deps.new(queue:, asker: nil, journal:))).to be(false)
     end
   end
 
   describe described_class::Nobody do
     it "refuses to ask, by name, as a missing asker" do
-      expect { described_class.ask("Approve?") }.to raise_error(Lain::Approval::Gate::Policies::Refusal) { |error|
+      expect { described_class.ask("Approve?") }.to raise_error(Lain::Epic::Gate::Policies::Refusal) { |error|
         expect(error.kind).to eq(:missing_seam)
         expect(error.seams).to eq(["asker"])
         expect(error.message).to include("nobody to put a gate's question to")

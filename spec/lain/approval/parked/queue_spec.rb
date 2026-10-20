@@ -30,7 +30,7 @@ end
 # Pending approval and parks its fiber on Gate's synchronous policy seam; a
 # surface fiber answers, first answer wins, every decision journals, and an
 # unanswered window denies (the fail-closed doctrine gate.rb pins).
-RSpec.describe Lain::Approval::Queue do
+RSpec.describe Lain::Approval::Parked::Queue do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
   let(:queue) { described_class.new(journal:) }
@@ -329,7 +329,7 @@ RSpec.describe Lain::Approval::Queue do
 
     it "names the authority each surface declared, not one read off its name" do
       machine = ruled(surface: "tty", authority: :automatic)
-      person = ruled(surface: Lain::Approval::SecretSurface::SURFACE, authority: :human)
+      person = ruled(surface: Lain::Approval::Parked::SecretSurface::SURFACE, authority: :human)
 
       expect([machine.authority, person.authority]).to eq(%i[automatic human])
     end
@@ -536,13 +536,13 @@ RSpec.describe Lain::Approval::Queue do
   # identity one rail over.
   #
   # It rides the `context` the policy seam already threads untouched
-  # ({Approval::PolicySwitch::Requested}), which is why nothing between a
+  # ({Approval::Parked::PolicySwitch::Requested}), which is why nothing between a
   # child's gate and this queue had to widen its `call(effect, context)` duck.
   # That value's OWN behaviour -- its delegation, and the names it refuses --
-  # is spec'd at its mirrored path, `spec/lain/approval/policy_switch_spec.rb`;
+  # is spec'd at its mirrored path, `spec/lain/approval/parked/policy_switch_spec.rb`;
   # what belongs here is what the QUEUE does with it.
   describe "who a parked call is asked on behalf of" do
-    def asked_by(requester) = Lain::Approval::PolicySwitch::Requested.new(nil, requester)
+    def asked_by(requester) = Lain::Approval::Parked::PolicySwitch::Requested.new(nil, requester)
 
     def parked(context)
       Sync do |task|
@@ -615,7 +615,7 @@ RSpec.describe Lain::Approval::Queue do
 
     def in_dir(cwd, requester: nil)
       session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd:, env: {}))
-      requester ? Lain::Approval::PolicySwitch::Requested.new(session, requester) : session
+      requester ? Lain::Approval::Parked::PolicySwitch::Requested.new(session, requester) : session
     end
 
     def settled(effect, context = nil)
@@ -875,7 +875,7 @@ RSpec.describe Lain::Approval::Queue do
     end
 
     it "remembers no call a machine decided" do
-      settled(tool_call) { |pending| pending.deny(surface: Lain::Approval::SecretSurface::SURFACE) }
+      settled(tool_call) { |pending| pending.deny(surface: Lain::Approval::Parked::SecretSurface::SURFACE) }
 
       expect(queue.denied_call(requester: "agent", tool: "dangerous", input: { "text" => "boom" },
                                cwd: Lain::Session.cwd_of(nil))).to be_nil
@@ -894,7 +894,7 @@ RSpec.describe Lain::Approval::Queue do
     end
 
     it "remembers nothing a machine or a fault decided" do
-      [Lain::Approval::SecretSurface::SURFACE, Lain::Frontend::ApprovalPolicy::FAULT_SURFACE].each do |surface|
+      [Lain::Approval::Parked::SecretSurface::SURFACE, Lain::Frontend::ApprovalPolicy::FAULT_SURFACE].each do |surface|
         settled(lists("/tmp/x")) { |pending| pending.deny(surface:) }
       end
 
@@ -1052,7 +1052,7 @@ RSpec.describe Lain::Approval::Queue do
       expect { verdict = Sync { queue.call(tool_call, nil) } }.not_to raise_error
       expect(verdict).to be(false)
       expect(error_records).to contain_exactly(
-        a_hash_including("entry_class" => "Lain::Approval::Queue::Pending")
+        a_hash_including("entry_class" => "Lain::Approval::Parked::Queue::Pending")
       )
     end
 
@@ -1392,7 +1392,7 @@ RSpec.describe Lain::Approval::Queue do
     # a ledger of its own would satisfy the parameter pin above. Comments may
     # cite the ruling, so only code lines are searched.
     it "names no ledger anywhere in the queue's code" do
-      code = File.read(File.expand_path("../../../lib/lain/approval/queue.rb", __dir__))
+      code = File.read(File.expand_path("../../../../lib/lain/approval/parked/queue.rb", __dir__))
                  .lines.grep_v(/\A\s*#/).join
 
       expect(code).not_to match(/ledger/i)
@@ -1448,7 +1448,7 @@ RSpec.describe Lain::Approval::Queue do
   # secrets are at stake and names no file, which is a question no human can
   # answer. The ledger's absolute-path check is a different rule and lives one
   # object over; it is not an argument for coercing nil to "" here.
-  describe Lain::Approval::Queue::Outstanding do
+  describe Lain::Approval::Parked::Queue::Outstanding do
     let(:regions) { Lain::Sensitivity::Regions.detect("API_KEY=sk-ant-api03-QZ9vK2mR7xT4wL8nB3jH6yD1sA5fG0pE\n") }
 
     it "refuses to carry regions without naming the file they came from" do

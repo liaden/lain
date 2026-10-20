@@ -21,7 +21,7 @@ module Lain
     # approved but never that something is WAITING, which is the one state a
     # human is actually asked to act on.
     #
-    # A separate value object rather than the {Approval::Queue::Pending} itself,
+    # A separate value object rather than the {Approval::Parked::Queue::Pending} itself,
     # which holds an injected clock and a decision it exists to have mutated --
     # coordination state that can never be `Ractor.shareable?`.
     #
@@ -40,16 +40,16 @@ module Lain
     ApprovalPending = Data.define(:requester, :tool, :tool_use_id, :humans_only, :notes) do
       include Journalable
 
-      # Built from the parked {Approval::Queue::Pending} at admit time, so the
+      # Built from the parked {Approval::Parked::Queue::Pending} at admit time, so the
       # queue names the fields once and this record owns the projection.
       #
       # ⚠️ `outstanding` is ABSENT and must stay absent. A {Pending} carries the
       # sensitive regions a yes would release, bytes and all
-      # ({Approval::Queue::Outstanding}), and the ONLY thing keeping them out of
+      # ({Approval::Parked::Queue::Outstanding}), and the ONLY thing keeping them out of
       # the Journal is that this hand-maintained list does not name them. Adding
       # the field -- for a HUD, for a replay, for symmetry -- writes real
       # credentials to disk, and no test would catch it, because every test here
-      # asserts the fields that ARE listed. {Queue::Pending#to_journal} carries
+      # asserts the fields that ARE listed. {Approval::Parked::Queue::Pending#to_journal} carries
       # the identical hazard and the identical note.
       def self.from(pending)
         new(requester: pending.requester, tool: pending.tool, tool_use_id: pending.tool_use_id,

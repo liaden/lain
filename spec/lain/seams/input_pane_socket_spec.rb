@@ -17,7 +17,7 @@ module InputPaneSocket
   # The chat: a real Intake, InputSocket, Conductor and TTY, with its stdin
   # closed so nothing on this side can read a line at all. `lines` reads `you>`
   # until the stream ends; `approval` parks one gated call through a real
-  # Approval::Queue and answers it through the real terminal surface;
+  # Approval::Parked::Queue and answers it through the real terminal surface;
   # `countdown` supervises an ask a Ctrl-C can open a grace window on;
   # `running` supervises one until told it is done, then reads `you>` again.
   CHILD = <<~RUBY
@@ -57,7 +57,7 @@ module InputPaneSocket
     end
 
     approval = lambda do |task|
-      queue = Lain::Approval::Queue.new(journal: Lain::Journal.new(io: out), timeout: 30)
+      queue = Lain::Approval::Parked::Queue.new(journal: Lain::Journal.new(io: out), timeout: 30)
       policy = Lain::Frontend::ApprovalPolicy.new(reader: ->(asked) { conductor.read_reply(asked) },
                                                  output: out, pastel: Pastel.new(enabled: false))
       watching = task.async { policy.watch(queue) }

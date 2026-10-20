@@ -10,7 +10,7 @@ require "tmpdir"
 # Support kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
 module ApprovalPrimeSupport
   # The gated call the editor is asked about. A Struct rather than a real
-  # {Lain::Effect} for {Lain::Approval::Queue::Pending}'s own reason: it reads a
+  # {Lain::Effect} for {Lain::Approval::Parked::Queue::Pending}'s own reason: it reads a
   # name, an input and a tool_use_id, and nothing else. Named apart from
   # neovim_runtime_spec's identical fixture on purpose -- both files load into
   # one process, and a shared top-level constant would make whichever loaded
@@ -99,7 +99,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     LUA
   end
 
-  # A REAL gated call parked in a REAL {Lain::Approval::Queue}, with the REAL
+  # A REAL gated call parked in a REAL {Lain::Approval::Parked::Queue}, with the REAL
   # consumer bound the way {Lain::CLI::Repl} binds it -- neovim_runtime_spec's
   # harness, trimmed to the one question this file asks: does the buffer the
   # attach primed still take the first real approval and still answer it.
@@ -123,7 +123,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # beyond the grace for the same reason.
   def serve_approval(frontend, settled, grace)
     Sync do |task|
-      queue = Lain::Approval::Queue.new(journal: Lain::Journal.new(io: StringIO.new), timeout: 60)
+      queue = Lain::Approval::Parked::Queue.new(journal: Lain::Journal.new(io: StringIO.new), timeout: 60)
       surfaces = approval_surfaces(task, frontend, queue)
       effect = ApprovalPrimeSupport::Effect.new("bash", { "command" => "pwd" }, "tu_1")
       gated = task.async { queue.call(effect, nil) }

@@ -65,7 +65,7 @@ module Lain
     # denies. `root:` is REQUIRED, as {.sensitivity}'s is.
     #
     # @param root [String] a project root; `.lain/config.rb` is resolved under it
-    # @return [Numeric] seconds, above 0; {Approval::Queue::DEFAULT_TIMEOUT} when unset
+    # @return [Numeric] seconds, above 0; {Approval::Parked::Queue::DEFAULT_TIMEOUT} when unset
     # @raise [Project::Trust::Untrusted] as {.load}
     # @raise [Refusal] as {.load}
     def self.approval_timeout(root:) = built(root).approval_timeout
@@ -207,7 +207,7 @@ module Lain
     end
 
     # The default `gates` table must stay EMPTY. {Epics::Gates.check!} reads
-    # `Epic::STAGES` and {Approval::Gate::Policies}, so a non-empty default
+    # `Epic::STAGES` and {Epic::Gate::Policies}, so a non-empty default
     # here would reach two unrelated units while this file loads -- reaching
     # config would then reach the epic tier and the approval gate with it.
     # `gates_spec.rb` boots a child without the eager load and asks exactly

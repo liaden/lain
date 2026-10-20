@@ -4,7 +4,7 @@ require "async"
 
 # Support kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
 module ApprovalSurfacesSpecSupport
-  # The minimal effect a {Approval::Queue::Pending} reads -- a name, an input,
+  # The minimal effect a {Approval::Parked::Queue::Pending} reads -- a name, an input,
   # and the tool_use_id the park record correlates on.
   Effect = Struct.new(:name, :input, :tool_use_id)
 
@@ -52,7 +52,7 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
   # A REAL queue, not a double: the claim is that N surfaces watch ONE queue
   # and a SIBLING fiber wakes the parked gated call, and only the real
   # park/decide path can show that.
-  let(:queue) { Lain::Approval::Queue.new(journal:, timeout: 0.3) }
+  let(:queue) { Lain::Approval::Parked::Queue.new(journal:, timeout: 0.3) }
   # A REAL terminal over a StringIO, because a cockpit's chat announces a parked
   # call through the frontend's own one-line note, and what it printed is half
   # of what these examples assert.
@@ -203,7 +203,7 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
       result = fan_out(attached: editor)
 
       expect(conductor).not_to have_received(:read_reply)
-      expect(decisions.last.fetch("surface")).to eq(Lain::Approval::Queue::TIMEOUT_SURFACE)
+      expect(decisions.last.fetch("surface")).to eq(Lain::Approval::Parked::Queue::TIMEOUT_SURFACE)
       expect(result[:verdict]).to be(false)
     end
 
@@ -215,7 +215,7 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
 
     it "names a skill child by its label in the announcement" do
       child = Lain::Requester.new(name: "dev", role: "dev", skill: "gherkin-tests")
-      fan_out(attached: editor, context: Lain::Approval::PolicySwitch::Requested.new(nil, child))
+      fan_out(attached: editor, context: Lain::Approval::Parked::PolicySwitch::Requested.new(nil, child))
 
       expect(notes).to contain_exactly(a_string_including("! dev (gherkin-tests) asks to run bash("))
     end
@@ -272,7 +272,7 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
       child = Lain::Requester.new(name: "dev", role: "dev", skill: "gherkin-tests")
       Sync do |task|
         watched = surfaces(attached: editor).watch(task)
-        asked = Lain::Approval::PolicySwitch::Requested.new(nil, child)
+        asked = Lain::Approval::Parked::PolicySwitch::Requested.new(nil, child)
         task.with_timeout(2) { task.async { queue.call(effect, asked) }.wait }
         task.sleep(0.2)
         watched.each(&:stop)
@@ -483,7 +483,7 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
   describe "a parked call carrying outstanding sensitive regions" do
     let(:secret) { "sk-ant-api03-QZ9vK2mR7xT4wL8nB3jH6yD1sA5fG0pE" }
     let(:regions) { Lain::Sensitivity::Regions.detect("API_KEY=#{secret}\n") }
-    let(:outstanding) { Lain::Approval::Queue::Outstanding.new(path: "/repo/.env", regions:) }
+    let(:outstanding) { Lain::Approval::Parked::Queue::Outstanding.new(path: "/repo/.env", regions:) }
 
     def fan_out_disclosing
       Sync do |task|

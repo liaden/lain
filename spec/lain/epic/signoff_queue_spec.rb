@@ -2,16 +2,16 @@
 
 require "stringio"
 
-# Approval::SignoffQueue holds the artifact gates a Deferred policy parked for a
+# Epic::SignoffQueue holds the artifact gates a Deferred policy parked for a
 # human to sign off later. It is a FOLD over journaled gate_decisions -- parked
 # is "a deferral with no later terminal decision for the same digest+epic+stage"
 # -- so a session that dies loses no sign-off, and the live queue is only the
 # convenience view of a record that already exists.
 #
-# It is deliberately NOT Approval::Queue: that one is effect-scoped (it parks one
+# It is deliberately NOT Approval::Parked::Queue: that one is effect-scoped (it parks one
 # tool call and blocks a fiber on it). Nothing parks here; a deferral returns at
 # once having refused.
-RSpec.describe Lain::Approval::SignoffQueue do
+RSpec.describe Lain::Epic::SignoffQueue do
   # ONE sentence for a damaged sign-off record, whichever fold reaches it: the
   # queue's own and the gate registry's both build their refusal here.
   describe described_class::UnreadableRecord, ".for" do
@@ -41,8 +41,8 @@ RSpec.describe Lain::Approval::SignoffQueue do
   end
 
   def decision(policy:, approved: false, digest: "blake3:plan", epic_slug: "alpha", stage: "research", **overrides)
-    Lain::Approval::GateDecision.new(artifact_digest: digest, epic_slug:, stage:, approved:,
-                                     answered_by: policy, policy:, latency: 0.1, **overrides)
+    Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug:, stage:, approved:,
+                                 answered_by: policy, policy:, latency: 0.1, **overrides)
   end
 
   def deferral(**overrides) = decision(policy: described_class::DEFERRED_POLICY, **overrides)
@@ -540,7 +540,7 @@ RSpec.describe Lain::Approval::SignoffQueue do
     end
   end
 
-  describe Lain::Approval::SignoffQueue::Partition do
+  describe Lain::Epic::SignoffQueue::Partition do
     it "is equal for the same pair, so it can key the fold" do
       expect(described_class.new(epic_slug: "alpha", stage: "research"))
         .to eq(described_class.new(epic_slug: :alpha, stage: :research))
@@ -562,14 +562,14 @@ RSpec.describe Lain::Approval::SignoffQueue do
     end
   end
 
-  describe Lain::Approval::SignoffQueue::Item do
+  describe Lain::Epic::SignoffQueue::Item do
     def item(**overrides)
       described_class.new(artifact_digest: "blake3:plan", epic_slug: "alpha", stage: "research", **overrides)
     end
 
     it "answers the partition it sits in" do
-      expect(item.partition).to eq(Lain::Approval::SignoffQueue::Partition.new(epic_slug: "alpha",
-                                                                               stage: "research"))
+      expect(item.partition).to eq(Lain::Epic::SignoffQueue::Partition.new(epic_slug: "alpha",
+                                                                           stage: "research"))
     end
 
     it "is Ractor-shareable with prose and evidence attached" do

@@ -7,7 +7,7 @@ module Lain
     # Refuses a call on a path a human already denied the same requester, or on
     # anything under it, or an exact repeat of a call they denied, rather than
     # parking it to ask again. The memory is the queue's own
-    # ({Approval::Queue#denied} and {Approval::Queue#denied_call}), so a run
+    # ({Approval::Parked::Queue#denied} and {Approval::Parked::Queue#denied_call}), so a run
     # with no queue remembers nothing.
     #
     # Only a call the gate would have asked about is refused here: a deny on
@@ -76,7 +76,7 @@ module Lain
       end
 
       def remembered_on_path(effect, context, cwd, parsed, refused)
-        if effect.name == Approval::Queue::BASH
+        if effect.name == Approval::Parked::Queue::BASH
           remembered_in_command(effect, context, cwd, parsed)
         else
           remembered_at(effect, context, cwd, refused)

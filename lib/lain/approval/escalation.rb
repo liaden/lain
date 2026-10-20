@@ -23,7 +23,7 @@ module Lain
     # The composability property, and what lets rungs be reordered among the
     # abstaining ones without surprise. No rung is ever asked to invent an
     # answer to stay total, because the BOTTOM of the ladder already is: the
-    # surfaces rung parks on {Approval::Queue}, whose window expires into a
+    # surfaces rung parks on {Approval::Parked::Queue}, whose window expires into a
     # denial, and a ladder that runs out of rungs refuses. An unanswered gate
     # refuses; it never wedges.
     #
@@ -53,7 +53,7 @@ module Lain
     # So a HUMAN surface's allow is honoured and journaled `verdict: allow,
     # faulted: true`, naming the rung that broke -- enough for the bench to
     # exclude those runs without inventing a denial no authority ever made. An
-    # {SecretSurface} allow keeps being suppressed: a model adjudicator IS a later
+    # {Parked::SecretSurface} allow keeps being suppressed: a model adjudicator IS a later
     # automatic rung wearing a human's clothes. {Ruling#authority} tells them
     # apart.
     #
@@ -70,7 +70,7 @@ module Lain
     # allow is read as an abstention, so it reaches a human or nobody. The
     # settled ruling reaches that layer through {Middleware::Gate}, which
     # hands back whatever any policy settled on. Duck-typed, on
-    # {PolicySwitch::Requested}'s terms: every other context is judged as
+    # {Parked::PolicySwitch::Requested}'s terms: every other context is judged as
     # before.
     class Escalation
       # A name, not a nil, so journal readers never guard.
@@ -103,9 +103,9 @@ module Lain
 
         # NOT a synonym for the rung: the asking rung produces both, depending
         # on which surface won the race for the pending, and this is the whole
-        # reason a {SecretSurface}'s allow is suppressed over a fault where a
+        # reason a {Parked::SecretSurface}'s allow is suppressed over a fault where a
         # human's is honoured.
-        AUTHORITIES = Queue::AUTHORITIES
+        AUTHORITIES = Parked::Queue::AUTHORITIES
 
         def self.allow(rung:, because:, **rest) = new(verdict: :allow, rung:, reason: because, **rest)
         def self.deny(rung:, because:, **rest) = new(verdict: :deny, rung:, reason: because, **rest)
@@ -852,7 +852,7 @@ module Lain
         end
       end
 
-      # The asking rung: {Approval::Queue}, where a call parks for whatever
+      # The asking rung: {Approval::Parked::Queue}, where a call parks for whatever
       # surfaces are watching, and where the window expiring is itself a denial
       # signed by the clock. Total by construction, which is what makes it the
       # bottom of the ladder.
@@ -877,7 +877,7 @@ module Lain
 
         def name = NAME
 
-        # {Queue#adjudicate} rather than `#call`, because a Boolean cannot carry
+        # {Parked::Queue#adjudicate} rather than `#call`, because a Boolean cannot carry
         # WHO answered -- the one thing the ladder above needs in order not to
         # throw a person's approval away.
         def call(effect, context)

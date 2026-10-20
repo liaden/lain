@@ -1276,7 +1276,7 @@ RSpec.describe Lain::Tools::AskHuman do
   # An asker admits ONE outstanding set, so a caller that gave up waiting has to
   # say so -- otherwise the set it abandoned refuses every later ask for the
   # life of the asker, and the inbox goes on offering a question whose answer
-  # nobody is waiting for. {Approval::Gate} is the caller that needs it: its
+  # nobody is waiting for. {Epic::Gate} is the caller that needs it: its
   # window closing is lain's decision, not the human's.
   describe "#withdraw -- a set whose asker stopped waiting" do
     it "frees the asker to ask again" do

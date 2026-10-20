@@ -23,7 +23,7 @@ module Lain
     #
     # An arm that only masked would leave the agent reading `Cargo.lock`, getting
     # `<redacted:1>` forever, with no move available to model or human. So when
-    # anything would be masked this parks a {Approval::Queue::Pending} and awaits
+    # anything would be masked this parks a {Approval::Parked::Queue::Pending} and awaits
     # it; the fail-closed default is the queue's own and is not reimplemented
     # here. An unreleased region renders as `<redacted:N>` and a released one as
     # its real bytes, so the model keeps the file's STRUCTURE and partial approval
@@ -136,7 +136,7 @@ module Lain
         Verdict = Data.define(:requester)
 
         # The messages this middleware reads off a settled
-        # {Approval::Queue::Pending}: `approved?`, `timed_out?`, `surface`, `requester`.
+        # {Approval::Parked::Queue::Pending}: `approved?`, `timed_out?`, `surface`, `requester`.
         class Verdict
           def approved? = true
           def timed_out? = false
@@ -146,7 +146,7 @@ module Lain
         # `outstanding:` is accepted and discarded, but cannot be renamed to the
         # unused-argument underscore: it is a KEYWORD, so the name is the duck.
         def adjudicate(_effect, context, outstanding: nil) # rubocop:disable Lint/UnusedMethodArgument
-          Verdict.new(requester: Approval::Queue.identity_for(context).name)
+          Verdict.new(requester: Approval::Parked::Queue.identity_for(context).name)
         end
 
         INSTANCE = new.freeze
@@ -430,7 +430,7 @@ module Lain
       # raises. Recording the mask up front and retracting it on approval is not
       # available: `@masked` has no removal, by {Session::ReadSet}'s design.
       def settle(carried, effect, withheld)
-        outstanding = Approval::Queue::Outstanding.new(path: withheld.path, regions: withheld.unreleased)
+        outstanding = Approval::Parked::Queue::Outstanding.new(path: withheld.path, regions: withheld.unreleased)
         decided = false
         settled = @queue.adjudicate(effect, asked(carried.fetch(:context)), outstanding:)
         approved = settled.approved?
@@ -446,7 +446,7 @@ module Lain
 
       # One queue serves the whole fleet, so a child's read names the child
       # through the context, as the child's gate does.
-      def asked(context) = @requester ? Approval::PolicySwitch::Requested.new(context, @requester) : context
+      def asked(context) = @requester ? Approval::Parked::PolicySwitch::Requested.new(context, @requester) : context
 
       # Nothing was withheld, so no mask is recorded. What is journaled is that
       # a secret was sent: the decision record names no file and no count, and a
@@ -521,7 +521,7 @@ module Lain
       #
       # It is not silent either: a lost release is a secret sent with no record
       # of it, so the failure degrades into the Journal's own `journal_error`
-      # shape, naming the record it stood in for, as {Approval::Queue} does. A
+      # shape, naming the record it stood in for, as {Approval::Parked::Queue} does. A
       # lost mask costs a resumed session the knowledge that the path was masked,
       # since {SessionRecord::Replay} reads this record; the LIVE
       # session still knows.

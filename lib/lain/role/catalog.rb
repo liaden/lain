@@ -35,7 +35,7 @@ module Lain
         # `subagent` tool or a role skill spawned it.
         Role.new(name: :researcher, only: %i[read_file list_files glob grep web_fetch web_search bash write_file],
                  max_iterations: 60),
-        # {Approval::Gate::Adjudicator}'s evidence spike: the researcher's old
+        # {Epic::Gate::Adjudicator}'s evidence spike: the researcher's old
         # read-only set, unattended because the gate waits on its answer and
         # nobody could answer a parked call.
         Role.new(name: :evidence_researcher, only: %i[read_file list_files glob grep web_fetch web_search],
@@ -45,7 +45,7 @@ module Lain
         # answer with the judged call still unparked: a question of its own
         # would hold that call until the judge's bound lapsed.
         Role.new(name: :auto_approver, only: %i[read_file list_files glob grep], unattended: true, sealed: true),
-        # {Approval::Gate::Adjudicator}'s sibling of `auto_approver`, judging an
+        # {Epic::Gate::Adjudicator}'s sibling of `auto_approver`, judging an
         # ARTIFACT rather than one waiting tool call. Two roles because reusing
         # auto_approver.md would tell the model a tool call is pending on every
         # artifact gate. Unattended for `auto_approver`'s reason: the gate is

@@ -7,8 +7,8 @@ module Lain
     # call that is already blocking.
     #
     # UNLIKE {MemorySave}, nothing here sits on the live tool-dispatch path. Its
-    # one caller is {Approval::SecretSurface}, a QUEUE surface racing the human
-    # for pendings {Approval::Queue} has already parked. A surface that never
+    # one caller is {Approval::Parked::SecretSurface}, a QUEUE surface racing the human
+    # for pendings {Approval::Parked::Queue} has already parked. A surface that never
     # answers costs nothing, because the fail-closed clock denies whatever nobody
     # decided.
     #
@@ -36,7 +36,7 @@ module Lain
     #
     # The path, the tool, and how MANY regions are outstanding. Never a region's
     # bytes: putting the value in the question would disclose it to the very model
-    # the gate exists to withhold it from ({Approval::Queue::Outstanding#preamble}
+    # the gate exists to withhold it from ({Approval::Parked::Queue::Outstanding#preamble}
     # states the same rule one surface over). The judgement is therefore about a
     # PATH, which is what makes a small local model a defensible judge at all.
     #
@@ -50,7 +50,7 @@ module Lain
     #
     # The schema's `confidence` is a local model's SELF-REPORT: a rank, not a
     # probability. It is journaled on every answer so
-    # {Approval::SecretSurface::DEFAULT_THRESHOLD} can be set from measurement
+    # {Approval::Parked::SecretSurface::DEFAULT_THRESHOLD} can be set from measurement
     # rather than asserted. Nothing here reads it; the surface owns the threshold,
     # because routing is the surface's job.
     module SecretRead
@@ -77,7 +77,7 @@ module Lain
         # A local model has been measured sending schema-valid nonsense past
         # both fields -- a confidence of 90 where the schema means 0.0 to 1.0,
         # and a verdict outside the three words asked for. Nothing downstream
-        # re-checks either: {Approval::SecretSurface#confident?} compares
+        # re-checks either: {Approval::Parked::SecretSurface#confident?} compares
         # `confidence` straight against a threshold, so an unconstrained 90
         # would outrank every real verdict forever, and an unrecognised
         # `verdict` would merely fall through `#settle`'s two `if`s unnoticed
@@ -86,7 +86,7 @@ module Lain
         # `verdict` is normalized -- stripped, downcased -- ON ASSIGNMENT,
         # before the inclusion check below ever runs. Skipping that would put
         # this validator at odds with the comparison it exists to protect:
-        # {Approval::SecretSurface#confident?} already tolerates case and
+        # {Approval::Parked::SecretSurface#confident?} already tolerates case and
         # whitespace (`answer.verdict.to_s.strip.downcase == verdict`), so an
         # exact inclusion check would hard-reject "Approve" or "approve\n" as
         # an oracle fault even though the surface would have matched either

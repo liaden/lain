@@ -29,7 +29,7 @@ module Lain
     #
     # Deliberately not a value object and not frozen -- {Session}'s posture, for
     # {Session}'s reason: these are the run's accumulating decisions. It is not
-    # ON the Session, though. It sits beside the run's one {Approval::Queue} and
+    # ON the Session, though. It sits beside the run's one {Approval::Parked::Queue} and
     # one {Sensitivity::Policy}, where "ONE, so the two cannot disagree" is
     # already the rule, and it dies with the process.
     #

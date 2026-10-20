@@ -292,7 +292,7 @@ RSpec.describe Lain::Oracle::SecretRead do
 
     # The measurement behind the card: a local model answered `"confidence": 90`
     # where the schema means 0.0 to 1.0 -- schema-valid JSON, nonsense as a value.
-    # `Approval::SecretSurface#confident?` compares this number straight against a
+    # `Approval::Parked::SecretSurface#confident?` compares this number straight against a
     # threshold with no range check of its own, so an unconstrained 90 would
     # outrank any real verdict forever.
     it "refuses a confidence outside 0.0 to 1.0, not just a missing one" do
@@ -314,7 +314,7 @@ RSpec.describe Lain::Oracle::SecretRead do
         .to raise_error(Lain::Oracle::InvalidAnswer, /approve.*deny.*defer/i)
     end
 
-    # `Approval::SecretSurface#confident?` compares with
+    # `Approval::Parked::SecretSurface#confident?` compares with
     # `answer.verdict.to_s.strip.downcase == verdict`, deliberately tolerant of
     # case and whitespace. An exact inclusion check disagrees with the
     # comparison it exists to protect: it would hard-reject exactly the replies

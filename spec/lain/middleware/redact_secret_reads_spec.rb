@@ -79,7 +79,7 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
   # rather than the queue's five-minute human window. 0.01 flaked about 1 run
   # in 50 under a loaded box; this buys ten times the margin for the same
   # apparent speed, since the whole file spends well under a second here.
-  let(:queue) { Lain::Approval::Queue.new(journal: queue_journal, timeout: 0.1) }
+  let(:queue) { Lain::Approval::Parked::Queue.new(journal: queue_journal, timeout: 0.1) }
   let(:journal) { [] }
   let(:session) { Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: dir, env: {})) }
 

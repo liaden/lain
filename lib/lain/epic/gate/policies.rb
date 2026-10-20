@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module Lain
-  module Approval
+  module Epic
     class Gate
       # WHICH policy a stage runs under, read off `epics` gates and built
       # from one dependencies value. {Policy} is how a verdict is reached; this

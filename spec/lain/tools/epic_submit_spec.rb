@@ -102,7 +102,7 @@ RSpec.describe Lain::Tools::EpicSubmit do
 
   context "when a human denies over an earlier deferral of the same digest" do
     it "starts with denied" do
-      parked = Lain::Approval::GateDecision.new(
+      parked = Lain::Epic::GateDecision.new(
         artifact_digest: Lain::Epic::Submission.research(text: "# findings\n", slug: "frugirl-mvp").digest,
         epic_slug: "frugirl-mvp", stage: "research", approved: false, answered_by: "deferred",
         policy: "deferred", latency: 1.0
@@ -145,7 +145,7 @@ RSpec.describe Lain::Tools::EpicSubmit do
   end
 
   context "when nobody answers within the gate's window" do
-    before { stub_const("Lain::Approval::Gate::DEFAULT_TIMEOUT", 0.2) }
+    before { stub_const("Lain::Epic::Gate::DEFAULT_TIMEOUT", 0.2) }
 
     it "says nobody answered in that time and nothing advanced, not that it was denied" do
       result = submit(stage: "research", slug: "frugirl-mvp")

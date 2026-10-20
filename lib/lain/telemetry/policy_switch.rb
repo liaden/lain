@@ -8,7 +8,7 @@ module Lain
     # writes the approval level's gate policy as the consequence of a `/mode` flip, so
     # `surface` names the surface that flipped the MODE.
     #
-    # A DUMB CARRIER, as {ModelSwitch} and {ModeSwitch} are: {Approval::PolicySwitch}
+    # A DUMB CARRIER, as {ModelSwitch} and {ModeSwitch} are: {Approval::Parked::PolicySwitch}
     # owns the from/to naming and keeps its own live `@current`, and the record only
     # serializes the flip. The discriminator "policy_switch" derives from the class
     # basename ({Journalable#journal_type}), which journal readers and replay match

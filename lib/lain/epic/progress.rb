@@ -56,7 +56,7 @@ module Lain
       # unrelated tier's record vouch for an epic. `gate_decision` counts,
       # because a gate parked before any issue moved is a real state.
       SLUG_TYPES = [IssueTransition::JOURNAL_TYPE, StageTransition::JOURNAL_TYPE,
-                    Approval::SignoffQueue::JOURNAL_TYPE].freeze
+                    Epic::SignoffQueue::JOURNAL_TYPE].freeze
 
       def initialize(entries, epic_slug:)
         # Materialized once rather than left lazy: the fold enumerates three
@@ -177,7 +177,7 @@ module Lain
       # rescue here and must not be one: an empty queue reads as drained, and
       # drained opens the next stage over work nobody signed off.
       def parked_at(stage)
-        queue = Approval::SignoffQueue.from_journal(@records)
+        queue = Epic::SignoffQueue.from_journal(@records)
         watched(stage).flat_map { |shown| queue.parked(@epic_slug, shown.name) }
       end
 
@@ -257,7 +257,7 @@ module Lain
       # before freezing, so the caller keeps ownership of the array it passed.
       def signoffs(parked, slug)
         refuse_stranger!(parked) unless parked.is_a?(Array)
-        stranger = parked.find { |item| !item.is_a?(Approval::SignoffQueue::Item) }
+        stranger = parked.find { |item| !item.is_a?(Epic::SignoffQueue::Item) }
         refuse_stranger!(stranger) if stranger
         foreign = parked.find { |item| item.epic_slug != slug }
         refuse_foreign!(foreign, slug) if foreign
@@ -267,7 +267,7 @@ module Lain
 
       def refuse_stranger!(offender)
         raise ArgumentError,
-              "parked must be an Array of #{Approval::SignoffQueue::Item} values (got #{offender.inspect})"
+              "parked must be an Array of #{Epic::SignoffQueue::Item} values (got #{offender.inspect})"
       end
 
       def refuse_foreign!(item, slug)
@@ -278,7 +278,7 @@ module Lain
 
       # Interned first, so the check judges the bytes that get stored: a slug
       # object whose #to_s is blank passes a naive presence test and then names a
-      # partition nothing can match -- the reason {Approval::SignoffQueue}'s own
+      # partition nothing can match -- the reason {Epic::SignoffQueue}'s own
       # Partition interns before its contract.
       def named_epic(epic_slug)
         slug = -epic_slug.to_s

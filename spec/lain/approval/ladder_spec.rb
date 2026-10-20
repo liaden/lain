@@ -249,7 +249,7 @@ RSpec.describe Lain::Approval::Ladder do
   # included, so a broken rule's company cannot settle a call a human could.
   describe "inside the chat ladder" do
     let(:journal) { Lain::Journal.new(io: StringIO.new) }
-    let(:queue) { Lain::Approval::Queue.new(journal:, timeout: 1) }
+    let(:queue) { Lain::Approval::Parked::Queue.new(journal:, timeout: 1) }
     let(:tools) { Lain::Toolset.new([Lain::Tools::Bash.new]) }
     let(:effect) { Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => "ls" }) }
 

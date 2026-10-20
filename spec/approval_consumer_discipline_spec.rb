@@ -6,12 +6,12 @@ require "pathname"
 # Mechanical enforcement of the one-consumer rule, and deliberately the same
 # shape {DesktopDiscipline} and {OutputDiscipline} are.
 #
-# {Lain::Approval::Queue}'s arrival queue delivers each parked call to exactly
+# {Lain::Approval::Parked::Queue}'s arrival queue delivers each parked call to exactly
 # ONE `#dequeue` caller -- `Async::Queue` delegates to a `Thread::Queue`, so a
 # second consumer does not observe the pending, it TAKES it. Exactly one surface
 # may therefore drain it, and it has to be the one that can ask a person:
 # {Lain::Frontend::ApprovalPolicy}. Every other surface observes the parked set
-# through `Queue#each` ({Lain::Approval::QueueSurface},
+# through `Queue#each` ({Lain::Approval::Parked::QueueSurface},
 # {Lain::Frontend::Neovim::ApprovalView}).
 #
 # The rule was already written down -- `queue_surface.rb`'s class comment says
@@ -57,7 +57,7 @@ module ApprovalConsumerDiscipline
   # Every `#dequeue` receiver in `lib/`, by file, with what it drains. Paths are
   # relative to `lib/`; a receiver not listed for its file is a violation.
   ALLOWLIST = {
-    "lain/approval/queue.rb" => { "@arrivals" => "the queue's own arrival buffer -- this IS the seam" },
+    "lain/approval/parked/queue.rb" => { "@arrivals" => "the queue's own arrival buffer -- this IS the seam" },
     APPROVAL_CONSUMER => { "queue" => "THE approval consumer: the surface that can ask a person" },
     "lain/cli/human_replies.rb" => {
       "@questions" => "ask_human's own queue, not an approval queue",
@@ -136,12 +136,12 @@ RSpec.describe "approval consumer discipline" do
 
     expect(violations).to be_empty, lambda {
       listing = violations.map { |violation| "  #{violation}" }.join("\n")
-      "Lain::Approval::Queue's arrival queue hands each parked call to exactly ONE #dequeue " \
+      "Lain::Approval::Parked::Queue's arrival queue hands each parked call to exactly ONE #dequeue " \
         "caller, so a second consumer STEALS pendings the human's surface then never asks about " \
         "-- on --no-nvim that is a session with no approval surface at all (T15). Found:\n" \
         "#{listing}\n" \
         "If it drains an approval queue, it must not exist: observe the parked set through " \
-        "Queue#each, as Approval::QueueSurface and Neovim::ApprovalView do. If it drains " \
+        "Queue#each, as Approval::Parked::QueueSurface and Neovim::ApprovalView do. If it drains " \
         "some OTHER queue, add it to ApprovalConsumerDiscipline::ALLOWLIST with its reason."
     }
   end

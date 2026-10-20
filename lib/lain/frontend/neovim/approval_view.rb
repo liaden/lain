@@ -5,11 +5,11 @@ require "async"
 module Lain
   module Frontend
     class Neovim
-      # The editor's surface on {Lain::Approval::Queue}: lain://approval lists
+      # The editor's surface on {Lain::Approval::Parked::Queue}: lain://approval lists
       # what is parked, and `y`/`n` on a row answers it -- the second surface
       # {Frontend::ApprovalPolicy} coexists with, first answer winning.
       #
-      # IT OBSERVES, IT DOES NOT CONSUME, which is {Approval::QueueSurface}'s
+      # IT OBSERVES, IT DOES NOT CONSUME, which is {Approval::Parked::QueueSurface}'s
       # rule and not a detail: the arrival queue hands each pending to exactly
       # ONE `dequeue` caller, and that caller is {Frontend::ApprovalPolicy} --
       # the surface that can ask a person. A second one here would STEAL
@@ -84,7 +84,7 @@ module Lain
         # A FOLD's measurement rather than a terminal's: a closed item shows
         # this line plus `10_folds.lua`'s "  (+N lines)" marker on ONE screen
         # line, and the cockpit's nvim pane measures 110 columns. Generous at
-        # the other end on purpose -- {Approval::Queue::Outstanding#preamble}
+        # the other end on purpose -- {Approval::Parked::Queue::Outstanding#preamble}
         # runs to ~84 columns on its own, and a bar cutting into that would hide
         # the one sentence a `y` on this row is most about.
         #
@@ -125,7 +125,7 @@ module Lain
         # three, because they are one fact from the human's side.
         DETACHED = "showing a parked approval needs an attached editor"
 
-        # The wire's two words, against the Booleans {Approval::Queue::Pending}
+        # The wire's two words, against the Booleans {Approval::Parked::Queue::Pending}
         # takes. A CLOSED map and never a truthiness test: an unknown word is
         # REFUSED, because the one thing an approval surface must never do is
         # let a value nobody recognises fall toward approve.
@@ -331,7 +331,7 @@ module Lain
 
         # The `y`/`n` gesture from lain://approval, resolved against the
         # rendering it came from and handed to
-        # {Approval::Queue::Pending#decide}, whose single-shot answer is the
+        # {Approval::Parked::Queue::Pending#decide}, whose single-shot answer is the
         # whole of the race.
         #
         # THERE IS NO `decided?` PRE-CHECK, and its absence is deliberate: a
@@ -533,7 +533,7 @@ module Lain
 
         # THE WHOLE ROW, never just the call. A body carrying only `call_of`
         # reads fine until the summary is cut INSIDE
-        # {Approval::Queue::Outstanding#preamble} -- a deep enough path does it
+        # {Approval::Parked::Queue::Outstanding#preamble} -- a deep enough path does it
         # on its own -- and then "4 sensitive regions outstanding" is in the
         # buffer NOWHERE, on the one surface whose premise is that a human reads
         # what they approve. Wrapping the summary makes the fold's first line a
@@ -545,7 +545,7 @@ module Lain
         # {Frontend::ApprovalPolicy#prompt_for}'s facts in the terminal's own
         # spelling, so a human who has answered one of these at the prompt reads
         # the same call here. The release sentence is the terminal's own
-        # ({Approval::Queue::Outstanding#preamble}) rather than a second spelling
+        # ({Approval::Parked::Queue::Outstanding#preamble}) rather than a second spelling
         # of it: `y` on a row is a FULL approval signing `surface: "nvim"`, so a
         # row omitting it would let a human release a file's secrets from the
         # editor having been shown no warning at all.

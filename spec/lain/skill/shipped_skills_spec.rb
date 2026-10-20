@@ -580,7 +580,7 @@ RSpec.describe "shipped skills" do
     # class name, because NAME is the durable journal label the scaffolds
     # actually quote.
     it "pins the closed policy family the gate prose depends on" do
-      expect(Lain::Approval::Gate::Policy.subclasses.map { |policy| policy::NAME })
+      expect(Lain::Epic::Gate::Policy.subclasses.map { |policy| policy::NAME })
         .to match_array(%w[interactive hands_off deferred adjudicated]),
             "The gate policy family has changed. research-epic, plan-epic and create-epic-issues " \
             "each describe every policy a session can configure; re-check all three against the " \

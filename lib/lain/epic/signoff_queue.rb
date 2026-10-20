@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module Lain
-  module Approval
+  module Epic
     # The artifact gates a {Gate::Policy::Deferred} refused and parked for a
     # human to sign off later.
     #
@@ -23,7 +23,7 @@ module Lain
     # That direction refuses where the fold would have opened, the SAFE
     # direction, so it is documented rather than locked.
     #
-    # == It is NOT {Approval::Queue}
+    # == It is NOT {Approval::Parked::Queue}
     #
     # That class is effect-scoped: it parks ONE tool call and BLOCKS the calling
     # fiber until a surface decides it. Nothing blocks here -- a deferred gate
@@ -61,7 +61,7 @@ module Lain
       SIGNOFF_POLICY = "signoff"
 
       # The record type the fold reads (Journalable's discriminator for
-      # {Approval::GateDecision}).
+      # {Epic::GateDecision}).
       JOURNAL_TYPE = "gate_decision"
 
       # The closed set a journaled `policy` is read against: every configurable
@@ -77,7 +77,7 @@ module Lain
       # right for a caller that built the value wrong, a backtrace for a human
       # whose journal holds a damaged line.
       #
-      # {Approval::Gate.from_journal} folds the same record type and refuses it
+      # {Epic::Gate.from_journal} folds the same record type and refuses it
       # through {.for} too, so one damaged line reads the same whichever fold
       # reaches it first.
       class UnreadableRecord < Error
@@ -94,7 +94,7 @@ module Lain
         end
       end
 
-      # SignoffQueue's OWN construction contracts, not {Approval::Contracts}.
+      # SignoffQueue's OWN construction contracts, not {Epic::Contracts}.
       module Contracts
         # An empty partition key is worse than a wrong one: it still constructs,
         # still folds, and can never be matched back by the epic and stage a
@@ -158,7 +158,7 @@ module Lain
       # otherwise the issue's name as text. Anything else is a damaged line,
       # refused BEFORE `to_s` -- a stringified Array names an issue nobody has,
       # parks where no issue's question looks, and reads as drained for every
-      # real one. {Approval::GateDecision} reads its own through this too.
+      # real one. {Epic::GateDecision} reads its own through this too.
       module IssueId
         def self.read(value)
           return value if value.nil?
@@ -198,7 +198,7 @@ module Lain
 
       # One artifact awaiting a human's sign-off.
       #
-      # `question` is NULLABLE on purpose: {Approval::GateDecision}'s wire shape
+      # `question` is NULLABLE on purpose: {Epic::GateDecision}'s wire shape
       # is closed, so a rebuilt item has no question to recover. Not a loss --
       # the digest addresses the artifact and the artifact owns its question, so
       # storing prose in the decision record would duplicate what

@@ -1190,7 +1190,7 @@ class LainCLI < Thor
   # Metrics/ClassLength headroom for another `method_option`.
   #
   # The secret oracle judges only pendings that would release something
-  # sensitive ({Approval::SecretSurface} filters structurally).
+  # sensitive ({Approval::Parked::SecretSurface} filters structurally).
   module SurfaceFlags
     # @param thor [Class] the Thor class to declare on
     # @return [void]

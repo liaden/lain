@@ -5,7 +5,7 @@
 # life outside a reactor.
 require "stringio"
 
-RSpec.describe Lain::Approval::Gate do
+RSpec.describe Lain::Epic::Gate do
   let(:gate_class) { described_class }
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
@@ -115,22 +115,22 @@ RSpec.describe Lain::Approval::Gate do
   describe "latency" do
     it "refuses a nil latency rather than silently journaling 0.0" do
       expect do
-        Lain::Approval::GateDecision.new(artifact_digest: "d", epic_slug: "e", stage: "s", approved: true,
-                                         answered_by: "human", policy: "interactive", latency: nil)
+        Lain::Epic::GateDecision.new(artifact_digest: "d", epic_slug: "e", stage: "s", approved: true,
+                                     answered_by: "human", policy: "interactive", latency: nil)
       end.to raise_error(ArgumentError, /latency/)
     end
 
     it "refuses a non-numeric latency rather than coercing it to 0.0" do
       expect do
-        Lain::Approval::GateDecision.new(artifact_digest: "d", epic_slug: "e", stage: "s", approved: true,
-                                         answered_by: "human", policy: "interactive", latency: "quick")
+        Lain::Epic::GateDecision.new(artifact_digest: "d", epic_slug: "e", stage: "s", approved: true,
+                                     answered_by: "human", policy: "interactive", latency: "quick")
       end.to raise_error(ArgumentError, /latency/)
     end
 
     it "refuses a negative latency" do
       expect do
-        Lain::Approval::GateDecision.new(artifact_digest: "d", epic_slug: "e", stage: "s", approved: true,
-                                         answered_by: "human", policy: "interactive", latency: -3.0)
+        Lain::Epic::GateDecision.new(artifact_digest: "d", epic_slug: "e", stage: "s", approved: true,
+                                     answered_by: "human", policy: "interactive", latency: -3.0)
       end.to raise_error(ArgumentError, /latency/)
     end
   end
@@ -157,8 +157,8 @@ RSpec.describe Lain::Approval::Gate do
       blank.define_singleton_method(:to_s) { "" }
 
       expect do
-        Lain::Approval::GateDecision.new(artifact_digest: "d", epic_slug: "e", stage: blank, approved: true,
-                                         answered_by: "human", policy: "p", latency: 0.1)
+        Lain::Epic::GateDecision.new(artifact_digest: "d", epic_slug: "e", stage: blank, approved: true,
+                                     answered_by: "human", policy: "p", latency: 0.1)
       end.to raise_error(ArgumentError, /stage/)
     end
   end
@@ -177,15 +177,15 @@ RSpec.describe Lain::Approval::Gate do
       shared.define_singleton_method(:ask) do |_q|
         Lain::Promise.new.tap { |p| pendings << p }
       end
-      a = gate_class.new(journal:, timeout: 0.05)
-      b = gate_class.new(journal:, timeout: 0.05)
+      a = gate_class.new(journal:, timeout: 1.0)
+      b = gate_class.new(journal:, timeout: 1.0)
       other = artifact(digest: "blake3:other")
 
       results = Sync do
         t1 = Async { a.call(plan, asker: shared, stage: "s", epic_slug: "e") }
         t2 = Async { b.call(other, asker: shared, stage: "s", epic_slug: "e") }
         Async do
-          Async::Task.current.sleep(0.01)
+          Async::Task.current.sleep(0.001) until pendings.size == 2
           pendings.last&.resolve(gate_class::Answer.approve("human"))
         end
         [t1.wait, t2.wait]
@@ -198,17 +198,17 @@ RSpec.describe Lain::Approval::Gate do
 
   describe "immutability" do
     it "GateDecision is deeply frozen even with mutable inputs" do
-      rec = Lain::Approval::GateDecision.new(artifact_digest: +"d", epic_slug: +"e", stage: +"s", approved: false,
-                                             answered_by: +"timeout", policy: +"interactive", latency: 1.0,
-                                             evidence_digest: +"ev")
+      rec = Lain::Epic::GateDecision.new(artifact_digest: +"d", epic_slug: +"e", stage: +"s", approved: false,
+                                         answered_by: +"timeout", policy: +"interactive", latency: 1.0,
+                                         evidence_digest: +"ev")
       expect(rec).to be_deeply_frozen
       expect(rec.evidence_digest).to be_frozen
     end
 
     it "does not mutate a frozen digest argument" do
       frozen = "blake3:frozen"
-      rec = Lain::Approval::GateDecision.new(artifact_digest: frozen, epic_slug: "e", stage: "s", approved: true,
-                                             answered_by: "h", policy: "p", latency: 1.0)
+      rec = Lain::Epic::GateDecision.new(artifact_digest: frozen, epic_slug: "e", stage: "s", approved: true,
+                                         answered_by: "h", policy: "p", latency: 1.0)
       expect(rec.artifact_digest).to eq(frozen)
     end
   end

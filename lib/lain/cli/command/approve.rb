@@ -4,7 +4,7 @@ module Lain
   module CLI
     module Command
       # `/approve`: drains the parked approval queue inline -- each undecided
-      # {Approval::Queue::Pending} is rendered for y/N in turn through the
+      # {Approval::Parked::Queue::Pending} is rendered for y/N in turn through the
       # injected prompt ({Frontend::ApprovalPolicy}, the SAME prompt loop the
       # watch surface uses, so decisions are signed "tty" and fail closed on
       # anything but an explicit yes). The prompt collaborator owns the

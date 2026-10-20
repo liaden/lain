@@ -23,7 +23,7 @@ module Lain
     # marker flags it. A second such axis belongs in that marker rather than in
     # a parallel flag here, at a price worth knowing first -- the marker is
     # grammar, and moving it moves {Gherkin::Criteria#digest}, a content address
-    # {Approval::Gate}, {Plan::Step} and {Epic::Issue} all cite.
+    # {Epic::Gate}, {Plan::Step} and {Epic::Issue} all cite.
     #
     # Per-part silence is reported. Silence about the whole DOCUMENT is not:
     # zero cards yield zero claims and zero findings, which is indistinguishable

@@ -56,7 +56,7 @@ module Lain
     # spelled once in the tree: {Gherkin::Scenario}'s `mechanical`, set by the
     # pinned `# rubric` marker. A second spelling on one axis is what this file
     # declines to add, because widening the marker moves
-    # {Gherkin::Criteria#digest} -- a content address {Approval::Gate},
+    # {Gherkin::Criteria#digest} -- a content address {Epic::Gate},
     # {Plan::Step} and {Epic::Issue} all cite. The two options, neither chosen
     # here: widen the marker and pay that blast radius, or give the ladder a rung
     # selector that READS `mechanical` and renames nothing.

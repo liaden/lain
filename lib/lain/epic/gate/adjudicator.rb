@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module Lain
-  module Approval
+  module Epic
     class Gate
       # The attempt a deferred gate makes to answer ITSELF before it parks:
       # spike first, adjudicate second, park only on doubt. `researcher` gathers
@@ -203,7 +203,7 @@ module Lain
           end
         end
 
-        # {Adjudicator}'s OWN construction contract, not {Approval::Contracts}.
+        # {Adjudicator}'s OWN construction contract, not {Epic::Contracts}.
         module Contracts
           # The three members that make this record JOINABLE, guarded together:
           # a blank one still constructs, still journals, and can never be
@@ -359,7 +359,7 @@ module Lain
         #   `(role, context_mode, prompt) -> Tool::Result` seam ({Skill::RoleSpawn});
         #   injected, so this class depends on the message and not on how a
         #   child is assembled
-        # @param gate [Approval::Gate] the one object that journals and registers
+        # @param gate [Epic::Gate] the one object that journals and registers
         # @param queue [SignoffQueue] where a deferral parks -- and the same
         #   queue the stage-boundary check reads
         # @param journal [#record] where the spike's evidence lands. Required,

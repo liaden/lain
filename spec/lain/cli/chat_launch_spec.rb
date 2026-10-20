@@ -705,7 +705,7 @@ RSpec.describe Lain::CLI::ChatLaunch do
 
       expect(agent).to be_a(Lain::Agent)
       expect(agent.toolset.fetch("bash")).to be_a(Lain::Tools::Bash)
-      expect(wiring.approvals).to be_a(Lain::Approval::Queue)
+      expect(wiring.approvals).to be_a(Lain::Approval::Parked::Queue)
       expect(wiring.role_spawn).to be_a(Lain::Skill::RoleSpawn)
       expect(session).to be_a(Lain::Session)
     end

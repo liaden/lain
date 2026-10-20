@@ -57,7 +57,7 @@ RSpec.describe Lain::StatusFeed do
     Lain::Event.new(kind: :turn, payload_digest: base.payload_digest, body: base.body, causal_parents:)
   end
 
-  # The two records Approval::Queue writes around one gated call: the park
+  # The two records Approval::Parked::Queue writes around one gated call: the park
   # (the Telemetry::ApprovalPending) and the decision (the Pending itself,
   # whose #to_journal is the id-less "approval_decision" record).
   def approval_park(tool: "bash", tool_use_id: "tu_1")
@@ -66,7 +66,7 @@ RSpec.describe Lain::StatusFeed do
 
   def approval_decision(tool: "bash", tool_use_id: "tu_1", verdict: true)
     effect = Lain::Effect::ToolCall.new(tool_use_id:, name: tool, input: {})
-    pending = Lain::Approval::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 })
+    pending = Lain::Approval::Parked::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 })
     pending.decide(verdict, surface: "tty")
     pending
   end
@@ -565,7 +565,7 @@ RSpec.describe Lain::StatusFeed do
   end
 
   # The one state a human is actually asked to ACT on. The park record and
-  # the decision record are written by Approval::Queue around the same gated
+  # the decision record are written by Approval::Parked::Queue around the same gated
   # call and both ride the tee this sink sits in -- but the decision carries
   # NO tool_use_id, so the pair is counted, never keyed.
   describe "approvals_pending" do
@@ -607,7 +607,7 @@ RSpec.describe Lain::StatusFeed do
       expect(published["approvals_pending"]).to eq(0)
     end
 
-    # Approval::Queue#degrade's stand-in record, verbatim. The park or the
+    # Approval::Parked::Queue#degrade's stand-in record, verbatim. The park or the
     # decision HAPPENED; only its evidence failed to serialize, and the record
     # names which class it stood in for. Counting it is what keeps a lost
     # DECISION from leaving the published count high for the life of the run --
@@ -628,7 +628,7 @@ RSpec.describe Lain::StatusFeed do
       feed = described_class.new(path:)
       feed << approval_park
 
-      feed << degraded(Lain::Approval::Queue::Pending)
+      feed << degraded(Lain::Approval::Parked::Queue::Pending)
 
       expect(published["approvals_pending"]).to eq(0)
     end
@@ -1645,7 +1645,7 @@ RSpec.describe Lain::StatusFeed do
   # question: what does it derive? This one asks the wiring question the ACs
   # are actually written about -- does a real parked approval REACH it? -- by
   # standing up the production path (Chronicle -> wrap_tee -> Switchboard ->
-  # Approval::Queue) and parking a real gated call on it. That path runs
+  # Approval::Parked::Queue) and parking a real gated call on it. That path runs
   # through four objects this class never names, and a break in any of them
   # would leave every example above green and the HUD blank.
   describe "riding the run's real fan-out" do
@@ -1704,7 +1704,7 @@ RSpec.describe Lain::StatusFeed do
     # derivation and proves nothing about ARRIVAL -- and arrival is exactly
     # what a known gap one field over got wrong. So this drives a real
     # Mode::Switch over the chronicle's own record journal, the leg
-    # Approval::PolicySwitch and Context::ModelSwitch already use.
+    # Approval::Parked::PolicySwitch and Context::ModelSwitch already use.
     it "publishes a flip made by a real Mode::Switch over the chronicle's record journal" do
       feed = described_class.new(path:)
       switch = Lain::Mode::Switch.new(Lain::Mode.new, journal: chronicle_teed_to(feed).record_journal)

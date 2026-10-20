@@ -6,14 +6,14 @@ require "stringio"
 require "tmpdir"
 
 # The terminal y/N prompt is now a queue SURFACE -- it answers Pending
-# approvals drawn from Lain::Approval::Queue rather than being Gate's policy
+# approvals drawn from Lain::Approval::Parked::Queue rather than being Gate's policy
 # itself. The y/N contract is unchanged: anything but an affirmative denies.
 RSpec.describe Lain::Frontend::ApprovalPolicy do
   let(:output) { StringIO.new }
   let(:effect) { Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { command: "rm -rf /tmp/x" }) }
 
   def pending
-    Lain::Approval::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 })
+    Lain::Approval::Parked::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 })
   end
 
   def policy_for(answer)
@@ -21,7 +21,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
   end
 
   def pending_from(requester)
-    Lain::Approval::Queue::Pending.new(effect:, identity: Lain::Requester.of(requester), clock: -> { 0.0 })
+    Lain::Approval::Parked::Queue::Pending.new(effect:, identity: Lain::Requester.of(requester), clock: -> { 0.0 })
   end
 
   it "asks the question, naming the tool and its input" do
@@ -41,25 +41,27 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
   end
 
   it "says in the question when the judge deferred the call" do
-    deferred = Lain::Approval::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 },
-                                                  notes: [Lain::Approval::Queue::Reason.own("the judge deferred this")])
+    deferred = Lain::Approval::Parked::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 },
+                                                          notes: [Lain::Approval::Parked::Queue::Reason.own(
+                                                            "the judge deferred this"
+                                                          )])
     policy_for("n\n").decide(deferred)
 
     expect(output.string).to include("the judge deferred this")
   end
 
   it "says in the question what the ladder noted about the call" do
-    noted = Lain::Approval::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 },
-                                               notes: ["cat resolved to /repo/bin/cat (project)"])
+    noted = Lain::Approval::Parked::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 },
+                                                       notes: ["cat resolved to /repo/bin/cat (project)"])
     policy_for("n\n").decide(noted)
 
     expect(output.string).to include("; \"cat resolved to /repo/bin/cat (project)\"")
   end
 
   it "shows a path reason before the judge's deferral, the judge's words unquoted and lain's quoted apart" do
-    both = Lain::Approval::Queue::Pending.new(
+    both = Lain::Approval::Parked::Queue::Pending.new(
       effect:, identity: Lain::Requester.main, clock: -> { 0.0 },
-      notes: ["cat is /x/", Lain::Approval::Queue::Reason.own("the judge deferred this")]
+      notes: ["cat is /x/", Lain::Approval::Parked::Queue::Reason.own("the judge deferred this")]
     )
     policy_for("n\n").decide(both)
 
@@ -67,8 +69,8 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
   end
 
   it "renders a planted path in a note inspected, on one line" do
-    planted = Lain::Approval::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 },
-                                                 notes: ["cat is /x/\e[2K\nforged"])
+    planted = Lain::Approval::Parked::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 },
+                                                         notes: ["cat is /x/\e[2K\nforged"])
     policy_for("n\n").decide(planted)
 
     expect(output.string.lines.size).to eq(1)
@@ -88,7 +90,8 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
   end
 
   it "says in the question how long the human has before it auto-denies" do
-    slow = Lain::Approval::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 }, timeout: 300)
+    slow = Lain::Approval::Parked::Queue::Pending.new(effect:, identity: Lain::Requester.main,
+                                                      clock: -> { 0.0 }, timeout: 300)
     policy_for("n\n").decide(slow)
 
     expect(output.string).to include("bash(").and include("auto-denies in 5:00")
@@ -105,10 +108,10 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
 
   it "names a skill child by its label in the line a closed prompt leaves behind" do
     skilled = Lain::Requester.new(name: "dev", skill: "gherkin-tests")
-    labelled = Lain::Approval::Queue::Pending.new(effect:, identity: skilled,
-                                                  clock: -> { 0.0 }, timeout: 300)
+    labelled = Lain::Approval::Parked::Queue::Pending.new(effect:, identity: skilled,
+                                                          clock: -> { 0.0 }, timeout: 300)
     asked = described_class::Asked.new("approve? ", labelled)
-    labelled.deny(surface: Lain::Approval::Queue::TIMEOUT_SURFACE)
+    labelled.deny(surface: Lain::Approval::Parked::Queue::TIMEOUT_SURFACE)
     closing = []
     asked.closed { |note| closing << note }
 
@@ -117,8 +120,8 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
 
   it "names a skill child by its label in the prompt" do
     skilled = Lain::Requester.new(name: "dev", skill: "gherkin-tests")
-    labelled = Lain::Approval::Queue::Pending.new(effect:, identity: skilled,
-                                                  clock: -> { 0.0 }, timeout: 300)
+    labelled = Lain::Approval::Parked::Queue::Pending.new(effect:, identity: skilled,
+                                                          clock: -> { 0.0 }, timeout: 300)
     policy_for("n\n").decide(labelled)
 
     expect(output.string).to include("dev (gherkin-tests) asks (auto-denies in 5:00")
@@ -139,10 +142,10 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
   end
 
   it "closes a prompt the clock denied with the full window and no mention of a surface" do
-    lapsed = Lain::Approval::Queue::Pending.new(effect:, identity: Lain::Requester.main,
-                                                clock: -> { 0.0 }, timeout: 300)
+    lapsed = Lain::Approval::Parked::Queue::Pending.new(effect:, identity: Lain::Requester.main,
+                                                        clock: -> { 0.0 }, timeout: 300)
     asked = described_class::Asked.new("approve? ", lapsed)
-    lapsed.deny(surface: Lain::Approval::Queue::TIMEOUT_SURFACE)
+    lapsed.deny(surface: Lain::Approval::Parked::Queue::TIMEOUT_SURFACE)
     closing = []
     asked.closed { |note| closing << note }
 
@@ -150,11 +153,11 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
   end
 
   it "closes a prompt whose requester was stopped in words that say so, never as a surface's decision" do
-    stopped = Lain::Approval::Queue::Pending.new(effect:, identity: Lain::Requester.main,
-                                                 clock: -> { 0.0 },
-                                                 timeout: 300)
+    stopped = Lain::Approval::Parked::Queue::Pending.new(effect:, identity: Lain::Requester.main,
+                                                         clock: -> { 0.0 },
+                                                         timeout: 300)
     asked = described_class::Asked.new("approve? ", stopped)
-    stopped.deny(surface: Lain::Approval::Queue::ABANDONED_SURFACE)
+    stopped.deny(surface: Lain::Approval::Parked::Queue::ABANDONED_SURFACE)
     closing = []
     asked.closed { |note| closing << note }
 
@@ -257,7 +260,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
   end
 
   it "parks on the queue and answers arrivals (the surface loop)" do
-    queue = Lain::Approval::Queue.new(journal: Lain::Journal.new(io: StringIO.new))
+    queue = Lain::Approval::Parked::Queue.new(journal: Lain::Journal.new(io: StringIO.new))
     policy = policy_for("y\n")
 
     Sync do |task|
@@ -272,15 +275,15 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
 
   # The other half of the same fiber hazard. A raise inside ONE prompt used to
   # retire this fiber for the rest of the session, silently -- the failure
-  # {Approval::Queue::Pending}'s own comment names, and the one every sibling
-  # surface already guards ({Approval::QueueSurface#swept},
+  # {Approval::Parked::Queue::Pending}'s own comment names, and the one every sibling
+  # surface already guards ({Approval::Parked::QueueSurface#swept},
   # {CLI::HumanReplies::AnswerLoop#exchange}).
   # This is the surface it is fatal for: on `--no-nvim` there is no second one,
   # so a dead fiber here is a session that can never be asked anything again.
   describe "a prompt that raises" do
     let(:journal_io) { StringIO.new }
 
-    def queue = @queue ||= Lain::Approval::Queue.new(journal: Lain::Journal.new(io: journal_io), timeout: 1.0)
+    def queue = @queue ||= Lain::Approval::Parked::Queue.new(journal: Lain::Journal.new(io: journal_io), timeout: 1.0)
 
     def decisions = journal_records(journal_io, "approval_decision")
 
@@ -315,8 +318,8 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     # "tty" is byte-identical to a person typing `n` -- so a reader counting
     # human refusals counts a broken terminal as one, and {Approval::Escalation}
     # weighs a person's authority differently from a machine's. The refusal is
-    # right; the attribution is not. Neither {Approval::Queue::TIMEOUT_SURFACE}
-    # nor {Approval::Queue::ABANDONED_SURFACE} pretends to be a person either.
+    # right; the attribution is not. Neither {Approval::Parked::Queue::TIMEOUT_SURFACE}
+    # nor {Approval::Parked::Queue::ABANDONED_SURFACE} pretends to be a person either.
     it "signs that refusal as the surface's own fault, never as a person's answer" do
       two_gated_calls(policy_failing_once(output:))
 
@@ -328,7 +331,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     # is literally "the terminal went away" -- and a rescue that dies leaves the
     # pending undenied, which is strictly worse than no guard at all. So the
     # denial lands FIRST and the reporting is wrapped in its own rescue, the
-    # shape {Approval::QueueSurface#journal_fault} already uses.
+    # shape {Approval::Parked::QueueSurface#journal_fault} already uses.
     it "still refuses, and still keeps watching, when reporting the failure raises too" do
       unwritable = Object.new
       def unwritable.puts(*) = raise(IOError, "closed stream")
@@ -343,7 +346,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
   # and was answerable; every one after it rendered nothing and was never read,
   # so a plain `lain chat` -- which has no second surface -- wedged for good.
   #
-  # The measured mechanism was a CO-CONSUMER, not the terminal. `Approval::Queue`
+  # The measured mechanism was a CO-CONSUMER, not the terminal. `Approval::Parked::Queue`
   # hands each arrival to exactly one `#dequeue` caller ({Async::Queue} delegates
   # to a `Thread::Queue`), and a real chat then wired TWO of them beside each
   # other: this surface and the desktop-notification surface. Both parked; the
@@ -366,7 +369,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     let(:journal) { Lain::Journal.new(io: journal_io) }
     # Short, and it is the counterfactual: a pending no surface can answer is
     # denied by the clock, so a stolen one fails in words instead of hanging.
-    let(:queue) { Lain::Approval::Queue.new(journal:, timeout: 1.0) }
+    let(:queue) { Lain::Approval::Parked::Queue.new(journal:, timeout: 1.0) }
     let(:channel) { Lain::Channel.new }
     let(:pane) { StringIO.new }
 
@@ -472,7 +475,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     # Long enough that the clock is never what ends an example: under test is a
     # surface letting go of a prompt, not the queue's fail-closed timer -- which
     # has its own example below.
-    let(:queue) { Lain::Approval::Queue.new(journal:, timeout: 10) }
+    let(:queue) { Lain::Approval::Parked::Queue.new(journal:, timeout: 10) }
     # The prompts this terminal rendered, as a queue rather than an array, so an
     # example PARKS until one arrives instead of polling for it.
     let(:asked) { Async::Queue.new }
@@ -556,7 +559,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     end
 
     it "names the timeout and its refusal when the window closed the prompt" do
-      unanswerable = Lain::Approval::Queue.new(journal:, timeout: 0.2)
+      unanswerable = Lain::Approval::Parked::Queue.new(journal:, timeout: 0.2)
       Sync do |task|
         watcher = task.async { absent_human.watch(unanswerable) }
         task.with_timeout(5) { task.async { unanswerable.call(gated("call_1"), nil) }.wait }
@@ -583,7 +586,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     end
 
     it "ends a prompt that never drew with a whole line naming the call and who decided it" do
-      unanswerable = Lain::Approval::Queue.new(journal:, timeout: 0.2)
+      unanswerable = Lain::Approval::Parked::Queue.new(journal:, timeout: 0.2)
       Sync do |task|
         watcher = task.async { absent_human.watch(unanswerable) }
         task.with_timeout(5) { task.async { unanswerable.call(gated("call_1"), nil) }.wait }
@@ -684,7 +687,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     # go of the PENDING. Nobody answers here -- not the editor, not the terminal
     # -- and the queue's window still refuses, which is gate.rb's doctrine.
     it "still fails closed when nobody answers at all" do
-      unanswerable = Lain::Approval::Queue.new(journal:, timeout: 0.2)
+      unanswerable = Lain::Approval::Parked::Queue.new(journal:, timeout: 0.2)
       verdict = Sync do |task|
         watcher = task.async { absent_human.watch(unanswerable) }
         task.with_timeout(5) { task.async { unanswerable.call(gated("call_1"), nil) }.wait }
@@ -693,7 +696,8 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
       end
 
       expect(verdict).to be(false)
-      expect(decisions.last).to include("surface" => Lain::Approval::Queue::TIMEOUT_SURFACE, "verdict" => "deny")
+      expect(decisions.last).to include("surface" => Lain::Approval::Parked::Queue::TIMEOUT_SURFACE,
+                                        "verdict" => "deny")
     end
   end
 
@@ -738,7 +742,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
   end
 
   it "does not let the queue remember an EOF denial as a human's" do
-    queue = Lain::Approval::Queue.new(journal: Lain::Journal.new(io: StringIO.new))
+    queue = Lain::Approval::Parked::Queue.new(journal: Lain::Journal.new(io: StringIO.new))
     call = Lain::Effect::ToolCall.new(tool_use_id: "call_1", name: "bash", input: { "command" => "make deploy" })
     Sync do |task|
       parked = task.async { queue.adjudicate(call, nil) }
@@ -756,7 +760,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
   describe "a window that closes while another fiber holds the writer" do
     let(:note) { ": denied after 0:01 with no answer" }
     let(:journal) { Lain::Journal.new(io: StringIO.new) }
-    let(:queue) { Lain::Approval::Queue.new(journal:, timeout: 0.2) }
+    let(:queue) { Lain::Approval::Parked::Queue.new(journal:, timeout: 0.2) }
     let(:channel) { Lain::Channel.new }
     let(:released) { Async::Queue.new }
     # A terminal whose one marked write parks until the example lets it go:
@@ -890,7 +894,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
   end
 
   # A Pending can carry the sensitive regions approving it would release
-  # (Approval::Queue::Outstanding), and this surface is where they are rendered
+  # (Approval::Parked::Queue::Outstanding), and this surface is where they are rendered
   # -- lib/ may not touch the terminal, so the whole capability's human half
   # lives behind the injected reader here.
   describe "a pending carrying outstanding sensitive regions" do
@@ -901,12 +905,12 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     let(:regions) { Lain::Sensitivity::Regions.detect("API_KEY=#{secret}\nDB_PASSWORD=hunter2pass\n") }
 
     def outstanding(path: "/repo/.env", regions: self.regions)
-      Lain::Approval::Queue::Outstanding.new(path:, regions:)
+      Lain::Approval::Parked::Queue::Outstanding.new(path:, regions:)
     end
 
     def disclosing(**)
-      Lain::Approval::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 },
-                                         outstanding: outstanding(**))
+      Lain::Approval::Parked::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 },
+                                                 outstanding: outstanding(**))
     end
 
     # Every prompt below goes through a reader rather than `output`, and pastel
@@ -954,9 +958,9 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
         File.write(File.join(root, ".env.local"), "x")
         File.symlink(".env.local", File.join(root, "readme2.txt"))
         read = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file", input: { "path" => "readme2.txt" })
-        linked = Lain::Approval::Queue::Pending.new(effect: read, identity: Lain::Requester.main,
-                                                    clock: -> { 0.0 },
-                                                    cwd: root)
+        linked = Lain::Approval::Parked::Queue::Pending.new(effect: read, identity: Lain::Requester.main,
+                                                            clock: -> { 0.0 },
+                                                            cwd: root)
 
         target = File.join(root, ".env.local").inspect
         expect(rendered(linked))

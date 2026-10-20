@@ -105,7 +105,7 @@ module Lain
         @path = path
         @verbs = verbs
         @tables = {}
-        @approval_timeout = Approval::Queue::DEFAULT_TIMEOUT
+        @approval_timeout = Approval::Parked::Queue::DEFAULT_TIMEOUT
       end
 
       # @return [Built] every table not declared at its default

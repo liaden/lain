@@ -112,7 +112,7 @@ class ReplGoalTerminal
 
     dir, shape, cap, = ARGV
     journal = Lain::Journal.new(io: File.open(File.join(dir, "journal.ndjson"), "a").tap { |io| io.sync = true })
-    queue = Lain::Approval::Queue.new(journal:, timeout: 30)
+    queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 30)
     tty = Lain::Frontend::TTY.new(channel: Lain::Channel.new, pastel: Pastel.new(enabled: false),
                                   history_path: File.join(dir, "history"), state_path: File.join(dir, "state.json"))
     rail = Lain::Frontend::Intake.new(screen: tty)
@@ -1731,7 +1731,7 @@ RSpec.describe Lain::CLI::Repl do
     # The queue is REAL, and so is its fail-closed timer: what a suppressed
     # terminal surface costs is a call that waits, and the worst case is the
     # queue refusing it -- never a silent grant.
-    let(:approvals) { Lain::Approval::Queue.new(journal: Lain::Journal.new(io: StringIO.new), timeout: 5) }
+    let(:approvals) { Lain::Approval::Parked::Queue.new(journal: Lain::Journal.new(io: StringIO.new), timeout: 5) }
 
     around do |example|
       Dir.mktmpdir do |dir|

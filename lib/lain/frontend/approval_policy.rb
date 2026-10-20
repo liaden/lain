@@ -5,15 +5,15 @@ require "pastel"
 
 module Lain
   module Frontend
-    # The terminal surface of {Lain::Approval::Queue}: prompts a human y/N for
-    # each {Approval::Queue::Pending} it draws from the queue and decides it.
+    # The terminal surface of {Lain::Approval::Parked::Queue}: prompts a human y/N for
+    # each {Approval::Parked::Queue::Pending} it draws from the queue and decides it.
     #
     # One watcher among several, first answer winning: {Middleware::Gate}
     # holds the queue and the gated fiber parks there, which is what lets a
     # Neovim view coexist. It lives in Frontend because asking the question IS
     # the terminal write; the queue, which touches no IO, lives in lib proper.
     #
-    # It is also where an {Approval::Queue::Outstanding} is RENDERED, for that
+    # It is also where an {Approval::Parked::Queue::Outstanding} is RENDERED, for that
     # same reason. The rendering is a function of the PENDING alone, with no
     # collaborator and no state, and that is what keeps THIS class's own
     # instances agreeing: a live process builds up to three of them with nothing
@@ -184,7 +184,7 @@ module Lain
       # Answers whether THIS surface's decision won ({Pending#decide}'s
       # first-answer-wins contract); an already-decided pending is a no-op.
       #
-      # @param pending [Lain::Approval::Queue::Pending]
+      # @param pending [Lain::Approval::Parked::Queue::Pending]
       # @return [Boolean]
       def decide(pending)
         return false if pending.decided?
@@ -278,7 +278,7 @@ module Lain
 
       # What a yes would RELEASE leads, so a human scanning the prompt reads the
       # sensitive fact first. The sentence is
-      # {Approval::Queue::Outstanding#preamble}, shared with the editor's list so
+      # {Approval::Parked::Queue::Outstanding#preamble}, shared with the editor's list so
       # the two human surfaces cannot say different things.
       #
       # WHO is asking opens the question itself: with a fleet running, the tool

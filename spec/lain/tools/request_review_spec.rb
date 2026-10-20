@@ -1020,7 +1020,7 @@ RSpec.describe Lain::Tools::RequestReview do
       expect(closed["error_kind"]).to be_nil
     end
 
-    # First-answer-wins, `Approval::Queue::Pending#decide`'s rule: the loser
+    # First-answer-wins, `Approval::Parked::Queue::Pending#decide`'s rule: the loser
     # gets a sentence back rather than an exception, and nothing is judged
     # twice.
     it "answers a second verdict with a refusal instead of judging twice" do

@@ -11,7 +11,7 @@ require "stringio"
 #
 # #digest is (stage, slug, artifact) composed together (Joel's ruling on the
 # review round-2 BLOCKER), not the artifact's content address alone --
-# Approval::Gate's registry is keyed on #digest alone, so content-address-only
+# Epic::Gate's registry is keyed on #digest alone, so content-address-only
 # would let epic alpha's approval silently open epic beta's identical plan,
 # or a research sign-off silently open an issue_plan resubmitting the same
 # words. #content_digest stays public for the raw content address (still
@@ -28,12 +28,12 @@ RSpec.describe Lain::Epic::Submission do
     let(:submission) { described_class.epic_plan(graph:, slug: "demo") }
     let(:journal_io) { StringIO.new }
     let(:journal) { Lain::Journal.new(io: journal_io) }
-    let(:gate) { Lain::Approval::Gate.new(journal:) }
+    let(:gate) { Lain::Epic::Gate.new(journal:) }
 
     def approve_asker(surface: "human")
       Object.new.tap do |asker|
         asker.define_singleton_method(:ask) do |_question|
-          Lain::Promise.new.tap { |promise| promise.resolve(Lain::Approval::Gate::Answer.approve(surface)) }
+          Lain::Promise.new.tap { |promise| promise.resolve(Lain::Epic::Gate::Answer.approve(surface)) }
         end
       end
     end
@@ -90,12 +90,12 @@ RSpec.describe Lain::Epic::Submission do
 
     describe "at the Gate, where the bleed used to actually matter" do
       let(:journal) { Lain::Journal.new(io: StringIO.new) }
-      let(:gate) { Lain::Approval::Gate.new(journal:) }
+      let(:gate) { Lain::Epic::Gate.new(journal:) }
 
       def approve_asker(surface: "human")
         Object.new.tap do |asker|
           asker.define_singleton_method(:ask) do |_question|
-            Lain::Promise.new.tap { |promise| promise.resolve(Lain::Approval::Gate::Answer.approve(surface)) }
+            Lain::Promise.new.tap { |promise| promise.resolve(Lain::Epic::Gate::Answer.approve(surface)) }
           end
         end
       end
@@ -106,7 +106,7 @@ RSpec.describe Lain::Epic::Submission do
         Sync { gate.call(alpha, asker: approve_asker, stage: "epic_plan", epic_slug: "alpha") }
 
         expect(gate.approved?(beta.digest)).to be(false)
-        expect { gate.ensure_approved!(beta) }.to raise_error(Lain::Approval::Gate::NotApproved)
+        expect { gate.ensure_approved!(beta) }.to raise_error(Lain::Epic::Gate::NotApproved)
       end
 
       it "does not let approving research open an issue_plan resubmitting the same words" do
@@ -266,10 +266,10 @@ RSpec.describe Lain::Epic::Submission do
 
     it "is not approved by a gate that approved another issue's implementation of the same commit" do
       mine = described_class.implementation(slug: "demo", issue_id: "c", digest: "a" * 40)
-      approval = Lain::Approval::GateDecision.new(artifact_digest: mine.digest, epic_slug: "demo",
-                                                  stage: "implementation", approved: true, answered_by: "human",
-                                                  policy: "hands_off", latency: 0.0, issue_id: "c")
-      gate = Lain::Approval::Gate.from_journal([approval.to_journal], journal: Lain::Channel::Null.instance)
+      approval = Lain::Epic::GateDecision.new(artifact_digest: mine.digest, epic_slug: "demo",
+                                              stage: "implementation", approved: true, answered_by: "human",
+                                              policy: "hands_off", latency: 0.0, issue_id: "c")
+      gate = Lain::Epic::Gate.from_journal([approval.to_journal], journal: Lain::Channel::Null.instance)
 
       expect(gate.approved?(described_class.implementation(slug: "demo", issue_id: "b", digest: "a" * 40).digest))
         .to be(false)
@@ -394,7 +394,7 @@ RSpec.describe Lain::Epic::Submission do
   # header), and Canonical.normalize raises on a String that cannot round-trip
   # to UTF-8. Unchecked, that turned #digest from TOTAL (a stored, validated
   # String, same as every other Submission field) into a method that raises
-  # deep inside Approval::Gate#call -- its first line is `artifact.digest`,
+  # deep inside Epic::Gate#call -- its first line is `artifact.digest`,
   # three frames before the asker is ever reached. A slug plausibly arrives
   # via a Linux directory name (Epic::Home), which is arbitrary bytes, not
   # guaranteed UTF-8. Refusing it at construction restores totality and moves

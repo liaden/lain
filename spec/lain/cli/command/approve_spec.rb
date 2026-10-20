@@ -2,7 +2,7 @@
 
 # Support kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
 module ApproveSpecSupport
-  # The minimal effect a {Approval::Queue::Pending} reads: a name, an input, and
+  # The minimal effect a {Approval::Parked::Queue::Pending} reads: a name, an input, and
   # the tool_use_id the park's journal record correlates on.
   Effect = Struct.new(:name, :input, :tool_use_id)
 end
@@ -23,8 +23,8 @@ RSpec.describe Lain::CLI::Command::Approve do
   end
 
   def pending(tool = "bash", input = { "command" => "ls" })
-    Lain::Approval::Queue::Pending.new(effect: ApproveSpecSupport::Effect.new(tool, input, "tu_#{tool}"),
-                                       identity: Lain::Requester.main, clock: -> { 0.0 })
+    Lain::Approval::Parked::Queue::Pending.new(effect: ApproveSpecSupport::Effect.new(tool, input, "tu_#{tool}"),
+                                               identity: Lain::Requester.main, clock: -> { 0.0 })
   end
 
   def env_over(parked)

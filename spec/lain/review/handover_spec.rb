@@ -363,7 +363,7 @@ RSpec.describe Lain::Review::Handover do
       expect(refusal).not_to match(/::|\.new\b/)
     end
 
-    # First-answer-wins ({Approval::Queue::Pending#decide}'s rule), and it is
+    # First-answer-wins ({Approval::Parked::Queue::Pending#decide}'s rule), and it is
     # the SESSION's refusal rather than a flag here.
     it "answers a second verdict with a sentence rather than judging twice" do
       handover.wrote_verdict("approve")

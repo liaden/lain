@@ -176,7 +176,7 @@ RSpec.describe Lain::CLI::ToolGuard do
   let(:journal) { Lain::Journal.new(io: journal_io) }
   # Journaling, never the Null chronicle -- see {ToolGuardSpecChronicle}.
   let(:chronicle) { ToolGuardSpecChronicle.new(journal) }
-  let(:queue) { Lain::Approval::Queue.new(journal:) }
+  let(:queue) { Lain::Approval::Parked::Queue.new(journal:) }
 
   def guards(board) = described_class.stack(chronicle, board).to_a
 
@@ -1218,7 +1218,7 @@ RSpec.describe Lain::CLI::ToolGuard do
           def call(effect, context) = rule(effect, context).allow?
 
           def rule(effect, context)
-            @asked << [effect.name, Lain::Approval::Queue.identity_for(context).name]
+            @asked << [effect.name, Lain::Approval::Parked::Queue.identity_for(context).name]
             Lain::Approval::Escalation::Ruling.deny(rung: "spec", because: "no", final: true)
           end
         end.new(asked)

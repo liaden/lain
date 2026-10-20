@@ -219,7 +219,7 @@ RSpec.describe Lain::Approval::Judge do
 
     it "answers a child's task as model-written, never the human's line" do
       heard.remember("summarize the README")
-      child = Lain::Approval::PolicySwitch::Requested.new(session, "researcher", task: "find the flaky spec")
+      child = Lain::Approval::Parked::PolicySwitch::Requested.new(session, "researcher", task: "find the flaky spec")
 
       expect(heard.call(child)).to eq(request("find the flaky spec", model_written: true))
     end
@@ -227,7 +227,7 @@ RSpec.describe Lain::Approval::Judge do
     it "answers nothing for a child spawned with no task" do
       heard.remember("summarize the README")
 
-      expect(heard.call(Lain::Approval::PolicySwitch::Requested.new(session, "researcher"))).to be_nil
+      expect(heard.call(Lain::Approval::Parked::PolicySwitch::Requested.new(session, "researcher"))).to be_nil
     end
   end
 

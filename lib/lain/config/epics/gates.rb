@@ -3,12 +3,12 @@
 module Lain
   class Config
     class Epics
-      # The `epics` gates sub-table: which {Approval::Gate::Policy} each epic
+      # The `epics` gates sub-table: which {Epic::Gate::Policy} each epic
       # stage's gates run under (`epic_plan = "deferred"`). BOTH sides of the
       # mapping are closed sets, so both are refused at load rather than
       # discovered at the first overnight gate.
       #
-      # The allowed VALUES are not spelled here: {Approval::Gate::Policies.known?}
+      # The allowed VALUES are not spelled here: {Epic::Gate::Policies.known?}
       # answers, so widening the policy family is one edit in the factory rather
       # than two that can disagree.
       #
@@ -63,7 +63,7 @@ module Lain
 
           # A value of the wrong TYPE fails the membership test rather than
           # being coerced first, {Epics.invalid_home}'s posture.
-          unnamed = table.values.reject { |policy| Approval::Gate::Policies.known?(policy) }
+          unnamed = table.values.reject { |policy| Epic::Gate::Policies.known?(policy) }
           raise unknown_policies(unnamed, path:) unless unnamed.empty?
         end
 
@@ -77,13 +77,13 @@ module Lain
                       path:, table: TABLE, key: keys)
         end
 
-        # The known set is read from {Approval::Gate::Policies} at CALL time, so
+        # The known set is read from {Epic::Gate::Policies} at CALL time, so
         # widening the policy family is one edit in the factory.
         #
         # @return [Config::Refusal]
         def self.unknown_policies(policies, path: nil)
           Refusal.new("names unknown gate policies #{policies.map(&:inspect).join(", ")}; " \
-                      "known policies: #{Approval::Gate::Policies.names.join(", ")}",
+                      "known policies: #{Epic::Gate::Policies.names.join(", ")}",
                       path:, table: TABLE, value: policies)
         end
 
@@ -91,7 +91,7 @@ module Lain
 
         # Validated in the value's own constructor as well as in {.from}, the
         # {Epics#initialize} precedent: a typo that CONSTRUCTS would reach
-        # {Approval::Gate::Policies.for} as an unbuildable name.
+        # {Epic::Gate::Policies.for} as an unbuildable name.
         def initialize(table:)
           self.class.check!(table)
 
@@ -105,7 +105,7 @@ module Lain
         #
         # @param stage [#to_s] an {Epic::Stage} or its name
         # @return [String] the policy name that stage's gates run under
-        def policy_for(stage) = table.fetch(stage.to_s, Approval::Gate::Policies::DEFAULT)
+        def policy_for(stage) = table.fetch(stage.to_s, Epic::Gate::Policies::DEFAULT)
 
         EMPTY = new(table: {}).freeze
         private_constant :EMPTY

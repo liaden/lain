@@ -503,11 +503,11 @@ not by mutex. Two claims carry the whole design, and each is now a spec:
   journal can detect because its write never yields. That last one needs a journal double whose
   `#<<` hands the scheduler over, and without it half the ordering claim is unpinned: the swap
   passed every other example in the file.
-- `Approval::Queue`'s `@parked` is a plain Array whose mutations (`<<` on admit, `delete` on
+- `Approval::Parked::Queue`'s `@parked` is a plain Array whose mutations (`<<` on admit, `delete` on
   settle) are straight-line Ruby; every park happens on an Async primitive *between* those
   mutations, never inside one. So N concurrently gated fibers admit N independent pendings, each
   decidable on its own terms (one approved, one timed out — distinct verdicts, distinct journal
-  records). Pinned by `spec/lain/approval/queue_concurrency_spec.rb`, proven to bite by
+  records). Pinned by `spec/lain/approval/parked/queue_concurrency_spec.rb`, proven to bite by
   temporarily rewriting the push as read-yield-write: the classic lost update dropped one of two
   concurrent pendings from the parked list, and the spec failed for exactly that reason.
 

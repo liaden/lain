@@ -106,8 +106,8 @@ RSpec.describe Lain::CLI::EpicLand, :seam do
   end
 
   def decision(stage, issue_id, digest)
-    Lain::Approval::GateDecision.new(artifact_digest: digest, epic_slug: "demo", stage:, approved: true,
-                                     answered_by: "human", policy: "hands_off", latency: 0.0, issue_id:)
+    Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: "demo", stage:, approved: true,
+                                 answered_by: "human", policy: "hands_off", latency: 0.0, issue_id:)
   end
 
   def plan_approval(issue_id)
@@ -265,7 +265,7 @@ RSpec.describe Lain::CLI::EpicLand, :seam do
       session(plan_approval("b"), plan_approval("c"), implementation_approval("c", c_sha))
       before = tip
 
-      expect { command.land("b", "demo") }.to raise_error(Lain::Approval::Gate::NotApproved, /implementation gate/)
+      expect { command.land("b", "demo") }.to raise_error(Lain::Epic::Gate::NotApproved, /implementation gate/)
       expect { command.land("c", "demo") }.to raise_error(Lain::Forge::LocalLanding::MisplacedTests) { |error|
         expect(error.message).to include("spec/order_extra_spec.rb", "spec/unit/models/order_spec.rb")
       }
@@ -278,12 +278,12 @@ RSpec.describe Lain::CLI::EpicLand, :seam do
       session(plan_approval("a"))
       before = tip
 
-      expect { command.land("a", "demo") }.to raise_error(Lain::Approval::Gate::NotApproved) { |error|
+      expect { command.land("a", "demo") }.to raise_error(Lain::Epic::Gate::NotApproved) { |error|
         expect(error.message).to include("only the failing-test commit is anchored for issue a; re-run the issue")
         expect(error.message).not_to include(sha)
       }
       session(implementation_approval("a", sha))
-      expect { command.land("a", "demo") }.to raise_error(Lain::Approval::Gate::NotApproved, /failing-test commit/)
+      expect { command.land("a", "demo") }.to raise_error(Lain::Epic::Gate::NotApproved, /failing-test commit/)
       expect(tip).to eq(before)
       expect(progress.status("a")).to eq("in_flight")
     end

@@ -46,7 +46,7 @@ RSpec.describe Lain::Config::Epics::Gates do
   # One list, in the factory. Two would drift, and the drift's shape is a
   # config that loads and then refuses to build.
   it "accepts every policy name the factory ships" do
-    names = Lain::Approval::Gate::Policies.names
+    names = Lain::Epic::Gate::Policies.names
     accepted = names.map { |name| described_class.new(table: { "research" => name }).policy_for("research") }
 
     expect(accepted).to eq(names)
@@ -69,7 +69,7 @@ RSpec.describe Lain::Config::Epics::Gates do
                         "the pipeline is research -> epic_plan -> issue_plan -> implementation")
     end
 
-    # Likewise: widening {Approval::Gate::Policies} must update the list below,
+    # Likewise: widening {Epic::Gate::Policies} must update the list below,
     # and the red you are reading is this pin doing its job, not a broken factory.
     it "names the unknown policies and every policy the factory does build" do
       expect { described_class.new(table: { "research" => "yolo" }) }
@@ -85,7 +85,7 @@ RSpec.describe Lain::Config::Epics::Gates do
     end
   end
 
-  # `Epic::STAGES` and `Approval::Gate::Policies` are read inside METHOD BODIES,
+  # `Epic::STAGES` and `Epic::Gate::Policies` are read inside METHOD BODIES,
   # at call time, and this pins them there. A class-body reference to either --
   # the shape a declarative closed-set validation naturally takes -- would make
   # reaching the config unit reach two unrelated units with it, which is what

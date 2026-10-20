@@ -319,7 +319,7 @@ module Lain
         #
         # A SPAWNED chain's turn brings its edges under its own name, as a
         # {Lain::Telemetry::QuestionsConsumed}, whose doc holds why it is narrow;
-        # a settled {Lain::Approval::Gate} writes the same record with
+        # a settled {Lain::Epic::Gate} writes the same record with
         # `turn: nil`, and only its digests are read.
         # It needs no chain walk and so no rescue: a second, narrower never-raise
         # promise here is how the two surfaces start disagreeing. Shaped like

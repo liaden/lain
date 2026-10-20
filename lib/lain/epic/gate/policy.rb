@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module Lain
-  module Approval
+  module Epic
     class Gate
       # HOW a verdict is reached, wrapped around the one {Gate} that reaches it.
       #
@@ -77,7 +77,7 @@ module Lain
         end
 
         # @param artifact [#digest, #gate_question] the thing being gated
-        # @param gate [Approval::Gate] the one object that journals and registers
+        # @param gate [Epic::Gate] the one object that journals and registers
         # @param stage [#to_s] the stage this gate sits on
         # @param epic_slug [#to_s] the epic it belongs to; with `stage`, the
         #   partition key {SignoffQueue} folds decisions on
@@ -226,7 +226,7 @@ module Lain
           # The same string as {Adjudicator::TERMINAL_POLICY}, written out
           # rather than referenced so a policy does not depend on the
           # adjudicator that happens to end in it, and held equal to it by
-          # `spec/lain/approval/gate/policy_spec.rb`.
+          # `spec/lain/epic/gate/policy_spec.rb`.
           NAME = "adjudicated"
 
           # A {Lain::Error} rather than an ArgumentError because this is the
@@ -253,7 +253,7 @@ module Lain
           #   to a path, so a default could only send the spike after something
           #   it cannot find
           # @param journal [#record, #each] the one handle above. It must ALSO
-          #   be the journal the {Approval::Gate} passed to {#decide} writes to,
+          #   be the journal the {Epic::Gate} passed to {#decide} writes to,
           #   which no object in this process can check -- a Gate does not
           #   publish its journal. That half of the invariant is the CALLER's.
           # @param queue [SignoffQueue] where an uncertain verdict parks -- and

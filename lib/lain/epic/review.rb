@@ -158,7 +158,7 @@ module Lain
       end
 
       # The fold that rebuilds an open set from journaled records --
-      # {Approval::SignoffQueue.from_journal}'s shape.
+      # {Epic::SignoffQueue.from_journal}'s shape.
       class Replay
         TYPES = [ReviewOpened::JOURNAL_TYPE, ReviewClosed::JOURNAL_TYPE].freeze
 
@@ -290,7 +290,7 @@ module Lain
 
       # Hand a document to a human and take the baton for it.
       #
-      # Journaled BEFORE the baton is held ({Approval::SignoffQueue}'s order):
+      # Journaled BEFORE the baton is held ({Epic::SignoffQueue}'s order):
       # nothing is ever held without a record behind it, so a crash between the
       # two refuses a write the record would also have refused. The other order
       # loses the claim.

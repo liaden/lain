@@ -3,7 +3,7 @@
 require "async"
 require "stringio"
 
-# What {Approval::Queue#settle} does to `@parked` when SEVERAL pendings are
+# What {Approval::Parked::Queue#settle} does to `@parked` when SEVERAL pendings are
 # parked at once. The load-bearing example is the third one, and the property it
 # owns is not an arity claim: *the answered pending, and only it, leaves the
 # parked list, by identity, promptly, with oldest-first order preserved.* Three
@@ -50,12 +50,12 @@ require "stringio"
 # whose spec they also redded -- recorded because the second one used to be the
 # reason only the third example here was said to be distinguishing, and with
 # that file gone all three are.
-RSpec.describe "Approval::Queue with three pendings parked at once" do
+RSpec.describe "Approval::Parked::Queue with three pendings parked at once" do
   let(:journal_io) { StringIO.new }
 
   # Long enough that the queue's own fail-closed window is never the thing
   # under test here -- these examples answer in microseconds.
-  let(:queue) { Lain::Approval::Queue.new(journal: Lain::Journal.new(io: journal_io), timeout: 5) }
+  let(:queue) { Lain::Approval::Parked::Queue.new(journal: Lain::Journal.new(io: journal_io), timeout: 5) }
 
   it "holds three individually addressable pendings at once" do
     ParkedApprovals.park(queue, count: 3) do |parked|
@@ -65,7 +65,7 @@ RSpec.describe "Approval::Queue with three pendings parked at once" do
       # Found BEFORE dereferenced: `find` answers nil for an absent id, and a
       # nil that reaches the line below reports a NoMethodError instead of the
       # missing pending it actually means.
-      expect(addressed).to all(be_a(Lain::Approval::Queue::Pending))
+      expect(addressed).to all(be_a(Lain::Approval::Parked::Queue::Pending))
       # An aliasing queue that answered all three lookups with one pending
       # reports %w[tu_0 tu_0 tu_0] here -- the diff names the defect.
       expect(addressed.map { |pending| pending.input.fetch("command") }).to eq(%w[tu_0 tu_1 tu_2])

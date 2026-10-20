@@ -5,7 +5,7 @@ require "neovim"
 
 # Support kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
 module ApprovalViewSpecSupport
-  # The minimal effect {Approval::Queue::Pending} reads: a name, an input, and
+  # The minimal effect {Approval::Parked::Queue::Pending} reads: a name, an input, and
   # the tool_use_id the park record correlates on.
   Effect = Struct.new(:name, :input, :tool_use_id)
 
@@ -42,7 +42,7 @@ module ApprovalViewSpecSupport
   end
 end
 
-# lain://approval, the editor's own surface on {Lain::Approval::Queue}.
+# lain://approval, the editor's own surface on {Lain::Approval::Parked::Queue}.
 #
 # EVERY EXAMPLE THAT MATTERS DRIVES A REAL QUEUE AND A REAL PARKED FIBER. The
 # claim under test is not "a buffer gets some lines" -- an implementation that
@@ -81,12 +81,12 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
   # threads -- one per call, because separating a fleet's rows is exactly
   # the claim, and a fixture that could only name them all at once could not
   # state it.
-  def asked_by(requester) = Lain::Approval::PolicySwitch::Requested.new(nil, requester)
+  def asked_by(requester) = Lain::Approval::Parked::PolicySwitch::Requested.new(nil, requester)
 
   def gated(timeout: 0.4, await: false, calls: [effect], requesters: nil, clock: Lain::RunClock::MONOTONIC,
-            outstanding: Lain::Approval::Queue::Outstanding::NONE, wall: Time.method(:now), &block)
+            outstanding: Lain::Approval::Parked::Queue::Outstanding::NONE, wall: Time.method(:now), &block)
     Sync do |task|
-      queue = Lain::Approval::Queue.new(journal:, timeout:, clock:, wall:)
+      queue = Lain::Approval::Parked::Queue.new(journal:, timeout:, clock:, wall:)
       asking = requesters || calls.map { "agent" }
       parked = calls.zip(asking).map do |call, requester|
         task.async { queue.adjudicate(call, asked_by(requester), outstanding:).approved? }
@@ -174,7 +174,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
 
     it "says a call closed because its requester was stopped, once, naming the call" do
       gated(timeout: 60) do |queue|
-        queue.first.deny(surface: Lain::Approval::Queue::ABANDONED_SURFACE)
+        queue.first.deny(surface: Lain::Approval::Parked::Queue::ABANDONED_SURFACE)
         2.times { view.sweep(queue) }
       end
 
@@ -234,7 +234,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       expect(result[:outcome]).not_to be_decided
       expect(result[:outcome].report).to eq("approve takes no reason -- run :LainApprove alone; still parked")
       expect(result[:verdicts]).to eq([false])
-      expect(decisions.map { |record| record.fetch("surface") }).to eq([Lain::Approval::Queue::TIMEOUT_SURFACE])
+      expect(decisions.map { |record| record.fetch("surface") }).to eq([Lain::Approval::Parked::Queue::TIMEOUT_SURFACE])
     end
 
     it "signs its decision with its own surface, so a transcript never reads it as the terminal's" do
@@ -309,14 +309,14 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       expect(result[:verdicts]).to eq([false])
       expect(result[:outcome]).not_to be_decided
       expect(decisions.map { |record| record.fetch("surface") })
-        .to eq([Lain::Approval::Queue::TIMEOUT_SURFACE])
+        .to eq([Lain::Approval::Parked::Queue::TIMEOUT_SURFACE])
     end
 
     # THE MUTATION THAT SURVIVED EVERYTHING ELSE, and the narrow window it
     # lives in. The example below waits for the queue to be EMPTY, which a view
     # that rendered every parked call -- decided or not -- passes unchanged.
     #
-    # A pending is DECIDED before it LEAVES: `Approval::Queue#settle` removes it
+    # A pending is DECIDED before it LEAVES: `Approval::Parked::Queue#settle` removes it
     # in an ensure that runs on the gated fiber, so between the answer and that
     # fiber's next turn the queue still lists a call nobody can answer any more.
     # Rendering it is a row that looks live and can only refuse. The
@@ -354,7 +354,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       unpolled = described_class.new(rpc:, poll_interval: 60)
 
       Sync do |task|
-        queue = Lain::Approval::Queue.new(journal:, timeout: 30)
+        queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 30)
         parked = task.async { queue.call(effect, nil) }
         watcher = task.async { unpolled.watch(queue) }
         task.with_timeout(10) do
@@ -423,7 +423,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       expect(result[:outcome].report).to include("approve", "deny", '"yes"')
       expect(result[:verdicts]).to eq([false])
       expect(decisions.map { |record| record.fetch("surface") })
-        .to eq([Lain::Approval::Queue::TIMEOUT_SURFACE])
+        .to eq([Lain::Approval::Parked::Queue::TIMEOUT_SURFACE])
     end
 
     it "resolves an OLD rendering's row to the call that rendering drew, never to its neighbour" do
@@ -441,7 +441,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       expect(result[:outcome]).not_to be_decided
       expect(decisions.map { |record| record.fetch("tool") }).to eq(%w[bash write])
       expect(decisions.first.fetch("surface")).to eq("elsewhere")
-      expect(decisions.last.fetch("surface")).to eq(Lain::Approval::Queue::TIMEOUT_SURFACE)
+      expect(decisions.last.fetch("surface")).to eq(Lain::Approval::Parked::Queue::TIMEOUT_SURFACE)
     end
   end
 
@@ -477,7 +477,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     describe "a pending whose approval would release sensitive regions" do
       let(:secret) { "sk-ant-api03-QZ9vK2mR7xT4wL8nB3jH6yD1sA5fG0pE" }
       let(:regions) { Lain::Sensitivity::Regions.detect("API_KEY=#{secret}\n") }
-      let(:outstanding) { Lain::Approval::Queue::Outstanding.new(path: "/repo/.env", regions:) }
+      let(:outstanding) { Lain::Approval::Parked::Queue::Outstanding.new(path: "/repo/.env", regions:) }
 
       def row(requester: "researcher")
         gated(timeout: window, outstanding:, requesters: [requester]) { |_queue| nil }
@@ -514,11 +514,11 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     describe "a call the judge deferred" do
       let(:marked) { Lain::Approval::Judged::Deferred.new(nil) }
 
-      def deferred = Lain::Approval::PolicySwitch::Requested.new(marked, "researcher")
+      def deferred = Lain::Approval::Parked::PolicySwitch::Requested.new(marked, "researcher")
 
       def row_of(context)
         Sync do |task|
-          queue = Lain::Approval::Queue.new(journal:, timeout: window)
+          queue = Lain::Approval::Parked::Queue.new(journal:, timeout: window)
           parked = task.async { queue.adjudicate(effect, context) }
           spun_until { queue.one? }
           view.sweep(queue)
@@ -532,7 +532,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       end
 
       it "shows a path reason first and the deferral after it, only the path quoted" do
-        both = Lain::Approval::PolicySwitch::Requested.new(
+        both = Lain::Approval::Parked::PolicySwitch::Requested.new(
           Lain::Approval::Judged::Deferred.new(Lain::Approval::Escalation::Noted.new(nil, "cat is /x/")), "researcher"
         )
 
@@ -549,7 +549,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
 
       def row_of(context)
         Sync do |task|
-          queue = Lain::Approval::Queue.new(journal:, timeout: window)
+          queue = Lain::Approval::Parked::Queue.new(journal:, timeout: window)
           parked = task.async { queue.adjudicate(effect, context) }
           spun_until { queue.one? }
           view.sweep(queue)
@@ -790,7 +790,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
 
     # THE CUT MUST NOT EAT THE WARNING, and this is the one way the record
     # rendering could have made the surface WORSE than it found it. The row used
-    # to be one unwrapped line, so {Approval::Queue::Outstanding#preamble}'s
+    # to be one unwrapped line, so {Approval::Parked::Queue::Outstanding#preamble}'s
     # sentence was always in the buffer somewhere; an elided summary whose body
     # carried only the CALL puts a long enough path's warning nowhere at all.
     # `y` here is a full approval signing surface "nvim", and this is the
@@ -804,8 +804,8 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       let(:deep_path) { "/#{"vendor/" * 11}.env" }
       let(:secrets) { (1..4).map { |n| "KEY_#{n}=sk-ant-api03-QZ9vK2mR7xT4wL8nB3jH6yD1sA5fG0pE#{n}\n" }.join }
       let(:outstanding) do
-        Lain::Approval::Queue::Outstanding.new(path: deep_path,
-                                               regions: Lain::Sensitivity::Regions.detect(secrets))
+        Lain::Approval::Parked::Queue::Outstanding.new(path: deep_path,
+                                                       regions: Lain::Sensitivity::Regions.detect(secrets))
       end
 
       def cut_item
@@ -960,7 +960,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       view.prime
 
       Sync do
-        queue = Lain::Approval::Queue.new(journal:, timeout: 0.1)
+        queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 0.1)
         view.sweep(queue)
       end
 
@@ -1094,7 +1094,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
 
     def park_and_sweep(handle, commands)
       Sync do |task|
-        queue = Lain::Approval::Queue.new(journal:, timeout: 60)
+        queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 60)
         parked = commands.each_with_index.map do |command, index|
           task.async { queue.call(effect("bash", { "command" => command }, "tu_#{index}"), nil) }
         end
@@ -1156,7 +1156,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
 
     def park_answer_and_sweep(handle)
       Sync do |task|
-        queue = Lain::Approval::Queue.new(journal:, timeout: 60)
+        queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 60)
         parked = task.async { queue.call(effect("bash", { "command" => long_command }, "tu_1"), nil) }
         task.with_timeout(20) { emptied(handle, queue) }
       ensure
@@ -1453,7 +1453,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       unwired = described_class.new
 
       Sync do |task|
-        queue = Lain::Approval::Queue.new(journal:, timeout: 0.4)
+        queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 0.4)
         parked = task.async { queue.call(effect, nil) }
         task.with_timeout(10) do
           spun_until { queue.one? }

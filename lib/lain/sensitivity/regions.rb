@@ -458,7 +458,7 @@ module Lain
         # Never the bytes -- but note what it DOES render: offset, length and
         # the detector's reason. That is safe in a backtrace and unsafe in a
         # prompt, so no human-facing string may interpolate a Region.
-        # {Approval::Queue::Outstanding#preamble} says WHICH file and HOW MANY
+        # {Approval::Parked::Queue::Outstanding#preamble} says WHICH file and HOW MANY
         # for exactly that reason, and a future `"#{outstanding}"` written for
         # convenience would undo it by disclosing where in the file each secret
         # sits and how long it is.

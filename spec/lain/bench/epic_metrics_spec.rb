@@ -20,20 +20,20 @@ RSpec.describe Lain::Bench::EpicMetrics do
 
   def gate_decision(approved:, epic_slug: "lain-epics", stage: "issue_plan", digest: "blake3:artifact")
     journal.record(
-      Lain::Approval::GateDecision.new(artifact_digest: digest, epic_slug:, stage:, approved:,
-                                       answered_by: "human", policy: "interactive", latency: 0.1)
+      Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug:, stage:, approved:,
+                                   answered_by: "human", policy: "interactive", latency: 0.1)
     )
   end
 
   # A `gate_decision` line carrying `issue_id`, the field a LATER card's
   # issue-scoped gates will journal -- GateDecision's own wire shape does not
   # carry it yet, so this writes the raw line directly rather than through
-  # {Lain::Approval::GateDecision}, the same forward-compatible shape
+  # {Lain::Epic::GateDecision}, the same forward-compatible shape
   # {Lain::Journal.records} already reads any foreign-but-typed line as.
   def gate_decision_for_issue(issue_id:, approved:, epic_slug: "lain-epics", stage: "issue_plan",
                               digest: "blake3:artifact")
-    record = Lain::Approval::GateDecision.new(artifact_digest: digest, epic_slug:, stage:, approved:,
-                                              answered_by: "human", policy: "interactive", latency: 0.1)
+    record = Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug:, stage:, approved:,
+                                          answered_by: "human", policy: "interactive", latency: 0.1)
     journal_io.puts(record.to_journal.merge("issue_id" => issue_id).to_json)
   end
 

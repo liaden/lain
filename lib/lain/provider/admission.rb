@@ -95,10 +95,8 @@ module Lain
       # why {ENV_KEY} exists.
       DEFAULT_WIDTH = 1
 
-      # Between polls for a free slot. {Approval::QueueSurface::DEFAULT_POLL_INTERVAL}'s
-      # value and its reason -- the sleep is a scheduler yield, not a wall-clock
-      # stall -- reused rather than restated.
-      POLL_INTERVAL = Approval::QueueSurface::DEFAULT_POLL_INTERVAL
+      # Between polls for a free slot; a scheduler yield, not a wall-clock stall.
+      POLL_INTERVAL = 0.05
 
       # The longest a caller waits for a slot before being refused by name.
       #

@@ -763,7 +763,7 @@ module Lain
       # outstanding so this asker can ask again.
       #
       # An asker admits ONE outstanding set at a time, so a caller that gave up
-      # -- {Approval::Gate} when its window closes -- has to withdraw, or every
+      # -- {Epic::Gate} when its window closes -- has to withdraw, or every
       # later ask on this asker is refused for the rest of its life while a
       # stale inbox line still offers a question whose answer nobody reads.
       # That is the difference between a human pause costing one gate and
@@ -777,7 +777,7 @@ module Lain
       # So a withdrawal retires nothing from the RECORD: every reader folding it
       # goes on listing the Q until something names it consumed. For this
       # tool's own call that is the commit delivering the answer; a caller with
-      # no such commit names it itself, as {Approval::Gate} does on the journal
+      # no such commit names it itself, as {Epic::Gate} does on the journal
       # its verdict went to. Live surfaces ask {#awaiting?}.
       #
       # NAMED, never inferred, exactly as {#reply} names the set it answers: a
@@ -821,7 +821,7 @@ module Lain
       # something names it consumed, and a stop has no committed turn to do it.
       # Recorded from the whole of {#perform}, not {#awaited}, which runs twice
       # for a handed-back answer while the set is still open. Total, as
-      # {Approval::Gate#retired} is, so a failed write cannot replace the
+      # {Epic::Gate#retired} is, so a failed write cannot replace the
       # error or result already on its way out.
       def retired(pending)
         return if pending.nil?

@@ -4,7 +4,7 @@ RSpec.describe Lain::Telemetry::Escalation do
   let(:effect) { Lain::Effect::ToolCall.new(name: "bash", input: {}, tool_use_id: "tu_1") }
   let(:ruling) { Lain::Approval::Escalation::Ruling }
   let(:journal) { [] }
-  let(:role_context) { Lain::Approval::PolicySwitch::Requested.new(nil, "researcher") }
+  let(:role_context) { Lain::Approval::Parked::PolicySwitch::Requested.new(nil, "researcher") }
 
   def written = journal.sole
 
@@ -26,7 +26,7 @@ RSpec.describe Lain::Telemetry::Escalation do
       described_class.write(journal, given, effect, nil)
 
       expect(written).to include("type" => "escalation", "tool" => "bash", "tool_use_id" => "tu_1",
-                                 "requester" => Lain::Approval::Queue::REQUESTER.name, "rung" => given.rung,
+                                 "requester" => Lain::Approval::Parked::Queue::REQUESTER.name, "rung" => given.rung,
                                  "verdict" => "deny", "authority" => given.authority.to_s)
     end
   end
@@ -79,7 +79,7 @@ RSpec.describe Lain::Telemetry::Escalation do
     it "answers the given name, else the context's, else the default" do
       expect([described_class.requester_of(role_context, "fixed"), described_class.requester_of(role_context),
               described_class.requester_of(nil)])
-        .to eq(["fixed", "researcher", Lain::Approval::Queue::REQUESTER.name])
+        .to eq(["fixed", "researcher", Lain::Approval::Parked::Queue::REQUESTER.name])
     end
 
     it "journals the name of a Requester value, never the value" do

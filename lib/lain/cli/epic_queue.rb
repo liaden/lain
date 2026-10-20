@@ -6,28 +6,28 @@ require "active_support/core_ext/string/inflections"
 module Lain
   module CLI
     # `lain epic queue [SLUG]` / `lain epic approve DIGEST` / `lain epic deny
-    # DIGEST`: the morning review. What a {Approval::Gate::Policy::Deferred}
+    # DIGEST`: the morning review. What a {Lain::Epic::Gate::Policy::Deferred}
     # refused and parked, read over coffee and decided. Returns Strings; only the
     # frontend prints.
     #
     # == Draining is journaling
     #
-    # {Approval::SignoffQueue} is a FOLD, not a file: an artifact is parked
+    # {Lain::Epic::SignoffQueue} is a FOLD, not a file: an artifact is parked
     # exactly when a `deferred` decision has no LATER terminal one for the same
     # `(artifact_digest, epic_slug, stage)`. So `approve`/`deny` APPEND a terminal
-    # {Approval::GateDecision} rather than mutating a queue, nothing here holds
+    # {Lain::Epic::GateDecision} rather than mutating a queue, nothing here holds
     # state between commands, and two readers of the same journals agree by
     # construction.
     #
     # == A failed rebuild ABORTS
     #
-    # {Approval::SignoffQueue.from_journal} raises on a record it cannot read
+    # {Lain::Epic::SignoffQueue.from_journal} raises on a record it cannot read
     # whole, {SessionJournals} on a torn line a sign-off could rest on, and
     # NOTHING here rescues either. Only the listing reads past a torn line, and
     # it says so on every rendering. The ergonomic response -- an empty
     # queue on failure -- is maximally fail-open: an empty queue reads as drained,
     # drained opens the next stage, and the stage opens over work nobody signed
-    # off. {Approval::Gate::Policy::Drained} legitimizes "this caller has no
+    # off. {Lain::Epic::Gate::Policy::Drained} legitimizes "this caller has no
     # queue", never "this rebuild failed".
     #
     # This is the screen a human reads specifically to decide that nothing is
@@ -45,7 +45,7 @@ module Lain
       # thing", this one says "the record is damaged", and the remedies are
       # nothing alike. The fold's own refusal, so a damaged record reads the
       # same whether the fold or this surface found it.
-      UnreadableRecord = Approval::SignoffQueue::UnreadableRecord
+      UnreadableRecord = Lain::Epic::SignoffQueue::UnreadableRecord
 
       # An approved issue plan puts its issue in flight, and an issue's status
       # is folded from the epic's own document -- so with no document where
@@ -54,11 +54,11 @@ module Lain
       class MissingEpicDocument < Error; end
 
       # `answered_by` names WHO decided; `policy` names HOW the verdict was
-      # reached ({Approval::SignoffQueue::SIGNOFF_POLICY}) -- independent axes
-      # ({Approval::GateDecision}'s contract), both known here without asking.
+      # reached ({Lain::Epic::SignoffQueue::SIGNOFF_POLICY}) -- independent axes
+      # ({Lain::Epic::GateDecision}'s contract), both known here without asking.
       HUMAN = "human"
 
-      # {Approval::Gate::Adjudicator::GateEvidence}'s discriminator. A literal
+      # {Lain::Epic::Gate::Adjudicator::GateEvidence}'s discriminator. A literal
       # because that class ships no constant for it; a spec pins this string
       # against a real record's `#journal_type`, so the two cannot drift.
       EVIDENCE_TYPE = "gate_evidence"
@@ -122,7 +122,7 @@ module Lain
       # listing's read is its own and never cached, so its tolerance cannot
       # reach the {#review} the deciding verbs read.
       def walk(damage)
-        SessionJournals.new(dir:, types: [Approval::SignoffQueue::JOURNAL_TYPE, EVIDENCE_TYPE], damage:)
+        SessionJournals.new(dir:, types: [Lain::Epic::SignoffQueue::JOURNAL_TYPE, EVIDENCE_TYPE], damage:)
       end
 
       def drain(digest, approved:, reason:)
@@ -144,8 +144,8 @@ module Lain
       # digest parked at research and at epic_plan opens epic_plan only over
       # the research approval this same drain journals.
       def ensure_open!(decisions)
-        queue = Approval::SignoffQueue.from_journal(journals.to_a)
-        boundary = Approval::Gate::Policy::Boundary.new(queue)
+        queue = Lain::Epic::SignoffQueue.from_journal(journals.to_a)
+        boundary = Lain::Epic::Gate::Policy::Boundary.new(queue)
         decisions.each do |decision|
           boundary.ensure_open!(decision.stage, epic_slug: decision.epic_slug, issue_id: decision.issue_id)
           queue.apply(decision.to_journal)
@@ -177,11 +177,11 @@ module Lain
          *moved.map { |line| "  #{line}" }].join("\n")
       end
 
-      # Spelled by {Approval::SignoffQueue::Partition}, so a sign-off names its
+      # Spelled by {Lain::Epic::SignoffQueue::Partition}, so a sign-off names its
       # issue exactly as the park it drained did.
       def partition_of(decision)
-        Approval::SignoffQueue::Partition.new(epic_slug: decision.epic_slug, stage: decision.stage,
-                                              issue_id: decision.issue_id).to_s
+        Lain::Epic::SignoffQueue::Partition.new(epic_slug: decision.epic_slug, stage: decision.stage,
+                                                issue_id: decision.issue_id).to_s
       end
 
       # `review.rows(nil)` widens to every epic: the near-miss beside what was
@@ -280,11 +280,11 @@ module Lain
         def address = "#{item.artifact_digest}  (#{item.partition})"
 
         def terminal(approved:, reason:)
-          Approval::GateDecision.new(artifact_digest: item.artifact_digest, epic_slug: item.epic_slug,
-                                     stage: item.stage, approved:, answered_by: HUMAN,
-                                     policy: Approval::SignoffQueue::SIGNOFF_POLICY,
-                                     latency: waited, evidence_digest: item.evidence_digest, reason:,
-                                     issue_id: item.issue_id, criteria_digest: item.criteria_digest)
+          Lain::Epic::GateDecision.new(artifact_digest: item.artifact_digest, epic_slug: item.epic_slug,
+                                       stage: item.stage, approved:, answered_by: HUMAN,
+                                       policy: Lain::Epic::SignoffQueue::SIGNOFF_POLICY,
+                                       latency: waited, evidence_digest: item.evidence_digest, reason:,
+                                       issue_id: item.issue_id, criteria_digest: item.criteria_digest)
         end
 
         # `Lain::Epic`, spelled out: {CLI::Epic} is a sibling of this class, so a
@@ -356,7 +356,7 @@ module Lain
           @records = records
           @now = now
           # NO rescue, here or anywhere below it. See the class comment.
-          @queue = Approval::SignoffQueue.from_journal(records)
+          @queue = Lain::Epic::SignoffQueue.from_journal(records)
         end
 
         # @param slug [String, nil]
@@ -417,8 +417,8 @@ module Lain
         # Last write wins: an artifact deferred twice is one thing to sign off,
         # and the most recent attempt carries the hesitation a reader wants.
         def deferrals
-          @deferrals ||= of_type(Approval::SignoffQueue::JOURNAL_TYPE)
-                         .select { |record| record["policy"].to_s == Approval::SignoffQueue::DEFERRED_POLICY }
+          @deferrals ||= of_type(Lain::Epic::SignoffQueue::JOURNAL_TYPE)
+                         .select { |record| record["policy"].to_s == Lain::Epic::SignoffQueue::DEFERRED_POLICY }
                          .to_h { |record| [address_of(record), record] }
         end
 

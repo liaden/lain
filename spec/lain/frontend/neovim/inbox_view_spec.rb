@@ -1234,9 +1234,9 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
       # reads the human's words as a verdict.
       def deciding(task, timeout:)
         task.async do
-          Lain::Approval::Gate.new(journal: tee, timeout:)
-                              .call(submission, asker: Lain::CLI::EpicSubmit::Heard.over(asker),
-                                                stage: "implementation", epic_slug: "demo")
+          Lain::Epic::Gate.new(journal: tee, timeout:)
+                          .call(submission, asker: Lain::CLI::EpicSubmit::Heard.over(asker),
+                                            stage: "implementation", epic_slug: "demo")
         end
       end
 

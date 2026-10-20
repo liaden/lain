@@ -28,7 +28,7 @@ module Lain
         # What a child announces itself as at the approval gate when the spawn
         # bound no more specific name -- the tool's own default `name`, so a
         # park is at least separable from the human's own agent
-        # ({Approval::Queue}'s `requester:`) without claiming an identity the
+        # ({Approval::Parked::Queue}'s `requester:`) without claiming an identity the
         # spawn never took.
         SPAWN_REQUESTER = Requester.new(name: "subagent")
 

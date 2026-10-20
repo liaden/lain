@@ -36,9 +36,9 @@ RSpec.describe Lain::CLI::Resume::Selector do
   # What `lain epic approve` leaves behind: a durable, non-ephemeral, non-empty
   # journal holding one terminal gate decision and no session header.
   def drain(name, at:)
-    write(name, [Lain::Approval::GateDecision.new(artifact_digest: "blake3:#{"a" * 64}", epic_slug: "alpha",
-                                                  stage: "research", approved: true, answered_by: "human",
-                                                  policy: "signoff", latency: 3.0).to_journal.merge("ts" => at)])
+    write(name, [Lain::Epic::GateDecision.new(artifact_digest: "blake3:#{"a" * 64}", epic_slug: "alpha",
+                                              stage: "research", approved: true, answered_by: "human",
+                                              policy: "signoff", latency: 3.0).to_journal.merge("ts" => at)])
   end
 
   # A session written before the header carried its format: every key a chat

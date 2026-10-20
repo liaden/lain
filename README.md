@@ -145,7 +145,7 @@ flowchart TB
   SR -->|"end_turn · stop_sequence"| DONE([done])
   SR -->|"max_tokens · refusal · unknown · malformed"| FAIL([failed])
   SR -->|tool_use| GATE{"tier-3?"}
-  GATE -->|yes| APR["Approval::Queue<br/>you&gt; · nvim"] --> EXEC
+  GATE -->|yes| APR["Approval::Parked::Queue<br/>you&gt; · nvim"] --> EXEC
   GATE -->|no| EXEC["ToolRunner → tool middleware → Effect::Handler<br/>parallel_safe? tools gather, everything else is a barrier"]
   EXEC -->|"ONE user turn, all tool_results"| TL
   EXEC --> SUM["Oracle::Eager<br/>local summary on its own fiber, off the critical path"]

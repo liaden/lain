@@ -379,7 +379,7 @@ RSpec.describe Lain::Prompt::Slots do
 
     it "names the approval roles in the catalog" do
       expect(Lain::Role::Catalog.approval_roles).to contain_exactly(Lain::Approval::Judge::ROLE,
-                                                                    Lain::Approval::Gate::Adjudicator::ROLE, Lain::Approval::Gate::Adjudicator::EVIDENCE_ROLE)
+                                                                    Lain::Epic::Gate::Adjudicator::ROLE, Lain::Epic::Gate::Adjudicator::EVIDENCE_ROLE)
     end
   end
 

@@ -86,7 +86,7 @@ RSpec.describe "A symlink is judged where it lands", :seam do
 
     pending, result = parked("read_file", { "path" => "readme2.txt" })
 
-    expect(pending).to have_attributes(tool: "read_file", outstanding: Lain::Approval::Queue::Outstanding::NONE)
+    expect(pending).to have_attributes(tool: "read_file", outstanding: Lain::Approval::Parked::Queue::Outstanding::NONE)
     expect(result.content).not_to include("PLAIN=value")
   end
 

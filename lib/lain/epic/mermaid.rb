@@ -26,7 +26,7 @@ module Lain
     # == The `gated` class is not rendered
     #
     # The epic-orchestration plan's classDef list names a fifth state, `gated`,
-    # for an issue with a sign-off parked. {Approval::SignoffQueue::Item} keys a
+    # for an issue with a sign-off parked. {Epic::SignoffQueue::Item} keys a
     # parked artifact on `(artifact_digest, epic_slug, stage)` and carries no
     # `issue_id` -- so which issue a parked implementation gate belongs to is
     # not a field this fold can read, only a guess (the digest addresses a

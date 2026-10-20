@@ -58,17 +58,17 @@ module AdjudicatorSpecSupport
   end
 end
 
-# Approval::Gate::Adjudicator is the spike-first attempt a deferred gate makes to
+# Epic::Gate::Adjudicator is the spike-first attempt a deferred gate makes to
 # answer itself: gather evidence with the `researcher` role, hand the question
 # plus that evidence to the `gate_adjudicator` role, and act only on a bare
 # one-word verdict. Every other path -- prose around the word, an unrecognized
 # word, a spawn that raised, a spike that returned nothing -- lands on DEFER,
 # which parks for a human and approves nothing. The safety property is that no
 # route through this class reaches an approval without evidence behind it.
-RSpec.describe Lain::Approval::Gate::Adjudicator do
+RSpec.describe Lain::Epic::Gate::Adjudicator do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
-  let(:gate) { Lain::Approval::Gate.new(journal:, timeout: 0.5) }
+  let(:gate) { Lain::Epic::Gate.new(journal:, timeout: 0.5) }
   let(:queue) { approved_queue }
   let(:evidence_text) { "The plan cites Epic::Stage's closed set, which the issue graph already honours." }
   let(:plan) { artifact }
@@ -90,10 +90,10 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
   # The stage boundary opens only over approved earlier stages, so the queue
   # starts with alpha's research and epic plan approved.
   def approved_queue(epic_slug = "alpha")
-    %w[research epic_plan].each_with_object(Lain::Approval::SignoffQueue.new) do |stage, folded|
-      folded.apply(Lain::Approval::GateDecision.new(artifact_digest: "blake3:#{stage}-approved", epic_slug:, stage:,
-                                                    approved: true, answered_by: "human", policy: "signoff",
-                                                    latency: 1.0).to_journal)
+    %w[research epic_plan].each_with_object(Lain::Epic::SignoffQueue.new) do |stage, folded|
+      folded.apply(Lain::Epic::GateDecision.new(artifact_digest: "blake3:#{stage}-approved", epic_slug:, stage:,
+                                                approved: true, answered_by: "human", policy: "signoff",
+                                                latency: 1.0).to_journal)
     end
   end
 
@@ -110,9 +110,9 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
   # session's, which is exactly the case an in-memory guard cannot see.
   # Fully qualified rather than off `described_class`, because the group that
   # exercises Decided directly rebinds it.
-  def adjudicated(approved:, digest: plan.digest, policy: Lain::Approval::Gate::Adjudicator::TERMINAL_POLICY)
+  def adjudicated(approved:, digest: plan.digest, policy: Lain::Epic::Gate::Adjudicator::TERMINAL_POLICY)
     { "type" => "gate_decision", "artifact_digest" => digest, "epic_slug" => "alpha", "stage" => "epic_plan",
-      "approved" => approved, "answered_by" => Lain::Approval::Gate::Adjudicator::SURFACE,
+      "approved" => approved, "answered_by" => Lain::Epic::Gate::Adjudicator::SURFACE,
       "policy" => policy, "latency" => 0.1 }
   end
 
@@ -167,7 +167,7 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
     it "wears a terminal policy label, so the sign-off fold drains rather than parks it" do
       adjudicate
 
-      expect(decisions.first["policy"]).not_to eq(Lain::Approval::SignoffQueue::DEFERRED_POLICY)
+      expect(decisions.first["policy"]).not_to eq(Lain::Epic::SignoffQueue::DEFERRED_POLICY)
     end
 
     it "spawns the evidence researcher first and the gate_adjudicator second, both on a fresh root" do
@@ -201,7 +201,7 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
 
       expect(decisions.first).to include("approved" => false, "answered_by" => "gate_adjudicator")
       expect(queue.to_a).to be_empty
-      expect { gate.ensure_approved!(plan) }.to raise_error(Lain::Approval::Gate::NotApproved)
+      expect { gate.ensure_approved!(plan) }.to raise_error(Lain::Epic::Gate::NotApproved)
     end
   end
 
@@ -224,7 +224,7 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
       adjudicate(adjudicator(spawn_stub(verdict: hedged)))
 
       expect(decisions.first).to include("approved" => false,
-                                         "policy" => Lain::Approval::SignoffQueue::DEFERRED_POLICY)
+                                         "policy" => Lain::Epic::SignoffQueue::DEFERRED_POLICY)
       expect(decisions.first["evidence_digest"]).to eq(Lain::Canonical.digest(evidence_text))
     end
 
@@ -245,7 +245,7 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
 
     it "rebuilds the same parked item (evidence digest included) from the journal alone" do
       adjudicate(adjudicator(spawn_stub(verdict: hedged)))
-      rebuilt = Lain::Approval::SignoffQueue.from_journal(journal_io.string.lines)
+      rebuilt = Lain::Epic::SignoffQueue.from_journal(journal_io.string.lines)
 
       expect(rebuilt.parked("alpha", "epic_plan").map(&:evidence_digest))
         .to eq([Lain::Canonical.digest(evidence_text)])
@@ -270,7 +270,7 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
       expect(adjudicate(adjudicator(spawn_stub(researcher: raiser)))).to be(false)
 
       expect(queue.parked("alpha", "epic_plan").map(&:artifact_digest)).to eq([plan.digest])
-      expect { gate.ensure_approved!(plan) }.to raise_error(Lain::Approval::Gate::NotApproved)
+      expect { gate.ensure_approved!(plan) }.to raise_error(Lain::Epic::Gate::NotApproved)
     end
 
     it "parks with an error note naming the failure" do
@@ -323,14 +323,14 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
   describe "it inherits the gate's own fail-closed guarantees" do
     it "keeps Gate's reactor precondition rather than quietly relaxing it" do
       expect { adjudicator.call(plan, stage: "epic_plan", epic_slug: "alpha") }
-        .to raise_error(Lain::Approval::Gate::NoReactor)
+        .to raise_error(Lain::Epic::Gate::NoReactor)
     end
 
     it "parks nothing when the decision's journal write raises -- the queue is the journal's fold" do
       exploding = Object.new
       exploding.define_singleton_method(:record) { |_entry| raise IOError, "disk full" }
       subject_under_test = described_class.new(role_spawn: spawn_stub(verdict: "MAYBE"),
-                                               gate: Lain::Approval::Gate.new(journal: exploding),
+                                               gate: Lain::Epic::Gate.new(journal: exploding),
                                                queue:, journal: exploding, brief:, decisions: [])
 
       expect { adjudicate(subject_under_test) }.to raise_error(IOError)
@@ -623,7 +623,7 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
     end
 
     it "ignores a decision reached under another policy -- only an adjudication is terminal here" do
-      hands_off = adjudicated(approved: true, policy: Lain::Approval::Gate::Policy::HandsOff::NAME)
+      hands_off = adjudicated(approved: true, policy: Lain::Epic::Gate::Policy::HandsOff::NAME)
 
       expect(adjudicate(adjudicator_over([hands_off]))).to be(true)
     end
@@ -666,10 +666,10 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
 
   # The fold behind that guard, asked directly: it is the record's answer to
   # "was this address SETTLED", which Gate's add-only registry cannot give.
-  describe Lain::Approval::Gate::Adjudicator::Decided do
+  describe Lain::Epic::Gate::Adjudicator::Decided do
     it "refuses an address a terminal record already settled, naming the verdict" do
       expect { described_class.new([adjudicated(approved: false)]).ensure_undecided!(plan.digest) }
-        .to raise_error(Lain::Approval::Gate::Adjudicator::AlreadyDecided, /false/)
+        .to raise_error(Lain::Epic::Gate::Adjudicator::AlreadyDecided, /false/)
     end
 
     it "passes an address nothing settled" do
@@ -677,7 +677,7 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
     end
 
     it "passes a deferral -- parking is an invitation to come back" do
-      deferred = adjudicated(approved: false, policy: Lain::Approval::SignoffQueue::DEFERRED_POLICY)
+      deferred = adjudicated(approved: false, policy: Lain::Epic::SignoffQueue::DEFERRED_POLICY)
 
       expect(described_class.new([deferred]).ensure_undecided!(plan.digest)).to be_nil
     end
@@ -686,7 +686,7 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
       line = "#{JSON.generate(adjudicated(approved: true))}\n"
 
       expect { described_class.new([line]).ensure_undecided!(plan.digest) }
-        .to raise_error(Lain::Approval::Gate::Adjudicator::AlreadyDecided, /true/)
+        .to raise_error(Lain::Epic::Gate::Adjudicator::AlreadyDecided, /true/)
     end
 
     it "skips foreign lines rather than raising over another writer's bytes" do
@@ -707,12 +707,12 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
 
       it "names the LAST record, not the first, when the deny came second" do
         expect { described_class.new([approved, denied]).ensure_undecided!(plan.digest) }
-          .to raise_error(Lain::Approval::Gate::Adjudicator::AlreadyDecided, /false/)
+          .to raise_error(Lain::Epic::Gate::Adjudicator::AlreadyDecided, /false/)
       end
 
       it "names the LAST record when the approve came second -- journal order is time order" do
         expect { described_class.new([denied, approved]).ensure_undecided!(plan.digest) }
-          .to raise_error(Lain::Approval::Gate::Adjudicator::AlreadyDecided, /true/)
+          .to raise_error(Lain::Epic::Gate::Adjudicator::AlreadyDecided, /true/)
       end
     end
   end

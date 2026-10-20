@@ -10,7 +10,7 @@ module Lain
     # cap, a `/goal off`, or a budget interrupt. No LLM judge decides
     # termination; the marker is a literal token match.
     #
-    # Same delegating-slot shape as {Approval::PolicySwitch} and
+    # Same delegating-slot shape as {Approval::Parked::PolicySwitch} and
     # {Context::ModelSwitch}: the Repl holds this ONE object for the session,
     # `/goal` swaps the delegate INSIDE it, and each iteration lands in the
     # Journal attributed to the `goal` surface -- "which turns the driver

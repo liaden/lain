@@ -26,8 +26,8 @@ module SubagentGateSupport
     # The artifact gate's two halves -- the judge, and the researcher it sends
     # to gather evidence first. `EVIDENCE_ROLE` is the one a hand-written list
     # misses, because that file names it second.
-    Lain::Approval::Gate::Adjudicator::ROLE,
-    Lain::Approval::Gate::Adjudicator::EVIDENCE_ROLE
+    Lain::Epic::Gate::Adjudicator::ROLE,
+    Lain::Epic::Gate::Adjudicator::EVIDENCE_ROLE
   ].freeze
 
   # A tool middleware a config.rb could register: Base's pass-through.
@@ -150,7 +150,7 @@ RSpec.describe "Subagent gating" do
 
   describe "a child holding bash" do
     let(:journal_io) { StringIO.new }
-    let(:queue) { Lain::Approval::Queue.new(journal: Lain::Journal.new(io: journal_io)) }
+    let(:queue) { Lain::Approval::Parked::Queue.new(journal: Lain::Journal.new(io: journal_io)) }
 
     it "parks its bash call on the same queue the parent's gate holds" do
       tool = build_subagent(provider: mock(*calls("bash", { "text" => "rm -rf /" })), gate_policy: asking_ladder(queue))

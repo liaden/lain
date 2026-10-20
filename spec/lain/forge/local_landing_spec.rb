@@ -103,9 +103,9 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
 
   def approve(issue_id, sha)
     digest = Lain::Epic::Submission.implementation(slug: "demo", issue_id:, digest: sha).digest
-    decisions << Lain::Approval::GateDecision.new(artifact_digest: digest, epic_slug: "demo", stage: "implementation",
-                                                  approved: true, answered_by: "human", policy: "hands_off",
-                                                  latency: 0.0, issue_id:)
+    decisions << Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: "demo", stage: "implementation",
+                                              approved: true, answered_by: "human", policy: "hands_off",
+                                              latency: 0.0, issue_id:)
   end
 
   def transitions
@@ -154,7 +154,7 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
     it "refuses a commit its implementation gate never approved, naming the gate and how to approve it" do
       sha, ref = worker("b", "README" => "b's work\n")
 
-      expect { landing.call("b", sha:, ref:) }.to raise_error(Lain::Approval::Gate::NotApproved) { |error|
+      expect { landing.call("b", sha:, ref:) }.to raise_error(Lain::Epic::Gate::NotApproved) { |error|
         expect(error.message).to include("implementation gate", sha,
                                          "lain epic submit implementation demo --issue b --digest #{sha}")
       }
@@ -167,7 +167,7 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
       sha, ref = worker("b", "README" => "b's work\n")
       approve("c", sha)
 
-      expect { landing.call("b", sha:, ref:) }.to raise_error(Lain::Approval::Gate::NotApproved, /issue b/)
+      expect { landing.call("b", sha:, ref:) }.to raise_error(Lain::Epic::Gate::NotApproved, /issue b/)
       expect(contains?(sha)).to be(false)
     end
 
@@ -179,7 +179,7 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
       line = decisions.first.to_journal.merge("approved" => "maybe")
 
       expect { described_class::Approvals.from([line]) }.to raise_error(Lain::Error) { |error|
-        expect(error).to be_a(Lain::Approval::SignoffQueue::UnreadableRecord)
+        expect(error).to be_a(Lain::Epic::SignoffQueue::UnreadableRecord)
         expect(error.message).to include("gate_decision", "demo/implementation/a", "approved", "nothing landed")
         expect(error.message).not_to include("\n")
       }
@@ -369,7 +369,7 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
     it "refuses an anchored commit no gate approved, naming lain epic submit implementation with its sha" do
       sha, = worker("a", "README" => "a's work\n")
 
-      expect { landing.anchored("a") }.to raise_error(Lain::Approval::Gate::NotApproved) { |error|
+      expect { landing.anchored("a") }.to raise_error(Lain::Epic::Gate::NotApproved) { |error|
         expect(error.message).to include("implementation gate", sha,
                                          "lain epic submit implementation demo --issue a --digest #{sha}")
       }
@@ -381,7 +381,7 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
       git("switch", "-q", "epic/demo")
       approve("a", sha)
 
-      expect { landing.anchored("a") }.to raise_error(Lain::Approval::Gate::NotApproved) { |error|
+      expect { landing.anchored("a") }.to raise_error(Lain::Epic::Gate::NotApproved) { |error|
         expect(error.message).to include("no worker commit is anchored for issue a", "driver")
         expect(error.message).not_to include("epic submit")
       }
@@ -390,13 +390,13 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
     it "does not take the anchor of an issue whose id continues this one's after a dot" do
       worker("a.1", "README" => "a.1's work\n")
 
-      expect { landing.anchored("a") }.to raise_error(Lain::Approval::Gate::NotApproved, /no worker commit is anchored/)
+      expect { landing.anchored("a") }.to raise_error(Lain::Epic::Gate::NotApproved, /no worker commit is anchored/)
     end
 
     it "finds an anchor for an id Naming rewrites, one with a double dot" do
       sha, = worker("a..b", "README" => "a..b's work\n")
 
-      expect { landing.anchored("a..b") }.to raise_error(Lain::Approval::Gate::NotApproved) { |error|
+      expect { landing.anchored("a..b") }.to raise_error(Lain::Epic::Gate::NotApproved) { |error|
         expect(error.message).to include(sha)
       }
     end
@@ -404,13 +404,13 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
     it "does not take another issue's anchor for this issue's" do
       worker("ab", "README" => "ab's work\n")
 
-      expect { landing.anchored("a") }.to raise_error(Lain::Approval::Gate::NotApproved, /no worker commit is anchored/)
+      expect { landing.anchored("a") }.to raise_error(Lain::Epic::Gate::NotApproved, /no worker commit is anchored/)
     end
 
     it "refuses when only the failing-test commit is anchored, naming no sha to approve" do
       sha = red_worker("greet")
 
-      expect { landing.anchored("greet") }.to raise_error(Lain::Approval::Gate::NotApproved) { |error|
+      expect { landing.anchored("greet") }.to raise_error(Lain::Epic::Gate::NotApproved) { |error|
         expect(error.message).to include("only the failing-test commit is anchored for issue greet; re-run the issue")
         expect(error.message).not_to include(sha, "epic submit")
       }
@@ -420,12 +420,12 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
       sha = red_worker("greet")
       approve("greet", sha)
 
-      expect { landing.anchored("greet") }.to raise_error(Lain::Approval::Gate::NotApproved) { |error|
+      expect { landing.anchored("greet") }.to raise_error(Lain::Epic::Gate::NotApproved) { |error|
         expect(error.message).to include("only the failing-test commit is anchored for issue greet")
         expect(error.message).not_to include(sha)
       }
       expect { landing.call("greet", sha:, ref: "refs/lain/worker/x") }
-        .to raise_error(Lain::Approval::Gate::NotApproved,
+        .to raise_error(Lain::Epic::Gate::NotApproved,
                         /#{sha} holds only issue greet's failing tests; re-run the issue/)
       expect(contains?(sha)).to be(false)
       expect(transitions).to be_empty
@@ -435,7 +435,7 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
       sha = red_worker("greet")
 
       expect { landing.call("greet", sha:, ref: "refs/lain/worker/x") }
-        .to raise_error(Lain::Approval::Gate::NotApproved) { |error|
+        .to raise_error(Lain::Epic::Gate::NotApproved) { |error|
           expect(error.message).to include("#{sha} holds only issue greet's failing tests; re-run the issue")
           expect(error.message).not_to include("epic submit")
         }

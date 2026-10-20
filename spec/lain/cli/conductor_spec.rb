@@ -624,7 +624,8 @@ RSpec.describe Lain::CLI::Conductor do
       conductor = build_with_run_clock(run_clock:)
       human_typing("y")
       asked = Lain::Frontend::ApprovalPolicy::Asked.new("[y/N] ",
-                                                        instance_double(Lain::Approval::Queue::Pending, drawn: nil))
+                                                        instance_double(Lain::Approval::Parked::Queue::Pending,
+                                                                        drawn: nil))
 
       Sync { conductor.read_reply(asked) }
 

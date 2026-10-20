@@ -173,9 +173,9 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
   def approve_plan(id)
     plan = Lain::Epic::Submission.issue_plan(text: "the plan for #{id}\n", slug: "demo", issue_id: id,
                                              criteria_digest: home.read_epic.fetch(id).criteria_digest)
-    decision = Lain::Approval::GateDecision.new(artifact_digest: plan.digest, epic_slug: "demo", stage: "issue_plan",
-                                                approved: true, answered_by: "human", policy: "hands_off",
-                                                latency: 0.0, issue_id: id)
+    decision = Lain::Epic::GateDecision.new(artifact_digest: plan.digest, epic_slug: "demo", stage: "issue_plan",
+                                            approved: true, answered_by: "human", policy: "hands_off",
+                                            latency: 0.0, issue_id: id)
     File.open(File.join(paths.sessions_dir, "fixture.ndjson"), "a") do |io|
       Lain::Journal.new(io:, clock: -> { "2026-01-01T00:00:00Z" }).record(decision)
     end

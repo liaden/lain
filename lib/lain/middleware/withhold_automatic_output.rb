@@ -70,7 +70,7 @@ module Lain
       # Keyed on the exact command string: a respelling is a different command,
       # whose output is scanned again.
       #
-      # Deliberately mutable and unlocked, {Approval::Queue}'s posture: `add`
+      # Deliberately mutable and unlocked, {Approval::Parked::Queue}'s posture: `add`
       # and `include?` are straight-line with no yield point between them.
       class Bar
         def initialize

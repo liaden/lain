@@ -192,7 +192,7 @@ module Lain
 
       # The path rule's reason travels to the human as a note on the context, the
       # way a rung's abstention does; {Sensitivity::Policy#judge} is the same call
-      # {Approval::PathGate#verdict_for} makes, so the two cannot disagree.
+      # {Approval::Parked::PathGate#verdict_for} makes, so the two cannot disagree.
       def noting(env, effect)
         context = env[:context]
         return context unless effect.tool_call? && (env.fetch(:effect).approval? || env.fetch(:tool).held?) &&

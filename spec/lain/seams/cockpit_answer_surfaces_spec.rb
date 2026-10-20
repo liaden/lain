@@ -5,7 +5,7 @@ require "stringio"
 
 # Support kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
 module CockpitAnswerSurfacesSupport
-  # The minimal effect a parked {Lain::Approval::Queue::Pending} reads.
+  # The minimal effect a parked {Lain::Approval::Parked::Queue::Pending} reads.
   Effect = Struct.new(:name, :input, :tool_use_id)
 
   # The editor's command rail, attached: {Lain::Frontend::Neovim::CommandInbox}'s
@@ -107,7 +107,7 @@ end
 # prose typed there waits for `you>` instead of landing as a verdict.
 #
 # Real {Lain::CLI::HumanReplies}, {Lain::CLI::Repl::ApprovalSurfaces} and
-# {Lain::CLI::Repl::ConversationScope} over a real {Lain::Approval::Queue}, the real
+# {Lain::CLI::Repl::ConversationScope} over a real {Lain::Approval::Parked::Queue}, the real
 # command registry with the real `/approve` and `/inbox`, and the real
 # {Lain::Frontend::Neovim::ApprovalView} deciding the call. The editor's far end
 # and the keyboard are the only stand-ins.
@@ -118,7 +118,7 @@ RSpec.describe "cockpit answer surfaces", :seam do
                             history_path: File.join(@dir, "history"))
   end
   let(:journal_io) { StringIO.new }
-  let(:queue) { Lain::Approval::Queue.new(journal: Lain::Journal.new(io: journal_io), timeout: 20) }
+  let(:queue) { Lain::Approval::Parked::Queue.new(journal: Lain::Journal.new(io: journal_io), timeout: 20) }
   let(:rpc) { CockpitAnswerSurfacesSupport::ApprovalRpc.new }
   let(:view) { Lain::Frontend::Neovim::ApprovalView.new(rpc:, poll_interval: 0.01) }
   let(:askers) { Lain::CLI::Wiring::Askers.new(observer: Lain::Event::ChainWriter::Null.new) }

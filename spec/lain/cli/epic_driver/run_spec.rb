@@ -158,7 +158,7 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
   # The REAL implementation gate over a real asker, which is what makes the
   # outstanding-set rule observable from up here.
   def gate_over(asker, timeout: 30)
-    gate = Lain::Approval::Gate.new(journal: Lain::Journal.new(io: StringIO.new), timeout:)
+    gate = Lain::Epic::Gate.new(journal: Lain::Journal.new(io: StringIO.new), timeout:)
     lambda do |issue_id, sha:, tests: nil|
       gate.call(Lain::Epic::Submission.implementation(slug: "demo", issue_id:, digest: sha, tests:),
                 asker:, stage: "implementation", epic_slug: "demo", issue_id:)
@@ -393,7 +393,7 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
   # reported once per issue.
   describe "a sign-off journal that cannot be read" do
     [Lain::CLI::SessionJournals::Unreadable.new("the session journal x.ndjson is damaged at line 1"),
-     Lain::Approval::SignoffQueue::UnreadableRecord.new("the gate_decision record cannot be read")].each do |torn|
+     Lain::Epic::SignoffQueue::UnreadableRecord.new("the gate_decision record cannot be read")].each do |torn|
       it "refuses the whole run over #{torn.class.name.split("::").last}, and launches nothing" do
         statuses = { "a" => "in_flight", "b" => "in_flight" }
         run, actors = run_over(issues: [issue("a"), issue("b")], statuses:, reports: {}, width: 1,
@@ -407,10 +407,10 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
     # A Result that already carries a landing survives whatever comes after it:
     # the work is on the branch, so the reply has to say so, and the damage
     # ends the run in words instead.
-    def torn_record = Lain::Approval::SignoffQueue::UnreadableRecord.new("the gate_decision record cannot be read")
+    def torn_record = Lain::Epic::SignoffQueue::UnreadableRecord.new("the gate_decision record cannot be read")
 
     it "declares both damaged-journal refusals by one marker" do
-      expect([Lain::CLI::SessionJournals::Unreadable, Lain::Approval::SignoffQueue::UnreadableRecord])
+      expect([Lain::CLI::SessionJournals::Unreadable, Lain::Epic::SignoffQueue::UnreadableRecord])
         .to all(be < Lain::JournalUnreadable)
     end
 
@@ -475,7 +475,7 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
     it "still refuses the whole run when a gate meets it before anything landed" do
       run, = reading_b_torn(gate: gate_torn_for("a"))
 
-      expect { run.call }.to raise_error(Lain::Approval::SignoffQueue::UnreadableRecord)
+      expect { run.call }.to raise_error(Lain::Epic::SignoffQueue::UnreadableRecord)
     end
 
     it "ends the run in words, keeping what already landed, when a later plan read meets it" do
@@ -840,7 +840,7 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
     end
 
     it "reports an unapproved commit without offering a resume that would refuse" do
-      reason = refused_by(Lain::Approval::Gate::NotApproved.new("issue a's implementation gate has not approved"))
+      reason = refused_by(Lain::Epic::Gate::NotApproved.new("issue a's implementation gate has not approved"))
 
       expect(reason).to include("implementation gate")
       expect(reason).not_to include("--resume")
@@ -880,8 +880,8 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
     end
 
     it "finds the refusals the landing borrows for its gate, plan and journal checks marked the same way" do
-      borrowed = [Lain::Approval::Gate::NotApproved, Lain::CLI::EpicSubmit::PlanNotApproved,
-                  Lain::Approval::SignoffQueue::UnreadableRecord, Lain::CLI::SessionJournals::Unreadable]
+      borrowed = [Lain::Epic::Gate::NotApproved, Lain::CLI::EpicSubmit::PlanNotApproved,
+                  Lain::Epic::SignoffQueue::UnreadableRecord, Lain::CLI::SessionJournals::Unreadable]
 
       expect(borrowed.reject { |error| error < Lain::RefusedBeforeActing }).to be_empty
     end

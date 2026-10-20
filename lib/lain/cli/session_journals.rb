@@ -102,7 +102,7 @@ module Lain
 
         # The records a gate or a stage rests on, each named from the unit that
         # declares it, so neither can drift out from under this set.
-        def self.decisive_types = [Approval::SignoffQueue::JOURNAL_TYPE, Lain::Epic::StageTransition::JOURNAL_TYPE]
+        def self.decisive_types = [Lain::Epic::SignoffQueue::JOURNAL_TYPE, Lain::Epic::StageTransition::JOURNAL_TYPE]
 
         # A torn line whose type cannot be read could have been anything, so it
         # is treated as the worst thing it could have been.
@@ -134,7 +134,7 @@ module Lain
 
         # @param record [Hash{String=>Object}] one parsed journal record
         def self.shaped?(record)
-          SHAPE.all? { |field| record.key?(field) } && record["type"] != Approval::SignoffQueue::JOURNAL_TYPE
+          SHAPE.all? { |field| record.key?(field) } && record["type"] != Lain::Epic::SignoffQueue::JOURNAL_TYPE
         end
 
         def decisive? = true
@@ -143,7 +143,7 @@ module Lain
 
         def what
           "a record #{type ? "typed #{named}" : "with no type"} carries #{SHAPE.join(", ")}, which only a " \
-            "#{Approval::SignoffQueue::JOURNAL_TYPE} carries"
+            "#{Lain::Epic::SignoffQueue::JOURNAL_TYPE} carries"
         end
 
         # @return [String] the type it wears, quoted, or "no type" when it wears none

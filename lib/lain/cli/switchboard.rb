@@ -8,9 +8,9 @@ module Lain
   module CLI
     # The live switches a session's commands flip:
     #
-    # * ONE {Approval::PolicySwitch} the Gate holds for the whole session --
+    # * ONE {Approval::Parked::PolicySwitch} the Gate holds for the whole session --
     #   a mode flip re-binds the delegate inside it, Gate stays
-    #   construction-fixed. An attended session's {Approval::Queue} is the
+    #   construction-fixed. An attended session's {Approval::Parked::Queue} is the
     #   parked list `/approve` drains, and the {Approval::Escalation} ladder
     #   OVER it is what `ask` approval resolves to, so the deterministic rungs
     #   answer first and the queue is where a call lands when they abstain. An
@@ -120,7 +120,7 @@ module Lain
                    sensitivity: Sensitivity::Policy::Null.instance,
                    classifiers: Approval::Escalation::Triage::AnyPath.new,
                    verdict: Lain::Shell::Verdict.new, spike: Scoping::NOWHERE, middleware: Config::Middleware.empty,
-                   approval_timeout: Approval::Queue::DEFAULT_TIMEOUT, display: Channel::Null.instance, arms: Arms::OFF,
+                   approval_timeout: Approval::Parked::Queue::DEFAULT_TIMEOUT, display: Channel::Null.instance, arms: Arms::OFF,
                    request: Approval::Judge::Unrequested, child_env: Exec::ChildEnv::DEFAULT,
                    denied_tools: Set[].freeze)
         new(journal: chronicle.record_journal, model:, toolset:, rules:, approving:, sensitivity:, classifiers:,
@@ -236,7 +236,7 @@ module Lain
                      classifiers: Approval::Escalation::Triage::AnyPath.new,
                      verdict: Lain::Shell::Verdict.new, test_layout: Middleware::GuardTestLayout::Run.undeclared,
                      attended: true, approval: :ask, layers: [], spike: Scoping::NOWHERE, middleware: Config::Middleware.empty,
-                     approval_timeout: Approval::Queue::DEFAULT_TIMEOUT, judge: DEFERRING,
+                     approval_timeout: Approval::Parked::Queue::DEFAULT_TIMEOUT, judge: DEFERRING,
                      display: Channel::Null.instance, arms: Arms::OFF, request: Approval::Judge::Unrequested,
                      child_env: Exec::ChildEnv::DEFAULT, denied_tools: Set[].freeze)
         @attended = attended
@@ -246,7 +246,9 @@ module Lain
         hold_ladder_parts(rules:, approving:, classifiers:, verdict:, judge:, sensitivity:, arms:, request:)
         # A parked call has to be answered by somebody, and a queue with no
         # drain is a wait, not a decision.
-        @approvals = Approval::Queue.new(journal:, timeout: approval_timeout, home: sensitivity.home) if @attended
+        if @attended
+          @approvals = Approval::Parked::Queue.new(journal:, timeout: approval_timeout, home: sensitivity.home)
+        end
         @toolset = toolset
         @model_switch = Context::ModelSwitch.new(model, journal:)
         seed(Mode.new(approval:, layers:))
@@ -348,7 +350,7 @@ module Lain
         def rule(effect, context) = current.rule(effect, context)
 
         # @return [Approval::Escalation] the ladder in force, on
-        #   {Approval::PolicySwitch#current}'s terms
+        #   {Approval::Parked::PolicySwitch#current}'s terms
         def current
           mode = mode_switch.current
           Mode::Resolution.for(mode:, ladders: ladders.fetch(mode.scope.name)).gate_policy
@@ -434,7 +436,7 @@ module Lain
         @ladder = @ladders.fetch(:ask)
         @scoping = Scoping.new(spike: @spike, ladders: @ladders,
                                plan_ladders: ->(env) { plan_ladders(@classifiers.for(env), env.checkout) })
-        @policy_switch = Approval::PolicySwitch.new(resolve(initial, @ladders).gate_policy, journal: @journal)
+        @policy_switch = Approval::Parked::PolicySwitch.new(resolve(initial, @ladders).gate_policy, journal: @journal)
         @mode_switch = BoundSwitch.new(launched(initial), scoping: @scoping, resolve: method(:resolve),
                                                           apply: method(:apply))
       end

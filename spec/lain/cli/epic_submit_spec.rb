@@ -30,8 +30,8 @@ end
 # `lain epic submit` is the one verb that puts an epic's artifact in front of a
 # gate. Everything it does is assembled from objects that already carry their
 # own specs -- {Lain::Epic::Submission} addresses the artifact,
-# {Lain::Approval::Gate::Policies} chooses HOW the verdict is reached,
-# {Lain::Approval::Gate.from_journal} remembers what was already approved, and
+# {Lain::Epic::Gate::Policies} chooses HOW the verdict is reached,
+# {Lain::Epic::Gate.from_journal} remembers what was already approved, and
 # {Lain::Epic::Scribe} is the only writer of a stage transition -- so what is
 # pinned here is the WIRING, and the three ways it must refuse.
 #
@@ -39,7 +39,7 @@ end
 # WIRING time naming the seam, not hours in; a submit that crosses a stage
 # boundary with sign-offs still parked must journal nothing at all; and a
 # re-submit of a digest that already carries an approval must decide nothing a
-# second time, because {Approval::Gate}'s registry is add-only and a second
+# second time, because {Epic::Gate}'s registry is add-only and a second
 # verdict over a standing approval could only ever be noise in the record.
 RSpec.describe Lain::CLI::EpicSubmit do
   around do |example|
@@ -122,8 +122,8 @@ RSpec.describe Lain::CLI::EpicSubmit do
   # Built through the real producers, so no fixture can drift from the wire
   # shape the live path writes.
   def decision(digest:, stage:, approved: false, policy: "deferred", slug: "alpha")
-    Lain::Approval::GateDecision.new(artifact_digest: digest, epic_slug: slug, stage:, approved:,
-                                     answered_by: policy, policy:, latency: 1.0)
+    Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: slug, stage:, approved:,
+                                 answered_by: policy, policy:, latency: 1.0)
   end
 
   # Approvals of the named stages, as the stages before an epic's later gates
@@ -266,7 +266,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
     def deferring = command(gates: hands_off.merge("issue_plan" => "deferred"))
     def changeset = commit_sha
-    def parked_plans = Lain::Approval::SignoffQueue.from_journal(journal_records).parked("alpha", "issue_plan")
+    def parked_plans = Lain::Epic::SignoffQueue.from_journal(journal_records).parked("alpha", "issue_plan")
 
     it "opens b's implementation gate while a's issue_plan is parked" do
       deferring.submit("issue_plan", issue: "a")
@@ -387,7 +387,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     it "leaves the artifact parked for sign-off" do
       command(gates: hands_off.merge("epic_plan" => "deferred")).submit("epic_plan")
 
-      expect(Lain::Approval::SignoffQueue.from_journal(journal_records).drained?("alpha", "epic_plan")).to be(false)
+      expect(Lain::Epic::SignoffQueue.from_journal(journal_records).drained?("alpha", "epic_plan")).to be(false)
     end
   end
 
@@ -524,7 +524,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
                                     .merge("ts" => "2026-01-01T00:00:00Z", "approved" => "maybe"))}\n")
 
       expect { command.submit("epic_plan") }.to raise_error(Lain::Error) { |error|
-        expect(error).to be_a(Lain::Approval::SignoffQueue::UnreadableRecord)
+        expect(error).to be_a(Lain::Epic::SignoffQueue::UnreadableRecord)
         expect(error.message).to include("gate_decision", research_digest, "approved")
         expect(error.message).not_to include("\n")
       }
@@ -545,7 +545,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
                                     .merge("ts" => "2026-01-01T00:00:00Z", "approved" => "maybe"))}\n")
 
       expect { command.ensure_plan_approved!("a") }.to raise_error(Lain::Error) { |error|
-        expect(error).to be_a(Lain::Approval::SignoffQueue::UnreadableRecord)
+        expect(error).to be_a(Lain::Epic::SignoffQueue::UnreadableRecord)
         expect(error.message).to include("gate_decision", "blake3:damaged", "approved")
         expect(error.message).not_to include("\n")
       }
@@ -576,7 +576,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     it "says stdin is not a terminal, naming the stage and the policies that would proceed" do
       research_approved
       expect { unaskable.submit("epic_plan") }.to raise_error(Lain::Error) { |error|
-        expect(error).to be_a(Lain::Approval::Gate::Policies::Refusal)
+        expect(error).to be_a(Lain::Epic::Gate::Policies::Refusal)
         expect(error.kind).to eq(:missing_seam)
         expect(error.message).to match(/epic_plan.*interactive.*stdin is not a terminal/)
         expect(error.message)
@@ -601,7 +601,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
                                       input: tty, output: StringIO.new, asker: nil)
 
       expect { askerless.submit("epic_plan") }
-        .to raise_error(Lain::Approval::Gate::Policies::Refusal, /epic_plan.*but this session wired no asker, so/)
+        .to raise_error(Lain::Epic::Gate::Policies::Refusal, /epic_plan.*but this session wired no asker, so/)
     end
 
     it "journals no gate_decision" do
@@ -610,7 +610,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       # satisfied by an unknown-policy or unknown-seam refusal too.
       research_approved
       expect { unaskable.submit("epic_plan") }
-        .to raise_error(Lain::Approval::Gate::Policies::Refusal, /epic_plan.*interactive.*not a terminal/m)
+        .to raise_error(Lain::Epic::Gate::Policies::Refusal, /epic_plan.*interactive.*not a terminal/m)
 
       expect(gate_decisions.map { |record| record["policy"] }).to eq(["hands_off"])
     end
@@ -628,7 +628,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     # caller that constructs this command without one is refused by name.
     it "refuses an adjudicated stage in a session that wired no role spawn or brief" do
       expect { command(gates: hands_off.merge("implementation" => "adjudicated")).submit("research") }
-        .to raise_error(Lain::Approval::Gate::Policies::Refusal, /implementation.*adjudicated.*role_spawn, brief/m)
+        .to raise_error(Lain::Epic::Gate::Policies::Refusal, /implementation.*adjudicated.*role_spawn, brief/m)
     end
   end
 
@@ -678,7 +678,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       said = adjudicated("It is one sentence -- I cannot tell whether it covers the epic.").submit("research").text
 
       expect(said).to start_with("deferred")
-      expect(Lain::Approval::SignoffQueue.from_journal(journal_records).drained?("alpha", "research")).to be(false)
+      expect(Lain::Epic::SignoffQueue.from_journal(journal_records).drained?("alpha", "research")).to be(false)
     end
 
     it "builds its own pair from the backend flags and decides through a real spawn" do
@@ -778,7 +778,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     end
 
     it "asks through an injected asker, with no terminal at all" do
-      asker = Lain::Approval::Gate::Policy::StandingAnswer.new(Lain::Approval::Gate::Answer.approve("driver"))
+      asker = Lain::Epic::Gate::Policy::StandingAnswer.new(Lain::Epic::Gate::Answer.approve("driver"))
 
       described_class.new(root:, paths:, config: config(hands_off.merge("research" => "interactive")), asker:)
                      .submit("research")
@@ -883,7 +883,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
         # A window short enough that a reply that never arrives fails the example
         # rather than hanging it.
         def written_and_saved(reply)
-          stub_const("Lain::Approval::Gate::DEFAULT_TIMEOUT", 5)
+          stub_const("Lain::Epic::Gate::DEFAULT_TIMEOUT", 5)
           Sync do |task|
             surfaces = replies.session_surfaces(task)
             task.async do
@@ -948,7 +948,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       end
 
       it "counts the gate's question while it waits and none once its window closes" do
-        stub_const("Lain::Approval::Gate::DEFAULT_TIMEOUT", 0.2)
+        stub_const("Lain::Epic::Gate::DEFAULT_TIMEOUT", 0.2)
         while_waiting = nil
 
         said = Sync do |task|
@@ -1170,7 +1170,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
       expect(said).to start_with("denied")
       expect(said).not_to include("parked")
-      queue = Lain::Approval::SignoffQueue.from_journal(journal_records)
+      queue = Lain::Epic::SignoffQueue.from_journal(journal_records)
       expect(queue.parked("alpha", "research")).to be_empty
     end
 
@@ -1180,7 +1180,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     # and printed a backtrace at a user standing at a half-answered gate.
     it "refuses a half-wired terminal as a missing seam, not a NoMethodError" do
       expect { command(gates: hands_off.merge("research" => "interactive"), output: nil).submit("research") }
-        .to raise_error(Lain::Approval::Gate::Policies::Refusal, /research.*interactive.*nowhere to write/m)
+        .to raise_error(Lain::Epic::Gate::Policies::Refusal, /research.*interactive.*nowhere to write/m)
     end
 
     it "denies an unrecognised reply as unrecognised, never as the human's denial" do
@@ -1201,7 +1201,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
     # Scenario: latency is measured from the question's write, not from
     # before it. {Prompt#ask} used to resolve synchronously, so
-    # {Approval::Gate#await}'s clock only ever started after a human had
+    # {Epic::Gate#await}'s clock only ever started after a human had
     # already answered -- every journaled latency read as instant no matter
     # how long the read actually took.
     it "measures at least as long as the terminal read actually takes" do
@@ -1216,12 +1216,12 @@ RSpec.describe Lain::CLI::EpicSubmit do
       expect(gate_decisions.first["latency"]).to be >= 0.2
     end
 
-    # Mentally revert to always answering `Approval::Gate::DEFAULT_TIMEOUT`
+    # Mentally revert to always answering `Epic::Gate::DEFAULT_TIMEOUT`
     # and this fails: with the window shrunk small enough for the read to
     # outlast it, a bounded gate would deny with `answered_by: "timeout"`
     # before the human ever got to type.
     it "keeps no timeout: a read that outlasts DEFAULT_TIMEOUT still answers" do
-      stub_const("Lain::Approval::Gate::DEFAULT_TIMEOUT", 0.05)
+      stub_const("Lain::Epic::Gate::DEFAULT_TIMEOUT", 0.05)
       slow = instance_double(IO, tty?: true)
       allow(slow).to receive(:gets) do
         sleep 0.2
@@ -1236,7 +1236,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
   end
 
   # Ctrl-C at an unanswered prompt unwinds the whole reactor before the plain
-  # `Interrupt` the human sent re-emerges outside {Approval::Gate}'s own Sync
+  # `Interrupt` the human sent re-emerges outside {Epic::Gate}'s own Sync
   # boundary -- see that class's own `Async::Cancel` handling, which journals
   # the fail-closed refusal before letting the cancellation through.
   # {Verdict#call} is where the boundary this command owns sits, so this
@@ -1245,7 +1245,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
   # traps SIGINT for its own graceful shutdown, so a self-sent one here would
   # be caught by the RUNNER, not by this class.
   describe Lain::CLI::EpicSubmit::Verdict do
-    # NOT translated. {Approval::Gate} has already journaled the fail-closed
+    # NOT translated. {Epic::Gate} has already journaled the fail-closed
     # decision by the time this `Interrupt` reaches here -- see that class's
     # own `Async::Cancel` handling -- so `Verdict#call` lets it climb bare,
     # the same `Interrupt` every other command's `render` meets and turns
@@ -1292,7 +1292,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
   # one) and a real line discipline (^C on the master is what actually sends
   # SIGINT to the child's foreground process group -- the same delivery path
   # an operator's terminal uses, and the one no in-process trick reproduces).
-  # `Approval::Gate` journals the fail-closed decision from its own
+  # `Epic::Gate` journals the fail-closed decision from its own
   # `Async::Cancel` handling, and the plain `Interrupt` that re-emerges once
   # the child's reactor unwinds is what `render`'s own Ctrl-C rescue turns
   # into "interrupted", exit 130 -- pinning that neither half of that

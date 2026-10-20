@@ -85,9 +85,9 @@ RSpec.describe Lain::CLI::Epic do
   end
 
   def verdict(approved:, at:, stage: "research")
-    Lain::Approval::GateDecision.new(artifact_digest: "blake3:#{"a" * 64}", epic_slug: "alpha", stage:, approved:,
-                                     answered_by: "human", policy: "signoff", latency: 1.5)
-                                .to_journal.merge("ts" => at)
+    Lain::Epic::GateDecision.new(artifact_digest: "blake3:#{"a" * 64}", epic_slug: "alpha", stage:, approved:,
+                                 answered_by: "human", policy: "signoff", latency: 1.5)
+                            .to_journal.merge("ts" => at)
   end
 
   # a blocks b blocks c: three waves, one issue each, so a residual view is
@@ -902,8 +902,8 @@ RSpec.describe Lain::CLI::Epic do
 
     def gate_decision(stage:, issue_id:, approved:, policy: approved ? "interactive" : "deferred",
                       digest: "blake3:#{"a" * 64}")
-      Lain::Approval::GateDecision.new(artifact_digest: digest, epic_slug: "alpha", stage:, approved:,
-                                       answered_by: "human", policy:, latency: 1.0, issue_id:)
+      Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: "alpha", stage:, approved:,
+                                   answered_by: "human", policy:, latency: 1.0, issue_id:)
     end
 
     # Scenario: an edit over a parked gate refuses

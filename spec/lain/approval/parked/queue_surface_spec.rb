@@ -9,7 +9,7 @@ module QueueSurfaceSpecSupport
 
   # A concrete surface over the template, judging everything and approving
   # everything -- the minimum that shows the template's own machinery running.
-  class Everything < Lain::Approval::QueueSurface
+  class Everything < Lain::Approval::Parked::QueueSurface
     SURFACE = "spec_surface"
 
     attr_reader :asked
@@ -34,7 +34,7 @@ module QueueSurfaceSpecSupport
   end
 
   # A surface whose sweep raises every pass, for the fiber-survival guard.
-  class Broken < Lain::Approval::QueueSurface
+  class Broken < Lain::Approval::Parked::QueueSurface
     SURFACE = "broken_surface"
 
     def judges?(_outstanding) = raise(NoMethodError, "undefined method 'any?' for nil")
@@ -43,7 +43,7 @@ end
 
 # The template {SecretSurface} is built on: the observing, the seen-set and the
 # guarded polling loop.
-RSpec.describe Lain::Approval::QueueSurface do
+RSpec.describe Lain::Approval::Parked::QueueSurface do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
   let(:faults) { [] }
@@ -52,12 +52,12 @@ RSpec.describe Lain::Approval::QueueSurface do
 
   def regions = Lain::Sensitivity::Regions.detect("API_KEY=sk-ant-api03-QZ9vK2mR7xT4wL8nB3jH6yD1sA5fG0pE\n")
 
-  def carrying = Lain::Approval::Queue::Outstanding.new(path: "/repo/.env", regions:)
+  def carrying = Lain::Approval::Parked::Queue::Outstanding.new(path: "/repo/.env", regions:)
 
-  def none = Lain::Approval::Queue::Outstanding::NONE
+  def none = Lain::Approval::Parked::Queue::Outstanding::NONE
 
   def parked(surface, outstanding:)
-    queue = Lain::Approval::Queue.new(journal:, timeout: 0.05)
+    queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 0.05)
     Sync do |task|
       gated = task.async { queue.adjudicate(effect, nil, outstanding:) }
       task.with_timeout(1) { queue.dequeue }
@@ -91,12 +91,12 @@ RSpec.describe Lain::Approval::QueueSurface do
     it "is never handed a nil outstanding, because the Pending resolves one to the Null value" do
       settled = parked(QueueSurfaceSpecSupport::Everything.new, outstanding: nil)
 
-      expect(settled.outstanding).to be(Lain::Approval::Queue::Outstanding::NONE)
+      expect(settled.outstanding).to be(Lain::Approval::Parked::Queue::Outstanding::NONE)
       expect(settled.surface).to eq(QueueSurfaceSpecSupport::Everything::SURFACE)
     end
 
     it "keeps watching after a sweep that raised, and journals the fault once rather than per poll" do
-      queue = Lain::Approval::Queue.new(journal:, timeout: 5)
+      queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 5)
       surface = QueueSurfaceSpecSupport::Broken.new(poll_interval: 0.005, journal: faults)
 
       Sync do |task|

@@ -56,7 +56,7 @@ RSpec.describe Lain::Blankness do
   # `approval` for it; the old name has to keep answering identically or every
   # approval spec that pins it is pinning the wrong thing.
   it "is what Approval's GateEvidence.blank? now answers with" do
-    evidence = Lain::Approval::Gate::Adjudicator::GateEvidence
+    evidence = Lain::Epic::Gate::Adjudicator::GateEvidence
     ["", nbsp, zero_width.first, "ok", nil].each do |value|
       expect(evidence.blank?(value)).to be(described_class.blank?(value))
     end

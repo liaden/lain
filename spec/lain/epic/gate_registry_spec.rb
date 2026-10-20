@@ -1,18 +1,18 @@
 # frozen_string_literal: true
 
-# Coverage for Lain::Approval::Gate.from_journal and the private registry fold
+# Coverage for Lain::Epic::Gate.from_journal and the private registry fold
 # it is built on (#absorb). Started life as 17 adversarial review probes; the
 # ones that found real defects are
 # converted here to pin the FIXED behaviour (panel doctrine: probes that find
 # a real defect become specs, they are not deleted). The ones that found
 # nothing wrong are kept as regression coverage and documentation.
-RSpec.describe "Lain::Approval::Gate.from_journal" do
+RSpec.describe "Lain::Epic::Gate.from_journal" do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
   let(:clock) { -> { 0.0 } }
 
-  def gate = Lain::Approval::Gate.new(journal:, clock:)
-  def rebuild(entries) = Lain::Approval::Gate.from_journal(entries, journal:, clock:)
+  def gate = Lain::Epic::Gate.new(journal:, clock:)
+  def rebuild(entries) = Lain::Epic::Gate.from_journal(entries, journal:, clock:)
 
   def decision(digest:, approved:, **overrides)
     { "type" => "gate_decision", "artifact_digest" => digest, "epic_slug" => "lain-epics",
@@ -33,11 +33,11 @@ RSpec.describe "Lain::Approval::Gate.from_journal" do
   # of drift can't recur.
   describe "forwarding #initialize's own defaults, not restating them" do
     it "does not raise when clock: (or timeout:) is omitted -- there is no second copy of the default to go stale" do
-      expect { Lain::Approval::Gate.from_journal([], journal:) }.not_to raise_error
+      expect { Lain::Epic::Gate.from_journal([], journal:) }.not_to raise_error
     end
 
     it "still forwards an explicitly given timeout:, the same as a plain .new would" do
-      rebuilt = Lain::Approval::Gate.from_journal([], journal:, timeout: 0.01, clock:)
+      rebuilt = Lain::Epic::Gate.from_journal([], journal:, timeout: 0.01, clock:)
 
       expect { Sync { rebuilt.call(artifact("x"), asker: silent_asker, stage: "s", epic_slug: "e") } }
         .not_to raise_error
@@ -90,12 +90,12 @@ RSpec.describe "Lain::Approval::Gate.from_journal" do
 
     it "raises rather than registering an approval when `approved` arrives as the STRING \"false\"" do
       expect { rebuild([decision(digest: "d", approved: "false")]) }
-        .to raise_error(Lain::Approval::SignoffQueue::UnreadableRecord, /approved/)
+        .to raise_error(Lain::Epic::SignoffQueue::UnreadableRecord, /approved/)
     end
 
     it "raises rather than registering nil when artifact_digest is missing" do
       expect { rebuild([decision(digest: nil, approved: true)]) }
-        .to raise_error(Lain::Approval::SignoffQueue::UnreadableRecord, /artifact_digest/)
+        .to raise_error(Lain::Epic::SignoffQueue::UnreadableRecord, /artifact_digest/)
     end
 
     it "never reaches a turn_usage record with the fold at all -- from_journal's type filter runs first" do
@@ -165,7 +165,7 @@ RSpec.describe "Lain::Approval::Gate.from_journal" do
       rebuilt = rebuild([])
 
       expect { rebuilt.call(artifact("x"), asker: asker(true), stage: "s", epic_slug: "e") }
-        .to raise_error(Lain::Approval::Gate::NoReactor)
+        .to raise_error(Lain::Epic::Gate::NoReactor)
     end
 
     it "does NOT re-journal the entries it replayed" do
@@ -179,7 +179,7 @@ RSpec.describe "Lain::Approval::Gate.from_journal" do
     surface = "human"
     Class.new do
       define_method(:ask) do |_question|
-        Lain::Promise.new.tap { |p| p.resolve(Lain::Approval::Gate::Answer.new(approved: verdict, surface:)) }
+        Lain::Promise.new.tap { |p| p.resolve(Lain::Epic::Gate::Answer.new(approved: verdict, surface:)) }
       end
     end.new
   end

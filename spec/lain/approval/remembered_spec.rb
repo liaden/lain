@@ -67,7 +67,7 @@ RSpec.describe Lain::Approval::Remembered do
     end
 
     # "Without reaching a human" is exactly "the chain produced a decision":
-    # nothing is what escalates to {Approval::Queue} and the surfaces behind it.
+    # nothing is what escalates to {Approval::Parked::Queue} and the surfaces behind it.
     it "makes the chain decisive, so nothing escalates to a surface" do
       Dir.mktmpdir do |root|
         write_config(root, <<~RUBY)

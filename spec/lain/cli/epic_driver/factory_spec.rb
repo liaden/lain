@@ -152,17 +152,17 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
     File.open(File.join(paths.sessions_dir, "epic-approved.ndjson"), "a") do |io|
       journal = Lain::Journal.new(io:, clock: -> { "2026-01-01T00:00:00Z" })
       %w[research epic_plan].each do |stage|
-        journal.record(Lain::Approval::GateDecision.new(artifact_digest: "blake3:#{stage}-approved", epic_slug: slug,
-                                                        stage:, approved: true, answered_by: "human",
-                                                        policy: "hands_off", latency: 0.0))
+        journal.record(Lain::Epic::GateDecision.new(artifact_digest: "blake3:#{stage}-approved", epic_slug: slug,
+                                                    stage:, approved: true, answered_by: "human",
+                                                    policy: "hands_off", latency: 0.0))
       end
     end
   end
 
   def approve_plan(id, slug: "demo")
-    journaled(Lain::Approval::GateDecision.new(artifact_digest: approved_plan(id, slug).digest, epic_slug: slug,
-                                               stage: "issue_plan", approved: true, answered_by: "human",
-                                               policy: "hands_off", latency: 0.0, issue_id: id))
+    journaled(Lain::Epic::GateDecision.new(artifact_digest: approved_plan(id, slug).digest, epic_slug: slug,
+                                           stage: "issue_plan", approved: true, answered_by: "human",
+                                           policy: "hands_off", latency: 0.0, issue_id: id))
   end
 
   def approved_plan(id, slug = "demo")
@@ -253,7 +253,7 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
 
   def journaled_decisions
     Lain::Journal.records(File.readlines(File.join(paths.sessions_dir, "chat.ndjson")),
-                          type: Lain::Approval::SignoffQueue::JOURNAL_TYPE).to_a
+                          type: Lain::Epic::SignoffQueue::JOURNAL_TYPE).to_a
   end
 
   # What a chat lends the epic it is seated in. The grading hook has to ride
@@ -818,9 +818,9 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
       approve_plan("a")
       original = home.plan("a").read
       home.plan("a").write("#{original}revised\n")
-      journaled(Lain::Approval::GateDecision.new(artifact_digest: approved_plan("a").digest, epic_slug: "demo",
-                                                 stage: "issue_plan", approved: false, answered_by: "human",
-                                                 policy: "signoff", latency: 0.0, issue_id: "a"))
+      journaled(Lain::Epic::GateDecision.new(artifact_digest: approved_plan("a").digest, epic_slug: "demo",
+                                             stage: "issue_plan", approved: false, answered_by: "human",
+                                             policy: "signoff", latency: 0.0, issue_id: "a"))
       home.plan("a").write(original)
       git(repo, "switch", "-q", "main")
 

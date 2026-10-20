@@ -584,7 +584,7 @@ module Lain
       # an NDJSON line. An exception message is unbounded and is written by
       # whatever raised: a provider error carrying a response body, a
       # `JSON::ParserError` echoing its document, a `NoMethodError` inspecting a
-      # large receiver. {Approval::Gate::Adjudicator}'s `note` clamps for this
+      # large receiver. {Epic::Gate::Adjudicator}'s `note` clamps for this
       # reason and at this size -- the head is where the diagnosis is.
       MAX_FAILURE_REASON = 500
 

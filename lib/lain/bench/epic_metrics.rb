@@ -13,7 +13,7 @@ module Lain
       SUPERSESSION_RECORD = "supersession_record"
       # Named from its one declaration rather than spelled again, unlike the two
       # above it, which are declared in the epic tier this file does not reach.
-      GATE_DECISION = Approval::SignoffQueue::JOURNAL_TYPE
+      GATE_DECISION = Epic::SignoffQueue::JOURNAL_TYPE
 
       # The one status a transition must have LEFT for it to count as rework:
       # settled work an issue moved back out of, whether a later gate reopened

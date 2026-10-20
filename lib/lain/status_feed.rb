@@ -105,7 +105,7 @@ module Lain
   #   The pair breaks in exactly ONE place, and the halves fail asymmetrically.
   #   NOT cancellation: `Async::Stop` descends from `Exception`, not
   #   `StandardError`, so a stop inside the announcement write escapes
-  #   {Approval::Queue#record_evidence} before EITHER record is written. What
+  #   {Approval::Parked::Queue#record_evidence} before EITHER record is written. What
   #   breaks the pair is the queue's `degrade` path, which writes a
   #   `journal_error` instead. Losing the ASKED half under-reports and heals
   #   when the call is decided; losing the DECIDED half over-reports and NEVER
@@ -151,7 +151,7 @@ module Lain
   # {#turn_usage?} records the one that was actually shipped and what it cost.
   #
   # The approval pair is the ONE exception, for {Memory::JournalMemoryRoot}'s
-  # reason: {Approval::Queue} is the single writer of both records, and no other
+  # reason: {Approval::Parked::Queue} is the single writer of both records, and no other
   # event in this fan-out is distinguishable from a park by shape alone (a
   # `tool_use_id` reader would also match {Telemetry::ToolOutput}).
   #
@@ -171,7 +171,7 @@ module Lain
     DEFAULT_CACHE_PROFILE = { ttl: 300 }.freeze
 
     # {Journal#encode}'s self-describing failure record, which is also what
-    # {Approval::Queue#degrade} writes when it cannot journal a park or a
+    # {Approval::Parked::Queue#degrade} writes when it cannot journal a park or a
     # decision -- the only raw Hash in the fan-out this class recognizes.
     JOURNAL_ERROR = "journal_error"
 
@@ -253,7 +253,7 @@ module Lain
 
     # @param event [Object] a record this sink recognizes, or anything at all.
     #   The recognized set is the class doc's: six journal records matched by
-    #   CLASS, plus the {Approval::Queue} pair, plus anything answering `#kind`.
+    #   CLASS, plus the {Approval::Parked::Queue} pair, plus anything answering `#kind`.
     #
     #   WHAT A `#kind`-ANSWERING RECORD OWES BEYOND `#kind`: a `:spawn` owes
     #   `#digest`; a `:message` owes `#to`, `#digest` and `#causal_parents`,
@@ -534,22 +534,22 @@ module Lain
     def observe_approval(event)
       case event
       when Telemetry::ApprovalPending then @approvals_pending += 1
-      when Approval::Queue::Pending then release_approval
+      when Approval::Parked::Queue::Pending then release_approval
       when Hash then observe_degraded_approval(event)
       end
     end
 
-    # {Approval::Queue#degrade}'s stand-in record. The park (or the decision)
+    # {Approval::Parked::Queue#degrade}'s stand-in record. The park (or the decision)
     # HAPPENED -- only its evidence failed to serialize -- and the record names
     # which class it stood in for, so the count can still move. The two names
     # are read off the classes themselves, so a rename cannot drift them apart
-    # from what {Approval::Queue} actually writes.
+    # from what {Approval::Parked::Queue} actually writes.
     def observe_degraded_approval(event)
       return unless event["type"] == JOURNAL_ERROR
 
       case event["entry_class"]
       when Telemetry::ApprovalPending.name then @approvals_pending += 1
-      when Approval::Queue::Pending.name then release_approval
+      when Approval::Parked::Queue::Pending.name then release_approval
       end
     end
 

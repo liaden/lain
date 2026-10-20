@@ -38,8 +38,8 @@ RSpec.describe Lain::Epic::Progress do
 
   def gate(policy: "deferred", approved: false, stage: "research", epic_slug: "alpha", digest: "blake3:plan",
            **scope)
-    Lain::Approval::GateDecision.new(artifact_digest: digest, epic_slug:, stage:, approved:,
-                                     answered_by: policy, policy:, latency: 0.1, **scope)
+    Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug:, stage:, approved:,
+                                 answered_by: policy, policy:, latency: 0.1, **scope)
   end
 
   def fold(entries, graph:, epic_slug: "alpha") = described_class.fold(entries, graph:, epic_slug:)
@@ -165,7 +165,7 @@ RSpec.describe Lain::Epic::Progress do
                   "stage" => "research", "approved" => false }
       entries = journaled(transition(issue_id: "a"), damaged)
 
-      expect { fold(entries, graph: chain) }.to raise_error(Lain::Approval::SignoffQueue::UnreadableRecord, /policy/)
+      expect { fold(entries, graph: chain) }.to raise_error(Lain::Epic::SignoffQueue::UnreadableRecord, /policy/)
     end
 
     # What `lain epic status` folds: refused as a Lain::Error, which the
@@ -196,7 +196,7 @@ RSpec.describe Lain::Epic::Progress do
                             "stage" => "research", "approved" => false, "policy" => "deferred" })
 
       expect { fold(entries, graph: chain) }
-        .to raise_error(Lain::Approval::SignoffQueue::UnreadableRecord, /epic_slug/)
+        .to raise_error(Lain::Epic::SignoffQueue::UnreadableRecord, /epic_slug/)
     end
   end
 
@@ -366,8 +366,8 @@ RSpec.describe Lain::Epic::Progress do
     # The fold only ever hands in this epic's own sign-offs; the constructor is
     # public, so the value checks the same thing rather than trusting it.
     it "refuses a parked sign-off from another epic, naming both" do
-      stray = Lain::Approval::SignoffQueue::Item.new(artifact_digest: "blake3:x", epic_slug: "other",
-                                                     stage: "research")
+      stray = Lain::Epic::SignoffQueue::Item.new(artifact_digest: "blake3:x", epic_slug: "other",
+                                                 stage: "research")
 
       expect { built(parked: [stray]) }.to raise_error(Lain::Error, /"alpha".*"other"/m)
     end

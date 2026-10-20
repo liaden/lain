@@ -21,7 +21,7 @@ module Lain
     #   lists. A decision the session already made, so it is reported as a
     #   decision and not as a doubt.
     # * *abstain* -- anything else, including every failure mode. It falls
-    #   through to {Approval::Queue} and a human. Abstention is cheap and
+    #   through to {Approval::Parked::Queue} and a human. Abstention is cheap and
     #   expected; the job is to be right when it answers, not to answer often.
     #
     # The three detection tiers -- node kinds, program names, and WORD TEXT,

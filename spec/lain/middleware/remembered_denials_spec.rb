@@ -6,7 +6,7 @@ RSpec.describe Lain::Middleware::RememberedDenials do
   let(:policy) do
     Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: project)).confined(roots: [project])
   end
-  let(:queue) { instance_double(Lain::Approval::Queue, denied: nil, denied_call: nil) }
+  let(:queue) { instance_double(Lain::Approval::Parked::Queue, denied: nil, denied_call: nil) }
   let(:denial) { "approval denied for tool %<name>s" }
   let(:layer) { described_class.new(queue:, sensitivity: policy, denial:) }
 
@@ -127,7 +127,7 @@ RSpec.describe Lain::Middleware::RememberedDenials do
     remembering("researcher", "/home/joel")
 
     result, = through(lists("/home/joel"),
-                      context: Lain::Approval::PolicySwitch::Requested.new(in_project, "researcher"))
+                      context: Lain::Approval::Parked::PolicySwitch::Requested.new(in_project, "researcher"))
 
     expect(result).to have_attributes(is_error: true)
   end
@@ -246,7 +246,7 @@ RSpec.describe Lain::Middleware::RememberedDenials do
     end
 
     let(:project) { @dir }
-    let(:queue) { Lain::Approval::Queue.new(journal: Lain::Journal.new(io: StringIO.new)) }
+    let(:queue) { Lain::Approval::Parked::Queue.new(journal: Lain::Journal.new(io: StringIO.new)) }
 
     def denied_by_human(effect)
       Sync do |task|

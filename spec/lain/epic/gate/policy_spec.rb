@@ -70,12 +70,12 @@ module PolicySpecSupport
   end
 end
 
-# Approval::Gate::Policy is HOW a verdict is reached, wrapped around the one
+# Epic::Gate::Policy is HOW a verdict is reached, wrapped around the one
 # Gate that reaches it. Each policy answers #decide by handing Gate a surface and
 # a label, so the journal-then-register ordering Gate ships (a journal that
 # raises must leave no standing approval) survives every wrapping by
 # construction rather than by three re-implementations agreeing.
-RSpec.describe Lain::Approval::Gate::Policy do
+RSpec.describe Lain::Epic::Gate::Policy do
   # The whole artifact duck: a content address and its human-facing question.
   def artifact(digest: "blake3:plan", question: "Approve the epic plan? Reply approve or deny.")
     Data.define(:digest, :gate_question).new(digest:, gate_question: question)
@@ -84,10 +84,10 @@ RSpec.describe Lain::Approval::Gate::Policy do
   let(:plan) { artifact }
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
-  let(:gate) { Lain::Approval::Gate.new(journal:, timeout: 0.5) }
+  let(:gate) { Lain::Epic::Gate.new(journal:, timeout: 0.5) }
   # Alpha's research and plan approved, so a gate at a later stage meets the
   # positive evidence the boundary asks for and an example is about its policy.
-  let(:queue) { approved(Lain::Approval::SignoffQueue.new, "alpha") }
+  let(:queue) { approved(Lain::Epic::SignoffQueue.new, "alpha") }
   # The Null Object a policy names when there is no sign-off queue in the
   # session at all. Named explicitly at every call site on purpose -- see the
   # "no policy opens a boundary it never checked" group.
@@ -99,9 +99,9 @@ RSpec.describe Lain::Approval::Gate::Policy do
 
   def approved(signoffs, epic_slug, stages: %w[research epic_plan])
     stages.each_with_object(signoffs) do |stage, folded|
-      folded.apply(Lain::Approval::GateDecision.new(artifact_digest: "blake3:#{stage}-approved", epic_slug:, stage:,
-                                                    approved: true, answered_by: "human", policy: "signoff",
-                                                    latency: 1.0).to_journal)
+      folded.apply(Lain::Epic::GateDecision.new(artifact_digest: "blake3:#{stage}-approved", epic_slug:, stage:,
+                                                approved: true, answered_by: "human", policy: "signoff",
+                                                latency: 1.0).to_journal)
     end
   end
 
@@ -132,17 +132,17 @@ RSpec.describe Lain::Approval::Gate::Policy do
     end
 
     it "keeps the deferred label and the queue's fold discriminator the same string" do
-      expect(described_class::Deferred::NAME).to eq(Lain::Approval::SignoffQueue::DEFERRED_POLICY)
+      expect(described_class::Deferred::NAME).to eq(Lain::Epic::SignoffQueue::DEFERRED_POLICY)
     end
 
     it "keeps the interactive label equal to the Gate's own default, so the interactive path is not relabelled" do
-      expect(described_class::Interactive::NAME).to eq(Lain::Approval::Gate::DEFAULT_POLICY)
+      expect(described_class::Interactive::NAME).to eq(Lain::Epic::Gate::DEFAULT_POLICY)
     end
   end
 
-  describe Lain::Approval::Gate::Policy::Interactive do
+  describe Lain::Epic::Gate::Policy::Interactive do
     def approving_asker(surface: "human")
-      scripted_asker { |promise, _q| promise.resolve(Lain::Approval::Gate::Answer.approve(surface)) }
+      scripted_asker { |promise, _q| promise.resolve(Lain::Epic::Gate::Answer.approve(surface)) }
     end
 
     it "delegates to the asker and journals the surface that answered" do
@@ -157,7 +157,7 @@ RSpec.describe Lain::Approval::Gate::Policy do
       asked = nil
       asker = scripted_asker do |promise, question|
         asked = question
-        promise.resolve(Lain::Approval::Gate::Answer.approve("human"))
+        promise.resolve(Lain::Epic::Gate::Answer.approve("human"))
       end
 
       decide(described_class.new(asker:, queue: drained))
@@ -166,7 +166,7 @@ RSpec.describe Lain::Approval::Gate::Policy do
     end
 
     it "inherits the fail-closed clock -- silence is a denial signed by the timeout" do
-      gate = Lain::Approval::Gate.new(journal:, timeout: 0.02)
+      gate = Lain::Epic::Gate.new(journal:, timeout: 0.02)
       policy = described_class.new(asker: scripted_asker { |_promise, _q| nil }, queue: drained)
 
       approved = Sync { policy.decide(plan, gate:, stage: "research", epic_slug: "alpha") }
@@ -205,7 +205,7 @@ RSpec.describe Lain::Approval::Gate::Policy do
 
     it "keeps Gate's reactor precondition rather than quietly relaxing it" do
       expect { policy.decide(plan, gate:, stage: "epic_plan", epic_slug: "alpha") }
-        .to raise_error(Lain::Approval::Gate::NoReactor)
+        .to raise_error(Lain::Epic::Gate::NoReactor)
     end
   end
 
@@ -242,7 +242,7 @@ RSpec.describe Lain::Approval::Gate::Policy do
       decide(policy)
 
       expect(gate.approved?(plan.digest)).to be(false)
-      expect { gate.ensure_approved!(plan) }.to raise_error(Lain::Approval::Gate::NotApproved)
+      expect { gate.ensure_approved!(plan) }.to raise_error(Lain::Epic::Gate::NotApproved)
     end
 
     it "parks once for a gate decided twice -- the address is the identity" do
@@ -270,7 +270,7 @@ RSpec.describe Lain::Approval::Gate::Policy do
       expect { decide(described_class::HandsOff.new(queue: drained)) }.to raise_error(IOError)
 
       expect(gate.approved?(plan.digest)).to be(false)
-      expect { gate.ensure_approved!(plan) }.to raise_error(Lain::Approval::Gate::NotApproved)
+      expect { gate.ensure_approved!(plan) }.to raise_error(Lain::Epic::Gate::NotApproved)
     end
 
     it "parks nothing when the deferral's own journal write raises -- the queue is the journal's fold" do
@@ -370,7 +370,7 @@ RSpec.describe Lain::Approval::Gate::Policy do
   # a Policy and never reaches #decide -- and two copies of a safety rule can
   # drift. Every caller now goes through this object, so the rule has a single
   # call site.
-  describe Lain::Approval::Gate::Policy::Boundary do
+  describe Lain::Epic::Gate::Policy::Boundary do
     def park_research(epic_slug: "alpha")
       queue.park(artifact_digest: "blake3:research", epic_slug:, stage: "research",
                  question: "Approve the research?")
@@ -389,7 +389,7 @@ RSpec.describe Lain::Approval::Gate::Policy do
     end
 
     it "refuses a stage whose earlier partition nothing ever approved, though nothing is parked there" do
-      expect { described_class.new(Lain::Approval::SignoffQueue.new).ensure_open!("epic_plan", epic_slug: "alpha") }
+      expect { described_class.new(Lain::Epic::SignoffQueue.new).ensure_open!("epic_plan", epic_slug: "alpha") }
         .to raise_error(Lain::Epic::StageBlocked, /alpha.*research not approved/m)
     end
 
@@ -409,7 +409,7 @@ RSpec.describe Lain::Approval::Gate::Policy do
     it "opens everything when NAMED the Drained null object" do
       park_research
 
-      expect(described_class.new(Lain::Approval::Gate::Policy::Drained).ensure_open!("epic_plan", epic_slug: "alpha"))
+      expect(described_class.new(Lain::Epic::Gate::Policy::Drained).ensure_open!("epic_plan", epic_slug: "alpha"))
         .to eq(Lain::Epic::Stage.new("epic_plan"))
     end
   end
@@ -418,7 +418,7 @@ RSpec.describe Lain::Approval::Gate::Policy do
   # before parking it for the morning queue. It is the Adjudicator wearing the
   # seam `[epics.gates]` selects, so `deferred` stays the policy that spends
   # nothing and this is the one that spikes first.
-  describe Lain::Approval::Gate::Policy::Adjudicated do
+  describe Lain::Epic::Gate::Policy::Adjudicated do
     # The Gate, the evidence journal and the decisions read back are ONE
     # handle here, which is the wiring this policy exists to make unmissable --
     # `gate` (defined above) is built from whatever `journal` answers.
@@ -499,7 +499,7 @@ RSpec.describe Lain::Approval::Gate::Policy do
     it "refuses a second terminal verdict over one address, because it reads back the journal it wrote" do
       decide(adjudicated)
 
-      expect { decide(adjudicated) }.to raise_error(Lain::Approval::Gate::Adjudicator::AlreadyDecided)
+      expect { decide(adjudicated) }.to raise_error(Lain::Epic::Gate::Adjudicator::AlreadyDecided)
     end
 
     it "refuses a journal it cannot read back, rather than a guard that never fires" do
@@ -523,11 +523,11 @@ RSpec.describe Lain::Approval::Gate::Policy do
     end
 
     it "names the stage when the refusal comes through the factory, as its sibling refusals do" do
-      deps = Lain::Approval::Gate::Policies::Deps.new(queue:, asker: nil, role_spawn: spawn_stub, brief:,
-                                                      journal: Lain::Journal.new(io: journal_io))
+      deps = Lain::Epic::Gate::Policies::Deps.new(queue:, asker: nil, role_spawn: spawn_stub, brief:,
+                                                  journal: Lain::Journal.new(io: journal_io))
 
-      expect { Lain::Approval::Gate::Policies.for(stage: "research", config: config_with(research: "adjudicated"), deps:) }
-        .to raise_error(Lain::Approval::Gate::Policies::Refusal) do |error|
+      expect { Lain::Epic::Gate::Policies.for(stage: "research", config: config_with(research: "adjudicated"), deps:) }
+        .to raise_error(Lain::Epic::Gate::Policies::Refusal) do |error|
           expect(error.kind).to eq(:unusable_seam)
           expect(error.message).to include("research")
           expect(error.message).to include("adjudicated")
@@ -536,27 +536,27 @@ RSpec.describe Lain::Approval::Gate::Policy do
     end
 
     it "wears the terminal label the journal already uses, so config and record name one thing" do
-      expect(described_class::NAME).to eq(Lain::Approval::Gate::Adjudicator::TERMINAL_POLICY)
+      expect(described_class::NAME).to eq(Lain::Epic::Gate::Adjudicator::TERMINAL_POLICY)
     end
 
     it "is selectable from [epics.gates] and built from the one dependencies value" do
-      deps = Lain::Approval::Gate::Policies::Deps.new(queue:, asker: nil, journal:,
-                                                      role_spawn: spawn_stub, brief:)
+      deps = Lain::Epic::Gate::Policies::Deps.new(queue:, asker: nil, journal:,
+                                                  role_spawn: spawn_stub, brief:)
 
-      expect(Lain::Approval::Gate::Policies.for(stage: "research", config: config_with(research: "adjudicated"),
-                                                deps:))
+      expect(Lain::Epic::Gate::Policies.for(stage: "research", config: config_with(research: "adjudicated"),
+                                            deps:))
         .to be_a(described_class)
     end
 
     it "refuses at wiring time in a session that never wired the adjudication seams" do
-      deps = Lain::Approval::Gate::Policies::Deps.new(queue:, asker: nil, journal:)
+      deps = Lain::Epic::Gate::Policies::Deps.new(queue:, asker: nil, journal:)
 
-      expect { Lain::Approval::Gate::Policies.for(stage: "research", config: config_with(research: "adjudicated"), deps:) }
-        .to raise_error(Lain::Approval::Gate::Policies::Refusal, /role_spawn.*brief|brief.*role_spawn/m)
+      expect { Lain::Epic::Gate::Policies.for(stage: "research", config: config_with(research: "adjudicated"), deps:) }
+        .to raise_error(Lain::Epic::Gate::Policies::Refusal, /role_spawn.*brief|brief.*role_spawn/m)
     end
 
     it "leaves `deferred` the policy that spends nothing -- both stay selectable" do
-      expect(Lain::Approval::Gate::Policies.names).to include("deferred", "adjudicated")
+      expect(Lain::Epic::Gate::Policies.names).to include("deferred", "adjudicated")
     end
   end
 end

@@ -141,7 +141,7 @@ module Lain
       def named? = reason == :named
       def explanation = EXPLANATIONS.fetch(reason)
 
-      # Whether {Approval::SecretSurface} may apply an approve to a call this verdict gated.
+      # Whether {Approval::Parked::SecretSurface} may apply an approve to a call this verdict gated.
       def oracle_approvable? = ORACLE_APPROVABLE.include?(reason)
     end
 

@@ -6,7 +6,7 @@
 # STAGE-BOUNDARY rule: a stage may only open once every earlier stage's sign-off
 # partition is drained AND carries an approval, per epic.
 RSpec.describe Lain::Epic::Stage do
-  let(:queue) { Lain::Approval::SignoffQueue.new }
+  let(:queue) { Lain::Epic::SignoffQueue.new }
 
   def stage(name) = described_class.new(name)
 
@@ -17,8 +17,8 @@ RSpec.describe Lain::Epic::Stage do
   # Folded the way a journaled sign-off is, since a verdict reaches the queue
   # only as a decision record.
   def decide(approved:, epic_slug:, stage:, digest:, **scope)
-    queue.apply(Lain::Approval::GateDecision.new(artifact_digest: digest, epic_slug:, stage:, approved:,
-                                                 answered_by: "human", policy: "signoff", latency: 1.0, **scope)
+    queue.apply(Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug:, stage:, approved:,
+                                             answered_by: "human", policy: "signoff", latency: 1.0, **scope)
                                             .to_journal)
   end
 

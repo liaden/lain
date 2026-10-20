@@ -29,7 +29,7 @@ RSpec.describe Lain::Telemetry::ApprovalPending do
   end
 
   it "is built from a parked Pending, carrying neither its clock nor its decision" do
-    pending = Lain::Approval::Queue::Pending.new(
+    pending = Lain::Approval::Parked::Queue::Pending.new(
       effect: Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "cmd" => "ls" }),
       identity: Lain::Requester.new(name: "the-agent"), clock: -> { 0.0 }
     )
@@ -40,7 +40,7 @@ RSpec.describe Lain::Telemetry::ApprovalPending do
   end
 
   it "says so when the Pending it is built from may be decided by a person only" do
-    pending = Lain::Approval::Queue::Pending.new(
+    pending = Lain::Approval::Parked::Queue::Pending.new(
       effect: Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: {}),
       identity: Lain::Requester.main, clock: -> { 0.0 }, humans_only: true
     )
@@ -49,7 +49,7 @@ RSpec.describe Lain::Telemetry::ApprovalPending do
   end
 
   it "carries the notes of the Pending it is built from, and omits the key when there are none" do
-    pending = Lain::Approval::Queue::Pending.new(
+    pending = Lain::Approval::Parked::Queue::Pending.new(
       effect: Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: {}),
       identity: Lain::Requester.main, clock: -> { 0.0 }, notes: ["cat is /bin/cat"]
     )

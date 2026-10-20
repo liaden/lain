@@ -219,7 +219,7 @@ module DeletionMap
     Capability.new(
       key: "disclosure",
       # `Deferred` is spelled qualified and `Upfront` is not, and the leaf name
-      # is the whole reason: `Approval::Gate::Policy::Deferred` is a live class
+      # is the whole reason: `Epic::Gate::Policy::Deferred` is a live class
       # ending in the same segment, so a bare `Deferred` here would report four
       # files of the approval gate as unlisted consumers of a toolset strategy
       # they have never heard of.

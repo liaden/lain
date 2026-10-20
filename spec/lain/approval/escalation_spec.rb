@@ -160,7 +160,7 @@ module EscalationSpecSupport
   end
 
   # A queue-shaped rung stand-in: answers a fixed Boolean the way
-  # {Lain::Approval::Queue#call} does, without parking a fiber.
+  # {Lain::Approval::Parked::Queue#call} does, without parking a fiber.
   class Surface
     def initialize(answer) = @answer = answer
     def call(_effect, _context) = @answer
@@ -217,7 +217,7 @@ module EscalationSpecSupport
 end
 
 RSpec.describe Lain::Approval::Escalation do
-  def asked_as(name) = Lain::Approval::PolicySwitch::Requested.new(nil, name)
+  def asked_as(name) = Lain::Approval::Parked::PolicySwitch::Requested.new(nil, name)
 
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
@@ -260,7 +260,7 @@ RSpec.describe Lain::Approval::Escalation do
   # Scenario: a deterministic deny settles without reaching anything above it
   # Scenario: an abstention parks for the surfaces above
   describe "where a call settles" do
-    let(:queue) { Lain::Approval::Queue.new(journal:, timeout: 0.05) }
+    let(:queue) { Lain::Approval::Parked::Queue.new(journal:, timeout: 0.05) }
 
     def over(rung) = ladder(rung, described_class::Surfaces.new(queue))
 
@@ -380,7 +380,7 @@ RSpec.describe Lain::Approval::Escalation do
   # Scenario: the ladder remains fail-closed
   describe "fail-closed" do
     it "denies a call that reaches the timeout with no answer from any surface" do
-      queue = Lain::Approval::Queue.new(journal:, timeout: 0.01)
+      queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 0.01)
 
       Sync do
         expect(ladder(described_class::Surfaces.new(queue)).call(effect, nil)).to be(false)
@@ -440,7 +440,7 @@ RSpec.describe Lain::Approval::Escalation do
   # `ask` and `auto` share every rung but the bottom one, so the session's own
   # refusals decide under both.
   describe "the two approval levels' ladders" do
-    let(:queue) { Lain::Approval::Queue.new(journal:, timeout: 0.05) }
+    let(:queue) { Lain::Approval::Parked::Queue.new(journal:, timeout: 0.05) }
     let(:classifiers) { EscalationSpecSupport::Classifiers.new(home: "/home/tester", base: "/srv/project") }
 
     def automatic(rules: [], triage: described_class::Triage.new)
@@ -644,7 +644,7 @@ RSpec.describe Lain::Approval::Escalation do
     end
 
     it "reads a rung's own ladder that decided nothing as an abstention, keeping its reason as the note" do
-      queue = Lain::Approval::Queue.new(journal:, timeout: 0.05)
+      queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 0.05)
 
       ladder(EscalationSpecSupport::Undecided.new, described_class::Surfaces.new(queue)).call(effect, nil)
 
@@ -664,7 +664,7 @@ RSpec.describe Lain::Approval::Escalation do
   # exists to escalate to, and suppressing their answer inverts it.
   describe "a fault, and who is entitled to answer over one" do
     def settled_by(rung, surface:, approve: true, context: nil, **authority)
-      queue = Lain::Approval::Queue.new(journal:, timeout: 1)
+      queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 1)
       built = ladder(rung, described_class::Surfaces.new(queue))
       answer = nil
       Sync do |task|
@@ -709,7 +709,7 @@ RSpec.describe Lain::Approval::Escalation do
     end
 
     it "records an abandoned call as an automatic deny by the surfaces rung, and the stop still propagates" do
-      queue = Lain::Approval::Queue.new(journal:, timeout: 5)
+      queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 5)
       built = ladder(described_class::Surfaces.new(queue))
       stopped = nil
       Sync do |task|
@@ -729,7 +729,7 @@ RSpec.describe Lain::Approval::Escalation do
     end
 
     it "suppresses the secret oracle's allow too: a local model is a machine, not a person" do
-      expect(settled_by(faulting, surface: Lain::Approval::SecretSurface::SURFACE)).to be(false)
+      expect(settled_by(faulting, surface: Lain::Approval::Parked::SecretSurface::SURFACE)).to be(false)
       expect(rulings.last).to include("rung" => "rules", "verdict" => "deny")
     end
 
@@ -1452,7 +1452,7 @@ RSpec.describe Lain::Approval::Escalation do
     end
 
     it "does not mark a surface's refusal final, since a human or a closed window can answer otherwise next time" do
-      queue = Lain::Approval::Queue.new(journal:, timeout: 0.01)
+      queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 0.01)
 
       ruling = Sync { ladder(described_class::Surfaces.new(queue)).rule(effect, nil) }
 
@@ -1495,7 +1495,7 @@ RSpec.describe Lain::Approval::Escalation do
   # from automatic approval, and the bar rides the context the call is judged
   # in, so the ladder's deterministic rungs stay what they were.
   describe "a context barring automatic approval" do
-    let(:queue) { Lain::Approval::Queue.new(journal:, timeout: 0.05) }
+    let(:queue) { Lain::Approval::Parked::Queue.new(journal:, timeout: 0.05) }
 
     def carried(barred:) = Lain::Middleware::WithholdAutomaticOutput::Carried.new(:the_session, barred:)
 
@@ -1596,7 +1596,7 @@ RSpec.describe Lain::Approval::Escalation do
   end
 
   describe ".for, which is how a session wires it" do
-    let(:queue) { Lain::Approval::Queue.new(journal:, timeout: 0.05) }
+    let(:queue) { Lain::Approval::Parked::Queue.new(journal:, timeout: 0.05) }
     let(:built) { described_class.for(queue:, tools:, journal:, rules: [EscalationSpecSupport::Raiser.new]) }
 
     it "orders the rungs triage, rules, surfaces -- deterministic before the human" do

@@ -114,7 +114,7 @@ RSpec.describe Lain::Arm::OneShot do
       types = tee.seen.map { |event| event.to_journal["type"] }
 
       expect(tee.seen).not_to be_empty
-      expect(tee.seen.grep(Lain::Approval::GateDecision)).to be_empty
+      expect(tee.seen.grep(Lain::Epic::GateDecision)).to be_empty
       expect(types).to include("turn_usage")
       expect(types).not_to include("gate_decision")
     end

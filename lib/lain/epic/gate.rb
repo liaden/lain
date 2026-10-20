@@ -3,10 +3,7 @@
 require "async"
 
 module Lain
-  module Approval
-    # Construction contracts for the records below: a {Declarative::Carrier}
-    # checked BEFORE the auto-frozen Data value exists, so the record never
-    # touches ActiveModel and stays `Ractor.shareable?`.
+  module Epic
     module Contracts
       # {Gate::Answer} is what decides whether a digest is registered, so a
       # non-boolean here is worse than the same value in {GateDecision}: `"yes"`
@@ -130,7 +127,7 @@ module Lain
     #
     # == Two things in this codebase are called a gate
     #
-    # * {Approval::Gate} (here) gates an ARTIFACT by its content address, across
+    # * {Epic::Gate} (here) gates an ARTIFACT by its content address, across
     #   a whole stage of work. An issue's acceptance criteria are gated HERE
     #   too, composed into that issue's plan, rather than by a gate of their
     #   own that could approve criteria no plan was written to.
@@ -247,7 +244,7 @@ module Lain
       # nor the one-word fix.
       class NoReactor < Error; end
 
-      MISSING_REACTOR = "Approval::Gate#call parks on the asker's promise -- run it inside Sync { } or " \
+      MISSING_REACTOR = "Epic::Gate#call parks on the asker's promise -- run it inside Sync { } or " \
                         "Async { } (there is no reactor on this fiber)"
       private_constant :MISSING_REACTOR
 

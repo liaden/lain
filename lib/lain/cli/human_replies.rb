@@ -983,7 +983,7 @@ module Lain
         private
 
         # Every item off the queue and the ones the block keeps put back, in
-        # order and with no yield between -- {Approval::Queue}'s own way of
+        # order and with no yield between -- {Approval::Parked::Queue}'s own way of
         # editing a buffer it cannot index. Answers everything that was taken.
         def rotated(&block)
           taken = Array.new(@questions.size) { @questions.dequeue(timeout: 0) }.compact
@@ -996,7 +996,7 @@ module Lain
       # The approval list nobody wired, and a fourth object because it is a
       # fourth fact: a run can have an editor, its views and a changeset review
       # all bound and still have no approval list -- an unattended run wires no
-      # {Approval::Queue} to render -- so a human told "no editor is attached"
+      # {Approval::Parked::Queue} to render -- so a human told "no editor is attached"
       # would be told something false about the thing in front of them.
       #
       # Named for the LIST'S ABSENCE rather than whatever caused it, as
@@ -1024,7 +1024,7 @@ module Lain
       # The cut from {HumanReplies} is the RAISE: what stayed there routes
       # ANSWERS, each reaching the Store or a promise and able to raise. An
       # approval verdict is the one member here that reaches a promise and
-      # belongs on this side anyway, because {Approval::Queue::Pending#decide}
+      # belongs on this side anyway, because {Approval::Parked::Queue::Pending#decide}
       # is single-shot and answers a lost race with `false` rather than with
       # {Promise::AlreadyResolved} -- a value this object reports, never an
       # exception somebody else's rescue has to catch.

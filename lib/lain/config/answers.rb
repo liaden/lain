@@ -14,7 +14,7 @@ module Lain
     # `Config::Approval` constant would win Ruby's lexical lookup over
     # `Lain::Approval` for every reference lexically inside {Config}, in any
     # file of this unit -- {Epics::Gates} asks
-    # `Approval::Gate::Policies.known?` -- and the failure would be a
+    # `Epic::Gate::Policies.known?` -- and the failure would be a
     # NameError nowhere near the constant that caused it.
     #
     # The shape is an array of tables per strength, because that is the one

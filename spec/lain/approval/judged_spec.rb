@@ -38,7 +38,7 @@ RSpec.describe Lain::Approval::Judged do
   let(:root) { "/home/tester/project" }
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
-  let(:queue) { Lain::Approval::Queue.new(journal:, timeout: 5) }
+  let(:queue) { Lain::Approval::Parked::Queue.new(journal:, timeout: 5) }
   let(:policy) do
     Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root, root:), home:, root:)
   end
@@ -140,7 +140,7 @@ RSpec.describe Lain::Approval::Judged do
     it "tells the judge a child's task as model-written, never the human's line" do
       heard = Lain::Approval::Judge::Heard.new
       heard.remember("summarize the README")
-      child = Lain::Approval::PolicySwitch::Requested.new(context, "researcher", task: "find the flaky spec")
+      child = Lain::Approval::Parked::PolicySwitch::Requested.new(context, "researcher", task: "find the flaky spec")
 
       prompt = prompt_under(heard, within: child)
 
@@ -305,7 +305,7 @@ RSpec.describe Lain::Approval::Judged do
 
     ruling = Sync do |task|
       settled = task.async { ladder.rule(bash, context) }
-      task.with_timeout(1) { queue.dequeue }.approve(surface: Lain::Approval::SecretSurface::SURFACE)
+      task.with_timeout(1) { queue.dequeue }.approve(surface: Lain::Approval::Parked::SecretSurface::SURFACE)
       settled.wait
     end
 

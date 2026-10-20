@@ -42,7 +42,7 @@ module Lain
     # parent's correlation -- can be consumed only by the child's own turn, so no
     # other carrier could ever retire it.
     #
-    # The same record has a second producer: a settled {Approval::Gate} writes
+    # The same record has a second producer: a settled {Epic::Gate} writes
     # one with `turn: nil` naming the question it asked, which no committed turn
     # ever cites because a gate is no tool call. It arrives on the same carrier
     # and needs nothing new here -- {#retire} reads only the digests.

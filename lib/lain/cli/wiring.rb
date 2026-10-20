@@ -209,14 +209,14 @@ module Lain
       # whenever the chat runs the judge's own model.
       #
       # @param backend [Backend] the run's flag resolution
-      # @return [Approval::SecretSurface, nil]
+      # @return [Approval::Parked::SecretSurface, nil]
       def secret_surface(backend)
         return nil unless options[:secret_oracle]
 
         @secret_surface ||= begin
           journal = goal_journal
-          Approval::SecretSurface.new(oracle: secret_read(backend, journal), journal:,
-                                      path_gate: Approval::PathGate.new(@switchboard.sensitivity))
+          Approval::Parked::SecretSurface.new(oracle: secret_read(backend, journal), journal:,
+                                              path_gate: Approval::Parked::PathGate.new(@switchboard.sensitivity))
         end
       end
 

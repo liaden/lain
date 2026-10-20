@@ -8,14 +8,14 @@ module Lain
     # gate, and report the verdict.
     #
     # Everything here is assembly: this class picks the epic, reads the artifact,
-    # wires {Epic::Submission}, {Approval::Gate::Policies},
-    # {Approval::Gate.from_journal}, {Approval::Gate::Policy::Boundary} and
+    # wires {Epic::Submission}, {Lain::Epic::Gate::Policies},
+    # {Lain::Epic::Gate.from_journal}, {Lain::Epic::Gate::Policy::Boundary} and
     # {Epic::Scribe} together, and turns what comes back into a String. It prints
     # nothing.
     #
     # == Wiring is resolved before anything is decided
     #
-    # {Approval::Gate::Policies.for_all} resolves EVERY stage's policy, not just
+    # {Lain::Epic::Gate::Policies.for_all} resolves EVERY stage's policy, not just
     # the one being submitted, which is what makes an unbuildable policy a startup
     # refusal naming the stage, the policy and the seam, rather than a
     # NoMethodError on the first overnight gate with nobody watching.
@@ -27,7 +27,7 @@ module Lain
     # == Draining is journaling, here too
     #
     # Nothing here holds state between invocations. A verdict is a journaled
-    # {Approval::GateDecision}; a deferral is that record plus a park the next
+    # {Lain::Epic::GateDecision}; a deferral is that record plus a park the next
     # fold rebuilds; what an approval advances is {Epic::Advance}'s to write.
     #
     # == Every constant from the epic tier is spelled in full
@@ -47,7 +47,7 @@ module Lain
       # frontend may touch `$stdout`/`$stderr`.
       #
       # `#ask` writes the question and returns an UNRESOLVED promise: the read
-      # runs on a fiber of its own, so {Approval::Gate#await}'s clock -- which
+      # runs on a fiber of its own, so {Lain::Epic::Gate#await}'s clock -- which
       # starts once `#ask` returns -- spans the actual wait rather than a wait
       # already over. Resolving synchronously, as this used to, made every
       # journaled latency read as instant no matter how long a human took to
@@ -68,7 +68,7 @@ module Lain
         NO_ASKER = "this session wired no asker"
 
         # nil for a session with no terminal, and the nil is the CONTRACT rather
-        # than a missing Null Object: {Approval::Gate::Policies::Deps} reads a nil
+        # than a missing Null Object: {Lain::Epic::Gate::Policies::Deps} reads a nil
         # asker as "this session cannot ask anybody", which turns a stage
         # configured `interactive` in a non-interactive session into a named
         # wiring-time refusal instead of a prompt nobody can answer.
@@ -96,17 +96,17 @@ module Lain
         end
 
         # @param question [String] the artifact's own rendering
-        # @return [Lain::Promise] resolves with an {Approval::Gate::Answer} once
+        # @return [Lain::Promise] resolves with an {Lain::Epic::Gate::Answer} once
         #   the read returns
         def ask(question)
           @output.write("#{question} [y/N] ")
           Promise.new.tap { |promise| Async::Task.current.async { promise.resolve(answer(@input.gets)) } }
         end
 
-        # @return [Approval::Gate::Window] no reactor timer is armed for this
+        # @return [Lain::Epic::Gate::Window] no reactor timer is armed for this
         #   wait: the person reading the question has nobody else to hand the
         #   reactor to, and an unattended wait here ends only by Ctrl-C.
-        def window = Approval::Gate::Window::Unbounded
+        def window = Lain::Epic::Gate::Window::Unbounded
 
         private
 
@@ -116,14 +116,14 @@ module Lain
       # The asker the chat lends this command, heard in the words its gate's
       # question names. That asker resolves with what the human WROTE -- bare
       # words at `human>` and `:LainReply`, a rendered answer set carrying them
-      # from lain://question -- and {Approval::Gate} reads verdicts, not words.
+      # from lain://question -- and {Lain::Epic::Gate} reads verdicts, not words.
       # So the reading happens here, where the question's vocabulary and the
       # chat's asker meet, and the gate stays blind to which surface spoke.
       #
       # It forwards `#withdraw` and, through {Hearing}, `#digest`, so the gate
       # still frees the asker and still retires the question it asked.
       class Heard
-        # nil stays nil: {Approval::Gate::Policies::Deps} reads a nil asker as
+        # nil stays nil: {Lain::Epic::Gate::Policies::Deps} reads a nil asker as
         # "nobody can be asked", and wrapping it would hide exactly that.
         def self.over(asker) = asker && new(asker)
 
@@ -291,7 +291,7 @@ module Lain
       end
 
       # One handle an adjudicated gate can write through AND read back, which
-      # {Approval::Gate::Policy::Adjudicated} demands and a {Journal} cannot
+      # {Lain::Epic::Gate::Policy::Adjudicated} demands and a {Journal} cannot
       # give: it only writes. A read re-walks the session journals the
       # decision's journal lives among, so the terminal-verdict guard sees what
       # this command itself just wrote. That is also the contract on a lent
@@ -307,7 +307,7 @@ module Lain
         end
 
         def record(entry)
-          @decided << entry if entry.is_a?(Approval::GateDecision)
+          @decided << entry if entry.is_a?(Lain::Epic::GateDecision)
           @journal.record(entry)
           self
         end
@@ -318,16 +318,16 @@ module Lain
         #   digest's gate with nobody answering; nil when somebody answered
         def expired(digest)
           decision = latest(digest)
-          decision.latency if decision&.answered_by == Approval::Gate::TIMEOUT_SURFACE
+          decision.latency if decision&.answered_by == Lain::Epic::Gate::TIMEOUT_SURFACE
         end
 
         # @param digest [String] the submitted artifact's address
         # @return [Boolean] whether this command's own latest decision on the digest deferred it
         def deferred?(digest)
-          latest(digest)&.policy == Approval::SignoffQueue::DEFERRED_POLICY
+          latest(digest)&.policy == Lain::Epic::SignoffQueue::DEFERRED_POLICY
         end
 
-        def each(&block) = SessionJournals.new(dir: @dir, types: [Approval::SignoffQueue::JOURNAL_TYPE]).each(&block)
+        def each(&block) = SessionJournals.new(dir: @dir, types: [Lain::Epic::SignoffQueue::JOURNAL_TYPE]).each(&block)
 
         private
 
@@ -348,11 +348,11 @@ module Lain
           @advance = advance
         end
 
-        # `Sync` because {Approval::Gate#call} parks on the asker's promise, and
+        # `Sync` because {Lain::Epic::Gate#call} parks on the asker's promise, and
         # EVERY policy inherits that precondition -- {Policy::HandsOff} included,
         # whose answer needs no human. No policy-shaped exception to remember.
         #
-        # Ctrl-C is NOT caught here. {Approval::Gate} has already journaled the
+        # Ctrl-C is NOT caught here. {Lain::Epic::Gate} has already journaled the
         # fail-closed decision by the time its own `Async::Cancel` handling
         # re-raises, and once every task under this `Sync` has unwound, what
         # climbs out of it is the plain `Interrupt` the human sent -- the same
@@ -509,7 +509,7 @@ module Lain
       # decided.
       module WholePipeline
         def self.call(stage, config:, deps:)
-          Approval::Gate::Policies.for_all(config:, deps:, asking: [stage]).fetch(stage)
+          Lain::Epic::Gate::Policies.for_all(config:, deps:, asking: [stage]).fetch(stage)
         end
       end
 
@@ -517,7 +517,7 @@ module Lain
       # adjudication spike prompt, and another stage's adjudicated gate must
       # not refuse this one.
       module SubmittedStage
-        def self.call(stage, config:, deps:) = Approval::Gate::Policies.for(stage:, config:, deps:)
+        def self.call(stage, config:, deps:) = Lain::Epic::Gate::Policies.for(stage:, config:, deps:)
       end
 
       # A chat's submitter decides into the chat's own session journal, lent
@@ -628,7 +628,7 @@ module Lain
       # @raise [PlanNotApproved] naming the plan digest that carries no approval
       def ensure_plan_approved!(issue, slug = nil)
         plan = Artifacts.new(home: home(slug), root: @root, issue:).submission(Lain::Epic::Stage.new("issue_plan"))
-        ensure_approved!(Approval::SignoffQueue.from_journal(journals.to_a), plan)
+        ensure_approved!(Lain::Epic::SignoffQueue.from_journal(journals.to_a), plan)
       end
 
       private
@@ -639,7 +639,7 @@ module Lain
       end
 
       # Held around the WHOLE decision, wiring refusal included, because
-      # {Approval::Gate::Policies::Deps} carries a `journal` seam an adjudicating
+      # {Lain::Epic::Gate::Policies::Deps} carries a `journal` seam an adjudicating
       # policy needs before it is built.
       def decide(stage, epic_home, artifacts)
         submission = artifacts.submission(stage)
@@ -655,10 +655,10 @@ module Lain
       end
 
       def settled(stage, submission, required, records, journal)
-        queue = Approval::SignoffQueue.from_journal(records)
+        queue = Lain::Epic::SignoffQueue.from_journal(records)
         open = -> { ensure_open!(stage, submission, queue) }
         policy = policy_for(stage, queue, journal, &open)
-        gate = Approval::Gate.from_journal(records, journal:, timeout: gate_timeout(policy))
+        gate = Lain::Epic::Gate.from_journal(records, journal:, timeout: gate_timeout(policy))
         advance = Lain::Epic::Advance.new(epic_slug: submission.slug, stage:, issue_id: submission.issue_id)
         ready = advance_for(advance, journal)
         return standing(submission, ready) { open.call if advance.moves? } if standing?(queue, submission)
@@ -667,13 +667,13 @@ module Lain
         Verdict.new(submission:, stage:, policy:, gate:, queue:, advance: ready, journal:).call
       end
 
-      # The boundary a verdict meets inside {Approval::Gate::Policy#decide},
+      # The boundary a verdict meets inside {Lain::Epic::Gate::Policy#decide},
       # asked here only on the two routes that never reach it: a standing
       # approval's repair, and a policy that could not be built.
       def ensure_open!(stage, submission, queue)
-        Approval::Gate::Policy::Boundary.new(queue)
-                                        .ensure_open!(stage.name, epic_slug: submission.slug,
-                                                                  issue_id: submission.issue_id)
+        Lain::Epic::Gate::Policy::Boundary.new(queue)
+                                          .ensure_open!(stage.name, epic_slug: submission.slug,
+                                                                    issue_id: submission.issue_id)
       end
 
       # The ASKER says its own window ({Prompt#window}), never a type check
@@ -683,9 +683,9 @@ module Lain
       # own terminal, which has nobody else to hand the reactor to while a
       # human reads and answers -- answers `#window` at all.
       def gate_timeout(policy)
-        return Approval::Gate::DEFAULT_TIMEOUT unless policy.name == Approval::Gate::DEFAULT_POLICY
+        return Lain::Epic::Gate::DEFAULT_TIMEOUT unless policy.name == Lain::Epic::Gate::DEFAULT_POLICY
 
-        @asker.respond_to?(:window) ? @asker.window : Approval::Gate::DEFAULT_TIMEOUT
+        @asker.respond_to?(:window) ? @asker.window : Lain::Epic::Gate::DEFAULT_TIMEOUT
       end
 
       # Read BEFORE anything is decided, as the queue reads before it signs
@@ -723,10 +723,10 @@ module Lain
       # A missing asker is the wrong refusal to read while the stage could not
       # open anyway, so the yielded boundary check goes first.
       def policy_for(stage, queue, journal)
-        deps = Approval::Gate::Policies::Deps.new(queue:, asker: Heard.over(@asker), journal:,
-                                                  role_spawn: @role_spawn, brief: @brief)
+        deps = Lain::Epic::Gate::Policies::Deps.new(queue:, asker: Heard.over(@asker), journal:,
+                                                    role_spawn: @role_spawn, brief: @brief)
         @policies.call(stage.name, config: @config, deps:)
-      rescue Approval::Gate::Policies::Refusal => e
+      rescue Lain::Epic::Gate::Policies::Refusal => e
         raise unless e.seams == ["asker"]
 
         yield
@@ -736,9 +736,9 @@ module Lain
       # The factory's sentence names a seam, which is the wiring's word for it.
       # A human who ran this from cron needs the reason and the line to change.
       def unattended(refusal, deps)
-        first, *others = Approval::Gate::Policies.runnable(deps).map { |policy| ":#{policy}" }
+        first, *others = Lain::Epic::Gate::Policies.runnable(deps).map { |policy| ":#{policy}" }
         alternatives = others.empty? ? "" : " (or #{others.join(" or ")})"
-        Approval::Gate::Policies::Refusal.new(
+        Lain::Epic::Gate::Policies::Refusal.new(
           "epic stage #{refusal.stage.inspect} is configured for the #{refusal.policy.inspect} gate policy, but " \
           "#{@unheard}, so nobody can answer it; add `gate :#{refusal.stage}, #{first}`#{alternatives} to the " \
           "`epics` block of .lain/config.rb to decide it unattended",
@@ -756,7 +756,7 @@ module Lain
       # same artifact twice, journaled two verdicts, and advanced the stage twice.
       # One object per process is a property of the executable, not of this class.
       def journals
-        SessionJournals.new(dir: @paths.sessions_dir, types: [Approval::SignoffQueue::JOURNAL_TYPE])
+        SessionJournals.new(dir: @paths.sessions_dir, types: [Lain::Epic::SignoffQueue::JOURNAL_TYPE])
       end
 
       # A second verdict over the partition's standing approval of these bytes
@@ -785,13 +785,13 @@ module Lain
       # policy spends no tokens, so a session that adjudicates nothing never
       # constructs a provider and never needs a key, while one that does is
       # refused for a missing key at wiring -- the same moment
-      # {Approval::Gate::Policies.for_all} refuses everything else.
+      # {Lain::Epic::Gate::Policies.for_all} refuses everything else.
       #
       # Every constant is root-qualified: this sits inside {CLI}, whose own
       # classes shadow several top-level names.
       class Adjudication
         # A pair of nils is the "not wired" fact
-        # {Approval::Gate::Policies::Deps} reads, so an `adjudicated` stage
+        # {Lain::Epic::Gate::Policies::Deps} reads, so an `adjudicated` stage
         # handed it is refused by name rather than guessed at.
         Pair = Data.define(:role_spawn, :brief)
         NONE = Pair.new(role_spawn: nil, brief: nil)
@@ -799,7 +799,7 @@ module Lain
         # @param config [#gate_policy_for]
         def self.wanted?(config)
           Lain::Epic::STAGES.any? do |stage|
-            config.gate_policy_for(stage) == Lain::Approval::Gate::Policy::Adjudicated::NAME
+            config.gate_policy_for(stage) == Lain::Epic::Gate::Policy::Adjudicated::NAME
           end
         end
 
@@ -881,7 +881,7 @@ module Lain
         end
 
         # What the spike is told to read. The gate's artifact duck is `#digest`
-        # and `#gate_question` and nothing more, so {Approval::Gate::Adjudicator}
+        # and `#gate_question` and nothing more, so {Lain::Epic::Gate::Adjudicator}
         # deliberately maps no digest to a path; the submission knows its stage,
         # epic and issue, and this maps them onto the epic home.
         class Brief

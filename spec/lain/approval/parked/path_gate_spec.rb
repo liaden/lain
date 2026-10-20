@@ -23,13 +23,13 @@ module PathGateSpecSupport
   end
 end
 
-RSpec.describe Lain::Approval::PathGate do
+RSpec.describe Lain::Approval::Parked::PathGate do
   let(:sensitivity) { Lain::Sensitivity.new(home: "/home/tester", cwd: "/home/tester/project", rules: Lain::Sensitivity::Rules.empty) }
   let(:gate) { described_class.new(Lain::Sensitivity::Policy.new(sensitivity:)) }
 
   def pending(tool, input)
     effect = Struct.new(:name, :input, :tool_use_id).new(tool, input, "tu_1")
-    Lain::Approval::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 })
+    Lain::Approval::Parked::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 })
   end
 
   describe "#path_for" do
@@ -87,9 +87,9 @@ RSpec.describe Lain::Approval::PathGate do
         base = File.realpath(made)
         cwd = File.join(base, "secrets", "sub")
         effect = Struct.new(:name, :input, :tool_use_id).new("read_file", { "path" => "notes.txt" }, "tu_1")
-        parked = Lain::Approval::Queue::Pending.new(effect:, identity: Lain::Requester.main,
-                                                    clock: -> { 0.0 },
-                                                    cwd:, within: base)
+        parked = Lain::Approval::Parked::Queue::Pending.new(effect:, identity: Lain::Requester.main,
+                                                            clock: -> { 0.0 },
+                                                            cwd:, within: base)
         policy = Lain::Sensitivity::Policy.new(
           sensitivity: Lain::Sensitivity.new(home: "/home/tester", cwd: "/elsewhere", rules: Lain::Sensitivity::Rules.empty)
         )
@@ -120,7 +120,7 @@ RSpec.describe Lain::Approval::PathGate do
     let(:read) { Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file", input: { "path" => "readme2.txt" }) }
 
     def park(surface)
-      queue = Lain::Approval::Queue.new(journal: [], timeout: 0.5)
+      queue = Lain::Approval::Parked::Queue.new(journal: [], timeout: 0.5)
       Sync do |task|
         gated = task.async { queue.adjudicate(read, session) }
         pending = task.with_timeout(1) { queue.dequeue }
@@ -132,14 +132,14 @@ RSpec.describe Lain::Approval::PathGate do
 
     it "is claimed by the secret surface, which asks the oracle about the link and judges where it lands" do
       oracle = PathGateSpecSupport::ApprovingOracle.new
-      surface = Lain::Approval::SecretSurface.new(oracle:, threshold: 0.9, journal: [], path_gate: gate)
+      surface = Lain::Approval::Parked::SecretSurface.new(oracle:, threshold: 0.9, journal: [], path_gate: gate)
 
       claimed, settled = park(surface)
 
       expect(claimed).to be(true)
       landing = File.join(@worker, ".env.local")
       expect(oracle.asks).to eq([{ path: "readme2.txt -> #{landing}".inspect, tool: "read_file", region_count: "0" }])
-      expect(settled.surface).to eq(Lain::Approval::Queue::TIMEOUT_SURFACE)
+      expect(settled.surface).to eq(Lain::Approval::Parked::Queue::TIMEOUT_SURFACE)
     end
   end
 
@@ -164,9 +164,10 @@ RSpec.describe Lain::Approval::PathGate do
 
     def claimed?(path)
       read = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file", input: { "path" => path })
-      surface = Lain::Approval::SecretSurface.new(oracle: PathGateSpecSupport::ApprovingOracle.new, threshold: 0.9,
-                                                  journal: [], path_gate: gate)
-      queue = Lain::Approval::Queue.new(journal: [], timeout: 0.5)
+      surface = Lain::Approval::Parked::SecretSurface.new(oracle: PathGateSpecSupport::ApprovingOracle.new,
+                                                          threshold: 0.9,
+                                                          journal: [], path_gate: gate)
+      queue = Lain::Approval::Parked::Queue.new(journal: [], timeout: 0.5)
       Sync do |task|
         parked = task.async { queue.adjudicate(read, session) }
         pending = task.with_timeout(1) { queue.dequeue }

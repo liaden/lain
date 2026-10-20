@@ -4,7 +4,7 @@ require "json"
 require "open3"
 require "stringio"
 
-# Approval::Gate is the artifact gate: any artifact answering #digest and
+# Epic::Gate is the artifact gate: any artifact answering #digest and
 # #gate_question must pass it before an irreversible action consumes that
 # digest. It asks through an ask_human-shaped duck, blocks on the promise with
 # a timeout -> deny, journals a gate_decision attributed to the answering
@@ -13,7 +13,7 @@ require "stringio"
 #
 # `policy:` is carried onto the record as a label, so the policies wrap this
 # one rather than branching inside it.
-RSpec.describe Lain::Approval::Gate do
+RSpec.describe Lain::Epic::Gate do
   # An ask_human-shaped duck: #ask returns a Promise the injected block may
   # resolve (the degenerate sync case) or leave pending forever (the
   # silence-denies path). The block receives the promise and the question.
@@ -305,8 +305,8 @@ RSpec.describe Lain::Approval::Gate do
         require "stringio"
 
         io = StringIO.new
-        gate = Lain::Approval::Gate.new(journal: Lain::Journal.new(io:),
-                                        timeout: Lain::Approval::Gate::Window::Unbounded)
+        gate = Lain::Epic::Gate.new(journal: Lain::Journal.new(io:),
+                                        timeout: Lain::Epic::Gate::Window::Unbounded)
         artifact = Data.define(:digest, :gate_question).new(digest: "blake3:epoll", gate_question: "Approve?")
         reader, writer = IO.pipe
         Thread.new { sleep 0.2; writer.write("go\\n") }
@@ -315,7 +315,7 @@ RSpec.describe Lain::Approval::Gate do
         asker.define_singleton_method(:ask) do |_question|
           Lain::Promise.new.tap do |promise|
             Async::Task.current.async do
-              promise.resolve(Lain::Approval::Gate::Answer.approve("human")) if reader.gets
+              promise.resolve(Lain::Epic::Gate::Answer.approve("human")) if reader.gets
             end
           end
         end
@@ -544,7 +544,7 @@ RSpec.describe Lain::Approval::Gate do
   describe "the reactor precondition" do
     it "names the gate and the missing Sync block rather than raising a bare RuntimeError" do
       expect { gate.call(plan, asker: approve_asker, stage: "epic_plan", epic_slug: "lain-epics") }
-        .to raise_error(described_class::NoReactor, /Approval::Gate.*Sync/m)
+        .to raise_error(described_class::NoReactor, /Epic::Gate.*Sync/m)
     end
   end
 
@@ -599,14 +599,14 @@ RSpec.describe Lain::Approval::Gate do
     # the sign-off queue's own fold refuses it -- never a bare ArgumentError a
     # human reads as a backtrace from `lain epic land`.
     it "refuses a gate_decision whose approved field is \"maybe\" in one line naming the record" do
-      damaged = JSON.generate(Lain::Approval::GateDecision.new(artifact_digest: "blake3:maybe", epic_slug: "demo",
-                                                               stage: "issue_plan", approved: true,
-                                                               answered_by: "human", policy: "interactive",
-                                                               latency: 1.0, issue_id: "a")
+      damaged = JSON.generate(Lain::Epic::GateDecision.new(artifact_digest: "blake3:maybe", epic_slug: "demo",
+                                                           stage: "issue_plan", approved: true,
+                                                           answered_by: "human", policy: "interactive",
+                                                           latency: 1.0, issue_id: "a")
                                                           .to_journal.merge("approved" => "maybe"))
 
       expect { described_class.from_journal([damaged], journal:) }.to raise_error(Lain::Error) { |error|
-        expect(error).to be_a(Lain::Approval::SignoffQueue::UnreadableRecord)
+        expect(error).to be_a(Lain::Epic::SignoffQueue::UnreadableRecord)
         expect(error.message).to include("gate_decision", "blake3:maybe", "approved", "demo/issue_plan/a")
         expect(error.message).not_to include("\n")
       }
@@ -632,7 +632,7 @@ RSpec.describe Lain::Approval::Gate do
     end
   end
 
-  describe Lain::Approval::GateDecision do
+  describe Lain::Epic::GateDecision do
     def record(**overrides)
       described_class.new(artifact_digest: "blake3:abc", epic_slug: "lain-epics", stage: "epic_plan",
                           approved: true, answered_by: "human", policy: "interactive", latency: 0.5,
@@ -712,7 +712,7 @@ RSpec.describe Lain::Approval::Gate do
     end
   end
 
-  describe Lain::Approval::Gate::Answer do
+  describe Lain::Epic::Gate::Answer do
     it "is Ractor-shareable (a boolean and an interned surface String)" do
       expect(described_class.approve(+"human")).to be_deeply_frozen
     end

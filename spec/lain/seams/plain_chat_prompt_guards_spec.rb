@@ -20,7 +20,7 @@ module PlainChatPromptGuards
   APPROVAL = %r{\[y/N\] }
 
   # The chat under test: a real Repl, Conductor, TTY, Intake and the StdinPump
-  # feeding it, HumanReplies, approval surfaces and Approval::Queue, all open for
+  # feeding it, HumanReplies, approval surfaces and Approval::Parked::Queue, all open for
   # the conversation. The one fake is the command registry's fallthrough, which
   # claims every line so no model is involved: the first line parks one gated
   # call once the spec says the human has finished typing ahead.
@@ -44,7 +44,7 @@ module PlainChatPromptGuards
     dir, window_arg, shape, grace = ARGV
     window = Float(window_arg)
     journal_io = File.open(File.join(dir, "journal.ndjson"), "a").tap { |io| io.sync = true }
-    queue = Lain::Approval::Queue.new(journal: Lain::Journal.new(io: journal_io), timeout: window)
+    queue = Lain::Approval::Parked::Queue.new(journal: Lain::Journal.new(io: journal_io), timeout: window)
     tty = Lain::Frontend::TTY.new(channel: Lain::Channel.new, pastel: Pastel.new(enabled: false),
                                   input: Lain::Frontend::StdinPump.keys($stdin),
                                   history_path: File.join(dir, "history"), state_path: File.join(dir, "state.json"))
@@ -974,7 +974,7 @@ RSpec.describe "a plain chat's inline prompts", :seam do
                                     pastel: Pastel.new(enabled: false))
       rail = Lain::Frontend::Intake.new(screen: tty)
       journal_io = StringIO.new
-      queue = Lain::Approval::Queue.new(journal: Lain::Journal.new(io: journal_io), timeout: 0.3)
+      queue = Lain::Approval::Parked::Queue.new(journal: Lain::Journal.new(io: journal_io), timeout: 0.3)
       policy = Lain::Frontend::ApprovalPolicy.new(output: StringIO.new,
                                                   reader: ->(prompt) { rail.read(:approval, prompt) })
 

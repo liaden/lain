@@ -222,7 +222,7 @@ module Lain
           end
 
           def approvals
-            Lain::Forge::LocalLanding::Approvals.from(records(Approval::SignoffQueue::JOURNAL_TYPE).to_a)
+            Lain::Forge::LocalLanding::Approvals.from(records(Lain::Epic::SignoffQueue::JOURNAL_TYPE).to_a)
           end
 
           # FRESH per read, for {SessionJournals}' own reason: it caches its walk.
@@ -681,7 +681,7 @@ module Lain
         # FRESH per read, never memoized: a decision this run just journaled has
         # to be visible to the very next question about it.
         def signoffs
-          SessionJournals.new(dir: @paths.sessions_dir, types: [Approval::SignoffQueue::JOURNAL_TYPE]).to_a
+          SessionJournals.new(dir: @paths.sessions_dir, types: [Lain::Epic::SignoffQueue::JOURNAL_TYPE]).to_a
         end
       end
 

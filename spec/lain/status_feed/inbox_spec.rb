@@ -129,8 +129,8 @@ RSpec.describe Lain::StatusFeed::Inbox do
       asker = Lain::Tools::AskHuman.new(parent: Lain::Timeline.empty(store:))
       artifact = Data.define(:digest, :gate_question).new(digest: "blake3:impl", gate_question: "Approve it?")
       Sync do
-        Lain::Approval::Gate.new(journal: Lain::Journal.new(io:), timeout: 0.02)
-                            .call(artifact, asker:, stage: "implementation", epic_slug: "demo")
+        Lain::Epic::Gate.new(journal: Lain::Journal.new(io:), timeout: 0.02)
+                        .call(artifact, asker:, stage: "implementation", epic_slug: "demo")
       end
       inbox = described_class.new(store:)
       inbox.arrived(asker.last_question)

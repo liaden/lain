@@ -80,7 +80,7 @@ module Lain
           # @param timeout [Numeric] seconds an unanswered question waits before
           #   it keeps
           # @param shell_out_factory [#call] builds the git subprocess runner
-          def initialize(slug:, repo_root:, asker:, journal:, timeout: Lain::Approval::Gate::DEFAULT_TIMEOUT,
+          def initialize(slug:, repo_root:, asker:, journal:, timeout: Lain::Epic::Gate::DEFAULT_TIMEOUT,
                          shell_out_factory: Lain::Shell::Out.public_method(:new))
             @slug = slug
             @repo_root = repo_root
@@ -150,7 +150,7 @@ module Lain
 
           def reply(resolved) = resolved.respond_to?(:words) ? resolved.words.to_s : resolved.to_s
 
-          # For {Approval::Gate#withdrawn}'s and {Approval::Gate#retired}'s
+          # For {Lain::Epic::Gate#withdrawn}'s and {Lain::Epic::Gate#retired}'s
           # reasons: an asker admits one outstanding question, and an inbox
           # lists a question until something in the record retires it.
           def settled(asked)

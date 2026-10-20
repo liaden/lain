@@ -107,7 +107,7 @@ RSpec.describe Lain::Middleware::Sensitivity do
     it "names the default requester when none was given and the context names none" do
       through(layer, reads("#{home}/.ssh/id_ed25519"))
 
-      expect(journal.first).to have_attributes(requester: Lain::Approval::Queue::REQUESTER.name)
+      expect(journal.first).to have_attributes(requester: Lain::Approval::Parked::Queue::REQUESTER.name)
     end
 
     # The reason travels from the VERDICT, not from a constant here: a path a
@@ -327,7 +327,7 @@ RSpec.describe Lain::Middleware::Sensitivity do
     it "refuses a bash call naming a project link to the shadow file at the gate, parking nothing", :seam do
       File.symlink("/etc/shadow", File.join(project, "notes.txt"))
       parked = StringIO.new
-      queue = Lain::Approval::Queue.new(journal: Lain::Journal.new(io: parked), timeout: 0.05)
+      queue = Lain::Approval::Parked::Queue.new(journal: Lain::Journal.new(io: parked), timeout: 0.05)
       shell = Lain::Toolset.new([Lain::Tools::Bash.new])
       ladder = Lain::Approval::Escalation.for(queue:, tools: shell, journal: [],
                                               triage: Lain::Approval::Escalation::Triage.new(policy:))
@@ -391,7 +391,7 @@ RSpec.describe Lain::Middleware::Sensitivity do
 
     it "parks nothing for a human under the asking ladder, since no answer could lift it" do
       parked = StringIO.new
-      queue = Lain::Approval::Queue.new(journal: Lain::Journal.new(io: parked), timeout: 0.05)
+      queue = Lain::Approval::Parked::Queue.new(journal: Lain::Journal.new(io: parked), timeout: 0.05)
       layers = [layer, gate(Lain::Approval::Escalation.for(queue:, tools: readers, journal: []), sensitivity: policy)]
 
       result = dispatch_call("read_file", { "path" => "/etc/shadow" }, toolset: readers, layers:,

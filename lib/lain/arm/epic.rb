@@ -10,7 +10,7 @@ module Lain
     # whichever driver it is handed, and the driver is what answers each gate --
     # the human's own live policy map for progressive, or, for a bench replay, a
     # driver that journals an earlier run's decisions back verbatim with no
-    # policy consulted at all; {Approval::Gate::Policy::HandsOff} at every gate,
+    # policy consulted at all; {Epic::Gate::Policy::HandsOff} at every gate,
     # with nobody asked, for hands-off. Both entries walk the SAME rungs in the
     # same order, which is what makes the pair a measurement of gating rather
     # than two unrelated runs: the policy is carried by the driver this arm is

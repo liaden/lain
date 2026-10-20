@@ -55,14 +55,14 @@ RSpec.describe Lain::Arm::Ladder do
 
     it "has epic-progressive and epic-hands-off visit the same rungs under an all-approve stub, " \
        "with every gated stage resolving to hands_off under hands-off's map" do
-      queue = Lain::Approval::SignoffQueue.new
+      queue = Lain::Epic::SignoffQueue.new
 
       # "epic-progressive" and "epic-hands-off" differ only in which policy
       # each epic-scoped stage runs under -- both are built from the SAME
       # ladder entry, so the rungs each arm's run would visit are identical
       # before either has decided a single gate.
-      deps = Lain::Approval::Gate::Policies::Deps.new(queue:, asker: nil, journal: nil)
-      built = Lain::Approval::Gate::Policies.for_all(config: config_for("hands_off"), deps:)
+      deps = Lain::Epic::Gate::Policies::Deps.new(queue:, asker: nil, journal: nil)
+      built = Lain::Epic::Gate::Policies.for_all(config: config_for("hands_off"), deps:)
 
       # Every GATED stage (every member of Epic::STAGES) resolves to
       # hands_off; `land` carries no gate policy at all because it is not a

@@ -77,7 +77,7 @@ flowchart TB
       GATHER["ToolRunner#gather<br/><i>sibling fiber per parallel_safe? tool</i><br/>unsafe tools are barriers"]
       SUP["Supervisor task<br/><i>outlives any single #ask</i><br/>hosts actor subagent fibers"]
       EAGER["Oracle::Eager<br/><i>transient task per summary</i><br/>reaped with the reactor"]
-      APPR["Approval::Queue<br/><i>fibers park on Async primitives</i>"]
+      APPR["Approval::Parked::Queue<br/><i>fibers park on Async primitives</i>"]
     end
     subgraph THREADS["helper threads · frontend drains only, never agent work"]
       TTYT["Frontend::TTY renderer"]
@@ -1231,7 +1231,7 @@ stays released, so delete-then-restore at that path is re-sent unasked. That is 
 (nothing can reconcile what it did not look at) but it compounds, and a file read only ever under
 a size cap never reconciles at all.
 
-The ledger is run-scoped, mutable, and owned beside the run's one `Approval::Queue` and one
+The ledger is run-scoped, mutable, and owned beside the run's one `Approval::Parked::Queue` and one
 `Sensitivity::Policy`. There is deliberately no persistence path and no Null: remembering "yes,
 send `.env.local`" across runs would turn one approval into a standing one,
 and a Null would answer "nothing outstanding" forever — a release control that
@@ -1301,7 +1301,7 @@ the Thor flag declarations and the `Lain::Error` to `Thor::Error` mapping.
   tool stack `CLI::ToolGuard` builds over the run's `Switchboard` in front of it (`#agent_over`),
   the `Supervisor` (`lib/lain/supervisor.rb`), the
   `Skill::RoleSpawn` seam (`lib/lain/skill/role_spawn.rb`) a `@role/skill` line folds through,
-  and the `Approval::Queue` (`lib/lain/approval/queue.rb`) that gates tool calls. It hands back
+  and the `Approval::Parked::Queue` (`lib/lain/approval/parked/queue.rb`) that gates tool calls. It hands back
   a built `Agent` and exposes the `ask_human` and `questions` seams `Repl` needs.
 - **`Repl`** owns one conversation. It reads `you>` prompts through `CLI::Conductor`
   (`lib/lain/cli/conductor.rb`, the shutdown and signal bracket; see `lib/lain/cli/shutdown.rb`
@@ -2075,8 +2075,8 @@ NDJSON records, so any single number needs its criterion stated.
 `klass < Lain::Telemetry::Journalable`, which counts inheritance and not just `include`
 (`Telemetry::RequestResent` subclasses the `RequestSent` **event** in `telemetry/request_sent.rb`
 and is the one a grep for `include` misses). That is **53** classes, each with a distinct
-`journal_type` string: 34 inside `lib/lain/telemetry/` and **19 defined elsewhere** — `Approval::GateDecision`,
-`Approval::Gate::Adjudicator::GateEvidence`, `Epic::IssueTransition`, `Epic::StageTransition`,
+`journal_type` string: 34 inside `lib/lain/telemetry/` and **19 defined elsewhere** — `Epic::GateDecision`,
+`Epic::Gate::Adjudicator::GateEvidence`, `Epic::IssueTransition`, `Epic::StageTransition`,
 `Compaction::Source::CompactionDecision`, `Compaction::Source::CompactionPrepared`,
 `Compaction::Source::CompactionApplied`, `Compaction::Source::DerivationRefused`,
 `Compaction::Cold::CacheColdConfirmed`, `Supervisor::DrainTimedOut`, `Supervisor::Restart::Restarted`,
@@ -2098,8 +2098,8 @@ and is the one a grep for `include` misses). That is **53** classes, each with a
 
 *Records written as plain Hashes, with no `Journalable` class behind them* — at least ten more:
 `session` / `turn` / `rewound` (`session_record.rb:27-29`, and `bench/session.rb:67-68` writes the
-first two for the bench), `journal_error` (`journal.rb:276`, `approval/queue.rb:364`),
-`approval_decision` (a hand-written `#to_journal` at `approval/queue.rb:203`, over
+first two for the bench), `journal_error` (`journal.rb:276`, `approval/parked/queue.rb:364`),
+`approval_decision` (a hand-written `#to_journal` at `approval/parked/queue.rb:203`, over
 `tool_use_id`, `requester`, `tool`, `surface`, `verdict`, `timed_out` and `latency` — the
 `tool_use_id` is what pairs a decision with its `approval_pending`, and because one call can park
 twice, at the path gate and again at the release, records within an id pair **in order**),

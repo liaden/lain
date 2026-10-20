@@ -7,7 +7,7 @@ module PruningSpecSupport
   Decided = Struct.new(:decided?)
 end
 
-RSpec.describe Lain::Approval::QueueSurface::Pruning do
+RSpec.describe Lain::Approval::Parked::QueueSurface::Pruning do
   # The seen-set no longer grows unbounded. A long watch adjudicates many
   # pendings; once one SETTLES (decided elsewhere, or by this surface), its
   # entry is released -- observable here, at the pruning seam itself, rather
