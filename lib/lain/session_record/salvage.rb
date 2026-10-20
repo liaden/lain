@@ -206,8 +206,10 @@ module Lain
         relevant_records.any? { |record, i| i > index && superseding?(record) }
       end
 
+      # A spawned child's payment settles the child's request, never the parent's.
       def superseding?(record)
         type = record["type"].to_s
+        return false if type == TURN_USAGE_TYPE && record["spawn"]
         return SUPERSEDING_TYPES.include?(type) unless type == TURN_TYPE
 
         record["role"].to_s == "assistant" && !recovered_turns.include?(record["digest"])

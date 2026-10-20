@@ -1712,18 +1712,52 @@ RSpec.describe Lain::CLI::Wiring do
         end
       end
 
-      # A child's usage written as `turn_usage` would pair with the parent's
-      # in-flight request in salvage, and be priced by the ledger as the
-      # parent's spend.
-      it "writes no turn_usage for a child turn, so salvage and the ledger see only the parent's" do
-        converse("look around")
+      context "when the parent and its child both pay" do
+        let(:mock_provider) do
+          Lain::Provider::Mock.new(responses: [
+                                     tool_response(["s1", "subagent", { "prompt" => "look around" }],
+                                                   usage: Lain::Usage.new(input_tokens: 20)),
+                                     text_response("child done", usage: Lain::Usage.new(input_tokens: 700)),
+                                     text_response("parent done", usage: Lain::Usage.new(input_tokens: 5))
+                                   ])
+        end
 
-        expect([child_digests, of_type("turn_usage")]).to all(be_present)
-        expect(of_type("turn_usage").map { |usage| usage["digest"] })
+        it "reports the child's spend through the chat's own session_usage tool" do
+          recorder, session = wiring.run_state(nil)
+          agent = wiring.wire_agent(channel:, recorder:, session:, backend:)
+          wiring.instance_variable_get(:@switchboard)
+                .mode_switch.switch(Lain::Mode.new(approval: :bypass), surface: "spec")
+          agent.ask("look around")
+
+          expect(agent.toolset.fetch("session_usage").call({}, nil).content).to include("  total: 725")
+        end
+
+        it "shows a live run: equal to the run: rebuilt from the session file, the child's spend included" do
+          feed = Lain::StatusFeed.new(path: File.join(@state, "status.json"))
+          Lain::CLI::LiveViews.new(options: { journal: true }, chronicle:, status_feed: feed)
+
+          converse("look around")
+          rebuilt = of_type("turn_usage").sum do |usage|
+            Lain::StatusFeed::JournaledUsage.new(usage["usage"]).total_tokens
+          end
+
+          expect([rebuilt, feed.observed["run_tokens"]]).to eq([725, 725])
+        end
+      end
+
+      # A child's payment names its spawn, so salvage and cache waste pair
+      # only the parent's own with the parent's requests, while the ledger can
+      # still price the child's turns from the one file.
+      it "writes a child's turn_usage naming its spawn beside the parent's own" do
+        converse("look around")
+        own, childs = of_type("turn_usage").partition { |usage| usage["spawn"].nil? }
+
+        expect([child_digests, own, childs]).to all(be_present)
+        expect(own.map { |usage| usage["digest"] })
           .to match_array(of_type("turn").select { |turn| turn["role"] == "assistant" }.map { |turn| turn["digest"] })
-        expect(child_digests.flat_map { |digest| Lain::Ledger::Index.from_journal(records).entries_for(digest) })
-          .to be_empty
-        expect(of_type("request_sent").size).to eq(of_type("turn_usage").size)
+        expect(child_digests).to include(*childs.map { |usage| usage["digest"] })
+        expect(childs.map { |usage| usage["spawn"] }.uniq).to contain_exactly(a_string_starting_with("blake3:"))
+        expect(of_type("request_sent").size).to eq(own.size)
       end
     end
   end

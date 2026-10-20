@@ -89,7 +89,8 @@ module Lain
       # must never stop saying are the run scope, the resume exclusion, and
       # tokens-not-dollars.
       DESCRIPTION = "Reports THIS RUN's cumulative model token usage, read from the " \
-                    "running agent's own accounting: input, output, cache-creation and " \
+                    "running agent's own accounting, the spend of the subagents it " \
+                    "spawned included: input, output, cache-creation and " \
                     "cache-read tokens, the total billed on the way in, the grand total, " \
                     "and the prompt cache hit ratio. Scope is the current run, NOT the " \
                     "lifetime of a resumed session: a session continued with --resume " \

@@ -129,6 +129,7 @@ module Lain
         @journal = chronicle.wrap_tee(sink([@channel, status_feed, @fleet].compact))
         @fleet.notice = @journal
         chronicle.listen(status_feed.transition_listener)
+        chronicle.observe(Lain::StatusFeed::ChildPayments.new(status_feed))
       end
 
       attr_reader :journal, :fleet

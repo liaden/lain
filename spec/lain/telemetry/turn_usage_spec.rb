@@ -56,4 +56,13 @@ RSpec.describe Lain::Telemetry::TurnUsage do
       "usage" => { "input_tokens" => 10, "output_tokens" => 5 }
     )
   end
+
+  it "names the spawn whose child paid, and leaves the key out for the run's own payment" do
+    child = described_class.new(digest: "blake3:abc123", model: nil, stop_reason: :end_turn, usage: {},
+                                spawn: "blake3:spawn")
+
+    expect([child.to_journal["spawn"], event.spawn, event.to_journal.key?("spawn")])
+      .to eq(["blake3:spawn", nil, false])
+    expect(child).to be_deeply_frozen
+  end
 end

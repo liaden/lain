@@ -735,6 +735,23 @@ RSpec.describe Lain::StatusFeed do
   # Backend hands the Source is the tee this feed sits in -- so a refusal
   # raises the streak here and the `context_derived` of a successful
   # derivation clears it.
+  describe "a spawned child's payments" do
+    def payment(input, spawn: nil)
+      Lain::Telemetry::TurnUsage.new(digest: "blake3:t", model: "child", stop_reason: :end_turn,
+                                     usage: Lain::Usage.new(input_tokens: input, cache_read_input_tokens: 9).to_h,
+                                     spawn:)
+    end
+
+    it "add to the run's spend and move neither the window reading nor the cache deadline" do
+      feed = described_class.new(path:)
+      payments = described_class::ChildPayments.new(feed)
+
+      payments << payment(40, spawn: "blake3:spawn") << payment(500)
+
+      expect(published.values_at("run_tokens", "occupancy", "cache_deadline")).to eq([49, nil, nil])
+    end
+  end
+
   describe "the derivation refusal streak" do
     it "starts at zero, because nothing has refused yet" do
       feed = described_class.new(path:)

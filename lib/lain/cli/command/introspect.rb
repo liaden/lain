@@ -44,7 +44,8 @@ module Lain
       #   {CLI::HumanReplies} with no reader -- unreachable from a command.
       class Introspect
         # The one line that keeps a true number from being read as a false one.
-        SPEND = "this run's own token spend -- not a plan or subscription quota, and never dollars"
+        SPEND = "this run's token spend, its spawned children's included -- not a plan or subscription quota, " \
+                "and never dollars"
         # Two bounds, because the totals are wrong in two directions if either is
         # missed: {Lain::Agent::Accounting} starts fresh over a Timeline that
         # does not, and it sums every model the run called.
@@ -118,7 +119,7 @@ module Lain
         def rows(env)
           [["model", env.model_switch.current], ["occupancy", occupancy(env.agent)],
            *review_rows, ["journal", env.journal_path || NO_JOURNAL], ["tokens", SPEND],
-           *counts(env.agent.usage), ["scope", SCOPE], ["unreported", UNREPORTED], *unseen]
+           *counts(env.agent.spent.usage), ["scope", SCOPE], ["unreported", UNREPORTED], *unseen]
         end
 
         def unseen = UNSEEN.map { |label, sentence| ["  #{label}", sentence] }

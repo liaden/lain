@@ -683,7 +683,7 @@ module Lain
       # the zero is not a measurement.
       def unmeasured?(records)
         records.any? { |record| record["type"] == "truncated_stream" } &&
-          records.select { |record| record["type"] == "turn_usage" }
+          records.select { |record| record["type"] == "turn_usage" && !record.key?("spawn") }
                  .all? { |record| record["usage"].to_h.values.grep(Numeric).all?(&:zero?) }
       end
 

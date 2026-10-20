@@ -11,6 +11,7 @@ class LiveViewsSpecChronicle
 
   def wrap_tee(sink) = Lain::CLI::JournalTee.new(@journal, sink)
   def listen(_listener) = self
+  def observe(_observer) = self
 end
 
 # A live-view leg that is neither closed nor healthy: the tee's review probe

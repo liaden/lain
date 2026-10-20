@@ -51,15 +51,27 @@ module Lain
         raise Exceeded.new("loop ran #{count} iterations, ceiling is #{limit}", kind: :iterations)
       end
 
+      # Checked before each call: a ceiling met exactly leaves nothing to pay
+      # the next call with.
+      # @raise [Lain::Budget::Exceeded] when `count` has reached the iteration
+      #   ceiling, or no tokens are left
+      def check_step!(count)
+        check_iterations!(count)
+        left = remaining(:tokens)
+        raise Exceeded.new(spent_tokens, kind: :tokens) if left && !left.positive?
+      end
+
       # Checked after each response: a turn's cost is only known once paid.
       # @raise [Lain::Budget::Exceeded] when the spend has passed the ceiling
       def check_tokens!
         return unless exceeded?(:tokens)
 
-        raise Exceeded.new("spent #{spent.usage.total_tokens} tokens, ceiling is #{ceilings.tokens}", kind: :tokens)
+        raise Exceeded.new(spent_tokens, kind: :tokens)
       end
 
       private
+
+      def spent_tokens = "spent #{spent.usage.total_tokens} tokens, ceiling is #{ceilings.tokens}"
 
       def used(kind)
         case kind

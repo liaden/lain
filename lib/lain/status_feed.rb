@@ -90,9 +90,17 @@ module Lain
   #   and queue depth, no bucket over time). The HUD labels it `run:` rather
   #   than `usage:` so the label cannot be read as the quota.
   #
-  #   ORACLE SPEND IS NOT IN IT, deliberately: the field's contract is that it
-  #   EQUALS `Accounting#usage`, which does not count oracle spend.
-  #   {#turn_usage?} holds that argument and what a `#usage` duck once cost.
+  #   SPAWNED CHILDREN'S SPEND IS IN IT: a run's total is its cost. The
+  #   field's contract is that it EQUALS what the session file's `turn_usage`
+  #   records add up to, and nothing more. A one-shot child's record never
+  #   rides the tee; it reaches {#child_paid} from the session journal through
+  #   {ChildPayments}, and moves nothing but this sum, since its window and its
+  #   cache are the child's. An actor child's payments are not journaled, so
+  #   once an actor is in the subtree this is LESS than `Accounting#spent`,
+  #   which settles the actor's spend all the same.
+  #
+  #   ORACLE SPEND IS NOT IN IT, deliberately: no `turn_usage` record carries
+  #   it. {#turn_usage?} holds that argument and what a `#usage` duck once cost.
   # * `approvals_pending` -- counted, never keyed. Both halves DO carry the
   #   parked call's `tool_use_id` now, so a keyed pairing is available; what it
   #   would have to be keyed by is `(tool_use_id, order within that id)`, since
@@ -250,6 +258,16 @@ module Lain
 
     # @return [self] the duck {Agent::Instrumentation} carries as `transition_listener:`
     def transition_listener = self
+
+    # A spawned child's payment: added to `run_tokens` and nothing else.
+    #
+    # @param event [Telemetry::TurnUsage] a record naming its spawn
+    # @return [self]
+    def child_paid(event)
+      @run_tokens = @run_tokens.to_i + JournaledUsage.new(event.usage.to_h).total_tokens
+      publish_if_changed
+      self
+    end
 
     # @param event [Object] a record this sink recognizes, or anything at all.
     #   The recognized set is the class doc's: six journal records matched by

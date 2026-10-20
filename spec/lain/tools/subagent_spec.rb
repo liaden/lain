@@ -253,6 +253,13 @@ class SubagentSpecCommitTool < Lain::Tool
   end
 end
 
+class SubagentSpecYieldingProvider < Lain::Provider::Mock
+  def complete(request, **)
+    Async::Task.current.yield
+    super
+  end
+end
+
 RSpec.describe Lain::Tools::Subagent do
   # A shared Store, and a two-turn parent chain whose head is H.
   let(:store) { Lain::Store.new }
@@ -1965,6 +1972,147 @@ RSpec.describe Lain::Tools::Subagent do
       tool.run("go")
 
       expect(provider.requests.first.messages.to_s).to include("5 of 5 iterations remain")
+    end
+  end
+
+  describe "a child's spend, rolled up into its spawner" do
+    def spawn_call(usage: Lain::Usage.zero) = tool_response(["s1", "subagent", { "prompt" => "go" }], usage:)
+
+    def spending(tokens) = Lain::Usage.new(input_tokens: tokens)
+
+    def echoing(tokens) = tool_response(["e1", "echo", { "text" => "again" }], usage: spending(tokens))
+
+    def held_by(parent_ref, provider:, **)
+      build_subagent(provider:, holder: Lain::Tools::Subagent::Holder.of(parent_ref),
+                     spend: -> { parent_ref.call.spend }, policy: spawn_policy(only: %i[echo]), **)
+    end
+
+    def parent_over(tool, responses, tokens: nil, journal: Lain::Channel::Null.instance)
+      Lain::Agent.new(provider: mock(*responses), toolset: Lain::Toolset.new([EchoTool.new, tool]),
+                      context: Lain::Context.new(model: "parent", max_tokens: 256),
+                      timeline: Lain::Timeline.empty(store:), budget: Lain::Budget.ceilings(tokens:).with(depth: 1),
+                      spend: Lain::Budget::Shared.new, journal:)
+    end
+
+    it "counts a child's tokens against the parent's ceiling" do
+      parent_agent = nil
+      tool = held_by(-> { parent_agent }, provider: mock(text_response("done", usage: spending(800))))
+      parent_agent = parent_over(tool, [spawn_call, text_response("over", usage: spending(300))], tokens: 1000)
+
+      expect { parent_agent.ask("spawn") }
+        .to raise_error(an_instance_of(Lain::Budget::Exceeded).and(having_attributes(kind: :tokens)))
+    end
+
+    it "grants siblings fanned out together no more than the parent's room between them" do
+      parent_agent = nil
+      provider = SubagentSpecYieldingProvider.new(responses: [echoing(100)])
+      tool = held_by(-> { parent_agent }, provider:, budget: Lain::Budget.ceilings(tokens: 400),
+                                          policy: sibling_policy)
+      parent_agent = parent_over(tool, [text_response("unused")], tokens: 1000)
+
+      expect { tool.fan_out(%w[one two three]) }.to raise_error(Lain::Budget::Exceeded, /ceiling is 400/)
+
+      expect([parent_agent.spent.usage.total_tokens, provider.call_count,
+              parent_agent.room.tokens]).to eq([1000, 10, 0])
+    end
+
+    # A call's cost is known only once it is paid, so each sibling may pass its
+    # grant by one call: the bound is the room plus one call per sibling.
+    it "holds siblings whose replies do not divide the room to the room plus one call each" do
+      parent_agent = nil
+      provider = SubagentSpecYieldingProvider.new(responses: [echoing(150)])
+      tool = held_by(-> { parent_agent }, provider:, policy: sibling_policy)
+      parent_agent = parent_over(tool, [text_response("unused")], tokens: 1000)
+
+      expect { tool.fan_out(%w[one two three]) }.to raise_error(Lain::Budget::Exceeded)
+
+      expect(parent_agent.spent.usage.total_tokens).to be <= 1000 + (3 * 150)
+    end
+
+    it "gives back the grant of a spawn whose child could not be built" do
+      parent_agent = nil
+      tool = held_by(-> { parent_agent }, provider: mock(text_response("unused")),
+                                          tool_middleware: ->(_worker_env, task:) { raise "no stack for #{task}" })
+      parent_agent = parent_over(tool, [text_response("unused")], tokens: 1000)
+
+      expect { tool.run("go") }.to raise_error(RuntimeError, "no stack for go")
+      expect(parent_agent.room.tokens).to eq(1000)
+    end
+
+    it "gives back the grant of an actor whose launch failed" do
+      spend = Lain::Budget::Shared.new
+      refusing = ->(event) { raise "no record of #{event.kind}" if event.kind == :spawn }
+      tool = build_subagent(provider: mock(text_response("unused")), mode: :actor, spend:, observer: refusing,
+                            holder: Lain::Budget.ceilings(tokens: 1000).with(depth: 1))
+
+      Sync do
+        expect { tool.launch_actor("go", worker_env: Lain::WorkerEnv.default) }
+          .to raise_error(RuntimeError, "no record of spawn")
+      end
+      expect(spend.reserved).to eq(0)
+    end
+
+    it "rolls up the spend of a child its iteration ceiling stopped" do
+      parent_agent = nil
+      tool = held_by(-> { parent_agent }, provider: mock(echoing(50)), budget: Lain::Budget.ceilings(iterations: 2))
+      parent_agent = parent_over(tool, [text_response("unused")], tokens: 1000)
+
+      expect { tool.run("go") }.to raise_error(Lain::Budget::Exceeded, /\Aloop ran 2 iterations/)
+      expect(parent_agent.spent.usage.total_tokens).to eq(100)
+    end
+
+    it "gives back what a finished child did not spend" do
+      parent_agent = nil
+      tool = held_by(-> { parent_agent }, provider: mock(text_response("done", usage: spending(300))))
+      parent_agent = parent_over(tool, [text_response("unused")], tokens: 1000)
+
+      tool.run("go")
+
+      expect(parent_agent.room.tokens).to eq(700)
+    end
+
+    it "journals a child's payments to the seam's journal, naming its spawn" do
+      journal = Lain::Channel.new
+      build_subagent(provider: mock(text_response("done", usage: spending(10))), journal:).run("go")
+
+      paid = journal.drain.grep(Lain::Telemetry::TurnUsage)
+      expect(paid.map(&:spawn)).to eq([record.spawn.digest])
+    end
+
+    it "is spent, live, exactly what the session file's payments add up to" do
+      io = StringIO.new
+      journal = Lain::Journal.new(io:)
+      parent_agent = nil
+      tool = held_by(-> { parent_agent }, provider: mock(text_response("child", usage: spending(700))), journal:)
+      parent_agent = parent_over(tool, [spawn_call(usage: spending(20)), text_response("done", usage: spending(5))],
+                                 journal:)
+
+      parent_agent.ask("spawn")
+
+      paid = io.string.each_line.map { |line| JSON.parse(line) }.select { |entry| entry["type"] == "turn_usage" }
+      expect(paid.size).to eq(3)
+      expect(paid.sum { |entry| Lain::StatusFeed::JournaledUsage.new(entry["usage"]).total_tokens })
+        .to eq(parent_agent.spent.usage.total_tokens)
+    end
+
+    it "refuses the units of a fan-out past its width, naming width and each prompt not started" do
+      provider = mock(text_response("done"))
+      tool = build_subagent(provider:, holder: Lain::Budget::Ceilings::UNLIMITED.with(depth: 1, width: 3))
+
+      results = tool.fan_out(%w[one two three four five])
+
+      expect(results.first(3)).to all(be_ok)
+      expect(results.last(2)).to all(be_error)
+      expect(results.last(2).map(&:content)).to match([a_string_including("width", "four"),
+                                                       a_string_including("width", "five")])
+      expect(provider.call_count).to eq(3)
+    end
+
+    def sibling_policy
+      Lain::Tool::SpawnPolicy.new(
+        prefix: Lain::Tool::SpawnPolicy::PrefixStrategy::SiblingTemplate.new(template: "One of the siblings. " * 20),
+        posture: :handler_union, only: %i[echo]
+      )
     end
   end
 

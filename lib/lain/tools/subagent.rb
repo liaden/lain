@@ -186,12 +186,14 @@ module Lain
       # @param prompts [Array<String>]
       # @return [Array<Tool::Result>]
       def fan_out(prompts)
-        units = prompts.map do |prompt|
+        width = Lain.live(@seam.holder).meet(budget).width
+        started, refused = width ? [prompts.take(width), prompts.drop(width)] : [prompts, []]
+        units = started.map do |prompt|
           lambda do |on_stream_started:|
             admitted(@builder) { |builder| spawn_one_shot(prompt, on_stream_started:, builder:) }
           end
         end
-        Stagger.new(journal:).call(units)
+        Stagger.new(journal:).call(units) + refused.map { |prompt| too_wide(prompt, width) }
       end
 
       # Launch a long-lived {Actor} over a freshly built child, and return its
@@ -213,8 +215,8 @@ module Lain
         # `deregister` there rides the same lease teardown that reaps the fiber.
         # {ChildBuilder::Child} owns the case where no actor comes out at all.
         build_child(parent, worker_env, task: prompt,
-                                        builder: granted(@builder)).launched do |agent, registration, tools|
-          Actor.new(agent:, registration:, lineage:, parent:, journal:, answer: @answer,
+                                        builder: granted(@builder)).launched do |agent, registration, tools, held|
+          Actor.new(agent:, registration:, lineage:, parent:, journal:, answer: @answer, reservation: held,
                     worker: Isolation::SelfSync.worker(agent, tools:)).launch(prompt)
         end
       end
@@ -227,8 +229,8 @@ module Lain
       # grandchild is clamped to what the child has left, never to what this
       # tool's own holder had. Public only for {ChildBuilder}, which is not a
       # Subagent, so `protected` can no longer say "only the spawn machinery".
-      def descend(parent:, escalation:, holder:)
-        config = @builder.config(parent:, escalation:, holder:)
+      def descend(parent:, escalation:, holder:, spend: Budget::Shared::Null)
+        config = @builder.config(parent:, escalation:, holder:, spend:)
         self.class.new(**config, name: @name, announces_as: @announces_as, mode: @mode, log: @log, answer: @answer)
       end
 
@@ -422,11 +424,22 @@ module Lain
       rescue Budget::Ceilings::Unrunnable => e
         Tool::Result.error("subagent spawn refused: #{e.message}. Do the task yourself instead.")
       else
-        yield child
+        begin
+          yield child
+        ensure
+          child.reservation.release
+        end
       end
 
       # @raise [Lain::Budget::Ceilings::Unrunnable] when the holder has no room for a child
-      def granted(builder) = builder.granting(Lain.live(@seam.holder).attenuate(budget))
+      def granted(builder)
+        builder.granting(Lain.live(@seam.spend).reserve { Lain.live(@seam.holder).attenuate(budget) })
+      end
+
+      def too_wide(prompt, width)
+        Tool::Result.error("subagent spawn refused: the width ceiling is #{width} children at once, so this " \
+                           "prompt was not started: #{prompt}")
+      end
 
       # {Lineage} writes the :spawn and :message events; the causal-edge and
       # correlation-join reasoning lives there. Memoized rather than built in
@@ -889,8 +902,10 @@ module Lain
 
         # Each spawner descends as its own, so every role on offer is capped at
         # the child's ceiling exactly as a lone spawner would be.
-        def descend(parent:, escalation:, holder:)
-          self.class.new(@spawners.transform_values { |spawner| spawner.descend(parent:, escalation:, holder:) })
+        def descend(parent:, escalation:, holder:, spend: Budget::Shared::Null)
+          self.class.new(@spawners.transform_values do |spawner|
+            spawner.descend(parent:, escalation:, holder:, spend:)
+          end)
         end
 
         protected
@@ -1277,7 +1292,7 @@ module Lain
       # {Event}/{Canonical} sense.
       Seam = Data.define(:provider, :context_factory, :parent, :tool_middleware, :journal, :telemetry, :display_channel,
                          :supervisor, :observer, :askers, :isolation, :escalation, :scope, :attachments, :middleware,
-                         :twins, :holder) do
+                         :twins, :holder, :spend) do
         # Everything after `tool_middleware` defaults to its Null object. The
         # first four stay required, so Data's own missing-keyword error is the
         # loud failure, unwritten.
@@ -1351,13 +1366,17 @@ module Lain
         # or a thunk answering them, read at each spawn. A child's ceilings are
         # this attenuated by the role's request. It is late-bound for `parent`'s
         # reason, and a descended copy rebinds it to the child ({Holder.of}).
+        #
+        # `spend` is the holder's {Budget::Shared}, or a thunk answering it:
+        # where a child's token grant is reserved and its spend settles.
         def initialize(provider:, context_factory:, parent:, tool_middleware:, journal: Channel::Null.instance,
                        telemetry: Channel::Null.instance, display_channel: Channel::Null.instance,
                        supervisor: Supervisor::Null, observer: NO_OBSERVER,
                        askers: NoAskers, isolation: NO_ISOLATION,
                        escalation: [AskHuman::HUMAN].freeze, scope: UNSCOPED,
                        attachments: Middleware::ResolveAttachments::Unwired,
-                       middleware: NO_MIDDLEWARE, twins: Lineage::Twins::Null, holder: Holder::ROOT)
+                       middleware: NO_MIDDLEWARE, twins: Lineage::Twins::Null, holder: Holder::ROOT,
+                       spend: Budget::Shared::Null)
           Seam.refuse_unbuildable(tool_middleware)
 
           super
@@ -1415,14 +1434,17 @@ module Lain
         # whether it may be asked to rebase its own work: only a shell can run
         # git. `asker` and `feed` are what a child that did not answer leaves
         # its record through.
-        Child = Data.define(:agent, :registration, :tools, :asker, :feed) do
+        Child = Data.define(:agent, :registration, :tools, :asker, :feed, :reservation) do
           # A one-shot child's lifetime IS the dispatch, so the release lands
           # on every exit from it. `timeline` is read AFTER the block: the
           # caller wants the settled head, not the one the child started from.
+          # A child its ceiling stopped still paid, so its spend settles on
+          # every exit too.
           def answered
             response = yield(agent, tools)
             [agent.timeline, response]
           ensure
+            reservation.settle(agent.spent)
             registration.deregister
           end
 
@@ -1432,9 +1454,12 @@ module Lain
           # raise, so nothing else could ever hold this.
           def launched
             actor = nil
-            actor = yield(agent, registration, tools)
+            actor = yield(agent, registration, tools, reservation)
           ensure
-            registration.deregister unless actor
+            unless actor
+              reservation.settle(agent.spent)
+              registration.deregister
+            end
           end
 
           # The head a child that did not answer stopped at, written into the
@@ -1493,13 +1518,14 @@ module Lain
           end
         end
 
-        attr_reader :policy, :toolset, :budget
+        attr_reader :policy, :toolset, :budget, :reservation
 
         # `name` is what a human is TOLD is asking when this child puts a
         # question to them, so a role spawn announces as "researcher" rather
         # than as a 71-character correlation.
         def initialize(seam:, toolset:, policy:, budget:, persona: Role::Persona::Null,
-                       model: ModelChoice::Null, name: "subagent", compaction: ParentView::None)
+                       model: ModelChoice::Null, name: "subagent", compaction: ParentView::None,
+                       reservation: Budget::Shared::Unreserved)
           @seam = seam
           @toolset = toolset
           @policy = policy
@@ -1508,6 +1534,7 @@ module Lain
           @model = model
           @name = name
           @compaction = compaction
+          @reservation = reservation
         end
 
         # This builder, its children's approvals asked as `requester`.
@@ -1535,16 +1562,16 @@ module Lain
         # `parent`'s: a bound model is ONE child's property, not a subtree's.
         # The copy this builds is the run's own `subagent` tool descending into
         # a child's union, and what binds a grandchild is whoever spawns it.
-        def config(parent:, escalation:, holder:)
-          { seam: @seam.with(parent:, escalation:, holder:), toolset: @toolset, policy: @policy,
+        def config(parent:, escalation:, holder:, spend:)
+          { seam: @seam.with(parent:, escalation:, holder:, spend:), toolset: @toolset, policy: @policy,
             budget: @budget, persona: @persona }
         end
 
-        # This builder, its child run under `ceilings`: what the spawn was
-        # granted once the holder's room clamped the role's request.
-        def granting(ceilings)
-          self.class.new(seam: @seam, toolset: @toolset, policy: @policy, budget: ceilings, persona: @persona,
-                         model: @model, name: @name, compaction: @compaction)
+        # This builder, its child run under what the spawn was granted once
+        # the holder's room clamped the role's request, and settling into it.
+        def granting(reservation)
+          self.class.new(seam: @seam, toolset: @toolset, policy: @policy, budget: reservation.ceilings,
+                         persona: @persona, model: @model, name: @name, compaction: @compaction, reservation:)
         end
 
         # `child` is late-bound through the thunk exactly as the exe wires the
@@ -1565,10 +1592,11 @@ module Lain
         def build(parent, worker_env: WorkerEnv.default, scope: @seam.scope.current,
                   progress: Progress::Null, task: nil)
           child = nil
+          spend = Budget::Shared.new
           chain = own_chain(parent, progress) { child.timeline }
-          union = child_union(chain.timeline, chain.escalation, Holder.of(-> { child }))
+          union = child_union(chain.timeline, chain.escalation, Holder.of(-> { child }), spend)
           view = @compaction.call(base: chain.base, worker_env: scope.env_over(worker_env), scope:)
-          spawned(@seam.askers.enrol(chain.asking_handle, agent: @name), chain, union, view, task:)
+          spawned(@seam.askers.enrol(chain.asking_handle, agent: @name), chain, union, view, task:, spend:)
             .tap { |built| child = built.agent }
         end
 
@@ -1609,12 +1637,13 @@ module Lain
         # for anyone to hang a `deregister` on, and retention runs from
         # `register` to `deregister` and nothing else -- so this method is the
         # only place that release can live.
-        def spawned(enrolled, chain, union, view, task:)
+        def spawned(enrolled, chain, union, view, task:, spend:)
           child = nil
           asker = enrolled.asker
           allowed = granted(@policy.attenuate(union), asker)
-          child = Child.new(agent: spawn_agent(chain, granted(union, asker), allowed, view, task:),
-                            registration: enrolled.registration, tools: allowed.names, asker:, feed: chain.feed)
+          child = Child.new(agent: spawn_agent(chain, granted(union, asker), allowed, view, task:, spend:),
+                            registration: enrolled.registration, tools: allowed.names, asker:, feed: chain.feed,
+                            reservation: @reservation)
         ensure
           # Keyed on the handle rather than `rescue StandardError`, so a
           # CANCELLED spawn releases too: `Async::Stop` is not a StandardError.
@@ -1654,9 +1683,9 @@ module Lain
         # only because this union is assembled below the trust boundary: a run's
         # own wiring decides what is in it, never the model, so a tool answering
         # the duck is one lain put there.
-        def child_union(parent_handle, escalation, holder)
+        def child_union(parent_handle, escalation, holder, spend)
           Toolset.new(@toolset.map do |tool|
-            tool.respond_to?(:descend) ? tool.descend(parent: parent_handle, escalation:, holder:) : tool
+            tool.respond_to?(:descend) ? tool.descend(parent: parent_handle, escalation:, holder:, spend:) : tool
           end)
         end
 
@@ -1678,22 +1707,31 @@ module Lain
         # `schema`, the descended union under `handler_union` -- so a permitted
         # nested subagent is clamped to what this child has left.
         #
-        # The child Agent's OWN journal discards, deliberately, while the seam's
-        # records around it reach the session file. What an Agent journals is
-        # its `turn_usage` and `tool_cancelled`, and a child's in the parent's
-        # file would read as the parent's: salvage would pair it with the
-        # parent's in-flight `request_sent`, cache-waste would count it, and the
-        # ledger would price it as the parent's spend.
-        def spawn_agent(chain, union, allowed, (pipeline_source, session), task:)
+        # The child Agent's `tool_cancelled` records discard, deliberately,
+        # while the seam's records around it reach the session file: in the
+        # parent's file they would read as the parent's.
+        def spawn_agent(chain, union, allowed, (pipeline_source, session), task:, spend:)
           mailbox = child_mailbox(chain)
           Agent.new(
             provider: @seam.provider, context: child_context(session.worker_env),
             toolset: @policy.posture.rendered_toolset(union:, allowed:), handler: Effect::Handler::Live.new,
             timeline: chain.base, turn_middleware: recorded_turns(chain, mailbox),
             model_middleware: child_budget, tool_middleware: child_stack(session.worker_env, allowed, task:),
-            session:, budget: @budget, journal: Channel::Null.instance, pipeline_source:, mailbox:,
+            session:, budget: @budget, accounting: child_accounting(chain, spend), pipeline_source:, mailbox:,
             display: CLI::JournalTee.new(@seam.telemetry, @seam.display_channel), display_as: @name
           )
+        end
+
+        # A child's payments go to the session file, never to the live tee:
+        # the parent's HUD and compaction would take a child's reading as their
+        # own. Each names its spawn, so a reader pairing payments with the
+        # parent's requests can skip it. An actor's spawn is written only after
+        # its Agent exists, so an actor's payments, which could name none, are
+        # not journaled; its spend still settles into the holder.
+        def child_accounting(chain, spend)
+          return Agent::Accounting.new(spend:) if chain.spawn.nil?
+
+          Agent::Accounting.new(journal: @seam.journal, spawn: chain.spawn, spend:)
         end
 
         # Addressed to the spawn digest, which only a one-shot dispatch knows

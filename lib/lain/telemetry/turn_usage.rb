@@ -26,19 +26,27 @@ module Lain
     #
     # `usage` is held in canonical wire form so the event stays
     # Ractor-shareable; `model` is nil when the provider reported none.
-    TurnUsage = Data.define(:digest, :model, :stop_reason, :usage) do
+    #
+    # `spawn` names the spawn a child's payment was made under, and is nil for
+    # the run's own. A reader pairing a payment with the parent's request must
+    # skip a child's, which can bill the parent's own model. The key is left out
+    # of the run's own record, so its bytes are what they always were.
+    TurnUsage = Data.define(:digest, :model, :stop_reason, :usage, :spawn) do
       include Journalable
 
-      def initialize(digest:, model:, stop_reason:, usage:)
+      def initialize(digest:, model:, stop_reason:, usage:, spawn: nil)
         Carriers::TurnUsage.check!(digest:, stop_reason:)
 
         super(
           digest: digest.dup.freeze,
           model: model&.to_s&.freeze,
           stop_reason: stop_reason.to_sym,
-          usage: Canonical.normalize(usage)
+          usage: Canonical.normalize(usage),
+          spawn: spawn && -spawn.to_s
         )
       end
+
+      def to_journal = spawn ? super : super.except("spawn")
     end
   end
 end

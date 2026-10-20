@@ -1322,6 +1322,23 @@ RSpec.describe Lain::Bench::CLI do
       end
     end
 
+    # A spawned child that paid says nothing about whether the run's own turns were measured.
+    it "still sets the run aside when only a spawned child's usage beside a truncated stream is nonzero" do
+      Dir.mktmpdir do |tmp|
+        out = File.join(tmp, "sessions")
+        cli.record(taskfile: write_taskfile(tmp), runs: 2, out:, backend: backend(model: "claude-sonnet-4-6"),
+                   provider:)
+        unmeasured = File.join(out, "3.ndjson")
+        write_unmeasured(File.join(out, "2.ndjson"), unmeasured)
+        child = { "type" => "turn_usage", "digest" => "blake3:child", "model" => "claude-sonnet-4-6",
+                  "stop_reason" => "end_turn", "usage" => { "input_tokens" => 50, "output_tokens" => 5 },
+                  "spawn" => "blake3:spawn" }
+        File.write(unmeasured, "#{JSON.generate(child)}\n", mode: "a")
+
+        expect(cli.variance_report([out])).to include("3.ndjson: no usage recorded beside a truncated stream")
+      end
+    end
+
     # The counter-example: a stream cut short on a run that still paid for
     # tokens measured something, and stays in the distribution.
     it "keeps a run with usage beside a truncated stream in variance" do

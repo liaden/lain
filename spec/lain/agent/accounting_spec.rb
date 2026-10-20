@@ -72,6 +72,14 @@ RSpec.describe Lain::Agent::Accounting do
       expect(records.last["usage"]).to include("input_tokens" => 3, "output_tokens" => 2)
     end
 
+    it "names the spawn a child's records were paid under, and nothing for the run's own" do
+      described_class.new(journal:, spawn: "blake3:spawn").observe(response, digest: "blake3:one")
+      described_class.new(journal:).observe(response, digest: "blake3:two")
+
+      expect(records.map { |record| record["spawn"] }).to eq(["blake3:spawn", nil])
+      expect(records.last).not_to have_key("spawn")
+    end
+
     it "needs no journal: the default Null channel absorbs the record" do
       accounting = described_class.new
       expect { accounting.observe(response, digest: "blake3:one") }.not_to raise_error

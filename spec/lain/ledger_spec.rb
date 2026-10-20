@@ -2,6 +2,7 @@
 
 require "bigdecimal"
 require "json"
+require "stringio"
 
 RSpec.describe Lain::Ledger do
   let(:store) { Lain::Store.new }
@@ -227,6 +228,27 @@ RSpec.describe Lain::Ledger do
         expect(fork_ledger.usage(branch_a, branch_b) + fork_ledger.usage(meet))
           .to eq(fork_ledger.usage(branch_a) + fork_ledger.usage(branch_b))
       end
+    end
+  end
+
+  describe "a lineage priced from the one session journal" do
+    it "includes the cost a spawned child paid on a priced model" do
+      io = StringIO.new
+      journal = Lain::Journal.new(io:)
+      spawned = SpawnRecord.new
+      paid = Lain::Usage.new(input_tokens: 10, output_tokens: 5)
+      child = Lain::Tools::Subagent.new(
+        provider: Lain::Provider::Mock.new(responses: [text_response("child done", model:, usage: paid)]),
+        context_factory: -> { Lain::Context.new(model:, max_tokens: 64) }, toolset: Lain::Toolset.new([]),
+        policy: Lain::Tool::SpawnPolicy.new(only: []), parent: Lain::Timeline.empty(store:), journal:,
+        tool_middleware: ToolRegistry::UNGUARDED, observer: spawned
+      )
+      parent = commit(Lain::Timeline.empty(store:), "parent")
+
+      child.run("go")
+      priced = described_class.from_journal(records + io.string.lines)
+
+      expect(priced.cost(parent, spawned.child(store))).to eq(BigDecimal("0.00021"))
     end
   end
 end

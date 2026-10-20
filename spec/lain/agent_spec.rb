@@ -998,6 +998,49 @@ RSpec.describe Lain::Agent do
 
       expect([a.room.iterations, a.room.tokens]).to eq([3, 60])
     end
+
+    it "holds back the tokens a live child has reserved" do
+      spend = Lain::Budget::Shared.new
+      spend.reserve { Lain::Budget::Ceilings::UNLIMITED.with(tokens: 400) }
+      a = agent(text_response("unused"), budget: Lain::Budget.ceilings(tokens: 1000), spend:)
+
+      expect(a.room.tokens).to eq(600)
+    end
+  end
+
+  describe "a subtree's spend" do
+    def spend_of(tokens)
+      Lain::Budget::Shared.new.tap do |spend|
+        spend.reserve { Lain::Budget::Ceilings::UNLIMITED }
+             .settle(Lain::Budget::Spent.zero.with(usage: Lain::Usage.new(input_tokens: tokens)))
+      end
+    end
+
+    it "refuses a reply that passes the ceiling once the children's spend is counted" do
+      a = agent(text_response("over", usage: Lain::Usage.new(output_tokens: 300)),
+                budget: Lain::Budget.ceilings(tokens: 1000), spend: spend_of(800))
+
+      expect do
+        a.ask("go")
+      end.to raise_error(an_instance_of(Lain::Budget::Exceeded).and(having_attributes(kind: :tokens)))
+    end
+
+    it "is spent as its own usage plus its children's" do
+      a = agent(text_response("done", usage: Lain::Usage.new(output_tokens: 30)), spend: spend_of(800))
+
+      a.ask("go")
+
+      expect(a.spent.usage.total_tokens).to eq(830)
+    end
+
+    it "pays for no call once the ceiling is reached exactly" do
+      provider = CoreGraph.provider(text_response("unpaid"))
+      a = described_class.new(provider:, toolset:, context:, budget: Lain::Budget.ceilings(tokens: 100),
+                              spend: spend_of(100))
+
+      expect { a.ask("go") }.to raise_error(Lain::Budget::Exceeded, "spent 100 tokens, ceiling is 100")
+      expect(provider.call_count).to eq(0)
+    end
   end
 
   describe "turn usage accounting" do
@@ -2411,7 +2454,7 @@ RSpec.describe Lain::Agent do
         tool_middleware: Lain::Middleware::Stack.new,
         tool_observer: Lain::Agent::ToolRunner::Observer::Null.new,
         round_budget: Lain::Tool::RoundBudget.static,
-        journal: RecordingChannel.new }.fetch(keyword)
+        journal: RecordingChannel.new, spend: Lain::Budget::Shared.new }.fetch(keyword)
     end
 
     it "drives injected collaborators, with no provider:, journal: or middleware keyword" do
@@ -2488,7 +2531,7 @@ RSpec.describe Lain::Agent do
     it "names the ingredient vocabulary its refusals are keyed on" do
       expect(described_class::KEYWORDS)
         .to contain_exactly(:provider, :model_middleware, :handler, :tool_middleware, :tool_observer, :round_budget,
-                            :journal)
+                            :journal, :spend)
       expect(described_class::OMITTED).to be_frozen
     end
 

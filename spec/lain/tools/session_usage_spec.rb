@@ -228,6 +228,10 @@ RSpec.describe Lain::Tools::SessionUsage do
       expect(tool.description).to match(/dollar/i)
     end
 
+    it "says the subagents it spawned are counted" do
+      expect(tool.description).to include("the spend of the subagents it spawned included")
+    end
+
     # The resume caveat has to live in the DESCRIPTION, because the description
     # is the only part of this tool the model reads before deciding what the
     # number means. See the resumed-agent example below for the behaviour it

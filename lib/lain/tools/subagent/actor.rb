@@ -59,10 +59,15 @@ module Lain
         # reaches every row -- crashed ones included -- through
         # `registration.actor.stop`. So the release rides the same lease
         # teardown that reaps this fiber, with no timeout and no reaper.
+        #
+        # `reservation` is the child's claim on its holder's room. It settles
+        # once, with the child's spend: at the first reply, or when the run
+        # ends having sent none, as a child its ceiling stopped does.
         def initialize(agent:, lineage:, parent:, journal: Channel::Null.instance,
                        registration: AskHuman::Directory::Unheld, answer: ANSWER,
-                       worker: Isolation::SelfSync::Unaskable)
+                       worker: Isolation::SelfSync::Unaskable, reservation: Budget::Shared::Unreserved)
           @worker = worker
+          @reservation = reservation
           @agent = agent
           @lineage = lineage
           @parent = parent
@@ -182,6 +187,7 @@ module Lain
         rescue StandardError => e
           @failure = e
         ensure
+          @reservation.settle(@agent.spent)
           @ready.resolve(false)
         end
 
@@ -209,6 +215,7 @@ module Lain
         # causal parents. Only TRANSITIONS carry a `lifecycle` -- a tell stays
         # bare.
         def reply(text, lifecycle: nil)
+          @reservation.settle(@agent.spent)
           @lineage.note(@parent, from: @address, to: @parent_correlation, text:,
                                  causal_parents: [@address, @agent.timeline.head_digest].compact, lifecycle:)
         end

@@ -221,6 +221,9 @@ RSpec.describe "an :inherit child of a parent that compacted", :seam do
 
   def child_requests(parent) = parent.child_provider.requests
 
+  # A child's payment names its spawn and is the child's, not the parent's.
+  def child_payment?(record) = record["type"] == "turn_usage" && record.key?("spawn")
+
   describe "spawned after a handoff" do
     it "sends the handoff document and not the replaced turns, and is answered" do
       parent = handed_off
@@ -285,7 +288,7 @@ RSpec.describe "an :inherit child of a parent that compacted", :seam do
 
   describe "the parent" do
     def without_lineage(records)
-      records.reject { |record| InheritChildCompactionSeam::LINEAGE.include?(record["type"]) }
+      records.reject { |record| InheritChildCompactionSeam::LINEAGE.include?(record["type"]) || child_payment?(record) }
              .map { |record| record.except("ts", "wall_clock") }
     end
 
@@ -317,7 +320,8 @@ RSpec.describe "an :inherit child of a parent that compacted", :seam do
     end
 
     def parent_side(records)
-      records.reject { |record| (InheritChildCompactionSeam::LINEAGE + %w[oracle_answer]).include?(record["type"]) }
+      lineage = InheritChildCompactionSeam::LINEAGE + %w[oracle_answer]
+      records.reject { |record| lineage.include?(record["type"]) || child_payment?(record) }
              .map { |record| record.except("ts", "wall_clock") }
     end
 

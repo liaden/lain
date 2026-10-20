@@ -235,6 +235,18 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       end
     end
 
+    it "reports, through session_usage, the chat's spend with its settled children's included" do
+      spend = Lain::Budget::Shared.new
+      spend.reserve { Lain::Budget::Ceilings::UNLIMITED }
+           .settle(Lain::Budget::Spent.zero.with(usage: Lain::Usage.new(input_tokens: 700)))
+      chat = Lain::Agent.new(provider: Lain::Provider::Mock.new, toolset: Lain::Toolset.new([]),
+                             context: Lain::Context.new(model: "m", max_tokens: 64), spend:)
+
+      reported = build_with({}, agent: -> { chat }).build(recorder, ask_human:).fetch("session_usage").call({}, nil)
+
+      expect(reported.content).to include("  total: 700")
+    end
+
     it "layers the capability floor, the child seam, and the three main-agent-only tools" do
       names = toolset_build.build(recorder, ask_human:).names
 

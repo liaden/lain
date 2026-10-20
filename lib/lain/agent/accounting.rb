@@ -33,13 +33,28 @@ module Lain
       # Readable so a caller can confirm what it was wired to.
       attr_reader :journal
 
+      # What this run's children spent and still hold ({Budget::Shared}).
+      attr_reader :spend
+
       # @param journal [#<<] where TurnUsage records land; the Null channel by
       #   default, so no caller guards `if journal`
-      def initialize(journal: Channel::Null.instance)
+      # @param spawn [String, nil] the spawn a child's records are paid under,
+      #   so a reader of the parent's file can tell them from the parent's own
+      # @param spend [Budget::Shared] where this run's children settle
+      def initialize(journal: Channel::Null.instance, spawn: nil, spend: Budget::Shared::Null)
         @journal = journal
+        @spawn = spawn
+        @spend = spend
         @usage = Usage.zero
         @reading = Unread
       end
+
+      # The run's own usage and its settled children's together: what its
+      # ceilings are held to. {#usage} stays the run's own, which is what the
+      # payments its own journal carries add up to.
+      #
+      # @return [Budget::Spent]
+      def spent = Budget::Spent.zero.with(usage: @usage) + @spend.spent
 
       # Roll one model response into the running total and journal it against
       # the turn it was committed as.
@@ -54,7 +69,8 @@ module Lain
           digest:,
           model: response.model,
           stop_reason: response.stop_reason,
-          usage: response.usage.to_h
+          usage: response.usage.to_h,
+          spawn: @spawn
         )
         @usage
       end

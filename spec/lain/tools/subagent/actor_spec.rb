@@ -44,6 +44,73 @@ RSpec.describe Lain::Tools::Subagent::Actor do
     end
   end
 
+  describe "the spend an actor's child reports" do
+    let(:spend) { Lain::Budget::Shared.new }
+    let(:tool) do
+      CoreGraph.subagent(provider: CoreGraph.provider(text_response("ready", usage: Lain::Usage.new(input_tokens: 40))),
+                         parent:, journal: session_file, observer: scribe, mode: :actor, spend:,
+                         holder: Lain::Budget.ceilings(tokens: 1000).with(depth: 1))
+    end
+
+    it "rolls into its spawner once, at its reply, however often it is stopped" do
+      Sync do |task|
+        supervisor = Lain::Supervisor.new(journal: session_file).run(task)
+        actor = supervisor.adopt(role: "researcher") { |worker_env| tool.launch_actor("go", worker_env:) }
+        actor.settle
+        actor.stop
+        actor.stop
+      ensure
+        supervisor&.stop
+      end
+
+      expect([spend.spent.usage.total_tokens, spend.reserved]).to eq([40, 0])
+    end
+  end
+
+  describe "the spend of a live actor's child" do
+    let(:spend) { Lain::Budget::Shared.new }
+    let(:tool) do
+      CoreGraph.subagent(provider: CoreGraph.provider(text_response("ready", usage: Lain::Usage.new(input_tokens: 40))),
+                         parent:, journal: session_file, observer: scribe, mode: :actor, spend:,
+                         holder: Lain::Budget.ceilings(tokens: 1000).with(depth: 1))
+    end
+
+    it "settles into its spawner at its first answer, while the actor still lives" do
+      Sync do |task|
+        supervisor = Lain::Supervisor.new(journal: session_file).run(task)
+        actor = supervisor.adopt(role: "researcher") { |worker_env| tool.launch_actor("go", worker_env:) }
+        actor.settle
+
+        expect([spend.spent.usage.total_tokens, spend.reserved, actor.dead?]).to eq([40, 0, false])
+      ensure
+        supervisor&.stop
+      end
+    end
+  end
+
+  describe "the spend of an actor's child its ceiling stopped" do
+    let(:spend) { Lain::Budget::Shared.new }
+    let(:tool) do
+      looping = tool_response(["e1", "echo", { "text" => "again" }], usage: Lain::Usage.new(input_tokens: 30))
+      CoreGraph.subagent(provider: CoreGraph.provider(looping), parent:, journal: session_file, observer: scribe,
+                         mode: :actor, spend:, toolset: Lain::Toolset.new([EchoTool.new]),
+                         policy: CoreGraph.spawn_policy(only: %i[echo]), budget: Lain::Budget.ceilings(iterations: 2),
+                         holder: Lain::Budget.ceilings(tokens: 1000).with(depth: 1))
+    end
+
+    it "settles into its spawner, and frees its reservation, before anyone stops it" do
+      Sync do |task|
+        supervisor = Lain::Supervisor.new(journal: session_file).run(task)
+        actor = supervisor.adopt(role: "researcher") { |worker_env| tool.launch_actor("go", worker_env:) }
+        expect { actor.settle }.to raise_error(Lain::Budget::Exceeded)
+
+        expect([spend.spent.usage.total_tokens, spend.reserved]).to eq([60, 0])
+      ensure
+        supervisor&.stop
+      end
+    end
+  end
+
   describe "#settle" do
     let(:gate) { Lain::Promise.new }
     let(:blocked_provider) do

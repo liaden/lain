@@ -226,10 +226,10 @@ module Lain
           @epic = epic
           @in_chat = { chronicle:, root:, paths:, config: }.freeze
           @askers = askers
-          @usage = agent && -> { agent.call&.usage }
+          @usage = agent && -> { agent.call&.spent&.usage }
           @switchboard = switchboard
           @seam = spawn_seam(backend:, provider:, parent:, journal:, supervisor:, switchboard:, chronicle:,
-                             isolation:, handback:, middleware:, display:).with(holder: room_of(agent))
+                             isolation:, handback:, middleware:, display:).with(**held_by(agent))
           @session = session
           @parent_view = parent_view(backend, session)
         end
@@ -455,7 +455,12 @@ module Lain
         # with an unassigned slot.
         def session_usage = Lain::Tools::SessionUsage.new(usage: @usage)
 
-        def room_of(agent) = agent ? Lain::Tools::Subagent::Holder.of(agent) : Lain::Tools::Subagent::Holder::ROOT
+        # The chat's room, and its account, that each child it spawns is granted from and settles into.
+        def held_by(agent)
+          return { holder: Lain::Tools::Subagent::Holder::ROOT } unless agent
+
+          { holder: Lain::Tools::Subagent::Holder.of(agent), spend: -> { agent.call.spend } }
+        end
 
         # The chat default: an attenuated read-only child (schema posture,
         # depth 1), whose :spawn/:message lineage events the observer routes

@@ -677,7 +677,7 @@ module Lain
         # turn's three readers see three windows.
         window = backend.context_window
         telemetry = mount.instrumentation
-        { provider:, context_window: window,
+        { provider:, context_window: window, spend: Lain::Budget::Shared.new,
           instrumentation: telemetry.with(tool_middleware: ToolGuard.stack(chronicle, board),
                                           turn_middleware: turn_phase(timeline, window, backend.middleware),
                                           model_middleware: model_phase(telemetry, backend.middleware)) }

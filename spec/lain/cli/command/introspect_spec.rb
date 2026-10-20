@@ -69,6 +69,18 @@ RSpec.describe Lain::CLI::Command::Introspect do
       .to include("input 13", "output 7", "cache creation 4", "cache read 100")
   end
 
+  it "counts the spend its spawned children settled into the run" do
+    spend = Lain::Budget::Shared.new
+    spend.reserve { Lain::Budget::Ceilings::UNLIMITED }
+         .settle(Lain::Budget::Spent.zero.with(usage: Lain::Usage.new(input_tokens: 700)))
+    agent = Lain::Agent.new(provider: Lain::Provider::Mock.new(responses: [usage_response("one", input_tokens: 10)]),
+                            toolset: Lain::Toolset.new([]), context_window: book,
+                            context: Lain::Context.new(model:, max_tokens: 64), spend:)
+    agent.ask("first")
+
+    expect(report(agent)).to include("total input 710")
+  end
+
   # Reported rather than left for the reader to add up: an arithmetic step
   # somebody takes is an arithmetic step somebody can get wrong, which is the
   # same fabrication in miniature.
