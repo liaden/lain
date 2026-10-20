@@ -363,6 +363,13 @@ RSpec.describe Lain::Sensitivity::Policy do
       expect(policy.denial(call("bash", { "cwd" => "#{home}/.gnupg" }), cwd:).tool).to eq("bash")
     end
 
+    it "reads a command whose cwd field holds a NUL byte without raising" do
+      confined = policy.confined(roots: [cwd])
+
+      expect { confined.denial(call("bash", { "command" => "cat notes", "cwd" => "bad\0dir" }), cwd:) }
+        .not_to raise_error
+    end
+
     # {#path_in} reads `effect.name`, which these have not got. A NoMethodError
     # on the dispatch path invites a `rescue` answering "not denied", which is
     # this boundary failing OPEN.

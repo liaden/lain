@@ -302,7 +302,7 @@ module Lain
       # @return [Array<Array(String, Boolean)>] each path, and whether the call writes it
       def named_paths(effect, context, cwd)
         field = named_by_field(effect)
-        base = field && Queue.resolved(field, cwd)
+        base = field && ::Lain::Shell::Named.resolved(field, cwd)
         runs_in = command_cwd(effect, context)
         named = named_in(effect, context).paths.reject { guessed_here?(_1, runs_in) }
         [[base, writes_field?(effect)], [glob_root(effect, base || cwd), false],
@@ -331,11 +331,7 @@ module Lain
       def named_in(effect, context)
         return NOTHING_NAMED unless effect.name == BASH
 
-        command = command_in(effect.input)
-        cwd = command_cwd(effect, context)
-        return ::Lain::Shell::Named::UNREADABLE unless command.is_a?(String) && cwd
-
-        ::Lain::Shell::Named.of(command, cwd:, home: @policy.home)
+        ::Lain::Middleware::ParsedCommand.named_in(effect, context, home: @policy.home)
       end
 
       def command_in(input) = input.is_a?(Hash) ? input["command"] || input[:command] : nil

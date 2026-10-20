@@ -206,10 +206,11 @@ module Lain
 
         # @param effect [Lain::Effect]
         # @param cwd [String] absolute
+        # @param named [Shell::Named, nil] the command's parse when a caller already holds it
         # @return [Denial, nil] the policy's own, else one for a read that
         #   names or walks from the account database
-        def denial(effect, cwd:)
-          @policy.denial(effect, cwd:) || own_denial(Policy.unwrapped(effect), cwd)
+        def denial(effect, cwd:, named: nil)
+          @policy.denial(effect, cwd:) || own_denial(Policy.unwrapped(effect), cwd, named)
         end
 
         def classify(path, within: nil) = @policy.classify(path, within:)
@@ -253,8 +254,8 @@ module Lain
           effect.name == "glob" ? [base, glob_root(effect.input, base)].compact : [base]
         end
 
-        def own_denial(call, cwd)
-          named = shell_named(call, cwd)
+        def own_denial(call, cwd, parsed)
+          named = shell_named(call, cwd, parsed)
           account_denial(call, cwd, named) || shell_denial(call, cwd, named)
         end
 
@@ -272,11 +273,11 @@ module Lain
           verdict && Denial.new(tool_use_id: call.tool_use_id, tool: call.name, path:, verdict:)
         end
 
-        def shell_named(call, cwd)
+        def shell_named(call, cwd, parsed)
           return [] unless call.tool_call? && call.name == "bash" && call.input.is_a?(Hash)
+          return parsed.paths.map(&:resolved) if parsed
 
-          base = File.expand_path(Policy.path_in(call) || ".", cwd)
-          Shell::Named.of(call.input["command"].to_s, cwd: base, home:).paths.map(&:resolved)
+          Shell::Named.for_input(call.input, cwd:, home:).paths.map(&:resolved)
         end
 
         def home_advice = home && "the agent's home directory is #{home}".freeze
@@ -467,7 +468,7 @@ module Lain
       #   over the vocabulary, so no caller guards on kind first
       # @param cwd [String] absolute; the call's own base, see {Session.cwd_of}
       # @return [Denial, nil] nil when nothing here refuses
-      def denial(effect, cwd:)
+      def denial(effect, cwd:, **)
         call = self.class.unwrapped(effect)
         # {.path_in} reads `effect.name`, which a {Effect::ModelCall} has not
         # got. Without this guard the boundary raises NoMethodError on the

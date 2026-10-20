@@ -296,7 +296,7 @@ RSpec.describe "Subagent gating" do
     end
 
     let(:guards) do
-      [Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
+      [Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
        Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
        Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::RememberedDenials]
     end
@@ -578,7 +578,7 @@ RSpec.describe "Subagent gating" do
       parent_layers = parent_stack.to_a
 
       expect(parent_layers.map(&:class))
-        .to eq([Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
+        .to eq([Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
                 Lain::Middleware::RedactSecretReads, Lain::Middleware::WithholdSecretPaths,
                 Lain::Middleware::GuardTestLayout,
                 Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::RememberedDenials,

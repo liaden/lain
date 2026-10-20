@@ -112,6 +112,57 @@ class ToolGuardSpecRedirect < Lain::Middleware::Base
   end
 end
 
+# A configured member that rewrites a bash call's command, as a user's could.
+class ToolGuardSpecRewriteCommand < Lain::Middleware::Base
+  def initialize(to:)
+    super()
+    @to = to
+  end
+
+  def call(env, &block)
+    effect = env.fetch(:effect)
+    downstream(env.merge(effect: effect.with(input: effect.input.merge("command" => @to))), &block)
+  end
+end
+
+# The path policy the guards ask, keeping the parse each denial question carried.
+class ToolGuardSpecSpiedPolicy < SimpleDelegator
+  attr_reader :parses
+
+  def initialize(policy)
+    super
+    @parses = []
+  end
+
+  def denial(effect, cwd:, named: nil)
+    @parses << named
+    __getobj__.denial(effect, cwd:, named:)
+  end
+
+  def judged
+    @judged ||= []
+  end
+
+  def judge(path, **)
+    judged << path
+    super
+  end
+end
+
+# An approval queue remembering nothing and noting every path it was asked about.
+class ToolGuardSpecSpiedQueue
+  attr_reader :asked
+
+  def initialize = @asked = []
+
+  def denied(path:, **)
+    @asked << path
+    nil
+  end
+
+  def denied_call(**) = nil
+end
+
 # A board answering only the one value the guard reads.
 ToolGuardSpecBareBoard = Data.define(:guard_inputs)
 
@@ -137,7 +188,7 @@ RSpec.describe Lain::CLI::ToolGuard do
     it "puts the scope, write, read, listing, test layout and automatic output guards first, then the " \
        "remembered denials, the path refusal and the gate" do
       expect(guards(ToolGuardSpecBoard.new).map(&:class))
-        .to eq([Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
+        .to eq([Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
                 Lain::Middleware::RedactSecretReads,
                 Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
                 Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::RememberedDenials,
@@ -416,7 +467,7 @@ RSpec.describe Lain::CLI::ToolGuard do
     # A child asks the SAME policy, through a context naming the child, so a
     # park says which of a fleet is asking while the verdict stays the board's.
     # A `bash` call is judged over the automatic output guard's context, so the
-    # session sits one delegator further down.
+    # session sits two delegators further down, the other carrying the parse.
     it "asks a child's policy through a context naming the child" do
       board = ToolGuardSpecBoard.new
 
@@ -424,7 +475,7 @@ RSpec.describe Lain::CLI::ToolGuard do
 
       expect(board.policy.contexts.map(&:requester)).to eq(%w[researcher])
       expect(board.policy.contexts.first.__getobj__).to be_a(Lain::Middleware::WithholdAutomaticOutput::Carried)
-      expect(board.policy.contexts.first.__getobj__.__getobj__).to be(the_session)
+      expect(board.policy.contexts.first.__getobj__.__getobj__.__getobj__).to be(the_session)
     end
 
     # The read guard parks on the board's one queue too, so its release has to
@@ -524,9 +575,10 @@ RSpec.describe Lain::CLI::ToolGuard do
       end.fetch(:result)
     end
 
-    it "runs ahead of every guard lain builds" do
+    it "runs ahead of every guard lain builds, the parse included" do
       expect(guards(board_with(configured(ToolGuardSpecStamp))).map(&:class))
-        .to eq([ToolGuardSpecStamp, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
+        .to eq([ToolGuardSpecStamp, Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope,
+                Lain::Middleware::RefuseSecretWrites,
                 Lain::Middleware::RedactSecretReads, Lain::Middleware::WithholdSecretPaths,
                 Lain::Middleware::GuardTestLayout, Lain::Middleware::WithholdAutomaticOutput,
                 Lain::Middleware::RememberedDenials, Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
@@ -540,6 +592,20 @@ RSpec.describe Lain::CLI::ToolGuard do
 
       expect(told).to have_attributes(is_error: true)
       expect(told).to eq(read_result(described_class.stack(chronicle, ToolGuardSpecBoard.new), secret))
+    end
+
+    it "has the guards parse the command a configured member rewrote" do
+      spied = ToolGuardSpecSpiedPolicy.new(ToolGuardSpecBoard.new.sensitivity)
+      middleware = configured(ToolGuardSpecRewriteCommand, to: "cat rewritten.rb")
+      inputs = ToolGuardSpecBoard.new(sensitivity: spied, policy: ToolGuardSpecPolicy.new(verdict: true))
+                                 .guard_inputs.with(middleware:)
+      stack = described_class.stack(chronicle, ToolGuardSpecBareBoard.new(guard_inputs: inputs))
+      effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => "cat original.rb" })
+      context = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: "/work", env: {}))
+
+      stack.call({ effect:, tool: Lain::Tools::Bash.new, context: }) { |env| env.merge(result: Lain::Tool::Result.ok("ran")) }
+
+      expect(spied.parses.compact.map { |named| named.paths.map(&:resolved) }.uniq).to eq([%w[/work/rewritten.rb]])
     end
 
     it "builds each child its own instance, in a stack the gate still closes" do
@@ -623,6 +689,64 @@ RSpec.describe Lain::CLI::ToolGuard do
       expect(board.sensitivity.home).to eq("/home/tester")
       expect(acted(stack, Lain::Tools::Bash.new, { "command" => "cd ~ && ls" }))
         .to have_attributes(is_error: true, content: start_with("bash refused").and(include('"/home/tester"')))
+    end
+
+    describe "the parse of a bash call" do
+      let(:board) do
+        ToolGuardSpecBoard.new(approvals: queue, policy: ToolGuardSpecPolicy.new(verdict: true))
+      end
+      let(:stack) do
+        ->(worker_env) { described_class.child_stack(chronicle, board, worker_env, requester: "subagent") }
+      end
+
+      def parses_during
+        count = 0
+        allow(Lain::Shell::Parse).to receive(:new).and_wrap_original do |original, *args|
+          parser = original.call(*args)
+          lambda do |command|
+            count += 1
+            parser.call(command)
+          end
+        end
+        yield
+        count
+      end
+
+      it "happens once in a confined child's stack" do
+        parses = parses_during { acted(stack, Lain::Tools::Bash.new, { "command" => "cat a.rb" }) }
+
+        expect(parses).to eq(1)
+      end
+
+      it "gives every guard, the real judge rung included, one directory for a relative cwd under the lease" do
+        spied = ToolGuardSpecSpiedPolicy.new(ToolGuardSpecBoard.new.sensitivity)
+        remembered = ToolGuardSpecSpiedQueue.new
+        reached = []
+        judge = lambda do |**, &_why|
+          reached << true
+          :defer
+        end
+        asking = ToolGuardSpecPolicy.new(verdict: true)
+        judged = Lain::Approval::Judged.new(judge:, policy: spied, asking:, journal:)
+        board = ToolGuardSpecBoard.new(approvals: remembered, sensitivity: spied, policy: judged)
+        stack = ->(_worker_env) { described_class.stack(chronicle, board) }
+        expected = File.join(@lease, "sub", "a.rb")
+
+        parses = parses_during { acted(stack, Lain::Tools::Bash.new, { "command" => "cat a.rb", "cwd" => "sub" }) }
+
+        expect(parses).to eq(1)
+        expect(reached).to eq([true])
+        expect(spied.judged).to include(expected)
+        expect(spied.parses.compact.map { |named| named.paths.map(&:resolved) }.uniq).to eq([[expected]])
+        expect(remembered.asked).to eq([expected])
+      end
+
+      it "reaches the ladder as unreadable when the call names no command" do
+        leased = described_class.detached(journal:)
+
+        expect(acted(leased, Lain::Tools::Bash.new, {}))
+          .to have_attributes(is_error: true, content: include("a command whose paths cannot be read"))
+      end
     end
 
     it "holds no child whose environment names no checkout" do
@@ -1208,7 +1332,7 @@ RSpec.describe Lain::CLI::ToolGuard do
         leased = Lain::WorkerEnv.new(cwd: dir, env: {}, checkout: dir)
 
         expect(described_class.detached(journal:).call(leased).to_a.map(&:class).first(2))
-          .to eq([Lain::Middleware::ConfineToScope, Lain::Middleware::ConfineToScope])
+          .to eq([Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope])
       end
     end
 

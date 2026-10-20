@@ -54,7 +54,7 @@ module Lain
 
       def call(env, &app)
         effect = ::Lain::Sensitivity::Policy.unwrapped(env.fetch(:effect))
-        reason, because = effect.tool_call? && remembered(effect, env[:context])
+        reason, because = effect.tool_call? && remembered(effect, env[:context], env[:named])
         return downstream(env, &app) unless reason
 
         record(effect, reason, because, requester_of(env[:context]))
@@ -64,48 +64,46 @@ module Lain
 
       private
 
-      def remembered(effect, context)
+      def remembered(effect, context, parsed)
         cwd = Session.cwd_of(context)
-        on_path = remembered_on_path(effect, context, cwd)
+        refused = !@sensitivity.denial(effect, cwd:, named: parsed).nil?
+        on_path = remembered_on_path(effect, context, cwd, parsed, refused)
         return [on_path, PATH_DENIED] if on_path
-        return unless @sensitivity.denial(effect, cwd:).nil?
+        return if refused
 
         repeated = @queue.denied_call(requester: requester_of(context), tool: effect.name, input: effect.input, cwd:)
         [repeated, CALL_DENIED] if repeated
       end
 
-      def remembered_on_path(effect, context, cwd)
+      def remembered_on_path(effect, context, cwd, parsed, refused)
         if effect.name == Approval::Queue::BASH
-          remembered_in_command(effect, context, cwd)
+          remembered_in_command(effect, context, cwd, parsed)
         else
-          remembered_at(effect, context, cwd)
+          remembered_at(effect, context, cwd, refused)
         end
       end
 
       # A path the session refuses outright passes on to {Sensitivity}, whose
       # final refusal says no approval can lift it, which a remembered no cannot.
-      def remembered_at(effect, context, cwd)
+      def remembered_at(effect, context, cwd, refused)
         path = ::Lain::Sensitivity::Policy.path_in(effect)
-        resolved = path && Approval::Queue.resolved(path, cwd, home: @sensitivity.home)
+        resolved = path && Shell::Named.resolved(path, cwd, home: @sensitivity.home)
         reason = resolved && denied_at(resolved, context)
-        reason if reason && asked?(effect, context, cwd)
+        if reason && !refused && @sensitivity.gates?(effect, cwd:, within: ::Lain::Sensitivity::Policy.base_of(context))
+          reason
+        end
       end
 
       # Each named path is held as a call on that path would be, so a command
       # is refused only on a path a read of it would have parked.
-      def remembered_in_command(effect, context, cwd)
+      def remembered_in_command(effect, context, cwd, parsed)
         within = ::Lain::Sensitivity::Policy.base_of(context)
-        named = Approval::Queue.named(effect.input, cwd:, home: @sensitivity.home).paths
+        named = (parsed || Shell::Named.for_input(effect.input, cwd:, home: @sensitivity.home)).paths
         named.lazy.map { [_1, denied_at(_1.resolved, context)] }
              .find { |path, reason| reason && asked_at?(path, cwd, within) }&.last
       end
 
       def denied_at(path, context) = @queue.denied(requester: requester_of(context), path:)
-
-      def asked?(effect, context, cwd)
-        @sensitivity.denial(effect, cwd:).nil? &&
-          @sensitivity.gates?(effect, cwd:, within: ::Lain::Sensitivity::Policy.base_of(context))
-      end
 
       # A protected name spelled bare is only flagged by the triage, so the
       # call parks; written as a path it is refused outright, and a remembered

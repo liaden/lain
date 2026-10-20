@@ -1003,6 +1003,17 @@ RSpec.describe Lain::Tools::Bash do
         end
       end
 
+      it "reads a ~ in a redirect target as the home the call's environment names" do
+        Dir.mktmpdir do |dir|
+          home = File.realpath(dir)
+          session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: home, env: ENV.to_h.merge("HOME" => home)))
+          invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_w", context: session, channel:)
+          described_class.new(journal:).call({ command: "echo x > ~/x" }, invocation)
+
+          expect(written.map(&:path)).to eq([File.join(home, "x")])
+        end
+      end
+
       it "names the file a symlinked redirect landed in" do
         Dir.mktmpdir do |dir|
           root = File.realpath(dir)

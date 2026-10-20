@@ -4093,7 +4093,7 @@ RSpec.describe Lain::CLI::Wiring do
         runner = wiring.wire_agent(channel:, recorder:, session:, backend: configured).send(:tool_runner)
 
         expect(runner.middleware.to_a.map(&:class))
-          .to eq([WiringSpecToolStamp, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
+          .to eq([WiringSpecToolStamp, Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
                   Lain::Middleware::RedactSecretReads, Lain::Middleware::WithholdSecretPaths,
                   Lain::Middleware::GuardTestLayout, Lain::Middleware::WithholdAutomaticOutput,
                   Lain::Middleware::RememberedDenials,
@@ -4403,7 +4403,7 @@ RSpec.describe Lain::CLI::Wiring do
           board = board_for(root:)
 
           expect(Lain::CLI::ToolGuard.stack(chronicle, board).to_a.map(&:class))
-            .to eq([Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
+            .to eq([Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
                     Lain::Middleware::RedactSecretReads,
                     Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
                     Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::RememberedDenials,
@@ -4877,7 +4877,7 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
     # is refused before a human is ever asked about it.
     it "puts all three secret guards, then the test layout guard, then the board's gate, in the tool phase" do
       expect(backing[:instrumentation].tool_middleware.to_a.map(&:class))
-        .to eq([Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
+        .to eq([Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
                 Lain::Middleware::RedactSecretReads,
                 Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
                 Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::RememberedDenials,
@@ -4966,7 +4966,7 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
       runner = build.send(:tool_runner)
 
       expect([*runner.middleware.to_a.map(&:class), runner.handler.class])
-        .to eq([Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
+        .to eq([Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
                 Lain::Middleware::RedactSecretReads,
                 Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
                 Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::RememberedDenials,

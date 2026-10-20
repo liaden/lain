@@ -284,16 +284,7 @@ module Lain
         def unreadable?(effect, context)
           return false unless effect.tool_call? && effect.name == "bash"
 
-          command = effect.input["command"] || effect.input[:command]
-          ::Lain::Shell::Named.of(command.to_s, cwd: where(effect, context), home: @home).opaque?
-        end
-
-        # As the tool resolves it; one that cannot resolve leaves the command unreadable.
-        def where(effect, context)
-          session = context.respond_to?(:worker_env) ? context : ::Lain::Session::Null.instance
-          session.worker_env.resolve(effect.input["cwd"] || effect.input[:cwd])
-        rescue TypeError, ArgumentError
-          nil
+          Middleware::ParsedCommand.named_in(effect, context, home: @home).opaque?
         end
 
         def outside?(effect, context)
@@ -414,7 +405,8 @@ module Lain
         journal = chronicle.instrumentation.journal
         requester &&= Requester.of(requester)
         Middleware::Gate.closes!(
-          Middleware::Stack.new([*configured(inputs), Middleware::ConfineToScope.new(scope: inputs.scope), *held,
+          Middleware::Stack.new([*configured_then_parsed(inputs),
+                                 Middleware::ConfineToScope.new(scope: inputs.scope), *held,
                                  Middleware::RefuseSecretWrites.new(**kwargs(chronicle)),
                                  Middleware::RedactSecretReads.new(**read_kwargs(chronicle, inputs), requester:),
                                  Middleware::WithholdSecretPaths.new(filter: path_filter(inputs)),
@@ -436,6 +428,12 @@ module Lain
         [Middleware::Sensitivity.new(sensitivity: inputs.sensitivity, journal:, requester:),
          Middleware::Gate.new(policy:, sensitivity: inputs.sensitivity, denial: inputs.denial,
                               denied_tools: inputs.denied_tools, journal:, requester:)]
+      end
+
+      # The parse follows the configured members, which may rewrite the command, so every
+      # guard below reads the text that will run.
+      def configured_then_parsed(inputs)
+        [*configured(inputs), Middleware::ParsedCommand.new(home: inputs.sensitivity.home)]
       end
 
       # Fresh instances on every call, so no two stacks share one.

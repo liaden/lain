@@ -1151,6 +1151,31 @@ RSpec.describe Lain::Approval::Escalation do
       expect(faults).to be_empty
     end
 
+    # A doubted command under the bypass ladder: the one place an opaque reading
+    # that skipped its absolute words would turn a deny into an approval.
+    describe "a doubted command whose cwd cannot be resolved, under bypass" do
+      let(:doubting) do
+        lambda do |_command|
+          Lain::Shell::Verdict::Decision.new(name: :abstain, reason: "spec doubts", term: Lain::Shell::Verdict::NO_TERM)
+        end
+      end
+
+      def bypassed(cwd)
+        sensitivity = Lain::CLI::Wiring::BoardBuild::Classifiers.new(home:, cwd: base,
+                                                                     rules: Lain::Sensitivity::Rules.empty)
+        triage = described_class::Triage.new(sensitivity:, verdict: doubting)
+        bypass = described_class.bypass(tools: Lain::Toolset.new([Lain::Tools::Bash.new]), journal:, triage:)
+        input = { "command" => "cat #{home}/.ssh/id_ed25519", "cwd" => cwd }.compact
+        bypass.call(Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input:), nil)
+      end
+
+      [nil, "bad\0dir", 3].each do |cwd|
+        it "still denies a protected absolute path with the cwd #{cwd.inspect}" do
+          expect(bypassed(cwd)).to be(false)
+        end
+      end
+    end
+
     # The default is inert for {Triage}'s other deny arm's reason: nothing in
     # `lib/` knows a home where a ladder is built, so an unwired session
     # behaves exactly as it did.

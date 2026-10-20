@@ -286,7 +286,7 @@ module Lain
         options = runtime(input, invocation)
         stages = journal_resolution(input.command, decision, invocation, options[:cwd], arm)
         confinement = confinement_for(stages, invocation, options[:cwd])
-        capture = run_journalling_writes(input.command, options[:cwd], invocation) do
+        capture = run_journalling_writes(input.command, options, invocation) do
           executed(on_arm(arm, input.command, decision), confinement, options)
         end
         self.class.render_output(capture)
@@ -370,10 +370,17 @@ module Lain
 
       # Stats after the call, timeout included: a killed command may already
       # have truncated its target.
-      def run_journalling_writes(command, cwd, invocation)
+      #
+      # @param command [String] the command as the model wrote it
+      # @param options [Hash] the spawn options the command runs under
+      # @param invocation [Lain::Tool::Invocation] the call being journalled
+      # @option options [String] :cwd the directory the command runs in
+      # @option options [Hash] :env the child's environment, whose HOME places a `~` word
+      def run_journalling_writes(command, options, invocation)
         paths = []
         before = {}
-        paths = Shell::Named.of(command, cwd:, home: nil).written.map(&:resolved).uniq
+        home = options[:env].to_h["HOME"]
+        paths = Shell::Named.of(command, cwd: options[:cwd], home:).written.map(&:resolved).uniq
         before = paths.to_h { |path| [path, identity(path)&.last] }
         yield
       ensure

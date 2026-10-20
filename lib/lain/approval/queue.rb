@@ -44,10 +44,6 @@ module Lain
       REQUESTER = Requester.main
 
       BASH = "bash"
-      HOMED = %r{\A~(/|\z)}
-      COMMAND = "command"
-      RUNS_IN = ::Lain::Sensitivity::Policy::PATH_FIELDS.fetch(BASH)
-      private_constant :HOMED, :COMMAND, :RUNS_IN
 
       Outstanding = Data.define(:path, :regions)
 
@@ -419,62 +415,12 @@ module Lain
         context.respond_to?(:identity) ? context.identity : fallback
       end
 
-      # Where a call's path lands, spelled one way for both the recording and
-      # the lookup; nil for a path no tool could resolve either.
-      #
-      # A `~` is the session's home when one is known, as the policy reads it,
-      # so a path tool and a command spelling the same file meet.
-      #
-      # @param path [String] as the call wrote it
-      # @param cwd [String] absolute; where the call resolves a relative path
-      # @param home [String, nil] for a leading `~`; nil leaves it to the process
-      # @return [String, nil]
-      def self.resolved(path, cwd, home: nil)
-        homed = home && path.match?(HOMED) ? File.join(home, path.delete_prefix("~")) : path
-        File.expand_path(homed, cwd)
-      rescue ArgumentError, EncodingError
-        nil
-      end
-
-      # The paths a `bash` call's command names, read one way for the recording
-      # and the lookup.
-      #
-      # @param input [Object] the call's input; its `cwd` field, when it has
-      #   one, resolves against `cwd`
-      # @param cwd [String] absolute; the session's directory for the call
-      # @param home [String, nil] for `~`, as {Shell::Named.of} takes it
-      # @param directory [String, nil] where the call runs, for a caller that
-      #   already resolved it with {.directory_of}
-      # @return [Shell::Named] unreadable when the input holds no command
-      #   String, or names a directory that cannot be resolved
-      def self.named(input, cwd:, home:, directory: directory_of(input, cwd:, home:))
-        command = field(input, COMMAND)
-        return ::Lain::Shell::Named::UNREADABLE unless command.is_a?(String) && directory
-
-        ::Lain::Shell::Named.of(command, cwd: directory, home:)
-      end
-
-      # Where a `bash` call runs: its `cwd` field resolved against the
-      # session's, or the session's when it has none.
-      #
-      # @param input [Object] as the model sent it; only its `cwd` field is read
-      # @param cwd [String] absolute; the session's directory for the call
-      # @param home [String, nil] for a leading `~`
-      # @return [String, nil] nil for a field no tool could resolve
-      def self.directory_of(input, cwd:, home:)
-        at = field(input, RUNS_IN) || "."
-        at.is_a?(String) ? resolved(at, cwd, home:) : nil
-      end
-
-      def self.field(input, name) = input.is_a?(Hash) ? input[name] || input[name.to_sym] : nil
-      private_class_method :field
-
       # The reason a human gave when they denied this requester a call on
       # `path`, on where it lands, or on a directory above either; "" when
       # they gave none.
       #
       # @param requester [String] as {.identity_for} names it
-      # @param path [String] absolute and resolved, see {.resolved}
+      # @param path [String] absolute and resolved, see {Shell::Named.resolved}
       # @return [String, nil] nil when no such denial was given
       def denied(requester:, path:)
         held = @denials.fetch(requester, {})
@@ -560,7 +506,7 @@ module Lain
         if pending.tool == BASH
           named_files(pending).flat_map { |path| [path, *landings(path).reject { File.directory?(_1) }] }
         else
-          lexical = pending.path && Queue.resolved(pending.path, pending.cwd, home: @home)
+          lexical = pending.path && ::Lain::Shell::Named.resolved(pending.path, pending.cwd, home: @home)
           lexical ? [lexical, *landings(lexical)] : []
         end
       end
@@ -579,8 +525,8 @@ module Lain
       # asked about. A word starting with a dash is an option, whatever value
       # it was read as carrying.
       def named_files(pending)
-        directory = Queue.directory_of(pending.input, cwd: pending.cwd, home: @home)
-        named = Queue.named(pending.input, cwd: pending.cwd, home: @home, directory:)
+        directory = ::Lain::Shell::Named.directory_of(pending.input, cwd: pending.cwd, home: @home)
+        named = ::Lain::Shell::Named.for_input(pending.input, cwd: pending.cwd, home: @home, directory:)
         return [] if named.opaque?
 
         places = [directory, *named.paths.select(&:directory).map(&:resolved)]

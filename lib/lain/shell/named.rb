@@ -34,6 +34,10 @@ module Lain
       Path = Data.define(:word, :resolved, :written, :directory, :pattern, :guess) do
         # Data has no per-member defaults, so the keyword is defaulted here.
         def initialize(guess: false, **) = super
+
+        # Whether the command wrote it so that the directory it runs in cannot
+        # move it: a rooted path, or a `~` the home resolves.
+        def absolute? = word.delete(%q('")).start_with?("/", "~")
       end
 
       # @param command [String] the command as the model wrote it
@@ -42,6 +46,78 @@ module Lain
       #   `~` word with none makes the command opaque
       # @return [Named]
       def self.of(command, cwd:, home:) = from(Parse.new.call(command), cwd:, home:)
+
+      HOMED = %r{\A~(/|\z)}
+      COMMAND = "command"
+      RUNS_IN = "cwd"
+      UNPLACED = "/.lain-unplaced-cwd"
+      private_constant :HOMED, :RUNS_IN, :UNPLACED
+
+      # The one reading of where a call runs, so the rungs that read one call
+      # cannot place its paths under different directories.
+      #
+      # @param effect [Lain::Effect::ToolCall] its `cwd` field resolves against the session's
+      # @param context [Object] answers `worker_env` as a session does
+      # @param home [String, nil] as for {.of}
+      # @return [Named] {UNREADABLE} when the call names no command or the session's directory is not absolute;
+      #   opaque when only the call's own `cwd` cannot be resolved
+      def self.for_call(effect, context, home:)
+        cwd = ::Lain::Session.cwd_of(context)
+        return UNREADABLE unless cwd.is_a?(String) && cwd.start_with?("/")
+
+        for_input(effect.input, cwd:, home:)
+      end
+
+      # @param input [Object] as the model sent it; only the command and `cwd` fields are read
+      # @param cwd [String] absolute; the session's directory for the call
+      # @param home [String, nil] as for {.of}
+      # @param directory [String, nil] where the call runs, for a caller that already resolved it
+      # @return [Named] {UNREADABLE} when the input holds no command String; opaque when the
+      #   directory cannot be resolved
+      def self.for_input(input, cwd:, home:, directory: directory_of(input, cwd:, home:))
+        command = field_of(input, COMMAND)
+        return UNREADABLE unless command.is_a?(String)
+
+        directory ? of(command, cwd: directory, home:) : unplaced(command, home:)
+      end
+
+      # A command whose directory cannot be resolved still names the words it
+      # wrote as absolute, but a relative one lands nowhere known, so the whole
+      # is opaque.
+      def self.unplaced(command, home:)
+        read = of(command, cwd: UNPLACED, home:)
+        new(paths: read.paths.select(&:absolute?).freeze, opaque: true)
+      end
+      private_class_method :unplaced
+
+      # Where a call runs: its `cwd` field resolved against the session's, or
+      # the session's when it has none.
+      #
+      # @param input [Object] as the model sent it
+      # @param cwd [String] absolute; the session's directory for the call
+      # @param home [String, nil] for a leading `~`
+      # @return [String, nil] nil for a field no tool could resolve
+      def self.directory_of(input, cwd:, home:)
+        at = field_of(input, RUNS_IN) || "."
+        at.is_a?(String) ? resolved(at, cwd, home:) : nil
+      end
+
+      # A `~` is the session's home when one is known, as the policy reads it,
+      # so a path tool and a command spelling the same file meet.
+      #
+      # @param path [String] as the call wrote it
+      # @param cwd [String] absolute; where the call resolves a relative path
+      # @param home [String, nil] for a leading `~`; nil leaves it to the process
+      # @return [String, nil]
+      def self.resolved(path, cwd, home: nil)
+        homed = home && path.match?(HOMED) ? File.join(home, path.delete_prefix("~")) : path
+        File.expand_path(homed, cwd)
+      rescue ArgumentError, EncodingError
+        nil
+      end
+
+      def self.field_of(input, name) = input.is_a?(Hash) ? input[name] || input[name.to_sym] : nil
+      private_class_method :field_of
 
       # @param result [Parse::Result] a parse a caller already holds
       # @param cwd [String] absolute directory the call runs in

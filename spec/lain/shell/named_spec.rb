@@ -873,4 +873,55 @@ RSpec.describe Lain::Shell::Named do
       expect(directories("ls", cwd: "p")).to eq([nil])
     end
   end
+
+  describe ".for_call" do
+    let(:context) { Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: "/p", env: {})) }
+
+    def call_of(input) = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input:)
+
+    def for_call(input, **) = described_class.for_call(call_of(input), context, home: "/home/u", **)
+
+    it "runs the command where the session stands when the call names no directory" do
+      expect(for_call({ "command" => "cat a" }).paths.map(&:resolved)).to eq(%w[/p/a])
+    end
+
+    it "resolves a relative cwd field against the session's directory" do
+      expect(for_call({ "command" => "cat a", "cwd" => "sub" }).paths.map(&:resolved)).to eq(%w[/p/sub/a])
+    end
+
+    it "reads a ~ in the cwd field as the home it is given" do
+      expect(for_call({ "command" => "cat a", "cwd" => "~/x" }).paths.map(&:resolved)).to eq(%w[/home/u/x/a])
+    end
+
+    it "reads symbol keys as the tool does" do
+      expect(for_call({ command: "cat a", cwd: "sub" }).paths.map(&:resolved)).to eq(%w[/p/sub/a])
+    end
+
+    it "is unreadable when the call names no command" do
+      expect(for_call({})).to equal(described_class::UNREADABLE)
+    end
+
+    it "names an absolute word and leaves the command opaque when the cwd cannot be resolved" do
+      [3, "bad\0dir"].each do |cwd|
+        result = for_call({ "command" => "cat /etc/passwd notes", "cwd" => cwd })
+
+        expect(result).to be_opaque
+        expect(result.paths.map(&:resolved)).to eq(%w[/etc/passwd])
+      end
+    end
+
+    it "keeps only the words written as absolute when the cwd cannot be resolved" do
+      result = for_call({ "command" => "cat ../../etc/x /etc/y notes", "cwd" => "bad\0dir" })
+
+      expect(result).to be_opaque
+      expect(result.paths.map(&:resolved)).to eq(%w[/etc/y])
+    end
+
+    it "is unreadable when the session's own directory is not absolute" do
+      relative = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: "wt", env: {}))
+
+      expect(described_class.for_call(call_of({ "command" => "ls" }), relative, home: nil))
+        .to equal(described_class::UNREADABLE)
+    end
+  end
 end

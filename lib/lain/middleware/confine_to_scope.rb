@@ -59,14 +59,15 @@ module Lain
       Reach = Data.define(:home) do
         # @param command [String, nil] as the model wrote it
         # @param cwd [String] absolute, where the command starts
+        # @param parsed [Shell::Named, nil] the command's parse when the stack already holds it
         # @return [Array<String>] absolute
-        def call(command, cwd)
-          Shell::Named.of(command.to_s, cwd:, home:).paths
-                      .select { _1.directory || _1.written }.map(&:resolved).grep_v(STREAMS)
+        def call(command, cwd, parsed = nil)
+          reached = parsed || Shell::Named.of(command.to_s, cwd:, home:)
+          reached.paths.select { _1.directory || _1.written }.map(&:resolved).grep_v(STREAMS)
         end
       end
 
-      CWD_ONLY = ->(_command, _cwd) { [] }
+      CWD_ONLY = ->(*) { [] }
 
       # @param scope [#current] the scope judged against, read per call
       # @param wording [String] the refusal, {PLAN} or {LEASE}
@@ -87,7 +88,7 @@ module Lain
 
         scope = @scope.current
         named = effect.input[field] || effect.input[field.to_sym]
-        outside = locations(effect, named, target(env.fetch(:context), named)).find { !scope.holds?(_2) }
+        outside = locations(env, named, target(env.fetch(:context), named)).find { !scope.holds?(_2) }
         return downstream(env, &app) unless outside
 
         env.merge(result: refusal(effect, scope, outside.first, undone))
@@ -95,15 +96,18 @@ module Lain
 
       private
 
-      def locations(effect, named, landed)
+      def locations(env, named, landed)
         Enumerator.new do |out|
           out << [named, landed]
-          reached(effect, landed).each { out << [_1, _1] }
+          reached(env, landed).each { out << [_1, _1] }
         end
       end
 
-      def reached(effect, cwd)
-        effect.name == "bash" ? @reach.call(effect.input["command"] || effect.input[:command], cwd) : []
+      def reached(env, cwd)
+        effect = env.fetch(:effect)
+        return [] unless effect.name == "bash"
+
+        @reach.call(effect.input["command"] || effect.input[:command], cwd, env[:named])
       end
 
       # A location that cannot be resolved at all keeps a NUL byte no confined

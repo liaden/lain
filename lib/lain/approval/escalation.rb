@@ -738,15 +738,20 @@ module Lain
         def refused(effect, context, allowed:)
           cwd = effect.input[CWD_FIELD]
           dir = directory(cwd, context)
-          named = Shell::Named.of(effect.input[@field], cwd: dir, home: @policy.home)
-          return [] if named.opaque? && !allowed
+          named = Middleware::ParsedCommand.named_in(effect, context, home: @policy.home)
+          paths = vouched(named, allowed)
+          return [] if paths.empty?
 
           judges = [@sensitivity.call(cwd), project(context)]
           here = dir
-          named.paths.filter_map do |path|
+          paths.filter_map do |path|
             refusal(path, in_place(path.resolved, here), dir, judges).tap { here = path.resolved if path.directory }
           end
         end
+
+        # A doubted opaque reading is vouched for only by the words written as
+        # absolute, which no `cd` or unresolved directory can move.
+        def vouched(named, allowed) = named.opaque? && !allowed ? named.paths.select(&:absolute?) : named.paths
 
         # The board's root, and the checkout this call's worker or spike runs in,
         # whose own files share the names a project's do.

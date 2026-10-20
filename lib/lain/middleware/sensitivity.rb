@@ -71,7 +71,8 @@ module Lain
       # a raised refusal wedges the loop, where an is_error Result is something
       # the next turn can read and act on.
       def call(env, &app)
-        denial = @sensitivity.denial(env.fetch(:effect), cwd: ::Lain::Session.cwd_of(env[:context]))
+        denial = @sensitivity.denial(env.fetch(:effect), cwd: ::Lain::Session.cwd_of(env[:context]),
+                                                         named: env[:named])
         return downstream(env, &app) if denial.nil?
 
         env.merge(result: refuse(denial, requester_of(env[:context])))
