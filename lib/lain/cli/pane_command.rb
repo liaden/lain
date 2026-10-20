@@ -34,9 +34,11 @@ module Lain
       # Variables lain needs that are not flag defaults, so PANE_ENV cannot hold
       # them: OpenSSL's library path, the shared temp directory, the
       # provider tuning (concurrency, connect timeout, stream stall timeout,
-      # stream debug toggle), and the human's env pass list. Sorted.
+      # stream debug toggle), the human's env pass list, and the DAG
+      # implementation, so a pane rebuilds the journal it reads on the same one
+      # its launcher ran. Sorted.
       RUNTIME_ENV = %w[
-        LAIN_CONNECT_TIMEOUT LAIN_ENV_PASS LAIN_PROVIDER_CONCURRENCY LAIN_STREAM_DEBUG
+        LAIN_CONNECT_TIMEOUT LAIN_DAG LAIN_ENV_PASS LAIN_PROVIDER_CONCURRENCY LAIN_STREAM_DEBUG
         LAIN_STREAM_STALL_TIMEOUT LD_LIBRARY_PATH TMPDIR
       ].freeze
 
