@@ -588,28 +588,23 @@ module Lain
       # an epic's files sit outside the project root, so the guard is pointed at
       # the decided epic's home for the length of one decision, as the spike's
       # journal is. Another epic's home is never in scope.
-      class HomedGuard
+      class HomedGuard < SimpleDelegator
         # @param root [String] the project root, in scope for every child
         def initialize(root:)
           @root = root
-          @current = build([root])
+          super(build([root]))
         end
 
+        # The seam asks for each guard message through this object, and a copy
+        # made now would keep the roots of whichever decision it was taken in.
         # @param home [Lain::Epic::Home] the epic the decision is about
         def within(home)
-          outer = @current
-          @current = build([@root, home.path])
+          outer = __getobj__
+          __setobj__(build([@root, home.path]))
           yield
         ensure
-          @current = outer
+          __setobj__(outer)
         end
-
-        # The seam asks the builder for each of these, and a copy made now would
-        # keep the roots of whichever decision it was taken in.
-        def call(...) = @current.call(...)
-        def never_parking = @current.never_parking
-        def guard_inputs = @current.guard_inputs
-        def with(...) = @current.with(...)
 
         private
 

@@ -14,7 +14,7 @@ module Lain
     # A lock file that exists and cannot be used.
     class Unreadable < Error
       def initialize(path, cause)
-        super("cannot use the lock #{path}: #{SystemCallError.new(nil, cause.errno).message}")
+        super("cannot use the lock #{path}: #{Error.reason_of(cause)}")
       end
     end
 

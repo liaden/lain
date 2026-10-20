@@ -266,6 +266,13 @@ RSpec.describe Lain::Config::Builder do
         }
     end
 
+    it "reports a repeated stage together with the bad policy on the repeat" do
+      expect { build("epics do\n  gate :research, :hands_off\n  gate :research, :bogus\nend\n") }
+        .to raise_error(Lain::Config::Refusal) { |error|
+          expect(error.message).to match(/config\.rb:3: .*bogus.*\n.*config\.rb:3: .*twice/)
+        }
+    end
+
     it "refuses gates given both as a keyword and as a block" do
       expect { build("epics gates: { research: :hands_off } do\n  gate :implementation, :hands_off\nend\n") }
         .to raise_error(Lain::Config::Refusal, /config\.rb:1: .*both as a keyword and as a block/)

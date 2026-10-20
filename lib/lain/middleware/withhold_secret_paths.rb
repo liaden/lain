@@ -236,8 +236,8 @@ module Lain
       def gated_file_search?(env, effect)
         return false unless effect.name == "grep"
 
-        path = at(effect.input, ::Lain::Sensitivity::Policy::PATH_FIELDS[effect.name])
-        return false unless path.is_a?(String) && ::Lain::Sensitivity.readable?(path) && !path.include?("\0")
+        path = ::Lain::Sensitivity::Policy.path_in(effect)
+        return false unless path && ::Lain::Sensitivity.readable?(path)
 
         context = env.fetch(:context)
         target = base(effect, ::Lain::Session.cwd_of(context))

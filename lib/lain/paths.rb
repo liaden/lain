@@ -29,7 +29,7 @@ module Lain
     # A directory this class had to create and could not.
     class Unwritable < Error
       def initialize(path, cause)
-        super("cannot create #{path}: #{SystemCallError.new(nil, cause.errno).message}")
+        super("cannot create #{path}: #{Error.reason_of(cause)}")
       end
     end
 

@@ -48,7 +48,7 @@ module Lain
         dir = File.realpath(Dir.mktmpdir(@prefix, @root))
         Lease.new(worker_env: WorkerEnv.new(cwd: dir, env: ENV.to_h), origin: Lease::Origin.new(path: dir))
       rescue SystemCallError => e
-        raise Unwritable.new(@root, SystemCallError.new(nil, e.errno).message.downcase)
+        raise Unwritable.new(@root, Error.reason_of(e).downcase)
       end
 
       # What the model is told about where it is.

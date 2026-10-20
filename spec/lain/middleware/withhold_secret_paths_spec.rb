@@ -141,6 +141,17 @@ RSpec.describe Lain::Middleware::WithholdSecretPaths, :seam do
       expect(content(env)).to eq("searching a gated file returns nothing; use read_file on it to ask for a release")
     end
 
+    it "refuses a search of one gated file named by a Pathname" do
+      reached = false
+      env = stack.call({ effect: effect("grep", { "pattern" => "API_KEY", "path" => Pathname(".env") }),
+                         context: session }) do |inner|
+        reached = true
+        inner
+      end
+
+      expect([reached, env.fetch(:result)]).to match([false, be_error])
+    end
+
     it "leaves a path the tool must reject to the tool, whatever its shape" do
       ["a\0b", 7].each do |path|
         env = stack.call({ effect: effect("grep", { "pattern" => "x", "path" => path }), context: session }) do |inner|

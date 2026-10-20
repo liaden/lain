@@ -71,10 +71,8 @@ module Lain
         end
 
         def prompt_awaiting_answer?(messages, span)
-          span.any? && messages[span.last + 1] && human_prompt?(messages.fetch(span.last))
+          span.any? && messages[span.last + 1] && Oracle::Handoff.human?(messages.fetch(span.last))
         end
-
-        def human_prompt?(message) = message.fetch("role") == "user" && !ToolMessages.tool?(message)
       end
     end
   end

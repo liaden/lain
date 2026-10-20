@@ -1,7 +1,13 @@
 # frozen_string_literal: true
 
 module Lain
-  class Error < StandardError; end
+  # The root of every error this harness raises.
+  class Error < StandardError
+    # The errno's own reason without the path a system call's message appends.
+    # @param cause [SystemCallError]
+    # @return [String]
+    def self.reason_of(cause) = SystemCallError.new(nil, cause.errno).message
+  end
 
   # A refusal raised before the command refusing changed anything. Its message
   # names its own remedy, so a caller never sends a human on to resume work

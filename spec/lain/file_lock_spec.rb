@@ -43,6 +43,16 @@ RSpec.describe Lain::FileLock, :seam do
     expect(ran).to be(false)
   end
 
+  it "explains a lock in an unwritable directory by the errno's reason, naming the path once" do
+    FileUtils.mkdir_p(File.dirname(@path))
+    File.chmod(0o500, File.dirname(@path))
+
+    expect { described_class.new(@path).hold { :never } }
+      .to raise_error(Lain::Paths::Unwritable, "cannot create #{@path}: Permission denied")
+  ensure
+    File.chmod(0o700, File.dirname(@path))
+  end
+
   it "refuses an unopenable path by name from try as well" do
     FileUtils.mkdir_p(@path)
 

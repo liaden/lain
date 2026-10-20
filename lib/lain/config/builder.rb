@@ -237,7 +237,9 @@ module Lain
 
       def located_at(line) = self.class.located(@path, line)
 
-      def refuse(detail, line:, table:, key:) = raise(Refusal.new(detail, path: located_at(line), table:, key:))
+      def refuse(detail, line:, table:, key:) = raise(refusal(detail, line:, table:, key:))
+
+      def refusal(detail, line:, table:, key:) = Refusal.new(detail, path: located_at(line), table:, key:)
 
       def collect(block, verbs)
         collector = Collector.new(@path, verbs)
@@ -253,23 +255,29 @@ module Lain
         end
 
         gates = {}
-        refusals = calls.filter_map { |call| refusal_of(call, gates) }
+        refusals = calls.flat_map { |call| refusals_of(call, gates) }
         raise_all(refusals)
         gates.empty? ? nil : gates
       end
 
-      def refusal_of(call, seen)
+      def refusals_of(call, seen)
         stage, policy = gate_pair(call)
         repeated = seen.key?(stage)
         seen[stage] = policy
+        [bad_policy(call, stage, policy), (twice(call, stage) if repeated)].compact
+      rescue Refusal => e
+        [e]
+      end
+
+      def bad_policy(call, stage, policy)
         Epics::Gates.from(shaped({ stage => policy }), path: located_at(call.line))
-        if repeated
-          refuse("declares gate #{stage.inspect} twice", line: call.line, table: Epics::Gates::TABLE,
-                                                         key: stage.to_s)
-        end
         nil
       rescue Refusal => e
         e
+      end
+
+      def twice(call, stage)
+        refusal("declares gate #{stage.inspect} twice", line: call.line, table: Epics::Gates::TABLE, key: stage.to_s)
       end
 
       # One bad line re-raises as it was, so its file:line prefix is unchanged; several are

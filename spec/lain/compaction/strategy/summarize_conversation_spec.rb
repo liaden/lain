@@ -215,6 +215,14 @@ RSpec.describe Lain::Compaction::Strategy::SummarizeConversation do
       expect(strategy.ranges(prompted, span: 1..2)).to be_empty
     end
 
+    it "claims a span ending on a summary-marked user message whole, as the handoff does not count it human" do
+      marked = prompted.each_with_index.map do |message, index|
+        index == 2 ? message.merge(Lain::Oracle::Handoff::SUMMARY => true) : message
+      end
+
+      expect(strategy.ranges(marked, span: 0..2)).to eq([0..2])
+    end
+
     it "still claims a span that ends on the assistant's turn whole" do
       expect(strategy.ranges(prompted, span: 0..3)).to eq([0..3])
     end
