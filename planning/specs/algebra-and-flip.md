@@ -2799,3 +2799,9 @@ After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]
   full `Context#render` 15.7 against 19 to 21, and the chat path after the first render 32,271 against 13,489. Asked the
   user; ruled: T37 gates on the chat path, and the cold render's 20% gap is accepted (card and integration check amended).
 - 2026-10-20 T4 landed `dec32aaf` (2nd attempt: the first hook failed only on 'files were modified', caused by the main session writing this plan during the run; suite green both times, 26206 examples). T32 review: FFI reader replay added as a spec; `Ext::Store::MissingObject` ancestry and `ext/lain/CLAUDE.md:143` added to T37 and T41.
+- 2026-10-20 T32 landed `e1c51d5e` (corpus 2.8 MB, about 725 KB gzipped; generator at `spec/conformance/corpus_generator.rb`,
+  outside the support glob; locale pinned to UTF-8); T5 landed `07504e9d`.
+- 2026-10-20 correction to the T35 figures above: the 2.4x timed the prefix step alone. T35's review measured, at 10k turns on
+  a loaded box: a full `Context#render` after 1 commit Ruby 43.3 ms against Ext 36.6 ms (about 1.2x, near noise); cold
+  `messages` 9.7 against 23.6 ms; cold full render 47.9 against 64.3 ms (Ext about 34% slower); the spike's replay-render
+  89 against 40 ips. The user's gate (chat path not slower) still holds; the user is told the correction.
