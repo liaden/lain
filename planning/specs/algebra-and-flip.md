@@ -1,6 +1,6 @@
 # Laws as interfaces: the approval ladder, the mask spans, the bench folds, the budget lattice and the Rust flip
 
-status: draft
+status: in-progress
 commit-mode: orchestrator-commits
 language: ruby (Rust cards: T27 to T33, T35, T41)
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson); the algebra seats (Edward Kmett, Philip Wadler, Conal Elliott) join for T1, T4, T10, T11, T14, T15, T20, T22, T52, T53; Rust (Raph Levien, Andrew Gallant, Frank McSherry, Ashley Williams) for T27 to T33, T35, T41
@@ -2725,3 +2725,17 @@ After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]
 ## Execution log
 
 (Written by /execute-plan.)
+
+- 2026-10-19 20:40 start. Base `main` at `afd5116f` (only this plan's own commit past the grounding `9eaff2a8`, so every
+  cited line still holds). `git worktree list`: `/home/tara/dev/lain afd5116f [main]` only. Branches: `flake/review`,
+  `main`, `spike/combined`, `spike/combined2`.
+- Hooks (`.pre-commit-config.yaml`): pre-commit runs whitespace and yaml checks, shellcheck; on Rust files `cargo fmt -- --check`,
+  `cargo clippy --all-targets -- -D warnings`, `cargo test`; on `Cargo.toml`/`Cargo.lock`/`deny.toml` `cargo deny check`;
+  on Ruby or Rust files `bundle exec rake compile check` (pspec plus whole-repo rubocop, about 2 min); on staged Ruby
+  `bundle exec yard-lint --staged`; on `planning/specs/*.md` `bin/lint-gherkin-docs`; every commit `bin/lint-price-freshness`;
+  commit-msg `bin/lint-commit-msg` (subject at most 72, no trailing period, blank line 2, no em or en dashes, no trailers).
+  An agent's checks on its own paths: `bundle exec rspec <files>`, `bundle exec rubocop <files>`, `bundle exec yard-lint <files>`,
+  and for Rust `cargo fmt -- --check && cargo clippy --all-targets -- -D warnings && cargo test`.
+- The suite cannot run beside other tests (shared `TMPDIR`, contention flakes): every landing runs alone. Each worktree gets its
+  own `TMPDIR` under `~/tmp/lain/` and a copy of the main checkout's `lib/lain/lain.so` (Ruby cards need no rebuild).
+- Paths needing user approval: none known. `cargo-mutants` is not installed (T33 stop condition).
