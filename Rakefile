@@ -89,6 +89,27 @@ namespace :core do
   end
 end
 
+# Regenerates ext/lain/corpus from the Ruby implementation, on the manifest's seed unless CORPUS_SEED names
+# another. The SHA recorded is the commit the corpus was generated on, since the corpus commit cannot name itself.
+namespace :conformance do
+  desc "Regenerate the conformance corpus from the Ruby implementation"
+  task :corpus do
+    $LOAD_PATH.unshift(File.expand_path("lib", __dir__))
+    require "lain"
+    require_relative "spec/conformance/corpus_generator"
+    seed = ENV["CORPUS_SEED"]&.then { Integer(_1) } || ConformanceCorpus.recorded_seed
+    ConformanceCorpus.write!(seed:, sha: ENV.fetch("CORPUS_SHA") { head_sha })
+  end
+end
+
+def head_sha
+  sha = `git rev-parse HEAD`.strip
+  raise "conformance:corpus needs a git checkout or CORPUS_SHA to name the commit it records" unless
+    Process.last_status&.success? && !sha.empty?
+
+  sha
+end
+
 require "rubocop/rake_task"
 
 RuboCop::RakeTask.new

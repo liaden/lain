@@ -36,6 +36,8 @@ mod algebra;
 mod astgrep;
 mod bm25;
 mod canonical;
+#[cfg(test)]
+mod corpus;
 #[deny(clippy::missing_docs_in_private_items)]
 mod dag;
 #[deny(clippy::missing_docs_in_private_items)]
@@ -78,7 +80,7 @@ fn blake3_hex(bytes: &[u8]) -> String {
 /// Matching it makes the two implementations accept and refuse the same set of
 /// structures, which is what parity means here; a lower bound would refuse
 /// payloads Ruby serializes fine, and a higher one would accept structures Ruby
-/// cannot dump at all. The deepest tree the canonical parity corpus builds is 3
+/// cannot dump at all. The deepest tree the canonical parity examples build is 3
 /// (`spec/lain/rust/canonical_spec.rb`), so the bound is nowhere near real
 /// payloads. `spec/lain/rust/canonical_spec.rb`'s "nesting depth" group pins
 /// both sides of the boundary, so a JSON-gem change that moves Ruby's limit
@@ -101,6 +103,17 @@ fn descend(depth: usize) -> Result<usize, String> {
         ));
     }
     Ok(entered)
+}
+
+/// The refusal of a NaN or an infinity, naming it as Ruby's `Float#to_s` does,
+/// so the message is `Canonical`'s own. Plain Rust for the reason `descend` is.
+fn non_finite(value: f64) -> String {
+    let name = match value {
+        v if v.is_nan() => "NaN",
+        v if v > 0.0 => "Infinity",
+        _ => "-Infinity",
+    };
+    format!("cannot canonicalize {name}")
 }
 
 /// How a [`Canon::Num`] text must be rebuilt as a Ruby value. `Canon::Num`
@@ -180,7 +193,8 @@ impl std::error::Error for DanglingPut {}
 /// A put refused because the object's claimed address is not the one its
 /// content hashes to. Raised as `Store::DigestMismatch`. For a canonical
 /// value whose tree holds a float the check is circular -- the float's text is
-/// the one Ruby rendered -- so the parity corpus, not this, pins floats.
+/// the one Ruby rendered -- so the conformance corpus (`ext/lain/corpus`), not
+/// this, pins floats.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DigestMismatch {
     claimed: crate::digest::Digest,
@@ -538,7 +552,7 @@ mod ffi {
             return Err(lookup_error(
                 ruby,
                 &["Lain", "Canonical", "NonFiniteFloat"],
-                "cannot canonicalize a non-finite Float".to_string(),
+                super::non_finite(float.to_f64()),
             ));
         }
         let json = ruby.class_object().const_get::<_, RModule>("JSON")?;
@@ -2895,6 +2909,21 @@ mod rewind_tests {
         assert_eq!(
             rewind_to(&StoreMap::new_sync(), Some(absent.clone()), 1),
             Err(DanglingDigest(absent))
+        );
+    }
+}
+
+#[cfg(test)]
+mod non_finite_tests {
+    use super::non_finite;
+
+    #[test]
+    fn names_the_value_as_ruby_float_to_s_does() {
+        assert_eq!(non_finite(f64::NAN), "cannot canonicalize NaN");
+        assert_eq!(non_finite(f64::INFINITY), "cannot canonicalize Infinity");
+        assert_eq!(
+            non_finite(f64::NEG_INFINITY),
+            "cannot canonicalize -Infinity"
         );
     }
 }

@@ -1,0 +1,67 @@
+{
+  "about": "A regression oracle, not a discovery one: these vectors record what the Ruby implementation answered at the commit named here, so a change in either implementation shows up as a mismatch. They cannot find a bug both implementations share.",
+  "seed": 20261019,
+  "sha": "b541b418f3108c5b963404e42984ea484b5f627e",
+  "ruby": "4.0.6",
+  "json": "3.0.2",
+  "default_external": "UTF-8",
+  "files": {
+    "canonical.ndjson": {
+      "blake3": "blake3:469b304081d37494ec5edcf1332233b9ad5b58cf218ece99f477dc87cbd3e5ab",
+      "records": 2048
+    },
+    "event_digest.ndjson": {
+      "blake3": "blake3:855dc83dafb10808cb7ac42482310280f0df8359cbbfdbdec06f1ea372ca6e1f",
+      "records": 600
+    },
+    "dag.ndjson": {
+      "blake3": "blake3:67ea5ec210c2863f1fd6e18de7ad4ad80ac1773c145034f6b0c9c9ead5acb3ea",
+      "records": 60
+    },
+    "store.ndjson": {
+      "blake3": "blake3:bd68f5038a3a6f08d689890e1cdfa7c0d778e047dc3c896b97a2126151c74625",
+      "records": 150
+    },
+    "errors.ndjson": {
+      "blake3": "blake3:b3c10bc2f657c52081ecd21e14808521176b8e1e29f2a6785d28e8ef1992548f",
+      "records": 400
+    }
+  },
+  "divergences": [
+    {
+      "ruby_class": "Lain::Store::MissingObject",
+      "ruby_message_prefix": "no object",
+      "rust_class": "Lain::Ext::Store::MissingObject",
+      "rust_message": null,
+      "why": "the extension raises its own store's class; the message is the same"
+    },
+    {
+      "ruby_class": "Lain::Error",
+      "ruby_message_prefix": "role must be one of",
+      "rust_class": "Lain::Ext::Turn::InvalidRole",
+      "rust_message": null,
+      "why": "the extension names the role refusal; Ruby raises its base error"
+    },
+    {
+      "ruby_class": "Lain::Canonical::UnsupportedType",
+      "ruby_message_prefix": "string is not convertible to UTF-8",
+      "rust_class": "Lain::Canonical::UnsupportedType",
+      "rust_message": "string is not valid UTF-8",
+      "why": "Ruby transcodes a binary String and reports the failed conversion; the extension reports bad bytes"
+    },
+    {
+      "ruby_class": "JSON::NestingError",
+      "ruby_message_prefix": "nesting of",
+      "rust_class": "Lain::Canonical::UnsupportedType",
+      "rust_message": "cannot canonicalize a structure nested deeper than 100 levels",
+      "why": "Ruby's limit is JSON.generate's own; the extension refuses the same depth while reading"
+    }
+  ],
+  "unsampled": [
+    "a render or causal edge naming a stored non-event, or a payload or canonical parent naming an event: Ruby's one map accepts it, the extension refuses it as no event or no member",
+    "an envelope whose payload digest names a stored payload of another kind: Ruby accepts it, the extension refuses it as not its payload",
+    "a value with 2 defects: Ruby refuses the first it meets, the extension reads a whole Hash before it checks for a key spelled both ways",
+    "a refusal quoting a control character or a '#{': String#inspect and Rust's Debug escape them differently",
+    "a role that is neither a String nor a Symbol"
+  ]
+}
