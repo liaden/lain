@@ -28,6 +28,45 @@ RSpec.describe Lain::Ext::Timeline do
     end
   end
 
+  describe ".new" do
+    it "builds a timeline at a head already in the store" do
+      middle = described_class.new(head_digest: three.rewind.head_digest, store:)
+      expect(middle.head).to eq(three.rewind.head)
+      expect(middle.length).to eq(2)
+    end
+
+    it "builds an empty timeline from a nil head" do
+      expect(described_class.new(head_digest: nil, store:)).to be_empty
+    end
+
+    it "refuses a head the store does not hold" do
+      expect { described_class.new(head_digest: "blake3:nope", store:) }
+        .to raise_error(Lain::Ext::Store::MissingObject, /no object "blake3:nope"/)
+    end
+
+    it "refuses a store that is not a Store" do
+      expect { described_class.new(head_digest: nil, store: Object.new) }.to raise_error(TypeError)
+    end
+  end
+
+  describe "#correlation" do
+    it "is nil on an empty timeline" do
+      expect(timeline.correlation).to be_nil
+    end
+
+    it "names a chain by its root digest, at the root and above it" do
+      root = three.to_a.first.digest
+      expect([three.rewind(2).correlation, three.correlation]).to eq([root, root])
+    end
+
+    it "equals the Ruby timeline's answer over the same chain" do
+      ruby = Lain::Timeline.empty.commit(role: :user, content: text("a")).commit(role: :assistant, content: text("b"))
+      ext = described_class.empty(store:).commit(role: :user, content: text("a"))
+                           .commit(role: :assistant, content: text("b"))
+      expect(ext.correlation).to eq(ruby.correlation)
+    end
+  end
+
   describe "#commit" do
     it "advances the head and leaves the receiver untouched" do
       one = say(timeline, "a")

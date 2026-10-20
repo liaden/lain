@@ -89,6 +89,65 @@ RSpec.describe Lain::Ext::Turn do
     end
   end
 
+  describe "the envelope and its payload" do
+    subject(:turn) do
+      described_class.new(role: :user, content: text("hi"), from: "alice", to: "bob", meta: { "k" => 1 })
+    end
+
+    it "names its sender and recipient" do
+      expect([turn.from, turn.to]).to eq(%w[alice bob])
+    end
+
+    it "has no sender or recipient unless given one" do
+      plain = described_class.new(role: :user, content: text("hi"))
+      expect([plain.from, plain.to]).to eq([nil, nil])
+    end
+
+    it "hands back the carried body" do
+      expect(turn.body).to eq("role" => "user", "content" => text("hi"), "meta" => { "k" => 1 })
+    end
+
+    it "hands back a frozen payload that names the envelope's payload digest" do
+      payload = turn.carried_payload
+      expect(payload).to be_a(Lain::Ext::Payload).and be_deeply_frozen
+      expect(payload.digest).to eq(turn.payload_digest)
+    end
+
+    it "carries a payload equal to the Ruby one over the same body" do
+      ruby = Lain::Event.turn(role: :user, content: text("hi"), meta: { "k" => 1 }).carried_payload
+      expect(turn.carried_payload).to have_attributes(kind: ruby.kind, body: ruby.body, digest: ruby.digest)
+    end
+
+    it "changes digest with the sender and recipient" do
+      plain = described_class.new(role: :user, content: text("hi"), meta: { "k" => 1 })
+      expect(turn).not_to have_same_digest_as(plain)
+    end
+
+    it "matches the Ruby event digest for the same sender and recipient" do
+      ruby = Lain::Event.turn(role: :user, content: text("hi"), meta: { "k" => 1 })
+                        .then { |e| Lain::Event.new(kind: :turn, carried_payload: e.carried_payload, from: "alice", to: "bob") }
+      expect(turn).to have_same_digest_as(ruby)
+    end
+
+    it "refuses a sender that is not a String" do
+      expect { described_class.new(role: :user, content: text("hi"), from: 7) }.to raise_error(TypeError)
+    end
+
+    it "renders the payload as an Ext::Payload" do
+      expect(turn.carried_payload.inspect).to start_with("#<Lain::Ext::Payload turn blake3:")
+    end
+
+    describe "the payload's equality (Regular)" do
+      include_examples "a Regular value",
+                       equal_pair: lambda {
+                         [described_class.new(role: :user, content: text("hi")).carried_payload,
+                          described_class.new(role: :user, content: text("hi")).carried_payload]
+                       },
+                       unequal: -> { described_class.new(role: :user, content: text("bye")).carried_payload },
+                       non_member: -> { "x" }
+    end
+  end
+
   describe "equality (Regular)" do
     include_examples "a Regular value",
                      equal_pair: lambda {

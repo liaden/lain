@@ -301,7 +301,7 @@ mod ffi {
     use crate::canonical::{self, Canon};
     use crate::dag::{self, StoreMap};
     use crate::digest::Digest;
-    use crate::event::{EventData, Role};
+    use crate::event::{EventData, PayloadData, Role};
     use magnus::{
         DataTypeFunctions, Error, ExceptionClass, Float, Integer, RArray, RClass, RHash, RModule,
         RString, Ruby, Symbol, TryConvert, TypedData, Value, function, gc, method,
@@ -741,6 +741,15 @@ mod ffi {
     /// matching `None` separately rather than by an `is_nil` guard, so a nil
     /// falls through to `RArray::from_value` and is refused as the non-Array it
     /// is, in the same message any other non-Array gets.
+    fn read_optional_text(ruby: &Ruby, value: Option<Value>) -> Result<Option<String>, Error> {
+        match value {
+            Some(value) if !value.is_nil() => {
+                validated_utf8(ruby, RString::try_convert(value)?).map(Some)
+            }
+            _ => Ok(None),
+        }
+    }
+
     fn read_causal_parents(ruby: &Ruby, value: Option<Value>) -> Result<Vec<Digest>, Error> {
         match value {
             None => Ok(Vec::new()),
@@ -802,24 +811,76 @@ mod ffi {
         }
 
         fn new(ruby: &Ruby, kw: RHash) -> Result<Obj<Self>, Error> {
-            type OptionalArgs = (Option<Value>, Option<Value>, Option<Value>, Option<Value>);
+            type OptionalArgs = (
+                Option<Value>,
+                Option<Value>,
+                Option<Value>,
+                Option<Value>,
+                Option<Value>,
+                Option<Value>,
+            );
             let args = get_kwargs::<_, (Value, Value), OptionalArgs, ()>(
                 kw,
                 &["role", "content"],
-                &["parent", "meta", "correlation", "causal_parents"],
+                &[
+                    "parent",
+                    "meta",
+                    "correlation",
+                    "causal_parents",
+                    "from",
+                    "to",
+                ],
             )?;
             let (role_value, content_value) = args.required;
-            let (parent_value, meta_value, correlation_value, causal_value) = args.optional;
+            let (parent_value, meta_value, correlation_value, causal_value, from_value, to_value) =
+                args.optional;
             let role = read_role(ruby, role_value)?;
             let content = ruby_to_canon(ruby, content_value)?;
             let parent = read_optional_digest(ruby, parent_value)?;
             let meta = read_meta(ruby, meta_value)?;
             let correlation = read_optional_digest(ruby, correlation_value)?;
             let causal_parents = read_causal_parents(ruby, causal_value)?;
-            Ok(Turn::wrap(
-                ruby,
-                EventData::turn(role, content, parent, meta, correlation, causal_parents),
-            ))
+            let from = read_optional_text(ruby, from_value)?;
+            let to = read_optional_text(ruby, to_value)?;
+            let turn = EventData::turn(role, content, parent, meta, correlation, causal_parents);
+            // The sender and recipient live in the header, so they change the
+            // digest while the payload is reused as built.
+            let inner = if from.is_none() && to.is_none() {
+                turn
+            } else {
+                EventData::new(
+                    from,
+                    to,
+                    turn.render_parent.clone(),
+                    turn.causal_parents.clone(),
+                    turn.correlation.clone(),
+                    Arc::clone(&turn.payload),
+                )
+            };
+            Ok(Turn::wrap(ruby, inner))
+        }
+
+        fn from(ruby: &Ruby, rb_self: &Turn) -> Value {
+            Self::optional_text_value(ruby, &rb_self.inner.from)
+        }
+
+        fn to(ruby: &Ruby, rb_self: &Turn) -> Value {
+            Self::optional_text_value(ruby, &rb_self.inner.to)
+        }
+
+        fn body(ruby: &Ruby, rb_self: &Turn) -> Result<Value, Error> {
+            canon_to_ruby(ruby, &rb_self.inner.payload.body)
+        }
+
+        fn carried_payload(ruby: &Ruby, rb_self: &Turn) -> Obj<Payload> {
+            Payload::wrap(ruby, Arc::clone(&rb_self.inner.payload))
+        }
+
+        fn optional_text_value(ruby: &Ruby, text: &Option<String>) -> Value {
+            match text {
+                Some(text) => frozen_str(ruby, text),
+                None => ruby.qnil().as_value(),
+            }
         }
 
         /// A carried-body field. The :turn constructor -- the only way this
@@ -938,6 +999,60 @@ mod ffi {
 
         fn inspect(&self) -> String {
             format!("#<Lain::Ext::Turn {}>", self.to_s())
+        }
+    }
+
+    /// The kind-tagged body an envelope addresses by digest. Holds only an
+    /// `Arc<PayloadData>` -- pure immutable Rust, no Ruby reference -- so it
+    /// needs no `mark` and is `Ractor.shareable?` once frozen, like `Turn`.
+    #[derive(TypedData)]
+    #[magnus(class = "Lain::Ext::Payload", free_immediately, frozen_shareable)]
+    struct Payload {
+        inner: Arc<PayloadData>,
+    }
+
+    impl DataTypeFunctions for Payload {}
+
+    impl PartialEq for Payload {
+        fn eq(&self, other: &Self) -> bool {
+            self.inner.digest == other.inner.digest
+        }
+    }
+
+    impl Eq for Payload {}
+
+    impl std::hash::Hash for Payload {
+        fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+            self.inner.digest.hash(state);
+        }
+    }
+
+    impl Payload {
+        fn wrap(ruby: &Ruby, inner: Arc<PayloadData>) -> Obj<Self> {
+            let obj = ruby.obj_wrap(Payload { inner });
+            obj.freeze();
+            obj
+        }
+
+        fn kind(ruby: &Ruby, rb_self: &Payload) -> Value {
+            ruby.to_symbol(rb_self.inner.kind.as_str()).as_value()
+        }
+
+        fn body(ruby: &Ruby, rb_self: &Payload) -> Result<Value, Error> {
+            canon_to_ruby(ruby, &rb_self.inner.body)
+        }
+
+        fn digest(ruby: &Ruby, rb_self: &Payload) -> Value {
+            frozen_str(ruby, rb_self.inner.digest.as_str())
+        }
+
+        fn to_s(&self) -> String {
+            let digest = self.inner.digest.as_str();
+            let prefix = digest.get(..19).unwrap_or(digest);
+            format!(
+                "#<Lain::Ext::Payload {} {prefix}...>",
+                self.inner.kind.as_str()
+            )
         }
     }
 
@@ -1100,6 +1215,22 @@ mod ffi {
             let timeline = Timeline::wrap(ruby, None, store_value);
             store_ref(ruby, &timeline)?;
             Ok(timeline)
+        }
+
+        fn new(ruby: &Ruby, kw: RHash) -> Result<Obj<Self>, Error> {
+            let args = get_kwargs::<_, (Value, Value), (), ()>(kw, &["head_digest", "store"], &[])?;
+            let (head_value, store_value) = args.required;
+            let head = read_optional_digest(ruby, Some(head_value))?;
+            let timeline = Timeline::wrap(ruby, head, store_value);
+            let store = store_ref(ruby, &timeline)?;
+            validate_head(ruby, store, &timeline.head)?;
+            Ok(timeline)
+        }
+
+        fn correlation(ruby: &Ruby, rb_self: &Timeline) -> Result<Value, Error> {
+            let store = store_ref(ruby, rb_self)?;
+            let correlation = Self::next_correlation(ruby, rb_self.head.as_ref(), store)?;
+            Ok(Turn::optional_digest_value(ruby, &correlation))
         }
 
         fn empty_p(&self) -> bool {
@@ -1778,12 +1909,26 @@ mod ffi {
         turn.define_method("correlation", method!(Turn::correlation, 0))?;
         turn.define_method("causal_parents", method!(Turn::causal_parents, 0))?;
         turn.define_method("payload", method!(Turn::payload, 0))?;
+        turn.define_method("from", method!(Turn::from, 0))?;
+        turn.define_method("to", method!(Turn::to, 0))?;
+        turn.define_method("body", method!(Turn::body, 0))?;
+        turn.define_method("carried_payload", method!(Turn::carried_payload, 0))?;
         turn.define_method("root?", method!(Turn::root_p, 0))?;
         turn.define_method("==", method!(<Turn as typed_data::IsEql>::is_eql, 1))?;
         turn.define_method("eql?", method!(<Turn as typed_data::IsEql>::is_eql, 1))?;
         turn.define_method("hash", method!(<Turn as typed_data::Hash>::hash, 0))?;
         turn.define_method("to_s", method!(Turn::to_s, 0))?;
         turn.define_method("inspect", method!(Turn::inspect, 0))?;
+
+        let payload = ext.define_class("Payload", ruby.class_object())?;
+        payload.define_method("kind", method!(Payload::kind, 0))?;
+        payload.define_method("body", method!(Payload::body, 0))?;
+        payload.define_method("digest", method!(Payload::digest, 0))?;
+        payload.define_method("==", method!(<Payload as typed_data::IsEql>::is_eql, 1))?;
+        payload.define_method("eql?", method!(<Payload as typed_data::IsEql>::is_eql, 1))?;
+        payload.define_method("hash", method!(<Payload as typed_data::Hash>::hash, 0))?;
+        payload.define_method("to_s", method!(Payload::to_s, 0))?;
+        payload.define_method("inspect", method!(Payload::to_s, 0))?;
 
         let store = ext.define_class("Store", ruby.class_object())?;
         store.define_error("MissingObject", lain_error)?;
@@ -1796,6 +1941,8 @@ mod ffi {
         let timeline = ext.define_class("Timeline", ruby.class_object())?;
         timeline.define_error("CrossStore", lain_error)?;
         timeline.define_singleton_method("empty", function!(Timeline::empty, -1))?;
+        timeline.define_singleton_method("new", function!(Timeline::new, 1))?;
+        timeline.define_method("correlation", method!(Timeline::correlation, 0))?;
         timeline.define_method("empty?", method!(Timeline::empty_p, 0))?;
         timeline.define_method("head", method!(Timeline::head, 0))?;
         timeline.define_method("head_digest", method!(Timeline::head_digest, 0))?;

@@ -226,4 +226,24 @@ RSpec.describe Lain::Event::Projection do
       expect(described_class.new(usage: {}).usage(timeline)).to eq(Lain::Usage.zero)
     end
   end
+
+  describe "over a Rust-backed log" do
+    let(:result) { [{ "type" => "tool_result", "tool_use_id" => "t1", "content" => "ok" }] }
+
+    def log_of(source, folder) = [source, folder.call(source.digest)]
+
+    it "walks provenance to the same tool results as the Ruby projection" do
+      rust_source = Lain::Ext::Turn.new(role: "user", content: result)
+      rust = log_of(rust_source, lambda { |d|
+        Lain::Ext::Turn.new(role: "assistant", content: block("x"), causal_parents: [d])
+      })
+      ruby_source = Lain::Event.turn(role: "user", content: result)
+      ruby = log_of(ruby_source, lambda { |d|
+        Lain::Event.turn(role: "assistant", content: block("x"), causal_parents: [d])
+      })
+
+      expect(described_class.new(rust).provenance(rust.last)).to eq(described_class.new(ruby).provenance(ruby.last))
+      expect(described_class.new(rust).provenance(rust.last)).to eq(result)
+    end
+  end
 end
