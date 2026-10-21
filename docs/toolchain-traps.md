@@ -375,7 +375,9 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
 
   Added 2026-10-18, red once in a pre-commit suite (exit 130 and the screen right, but no
   `gate_decision` journaled yet) and green 3 of 3 alone: `Lain::CLI::EpicSubmit Ctrl-C through the real
-  CLI exits 130, with the fail-closed decision already journaled`.
+  CLI exits 130, with the fail-closed decision already journaled`. Red again on 2026-10-21 (no decision
+  journaled) in a pre-commit suite beside a cargo-mutants sweep at about 12 cores, green alone, and green
+  in a full suite on the base and on the change, both on a quiet box.
 
   Added 2026-10-18, a wall-clock count red once in a pre-commit suite (6 ticks against 15) and green
   alone and in a full suite on the base and on the change: `Lain::Tool::Offload keeps a sibling fiber
