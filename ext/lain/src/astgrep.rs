@@ -242,6 +242,17 @@ pub fn search_until(
 /// within a millisecond, rarely enough that the read costs nothing measurable.
 const NODES_PER_CHECK: usize = 64;
 
+/// Sources shorter than this are searched with the GVL held. Releasing hands the
+/// lock to any busy Ruby thread and waits out its time slice, about 20 ms beside
+/// a thread at `Tool::Offload`'s priority, to get it back. A search costs about
+/// 0.7 ms per KB over this checkout's shapes, so 16 KiB costs about 11 ms, half a slice: a stall budget, since the curves do not cross there.
+pub const HOLD_BELOW: usize = 16 * 1024;
+
+/// Whether a search over `source_len` bytes is worth releasing the GVL for.
+pub fn releases(source_len: usize) -> bool {
+    source_len >= HOLD_BELOW
+}
+
 fn check_due(seen: usize) -> bool {
     seen.is_multiple_of(NODES_PER_CHECK)
 }
@@ -486,6 +497,13 @@ fn write_node<D: Doc>(
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicBool;
+
+    #[test]
+    fn a_source_below_the_threshold_keeps_the_lock_and_a_larger_one_releases_it() {
+        assert!(!releases(0));
+        assert!(!releases(HOLD_BELOW - 1));
+        assert!(releases(HOLD_BELOW));
+    }
 
     #[test]
     fn captures_a_named_metavariable_with_a_byte_range() {
@@ -982,9 +1000,9 @@ mod tests {
 }
 #[cfg(not(test))]
 pub mod ffi {
-    use super::{Capture, Match, SearchError, dump as pure_dump, search_until};
+    use super::{Capture, Match, SearchError, dump as pure_dump, releases, search_until};
     use crate::ffi::{frozen_str, int, lookup_error};
-    use crate::nogvl::{Cancel, without_gvl};
+    use crate::nogvl::{Cancel, without_gvl_when};
     // The one string-boundary policy, shared with `fuzzy`, `prompt` and
     // `treesitter`. It is not optional here: this binding's PINNED contract is
     // byte offsets into the caller's own String (see the module doc), and
@@ -1009,11 +1027,12 @@ pub mod ffi {
     /// `captures` maps each `$NAME` to `{ "text", "start", "end" }`. One FFI
     /// crossing: the whole result is materialized and frozen before returning.
     ///
-    /// The search runs with the GVL released, so a kill or a raise stops it
-    /// early; the arguments' Rust copies live in the job and are gone by the
-    /// time a refusal runs Ruby.
+    /// A source of `HOLD_BELOW` bytes or more is searched with the GVL released,
+    /// so a kill or a raise stops it early; the arguments' Rust copies live in
+    /// the job and are gone by the time a refusal runs Ruby.
     pub fn search(ruby: &Ruby, src: Value, lang: Value, pattern: Value) -> Result<RArray, Error> {
-        let searched = without_gvl(ruby, || {
+        let release = RString::from_value(src).is_some_and(|text| releases(text.len()));
+        let searched = without_gvl_when(ruby, release, || {
             let (src, lang, pattern) = (
                 text_of(ruby, src, "source")?,
                 text_of(ruby, lang, "language")?,

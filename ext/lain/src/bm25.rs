@@ -108,7 +108,32 @@ const _: fn() = || {
     assert_sync::<Bm25Index>();
 };
 
+/// Batches under this many bytes are built with the GVL held. Releasing hands
+/// the lock to any busy Ruby thread and waits out its time slice, about 20 ms
+/// beside a thread at `Tool::Offload`'s priority, to get it back. A build costs
+/// about 0.11 ms per KB, so 128 KiB costs about 14 ms, a stall budget of about half a slice rather than a measured crossover.
+pub const HOLD_BUILD_BELOW: usize = 128 * 1024;
+
+/// Indexes under this many documents are searched with the GVL held, for the
+/// same reason. A search costs about 1 us per document, so 10,000 cost about 10 ms.
+pub const HOLD_SEARCH_BELOW: usize = 10_000;
+
+/// Whether a build over `batch_bytes` of ids and texts is worth releasing the GVL for.
+pub fn releases_build(batch_bytes: usize) -> bool {
+    batch_bytes >= HOLD_BUILD_BELOW
+}
+
+/// Whether a search over `documents` is worth releasing the GVL for.
+pub fn releases_search(documents: usize) -> bool {
+    documents >= HOLD_SEARCH_BELOW
+}
+
 impl Bm25Index {
+    /// How many documents the index holds.
+    pub fn documents(&self) -> usize {
+        self.order.len()
+    }
+
     /// Build an index from a batch of `(id, text)` pairs, preserving insertion
     /// order as the tie-breaker. Empty batches and duplicate ids fail loudly.
     ///
@@ -226,6 +251,21 @@ impl Bm25Index {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_batch_or_index_below_the_threshold_keeps_the_lock_and_a_larger_one_releases_it() {
+        assert!(!releases_build(0));
+        assert!(!releases_build(128 * 1024 - 1));
+        assert!(releases_build(128 * 1024));
+        assert!(!releases_search(0));
+        assert!(!releases_search(HOLD_SEARCH_BELOW - 1));
+        assert!(releases_search(HOLD_SEARCH_BELOW));
+    }
+
+    #[test]
+    fn an_index_counts_its_documents() {
+        assert_eq!(Bm25Index::build(corpus()).unwrap().documents(), 4);
+    }
 
     fn corpus() -> Vec<(String, String)> {
         vec![

@@ -1,6 +1,6 @@
 //! Runs a pure job with the GVL released, so other Ruby threads keep running and
 //! a kill, a raise or an Async stop reaches the job through its unblocking
-//! function instead of waiting for it to end. A binding calls [`without_gvl`];
+//! function instead of waiting for it to end. A binding calls [`without_gvl_when`];
 //! its job polls [`Cancel::requested`] and gives up with [`Halted`].
 //!
 //! The `void*` both callbacks get is a slot index into `TABLE`, never a
@@ -24,7 +24,7 @@ use std::sync::{Mutex, MutexGuard, Once, PoisonError};
 #[cfg(not(test))]
 mod ffi;
 #[cfg(not(test))]
-pub use ffi::{without_gvl, without_gvl_when};
+pub use ffi::without_gvl_when;
 
 /// Borrows the slot's flag rather than owning it, so a job cannot outlive the
 /// slot it was given or keep a stop request for a later call.
@@ -255,7 +255,7 @@ impl Attempts {
 }
 
 /// INTR_FAIL so `rb_nogvl` runs no interrupt check of its own, which could
-/// longjmp through Rust frames; `without_gvl` checks with `thread_check_ints`.
+/// longjmp through Rust frames; `without_gvl_when` checks with `thread_check_ints`.
 /// Summed rather than or-ed, since the 2 are distinct bits and a sum gives a
 /// mutation sweep no equivalent operator to swap in.
 fn flags() -> c_int {

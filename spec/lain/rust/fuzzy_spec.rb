@@ -253,6 +253,23 @@ RSpec.describe Lain::Ext::Fuzzy do
       waker&.kill&.join
     end
 
+    # Releasing hands the lock to a busy thread, and getting it back waits out that thread's time
+    # slice, about 20 ms; the bound is loose for a loaded suite and well under a slice.
+    it "keeps the lock for a small candidate set, so a busy thread at the offload priority does not slow it" do
+      small = described_class.new(Array.new(100) { |i| "lib/lain/part#{i}/file#{i}.rb" })
+      busy = Thread.new do
+        Thread.current.priority = Lain::Tool::Offload::PRIORITY
+        loop { nil }
+      end
+      sleep 0.05
+      started = monotonic
+      20.times { small.match("lnpart9f1", limit: 50) }
+
+      expect((monotonic - started) / 20).to be < 0.008
+    ensure
+      busy&.kill&.join
+    end
+
     it "answers every match when more run at once than it has slots for" do
       results = Array.new(80) { matching(few) }.map(&:value)
 

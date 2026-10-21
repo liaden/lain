@@ -139,6 +139,27 @@ RSpec.describe Lain::Ext::AstGrep do
     end
   end
 
+  describe ".search beside a busy thread" do
+    def monotonic = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+    # Releasing hands the lock to a busy thread, and getting it back waits out that thread's time
+    # slice, about 20 ms; the bound is loose for a loaded suite and well under a slice.
+    it "keeps the lock for a small source, so a busy thread at the offload priority does not slow it" do
+      source = "def m(a)\n  a.save(1, 2)\nend\n" * 20
+      busy = Thread.new do
+        Thread.current.priority = Lain::Tool::Offload::PRIORITY
+        loop { nil }
+      end
+      sleep 0.05
+      started = monotonic
+      20.times { described_class.search(source, "ruby", "def $NAME($$$A)") }
+
+      expect((monotonic - started) / 20).to be < 0.008
+    ensure
+      busy&.kill&.join
+    end
+  end
+
   describe ".dump" do
     it "dumps the CST so an agent can see the real node kinds" do
       # `def self.x` is a `singleton_method` node, NOT the `method` node an LLM's

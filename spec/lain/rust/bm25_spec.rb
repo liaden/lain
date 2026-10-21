@@ -152,6 +152,7 @@ RSpec.describe Lain::Ext::Bm25 do
     # Timed from when the interrupt was meant to land: a build holding the GVL also keeps
     # this thread's sleep from ending, so its interrupt reaches a thread that is nearly done.
     it "stops within 100 ms of its thread being killed, rather than at the end of the build" do
+      GC.start # a collection pause inside the window would count against the bound
       meant = monotonic + 0.05
       worker = building
       sleep 0.05
@@ -162,6 +163,7 @@ RSpec.describe Lain::Ext::Bm25 do
     end
 
     it "raises the interrupt's error within 100 ms, rather than returning a partial index" do
+      GC.start # a collection pause inside the window would count against the bound
       meant = monotonic + 0.05
       worker = building
       sleep 0.05
@@ -196,6 +198,28 @@ RSpec.describe Lain::Ext::Bm25 do
       expect(worker.value.search("w0", 5).size).to eq(5)
     ensure
       waker&.kill&.join
+    end
+
+    # Releasing hands the lock to a busy thread, and getting it back waits out that thread's time
+    # slice, about 20 ms; the bound is loose for a loaded suite and well under a slice.
+    it "keeps the lock for a small build and search, so a busy offload-priority thread does not slow them" do
+      small = synthetic(100)
+      busy = Thread.new do
+        Thread.current.priority = Lain::Tool::Offload::PRIORITY
+        loop { nil }
+      end
+      sleep 0.05
+      index = described_class.build(small)
+      started = monotonic
+      20.times { described_class.build(small) }
+      built = (monotonic - started) / 20
+      started = monotonic
+      20.times { index.search("w0 w1 w2", 10) }
+      searched = (monotonic - started) / 20
+
+      expect([built, searched]).to all(be < 0.008)
+    ensure
+      busy&.kill&.join
     end
 
     it "answers every build when more run at once than it has slots for" do

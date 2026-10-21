@@ -60,8 +60,10 @@ All four run in `pre-commit` on **every** worktree, because `core.hooksPath` is 
   API, and its open PR 171 and lucchetto 0.4.0 both pass none, so a kill could not stop the work.
   The block is the call alone. Both callbacks are safe fns, because the `void*` they get is a slot
   index into a static table, never a pointer they dereference. A binding that needs the GVL
-  released calls `nogvl::without_gvl` rather than adding a second block. Its job reads its stop
-  request through `Cancel::requested` and returns `Halted`.
+  released calls `nogvl::without_gvl_when` rather than adding a second block, passing false for
+  work under its measured crossover: a released call beside a busy Ruby thread waits out that
+  thread's time slice to get the GVL back. Its job reads its stop request through
+  `Cancel::requested` and returns `Halted`.
 - **Two doc lints, and only one of them bites today.** The crate-root `missing_docs` is just the
   `pub mod` tripwire: it only sees items reachable as public API from `lib.rs`, and every module
   here is private, so its scope is **zero items**. Do not read it as evidence the crate is

@@ -137,6 +137,17 @@ const _: () = {
     assert_sync::<Candidates>();
 };
 
+/// Candidate sets smaller than this are ranked with the GVL held. Releasing hands
+/// the lock to any busy Ruby thread and waits out its time slice, about 20 ms
+/// beside a thread at `Tool::Offload`'s priority, to get it back. A match costs
+/// about 0.32 us per candidate, so 30,000 costs about 10 ms, half a slice: a stall budget, since the curves do not cross there.
+pub const HOLD_BELOW: usize = 30_000;
+
+/// Whether a match over `candidates` is worth releasing the GVL for.
+pub fn releases(candidates: usize) -> bool {
+    candidates >= HOLD_BELOW
+}
+
 impl Candidates {
     /// Take ownership of a batch, refusing any candidate over
     /// [`MAX_CANDIDATE_BYTES`].
@@ -299,7 +310,7 @@ thread_local! {
     /// still honest.
     ///
     /// What makes the sharing safe **today** is that the matcher belongs to one
-    /// OS thread and `without_gvl` runs the job on the calling thread, so
+    /// OS thread and `without_gvl_when` runs the job on the calling thread, so
     /// no two matches ever hold it at once (`try_borrow_mut` covers re-entrancy),
     /// not Ractors. `Ractor.shareable?(fuzzy)` is genuinely `true`, but calling
     /// any method on the handle from a non-main Ractor raises
@@ -343,9 +354,9 @@ fn with_matcher<T>(mut f: impl FnMut(&mut Matcher) -> T) -> T {
 /// rule a naive binding breaks first.
 #[cfg(not(test))]
 pub mod ffi {
-    use super::{BuildError, Candidates, Hit, QueryError};
+    use super::{BuildError, Candidates, Hit, QueryError, releases};
     use crate::ffi::{frozen_str, int, lookup_error};
-    use crate::nogvl::{Cancel, without_gvl};
+    use crate::nogvl::{Cancel, without_gvl_when};
     // The one string-boundary policy, shared with `prompt`, `astgrep` and
     // `treesitter`. Candidate positions here index GRAPHEME CLUSTERS (see
     // `positions`), which only means anything because `read_text` guarantees the
@@ -437,7 +448,8 @@ pub mod ffi {
 
             // The job outlives this frame's borrows, so it gets its own handle
             // and query; `prepare` runs again after a quiet wakeup.
-            let ranked = without_gvl(ruby, || {
+            let release = releases(rb_self.inner.items().len());
+            let ranked = without_gvl_when(ruby, release, || {
                 let (inner, query) = (Arc::clone(&rb_self.inner), query.clone());
                 Ok(move |cancel: &Cancel<'_>| inner.rank_until(&query, limit, cancel))
             })?;
@@ -850,6 +862,13 @@ mod tests {
         let stop = AtomicBool::new(true);
         let halted = many_paths().rank_until("part", None, &Cancel::watching(&stop));
         assert_eq!(halted, Err(Halted));
+    }
+
+    #[test]
+    fn a_set_below_the_threshold_keeps_the_lock_and_a_larger_one_releases_it() {
+        assert!(!releases(0));
+        assert!(!releases(HOLD_BELOW - 1));
+        assert!(releases(HOLD_BELOW));
     }
 
     #[test]

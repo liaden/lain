@@ -4,23 +4,15 @@
 use super::{Attempts, Cancel, Halted, Job, Outcome, TABLE, flags, held, run, stop};
 use magnus::{Error, Ruby};
 
-/// Runs the job `prepare` builds with the GVL released, and answers its value.
+/// Runs the job `prepare` builds with the GVL released, and answers its value;
+/// with `release` false it runs once with the GVL held instead, under a cancel
+/// never raised and without taking a slot. The caller passes false for work too
+/// small to be worth a release.
 ///
 /// `prepare` copies everything the job needs out of Ruby objects, so the job
 /// touches none. It runs once per attempt, so no Rust state is held across
 /// `thread_check_ints`, the one call into Ruby between attempts. A kill or a
 /// raise leaves through that call as an `Err`; a panic is a `RuntimeError`.
-pub fn without_gvl<T, W>(ruby: &Ruby, prepare: impl FnMut() -> Result<W, Error>) -> Result<T, Error>
-where
-    T: Send + 'static,
-    W: FnOnce(&Cancel<'_>) -> Result<T, Halted> + Send + 'static,
-{
-    without_gvl_when(ruby, true, prepare)
-}
-
-/// [`without_gvl`], except that with `release` false the job runs once with
-/// the GVL held, under a cancel never raised and without taking a slot. The
-/// caller passes false for work too small to be worth a release.
 pub fn without_gvl_when<T, W>(
     ruby: &Ruby,
     release: bool,

@@ -2667,7 +2667,8 @@ mod ffi {
             // Scoped so the batch is freed before a refusal looks up its Ruby class.
             let built = {
                 let batch: Arc<[(String, String)]> = batch.into();
-                crate::nogvl::without_gvl(ruby, || {
+                let bytes = batch.iter().map(|(id, text)| id.len() + text.len()).sum();
+                crate::nogvl::without_gvl_when(ruby, crate::bm25::releases_build(bytes), || {
                     let batch = Arc::clone(&batch);
                     Ok(move |cancel: &crate::nogvl::Cancel<'_>| {
                         crate::bm25::Bm25Index::build_until(&batch, cancel)
@@ -2701,7 +2702,8 @@ mod ffi {
         /// the exception. The outer freeze is also what makes the whole answer
         /// `Ractor.shareable?`, not merely frozen a layer down.
         fn search(ruby: &Ruby, rb_self: &Bm25, query: String, k: usize) -> Result<RArray, Error> {
-            let hits = crate::nogvl::without_gvl(ruby, || {
+            let release = crate::bm25::releases_search(rb_self.inner.documents());
+            let hits = crate::nogvl::without_gvl_when(ruby, release, || {
                 let (index, query) = (Arc::clone(&rb_self.inner), query.clone());
                 Ok(move |cancel: &crate::nogvl::Cancel<'_>| index.search_until(&query, k, cancel))
             })?;

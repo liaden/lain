@@ -8,5 +8,5 @@ ext/lain/src/digest.rs 9 1 0 0
 ext/lain/src/dag.rs 36 16 0 0
 ext/lain/src/graph.rs 14 11 0 0
 ext/lain/src/nogvl.rs 24 26 0 0
-ext/lain/src/bm25.rs 34 1 0 0
-total 162 72 3 0
+ext/lain/src/bm25.rs 44 1 0 0
+total 172 72 3 0
