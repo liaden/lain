@@ -42,6 +42,7 @@ module RuntimeCensus
     "spec/lain/frontend/tty_spec.rb" => 22,
     "spec/lain/cli/epic_driver/factory_spec.rb" => 22,
     "spec/lain/frontend/neovim/diff_mode_spec.rb" => 21,
+    "spec/lain/cli/wiring_spec.rb" => 21,
     "spec/e2e/fork_resume_spec.rb" => 21,
     "spec/lain/isolation/worktree_handback_spec.rb" => 20,
     "spec/lain/project/root_defaults_spec.rb" => 20,
