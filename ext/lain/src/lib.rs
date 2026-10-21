@@ -2662,9 +2662,21 @@ mod ffi {
                 })
                 .collect::<Result<Vec<_>, Refusal>>()
                 .map_err(|refusal| refusal.raise(ruby))?;
+            // The build runs with the GVL released, so a kill or a raise stops it
+            // early; the batch is shared into the job, not copied per attempt.
+            // Scoped so the batch is freed before a refusal looks up its Ruby class.
+            let built = {
+                let batch: Arc<[(String, String)]> = batch.into();
+                crate::nogvl::without_gvl(ruby, || {
+                    let batch = Arc::clone(&batch);
+                    Ok(move |cancel: &crate::nogvl::Cancel<'_>| {
+                        crate::bm25::Bm25Index::build_until(&batch, cancel)
+                    })
+                })?
+            };
             // `BuildError`'s `Display` (see `bm25.rs`) IS the FFI-visible
             // message for both variants; no hand-built duplicate to drift.
-            match crate::bm25::Bm25Index::build(batch) {
+            match built {
                 Ok(index) => Ok(Bm25::wrap(ruby, Arc::new(index))),
                 Err(err @ crate::bm25::BuildError::EmptyCorpus) => Err(lookup_error(
                     ruby,
@@ -2689,7 +2701,10 @@ mod ffi {
         /// the exception. The outer freeze is also what makes the whole answer
         /// `Ractor.shareable?`, not merely frozen a layer down.
         fn search(ruby: &Ruby, rb_self: &Bm25, query: String, k: usize) -> Result<RArray, Error> {
-            let hits = rb_self.inner.search(&query, k);
+            let hits = crate::nogvl::without_gvl(ruby, || {
+                let (index, query) = (Arc::clone(&rb_self.inner), query.clone());
+                Ok(move |cancel: &crate::nogvl::Cancel<'_>| index.search_until(&query, k, cancel))
+            })?;
             let out = ruby.ary_new_capa(hits.len());
             for (id, score, matched) in hits {
                 let triple = ruby.ary_new_capa(3);

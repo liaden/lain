@@ -8,6 +8,9 @@
 //! Ruby VM; the FFI wrapper in `lib.rs` wraps a built index in a frozen,
 //! `Ractor.shareable?` handle.
 //!
+//! `build_until` upserts into the engine one document at a time so a stop request can be
+//! read between them; no upsert or remove is exposed to Ruby, so the index stays immutable.
+//!
 //! ## Interior-mutability audit (the `frozen_shareable` promise)
 //!
 //! The FFI wrapper marks the handle `frozen_shareable`, an unchecked promise to
@@ -30,8 +33,11 @@
 //! own tokenizer, so `cached`/`stop-words`/`rust-stemmers`/`deunicode` are never
 //! compiled in and are unreachable by construction.
 
+use crate::nogvl::{Cancel, Halted};
 use bm25::{Document, SearchEngine, SearchEngineBuilder, Tokenizer};
 use std::collections::{BTreeSet, HashMap};
+#[cfg(test)]
+use std::sync::atomic::AtomicBool;
 
 /// A deterministic surface tokenizer: lowercase, split on any non-alphanumeric
 /// character, drop empties. No language detection, no stemming, no stopword
@@ -105,33 +111,42 @@ const _: fn() = || {
 impl Bm25Index {
     /// Build an index from a batch of `(id, text)` pairs, preserving insertion
     /// order as the tie-breaker. Empty batches and duplicate ids fail loudly.
-    pub fn build(pairs: Vec<(String, String)>) -> Result<Self, BuildError> {
+    ///
+    /// The crate's own batch build is one uninterruptible call, so this fits the
+    /// average document length itself, exactly as the crate does, and adds the
+    /// documents one at a time with a stop request read between them.
+    pub fn build_until(
+        pairs: &[(String, String)],
+        cancel: &Cancel<'_>,
+    ) -> Result<Result<Self, BuildError>, Halted> {
         if pairs.is_empty() {
-            return Err(BuildError::EmptyCorpus);
+            return Ok(Err(BuildError::EmptyCorpus));
         }
         let mut order = HashMap::with_capacity(pairs.len());
         let mut doc_tokens = HashMap::with_capacity(pairs.len());
-        let mut documents = Vec::with_capacity(pairs.len());
-        for (position, (id, text)) in pairs.into_iter().enumerate() {
-            if order.contains_key(&id) {
-                return Err(BuildError::DuplicateId(id));
+        let mut total_len = 0_u64;
+        for (position, (id, text)) in pairs.iter().enumerate() {
+            Self::unless_stopped(cancel)?;
+            if order.contains_key(id) {
+                return Ok(Err(BuildError::DuplicateId(id.clone())));
             }
-            let tokens: BTreeSet<String> = tokenize(&text).into_iter().collect();
+            let tokens = tokenize(text);
+            total_len += tokens.len() as u64;
             order.insert(id.clone(), position);
-            doc_tokens.insert(id.clone(), tokens);
-            documents.push(Document::new(id, text));
+            doc_tokens.insert(id.clone(), tokens.into_iter().collect::<BTreeSet<_>>());
         }
-        let engine =
-            SearchEngineBuilder::<String, u32, SurfaceTokenizer>::with_tokenizer_and_documents(
-                SurfaceTokenizer,
-                documents,
-            )
-            .build();
-        Ok(Self {
+        let avgdl = (total_len as f64 / pairs.len() as f64) as f32;
+        let mut engine =
+            SearchEngineBuilder::<String, u32, SurfaceTokenizer>::with_avgdl(avgdl).build();
+        for (id, text) in pairs {
+            Self::unless_stopped(cancel)?;
+            engine.upsert(Document::new(id.clone(), text.clone()));
+        }
+        Ok(Ok(Self {
             engine,
             order,
             doc_tokens,
-        })
+        }))
     }
 
     /// The top `k` hits for `query` as `(id, score, matched_tokens)`, ranked by
@@ -143,9 +158,19 @@ impl Bm25Index {
     /// truncating to `k` before imposing our deterministic order could drop the
     /// wrong tied document. Re-sorting the full set first makes the result
     /// byte-identical across processes.
-    pub fn search(&self, query: &str, k: usize) -> Vec<(String, f32, Vec<String>)> {
+    ///
+    /// The crate scores every candidate in one call, so a stop request is read
+    /// before and after that call and not inside it.
+    pub fn search_until(
+        &self,
+        query: &str,
+        k: usize,
+        cancel: &Cancel<'_>,
+    ) -> Result<Vec<(String, f32, Vec<String>)>, Halted> {
+        Self::unless_stopped(cancel)?;
         let query_tokens: BTreeSet<String> = tokenize(query).into_iter().collect();
         let mut hits = self.engine.search(query, None);
+        Self::unless_stopped(cancel)?;
         hits.sort_by(|a, b| {
             // `total_cmp` is a total order over f32 (no NaN unwrap); scores are
             // finite and non-negative here regardless.
@@ -154,7 +179,8 @@ impl Bm25Index {
                     .cmp(&self.insertion(&b.document.id))
             })
         });
-        hits.into_iter()
+        Ok(hits
+            .into_iter()
             .take(k)
             .map(|hit| {
                 let matched = self
@@ -164,7 +190,28 @@ impl Bm25Index {
                     .unwrap_or_default();
                 (hit.document.id, hit.score, matched)
             })
-            .collect()
+            .collect())
+    }
+
+    fn unless_stopped(cancel: &Cancel<'_>) -> Result<(), Halted> {
+        if cancel.requested() {
+            Err(Halted)
+        } else {
+            Ok(())
+        }
+    }
+
+    #[cfg(test)]
+    fn build(pairs: Vec<(String, String)>) -> Result<Self, BuildError> {
+        let flag = AtomicBool::new(false);
+        Self::build_until(&pairs, &Cancel::watching(&flag)).expect("nothing asked to stop")
+    }
+
+    #[cfg(test)]
+    fn search(&self, query: &str, k: usize) -> Vec<(String, f32, Vec<String>)> {
+        let flag = AtomicBool::new(false);
+        self.search_until(query, k, &Cancel::watching(&flag))
+            .expect("nothing asked to stop")
     }
 
     /// The insertion index of an id known to be in the corpus. Every id the
@@ -329,5 +376,51 @@ mod tests {
             .unwrap()
             .search("drug chemotherapy agent", 10);
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn a_build_asked_to_stop_halts_and_a_search_asked_to_stop_halts() {
+        let stopped = AtomicBool::new(true);
+        let cancel = Cancel::watching(&stopped);
+        assert!(Bm25Index::build_until(&corpus(), &cancel).is_err());
+
+        let index = Bm25Index::build(corpus()).unwrap();
+        assert_eq!(index.search_until("drug", 5, &cancel), Err(Halted));
+    }
+
+    #[test]
+    fn an_empty_batch_is_refused_even_when_a_stop_was_asked_for() {
+        let stopped = AtomicBool::new(true);
+        let built = Bm25Index::build_until(&[], &Cancel::watching(&stopped));
+        assert!(matches!(built, Ok(Err(BuildError::EmptyCorpus))));
+    }
+
+    #[test]
+    fn the_fitted_average_length_matches_the_crates_own_batch_build() {
+        let pairs = corpus();
+        let documents = pairs
+            .iter()
+            .map(|(id, text)| Document::new(id.clone(), text));
+        let theirs =
+            SearchEngineBuilder::<String, u32, SurfaceTokenizer>::with_tokenizer_and_documents(
+                SurfaceTokenizer,
+                documents,
+            )
+            .build();
+        let ours = Bm25Index::build(pairs).unwrap();
+        for query in ["drug", "the cat", "chronic leukemia agent"] {
+            let expected: Vec<_> = theirs
+                .search(query, None)
+                .iter()
+                .map(|hit| hit.score)
+                .collect();
+            let found: Vec<_> = ours
+                .engine
+                .search(query, None)
+                .iter()
+                .map(|hit| hit.score)
+                .collect();
+            assert_eq!(found, expected);
+        }
     }
 }

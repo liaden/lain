@@ -1,4 +1,4 @@
-# cargo-mutants sweep over the address-computing and graph modules, and the GVL release helper.
+# cargo-mutants sweep over the address-computing and graph modules, the GVL release helper and the BM25 index.
 # Columns: file caught unviable timeout missed. The gate compares each file's killed (caught plus
 # timeout), unviable and missed counts to its row, so a caught mutant that turns unviable fails it.
 # Sweep: cargo mutants -p lain --file <each file> -j 4 --timeout 300
@@ -8,4 +8,5 @@ ext/lain/src/digest.rs 9 1 0 0
 ext/lain/src/dag.rs 36 16 0 0
 ext/lain/src/graph.rs 14 11 0 0
 ext/lain/src/nogvl.rs 23 26 0 0
-total 127 71 3 0
+ext/lain/src/bm25.rs 34 1 0 0
+total 161 72 3 0
