@@ -20,6 +20,9 @@
 use ast_grep_core::meta_var::{MetaVarEnv, MetaVariable};
 use ast_grep_core::{AstGrep, Doc, Language, Node, NodeMatch, Pattern};
 use ast_grep_language::SupportLang;
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
 
 /// A captured metavariable (`$NAME`) and where its node sits in the source.
 #[derive(Debug, PartialEq, Eq)]
@@ -108,6 +111,70 @@ fn build_pattern(pattern: &str, lang: SupportLang) -> Result<Pattern, SearchErro
     Ok(pat)
 }
 
+/// Only successes are stored, so a malformed pattern keeps raising and takes no
+/// slot. Nothing is evicted: the cap bounds memory, not cost. A hit lasts one
+/// tool call, because `Tool::Offload` starts a thread per call.
+struct PatternCache {
+    built: HashMap<SupportLang, HashMap<String, Rc<Pattern>>>,
+    len: usize,
+    cap: usize,
+}
+
+impl PatternCache {
+    fn new(cap: usize) -> Self {
+        Self {
+            built: HashMap::new(),
+            len: 0,
+            cap,
+        }
+    }
+
+    fn get_or_build(
+        &mut self,
+        lang: SupportLang,
+        pattern: &str,
+    ) -> Result<Rc<Pattern>, SearchError> {
+        if let Some(hit) = self
+            .built
+            .get(&lang)
+            .and_then(|by_text| by_text.get(pattern))
+        {
+            return Ok(Rc::clone(hit));
+        }
+        let built = Rc::new(build_pattern(pattern, lang)?);
+        // Admit until full, then never evict: the first patterns a thread sees keep their slots.
+        if self.len < self.cap {
+            self.built
+                .entry(lang)
+                .or_default()
+                .insert(pattern.to_string(), Rc::clone(&built));
+            self.len += 1;
+        }
+        Ok(built)
+    }
+}
+
+thread_local! {
+    /// Per thread, so the cache needs no lock and holds `Rc` rather than `Arc`.
+    /// `Tool::Offload` starts a thread per call, so a hit lasts one tool call.
+    static PATTERNS: RefCell<PatternCache> = RefCell::new(PatternCache::new(64));
+}
+
+/// The thread's cached build of `pattern`, falling back to an uncached build
+/// if the thread-local is unreachable (TLS teardown) or already borrowed;
+/// both are panics on the ergonomic API.
+fn built_pattern(pattern: &str, lang: SupportLang) -> Result<Rc<Pattern>, SearchError> {
+    PATTERNS
+        .try_with(|cell| {
+            cell.try_borrow_mut()
+                .ok()
+                .map(|mut cache| cache.get_or_build(lang, pattern))
+        })
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| build_pattern(pattern, lang).map(Rc::new))
+}
+
 /// Whether `node` or any descendant is an ERROR or MISSING node -- the two ways
 /// tree-sitter records "this did not parse cleanly", walked over the same
 /// preprocessed source `Pattern::try_new` parsed.
@@ -133,11 +200,11 @@ fn has_metavariable(pattern: &str) -> bool {
 /// pattern with no matches yields an empty `Vec` (not an error).
 pub fn search(src: &str, lang: &str, pattern: &str) -> Result<Vec<Match>, SearchError> {
     let lang = parse_lang(lang)?;
-    let pat = build_pattern(pattern, lang)?;
+    let pat = built_pattern(pattern, lang)?;
     let ast = AstGrep::new(src, lang);
     let matches = ast
         .root()
-        .find_all(&pat)
+        .find_all(&*pat)
         .map(|matched| extract_match(&matched))
         .collect();
     Ok(matches)
@@ -594,6 +661,77 @@ mod tests {
         let a = search("def total(x)\n  x\nend", "ruby", "def $NAME($$$A)").unwrap();
         let b = search("def total(x)\n  x\nend", "ruby", "def $NAME($$$A)").unwrap();
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn a_second_build_of_the_same_pattern_is_the_same_object() {
+        let mut cache = PatternCache::new(64);
+        let first = cache.get_or_build(SupportLang::Ruby, "$A.save").unwrap();
+        let second = cache.get_or_build(SupportLang::Ruby, "$A.save").unwrap();
+        assert!(Rc::ptr_eq(&first, &second));
+    }
+
+    #[test]
+    fn the_same_text_in_another_language_is_a_separate_entry() {
+        let mut cache = PatternCache::new(64);
+        let ruby = cache.get_or_build(SupportLang::Ruby, "$A").unwrap();
+        let rust = cache.get_or_build(SupportLang::Rust, "$A").unwrap();
+        assert!(!Rc::ptr_eq(&ruby, &rust));
+        assert_eq!(cache.len, 2);
+    }
+
+    #[test]
+    fn failures_are_not_stored_and_the_cap_holds() {
+        let mut cache = PatternCache::new(64);
+        assert!(matches!(
+            cache.get_or_build(SupportLang::Ruby, "def"),
+            Err(SearchError::BadPattern { .. })
+        ));
+        assert_eq!(cache.len, 0, "the bad pattern took no slot");
+
+        let sources: Vec<String> = (0..65).map(|n| format!("$A.save{n}")).collect();
+        let firsts: Vec<Rc<Pattern>> = sources
+            .iter()
+            .map(|src| cache.get_or_build(SupportLang::Ruby, src).unwrap())
+            .collect();
+        let kept: Vec<bool> = sources
+            .iter()
+            .zip(&firsts)
+            .map(|(src, first)| {
+                Rc::ptr_eq(first, &cache.get_or_build(SupportLang::Ruby, src).unwrap())
+            })
+            .collect();
+
+        assert!(kept[..64].iter().all(|&hit| hit));
+        assert!(!kept[64], "the 65th pattern is built but not kept");
+    }
+
+    #[test]
+    fn search_reuses_the_threads_cached_pattern() {
+        let before = PATTERNS.with(|cell| cell.borrow().len);
+        let first = search("a.save_twice", "ruby", "$A.save_twice").unwrap();
+        let second = search("a.save_twice", "ruby", "$A.save_twice").unwrap();
+        assert_eq!(first, second);
+        assert_eq!(PATTERNS.with(|cell| cell.borrow().len), before + 1);
+    }
+
+    #[test]
+    fn a_cached_pattern_agrees_with_a_fresh_one() {
+        let src = "a.save\nb.save\n";
+        let mut cache = PatternCache::new(64);
+        let cached = cache.get_or_build(SupportLang::Ruby, "$A.save").unwrap();
+        let fresh = build_pattern("$A.save", SupportLang::Ruby).unwrap();
+        let find = |pat: &Pattern| {
+            AstGrep::new(src, SupportLang::Ruby)
+                .root()
+                .find_all(pat)
+                .map(|matched| extract_match(&matched))
+                .collect::<Vec<_>>()
+        };
+        let first = find(&cached);
+        assert_eq!(first, find(&cached));
+        assert_eq!(first, find(&fresh));
+        assert_eq!(first.len(), 2);
     }
 }
 #[cfg(not(test))]
