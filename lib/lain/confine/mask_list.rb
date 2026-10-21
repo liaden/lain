@@ -2,7 +2,7 @@
 
 module Lain
   module Confine
-    # The files a sandbox hides from a command, kept current for a session whose
+    # The files or directories a sandbox hides from a command, kept current for a session whose
     # tree changes under it. Listing is one `git ls-files` per ask; classifying
     # is the slow part, so only a name that is new, or whose file changed
     # identity since it was classified, is classified. A swap keeps the name,
@@ -44,6 +44,10 @@ module Lain
         refresh
         @state.masks.values.uniq(&:path).select { File.exist?(_1.path) }
       end
+
+      # @param path [String] a resolved path from {#masks}
+      # @return [Array<String>] the listed names that landed on it
+      def landed_on(path) = @state.masks.filter_map { |name, mask| name if mask.path == path }
 
       private
 

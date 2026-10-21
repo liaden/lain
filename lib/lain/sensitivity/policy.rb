@@ -484,7 +484,7 @@ module Lain
         Denial.new(tool_use_id: call.tool_use_id, tool: call.name, path:, verdict:)
       end
 
-      # The files a sandbox must hide. Each name is judged as the listing
+      # The files or directories a sandbox must hide. Each name is judged as the listing
       # filter judges it, and masked where it lands. So a link whose name
       # alone is sensitive (`readme.key -> README.md`) masks its landing,
       # although the filter keeps the landing's own row.

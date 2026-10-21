@@ -58,6 +58,12 @@ module Lain
       # @return [Boolean] whether the fence lets the call exec it
       def runs?(path) = exec_files.include?(path) || exec_dirs.any? { path.start_with?("#{_1}/") }
 
+      # @return [String, nil] the first mask that is or holds a grant, which masking would empty
+      def overmask
+        grants = [*exec_dirs, *exec_files, *read_dirs, *write_dirs]
+        masks.find { |mask| grants.any? { _1 == mask || _1.start_with?(File.join(mask, "")) } }
+      end
+
       NONE = new(name: :none, trace: false)
       TRACED = new(name: :traced, trace: true)
 

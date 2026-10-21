@@ -54,7 +54,21 @@ module Lain
         [@bwrap, "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
          "--size", profile.tmpfs_bytes.to_s, "--tmpfs", "/tmp", "--unshare-pid", "--die-with-parent",
          *under_tmp(profile).flat_map { |dir| ["--ro-bind-try", dir, dir] },
-         *profile.masks.flat_map { |mask| ["--ro-bind", "/dev/null", mask] }, "--"]
+         *masking(profile.masks), "--"]
+      end
+
+      # The kind is read here, the last moment before bwrap binds, because a
+      # mask list keeps a path, not what it was when judged. bwrap cannot bind
+      # /dev/null over a directory, so a directory gets an empty read-only
+      # tmpfs. A mask inside a masked directory is left out: bwrap cannot bind
+      # into the read-only tmpfs, and on a writable one the bind would put the
+      # name back.
+      def masking(masks)
+        dirs = masks.select { File.directory?(_1) }
+        covers = dirs.map { "#{_1}/" }
+        masks.reject { |mask| covers.any? { mask.start_with?(_1) } }.flat_map do |mask|
+          dirs.include?(mask) ? ["--tmpfs", mask, "--remount-ro", mask] : ["--ro-bind", "/dev/null", mask]
+        end
       end
 
       # The private /tmp hides whatever the host had there, a project or a

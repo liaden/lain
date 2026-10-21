@@ -168,5 +168,72 @@ RSpec.describe Lain::Confine::Bwrap do
     it "writes its private /tmp" do
       expect(confined("sh", "-c", "echo x > /tmp/scratch && cat /tmp/scratch")).to eq(["x\n", "", true])
     end
+
+    describe "over a repo whose listed links land on a home credential" do
+      def ssh = File.join(home, ".ssh")
+
+      def plant_repo(links)
+        FileUtils.mkdir_p([project, ssh])
+        File.write(File.join(ssh, "id_rsa"), "PRIVATE KEY\n")
+        File.write(File.join(project, "plain.txt"), "plain words\n")
+        links.each { |name, target| File.symlink(target, File.join(project, name)) }
+        system(SeedRepo::SCRUB, "git", "init", "-q", chdir: project, exception: true)
+      end
+
+      def listed_masks
+        policy = Lain::Sensitivity::Policy.new(
+          sensitivity: Lain::Sensitivity.new(home:, cwd: project, root: project), home:, root: project
+        )
+        Lain::Confine::MaskList.new(root: project, policy: -> { policy }).masks.map(&:path)
+      end
+
+      def wrapped(argv, trace: true)
+        profile = Lain::Confine::Profile.reader(root: project, home:, masks: listed_masks, trace:)
+        argv_of(described_class.new(fence:).wrap(Lain::Shell::Term.of(argv), profile, trace_fd: 3))
+      end
+
+      # The fence refuses home before a mask is reached, so bwrap's layer runs
+      # alone to show the mask itself is what hides the credential.
+      def masked_only(*argv)
+        full = wrapped(argv, trace: false)
+        run(full.take(full.index("--") + 1) + argv)
+      end
+
+      it "still runs a command that reads an ordinary file" do
+        plant_repo("ldir" => ssh)
+        expect(run(wrapped(["cat", "plain.txt"]))).to eq(["plain words\n", "", true])
+      end
+
+      it "shows the masked directory empty and refuses its key" do
+        plant_repo("ldir" => ssh)
+        expect(masked_only("ls", "-A", "ldir")).to eq(["", "", true])
+        expect(masked_only("cat", "ldir/id_rsa")).to match(["", /No such file/, false])
+      end
+
+      it "runs, and shows the directory empty, when a key link inside it is listed too" do
+        plant_repo("ldir" => ssh, "lkey" => File.join(ssh, "id_rsa"))
+        expect(run(wrapped(["cat", "plain.txt"]))).to eq(["plain words\n", "", true])
+        expect(masked_only("ls", "-A", "ldir")).to eq(["", "", true])
+      end
+
+      it "keeps it read-only" do
+        plant_repo("ldir" => ssh)
+        expect(masked_only("touch", "ldir/x")).to match(["", /Read-only/, false])
+      end
+
+      it "still masks a key in a sibling directory whose name only starts with the masked one" do
+        sibling = File.join("#{ssh}2", "id_rsa")
+        FileUtils.mkdir_p(File.dirname(sibling))
+        File.write(sibling, "PRIVATE KEY\n")
+        plant_repo("ldir" => ssh, "lkey" => sibling)
+        expect(masked_only("cat", "lkey")).to match(["", /Permission denied/, false])
+      end
+
+      it "reads nothing through a link to the key file" do
+        plant_repo("lkey" => File.join(ssh, "id_rsa"))
+        expect(masked_only("cat", "lkey")).to match(["", /Permission denied/, false])
+        expect(run(wrapped(%w[cat lkey]))).to match(["", /Permission denied/, false])
+      end
+    end
   end
 end

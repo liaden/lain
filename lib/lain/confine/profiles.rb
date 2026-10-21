@@ -10,6 +10,20 @@ module Lain
     # What this kernel lacks narrows the profile: no trace leaves a reader
     # confined and untraced, and every other call unwatched.
     class Profiles
+      # A listed link lands on a program or directory the call runs on, so its
+      # mask would leave an empty view or an exec that fails for no visible reason.
+      class Overmasked < Error
+        attr_reader :path, :names
+
+        # @param path [String] the program or directory the mask would hide
+        # @param names [Array<String>] the listed names that landed on it
+        def initialize(path:, names:)
+          @path = path
+          @names = names
+          super("#{names.join(", ")} lands on #{path}, which the call needs")
+        end
+      end
+
       # @param masks [#masks] the session's {MaskList}, asked on every call so a
       #   mask whose file has gone never reaches bwrap, which fails on one
       # @param probe [#supports?] which sandbox layers this kernel offers
@@ -24,6 +38,7 @@ module Lain
 
       # @param request [Request]
       # @return [Profile]
+      # @raise [Overmasked] when a mask would empty a directory the reader profile grants
       def for(request)
         return reader(request) if read_only?(request.ruling)
 
@@ -37,8 +52,12 @@ module Lain
       def traceable? = @probe.supports?(:trace)
 
       def reader(request)
-        Profile.reader(root: request.root || @root, home: @home, masks: @masks.masks.map(&:path),
-                       exec_files: exec_files(request.executables), trace: traceable?)
+        profile = Profile.reader(root: request.root || @root, home: @home, masks: @masks.masks.map(&:path),
+                                 exec_files: exec_files(request.executables), trace: traceable?)
+        overmask = profile.overmask
+        raise Overmasked.new(path: overmask, names: @masks.landed_on(overmask)) if overmask
+
+        profile
       end
 
       # A program the call resolved to outside /usr may run, unless the project

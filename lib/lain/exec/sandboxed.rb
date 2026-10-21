@@ -38,6 +38,10 @@ module Lain
       REFUSED = "REFUSED by the sandbox, not a transient error: this call may not run %<path>s. Retrying, or " \
                 "running the same effect another way, will be refused again. Stop and ask the human to approve " \
                 "it, then wait for the answer."
+      OVERMASKED = "REFUSED by the sandbox, not a transient error: the listed link %<names>s lands on %<path>s, " \
+                   "which this call needs to run, so hiding it would leave the call nothing to run on. Retrying " \
+                   "will be refused again. Stop and ask the human to remove or rename the link, then wait for the " \
+                   "answer."
 
       # Bundler reads the user's config, which may hold gem-source credentials,
       # and the reader profile grants no home directory to find it in.
@@ -73,7 +77,11 @@ module Lain
       # @return [Capture]
       # @raise [Timeout] when the deadline passed and the group was killed
       def call(command:, cwd:, env:, timeout:, confinement: Confine::Request::NONE, **sinks)
-        profile = @profiles.for(confinement)
+        begin
+          profile = @profiles.for(confinement)
+        rescue Confine::Profiles::Overmasked => e
+          return overmasked(confinement, e, sinks)
+        end
         refused = unrunnable(profile, confinement.executables)
         @journal << Telemetry::Sandbox.new(tool_use_id: confinement.tool_use_id, profile: profile.name,
                                            trace: profile.trace, refused:)
@@ -148,8 +156,19 @@ module Lain
           @journal << Telemetry::ExecRecord.new(tool_use_id: confinement.tool_use_id, profile: profile.name,
                                                 execs: [], refusals: [], fd_execs: [], truncated: false)
         end
+        refusal(format(REFUSED, path:), sinks)
+      end
+
+      def overmasked(confinement, overmask, sinks)
+        @journal << Telemetry::Sandbox.new(tool_use_id: confinement.tool_use_id, profile: :reader, trace: false,
+                                           refused: [overmask.path])
+        names = overmask.names.map { printable(_1) }.join(", ")
+        refusal(format(OVERMASKED, names:, path: printable(overmask.path)), sinks)
+      end
+
+      def refusal(line, sinks)
         Capture::Bounded.new(ceiling: @ceiling, **sinks)
-                        .take(:stderr, "#{Shell::Pipeline::PREFIX}#{format(REFUSED, path:)}\n")
+                        .take(:stderr, "#{Shell::Pipeline::PREFIX}#{line}\n")
                         .finish(Shell::Pipeline::NOT_PERMITTED)
       end
 

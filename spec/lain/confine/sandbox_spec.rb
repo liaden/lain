@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require "fileutils"
+require "tmpdir"
+
 RSpec.describe Lain::Confine::Sandbox do
   let(:journal) { RecordingChannel.new }
   let(:fence) { "/srv/lain-fence" }
@@ -71,6 +74,88 @@ RSpec.describe Lain::Confine::Sandbox do
       sandbox.prime
 
       expect(masks.instance_variable_get(:@priming)).to be_nil
+    end
+  end
+
+  describe "a reader call whose listed link lands on what the call runs on", :seam do
+    let(:fence) { Lain::Confine::Bwrap.fence_binary }
+
+    before do
+      skip("bwrap or strace is not installed") unless %w[/usr/bin/bwrap /usr/bin/strace].all? { File.executable?(_1) }
+      skip("lain-fence is not built at #{fence} -- run `bundle exec rake compile`") unless File.executable?(fence)
+    end
+
+    around do |example|
+      Dir.mktmpdir("lain-sandbox-overmask") do |dir|
+        @base = File.realpath(dir)
+        example.run
+      end
+    end
+
+    def home = File.join(@base, "home")
+    def repo = File.join(@base, "repo")
+
+    def plant(name, target)
+      FileUtils.mkdir_p([repo, File.join(home, ".ssh")])
+      File.write(File.join(repo, "plain.txt"), "plain words\n")
+      File.symlink(target, File.join(repo, name))
+      system(SeedRepo::SCRUB, "git", "init", "-q", chdir: repo, exception: true)
+    end
+
+    def policy
+      Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: repo, root: repo), home:, root: repo)
+    end
+
+    def sandboxed_over(name, target)
+      plant(name, target)
+      judging = policy
+      masks = Lain::Confine::MaskList.new(root: repo, policy: -> { judging })
+      described_class.new(root: repo, home:, masks:, probe: Lain::Confine::Probe.new(fence:, journal:), fence:,
+                          journal:).wrap(Lain::Exec::Local.new, requirer: "Spec")
+    end
+
+    def cat_plain(exec, command: "cat plain.txt", executables: [])
+      ruling = Lain::Approval::Escalation::Ruling.allow(rung: "rules", because: "spec", rule: "composed_term")
+      request = Lain::Confine::Request.new(ruling:, executables:, cwd: repo, root: repo, tool_use_id: "toolu_1")
+      exec.call(command:, cwd: repo, env: {}, timeout: 10, confinement: request)
+    end
+
+    def user_program(path)
+      FileUtils.mkdir_p(File.dirname(path))
+      File.write(path, "#!/bin/sh\necho ran\n")
+      File.chmod(0o755, path)
+      Lain::Shell::Executable.new(name: File.basename(path), resolved: path, realpath: path, chain: [], shadowed: [],
+                                  anomalies: [], klass: :user, fresh: false, run_files: [], wrappers: [])
+    end
+
+    {
+      "the project root" => ["id_rsa", -> { "." }, -> { repo }],
+      "the home directory" => ["secrets.key", -> { home }, -> { home }],
+      "/" => ["server.pem", -> { "/" }, -> { "/" }],
+      "/usr" => ["credentials", -> { "/usr" }, -> { "/usr" }]
+    }.each do |landing, (name, target, landed)|
+      it "refuses the call, naming the link, when a listed link lands on #{landing}" do
+        capture = cat_plain(sandboxed_over(name, instance_exec(&target)))
+
+        expect(capture).to have_attributes(exit_status: Lain::Shell::Pipeline::NOT_PERMITTED, stdout: "")
+        expect(capture.stderr).to include(name, instance_exec(&landed)).and start_with("lain: REFUSED")
+      end
+    end
+
+    it "refuses the call, naming the link, when a listed link lands on a program the call was granted" do
+      program = File.join(home, ".local", "bin", "tool")
+      executable = user_program(program)
+      capture = cat_plain(sandboxed_over("id_rsa", program), command: program, executables: [executable])
+
+      expect(capture).to have_attributes(exit_status: Lain::Shell::Pipeline::NOT_PERMITTED, stdout: "")
+      expect(capture.stderr).to include("id_rsa", program).and start_with("lain: REFUSED")
+    end
+
+    it "runs when a masked directory's name only starts like a grant's" do
+      FileUtils.mkdir_p(File.join(home, ".rust"))
+      capture = cat_plain(sandboxed_over("secrets.key", File.join(home, ".rust")))
+
+      expect(capture).to have_attributes(exit_status: 0, stdout: "plain words\n")
     end
   end
 end
