@@ -23,6 +23,7 @@ module TimelineBindingCalls
     ancestor_digests: ->(left, _right, root) { [left.ancestor_digests.last, root.head_digest] },
     to_a: ->(left, _right, _root) { [left.to_a.map(&:role), %w[user assistant]] },
     messages: ->(left, _right, root) { [left.messages(after: root.head_digest, onto: []).size, 1] },
+    consumed: ->(left, right, _root) { [right.consumed([left.head_digest]), [left.head_digest]] },
     length: ->(left, _right, _root) { [left.length, 2] },
     include?: ->(left, _right, root) { [left.include?(root.head_digest), true] },
     ancestor_of?: ->(left, _right, root) { [root.ancestor_of?(left), true] },

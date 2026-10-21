@@ -426,6 +426,29 @@ pub fn includes(
     Ok(find_ancestor(map, head, |digest| digest == needle)?.is_some())
 }
 
+/// The `wanted` digests some turn on `head`'s chain names as a causal parent,
+/// in the order the walk finds them, each once. Stops the moment every distinct
+/// wanted digest is found, so a note a recent turn consumed costs a few node
+/// reads rather than the whole chain; a dangle reached before that still raises.
+pub fn consumed(
+    map: &StoreMap,
+    head: Option<&Digest>,
+    wanted: &[Digest],
+) -> Result<Vec<Digest>, DanglingDigest> {
+    let mut remaining: HashSet<&Digest> = wanted.iter().collect();
+    let mut found = Vec::new();
+    let mut steps = walk(map, head);
+    while !remaining.is_empty() {
+        let Some(step) = steps.next() else { break };
+        for parent in &step?.causal_parents {
+            if remaining.remove(parent) {
+                found.push(parent.clone());
+            }
+        }
+    }
+    Ok(found)
+}
+
 /// The parent digest of `digest`. `Ok(None)` is a root (a valid stop); an absent
 /// digest is `Err(DanglingDigest)` -- corruption, kept distinct from the root so
 /// `rewind` can absorb past `None` yet still raise on a dangle. Used by `rewind`
@@ -931,6 +954,62 @@ pub(crate) mod tests {
         assert_eq!(includes(&map, Some(&left), &left), Ok(true));
         assert_eq!(includes(&map, Some(&left), &right), Ok(false));
         assert_eq!(includes(&map, None, &digest("blake3:anything")), Ok(false));
+    }
+
+    fn commit_naming(
+        map: &StoreMap,
+        parent: Option<&Digest>,
+        causal: Vec<Digest>,
+    ) -> (StoreMap, Digest) {
+        let turn = EventData::turn(
+            Role::User,
+            text("names"),
+            parent.cloned(),
+            Canon::Object(vec![]),
+            None,
+            causal,
+        );
+        let digest = turn.digest.clone();
+        (map.insert(digest.clone(), turn), digest)
+    }
+
+    #[test]
+    fn consumed_answers_the_wanted_digests_a_turn_names() {
+        let (map, base) = chain(5);
+        let (note_a, note_b, note_c) = (digest("blake3:a"), digest("blake3:b"), digest("blake3:c"));
+        let (map, mid) = commit_naming(&map, Some(&base), vec![note_b.clone()]);
+        let (map, head) = commit_naming(&map, Some(&mid), vec![note_a.clone()]);
+        let wanted = [note_a.clone(), note_b.clone(), note_c];
+        assert_eq!(
+            consumed(&map, Some(&head), &wanted),
+            Ok(vec![note_a, note_b])
+        );
+        assert_eq!(consumed(&map, None, &wanted), Ok(vec![]));
+    }
+
+    #[test]
+    fn consumed_stops_once_every_distinct_wanted_digest_is_found() {
+        // The chain dangles past its root, so a walk that outlives the answer raises.
+        let (map, digests) = dangling_chain(10_000);
+        let note = digest("blake3:note");
+        let (map, head) = commit_naming(&map, Some(&digests[0]), vec![note.clone()]);
+        let twice = [note.clone(), note.clone()];
+        assert_eq!(consumed(&map, Some(&head), &twice), Ok(vec![note.clone()]));
+        assert_eq!(consumed(&map, Some(&head), &[]), Ok(vec![]));
+        let unnamed = [note, digest("blake3:unnamed")];
+        assert_eq!(
+            consumed(&map, Some(&head), &unnamed),
+            Err(DanglingDigest(digest("blake3:absent")))
+        );
+    }
+
+    #[test]
+    fn consumed_raises_on_a_dangle_before_the_wanted_digests_are_found() {
+        let (map, head) = corrupt();
+        assert_eq!(
+            consumed(&map, Some(&head), &[digest("blake3:note")]),
+            Err(DanglingDigest(digest("blake3:absent")))
+        );
     }
 
     #[test]

@@ -519,6 +519,37 @@ RSpec.describe Lain::Ext::Timeline do
     e.message
   end
 
+  describe "#consumed" do
+    let(:notes) { Array.new(5) { |i| say(timeline, "note #{i}").head_digest } }
+    let(:chain) do
+      notes.first(3).each_with_index.reduce(say(timeline, "root")) do |line, (note, i)|
+        198.times.reduce(line) { |acc, n| say(acc, "filler #{i} #{n}") }
+           .commit(role: :assistant, content: text("names #{i}"), causal_parents: [note])
+      end
+    end
+
+    it "agrees with the full walk over a 200-turn chain" do
+      expect(chain.length).to be >= 200
+      expect(chain.consumed(notes)).to match_array(chain.to_a.flat_map(&:causal_parents) & notes)
+      expect(chain.consumed(notes).size).to eq(3)
+    end
+
+    it "answers frozen strings and nothing for an empty or unnamed list" do
+      expect(chain.consumed(notes).map(&:frozen?)).to all(be(true))
+      expect(chain.consumed([])).to eq([])
+      expect(chain.consumed(notes.last(2))).to eq([])
+    end
+
+    it "answers a repeated digest once" do
+      expect(chain.consumed([notes.first, notes.first])).to eq([notes.first])
+    end
+
+    it "refuses anything but an Array of digest Strings" do
+      expect { chain.consumed(nil) }.to raise_error(TypeError)
+      expect { chain.consumed([1]) }.to raise_error(TypeError)
+    end
+  end
+
   describe "subagent lineage" do
     let(:parent) { say(timeline, "parent work") }
 

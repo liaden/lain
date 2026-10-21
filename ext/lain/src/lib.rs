@@ -2199,6 +2199,18 @@ mod ffi {
             counted.map_err(|e| missing_object(ruby, e))
         }
 
+        fn consumed(ruby: &Ruby, rb_self: &Timeline, digests: Value) -> Result<RArray, Error> {
+            let wanted = read_causal_parents(ruby, Some(digests)).map_err(|r| r.raise(ruby))?;
+            let store: &Store = store_ref(ruby, rb_self)?;
+            let walked = dag::consumed(&store.locked().events, rb_self.head.as_ref(), &wanted);
+            let found = walked.map_err(|e| missing_object(ruby, e))?;
+            let array = ruby.ary_new_capa(found.len());
+            for digest in found {
+                array.push(frozen_str(ruby, digest.as_str()))?;
+            }
+            Ok(array)
+        }
+
         fn include_p(ruby: &Ruby, rb_self: &Timeline, digest: String) -> Result<bool, Error> {
             let needle: Digest = digest.into();
             let store: &Store = store_ref(ruby, rb_self)?;
@@ -2820,6 +2832,7 @@ mod ffi {
         timeline.define_method("ancestor_digests", method!(Timeline::ancestor_digests, 0))?;
         timeline.define_method("to_a", method!(Timeline::to_a, 0))?;
         timeline.define_method("messages", method!(Timeline::messages, -1))?;
+        timeline.define_method("consumed", method!(Timeline::consumed, 1))?;
         timeline.define_method("length", method!(Timeline::length, 0))?;
         timeline.define_method("include?", method!(Timeline::include_p, 1))?;
         timeline.define_method("ancestor_of?", method!(Timeline::ancestor_of_p, 1))?;

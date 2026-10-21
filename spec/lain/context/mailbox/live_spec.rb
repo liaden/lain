@@ -170,4 +170,18 @@ RSpec.describe Lain::Context::Mailbox::Live do
     expect { failing.capture(timeline) }.to raise_error(IOError)
     expect(texts(failing.capture(timeline))).to eq(%w[a b c])
   end
+
+  it "folds a note into the first render of an Agent and not after a turn names it" do
+    provider = CoreGraph.provider(text_response("one"), text_response("two"))
+    agent = Lain::Agent.new(provider:, toolset: CoreGraph.toolset([]), context: CoreGraph.context, mailbox: live)
+    live.post(from: "human", text: "once only")
+    agent.ask("first")
+    agent.ask("second")
+
+    mailboxed = provider.requests.map do |request|
+      request.messages.flat_map { |message| Array(message["content"]) }
+             .filter_map { |block| block.is_a?(Hash) && block["text"] }.grep(/once only/)
+    end
+    expect(mailboxed.map(&:size)).to eq([1, 0])
+  end
 end

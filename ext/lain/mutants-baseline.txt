@@ -5,6 +5,6 @@
 ext/lain/src/canonical.rs 18 3 3 0
 ext/lain/src/event.rs 27 14 0 0
 ext/lain/src/digest.rs 9 1 0 0
-ext/lain/src/dag.rs 34 14 0 0
+ext/lain/src/dag.rs 36 16 0 0
 ext/lain/src/graph.rs 14 11 0 0
-total 102 43 3 0
+total 104 45 3 0

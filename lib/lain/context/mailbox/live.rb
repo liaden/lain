@@ -97,7 +97,7 @@ module Lain
         def written = @lock.synchronize { @notes.to_a }
 
         def unconsumed(timeline, notes)
-          consumed = timeline.to_a.flat_map(&:causal_parents).to_set
+          consumed = timeline.consumed(notes.map(&:digest)).to_set
           notes.reject { |note| consumed.include?(note.digest) }
         end
       end
