@@ -107,12 +107,14 @@ pub struct Hit {
 
 /// An immutable batch of candidates, matched many times.
 ///
-/// Holds nothing but owned `String`s -- no cell, no lock, no lazy cache, no Ruby
+/// Holds nothing but owned `String`s and their grapheme segmentation, built once
+/// in `new` so a match never re-segments -- no cell, no lock, no lazy cache, no Ruby
 /// object -- which is what lets [`ffi::Fuzzy`] promise `frozen_shareable`. The
 /// 135 KB scratch buffer `nucleo` needs lives in [`with_matcher`]'s thread-local
 /// and is deliberately *not* a field here; see that function for why.
 pub struct Candidates {
     items: Vec<String>,
+    segmented: Vec<Box<[char]>>,
 }
 
 // A tripwire, and a narrow one. It catches `Rc`, `RefCell`, raw pointers, and
@@ -146,7 +148,17 @@ impl Candidates {
                 index,
                 len: items[index].len(),
             }),
-            None => Ok(Candidates { items }),
+            None => {
+                let mut buf = Vec::new();
+                let segmented = items
+                    .iter()
+                    .map(|item| {
+                        segment_into(item, &mut buf);
+                        buf.clone().into_boxed_slice()
+                    })
+                    .collect();
+                Ok(Candidates { items, segmented })
+            }
         }
     }
 
@@ -186,13 +198,11 @@ impl Candidates {
         // whitespace before it gets here.
         let pattern = Pattern::parse(query, CaseMatching::Smart, Normalization::Smart);
 
-        let mut haystack: Vec<char> = Vec::new();
         let mut positions = Vec::new();
         let mut hits = Vec::new();
-        for (index, item) in self.items.iter().enumerate() {
+        for (index, haystack) in self.segmented.iter().enumerate() {
             positions.clear();
-            segment_into(item, &mut haystack);
-            let score = pattern.indices(Utf32Str::Unicode(&haystack), matcher, &mut positions);
+            let score = pattern.indices(Utf32Str::Unicode(haystack), matcher, &mut positions);
             if let Some(score) = score {
                 // Upstream appends each atom's indices without merging, so that a
                 // caller can attribute them to their atom. A highlighter cannot,
@@ -244,11 +254,19 @@ impl Candidates {
 /// no highlighter can use, so this is the right trade; it just has to be
 /// written down.
 fn segment_into(text: &str, buf: &mut Vec<char>) {
+    #[cfg(test)]
+    SEGMENTATIONS.with(|count| count.set(count.get() + 1));
     buf.clear();
     buf.extend(
         text.graphemes(true)
             .filter_map(|cluster| cluster.chars().next()),
     );
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Per test thread, so concurrent tests cannot see each other's calls.
+    static SEGMENTATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 thread_local! {
@@ -321,7 +339,8 @@ pub mod ffi {
 
     /// A frozen candidate set, `Ractor.shareable?`.
     ///
-    /// Wraps only `Arc<Candidates>`, which is a `Vec<String>` and nothing else --
+    /// Wraps only `Arc<Candidates>`, which is a `Vec<String>` plus its
+    /// `Vec<Box<[char]>>` segmentation and nothing else --
     /// no `Cell`/`RefCell`/`Mutex`/`OnceCell`/atomic/lazy cache is reachable from
     /// it, and it holds no Ruby object. The one piece of mutable state this
     /// binding needs, `nucleo`'s 135 KB scratch matcher, is deliberately NOT a
@@ -511,6 +530,40 @@ mod tests {
             .into_iter()
             .map(|hit| candidates.items()[hit.index].clone())
             .collect()
+    }
+
+    fn segmentations() -> usize {
+        SEGMENTATIONS.with(std::cell::Cell::get)
+    }
+
+    #[test]
+    fn a_match_does_no_segmentation() {
+        let items: Vec<String> = (0..1000).map(|i| format!("lib/lain/file_{i}.rb")).collect();
+        let before = segmentations();
+        let candidates = Candidates::new(items).expect("candidates within bounds");
+        assert_eq!(segmentations() - before, 1000);
+
+        candidates.rank("file", None).expect("query within bounds");
+        candidates.rank("rb", None).expect("query within bounds");
+        assert_eq!(segmentations() - before, 1000);
+    }
+
+    #[test]
+    fn a_query_of_exactly_the_limit_is_accepted() {
+        let candidates = Candidates::new(paths()).expect("candidates within bounds");
+        let query = "a".repeat(MAX_QUERY_BYTES);
+        assert!(candidates.rank(&query, None).is_ok());
+    }
+
+    #[test]
+    fn a_combining_mark_candidate_keeps_grapheme_positions() {
+        let candidates =
+            Candidates::new(vec!["cafe\u{301}".to_string()]).expect("candidates within bounds");
+        let hits = candidates.rank("fe", None).expect("query within bounds");
+        assert_eq!(
+            hits.first().map(|hit| hit.positions.clone()),
+            Some(vec![2, 3])
+        );
     }
 
     #[test]
