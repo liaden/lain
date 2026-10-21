@@ -135,10 +135,12 @@ structure it realizes (the 4 kinds, `meet`/`diverge_at` over the DAG, the Rust p
   the real `exe/lain` chat and `lain up` cockpit driven against a stand-in that replays ollama
   cassettes, so `/manual-qa` rounds can skip the scenario sections the suite now drives. 8 journey
   files, 38 examples, about 82s serial; `rake pspec` 21,642 examples at a 61 to 66s wall.
-- **Rust hot paths.** `[planned]` `planning/specs/rust-hot-paths.md` (10 cards, 2026-10-20): message
-  adoption and an Agent-owned prefix-chain memo (a chat turn at 10,000 turns about 168 ms to 27 ms), 3
-  binding fixes, `wiring_spec.rb` off the real checkout, a cheaper mask listing, and 2 experiments (YJIT,
-  releasing the GVL) that stop for a ruling.
+- **Rust hot paths.** `[built]` `planning/specs/rust-hot-paths.md` (2026-10-20 to 2026-10-21): message
+  adoption and an Agent-owned prefix-chain memo (a chat turn at 10,000 turns 169 ms to 27 ms), 3
+  binding fixes, `wiring_spec.rb` off the real checkout, a cheaper mask listing that also masks what a
+  nested repo or a sensitive-named link hides, YJIT tried and left off, and the GVL released with early
+  cancel around ast_search, TreeSitter, Bm25 and Fuzzy through 1 helper, held for small calls. Next:
+  path encoding, since the suite under a non-ASCII TMPDIR is red (211 examples, red before this plan).
 
 **The bench — the deliverable — now exists.** For the first time the project can *compare strategies*:
 `DryReplay` re-renders a recorded Timeline byte-identically under one `Context` and yields a

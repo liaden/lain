@@ -1,6 +1,6 @@
 # Rust hot paths: message adoption, the prefix-chain memo, 3 binding fixes, the mask listing, and 2 experiments
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby (Rust cards: T1, T3, T4, T5; T10 prototypes in Rust and lands nothing)
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Aaron Patterson); Rust (Raph Levien, Andrew Gallant) for T1, T3, T4, T5, T10
@@ -1281,3 +1281,12 @@ After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]
 - 16:31 T20 landed `f5f18a1b`. T19's first landing went red on its new kill spec (20.5 ms against 20, green alone, so card-caused). The bound became 100 ms, still red on a GVL-held build. T19 landed `5db9f0e1` (attempt 2).
 - 16:58 T18 high review: REQUEST-CHANGES. Blocker: a GVL convoy, where a small released call beside a busy thread waits a time slice (Shell::Parse 189 us to 20 ms at priority -3, 100 ms at priority 0). Ruled in main: the helper gains a held path for small work, built in T18 (nogvl.rs edit approved as a scope change), and card T22 applies it to the landed fuzzy, bm25 and astgrep.
 - 17:04 T18 fix round: the helper gained `without_gvl_when` (a held path; `without_gvl` passes true, so the landed bindings are unchanged); treesitter holds below 32 KiB (worst rate 859 us per KB). Shell::Parse beside a busy thread back to 169 to 200 us. Second review APPROVE; residual 3 files over 32 KiB pay 1 slice each, kept. Convoy spec bound 2 to 8 ms for suite load (red at 21 ms). T18 landed `c64b9a78` (attempt 1). T22 starts.
+- 17:39 T22 medium review: APPROVE-WITH-FIXES, all mechanical (GC.start before the bm25 kill and raise clocks, "half a slice" wording, 1 rewrap). The stop condition holds for 3 of 4 thresholds on this checkout: fuzzy (about 2,741 candidates against 30,000), bm25 search (25 documents against 10,000) and bm25 build (104 KB against 128 KiB) always hold here and release only at monorepo scale; astgrep's 16 KiB is crossed by 119 of 953 lib files. Kept, ruled in main. T22 landed `1ebcdd3b` (attempt 1).
+- 18:12 Integration on `1ebcdd3b`:
+  - Dry-run count: base `1e3f3ae9` 26,340, main 26,464 (this plan added 124 examples). Every full suite reported 26,464.
+  - pspec 3 times: run 1 red on 1 example, `Lain::Tool::Offload keeps a sibling fiber running while the work holds its thread` (24 ticks against 25), green alone 6 of 6, code untouched by any card; recorded as a known load flake (`ef113d23`). Run 3 green.
+  - pspec under TMPDIR `intégration-日本`: 211 failures on main, 226 on base, all Encoding::CompatibilityError where a UTF-8 path meets a binary string (isolation/gc, input_socket, worktree, epic_driver, grep, sandboxed stderr wording, spec fixtures). The 2 on main only (sandboxed_spec "planted on PATH after the call was resolved") were pending on base, which had no lain-fence; their failing line predates the plan. User ruling: close this plan and plan path encoding separately.
+  - runtime-census --record 3 times, --check exit 0; wiring_spec 9.0 to 10.3 s in a suite, ceiling 21 s (`9405fc1b`).
+  - cargo test, clippy, fmt, deny; zeitwerk-census --check; comment-census --check-tickets and --check-load-order; spec-census --check; symlink and policy specs; rake rust:mutants (exit 0, 0 missed, 23 min); pre-commit run --all-files: all exit 0.
+  - The chat-turn bench ran at 12:22 (169.4 to 26.9 ms).
+  - Owed, manual: a chat past 50 turns, fast `@`-path completion in a large repo, an ast_search while a reply streams.
