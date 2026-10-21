@@ -15,6 +15,9 @@ module Lain
     # The record lands BEFORE dispatch, so a call that fails still leaves its
     # attempt in the Journal: a request_sent with no following turn_usage is how a
     # failure reads.
+    #
+    # The sender's prefix-chain memo rides the env as `prefix_chain`, so a
+    # long conversation's chain is extended rather than recomputed per call.
     class JournalRequests < Base
       # @param journal [#<<] where RequestSent records land; the Null channel by
       #   default, so no caller guards `if journal`
@@ -25,7 +28,8 @@ module Lain
       end
 
       def call(env, &app)
-        @journal << Telemetry::RequestSent.from(env.fetch(:request))
+        @journal << Telemetry::RequestSent.from(env.fetch(:request),
+                                                prefix_chain: env.fetch(:prefix_chain, Request::PrefixChain::NONE))
         downstream(env, &app)
       end
     end

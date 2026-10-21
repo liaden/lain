@@ -16,6 +16,7 @@ module Lain
       def initialize(provider:, middleware: Middleware::Stack.new)
         @provider = provider
         @middleware = middleware
+        @prefix_chain = Request::PrefixChain.new
       end
 
       # `on_stream_started` (see {Provider::StreamStartedSignal}) is an
@@ -27,14 +28,15 @@ module Lain
       #
       # What the caller knows about the turn it is rendering -- the Agent names
       # the turn the render stands on -- rides the env beside the request, for a
-      # middleware that records it.
+      # middleware that records it. So does this caller's prefix chain, which
+      # lets each request's chain extend the last one's rather than recompute it.
       #
       # @param request [Lain::Request]
       # @param on_stream_started [#call, nil]
       # @param turn [Hash{Symbol => Object}] env entries beside `request`
       # @return [Lain::Response]
       def call(request, on_stream_started: nil, **turn)
-        @middleware.call({ request:, **turn }) do |inner|
+        @middleware.call({ request:, prefix_chain: @prefix_chain, **turn }) do |inner|
           inner.merge(response: complete(inner.fetch(:request), on_stream_started))
         end.response
       end

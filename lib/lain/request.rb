@@ -126,9 +126,15 @@ module Lain
     # which is what lets Recall append a `<recall>` block to the tail without the
     # entry reading as a rewrite. The rolling STATE still folds the whole message
     # in, because later entries cover every earlier message's full wire bytes.
-    def prefix_digests
+    #
+    # A caller that walks the same growing conversation turn after turn passes
+    # its own {PrefixChain}, so each walk digests only the messages it has not
+    # seen; the result is the same either way.
+    #
+    # @param chain [#state] the states of an earlier walk; {PrefixChain::NONE} remembers nothing
+    def prefix_digests(chain: PrefixChain::NONE)
       cuts = marked_cuts
-      cuts.empty? ? [] : rolled_entries(cuts.to_h)
+      cuts.empty? ? [] : rolled_entries(cuts.to_h, chain)
     end
 
     private
@@ -153,10 +159,9 @@ module Lain
     # more than one is {AmbiguousMarkerPosition}.
     def marked_block(message)
       content = message["content"]
-      return nil unless content.is_a?(Array) && !content.empty?
+      return nil unless content.is_a?(Array) && content.any? { |block| cache_marker?(block) }
 
       marked = content.each_index.select { |index| cache_marker?(content[index]) }
-      return nil if marked.empty?
 
       unless marked.size == 1
         raise AmbiguousMarkerPosition,
@@ -172,22 +177,29 @@ module Lain
     end
 
     # `states[k]` is the chain state after k messages. The walk stops at the
-    # deepest cut -- later messages cannot enter any entry.
-    def rolled_entries(cuts)
-      stripped = messages.first(cuts.keys.max + 1).map { |message| strip_cache_markers(message) }
-      states = stripped.each_with_object([fixed_prefix_digest]) do |message, chain|
-        chain << Canonical.digest([chain.last, message])
+    # deepest cut -- later messages cannot enter any entry. A message is
+    # stripped only when its state is computed or a cut needs it, since a
+    # memo hit needs neither.
+    def rolled_entries(cuts, chain)
+      states = rolled_states(cuts.keys.max + 1, chain)
+      cuts.map { |position, block_index| [position, entry_at(position, block_index, states)] }
+    end
+
+    def rolled_states(count, chain)
+      messages.first(count).each_with_index.with_object([fixed_prefix_digest]) do |(message, index), states|
+        states << chain.state(index, message, states.last) do
+          Canonical.digest([states.last, strip_cache_markers(message)])
+        end
       end
-      cuts.map { |position, block_index| [position, entry_at(position, block_index, stripped, states)] }
     end
 
     # A marker on a message's final block cuts exactly where the rolling state
     # does; a non-final marker digests the truncation `cache_control` actually
     # covers -- the one extra digest in the whole walk.
-    def entry_at(position, block_index, stripped, states)
-      return states[position + 1] if position == SYSTEM_PREFIX || final_block?(stripped[position], block_index)
+    def entry_at(position, block_index, states)
+      return states[position + 1] if position == SYSTEM_PREFIX || final_block?(messages[position], block_index)
 
-      Canonical.digest([states[position], truncate_through(stripped[position], block_index)])
+      Canonical.digest([states[position], truncate_through(strip_cache_markers(messages[position]), block_index)])
     end
 
     def final_block?(message, block_index)

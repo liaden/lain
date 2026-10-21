@@ -1911,6 +1911,42 @@ RSpec.describe Lain::CLI::Wiring do
     end
   end
 
+  describe "the prefix chain a journaling chat records" do
+    let(:chatty_provider) do
+      Lain::Provider::Mock.new(responses: Array.new(11) do |i|
+        Lain::Response.new(content: [{ "type" => "text", "text" => "reply #{i}" }], stop_reason: :end_turn)
+      end)
+    end
+    let(:chatty_backend) do
+      offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 }, mock: chatty_provider,
+                                                                                    root: backend_root)
+    end
+    let(:recording) do
+      Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: StringIO.new), journal_path: "prefix-chain-spec.ndjson")
+    end
+
+    def digests_during
+      count = 0
+      allow(Lain::Canonical).to receive(:digest).and_wrap_original do |original, value|
+        count += 1
+        original.call(value)
+      end
+      yield
+      count
+    end
+
+    it "digests only the messages a later turn added" do
+      wired = new_wiring(options: { grace: 5 }, chronicle: recording, status_feed:)
+      recorder, session = wired.run_state(nil)
+      agent = wired.wire_agent(channel:, recorder:, session:, backend: chatty_backend)
+      10.times { |i| agent.ask("turn #{i}") }
+
+      spent = digests_during { agent.ask("turn 10") }
+      added = chatty_provider.requests[10].messages.size - chatty_provider.requests[9].messages.size
+      expect(spent).to be <= added + 4
+    end
+  end
+
   # The assembly, and the point the whole chunk converges on. A plain `lain
   # chat` compacts, which means the Agent gets three things Wiring never passed
   # before: the run's per-turn Context source, the eager-summary observer its

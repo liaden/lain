@@ -63,6 +63,20 @@ RSpec.describe Lain::Middleware::JournalRequests do
       expect(event.prefix_digests).not_to be_empty
     end
 
+    it "walks the chain through the env's prefix_chain, so an Agent's memo serves the journal" do
+      marked = [{ "role" => "user", "content" => [{ "type" => "text", "text" => "hello", "cache" => true }] }]
+      sent = request(messages: marked)
+      memo = Lain::Request::PrefixChain.new
+      middleware.call({ request: sent, prefix_chain: memo }) { |env| env }
+      middleware.call({ request: sent, prefix_chain: memo }) { |env| env }
+
+      allow(Lain::Canonical).to receive(:digest).and_call_original
+      middleware.call({ request: sent, prefix_chain: memo }) { |env| env }
+
+      expect(Lain::Canonical).to have_received(:digest).once
+      expect(journal.events.map(&:prefix_digests).uniq).to eq([sent.prefix_digests])
+    end
+
     # Record-before-dispatch is a semantic, not an implementation accident: a
     # provider call that raises was still ATTEMPTED, and replay must see the
     # attempt. A request_sent with no following turn_usage is how a failed

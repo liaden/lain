@@ -52,6 +52,23 @@ RSpec.describe Lain::Agent::ModelCaller do
     described_class.new(provider:, middleware: Lain::Middleware::Stack.new.use(probe))
                    .call(request, stands_on: "blake3:below")
 
-    expect(seen_in.to_h).to eq(request:, stands_on: "blake3:below")
+    expect(seen_in.to_h).to include(request:, stands_on: "blake3:below")
+  end
+
+  it "hands every call the same prefix chain, so a later request extends the walk of an earlier one" do
+    seen = []
+    probe = Class.new(Lain::Middleware::Base) do
+      define_method(:call) do |env, &downstream|
+        seen << env.to_h[:prefix_chain]
+        downstream.call(env)
+      end
+    end.new
+    caller = described_class.new(provider: Lain::Provider::Mock.new(responses: [response, response]),
+                                 middleware: Lain::Middleware::Stack.new.use(probe))
+
+    2.times { caller.call(request) }
+
+    expect(seen.first).to be_a(Lain::Request::PrefixChain)
+    expect(seen.last).to equal(seen.first)
   end
 end

@@ -53,9 +53,13 @@ module Lain
       # and skips the deep re-walk of the full message history the keyword
       # constructor performs on arbitrary input -- one normalize pass per
       # payload, the only remaining walk being the digest's own.
-      def self.from(request, requester: nil)
+      #
+      # @param request [Request] the request as it left
+      # @param requester [#to_s, nil] who sent it
+      # @param prefix_chain [#state] the sender's memo of its last walk, see {Request::PrefixChain}
+      def self.from(request, requester: nil, prefix_chain: Request::PrefixChain::NONE)
         new(digest: request.digest, payload: request.cache_payload, stream: request.stream,
-            extra: request.extra, prefix_digests: request.prefix_digests,
+            extra: request.extra, prefix_digests: request.prefix_digests(chain: prefix_chain),
             prefix_chain_version: Request::PREFIX_CHAIN_VERSION, requester:, normalized: true)
       end
 

@@ -257,6 +257,17 @@ RSpec.describe Lain::Request do
         expect(full_prefix_payloads).to be_empty
       end
     end
+
+    it "stays deeply frozen and shareable when a journaling Agent rendered it and walked its chain" do
+      provider = CoreGraph.provider(text_response("one"), text_response("two"))
+      journal = RecordingChannel.new
+      agent = CoreGraph.agent(provider:, instrumentation: Lain::CLI::Chronicle.instrumentation(journal))
+      agent.ask("hi")
+      agent.ask("again")
+
+      expect(journal.events.grep(Lain::Telemetry::RequestSent).last.prefix_digests).not_to be_empty
+      expect(provider.last_request).to be_deeply_frozen
+    end
   end
 
   describe "#cache_payload" do
