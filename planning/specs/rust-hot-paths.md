@@ -153,8 +153,8 @@ Every spike worktree is removed.
 
 ## Open decisions
 
-- **YJIT by default.** Decided by the user after T9 reports. No card depends on it.
-- **The GVL route.** Decided by the user after T10 reports. No card depends on it.
+- **YJIT by default.** Ruled 2026-10-21: off. The 2 specs red only under YJIT are being checked as latent races.
+- **The GVL route.** Ruled 2026-10-21: release it now, with early cancel and 1 unsafe block of our own (T17).
 
 ## Dependency graph
 
@@ -173,6 +173,7 @@ flowchart LR
   T14 & T15 --> T9
   T14 --> T16
   T16 --> T9
+  T10 --> T17
 ```
 
 ## Tasks
@@ -860,6 +861,59 @@ Spec file: `spec/lain/seams/symlink_boundary_spec.rb` (the first 2, real sandbox
 - A walk of nested repos makes a refresh of this checkout cost more than 20 ms extra (quiet-box median).
 - The fix needs `judge` on the gate path to change.
 
+### T17: Release the GVL around ast_search, and let a cancel stop it early          [risk: high]
+
+**Depends on:** T10 (landed as research; the route is the user's ruling of 2026-10-21)
+**Files:** `ext/lain/src/astgrep.rs`, `ext/lain/CLAUDE.md` (the unsafe rule names this 1 exception), `spec/lain/rust/astgrep_spec.rb`, `lib/lain/tool/offload.rb` only if the cancel path needs it
+**Reuse:** `tmp/worktrees/T10/early-cancel-research.md` and its prototype in `tmp/worktrees/T10/tmp/cancel-proto/` (`time.rb` is the cancel harness); `planning/gvl-release-research-2026-10.md`; `planning/rust-performance-research-2026-10/bench-bindings/q7.rb` (the main-thread ticker)
+**Shared-file wiring:** none
+**Reachable from:** the `ast_search` tool, through `Tool::Offload`
+
+The user ruled: release the GVL now, with 1 unsafe block of our own, because no crate releases it with an
+unblocking function (magnus 0.9.3 has none; its PR 171 and lucchetto 0.4.0 pass none).
+
+- The search's inputs are copied out of Ruby objects before the GVL is released, and nothing touches a Ruby
+  object until it is taken back.
+- `rb_nogvl` is the 1 unsafe block, with a `SAFETY:` comment. Its unblocking function stores into an
+  `AtomicBool`; a slot index, not a pointer, reaches both callbacks, so they are safe fns.
+- The flag is read by tree-sitter 0.27's `ParseOptions::progress_callback` during the parse and every 64 nodes
+  of our own `dfs()` and `match_node` walk over ast-grep-core 0.45.3's public `doc` API. No fork.
+- `catch_unwind` wraps the search, so a panic comes back as a Ruby exception and never aborts the VM. A
+  poisoned lock inside a callback must not abort either.
+- A cancelled search raises, so a caller cannot read a partial result as a whole one.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: the search finds what it finds today
+  Given the 500-file corpus and the 7.8 MB source the research used
+  When ast_search runs with the GVL released
+  Then its matches equal today's, match for match
+
+Scenario: the main thread keeps running during a search
+  When a search runs on another thread
+  Then the main-thread ticker's p99 stays under 5 ms (today 25.5 ms)
+
+Scenario: a cancel stops the search early
+  When a search is cancelled 50 ms in, during the parse or during matching
+  Then it returns control within 20 ms (today about 900 ms)
+  And it raises rather than returning a partial list
+
+Scenario: a panic inside the search
+  When the search panics
+  Then Ruby sees an exception and the VM keeps running
+
+Scenario: a normal call costs no more
+  When ast_search runs on a 15 KB file
+  Then its per-call cost is within the layout spread of today's
+```
+Spec file: `spec/lain/rust/astgrep_spec.rb`; timings through `tmp/bench-stats` with the GVL plan
+
+**Stop and report if:**
+- A second unsafe block is needed: name it and why; the ruling covered 1.
+- The cancel cannot reach the parse through ast-grep-core's public API without a fork.
+- `rake rust:mutants` shows a missed mutant in the new code that no spec can kill.
+
 ## Integration checks
 
 After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]*/bin/parallel_rspec'` and
@@ -1029,3 +1083,8 @@ After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]
 - 10:50 T16 final fixes in: Sensitivity holds paths as UTF-8 at entry (bytes broke a name-rule allocation spec); marks are rule indexes; a new lifts reader closes an exemption-on-landing leak (vault/l/server.key). An invalid-UTF-8 name now judges malformed and is refused. 3105 card-area and 161 discipline examples green; steady refresh +11.4 ms. Narrow re-check (same reviewer) started, asked to rule on lifts and the invalid-UTF-8 widening.
 - 10:55 T16 narrow re-check: APPROVE. Probes and 10 mutants red as meant; lifts sound and opaque; the invalid-UTF-8 widening ruled right (judge already gated such names, the mask list missed them). Follow-up: Confined#outside? and #held? expand raw input. Landing.
 - 10:57 T16 landed `4f09b914` (attempt 1). Scope change, ruled in main: lib/lain/sensitivity.rb and sensitivity/policy.rb joined the card (opaque marks, UTF-8 at entry). Left: the 3 timed runs on a quiet box, T9 and T10 reports, integration checks (now including a full suite with TMPDIR under a non-ASCII directory), close-out.
+- 10:57 Timed runs started on main `47bf381d`: hot paths, YJIT, GVL in sequence (about 80 min), logs in the session scratchpad.
+- 12:22 Timed runs done (hot paths 11:27, YJIT 12:00, GVL 12:19), all digests equal. Hot paths: chat turn 169.4 to 26.9 ms, prefix digests 118.4 to 6.7, render 62.1 to 38.1, mailbox 6.1 to 1.8, fuzzy match 56.1 to 16.5, fuzzy build 6.1 to 50.0, ast_search 564 to 538, mask refresh cold 1270 to 452 and steady 11.6 to 36.7 ms (every sandboxed command pays the steady refresh; follow-up). T9 and T10 reports written. The 2 specs red only in the YJIT suite arm (hunk_spec Ractor usability, plain_chat_prompt_guards pty) pass alone under YJIT. Both decisions put to the user.
+- 12:28 User rulings: YJIT stays off; investigate the 2 YJIT-arm reds as possible latent races (agent, tmp/yjit-races/). GVL release is wanted now regardless, for future Rust tools; research a safe early-cancel design with minimal own unsafe (spike in tmp/worktrees/T10). A GVL implementation card follows that research.
+- 12:28 Integration on main `47bf381d`: zeitwerk-census --check, comment-census --check-tickets and --check-load-order, spec-census --check all exit 0 (spec-census at its ceilings, 184 and 49). Suite-level checks wait for the race investigation to release the box.
+- 12:32 Early-cancel research (tmp/worktrees/T10/early-cancel-research.md): no crate releases the GVL with an unblocking function (magnus 0.9.3 none, PR 171 and lucchetto 0.4.0 pass None). Design: rb_nogvl plus an unblocking fn setting an AtomicBool, read by tree-sitter 0.27 ParseOptions progress_callback and our own dfs/match_node loop every 64 nodes (ast-grep-core 0.45.3 public doc API, no fork), catch_unwind, slot index so callbacks are safe fns. 1 unsafe block. Cancel 50 ms into a 7.8 MB search: 2 ms median (today 993). ext/lain/CLAUDE.md bans hand-rolled new unsafe, so put to the user.
