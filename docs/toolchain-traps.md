@@ -373,6 +373,11 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   alone in 0.79s and green in a full suite on the base and on the card);
   and `a chat whose terminal is gone ends at its prompt once the terminal is closed`.
 
+  Added 2026-10-21, a wall-clock count red once in a full `pspec` at 12 workers on a quiet box (24 ticks
+  against 25), green alone (6 of 6) and green in the next 2 full suites, with no change to the code it
+  drives: `Lain::Tool::Offload keeps a sibling fiber running while the work holds its thread`. Its sibling
+  below is the same budget starved the same way, so this file's tick floors are now a pattern of 2.
+
   Added 2026-10-21, a thread count red once in a pre-commit suite at load 11 beside another rspec run
   (5 threads against 4), green alone (37 of 37) and green in a full suite on the base and on the change:
   `Lain::CLI::InputSocket serving a pane reaps a closed pane's reader, so it owns every thread it started`.
