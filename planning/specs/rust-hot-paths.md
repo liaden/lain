@@ -169,6 +169,8 @@ flowchart LR
   T7 --> T12
   T7 --> T13
   T11 & T12 & T13 --> T9
+  T13 --> T14
+  T14 & T15 --> T9
 ```
 
 ## Tasks
@@ -277,9 +279,14 @@ Scenario: a second walk over the same prefix reuses every state
   When the same 10 message objects are walked again with the same seed
   Then Canonical.digest is called 0 times
 
-Scenario: a changed message is recomputed
+Scenario: an equal message recomputes only its own state
   Given a chain that walked 10 messages
   When message 5 is replaced by an equal but distinct object
+  Then only state 5 is recomputed, and the chain equals the memo-less chain
+
+Scenario: a changed message is recomputed
+  Given a chain that walked 10 messages
+  When message 5 is replaced by a message with different content
   Then states 5 to 9 are recomputed and equal the memo-less chain
 
 Scenario: a Request stays deeply frozen and shareable
@@ -732,6 +739,83 @@ Spec file: `spec/lain/confine/mask_list_spec.rb`; the per-refresh cost on this c
   becomes a link): report how the digest is formed and what the fix needs.
 - The `lstat` pass costs more than 20 ms on this checkout's listing.
 
+### T14: Mask a directory the sandbox must hide without aborting bwrap          [risk: high]
+
+**Depends on:** T13 (landed)
+**Files:** `lib/lain/confine/bwrap.rb`, `spec/lain/confine/bwrap_spec.rb`, and the mask's producer if a mask must carry its kind (`lib/lain/sensitivity/policy.rb` or `lib/lain/confine/mask_list.rb`, with their specs)
+**Reuse:** the T13 reviewer's probe shape (`ldir -> ~/.ssh` listed in a real repo, run through a real `Confine::Sandbox` with bwrap); `Bwrap#namespace` (`bwrap.rb:53-58`)
+**Shared-file wiring:** none
+**Reachable from:** `Confine::Sandbox` -> `Confine::MaskList#masks` -> `Bwrap#namespace`, on every sandboxed command
+
+Added 2026-10-21 on the user's ruling, from T13's second review. A defect on main before this plan: a listed link to a
+credential directory lands at a directory, `mask_paths` returns that directory as a mask, and `--ro-bind /dev/null
+<dir>` aborts bwrap with "Is a directory". Every sandboxed command, `cat plain.txt` included, then fails until the link
+is removed. It fails closed. A directory mask must hide the directory's contents (an empty tmpfs or an empty read-only
+directory bound over it) and let the command run; a file mask stays `/dev/null`. Decide the kind at the last moment
+the path is known (bwrap time, by `File.directory?`) or carry it from the producer, and say which and why.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: a listed link to a credential directory does not stop the sandbox
+  Given a real repo listing ldir linked to a home .ssh directory holding id_rsa, and plain.txt
+  When a sandboxed command cats plain.txt
+  Then it succeeds
+
+Scenario: the masked directory's contents stay hidden
+  Given the same repo
+  When a sandboxed command lists ldir and cats ldir/id_rsa
+  Then the listing is empty and the read fails
+
+Scenario: a file mask is unchanged
+  Given a listed link to a home key file
+  When a sandboxed command cats it
+  Then it reads nothing, as before
+```
+Spec file: `spec/lain/confine/bwrap_spec.rb`, or a `:seam` example beside it where a real bwrap is needed; skip
+cleanly when bwrap is absent, as the existing sandbox seams do
+
+**Stop and report if:**
+- An empty tmpfs or directory bound over the mask lets any byte of the original directory through.
+- The fix needs the gate's `judge` or the classifier to change.
+
+### T15: Find and fix why the EpicSubmit Ctrl-C example sees no journaled decision          [risk: medium]
+
+**Depends on:** none
+**Files:** `spec/lain/cli/epic_submit_spec.rb`, and the `lib/` file that journals the interrupted gate decision if the cause is there (name it in the hand-back before editing)
+**Reuse:** the 2 recorded reds in `docs/toolchain-traps.md` (exit 130 and the screen right, decisions empty); the example at `epic_submit_spec.rb:1311`
+**Shared-file wiring:** `docs/toolchain-traps.md`: the main session retires the flake entry when this lands
+**Reachable from:** `exe/lain epic submit` -> the interactive gate -> Ctrl-C -> exit 130
+
+Added 2026-10-21 on the user's ruling: the skill turns a repeat flake into a card, and this one went red on 2026-10-18
+and 2026-10-21, both times under load, both with exit 130 and no `gate_decision` journaled yet. Decide which it is: the
+spec reads the journal before the child's write is on disk (a spec race), or the CLI can exit 130 before the decision is
+journaled (an ordering bug in the product, which the card name promises it never does). Prove it under load, not by
+reading: reproduce the red with the box loaded on purpose (`stress-ng` or a busy loop at `nice 19` on every core) before
+changing anything.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: the red reproduces under load before the fix
+  Given the box loaded on every core
+  When the example runs 30 times
+  Then at least 1 run is red, and the hand-back records the count
+
+Scenario: the fix holds under the same load
+  When the example runs 30 times under the same load after the fix
+  Then all 30 are green
+
+Scenario: a product ordering bug, if that is the cause, has its own example
+  Given the CLI interrupted at the gate
+  Then the decision is journaled before the process exits 130
+```
+Spec file: `spec/lain/cli/epic_submit_spec.rb`; the load counts go in the hand-back
+
+**Stop and report if:**
+- The red does not reproduce in 100 loaded runs: report the counts and stop.
+- The fix is a longer sleep or a wider timeout in the spec without a named ordering it waits on.
+
 ## Integration checks
 
 After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]*/bin/parallel_rspec'` and
@@ -806,3 +890,57 @@ After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]
   (re-judge a listed name whose identity changed). Cards written above; T9 now waits on them too.
 - T4 handed back (compile red, 22 astgrep tests green). No `astgrep.rs` mutants row, as for `fuzzy.rs`. T1 review:
   APPROVE-WITH-FIXES, 4 mechanical nits; byte-identical digests and chains over 9,985 real payloads against main.
+- 00:15 T8 (sonnet), T11 (sonnet), T12 (opus), T13 (opus) started, cut from `9aacd5c3`. T12's MaskList scenario moved to
+  `symlink_boundary_spec.rb` so it shares no file with T13. T1 applying 4 mechanical nits; T4 medium review started.
+- 00:25 T4 reviewed: APPROVE-WITH-FIXES, 1 substantive (no test failed when `search` bypassed the cache), 2 comment nits.
+  Back with its implementer; 1 second review after.
+- 00:35 T1 nits applied; approved. T13 stopped on its digest stop condition (the listing digest is names only, so a
+  swap returns early); resolved in main: proceed with per-name lstat identity, cost judged on a quiet median (8.26 ms).
+  T8 handed back (cold mask_paths about 730 to 320 ms, masks identical); medium review started.
+- 00:45 T1 landed `4b56c861`. T4 approved on its second review. T11 handed back (4 files 34.5 s to 13.5 s alone, counts
+  unchanged). T8 review: 1 substantive (a spec spy prepended globally), back with its implementer. T12 stopped: T7's
+  equivalence example's `judge` oracle reads a listed `~name` as home; ruled in main to join it to cwd in the oracle,
+  since that example is this plan's own and the rule changed by design. T2 and T5 started from `4b56c861`.
+- 00:55 T4 landed `616c0865`. T2 and T5 fast-forwarded to it before spawn. T12 oracle change applied (596 green).
+  T13 handed back: lstat pass median 7.45 ms, unchanged refresh 18.56 ms; it now reads the policy every refresh;
+  still misses a link whose target is swapped and a retargeted linked directory. T8 fixes applied.
+- 01:00 T2 (opus) and T5 (sonnet) started at `616c0865`. Reviews started: T11 low, T12 high, T13 high; T8 second review.
+- 01:05 T8 approved on its second review (1 nit left: the spec swaps `@rules` by ivar). Waiting for a quiet window.
+- 01:10 T8 landed `a7ec9876`. T11 reviewed: APPROVE-WITH-FIXES, mechanical (1 shared `throwaway_project` helper in
+  spec/support in place of 4 copies; wiring_spec.rb joins T11's Files for it).
+- 01:20 T11 landing attempt 1 red: 26,349 examples, 1 failure, "Lain::CLI::EpicSubmit Ctrl-C through the real CLI exits
+  130, with the fail-closed decision already journaled" (epic_submit_spec.rb:1360, decisions empty). Not a quiet box:
+  T5's cargo-mutants and an rspec run started after the wait script exited. Index reset. Agents asked to hold tests.
+  T12 reviewed: APPROVE-WITH-FIXES, all mechanical (a gate example that cannot fail, a dead TILDE arm, 2 nits).
+- 01:25 T13 reviewed: REQUEST-CHANGES. Blocker: on ext4, `rm` then `ln -s` reuses the inode (197 of 200), so a
+  retargeted link keeps its identity; fix is a link's realpath in its identity (0 links listed here, so nil cost).
+  Should-fix: a failed listing returns [] and drops every mask (fails open); 3 production lines no example guards; the
+  policy-read comment states the wrong reason. Ruled: the 20 ms limit is on the quiet-box median. The reviewer's
+  `mask_paths`-yields-names refactor is a follow-up, not this card.
+- 01:30 T2 paused, code and specs done (bench, rubocop, yard-lint owed). Accepted deviation: an equal but distinct message 5 recomputes state 5 only, since later states see the same previous state; a changed message recomputes 5 to 9.
+- 01:40 Flaky procedure on T11's red: the example passed alone on main and in T11's tree (134 of 134); a full suite on
+  T11's tree (by accident, its copies were still on disk after `git reset`) and on base `a7ec9876` were both green,
+  26,349 examples, quiet box. Already a recorded flake; recurrence noted `ebebbca2`. A repeat, so proposed as a card.
+  T11 landed `22c07012`.
+- T5 handed back (unconsumed 12.3 to 14.5 ms becomes 7.8 to 8.8 ms at 10,000 turns; dag.rs mutants 36 caught 16
+  unviable 0 missed). Wiring applied in its worktree: dag.rs row `36 16 0 0`, total `104 45 3 0`.
+- 01:50 T12 review fixes applied (gate example now fails when judge reads ~ literally; a bare ~ link has its own seam example); approved. Waiting for a window.
+- 01:55 T2 done: prefix_digests 131 to 146 ms (NONE) against 8.5 to 20.0 ms held, load 15, chains equal. Built lazily (||=) to fit Agent's class-length limit: put to the reviewer. High review started.
+- 02:05 T13 fixes in: 0 of 16 swap shapes stale (was 4); lstat pass 10.50 ms median at load 16 (the card's limit is on this pass); 1 mutant survives (exist filter). Second review started.
+- 02:15 T5 reviewed: APPROVE (dag.rs sweep 36 caught 16 unviable 0 missed, confirmed with the gate's reader). Deleted 1 WHAT test comment in main session; skipped the read_causal_parents error-name nit. Waiting for a window with T12.
+- 02:25 T13 second review: APPROVE-WITH-FIXES (3 surviving mutants ruled acceptable: exist filter, :dangling as nil,
+  defensive freeze; nits not taken). Real bwrap: no leak over 15 steps. New defect older than this plan, for the user:
+  a listed link to a credential directory (`ldir -> ~/.ssh`) yields a directory mask, bwrap's `/dev/null` bind aborts
+  "Is a directory", and every sandboxed command fails until the link goes (fails closed).
+- 02:35 T12 landed `982b8048`, T5 landed `f20746e4`. T13 landing attempt 1 red: 26,368 examples, 1 failure,
+  "Lain::CLI::InputSocket serving a pane reaps a closed pane's reader, so it owns every thread it started"
+  (5 threads against 4), at load 11 beside T2's reviewer's rspec. Not a recorded flake. Index reset, files restored.
+- 02:45 Flaky procedure on T13's red: green alone in T13's tree (37 of 37); full suite on base `f20746e4` green, 26,359
+  examples, quiet box; T13's landing attempt 2 green (26,368). Recorded by name in toolchain-traps.md. T13 landed `8c6a443a`.
+- 03:00 T2 reviewed: APPROVE-WITH-FIXES, 3 substantive. The lazy `||=` is a dodge of the class-length cop: ruled that
+  `Agent::ModelCaller` (1 per Agent, already builds the env) owns the chain, so `model_caller.rb` joins T2's Files.
+  The wiring path gets its own count example; the 30-turn equality gains a rewind. Criterion 4 amended above to the
+  implementer's correct reading. 1 second review after. Reviewer timing: 4.48 against 49.99 ms per JournalRequests
+  call at 3,079 messages; memo bounded at the message count over 300 turns with rewinds.
+- 03:10 User ruling: add T14 (a directory mask must not abort bwrap) and T15 (the repeat EpicSubmit Ctrl-C flake). Cards
+  written above; T9 waits on them too. T2 fixes in (ModelCaller owns the chain); second review started.
