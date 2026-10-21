@@ -1233,6 +1233,27 @@ RSpec.describe Lain::CLI::EpicSubmit do
       expect(said).to include("approved")
       expect(gate_decisions.map { |record| record["answered_by"] }).to eq(["human"])
     end
+
+    # Real reactor cancellation, the way a SIGINT reaches the CLI: `Async` turns
+    # it into a stop of every task, which can land while the prompt's bytes are
+    # already out but the write has not returned.
+    it "journals the fail-closed decision for a stop landing while the prompt is being drawn" do
+      slow = StringIO.new
+      slow.define_singleton_method(:write) { |*| sleep 0.2 }
+      io = StringIO.new
+      gate = Lain::Epic::Gate.new(journal: Lain::Journal.new(io:), timeout: Lain::Epic::Gate::Window::Unbounded)
+      prompt = described_class::Prompt.new(input: IO.pipe.first, output: slow)
+      artifact = Lain::Epic::Submission.research(text: research_text, slug: "alpha")
+
+      Sync do |task|
+        asking = task.async { gate.call(artifact, asker: prompt, stage: "research", epic_slug: "alpha") }
+        sleep 0.05
+        asking.stop
+      end
+
+      decisions = Lain::Journal.records(io.string.lines, type: "gate_decision").to_a
+      expect(decisions.map { |record| record.values_at("approved", "answered_by") }).to eq([[false, "interrupted"]])
+    end
   end
 
   # Ctrl-C at an unanswered prompt unwinds the whole reactor before the plain

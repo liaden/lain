@@ -99,8 +99,14 @@ module Lain
         # @return [Lain::Promise] resolves with an {Lain::Epic::Gate::Answer} once
         #   the read returns
         def ask(question)
-          @output.write("#{question} [y/N] ")
-          Promise.new.tap { |promise| Async::Task.current.async { promise.resolve(answer(@input.gets)) } }
+          task = Async::Task.current
+          promise = Promise.new
+          cancelled = drawn_whole(task) do
+            @output.write("#{question} [y/N] ")
+            task.async { promise.resolve(answer(@input.gets)) }
+          end
+          task.stop(true) if cancelled
+          promise
         end
 
         # @return [Lain::Epic::Gate::Window] no reactor timer is armed for this
@@ -109,6 +115,17 @@ module Lain
         def window = Lain::Epic::Gate::Window::Unbounded
 
         private
+
+        # A stop landing while the write is parked arrives after the bytes are
+        # out, so the human is already looking at the question. A cancel raised
+        # inside ask journals nothing, so it is held until the reader exists and
+        # re-queued for the gate's park, which does journal it.
+        def drawn_whole(task, &block)
+          task.defer_stop(&block)
+          false
+        rescue Async::Cancel
+          true
+        end
 
         def answer(reply) = Lain::Epic::GateReply.answer(reply, surface: SURFACE)
       end

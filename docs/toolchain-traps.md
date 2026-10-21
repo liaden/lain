@@ -373,12 +373,6 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   alone in 0.79s and green in a full suite on the base and on the card);
   and `a chat whose terminal is gone ends at its prompt once the terminal is closed`.
 
-  Added 2026-10-18, red once in a pre-commit suite (exit 130 and the screen right, but no
-  `gate_decision` journaled yet) and green 3 of 3 alone: `Lain::CLI::EpicSubmit Ctrl-C through the real
-  CLI exits 130, with the fail-closed decision already journaled`. Red again on 2026-10-21 (no decision
-  journaled) in a pre-commit suite beside a cargo-mutants sweep at about 12 cores, green alone, and green
-  in a full suite on the base and on the change, both on a quiet box.
-
   Added 2026-10-21, a thread count red once in a pre-commit suite at load 11 beside another rspec run
   (5 threads against 4), green alone (37 of 37) and green in a full suite on the base and on the change:
   `Lain::CLI::InputSocket serving a pane reaps a closed pane's reader, so it owns every thread it started`.
@@ -459,6 +453,16 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
 
   **Retired, with the fix that ended each.** Keep a retired name here so a later red under it reads
   as a regression, not as a known flake.
+  - 2026-10-21: `Lain::CLI::EpicSubmit Ctrl-C through the real CLI exits 130, with the fail-closed
+    decision already journaled` (red 2026-10-18 and 2026-10-21 in pre-commit suites, exit 130 with no
+    `gate_decision`). Not a spec race: a product ordering bug. Under Async a SIGINT never reaches the
+    gate as an `Interrupt`; the stop becomes an `Async::Cancel` in every task. `Prompt#ask` yielded
+    while its write was parked in the io_uring hook and again at its reader's spawn, after the
+    `[y/N] ` bytes had reached the pty, and a cancel raised inside the ask journals nothing by design.
+    The prompt now draws and spawns its reader under `defer_stop`, and a stop that lands there is
+    moved to the park, which journals it. An example stops the task while the prompt's write is
+    parked. 90 loaded runs of the real-CLI example never reproduced the red; that example and a
+    real-SIGINT probe are the proof.
   - 2026-10-17: `a plain chat's inline prompts over a real terminal a prompt the approval window
     decides ends its line with who decided it and how, and a y typed afterwards decides nothing`
     (red 2026-10-15 at seed 50146 and on a later landing at seed 17844, both with `expected
