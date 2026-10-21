@@ -349,7 +349,7 @@ RSpec.describe Lain::CLI::Wiring do
                                                   stop_reason: :end_turn)
                              ])
   end
-  let(:backend_root) { Dir.pwd }
+  let(:backend_root) { project_dir }
   let(:backend) do
     offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 }, mock: mock_provider,
                                                                                   root: backend_root)
@@ -377,9 +377,15 @@ RSpec.describe Lain::CLI::Wiring do
   # inbox_count able to retire anything. Stubbed rather than doubled away
   # so the #run group below can assert that call actually happened.
   let(:status_feed) { instance_double(Lain::StatusFeed, bind_store: nil) }
-  let(:wiring) { described_class.new(options: { grace: 5 }, chronicle:, status_feed:) }
+  let(:wiring) { new_wiring(options: { grace: 5 }, chronicle:, status_feed:) }
+  # The default project is the checkout, and a wiring rooted there lists every tracked file to mask it.
+  let(:project_dir) { File.realpath(Dir.mktmpdir("lain-wiring-project")) }
 
   def throwaway_project(dir) = Lain::Project.new(root: dir, cwd: dir, kind: :project, detected_by: :flag)
+
+  after { FileUtils.rm_rf(project_dir) }
+
+  def new_wiring(**kwargs) = described_class.new(project: throwaway_project(project_dir), **kwargs)
 
   def wire_agent
     recorder, session = wiring.run_state(nil)
@@ -388,14 +394,14 @@ RSpec.describe Lain::CLI::Wiring do
 
   describe "the bench arms" do
     let(:arm_options) { { grace: 5, confine: "reader", judge_facts: "facts", tripwire: "observe" } }
-    let(:armed) { described_class.new(options: arm_options, chronicle:, status_feed:) }
+    let(:armed) { new_wiring(options: arm_options, chronicle:, status_feed:) }
 
     it "answers the parsed flags" do
       expect([armed.arms.confine, armed.arms.judge_facts, armed.arms.tripwire]).to eq(%i[reader facts observe])
     end
 
     it "refuses a bad value when the wiring is built" do
-      expect { described_class.new(options: { confine: "sideways" }, chronicle:, status_feed:) }
+      expect { new_wiring(options: { confine: "sideways" }, chronicle:, status_feed:) }
         .to raise_error(Lain::CLI::Arms::Unknown, /off, classes, reader/)
     end
 
@@ -422,7 +428,7 @@ RSpec.describe Lain::CLI::Wiring do
       end
 
       it "holds the 4 default-on arms when no arm flag is typed" do
-        plain = described_class.new(options: { grace: 5 }, chronicle:, status_feed:)
+        plain = new_wiring(options: { grace: 5 }, chronicle:, status_feed:)
 
         expect(header_of(plain))
           .to include("arms" => { "confine" => "reader", "tripwire" => "observe", "round_budget" => "window",
@@ -430,9 +436,9 @@ RSpec.describe Lain::CLI::Wiring do
       end
 
       it "holds only round_dedup off when every arm is off" do
-        off = described_class.new(options: { grace: 5, confine: "off", tripwire: "off", round_budget: "off",
-                                             round_dedup: "off" },
-                                  chronicle:, status_feed:)
+        off = new_wiring(options: { grace: 5, confine: "off", tripwire: "off", round_budget: "off",
+                                    round_dedup: "off" },
+                         chronicle:, status_feed:)
 
         expect(header_of(off)).to include("arms" => { "round_dedup" => "off" })
       end
@@ -447,7 +453,7 @@ RSpec.describe Lain::CLI::Wiring do
         end
 
         it "holds whose trust admitted it" do
-          plain = described_class.new(options: { grace: 5 }, chronicle:, status_feed:)
+          plain = new_wiring(options: { grace: 5 }, chronicle:, status_feed:)
 
           expect(header_of(plain)).to include("middleware" => { "project" => "d1" })
         end
@@ -490,8 +496,8 @@ RSpec.describe Lain::CLI::Wiring do
         terminal = lambda do |channel:, **|
           Lain::Frontend::TTY.new(channel:, output: StringIO.new, history_path: File.join(dir, "history"))
         end
-        wiring = described_class.new(options:, chronicle:, status_feed:, stdin: StringIO.new, tty_factory: terminal,
-                                     paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => dir, "HOME" => dir }))
+        wiring = new_wiring(options:, chronicle:, status_feed:, stdin: StringIO.new, tty_factory: terminal,
+                            paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => dir, "HOME" => dir }))
         Timeout.timeout(20) { wiring.run(backend:, resumed: nil, nvim: nil) }
         wiring.conductor.close(reason: :exit)
       end
@@ -714,7 +720,7 @@ RSpec.describe Lain::CLI::Wiring do
       after { FileUtils.rm_rf(state_dir) }
 
       def remembered_deny_after_wiring(options)
-        armed = described_class.new(options: { grace: 5, **options }, chronicle:, status_feed:)
+        armed = new_wiring(options: { grace: 5, **options }, chronicle:, status_feed:)
         recorder, session = armed.run_state(nil)
         armed.wire_agent(channel:, recorder:, session:, backend:)
         chronicle.durable_journal << { "type" => "escalation", "tool" => "bash", "tool_use_id" => "tu_1",
@@ -964,7 +970,7 @@ RSpec.describe Lain::CLI::Wiring do
     end
 
     it "assembles a chat that answers, and nothing in it reaches the notification daemon" do
-      wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:)
+      wiring = new_wiring(options: { grace: 5 }, chronicle:, status_feed:)
       recorder, session = wiring.run_state(nil)
       agent = wiring.wire_agent(channel:, recorder:, session:, backend:)
 
@@ -1155,7 +1161,7 @@ RSpec.describe Lain::CLI::Wiring do
     it "wires the chronicle's per-turn durability middleware, so each ask lands its turns on disk" do
       io = StringIO.new
       recording = Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io:), journal_path: "wiring-spec.ndjson")
-      recording_wiring = described_class.new(options: { grace: 5 }, chronicle: recording, status_feed:)
+      recording_wiring = new_wiring(options: { grace: 5 }, chronicle: recording, status_feed:)
       recorder, session = recording_wiring.run_state(nil)
       agent = recording_wiring.wire_agent(channel:, recorder:, session:, backend:)
 
@@ -1187,7 +1193,7 @@ RSpec.describe Lain::CLI::Wiring do
       recording = Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io:), journal_path: "wiring-spec.ndjson")
       lacking = Lain::Provider::Mock.new(responses: [Lain::Response.new(content: [], stop_reason: :end_turn)],
                                          capabilities: default_requires - %i[prompt_caching])
-      recording_wiring = described_class.new(options: { grace: 5 }, chronicle: recording, status_feed:)
+      recording_wiring = new_wiring(options: { grace: 5 }, chronicle: recording, status_feed:)
       recorder, session = recording_wiring.run_state(nil)
       recording_wiring.wire_agent(channel:, recorder:, session:,
                                   backend: offline_backend_class.new({ provider: "ollama", model: nil,
@@ -1206,7 +1212,7 @@ RSpec.describe Lain::CLI::Wiring do
     it "journals no degradation when the provider supports everything the context requires" do
       io = StringIO.new
       recording = Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io:), journal_path: "wiring-spec.ndjson")
-      recording_wiring = described_class.new(options: { grace: 5 }, chronicle: recording, status_feed:)
+      recording_wiring = new_wiring(options: { grace: 5 }, chronicle: recording, status_feed:)
       recorder, session = recording_wiring.run_state(nil)
       recording_wiring.wire_agent(channel:, recorder:, session:, backend:)
 
@@ -1224,7 +1230,7 @@ RSpec.describe Lain::CLI::Wiring do
     end
 
     describe "--secret-oracle" do
-      let(:wiring) { described_class.new(options: { grace: 5, secret_oracle: true }, chronicle:, status_feed:) }
+      let(:wiring) { new_wiring(options: { grace: 5, secret_oracle: true }, chronicle:, status_feed:) }
 
       before do
         recorder, session = wiring.run_state(nil)
@@ -1254,7 +1260,7 @@ RSpec.describe Lain::CLI::Wiring do
       # the surface actually holds, not off a `.new` count.
       it "builds it against the LOCAL ollama provider, whatever --provider and --summarizer-provider say" do
         remote = { grace: 5, secret_oracle: true, provider: "anthropic", summarizer_provider: "anthropic" }
-        built = described_class.new(options: remote, chronicle:, status_feed:)
+        built = new_wiring(options: remote, chronicle:, status_feed:)
         recorder, session = built.run_state(nil)
         built.wire_agent(channel:, recorder:, session:, backend:)
 
@@ -1868,7 +1874,7 @@ RSpec.describe Lain::CLI::Wiring do
     end
 
     def asker(over: chronicle)
-      wired = described_class.new(options: { grace: 5 }, chronicle: over, status_feed:)
+      wired = new_wiring(options: { grace: 5 }, chronicle: over, status_feed:)
       recorder, session = wired.run_state(nil)
       agent = wired.wire_agent(channel:, recorder:, session:, backend: served_backend)
       Lain::CLI::Repl::Ask.new(agent:, tty: nil, chronicle: over)
@@ -2498,7 +2504,7 @@ RSpec.describe Lain::CLI::Wiring do
     # same ordering rule: resolved before the header is pinned.
     context "with an unrecognized exec option" do
       it "raises a Lain::Error before the toolset exists" do
-        wiring = described_class.new(options: { grace: 5, exec: "podman" }, chronicle:, status_feed:)
+        wiring = new_wiring(options: { grace: 5, exec: "podman" }, chronicle:, status_feed:)
         recorder, session = wiring.run_state(nil)
 
         expect { wiring.wire_agent(channel:, recorder:, session:, backend:) }
@@ -2514,7 +2520,7 @@ RSpec.describe Lain::CLI::Wiring do
         Dir.mktmpdir("lain-d2-state") do |state|
           paths = Lain::Paths.new(env: { "HOME" => "/home/nobody", "XDG_STATE_HOME" => state })
           journaled = Lain::CLI::Chronicle.for(enabled: true, paths:)
-          wiring = described_class.new(options: { grace: 5, isolation: "docker" }, chronicle: journaled, status_feed:)
+          wiring = new_wiring(options: { grace: 5, isolation: "docker" }, chronicle: journaled, status_feed:)
           recorder, session = wiring.run_state(nil)
 
           expect { wiring.wire_agent(channel:, recorder:, session:, backend:) }
@@ -2553,8 +2559,8 @@ RSpec.describe Lain::CLI::Wiring do
 
     def run_wiring(input: "quit\n", options: { grace: 5 }, backend: self.backend)
       Dir.mktmpdir do |dir|
-        wiring = described_class.new(options:, chronicle:, status_feed:, stdin: StringIO.new(input),
-                                     tty_factory: tty_factory(dir), conductor_opener:)
+        wiring = new_wiring(options:, chronicle:, status_feed:, stdin: StringIO.new(input),
+                            tty_factory: tty_factory(dir), conductor_opener:)
         wiring.run(backend:, resumed: nil, nvim: nil)
         wiring.conductor.close(reason: :exit)
         wiring
@@ -2655,11 +2661,11 @@ RSpec.describe Lain::CLI::Wiring do
     it "reads the human from an input socket, never this terminal, when --input names one" do
       Dir.mktmpdir do |dir|
         paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
-        path = Lain::CLI::InputSocket.path(name: "wiring", paths:, cwd: Dir.pwd)
+        path = Lain::CLI::InputSocket.path(name: "wiring", paths:, cwd: project_dir)
         stdin = StringIO.new("never read\n")
         allow(status_feed).to receive(:state).and_return(PublishedFeedState.build)
-        wiring = described_class.new(options: { grace: 5, input: "socket:wiring" }, chronicle:, status_feed:,
-                                     paths:, stdin:, tty_factory: tty_factory(dir), conductor_opener:)
+        wiring = new_wiring(options: { grace: 5, input: "socket:wiring" }, chronicle:, status_feed:,
+                            paths:, stdin:, tty_factory: tty_factory(dir), conductor_opener:)
         pane = Thread.new { end_the_chat_from_a_pane(path) }
 
         wiring.run(backend:, resumed: nil, nvim: nil)
@@ -2673,8 +2679,8 @@ RSpec.describe Lain::CLI::Wiring do
     # script feeds it is not what a human would reach for at `you>`.
     it "keeps no history for a chat reading a stream that is not a terminal" do
       kept = Dir.mktmpdir do |dir|
-        wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:, stdin: StringIO.new("quit\n"),
-                                     tty_factory: tty_factory(dir), conductor_opener:)
+        wiring = new_wiring(options: { grace: 5 }, chronicle:, status_feed:, stdin: StringIO.new("quit\n"),
+                            tty_factory: tty_factory(dir), conductor_opener:)
         wiring.run(backend:, resumed: nil, nvim: nil)
         wiring.conductor.close(reason: :exit)
         File.exist?(File.join(dir, "history"))
@@ -2689,10 +2695,10 @@ RSpec.describe Lain::CLI::Wiring do
     it "keeps the line a pane sent over the input socket in the chat's history" do
       Dir.mktmpdir do |dir|
         paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
-        path = Lain::CLI::InputSocket.path(name: "wiring-history", paths:, cwd: Dir.pwd)
+        path = Lain::CLI::InputSocket.path(name: "wiring-history", paths:, cwd: project_dir)
         allow(status_feed).to receive(:state).and_return(PublishedFeedState.build)
-        wiring = described_class.new(options: { grace: 5, input: "socket:wiring-history" }, chronicle:, status_feed:,
-                                     paths:, stdin: StringIO.new, tty_factory: tty_factory(dir), conductor_opener:)
+        wiring = new_wiring(options: { grace: 5, input: "socket:wiring-history" }, chronicle:, status_feed:,
+                            paths:, stdin: StringIO.new, tty_factory: tty_factory(dir), conductor_opener:)
         pane = Thread.new { type_at_you_from_a_pane(path, "quit") }
 
         wiring.run(backend:, resumed: nil, nvim: nil)
@@ -2708,21 +2714,21 @@ RSpec.describe Lain::CLI::Wiring do
     it "echoes a line typed in the input pane into the transcript, and not a line typed here" do
       transcripts = Dir.mktmpdir do |dir|
         paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
-        path = Lain::CLI::InputSocket.path(name: "wiring-echo", paths:, cwd: Dir.pwd)
+        path = Lain::CLI::InputSocket.path(name: "wiring-echo", paths:, cwd: project_dir)
         allow(status_feed).to receive(:state).and_return(PublishedFeedState.build)
         outputs = []
         factory = lambda do |channel:, **|
           Lain::Frontend::TTY.new(channel:, output: StringIO.new.tap { |io| outputs << io },
                                   history_path: File.join(dir, "history"))
         end
-        cockpit = described_class.new(options: { grace: 5, input: "socket:wiring-echo" }, chronicle:, status_feed:,
-                                      paths:, stdin: StringIO.new, tty_factory: factory, conductor_opener:)
+        cockpit = new_wiring(options: { grace: 5, input: "socket:wiring-echo" }, chronicle:, status_feed:,
+                             paths:, stdin: StringIO.new, tty_factory: factory, conductor_opener:)
         pane = Thread.new { type_at_you_from_a_pane(path, "quit") }
         cockpit.run(backend:, resumed: nil, nvim: nil)
         cockpit.conductor.close(reason: :exit)
         pane.join
-        plain = described_class.new(options: { grace: 5 }, chronicle:, status_feed:, stdin: StringIO.new("quit\n"),
-                                    tty_factory: factory, conductor_opener:)
+        plain = new_wiring(options: { grace: 5 }, chronicle:, status_feed:, stdin: StringIO.new("quit\n"),
+                           tty_factory: factory, conductor_opener:)
         plain.run(backend:, resumed: nil, nvim: nil)
         plain.conductor.close(reason: :exit)
         outputs.map { |io| io.string.include?("you> quit") }
@@ -2740,8 +2746,8 @@ RSpec.describe Lain::CLI::Wiring do
       end
 
       flipped = Dir.mktmpdir do |dir|
-        wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:, stdin: StringIO.new("quit\n"),
-                                     tty_factory: tty_factory(dir), conductor_opener:)
+        wiring = new_wiring(options: { grace: 5 }, chronicle:, status_feed:, stdin: StringIO.new("quit\n"),
+                            tty_factory: tty_factory(dir), conductor_opener:)
         wiring.run(backend:, resumed: nil, nvim: nil)
         board = built[Lain::CLI::Switchboard].last
         before = board.mode_switch.approval.name
@@ -2766,8 +2772,8 @@ RSpec.describe Lain::CLI::Wiring do
       end
 
       Dir.mktmpdir do |dir|
-        wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:, stdin: StringIO.new("quit\n"),
-                                     tty_factory: tty_factory(dir), conductor_opener:)
+        wiring = new_wiring(options: { grace: 5 }, chronicle:, status_feed:, stdin: StringIO.new("quit\n"),
+                            tty_factory: tty_factory(dir), conductor_opener:)
         wiring.run(backend:, resumed: nil, nvim: nil)
         wiring.conductor.close(reason: :exit)
       end
@@ -2829,8 +2835,8 @@ RSpec.describe Lain::CLI::Wiring do
       end
 
       Dir.mktmpdir do |dir|
-        wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:, stdin: StringIO.new("quit\n"),
-                                     tty_factory: tty_factory(dir), conductor_opener:)
+        wiring = new_wiring(options: { grace: 5 }, chronicle:, status_feed:, stdin: StringIO.new("quit\n"),
+                            tty_factory: tty_factory(dir), conductor_opener:)
         wiring.run(backend:, resumed: nil, nvim: nil)
         wiring.conductor.close(reason: :exit)
       end
@@ -2861,8 +2867,8 @@ RSpec.describe Lain::CLI::Wiring do
         factory = lambda do |channel:, **|
           Lain::Frontend::TTY.new(channel:, output:, history_path: File.join(dir, "history"))
         end
-        wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:, stdin: StringIO.new("/help\n"),
-                                     tty_factory: factory, conductor_opener:)
+        wiring = new_wiring(options: { grace: 5 }, chronicle:, status_feed:, stdin: StringIO.new("/help\n"),
+                            tty_factory: factory, conductor_opener:)
         wiring.run(backend:, resumed: nil, nvim: nil)
         wiring.conductor.close(reason: :exit)
       end
@@ -2901,8 +2907,8 @@ RSpec.describe Lain::CLI::Wiring do
           factory = lambda do |channel:, **|
             Lain::Frontend::TTY.new(channel:, output:, history_path: File.join(dir, "history"))
           end
-          wiring = described_class.new(options: { grace: 5 }, chronicle: typing_chronicle, status_feed:,
-                                       stdin: StringIO.new("tell me\n"), tty_factory: factory, conductor_opener:)
+          wiring = new_wiring(options: { grace: 5 }, chronicle: typing_chronicle, status_feed:,
+                              stdin: StringIO.new("tell me\n"), tty_factory: factory, conductor_opener:)
           wiring.run(backend:, resumed: nil, nvim: nil)
           wiring.conductor.close(reason: :exit)
         end
@@ -2956,7 +2962,7 @@ RSpec.describe Lain::CLI::Wiring do
     # time, so the question is what it reaches once a frontend exists.
     describe "the run's one line to the human" do
       it "says nothing before a frontend exists, which is the window the toolset is built in" do
-        wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:)
+        wiring = new_wiring(options: { grace: 5 }, chronicle:, status_feed:)
 
         expect { wiring.told.call("a file is waiting") }.not_to raise_error
       end
@@ -2967,8 +2973,8 @@ RSpec.describe Lain::CLI::Wiring do
           factory = lambda do |channel:, **|
             Lain::Frontend::TTY.new(channel:, output: rendered, history_path: File.join(dir, "history"))
           end
-          wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:, stdin: StringIO.new("quit\n"),
-                                       tty_factory: factory, conductor_opener:)
+          wiring = new_wiring(options: { grace: 5 }, chronicle:, status_feed:, stdin: StringIO.new("quit\n"),
+                              tty_factory: factory, conductor_opener:)
           wiring.run(backend:, resumed: nil, nvim: nil)
           wiring.conductor.close(reason: :exit)
           wiring.told.call("epic.md is open for review")
@@ -3003,9 +3009,9 @@ RSpec.describe Lain::CLI::Wiring do
       opener = ->(**kwargs) { Lain::CLI::Conductor.open(**kwargs).tap { seen << kwargs[:run_clock] } }
 
       Dir.mktmpdir do |dir|
-        wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:, run_clock:,
-                                     tty_factory: tty_factory(dir), stdin: StringIO.new("quit\n"),
-                                     conductor_opener: opener)
+        wiring = new_wiring(options: { grace: 5 }, chronicle:, status_feed:, run_clock:,
+                            tty_factory: tty_factory(dir), stdin: StringIO.new("quit\n"),
+                            conductor_opener: opener)
         wiring.run(backend:, resumed: nil, nvim: nil)
         wiring.conductor.close(reason: :exit)
       end
@@ -3037,8 +3043,8 @@ RSpec.describe Lain::CLI::Wiring do
       # write while the record is still open, so the close moves BELOW the drive.
       it "wires the standing-goal driver over the run's own journal, not a discard" do
         Dir.mktmpdir do |dir|
-          wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
-                                       tty_factory: tty_factory(dir), stdin: StringIO.new("quit\n"), conductor_opener:)
+          wiring = new_wiring(options: { grace: 5 }, chronicle:, status_feed:,
+                              tty_factory: tty_factory(dir), stdin: StringIO.new("quit\n"), conductor_opener:)
           wiring.run(backend:, resumed: nil, nvim: nil)
 
           driver = wiring.command_surface.goal_driver
@@ -3059,8 +3065,8 @@ RSpec.describe Lain::CLI::Wiring do
       # launch under the default auto approval journals a flip from ask.
       it "writes the session header before the launch's mode switch" do
         Dir.mktmpdir do |dir|
-          wiring = described_class.new(options: { grace: 5, approval: "auto" }, chronicle:, status_feed:,
-                                       tty_factory: tty_factory(dir), stdin: StringIO.new("quit\n"), conductor_opener:)
+          wiring = new_wiring(options: { grace: 5, approval: "auto" }, chronicle:, status_feed:,
+                              tty_factory: tty_factory(dir), stdin: StringIO.new("quit\n"), conductor_opener:)
           wiring.run(backend:, resumed: nil, nvim: nil)
           wiring.conductor.close(reason: :exit)
         end
@@ -3096,8 +3102,8 @@ RSpec.describe Lain::CLI::Wiring do
       # Scenario: a switch applies wholly under --no-journal --nvim
       it "applies /mode bypass to the gate and drives /goal, with no NoMethodError" do
         Dir.mktmpdir do |dir|
-          wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
-                                       tty_factory: tty_factory(dir), stdin: StringIO.new("quit\n"), conductor_opener:)
+          wiring = new_wiring(options: { grace: 5 }, chronicle:, status_feed:,
+                              tty_factory: tty_factory(dir), stdin: StringIO.new("quit\n"), conductor_opener:)
           wiring.run(backend:, resumed: nil, nvim: nil)
           commands = wiring.command_surface.commands
 
@@ -3270,9 +3276,9 @@ RSpec.describe Lain::CLI::Wiring do
       def run_recording(options: { grace: 5 }, &notice)
         seen = []
         Dir.mktmpdir do |dir|
-          wiring = described_class.new(options:, chronicle:, status_feed:,
-                                       tty_factory: recording_factory(dir, seen), conductor_opener:,
-                                       stdin: StringIO.new("quit\n"))
+          wiring = new_wiring(options:, chronicle:, status_feed:,
+                              tty_factory: recording_factory(dir, seen), conductor_opener:,
+                              stdin: StringIO.new("quit\n"))
           wiring.run(backend:, resumed: nil, nvim: nil, &notice)
           wiring.conductor.close(reason: :exit)
         end
@@ -3337,9 +3343,9 @@ RSpec.describe Lain::CLI::Wiring do
         with_env("OLLAMA_API_KEY" => "sk-ollama-test", "LAIN_PROVIDER_CONCURRENCY" => nil) do
           seen = []
           Dir.mktmpdir do |dir|
-            wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
-                                         tty_factory: recording_factory(dir, seen), conductor_opener:,
-                                         stdin: StringIO.new("quit\n"))
+            wiring = new_wiring(options: { grace: 5 }, chronicle:, status_feed:,
+                                tty_factory: recording_factory(dir, seen), conductor_opener:,
+                                stdin: StringIO.new("quit\n"))
             wiring.run(backend: cloud_backend, resumed: nil, nvim: nil) { |notice| notices << notice }
             wiring.conductor.close(reason: :exit)
           end
@@ -3406,9 +3412,9 @@ RSpec.describe Lain::CLI::Wiring do
       def said_resuming(file, state)
         said = []
         Dir.mktmpdir do |dir|
-          wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:, conductor_opener:,
-                                       paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => state, "HOME" => state }),
-                                       tty_factory: quiet_tty(dir), stdin: StringIO.new("quit\n"))
+          wiring = new_wiring(options: { grace: 5 }, chronicle:, status_feed:, conductor_opener:,
+                              paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => state, "HOME" => state }),
+                              tty_factory: quiet_tty(dir), stdin: StringIO.new("quit\n"))
           wiring.run(backend:, resumed: resumed_from(file), nvim: nil) { |line| said << line }
           wiring.conductor.close(reason: :exit)
         end
@@ -3452,8 +3458,8 @@ RSpec.describe Lain::CLI::Wiring do
             Lain::Frontend::TTY.new(channel:, output: screen, history_path: File.join(dir, "history"),
                                     alternate_screen:)
           end
-          wiring = described_class.new(options:, chronicle:, status_feed:, stdin:,
-                                       tty_factory: factory, conductor_opener:)
+          wiring = new_wiring(options:, chronicle:, status_feed:, stdin:,
+                              tty_factory: factory, conductor_opener:)
           wiring.run(backend:, resumed: resumed_with_notice, nvim: nil) { |line| said << line }
           wiring.conductor.close(reason: :exit)
         end
@@ -3485,15 +3491,15 @@ RSpec.describe Lain::CLI::Wiring do
           Lain::Frontend::TTY.new(channel:, output: pane_output, history_path: File.join(dir, "history"),
                                   alternate_screen:)
         end
-        described_class.new(options: { grace: 5, input: "socket:wiring-scrollback" }, chronicle:,
-                            status_feed:, paths:, stdin:, tty_factory: factory, conductor_opener:)
+        new_wiring(options: { grace: 5, input: "socket:wiring-scrollback" }, chronicle:,
+                   status_feed:, paths:, stdin:, tty_factory: factory, conductor_opener:)
       end
 
       def run_in_pane(notice)
         said = []
         Dir.mktmpdir do |dir|
           paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
-          path = Lain::CLI::InputSocket.path(name: "wiring-scrollback", paths:, cwd: Dir.pwd)
+          path = Lain::CLI::InputSocket.path(name: "wiring-scrollback", paths:, cwd: project_dir)
           wiring = pane_wiring(dir, paths)
           pane = Thread.new { end_the_chat_from_a_pane(path) }
           wiring.run(backend:, resumed: resumed_with(notice), nvim: nil) { |line| said << line }
@@ -3562,9 +3568,9 @@ RSpec.describe Lain::CLI::Wiring do
 
       def run_layered(rendered = StringIO.new, seen = [])
         Dir.mktmpdir do |dir|
-          wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
-                                       tty_factory: layered_factory(rendered, dir, seen), conductor_opener:,
-                                       stdin: StringIO.new("quit\n"))
+          wiring = new_wiring(options: { grace: 5 }, chronicle:, status_feed:,
+                              tty_factory: layered_factory(rendered, dir, seen), conductor_opener:,
+                              stdin: StringIO.new("quit\n"))
           wiring.run(backend:, resumed: nil, nvim: nil)
           yield wiring
           wiring.conductor.close(reason: :exit)
@@ -4526,9 +4532,9 @@ RSpec.describe Lain::CLI::Wiring do
       # store is a FILE and the suite's is shared by every example in the process.
       it "says how many newer entries the store holds, and says nothing when it holds none" do
         Dir.mktmpdir do |state|
-          isolated = described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
-                                         paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => state,
-                                                                       "HOME" => state }))
+          isolated = new_wiring(options: { grace: 5 }, chronicle:, status_feed:,
+                                paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => state,
+                                                              "HOME" => state }))
           resumed = WiringSpecResumed.new(recorder: recorded(remembered), session: Lain::Session.new)
           restored, = isolated.run_state(resumed)
 
@@ -4653,7 +4659,7 @@ RSpec.describe Lain::CLI::Wiring do
     let(:png) { (+"\x89PNG\r\n\x1a\n\x00\xff\x80pixels").force_encoding(Encoding::BINARY) }
 
     def dispatch(over: chronicle)
-      wired = described_class.new(options: { grace: 5 }, chronicle: over, status_feed:)
+      wired = new_wiring(options: { grace: 5 }, chronicle: over, status_feed:)
       recorder, session = wired.run_state(nil)
       agent = wired.wire_agent(channel:, recorder:, session:, backend:)
       reference = Lain::Attachment::Reference.new(digest: wired.send(:toolset_build).attachments.put(png),
@@ -5114,7 +5120,6 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
 
   describe "the switchboard memo Wiring keeps" do
     let(:status_feed) { instance_double(Lain::StatusFeed) }
-    let(:wiring) { described_class.new(options: { grace: 5 }, chronicle:, status_feed:) }
     let(:wired_backend) do
       Class.new(Lain::CLI::Backend) do
         def initialize(options, mock:, root: Dir.pwd)
