@@ -27,11 +27,14 @@ RSpec.describe "a stranded prompt folded into the next ask", :seam do
     end.new({ provider: "ollama", model:, max_tokens: 64 }, root: Dir.pwd)
   end
   let(:warnings) { [] }
+  let(:project_dir) { File.realpath(Dir.mktmpdir("fold-seam")) }
   let(:tty) do
     instance_double(Lain::Frontend::TTY, render_error: nil).tap do |double|
       allow(double).to receive(:render_warning) { |message| warnings << message }
     end
   end
+
+  after { FileUtils.rm_rf(project_dir) }
 
   before do
     stub_request(:get, %r{/api/ps}).to_return(
@@ -58,7 +61,7 @@ RSpec.describe "a stranded prompt folded into the next ask", :seam do
   def refused = stub_request(:post, %r{/api/chat}).to_raise(Errno::ECONNREFUSED)
 
   def chat
-    wiring = Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle:,
+    wiring = Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle:, project: throwaway_project(project_dir),
                                    status_feed: instance_double(Lain::StatusFeed, bind_store: nil))
     recorder, session = wiring.run_state(nil)
     agent = wiring.wire_agent(channel: Lain::Channel.new, recorder:, session:, backend:)

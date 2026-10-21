@@ -91,6 +91,7 @@ RSpec.describe "a human question raised while a skill spawn is dispatched", :sea
   def chat_wiring(tty_factory, dir, stdin)
     Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle: Lain::CLI::Chronicle::Null.new, tty_factory:,
                           paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => dir, "HOME" => dir }),
+                          project: throwaway_project(dir),
                           status_feed: instance_double(Lain::StatusFeed, bind_store: nil), stdin:)
   end
 

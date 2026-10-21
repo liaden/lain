@@ -81,7 +81,7 @@ RSpec.describe "a prompt that does not fit the served context", :seam do
   end
 
   def chat(tty: nil)
-    wiring = Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle:,
+    wiring = Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle:, project: throwaway_project(@dir),
                                    status_feed: instance_double(Lain::StatusFeed, bind_store: nil))
     recorder, session = wiring.run_state(nil)
     agent = wiring.wire_agent(channel: Lain::Channel.new, recorder:, session:, backend:)

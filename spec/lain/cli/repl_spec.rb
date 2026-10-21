@@ -348,6 +348,7 @@ RSpec.describe Lain::CLI::Repl do
       Lain::Frontend::TTY.new(channel:, output:, history_path: File.join(dir, "history"))
     end
     wiring = Lain::CLI::Wiring.new(options:, chronicle:, tty_factory:, paths: spec_state(dir),
+                                   project: throwaway_project(dir),
                                    status_feed: instance_double(Lain::StatusFeed, bind_store: nil),
                                    stdin: StringIO.new(input))
     wiring.run(backend:, resumed: nil, nvim: nil)
@@ -383,6 +384,7 @@ RSpec.describe Lain::CLI::Repl do
       wiring = Lain::CLI::Wiring.new(options: { grace: 5, prompt:, non_interactive: true },
                                      chronicle: Lain::CLI::Chronicle::Null.new,
                                      tty_factory: waiting_terminal(output, dir:), paths: spec_state(dir),
+                                     project: throwaway_project(dir),
                                      status_feed: instance_double(Lain::StatusFeed, bind_store: nil),
                                      stdin: StringIO.new("and another thing\n"))
       Timeout.timeout(20) { wiring.run(backend: headless, resumed: nil, nvim: nil) }
@@ -573,7 +575,8 @@ RSpec.describe Lain::CLI::Repl do
 
     def editor_wiring(tty_factory, dir)
       Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle: Lain::CLI::Chronicle::Null.new, tty_factory:,
-                            paths: spec_state(dir), status_feed: instance_double(Lain::StatusFeed, bind_store: nil),
+                            paths: spec_state(dir), project: throwaway_project(dir),
+                            status_feed: instance_double(Lain::StatusFeed, bind_store: nil),
                             stdin: StringIO.new("quit\n"))
     end
 
@@ -1059,7 +1062,7 @@ RSpec.describe Lain::CLI::Repl do
           Lain::Frontend::TTY.new(channel:, output: StringIO.new, history_path: File.join(dir, "history"))
         end
         wiring = Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle: Lain::CLI::Chronicle::Null.new, tty_factory:,
-                                       paths: spec_state(dir),
+                                       paths: spec_state(dir), project: throwaway_project(dir),
                                        status_feed: instance_double(Lain::StatusFeed, bind_store: nil),
                                        stdin: StringIO.new("quit\n"))
         wiring.run(backend:, resumed: nil, nvim: nil)

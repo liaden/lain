@@ -381,8 +381,6 @@ RSpec.describe Lain::CLI::Wiring do
   # The default project is the checkout, and a wiring rooted there lists every tracked file to mask it.
   let(:project_dir) { File.realpath(Dir.mktmpdir("lain-wiring-project")) }
 
-  def throwaway_project(dir) = Lain::Project.new(root: dir, cwd: dir, kind: :project, detected_by: :flag)
-
   after { FileUtils.rm_rf(project_dir) }
 
   def new_wiring(**kwargs) = described_class.new(project: throwaway_project(project_dir), **kwargs)
