@@ -76,12 +76,13 @@ module PlainChatPromptGuards
                                            .bind(Struct.new(:approvals, :replies).new(queue, replies))
 
     commands = Class.new do
-      def initialize(queue, dir, askers, conductor, rail, waiting, registry)
+      def initialize(queue, dir, askers, conductor, rail, tty, waiting, registry)
         @queue = queue
         @dir = dir
         @askers = askers
         @conductor = conductor
         @rail = rail
+        @tty = tty
         @waiting = waiting
         @registry = registry
         @parked = 0
@@ -114,7 +115,7 @@ module PlainChatPromptGuards
 
       def ask_and_park
         parking = Async::Task.current.async do
-          Async::Task.current.sleep(0.02) until @rail.published.kind == :human
+          Async::Task.current.sleep(0.02) until @rail.published.kind == :human && @tty.prompt_drawn?
           park
         end
         ask
@@ -133,7 +134,7 @@ module PlainChatPromptGuards
                                                  Lain::Tool::Invocation.new(context: Lain::Session::Null.instance))
         File.write(File.join(@dir, "answer"), result.content.to_s)
       end
-    end.new(queue, dir, askers, conductor, rail, waiting, registry)
+    end.new(queue, dir, askers, conductor, rail, tty, waiting, registry)
 
     if shape != "cockpit"
       replies.bind_commands(registry)
