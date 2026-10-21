@@ -1,6 +1,6 @@
 # Rust hot paths: message adoption, the prefix-chain memo, 3 binding fixes, the mask listing, and 2 experiments
 
-status: draft
+status: in-progress
 commit-mode: orchestrator-commits
 language: ruby (Rust cards: T1, T3, T4, T5; T10 prototypes in Rust and lands nothing)
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Aaron Patterson); Rust (Raph Levien, Andrew Gallant) for T1, T3, T4, T5, T10
@@ -652,4 +652,15 @@ After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]
 
 ## Execution log
 
-(Written by /execute-plan.)
+- 2026-10-20 20:02 start. Base `main` at `be96631d` (the plan commit on top of the grounding SHA `1e3f3ae9`;
+  the only diff is ROADMAP.md and this plan, so the Grounding holds). `git worktree list`: `/home/tara/dev/lain be96631d [main]`
+  only. Branches at start: `flake/review`, `main`, `spike/combined`, `spike/combined2`.
+- Hook (`.pre-commit-config.yaml`), as commands an agent can run on its own paths:
+  `bundle exec rubocop <paths>`; `bundle exec yard-lint --staged` (main session only, needs the index);
+  `cargo fmt -- --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` (any Rust change);
+  `bin/lint-gherkin-docs <plan>` (plan docs); trailing whitespace and end-of-file fixers; commit-msg lint
+  (subject 72 chars, no trailing period, no dashes, no trailers). `ruby-checks` is `bundle exec rake compile check`,
+  that is the full `pspec` plus rubocop, about 1 to 2 min, plus cargo test and clippy when Rust is staged.
+- The suite cannot run beside other tests (shared `TMPDIR`, contention flakes): landings go on a quiet box.
+  Each worktree gets its own `TMPDIR=$HOME/tmp/lain/<card>`.
+- Paths needing user approval: none known.
