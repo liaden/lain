@@ -178,6 +178,7 @@ flowchart LR
   T17 --> T19
   T17 --> T20
   T9 --> T21
+  T18 --> T22
 ```
 
 ## Tasks
@@ -1069,6 +1070,32 @@ Spec file: the 2 spec files above
 **Stop and report if:**
 - The fixed fixture still fails under the injected delay: the product, not the fixture, is then in question.
 
+### T22: Hold the GVL for small calls in the 3 landed bindings          [risk: medium]
+
+**Depends on:** T18 (the helper's held path)
+**Files:** `ext/lain/src/fuzzy.rs`, `ext/lain/src/bm25.rs`, `ext/lain/src/astgrep.rs`, `spec/lain/rust/fuzzy_spec.rb`, `spec/lain/rust/bm25_spec.rb`, `spec/lain/rust/astgrep_spec.rb`
+**Reuse:** the T18 reviewer's convoy probes (`convoy_t18_review.rb`), `tmp/bench-stats`
+**Reachable from:** `@`-path tab completion, memory search, `ast_search`
+
+The T18 review found a GVL convoy. A released call beside a busy Ruby thread waits out that thread's time slice to get the lock back, so a 1-line Shell::Parse went from 189 us to 20 ms beside a priority -3 thread, and to 100 ms beside a priority 0 one. T17, T19 and T20 landed releasing on every call. Each needs a size threshold below which it holds, set from its own measured crossover.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: a small call beside a busy thread costs what it did before the release
+  Given a Ruby thread spinning at Offload priority
+  When a 100-path match, a 100-document search, or a 1-file ast_search runs
+  Then its per-call cost is within the layout spread of 337ba598's
+
+Scenario: a large call still frees other threads
+  When a 50,000-path match, a full build, or a 500-file search runs on another thread
+  Then the main-thread ticker's p99 stays within the layout spread of idle
+```
+Spec files: the 3 above.
+
+**Stop and report if:**
+- A binding's crossover sits above every input the app gives it: report it, since the release then never runs there.
+
 ## Integration checks
 
 After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]*/bin/parallel_rspec'` and
@@ -1251,3 +1278,6 @@ After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]
 - 13:55 T21 low review: APPROVE-WITH-FIXES (1 optional nit, no inner deadline on the drawn-prompt wait; left, the outer 20 s wait bounds it). The reviewer could not run while the bench lock was held, so the main session reproduced it: old spec red 3 of 3 under the 12 ms delay, fixed spec green 5 of 5. T21 landed `665b1d5d` (attempt 1).
 - 14:45 T17 handed back. The helper (rb_nogvl with an unblocking fn, 64-slot table, catch_unwind, retry held after 4 quiet returns) is the 1 new unsafe block; 16 in the crate. Ticker p99 26.7 to 1.09 ms; kill 50 ms in 948.7 to 0.21 ms; per call 1.568 to 1.609 ms, within layout spread. A kill during the Ruby result build waits it out (about 57 ms on 11,522 matches); follow-up. Wiring applied in its worktree: the helper promoted to crate-level `src/nogvl.rs`.
 - 15:05 T17 high review: APPROVE-WITH-FIXES, 1 substantive (put nogvl in the mutants gate), 1 bug (a grammar refusal retried as a halt), 6 mechanical. Fix round: glue moved to `nogvl/ffi.rs`, nogvl.rs sweep 23 caught 26 unviable 0 missed; refusal is a SearchError; spec file 6.0 to 2.6 s. Wiring applied: rb-sys caret 0.9.130 (`links = "rb"` allows 1 copy), baseline row `ext/lain/src/nogvl.rs 23 26 0 0`, Rakefile MUTANT_FILES gains nogvl. Second review (narrow): APPROVE; the gate exits 0 on the new row.
+- 16:31 T20 landed `f5f18a1b`. T19's first landing went red on its new kill spec (20.5 ms against 20, green alone, so card-caused). The bound became 100 ms, still red on a GVL-held build. T19 landed `5db9f0e1` (attempt 2).
+- 16:58 T18 high review: REQUEST-CHANGES. Blocker: a GVL convoy, where a small released call beside a busy thread waits a time slice (Shell::Parse 189 us to 20 ms at priority -3, 100 ms at priority 0). Ruled in main: the helper gains a held path for small work, built in T18 (nogvl.rs edit approved as a scope change), and card T22 applies it to the landed fuzzy, bm25 and astgrep.
+- 17:04 T18 fix round: the helper gained `without_gvl_when` (a held path; `without_gvl` passes true, so the landed bindings are unchanged); treesitter holds below 32 KiB (worst rate 859 us per KB). Shell::Parse beside a busy thread back to 169 to 200 us. Second review APPROVE; residual 3 files over 32 KiB pay 1 slice each, kept. Convoy spec bound 2 to 8 ms for suite load (red at 21 ms). T18 landed `c64b9a78` (attempt 1). T22 starts.
