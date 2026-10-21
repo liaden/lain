@@ -165,6 +165,10 @@ flowchart LR
   T7 --> T8
   T2 & T3 & T4 & T5 & T6 & T8 --> T9
   T9 --> T10
+  T6 --> T11
+  T7 --> T12
+  T7 --> T13
+  T11 & T12 & T13 --> T9
 ```
 
 ## Tasks
@@ -622,6 +626,112 @@ Spec file: none (a report)
 - `lucchetto` does not build against the locked `rb-sys`: record the error and continue with the other 2.
 - A prototype crashes the VM: record the backtrace; that route is out.
 
+### T11: Root 4 more spec files' wirings at a throwaway project          [risk: low]
+
+**Depends on:** T6 (landed; its `new_wiring` shape is the reference)
+**Files:** `spec/lain/cli/repl_spec.rb`, `spec/lain/seams/over_window_request_spec.rb`, `spec/lain/seams/stranded_prompt_fold_spec.rb`, `spec/lain/seams/skill_spawn_inbox_spec.rb`, and `spec/support/chat_launch_probe.rb` only if a file's checkout listing comes through it
+**Reuse:** T6's `new_wiring` and `project_dir` in `spec/lain/cli/wiring_spec.rb`
+**Shared-file wiring:** none
+**Reachable from:** the spec suite (`rake pspec`, the commit hook)
+
+Added 2026-10-21 on the user's ruling, from T6's stop condition: `MaskList#refresh` was 76% of `repl_spec.rb`, 95% of
+`over_window_request_spec.rb`, 98% of `stranded_prompt_fold_spec.rb` and 79% of `skill_spawn_inbox_spec.rb`, timed
+directly. Each wiring these files build without a `project:` lists the checkout. Each gets a per-example tmpdir project,
+as T6 did. An example that tests the default project keeps its own chdir.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: no wiring in the 4 files lists the real checkout
+  Given each of the 4 files run alone with Confine::MaskList#refresh instrumented to record its root
+  Then no recorded root is the checkout
+
+Scenario: the example counts are unchanged
+  Then LAIN_SLOW=1 rspec --dry-run counts the same examples in each file as before
+```
+Spec file: the 4 files; the counts and the before and after wall of each go in the hand-back
+
+**Stop and report if:**
+- An example fails only because it is no longer at the checkout: name it.
+
+### T12: A listed name is root-relative, even when it starts with ~          [risk: high]
+
+**Depends on:** T7 (landed)
+**Files:** `lib/lain/sensitivity/policy.rb`, `spec/lain/sensitivity/policy_spec.rb`, `spec/lain/seams/symlink_boundary_spec.rb` (new examples only)
+**Reuse:** T7's criterion-1 fixture and comparator in `policy_spec.rb`; the reviewer's probe `t7_tilde_dir.rb` (its shape: `root/~/shadow -> /etc/shadow`, `root/~/notes -> ~/.ssh/id_rsa`)
+**Shared-file wiring:** none
+**Reachable from:** `Confine::MaskList#refresh` -> `Sensitivity::Policy#mask_paths` (`policy.rb:496`) -> `listed_landed` (`:572`) and the `judge` fallback
+
+Added 2026-10-21 on the user's ruling, from T7's review (finding 5). A hole on main before T7: git lists a file under a
+directory literally named `~` as `~/shadow`. `File.expand_path` reads that as the process's `$HOME`, and the
+classifier rewrites a leading `~` to the injected home. So a link to `/etc/shadow` there judges `ordinary`, and the
+sandbox does not mask it. A listing name is root-relative by construction, so `mask_paths` must treat each name as a
+literal path under the call's cwd. `judge` on the gate path is NOT changed: there a model-named `~/x` means home, and
+that must keep being classified as home.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: a link under a directory named ~ is masked
+  Given a tmpdir repo with root/~/shadow linked to a denied target and root/~/notes linked to a home secret
+  When MaskList refreshes
+  Then both names are masked at the label their targets carry
+
+Scenario: a listed name starting with ~ is not read as home
+  Given a listing naming ~notes.txt, ~/plain.txt and ~nobody/x as plain files under root
+  When mask_paths judges the listing
+  Then each lands under root and none raises
+
+Scenario: the gate still reads ~ as home
+  Given a named path ~/.ssh/id_rsa in a tool call
+  When judge classifies it
+  Then the verdict is the home secret's, unchanged from before
+```
+Spec file: `spec/lain/sensitivity/policy_spec.rb` (the last 2); `spec/lain/seams/symlink_boundary_spec.rb` (the first, a real MaskList over a real repo, so it does not share `mask_list_spec.rb` with T13)
+
+**Stop and report if:**
+- Any existing example in `policy_spec.rb` or `spec/lain/seams/symlink_boundary_spec.rb` needs a change.
+- The fix needs `judge`'s gate behaviour to change.
+
+### T13: Re-judge a listed name whose file changed identity          [risk: high]
+
+**Depends on:** T7 (landed)
+**Files:** `lib/lain/confine/mask_list.rb`, `spec/lain/confine/mask_list_spec.rb`
+**Reuse:** the reviewer's probe `t7_swap_after_listing.rb`; `MaskList#refresh`'s digest and `names - @names` (`mask_list.rb:62-70`)
+**Shared-file wiring:** none
+**Reachable from:** `Confine::Sandbox` -> `Confine::MaskList#masks` -> `#refresh`
+
+Added 2026-10-21 on the user's ruling, from T7's review (finding 6). A hole on main before T7: a refresh judges only
+names the previous listing lacked. A listed plain file later replaced by a link to `~/.ssh/id_rsa` keeps its name, so it
+is never re-judged and never masked, although `judge` now says protected. A refresh re-judges any kept name whose
+`lstat` identity (device, inode, and whether it is a link) changed since it was judged, and drops masks for names that
+are no longer listed exactly as today. The cost is 1 `lstat` per listed name per refresh: measure it on this checkout.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: a file swapped for a link is masked on the next refresh
+  Given a tmpdir repo listing plain.txt, refreshed once with no masks
+  When plain.txt is replaced by a link to a home secret and the list refreshes
+  Then plain.txt is masked at the secret's label
+
+Scenario: a link swapped back for a plain file is unmasked
+  Given a listed name masked as a link to a home secret
+  When it is replaced by a plain file and the list refreshes
+  Then it is no longer masked
+
+Scenario: an unchanged listing is not re-judged
+  Given a refreshed list over 200 unchanged files
+  When it refreshes again
+  Then Policy#mask_paths receives no names
+```
+Spec file: `spec/lain/confine/mask_list_spec.rb`; the per-refresh cost on this checkout goes in the hand-back
+
+**Stop and report if:**
+- `refresh`'s current early return on an unchanged digest hides a swap (the listing's bytes do not change when a file
+  becomes a link): report how the digest is formed and what the fix needs.
+- The `lstat` pass costs more than 20 ms on this checkout's listing.
+
 ## Integration checks
 
 After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]*/bin/parallel_rspec'` and
@@ -664,3 +774,35 @@ After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]
 - The suite cannot run beside other tests (shared `TMPDIR`, contention flakes): landings go on a quiet box.
   Each worktree gets its own `TMPDIR=$HOME/tmp/lain/<card>`.
 - Paths needing user approval: none known.
+- 20:05 T1 (opus), T3, T4, T6 (sonnet), T7 (opus) started in `tmp/worktrees/<card>`, cut from `a4dc42b1`.
+  T6 and T7 got main's `lib/lain/lain.so` copied in, since they change no Rust.
+- 20:12 T3 handed back. Decision: no `fuzzy.rs` row in `mutants-baseline.txt`; the sweep covers only the address and
+  graph modules (its header), and `astgrep.rs` is out on the same ground. Plan gap: Shared files assumed rows.
+- 20:11 T3 reviewed: APPROVE-WITH-FIXES, 1 mechanical (a boundary test killing the query-length `>=` mutant), applied.
+  Waiting for a quiet window to land.
+- 20:15 T7 handed back (red 900 realpaths against 21; the fixture fails 6 shapes with the fallback removed). High-depth
+  review started. A worktree needs `CARGO_TARGET_DIR=/home/tara/dev/lain/target` for the lain-fence binary.
+- 20:20 T1 handed back (red 2 of 4 new examples; 6,681 green by path). Open point it raised: recording every normalized
+  Hash brings back the 30% fresh-data cost the old comment measured. Sent back to measure record-all against
+  check-only before review.
+- 20:27 T6 handed back: wiring_spec.rb 3m14s to 7.6s, 244 examples both sides, checkout refreshed 95 times before and
+  0 after. Its stop condition fired as a report: `MaskList#refresh` is 76% of `repl_spec.rb`, 95% of
+  `seams/over_window_request_spec.rb`, 98% of `seams/stranded_prompt_fold_spec.rb`, 79% of
+  `seams/skill_spawn_inbox_spec.rb` (timed directly; stackprof wall mode dropped most samples). Not fixed here;
+  proposed to the user as a follow-up card. Low-depth review started.
+- 20:30 T6 reviewed: APPROVE (3 nits, none taken: comment placement, a lazy tmpdir forced by `after`, a `Dir.pwd` outside
+  the card). Waiting with T3 for a quiet window; T4's mutants sweep is running.
+- 20:50 T1 measured (5 rounds, 10,000 turns, medians): chat-turn render 55.0 old, 25.5 record-all, 25.0 check-only;
+  fresh digest 9.32, 11.02, 9.48 ms. Kept check-only (only `adopt` records a Hash), pinned by a new spec. High-depth review started.
+- 21:00 T7 reviewed: APPROVE-WITH-FIXES. 0 verdict differences over the real listing and 160 adversarial names across
+  cwd and home spellings. Fixes sent: 3 unguarded load-bearing lines get discriminating examples, `Listed#respell`
+  folds into `Landing` (landing.rb added to T7's Files, scope change decided here), 3 nits. 2 holes on main, not
+  caused by T7, go to the user: a root directory literally named `~` hides links from the mask (`expand_path` reads
+  the process `$HOME`); `MaskList#refresh` never re-judges a listed file later swapped for a link.
+- 2026-10-21 00:05 T3 landed `078fd77a`, T6 landed `12605ae1`, T7 landed `3b4ae788` (T7's first attempt ran the suite
+  green, then failed on a missing message file; my shell error, not a hook red). Every runnable spec file shows in the
+  runtime log after each. Worktrees and branches removed.
+- 00:10 User ruling: add T11 (4 more spec files off the checkout), T12 (a listed `~` name is root-relative), T13
+  (re-judge a listed name whose identity changed). Cards written above; T9 now waits on them too.
+- T4 handed back (compile red, 22 astgrep tests green). No `astgrep.rs` mutants row, as for `fuzzy.rs`. T1 review:
+  APPROVE-WITH-FIXES, 4 mechanical nits; byte-identical digests and chains over 9,985 real payloads against main.
