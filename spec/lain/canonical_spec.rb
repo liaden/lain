@@ -116,6 +116,21 @@ RSpec.describe Lain::Canonical do
       expect(described_class.normalize(copy)).not_to equal(copy)
     end
 
+    it "rebuilds a frozen Ruby Hash into sorted keys, though its keys are already the wire's" do
+      look_alike = { "role" => "user", "content" => [] }.freeze
+
+      normalized = described_class.normalize(look_alike)
+
+      expect(normalized).not_to equal(look_alike)
+      expect(normalized.keys).to eq(%w[content role])
+    end
+
+    it "does not record a Hash it built, so normalizing that Hash again rebuilds it" do
+      normalized = described_class.normalize({ "b" => 1, "a" => 2 })
+
+      expect(described_class.normalize(normalized)).not_to equal(normalized)
+    end
+
     it "gives a non-main Ractor the full normalization" do
       input = [{ b: 1, a: [2] }]
 

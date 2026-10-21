@@ -2172,8 +2172,8 @@ mod ffi {
                 let prefix = onto.filter(|_| reached);
                 MessageBuilder::new(ruby).messages(prefix, &turns)?
             };
-            for array in adoptable {
-                let _: Value = canonical.funcall("adopt", (array,))?;
+            for built in adoptable {
+                let _: Value = canonical.funcall("adopt", (built,))?;
             }
             Ok(messages)
         }
@@ -2400,10 +2400,11 @@ mod ffi {
     }
 
     /// Builds `Timeline#messages`' answer. Every Hash key and role is one frozen
-    /// String per call rather than one per turn, and every Array it builds is
-    /// collected for `Canonical.adopt`, so a render normalizing the content
-    /// finds it already produced instead of rebuilding it. Adopting is Ruby, so
-    /// it waits until the builder, and the Rust state it holds, is gone.
+    /// String per call rather than one per turn, and every message Hash and
+    /// every Array it builds is collected for `Canonical.adopt`, so a render
+    /// normalizing them finds them already produced instead of rebuilding
+    /// them. Adopting is Ruby, so it waits until the builder, and the Rust
+    /// state it holds, is gone.
     struct MessageBuilder<'r> {
         ruby: &'r Ruby,
         adoptable: RArray,
@@ -2424,7 +2425,7 @@ mod ffi {
             }
         }
 
-        /// The messages, and every Array in them still to be adopted.
+        /// The messages, and every Array and message Hash in them still to be adopted.
         fn messages(
             mut self,
             prefix: Option<RArray>,
@@ -2454,10 +2455,13 @@ mod ffi {
                     ),
                 ));
             };
+            // Sorted key order: an adopted Hash is returned by `normalize` as
+            // is, so any other order would change every digest in silence.
             let message = self.ruby.hash_new();
-            message.aset(self.string("role")?, self.string(role)?)?;
             message.aset(self.string("content")?, self.tree(content)?)?;
+            message.aset(self.string("role")?, self.string(role)?)?;
             message.freeze();
+            self.adoptable.push(message)?;
             Ok(message.as_value())
         }
 

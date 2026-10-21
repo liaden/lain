@@ -23,14 +23,15 @@ module Lain
     class NonFiniteFloat < Error; end
     class AmbiguousKey < Error; end
 
-    # Every Array this module has returned. Identity, not equality, and that is
-    # the soundness argument: an output is deeply frozen, so the object can
-    # never stop being canonical, while a frozen input merely LOOKING canonical
-    # (unsorted keys, a Symbol key) is not in here and is rebuilt. Arrays only,
-    # because that is where the reuse is (a turn's content blocks, a message
-    # list) and marking Hashes too cost 30% more on data never normalized
-    # twice. Weak, so it keeps nothing alive. A non-main Ractor cannot read a
-    # non-shareable constant, so it skips the set and always rebuilds.
+    # Every Array this module has returned, and every message Hash the extension
+    # built. Identity, not equality, and that is the soundness argument: an
+    # output is deeply frozen, so the object can never stop being canonical,
+    # while a frozen input merely LOOKING canonical (unsorted keys, a Symbol
+    # key) is not in here and is rebuilt. A Hash this module builds is not
+    # recorded: that costs fresh data and never hits on a chat turn, while
+    # skipping the rebuild of the extension's message Hashes is the win. Weak,
+    # so it keeps nothing alive. A non-main Ractor cannot read a non-shareable
+    # constant, so it skips the set and always rebuilds.
     PRODUCED = ObjectSpace::WeakMap.new
     private_constant :PRODUCED
 
@@ -45,7 +46,7 @@ module Lain
         when Float then finite(value)
         when String, Symbol then -utf8(value.to_s)
         when Array then produced(value) { value.map { |element| normalize(element) }.freeze }
-        when Hash then normalize_hash(value)
+        when Hash then adopted?(value) ? value : normalize_hash(value)
         else raise UnsupportedType, "cannot canonicalize #{value.class}"
         end
       end
@@ -79,18 +80,21 @@ module Lain
 
       private
 
-      # Marks an Array the extension built from a stored tree as produced, so a
-      # render normalizing it gets it back unrebuilt. Private, and reached only
-      # by the extension: what makes this sound is where the Array came from, a
-      # deep-frozen tree of a value already normalized when it was stored, and a
-      # Ruby caller has no such provenance.
+      # Marks an Array or Hash the extension built from a stored tree as
+      # produced, so a render normalizing it gets it back unrebuilt. Private, and
+      # reached only by the extension: what makes this sound is where it came
+      # from, a deep-frozen tree of a value already normalized when it was
+      # stored, its Hash keys written in sorted order, and a Ruby caller has no
+      # such provenance.
       #
-      # @param normalized_array [Array] deep frozen, built by Lain::Ext
-      # @return [Array] the same Array
-      def adopt(normalized_array)
-        PRODUCED[normalized_array] = true if Ractor.main?
-        normalized_array
+      # @param normalized [Array, Hash] deep frozen, built by Lain::Ext
+      # @return [Array, Hash] the same object
+      def adopt(normalized)
+        PRODUCED[normalized] = true if Ractor.main?
+        normalized
       end
+
+      def adopted?(hash) = Ractor.main? && PRODUCED.key?(hash)
 
       # Re-normalizing is the common case on the render path: a turn's content
       # is canonical from the moment it was committed, and every later digest,

@@ -321,8 +321,11 @@ RSpec.describe Lain::Ext::Timeline do
          { "type" => "tool_use", "id" => "tu_#{index}", "name" => "echo",
            "input" => { "ratio" => index / 4.0, "counts" => [index, -index, 2**70], "flag" => nil } }]
       end
-      ext = 6.times.inject(timeline) { |acc, at| acc.commit(role: :assistant, content: blocks.call(at)) }
-      plain = Struct.new(:messages).new(Array.new(6) { |at| { "role" => "assistant", "content" => blocks.call(at) } })
+      role = ->(index) { index.even? ? "user" : "assistant" }
+      ext = 30.times.inject(timeline) { |acc, at| acc.commit(role: role.call(at), content: blocks.call(at)) }
+      plain = Struct.new(:messages).new(Array.new(30) do |at|
+        { "role" => role.call(at), "content" => blocks.call(at) }
+      end)
 
       expect(context.render(timeline: ext, toolset:).digest).to eq(context.render(timeline: plain, toolset:).digest)
     end
@@ -348,6 +351,24 @@ RSpec.describe Lain::Ext::Timeline do
       expect(longer.asked.map(&:first)).to eq(%i[head_digest messages])
       expect(fresh.size).to eq(1)
       expect(extended.messages).to eq(longer.__getobj__.messages)
+    end
+
+    it "builds each message as a normalize hit, so a render reuses it" do
+      message = say(timeline, "a").messages.first
+
+      expect(Lain::Canonical.normalize(message)).to equal(message)
+    end
+
+    it "writes each message's keys in canonical order, byte for byte what normalize writes" do
+      tool_use = [{ "type" => "tool_use", "id" => "tu_1", "name" => "echo", "input" => { "b" => 1, "a" => [nil] } }]
+      line = say(timeline, "a").commit(role: :assistant, content: tool_use)
+
+      line.messages.each do |message|
+        plain = Lain::Canonical.normalize({ "role" => message["role"], "content" => message["content"] })
+
+        expect(message.keys).to eq(plain.keys)
+        expect(Lain::Canonical.dump(message)).to eq(JSON.generate(plain))
+      end
     end
 
     it "never splices a rewound head onto a stale prefix" do
