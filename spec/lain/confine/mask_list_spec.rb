@@ -163,4 +163,66 @@ RSpec.describe Lain::Confine::MaskList do
       expect { broken.masks }.to raise_error(RuntimeError, "no policy yet")
     end
   end
+
+  # {Sensitivity::Policy#judge} is the oracle for what a refresh masks.
+  describe "a refresh over links and plain files" do
+    let(:home) { File.join(@base, "home") }
+    let!(:policy) do
+      real_home = File.join(@base, "realhome")
+      FileUtils.mkdir_p(%w[.ssh .aws .kube tokens].map { File.join(real_home, _1) })
+      File.write(File.join(real_home, ".ssh", "id_rsa"), "key\n")
+      File.write(File.join(real_home, ".kube", "config"), "token: x\n")
+      File.write(File.join(real_home, "tokens", "tokens.txt"), "t\n")
+      FileUtils.rm_rf(File.join(@base, "home"))
+      File.symlink(real_home, File.join(@base, "home"))
+      Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root, root:), home:, root:)
+    end
+
+    def plant
+      stale_tracked_under_a_link
+      { "key_link" => File.join(home, ".ssh", "id_rsa"), "envlink" => ".env", "linkdir" => File.join(home, ".ssh"),
+        "aws" => File.join(home, ".aws", "credentials"), "shadow" => "/etc/shadow",
+        "tokdir" => File.join(home, "tokens"), "readme.key" => "README.md", "kubedir" => File.join(home, ".kube") }
+        .each { |name, target| File.symlink(target, File.join(root, name)) }
+      write(".env", "A=1\n")
+      write("README.md")
+    end
+
+    def stale_tracked_under_a_link
+      %w[linkdir/id_rsa kubedir/config].each do |name|
+        FileUtils.mkdir_p(File.dirname(File.join(root, name)))
+        write(name)
+        git("add", name)
+      end
+      FileUtils.rm_r(%w[linkdir kubedir].map { File.join(root, _1) })
+    end
+
+    def plain_files
+      Array.new(200) { |i| "d#{i % 10}/f#{i}.txt" }.each do |name|
+        FileUtils.mkdir_p(File.dirname(File.join(root, name)))
+        write(name)
+      end
+    end
+
+    def judged(names)
+      masks = names.filter_map do |name|
+        verdict = policy.judge(name, cwd: root)
+        Lain::Sensitivity::Policy.masks?(verdict) ? [File.realpath(name, root), verdict.reason] : nil
+      rescue SystemCallError
+        nil
+      end
+      masks.uniq(&:first).select { File.exist?(_1.first) }
+    end
+
+    it "masks what judge masks, name by name" do
+      plant
+      git("add", *plain_files.first(100))
+      listed = git("ls-files", "-z", "-co").stdout.split("\0").uniq
+
+      expect(listed).to include("linkdir/id_rsa", "kubedir/config", "linkdir", "d0/f0.txt", "d9/f199.txt")
+      expect(judged(listed).map(&:first))
+        .to include(File.join(root, ".env"), File.join(@base, "realhome", ".ssh", "id_rsa"))
+      expect(list.masks.map { [_1.path, _1.reason] }).to match_array(judged(listed))
+    end
+  end
 end

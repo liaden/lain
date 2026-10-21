@@ -494,8 +494,45 @@ module Lain
       # @param within [String] absolute; see {.base_of}
       # @return [Array<Mask>] one per landing, in listing order
       def mask_paths(files, cwd:, within: cwd)
-        files.filter_map { |file| mask(file, cwd, within) }.uniq(&:path)
+        listed = Listed.new(anchors: @anchors)
+        same_cwd = @sensitivity.cwd == File.expand_path(cwd)
+        files.filter_map { |file| mask(file, cwd, within, listed, same_cwd) }.uniq(&:path)
       end
+
+      # A listing pays one realpath per directory rather than three per name.
+      # `git ls-files` lists a linked directory as one leaf, and a stale name
+      # below one still resolves, since its directory is the link.
+      class Listed
+        # @param anchors [Hash{Symbol => String, nil}] the lexical home and root
+        def initialize(anchors:)
+          @real = {}
+          @anchors = anchors.values_at(:home, :root).compact.filter_map { |lexical| anchor(lexical) }
+        end
+
+        # @param named [String] absolute and expanded
+        # @return [Array<String>, nil] where it lands, respelled as {Landing.of}
+        #   respells it; nil for a link or anything lstat refuses, which the
+        #   caller resolves the long way
+        def spellings(named)
+          return nil if File.lstat(named).symlink?
+
+          real = File.join(real(File.dirname(named)), File.basename(named))
+          [real, *@anchors.filter_map { |lexical, anchor| Landing.respelled(real, lexical, anchor) }].uniq
+        rescue SystemCallError
+          nil
+        end
+
+        private
+
+        def real(dir) = @real.fetch(dir) { @real[dir] = File.realpath(dir) }
+
+        def anchor(lexical)
+          [lexical, real(lexical)]
+        rescue SystemCallError
+          nil
+        end
+      end
+      private_constant :Listed
 
       # A location verdict says where a call reached, not what a file holds,
       # so a sandbox has nothing to hide there.
@@ -510,14 +547,36 @@ module Lain
       # and only where the file exists, since bwrap creates a missing mask
       # target on the host. Never in a git dir, whose files git needs to run
       # at all; a linked worktree's lies outside the project.
-      def mask(file, cwd, within)
-        verdict = judge(file, cwd:, within:)
+      def mask(file, cwd, within, listed, same_cwd)
+        verdict = listed_judge(file, cwd, within, listed, same_cwd)
         return nil unless self.class.masks?(verdict)
 
         landing = File.realpath(file, cwd)
         git_dir?(landing) ? nil : Mask.new(path: landing.freeze, reason: verdict.reason)
       rescue SystemCallError, ArgumentError, EncodingError
         nil
+      end
+
+      # {#judge}, for a name a listing produced. The classifier joins a
+      # relative name to its own cwd, so where that is the call's cwd the
+      # name as written already is its cwd spelling.
+      def listed_judge(path, cwd, within, listed, same_cwd)
+        written = [@sensitivity.classify(path, within:)]
+        written.concat(from_cwd(path, cwd, within)) unless same_cwd && !path.start_with?(File::SEPARATOR, TILDE)
+        denied = written.find(&:denied?)
+        return denied if denied
+
+        strictest([*written, *listed_landed(path, cwd, within, listed)])
+      end
+
+      def listed_landed(path, cwd, within, listed)
+        named = File.expand_path(path, cwd)
+        spellings = listed.spellings(named)
+        return landed(path, cwd, within) if spellings.nil?
+
+        spellings.reject { _1 == named }.map { @sensitivity.classify(_1, within:) }
+      rescue ArgumentError, EncodingError
+        [MALFORMED]
       end
 
       def git_dir?(landing) = landing.split(File::SEPARATOR).include?(".git")

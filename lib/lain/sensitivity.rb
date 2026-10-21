@@ -960,6 +960,9 @@ module Lain
     # @raise [ArgumentError] when `path` is not path-shaped at all -- see {#text!}
     def classify(path, within: nil) = verdict_for(text!(path), within)
 
+    # @return [String] the cleaned absolute directory a relative path resolves against
+    attr_reader :cwd
+
     def denied?(path) = classify(path).denied?
     def gated?(path) = classify(path).gated?
 

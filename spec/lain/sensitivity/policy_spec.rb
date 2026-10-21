@@ -751,6 +751,86 @@ RSpec.describe Lain::Sensitivity::Policy do
     end
   end
 
+  # {#judge} is the oracle: {#mask_paths} takes a shortcut through each
+  # directory's real path, and only a link may take the long way round.
+  describe "#mask_paths against #judge, name by name" do
+    around do |example|
+      Dir.mktmpdir("lain-policy-listed") do |dir|
+        @base = File.realpath(dir)
+        real_home = File.join(@base, "realhome")
+        dirs = %w[.ssh .aws .kube project/sub project/.lain project/~nobody tokens]
+        FileUtils.mkdir_p(dirs.map { File.join(real_home, _1) })
+        File.write(File.join(real_home, ".ssh", "id_rsa"), "key\n")
+        File.write(File.join(real_home, ".kube", "config"), "token: x\n")
+        File.write(File.join(real_home, "tokens", "tokens.txt"), "t\n")
+        File.symlink(real_home, File.join(@base, "home"))
+        example.run
+      end
+    end
+
+    let(:home) { File.join(@base, "home") }
+    let(:real_root) { File.join(@base, "realhome", "project") }
+    let(:listing) do
+      %w[README.md .env sub/plain.txt key_link abs_key_link envlink linkdir linkdir/id_rsa aws shadow
+         tokdir tokdir/tokens.txt readme.key absent.env ./sub/plain.txt sub/../.env kubedir/config
+         .lain/config.rb ~notes.txt ~nobody/x]
+    end
+
+    def listed_policy(root, cwd: root)
+      described_class.new(sensitivity: Lain::Sensitivity.new(home:, cwd:, root:), home:, root:)
+    end
+
+    def judged(policy, names, cwd) = names.filter_map { judged_mask(policy, _1, cwd) }.uniq(&:first)
+
+    def judged_mask(policy, name, cwd)
+      verdict = policy.judge(name, cwd:)
+      [File.realpath(name, cwd), verdict.reason] if described_class.masks?(verdict)
+    rescue SystemCallError
+      nil
+    end
+
+    def masked(policy, names, cwd) = policy.mask_paths(names, cwd:).map { [_1.path, _1.reason] }
+
+    def plant(root)
+      { "README.md" => "r\n", ".env" => "A=1\n", "sub/plain.txt" => "p\n", ".lain/config.rb" => "c\n",
+        "~notes.txt" => "n\n", "~nobody/x" => "x\n" }
+        .each { |name, body| File.write(File.join(root, name), body) }
+      { "key_link" => "../.ssh/id_rsa", "abs_key_link" => File.join(home, ".ssh", "id_rsa"), "envlink" => ".env",
+        "linkdir" => "../.ssh", "aws" => "../.aws/credentials", "shadow" => "/etc/shadow",
+        "tokdir" => File.join(home, "tokens"), "readme.key" => "README.md", "kubedir" => File.join(home, ".kube") }
+        .each { |name, target| File.symlink(target, File.join(root, name)) }
+    end
+
+    it "masks every symlink escape as judge does, with the root spelled through the linked home and at its real path" do
+      plant(real_root)
+
+      [File.join(home, "project"), real_root].product(["", "sub"]).each do |root, below|
+        policy = listed_policy(root, cwd: File.join(root, below))
+        names = [*listing, *listing.first(8).map { File.join(root, _1) }]
+
+        names.each do |name|
+          expect(masked(policy, [name], root)).to eq(judged(policy, [name], root)),
+                                                  "#{name} under #{root}, classifier cwd at #{File.join(root, below)}"
+        end
+        expect(masked(policy, names, root)).to eq(judged(policy, names, root))
+      end
+    end
+
+    it "does 1 realpath per directory over a plain listing, with judge's verdicts" do
+      dirs = [".", *Array.new(19) { "d#{_1}" }]
+      dirs.each { FileUtils.mkdir_p(File.join(real_root, _1)) }
+      names = Array.new(300) { |i| File.join(dirs[i % 20], "f#{i}.txt").delete_prefix("./") }
+      names.each { File.write(File.join(real_root, _1), "x\n") }
+      policy = listed_policy(real_root)
+      allow(File).to receive(:realpath).and_call_original
+
+      masks = masked(policy, names, real_root)
+
+      expect(File).to have_received(:realpath).at_most(21).times
+      expect(masks).to eq(judged(policy, names, real_root))
+    end
+  end
+
   describe "#mask_paths" do
     around do |example|
       Dir.mktmpdir("lain-policy-masks") do |dir|

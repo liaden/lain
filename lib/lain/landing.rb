@@ -93,12 +93,20 @@ module Lain
     end
 
     def respell(real, lexical)
-      anchor = File.realpath(lexical)
-      return if anchor == lexical || !under?(real, anchor)
-
-      File.join(lexical, real.delete_prefix(anchor))
+      respelled(real, lexical, File.realpath(lexical))
     rescue SystemCallError
       nil
+    end
+
+    # @param real [String] a resolved path
+    # @param lexical [String] the home or root as configured
+    # @param anchor [String] the real path of `lexical`
+    # @return [String, nil] `real` spelled under `lexical`; nil when the two
+    #   spell alike or `real` lies outside it
+    def respelled(real, lexical, anchor)
+      return nil if anchor == lexical || !under?(real, anchor)
+
+      File.join(lexical, real.delete_prefix(anchor))
     end
 
     # A trailing slash is only a spelling, so `/a/` and `/a` answer alike.
