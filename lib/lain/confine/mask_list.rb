@@ -1,12 +1,12 @@
 # frozen_string_literal: true
 
-require "digest"
-
 module Lain
   module Confine
     # The files a sandbox hides from a command, kept current for a session whose
     # tree changes under it. Listing is one `git ls-files` per ask; classifying
-    # is the slow part, so only names the previous listing lacked are classified.
+    # is the slow part, so only a name that is new, or whose file changed
+    # identity since it was classified, is classified. A swap keeps the name,
+    # so the listing alone cannot see a plain file become a link to a secret.
     #
     # Not covered: files below the top level of a tmp, vendor, target or
     # node_modules directory at any depth. Their own top-level files are listed.
@@ -24,9 +24,7 @@ module Lain
         @root = root
         @policy = policy
         @shell_out = shell_out
-        @digest = nil
-        @names = []
-        @masks = {}
+        @state = State.new(identities: {}, masks: {})
         @priming = nil
       end
 
@@ -44,7 +42,7 @@ module Lain
       def masks
         join_priming
         refresh
-        @masks.values.select { File.exist?(_1.path) }
+        @state.masks.values.uniq(&:path).select { File.exist?(_1.path) }
       end
 
       private
@@ -55,23 +53,81 @@ module Lain
         priming&.value
       end
 
-      def refresh
-        names = listing
-        digest = Digest::SHA256.digest(names.join("\0"))
-        return if digest == @digest
+      # Every name a listing held, as it was when judged, and the masks those names landed on.
+      State = Data.define(:identities, :masks)
+      private_constant :State
 
-        @policy.call.mask_paths(names - @names, cwd: @root).each { @masks[_1.path] = _1 }
-        @names = names
-        @digest = digest
+      # A link's target is part of it: replacing a link often reuses its inode.
+      Identity = Data.define(:dev, :ino, :link, :target) do
+        def self.of(path)
+          stat = File.lstat(path)
+          new(stat.dev, stat.ino, stat.symlink?, stat.symlink? ? target(path) : nil)
+        rescue SystemCallError
+          nil
+        end
+
+        def self.target(path)
+          File.realpath(path)
+        rescue SystemCallError
+          :dangling
+        end
       end
+      private_constant :Identity
+
+      # A failed listing keeps the last state, since an empty one would unmask everything.
+      def refresh
+        identities = listing&.to_h { [_1, Identity.of(File.join(@root, _1))] }
+        return if identities.nil?
+
+        changed = identities.keys.reject { @state.identities.key?(_1) && @state.identities[_1] == identities[_1] }
+        masks = @state.masks.slice(*identities.keys).except(*changed).merge(judged(changed, identities))
+        @state = State.new(identities: identities.freeze, masks: masks.freeze)
+      end
+
+      # Read before the empty check: an empty listing's first ask must still
+      # surface a policy that cannot be built.
+      def judged(names, identities)
+        policy = @policy.call
+        return {} if names.empty?
+
+        landings = Landings.new(names, identities, @root)
+        policy.mask_paths(names, cwd: @root).each_with_object({}) do |mask, by_name|
+          landings.of(mask.path).each { by_name[_1] = mask }
+        end
+      end
+
+      # Only a link or a name sharing the path's basename can resolve to it,
+      # so few names pay a realpath.
+      class Landings
+        def initialize(names, identities, root)
+          @links = names.select { identities[_1]&.link }
+          @by_basename = names.group_by { File.basename(_1) }
+          @root = root
+        end
+
+        # @param landing [String] a resolved path
+        # @return [Array<String>] the names that resolve to it
+        def of(landing)
+          (@links | @by_basename.fetch(File.basename(landing), [])).select { lands?(_1, landing) }
+        end
+
+        private
+
+        def lands?(name, landing)
+          File.realpath(name, @root) == landing
+        rescue SystemCallError
+          false
+        end
+      end
+      private_constant :Landings
 
       # No `--exclude-standard`: the secrets a mask exists for are usually the ignored ones.
       def listing
         shell = Isolation::Checkout.new(@root, shell_out_factory: @shell_out)
                                    .run("ls-files", "-z", "-co", "--", ".", *EXCLUDES, timeout: TIMEOUT)
-        Shell::Out.ok?(shell) ? shell.stdout.split("\0").uniq : []
+        Shell::Out.ok?(shell) ? shell.stdout.split("\0").uniq : nil
       rescue Shell::Out::Timeout, SystemCallError
-        []
+        nil
       end
     end
   end

@@ -224,5 +224,106 @@ RSpec.describe Lain::Confine::MaskList do
         .to include(File.join(root, ".env"), File.join(@base, "realhome", ".ssh", "id_rsa"))
       expect(list.masks.map { [_1.path, _1.reason] }).to match_array(judged(listed))
     end
+
+    def swap_for_link(name, target)
+      FileUtils.rm(File.join(root, name))
+      File.symlink(target, File.join(root, name))
+    end
+
+    it "masks a listed file on the next refresh once it is swapped for a link to a secret" do
+      write("plain.txt")
+      expect(paths).to be_empty
+
+      swap_for_link("plain.txt", File.join(home, ".ssh", "id_rsa"))
+
+      expect(list.masks.map { [_1.path, _1.reason] }).to eq(judged(["plain.txt"]))
+      expect(paths).to eq([File.join(@base, "realhome", ".ssh", "id_rsa")])
+    end
+
+    it "unmasks a listed link once it is swapped back for a plain file" do
+      File.symlink(File.join(home, ".ssh", "id_rsa"), File.join(root, "plain.txt"))
+      expect(paths).to eq([File.join(@base, "realhome", ".ssh", "id_rsa")])
+
+      FileUtils.rm(File.join(root, "plain.txt"))
+      write("plain.txt")
+
+      expect(paths).to be_empty
+    end
+
+    it "judges no name again when 200 listed files are unchanged" do
+      plain_files
+      list.masks
+      asked.clear
+
+      list.masks
+
+      expect(asked).to be_empty
+    end
+
+    def secret = File.join(@base, "realhome", ".ssh", "id_rsa")
+
+    def notes = File.join(@base, "realhome", "notes.txt").tap { File.write(_1, "n\n") }
+
+    it "masks a listed link retargeted at a secret by a delete and a new link" do
+      File.symlink(notes, File.join(root, "lnk"))
+      expect(paths).to be_empty
+
+      swap_for_link("lnk", File.join(home, ".ssh", "id_rsa"))
+
+      expect(paths).to eq([secret])
+    end
+
+    it "masks a listed link retargeted at a secret in place" do
+      File.symlink(notes, File.join(root, "lnk"))
+      expect(paths).to be_empty
+
+      system("ln", "-sfn", File.join(home, ".ssh", "id_rsa"), File.join(root, "lnk"), exception: true)
+
+      expect(paths).to eq([secret])
+    end
+
+    it "unmasks a listed link whose target outside the tree is deleted" do
+      File.symlink(File.join(home, "tokens", "tokens.txt"), File.join(root, "k"))
+      expect(paths).to eq([File.join(@base, "realhome", "tokens", "tokens.txt")])
+
+      FileUtils.rm(File.join(home, "tokens", "tokens.txt"))
+
+      expect(paths).to be_empty
+    end
+
+    it "unmasks a secret link moved out of the tree while its landing remains" do
+      File.symlink(File.join(home, ".ssh", "id_rsa"), File.join(root, "k"))
+      expect(paths).to eq([secret])
+
+      File.rename(File.join(root, "k"), File.join(@base, "k"))
+
+      expect(paths).to be_empty
+    end
+
+    it "masks a tracked name at its new landing once its directory is swapped for a link" do
+      FileUtils.mkdir_p(File.join(root, "d"))
+      write("d/id_rsa")
+      git("add", "d/id_rsa")
+      expect(paths).to eq([File.join(root, "d", "id_rsa")])
+
+      FileUtils.rm_r(File.join(root, "d"))
+      File.symlink(File.join(home, ".ssh"), File.join(root, "d"))
+
+      expect(paths).to include(secret)
+    end
+
+    it "keeps the masks it has when a listing fails" do
+      failing = false
+      shell_out = lambda do |*argv, **opts|
+        failing ? Lain::Shell::Out.new("false", **opts.slice(:chdir, :timeout)) : Lain::Shell::Out.new(*argv, **opts)
+      end
+      flaky = described_class.new(root:, policy: -> { policy }, shell_out:)
+      File.symlink(File.join(home, ".ssh", "id_rsa"), File.join(root, "k"))
+      expect(flaky.masks.map(&:path)).to eq([secret])
+
+      failing = true
+
+      expect(flaky.masks.map(&:path)).to eq([secret])
+    end
   end
 end
