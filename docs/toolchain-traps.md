@@ -379,6 +379,10 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   journaled) in a pre-commit suite beside a cargo-mutants sweep at about 12 cores, green alone, and green
   in a full suite on the base and on the change, both on a quiet box.
 
+  Added 2026-10-21, a thread count red once in a pre-commit suite at load 11 beside another rspec run
+  (5 threads against 4), green alone (37 of 37) and green in a full suite on the base and on the change:
+  `Lain::CLI::InputSocket serving a pane reaps a closed pane's reader, so it owns every thread it started`.
+
   Added 2026-10-18, a wall-clock count red once in a pre-commit suite (6 ticks against 15) and green
   alone and in a full suite on the base and on the change: `Lain::Tool::Offload keeps a sibling fiber
   running while the work never gives up the lock between threads`. Red again on 2026-10-19, 6 against
