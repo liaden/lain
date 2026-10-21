@@ -547,7 +547,8 @@ module Lain
       # and only where the file exists, since bwrap creates a missing mask
       # target on the host. Never in a git dir, whose files git needs to run
       # at all; a linked worktree's lies outside the project.
-      def mask(file, cwd, within, listed, same_cwd)
+      def mask(listed_name, cwd, within, listed, same_cwd)
+        file = literal(listed_name, cwd)
         verdict = listed_judge(file, cwd, within, listed, same_cwd)
         return nil unless self.class.masks?(verdict)
 
@@ -557,12 +558,16 @@ module Lain
         nil
       end
 
+      # git lists a file under a directory named `~` as `~/name`, which every
+      # expander reads as home; a listed name is under the cwd however it begins.
+      def literal(file, cwd) = file.start_with?(TILDE) ? File.join(cwd, file) : file
+
       # {#judge}, for a name a listing produced. The classifier joins a
       # relative name to its own cwd, so where that is the call's cwd the
       # name as written already is its cwd spelling.
       def listed_judge(path, cwd, within, listed, same_cwd)
         written = [@sensitivity.classify(path, within:)]
-        written.concat(from_cwd(path, cwd, within)) unless same_cwd && !path.start_with?(File::SEPARATOR, TILDE)
+        written.concat(from_cwd(path, cwd, within)) unless same_cwd && !path.start_with?(File::SEPARATOR)
         denied = written.find(&:denied?)
         return denied if denied
 

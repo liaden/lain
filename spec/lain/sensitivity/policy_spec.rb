@@ -783,7 +783,7 @@ RSpec.describe Lain::Sensitivity::Policy do
     def judged(policy, names, cwd) = names.filter_map { judged_mask(policy, _1, cwd) }.uniq(&:first)
 
     def judged_mask(policy, name, cwd)
-      verdict = policy.judge(name, cwd:)
+      verdict = policy.judge(name.start_with?("~") ? File.join(cwd, name) : name, cwd:)
       [File.realpath(name, cwd), verdict.reason] if described_class.masks?(verdict)
     rescue SystemCallError
       nil
@@ -828,6 +828,36 @@ RSpec.describe Lain::Sensitivity::Policy do
 
       expect(File).to have_received(:realpath).at_most(21).times
       expect(masks).to eq(judged(policy, names, real_root))
+    end
+
+    it "lands a listed name starting with ~ under the root, never in home" do
+      plant(real_root)
+      FileUtils.mkdir_p(File.join(real_root, "~"))
+      File.write(File.join(real_root, "~", "plain.txt"), "p\n")
+      root = File.join(home, "project")
+      asked = []
+      sensitivity = Class.new(SimpleDelegator) do
+        define_method(:classify) { |path, **kw| asked.push(path).then { super(path, **kw) } }
+      end.new(Lain::Sensitivity.new(home:, cwd: root, root:))
+      policy = described_class.new(sensitivity:, home:, root:)
+
+      masks = policy.mask_paths(%w[~notes.txt ~/plain.txt ~nobody/x], cwd: root)
+
+      expect(masks).to be_empty
+      expect(asked).not_to be_empty
+      expect(asked).to all(start_with("#{root}/").or(start_with("#{real_root}/")))
+    end
+
+    it "still reads a named ~ as home on the gate path" do
+      root = File.join(home, "project")
+      policy = listed_policy(root)
+
+      expect(policy.judge("~/.ssh/id_rsa", cwd: root))
+        .to eq(policy.judge(File.join(home, ".ssh", "id_rsa"), cwd: root))
+        .and have_attributes(reason: :protected)
+      expect(policy.judge("~/.kube/config", cwd: root))
+        .to eq(policy.judge(File.join(home, ".kube", "config"), cwd: root))
+        .and have_attributes(reason: :protected)
     end
   end
 

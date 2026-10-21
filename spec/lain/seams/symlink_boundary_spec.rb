@@ -173,6 +173,35 @@ RSpec.describe "A symlink is judged where it lands", :seam do
     expect(grepped.content).to eq("1 match withheld (protected)")
   end
 
+  it "masks a link under a directory named ~ at its target's label" do
+    git("init", "-q")
+    FileUtils.mkdir_p(File.join(@repo, "~"))
+    link("shadow", "/etc/shadow", under: File.join(@repo, "~"))
+    link("notes", key, under: File.join(@repo, "~"))
+    policy = Lain::Sensitivity::Policy.new(
+      sensitivity: Lain::Sensitivity.new(home: @home, cwd: @repo, root: @repo), home: @home, root: @repo
+    )
+    list = Lain::Confine::MaskList.new(root: @repo, policy: -> { policy })
+
+    expect(git("ls-files", "-co")).to include("~/shadow", "~/notes")
+    expect(list.masks.map { [_1.path, _1.reason] })
+      .to contain_exactly(["/etc/shadow", policy.judge("/etc/shadow", cwd: @repo).reason], [key, :protected])
+  end
+
+  # A directory named `~` already holds that name in the repo above, so the bare link gets a repo of its own.
+  it "masks a link named exactly ~ at its target's label" do
+    @repo = File.join(@base, "tilde").tap { FileUtils.mkdir_p(_1) }
+    git("init", "-q")
+    link("~", key)
+    policy = Lain::Sensitivity::Policy.new(
+      sensitivity: Lain::Sensitivity.new(home: @home, cwd: @repo, root: @repo), home: @home, root: @repo
+    )
+    list = Lain::Confine::MaskList.new(root: @repo, policy: -> { policy })
+
+    expect(git("ls-files", "-co")).to eq("~\n")
+    expect(list.masks.map { [_1.path, _1.reason] }).to eq([[key, :protected]])
+  end
+
   it "reads through a link to an ordinary file with no prompt" do
     File.write(File.join(@repo, "b.txt"), "plain words\n")
     link("a.txt", "b.txt")
