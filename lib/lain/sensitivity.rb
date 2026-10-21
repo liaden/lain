@@ -286,7 +286,11 @@ module Lain
 
       # @param path [String] already lexically normalized and home-rewritten
       # @param anchors [Anchors] the injected home and project root
-      def matches?(path, anchors) = under?(path, anchors) && inside?(path) && named?(File.basename(path))
+      # @param base [String] the basename of `path`, read once per classify
+      # @param segments [Array<String>] `path` split on the separator, read once per classify
+      def matches?(path, anchors, base = File.basename(path), segments = path.split(File::SEPARATOR))
+        under?(path, anchors) && inside?(segments) && named?(base)
+      end
 
       # Paths this rule matches, so a question about what another rule would
       # LIFT can be asked without a filesystem to look in. A star matches the
@@ -358,7 +362,7 @@ module Lain
       # much a private key as `~/.ssh/id_rsa`. The last segment counts too: a
       # subtree rule that missed the subtree's own root would let a listing show
       # the directory while withholding everything inside it.
-      def inside?(path) = inside.nil? || path.split(File::SEPARATOR).include?(inside)
+      def inside?(segments) = inside.nil? || segments.include?(inside)
 
       def named?(base) = called?(base) && !excepted?(base)
 
@@ -431,7 +435,9 @@ module Lain
 
       # @param path [String] already lexically normalized and home-rewritten
       # @param anchors [Anchors] whose base the directory names are read below
-      def matches?(path, anchors)
+      # @param _base [String, nil] unused; this rule reads the whole name
+      # @param _segments [Array<String>, nil] unused; this rule reads the whole name
+      def matches?(path, anchors, _base = nil, _segments = nil)
         prefix = anchors.base_prefix
         return false if path.match?(EXCEPTED) || covers?(path, prefix)
 
@@ -1002,7 +1008,9 @@ module Lain
       return MALFORMED unless Sensitivity.readable?(path)
 
       clean = lexical(path)
-      verdict = @rules.find { |rule| rule.matches?(clean, @anchors) }.verdict
+      base = File.basename(clean)
+      segments = clean.split(File::SEPARATOR)
+      verdict = @rules.find { |rule| rule.matches?(clean, @anchors, base, segments) }.verdict
       verdict.reason == ORDINARY.reason && named_within?(clean, within) ? NAME.verdict : verdict
     rescue ArgumentError, EncodingError
       # Defence in depth, {Approval::Root#contains?}'s posture: `readable?`

@@ -729,6 +729,45 @@ RSpec.describe Lain::Sensitivity do
     end
   end
 
+  describe "the name a classify reads once" do
+    let(:seen) { [] }
+
+    let(:recorder) do
+      log = seen
+      Class.new(SimpleDelegator) do
+        define_method(:matches?) do |*args|
+          log << args
+          __getobj__.matches?(*args)
+        end
+      end
+    end
+    let(:recording) do
+      copy = sensitivity.dup
+      copy.instance_variable_set(:@rules, sensitivity.instance_variable_get(:@rules).map { recorder.new(_1) })
+      copy
+    end
+
+    def classify(path) = recording.classify(path)
+
+    it "hands every rule the same basename and segments objects" do
+      classify("/srv/project/lib/lain/session.rb")
+
+      parts = seen.map { |_path, _anchors, base, segments| [base, segments] }
+      expect(parts.size).to be > 50
+      expect(parts.flatten).to all(be_truthy)
+      expect(parts.map { |base, _| base.object_id }.uniq.size).to eq(1)
+      expect(parts.map { |_, segments| segments.object_id }.uniq.size).to eq(1)
+    end
+
+    it "gives them the path's basename and segments" do
+      classify("/srv/project/lib/lain/session.rb")
+
+      _path, _anchors, base, segments = seen.first
+      expect(base).to eq("session.rb")
+      expect(segments).to eq(["", "srv", "project", "lib", "lain", "session.rb"])
+    end
+  end
+
   describe "config may widen and may never narrow" do
     let(:rules) do
       Lain::Sensitivity::Rules.from({ "denied" => ["*.secret"], "exempt" => ["~/.netrc"] })
