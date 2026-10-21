@@ -7,6 +7,6 @@ ext/lain/src/event.rs 27 14 0 0
 ext/lain/src/digest.rs 9 1 0 0
 ext/lain/src/dag.rs 36 16 0 0
 ext/lain/src/graph.rs 14 11 0 0
-ext/lain/src/nogvl.rs 23 26 0 0
+ext/lain/src/nogvl.rs 24 26 0 0
 ext/lain/src/bm25.rs 34 1 0 0
-total 161 72 3 0
+total 162 72 3 0

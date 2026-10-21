@@ -24,11 +24,16 @@
 //!
 //! Byte offsets only. Byte -> line/column conversion is the Ruby wrapper's job.
 
+use crate::nogvl::{Cancel, Halted};
 use ast_grep_language::{LanguageExt, SupportLang};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::ops::ControlFlow;
 use std::rc::Rc;
-use tree_sitter::{Parser, Query, QueryCursor, StreamingIterator};
+use tree_sitter::{
+    LanguageError, ParseOptions, Parser, Query, QueryCursor, QueryCursorOptions, StreamingIterator,
+    Tree,
+};
 
 /// One named capture (`@name`) and where its node sits in the source. A single
 /// query run yields these flat, in match-then-capture order: a raw tree-sitter
@@ -74,8 +79,23 @@ fn parse_lang(lang: &str) -> Result<SupportLang, QueryFailure> {
         .map_err(|_| QueryFailure::UnknownLanguage(lang.to_string()))
 }
 
+/// Sources shorter than this are queried with the GVL held. Releasing hands the
+/// lock to any busy Ruby thread and waits out its time slice to get it back:
+/// 20 ms beside a thread at `Tool::Offload`'s priority, 100 ms at 0, against
+/// 0.2 ms for a `Shell::Parse` command. At the slowest rate measured over this
+/// checkout's sources (859 us per KB, markdown sections) 32 KiB costs about 27 ms,
+/// about 1 offload slice, so below it holding costs a busy thread no more than
+/// releasing would cost the caller.
+pub const HOLD_BELOW: usize = 32 * 1024;
+
+/// Whether a query over `source_len` bytes is worth releasing the GVL for.
+pub fn releases(source_len: usize) -> bool {
+    source_len >= HOLD_BELOW
+}
+
 /// All captures bound by running `query_src` against `src`, in match-then-capture
-/// order. A valid query with no matches yields an empty `Vec` (not an error).
+/// order, or [`Halted`] once `cancel` asks, during the parse or the matching. A
+/// valid query with no matches yields an empty `Vec` (not an error).
 ///
 /// Built-in text predicates (`#eq?`, `#match?`) DO filter. But tree-sitter
 /// treats an unknown/misspelled general predicate (`#nonsense?`, `#eqq?`) as
@@ -83,10 +103,19 @@ fn parse_lang(lang: &str) -> Result<SupportLang, QueryFailure> {
 /// yields UNFILTERED results with no error. That is inherent to tree-sitter's
 /// design (the host is expected to interpret general predicates) and this is the
 /// explicitly "raw" surface, so it is not enforced here.
-pub fn query(src: &str, lang: &str, query_src: &str) -> Result<Vec<Capture>, QueryFailure> {
-    let lang = parse_lang(lang)?;
-    let query = compiled(lang, query_src)?;
-    run(&query, src, lang)
+pub fn query_until(
+    src: &str,
+    lang: &str,
+    query_src: &str,
+    cancel: &Cancel<'_>,
+) -> Result<Result<Vec<Capture>, QueryFailure>, Halted> {
+    let (lang, query) = match parse_lang(lang)
+        .and_then(|lang| compiled(lang, query_src).map(|query| (lang, query)))
+    {
+        Ok(ready) => ready,
+        Err(refused) => return Ok(Err(refused)),
+    };
+    run(&query, src, lang, cancel)
 }
 
 /// Compile `query_src` for `lang`, rejecting a query that binds no `@capture`.
@@ -171,8 +200,9 @@ impl QueryCache {
 
 thread_local! {
     /// Per thread, so the cache needs no lock and holds `Rc` rather than `Arc`.
-    /// What makes it safe under Ruby is the GVL plus `try_borrow_mut`, the same
-    /// argument `fuzzy.rs`'s `MATCHER` makes. 64 is far above the handful of
+    /// It stays safe with the GVL released because `rb_nogvl` runs the job on
+    /// the calling thread, so only that thread ever reaches its cache, and
+    /// `try_borrow_mut` covers re-entrancy. 64 is far above the handful of
     /// constant queries `lib/` passes.
     static QUERIES: RefCell<QueryCache> = RefCell::new(QueryCache::new(64));
 }
@@ -195,23 +225,108 @@ fn compiled(lang: SupportLang, query_src: &str) -> Result<Rc<Query>, QueryFailur
 }
 
 /// Every capture `compiled` binds in `src`, in match-then-capture order.
-fn run(compiled: &Query, src: &str, lang: SupportLang) -> Result<Vec<Capture>, QueryFailure> {
-    let ts_lang = lang.get_ts_language();
-    let mut parser = Parser::new();
-    parser
-        .set_language(&ts_lang)
-        .map_err(|err| QueryFailure::Backend(err.to_string()))?;
-    let tree = parser
-        .parse(src, None)
-        .ok_or_else(|| QueryFailure::Backend(format!("parser produced no tree for {lang}")))?;
+fn run(
+    compiled: &Query,
+    src: &str,
+    lang: SupportLang,
+    cancel: &Cancel<'_>,
+) -> Result<Result<Vec<Capture>, QueryFailure>, Halted> {
+    let tree = match parsed(src, lang, cancel)? {
+        Ok(tree) => tree,
+        Err(refused) => return Ok(Err(refused)),
+    };
+    captures_of(compiled, &tree, src, cancel).map(Ok)
+}
 
+/// Reads the stop request for tree-sitter's progress callbacks, and remembers
+/// whether it stopped one: a stopped parse answers no tree and a stopped query
+/// cursor just runs out of matches, and neither may pass for a whole answer.
+struct Watch<'c> {
+    cancel: &'c Cancel<'c>,
+    stopped: Cell<bool>,
+}
+
+impl<'c> Watch<'c> {
+    fn over(cancel: &'c Cancel<'c>) -> Self {
+        Self {
+            cancel,
+            stopped: Cell::new(false),
+        }
+    }
+
+    fn tick(&self) -> ControlFlow<()> {
+        if self.cancel.requested() {
+            self.stopped.set(true);
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    }
+
+    fn halted(&self) -> Result<(), Halted> {
+        if self.stopped.get() {
+            Err(Halted)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn tree_or_halt(
+        &self,
+        parsed: Result<Option<Tree>, LanguageError>,
+        lang: SupportLang,
+    ) -> Result<Result<Tree, QueryFailure>, Halted> {
+        match parsed {
+            Ok(Some(tree)) => Ok(Ok(tree)),
+            Ok(None) => self.halted().map(|()| {
+                Err(QueryFailure::Backend(format!(
+                    "parser produced no tree for {lang}"
+                )))
+            }),
+            Err(refused) => Ok(Err(QueryFailure::Backend(refused.to_string()))),
+        }
+    }
+}
+
+fn parsed(
+    src: &str,
+    lang: SupportLang,
+    cancel: &Cancel<'_>,
+) -> Result<Result<Tree, QueryFailure>, Halted> {
+    let watch = Watch::over(cancel);
+    let mut progress = |_: &_| watch.tick();
+    let bytes = src.as_bytes();
+    let mut parser = Parser::new();
+    let parsed = parser.set_language(&lang.get_ts_language()).map(|()| {
+        parser.parse_with_options(
+            &mut |at, _| bytes.get(at..).unwrap_or_default(),
+            None,
+            Some(ParseOptions::new().progress_callback(&mut progress)),
+        )
+    });
+    watch.tree_or_halt(parsed, lang)
+}
+
+fn captures_of(
+    compiled: &Query,
+    tree: &Tree,
+    src: &str,
+    cancel: &Cancel<'_>,
+) -> Result<Vec<Capture>, Halted> {
+    let watch = Watch::over(cancel);
+    let mut progress = |_: &_| watch.tick();
     let names = compiled.capture_names();
     let src_bytes = src.as_bytes();
     let mut cursor = QueryCursor::new();
     // tree-sitter 0.25+ hands back a StreamingIterator, not a std Iterator, so
     // this is a `while let Some(..) = it.next()` drive rather than a `for`/`map`
     // -- the borrow of the reused row buffer is what forbids a plain Iterator.
-    let mut matches = cursor.matches(compiled, tree.root_node(), src_bytes);
+    let mut matches = cursor.matches_with_options(
+        compiled,
+        tree.root_node(),
+        src_bytes,
+        QueryCursorOptions::new().progress_callback(&mut progress),
+    );
     let mut out = Vec::new();
     while let Some(matched) = matches.next() {
         matched.captures().iter().for_each(|capture| {
@@ -221,9 +336,9 @@ fn run(compiled: &Query, src: &str, lang: SupportLang) -> Result<Vec<Capture>, Q
                 name: names[capture.index as usize].to_string(),
                 // A captured node always lies on a char boundary of its own
                 // `&str` source, so `utf8_text` cannot fail -- but if that
-                // invariant ever broke it must fail LOUD (magnus turns the panic
-                // into a Ruby exception), not silently return an empty capture,
-                // per the crate's no-silent-corner rule.
+                // invariant ever broke it must fail LOUD (the panic becomes a
+                // Ruby exception), not silently return an empty capture, per
+                // the crate's no-silent-corner rule.
                 text: node
                     .utf8_text(src_bytes)
                     .expect("captured node lies on a char boundary of its own source")
@@ -233,12 +348,181 @@ fn run(compiled: &Query, src: &str, lang: SupportLang) -> Result<Vec<Capture>, Q
             });
         });
     }
-    Ok(out)
+    watch.halted().map(|()| out)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::AtomicBool;
+
+    static RAISED: AtomicBool = AtomicBool::new(true);
+    static LOWERED: AtomicBool = AtomicBool::new(false);
+
+    fn raised() -> Cancel<'static> {
+        Cancel::watching(&RAISED)
+    }
+
+    fn lowered() -> Cancel<'static> {
+        Cancel::watching(&LOWERED)
+    }
+
+    /// Every test's view: a query nothing cancels.
+    /// `Shell::Parse::MAX_BYTES`, the longest command it hands to a query.
+    const SHELL_PARSE_CAP: usize = 4096;
+
+    fn query(src: &str, lang: &str, query_src: &str) -> Result<Vec<Capture>, QueryFailure> {
+        query_until(src, lang, query_src, &lowered()).expect("nothing asked it to halt")
+    }
+
+    /// The query every caller ran before the cancellable one, kept as the oracle.
+    fn captured_all(compiled: &Query, src: &str, lang: SupportLang) -> Vec<Capture> {
+        let mut parser = Parser::new();
+        parser.set_language(&lang.get_ts_language()).unwrap();
+        let tree = parser.parse(src, None).unwrap();
+        let names = compiled.capture_names();
+        let mut cursor = QueryCursor::new();
+        let mut matches = cursor.matches(compiled, tree.root_node(), src.as_bytes());
+        let mut out = Vec::new();
+        while let Some(matched) = matches.next() {
+            for capture in matched.captures() {
+                let range = capture.node.byte_range();
+                out.push(Capture {
+                    name: names[capture.index as usize].to_string(),
+                    text: src[range.clone()].to_string(),
+                    start: range.start,
+                    end: range.end,
+                });
+            }
+        }
+        out
+    }
+
+    fn checkout() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    }
+
+    fn sources(dirs: &[&str], extension: &str, every: usize) -> Vec<String> {
+        let mut paths = Vec::new();
+        let mut pending: Vec<PathBuf> = dirs.iter().map(|dir| checkout().join(dir)).collect();
+        while let Some(dir) = pending.pop() {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    pending.push(path);
+                } else if path.extension().is_some_and(|ext| ext == extension) {
+                    paths.push(path);
+                }
+            }
+        }
+        paths.sort();
+        paths
+            .iter()
+            .step_by(every)
+            .filter_map(|path| std::fs::read_to_string(path).ok())
+            .collect()
+    }
+
+    fn chunker_query(lang: &str, name: &str) -> String {
+        let path = checkout().join(format!("lib/lain/structural/queries/{lang}/{name}.scm"));
+        std::fs::read_to_string(path).unwrap()
+    }
+
+    #[test]
+    fn the_cancellable_query_finds_what_the_plain_query_finds_over_this_checkouts_sources() {
+        let corpora = [
+            ("ruby", "symbols", sources(&["lib"], "rb", 8)),
+            ("rust", "symbols", sources(&["ext/lain/src"], "rs", 1)),
+            (
+                "markdown",
+                "sections",
+                sources(&["docs", "planning"], "md", 8),
+            ),
+        ];
+        let mut total = 0;
+        for (lang, name, files) in &corpora {
+            assert!(files.len() > 10, "read {} {lang} files", files.len());
+            let query_src = chunker_query(lang, name);
+            let support = parse_lang(lang).unwrap();
+            let fresh = compile(support, &query_src).unwrap();
+            for src in files {
+                let captured = query(src, lang, &query_src).unwrap();
+                assert_eq!(
+                    captured,
+                    captured_all(&fresh, src, support),
+                    "{lang} {name}"
+                );
+                total += captured.len();
+            }
+        }
+        assert!(total > 10_000, "only {total} captures compared");
+    }
+
+    #[test]
+    fn a_raised_flag_halts_the_parse() {
+        let src = "def m(a)\n  a.save\nend\n".repeat(2_000);
+        assert_eq!(
+            parsed(&src, SupportLang::Ruby, &raised()).err(),
+            Some(Halted)
+        );
+        assert_eq!(
+            query_until(&src, "ruby", "(method) @m", &raised()),
+            Err(Halted)
+        );
+    }
+
+    #[test]
+    fn a_source_below_the_threshold_keeps_the_lock_and_a_larger_one_releases_it() {
+        assert!(!releases(0));
+        assert!(!releases(SHELL_PARSE_CAP));
+        assert!(!releases(HOLD_BELOW - 1));
+        assert!(releases(HOLD_BELOW));
+    }
+
+    #[test]
+    fn a_raised_flag_halts_the_matches_over_a_parsed_tree() {
+        let src = "def m(a)\n  a.save\nend\n".repeat(2_000);
+        let compiled = compile(SupportLang::Ruby, "(method) @m").unwrap();
+        let tree = parsed(&src, SupportLang::Ruby, &lowered())
+            .unwrap()
+            .unwrap();
+        assert_eq!(captures_of(&compiled, &tree, &src, &raised()), Err(Halted));
+        assert_eq!(
+            captures_of(&compiled, &tree, &src, &lowered())
+                .unwrap()
+                .len(),
+            2_000
+        );
+    }
+
+    #[test]
+    fn a_refused_query_or_language_is_a_failure_not_a_halt() {
+        assert!(matches!(
+            query_until("x = 1", "ruby", "(method name: @nope", &raised()),
+            Ok(Err(QueryFailure::BadQuery { .. }))
+        ));
+        assert!(matches!(
+            query_until("x = 1", "klingon", "(identifier) @i", &raised()),
+            Ok(Err(QueryFailure::UnknownLanguage(_)))
+        ));
+    }
+
+    #[test]
+    fn a_parser_with_no_tree_and_no_stop_is_a_backend_failure() {
+        let (lowered, raised) = (lowered(), raised());
+        let watch = Watch::over(&lowered);
+        assert!(matches!(
+            watch.tree_or_halt(Ok(None), SupportLang::Ruby),
+            Ok(Err(QueryFailure::Backend(_)))
+        ));
+        let stopped = Watch::over(&raised);
+        assert!(stopped.tick().is_break());
+        assert_eq!(
+            stopped.tree_or_halt(Ok(None), SupportLang::Ruby).err(),
+            Some(Halted)
+        );
+    }
 
     #[test]
     fn captures_a_named_field_with_a_byte_range() {
@@ -418,9 +702,15 @@ mod tests {
         let mut cache = QueryCache::new(64);
         let cached = cache.get_or_compile(SupportLang::Ruby, query_src).unwrap();
         let fresh = compile(SupportLang::Ruby, query_src).unwrap();
-        let first = run(&cached, src, SupportLang::Ruby).unwrap();
-        let reused = run(&cached, src, SupportLang::Ruby).unwrap();
-        let expected = run(&fresh, src, SupportLang::Ruby).unwrap();
+        let first = run(&cached, src, SupportLang::Ruby, &lowered())
+            .unwrap()
+            .unwrap();
+        let reused = run(&cached, src, SupportLang::Ruby, &lowered())
+            .unwrap()
+            .unwrap();
+        let expected = run(&fresh, src, SupportLang::Ruby, &lowered())
+            .unwrap()
+            .unwrap();
         assert_eq!(first, expected);
         assert_eq!(reused, expected);
         assert_eq!(expected.len(), 3, "2 receivers and 1 method name");
@@ -429,8 +719,9 @@ mod tests {
 
 #[cfg(not(test))]
 pub mod ffi {
-    use super::{Capture, QueryFailure, query as pure_query};
+    use super::{Capture, QueryFailure, query_until, releases};
     use crate::ffi::{frozen_str, int, lookup_error};
+    use crate::nogvl::{Cancel, without_gvl_when};
     // The one string-boundary policy, shared with `fuzzy`, `prompt` and
     // `astgrep`. Same reason as `astgrep`'s: this binding's pinned contract is
     // byte offsets into the caller's own String, and magnus's `String`
@@ -442,45 +733,49 @@ pub mod ffi {
     // the encoding refusal is Ruby's bare `EncodingError`. Rescuing `Lain::Error`
     // alone will not catch it.
     use crate::read_text::text_of;
-    use magnus::{Error, RArray, Ruby, Value, prelude::*};
+    use magnus::{Error, RArray, RString, Ruby, Value, prelude::*};
 
     /// `Lain::Ext::TreeSitter.query(src, lang, query)` -> a frozen Array of
     /// frozen capture Hashes `{ "name", "text", "start", "end" }`, one per
     /// `@capture` bound across every match, flat and in match-then-capture
     /// order. One FFI crossing: the whole result is materialized and frozen
     /// before returning, matching `AstGrep`'s frozen-hash style.
+    ///
+    /// A source of `HOLD_BELOW` bytes or more is queried with the GVL
+    /// released, so a kill or a raise stops it early; the arguments' Rust copies live in the job and are gone by the
+    /// time a refusal runs Ruby.
     pub fn query(ruby: &Ruby, src: Value, lang: Value, query_src: Value) -> Result<RArray, Error> {
-        let (src, lang, query_src) = (
-            text_of(ruby, src, "source")?,
-            text_of(ruby, lang, "language")?,
-            text_of(ruby, query_src, "query")?,
-        );
-        let (src, lang, query_src) = (src.read(ruby)?, lang.read(ruby)?, query_src.read(ruby)?);
-        let queried = pure_query(&src, &lang, &query_src);
-        // A refusal can run Ruby, so the arguments' Rust copies go first.
-        drop((src, lang, query_src));
-        let captures = match queried {
-            Ok(captures) => captures,
-            Err(err @ QueryFailure::BadQuery { .. }) => {
-                return Err(lookup_error(
-                    ruby,
-                    &["Lain", "Ext", "TreeSitter", "BadQuery"],
-                    move || err.to_string(),
-                ));
-            }
-            Err(err @ QueryFailure::UnknownLanguage(_)) => {
-                return Err(Error::new(ruby.exception_arg_error(), err.to_string()));
-            }
-            Err(err @ QueryFailure::Backend(_)) => {
-                return Err(Error::new(ruby.exception_runtime_error(), err.to_string()));
-            }
-        };
+        let release = RString::from_value(src).is_some_and(|text| releases(text.len()));
+        let queried = without_gvl_when(ruby, release, || {
+            let (src, lang, query_src) = (
+                text_of(ruby, src, "source")?,
+                text_of(ruby, lang, "language")?,
+                text_of(ruby, query_src, "query")?,
+            );
+            let (src, lang, query_src) = (src.read(ruby)?, lang.read(ruby)?, query_src.read(ruby)?);
+            Ok(move |cancel: &Cancel<'_>| query_until(&src, &lang, &query_src, cancel))
+        })?;
+        let captures = queried.map_err(|err| raised(ruby, err))?;
         let out = ruby.ary_new_capa(captures.len());
         for capture in captures {
             out.push(build_capture(ruby, capture)?)?;
         }
         out.freeze();
         Ok(out)
+    }
+
+    fn raised(ruby: &Ruby, err: QueryFailure) -> Error {
+        match err {
+            QueryFailure::BadQuery { .. } => lookup_error(
+                ruby,
+                &["Lain", "Ext", "TreeSitter", "BadQuery"],
+                move || err.to_string(),
+            ),
+            QueryFailure::UnknownLanguage(_) => {
+                Error::new(ruby.exception_arg_error(), err.to_string())
+            }
+            QueryFailure::Backend(_) => Error::new(ruby.exception_runtime_error(), err.to_string()),
+        }
     }
 
     fn build_capture(ruby: &Ruby, capture: Capture) -> Result<Value, Error> {

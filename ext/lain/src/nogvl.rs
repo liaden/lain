@@ -24,7 +24,7 @@ use std::sync::{Mutex, MutexGuard, Once, PoisonError};
 #[cfg(not(test))]
 mod ffi;
 #[cfg(not(test))]
-pub use ffi::without_gvl;
+pub use ffi::{without_gvl, without_gvl_when};
 
 /// Borrows the slot's flag rather than owning it, so a job cannot outlive the
 /// slot it was given or keep a stop request for a later call.
@@ -229,14 +229,24 @@ extern "C" fn stop(data: *mut c_void) {
 /// searches before the call gives up being cancellable.
 const MAX_QUIET_RETURNS: usize = 4;
 
-#[derive(Default)]
+/// `releasing` is the caller's call: releasing hands the lock to any busy
+/// thread, and taking it back waits out that thread's time slice (about 20 ms
+/// at the offload priority, 100 ms at 0), so work shorter than that runs held.
 struct Attempts {
     quiet: usize,
+    releasing: bool,
 }
 
 impl Attempts {
+    fn new(releasing: bool) -> Self {
+        Self {
+            quiet: 0,
+            releasing,
+        }
+    }
+
     fn release(&self) -> bool {
-        self.quiet < MAX_QUIET_RETURNS
+        self.releasing && self.quiet < MAX_QUIET_RETURNS
     }
 
     fn returned_quietly(&mut self) {
@@ -471,12 +481,28 @@ mod tests {
 
     #[test]
     fn attempts_release_the_lock_until_the_bound_then_hold_it() {
-        let mut attempts = Attempts::default();
+        let mut attempts = Attempts::new(true);
         for _ in 0..MAX_QUIET_RETURNS {
             assert!(attempts.release());
             attempts.returned_quietly();
         }
         assert!(!attempts.release());
+    }
+
+    #[test]
+    fn attempts_told_to_hold_never_release() {
+        assert!(!Attempts::new(false).release());
+    }
+
+    #[test]
+    fn a_held_job_sees_a_lowered_cancel_and_takes_no_slot() {
+        let table: Slots<1> = Slots::new();
+        let _full = table.claim().unwrap();
+        assert!(table.claim().is_none());
+        assert!(matches!(
+            held(|cancel: &Cancel<'_>| Ok(cancel.requested())),
+            Outcome::Done(false)
+        ));
     }
 
     static HOOK_SAW_MARKER: AtomicUsize = AtomicUsize::new(0);
