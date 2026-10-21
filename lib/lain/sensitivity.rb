@@ -284,6 +284,24 @@ module Lain
 
       def verdict = Verdict.new(level:, reason:)
 
+      # A segment rule reads 1 name anywhere, and an anchored rule its path,
+      # which a directory on or below it reaches whole and an ancestor of it
+      # reaches only as far as the rest of that path.
+      #
+      # @param path [String] a directory, already lexically normalized
+      # @param anchors [Anchors] the injected home and project root
+      # @param segments [Array<String>] `path` split on the separator
+      # @return [Symbol, nil] `:segment`, `:under` or `:ancestor`; nil when this rule reads nothing of `path`
+      def mark(path, anchors, segments)
+        return :segment if !inside.nil? && segments.include?(inside)
+        return nil if under.nil?
+
+        target = anchored(anchors)
+        return :under if descends?(path, target)
+
+        descends?(target, path) ? :ancestor : nil
+      end
+
       # @param path [String] already lexically normalized and home-rewritten
       # @param anchors [Anchors] the injected home and project root
       # @param base [String] the basename of `path`, read once per classify
@@ -402,16 +420,19 @@ module Lain
       # or a digit, a suffix word on the right only, and `api key` is one word
       # across a separator within a name.
       # A lower-to-upper step starts a word too (`dbToken`), and it alone is
-      # case-sensitive, since under `/i` every letter is lowercase.
+      # case-sensitive, since under `/i` every letter is lowercase. Both are
+      # fixed to UTF-8, the encoding every path here is held in: a regex left
+      # to follow its subject was seen to allocate on each match of an ASCII
+      # path once a non-ASCII one had been matched and a Ractor had run.
       WORD = %r{
         (?:
           (?:(?<![A-Za-z0-9])|(?-i:(?<=[a-z])(?=[A-Z])))(?:#{WORDS.join("|")}|api[^A-Za-z0-9/]+keys?)
           |(?:#{SUFFIXES.join("|")})s?
         )
         (?![A-Za-z0-9])
-      }ix
+      }ixu
       EXCEPTED = /\.(?:rb|erb|py|pyi|ts|tsx|js|jsx|vue|svelte|go|rs|java|kt|kts|scala|cs|php|dart|c|h|cc|cpp|hpp|hh|hxx
-                    |m|mm|sh|lua|ex|exs|swift|md)\z/ix
+                    |m|mm|sh|lua|ex|exs|swift|md)\z/ixu
       # Every stem in every data extension, and a few files under a named
       # directory, so an exemption that lifts any of them is counted here.
       DATA = %w[txt toml yml yaml json env tfvars csv ini conf cfg xml properties].freeze
@@ -424,10 +445,21 @@ module Lain
       # file whole: a name can say the whole file is the secret, a shape cannot.
       VERDICT = Verdict.new(level: :gated, reason: :named)
       SLASH = File::SEPARATOR.ord
+      # A basename no word matches, and ASCII, so it joins any directory.
+      PROBE = "probe"
 
       def credential? = true
       def verdict = VERDICT
       def label = LABEL
+
+      # Every directory name below the base is read, so a directory whose own
+      # names would match marks every data file beneath it.
+      #
+      # @param path [String] a directory, already lexically normalized
+      # @param anchors [Anchors] whose base the directory names are read below
+      # @param _segments [Array<String>] unused; this rule reads the whole name
+      # @return [Symbol, nil]
+      def mark(path, anchors, _segments) = matches?("#{path}#{File::SEPARATOR}#{PROBE}", anchors) ? :named : nil
 
       # @param anchors [Anchors] whose base the specimens sit under
       # @return [Array<String>]
@@ -897,6 +929,9 @@ module Lain
     # a human and is liftable, which is the right posture for input nobody can
     # parse.
     MALFORMED = Verdict.new(level: :gated, reason: :malformed)
+    # A directory the rules cannot read is walked rather than trusted, and a
+    # walk treats this mark as gained on whichever side it appears.
+    UNREADABLE_MARKS = [:unreadable].freeze
 
     ROOT = "/"
     TILDE = "~"
@@ -915,7 +950,24 @@ module Lain
     # rescues the same pair, and the `&&` order matters: `include?` on a UTF-16
     # String raises the very error being tested for.
     def self.readable?(text)
-      text.encoding.ascii_compatible? && text.valid_encoding? && !text.include?(NUL)
+      text.encoding.ascii_compatible? && text.valid_encoding? && !text.include?(NUL) && utf8_bytes?(text)
+    end
+
+    # A binary String is always valid, so its bytes are asked as UTF-8: the
+    # same name is then readable or not whatever label it arrives under.
+    def self.utf8_bytes?(text)
+      text.ascii_only? || text.encoding == Encoding::UTF_8 || text.dup.force_encoding(Encoding::UTF_8).valid_encoding?
+    end
+
+    # A readable path relabelled UTF-8, the one encoding this class compares
+    # in, so a binary listing name and a UTF-8 root always compare. Its rules'
+    # patterns stay compiled for it, and ASCII, which most paths are, is
+    # returned as it is, since classify runs per name.
+    #
+    # @param text [String] readable, see {.readable?}
+    # @return [String]
+    def self.text_of(text)
+      text.ascii_only? || text.encoding == Encoding::UTF_8 ? text : text.dup.force_encoding(Encoding::UTF_8)
     end
 
     # A home of "" (HOME unset) or "/" (Docker's default when the uid has no
@@ -958,6 +1010,25 @@ module Lain
       freeze
     end
 
+    # What the rules read of a directory's own path, so a name spelled through
+    # a link can be told from the same file by its real name: a rule that
+    # marks the link's spelling and not the landing's may judge the two apart.
+    # A mark is a rule's place in this classifier's list, with the directory's
+    # depth for an ancestor of an anchored path: it names no path and no rule,
+    # and means something only when compared with another mark from here.
+    #
+    # @param path [String] an absolute directory, as spelled
+    # @return [Array<Integer, Array<Integer>, Symbol>] frozen, of frozen marks;
+    #   1 per rule, so a walk needs 1 pass per mark, never per set of them
+    def marks(path) = marked(path) { true }
+
+    # The marks of the rules that lift a verdict, which a name spelled through
+    # a link escapes when only its landing's real path carries them.
+    #
+    # @param path [String] an absolute directory, as spelled
+    # @return [Array] frozen; see {#marks}
+    def lifts(path) = marked(path) { _1.is_a?(Rule) && _1.reason == :exempt }
+
     # @param path [String, Pathname] a path as it was written, not as it resolves
     # @param within [String, nil] the call's own cwd. A leased worker or
     #   `/mode plan` runs in a checkout outside the root, and directory names
@@ -989,6 +1060,20 @@ module Lain
 
     private
 
+    def marked(path)
+      given = text!(path)
+      return UNREADABLE_MARKS unless Sensitivity.readable?(given)
+
+      clean = lexical(Sensitivity.text_of(given))
+      segments = clean.split(File::SEPARATOR)
+      @rules.each_with_index.filter_map do |rule, index|
+        kind = yield(rule) && rule.mark(clean, @anchors, segments)
+        kind == :ancestor ? [index, segments.size].freeze : kind && index
+      end.freeze
+    rescue ArgumentError, EncodingError
+      UNREADABLE_MARKS
+    end
+
     # The line this class draws, and it has two sides. A wrong TYPE is the
     # caller's bug and is loud. Malformed BYTES are hostile data and fail closed
     # at {MALFORMED}. `path.to_s` used to erase the difference and answer
@@ -1007,7 +1092,7 @@ module Lain
     def verdict_for(path, within)
       return MALFORMED unless Sensitivity.readable?(path)
 
-      clean = lexical(path)
+      clean = lexical(Sensitivity.text_of(path))
       base = File.basename(clean)
       segments = clean.split(File::SEPARATOR)
       verdict = @rules.find { |rule| rule.matches?(clean, @anchors, base, segments) }.verdict
@@ -1020,7 +1105,9 @@ module Lain
     end
 
     def under_related?(written, itself: false)
-      clean = lexical(written)
+      return false unless Sensitivity.readable?(written)
+
+      clean = lexical(Sensitivity.text_of(written))
       @related.any? { |directory| Landing.under?(clean, directory) && (itself || clean != directory) }
     rescue ArgumentError, EncodingError
       false
@@ -1060,12 +1147,12 @@ module Lain
 
       # Cleaned directly rather than through {#lexical}, which reads `@cwd` --
       # not yet set while this is anchoring `home`.
-      Pathname.new(given).cleanpath.to_s.dup.freeze
+      Pathname.new(Sensitivity.text_of(given)).cleanpath.to_s.dup.freeze
     end
 
     # `Pathname#cleanpath` and not `File.expand_path`: it folds `.` and `..`
     # with pure string work, leaves a leading `~` alone, and consults neither the
-    # filesystem nor `Dir.pwd`.
+    # filesystem nor `Dir.pwd`. Every path here is held as UTF-8, see {.text_of}.
     def lexical(path) = Pathname.new(rooted(path)).cleanpath.to_s
 
     # Two rewrites, both pure string work: a leading tilde becomes the injected

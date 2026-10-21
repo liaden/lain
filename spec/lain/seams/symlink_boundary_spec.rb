@@ -208,4 +208,95 @@ RSpec.describe "A symlink is judged where it lands", :seam do
 
     expect(unparked("read_file", { "path" => "a.txt" }).content).to include("plain words")
   end
+
+  # git lists a nested repo as 1 leaf, so the names beneath it are what a real
+  # sandbox must still hide.
+  describe "a directory the listing shows as 1 leaf, through a real sandbox" do
+    let(:fence) { Lain::Confine::Bwrap.fence_binary }
+
+    before do
+      skip("bwrap or strace is not installed") unless %w[/usr/bin/bwrap /usr/bin/strace].all? { File.executable?(_1) }
+      skip("lain-fence is not built at #{fence} -- run `bundle exec rake compile`") unless File.executable?(fence)
+      skip("bwrap cannot make a user namespace on this host") unless
+        system("/usr/bin/bwrap", "--ro-bind", "/", "/", "--", "true", %i[out err] => File::NULL)
+    end
+
+    def secret(path)
+      FileUtils.mkdir_p(File.dirname(path))
+      File.write(path, "SECRETBYTES\n")
+    end
+
+    def policy
+      @policy ||= Lain::Sensitivity::Policy.new(
+        sensitivity: Lain::Sensitivity.new(home: @home, cwd: @repo, root: @repo), home: @home, root: @repo
+      )
+    end
+
+    def sandboxed
+      journal = RecordingChannel.new
+      masks = Lain::Confine::MaskList.new(root: @repo, policy: -> { policy })
+      Lain::Confine::Sandbox.new(root: @repo, home: @home, masks:, probe: Lain::Confine::Probe.new(fence:, journal:),
+                                 fence:, journal:).wrap(Lain::Exec::Local.new, requirer: "Spec")
+    end
+
+    def run_confined(command)
+      ruling = Lain::Approval::Escalation::Ruling.allow(rung: "rules", because: "spec", rule: "composed_term")
+      request = Lain::Confine::Request.new(ruling:, executables: [], cwd: @repo, root: @repo, tool_use_id: "toolu_1")
+      sandboxed.call(command:, cwd: @repo, env: {}, timeout: 10, confinement: request)
+    end
+
+    it "hides a secret inside a nested repo, which judge still denies" do
+      secret(File.join(@repo, ".aws", "credentials"))
+      SeedRepo.git(File.join(@repo, ".aws"), "init", "-q")
+      git("init", "-q")
+
+      capture = run_confined("cat .aws/credentials")
+
+      expect(git("ls-files", "-co")).to eq(".aws/\n")
+      expect(capture.stdout + capture.stderr).not_to include("SECRETBYTES")
+      expect(policy.judge(File.join(@repo, ".aws", "credentials"), cwd: @repo)).to be_denied
+    end
+
+    it "hides what judge gates beneath a link named .ssh into the project" do
+      secret(File.join(@repo, "keys", "config"))
+      link(".ssh", "keys")
+      git("init", "-q")
+
+      capture = run_confined("cat .ssh/config")
+
+      expect(capture.stdout + capture.stderr).to include("Permission denied")
+      expect(capture.stdout + capture.stderr).not_to include("SECRETBYTES")
+      expect(policy.judge(File.join(@repo, ".ssh", "config"), cwd: @repo)).to be_gated
+    end
+
+    # A file name is bytes: a listing hands them over binary, a caller as UTF-8, and the root may be either.
+    {
+      "a project root that is not ASCII" => %w[café keys],
+      "a landing whose name is not ASCII" => %w[repo clés],
+      "a root and a landing whose names are not ASCII" => %w[café clés],
+      "a landing whose name is not valid UTF-8" => ["repo", "\xFFk".b]
+    }.each do |shape, (root_name, landing)|
+      secrets = %w[config .env].freeze
+
+      it "judges, marks and hides alike, in any encoding, under #{shape}" do
+        @repo = File.join(@base, root_name)
+        secrets.each { secret(File.join(@repo.b, landing.b, _1.b)) }
+        link(".ssh", landing)
+        git("init", "-q")
+        spelled = File.join(@repo, ".ssh", "config")
+
+        capture = run_confined("cat .ssh/config")
+
+        expect(policy.judge(spelled, cwd: @repo)).to be_gated
+        expect([spelled.b, ".ssh/config".b, ".ssh/config"].map { policy.judge(_1, cwd: @repo.b) })
+          .to all(eq(policy.judge(spelled, cwd: @repo)))
+        expect(policy.marks(File.join(@repo, ".ssh").b)).to eq(policy.marks(File.join(@repo, ".ssh")))
+        expect(policy.marks(File.join(@repo, ".ssh"))).not_to eq(policy.marks(File.join(@repo.b, landing.b)))
+        masks = Lain::Confine::MaskList.new(root: @repo, policy: -> { policy }).masks.map { _1.path.b }
+        expect(secrets.map { File.join(@repo.b, landing.b, _1.b) })
+          .to all(satisfy { |file| masks.any? { file == _1 || file.start_with?("#{_1}/") } })
+        expect(capture.stdout + capture.stderr).not_to include("SECRETBYTES")
+      end
+    end
+  end
 end

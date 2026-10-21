@@ -153,6 +153,11 @@ module Lain
 
         def mask_paths(_files, **) = []
 
+        # @return [Array] none: with no classifier, no spelling judges apart from its landing
+        def marks(_path) = NONE
+        def lifts(_path) = NONE
+
+        NONE = [].freeze
         INSTANCE = new.freeze
 
         def self.instance = INSTANCE
@@ -226,6 +231,8 @@ module Lain
         def outside?(path, cwd:) = !held?(File.expand_path(path, cwd))
         def filter = @policy.filter
         def mask_paths(...) = @policy.mask_paths(...)
+        def marks(path) = @policy.marks(path)
+        def lifts(path) = @policy.lifts(path)
 
         # @param effect [Lain::Effect]
         # @param cwd [String] absolute; the call's own base
@@ -333,6 +340,7 @@ module Lain
       def initialize(sensitivity:, home: nil, root: nil)
         @sensitivity = sensitivity
         @anchors = { home:, root: }.freeze
+        @landing_anchors = @anchors.transform_values { self.class.text_of(_1) }.freeze
         # Built HERE, not memoized in the reader: this object freezes itself, so
         # a lazy `@filter ||=` raises FrozenError the first time anybody asks --
         # and the first asker is the tool phase, mid-run.
@@ -379,6 +387,17 @@ module Lain
       # @return [Boolean] whether it is a `related` directory or lies under one
       def in_related_tree?(path) = @sensitivity.in_related_tree?(path)
 
+      # Asked by {Confine::MaskList}, whose walk follows a link only where its
+      # spelling carries a mark its landing does not.
+      #
+      # @param path [String] an absolute directory, as spelled
+      # @return [Array] frozen; see {Sensitivity#marks}
+      def marks(path) = @sensitivity.marks(path)
+
+      # @param path [String] an absolute directory, as spelled
+      # @return [Array] frozen; see {Sensitivity#lifts}
+      def lifts(path) = @sensitivity.lifts(path)
+
       # The stricter of the path as written and every spelling of where it
       # lands. The literal is asked first, so a denied name costs no syscall.
       #
@@ -388,6 +407,7 @@ module Lain
       #   outside the root, see {.base_of}
       # @return [Sensitivity::Verdict]
       def judge(path, cwd:, within: cwd)
+        path, cwd, within = [path, cwd, within].map { self.class.text_of(_1) }
         written = [@sensitivity.classify(path, within:), *from_cwd(path, cwd, within)]
         denied = written.find(&:denied?)
         return denied if denied
@@ -494,10 +514,19 @@ module Lain
       # @param within [String] absolute; see {.base_of}
       # @return [Array<Mask>] one per landing, in listing order
       def mask_paths(files, cwd:, within: cwd)
-        listed = Listed.new(anchors: @anchors)
+        cwd, within = [cwd, within].map { self.class.text_of(_1) }
+        listed = Listed.new(anchors: @landing_anchors)
         same_cwd = @sensitivity.cwd == File.expand_path(cwd)
-        files.filter_map { |file| mask(file, cwd, within, listed, same_cwd) }.uniq(&:path)
+        files.filter_map { |file| mask(self.class.text_of(file), cwd, within, listed, same_cwd) }.uniq(&:path)
       end
+
+      # A path as the classifier holds one, see {Sensitivity.text_of}, so a
+      # binary listing name and a UTF-8 cwd resolve together. Anything
+      # unreadable is left as it is, for the classifier to call malformed.
+      #
+      # @param path [String, Object]
+      # @return [String, Object]
+      def self.text_of(path) = path.is_a?(String) && Sensitivity.readable?(path) ? Sensitivity.text_of(path) : path
 
       # A listing pays one realpath per directory rather than three per name.
       # `git ls-files` lists a linked directory as one leaf, and a stale name
@@ -603,7 +632,7 @@ module Lain
       def landed(path, cwd, within)
         named = File.expand_path(path, cwd)
         judged = path.start_with?(File::SEPARATOR) ? named : nil
-        Landing.of(named, cwd:, **@anchors).reject { _1 == judged }.map { @sensitivity.classify(_1, within:) }
+        Landing.of(named, cwd:, **@landing_anchors).reject { _1 == judged }.map { @sensitivity.classify(_1, within:) }
       rescue Landing::Dangling
         [MALFORMED, *eventually(named, cwd, within)]
       rescue SystemCallError, ArgumentError, EncodingError
@@ -611,7 +640,7 @@ module Lain
       end
 
       def eventually(named, cwd, within)
-        Landing.eventual(named, cwd:, **@anchors).map { @sensitivity.classify(_1, within:) }
+        Landing.eventual(named, cwd:, **@landing_anchors).map { @sensitivity.classify(_1, within:) }
       rescue Landing::Dangling, SystemCallError, ArgumentError, EncodingError
         []
       end

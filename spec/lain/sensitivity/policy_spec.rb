@@ -594,6 +594,23 @@ RSpec.describe Lain::Sensitivity::Policy do
     end
   end
 
+  describe "#marks" do
+    it "answers this policy's own classifier" do
+      expect(policy.marks("#{cwd}/a/.ssh")).to eq(sensitivity.marks("#{cwd}/a/.ssh")).and be_any
+    end
+
+    it "answers none on the Null and passes the confined policy's through" do
+      expect(described_class::Null.instance.marks("#{cwd}/a/.ssh")).to eq([]).and be_frozen
+      expect(policy.confined(roots: []).marks("#{cwd}/a/.ssh")).to eq(sensitivity.marks("#{cwd}/a/.ssh"))
+    end
+
+    it "answers lifts from its classifier, none on the Null, and the confined policy's through" do
+      expect(policy.lifts("#{cwd}/a")).to eq(sensitivity.lifts("#{cwd}/a"))
+      expect(described_class::Null.instance.lifts("#{cwd}/a")).to eq([]).and be_frozen
+      expect(policy.confined(roots: []).lifts("#{cwd}/a")).to eq(sensitivity.lifts("#{cwd}/a"))
+    end
+  end
+
   describe "#related?" do
     let(:rules) { Lain::Sensitivity::Rules.from({ "related" => ["~/dev/pitchcraft"] }) }
 

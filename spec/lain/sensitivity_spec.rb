@@ -98,6 +98,55 @@ RSpec.describe Lain::Sensitivity do
 
   def classify(path) = sensitivity.classify(path)
 
+  # What a directory's own path tells the rules, so a name spelled through a link
+  # can be told from its landing's: any mark the link has and the landing lacks.
+  describe "#marks" do
+    let(:sensitivity) { described_class.new(home:, cwd:, root: cwd) }
+
+    def marks(name) = sensitivity.marks(File.join(cwd, name))
+
+    it "marks nothing on a directory no rule reads, frozen" do
+      expect(marks("plain")).to eq([]).and be_frozen
+    end
+
+    it "marks a directory holding a name a rule matches anywhere in a path, once per name" do
+      expect(marks("a/.ssh/b")).to eq(marks("a/.ssh")).and eq(marks(".ssh/b/.ssh"))
+      expect([marks("a/.ssh"), marks("a/.aws"), marks("a/.git")].uniq.size).to eq(3)
+    end
+
+    it "marks a directory whose name a name rule reads, and not one excepted by its extension alone" do
+      expect(marks("auth.md")).not_to be_empty
+      expect(marks("nest/private.md")).to eq(marks("auth.md"))
+    end
+
+    it "marks a directory on or below a path a rule anchors, and an ancestor of one apart from it" do
+      expect(marks(".lain/services")).not_to be_empty
+      expect(marks(".lain")).to eq(marks(".lain/services"))
+      expect(marks("x")).to be_empty
+    end
+
+    it "hands out only frozen marks" do
+      expect([marks("a/.ssh/auth.md"), marks(".lain/x")].flatten).to all(be_frozen)
+    end
+
+    it "lifts only where an exemption reads the path, and lifts nothing a gating rule reads" do
+      exempting = described_class.new(home:, cwd:, root: cwd,
+                                      rules: Lain::Sensitivity::Rules.from({ "exempt" => ["/vault/a/server.key"] }))
+
+      expect(exempting.lifts(File.join(cwd, "vault", "a"))).not_to be_empty
+      expect(exempting.lifts(File.join(cwd, "vault", "l"))).to be_empty
+      expect(exempting.lifts(File.join(cwd, "a", ".ssh"))).to be_empty
+    end
+
+    it "hands out no mark that names a path or a directory, the system's own included" do
+      handed = [marks("a/.ssh/auth.md"), marks(".lain/x"), marks("."), sensitivity.marks("/etc"),
+                sensitivity.marks("/"), sensitivity.marks(home)].flatten
+
+      expect(handed).not_to be_empty
+      expect(handed.grep(String)).to be_empty
+    end
+  end
+
   describe "denied paths" do
     it "denies a private key and leaves the public half ordinary" do
       expect(classify("#{home}/.ssh/id_ed25519")).to be_denied
