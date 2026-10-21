@@ -171,6 +171,8 @@ flowchart LR
   T11 & T12 & T13 --> T9
   T13 --> T14
   T14 & T15 --> T9
+  T14 --> T16
+  T16 --> T9
 ```
 
 ## Tasks
@@ -816,6 +818,48 @@ Spec file: `spec/lain/cli/epic_submit_spec.rb`; the load counts go in the hand-b
 - The red does not reproduce in 100 loaded runs: report the counts and stop.
 - The fix is a longer sleep or a wider timeout in the spec without a named ordering it waits on.
 
+### T16: Mask what a nested repo or a sensitive-named link hides from the listing          [risk: high]
+
+**Depends on:** T14 (it shares the mask path: `mask_list.rb`, the bwrap masking)
+**Files:** `lib/lain/confine/mask_list.rb`, `lib/lain/sensitivity/policy.rb`, `spec/lain/confine/mask_list_spec.rb`, `spec/lain/sensitivity/policy_spec.rb`, `spec/lain/seams/symlink_boundary_spec.rb` (new examples only)
+**Reuse:** the T14 reviewer's probes `t14_sandbox_shapes.rb` (shapes 5 and 8) and `t14_classify.rb`, copied into this card's worktree from the T14 worktree before it is removed; `MaskList#refresh`'s listing and identity
+**Shared-file wiring:** none
+**Reachable from:** `Confine::Sandbox` -> `Confine::MaskList#refresh` -> `git ls-files -co` -> `Sensitivity::Policy#mask_paths`
+
+Added 2026-10-21 on the user's ruling, from T14's review. 2 holes on main before this plan:
+- A nested git repo inside the project (`repo/.aws/` with its own `.git` and `credentials`) is listed by `git ls-files -co`
+  as 1 leaf, `.aws/`. The policy judges `.aws/` ordinary, nothing is masked, and `cat .aws/credentials` prints the secret
+  through the full sandbox, fence included, while `judge` on `.aws/credentials` says denied.
+- A link named `.ssh` (or any sensitive directory name) pointing at a directory inside the project does not mask what
+  it lands on, so `notes.txt` there is readable.
+A listed leaf that is a directory gets walked for the names beneath it, or masked whole when its own name is sensitive;
+say which and why. Bound the walk: the pruned directories stay pruned, and a walk must not follow a link out of root.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: a secret inside a nested repo is masked
+  Given a real repo holding a nested repo at .aws with its own .git and a credentials file
+  When a sandboxed command cats .aws/credentials
+  Then it reads nothing, and judge on .aws/credentials still says denied
+
+Scenario: a sensitive-named link to an in-project directory masks its landing
+  Given a link named .ssh pointing at an in-project directory holding notes.txt
+  When a sandboxed command cats .ssh/notes.txt and the landing's notes.txt
+  Then neither prints the file
+
+Scenario: every listed name still masks as judge says
+  Given this checkout's real listing plus the 2 shapes above
+  When MaskList refreshes
+  Then every mask equals what judge gives each name, nested names included
+```
+Spec file: `spec/lain/seams/symlink_boundary_spec.rb` (the first 2, real sandbox, skip without bwrap);
+`spec/lain/confine/mask_list_spec.rb` (the last)
+
+**Stop and report if:**
+- A walk of nested repos makes a refresh of this checkout cost more than 20 ms extra (quiet-box median).
+- The fix needs `judge` on the gate path to change.
+
 ## Integration checks
 
 After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]*/bin/parallel_rspec'` and
@@ -944,3 +988,11 @@ After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]
   call at 3,079 messages; memo bounded at the message count over 300 turns with rewinds.
 - 03:10 User ruling: add T14 (a directory mask must not abort bwrap) and T15 (the repeat EpicSubmit Ctrl-C flake). Cards
   written above; T9 waits on them too. T2 fixes in (ModelCaller owns the chain); second review started.
+- 03:15 T14 (opus) and T15 (sonnet) started from `97cecea9`. T15's deliberate load runs, and every landing commit, now take `/home/tara/tmp/lain/bench.lock`, so neither can overlap the other.
+- 04:22 Correction: the clock times on the entries since 00:15 were estimated, not read; the T14 and T15 worktrees were cut at 04:21. Times from here are read from `date`.
+- 04:27 T2 second review: APPROVE (all 11 back-outs red). T2 landed `0d4cff12`, wiring_spec.rb applied as a 3-way patch over T11. Left: T14, T15 in flight; then T9, T10.
+- 04:28 T14 handed back: a directory mask is an empty read-only tmpfs, a file mask stays /dev/null, the kind read by File.directory? at bwrap time; a file mask inside a masked directory is dropped. Red 3 of 20 ("Is a directory"). High review started.
+- 04:30 T15 handed back: cause is a product ordering bug (gate journaled an interrupt only from the park; a Ctrl-C after the prompt is drawn and before the park journaled nothing). 0 of 60 loaded reds; a deterministic example is red before the fix. Accepted in place of the loaded-red criterion. Wiring applied in its worktree: the flake entry retired. Medium review started.
+- 04:35 T15 reviewed: REQUEST-CHANGES. Blocker: under Async a real SIGINT reaches the gate as Async::Cancel inside Prompt#ask, never as a plain Interrupt, so the new rescue never fires (TracePoint probe: decisions 0 on a real signal). My acceptance of the raise-Interrupt example was wrong; the flake-retirement wiring is reverted in the worktree. Back to the implementer.
+- 04:35 T14 reviewed: APPROVE-WITH-FIXES, no leak in scope; bwrap-time File.directory? ruled right (4 forced races all fail closed). Ruled in main: a directory mask covering root, $HOME or a grant refuses with a named reason (loud failure), substantive, so 1 second review. Outside the card, for the user: a nested git repo in the project is listed as 1 leaf, so `cat .aws/credentials` prints the secret through the full sandbox while judge says denied; and a link named .ssh to an in-project dir does not mask its landing.
+- 05:43 User ruling: add T16 (a nested repo, or a sensitive-named link to an in-project dir, hides names from the mask). Card above; after T14. T14 and T15 fix rounds in; second reviews started. T15 now defers a stop in Prompt#ask so a real cancel reaches the park; gate.rb reverted.
