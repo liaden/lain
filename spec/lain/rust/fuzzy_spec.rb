@@ -177,6 +177,90 @@ RSpec.describe Lain::Ext::Fuzzy do
     end
   end
 
+  describe "#match on another thread" do
+    let(:many) { described_class.new(Array.new(300_000) { |i| "w#{i % 37}/lib/lain/part#{i}/file#{i}.rb" }) }
+    let(:few) { described_class.new(Array.new(50_000) { |i| "w#{i % 37}/lib/lain/part#{i}/file#{i}.rb" }) }
+
+    def monotonic = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+    def matching(fuzzy, times: 1)
+      Thread.new do
+        Thread.current.report_on_exception = false
+        Array.new(times) { fuzzy.match("lnpart9f1", limit: 50) }.last
+      end
+    end
+
+    # A held GVL gives a p99 near 180 ms; 8 ms allows for suite load on an idle-thread 1 ms tick.
+    it "lets the calling thread keep ticking while it matches" do
+      worker = matching(few, times: 40)
+      gaps = []
+      last = monotonic
+      while worker.alive?
+        sleep 0.001
+        now = monotonic
+        gaps << (now - last)
+        last = now
+      end
+
+      expect(worker.value.size).to eq(50)
+      expect(gaps.sort[(gaps.size * 0.99).floor]).to be < 0.008
+    end
+
+    # The bench-stats run met the 5 ms target (0.2 to 1.9 ms); this bound allows for suite load.
+    it "stops soon after its thread is killed, rather than at the end of the match" do
+      worker = matching(many)
+      sleep 0.02
+      expect(worker).to be_alive
+      killed = monotonic
+      worker.kill.join
+
+      expect(monotonic - killed).to be < 0.01
+    end
+
+    it "raises the interrupt's error rather than returning a partial list" do
+      worker = matching(many)
+      sleep 0.02
+      expect(worker).to be_alive
+      worker.raise(IOError, "stopped")
+
+      expect { worker.value }.to raise_error(IOError, "stopped")
+    end
+
+    it "answers the whole ranking when an interrupt that raises nothing lands mid-match" do
+      expected = many.match("lnpart9f1", limit: 50)
+      worker = matching(many)
+      sleep 0.02
+      expect(worker).to be_alive
+      worker.wakeup
+
+      expect(worker.value).to eq(expected)
+    end
+
+    it "still finishes under a stream of interrupts that raise nothing, since its restarts are bounded" do
+      worker = matching(many)
+      waker = Thread.new do
+        while worker.alive?
+          sleep 0.001
+          worker.wakeup
+        end
+      rescue ThreadError
+        nil
+      end
+
+      expect(worker.join(30)).to eq(worker)
+      expect(worker.value.size).to eq(50)
+    ensure
+      waker&.kill&.join
+    end
+
+    it "answers every match when more run at once than it has slots for" do
+      results = Array.new(80) { matching(few) }.map(&:value)
+
+      expect(results.map(&:size)).to all(eq(50))
+      expect(results.uniq.size).to eq(1)
+    end
+  end
+
   # `Ractor.shareable?` is true, and calling a method off the main Ractor still
   # raises -- no binding in this crate calls `rb_ext_ractor_safe`. Pinned so the
   # gap is a recorded fact rather than a surprise, and so that whoever closes it

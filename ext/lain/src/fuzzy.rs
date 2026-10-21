@@ -3,7 +3,7 @@
 //! A candidate set is built once and matched many times: that asymmetry is the
 //! whole shape of the problem. Candidates change when the workspace does; the
 //! query changes on every keystroke. So [`Candidates`] owns the batch and
-//! [`Candidates::rank`] is the hot call, and the FFI boundary is crossed exactly
+//! [`Candidates::rank_until`] is the hot call, and the FFI boundary is crossed exactly
 //! twice -- once to hand over the batch, once per query to hand back the whole
 //! ranked result.
 //!
@@ -26,7 +26,7 @@
 //!
 //! * `Matcher::fuzzy_match` asserts the haystack is at most `u32::MAX`
 //!   codepoints. [`MAX_CANDIDATE_BYTES`] is checked in [`Candidates::new`], so a
-//!   `Candidates` that violates it cannot be constructed and `rank` has no
+//!   `Candidates` that violates it cannot be constructed and `rank_until` has no
 //!   reachable assert.
 //! * `Pattern::score` sums a `u16` per atom into a `u32`. [`MAX_QUERY_BYTES`]
 //!   caps the atom count far below the 65536 needed to overflow it.
@@ -41,6 +41,7 @@
 //! nothing else, the Ruby Array it comes from is already that large, and any cap
 //! would be a number invented to look careful.
 
+use crate::nogvl::{Cancel, Halted};
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use std::cell::RefCell;
@@ -168,22 +169,30 @@ impl Candidates {
     }
 
     /// Rank every candidate against `query`, best first, keeping at most `limit`.
-    pub fn rank(&self, query: &str, limit: Option<usize>) -> Result<Vec<Hit>, QueryError> {
-        with_matcher(|matcher| self.rank_with(query, limit, matcher))
+    /// Gives up with [`Halted`] once `cancel` asks, so a newer keystroke or a
+    /// kill does not wait for the whole batch.
+    pub fn rank_until(
+        &self,
+        query: &str,
+        limit: Option<usize>,
+        cancel: &Cancel<'_>,
+    ) -> Result<Result<Vec<Hit>, QueryError>, Halted> {
+        with_matcher(|matcher| self.rank_with(query, limit, matcher, cancel))
     }
 
-    /// [`rank`](Candidates::rank) with the scratch matcher supplied by the
-    /// caller. Split out so a test can prove that a matcher reused across calls
-    /// answers identically to a fresh one -- the property the thread-local rests
-    /// on, stated as a test rather than as a comment.
+    /// [`rank_until`](Candidates::rank_until) with the scratch matcher supplied
+    /// by the caller. Split out so a test can prove that a matcher reused across
+    /// calls answers identically to a fresh one -- the property the thread-local
+    /// rests on, stated as a test rather than as a comment.
     pub fn rank_with(
         &self,
         query: &str,
         limit: Option<usize>,
         matcher: &mut Matcher,
-    ) -> Result<Vec<Hit>, QueryError> {
+        cancel: &Cancel<'_>,
+    ) -> Result<Result<Vec<Hit>, QueryError>, Halted> {
         if query.len() > MAX_QUERY_BYTES {
-            return Err(QueryError::TooLong { len: query.len() });
+            return Ok(Err(QueryError::TooLong { len: query.len() }));
         }
         // `Pattern::parse`, not `Pattern::new`: it is what gives fzf's query
         // language -- `^prefix`, `suffix$`, `'substring`, `!negated`, and
@@ -201,6 +210,9 @@ impl Candidates {
         let mut positions = Vec::new();
         let mut hits = Vec::new();
         for (index, haystack) in self.segmented.iter().enumerate() {
+            if check_due(index) && cancel.requested() {
+                return Err(Halted);
+            }
             positions.clear();
             let score = pattern.indices(Utf32Str::Unicode(haystack), matcher, &mut positions);
             if let Some(score) = score {
@@ -225,8 +237,16 @@ impl Candidates {
         if let Some(limit) = limit {
             hits.truncate(limit);
         }
-        Ok(hits)
+        Ok(Ok(hits))
     }
+}
+
+/// Candidates matched between reads of the stop request: about 20 microseconds
+/// of matching, so a stop lands well inside a millisecond.
+const CANDIDATES_PER_CHECK: usize = 64;
+
+fn check_due(seen: usize) -> bool {
+    seen.is_multiple_of(CANDIDATES_PER_CHECK)
 }
 
 /// Fill `buf` with one `char` per grapheme cluster of `text` -- the cluster's
@@ -278,7 +298,9 @@ thread_local! {
     /// stays free of interior mutability, so its `frozen_shareable` promise is
     /// still honest.
     ///
-    /// What makes the sharing safe **today** is the GVL plus `try_borrow_mut`,
+    /// What makes the sharing safe **today** is that the matcher belongs to one
+    /// OS thread and `without_gvl` runs the job on the calling thread, so
+    /// no two matches ever hold it at once (`try_borrow_mut` covers re-entrancy),
     /// not Ractors. `Ractor.shareable?(fuzzy)` is genuinely `true`, but calling
     /// any method on the handle from a non-main Ractor raises
     /// `Ractor::UnsafeError` -- nothing in this crate calls
@@ -323,6 +345,7 @@ fn with_matcher<T>(mut f: impl FnMut(&mut Matcher) -> T) -> T {
 pub mod ffi {
     use super::{BuildError, Candidates, Hit, QueryError};
     use crate::ffi::{frozen_str, int, lookup_error};
+    use crate::nogvl::{Cancel, without_gvl};
     // The one string-boundary policy, shared with `prompt`, `astgrep` and
     // `treesitter`. Candidate positions here index GRAPHEME CLUSTERS (see
     // `positions`), which only means anything because `read_text` guarantees the
@@ -412,7 +435,12 @@ pub mod ffi {
             let limit = read_limit(ruby, kwargs.optional.0)?;
             let query = read_text(ruby, query, || "query".to_string())?;
 
-            let ranked = rb_self.inner.rank(&query, limit);
+            // The job outlives this frame's borrows, so it gets its own handle
+            // and query; `prepare` runs again after a quiet wakeup.
+            let ranked = without_gvl(ruby, || {
+                let (inner, query) = (Arc::clone(&rb_self.inner), query.clone());
+                Ok(move |cancel: &Cancel<'_>| inner.rank_until(&query, limit, cancel))
+            })?;
             // A refusal can run Ruby, so the query's Rust copy goes first.
             drop(query);
             let hits = ranked.map_err(|err| match err {
@@ -515,6 +543,16 @@ pub mod ffi {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicBool;
+
+    static NEVER: AtomicBool = AtomicBool::new(false);
+
+    impl Candidates {
+        fn rank(&self, query: &str, limit: Option<usize>) -> Result<Vec<Hit>, QueryError> {
+            self.rank_until(query, limit, &Cancel::watching(&NEVER))
+                .expect("nothing asked to stop")
+        }
+    }
 
     fn paths() -> Vec<String> {
         vec![
@@ -779,16 +817,54 @@ mod tests {
         let mut reused = Matcher::new(Config::DEFAULT);
 
         let warm = candidates
-            .rank_with("lib", None, &mut reused)
+            .rank_with("lib", None, &mut reused, &Cancel::watching(&NEVER))
+            .expect("nothing asked to stop")
             .expect("query within bounds");
         assert!(!warm.is_empty());
         let again = candidates
-            .rank_with("tty", None, &mut reused)
+            .rank_with("tty", None, &mut reused, &Cancel::watching(&NEVER))
+            .expect("nothing asked to stop")
             .expect("query within bounds");
         let fresh = candidates
-            .rank_with("tty", None, &mut Matcher::new(Config::DEFAULT))
+            .rank_with(
+                "tty",
+                None,
+                &mut Matcher::new(Config::DEFAULT),
+                &Cancel::watching(&NEVER),
+            )
+            .expect("nothing asked to stop")
             .expect("query within bounds");
 
         assert_eq!(again, fresh);
+    }
+
+    fn many_paths() -> Candidates {
+        let items = (0..CANDIDATES_PER_CHECK * 3)
+            .map(|index| format!("lib/part{index}.rb"))
+            .collect();
+        Candidates::new(items).expect("candidates within bounds")
+    }
+
+    #[test]
+    fn a_stop_request_halts_the_ranking_instead_of_answering_a_partial_one() {
+        let stop = AtomicBool::new(true);
+        let halted = many_paths().rank_until("part", None, &Cancel::watching(&stop));
+        assert_eq!(halted, Err(Halted));
+    }
+
+    #[test]
+    fn a_stop_request_is_read_only_every_so_many_candidates() {
+        assert!(check_due(0));
+        assert!(!check_due(1));
+        assert!(!check_due(CANDIDATES_PER_CHECK - 1));
+        assert!(check_due(CANDIDATES_PER_CHECK));
+    }
+
+    #[test]
+    fn a_ranking_nobody_stops_answers_every_match() {
+        let hits = many_paths()
+            .rank("part", None)
+            .expect("query within bounds");
+        assert_eq!(hits.len(), CANDIDATES_PER_CHECK * 3);
     }
 }
