@@ -47,6 +47,7 @@ mod event;
 mod fuzzy;
 #[deny(clippy::missing_docs_in_private_items)]
 mod graph;
+mod nogvl;
 mod prompt;
 mod read_text;
 mod treesitter;

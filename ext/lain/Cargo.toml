@@ -11,6 +11,11 @@ crate-type = ["cdylib"]
 
 [dependencies]
 magnus = { version = "0.9.0" }
+# rb_nogvl, for releasing the GVL with an unblocking function: magnus has no
+# such API and does not re-export rb-sys. rb-sys declares `links = "rb"`, so
+# Cargo allows only 1 copy in the graph and this always resolves to the one
+# magnus uses; a caret keeps a magnus update from needing an edit here.
+rb-sys = { version = "0.9.130", default-features = false }
 # Canonical's content-addressing hash. The one and only blake3 implementation
 # in this project -- Ruby calls into this ext rather than carrying a second,
 # separately-vendored copy of the algorithm.

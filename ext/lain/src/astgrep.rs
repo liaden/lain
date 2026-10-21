@@ -17,12 +17,17 @@
 //! we surface the node's own 0-based start line as a convenience but the pinned
 //! contract is the byte range.
 
+use crate::nogvl::{Cancel, Halted};
+use ast_grep_core::matcher::MatcherExt;
 use ast_grep_core::meta_var::{MetaVarEnv, MetaVariable};
-use ast_grep_core::{AstGrep, Doc, Language, Node, NodeMatch, Pattern};
+use ast_grep_core::tree_sitter::{LanguageExt, StrDoc};
+use ast_grep_core::{AstGrep, Doc, Language, Matcher, Node, NodeMatch, Pattern};
 use ast_grep_language::SupportLang;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::ops::ControlFlow;
 use std::rc::Rc;
+use tree_sitter::{LanguageError, ParseOptions, ParseState, Parser, Tree};
 
 /// A captured metavariable (`$NAME`) and where its node sits in the source.
 #[derive(Debug, PartialEq, Eq)]
@@ -69,6 +74,11 @@ pub enum SearchError {
     /// stack-safety bound and there is no safe prefix to hand back.
     #[error("dump capped at {0} levels of nesting -- dump a smaller snippet")]
     DumpTooDeep(usize),
+    /// tree-sitter refused a bundled grammar, which means the build pairs a
+    /// grammar with a tree-sitter it does not fit. A defect, not an input to
+    /// retry, so it never reaches the cancel path.
+    #[error("tree-sitter refused the {lang} grammar: {reason}")]
+    GrammarRefused { lang: String, reason: String },
 }
 
 /// Parse a language moniker (`"ruby"`, case-insensitive) into a `SupportLang`.
@@ -196,18 +206,122 @@ fn has_metavariable(pattern: &str) -> bool {
     named || pattern.contains("$$$")
 }
 
-/// All structural matches of `pattern` in `src`, in source order. A valid
-/// pattern with no matches yields an empty `Vec` (not an error).
-pub fn search(src: &str, lang: &str, pattern: &str) -> Result<Vec<Match>, SearchError> {
-    let lang = parse_lang(lang)?;
-    let pat = built_pattern(pattern, lang)?;
-    let ast = AstGrep::new(src, lang);
-    let matches = ast
-        .root()
-        .find_all(&*pat)
-        .map(|matched| extract_match(&matched))
-        .collect();
-    Ok(matches)
+/// All structural matches of `pattern` in `src`, in source order, or
+/// [`Halted`] once `cancel` asks, during the parse or the walk. A valid pattern
+/// with no matches yields an empty `Vec` (not an error).
+///
+/// It parses with its own parser rather than `AstGrep::new`, because ast-grep
+/// keeps its parser private and so offers no way to stop a parse; the tree and
+/// the walk are the same ones `find_all` uses.
+pub fn search_until(
+    src: &str,
+    lang: &str,
+    pattern: &str,
+    cancel: &Cancel<'_>,
+) -> Result<Result<Vec<Match>, SearchError>, Halted> {
+    let Ok(lang) = parse_lang(lang) else {
+        return Ok(Err(SearchError::UnknownLanguage(lang.to_string())));
+    };
+    let pat = match built_pattern(pattern, lang) {
+        Ok(pat) => pat,
+        Err(refused) => return Ok(Err(refused)),
+    };
+    let tree = match tree_or_halt(parse(src, lang, cancel), lang)? {
+        Ok(tree) => tree,
+        Err(refused) => return Ok(Err(refused)),
+    };
+    let ast = AstGrep::doc(StrDoc {
+        src: src.to_string(),
+        lang,
+        tree,
+    });
+    walk(&ast.root(), &pat, cancel).map(Ok)
+}
+
+/// Nodes visited between reads of the stop request: often enough to stop
+/// within a millisecond, rarely enough that the read costs nothing measurable.
+const NODES_PER_CHECK: usize = 64;
+
+fn check_due(seen: usize) -> bool {
+    seen.is_multiple_of(NODES_PER_CHECK)
+}
+
+/// `find_all`'s walk, with a stop request read every [`NODES_PER_CHECK`] nodes.
+fn walk<D: Doc>(
+    root: &Node<'_, D>,
+    pat: &Pattern,
+    cancel: &Cancel<'_>,
+) -> Result<Vec<Match>, Halted> {
+    let kinds = pat.potential_kinds();
+    let mut found = Vec::new();
+    for (seen, node) in root.dfs().enumerate() {
+        if check_due(seen) && cancel.requested() {
+            return Err(Halted);
+        }
+        let candidate = kinds
+            .as_ref()
+            .is_none_or(|kinds| kinds.contains(node.kind_id().into()));
+        if let Some(matched) = candidate.then(|| pat.match_node(node)).flatten() {
+            found.push(extract_match(&matched));
+        }
+    }
+    Ok(found)
+}
+
+/// `Ok(None)` when `cancel` stopped the parse.
+fn parse(src: &str, lang: SupportLang, cancel: &Cancel<'_>) -> Result<Option<Tree>, LanguageError> {
+    let bytes = src.as_bytes();
+    let mut progress = |_: &ParseState| {
+        if cancel.requested() {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    };
+    with_parser(|parser| {
+        parser.set_language(&lang.get_ts_language())?;
+        // A halted parse resumes on the next call unless the parser is reset.
+        parser.reset();
+        Ok(parser.parse_with_options(
+            &mut |at, _| bytes.get(at..).unwrap_or_default(),
+            None,
+            Some(ParseOptions::new().progress_callback(&mut progress)),
+        ))
+    })
+}
+
+fn tree_or_halt(
+    parsed: Result<Option<Tree>, LanguageError>,
+    lang: SupportLang,
+) -> Result<Result<Tree, SearchError>, Halted> {
+    match parsed {
+        Ok(Some(tree)) => Ok(Ok(tree)),
+        Ok(None) => Err(Halted),
+        Err(refused) => Ok(Err(SearchError::GrammarRefused {
+            lang: lang.to_string(),
+            reason: refused.to_string(),
+        })),
+    }
+}
+
+thread_local! {
+    /// One per thread, so a search reuses the parser's allocations. The parse
+    /// that `search_until` runs is on the calling thread even with the GVL released.
+    static PARSER: RefCell<Parser> = RefCell::new(Parser::new());
+}
+
+/// The thread's parser, or a fresh one if the thread-local is unreachable (TLS
+/// teardown) or already borrowed; both are panics on the ergonomic API.
+fn with_parser<T>(mut parse: impl FnMut(&mut Parser) -> T) -> T {
+    PARSER
+        .try_with(|cell| {
+            cell.try_borrow_mut()
+                .ok()
+                .map(|mut parser| parse(&mut parser))
+        })
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| parse(&mut Parser::new()))
 }
 
 /// Convert one borrowed `NodeMatch` into an owned [`Match`] before its backing
@@ -371,6 +485,7 @@ fn write_node<D: Doc>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicBool;
 
     #[test]
     fn captures_a_named_metavariable_with_a_byte_range() {
@@ -733,11 +848,143 @@ mod tests {
         assert_eq!(first, find(&fresh));
         assert_eq!(first.len(), 2);
     }
+
+    static RAISED: AtomicBool = AtomicBool::new(true);
+    static LOWERED: AtomicBool = AtomicBool::new(false);
+
+    fn raised() -> Cancel<'static> {
+        Cancel::watching(&RAISED)
+    }
+
+    fn lowered() -> Cancel<'static> {
+        Cancel::watching(&LOWERED)
+    }
+
+    /// Every existing test's view: a search nothing cancels.
+    fn search(src: &str, lang: &str, pattern: &str) -> Result<Vec<Match>, SearchError> {
+        search_until(src, lang, pattern, &lowered()).expect("nothing asked it to halt")
+    }
+
+    /// The search every caller made before the cancellable walk, kept as the oracle.
+    fn found_all(src: &str, pattern: &str) -> Vec<Match> {
+        let pat = build_pattern(pattern, SupportLang::Ruby).unwrap();
+        AstGrep::new(src, SupportLang::Ruby)
+            .root()
+            .find_all(&pat)
+            .map(|matched| extract_match(&matched))
+            .collect()
+    }
+
+    fn ruby_sources(every: usize) -> Vec<String> {
+        let mut paths = Vec::new();
+        let mut dirs = vec![std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../lib")];
+        while let Some(dir) = dirs.pop() {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    dirs.push(path);
+                } else if path.extension().is_some_and(|ext| ext == "rb") {
+                    paths.push(path);
+                }
+            }
+        }
+        paths.sort();
+        paths
+            .iter()
+            .step_by(every)
+            .map(|path| std::fs::read_to_string(path).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn the_cancellable_walk_finds_what_find_all_finds_over_this_repositorys_ruby() {
+        let sources = ruby_sources(8);
+        assert!(sources.len() > 50, "read {} files", sources.len());
+        let mut total = 0;
+        for pattern in [
+            "def $NAME($$$A)",
+            "$RECV.$NAME",
+            "class $C < $SUPER",
+            "@$VAR",
+        ] {
+            for src in &sources {
+                let walked = search(src, "ruby", pattern).unwrap();
+                assert_eq!(walked, found_all(src, pattern), "pattern {pattern:?}");
+                total += walked.len();
+            }
+        }
+        assert!(total > 1000, "only {total} matches compared");
+    }
+
+    #[test]
+    fn the_walk_reads_its_stop_request_once_every_nodes_per_check() {
+        let due: Vec<usize> = (0..=2 * NODES_PER_CHECK)
+            .filter(|&seen| check_due(seen))
+            .collect();
+        assert_eq!(due, vec![0, NODES_PER_CHECK, 2 * NODES_PER_CHECK]);
+    }
+
+    #[test]
+    fn a_raised_flag_halts_the_parse() {
+        let src = "def m(a)\n  a.save\nend\n".repeat(2_000);
+        assert_eq!(
+            search_until(&src, "ruby", "def $NAME($$$A)", &raised()),
+            Err(Halted)
+        );
+    }
+
+    #[test]
+    fn a_raised_flag_halts_the_walk_over_a_parsed_tree() {
+        let ast = AstGrep::new("a.save\nb.save\n", SupportLang::Ruby);
+        let pat = build_pattern("$A.save", SupportLang::Ruby).unwrap();
+        assert_eq!(walk(&ast.root(), &pat, &raised()), Err(Halted));
+        assert_eq!(walk(&ast.root(), &pat, &lowered()).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_halted_search_leaves_a_parser_that_parses_the_next_source_whole() {
+        let first = "def a(x)\n  x.save\nend\n".repeat(3_000);
+        assert_eq!(
+            search_until(&first, "ruby", "$A.save", &raised()),
+            Err(Halted)
+        );
+
+        let second = "class K\n  def b(y); y.go; end\nend\n";
+        assert_eq!(
+            search(second, "ruby", "def $NAME($$$A)").unwrap(),
+            found_all(second, "def $NAME($$$A)")
+        );
+    }
+
+    #[test]
+    fn a_grammar_the_parser_refuses_is_a_search_error_not_a_halt() {
+        let refused = tree_or_halt(
+            Err(tree_sitter::LanguageError::Version(0)),
+            SupportLang::Ruby,
+        );
+        assert!(matches!(
+            refused,
+            Ok(Err(SearchError::GrammarRefused { .. }))
+        ));
+        assert!(matches!(
+            tree_or_halt(Ok(None), SupportLang::Ruby),
+            Err(Halted)
+        ));
+    }
+
+    #[test]
+    fn a_bad_pattern_is_refused_not_halted() {
+        assert!(matches!(
+            search_until("x = 1", "ruby", "def (", &lowered()),
+            Ok(Err(SearchError::BadPattern { .. }))
+        ));
+    }
 }
 #[cfg(not(test))]
 pub mod ffi {
-    use super::{Capture, Match, SearchError, dump as pure_dump, search as pure_search};
+    use super::{Capture, Match, SearchError, dump as pure_dump, search_until};
     use crate::ffi::{frozen_str, int, lookup_error};
+    use crate::nogvl::{Cancel, without_gvl};
     // The one string-boundary policy, shared with `fuzzy`, `prompt` and
     // `treesitter`. It is not optional here: this binding's PINNED contract is
     // byte offsets into the caller's own String (see the module doc), and
@@ -761,16 +1008,20 @@ pub mod ffi {
     /// frozen match Hashes `{ "start", "end", "line", "captures" }`, where
     /// `captures` maps each `$NAME` to `{ "text", "start", "end" }`. One FFI
     /// crossing: the whole result is materialized and frozen before returning.
+    ///
+    /// The search runs with the GVL released, so a kill or a raise stops it
+    /// early; the arguments' Rust copies live in the job and are gone by the
+    /// time a refusal runs Ruby.
     pub fn search(ruby: &Ruby, src: Value, lang: Value, pattern: Value) -> Result<RArray, Error> {
-        let (src, lang, pattern) = (
-            text_of(ruby, src, "source")?,
-            text_of(ruby, lang, "language")?,
-            text_of(ruby, pattern, "pattern")?,
-        );
-        let (src, lang, pattern) = (src.read(ruby)?, lang.read(ruby)?, pattern.read(ruby)?);
-        let searched = pure_search(&src, &lang, &pattern);
-        // A refusal can run Ruby, so the arguments' Rust copies go first.
-        drop((src, lang, pattern));
+        let searched = without_gvl(ruby, || {
+            let (src, lang, pattern) = (
+                text_of(ruby, src, "source")?,
+                text_of(ruby, lang, "language")?,
+                text_of(ruby, pattern, "pattern")?,
+            );
+            let (src, lang, pattern) = (src.read(ruby)?, lang.read(ruby)?, pattern.read(ruby)?);
+            Ok(move |cancel: &Cancel<'_>| search_until(&src, &lang, &pattern, cancel))
+        })?;
         let matches = searched.map_err(|err| raised(ruby, err))?;
         let out = ruby.ary_new_capa(matches.len());
         for matched in matches {
@@ -851,6 +1102,9 @@ pub mod ffi {
                 return Error::new(ruby.exception_arg_error(), err.to_string());
             }
             SearchError::DumpTooDeep(_) => &["Lain", "Structural", "Matcher", "DumpCapped"],
+            SearchError::GrammarRefused { .. } => {
+                return Error::new(ruby.exception_runtime_error(), err.to_string());
+            }
         };
         lookup_error(ruby, path, move || err.to_string())
     }

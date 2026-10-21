@@ -506,6 +506,7 @@ dependencies = [
  "nucleo-matcher",
  "petgraph",
  "proptest",
+ "rb-sys",
  "rpds",
  "serde",
  "thiserror",

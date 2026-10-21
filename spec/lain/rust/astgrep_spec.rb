@@ -60,6 +60,85 @@ RSpec.describe Lain::Ext::AstGrep do
     end
   end
 
+  # A search over a large source runs for about a third of a second, with the lock between
+  # threads released, so another thread runs meanwhile and an interrupt reaches it.
+  describe ".search on another thread" do
+    let(:big) { "def m(a)\n  a.save(1, 2)\nend\n" * 15_000 }
+    let(:pattern) { "def $NAME($$$A)" }
+
+    def monotonic = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+    def searching
+      Thread.new do
+        Thread.current.report_on_exception = false
+        described_class.search(big, "ruby", pattern)
+      end
+    end
+
+    it "lets the calling thread keep running while it searches" do
+      worker = searching
+      ticks = 0
+      (ticks += 1) && sleep(0.001) while worker.alive?
+
+      expect(worker.value.size).to eq(15_000)
+      expect(ticks).to be >= 20
+    end
+
+    # Timed from when the kill was meant to land: a search holding the lock also
+    # keeps this thread's sleep from ending, so its kill reaches a finished thread.
+    it "stops soon after its thread is killed, rather than at the end of the search" do
+      meant = monotonic + 0.05
+      worker = searching
+      sleep 0.05
+      expect(worker).to be_alive
+      worker.kill.join
+
+      expect(monotonic - meant).to be < 0.1
+    end
+
+    it "raises the interrupt's error rather than returning a partial list" do
+      worker = searching
+      sleep 0.05
+      expect(worker).to be_alive
+      worker.raise(IOError, "stopped")
+
+      expect { worker.value }.to raise_error(IOError, "stopped")
+    end
+
+    it "answers the whole list when an interrupt that raises nothing lands mid-search" do
+      worker = searching
+      sleep 0.05
+      expect(worker).to be_alive
+      worker.wakeup
+
+      expect(worker.value.size).to eq(15_000)
+    end
+
+    it "still finishes under a stream of interrupts that raise nothing, since its restarts are bounded" do
+      worker = searching
+      waker = Thread.new do
+        while worker.alive?
+          sleep 0.001
+          worker.wakeup
+        end
+      rescue ThreadError
+        nil
+      end
+
+      expect(worker.join(30)).to eq(worker)
+      expect(worker.value.size).to eq(15_000)
+    ensure
+      waker&.kill&.join
+    end
+
+    it "answers every search when more run at once than it has slots for" do
+      source = "def m(a)\n  a.save\nend\n" * 2_000
+      results = Array.new(80) { Thread.new { described_class.search(source, "ruby", pattern).size } }.map(&:value)
+
+      expect(results).to all(eq(2_000))
+    end
+  end
+
   describe ".dump" do
     it "dumps the CST so an agent can see the real node kinds" do
       # `def self.x` is a `singleton_method` node, NOT the `method` node an LLM's

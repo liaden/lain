@@ -24,9 +24,9 @@ All four run in `pre-commit` on **every** worktree, because `core.hooksPath` is 
 
 > ⚠️ **`cargo test` never compiles the magnus surface, so a green `cargo test` is not a
 > building crate.** Every `ffi` module here is `#[cfg(not(test))]` — `lib.rs`'s `mod ffi`,
-> `prompt.rs:1447`, `fuzzy.rs:304`, `astgrep.rs:356`, `treesitter.rs:430` — and there is no
-> `tests/` directory and no doctest target, so under `--cfg test` the entire FFI layer is
-> absent from the build graph. The comment above `lib.rs`'s `mod ffi` explains *why* the modules
+> `prompt.rs:1397`, `fuzzy.rs:323`, `astgrep.rs:984`, `treesitter.rs:431`, and the whole of
+> `nogvl/ffi.rs` — and there is no `tests/` directory and no doctest target, so under
+> `--cfg test` the entire FFI layer is absent from the build graph. The comment above `lib.rs`'s `mod ffi` explains *why* the modules
 > are gated (a magnus item needs an embedded Ruby VM that `cargo test` has no way to start) but never says what
 > it costs you.
 >
@@ -47,14 +47,21 @@ All four run in `pre-commit` on **every** worktree, because `core.hooksPath` is 
 - **Stable channel only. No `#![feature]`.** A subagent has already shipped `#![feature]` here
   and it does not build. If you reach for a nightly feature, the design is wrong.
 - **No `forbid(unsafe_code)` here.** That rule is `crates/lain-core`'s
-  (`crates/lain-core/src/main.rs:13`), not this crate's. `ext/lain` has 15 `unsafe {` blocks
-  (`grep -rc 'unsafe {' ext/lain/src`, 2026-10-20). 9 are FFI-boundary calls in magnus's own
-  unsafe API; the other 6 sit in the 2 counting global allocators, `lib.rs`'s `heap` (the
-  extension's, behind `Lain::Ext::Probe.live_bytes`) and `dag.rs`'s test-only one, each an
-  `unsafe impl GlobalAlloc` forwarding to `System`. None can be removed, and forbidding them
-  would not compile. Every one carries a `SAFETY:` comment; that is
+  (`crates/lain-core/src/main.rs:13`), not this crate's. `ext/lain` has 16 `unsafe {` blocks
+  (`grep -rc 'unsafe {' ext/lain/src`, 2026-10-21). 9 are FFI-boundary calls in magnus's own
+  unsafe API, 1 is the `rb_nogvl` call below, and the other 6 sit in the 2 counting global
+  allocators, `lib.rs`'s `heap` (the extension's, behind `Lain::Ext::Probe.live_bytes`) and
+  `dag.rs`'s test-only one, each an `unsafe impl GlobalAlloc` forwarding to `System`. None can be
+  removed, and forbidding them would not compile. Every one carries a `SAFETY:` comment; that is
   the standard here. The root `CLAUDE.md`'s "NO `unsafe` in lain's Rust" means *do not hand-roll
   new unsafe* — reach for a crate — not that the existing FFI boundary is a defect.
+- **The one hand-rolled exception is the `rb_nogvl` call in `nogvl/ffi.rs`** (ruled
+  2026-10-21). No crate releases the GVL with an unblocking function: magnus 0.9.3 wraps no GVL
+  API, and its open PR 171 and lucchetto 0.4.0 both pass none, so a kill could not stop the work.
+  The block is the call alone. Both callbacks are safe fns, because the `void*` they get is a slot
+  index into a static table, never a pointer they dereference. A binding that needs the GVL
+  released calls `nogvl::without_gvl` rather than adding a second block. Its job reads its stop
+  request through `Cancel::requested` and returns `Halted`.
 - **Two doc lints, and only one of them bites today.** The crate-root `missing_docs` is just the
   `pub mod` tripwire: it only sees items reachable as public API from `lib.rs`, and every module
   here is private, so its scope is **zero items**. Do not read it as evidence the crate is
