@@ -154,7 +154,7 @@ Every spike worktree is removed.
 ## Open decisions
 
 - **YJIT by default.** Ruled 2026-10-21: off. The 2 specs red only under YJIT are being checked as latent races.
-- **The GVL route.** Ruled 2026-10-21: release it now, with early cancel and 1 unsafe block of our own (T17).
+- **The GVL route.** Ruled 2026-10-21: release it now, with early cancel and 1 unsafe block of our own (T17), then for TreeSitter, Bm25 and Fuzzy (T18 to T20).
 
 ## Dependency graph
 
@@ -174,6 +174,10 @@ flowchart LR
   T14 --> T16
   T16 --> T9
   T10 --> T17
+  T17 --> T18
+  T17 --> T19
+  T17 --> T20
+  T9 --> T21
 ```
 
 ## Tasks
@@ -914,6 +918,157 @@ Spec file: `spec/lain/rust/astgrep_spec.rb`; timings through `tmp/bench-stats` w
 - The cancel cannot reach the parse through ast-grep-core's public API without a fork.
 - `rake rust:mutants` shows a missed mutant in the new code that no spec can kill.
 
+### T18: Release the GVL around Ext::TreeSitter.query, with early cancel          [risk: high]
+
+**Depends on:** T17 (its release-and-cancel helper)
+**Files:** `ext/lain/src/treesitter.rs`, `ext/lain/src/lib.rs` (the TreeSitter wrapper only), `spec/lain/rust/treesitter_spec.rb`
+**Reuse:** T17's helper and its specs as the pattern; `tmp/bench-stats` for the timings
+**Shared-file wiring:** `ext/lain/mutants-baseline.txt` row for `treesitter.rs`
+**Reachable from:** `Survey::Chunker::Code` and `::Markdown`, the `file_symbols` tool, `Shell::Parse`
+
+The user ruled (2026-10-21) to release the GVL for this binding too. The query parses an in-memory string, as
+ast-grep does, so it takes T17's helper and the parse progress callback for cancel. `Shell::Parse` parses 1 short
+command per call, where releasing may cost more than it saves: measure it, and keep that caller on the held path if so.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: captures are unchanged
+  When the survey chunker's queries run over this checkout with the GVL released
+  Then every capture equals today's
+
+Scenario: the main thread keeps running during a large query
+  When a query over the largest source in this checkout runs on another thread
+  Then the main-thread ticker's p99 is within the layout spread of an idle main thread
+
+Scenario: a cancel stops a large parse early
+  When a query is cancelled 50 ms into a 7.8 MB source
+  Then it returns control within 20 ms and raises
+
+Scenario: a short command costs no more
+  When Shell::Parse reads a 1-line command
+  Then its per-call cost is within the layout spread of today's
+```
+Spec file: `spec/lain/rust/treesitter_spec.rb`
+
+**Stop and report if:**
+- No caller runs the query off the thread that must keep running: report the callers; releasing then buys nothing.
+- The helper needs a change: hand it back as a diff against T17's module.
+
+### T19: Release the GVL around Ext::Bm25 build and search          [risk: medium]
+
+**Depends on:** T17
+**Files:** `ext/lain/src/bm25.rs`, `ext/lain/src/lib.rs` (the Bm25 wrapper only), `spec/lain/rust/bm25_spec.rb`
+**Reuse:** T17's helper; `tmp/bench-stats`
+**Shared-file wiring:** `ext/lain/mutants-baseline.txt` row for `bm25.rs`
+**Reachable from:** the survey index (find its callers first)
+
+The index is pure Rust and frozen once built, so build (once the pairs are copied in) and search can run without
+the GVL. Cancel is checked between documents in build and between scored candidates in search.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: results are unchanged
+  When an index is built and searched over the survey corpus of this checkout
+  Then every ranking and score equals today's
+
+Scenario: the main thread keeps running during a build
+  When the index for this checkout is built on another thread
+  Then the main-thread ticker's p99 is within the layout spread of an idle main thread
+
+Scenario: a cancel stops a build early
+  When a build is cancelled midway
+  Then it returns control within 20 ms and raises, and no partial index is returned
+
+Scenario: a small search costs no more
+  When a search runs over a 100-document index
+  Then its per-call cost is within the layout spread of today's
+```
+Spec file: `spec/lain/rust/bm25_spec.rb`
+
+**Stop and report if:**
+- Build and search on this checkout's corpus both take under 5 ms: report the timings; the binding is not worth it.
+- The handle cannot be read without the GVL safely: name what the wrapper holds.
+
+### T20: Release the GVL around Ext::Fuzzy#match, and let a newer keystroke cancel it          [risk: medium]
+
+**Depends on:** T17
+**Files:** `ext/lain/src/fuzzy.rs`, `ext/lain/src/lib.rs` (the Fuzzy wrapper only), `spec/lain/rust/fuzzy_spec.rb`, `lib/lain/frontend/completion.rb` and `completion/sources.rb` only if the cancel needs the caller
+**Reuse:** T17's helper; `tmp/bench-stats` (`fuzzy_match` measure)
+**Shared-file wiring:** `ext/lain/mutants-baseline.txt` row for `fuzzy.rs`
+**Reachable from:** `@`-path tab completion in the line editor and the cockpit
+
+A match is about 16 ms at 50,000 paths, once per keystroke. Releasing the GVL lets the frontend keep painting, and a
+newer keystroke should cancel the older match instead of queueing behind it.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: matches are unchanged
+  When the 50,000-path matcher answers the recorded queries
+  Then every ranking equals today's
+
+Scenario: the frontend keeps running during a match
+  When a match over 50,000 paths runs on another thread
+  Then the main-thread ticker's p99 is within the layout spread of an idle main thread
+
+Scenario: a newer keystroke cancels the older match
+  Given a match over 50,000 paths is running
+  When the next keystroke starts a new match
+  Then the older one returns control within 5 ms and its result is never shown
+
+Scenario: a small match costs no more
+  When a match runs over 100 paths
+  Then its per-call cost is within the layout spread of today's
+```
+Spec file: `spec/lain/rust/fuzzy_spec.rb`, plus the completion spec at its mirrored path if the caller changes
+
+**Stop and report if:**
+- Completion matches on the thread that paints: releasing the GVL then frees nothing; report where it runs and what
+  moving it would take.
+
+### T21: Fix the 2 specs YJIT turned red          [risk: low]
+
+**Depends on:** T9 (its suite trial found them)
+**Files:** `spec/lain/seams/plain_chat_prompt_guards_spec.rb` (narrowed by the user on 2026-10-21: the hunk_spec example is left as it is, since YJIT stays off)
+**Reuse:** `tmp/yjit-races/report.md` and the probes beside it
+**Shared-file wiring:** none
+**Reachable from:** the suite
+
+The investigation (2026-10-21) found:
+
+1. `plain_chat_prompt_guards_spec.rb`, "announces the call once human> closes, then draws the [y/N]": a real race
+   in the fixture, present without YJIT. `ask_and_park` polls the rail's published kind every 20 ms, and
+   `Intake#publish` sets it about 10 ms before the TTY starts holding notes. A park in that gap prints the arrival
+   above an undrawn prompt, which is correct product behavior. Base passes on about 9 ms of margin. The fixture
+   must wait for the drawn prompt (`TTY#prompt_drawn?`) instead.
+2. `hunk_spec.rb`, "is shareable, but its key can only be computed on the main Ractor": YJIT calls a C method
+   not marked ractor-safe without the interpreter's `ractor_unsafe_check`, so once `Hunk#key` is compiled the
+   call succeeds on a non-main Ractor. Deterministic, set by the call count, not a race; no Ractor in `lib/`.
+   The example states the interpreter's behavior, so it is skipped under YJIT with that reason.
+
+Both go in `docs/toolchain-traps.md`: the fixture race under its flake list if it was ever recorded there, and the
+YJIT ractor check as a trap of its own (under YJIT, an unmarked method raises nothing off the main Ractor).
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: the fixture waits for the drawn prompt
+  Given a busy-wait of 12 ms is injected before Intake#publish, as the investigation's probe does
+  When the approval-queued example runs 10 times
+  Then it passes every time (today it fails 9 of 9)
+
+Scenario: the Ractor example holds where it can hold
+  When hunk_spec runs with review/session_spec under RUBYOPT=--yjit
+  Then the Ractor example is skipped with its reason, and nothing fails
+  And without YJIT it runs and passes
+```
+Spec file: the 2 spec files above
+
+**Stop and report if:**
+- The fixed fixture still fails under the injected delay: the product, not the fixture, is then in question.
+
 ## Integration checks
 
 After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]*/bin/parallel_rspec'` and
@@ -1088,3 +1243,11 @@ After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]
 - 12:28 User rulings: YJIT stays off; investigate the 2 YJIT-arm reds as possible latent races (agent, tmp/yjit-races/). GVL release is wanted now regardless, for future Rust tools; research a safe early-cancel design with minimal own unsafe (spike in tmp/worktrees/T10). A GVL implementation card follows that research.
 - 12:28 Integration on main `47bf381d`: zeitwerk-census --check, comment-census --check-tickets and --check-load-order, spec-census --check all exit 0 (spec-census at its ceilings, 184 and 49). Suite-level checks wait for the race investigation to release the box.
 - 12:32 Early-cancel research (tmp/worktrees/T10/early-cancel-research.md): no crate releases the GVL with an unblocking function (magnus 0.9.3 none, PR 171 and lucchetto 0.4.0 pass None). Design: rb_nogvl plus an unblocking fn setting an AtomicBool, read by tree-sitter 0.27 ParseOptions progress_callback and our own dfs/match_node loop every 64 nodes (ast-grep-core 0.45.3 public doc API, no fork), catch_unwind, slot index so callbacks are safe fns. 1 unsafe block. Cancel 50 ms into a 7.8 MB search: 2 ms median (today 993). ext/lain/CLAUDE.md bans hand-rolled new unsafe, so put to the user.
+- 12:39 User ruling: allow 1 unsafe block for the GVL release. T9 report `ff9a3249`, T10 report with the early-cancel follow-up `0c402242`, T17 card `b3ba16d5`. T17 (opus) started in tmp/worktrees/T17, cut from `b3ba16d5`. T10 worktree kept for its prototype.
+- 12:46 T17 stopped on wiring: rb_nogvl needs rb-sys as a direct dependency (magnus 0.9.1 does not re-export it); hand declaration would be a 2nd unsafe block. Applied in its worktree: rb-sys =0.9.130 (the version magnus already pulls in) in ext/lain/Cargo.toml and Cargo.lock. Continued, with a bound on retries after non-raising interrupts.
+- 12:52 User asked for the GVL release on TreeSitter, Bm25 and Fuzzy too: cards T18, T19, T20 added, each after T17. T17 told to build its release-and-cancel code as 1 reusable helper holding the 1 unsafe block.
+- 13:17 YJIT race investigation (tmp/yjit-races/report.md): the pty example is a real fixture race also present without YJIT (about 9 ms margin; injected delay fails base 10 of 12); the Ractor example is YJIT skipping ractor_unsafe_check, deterministic, no product race. Card T21 added for both. T21 (sonnet) started.
+- 13:19 User narrowed T21 to the pty fixture only; hunk_spec and the traps doc are left alone (YJIT is off).
+- 13:55 T21 low review: APPROVE-WITH-FIXES (1 optional nit, no inner deadline on the drawn-prompt wait; left, the outer 20 s wait bounds it). The reviewer could not run while the bench lock was held, so the main session reproduced it: old spec red 3 of 3 under the 12 ms delay, fixed spec green 5 of 5. T21 landed `665b1d5d` (attempt 1).
+- 14:45 T17 handed back. The helper (rb_nogvl with an unblocking fn, 64-slot table, catch_unwind, retry held after 4 quiet returns) is the 1 new unsafe block; 16 in the crate. Ticker p99 26.7 to 1.09 ms; kill 50 ms in 948.7 to 0.21 ms; per call 1.568 to 1.609 ms, within layout spread. A kill during the Ruby result build waits it out (about 57 ms on 11,522 matches); follow-up. Wiring applied in its worktree: the helper promoted to crate-level `src/nogvl.rs`.
+- 15:05 T17 high review: APPROVE-WITH-FIXES, 1 substantive (put nogvl in the mutants gate), 1 bug (a grammar refusal retried as a halt), 6 mechanical. Fix round: glue moved to `nogvl/ffi.rs`, nogvl.rs sweep 23 caught 26 unviable 0 missed; refusal is a SearchError; spec file 6.0 to 2.6 s. Wiring applied: rb-sys caret 0.9.130 (`links = "rb"` allows 1 copy), baseline row `ext/lain/src/nogvl.rs 23 26 0 0`, Rakefile MUTANT_FILES gains nogvl. Second review (narrow): APPROVE; the gate exits 0 on the new row.
