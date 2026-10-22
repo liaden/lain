@@ -482,7 +482,6 @@ module Lain
       # directory it runs in, for the journal alone.
       class Parsed
         BASIS = "parsed"
-        NUL = "\0"
 
         # @param resolver [#for] binds to a cwd, so each stage resolves where it runs
         # @param worker_env [WorkerEnv] the call's env, at the call's cwd
@@ -491,35 +490,21 @@ module Lain
           @worker_env = worker_env
         end
 
-        # A journal step must not fail the call it describes, so a NUL byte,
-        # which every path call raises on, and a filesystem error both leave
-        # the record it would have had without the parse.
+        # A journal step must not fail the call it describes, so a command
+        # whose stages cannot be told leaves the record it would have had
+        # without the parse.
         #
         # @param command [String]
         # @return [Array<Hash>, nil] one journal hash per stage a shell would
-        #   exec, builtins left out; nil when a stage could hide another program
+        #   exec, builtins left out; nil when its stages cannot be told
         def journal(command)
-          return if command.include?(NUL)
-
-          result = Shell::Parse.new.call(command)
-          return unless Shell::Verdict.literal?(result)
-
-          placed(result).reject { |stage, _| Shell::Verdict.builtin?(stage.argv.first) }
-                        .map { |stage, directory| entry(stage.argv, directory) }
-        rescue SystemCallError, IOError
-          nil
+          read = Shell::Stages.of(command, worker_env: @worker_env, resolver: @resolver)
+          read.stages.map { |stage| entry(stage) } if read.known?
         end
 
         private
 
-        def placed(result) = result.stages.zip(Shell::Named.directories(result, cwd: @worker_env.cwd, home: nil))
-
-        def entry(argv, directory)
-          executable = directory ? resolved(argv, directory) : Shell::Executable.unresolved(argv.first.to_s)
-          executable.to_journal.merge("basis" => BASIS, "cwd" => directory)
-        end
-
-        def resolved(argv, directory) = @resolver.for(@worker_env.with(cwd: directory)).call(Shell::Term.of(argv)).first
+        def entry(stage) = stage.executable.to_journal.merge("basis" => BASIS, "cwd" => stage.directory)
       end
       private_constant :Parsed
     end

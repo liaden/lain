@@ -116,8 +116,10 @@ module Lain
         nil
       end
 
+      # @param input [Object] as the model sent it
+      # @param name [String] the field
+      # @return [Object, nil] the field under its String or Symbol key; nil for an input that is not a Hash
       def self.field_of(input, name) = input.is_a?(Hash) ? input[name] || input[name.to_sym] : nil
-      private_class_method :field_of
 
       # @param result [Parse::Result] a parse a caller already holds
       # @param cwd [String] absolute directory the call runs in
@@ -143,6 +145,19 @@ module Lain
 
         Walk.new(result, cwd:, home:).directories
       end
+
+      # Read by the same walk as {.directories}, so a stage's words and its directory come from one reading.
+      #
+      # @param result [Parse::Result]
+      # @param cwd [String] absolute directory the call runs in
+      # @param home [String, nil] what a leading `~` names; with none, a `~` word cannot be told
+      # A plain glob is expanded as bash would, sorted, and kept as written when
+      # it matches nothing.
+      #
+      # @return [Array<Array(Array<String>, String)>, nil] one per stage: its words as bash passes them, and
+      #   the directory it runs in or nil; nil for a `**` or brace, an expansion, an escape, a word that is not
+      #   literal, or a glob in a stage it cannot place
+      def self.stages(result, cwd:, home:) = Walk.new(result, cwd:, home:).stages
 
       def opaque? = opaque
 
@@ -764,6 +779,7 @@ module Lain
         DESCRIPTOR = /\A(\d+|-)\z/
         NOT_A_NAME = ["", ".", ".."].freeze
         LONE_DASH = "-"
+        RECURSIVE = "**"
 
         Words = Data.define(:raws, :literals) do
           # An unreadable word stays as written; naming it makes the command opaque.
@@ -786,6 +802,15 @@ module Lain
 
           @result.stages.each_index.all? { |index| step(index) }
           Named.new(paths: @paths.uniq.freeze, opaque: @opaque)
+        end
+
+        # @return [Array<Array(Array<String>, String)>, nil]
+        def stages
+          return unless readable?
+
+          placed = directories
+          argvs = @result.stages.each_with_index.map { |stage, index| argv_of(stage, placed[index]) }
+          argvs.zip(placed) if argvs.all? { |argv| argv&.any? && argv.none?(&:nil?) }
         end
 
         # @return [Array<String, nil>]
@@ -816,6 +841,25 @@ module Lain
 
           name(stage, words)
           true
+        end
+
+        def argv_of(stage, directory)
+          literals = words_of(stage).literals
+          literals.flat_map { |literal| literal.glob? ? expanded(literal, directory) : [bash_text(literal)] } unless
+            literals.any?(&:nil?)
+        end
+
+        def expanded(literal, directory)
+          return [nil] if directory.nil? || literal.tilde || literal.pattern.include?(RECURSIVE)
+
+          matches = Dir.glob(literal.pattern, base: directory).sort
+          matches.empty? ? [literal.text] : matches
+        end
+
+        def bash_text(literal)
+          return literal.text unless literal.tilde
+
+          @home && literal.text.match?(HOMED) ? @home + literal.text.delete_prefix("~") : nil
         end
 
         def words_of(stage)

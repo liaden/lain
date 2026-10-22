@@ -49,6 +49,62 @@ module Lain
     # through {.detached}. This module is the one place an agent's tool stack is
     # assembled.
     module ToolGuard
+      # A run with no project root to class a program by classes it by the lease, which is a copy of the project.
+      LEASE_RESOLVER = lambda { |worker_env:, fresh:|
+        ::Lain::Shell::Executable::Resolver.new(root: worker_env.checkout, fresh:)
+      }
+
+      # One freshness per lease, keyed by the lease's own environment: an arm
+      # that spawns an agent per step builds a guard per step over that one
+      # object, and a later step must still read what an earlier one wrote as
+      # written. Keyed by identity, so a new lease cut at the same path starts
+      # its own clock.
+      #
+      # A file's ctime comes from the kernel's coarse clock, which trails the
+      # real one by up to a tick, so a write just after the start could stamp a
+      # ctime before it. The start is taken once the checkout exists, then the
+      # coarse clock is waited past it: everything the checkout wrote is no
+      # later than the start, and everything written after the wait is later.
+      class LeaseFreshness
+        # Far above any kernel tick, so it only bounds a clock that stopped.
+        TICK_BOUND = 0.05
+
+        Begun = Data.define(:fresh, :start)
+
+        def initialize
+          @by_lease = ObjectSpace::WeakMap.new
+          @lock = Mutex.new
+        end
+
+        # The wait is outside the lock, so one lease's tick never holds up another's build.
+        #
+        # @param worker_env [WorkerEnv] the lease's environment
+        # @return [Shell::Executable::Fresh]
+        def for(worker_env)
+          begun = @lock.synchronize { @by_lease[worker_env] ||= begin_now }
+          past_coarse_clock(begun.start)
+          begun.fresh
+        end
+
+        private
+
+        def begin_now
+          start = Time.now
+          Begun.new(fresh: ::Lain::Shell::Executable::Fresh.for_lineage([], clock: -> { start }), start:)
+        end
+
+        def past_coarse_clock(start)
+          floor = (start.to_i * 1_000_000_000) + start.nsec
+          deadline = RunClock::MONOTONIC.call + TICK_BOUND
+          sleep(0.0005) until coarse_now > floor || RunClock::MONOTONIC.call > deadline
+        end
+
+        def coarse_now = Process.clock_gettime(Process::CLOCK_REALTIME_COARSE, :nanosecond)
+      end
+
+      # The one a run with no chat reads, so every guard built over a lease shares its clock.
+      LEASES = LeaseFreshness.new
+
       # Everything the stack is built over, as ONE value: the run's one region
       # ledger, its approval queue (nil when nobody attends), its path policy,
       # its test layout run, the gate's policy, the policy a worker's gate asks
@@ -146,14 +202,17 @@ module Lain
       # holds. Until then its gate asks as the run's own agent. No current
       # caller spawns a role over it except through {#never_parking}, whose
       # copy names the child's role the same way.
-      Detached = Data.define(:chronicle, :guard_inputs, :requester) do
-        def initialize(chronicle:, guard_inputs:, requester: nil) = super
+      #
+      # `resolver` builds what a leased child's gate resolves a command through
+      # (`(worker_env:, fresh:) -> #for`), and `leases` holds each lease's freshness.
+      Detached = Data.define(:chronicle, :guard_inputs, :requester, :resolver, :leases) do
+        def initialize(chronicle:, guard_inputs:, requester: nil, resolver: LEASE_RESOLVER, leases: LEASES) = super
 
         # @param worker_env [WorkerEnv] the environment the child runs in
         # @param task [String, nil] what the child was spawned to do, asked about beside its name
         # @return [Middleware::Stack] a fresh one per child, over the one board
         def call(worker_env, task: nil)
-          return ToolGuard.leased(chronicle, guard_inputs, worker_env, requester:, task:) if worker_env.checkout
+          return leased(worker_env, task) if worker_env.checkout
 
           ToolGuard.working(chronicle, guard_inputs, worker_env,
                             ToolGuard.named(guard_inputs.policy_for.call(worker_env), requester, task:), requester:)
@@ -161,6 +220,14 @@ module Lain
 
         # @return [NeverParking]
         def never_parking = NeverParking.new(guard: self, requester: Approval::Judge::ROLE.to_s)
+
+        private
+
+        def leased(worker_env, task)
+          fresh = leases.for(worker_env)
+          ToolGuard.leased(chronicle, guard_inputs, worker_env, requester:, task:, fresh:,
+                                                                resolver: resolver.call(worker_env:, fresh:))
+        end
       end
 
       # A seam's builder as an approval judge spawns through it. The judge waits
@@ -241,25 +308,127 @@ module Lain
       # A command whose paths cannot be read is refused too: the lease's hold
       # checks only the paths a command names, and a loop, an expansion or an
       # inline script names none, so nothing else stands between it and a
-      # write outside the lease.
+      # write outside the lease. So is one whose stages cannot be told.
+      #
+      # So is code the run wrote, written spec included: the hold never reads
+      # a file's body, and no human is attached to vouch for it. The check
+      # covers the program a command runs, the files that program is known to
+      # run, and the regular files it hands an interpreter as an operand or a
+      # `-r` feature; it does not follow what those files load or require.
       class LeasedPolicy
         RUNG = "lease"
         ALLOW = Middleware::Gate::ApproveAll.new.freeze
         LEASED_READ = "this run is leased to %<lease>s and no human is attached to approve a call outside it; " \
                       "work inside %<lease>s"
         LEASED_OPAQUE = "this run is leased to %<lease>s and no human is attached, so a command whose paths " \
-                        "cannot be read is refused (a loop, $(...), cd then ;, sh -c, ruby -e, xargs); write a " \
-                        "script in %<lease>s and run it, or send the steps as separate calls"
+                        "cannot be read is refused (a loop, $(...), cd then ;, sh -c, ruby -e, xargs, a glob); " \
+                        "send the steps as separate calls"
+        LEASED_FRESH = "this run is leased to %<lease>s and no human is attached: %<written>s was written during " \
+                       "this run; a leased run cannot execute code it wrote"
+
+        # What a command would execute that this run wrote: each stage's
+        # program and the files it runs, and the regular files an interpreter
+        # is handed as an operand or as a `-r` feature under its `-I`
+        # directories. A directory is never itself code, so `-I.` over a
+        # directory the run added a file to refuses nothing alone; but a
+        # directory an interpreter is handed to run picks its own entry point,
+        # so that stage cannot be told.
+        class WrittenCode
+          INTERPRETERS = ::Lain::Shell::Executable::RunFiles::INTERPRETERS
+          PEEL = ::Lain::Shell::Executable::Resolver::Peel
+          INCLUDE = "-I"
+          REQUIRES = %w[-r --require].freeze
+          VALUED = [INCLUDE, *REQUIRES].freeze
+          SUFFIXES = ["", ".rb"].freeze
+
+          # @param fresh [#fresh?]
+          def initialize(fresh)
+            @fresh = fresh
+            freeze
+          end
+
+          # @param stages [Array<Shell::Stages::Stage>] every one placed
+          # @return [Array<String>] the written paths, each once
+          def in(stages) = stages.flat_map { |stage| [*programs(stage), *handed(stage)] }.uniq
+
+          # @param stages [Array<Shell::Stages::Stage>]
+          # @return [Boolean] whether an interpreter is handed a directory to run
+          def untellable?(stages)
+            stages.any? do |stage|
+              args = interpreted(stage.argv)
+              args && operands(args, stage.directory).any? { |path| File.directory?(path) }
+            end
+          end
+
+          private
+
+          def programs(stage) = stage.executable.programs.flat_map { |program| fresh_in(program, stage.directory) }
+
+          # A program behind `bundle exec` is named but not resolved, so a path it names is checked as written.
+          def fresh_in(program, directory)
+            [(program.realpath || program.resolved if program.fresh), *named_path(program, directory),
+             *program.run_files.select(&:fresh).map(&:path)].compact
+          end
+
+          def named_path(program, directory)
+            return [] unless program.klass == :unresolved && program.name.include?("/")
+
+            [File.expand_path(program.name, directory)].select { |path| written?(path) }
+          end
+
+          def handed(stage)
+            args = interpreted(stage.argv)
+            return [] unless args
+
+            [*operands(args, stage.directory), *required(args, stage.directory)].select { |path| written?(path) }
+          end
+
+          # The words after the interpreter a stage runs once its wrappers are peeled, as the resolver peels them.
+          def interpreted(argv)
+            return argv.drop(1) if INTERPRETERS.include?(File.basename(argv.first.to_s))
+
+            peel = PEEL.of(argv, {})
+            interpreted(peel.command) if peel&.command&.any?
+          end
+
+          def operands(args, directory)
+            args.each_with_index.reject { |word, at| word.start_with?("-") || value?(args, at) }
+                .map { |word, _| File.expand_path(word, directory) }
+          end
+
+          def value?(args, at) = at.positive? && VALUED.include?(args[at - 1])
+
+          def required(args, directory)
+            searched = [directory, *values(args, INCLUDE).map { File.expand_path(_1, directory) }]
+            REQUIRES.flat_map { values(args, _1) }.product(searched, SUFFIXES)
+                    .map { |feature, under, suffix| File.expand_path("#{feature}#{suffix}", under) }
+          end
+
+          def values(args, option)
+            [*args.each_cons(2).filter_map { |word, after| after if word == option },
+             *args.filter_map { |word| word.delete_prefix(option).delete_prefix("=") if attached?(word, option) }]
+          end
+
+          def attached?(word, option) = word.start_with?(option) && word != option
+
+          def written?(path) = File.file?(path) && @fresh.fresh?(path)
+        end
 
         # @param sensitivity [#gates?] the path policy the run's gate asks
         # @param lease [String] the checkout the run was leased
         # @param allow [#rule] who rules a call inside the lease; approves it by default
         # @param home [String, nil] what a `~` in a command names; with none, such a command is unreadable
-        def initialize(sensitivity:, lease:, allow: ALLOW, home: nil)
+        # @param resolver [#for] what a command's programs and the files they run resolve to
+        # @param fresh [#fresh?] whether a path was written during this run; nothing is by default
+        def initialize(sensitivity:, lease:, allow: ALLOW, home: nil,
+                       resolver: ::Lain::Shell::Executable::Resolver::NULL,
+                       fresh: ::Lain::Shell::Executable::Resolver::NeverFresh)
           @sensitivity = sensitivity
           @lease = lease
           @allow = allow
           @home = home
+          @resolver = resolver
+          @written = WrittenCode.new(fresh)
           freeze
         end
 
@@ -270,21 +439,32 @@ module Lain
           wording = refusal(effect, context)
           return @allow.rule(effect, context) unless wording
 
-          Approval::Escalation::Ruling.deny(rung: RUNG, because: format(wording, lease: @lease), final: true)
+          Approval::Escalation::Ruling.deny(rung: RUNG, because: wording, final: true)
         end
 
         private
 
         def refusal(effect, context)
-          return LEASED_READ if outside?(effect, context)
+          return format(LEASED_READ, lease: @lease) if outside?(effect, context)
 
-          LEASED_OPAQUE if unreadable?(effect, context)
+          command_refusal(effect, context) if effect.tool_call? && effect.name == "bash"
         end
 
-        def unreadable?(effect, context)
-          return false unless effect.tool_call? && effect.name == "bash"
+        def command_refusal(effect, context)
+          return format(LEASED_OPAQUE, lease: @lease) if opaque?(effect, context)
 
-          Middleware::ParsedCommand.named_in(effect, context, home: @home).opaque?
+          read = ::Lain::Shell::Stages.for_input(effect.input, worker_env: worker_env_of(context),
+                                                               resolver: @resolver, home: @home)
+          return format(LEASED_OPAQUE, lease: @lease) if !read.known? || @written.untellable?(read.stages)
+
+          written = @written.in(read.stages)
+          format(LEASED_FRESH, lease: @lease, written: written.join(", ")) if written.any?
+        end
+
+        def opaque?(effect, context) = Middleware::ParsedCommand.named_in(effect, context, home: @home).opaque?
+
+        def worker_env_of(context)
+          (context.respond_to?(:worker_env) ? context : ::Lain::Session::Null.instance).worker_env
         end
 
         def outside?(effect, context)
@@ -373,11 +553,19 @@ module Lain
       # chat's leased child is, and its gate refuses what that hold leaves to
       # a human, because nobody is attached to answer ({LeasedPolicy}).
       #
+      # @param chronicle [CLI::Chronicle] as on {.stack}
+      # @param inputs [Inputs] the guard's own
+      # @param worker_env [WorkerEnv] the leased child's, naming its checkout
+      # @param requester [Requester, String, nil] who the gate is asked for
+      # @param task [String, nil] what the child was spawned to do
+      # @param fresh [#fresh?] whether a path was written during the lease
+      # @param resolver [#for] what a command's programs resolve to, over `fresh`
       # @return [Middleware::Stack]
-      def leased(chronicle, inputs, worker_env, requester: nil, task: nil)
+      def leased(chronicle, inputs, worker_env, fresh:, resolver:, requester: nil, task: nil)
         held = confined(inputs, worker_env)
         policy = LeasedPolicy.new(sensitivity: held.sensitivity, lease: worker_env.checkout,
-                                  allow: inputs.policy_for.call(worker_env), home: inputs.sensitivity.home)
+                                  allow: inputs.policy_for.call(worker_env), home: inputs.sensitivity.home,
+                                  resolver:, fresh:)
         layered(chronicle, held, inputs.test_layout.roots_for(worker_env), named(policy, requester, task:),
                 requester:, held: held_for(worker_env, home: inputs.sensitivity.home))
       end

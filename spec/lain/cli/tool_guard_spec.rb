@@ -1430,17 +1430,173 @@ RSpec.describe Lain::CLI::ToolGuard do
 
     def bash_call(command) = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { command: })
 
-    it "refuses a command whose paths cannot be read, saying what to do instead" do
+    # A script the run writes is refused as written during the run, so advising one would advise a refusal.
+    it "refuses a command whose paths cannot be read, advising separate calls and no script" do
       ["cd /outside && for f in $(find . -name '*.rb'); do mv t \"$f\"; done", "cd /outside; rm x",
        "ruby -e 'File.write(\"/outside/x\", 1)'", "find . | xargs rm", "sh -c 'rm x'"].each do |command|
         ruling = policy.rule(bash_call(command), context)
 
         expect(ruling).to have_attributes(deny?: true, final?: true, rung: "lease"), command
-        expect(ruling.told).to eq(
-          "this run is leased to /work/wt and no human is attached, so a command whose paths cannot be read is " \
-          "refused (a loop, $(...), cd then ;, sh -c, ruby -e, xargs); write a script in /work/wt and run it, " \
-          "or send the steps as separate calls"
-        ), command
+        expect(ruling.told).to include("leased to /work/wt", "paths cannot be read", "separate calls"), command
+        expect(ruling.told).not_to include("script"), command
+      end
+    end
+
+    context "with a resolver over the run's own freshness" do
+      around do |example|
+        Dir.mktmpdir do |made|
+          @lease = File.realpath(made)
+          example.run
+        end
+      end
+
+      let(:leased_context) do
+        Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: @lease, env: {}, checkout: @lease))
+      end
+
+      def file(name, body = "touch /outside/x\n")
+        File.join(@lease, name).tap do |path|
+          FileUtils.mkdir_p(File.dirname(path))
+          File.write(path, body)
+          File.chmod(0o755, path)
+        end
+      end
+
+      def policy_over(written)
+        fresh = Lain::Shell::Executable::Fresh.new(start: Time.now, written:, stat: Lain::Shell::Executable::Stat.new)
+        resolver = Lain::Shell::Executable::Resolver.new(root: @lease, fresh:)
+        confined = Lain::Sensitivity::Policy::Null.instance.confined(roots: [@lease])
+        described_class::LeasedPolicy.new(sensitivity: confined, lease: @lease, resolver:, fresh:)
+      end
+
+      def refused_as_written?(ruling, written)
+        ruling.deny? && ruling.final? && ruling.rung == "lease" &&
+          ruling.told.include?("#{written} was written during this run; a leased run cannot execute code it wrote")
+      end
+
+      it "refuses a script written during this run, naming it, however the command spells it" do
+        written = file("add_loop.sh")
+        policy = policy_over([written])
+
+        ["bash add_loop.sh", "./add_loop.sh", "ls && sh add_loop.sh", %(bash "add_loop.sh"), "bash 'add_loop.sh'",
+         "bash add_loop.sh # note", "bash add_loop.sh '*'", "bundle exec ./add_loop.sh"].each do |command|
+          expect(refused_as_written?(policy.rule(bash_call(command), leased_context), written)).to be(true), command
+        end
+      end
+
+      it "refuses a written script a quoted interpreter runs" do
+        written = file("evil.rb")
+
+        ["ruby 'evil.rb'", "bundle exec ruby 'evil.rb'"].each do |command|
+          expect(refused_as_written?(policy_over([written]).rule(bash_call(command), leased_context), written))
+            .to be(true), command
+        end
+      end
+
+      it "refuses an interpreter handed a directory, whose entry point it cannot tell" do
+        file("pkg/__main__.py", "print(1)\n")
+
+        ruling = policy_over([]).rule(bash_call("python3 pkg"), leased_context)
+
+        expect(ruling).to have_attributes(deny?: true, final?: true, rung: "lease")
+        expect(ruling.told).to include("paths cannot be read")
+      end
+
+      it "refuses a glob that matches a written script, and approves one over files that predate the run" do
+        file("lib/a.rb", "1\n")
+        file("spec/a_spec.rb", "")
+        written = file("add_loop.sh")
+        policy = policy_over([written])
+
+        expect(refused_as_written?(policy.rule(bash_call("bash add_lo?p.sh"), leased_context), written)).to be(true)
+        ["ls lib/*.rb", "rspec spec/*_spec.rb", "wc -l lib/[ab].rb"].each do |command|
+          expect(policy.rule(bash_call(command), leased_context)).to have_attributes(allow?: true), command
+        end
+      end
+
+      it "refuses a written file an interpreter is handed as an operand or a required feature" do
+        file("bin/runs_arg.sh", "bash \"$1\"\n")
+        file("bin/check.rb", "1\n")
+        script = file("add_loop.sh")
+        feature = file("x.rb")
+        policy = policy_over([script, feature])
+
+        ["bash bin/runs_arg.sh add_loop.sh", "bundle exec bash bin/runs_arg.sh add_loop.sh"].each do |command|
+          expect(refused_as_written?(policy.rule(bash_call(command), leased_context), script)).to be(true), command
+        end
+        ["ruby -I. -rx bin/check.rb", "ruby -I . -r x bin/check.rb"].each do |command|
+          expect(refused_as_written?(policy.rule(bash_call(command), leased_context), feature)).to be(true), command
+        end
+      end
+
+      it "refuses a spec written during this run, since a spec is code the run wrote" do
+        written = file("spec/new_spec.rb", "")
+
+        expect(refused_as_written?(policy_over([written]).rule(bash_call("rspec spec/new_spec.rb"), leased_context),
+                                   written)).to be(true)
+      end
+
+      it "refuses a command whose words it cannot tell, as one whose paths cannot be read" do
+        file("lib/a.rb", "1\n")
+
+        ["ls lib/**/*.rb", "bash {lib,x}/a.rb"].each do |command|
+          ruling = policy_over([]).rule(bash_call(command), leased_context)
+
+          expect(ruling).to have_attributes(deny?: true, final?: true, rung: "lease"), command
+          expect(ruling.told).to include("paths cannot be read"), command
+        end
+      end
+
+      it "leaves a written file free to a program that does not run it, whatever its words name" do
+        policy = policy_over([file("add_loop.sh"), file("notes.txt", "ruby\n")])
+
+        ["cat add_loop.sh", "git add add_loop.sh", "ls -la", "grep -n ruby notes.txt", "grep -c sh add_loop.sh",
+         "wc -l add_loop.sh"].each do |command|
+          expect(policy.rule(bash_call(command), leased_context)).to have_attributes(allow?: true), command
+        end
+      end
+
+      it "approves a script and a test run over files that predate the run" do
+        file("check.sh")
+        file("Gemfile", "source 'https://rubygems.org'\n")
+        file("spec/old_spec.rb", "")
+        policy = policy_over([])
+
+        expect(policy.rule(bash_call("bash check.sh"), leased_context)).to have_attributes(allow?: true)
+        expect(policy.rule(bash_call("bundle exec rspec"), leased_context)).to have_attributes(allow?: true)
+      end
+    end
+
+    # A respawn over one lease builds a new guard, and must still read what an earlier step wrote as written.
+    describe "LeaseFreshness" do
+      subject(:freshness) { described_class::LeaseFreshness.new }
+
+      around do |example|
+        Dir.mktmpdir do |made|
+          @lease = File.realpath(made)
+          example.run
+        end
+      end
+
+      def lease = Lain::WorkerEnv.new(cwd: @lease, env: {}, checkout: @lease)
+
+      it "answers one freshness per lease, and another for another lease" do
+        env = lease
+
+        expect(freshness.for(env)).to be(freshness.for(env))
+        expect(freshness.for(lease)).not_to be(freshness.for(env))
+      end
+
+      it "reads a file written before the lease's start as not fresh, and one written just after as fresh" do
+        before = File.join(@lease, "before").tap { File.write(_1, "") }
+
+        read = Array.new(20) do |index|
+          fresh = freshness.for(lease)
+          after = File.join(@lease, "after_#{index}").tap { File.write(_1, "") }
+          [fresh.fresh?(before), fresh.fresh?(after)]
+        end
+
+        expect(read).to all(eq([false, true]))
       end
     end
 
@@ -1474,7 +1630,9 @@ RSpec.describe Lain::CLI::ToolGuard do
       sensitivity = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: lease), home:)
       inputs = described_class.detached(journal:).guard_inputs.with(sensitivity:)
       worker_env = Lain::WorkerEnv.new(cwd: lease, env: {}, checkout: lease)
-      stack = described_class.leased(chronicle, inputs, worker_env)
+      stack = described_class.leased(chronicle, inputs, worker_env,
+                                     fresh: Lain::Shell::Executable::Resolver::NeverFresh,
+                                     resolver: Lain::Shell::Executable::Resolver::NULL)
       Sync do
         dispatch_call("bash", { "command" => command }, toolset: Lain::Toolset.new([Lain::Tools::Bash.new]),
                                                         layers: stack.to_a, context: Lain::Session.new(worker_env:),

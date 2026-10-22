@@ -1450,6 +1450,31 @@ RSpec.describe Lain::Tools::Bash do
         expect(stages.first["run_files"].map { _1["path"] }).to eq([File.join(root, "x.rb")])
       end
 
+      it "journals the script a quoted command runs, its quotes undone as bash undoes them" do
+        File.write(File.join(root, "x.rb"), "")
+
+        run("ruby 'x.rb' # note", env: {})
+
+        expect(stages.map { _1.slice("resolved", "basis") })
+          .to eq([{ "resolved" => on_path("ruby"), "basis" => "parsed" }])
+        expect(stages.first["run_files"].map { _1["path"] }).to eq([File.join(root, "x.rb")])
+      end
+
+      it "journals the script a glob expands to" do
+        File.write(File.join(root, "x.rb"), "")
+
+        run("ruby x.r?", env: {})
+
+        expect(stages.first["run_files"].map { _1["path"] }).to eq([File.join(root, "x.rb")])
+      end
+
+      it "journals the one unresolved entry for a recursive glob, whose expansion it cannot tell" do
+        run("ruby **/x.rb", env: {})
+
+        expect(stages.map { _1.slice("name", "klass", "basis") })
+          .to eq([{ "name" => "ruby **/x.rb", "klass" => "unresolved" }])
+      end
+
       it "approves nothing with what it parsed: the call runs on the string arm, confined as unresolved" do
         crate
         requests = []

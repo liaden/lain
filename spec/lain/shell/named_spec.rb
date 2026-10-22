@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "tmpdir"
+
 RSpec.describe Lain::Shell::Named do
   def named(command, cwd: "/p", home: "/home/u") = described_class.of(command, cwd:, home:)
 
@@ -871,6 +873,58 @@ RSpec.describe Lain::Shell::Named do
     it "knows none for a command it cannot read, or a relative cwd" do
       expect(directories("echo $(id) && ls")).to eq([nil, nil])
       expect(directories("ls", cwd: "p")).to eq([nil])
+    end
+  end
+
+  describe ".stages" do
+    def stages(command, cwd: "/p", home: nil)
+      described_class.stages(Lain::Shell::Parse.new.call(command), cwd:, home:)
+    end
+
+    it "hands each stage's words as bash passes them, with the directory it runs in" do
+      expect(stages(%(bash "a b.sh" 'c' d # note))).to eq([[["bash", "a b.sh", "c", "d"], "/p"]])
+      expect(stages("ruby 'evil.rb' '*'")).to eq([[%w[ruby evil.rb *], "/p"]])
+    end
+
+    it "places each stage where a bound cd leaves it, and knows no directory past one it cannot bind" do
+      expect(stages("cd x && ls a")).to eq([[%w[cd x], "/p"], [%w[ls a], "/p/x"]])
+      expect(stages("cd x && ls\ncargo")).to eq([[%w[cd x], "/p"], [%w[ls], "/p/x"], [%w[cargo], nil]])
+    end
+
+    it "keeps a word written after a redirect, as bash does" do
+      expect(stages("echo a > o b")).to eq([[%w[echo a b], "/p"]])
+    end
+
+    it "reads a leading tilde as the home it is given" do
+      expect(stages("cat ~/notes.txt", home: "/home/u")).to eq([[%w[cat /home/u/notes.txt], "/p"]])
+    end
+
+    it "cannot tell for a recursive glob, a brace, an expansion, an escape, an assignment or a tilde with no home" do
+      ["ls **/*.rb", "ls lib/**", "cat $X", "cat a\\ b", "X=1 ls", "echo $(id)", "cat ~/x", "cat {a,b}"]
+        .each { |command| expect(stages(command)).to be_nil, command }
+    end
+
+    context "with a glob" do
+      around do |example|
+        Dir.mktmpdir do |made|
+          @dir = File.realpath(made)
+          %w[b.rb a.rb c.txt .d.rb].each { File.write(File.join(@dir, _1), "") }
+          example.run
+        end
+      end
+
+      it "expands it to the sorted names it matches where its stage runs" do
+        expect(stages("ls *.rb x?.txt", cwd: @dir)).to eq([[%w[ls a.rb b.rb x?.txt], @dir]])
+        expect(stages("ls #{@dir}/[ab].rb", cwd: "/p")).to eq([[["ls", "#{@dir}/a.rb", "#{@dir}/b.rb"], "/p"]])
+      end
+
+      it "keeps a quoted glob character as a name" do
+        expect(stages("ls '*'.rb a'?'.rb", cwd: @dir)).to eq([[%w[ls *.rb a?.rb], @dir]])
+      end
+
+      it "cannot tell a glob in a stage it cannot place" do
+        expect(stages("cd x && ls ; ls *.rb", cwd: @dir)).to be_nil
+      end
     end
   end
 

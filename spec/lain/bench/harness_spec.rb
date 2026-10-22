@@ -217,12 +217,20 @@ RSpec.describe Lain::Bench::Harness do
 
     def leased = Lain::WorkerEnv.new(cwd: @lease, env: {}, checkout: @lease)
 
-    def acted(tool, input, through: described_class::INSTRUMENTATION)
-      stack = through.call(journal:, recorder:, worker_env: leased).tool_middleware
+    def stack_for(through, worker_env: leased) = through.call(journal:, recorder:, worker_env:).tool_middleware
+
+    def acted(tool, input, through: described_class::INSTRUMENTATION, stack: stack_for(through), worker_env: leased)
       effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: tool.name, input:)
-      stack.call({ effect:, tool:, context: Lain::Session.new(worker_env: leased) }) do |inner|
+      stack.call({ effect:, tool:, context: Lain::Session.new(worker_env:) }) do |inner|
         invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: inner.fetch(:context))
         inner.merge(result: tool.call(inner.fetch(:effect).input, invocation))
+      end.fetch(:result)
+    end
+
+    def ruled_without_running(stack, command, worker_env:)
+      effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => command })
+      stack.call({ effect:, tool: Lain::Tools::Bash.new, context: Lain::Session.new(worker_env:) }) do |inner|
+        inner.merge(result: Lain::Tool::Result.ok("ran"))
       end.fetch(:result)
     end
 
@@ -269,8 +277,97 @@ RSpec.describe Lain::Bench::Harness do
 
         # The lease is left out: RedactSecretReads can mask a long temporary path in a bash result.
         expect(refused).to have_attributes(is_error: true, content: include("leased to", "paths cannot be read"))
+        expect(refused.content).not_to include("script")
       end
       expect(File.read(File.join(outside, "a.rb"))).to eq("kept\n")
+    end
+
+    def wrote(stack, name, body)
+      acted(Lain::Tools::WriteFile.new, { "path" => File.join(@lease, name), "content" => body }, stack:)
+    end
+
+    it "refuses a script the run wrote under both confinements, and nothing outside the worktree changes" do
+      outside = File.join(@tmp, "outside").tap { FileUtils.mkdir_p(_1) }
+
+      { "add_loop.sh" => described_class::INSTRUMENTATION, "add_loop_reader.sh" => reader }.each do |name, through|
+        stack = stack_for(through)
+        wrote(stack, name, "touch #{outside}/x\n")
+        refused = acted(Lain::Tools::Bash.new, { "command" => "bash #{name}" }, stack:)
+
+        expect(refused).to have_attributes(is_error: true, content: include("written during this run"))
+      end
+      expect(Dir.children(outside)).to be_empty
+    end
+
+    it "refuses a written script however the command spells it, under both confinements" do
+      outside = File.join(@tmp, "outside").tap { FileUtils.mkdir_p(_1) }
+
+      { "a" => described_class::INSTRUMENTATION, "b" => reader }.each do |tag, through|
+        stack = stack_for(through)
+        wrote(stack, "#{tag}.sh", "touch #{outside}/#{tag}sh\n")
+        wrote(stack, "#{tag}.rb", "File.write('#{outside}/#{tag}rb', 1)\n")
+
+        [%(bash "#{tag}.sh"), "bash '#{tag}.sh'", "bash #{tag}.sh # note", "bash #{tag}.s?", "bash #{tag}.sh '*'",
+         "ruby '#{tag}.rb'"].each do |command|
+          expect(acted(Lain::Tools::Bash.new, { "command" => command }, stack:)).to have_attributes(is_error: true),
+                                                                                    command
+        end
+      end
+      expect(Dir.children(outside)).to be_empty
+    end
+
+    it "refuses a spec the run wrote to a test runner, under both confinements" do
+      FileUtils.mkdir_p(File.join(@lease, "spec"))
+
+      { "a" => described_class::INSTRUMENTATION, "b" => reader }.each do |tag, through|
+        stack = stack_for(through)
+        expect(wrote(stack, "spec/#{tag}_spec.rb", "")).to have_attributes(is_error: false)
+
+        expect(acted(Lain::Tools::Bash.new, { "command" => "rspec spec/#{tag}_spec.rb" }, stack:))
+          .to have_attributes(is_error: true, content: include("written during this run")), tag
+      end
+    end
+
+    # DualLedger and OrchestratorWorker spawn a fresh agent per step over the lease's one environment.
+    it "refuses a script an earlier spawn over the same lease wrote, under both confinements" do
+      outside = File.join(@tmp, "outside").tap { FileUtils.mkdir_p(_1) }
+
+      { "step.sh" => described_class::INSTRUMENTATION, "step_reader.sh" => reader }.each do |name, through|
+        env = leased
+        wrote(stack_for(through, worker_env: env), name, "touch #{outside}/x\n")
+        respawned = stack_for(through, worker_env: env)
+
+        expect(acted(Lain::Tools::Bash.new, { "command" => "bash #{name}" }, stack: respawned, worker_env: env))
+          .to have_attributes(is_error: true, content: include("written during this run"))
+      end
+      expect(Dir.children(outside)).to be_empty
+    end
+
+    def cut_worktree
+      repo = File.join(@tmp, "repo").tap { FileUtils.mkdir_p(_1) }
+      FileUtils.cp_r("#{SeedRepo.at(SeedRepo::SEED)}/.", repo)
+      FileUtils.mkdir_p(File.join(repo, "bin"))
+      File.write(File.join(repo, "bin", "check.sh"), "true\n")
+      SeedRepo.git(repo, "add", "-A")
+      SeedRepo.git(repo, "commit", "-q", "-m", "check")
+      File.join(@tmp, "cut").tap { SeedRepo.git(repo, "worktree", "add", "-q", _1) }
+    end
+
+    # Both guards are built before the cut, as a run's are, so a freshness started then would read the checkout fresh.
+    it "approves a project script committed before the run, and a bundle exec, in a real worktree" do
+      guards = [described_class::INSTRUMENTATION, reader]
+      cut = cut_worktree
+      worker_env = Lain::WorkerEnv.new(cwd: cut, env: {}, checkout: cut)
+      commands = ["bash bin/check.sh", "bundle exec rspec"]
+
+      guards.each do |through|
+        stack = stack_for(through, worker_env:)
+
+        commands.each do |command|
+          expect(ruled_without_running(stack, command, worker_env:))
+            .to have_attributes(is_error: false, content: "ran"), command
+        end
+      end
     end
 
     it "runs a write inside the worktree and a bash ls with no approval asked" do

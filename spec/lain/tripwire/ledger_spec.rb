@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require "tmpdir"
 require "stringio"
 
 RSpec.describe Lain::Tripwire::Ledger do
@@ -94,6 +95,30 @@ RSpec.describe Lain::Tripwire::Ledger do
       approved(program("ruby", "/usr/bin/ruby", run_files: [script]))
 
       expect(tripwires.sole).to include("signal" => "fresh_run_file", "weight" => "strong")
+    end
+
+    # The bash tool journals a quoted command's parsed stages, so a quoted run of a written script still trips.
+    it "counts a written script a quoted command runs, as the bash tool journals it" do
+      Dir.mktmpdir do |made|
+        root = File.realpath(made)
+        script = File.join(root, "add_loop.sh").tap { File.write(_1, "true\n") }
+        fresh = Lain::Shell::Executable::Fresh.new(start: Time.now, written: [script],
+                                                   stat: Lain::Shell::Executable::Stat.new)
+        resolver = Lain::Shell::Executable::Resolver.new(root:, fresh:)
+        string_arm = Class.new do
+          define_method(:takes_term?) { |_term| false }
+          define_method(:child_env) { Lain::Exec::ChildEnv::DEFAULT }
+          define_method(:call) { |**| Lain::Exec::Capture.new(exit_status: 0, stdout: "", stderr: "") }
+        end.new
+        session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: root, env: {}))
+        write(escalation(rung: "rules", verdict: "allow"))
+
+        Lain::Tools::Bash.new(exec: string_arm, journal:, resolver:)
+                         .call({ command: "bash 'add_loop.sh'" }, Lain::Tool::Invocation.new(tool_use_id: "tu_1",
+                                                                                             context: session))
+
+        expect(tripwires.sole).to include("signal" => "fresh_run_file", "weight" => "strong")
+      end
     end
 
     it "still counts the refusals of an incomplete record" do
