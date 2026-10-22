@@ -91,11 +91,11 @@ RSpec.describe "manual-QA sandbox pane resolution", :seam do
 
   def alive?(identities) = identities.select { |pid, start, _| identity(pid)&.at(1) == start }
 
-  # TERM is ignored by exactly the processes that leaked, so KILL follows a
-  # short grace; the wait is a shortened grace, not a poll for an event.
+  # TERM is ignored by exactly the processes that leaked, so KILL follows once
+  # the grace runs out; a process that obeys TERM ends the wait early.
   def reap(identities)
     signal(identities, "TERM")
-    sleep 0.2
+    survivors_of(identities, within: 0.2)
     signal(identities, "KILL")
   end
 
@@ -107,11 +107,11 @@ RSpec.describe "manual-QA sandbox pane resolution", :seam do
     end
   end
 
-  # Event poll, ending at the first look with nothing alive; the 2s is only the
+  # Event poll, ending at the first look with nothing alive; `within` is only the
   # deadline after which a survivor is reported, since a KILLed process can take
   # a moment to be reaped by init.
-  def survivors_of(identities)
-    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 2
+  def survivors_of(identities, within: 2)
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + within
     left = alive?(identities)
     while left.any? && Process.clock_gettime(Process::CLOCK_MONOTONIC) < deadline
       sleep 0.05
@@ -206,16 +206,13 @@ RSpec.describe "manual-QA sandbox pane resolution", :seam do
   end
 
   # tmux answers before a pane's command has execed, so the shapes are not all
-  # present the instant `new-window` returns. Poll rather than sleep a guess --
-  # and sleep between polls, because a run that is going to fail would otherwise
-  # spin `bash` and `tmux` flat out for the whole deadline.
+  # present the instant `new-window` returns.
   def poll_panes(command_name)
     panes # build the sandbox and the server before asking anything about them
-    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 20
-    found = panes_running(command_name)
-    while !yield(found) && Process.clock_gettime(Process::CLOCK_MONOTONIC) < deadline
-      sleep 0.2
+    found = nil
+    wait_until(timeout: 20, reason: "panes running #{command_name}") do
       found = panes_running(command_name)
+      yield(found)
     end
     found
   end
@@ -229,9 +226,7 @@ RSpec.describe "manual-QA sandbox pane resolution", :seam do
   # An exclusion is evidence only once the excluded process exists; before it
   # has execed, a resolver that would count it has nothing to count yet.
   def await_process(pattern)
-    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 20
-    sleep 0.2 until system("pgrep", "-f", pattern, out: File::NULL) ||
-                    Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+    wait_until(timeout: 20, reason: "a process matching #{pattern}") { system("pgrep", "-f", pattern, out: File::NULL) }
   end
 
   def tooling? = system("command -v tmux >/dev/null 2>&1") && system("command -v nvim >/dev/null 2>&1")
