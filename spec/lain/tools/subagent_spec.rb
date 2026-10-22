@@ -477,6 +477,19 @@ RSpec.describe Lain::Tools::Subagent do
       expect(spawn.causal_parents).to include(parent.head_digest)
     end
 
+    it "journals the role the spawn was announced as, and omits the key for a spawn with none" do
+      plain_record = SpawnRecord.new
+      build_subagent(provider: mock(text_response("done")), observer: plain_record)
+        .call({ "prompt" => "go" }, invocation)
+
+      judge = Lain::Requester.new(name: "judge", role: "auto_approver")
+      build_subagent(provider: mock(text_response("done")), announces_as: judge)
+        .call({ "prompt" => "go" }, invocation)
+
+      expect(plain_record.spawn.body).not_to have_key("role")
+      expect(record.spawn.body).to include("role" => "auto_approver")
+    end
+
     # The Journal is the experiment record, so the recorded spawn has to
     # DETERMINE the child's toolset -- and `unattended` is the fourth thing the
     # policy decides. Written only when true, riding `lifecycle`'s conditional

@@ -19,8 +19,10 @@ module Lain
         # SUBSTITUTE for it -- or @log's mailbox fold silently stops.
         # `lane` names the spawn lane an actor is launched in; empty for the
         # run's own. See {#spawn}.
-        def initialize(policy:, log: Log::Null, observer: EventLog::ChainWriter::Null.new, lane: "", twins: Twins::Null)
+        def initialize(policy:, log: Log::Null, observer: EventLog::ChainWriter::Null.new, lane: "", twins: Twins::Null,
+                       role: nil)
           @policy = policy
+          @role = role
           @log = log
           @lane = lane
           @adoptions = Hash.new(0)
@@ -48,7 +50,9 @@ module Lain
         # ordinal k, so the 1st keeps the address a lone spawn takes and a
         # replay by a new writer, over the same Store, resolves the same digests.
         #
-        # `lifecycle`, `adoption` and `unattended` are written CONDITIONALLY.
+        # `lifecycle`, `adoption`, `unattended` and `role` are written CONDITIONALLY.
+        # `role` is what lets a lineage reader tell a judge's spawn from a worker's:
+        # `unattended` is shared by several roles and names none.
         # `unattended` is in the record because without it a recorded spawn no
         # longer determines the child's toolset, the one property a bench reader
         # replays a spawn to check.
@@ -72,6 +76,7 @@ module Lain
           body = { "prefix" => @policy.prefix.label, "posture" => @policy.posture.label,
                    "only" => @policy.only, "spawned_from" => head, "task" => Canonical.digest(prompt) }
           body["unattended"] = true if @policy.unattended
+          body["role"] = @role if @role
           if adoptable?(lifecycle)
             body.merge!(adopted(head, lifecycle, body, parent.store))
           else

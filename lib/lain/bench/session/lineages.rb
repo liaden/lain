@@ -48,7 +48,10 @@ module Lain
         #
         # @param recording [#messages, #timeline] a {Recording}, whole-file
         #   integrity already checked
-        def self.of(recording) = new(messages: recording.messages, store: recording.timeline.store)
+        # @param skip_roles [Array<String>] spawn roles left out
+        def self.of(recording, skip_roles: [])
+          new(messages: recording.messages, store: recording.timeline.store, skip_roles:)
+        end
 
         # The lineages a session file records, its Store landed through any
         # resume chain from the files beside it -- `resumed_from` names a
@@ -61,9 +64,11 @@ module Lain
         # a record cites it.
         #
         # @param path [String]
+        # @param skip_roles [Array<String>] spawn roles left out; a spawn
+        #   recorded without a role is always kept
         # @raise [Corrupt] naming the file, for any damage
-        def self.read(path)
-          from(whole_records(File.foreach(path)), resolve: beside(path), whole: true)
+        def self.read(path, skip_roles: Role::Catalog::MACHINERY)
+          from(whole_records(File.foreach(path)), resolve: beside(path), whole: true, skip_roles:)
         rescue Corrupt => e
           raise Corrupt, "#{path}: #{e.message}"
         end
@@ -86,7 +91,7 @@ module Lain
         # @param resolve [#call] `basename -> entries` for a resumed slice;
         #   refuses by default, since a slice carries no directory to look in
         def self.recorded_in(entries, resolve: UNCHAINED)
-          from(whole_records(entries), resolve:, whole: false)
+          from(whole_records(entries), resolve:, whole: false, skip_roles: [])
         end
 
         # A writer killed mid-record tears only the LAST line. A line that does
@@ -119,14 +124,14 @@ module Lain
         # Store holds a resume chain's prior events too, and those are the prior
         # file's lineages. Every record kept is forced, which is what refuses
         # damage.
-        def self.from(records, resolve:, whole:)
+        def self.from(records, resolve:, whole:, skip_roles:)
           unless records.any? { |record| completion_record?(record) }
-            return new(messages: [], store: Dag::Factory.store)
+            return new(messages: [], store: Dag::Factory.store, skip_roles:)
           end
 
           loader = Loader.new(records, resolve:)
           settle(loader, whole:)
-          new(messages: events(records, loader.store), store: loader.store)
+          new(messages: events(records, loader.store), store: loader.store, skip_roles:)
         end
         private_class_method :from
 
@@ -149,9 +154,11 @@ module Lain
         # @param messages [Enumerable<Ext::Event>] the session's :message/:spawn
         #   events, in file order
         # @param store [Ext::Store] the Store they, and every turn they cite, landed in
-        def initialize(messages:, store:)
+        # @param skip_roles [Array<String>] spawn roles whose lineages are not yielded
+        def initialize(messages:, store:, skip_roles: [])
           @messages = messages
           @store = store
+          @skip_roles = skip_roles
         end
 
         # Twin completions -- the same work from one head, answered alike --
@@ -161,7 +168,8 @@ module Lain
         def each(&)
           return enum_for(:each) unless block_given?
 
-          completions.uniq(&:digest).each { |completion| yield lineage(completion) }
+          completions.uniq(&:digest).select { |completion| kept?(completion) }
+                     .each { |completion| yield lineage(completion) }
         end
 
         private
@@ -176,6 +184,8 @@ module Lain
             event.kind == :message && StatusFeed::SpawnLifecycle.new(event).finished? && event.body.key?("final")
           end
         end
+
+        def kept?(completion) = !@skip_roles.include?(spawn_of(completion).body["role"])
 
         def lineage(completion)
           spawn = spawn_of(completion)

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require "stringio"
 require "tmpdir"
 
 # The one reader of a session's subagent lineages, over the shape a chat
@@ -23,6 +24,33 @@ RSpec.describe Lain::Bench::Session::Lineages do
   def lineages_of(session) = described_class.of(Lain::Bench::Session.load(session.lines))
 
   def texts(turns) = turns.map { |turn| turn.content.first["text"] }
+
+  describe "a spawn's role" do
+    def answers(lineages) = lineages.map { |lineage| texts(lineage.child_turns).last }
+
+    let(:lines) { RoleSession.lines(%w[auto_approver ruled], %w[researcher found], %w[gate_adjudicator judged]) }
+
+    def written(lines)
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "s.ndjson")
+        File.write(path, lines.join)
+        yield path
+      end
+    end
+
+    it "reads a worker's lineage and not the machinery roles', by default from a file" do
+      expect(written(lines) { |path| answers(described_class.read(path)) }).to eq(["found"])
+    end
+
+    it "reads every lineage when told to skip no role" do
+      expect(written(lines) { |path| answers(described_class.read(path, skip_roles: [])) })
+        .to eq(%w[ruled found judged])
+    end
+
+    it "reads every completed lineage of an old file whose spawns carry no role" do
+      expect(written(two_spawns.lines) { |path| described_class.read(path).count }).to eq(2)
+    end
+  end
 
   describe "a chat that spawned two one-shot subagents" do
     let(:session) { two_spawns }

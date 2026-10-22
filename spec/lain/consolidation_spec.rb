@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "stringio"
 require "tmpdir"
 
 # The court-clerk consolidation pass. Offline, it takes a session's COMPLETED
@@ -62,6 +63,21 @@ RSpec.describe Lain::Consolidation do
       request.messages.flat_map { |message| Array(message["content"]).grep(Hash) }
     end
     blocks.select { |block| block["type"] == "tool_result" }.map { |block| block["content"].to_s }.join("\n")
+  end
+
+  describe "a session where the approval judge ruled once and a researcher finished once" do
+    let(:path) { File.join(@root, "judged.ndjson") }
+
+    before { File.write(path, RoleSession.lines(%w[auto_approver ruled], %w[researcher found]).join) }
+
+    it "clerks the researcher's lineage only" do
+      provider = Lain::Provider::Mock.new(responses: [text_response("noted")])
+
+      outcomes = consolidation(provider).call(Lain::Bench::Session::Lineages.read(path))
+
+      expect(outcomes.size).to eq(1)
+      expect(prompts_seen(provider).join).to include("found").and(satisfy { |seen| !seen.include?("ruled") })
+    end
   end
 
   describe "a clerk whose answer is a failed stop" do

@@ -119,6 +119,9 @@ module Lain
                  only: %i[read_file list_files glob grep edit_file write_file todo_write bash subagent run_skill])
       ].to_h { |role| [role.name, role] }.freeze
 
+      # Spawns a lineage reader skips: they are the harness ruling, not work.
+      MACHINERY = %w[auto_approver gate_adjudicator].freeze
+
       class << self
         # The roles that decide or inform an approval: they render sealed, and
         # {Prompt::Slots} refuses a project file rewriting any of them.

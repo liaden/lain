@@ -131,7 +131,7 @@ http_interactions:
       encoding: UTF-8
       string: '{"model":"lfm2.5:latest","tools":["list_files","memory_read","memory_write","read_file"],"option_keys":["num_batch","num_predict"],"last_message":["user","You
         are consolidating one completed subagent lineage into durable memory.\n\nLineage
-        spawn (cite this as the evidence/source of every memory you write): blake3:6fff047f0cc8bc13bd4d5e8fe93ec5dc845e1f0e3dda44f3ff07ced045e56ff0\nSpawned
+        spawn (cite this as the evidence/source of every memory you write): blake3:dc4a89e4c1bb034b33473096ce96b892dacadf89cf19af5b4afb110c3c931250\nSpawned
         from parent turn: \nTurns in this lineage: 2\n\nTranscript:\n[user] Answer
         the request in one short sentence. Do not call any tools.\n\n\nWhat colour
         is a clear daytime sky?\n[assistant] <think>\nThe user asks: \"Answer the
@@ -419,7 +419,7 @@ http_interactions:
         knob each already points at):\nno friction found -- analyzers run: Grader::FrustrationRepair,
         Grader::ToolSteering, Bench::Rewrites, Friction::CacheWaste\n\nSession digest
         summary (2 turn(s) -- cite these digests as the evidence behind any note):\nsubagent
-        blake3:6fff047f0cc8bc13bd4d5e8fe93ec5dc845e1f0e3dda44f3ff07ced045e56ff0, spawned
+        blake3:dc4a89e4c1bb034b33473096ce96b892dacadf89cf19af5b4afb110c3c931250, spawned
         from :\n  [user] blake3:5d8114abace65d85799be6398c92c36cf760d145b4f4cfd34328ddba8851c1e8
         Answer the request in one short sentence. Do not call any tools.\n\n\nWhat
         colour is a clear daytime sky?\n  [assistant] blake3:392e1888b1a41edc7c1bcd2ed4696317647f26859ed3df0f7e154dab5491a1b7

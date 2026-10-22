@@ -458,7 +458,8 @@ module Lain
       # {StatusFeed}'s fleet field; the seam's journal is the same session file,
       # so writing the event there too would record every transition twice.
       def lineage
-        @lineage ||= Lineage.new(policy:, log: @log, observer:, lane: isolation.lane.name, twins: @seam.twins)
+        @lineage ||= Lineage.new(policy:, log: @log, observer:, lane: isolation.lane.name, twins: @seam.twins,
+                                 role: @announces_as.role)
       end
 
       # Mode fails loudly here: a mistyped mode must not silently fall through
