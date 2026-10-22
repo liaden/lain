@@ -1539,6 +1539,22 @@ RSpec.describe Lain::Compaction::Source do
       expect(decisions.map { |record| record["compacted"] }).to eq([true])
     end
 
+    # A run's window book holds a clock Proc, so a per-model ceiling over one is
+    # unshareable; the compacted turn must still send the ceiling the live slot resolves.
+    it "compacts a base Context carrying a per-model ceiling, sending the ceiling of the model in force" do
+      book = Lain::CLI::Backend::WindowBook
+      unresolved = book::Unresolved.new(Lain::CLI::Backend::MissingAPIKey.new("no key"))
+      window = book::Live.new(source: book.new(run: unresolved))
+      slot = Lain::Context::ModelSwitch.new("claude-opus-4-6", journal:)
+      live = Lain::Context.new(model: slot, max_tokens: Lain::OutputCeiling::PerModel.new(window:))
+      line = timeline
+      before = render(context_for(forcing, line, base: live), line).max_tokens
+      slot.switch("claude-haiku-4-5", surface: "tty")
+
+      expect([before, render(context_for(forcing, line, base: live), line).max_tokens]).to eq([128_000, 64_000])
+      expect(decisions.map { |record| record["compacted"] }).to eq([true, true])
+    end
+
     it "carries the keep_last a re-derivation needs on the edge" do
       context_for(forcing, timeline)
 

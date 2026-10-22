@@ -74,7 +74,7 @@ module Lain
     #
     # THE SUMMARIZING BRANCH'S RETURN MUST NEVER BE REACHABLE FROM ANYTHING
     # HANDED TO `Ractor.make_shareable` ({Scheduler::COMPOSE},
-    # {Source::BASE_PROVIDER}): it holds a live oracle and a mutable memo, so
+    # {Context#pipeline_provider}): it holds a live oracle and a mutable memo, so
     # it is not, and cannot be made, `Ractor.shareable?`. The two ways that
     # goes wrong are NOT symmetric. The LIVE tier this class builds fails by
     # accident -- {Oracle::Recorded::Journaling}'s default `clock:` is a Proc,

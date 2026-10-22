@@ -562,12 +562,10 @@ RSpec.describe Lain::Context do
   # The ceiling is a slot like the model: an untyped one resolves for the model
   # in force when the Context renders, so a `/model` switch moves it.
   describe "a per-model output ceiling" do
-    let(:per_model) do
-      Lain::OutputCeiling::PerModel.new(
-        window: double(resolve: Lain::ContextWindow::WindowResolution.new(window_tokens: 1_000_000,
-                                                                          provenance: :published))
-      )
+    let(:per_model_window) do
+      Lain::ContextWindow::WindowResolution.new(window_tokens: 1_000_000, provenance: :published)
     end
+    let(:per_model) { Lain::OutputCeiling::PerModel.new(window: double(resolve: per_model_window)) }
 
     it "renders the ceiling of the model in force, and keeps the slot through a copy" do
       switch = Lain::Context::ModelSwitch.new("claude-opus-4-6", journal: Lain::Journal.new(io: StringIO.new))
@@ -576,6 +574,22 @@ RSpec.describe Lain::Context do
       switch.switch("claude-haiku-4-5", surface: "tty")
 
       expect([before, live.render(timeline:, toolset:).max_tokens]).to eq([128_000, 64_000])
+    end
+
+    # Compaction composes over this inside `Ractor.make_shareable`, so it must
+    # hold neither live slot: the /model switch nor a ceiling over the window book.
+    it "hands out its render strategy as a shareable provider while the Context itself is not" do
+      switch = Lain::Context::ModelSwitch.new("claude-opus-4-6", journal: Lain::Journal.new(io: StringIO.new))
+      book = Lain::CLI::Backend::WindowBook
+      unresolved = book::Unresolved.new(Lain::CLI::Backend::MissingAPIKey.new("no key"))
+      ceiling = Lain::OutputCeiling::PerModel.new(window: book::Live.new(source: book.new(run: unresolved)))
+      live = described_class.new(model: switch, max_tokens: ceiling, pipeline: T21PipelineProviders::DEFAULT)
+      workspace = Lain::Workspace.new(reminders: ["LIVE"])
+
+      expect([Ractor.shareable?(live), Ractor.shareable?(live.pipeline_provider)]).to eq([false, true])
+      messages = [{ "role" => "user", "content" => [{ "type" => "text", "text" => "hi" }] }]
+      expect(live.pipeline_provider.call(workspace).call(messages)).to eq(live.pipeline_for(workspace).call(messages))
+      expect(live.pipeline_provider.call(workspace).call(messages).to_s).to include("LIVE")
     end
 
     it "keeps a typed ceiling whatever the model" do

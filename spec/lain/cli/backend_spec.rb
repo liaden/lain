@@ -1706,6 +1706,37 @@ RSpec.describe Lain::CLI::Backend do
       expect(decisions.last.compacted).to be(false)
     end
 
+    # A per-model ceiling reaches the run's window book, whose clock Proc no
+    # `make_shareable` can freeze, so neither a committing nor a holding turn
+    # may carry the Context into a shareable pipeline.
+    it "commits a cut and then holds it under the per-model ceiling a launch with no --max-tokens builds" do
+      backend = compacting_backend(max_tokens: nil, compact_strategy: "elide", compact_bytes: 200, compact_cap: 100,
+                                   compact_keep: 1)
+      source = backend.pipeline_source(cache_profile: profile, journal:)
+      session = Lain::Session.new(journal: Lain::Channel::Null.instance)
+      first = tool_history(6)
+      later = first.commit(role: "user", content: [{ "type" => "text", "text" => "and now?" }])
+      turns = [first, later].map do |timeline|
+        source.context_for(base: backend.context, timeline:, usage: nil, session:).render(timeline:, toolset:)
+      end
+
+      expect([decisions.map(&:compacted), session.compaction_cuts.size]).to eq([[true, false], 1])
+      expect(turns.map(&:max_tokens)).to eq([128_000, 128_000])
+    end
+
+    # Paired tool calls, so elision has results to drop and the chain stays well formed.
+    def tool_history(pairs)
+      (1..pairs).inject(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)) do |line, index|
+        id = "tu_#{index}"
+        line.commit(role: "user", content: [{ "type" => "text", "text" => "look #{index}" }])
+            .commit(role: "assistant",
+                    content: [{ "type" => "tool_use", "id" => id, "name" => "read_file", "input" => {} }])
+            .commit(role: "user", content: [{ "type" => "tool_result", "tool_use_id" => id,
+                                              "content" => "the quick brown fox. " * 40 }])
+            .commit(role: "assistant", content: [{ "type" => "text", "text" => "seen #{index}" }])
+      end
+    end
+
     # The decision lands on EVERY turn, deferring ones included: Agent#render_request
     # delegates to a collaborator that reports nothing back, so this record is the
     # only trace the choice was made -- and on a bench whose deliverable is

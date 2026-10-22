@@ -148,11 +148,29 @@ module Lain
     # Session's live reminders from every wrapped render, and NOTHING catches
     # it, because the composed `#requires` is a union and still reports
     # `[:prompt_caching]`.
-    def pipeline_for(workspace)
-      return self.class.pipeline(workspace) if @pipeline.nil?
+    def pipeline_for(workspace) = self.class.resolve_pipeline(@pipeline, workspace)
 
-      Context.combinator_for(@pipeline, workspace)
+    # {#pipeline_for} as a `->(workspace)` that holds only what it reads -- this
+    # class and the stored pipeline -- so a composition handed to
+    # `Ractor.make_shareable` never reaches the live model or ceiling slot.
+    #
+    # @return [Proc] Ractor-shareable
+    def pipeline_provider = PIPELINE_PROVIDER.call(self.class, @pipeline)
+
+    # The one rule both {#pipeline_for} and {#pipeline_provider} resolve by.
+    #
+    # @param pipeline [#requires, #call, nil] a Context's stored pipeline
+    # @param workspace [Workspace] this render's Workspace, live
+    # @return [Context::Combinator]
+    def self.resolve_pipeline(pipeline, workspace)
+      pipeline.nil? ? self.pipeline(workspace) : combinator_for(pipeline, workspace)
     end
+
+    # Built at class scope so the Proc's `self` is this class, never a Context.
+    PIPELINE_PROVIDER = lambda do |klass, pipeline|
+      Ractor.make_shareable(->(workspace) { klass.resolve_pipeline(pipeline, workspace) })
+    end
+    private_constant :PIPELINE_PROVIDER
 
     # What an injected pipeline MEANS for one render. The duck is PUBLIC and has
     # four consumers, each of which used to hold this same expression under a

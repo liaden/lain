@@ -956,7 +956,11 @@ module Lain
       # a summary that failed collapsed nothing and cannot shrink the render,
       # so no cut exists until its replacement text does.
       def commit(base:, held_cut:, head:, need:, outcome:, scheduler:, rewrite:, occupancy:, provenance:, cold:)
-        provider = BASE_PROVIDER.call(flattened_twin(base))
+        # The provider, never `base.class.pipeline`, which discards an injected
+        # pipeline, nor a combinator, which would freeze the Workspace that
+        # Reminder must read live. It holds neither the `/model` slot nor an
+        # unset ceiling's window book, so the shareable pipeline holds no Context.
+        provider = base.pipeline_provider
         pipeline = scheduler.pipeline(need:, cold:, history_size: head.bytesize,
                                       base: provider, rewrite:, ran_under: base.model,
                                       collapse_strategy: @collapse_strategy)
@@ -968,29 +972,15 @@ module Lain
         base.with_pipeline(pipeline)
       end
 
-      # The held render onto the live base, through the same flattened twin a
+      # The held render onto the live base, over the same provider a
       # compacting turn composes over, and WITHOUT a {Scheduler}: nothing was
       # decided this turn, so there is no compaction for one to journal.
       def holding(base, held_cut)
         held = held_cut.outcome
         return base if held.refused?
 
-        base.with_pipeline(HOLD.call(held.replay, BASE_PROVIDER.call(flattened_twin(base))))
+        base.with_pipeline(HOLD.call(held.replay, base.pipeline_provider))
       end
-
-      # The MAIN chat Context is deliberately not `Ractor.shareable?`: `/model`
-      # writes a live {Context::ModelSwitch} into its model slot, which is
-      # mutable by design. A provider closing over THAT fails
-      # {Scheduler::COMPOSE}'s `make_shareable` on the first compacting turn of
-      # every real `lain chat` -- found by wiring this live, invisible to a
-      # spec that builds a plain Context.
-      #
-      # The render pipeline does not depend on the model (`#pipeline_for` never
-      # reads it, and both Contexts report the same `#requires`), so the
-      # PROVIDER is built from a twin whose slot is flattened to a frozen
-      # {Context::StaticModel} while the pipeline is applied to the LIVE base
-      # -- which keeps `/model` switchable from the next turn on.
-      def flattened_twin(base) = base.with_model(base.model)
 
       # Built here, judged by {Diagnosis} and routed by {Reporting} -- the
       # record every turn, the operator only when the fact moves.
@@ -1022,28 +1012,6 @@ module Lain
       # A fresh Scheduler per turn, because the combinator it is frozen around
       # is this turn's. Both are cheap frozen values.
       def scheduler_for(compact) = @scheduling.call(compact)
-
-      # The base render strategy as a `->(workspace)` provider, asked of the
-      # Context PER RENDER.
-      #
-      # `#pipeline_for` and nothing else: `base.class.pipeline(workspace)`
-      # silently discards an injected pipeline, and a hand-rolled stand-in that
-      # omits {Context::Reminder} drops the session's live reminders from every
-      # compacting render with nothing failing -- the composed `#requires` is a
-      # union, so it still reports the same capabilities.
-      #
-      # A provider rather than the combinator `#pipeline_for` returns, because
-      # a raw combinator would freeze whatever Workspace it was built around,
-      # and Reminder must see the LIVE one.
-      #
-      # A module-scope lambda, for the reason {Scheduler::COMPOSE} spells out:
-      # a Proc built inside an instance method captures that instance as its
-      # `self`, which would carry this object -- its live Eager, its Cold, its
-      # journal -- into the pipeline and fail `Ractor.make_shareable`.
-      BASE_PROVIDER = lambda do |base|
-        Ractor.make_shareable(->(workspace) { base.pipeline_for(workspace) })
-      end
-      private_constant :BASE_PROVIDER
 
       # {Scheduler::COMPOSE}'s shape, for a held render no scheduler decided:
       # the replay rides ahead of the base, and it is a module-scope lambda for
