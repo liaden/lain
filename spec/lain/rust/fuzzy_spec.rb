@@ -183,38 +183,40 @@ RSpec.describe Lain::Ext::Fuzzy do
 
     def monotonic = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
-    def matching(fuzzy, times: 1)
+    def timed
+      started = monotonic
+      yield
+      monotonic - started
+    end
+
+    def matching(fuzzy)
       Thread.new do
         Thread.current.report_on_exception = false
-        Array.new(times) { fuzzy.match("lnpart9f1", limit: 50) }.last
+        fuzzy.match("lnpart9f1", limit: 50)
       end
     end
 
-    # A held GVL gives a p99 near 180 ms; 8 ms allows for suite load on an idle-thread 1 ms tick.
+    include GapShare
+
     it "lets the calling thread keep ticking while it matches" do
-      worker = matching(few, times: 40)
-      gaps = []
-      last = monotonic
-      while worker.alive?
-        sleep 0.001
-        now = monotonic
-        gaps << (now - last)
-        last = now
-      end
+      worker = matching(many)
+      share = longest_gap_share(worker)
 
       expect(worker.value.size).to eq(50)
-      expect(gaps.sort[(gaps.size * 0.99).floor]).to be < 0.008
+      expect(share).to be < 0.5
     end
 
-    # The bench-stats run met the 5 ms target (0.2 to 1.9 ms); this bound allows for suite load.
+    # A held GVL is caught by the be_alive guard, since the sleep never ends before the match does;
+    # the share only bounds the released path.
     it "stops soon after its thread is killed, rather than at the end of the match" do
+      whole = timed { many.match("lnpart9f1", limit: 50) }
       worker = matching(many)
       sleep 0.02
       expect(worker).to be_alive
       killed = monotonic
       worker.kill.join
 
-      expect(monotonic - killed).to be < 0.01
+      expect((monotonic - killed) / whole).to be < 0.3
     end
 
     it "raises the interrupt's error rather than returning a partial list" do

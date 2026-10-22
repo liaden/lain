@@ -19,19 +19,21 @@ RSpec.describe Lain::Tool::Offload do
     nil
   end
 
-  def ticks_during
-    ticks = 0
+  # Held, the one gap is nearly the whole call (share near 1.0); released, under 0.1 even on a loaded box.
+  def longest_tick_gap_share
+    stamps = []
     Sync do |task|
       ticker = task.async do
         loop do
-          ticks += 1
+          stamps << monotonic
           task.sleep(0.01)
         end
       end
       yield task
+      stamps << monotonic
       ticker.stop
     end
-    ticks
+    stamps.each_cons(2).map { |a, b| b - a }.max / (stamps.last - stamps.first)
   end
 
   it "answers what the work returns" do
@@ -51,7 +53,7 @@ RSpec.describe Lain::Tool::Offload do
     Dir.mktmpdir("lain-offload") do |dir|
       File.write(File.join(dir, "a.txt"), "a")
 
-      expect(ticks_during { described_class.call { walk_for(0.5, dir) } }).to be >= 25
+      expect(longest_tick_gap_share { described_class.call { walk_for(0.5, dir) } }).to be < 0.3
     end
   end
 
@@ -60,7 +62,7 @@ RSpec.describe Lain::Tool::Offload do
   it "keeps a sibling fiber running while the work never gives up the lock between threads" do
     spin = -> { (deadline = monotonic + 0.5) && (nil while monotonic < deadline) }
 
-    expect(ticks_during { described_class.call(&spin) }).to be >= 15
+    expect(longest_tick_gap_share { described_class.call(&spin) }).to be < 0.3
   end
 
   it "kills the work's thread when the task waiting on it is stopped" do

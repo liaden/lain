@@ -77,6 +77,8 @@ RSpec.describe Lain::Ext::TreeSitter do
 
     def monotonic = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
+    include GapShare
+
     def querying
       Thread.new do
         Thread.current.report_on_exception = false
@@ -86,11 +88,10 @@ RSpec.describe Lain::Ext::TreeSitter do
 
     it "lets the calling thread keep running while it queries" do
       worker = querying
-      ticks = 0
-      (ticks += 1) && sleep(0.001) while worker.alive?
+      share = longest_gap_share(worker)
 
       expect(worker.value.size).to eq(24_000)
-      expect(ticks).to be >= 20
+      expect(share).to be < 0.3
     end
 
     # Timed from when the kill was meant to land: a query holding the lock also

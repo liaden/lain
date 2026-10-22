@@ -68,6 +68,8 @@ RSpec.describe Lain::Ext::AstGrep do
 
     def monotonic = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
+    include GapShare
+
     def searching
       Thread.new do
         Thread.current.report_on_exception = false
@@ -77,11 +79,10 @@ RSpec.describe Lain::Ext::AstGrep do
 
     it "lets the calling thread keep running while it searches" do
       worker = searching
-      ticks = 0
-      (ticks += 1) && sleep(0.001) while worker.alive?
+      share = longest_gap_share(worker)
 
       expect(worker.value.size).to eq(15_000)
-      expect(ticks).to be >= 20
+      expect(share).to be < 0.3
     end
 
     # Timed from when the kill was meant to land: a search holding the lock also

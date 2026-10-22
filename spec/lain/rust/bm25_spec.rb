@@ -101,6 +101,8 @@ RSpec.describe Lain::Ext::Bm25 do
   describe "on another thread" do
     def monotonic = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
+    include GapShare
+
     def synthetic(count, words = 30)
       rng = Random.new(1)
       vocabulary = Array.new(4000) { |i| "w#{i.to_s(36)}" }
@@ -130,21 +132,19 @@ RSpec.describe Lain::Ext::Bm25 do
 
     it "lets the calling thread keep running while it builds" do
       worker = building
-      ticks = 0
-      (ticks += 1) && sleep(0.001) while worker.alive?
+      share = longest_gap_share(worker)
 
       expect(worker.value).to be_a(described_class)
-      expect(ticks).to be >= 20
+      expect(share).to be < 0.3
     end
 
     it "lets the calling thread keep running while it searches" do
       index = described_class.build(pairs)
       worker = Thread.new { Array.new(10) { index.search("w0 w1 w2", 10) } }
-      ticks = 0
-      (ticks += 1) && sleep(0.001) while worker.alive?
+      share = longest_gap_share(worker)
 
       expect(worker.value.map(&:size)).to all(eq(10))
-      expect(ticks).to be >= 20
+      expect(share).to be < 0.3
     end
 
     # The card's 20 ms was met in bench-stats; this bound allows for suite load and stays well under the
