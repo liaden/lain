@@ -31,7 +31,7 @@ export LAIN_SPEC_WORKERS=12                             # .envrc is gitignored; 
 ```
 
 ```bash
-bundle exec rake pspec         # THE suite command: ~58s at 12 workers, 21,730 examples, 2026-10-02.
+bundle exec rake pspec         # THE suite command: ~74s at 12 workers, 26,817 examples, 2026-10-22.
                                # It always runs the :slow files (it sets LAIN_SLOW=1), and so do
                                # the commit hook and CI, which both go through it.
 bundle exec rspec              # the quick local loop: skips the :slow files (spec/support/slow_files.rb).
@@ -69,9 +69,9 @@ Rules, with the evidence in [`docs/toolchain-traps.md`](docs/toolchain-traps.md)
   `[p]re-commit` matches any command line merely *containing* the word, your own echo label
   included, so it reads busy on a quiet box.
 - **`LAIN_SPEC_WORKERS=12`** is the measured default *on this box*; `physical - 1` is the worst
-  count tried. On 2026-10-02 the median wall was 57.7s at 12 workers, 53.7s at 14 and 53.1s at 16
-  (5 interleaved runs each): the wall is the larger of the slowest file (37s) and the total work
-  divided by the workers (653s / n), plus about 10s of startup. The wall is a MAX over files, not a sum, so **never shard a spec to game the
+  count tried. On 2026-10-02 (a smaller suite) the median wall was 57.7s at 12 workers, 53.7s at 14
+  and 53.1s at 16 (5 interleaved runs each); 2026-10-22 is 74s at 12. The wall is the larger of the
+  slowest file (29s) and the total work divided by the workers (780s / n), plus about 10s of startup. The wall is a MAX over files, not a sum, so **never shard a spec to game the
   packer** — one spec file per public entry point, at its mirrored path. See
   [`docs/spec-suite-performance.md`](docs/spec-suite-performance.md) before optimising anything
   here; profile first, and a cost inside the SUBJECT is an application finding, not a spec one.

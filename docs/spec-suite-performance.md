@@ -97,6 +97,43 @@ spread this section warns about. **The wall is the larger of two terms**: the sl
 (`seams/input_pane_socket_spec.rb`, 37s at 16 workers) and the total work divided by the workers
 (653s / n), plus about 10s of startup outside the workers' own clocks.
 
+**2026-10-22 baseline, after the round 27 suite cards.** 5 interleaved full `rake pspec` runs per
+tree at 12 workers, on a box `bin/box-state --guard` called quiet, base against head:
+
+| tree | runs (s) | median | examples | failures |
+|---|---|---|---|---|
+| base (`fb163f4d`) | 136, 78, 77, 77, 78 | **78s** | 26,464 | 0 in 5 runs |
+| head (`ce226ef3`, which differs from `4754ee7e` only in docs) | 73, 73, 74, 75, 74 | **74s** | 26,817 | 0 in 5 runs |
+
+The 136s run was the base tree's first boot, with nothing in the bootsnap cache yet. It stays in
+the table and the median ignores it (the median of the other 4 is 77.5s). The spread without it
+is 1s on the base side and 2s on the head side, so the 4s gain is bigger than the noise, but not
+by much. The head tree also runs 353 more examples (26,817 against 26,464) in less time.
+
+The wall barely moved because the suite's floor is no longer one file. Summed per-file runtime
+fell from 850s to 780s, and the slowest file fell from 44.5s to 29.4s, but a wall at 12 workers is
+the larger of the slowest file and the total work over 12 (780 / 12 = 65s), plus startup. Files
+that moved most, from the runtime logs of the two trees:
+
+| file | base | head | what changed |
+|---|---|---|---|
+| `seams/input_pane_socket_spec.rb` | 44.5s | 15.1s | answers Reline's cursor query; a test tick for the child |
+| `seams/approval_cycle_key_spec.rb` | 22.8s | 12.6s | takes the chat from the warm pool |
+| `memory/project_store_spec.rb` | 8.0s | 1.6s | |
+| `seams/plain_chat_prompt_guards_spec.rb` | 35.5s | 29.4s | |
+| `e2e/stop_while_busy_spec.rb` | 25.6s | 20.3s | |
+| `frontend/line_editor_spec.rb` | 10.6s | 5.8s | shares real-terminal children |
+| `frontend/input_pane_spec.rb` | 9.1s | 4.0s | answers the cursor query |
+| `cli/repl/approval_surfaces_spec.rb` | 6.6s | 2.5s | a short queue clock |
+| `suite_load_spec.rb` | 10.5s | 7.3s | stops a cooperative group at once |
+| `cli/repl_spec.rb` | 8.1s | 5.0s | waits on what was typed, not a sleep |
+| `cli/up_spec.rb` | 16.2s | 13.3s | waits for the chat prompt, not 3s |
+
+The slowest file is now `seams/plain_chat_prompt_guards_spec.rb` at 29.4s, then
+`e2e/stop_while_busy_spec.rb` at 20.3s and `cli/epic_driver/factory_spec.rb` at 17.9s. The last
+is CPU-bound in the subject: about 3,600 git commands over 57 examples from about 40 call sites,
+roughly 1 per example each, so there is no hot spot to cut.
+
 ## The wall is a MAX, not a sum
 
 `parallel_tests` packs whole FILES into groups, so **the longest single file is a hard floor** and
@@ -182,6 +219,13 @@ and costs 32ms. **91% of them come from one call path in the spec's own `TreeSwe
 (`Pathname#relative_path_from`, itself 73.5%), which is test code, not `lib/` -- so it is worth
 tidying and worth nobody's optimisation budget.
 
+**Measured on the whole suite, 2026-10-22, with the `gc` lens of `bin/suite-profile`:** GC is
+**5.5% of example time (48.4s of 872s)**, over 282M objects and 202 major collections. The top
+files are the Rust reentry specs, which call `GC.start` on purpose. In `stackprof` CPU samples GC
+is 23% of the 259s sampled in the workers (marking 15%, sweeping 8%), and the share that is
+example time is what matters for the wall. This agrees with the per-file table below: allocation
+is not where the suite's time goes.
+
 **`require "lain"` alone allocates 701K objects and spends 90ms in GC**, which is more than any of
 those files spends running its examples -- 3.6x `changeset_spec`'s 77 examples, at twice the GC.
 So allocation cost in this suite is paid **once per worker at boot**, multiplied by the worker
@@ -234,6 +278,25 @@ heap, instead of `bundler/setup`. A child's CPU for `require "lain"` fell from a
 research, and from about 1.5s to 1.1s on a loaded box on 2026-10-02. `exe/lain` children get the
 heap sizing only, because `exe/lain` requires `bundler/setup` itself. `LAIN_NO_CHILD_BOOT=1` puts
 `bundler/setup` back.
+
+Child boots are the largest cost the in-process profilers cannot see. The `rbspy` lens (every
+thread of every Ruby process, 50 Hz) read 1,380 thread-seconds over one suite, and about **155
+thread-seconds of that was child Ruby processes booting `lib/lain`** (`loader.eager_load`). They
+overlap the parent worker's wait, so they are not a share of the per-file runtime total; they are
+what a faster boot can halve. One `require "lain"` costs 0.92s with no bootsnap, 0.44s with a warm
+bootsnap cache and 1.24s with a cold one.
+
+So `exe/lain` sets bootsnap up itself, under `$XDG_CACHE_HOME/lain/bootsnap` (or
+`LAIN_BOOTSNAP_CACHE`), unless the process already ran `Bootsnap.setup`. Spec workers and the
+children they spawn share one warm cache through `LAIN_BOOTSNAP_CACHE` (`spec/support/child_boot.rb`),
+because a child given a fresh cache per example would be slower than one with none. **A mutation
+harness sets `LAIN_BOOTSNAP=0`**: bootsnap keys a cache entry on (mtime-seconds, size), so a
+same-size mutant runs against stale bytecode.
+
+**Reline waits 0.5s for a cursor report nobody sends.** Reline 0.7.0 writes `\e[6n` and waits up
+to 0.5s for a reply whenever input and output are both TTYs, which every PTY-driven spec is. A spec
+that drives a prompt through a PTY answers the query with `\e[1;1R` (`spec/support/cursor_report.rb`).
+On `input_pane_socket_spec.rb` that was 43.0s against 30.0s on its own, before any other change.
 Headless editors skip PATH entries named `shims` (`HeadlessEditor.binary`): a mise shim costs
 about 135ms per editor boot against 4 to 5ms for the real binary (the 2026-10-01 research), with
 no box configuration needed.
@@ -247,6 +310,31 @@ what `ObjectSpace.memsize_of_all` reports); `lain.so` and the C extensions hold 
 Ruby built `--with-jemalloc` returned about 18% of end-of-run RSS on one sample and cut system CPU
 about 5% against the precompiled build, with total work within noise. `LD_PRELOAD`-ing jemalloc
 into the suite is not a fair test: every git child loads it too.
+
+## `bin/suite-profile`: one lens per whole suite
+
+`bin/suite-profile <lens> [--dry-run]` runs the whole suite once through one lens and keeps the
+run in `tmp/suite-profile/<date>-<lens>/` with a `summary.txt`. It sets `LAIN_SLOW=1`, packs by the
+real runtime log but writes its own, so it never overwrites `tmp/parallel_runtime_rspec.log`, and
+refuses to start while `parallel_rspec` or the pre-commit hook is running. A profiled run is
+slower, so use it for shares, never for wall time. `--dry-run` prints the directory, environment
+and command and runs nothing.
+
+| lens | what it answers | how |
+|---|---|---|
+| `dissect` | how much of the example time is setup (30.3s of 872s, 3.5%), and which groups spend it | RSpecDissect, plus TagProf for the `:seam` tag (2,664 seam examples took 380s, the other 23,800 took 493s) |
+| `stack-cpu` | where in-process CPU goes | stackprof in cpu mode, one dump per worker |
+| `stack-wall` | what the workers wait on (32% in the event selector and `IO.select`, 11% in reads, 3% in `sleep`) | stackprof in wall mode |
+| `gc` | GC time and objects per file | a `GC.stat` hook per example |
+| `spawns` | every git command `lib/` spawns, by shape and call site | a hook on `Process.spawn` |
+| `rbspy` | the processes stackprof cannot see: child Ruby boots and `WaitUntil` polls (67s) | rbspy at 50 Hz over every thread of every Ruby process; needs `rbspy` on PATH |
+
+Test-prof names its dumps per mode only, so twelve workers would overwrite one file. A `RUBYOPT`
+preload (`spec/support/suite_profile/worker_suffix.rb`) suffixes each worker's dump, and `RUBYOPT`
+reaches the `lain` children the specs spawn, so theirs are suffixed too. The `gc` and `spawns` hooks
+sit beside it in `spec/support/suite_profile/`. Under the `stack-wall` lens one example failed once
+in 6 profiled runs; see `docs/toolchain-traps.md`.
+
 
 ## Tools for measuring it
 

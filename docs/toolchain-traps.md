@@ -342,6 +342,13 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   It sits beside the rule above on purpose: that rule is about a run that finishes and
   under-reports, this one about a run that never finishes to report anything at all. Any spec helper that blocks on a real `accept`, `read` or
   `connect` needs its own bound, not just the one on the socket it hands back.
+- **Reline asks the terminal where the cursor is and waits 0.5s for an answer.** Reline 0.7.0
+  (`reline/io/ansi.rb:208`) writes `\e[6n` and waits up to 0.5s for a reply when input and output
+  are both TTYs. A spec that drives a prompt through a PTY and never answers pays 0.5s at every
+  prompt, and nothing fails: the example is only slow. `spec/support/cursor_report.rb` answers
+  with `\e[1;1R`. On `seams/input_pane_socket_spec.rb`, answering took the file from 43.0s to 30.0s
+  alone, with 19 of 19 examples green. A new PTY spec that looks slow for no reason is the first
+  place to look.
 - **2026-10-02: after the speed and flakes plan, 15 full `rake pspec` runs at 12, 14 and 16 workers
   had no failure; the pre-plan tree failed 9 of the same 15.** The names below stay as the record;
   the retired list further down says which were fixed and how. Budget a retry only for a name
@@ -391,7 +398,15 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   does 1 realpath per directory over a plain listing, with judge's verdicts` (156 `File.realpath` calls
   against at most 21; green 30 of 30 alone). That second one is a count, not a clock: the stub counts
   calls from every thread in the worker, so a thread an earlier example left running would inflate it.
-  Unproven; counting only the example's own thread would settle it.
+Unproven; counting only the example's own thread would settle it.
+  Both are retired as of 2026-10-22, below.
+
+  Added 2026-10-22, from the 6 profiled runs of the suite (one per `bin/suite-profile` lens): under
+  the wall-mode stack profiler, `Lain::CLI::InputSocket serving a pane sends nothing more while the
+  header stays the same` failed once. The other 5 profiled runs reached all 26,464 examples green, and
+  none of the 10 plain `pspec` runs of the same work failed. A wall profiler slows every thread, so
+  read it as another wall-clock budget starved, not a product defect. It is one sample; if it recurs
+  without a profiler, that makes it a pattern.
 
   Added 2026-10-18, a wall-clock count red once in a pre-commit suite (6 ticks against 15) and green
   alone and in a full suite on the base and on the change: `Lain::Tool::Offload keeps a sibling fiber
@@ -469,6 +484,17 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
 
   **Retired, with the fix that ended each.** Keep a retired name here so a later red under it reads
   as a regression, not as a known flake.
+  - 2026-10-22: `Lain::Ext::Fuzzy#match on another thread lets the calling thread keep ticking while
+    it matches` (red once on 2026-10-21 with a p99 tick gap of 28.7 ms against an 8 ms bound). The
+    spec judged a released GVL by an absolute tick gap, which a loaded box inflates. It now judges
+    the longest gap's share (`spec/support/gap_share.rb`), and the same change moved its siblings in
+    the bm25, astgrep, treesitter and offload specs to that measure. Green in 10 of 10 interleaved
+    full `pspec` runs at 12 workers on a quiet box (5 before the fixes, 5 after).
+  - 2026-10-22: `Lain::Sensitivity::Policy#mask_paths against #judge, name by name does 1 realpath
+    per directory over a plain listing, with judge's verdicts` (156 `File.realpath` calls against at
+    most 21, red once on 2026-10-21). The stub counted calls from every thread in the worker, so a
+    thread an earlier example left running inflated the count. It now counts only the example's own
+    calls. Green in the same 10 of 10 runs.
   - 2026-10-21: `Lain::CLI::EpicSubmit Ctrl-C through the real CLI exits 130, with the fail-closed
     decision already journaled` (red 2026-10-18 and 2026-10-21 in pre-commit suites, exit 130 with no
     `gate_decision`). Not a spec race: a product ordering bug. Under Async a SIGINT never reaches the
