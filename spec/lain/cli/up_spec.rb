@@ -421,13 +421,22 @@ RSpec.describe Lain::CLI::Up do
     # OTHER way for a chat to die exits non-zero, which the option does hold.
     # So "the session outlives its own chat pane" is exactly the property the
     # scrub restores, and nothing else about a chat's health disturbs it.
-    # Three seconds is twice the boot measured on this box, so the failure has
-    # time to happen rather than being outrun.
+    # Ends at the prompt, the point a chat has booted, so the check never
+    # outwaits a boot; a pane that dies first (listed dead or gone) fails at once, by name.
     def session_survives_its_own_launch?
-      deadline = Time.now + 3
-      alive = -> { tmux("list-sessions").include?(session) }
-      sleep(0.05) while Time.now < deadline && alive.call
-      alive.call
+      chat = tmux("show-options", "-v", "-t", session, "@lain_chat_pane")
+      shown = wait_until(timeout: 10, reason: "chat pane #{chat} to show you>") do
+        # rubocop:disable-next Lint/InterpolationCheck
+        if tmux("list-panes", "-s", "-t", session, "-F",
+                '#{pane_id} #{pane_dead}').lines.map(&:strip).include?("#{chat} 0")
+          tmux("capture-pane", "-p", "-t", chat).include?("you>")
+        else
+          :gone
+        end
+      end
+      raise "chat pane #{chat} exited before showing you>" if shown == :gone
+
+      tmux("list-sessions").include?(session)
     end
 
     it "attaches instead of duplicating on a second call" do
