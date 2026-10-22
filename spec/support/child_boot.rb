@@ -6,8 +6,8 @@ require "fileutils"
 # Children inherit the worker's ENV, so rewriting it once gives every spawned Ruby static load
 # paths instead of a `bundler/setup` re-resolve, and a heap that does not collect 17 times
 # while `require "lain"` fills it. Specs only: an installed gem has no Gemfile.lock to key on.
-# Children that clear RUBYOPT (Lain::Exec::FRAMEWORK_ENV) keep their own bundle, and `exe/lain`
-# requires `bundler/setup` itself, so it gets the heap sizing only.
+# Children that clear RUBYOPT (Lain::Exec::FRAMEWORK_ENV) keep their own bundle and boot without the shared
+# bootsnap cache, and `exe/lain` requires `bundler/setup` itself, so it gets the heap sizing and the cache.
 module ChildBoot
   # Just under the object counts at the end of `require "lain"`; sizing for zero collections
   # costs 30MB per child and buys little.
@@ -21,6 +21,10 @@ module ChildBoot
   # `bundle exec` writes the absolute path of its setup file, not the bare feature name.
   BUNDLER_SETUP = %r{-r\S*bundler/setup}
 
+  BOOTSNAP_SETUP = File.expand_path("../bootsnap_setup.rb", __dir__)
+
+  BOOTSNAP_CACHE = File.expand_path("../../tmp/cache", __dir__)
+
   module_function
 
   # @param env [#[], #[]=, #delete] the environment children inherit
@@ -32,6 +36,12 @@ module ChildBoot
     swap_bundler_setup(env) if env["RUBYOPT"].to_s.match?(BUNDLER_SETUP)
   end
 
+  # One cache for every child, so a fresh per-example XDG_CACHE_HOME never pays a cold boot.
+  def share_bootsnap_cache(env)
+    env["RUBYOPT"] = "#{env["RUBYOPT"]} -r#{BOOTSNAP_SETUP}"
+    env["LAIN_BOOTSNAP_CACHE"] = BOOTSNAP_CACHE
+  end
+
   def cache_dir = File.join(File.expand_path("../..", __dir__), "tmp", "cache", "child_boot")
 
   # BUNDLER_SETUP goes with the `-r`: while it is set, rubygems loads all of bundler at boot to honour it.
@@ -39,6 +49,7 @@ module ChildBoot
     file = load_path_file
     env["RUBYOPT"] = env["RUBYOPT"].gsub(BUNDLER_SETUP, "-r#{file}")
     env.delete("BUNDLER_SETUP")
+    share_bootsnap_cache(env)
     file
   end
 

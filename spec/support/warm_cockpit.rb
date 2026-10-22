@@ -21,7 +21,7 @@ module WarmCockpit
   def self.env(dir, **extra)
     { "XDG_STATE_HOME" => File.join(dir, "state"), "XDG_RUNTIME_DIR" => File.join(dir, "run"),
       "XDG_CONFIG_HOME" => File.join(dir, "config"), "XDG_CACHE_HOME" => File.join(dir, "cache"),
-      "TERM" => "xterm", "INPUTRC" => File.join(dir, "no-inputrc") }.merge(extra)
+      "TERM" => "xterm", "INPUTRC" => File.join(dir, "no-inputrc") }.merge(ENV.to_h.slice("LAIN_BOOTSNAP_CACHE"), extra)
   end
 
   def self.pane(prefix:, **extra)

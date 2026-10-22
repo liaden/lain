@@ -32,6 +32,20 @@ if File.exist?(lain_gemfile)
 end
 require "thor"
 
+# A process that already ran Bootsnap.setup (a spec worker, a child given -rbootsnap/setup) keeps its own.
+# A cache that cannot be had must never stop lain.
+unless defined?(Bootsnap) || ENV["LAIN_BOOTSNAP"] == "0"
+  begin
+    require "bootsnap"
+    # Paths is not loaded yet, so its XDG rule is restated here.
+    xdg = ENV.fetch("XDG_CACHE_HOME", "")
+    cache_home = File.expand_path(xdg.empty? ? "~/.cache" : xdg)
+    Bootsnap.setup(cache_dir: ENV.fetch("LAIN_BOOTSNAP_CACHE") { File.join(cache_home, "lain", "bootsnap") })
+  rescue LoadError, SystemCallError
+    nil
+  end
+end
+
 # A refusal lain makes while it boots, such as a secret named in LAIN_ENV_PASS,
 # is the human's to fix, so it reads as one line rather than a backtrace.
 begin

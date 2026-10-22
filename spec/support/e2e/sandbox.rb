@@ -8,7 +8,7 @@ module E2E
   # A directory a journey's real `exe/lain` lives in: its project, its HOME and its XDG state, so
   # nothing the child does can reach the developer's own.
   class Sandbox
-    BUNDLER_VARIABLES = %w[BUNDLE_GEMFILE RUBYOPT BUNDLE_BIN_PATH].freeze
+    BUNDLER_VARIABLES = %w[BUNDLE_GEMFILE RUBYOPT BUNDLE_BIN_PATH LAIN_BOOTSNAP_CACHE].freeze
     DEFAULT_PROJECT = "proj"
     LIVE = Concurrent::Array.new
     private_constant :LIVE

@@ -1100,6 +1100,65 @@ RSpec.describe "exe/lain outside its own repository", :seam do
   end
 end
 
+# The cache `exe/lain` keeps for its own boot. `help` is the payload for the
+# reason the block above gives; the exe has no `--version` switch.
+RSpec.describe "exe/lain bootsnap cache", :seam do
+  let(:exe) { File.expand_path("../../exe/lain", __dir__) }
+  let(:lib) { File.expand_path("../../lib", __dir__) }
+  let(:root) { Dir.mktmpdir("lain-bootsnap") }
+
+  after { FileUtils.remove_entry(root) }
+
+  def lain(script: exe, include: nil, **env)
+    clean = { "RUBYOPT" => nil, "BUNDLER_SETUP" => nil, "LAIN_BOOTSNAP" => nil, "LAIN_BOOTSNAP_CACHE" => nil }
+    argv = [RbConfig.ruby, *("-I#{include}" if include), "-I#{lib}", script, "help"]
+    out = IO.popen(clean.merge(env), argv, err: %i[child out], &:read)
+    [out, $CHILD_STATUS.exitstatus]
+  end
+
+  # A copy of the exe with no Gemfile beside it boots without bundler, so a bootsnap on -I is the one it requires.
+  def cache_dir_given_to_bootsnap(**env)
+    stand_in = File.join(root, "stand-in")
+    FileUtils.mkdir_p(File.join(stand_in, "exe"))
+    FileUtils.cp(exe, File.join(stand_in, "exe", "lain"))
+    File.write(File.join(stand_in, "bootsnap.rb"),
+               %(module Bootsnap; def self.setup(cache_dir:) = File.write(ENV.fetch("SETUP_RECORD"), cache_dir); end))
+    record = File.join(root, "record")
+    lain(**env, "SETUP_RECORD" => record, script: File.join(stand_in, "exe", "lain"), include: stand_in)
+    File.read(record)
+  end
+
+  it "writes a non-empty cache under the XDG cache home" do
+    _, status = lain("XDG_CACHE_HOME" => root)
+    written = Dir.glob(File.join(root, "lain", "bootsnap", "**", "*")).select { File.file?(_1) }
+
+    expect([status, written.empty?]).to eq([0, false])
+  end
+
+  it "sets bootsnap up under the XDG cache home" do
+    expect(cache_dir_given_to_bootsnap("XDG_CACHE_HOME" => root)).to eq(File.join(root, "lain", "bootsnap"))
+  end
+
+  it "sets bootsnap up under LAIN_BOOTSNAP_CACHE when it names one" do
+    expect(cache_dir_given_to_bootsnap("XDG_CACHE_HOME" => root, "LAIN_BOOTSNAP_CACHE" => "/elsewhere"))
+      .to eq("/elsewhere")
+  end
+
+  it "boots with no bootsnap and writes no cache when LAIN_BOOTSNAP is 0" do
+    _, status = lain("XDG_CACHE_HOME" => root, "LAIN_BOOTSNAP" => "0")
+
+    expect([status, Dir.exist?(File.join(root, "lain"))]).to eq([0, false])
+  end
+
+  it "leaves the setup of a process that already ran Bootsnap.setup alone" do
+    allow(Bootsnap).to receive(:setup)
+
+    load exe
+
+    expect(Bootsnap).not_to have_received(:setup)
+  end
+end
+
 # T-env: the `direnv` case -- a project pins its endpoint in `.envrc` and stops
 # retyping it. Driven through `LainCLI`'s REAL option parsing rather than by
 # calling EnvDefaults directly, because the thing that can break is the wiring

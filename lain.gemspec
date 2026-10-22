@@ -53,6 +53,8 @@ Gem::Specification.new do |spec|
   # parking for ask_human promises and within-turn subagent fan-out. Promoted from the
   # spike-only dev group once adoption landed, exactly as the spike note promised.
   spec.add_dependency "async", "~> 2.35", ">= 2.35.1"
+  # exe/lain boots through it, so a command pays a warm load rather than a full one.
+  spec.add_dependency "bootsnap", "~> 1.18"
   spec.add_dependency "concurrent-ruby", "~> 1.3"
   # `anthropic` (the official SDK) and `aws-sdk-core` are deliberately NOT runtime
   # dependencies -- see the `:test` group in the Gemfile.
