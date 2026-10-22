@@ -110,6 +110,31 @@ RSpec.describe Lain::Improvement::Sink do
       expect(sink.appended).to eq(2)
     end
 
+    it "does not count a repeated note" do
+      expect(sink.append(note: "same", kind: "bug")).not_to be_nil
+      expect(sink.append(note: "same", kind: "bug")).to be_nil
+      expect(sink.appended).to eq(1)
+    end
+
+    it "raises again on a retry of an oversize note instead of calling it recorded" do
+      oversize = "a" * (Lain::Improvement::NOTE_MAX_BYTES + 1)
+      2.times { expect { sink.append(note: oversize, kind: "bug") }.to raise_error(ArgumentError) }
+    end
+
+    it "stores a retry after a failed write" do
+      calls = 0
+      allow(File).to receive(:open).and_wrap_original do |original, *args, &block|
+        calls += 1
+        raise IOError, "disk gone" if calls == 1
+
+        original.call(*args, &block)
+      end
+
+      expect { sink.append(note: "again", kind: "bug") }.to raise_error(IOError)
+      expect(sink.append(note: "again", kind: "bug")).not_to be_nil
+      expect(sink.appended).to eq(1)
+    end
+
     it "starts at zero" do
       expect(sink.appended).to eq(0)
     end

@@ -136,12 +136,17 @@ module Lain
         @paths = paths
         @session = session
         @project_hash = project_hash
+        @written = Set.new
       end
 
-      # Returns the record actually written.
+      # Returns the record actually written, or nil when this pass already stored the same line.
       def append(note:, kind:, evidence_digests: [])
         record = Improvement.new(note:, kind:, evidence_digests:, project_hash: @project_hash, session: @session)
+        key = [record.kind, record.note, record.evidence_digests]
+        return if @written.include?(key)
+
         write(record.line)
+        @written.add(key)
         @appended += 1
         record
       end

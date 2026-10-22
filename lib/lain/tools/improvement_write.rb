@@ -47,6 +47,8 @@ module Lain
 
       def perform(input, _invocation)
         record = sink.append(note: input.note, kind: input.kind, evidence_digests: digests_from(input.evidence_digests))
+        return Tool::Result.ok("already recorded") unless record
+
         Tool::Result.ok("recorded #{record.kind} improvement for project #{record.project_hash} " \
                         "(#{record.evidence_digests.size} evidence digest(s))")
       rescue ArgumentError => e
