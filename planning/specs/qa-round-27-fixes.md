@@ -1,6 +1,6 @@
 # QA round 27 fixes and a leaner suite: a default launch that survives compaction, a lease a script cannot walk out of, and a suite that stops waiting on itself
 
-status: draft (panel-reviewed 2026-10-22)
+status: in-progress (panel-reviewed 2026-10-22)
 commit-mode: orchestrator-commits
 language: ruby
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson)
@@ -1606,3 +1606,14 @@ Spec file: `spec/docs_naming_spec.rb` stays green; `bin/runtime-census --check` 
    landed (T16), and gc over an unlanded issue (T19).
 
 ## Execution log
+
+- 2026-10-22 start. Base `main` at `fb163f4d` (round 27's documents committed first, per the user). `git worktree list`:
+  `/home/tara/dev/lain fb163f4d [main]` only. Branches at start: `flake/review`, `main`, `spike/combined`,
+  `spike/combined2`.
+- Commit checks (pre-commit): pre-commit-hooks basics (shebangs, merge conflict, yaml, end-of-file, trailing
+  whitespace), shellcheck on shell files, cargo fmt/clippy/test on Rust, `bundle exec rake compile check`
+  (rubocop whole repo plus `rake pspec`) on any Ruby or Rust, `bundle exec yard-lint <paths>`,
+  `bin/lint-gherkin-docs` on `planning/specs/*.md`, `bin/lint-commit-msg`, `bin/lint-price-freshness`. A Ruby
+  commit costs about 70s plus compile. The suite cannot run beside other tests (shared `TMPDIR`, timing specs);
+  each worktree gets its own `TMPDIR`. No paths need user approval.
+- Box: 16 cores, 15 GB RAM. Cards run in waves of about 6 so landings get quiet windows.
