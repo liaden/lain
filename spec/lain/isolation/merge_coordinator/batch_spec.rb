@@ -151,14 +151,14 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Batch, :seam do
     context "with no verifier configured" do
       let(:verify) { Lain::Isolation::Verifier::Skipped }
 
-      it "lands them and counts no verify, since nothing judged the candidate" do
+      it "lands them, counts no verify, and stores the skip for each held worker" do
         landing = workers("w1", "w2")
 
         outcome = batch.call(landing)
 
         expect(landing.map { |each| on_branch?(each.sha) }).to all(be(true))
-        expect([outcome.reports.map(&:kind), outcome.verifications, outcome.verifies])
-          .to eq([%i[merged merged], [nil, nil], 0])
+        expect([outcome.reports.map(&:kind), outcome.verifications.map(&:outcome), outcome.verifies])
+          .to eq([%i[merged merged], %i[skipped skipped], 0])
       end
     end
   end

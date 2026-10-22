@@ -223,6 +223,16 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Drain, :seam do
                                                                detail: a_string_including("moved 2 times"))
     end
 
+    it "stores the skip for each worker and counts no verify when no verifier is configured" do
+      configure(verify: [])
+      entries = [worker("w1"), worker("w2")].map { |each| spool.enqueue(each) }
+
+      drain.call
+
+      expect(entries.map { |entry| spool.result(entry.id).verification.outcome }).to eq(%i[skipped skipped])
+      expect(batch_records.first).to include("outcome" => "landed", "verifies" => 0)
+    end
+
     it "ejects the worker that fails verification, naming each worker's verdict and batch" do
       configure(verify: ["sh", "-c", "test ! -e w2 || { echo w2 breaks it; exit 1; }"])
       w1 = worker("w1")

@@ -17,7 +17,8 @@ module Lain
         UNHELD = %i[conflicted failed].freeze
 
         # `verifications` runs beside `reports`: the verification of the run
-        # that last judged each worker, or nil where no verifier judged it.
+        # that last ran for each worker (a skip included), or nil where the
+        # candidate never held it.
         # `verifies` counts the runs a verifier judged, and `rebuilds` the runs
         # repeated because the branch moved under one, across the whole batch.
         Outcome = Data.define(:reports, :verifications, :verifies, :rebuilds) do
@@ -67,9 +68,8 @@ module Lain
         end
 
         def concluded(tally, reports, result)
-          judge = judged?(result) ? result.verification : nil
-          tally.with(reports: tally.reports + reports,
-                     verifications: tally.verifications + reports.map { |report| held?(report) ? judge : nil })
+          held = reports.map { |report| held?(report) ? result.verification : nil }
+          tally.with(reports: tally.reports + reports, verifications: tally.verifications + held)
         end
 
         def held?(report) = !UNHELD.include?(report.kind)
