@@ -7,49 +7,51 @@ require "rbconfig"
 require "securerandom"
 require "tmpdir"
 
+module ApprovalCycleKey
+  # `parked` holds one call on the board's queue with its `[y/N]` drawn;
+  # `unpublished` draws nothing, as a run in flight with no prompt open does;
+  # anything else reads one `you>` line. The `vi` shape raises the vi layer.
+  CHAT_SCRIPT = <<~RUBY
+    require "lain"
+    require "json"
+
+    dir, path, shape, approval = ARGV
+    journal = Lain::Journal.new(io: File.open(File.join(dir, "journal.ndjson"), "a").tap { |io| io.sync = true })
+    heard = File.open(File.join(dir, "heard.ndjson"), "a").tap { |io| io.sync = true }
+    board = Lain::CLI::Switchboard.new(journal:, model: "spec-model", toolset: Lain::Toolset.new,
+                                       approval: approval.to_sym)
+    rail = Lain::Frontend::Intake.new(on_cycle: -> { board.cycle_approval(surface: Lain::CLI::Switchboard::KEY_SURFACE) })
+    layers = shape == "vi" ? %w[vi] : []
+    welcomed = -> { File.write(File.join(dir, "welcomed"), "").then { [] } }
+    socket = Lain::CLI::InputSocket.new(rail:, path:, layers: -> { layers }, commands: welcomed).bind
+    File.write(File.join(dir, "bound"), "")
+    Sync do |task|
+      socket.start(task)
+      if shape == "parked"
+        policy = Lain::Frontend::ApprovalPolicy.new(reader: ->(asked) { rail.read(:approval, asked) },
+                                                   output: File.open(File::NULL, "w"))
+        watching = task.async { policy.watch(board.approvals) }
+        call = Lain::Effect::ToolCall.new(tool_use_id: "c1", name: "bash", input: { "command" => "rm -rf build" })
+        settled = board.approvals.adjudicate(call, nil)
+        heard.puts(JSON.generate({ "approved" => settled.approved? }))
+        watching.stop
+      elsif shape == "unpublished"
+        Async::Task.current.sleep(0.05) until File.exist?(File.join(dir, "done"))
+        heard.puts(JSON.generate({ "heard" => rail.read(:you, "you> ") }))
+      else
+        heard.puts(JSON.generate({ "heard" => rail.read(:you, "you> ") }))
+      end
+    end
+    socket.stop
+  RUBY
+end
+
 # Shift+Tab is a key only a terminal can send, so it is pressed in a real tmux
 # pane running this checkout's `lain input`, against a chat process holding a
 # real Switchboard behind a real Intake and InputSocket. The chat reads no
 # stdin: every key reaches it over the socket, as it does in a cockpit.
 RSpec.describe "the approval key in an input pane", :seam do
-  # `parked` holds one call on the board's queue with its `[y/N]` drawn;
-  # `unpublished` draws nothing, as a run in flight with no prompt open does;
-  # anything else reads one `you>` line. The `vi` shape raises the vi layer.
-  let(:chat_script) do
-    <<~RUBY
-      require "lain"
-      require "json"
-
-      dir, path, shape, approval = ARGV
-      journal = Lain::Journal.new(io: File.open(File.join(dir, "journal.ndjson"), "a").tap { |io| io.sync = true })
-      heard = File.open(File.join(dir, "heard.ndjson"), "a").tap { |io| io.sync = true }
-      board = Lain::CLI::Switchboard.new(journal:, model: "spec-model", toolset: Lain::Toolset.new,
-                                         approval: approval.to_sym)
-      rail = Lain::Frontend::Intake.new(on_cycle: -> { board.cycle_approval(surface: Lain::CLI::Switchboard::KEY_SURFACE) })
-      layers = shape == "vi" ? %w[vi] : []
-      welcomed = -> { File.write(File.join(dir, "welcomed"), "").then { [] } }
-      socket = Lain::CLI::InputSocket.new(rail:, path:, layers: -> { layers }, commands: welcomed).bind
-      File.write(File.join(dir, "bound"), "")
-      Sync do |task|
-        socket.start(task)
-        if shape == "parked"
-          policy = Lain::Frontend::ApprovalPolicy.new(reader: ->(asked) { rail.read(:approval, asked) },
-                                                     output: File.open(File::NULL, "w"))
-          watching = task.async { policy.watch(board.approvals) }
-          call = Lain::Effect::ToolCall.new(tool_use_id: "c1", name: "bash", input: { "command" => "rm -rf build" })
-          settled = board.approvals.adjudicate(call, nil)
-          heard.puts(JSON.generate({ "approved" => settled.approved? }))
-          watching.stop
-        elsif shape == "unpublished"
-          Async::Task.current.sleep(0.05) until File.exist?(File.join(dir, "done"))
-          heard.puts(JSON.generate({ "heard" => rail.read(:you, "you> ") }))
-        else
-          heard.puts(JSON.generate({ "heard" => rail.read(:you, "you> ") }))
-        end
-      end
-      socket.stop
-    RUBY
-  end
+  warm_pool(:chats, expected: 6) { WarmCockpit.chat(prefix: "approval-key", script: ApprovalCycleKey::CHAT_SCRIPT) }
 
   let(:repo) { File.expand_path("../../..", __dir__) }
   let(:dir) { @dir ||= Dir.mktmpdir("approval-key") }
@@ -89,7 +91,7 @@ RSpec.describe "the approval key in an input pane", :seam do
     example.run
   ensure
     tmux("kill-server")
-    reap(@chat)
+    @booted&.reap
     FileUtils.remove_entry(@dir) if @dir && File.directory?(@dir)
   end
 
@@ -139,10 +141,11 @@ RSpec.describe "the approval key in an input pane", :seam do
     Lain::Project::Trust.for_user(paths:).grant!
   end
 
+  # Must be the first thing an example does with `dir`: the warm chat owns it.
   def start_chat(shape, approval)
-    @chat = Process.spawn(env, RbConfig.ruby, "-I", File.join(repo, "lib"), "-e", chat_script,
-                          dir, path, shape, approval.to_s,
-                          in: File::NULL, out: File.join(dir, "chat.err"), err: %i[child out])
+    @booted = chats.take
+    @dir = @booted.dir
+    @booted.tell(dir, path, shape, approval.to_s)
   end
 
   def lines_of(name) = File.exist?(File.join(dir, name)) ? File.readlines(File.join(dir, name)) : []
@@ -158,15 +161,6 @@ RSpec.describe "the approval key in an input pane", :seam do
     deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
     sleep 0.05 until yield || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
     raise "timed out; the chat said:\n#{lines_of("chat.err").join}" unless yield
-  end
-
-  def reap(pid)
-    return if pid.nil?
-
-    Process.kill("KILL", pid)
-    Process.wait(pid)
-  rescue Errno::ESRCH, Errno::ECHILD
-    nil
   end
 
   it "flips auto to ask at once while a call is parked, and the call still waits for its answer" do
@@ -299,8 +293,8 @@ RSpec.describe "the approval key in an input pane", :seam do
     end
 
     it "does not open a pane over a refused key, and says why" do
-      user_binds("C-x")
       start_chat("idle", :ask)
+      user_binds("C-x")
       wait_for { File.exist?(File.join(dir, "bound")) }
       tmux("new-session", "-d", "-x", "100", "-y", "20", "-c", repo,
            "#{RbConfig.ruby} -I lib exe/lain input --socket #{path}; sleep 30")
