@@ -66,6 +66,21 @@ RSpec.describe Lain::CLI::Worktrees do
     expect(report).not_to include("  refs/lain/worker/a")
   end
 
+  # An issue branch still holds the commit, so the anchor is no orphan, and
+  # it goes once the work lands: it is news to read, not a standing count.
+  it "lists an anchor an issue branch reaches on its own line, apart from the ones no branch reaches" do
+    held = record(:kept, :anchor, "refs/lain/worker/issue",
+                  "only lain/issue/demo/shout reaches it, and an issue branch is not a landing")
+
+    report = worktrees(gc_factory: reaper([held, unreached("refs/lain/worker/w")])).gc
+
+    expect(report.lines.map(&:chomp)).to include(
+      "kept anchor refs/lain/worker/issue: only lain/issue/demo/shout reaches it, and an issue branch is not a landing",
+      "kept 1 anchor no branch reaches, 1 new since the last run:", "  refs/lain/worker/w"
+    )
+    expect(report).not_to include("  refs/lain/worker/issue")
+  end
+
   it "says so when there was nothing to reap or keep" do
     expect(worktrees(gc_factory: reaper([])).gc)
       .to eq("lain worktrees gc at 2026-09-11T12:00:00Z in #{@repo}\nnothing to reap or keep")

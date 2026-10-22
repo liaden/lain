@@ -106,9 +106,10 @@ module Lain
         raise NotARepository, "lain worktrees gc stops its repository search at $HOME, and #{e.message}"
       end
 
-      # What one run says. Kept anchors are kept indefinitely, so a daily log
-      # that re-listed each one would bury the day's news under the same lines
-      # every morning: they are a count, plus the ones not reported before.
+      # What one run says. An anchor no branch reaches is kept indefinitely,
+      # so a daily log that re-listed each one would bury the day's news under
+      # the same lines every morning: they are a count, plus the ones not
+      # reported before. Every other kept anchor is a line with its reason.
       class Report
         # @param records [Array<Telemetry::WorktreeReap>]
         # @param header [String] the run's first line
@@ -119,8 +120,8 @@ module Lain
           @reported = reported
         end
 
-        # @return [Array<String>] every anchor this run kept
-        def anchors = kept_anchors.map(&:name)
+        # @return [Array<String>] every anchor this run kept because no branch reaches it
+        def anchors = unreached.map(&:name)
 
         def to_s
           return "#{@header}\nnothing to reap or keep" if @records.empty?
@@ -130,10 +131,15 @@ module Lain
 
         private
 
-        def kept_anchors = @records.select { |record| record.subject == :anchor && !record.reaped? }
+        def unreached
+          @records.select do |record|
+            record.subject == :anchor && !record.reaped? &&
+              record.reason.start_with?(Isolation::Gc::Anchors::UNREACHED)
+          end
+        end
 
         def decisions
-          (@records - kept_anchors).map do |record|
+          (@records - unreached).map do |record|
             "#{record.action} #{record.subject} #{record.name}: #{record.reason}"
           end
         end
@@ -144,7 +150,8 @@ module Lain
           fresh = anchors - @reported
           noun = anchors.size == 1 ? "anchor" : "anchors"
           news = fresh.empty? ? "none new since the last run" : "#{fresh.size} new since the last run:"
-          ["kept #{anchors.size} #{noun} no branch reaches, #{news}", *fresh.map { |name| "  #{name}" }]
+          head = "kept #{anchors.size} #{noun} #{Isolation::Gc::Anchors::UNREACHED}, #{news}"
+          [head, *fresh.map { |name| "  #{name}" }]
         end
 
         def total

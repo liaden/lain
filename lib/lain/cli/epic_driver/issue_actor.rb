@@ -309,7 +309,7 @@ module Lain
 
         # @param slug [String] the epic
         # @return [String] the prefix every one of the epic's issue branches takes
-        def self.branch_prefix(slug) = "lain/issue/#{slug}"
+        def self.branch_prefix(slug) = "#{Lain::Isolation::WorkingBranch::ISSUE}/#{slug}"
 
         # @param slug [String] the epic
         # @param supervisor [Supervisor] the epic's own, whose checkouts are cut

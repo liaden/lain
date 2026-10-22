@@ -28,6 +28,9 @@ module Lain
       # needs the word, not the branch.
       EPIC = "epic"
 
+      # The prefix the epic driver cuts each issue's branch under.
+      ISSUE = "lain/issue"
+
       # SHA-1 or SHA-256, and nothing else: a name that slipped through here
       # would reach `worktree add` as a branch to check out.
       FULL_SHA = /\A(?:\h{40}|\h{64})\z/

@@ -445,13 +445,13 @@ RSpec.describe Lain::Isolation::Gc, :seam do
 
     # A new epic branch starts at main's tip, so it is an ancestor of main the
     # moment it exists; the marker's recorded SHA is what tells the two apart.
-    it "keeps an epic branch nothing has landed on since lain created it" do
+    it "keeps an epic branch nothing has landed on since lain created or last moved it" do
       Lain::Isolation::WorkingBranch.epic("fresh", repo_root: @repo_root)
 
       record = record_for(gc, "refs/heads/epic/fresh")
 
       expect(ref?("refs/heads/epic/fresh")).to be(true)
-      expect(summary(record)).to eq([:kept, :branch, "nothing has landed on it since lain created it"])
+      expect(summary(record)).to eq([:kept, :branch, "nothing has landed on it since lain created or last moved it"])
     end
 
     it "keeps a merged epic branch that is checked out" do
@@ -501,13 +501,56 @@ RSpec.describe Lain::Isolation::Gc, :seam do
         expect(summary(record)).to eq([:kept, :anchor, "#{name} still stands at it, a delete lain left unfinished"])
       end
 
-      it "reaps the anchor as folded once that branch has moved on past it" do
+      it "keeps the anchor once that issue branch has moved on past it" do
         anchor, = unfinished_delete
         run_git(@repo_root, "switch", "-q", name)
         commit_in(@repo_root, "more.txt", "more\n")
         run_git(@repo_root, "switch", "-q", "main")
 
-        expect(summary(record_for(gc, anchor))).to eq([:reaped, :anchor, "folded into #{name}"])
+        expect(summary(record_for(gc, anchor)))
+          .to eq([:kept, :anchor, "only #{name} reaches it, and an issue branch is not a landing"])
+      end
+    end
+
+    context "when an anchor holds an issue's commit" do
+      let(:anchor) { "refs/lain/worker/issue.demo.shout.2" }
+
+      def issue_commit
+        Lain::Isolation::WorkingBranch.owned("lain/issue/demo/shout", repo_root: @repo_root, from: sha("main"))
+        run_git(@repo_root, "switch", "-q", "lain/issue/demo/shout")
+        commit_in(@repo_root, "shout.txt", "shout\n").tap { |tip| run_git(@repo_root, "update-ref", anchor, tip) }
+      end
+
+      it "keeps the anchor while only the issue's own branch reaches it" do
+        tip = issue_commit
+        run_git(@repo_root, "switch", "-q", "main")
+
+        record = record_for(gc, anchor)
+
+        expect(summary(record))
+          .to eq([:kept, :anchor, "only lain/issue/demo/shout reaches it, and an issue branch is not a landing"])
+        expect(sha(anchor)).to eq(tip)
+      end
+
+      it "reaps the anchor as folded once the epic branch holds it too" do
+        tip = issue_commit
+        Lain::Isolation::WorkingBranch.epic("demo", repo_root: @repo_root)
+        run_git(@repo_root, "switch", "-q", "epic/demo")
+        run_git(@repo_root, "merge", "-q", "--ff-only", tip)
+        run_git(@repo_root, "switch", "-q", "main")
+
+        expect(ref?(anchor)).to be(true)
+        expect(summary(record_for(gc, anchor))).to eq([:reaped, :anchor, "folded into epic/demo"])
+        expect(ref?(anchor)).to be(false)
+      end
+
+      it "reaps the anchor as landed once the trunk holds it" do
+        tip = issue_commit
+        run_git(@repo_root, "switch", "-q", "main")
+        run_git(@repo_root, "merge", "-q", "--ff-only", tip)
+
+        expect(summary(record_for(gc, anchor))).to eq([:reaped, :anchor, "landed on main"])
+        expect(ref?(anchor)).to be(false)
       end
     end
 

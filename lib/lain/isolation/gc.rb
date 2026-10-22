@@ -14,7 +14,9 @@ module Lain
     # SAFE ELSEWHERE MEANS A LOCAL BRANCH REACHES IT. Reached from the trunk,
     # the work landed; reached from any other branch, it folded into that
     # branch. A checkout or anchor nothing reaches is the only place its work
-    # lives, so it is kept.
+    # lives, so it is kept. An anchor only an issue branch reaches is kept
+    # too: `lain epic land` admits only an anchored commit, so the anchor stays
+    # until the epic branch or the trunk holds the work.
     #
     # A CHECKOUT STILL WHERE IT WAS CUT HAS NOT LANDED. Cut at the trunk's
     # tip, its HEAD is reached from the trunk the moment it exists, which says
@@ -126,9 +128,18 @@ module Lain
 
         # @return [String] "landed on <trunk>", "folded into <branches>", or ""
         #   when no local branch reaches `commit`
-        def landing(commit)
-          names = @git.run("for-each-ref", "--format=%(refname)", "--contains", commit, "refs/heads/")
-                      .stdout.split("\n").map { |ref| ref.delete_prefix("refs/heads/") }
+        def landing(commit) = verdict(reaching(commit))
+
+        # @return [Array<String>] every local branch whose tip reaches
+        #   `commit`, without `refs/heads/`
+        def reaching(commit)
+          @git.run("for-each-ref", "--format=%(refname)", "--contains", commit, "refs/heads/")
+              .stdout.split("\n").map { |ref| ref.delete_prefix("refs/heads/") }
+        end
+
+        # @param names [Array<String>] branches reaching one commit
+        # @return [String] what {#landing} says of a commit those branches reach
+        def verdict(names)
           return "landed on #{trunk}" if names.include?(trunk)
 
           names.empty? ? "" : "folded into #{names.join(", ")}"
@@ -309,8 +320,8 @@ module Lain
 
         def abandoned?(entry) = entry.lock.abandoned?(@table)
 
-        # The branch pass's "nothing has landed on it since lain created it",
-        # for a checkout: `worktree add` opens the checkout's HEAD reflog at
+        # The branch pass's "nothing has landed on it since lain created or last
+        # moved it", for a checkout: `worktree add` opens the checkout's HEAD reflog at
         # the commit it cut, and every move of HEAD since appends to it. Only
         # an entry naming another commit proves a move; a reflog that is gone
         # or unreadable proves nothing, and what gc cannot judge it keeps,
@@ -390,8 +401,13 @@ module Lain
         end
       end
 
-      # Every worker anchor, deleted once a branch reaches its commit.
+      # Every worker anchor, deleted once a branch other than an issue branch
+      # reaches its commit.
       class Anchors
+        # How a kept anchor's reason starts when nothing but the anchor holds
+        # its commit, so a report can tell those apart.
+        UNREACHED = "no branch reaches"
+
         def initialize(repo:)
           @repo = repo
         end
@@ -400,18 +416,26 @@ module Lain
 
         private
 
-        # A branch reaching the commit is not the work landing when that branch
-        # is one a delete lain left unfinished: the anchor is the tip's keeper.
         def judge(ref, commit)
-          landing = @repo.landing(commit)
-          return Records.kept(:anchor, ref, "no branch reaches #{commit[0, 12]}") if landing.empty?
-
-          unfinished = WorkingBranch.unfinished_at(ref, commit, repo: @repo)
-          return Records.kept(:anchor, ref, "#{unfinished} still stands at it, a delete lain left unfinished") unless
-            unfinished.empty?
+          reaching = @repo.reaching(commit)
+          landing = @repo.verdict(reaching.reject { |name| name.start_with?("#{WorkingBranch::ISSUE}/") })
+          reason = hold(ref, commit, reaching, landing)
+          return Records.kept(:anchor, ref, reason) unless reason.empty?
           return Records.reaped(:anchor, ref, landing) if @repo.delete(ref, commit)
 
           Records.kept(:anchor, ref, "it moved while gc ran")
+        end
+
+        # @return [String] why the anchor stays, or "" when it may go
+        def hold(ref, commit, reaching, landing)
+          return "#{UNREACHED} #{commit[0, 12]}" if reaching.empty?
+
+          # A branch a delete lain left unfinished reaches the commit without
+          # the work landing: the anchor is the tip's keeper.
+          unfinished = WorkingBranch.unfinished_at(ref, commit, repo: @repo)
+          return "#{unfinished} still stands at it, a delete lain left unfinished" unless unfinished.empty?
+
+          landing.empty? ? "only #{reaching.join(", ")} reaches it, and an issue branch is not a landing" : ""
         end
       end
 
@@ -442,7 +466,7 @@ module Lain
         # @return [String] why the branch stays, or "" when it may go
         def hold(branch, tip, marked)
           return "it is #{@repo.trunk}, which is never reaped" if branch == "refs/heads/#{@repo.trunk}"
-          return "nothing has landed on it since lain created it" if tip == marked
+          return "nothing has landed on it since lain created or last moved it" if tip == marked
           return "not merged into #{@repo.trunk}" unless @repo.merged?(tip)
 
           in_use(branch)
