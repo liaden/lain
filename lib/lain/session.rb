@@ -7,9 +7,9 @@ module Lain
   # `Lain::Ext::Event`) or frozen and sent-not-stored (a {Lain::Workspace}). Session
   # is the exception on purpose: it is the run's scratch memory and must
   # accumulate as tools run. Keeping it OFF the Timeline is what keeps
-  # `Ractor.shareable?(turn)` true, and it is why rewinding or forking the
-  # Timeline can never resurrect or lose a todo list -- there was never a copy
-  # of it there, only here.
+  # `Ractor.shareable?(turn)` true. A todo list is held here with the head it
+  # was written at, so a rewind puts back the newest list its chain still
+  # carries rather than the newest one written.
   #
   # The pin-set (turn digests compaction may not elide) is modelled on the
   # READ-set rather than the write-set, because only the read-set is journaled
@@ -192,15 +192,18 @@ module Lain
     end
 
     # The head moved BACKWARD, so every chain-scoped projection this session
-    # holds re-derives from where it now stands: the read-set, and the memory
-    # view. Called by {Agent#rewind} rather than by {#on_chain}, which runs once
-    # per tool round and would pay a whole-chain memory fold on every one of
-    # them to answer a question only a rewind can change.
+    # holds re-derives from where it now stands: the read-set, the todo list,
+    # and the memory view. The todo list is put back without counting a plan
+    # step, because no write happened. Called by {Agent#rewind} rather than by
+    # {#on_chain}, which runs once per tool round and would pay a whole-chain
+    # memory fold on every one of them to answer a question only a rewind can
+    # change.
     #
     # @param timeline [Ext::Timeline] the chain as the rewind left it
     # @return [self]
     def rewound_to(timeline)
       on_chain(timeline)
+      show_todos(todos_on_chain)
       @memory.follow(timeline)
       self
     end
@@ -445,16 +448,18 @@ module Lain
     # list once and takes fifty more turns should not re-join the same strings
     # fifty times.
     #
-    # Journaled on every call, unconditionally and as the WHOLE list, so a
-    # replay folding in recorded order lands on the last list written.
+    # Journaled on every call, unconditionally and as the WHOLE list with the
+    # head it was written at, so a replay folding in recorded order lands on
+    # the last list written on its chain.
     #
     # @return [self]
     def write_todos(todos)
       list = todos.to_a
       @plan_step_completions += 1 if completed_count(list) > completed_count(@todo_items)
-      @todo_items = list
-      @todo_reminder = list.empty? ? nil : render_todos(list).freeze
-      @journal << Telemetry::TodoSnapshot.from(list)
+      head = @reads.head
+      @todo_lists << [head, list]
+      show_todos(list)
+      @journal << Telemetry::TodoSnapshot.from(list, head:)
       self
     end
 
@@ -759,8 +764,19 @@ module Lain
     end
 
     def start_todos
-      @todo_reminder = nil
-      @todo_items = []
+      @todo_lists = []
+      show_todos([])
+    end
+
+    def show_todos(list)
+      @todo_items = list
+      @todo_reminder = list.empty? ? nil : render_todos(list).freeze
+    end
+
+    # A list written before any turn has no head, and every chain carries it.
+    def todos_on_chain
+      _, list = @todo_lists.reverse_each.find { |head, _| head.nil? || @reads.carries?(head) }
+      list || []
     end
 
     def hold_cut(cut)
@@ -973,6 +989,9 @@ module Lain
 
       # @return [String, nil] the head of the chain reads are counted against
       def head = @chain.head
+
+      # @return [Boolean] whether the chain reads are counted against holds `digest`
+      def carries?(digest) = @chain.include?(digest)
 
       # Whole when the counted reads of one version cover every line, and
       # nothing was withheld.

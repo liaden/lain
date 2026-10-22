@@ -6,12 +6,10 @@ module Lain
   # State that is SENT to the model but never STORED in the Timeline, which is
   # the whole reason Workspace exists. Todo lists, a file-staleness ledger and a
   # remaining-budget countdown must reach the model reflecting *current* truth
-  # every turn; appending them as turn events would be wrong twice over -- the
-  # Timeline would accrete a stale copy per turn (compounding token cost
-  # forever), and rewinding would resurrect a completed todo list. So
-  # {Lain::Context} renders it into the Request at the tail of the last user
-  # message and it dies with the session; anything that must outlive one belongs
-  # in Memory.
+  # every turn; appending them as turn events would make the Timeline accrete
+  # a stale copy per turn, compounding token cost forever. So {Lain::Context}
+  # renders it into the Request at the tail of the last user message and it
+  # dies with the session; anything that must outlive one belongs in Memory.
   #
   # Frozen and value-like, so a Context render stays pure: the same Timeline,
   # Toolset and Workspace must always produce the same Request, or dry replay is

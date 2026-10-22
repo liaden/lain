@@ -169,8 +169,8 @@ RSpec.describe Lain::Tools::TodoWrite do
   # structured list IN MEMORY ONLY to compare against, exactly like the
   # existing read-/write-sets. That extra state is never appended to the
   # Timeline and never journaled beyond the existing whole-list
-  # TodoSnapshot, so it cannot resurrect a todo on rewind -- it dies with
-  # the Session, same as always.
+  # TodoSnapshot. A rewind puts back the list its chain carries without
+  # counting a step, since no write happened.
   describe "the plan-step-completion signal" do
     let(:session) { Lain::Session.new }
 

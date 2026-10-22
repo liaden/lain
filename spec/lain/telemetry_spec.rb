@@ -97,6 +97,14 @@ RSpec.describe Lain::Telemetry do
       expect { Lain::Telemetry::WriteRefused.new(pattern: "aws access key id") }
         .to raise_error(ArgumentError, /missing keyword: :tool_use_id/)
     end
+
+    it "journals a TodoSnapshot's head, and refuses one that is not a String or nil" do
+      snapshot = Lain::Telemetry::TodoSnapshot.new(todos: [], head: "blake3:head")
+
+      expect(snapshot.to_h).to eq(todos: [], head: "blake3:head")
+      expect { Lain::Telemetry::TodoSnapshot.new(todos: [], head: 7) }
+        .to raise_error(ArgumentError, /head must be a String or nil, got 7/)
+    end
   end
 
   describe "#journal_type" do

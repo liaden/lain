@@ -180,8 +180,8 @@ module Lain
     # @param workspace [Workspace] the sent-not-stored files/tools context
     #   rendered into every Request. Frozen, and never appended to the Timeline.
     # @param session [Session] the run's mutable scratch state (files read, the
-    #   todo list) -- deliberately off the Timeline, so forking or rewinding can
-    #   never resurrect or lose one.
+    #   todo list) -- deliberately off the Timeline; a rewind tells it where the
+    #   chain now stands, and it keeps what that chain carries.
     # @param mailbox [#capture] the inbox whose per-turn snapshot folds pending
     #   messages into the rendered tail ({Context::Mailbox::Source} for an
     #   actor's log, {Context::Mailbox::Live} for a chat's notes). Defaults to

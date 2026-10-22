@@ -897,6 +897,90 @@ RSpec.describe Lain::Session do
     end
   end
 
+  describe "the todo list across Agent#rewind" do
+    subject(:session) { described_class.new(journal:) }
+
+    let(:journal) { [] }
+    let(:provider) { Lain::Provider::Mock.new(responses:) }
+    let(:agent) do
+      Lain::Agent.new(provider:, session:, toolset: Lain::Toolset.new([Lain::Tools::TodoWrite.new]),
+                      context: Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024))
+    end
+
+    def todo_call(id, content, status = "pending")
+      tool_response([id, "todo_write", { "todos" => [{ "content" => content, "status" => status }] }])
+    end
+
+    describe "a rewind past a todo_write" do
+      let(:responses) { [todo_call("tu_1", "TULIP"), text_response("noted"), text_response("fresh")] }
+
+      it "renders the next request's workspace with no TULIP todo" do
+        agent.ask("plan it")
+        agent.rewind(3)
+        agent.ask("start over")
+
+        expect(provider.requests.last.cache_payload.to_s).not_to include("TULIP")
+        expect(session.reminders).to eq([])
+      end
+    end
+
+    describe "a todo written on the kept chain" do
+      let(:responses) do
+        [todo_call("tu_1", "IRIS", "completed"), text_response("noted"),
+         todo_call("tu_2", "IRIS"), text_response("noted"), text_response("fresh")]
+      end
+
+      it "keeps the earlier list in force without counting a plan step or journaling a write" do
+        agent.ask("plan it")
+        agent.ask("reopen it")
+        expect { agent.rewind(3) }.not_to(change { [session.plan_step_completions, journal.size] })
+        agent.ask("carry on")
+
+        expect(session.reminders).to eq(["Current todo list:\n- [completed] IRIS"])
+        expect(provider.requests.last.cache_payload.to_s).to include("[completed] IRIS")
+      end
+    end
+
+    describe "three lists, and a rewind past the last" do
+      let(:responses) do
+        [todo_call("tu_1", "IRIS"), text_response("noted"), todo_call("tu_2", "ROSE"), text_response("noted"),
+         todo_call("tu_3", "TULIP"), text_response("noted")]
+      end
+
+      it "puts back the newest list the chain still carries" do
+        agent.ask("one")
+        agent.ask("two")
+        agent.ask("three")
+        agent.rewind(4)
+
+        expect(session.reminders).to eq(["Current todo list:\n- [pending] ROSE"])
+      end
+    end
+
+    describe "a list written before any turn" do
+      let(:responses) { [todo_call("tu_1", "TULIP"), text_response("noted")] }
+
+      it "survives a rewind past every later write" do
+        session.write_todos([Struct.new(:content, :status).new("SEED", "pending")])
+        agent.ask("plan it")
+        agent.rewind(3)
+
+        expect(session.reminders).to eq(["Current todo list:\n- [pending] SEED"])
+      end
+    end
+
+    describe "a snapshot" do
+      let(:responses) { [todo_call("tu_1", "IRIS"), text_response("noted")] }
+
+      it "records the head of the round that wrote it" do
+        agent.ask("plan it")
+
+        snapshot = journal.find { |record| record.journal_type == "todo_snapshot" }
+        expect(snapshot.head).to eq(agent.timeline.to_a[1].digest)
+      end
+    end
+  end
+
   # Policy state, not a derived head: the Timeline stays the lossless record,
   # and the cut rides here beside the pin-set for the pin-set's reason -- it is
   # journaled and replayed, so a resume renders the replacement a recorded
@@ -1572,6 +1656,15 @@ RSpec.describe Lain::Session do
       expect(snapshots.first.todos).to eq([{ "content" => "a", "status" => "pending" }])
       expect(snapshots.last.todos).to eq([{ "content" => "b", "status" => "completed" }])
       expect(journaled.reminders).to eq(["Current todo list:\n- [completed] b"])
+    end
+
+    it "journals each TodoSnapshot with the chain head it was written at" do
+      root = CoreGraph.timeline.commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
+      journaled.write_todos([todo("a", "pending")])
+      journaled.on_chain(root)
+      journaled.write_todos([todo("b", "pending")])
+
+      expect(of_type("todo_snapshot").map(&:head)).to eq([nil, root.head_digest])
     end
   end
 end

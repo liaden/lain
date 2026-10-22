@@ -7,8 +7,9 @@ module Lain
     # the model never intended.
     #
     # The list never enters the Timeline: it rides the Workspace the way a file
-    # read never becomes a Turn, so it can neither compound token cost turn over
-    # turn nor resurrect a completed item when the Timeline is rewound.
+    # read never becomes a Turn, so it cannot compound token cost turn over
+    # turn. {Session} keeps it with the head it was written at, so a rewind
+    # puts back the list its chain carries.
     #
     # `status` is a CLOSED enum rather than free text, so a rendered list is
     # always one of three unambiguous words and never a model-invented synonym.
