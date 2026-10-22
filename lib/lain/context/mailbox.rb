@@ -32,6 +32,8 @@ module Lain
     class Mailbox < Combinator
       include TailInjection
 
+      TAG = "mailbox"
+
       # The projection for ONE turn, as a frozen value. The render-side
       # {Mailbox} folds `pending`; the commit records `folded` as the turn's
       # causal_parents. One object, one derivation, so the two sides cannot
@@ -125,7 +127,7 @@ module Lain
       private
 
       def mailbox_block(lines)
-        { "type" => "text", "text" => "<mailbox>\n#{lines.join("\n")}\n</mailbox>" }
+        { "type" => "text", "text" => "<#{TAG}>\n#{lines.join("\n")}\n</#{TAG}>" }
       end
 
       # A text-less message contributes nothing rather than a blank line. The

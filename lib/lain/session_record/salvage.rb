@@ -40,6 +40,17 @@ module Lain
     # prompt -- that old answer would commit onto a head no longer holding the
     # question.
     #
+    # == The prompt the crash lost
+    #
+    # A prompt's turn record lands only with its answer's, so a kill mid-stream
+    # leaves the prompt nowhere but the request_sent payload's tail message.
+    # The tail is rebuilt unless the head already holds it; the messages ahead
+    # of it may be derived (a handoff document, a compaction summary) and are
+    # not turns, except the cancellation a resume commits in memory over a
+    # stranded call. The cache breakpoint, the workspace blocks and a folded
+    # mailbox note are removed because none was ever part of a turn; the
+    # answer's link to that note is not in the payload and is not rebuilt.
+    #
     # == Reassembly, and an answer it cannot find
     #
     # The frame is rebuilt by {Provider::Reassembly}, with the decoder of the
@@ -90,7 +101,11 @@ module Lain
       # `corruption` is nil unless a mis-slotted region was skipped to reach
       # this frame (a legacy interleaved WAL); it rides the notice so the skip
       # is reported, never silent, even when a clean newer frame recovered fine.
-      Recovered = Data.define(:request_digest, :response, :timeline, :newly_committed, :corruption) do
+      #
+      # `committed` is the turns this recovery added, root to head: the answer,
+      # after the prompt it rebuilt when there was one; empty when nothing was
+      # newly committed.
+      Recovered = Data.define(:request_digest, :response, :timeline, :newly_committed, :corruption, :committed) do
         def recovered? = true
         def closes_file? = true
         def newly_committed? = newly_committed
@@ -167,7 +182,7 @@ module Lain
 
         digest = sent.fetch("digest")
         last = @frames.reverse_each.find { |frame| frame.request_digest == digest }
-        last&.complete? ? recover(digest, last, sent.dig("payload", "max_tokens")) : incomplete(digest, last)
+        last&.complete? ? recover(digest, last, sent) : incomplete(digest, last)
       end
 
       private
@@ -223,17 +238,86 @@ module Lain
       # Any failure inside the reassembly is the frame's, whatever its class --
       # rotted bytes raise from a parser, an encoder or a Hash lookup alike --
       # and a resume must not die on the one frame it was asked to read back.
-      def recover(digest, frame, ceiling)
-        response = @reassembly.call(frame, ceiling:)
+      def recover(digest, frame, sent)
+        response = @reassembly.call(frame, ceiling: sent.dig("payload", "max_tokens"))
       rescue StandardError => e
         unreadable(digest, frame, "it could not be reassembled (#{e.class}: #{e.message.lines.first&.strip})")
       else
         return unreadable(digest, frame, "it reassembled to no content") if response.content.empty?
         return already_recovered(digest, response) if already_committed?(response)
 
-        timeline = @timeline.commit(role: :assistant, content: response.content)
-        Recovered.new(request_digest: digest, response:, timeline:, newly_committed: true, corruption:)
+        newly_recovered(digest, response, unwritten_prompts(sent))
       end
+
+      def newly_recovered(digest, response, prompts)
+        asked = prompts.inject(@timeline) { |timeline, content| timeline.commit(role: :user, content:) }
+        timeline = asked.commit(role: :assistant, content: response.content)
+        Recovered.new(request_digest: digest, response:, timeline:, newly_committed: true, corruption:,
+                      committed: timeline.to_a.last(prompts.size + 1))
+      end
+
+      # Only the tail is the agent's own message: a handoff or a compacted
+      # render puts derived user messages ahead of it that no turn ever held.
+      # The one turn committed in memory ahead of a prompt is a resume's
+      # cancellation of a stranded call.
+      def unwritten_prompts(sent)
+        messages = Array(sent.dig("payload", "messages"))
+        return [] if messages.empty?
+
+        prompt = without_folded_note(prompt_of(messages.last["content"]))
+        return [] if on_record?(prompt)
+
+        EventLog::Guards.pending_tool_use?(@timeline.head) ? [cancellation(messages[-2]), prompt] : [prompt]
+      end
+
+      # A render may reshape the head's message -- a resend edits it, a dedupe
+      # drops a duplicate result, a fold reads like a note -- so content cannot
+      # say whether the head holds it. Structure can: the agent commits a user
+      # turn ahead of its request, and the only one it does not write first is
+      # a prompt, asked over tool results or a cancellation.
+      def on_record?(prompt)
+        head = @timeline.head
+        !head.nil? && head.role == "user" && !(tool_results?(head.content) && prompt.all? { |b| b["type"] == "text" })
+      end
+
+      def tool_results?(blocks) = blocks.any? { |block| block["type"] == "tool_result" }
+
+      # The message before the prompt is the cancellation only when it answers
+      # the stranded calls; a handoff document there means it was folded away,
+      # and it is minted the way the resume minted it.
+      def cancellation(message)
+        minted = Tool::Cancellation.new(@timeline.head, kind: :unknown).blocks
+        sent = message && prompt_of(message["content"])
+        answers?(sent, minted) ? sent : minted
+      end
+
+      def answers?(sent, minted)
+        sent.is_a?(Array) && sent.all? { |block| block["type"] == "tool_result" } &&
+          sent.map { |block| block["tool_use_id"] } == minted.map { |block| block["tool_use_id"] }
+      end
+
+      # A String content is a hand-built request's; a turn is always blocks, and
+      # replay reads it as blocks.
+      def prompt_of(content)
+        return [{ "type" => "text", "text" => content }] if content.is_a?(String)
+
+        Request.strip_cache_markers(content.reject { |block| workspace_block?(block) })
+      end
+
+      # A note has no marker of its own; adding one would move every cached
+      # prompt's bytes, so its exact rendering is what names it. It is appended
+      # after the prompt, so a sole block is never one.
+      def without_folded_note(blocks)
+        blocks.size > 1 && folded_note?(blocks.last) ? blocks[0..-2] : blocks
+      end
+
+      def folded_note?(block)
+        tag = Context::Mailbox::TAG
+        text = block.is_a?(Hash) && block.keys.sort == %w[text type] && block["type"] == "text" && block["text"]
+        text.is_a?(String) && text.start_with?("<#{tag}>\n") && text.end_with?("\n</#{tag}>")
+      end
+
+      def workspace_block?(block) = block.is_a?(Hash) && block[Workspace::WORKSPACE_MARKER] == true
 
       # Content, never digest: a re-resume commits the SAME response onto a
       # Timeline that already carries it, so the recovered turn's PARENT (and
@@ -255,7 +339,8 @@ module Lain
       end
 
       def already_recovered(digest, response)
-        Recovered.new(request_digest: digest, response:, timeline: @timeline, newly_committed: false, corruption:)
+        Recovered.new(request_digest: digest, response:, timeline: @timeline, newly_committed: false, corruption:,
+                      committed: [])
       end
 
       def incomplete(digest, frame)

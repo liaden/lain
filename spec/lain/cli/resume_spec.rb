@@ -1,10 +1,41 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "json"
 require "socket"
 require "stringio"
 require "thor"
 require "tmpdir"
+
+# A chat that SIGKILLs itself as its first turn record is about to land: the
+# request_sent for the prompt is on disk and neither turn is.
+module ResumeKilledMidStream
+  CHILD = <<~RUBY
+    require "lain"
+
+    paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => ARGV.fetch(0) })
+    path = Lain::Journal.default_path(paths:)
+    journal = Class.new(Lain::Journal) do
+      define_method(:record) do |entry|
+        type = (entry.respond_to?(:to_journal) ? entry.to_journal : entry).transform_keys(&:to_s)["type"].to_s
+        Process.kill(:KILL, Process.pid) if type == "turn"
+        super(entry)
+      end
+      alias_method :<<, :record
+    end.new(io: File.open(path, "ab"), owns_io: true, fsync: true, path:)
+    chronicle = Lain::CLI::Chronicle.new(journal:, journal_path: path)
+    context = Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse")
+    toolset = Lain::Toolset.new
+    chronicle.start(context:, toolset:)
+    reply = Lain::Response.new(content: [{ "type" => "text", "text" => "iota" }], stop_reason: :end_turn)
+    agent = nil
+    agent = Lain::Agent.new(provider: Lain::Provider::Mock.new(responses: [reply]), context:, toolset:,
+                            workspace: Lain::Workspace.new(reminders: ["no todos"]),
+                            instrumentation: chronicle.instrumentation
+                                                      .with(turn_middleware: chronicle.turn_middleware(-> { agent.timeline })))
+    agent.ask("say iota")
+  RUBY
+end
 
 # Resolving `lain chat --resume [SESSION]` into the pieces the exe wires --
 # the verified Timeline (injected), the replayed Session run-state and memory
@@ -438,6 +469,97 @@ RSpec.describe Lain::CLI::Resume do
       end
     end
 
+    describe "a prompt killed mid-stream", :seam do
+      let(:reply) { Lain::Response.new(content: text("iota"), stop_reason: :end_turn) }
+
+      def killed_session
+        pid = Process.spawn(RbConfig.ruby, "-I", File.expand_path("../../../lib", __dir__),
+                            "-e", ResumeKilledMidStream::CHILD, @state_home, out: File::NULL, err: File::NULL)
+        Process.wait(pid)
+        Dir[File.join(paths.sessions_dir, "*.ndjson")].sole
+      end
+
+      def frame_the_reply(path)
+        sent = journal_records(path, "request_sent").last.fetch("digest")
+        frame = Lain::Provider::ResponseWal.new(Lain::Paths.wal_for(path))
+                                           .open_frame(request_digest: sent, wire: "anthropic-sse")
+        frame.append(AnthropicSSE.body(reply))
+        frame.close(complete: true)
+      end
+
+      def uninterrupted
+        agent = Lain::Agent.new(provider: Lain::Provider::Mock.new(responses: [reply]), toolset: Lain::Toolset.new,
+                                context: Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024,
+                                                           system: "be terse"),
+                                workspace: Lain::Workspace.new(reminders: ["no todos"]))
+        agent.ask("say iota")
+        agent.timeline
+      end
+
+      # A spec-owned root, so the launch reads no skills from the developer's tree.
+      def resumed_through_launch
+        root = File.join(@state_home, "project").tap { |dir| FileUtils.mkdir_p(dir) }
+        project = Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag)
+        launch = Lain::CLI::ChatLaunch.new({ resume: "", journal: false, provider: "ollama", max_tokens: 16 },
+                                           resume_factory: -> { described_class.new(paths:) },
+                                           project_factory: -> { project })
+        launch.send(:resumed_run, launch.backend)
+      end
+
+      it "comes back with the prompt under its recovered answer, at the digests an uninterrupted run gives" do
+        path = killed_session
+        expect(journal_records(path).map { |record| record["type"] }).not_to include("turn")
+        frame_the_reply(path)
+
+        result = resumed_through_launch
+
+        expect(result.timeline.to_a.map { |turn| [turn.role, turn.content] })
+          .to eq([["user", text("say iota")], ["assistant", text("iota")]])
+        expect(result.timeline.to_a.map(&:digest)).to eq(uninterrupted.to_a.map(&:digest))
+      end
+    end
+
+    # The chat builds its inbox fresh on every launch and nothing reads a
+    # recorded note back into it, so a note the crashed prompt folded is not
+    # delivered again.
+    describe "a note the crashed prompt folded" do
+      def inbox(observer: ->(_event) {})
+        Lain::Context::Mailbox::Live.new(recipient: Lain::EventLog::ChainWriter.method(:correlation_of), observer:)
+      end
+
+      # The request a chat sends for "third" with a note pending, and the note's record.
+      def asked_with_note
+        notes = []
+        box = inbox(observer: ->(event) { notes << event })
+        provider = Lain::Provider::Mock.new(responses: [canned_response])
+        agent = Lain::Agent.new(provider:, context: recorded_context, toolset:, timeline: committed, mailbox: box)
+        box.post(from: "human", text: "also, be brief")
+        agent.ask("third")
+        [provider.requests.first, notes]
+      end
+
+      def crashed_with_note(name)
+        request, notes = asked_with_note
+        dead = Lain::Liveness::Writer.current.with(start: "1")
+        write_session(name, [open_header.merge(dead.to_header)] + turn_records(committed) +
+                            notes.map { |note| Lain::Telemetry::Message.from_event(note).to_journal } +
+                            [request_sent_record(request)])
+        write_complete_frame(name, request, canned_response)
+      end
+
+      it "recovers the prompt without the note, and the next prompt does not carry it again" do
+        crashed_with_note("20260101T000000-1.ndjson")
+
+        result = resume.call
+        provider = Lain::Provider::Mock.new(responses: [text_response("answered")])
+        Lain::Agent.new(provider:, context: recorded_context, toolset:, timeline: result.timeline,
+                        mailbox: inbox).ask("fourth")
+
+        expect(result.timeline.to_a.last(2).map(&:content)).to eq([text("third"), canned_response.content])
+        expect(JSON.generate(provider.requests.first.messages)).not_to include("also, be brief")
+      end
+    end
+
     describe "a complete uncommitted response" do
       it "recovers the response as the session's new turn, closing the file, without spending again" do
         request = in_flight_request
@@ -447,7 +569,9 @@ RSpec.describe Lain::CLI::Resume do
         result = resume.call
 
         expect(result.open?).to be(false)
-        expect(result.timeline.to_a.size).to eq(3)
+        expect(result.timeline.to_a.map { |turn| [turn.role, turn.content] })
+          .to eq([["user", text("hi")], ["assistant", text("hello")], ["user", text("third")],
+                  ["assistant", canned_response.content]])
         expect(result.timeline.head.content).to eq(canned_response.content)
         expect(result.notices.join).to include("recovered", request.digest)
         expect(result.resumed_from).to eq("file" => "20260101T000000-1.ndjson", "head" => result.timeline.head_digest)
@@ -499,11 +623,11 @@ RSpec.describe Lain::CLI::Resume do
     # re-resume salvaged AGAIN -- Salvage decided from request_sent-without-
     # turn_usage (a salvaged turn carries no turn_usage by design), committed
     # a second copy onto the already-recovered head, and the file loaded with
-    # two consecutive duplicate assistant turns. Every prefix of the
-    # three-record append (`salvaged`, `turn`, `session_closed`) must
+    # two consecutive duplicate assistant turns. Every prefix of the append
+    # (`salvaged`, the prompt and answer `turn`s, `session_closed`) must
     # re-resume to exactly one recovery, never a duplicate.
     describe "idempotency across a second crash mid-close" do
-      # Rebuilds the SAME three records {Salvager#close!} would append --
+      # Rebuilds the SAME records {Salvager#close!} would append --
       # driving {SessionRecord::Salvage} directly against the file exactly as
       # {Salvager} does, so the manually-truncated prefix is byte-for-byte
       # what a real interrupted append would have left, not an approximation.
@@ -526,7 +650,7 @@ RSpec.describe Lain::CLI::Resume do
         head_before = recording_for(name).timeline.head_digest
         [Lain::Telemetry::Salvaged.new(request_digest: outcome.request_digest, head_before:,
                                        head_after: outcome.turn.digest).to_journal,
-         Lain::SessionRecord.turn(outcome.turn),
+         *outcome.committed.map { |turn| Lain::SessionRecord.turn(turn) },
          Lain::Telemetry::SessionClosed.new(head: outcome.turn.digest, reason: :salvaged).to_journal]
       end
 
@@ -536,13 +660,11 @@ RSpec.describe Lain::CLI::Resume do
         end
       end
 
-      # roles ending [..., "assistant", "assistant"] IS the correct shape here
-      # (the crashed request was a follow-up with no new user turn in
-      # between, by this fixture's construction) -- the BUG this guards is a
-      # THIRD consecutive assistant turn (a duplicate recovery), not the
-      # legitimate pair.
-      [0, 1, 2, 3].each do |prefix|
-        it "recovers exactly once when #{prefix} of the 3 closing records already landed before the crash" do
+      # The crashed request's tail is a prompt the file never held, so the
+      # recovery rebuilds it; the BUG this guards is a second rebuilt prompt
+      # or a duplicate recovery.
+      [0, 1, 2, 3, 4].each do |prefix|
+        it "recovers exactly once when #{prefix} of the 4 closing records already landed before the crash" do
           name = "20260101T000000-1.ndjson"
           request = in_flight_request
           write_crashed_session(name, request)
@@ -551,14 +673,50 @@ RSpec.describe Lain::CLI::Resume do
 
           result = resume.call
 
-          expect(result.timeline.to_a.map(&:role)).to eq(%w[user assistant assistant])
-          expect(result.timeline.to_a.size).to eq(3) # committed (2) + exactly ONE recovery, never a duplicate
+          expect(result.timeline.to_a.map(&:role)).to eq(%w[user assistant user assistant])
           expect(result.timeline.head.content).to eq(canned_response.content)
           expect(result.open?).to be(false)
 
           # A further resume is now a clean no-op: the file is closed.
           again = resume.call
           expect(again.timeline.to_a.map(&:digest)).to eq(result.timeline.to_a.map(&:digest))
+        end
+      end
+
+      def stranded
+        chain("hi").commit(role: :assistant,
+                           content: [{ "type" => "tool_use", "id" => "tu_1", "name" => "echo", "input" => {} }])
+      end
+
+      # What a chat sends, and goes on to commit, for "third" over a head a
+      # resume answered as cancelled in memory only.
+      def asked_over_stranded
+        provider = Lain::Provider::Mock.new(responses: [canned_response])
+        agent = Lain::Agent.new(provider:, context: recorded_context, toolset:, timeline: stranded)
+        agent.ask("third")
+        [provider.requests.first, agent.timeline]
+      end
+
+      def write_crashed_mid_tool(name, request)
+        dead = Lain::Liveness::Writer.current.with(start: "1")
+        write_session(name, [open_header.merge(dead.to_header)] + turn_records(stranded) +
+                            [request_sent_record(request)])
+        write_complete_frame(name, request, canned_response)
+      end
+
+      # The cancellation and the prompt are two turns the file never held, so
+      # a crash between their two records must not lose the second.
+      [0, 1, 2, 3, 4, 5].each do |prefix|
+        it "rebuilds the cancellation and the prompt once when #{prefix} of the 5 closing records landed" do
+          name = "20260101T000000-1.ndjson"
+          request, original = asked_over_stranded
+          write_crashed_mid_tool(name, request)
+          append_prefix(name, prefix) if prefix.positive?
+
+          result = resume.call
+
+          expect(result.timeline.to_a.map(&:digest)).to eq(original.to_a.map(&:digest))
+          expect(resume.call.timeline.to_a.map(&:digest)).to eq(original.to_a.map(&:digest))
         end
       end
     end

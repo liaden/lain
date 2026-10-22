@@ -137,6 +137,21 @@ module Lain
       cuts.empty? ? [] : rolled_entries(cuts.to_h, chain)
     end
 
+    # Neither neutral marker is a wire field, and both move for reasons that are
+    # not rewrites: a "cache" breakpoint slides across messages as a session grows,
+    # and the "workspace" tail (Workspace::WORKSPACE_MARKER) is re-rendered fresh
+    # every turn.
+    #
+    # @param value [Object] a message, a block, or any part of one
+    # @return [Object] the value with both markers removed at every depth
+    def self.strip_cache_markers(value)
+      case value
+      when Hash then value.except("cache", Workspace::WORKSPACE_MARKER).transform_values { |v| strip_cache_markers(v) }
+      when Array then value.map { |v| strip_cache_markers(v) }
+      else value
+      end
+    end
+
     private
 
     # Ascending by position for free: SYSTEM_PREFIX (-1) sorts before every
@@ -188,7 +203,7 @@ module Lain
     def rolled_states(count, chain)
       messages.first(count).each_with_index.with_object([fixed_prefix_digest]) do |(message, index), states|
         states << chain.state(index, message, states.last) do
-          Canonical.digest([states.last, strip_cache_markers(message)])
+          Canonical.digest([states.last, self.class.strip_cache_markers(message)])
         end
       end
     end
@@ -199,7 +214,8 @@ module Lain
     def entry_at(position, block_index, states)
       return states[position + 1] if position == SYSTEM_PREFIX || final_block?(messages[position], block_index)
 
-      Canonical.digest([states[position], truncate_through(strip_cache_markers(messages[position]), block_index)])
+      stripped = self.class.strip_cache_markers(messages[position])
+      Canonical.digest([states[position], truncate_through(stripped, block_index)])
     end
 
     def final_block?(message, block_index)
@@ -209,25 +225,13 @@ module Lain
     # Model and tools lead system lead messages on the wire, and none carries a
     # position of its own, so together they seed every entry.
     def fixed_prefix_digest
-      Canonical.digest("model" => model, "tools" => strip_cache_markers(tools),
-                       "system" => strip_cache_markers(system))
+      Canonical.digest("model" => model, "tools" => self.class.strip_cache_markers(tools),
+                       "system" => self.class.strip_cache_markers(system))
     end
 
     # The bytes `cache_control` covers: content through the marked block.
     def truncate_through(message, block_index)
       { "role" => message["role"], "content" => message["content"].first(block_index + 1) }
-    end
-
-    # Neither neutral marker is a wire field, and both move for reasons that are
-    # not rewrites: a "cache" breakpoint slides across messages as a session grows,
-    # and the "workspace" tail (Workspace::WORKSPACE_MARKER) is re-rendered fresh
-    # every turn.
-    def strip_cache_markers(value)
-      case value
-      when Hash then value.except("cache", Workspace::WORKSPACE_MARKER).transform_values { |v| strip_cache_markers(v) }
-      when Array then value.map { |v| strip_cache_markers(v) }
-      else value
-      end
     end
   end
 end

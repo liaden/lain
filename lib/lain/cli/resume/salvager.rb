@@ -32,9 +32,10 @@ module Lain
                                                   timeline: @timeline, reassembly: Provider::Reassembly).call
         end
 
-        # Appends the salvage record, the recovered turn, and a `session_closed`
-        # anchor -- in that order, so a reader mid-write (a second crash) sees
-        # either nothing new or a self-consistent prefix, never a `turn` record
+        # Appends the salvage record, the recovered turns (a rebuilt prompt
+        # first, when there is one), and a `session_closed` anchor -- in that
+        # order, so a reader mid-write (a second crash) sees either nothing new
+        # or a self-consistent prefix, never a `turn` record
         # with no `salvaged` line explaining it.
         #
         # A SECOND crash landing after the `turn` write but before this append
@@ -68,7 +69,7 @@ module Lain
 
           [Telemetry::Salvaged.new(request_digest: outcome.request_digest, head_before:,
                                    head_after: outcome.turn.digest),
-           SessionRecord.turn(outcome.turn),
+           *outcome.committed.map { |turn| SessionRecord.turn(turn) },
            anchor]
         end
 

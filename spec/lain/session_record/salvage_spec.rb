@@ -1,11 +1,54 @@
 # frozen_string_literal: true
 
+require "json"
+require "stringio"
+
 # Recovering a paid-for-but-uncommitted response from the response WAL
 # when a session resumes open. `frames` are built through the REAL
 # Provider::ResponseWal / Provider::Anthropic pair wherever fidelity to
 # production bytes matters (response_wal_spec's own precedent), rather than
 # hand-authored fixtures -- what proves this class works is that it reassembles
 # EXACTLY what the live streaming path would have produced.
+# A chat provider that refuses while the history is in the prompt, the way the
+# handoff seam's recorded one does, and answers the handoff schema when asked.
+module SalvageHandoff
+  ANSWER = { "goal" => "finish the parser", "progress" => "lexer done", "files_and_decisions" => "lexer.rb",
+             "open_todos" => "parser", "next_step" => "write parser.rb" }.freeze
+
+  class Recorded
+    class Refusal < Lain::Error
+      include Lain::WindowExceeded
+    end
+
+    attr_reader :requests
+
+    def initialize = @requests = []
+
+    def complete(request)
+      return answer(JSON.generate(ANSWER)) if Lain::Canonical.dump(request.messages).include?("no longer fits")
+
+      @requests << request
+      raise Refusal.new("too big", prompt_tokens: 9000, window_tokens: 8192, source: "ollama") if overflowing?(request)
+
+      answer("settled")
+    end
+
+    def supports?(_capability) = false
+
+    def cache_profile = Lain::CacheProfile::NO_CACHING
+
+    private
+
+    # The history alone fills the window until a handoff replaces it.
+    def overflowing?(request) = request.messages.size >= 5
+
+    def answer(text)
+      Lain::Response.new(content: [{ "type" => "text", "text" => text }], stop_reason: :end_turn,
+                         usage: Lain::Usage.new(input_tokens: 30, output_tokens: 2))
+    end
+  end
+end
+
 RSpec.describe Lain::SessionRecord::Salvage do
   around { |example| Dir.mktmpdir("salvage") { |dir| @wal_path = File.join(dir, "session.wal") and example.run } }
 
@@ -153,6 +196,261 @@ RSpec.describe Lain::SessionRecord::Salvage do
 
       expect(outcome).to be_recovered
       expect(outcome.newly_committed?).to be(true)
+    end
+  end
+
+  # A prompt's turn record lands only once its answer commits, so a kill
+  # mid-stream leaves the prompt in the request_sent payload alone.
+  describe "the prompt the crash lost" do
+    let(:answered) { timeline.commit(role: :assistant, content: text("hello")) }
+    let(:workspace) { Lain::Workspace.new(reminders: ["no todos"]) }
+
+    def sent(request) = Lain::Telemetry::RequestSent.from(request).to_journal
+
+    def render(over) = CoreGraph.context.render(timeline: over, toolset: Lain::Toolset.new, workspace:)
+
+    it "rebuilds the prompt from the payload tail, without the cache and workspace markers, under the answer" do
+      asked = answered.commit(role: :user, content: text("say iota"))
+      request = render(asked)
+      spool(canned, request)
+
+      outcome = described_class.new(entries: [sent(request)], frames:, timeline: answered).call
+
+      uninterrupted = asked.commit(role: :assistant, content: canned.content)
+      expect(outcome.timeline.to_a.map(&:digest)).to eq(uninterrupted.to_a.map(&:digest))
+    end
+
+    it "rebuilds no user turn over a tool continuation, whose results are already on record" do
+      call = { "type" => "tool_use", "id" => "tu_1", "name" => "echo", "input" => {} }
+      result = { "type" => "tool_result", "tool_use_id" => "tu_1", "content" => "ok" }
+      continued = timeline.commit(role: :assistant, content: [call]).commit(role: :user, content: [result])
+      request = render(continued)
+      spool(canned, request)
+
+      outcome = described_class.new(entries: [sent(request)], frames:, timeline: continued).call
+
+      expect(outcome.turn.parent).to eq(continued.head_digest)
+      expect(outcome.turn.digest).to eq(continued.commit(role: :assistant, content: canned.content).head_digest)
+    end
+
+    # The original run's own request and chain, so the rebuild is judged
+    # against what a chat really sends and commits.
+    def asked_for_real(timeline: CoreGraph.timeline, mailbox: Lain::Context::Mailbox::Null)
+      provider = Lain::Provider::Mock.new(responses: [canned])
+      agent = Lain::Agent.new(provider:, context: CoreGraph.context, toolset: Lain::Toolset.new, timeline:, mailbox:)
+      yield mailbox if block_given?
+      agent.ask("say iota")
+      [provider.requests.first, agent.timeline]
+    end
+
+    # The answer's link to the note it folded is not in the payload, so only
+    # the prompt comes back at its original digest.
+    it "rebuilds the prompt a pending human note was folded into, without the note" do
+      mailbox = Lain::Context::Mailbox::Live.new(recipient: Lain::EventLog::ChainWriter.method(:correlation_of),
+                                                 observer: ->(_event) {})
+      request, original = asked_for_real(mailbox:) { |box| box.post(from: "human", text: "also, be brief") }
+      spool(canned, request)
+
+      outcome = described_class.new(entries: [sent(request)], frames:, timeline: CoreGraph.timeline).call
+
+      prompt, answer = outcome.timeline.to_a
+      expect(prompt.digest).to eq(original.to_a.first.digest)
+      expect(answer.content).to eq(canned.content)
+      expect(answer.causal_parents).to be_empty
+    end
+
+    it "keeps a typed prompt that only resembles a folded note" do
+      typed = "<#{Lain::Context::Mailbox::TAG}>\nnot a note\n</#{Lain::Context::Mailbox::TAG}>"
+      asked = answered.commit(role: :user, content: text(typed))
+      request = render(asked)
+      spool(canned, request)
+
+      outcome = described_class.new(entries: [sent(request)], frames:, timeline: answered).call
+
+      expect(outcome.timeline.to_a[-2].digest).to eq(asked.head_digest)
+    end
+
+    it "rebuilds the cancellation a resume answered in memory, under the prompt, at the original digests" do
+      call = { "type" => "tool_use", "id" => "tu_1", "name" => "echo", "input" => {} }
+      stranded = timeline.commit(role: :assistant, content: [call])
+      request, original = asked_for_real(timeline: stranded)
+      spool(canned, request)
+
+      outcome = described_class.new(entries: [sent(request)], frames:, timeline: stranded).call
+
+      expect(outcome.timeline.to_a.map(&:digest)).to eq(original.to_a.map(&:digest))
+    end
+
+    # A handoff retry and a compacted render both send user messages the
+    # Timeline never held ahead of the ask; only the ask is the agent's own.
+    describe "over derived messages" do
+      let(:journal) { Lain::Journal.new(io: StringIO.new) }
+
+      def handoff_tier(provider)
+        definition = Lain::Oracle::Handoff.definition
+        inner = Lain::Oracle::Model.new(definition:, provider:, model: "qwen3:4b", max_tokens: 512)
+        Lain::Oracle::Recorded::Journaling.new(inner:, definition:, journal:)
+      end
+
+      def handoff_source(provider)
+        Lain::Compaction::Source.new(
+          need: Lain::Compaction::Need.new(byte_threshold: 1_000_000),
+          cold: Lain::Compaction::Cold.new(cache_profile: Lain::CacheProfile::NO_CACHING, journal:),
+          hard_cap: 1_000_000, keep_last: 20, journal:,
+          fallback: Lain::Compaction::Source::Fallback.new(tier: -> { handoff_tier(provider) }),
+          context_window: Lain::ContextWindow.new(windows: { "qwen3" => 8192 })
+        )
+      end
+
+      it "rebuilds only the ask of a handoff retry" do
+        provider = SalvageHandoff::Recorded.new
+        source = handoff_source(provider)
+        budget = Lain::Middleware::RequestBudget.new(journal:, compaction: source)
+        chat = Lain::Agent.new(provider:, toolset: Lain::Toolset.new([]), journal:,
+                               context: Lain::Context.new(model: "qwen3:4b", max_tokens: 64, system: "s"),
+                               session: Lain::Session.new(journal:), pipeline_source: source,
+                               model_middleware: Lain::Middleware::Stack.new([budget]))
+        2.times { |i| chat.ask("question #{i}: #{"the lazy dog slept. " * 20}") }
+        on_disk = chat.timeline
+        chat.ask("so what is left to do?")
+        retried = provider.requests.last
+        spool(canned, retried)
+
+        outcome = described_class.new(entries: [sent(retried)], frames:, timeline: on_disk).call
+
+        expect(retried.messages.map { |message| message["role"] }).to eq(%w[user user])
+        expect(outcome.committed.map(&:role)).to eq(%w[user assistant])
+        expect(outcome.committed.first.digest).to eq(chat.timeline.to_a[-2].digest)
+      end
+
+      it "rebuilds only the ask under a compacted render" do
+        history = timeline.commit(role: :assistant, content: text("first answer " * 50))
+        compact = lambda { |workspace|
+          Lain::Context::Compact.new(threshold: 10, keep_last: 1, summarizer: ->(_messages) { "EARLIER" }) >>
+            Lain::Context::Reminder.new(workspace:) >> Lain::Context::CacheBreakpoints.new
+        }
+        context = Lain::Context.new(model: "claude-opus-4-8", max_tokens: 64, system: "s", pipeline: compact)
+        provider = Lain::Provider::Mock.new(responses: [canned])
+        agent = Lain::Agent.new(provider:, context:, toolset: Lain::Toolset.new, timeline: history, workspace:)
+        agent.ask("say iota")
+        request = provider.requests.first
+        spool(canned, request)
+
+        outcome = described_class.new(entries: [sent(request)], frames:, timeline: history).call
+
+        expect(request.messages.map { |message| message["role"] }).to eq(%w[user user])
+        expect(outcome.timeline.to_a.map(&:digest)).to eq(agent.timeline.to_a.map(&:digest))
+      end
+    end
+
+    # A user head already holds the request's last message, however a render
+    # reshaped it; only a prompt asked over tool results is new.
+    describe "over a user head" do
+      let(:reply) { Lain::Response.new(content: text("framed"), stop_reason: :end_turn) }
+
+      def salvaged(request, on_disk)
+        spool(reply, request)
+        described_class.new(entries: [sent(request)], frames:, timeline: on_disk).call
+      end
+
+      def bare_context(pipeline: nil)
+        Lain::Context.new(model: "claude-opus-4-8", max_tokens: 64, system: "s", pipeline:)
+      end
+
+      it "commits only the answer to a resend whose edited message never became a turn" do
+        provider = Lain::Provider::Mock.new(responses: [Lain::Response.new(content: text("a1"), stop_reason: :end_turn),
+                                                        reply])
+        override = Lain::Agent::RequestOverride.new
+        agent = Lain::Agent.new(provider:, context: bare_context, toolset: Lain::Toolset.new,
+                                timeline: CoreGraph.timeline, request_override: override)
+        agent.ask("p")
+        agent.rewind(1)
+        on_disk = agent.timeline
+        first = provider.requests.first
+        override.queue(Lain::Request.new(model: first.model, system: first.system, max_tokens: first.max_tokens,
+                                         messages: [{ "role" => "user", "content" => text("p, edited in nvim") }]))
+        agent.run
+
+        outcome = salvaged(provider.requests.last, on_disk)
+
+        expect(outcome.timeline.to_a.map(&:digest)).to eq(agent.timeline.to_a.map(&:digest))
+      end
+
+      it "commits only the answer to a tool continuation whose duplicate call the render deduped" do
+        call = ->(id) { { "type" => "tool_use", "id" => id, "name" => "bash", "input" => { "command" => "echo hi" } } }
+        twice = Lain::Response.new(content: [call.call("tu_1"), call.call("tu_2")], stop_reason: :tool_use)
+        provider = Lain::Provider::Mock.new(responses: [twice, reply])
+        pipeline = lambda { |workspace|
+          Lain::Context::Reminder.new(workspace:) >> Lain::Context::DedupeToolCalls.new >>
+            Lain::Context::CacheBreakpoints.new
+        }
+        agent = Lain::Agent.new(provider:, context: bare_context(pipeline:), timeline: CoreGraph.timeline,
+                                toolset: Lain::Toolset.new([Lain::Tools::Bash.new]))
+        agent.ask("run echo twice")
+
+        outcome = salvaged(provider.requests.last, agent.timeline.checkout(agent.timeline.head.parent))
+
+        expect(outcome.timeline.to_a.map(&:digest)).to eq(agent.timeline.to_a.map(&:digest))
+      end
+
+      it "commits only the answer to a stranded prompt folded with a typed prompt shaped like a note" do
+        provider = Lain::Provider::Mock.new(responses: [reply])
+        agent = Lain::Agent.new(provider:, context: bare_context, toolset: Lain::Toolset.new,
+                                timeline: CoreGraph.timeline.commit(role: :user, content: text("first")))
+        agent.ask("<mailbox>\nnot a note\n</mailbox>")
+
+        outcome = salvaged(provider.requests.last, agent.timeline.checkout(agent.timeline.head.parent))
+
+        expect(outcome.timeline.to_a.map(&:digest)).to eq(agent.timeline.to_a.map(&:digest))
+      end
+    end
+
+    # A resume answers a stranded call in memory, so the cancellation is a turn
+    # the file lacks; only a message that answers the call is that turn.
+    describe "over a stranded call" do
+      let(:call) { { "type" => "tool_use", "id" => "tu_1", "name" => "echo", "input" => {} } }
+      let(:stranded) { timeline.commit(role: :assistant, content: [call]) }
+      let(:cancelled) { Lain::Tool::Cancellation.new(stranded.head, kind: :unknown).blocks }
+
+      def salvaged(request)
+        spool(canned, request)
+        described_class.new(entries: [sent(request)], frames:, timeline: stranded).call
+      end
+
+      def request_of(*messages) = Lain::Request.new(model: "claude-opus-4-8", max_tokens: 64, messages:)
+
+      it "mints the cancellation when the message before the prompt is a derived one" do
+        outcome = salvaged(request_of({ "role" => "user", "content" => text("a handoff document") },
+                                      { "role" => "user", "content" => text("go on") }))
+
+        expect(outcome.committed.map(&:content)).to eq([cancelled, text("go on"), canned.content])
+      end
+
+      it "mints the cancellation when the request holds the prompt alone" do
+        outcome = salvaged(request_of({ "role" => "user", "content" => text("go on") }))
+
+        expect(outcome.committed.map(&:content)).to eq([cancelled, text("go on"), canned.content])
+      end
+    end
+
+    it "keeps a note-shaped block that carries a key a folded note never has" do
+      shaped = { "type" => "text", "text" => "<mailbox>\nhuman | hi\n</mailbox>", "citations" => [] }
+      request = Lain::Request.new(model: "claude-opus-4-8", max_tokens: 64,
+                                  messages: [{ "role" => "user", "content" => [*text("say iota"), shaped] }])
+      spool(canned, request)
+
+      outcome = described_class.new(entries: [sent(request)], frames:, timeline: answered).call
+
+      expect(outcome.committed.first.content).to eq([*text("say iota"), shaped])
+    end
+
+    it "commits only the assistant turn when an older file's payload is empty" do
+      digest = spool(canned)
+
+      outcome = described_class.new(entries: [request_sent(digest)], frames:, timeline: answered).call
+
+      expect(outcome.timeline.to_a.map(&:role)).to eq(%w[user assistant assistant])
+      expect(outcome.turn.parent).to eq(answered.head_digest)
     end
   end
 
