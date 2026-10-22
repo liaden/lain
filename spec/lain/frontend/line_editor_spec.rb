@@ -1281,15 +1281,13 @@ RSpec.describe Lain::Frontend::LineEditor do
         require "lain"
         Reline::HISTORY << "earlier"
         Lain::Frontend::LineEditor.bind("C-g") { |_buffer| nil } if ARGV[1] == "bind_first"
-        if ARGV[1] == "timed_cx"
+        if ARGV[1] == "bound_keys"
           Lain::Frontend::LineEditor.bind("C-x") do |buffer|
             File.write(ARGV[2], "\#{Process.clock_gettime(Process::CLOCK_MONOTONIC)}\n", mode: "a")
             buffer
           end
-        end
-        if ARGV[1] == "shift_tab"
           Lain::Frontend::LineEditor.bind("S-Tab") do |_buffer|
-            File.write(ARGV[2], "hit\n", mode: "a")
+            File.write(ARGV[5], "hit\n", mode: "a")
             nil
           end
         end
@@ -1301,102 +1299,112 @@ RSpec.describe Lain::Frontend::LineEditor do
             File.write(ARGV[3], Lain::Frontend::LineEditor.typed?.inspect)
           end
         end
-        line = Lain::Frontend::LineEditor.new.read("> ")
+        lines = Array.new(ARGV[4].to_i) do
+          print "#{ready}"
+          $stdout.flush
+          Lain::Frontend::LineEditor.new.read("> ")
+        end
         if ARGV[1] == "int_after_enter"
           Process.kill("INT", Process.pid)
           sleep 0.5
         end
-        File.write(ARGV[0], line.inspect)
+        File.write(ARGV[0], lines.map(&:inspect).join("\\n"))
       RUBY
     end
 
-    def read_through_pty(term, keys, bind_first: false, mode: bind_first ? "bind_first" : "plain", **timing)
-      Dir.mktmpdir { |dir| drive_child(term, keys, dir, mode, **timing) }
+    def ready = "\u0001READY\u0001"
+
+    def read_through_pty(term, steps, bind_first: false, mode: bind_first ? "bind_first" : "plain")
+      Dir.mktmpdir { |dir| drive_child(term, steps, dir, mode) }
     end
 
-    # `settle` holds the final Enter back, so a key that waits on a timeout is
-    # seen waiting; `on_write` stamps the moment the keys go in.
-    def drive_child(term, keys, dir, mode, settle: 0, on_write: nil)
+    # One child reads one line per step. A step's `settle` holds its final Enter
+    # back, so a key that waits on a timeout is seen waiting; `on_write` stamps the
+    # moment that step's keys go in. Returns each line read, inspected.
+    def drive_child(term, steps, dir, mode)
       out = File.join(dir, "line")
-      reader, writer, pid = spawn_child(term, dir, out, mode)
+      reader, writer, pid = spawn_child(term, dir, out, mode, steps.size)
       drawn = Queue.new
       answerer = answer_cursor_queries(reader, writer, drawn)
-      drawn.pop(timeout: 10) or raise "prompt never drew"
-      on_write&.call
-      writer.write(keys.delete_suffix("\r"))
-      sleep(settle)
-      writer.write("\r")
+      steps.each { |step| send_step(writer, drawn, **step) }
       Process.wait(pid)
-      File.exist?(out) ? File.read(out) : nil
+      File.exist?(out) ? File.read(out).split("\n") : nil
     ensure
       [reader, writer].each { |io| io&.close unless io&.closed? }
       answerer&.join(2)
     end
 
-    def spawn_child(term, dir, out, mode)
-      env = { "TERM" => term, "INPUTRC" => File.join(dir, "no-inputrc") }
-      PTY.spawn(env, RbConfig.ruby, "-W0", "-I", File.expand_path("../../../lib", __dir__),
-                "-e", child, out, mode, File.join(dir, "hits"), File.join(dir, "typed_at_int"))
+    def send_step(writer, drawn, keys:, settle: 0, on_write: nil)
+      drawn.pop(timeout: 10) or raise "prompt never drew"
+      on_write&.call
+      writer.write(keys.delete_suffix("\r"))
+      sleep(settle)
+      writer.write("\r")
     end
 
+    def spawn_child(term, dir, out, mode, reads)
+      env = { "TERM" => term, "INPUTRC" => File.join(dir, "no-inputrc") }
+      PTY.spawn(env, RbConfig.ruby, "-W0", "-I", File.expand_path("../../../lib", __dir__),
+                "-e", child, out, mode, File.join(dir, "hits"), File.join(dir, "typed_at_int"),
+                reads.to_s, File.join(dir, "shift_tab_hits"))
+    end
+
+    # Each ready marker re-arms the drawn signal, so the redraw of an accepted
+    # line cannot be taken for the next read's prompt.
     def answer_cursor_queries(reader, writer, drawn)
       Thread.new do
         seen = +""
+        armed = false
         loop do
           chunk = reader.readpartial(4096)
           writer.write("\e[1;1R") if chunk.include?("\e[6n")
-          seen << chunk
-          drawn << true if seen.include?("> ") && drawn.empty?
+          seen, armed = after_ready(seen + chunk, armed)
+          armed = signal_prompt(drawn, seen, armed)
         end
       rescue IOError, Errno::EIO
         nil
       end
     end
 
-    it "recalls the previous line with the up arrow on the ANSI gate" do
-      expect(read_through_pty("xterm", "\e[A\r")).to eq('"earlier"')
+    def signal_prompt(drawn, seen, armed)
+      return armed unless armed && seen.include?("> ")
+
+      drawn << true
+      false
     end
 
-    it "takes a bracketed paste whole on the ANSI gate" do
-      expect(read_through_pty("xterm", "\e[200~one\ntwo\e[201~\r")).to eq('"one\ntwo"')
+    def after_ready(seen, armed)
+      at = seen.rindex(ready)
+      at ? [seen[(at + ready.size)..], true] : [seen, armed]
+    end
+
+    it "recalls the previous line with the up arrow, then takes a bracketed paste whole, on the ANSI gate" do
+      steps = [{ keys: "\e[A\r" }, { keys: "\e[200~one\ntwo\e[201~\r" }]
+
+      expect(read_through_pty("xterm", steps)).to eq(['"earlier"', '"one\ntwo"'])
     end
 
     it "does both when a key was bound before the first read, as the frontend does at startup" do
-      expect(read_through_pty("xterm", "\e[A\r", bind_first: true)).to eq('"earlier"')
-      expect(read_through_pty("xterm", "\e[200~one\ntwo\e[201~\r", bind_first: true)).to eq('"one\ntwo"')
+      steps = [{ keys: "\e[A\r" }, { keys: "\e[200~one\ntwo\e[201~\r" }]
+
+      expect(read_through_pty("xterm", steps, bind_first: true)).to eq(['"earlier"', '"one\ntwo"'])
     end
 
     # The gate's emacs defaults include C-x C-x, which would turn lain's C-x
     # into a prefix that waits out Reline's 500ms key-sequence timeout.
-    describe "lain's C-x against the gate's C-x C-x" do
-      def fire_times(keys)
-        Dir.mktmpdir do |dir|
-          started = nil
-          drive_child("xterm", "#{keys}\r", dir, "timed_cx", settle: 0.8, on_write: -> { started = clock })
-          [started, File.readlines(File.join(dir, "hits"), chomp: true).map(&:to_f)]
-        end
-      end
-
-      def clock = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-
-      it "fires C-x at once rather than after the key-sequence timeout" do
-        started, hits = fire_times("\x18")
+    it "fires C-x at once and twice for C-x C-x, and Shift+Tab off ESC [ Z untyped", :aggregate_failures do
+      Dir.mktmpdir do |dir|
+        started = nil
+        stamp = -> { started = Process.clock_gettime(Process::CLOCK_MONOTONIC) }
+        steps = [{ keys: "\x18\r", settle: 0.8, on_write: stamp },
+                 { keys: "\x18\x18\r", settle: 0.8 },
+                 { keys: "draft\e[Z\r" }]
+        lines = drive_child("xterm", steps, dir, "bound_keys")
+        hits = File.readlines(File.join(dir, "hits"), chomp: true).map(&:to_f)
 
         expect(hits.first - started).to be < 0.3
-      end
-
-      it "fires twice for C-x C-x" do
-        _, hits = fire_times("\x18\x18")
-
-        expect(hits.size).to eq(2)
-      end
-    end
-
-    it "fires Shift+Tab off the terminal's ESC [ Z and types none of it into the line" do
-      Dir.mktmpdir do |dir|
-        line = drive_child("xterm", "draft\e[Z\r", dir, "shift_tab")
-
-        expect([line, File.readlines(File.join(dir, "hits")).size]).to eq(['"draft"', 1])
+        expect(hits.drop(1).size).to eq(2)
+        expect([lines.last, File.readlines(File.join(dir, "shift_tab_hits")).size]).to eq(['"draft"', 1])
       end
     end
 
@@ -1404,14 +1412,14 @@ RSpec.describe Lain::Frontend::LineEditor do
     # it raises the interrupt. So the interrupt is raised once the read has returned its line.
     it "does not take an accepted line for a draft when the interrupt is handled after its Enter" do
       Dir.mktmpdir do |dir|
-        line = Timeout.timeout(20) { drive_child("xterm", "hello\r", dir, "int_after_enter") }
+        lines = Timeout.timeout(20) { drive_child("xterm", [{ keys: "hello\r" }], dir, "int_after_enter") }
 
-        expect([line, File.read(File.join(dir, "typed_at_int"))]).to eq(['"hello"', "false"])
+        expect([lines, File.read(File.join(dir, "typed_at_int"))]).to eq([['"hello"'], "false"])
       end
     end
 
     it "still reads a line on the dumb gate" do
-      expect(read_through_pty("dumb", "typed\r")).to eq('"typed"')
+      expect(read_through_pty("dumb", [{ keys: "typed\r" }])).to eq(['"typed"'])
     end
   end
 
