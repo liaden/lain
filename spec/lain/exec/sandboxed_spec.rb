@@ -518,11 +518,13 @@ RSpec.describe Lain::Exec::Sandboxed do
           confinement: judged, env: { "TMPDIR" => calltmp })
       # Under load the traced loop can take longer than a fixed second to write its first line.
       Timeout.timeout(15) { sleep 0.05 until File.exist?(count) }
-      sleep 1
-      before = loop_count(count)
-      sleep 2
+      reached = 0
+      begin
+        wait_until(timeout: 10, reason: "the loop count passing 1000") { (reached = loop_count(count)) >= 1000 }
+      rescue RuntimeError => e
+        raise "#{e.message}; it reached #{reached}"
+      end
 
-      expect(loop_count(count) - before).to be > 200
       expect(held_under(calltmp)).to be_empty
     ensure
       system("pkill", "-f", count)
