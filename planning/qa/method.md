@@ -1598,3 +1598,29 @@ fallback rather than redesigning mid-run.
 - **The price lint marker is 2026-08-18**, so `bin/lint-price-freshness` fails pre-commit from 2026-11-17.
 - **Ctrl-C over a line typed at a drawn `you>` or `command>` ends the cockpit until b26-1 is fixed.** Do not use it to
   clear a line.
+
+## Round 27 (2026-10-21): what 13 forks taught the process
+
+- **Launch every long session with `--max-tokens 32768` until b27-4 is fixed**, and re-pass it on `--resume`, which
+  drops it (a27-1). With no `--max-tokens`, the first committed compaction cut ends the chat, about 22 turns into an
+  ordinary ollama session. `/btw`'s printed command needs it appended too. Record 1 untyped control when a section
+  tests the default.
+- **Source `env.sh` in the same call as every `lain` subcommand**, `lain worktrees gc` included. Fork l's bare gc wrote
+  2 files under the real `~/.local/state/lain/gc/`, and a `sed` `w` flag wrote a scrap into the repo root.
+- **A planted GitHub token is `ghp_` plus exactly 36 characters.** A 40-character one is below the detector, and the
+  check passes for the wrong reason.
+- **secret-boundary needs a fork to itself.** Paired with survey it hit the 200-turn limit and was resumed.
+- **In an `ask` session the user turn is journaled only with its reply.** Wait on a bare `you>` or a parked call, not on
+  a quiet journal; an 8 s quiet window put a prompt in mid-ask as a note for the agent. Use 15 s or more.
+- **zsh launch lines**: quote every value (a `?` in a URL globs and the chat never starts), use a function for a command
+  with arguments, and `${=a}` to split a variable into words.
+- **`@lain_input_pane` is a session option**: `show-options -t <session> -v`, not `-gv`.
+- **Gatekeepers**: anchor a danger pattern to the command word (`puma` inside a gem path denied a `wc`), split on `;`
+  only outside quotes, and set `ENV["QA_SOCK"]` inside the script.
+- **Seed the sandbox git identity with `git config --file "$XDG_CONFIG_HOME/git/config"`.** `--global` stayed in the
+  sandbox only because this box has no `~/.gitconfig`.
+- **A body-dumping proxy restarted into the same directory overwrites its earlier `req-NNNN` dumps.** Use a fresh one.
+- **ollama-cloud-arm §6b's TLS stub certificate expires.** Regenerate it with `openssl req -x509 ... -days 30 -addext
+  subjectAltName=IP:127.0.0.1`; fork j's fresh one is at `~/tmp/lain-qa-2026-10-21-j/records/stub`.
+- **A model that has completed every todo loops on `session_usage` to the ceiling.** Restart it; it is not a lain
+  defect.

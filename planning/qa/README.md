@@ -335,6 +335,13 @@ discharged, and git history is the archive: `git log --diff-filter=D --stat -- p
 commit that removed them, and `git show <commit>^:<path>` reads any of them back whole. A round
 stays here only while it is still in flight:
 
+- [`../qa-findings-round27-2026-10-21.md`](../qa-findings-round27-2026-10-21.md): round 27, a full round over all 22
+  scenarios in 13 forks, against `b5de73a4` (212 commits past round 26). Round 26 is almost entirely fixed, b26-1 included.
+  **Two new HIGH:** a launch with no `--max-tokens` dies at its first compaction cut on every arm (b27-4), and `bench arms
+  --confine reader` crashes at the first gated call (l27-2). **One MED-HIGH:** the opaque-command refusal tells a bench
+  arm to write a script, which walks out of its lease (l27-4). Rulings asked: a chat researcher's ceiling of 24 (i27-3),
+  and `checkout` scope writing outside the project unasked (k27-2).
+
 - [`../qa-findings-round26-2026-10-18.md`](../qa-findings-round26-2026-10-18.md): round 26, a full round over all 22
   scenarios in 13 forks, against `6054ba1d` (249 commits past round 25). Round 25 is almost entirely fixed, both HIGHs
   included on the routes filed. **One new HIGH:** Ctrl-C over a line typed at a drawn prompt still ends the cockpit

@@ -382,6 +382,17 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   (5 threads against 4), green alone (37 of 37) and green in a full suite on the base and on the change:
   `Lain::CLI::InputSocket serving a pane reaps a closed pane's reader, so it owns every thread it started`.
 
+  Added 2026-10-21, from 5 back-to-back full `pspec` runs at 12 workers on an otherwise quiet box (each run
+  at the load the previous one left, 9 to 15). Every run reached all 26,464 examples; 2 runs had 1 red each,
+  and each example was green 5 of 5 alone and green across its file with the failing worker's seed:
+  `Lain::Ext::Fuzzy#match on another thread lets the calling thread keep ticking while it matches` (p99
+  tick gap 28.7 ms against its 8 ms bound; a held GVL gives about 180 ms, so this is load, and the tick
+  floors are now a pattern of 3); and `Lain::Sensitivity::Policy#mask_paths against #judge, name by name
+  does 1 realpath per directory over a plain listing, with judge's verdicts` (156 `File.realpath` calls
+  against at most 21; green 30 of 30 alone). That second one is a count, not a clock: the stub counts
+  calls from every thread in the worker, so a thread an earlier example left running would inflate it.
+  Unproven; counting only the example's own thread would settle it.
+
   Added 2026-10-18, a wall-clock count red once in a pre-commit suite (6 ticks against 15) and green
   alone and in a full suite on the base and on the change: `Lain::Tool::Offload keeps a sibling fiber
   running while the work never gives up the lock between threads`. Red again on 2026-10-19, 6 against
