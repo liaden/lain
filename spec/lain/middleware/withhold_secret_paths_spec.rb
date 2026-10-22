@@ -169,6 +169,128 @@ RSpec.describe Lain::Middleware::WithholdSecretPaths, :seam do
     end
   end
 
+  # A single-file grep labels every row with the model's own spelling, so each
+  # row is judged as the file that was searched. The policy's filter, as
+  # production builds it, because only it judges a path where it lands.
+  describe "a grep of one file" do
+    let(:filter) { Lain::Sensitivity::Policy.new(sensitivity:, home:, root: dir).filter }
+
+    it "shows the rows of a relative single-file grep" do
+      write("gdir/g.txt", "alpha line\nbeta line\n")
+
+      expect(content(grep("beta", path: "gdir/g.txt"))).to eq("gdir/g.txt:2:beta line")
+    end
+
+    # The real grep, with the tree changed while it runs: before it reads, and
+    # after it has read but before this class sifts its rows.
+    def grep_racing(path, before: -> {}, after: -> {})
+      stack.call({ effect: effect("grep", { "pattern" => "API_KEY", "path" => path }), context: session }) do |inner|
+        before.call
+        invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: inner.fetch(:context))
+        result = Lain::Tools::Grep.new.call(inner.fetch(:effect).input, invocation)
+        after.call
+        inner.merge(result:)
+      end
+    end
+
+    def relink(name, target)
+      File.delete(File.join(dir, name))
+      File.symlink(target, File.join(dir, name))
+    end
+
+    def refile(name)
+      FileUtils.rm_rf(File.join(dir, name))
+      write(name, "x\n")
+    end
+
+    it "still withholds every row as the gated file's when the file becomes a link to one after the check" do
+      write("notes.txt", "API_KEY=ordinary\n")
+
+      expect(content(grep_racing("notes.txt", before: -> { relink("notes.txt", ".env") })))
+        .to eq("1 match withheld (credential)")
+    end
+
+    # Both the up-front check and the sift judge the file as it stands when
+    # each runs, as every listing does; the read between them is not seen. What
+    # remains is the content mask, which covers only the values it can
+    # recognise: an unkeyed bare line is shown.
+    it "judges a file that was a link to a gated one only while grep read it by what it is at the sift" do
+      write("notes.txt", "API_KEY=ordinary\n")
+
+      shown = content(grep_racing("notes.txt", before: -> { relink("notes.txt", ".env") },
+                                               after: -> { refile("notes.txt") }))
+
+      expect(shown).to eq("notes.txt:1:API_KEY=#{secret}")
+    end
+
+    it "judges a file that becomes a directory before grep reads it by what it is at the sift" do
+      write("t", "x\n")
+      becomes_directory = lambda do
+        File.delete(File.join(dir, "t"))
+        Dir.mkdir(File.join(dir, "t"))
+        File.symlink("../.env", File.join(dir, "t", "t"))
+      end
+
+      expect(content(grep_racing("t", before: becomes_directory))).to eq("1 match withheld (credential)")
+    end
+
+    it "shows a single-file row whose matched text has digits between colons" do
+      write("app.log", "at 12:30:45 started\n")
+
+      expect(content(grep("started", path: "app.log"))).to eq("app.log:1:at 12:30:45 started")
+    end
+
+    it "withholds the rows of a directory grep whose directory becomes a file before the sift" do
+      write("t/keep.txt", "API_KEY=ordinary\n")
+      File.symlink("../.env", File.join(dir, "t", "a"))
+
+      expect(content(grep_racing("t", after: -> { refile("t") }))).to eq("2 matches withheld (malformed)")
+    end
+
+    it "withholds a directory grep's row that is spelled like the directory when it becomes a file" do
+      write("t/keep.txt", "API_KEY=ordinary\n")
+      File.symlink("../.env", File.join(dir, "t", "t"))
+
+      expect(content(grep_racing("t", after: -> { refile("t") }))).to eq("2 matches withheld (malformed)")
+    end
+
+    it "shows the rows of a relative single-file ast_search" do
+      write("gdir/m.rb", "def beta = 1\n")
+
+      shown = content(run("ast_search", Lain::Tools::AstSearch.new,
+                          { "pattern" => "def $NAME = $V", "language" => "ruby", "path" => "gdir/m.rb" }))
+
+      expect(shown).to start_with("gdir/m.rb:1:def beta = 1")
+    end
+
+    it "refuses a link to a gated file before the tool runs" do
+      File.symlink(".env", File.join(dir, "notes.txt"))
+
+      env = grep("API_KEY", path: "notes.txt")
+
+      expect(content(env)).to eq(described_class::GATED_FILE_SEARCH)
+      expect(content(env)).not_to include(secret)
+    end
+
+    context "with an exemption at one exact path" do
+      let(:sensitivity) do
+        Lain::Sensitivity.new(home:, cwd: dir, root: dir,
+                              rules: Lain::Sensitivity::Rules.from({ "exempt" => ["/deploy/.env"] }))
+      end
+
+      before { write("deploy/.env", "API_KEY=#{secret}\n") }
+
+      it "shows the rows read_file of that path would show" do
+        expect(sensitivity.classify(File.join(dir, "deploy", ".env"))).to be_ordinary
+        expect(content(grep("API_KEY", path: "deploy/.env"))).to eq("deploy/.env:1:API_KEY=#{secret}")
+      end
+
+      it "still refuses the gated file beside it that the exemption does not name" do
+        expect(content(grep("API_KEY", path: ".env"))).to eq(described_class::GATED_FILE_SEARCH)
+      end
+    end
+  end
+
   describe "an ast_search whose rows include a gated path" do
     def ast_search(**options)
       run("ast_search", Lain::Tools::AstSearch.new,

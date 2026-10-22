@@ -355,9 +355,10 @@ module Lain
       def root = @anchors[:root]
 
       # What {#filter} classifies a listing row by. A readable row reaching the
-      # filter is already absolute ({Middleware::WithholdSecretPaths#reading}
-      # joins it to its base); an unreadable one is handed over unjoined and is
-      # {MALFORMED} by name, so the root stands in for a cwd nothing reads.
+      # filter is already absolute ({Middleware::WithholdSecretPaths#judged}
+      # joins it to its base, or reads it as the single file searched); an
+      # unreadable one is handed over unjoined and is {MALFORMED} by name, so
+      # the root stands in for a cwd nothing reads.
       class Rows
         def initialize(policy)
           @policy = policy

@@ -207,17 +207,22 @@ RSpec.describe Lain::CLI::ToolGuard do
         end
       end
 
-      def grep_through(path)
+      def grep_through(path, before: -> {}, after: -> {})
         stack = described_class.stack(chronicle, ToolGuardSpecBoard.new(policy: ToolGuardSpecPolicy.new(verdict: true)))
         call = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "grep",
                                           input: { "pattern" => "ghp_", "path" => path })
         session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: @project, env: {}))
         Sync do
           stack.call({ effect: call, tool: Lain::Tools::Grep.new, context: session }) do |passed|
-            invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: passed.fetch(:context))
-            passed.merge(result: Lain::Tools::Grep.new.call(passed.fetch(:effect).input, invocation))
+            before.call
+            passed.merge(result: grepped(passed)).tap { after.call }
           end.fetch(:result).content
         end
+      end
+
+      def grepped(passed)
+        invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: passed.fetch(:context))
+        Lain::Tools::Grep.new.call(passed.fetch(:effect).input, invocation)
       end
 
       it "masks the token in a directory grep's row" do
@@ -236,13 +241,30 @@ RSpec.describe Lain::CLI::ToolGuard do
         expect(content).not_to include(token)
       end
 
-      # Today's behaviour, pinned so a change to it is seen: the listing filter
-      # cannot read a relative single-file row back to its path and withholds
-      # it as malformed. That fails closed, and is tracked apart from masking.
-      it "withholds a relative single-file grep's row before masking sees it" do
+      it "masks the token in a relative single-file grep's row" do
         content = grep_through("config/settings.yml")
 
-        expect(content).to include("1 match withheld (malformed)")
+        expect(content.lines.first.chomp).to eq("config/settings.yml:2:  token: <redacted:1>")
+        expect(content).not_to include(token, "withheld")
+      end
+
+      # The file is a link to a credential file only while grep reads it, so
+      # both file checks see an ordinary file; the content mask is what remains.
+      it "masks the token of a file that was a link to a credential file only while grep read it" do
+        settings = File.join(@project, "config", "settings.yml")
+        File.write(File.join(@project, ".env"), "name: env\n  token: #{token}\n")
+        relink = lambda do
+          File.delete(settings)
+          File.symlink("../.env", settings)
+        end
+        refile = lambda do
+          File.delete(settings)
+          File.write(settings, "x\n")
+        end
+
+        content = grep_through("config/settings.yml", before: relink, after: refile)
+
+        expect(content.lines.first.chomp).to eq("config/settings.yml:2:  token: <redacted:1>")
         expect(content).not_to include(token)
       end
     end

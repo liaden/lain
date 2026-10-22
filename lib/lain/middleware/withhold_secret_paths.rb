@@ -194,6 +194,9 @@ module Lain
       # at all, whose rows can only be relative to where the worker stands.
       CWD = "."
       GATED_FILE_SEARCH = "searching a gated file returns nothing; use read_file on it to ask for a release"
+      # The tools whose single-file rows carry the model's own spelling of the
+      # file as their label, {Tools::Grep::Files#label}.
+      SPELLED_LABELS = %w[grep ast_search].freeze
 
       # Readable for {Agent::ToolRunner#handler}'s reason, plus one: a wiring
       # spec has to be able to assert IDENTITY -- that this holds the run's one
@@ -220,11 +223,12 @@ module Lain
         effect = env.fetch(:effect)
         return env.merge(result: Tool::Result.error(GATED_FILE_SEARCH)) if gated_file_search?(env, effect)
 
+        spelled = spelled_file(env, effect)
         carried = downstream(env, &app)
         shape = GUARDED_TOOLS[effect.name]
         return carried unless shape
 
-        guarded(carried, effect, shape)
+        guarded(carried, effect, shape, spelled)
       end
 
       private
@@ -252,14 +256,14 @@ module Lain
       # this class could not finish checking is one whose paths it cannot vouch
       # for. It reports the exception CLASS only -- a message can quote the input
       # that produced it, and the input here is the listing being withheld.
-      def guarded(carried, effect, shape)
+      def guarded(carried, effect, shape, spelled)
         result = carried.fetch(:result)
         # A failed tool carries a message, never a listing, so there are no rows
         # here to sift.
         return carried if result.error?
         return unreadable(carried, effect) unless result.content.is_a?(String)
 
-        reported(carried, effect, shape, result.content)
+        reported(carried, effect, shape, result.content, spelled)
       rescue StandardError => e
         carried.merge(result: Tool::Result.error(
           "#{effect.name} could not be checked for sensitive paths (#{e.class}); nothing was returned."
@@ -286,12 +290,13 @@ module Lain
       # asking `no_rows?` first is what keeps this class from manufacturing a
       # path reading out of a sentence that merely happens to be one line long
       # (see {Rows}).
-      def reported(carried, effect, shape, content)
+      def reported(carried, effect, shape, content, spelled)
         context = carried.fetch(:context)
         target = base(effect, ::Lain::Session.cwd_of(context))
         return carried if shape.no_rows?(effect, content, target)
 
-        sifted = sift(shape, content, target, ::Lain::Sensitivity::Policy.base_of(context))
+        sifted = sift(shape, content, target, ::Lain::Sensitivity::Policy.base_of(context),
+                      File.file?(target) ? spelled : nil)
         return carried unless sifted.any?
 
         carried.merge(result: Tool::Result.ok([*sifted.kept, line(sifted, shape)].join(ROW)))
@@ -302,8 +307,32 @@ module Lain
                          reasons: sifted.reasons.join(REASONS))
       end
 
-      def sift(shape, content, base, within)
-        @filter.sift(rows(content), within:) { |row| readings(shape, row).map { reading(_1, base) } }
+      def sift(shape, content, base, within, spelled)
+        @filter.sift(rows(content), within:) { |row| judged(readings(shape, row), base, spelled) }
+      end
+
+      # A row that can be read as the single file the model searched is that
+      # file's alone, however many colons its matched text holds: the tool writes
+      # that label only for the file it searched. That file is the path
+      # `read_file` of it is judged by, so an exemption at that exact path holds
+      # for both. A gated single file never gets this far: {#gated_file_search?}
+      # refuses it up front, since a refusal before the approval needs to know
+      # file from directory and the rows cannot say.
+      def judged(readings, base, spelled)
+        return [base] if readings.include?(spelled)
+
+        readings.map { reading(_1, base) }
+      end
+
+      # The model's own spelling of a single file it asked to search, nil for
+      # anything else. Checked BEFORE the tool runs and again at the sift, so a
+      # directory that becomes a file in between keeps its rows joined onto it,
+      # where they fail closed.
+      def spelled_file(env, effect)
+        path = ::Lain::Sensitivity::Policy.path_in(effect)
+        return nil unless SPELLED_LABELS.include?(effect.name) && path && ::Lain::Sensitivity.readable?(path)
+
+        path if File.file?(base(effect, ::Lain::Session.cwd_of(env.fetch(:context))))
       end
 
       # Split as BYTES and read back as UTF-8, because a text split raises on
@@ -355,19 +384,6 @@ module Lain
       # second copy of "which input field names a path". Absent -- `glob`'s
       # optional base -- it is the worker's cwd, exactly as {Tools::Glob#perform}
       # resolves it.
-      #
-      # A single-FILE `grep` is the one case where the target is not a directory:
-      # it labels every hit with the model's own spelling, so the join produces
-      # the true path with the row appended. That is a path no file has, and it
-      # is still the right thing to classify: every rule that withholds matches
-      # on a prefix, a whole segment, or the basename, and appending the row
-      # preserves all three. The rules that match one EXACT path are exemptions,
-      # which the appended path never matches, so a reading of it can only be
-      # stricter than a reading of the true path, never less: a grep over one
-      # exempted file withholds what `read_file` of it shows. A gated single
-      # file never gets this far: {#gated_file_search?} stats the target to
-      # refuse it up front, since a refusal before the approval needs to know
-      # file from directory and the rows cannot say.
       #
       # UTF-8, like {#rows}, so a row and its base join without an encoding
       # clash -- and as {Tools::ListFiles#perform} reads its own root, so a
