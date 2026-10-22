@@ -1,15 +1,17 @@
 # frozen_string_literal: true
 
 RSpec.describe Lain::CredentialPatterns do
-  # The write side's four, the key block since widened from its header to its
-  # whole span and the assignment to a compound name holding a literal value.
-  # Written out rather than referenced so these examples compare the shipped
-  # regexps against a literal, not against themselves.
-  let(:write_side_today) do
+  # The issuer-fixed shapes, the key block since widened from its header to
+  # its whole span and the assignment to a compound name holding a literal
+  # value. Written out rather than referenced so these examples compare the
+  # shipped regexps against a literal, not against themselves. The gated
+  # password shapes after them are pinned by what they refuse and store.
+  let(:issued_today) do
     {
       "openai-style api key" => /(?<![\w-])sk-[A-Za-z0-9_-]{16,}/,
       "aws access key id" => /AKIA[0-9A-Z]{16}/,
       "pem private key block" => /-----BEGIN(?: [A-Z]+)? PRIVATE KEY-----(?:.*?-----END [A-Z ]*PRIVATE KEY-----|.*)/m,
+      "github token" => /(?<![\w-])(?:gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,})(?![\w-])/,
       "credential assignment" => Regexp.new(
         "(?<![A-Za-z0-9])(?:password|passwd|secret|api[_-]?key|token)(?:[_-](?:access[_-])?key(?:[_-]base)?)?" \
         '(?>\s*)(?:=>|:=|[:=])(?>\s*)' \
@@ -21,6 +23,7 @@ RSpec.describe Lain::CredentialPatterns do
       )
     }
   end
+  let(:gated_today) { ["quoted password key", "url credentials", "bearer header", "password variable assignment"] }
 
   def names_matching(consumer, text)
     described_class.for(consumer).filter_map { |name, shape| name if shape.match?(text) }
@@ -34,12 +37,12 @@ RSpec.describe Lain::CredentialPatterns do
   end
 
   describe "the write side's active set" do
-    it "holds exactly the four names the write side used before the move" do
-      expect(described_class.for(:write).keys).to eq(write_side_today.keys)
+    it "holds the issuer-fixed names, then the gated password shapes, in that order" do
+      expect(described_class.for(:write).keys).to eq(issued_today.keys + gated_today)
     end
 
-    it "holds the same regexps, source and options both" do
-      expect(described_class.for(:write)).to eq(write_side_today)
+    it "holds the same issuer-fixed regexps, source and options both" do
+      expect(described_class.for(:write).slice(*issued_today.keys)).to eq(issued_today)
     end
 
     it "is the very table the middleware guards with, so the two cannot drift" do
@@ -168,6 +171,19 @@ RSpec.describe Lain::CredentialPatterns do
       expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started).to be < 0.2
     end
 
+    it "scans a 100 KB line in linear time for each gated password shape" do
+      a = "a" * 100_000
+      lines = ["A_PWD=" * 16_667, "A_PWD=#{a}1(", "A#{"_" * 100_000}", "#{"A" * 100_000}PWD=x", "A_PWD='#{a}",
+               "A_PASSWORD=\"$(#{a}", %("password": "#{a}), %("password": "${#{a}), "postgres://#{a}",
+               "postgres://a:#{"b" * 100_000}", "postgres://a:$#{"B" * 100_000}", "ghp_#{a}",
+               "Authorization: Bearer #{a} ", "Authorization: Bearer x" * 4_000, "a:" * 50_000]
+      shapes = described_class.for(:write).values_at("github token", *gated_today)
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      shapes.product(lines).each { |re, line| line.match?(re) }
+
+      expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started).to be < 0.2
+    end
+
     it "ends a bare value before a backtick or trailing punctuation" do
       values = ["`DB_PASSWORD=hunter2pass`.", "(DB_PASSWORD=hunter2pass)", "DB_PASSWORD=hunter2pass;",
                 "DB_PASSWORD=hunter2pass, then"].map { shape.match(_1)[0] }
@@ -203,7 +219,9 @@ RSpec.describe Lain::CredentialPatterns do
                  "export SLACK_TOKEN=xoxb-abc123", "token_count = 5", "max_tokens: 100", "note: remember this",
                  "access_token = request.headers['X']", "id_token: nil", "refresh_token: params[:refresh]",
                  "auth_token = SecureRandom.hex", "reset_password = true", "confirm_password: string",
-                 "page_token = resp.next", "client_secret: <%= ENV['X'] %>"]
+                 "page_token = resp.next", "client_secret: <%= ENV['X'] %>", '{"password": "hunter2pass"}',
+                 "PGPASSWORD=hunter2pass", "MYSQL_PWD=hunter2pass", "postgres://app:hunter2pw@db/main",
+                 "Authorization: Bearer abcdefgh12345678", "ghp_#{"a" * 36}"]
       unmasked = samples.select { names_matching(:write, _1).any? && names_matching(:content, _1).empty? }
 
       expect(described_class.for(:content).keys).to include(*described_class.for(:write).keys)
@@ -250,6 +268,80 @@ RSpec.describe Lain::CredentialPatterns do
     end
   end
 
+  # The read side's suffixed key and mysql flag mask a value inside a line,
+  # where a false hit costs one release decision; on the write side the same
+  # shapes would refuse a note that only says where a password lives.
+  describe "the password shapes that stay on the read side" do
+    ["db_password: is stored in vault", "mysql -u root -pager less"].each do |prose|
+      it "refuses nothing on the write side for #{prose.inspect}" do
+        expect(names_matching(:write, prose)).to be_empty
+      end
+    end
+  end
+
+  describe "the password variable assignment" do
+    let(:shape) { described_class.for(:write).fetch("password variable assignment") }
+
+    it "sees an upper-case name ending in a password word holding a literal, bare or quoted" do
+      lines = ["PGPASSWORD=hunter2pass", "MYSQL_PWD=hunter2pass", "export SMTP_PASSWD=hunter2pass",
+               "run PGPASSWORD=hunter2pass psql", "PGPASSWORD='hunter2pass'", %(export PGPASSWORD="hunter2pass"),
+               "MYSQL_PWD='hunter2pass'"]
+
+      expect(lines).to all(match(shape))
+    end
+
+    it "leaves a reference, a dull value, a lower-case name and a directory alone" do
+      lines = ["PGPASSWORD=$DB_PASSWORD", "PGPASSWORD=${DB_PASSWORD}", "PGPASSWORD=hunterpass",
+               "pgpassword=hunter2pass", "OLDPWD=/home/tara/dev", "PWD=/home/tara/dev", "PGPASSWORD=ENV.fetch",
+               "HOST_PWD=/home/tara/dev", "ORIGINAL_PWD=/srv/app", "INITIAL_PWD=/home/tara", "BUILD_PWD=~/build2",
+               "HOST_PWD='/home/tara/dev'", %(PGPASSWORD="$DB_PASSWORD"), %(PGPASSWORD="${DB_PASSWORD}"),
+               "PGPASSWORD='abc1'", "ORIG_PWD=$(pwd)"]
+
+      expect(lines.grep_v(shape)).to eq(lines)
+    end
+  end
+
+  # The read side leaves a reference, a template and a dull value clear, so
+  # the write side may not refuse a note for holding one.
+  describe "the gated password shapes" do
+    ["postgres://app:${DB_PASSWORD}@db/main", "postgres://app:$PGPASSWORD@db/main", '{"password": "${DB_PASS}"}',
+     "postgres://user:pass@localhost/db", "amqp://guest:guest@localhost:5672/",
+     "http://localhost:3000?email=tara@example.com", "http://localhost:3000#frag@x",
+     "the header is Authorization: Bearer followed by the token", "Authorization: Bearer YOUR_TOKEN_HERE"]
+      .each do |line|
+      it "refuses nothing on the write side for #{line.inspect}" do
+        expect(names_matching(:write, line)).to be_empty
+      end
+    end
+
+    {
+      "postgres://app:hunter2pw@db/main" => "url credentials", '{"password": "hunter2pass"}' => "quoted password key",
+      "Authorization: Bearer abcdefgh12345678" => "bearer header"
+    }.each do |line, name|
+      it "still names #{name.inspect} for #{line.inspect}" do
+        expect(names_matching(:write, line)).to eq([name])
+      end
+    end
+  end
+
+  # Which name a consumer that journals ONE name gives a line both an older
+  # shape and a gated one see.
+  describe "the order of the shapes" do
+    it "names the issuer prefix on the write side ahead of the assignment holding it" do
+      expect(first_name_matching(:write, "GITHUB_TOKEN=ghp_aB3dE5gH7jK9mN1pQ3sT5vX7zA9cE1gH3jK5")).to eq("github token")
+    end
+
+    it "keeps the dotenv name on the read side for a .env line holding url credentials" do
+      expect(first_name_matching(:content, "DATABASE_URL=postgres://app:hunter2pw@db/main"))
+        .to eq("dotenv assignment")
+    end
+
+    it "keeps the literal name on the read side ahead of the password variable" do
+      expect(first_name_matching(:content, "then set PGPASSWORD=hunter2pass")).to eq("password variable assignment")
+      expect(first_name_matching(:content, "then set DB_PASSWORD=hunter2pass")).to eq("credential literal assignment")
+    end
+  end
+
   describe "credential-file shapes on the content side" do
     it "names each format on the content side and none on the write side" do
       lines = ["machine h login u password hunter2hunter2", "db.example:5432:app:alice:s3cretpass",
@@ -272,7 +364,8 @@ RSpec.describe Lain::CredentialPatterns do
     it "sees a compound credential name on both sides, the write side naming the credential" do
       line = "DATABASE_PASSWORD=hunter2pass"
 
-      expect(names_matching(:write, line)).to eq(["credential assignment"])
+      expect(names_matching(:write, line)).to eq(["credential assignment", "password variable assignment"])
+      expect(first_name_matching(:write, line)).to eq("credential assignment")
       expect(names_matching(:content, line)).to include("dotenv assignment")
     end
 

@@ -425,6 +425,41 @@ RSpec.describe Lain::Sensitivity::Regions do
       end
     end
 
+    # A write refuses url credentials, but a read masks only the secret in
+    # them, since the rest of a URL says where it is used.
+    context "when a dotenv value is a url holding credentials" do
+      it "masks only the password, not the whole url" do
+        line = "export DATABASE_URL='postgres://app:hunter2xyz@db.local/app'"
+
+        expect(detect(line).map { [_1.bytes, _1.reason] }).to eq([["hunter2xyz", "url credentials"]])
+      end
+    end
+
+    context "when a dotenv name ends in the short password word" do
+      it "masks only the value of MYSQL_PWD, bare or quoted" do
+        expect(detect("MYSQL_PWD=hunter2pass").map(&:bytes)).to eq(["hunter2pass"])
+        expect(detect("MYSQL_PWD='hunter2pass'").map(&:bytes)).to eq(["hunter2pass"])
+      end
+
+      # The hint is the upper-case `_PWD` of a variable name, not the word, and
+      # a command substitution says where a value is read from.
+      ["original_pwd = Dir.pwd", "ORIG_PWD=$(pwd)"].each do |line|
+        it "reports nothing for #{line}" do
+          expect(detect(line)).to be_empty
+        end
+      end
+    end
+
+    it "masks nothing in a query string holding an email address" do
+      expect(detect("http://localhost:3000?email=tara@example.com")).to be_empty
+    end
+
+    # The literal assignment and the password variable rank after the named
+    # shapes, so a line they all see keeps the name it had before them.
+    it "names a mid-line compound password assignment by the literal shape" do
+      expect(detect("then set DB_PASSWORD=hunter2pass").map(&:reason)).to eq(["credential literal assignment"])
+    end
+
     context "when a password shape holds a reference, a template or a plain word" do
       {
         "an env reference" => "x_password: ${DB_PASS}",

@@ -76,6 +76,37 @@ module Lain
                    '(?![(\[]|\.\w)'.freeze
     private_constant :VOCABULARY, :ASSIGNED_NAME, :SEPARATOR, :QUOTED_LITERAL, :VALUE_STOPS, :BARE_LITERAL
 
+    # Where a secret is read FROM, so a value that is wholly one hides a name and
+    # carries nothing. Both sides gate on it, which is why it is public: the read
+    # side anchors it to a whole value, the write side to the value's delimiter.
+    # Case-sensitive inside any table, since `$UPPER_NAME` is the variable shape.
+    REFERENCE = '(?-i:\$\{[A-Za-z_]\w*\}|\$?\{\{\s*[\w.]+\s*\}\}|\$[A-Z_][A-Z0-9_]*|\$\([\w./-]+\)' \
+                '|ENV(?:\[\s*(?:"\w+"|\'\w+\')\s*\]|\.fetch\(\s*(?:"\w+"|\'\w+\')\s*\))' \
+                '|Rails\.application\.credentials\.dig\((?:\s*:\w+\s*,?)*\)?)'
+
+    # A name hint is a weak signal and needs the value to be worth showing a
+    # human. Without this floor the name arm reported `)`, `,`, `=`, `>` and
+    # bare integers -- 24 pure-punctuation regions across `lib/` alone, each of
+    # which becomes a prompt reading "release the value `)`?".
+    #
+    # SIX, not eight. The junk this exists to kill is 1-2 characters of
+    # punctuation and 4-character integers, so six clears all of it -- while
+    # eight would discard a `DATABASE_PASSWORD` holding `hunter2`, which is the
+    # exact case the name-substring gate is argued from. A floor that deletes the recall
+    # its own gate was designed to buy is set too high, whatever round number
+    # it matches.
+    SUBSTANCE_LENGTH = 6
+
+    # The write side only matches a pattern, so the read side's value gate has
+    # to be written into one.
+    def self.real_value(chars, stop)
+      "(?!#{REFERENCE}#{stop})(?=(?>#{chars}{#{SUBSTANCE_LENGTH},})#{stop})(?=#{chars}*?[A-Za-z0-9])#{chars}+"
+    end
+    private_class_method :real_value
+
+    QUOTED_VALUE = %{(?<q>["'])#{real_value(%q([^"'\n]), '\k<q>')}\\k<q>}.freeze
+    private_constant :QUOTED_VALUE
+
     # The sk- shape is anchored with a lookbehind because unanchored it matched
     # INSIDE hyphenated prose ("ask-someone-to-help-..."), refusing a benign
     # write under a pattern name it never honestly matched: a real key stands
@@ -88,12 +119,38 @@ module Lain
     # Text that ends before an END is covered to its end, since a bounded read
     # or a window can cut a block off; the write side still refuses on the
     # header alone.
-    WRITE = unreserved(
+    ISSUED = unreserved(
       "openai-style api key" => /(?<![\w-])sk-[A-Za-z0-9_-]{16,}/,
       "aws access key id" => /AKIA[0-9A-Z]{16}/,
       "pem private key block" => /-----BEGIN(?: [A-Z]+)? PRIVATE KEY-----(?:.*?-----END [A-Z ]*PRIVATE KEY-----|.*)/m,
+      "github token" => /(?<![\w-])(?:gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,})(?![\w-])/,
       "credential assignment" => /#{ASSIGNED_NAME}#{SEPARATOR}(?:#{QUOTED_LITERAL}|#{BARE_LITERAL})/i
     )
+
+    # Shaped for masking a value inside a line, and each still names its
+    # credential, so a write is refused for them too: a note stored with one
+    # would hand back in the clear what a read masks. Each value is gated as the
+    # read side gates it, so a note holding a reference or a placeholder stores.
+    # A url's value stops at `?` and `#`, where an `@` is an email in a query;
+    # a bearer token holds a digit or a symbol, where prose holds only letters.
+    NAMED_SHAPES = unreserved(
+      "quoted password key" =>
+        /["'][\w-]*(?:password|passwd|pwd)["']\s*:\s*(?<q>["'])(?<value>#{real_value(%q([^"'\n]), '\k<q>')})\k<q>/i,
+      "url credentials" => %r{\b[a-z][a-z0-9+.-]*://[^\s:/@?#]*:(?<value>#{real_value("[^\\s@/?#]", "@")})@}i,
+      "bearer header" => %r{\bAuthorization:[ \t]*Bearer[ \t]+(?<value>(?=[A-Za-z_]*[\d.~+/=-])[A-Za-z0-9._~+/=-]{8,})}i
+    )
+
+    # `PGPASSWORD=` and `MYSQL_PWD=`, which the assignment shape's vocabulary
+    # cannot reach. `_PWD` and never a bare `PWD`, which would refuse the
+    # shell's `OLDPWD=/home/...`, and never a path, which `HOST_PWD` holds.
+    # The lookbehind starts a name only where a word starts: without it a long
+    # run of capitals is retried from every letter, which is quadratic.
+    SHELL_VARIABLE = unreserved(
+      "password variable assignment" =>
+        %r{(?<![A-Za-z0-9_])[A-Z][A-Z0-9_]*(?:PASSW(?:OR)?D=|_PWD=(?!["']?[/~]))(?:#{QUOTED_VALUE}|#{BARE_LITERAL})}
+    )
+
+    WRITE = unreserved(ISSUED.merge(NAMED_SHAPES, SHELL_VARIABLE))
 
     # Name-agnostic on purpose, and the reason these stay off the write side:
     # WRITE's assignment shape sees only a credential word holding a literal, and
@@ -145,15 +202,17 @@ module Lain
     # The read side keeps the any-value shape the write side gave up, so a value
     # read from `$X` or `ENV[` is still masked: a false mask on a read costs one
     # release decision, where a false refusal on a write loses a note. The
-    # literal shape comes last under its own name, so a line the older shapes
-    # already saw is journaled under the name it always was.
+    # named, literal and variable shapes come after the older ones, in that
+    # order, so a line the older shapes already saw is journaled under the name
+    # it always was.
     CONTENT = unreserved(
-      WRITE.merge("credential assignment" => /\b(?:#{VOCABULARY})\s*[:=]\s*\S+/i)
-           .merge(ASSIGNMENTS, FILE_FORMATS, "credential literal assignment" => WRITE.fetch("credential assignment"))
+      ISSUED.merge("credential assignment" => /\b(?:#{VOCABULARY})\s*[:=]\s*\S+/i)
+            .merge(ASSIGNMENTS, FILE_FORMATS, NAMED_SHAPES,
+                   { "credential literal assignment" => WRITE.fetch("credential assignment") }, SHELL_VARIABLE)
     )
 
-    # WRITE first, so a line that is both an assignment and a known issuer
-    # prefix is journaled under the shape that says more.
+    # The issuer shapes first, so a line that is both an assignment and a known
+    # issuer prefix is journaled under the shape that says more.
     SETS = { write: WRITE, content: CONTENT }.freeze
 
     # @param consumer [Symbol] `:write` or `:content`

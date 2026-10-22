@@ -394,6 +394,63 @@ RSpec.describe Lain::Middleware::RefuseSecretWrites do
     end
   end
 
+  # A read masks these, so a write that stored them would hand the masked
+  # value back in the clear on the next memory_read.
+  describe "the named password shapes through a chat's guard stack" do
+    let(:recorder) { Lain::Memory::Recorder.new }
+    let(:toolset) { Lain::Toolset.new([Lain::Tools::MemoryWrite.new(recorder:, author: Lain::Memory::Author.chat)]) }
+    let(:records) { [] }
+    let(:layers) do
+      detached = Lain::CLI::ToolGuard.detached(journal: records)
+      Lain::CLI::ToolGuard.layered(detached.chronicle, detached.guard_inputs, [], detached.guard_inputs.policy).to_a
+    end
+
+    def stored(body)
+      dispatch_call("memory_write", { "id" => "n", "description" => "d", "body" => body }, toolset:, layers:)
+    end
+
+    def journaled(type) = records.map(&:to_journal).select { _1.fetch("type") == type }
+
+    {
+      '{"password": "hunter2pass"}' => "quoted password key",
+      "PGPASSWORD=hunter2pass" => "password variable assignment",
+      "MYSQL_PWD=hunter2pass" => "password variable assignment",
+      "PGPASSWORD='hunter2pass'" => "password variable assignment",
+      %(export PGPASSWORD="hunter2pass") => "password variable assignment",
+      "MYSQL_PWD='hunter2pass'" => "password variable assignment",
+      "postgres://app:hunter2pw@db/main" => "url credentials",
+      "Authorization: Bearer abcdefgh12345678" => "bearer header",
+      "ghp_#{"a" * 36}" => "github token"
+    }.each do |body, shape|
+      it "refuses #{body.inspect} naming #{shape.inspect}, and nothing reaches the store" do
+        result = stored(body)
+
+        expect(result.error?).to be(true)
+        expect(result.content).to include("memory_write refused", shape)
+        expect(result.content).not_to include(body)
+        expect(recorder.root).to be_nil
+        expect(journaled("write_refused").map { _1.fetch("pattern") }).to eq([shape])
+        expect(journaled("memory_loaded")).to be_empty
+      end
+    end
+
+    ["access_token = request.headers['X']", "id_token: nil", "db_password: is stored in vault",
+     "PGPASSWORD=$DB_PASSWORD", "postgres://app:${DB_PASSWORD}@db/main", "postgres://app:$PGPASSWORD@db/main",
+     '{"password": "${DB_PASS}"}', "postgres://user:pass@localhost/db", "amqp://guest:guest@localhost:5672/",
+     "HOST_PWD=/home/tara/dev", "ORIGINAL_PWD=/srv/app", "INITIAL_PWD=/home/tara",
+     "http://localhost:3000?email=tara@example.com", "the header is Authorization: Bearer followed by the token",
+     "Authorization: Bearer YOUR_TOKEN_HERE", '{"password": "******"}', "postgres://app:......@db/x",
+     '{"password": "{{ db_password }}"}'].each do |body|
+      it "stores #{body.inspect}" do
+        result = stored(body)
+
+        expect(result.error?).to be(false)
+        expect(recorder.root).not_to be_nil
+        expect(journaled("write_refused")).to be_empty
+      end
+    end
+  end
+
   describe "in an Agent's tool phase" do
     it "keeps the real recorder untouched: the refused write never lands in the Memory::Index" do
       recorder = Lain::Memory::Recorder.new

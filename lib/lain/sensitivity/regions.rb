@@ -48,20 +48,8 @@ module Lain
       # triage rather than reading like a matched credential.
       ENTROPY_REASON = "high-entropy token"
 
-      NAME_HINT = /pass|secret|token|api[_-]?key|credential|auth|private|signature|session/i
+      NAME_HINT = /pass|(?-i:_PWD)|secret|token|api[_-]?key|credential|auth|private|signature|session/i
 
-      # A name hint is a weak signal and needs the value to be worth showing a
-      # human. Without this floor the name arm reported `)`, `,`, `=`, `>` and
-      # bare integers -- 24 pure-punctuation regions across `lib/` alone, each of
-      # which becomes a prompt reading "release the value `)`?".
-      #
-      # SIX, not eight. The junk this exists to kill is 1-2 characters of
-      # punctuation and 4-character integers, so six clears all of it -- while
-      # eight would discard `DATABASE_PASSWORD=hunter2`, which is the exact case
-      # the name-substring gate is argued from. A floor that deletes the recall
-      # its own gate was designed to buy is set too high, whatever round number
-      # it matches.
-      SUBSTANCE_LENGTH = 6
       ALPHANUMERIC_RUN = /[A-Za-z0-9]/
 
       # `yaml assignment` needs only a colon and a space, so its name arm admits
@@ -97,36 +85,33 @@ module Lain
 
       # Password shapes the content table has no name for. They stay here and
       # not in {CredentialPatterns}: the write side refuses on that table, and
-      # these are shaped for masking a value inside a line, where a false hit
-      # costs one release decision rather than a refused write.
+      # these match a note that only says where a password lives
+      # (`db_password: is stored in vault`), where a false hit here costs one
+      # release decision rather than a refused write.
       PASSWORD_SHAPES = {
-        "quoted password key" => /["'][\w-]*(?:password|passwd|pwd)["']\s*:\s*(?<q>["'])(?<value>[^"'\n]+)\k<q>/i,
         "suffixed password key" => /^[ \t]*[\w-]*[_-](?:password|passwd)[ \t]*:[ \t]+["']?(?<value>[^\s"']+)/i,
-        "url credentials" => %r{\b[a-z][a-z0-9+.-]*://[^\s:/@]*:(?<value>[^\s@/]+)@}i,
-        "mysql password flag" => /\b(?:mysql|mysqldump|mysqladmin|mariadb)\b[^\n]*?[ \t]-p(?<value>[^\s-]\S*)/,
-        "github token" => /(?<![\w-])(?:gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,})(?![\w-])/,
-        "bearer header" => %r{\bAuthorization:[ \t]*Bearer[ \t]+(?<value>[A-Za-z0-9._~+/=-]{8,})}i
+        "mysql password flag" => /\b(?:mysql|mysqldump|mysqladmin|mariadb)\b[^\n]*?[ \t]-p(?<value>[^\s-]\S*)/
       }.freeze
 
       # A reference or template is where a secret is read FROM, so masking it hides
       # a name and protects nothing. Whole values only: a prefix match would pass
       # `${X:-hunter2pass}` or `$hunter2pass`, which carry the secret themselves.
       # `$UPPER_NAME` is the common shape, so a dull all-caps value after `$` is an accepted miss.
-      REFERENCE_VALUE = /\A(?:
-        \$\{[A-Za-z_]\w*\}
-        | \$\{\{\s*[\w.]+\s*\}\}
-        | \$[A-Z_][A-Z0-9_]*
-        | ENV(?:\[\s*(?:"\w+"|'\w+')\s*\]|\.fetch\(\s*(?:"\w+"|'\w+')\s*\))
-        | Rails\.application\.credentials\.dig\((?:\s*:\w+\s*,?)*\)?
-      )\z/x
+      REFERENCE_VALUE = /\A#{CredentialPatterns::REFERENCE}\z/
       REFERENCE_CHECKED = ["quoted password key", "suffixed password key", "url credentials"].freeze
 
-      # The literal assignment ranks last, below these too, so a token an issuer
-      # shape names keeps that name inside a compound assignment.
+      # The literal assignment and everything after it rank last, below these
+      # too, so a token an issuer shape names keeps that name inside a compound
+      # assignment.
       CONTENT_SHAPES = CredentialPatterns.for(:content).then do |content|
-        literal = content.slice("credential literal assignment")
-        content.except(*literal.keys).merge(PASSWORD_SHAPES, literal)
+        last = content.slice(*content.keys.drop_while { _1 != "credential literal assignment" })
+        content.except(*last.keys).merge(PASSWORD_SHAPES, last)
       end.freeze
+
+      # A value holding one of these is a secret whole. The gated password
+      # shapes name a secret INSIDE their match, so a url or a header around one
+      # would otherwise be masked entire along with its password.
+      ISSUER_FIXED = CredentialPatterns::ISSUED.values.freeze
 
       # Issuer-fixed shapes are whole-match secrets; the assignment shapes are
       # gated and contribute only their value. Order is the table's own, so a
@@ -183,7 +168,7 @@ module Lain
         def recurrences(text, secrets)
           haystack = text.b
           standing = placeholder_spans(text)
-          secrets.select { _1.bytesize >= SUBSTANCE_LENGTH }.flat_map { spellings(_1) }.uniq
+          secrets.select { _1.bytesize >= CredentialPatterns::SUBSTANCE_LENGTH }.flat_map { spellings(_1) }.uniq
                  .flat_map { occurrences(haystack, _1) }
                  .reject { |span| standing.any? { span.start < _1.finish && _1.start < span.finish } }
         end
@@ -302,7 +287,7 @@ module Lain
         def substantial?(value)
           token = unquote(value)
 
-          token.bytesize >= SUBSTANCE_LENGTH && token.match?(ALPHANUMERIC_RUN)
+          token.bytesize >= CredentialPatterns::SUBSTANCE_LENGTH && token.match?(ALPHANUMERIC_RUN)
         end
 
         def entropy_candidates(scanned)
@@ -327,7 +312,7 @@ module Lain
           value.strip.delete_prefix('"').delete_suffix('"').delete_prefix("'").delete_suffix("'")
         end
 
-        def issuer_fixed?(token) = CredentialPatterns.for(:write).any? { |_, shape| token.match?(shape) }
+        def issuer_fixed?(token) = ISSUER_FIXED.any? { token.match?(_1) }
       end
 
       # Whether bytes that look like a public key ARE one, parsed exactly. The

@@ -17,6 +17,12 @@ RSpec.describe Lain::Frontend::Intake::Discretion do
     expect(writer.kept).to be_empty
   end
 
+  it "withholds a bare GitHub token" do
+    discretion.remember("ghp_aB3dE5gH7jK9mN1pQ3sT5vX7zA9cE1gH3jK5")
+
+    expect(writer.kept).to be_empty
+  end
+
   # The content tier's yaml shape matches any `word: text` line of prose, which
   # at a prompt is most of what a human types.
   it "judges by the write tier, so a line of ordinary prose with a colon is still kept" do
