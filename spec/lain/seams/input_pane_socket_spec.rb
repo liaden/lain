@@ -40,7 +40,7 @@ module InputPaneSocket
     header = lambda do
       File.exist?(hud) ? Lain::StatusFeed::Reading.new(JSON.parse(File.read(hud))).header(now: Time.now) : ""
     end
-    socket = Lain::CLI::InputSocket.new(rail:, path:, commands: -> { %w[approve inbox] }, header:)
+    socket = Lain::CLI::InputSocket.new(rail:, path:, commands: -> { %w[approve inbox] }, header:, tick: 0.05)
     begin
       socket.bind
     rescue Lain::CLI::InputSocket::InUse => e
@@ -49,7 +49,7 @@ module InputPaneSocket
     end
     conductor = Lain::CLI::Conductor.new(tty:, chronicle: Lain::CLI::Chronicle::Null.new,
                                          signals: Lain::CLI::Signals.new, rail:, grace: 30,
-                                         countdown: Lain::CLI::Conductor::RailCountdown.new(rail:))
+                                         countdown: Lain::CLI::Conductor::RailCountdown.new(rail:), tick: 0.05)
 
     lines = lambda do |_task|
       Enumerator.produce { conductor.read_prompt("you> ") }.lazy
@@ -419,10 +419,10 @@ RSpec.describe "a chat fed by an input pane", :seam do
     cockpit.settles { cockpit.screen.include?("dev  running  1t") || nil }
     # One publish tick past the redraw that carried the row, so the count is
     # taken over a quiet window rather than across the change itself.
-    sleep(1)
+    sleep(0.5)
     settled = cockpit.screen.scan("you> ").size
 
-    sleep(3)
+    sleep(0.6)
 
     expect(cockpit.screen.scan("you> ").size).to eq(settled)
   end
@@ -439,7 +439,7 @@ RSpec.describe "a chat fed by an input pane", :seam do
     cockpit.settles { cockpit.screen.include?("dev  running  1t") || nil }
     # One publish tick past the redraw that carried the row, so the count is
     # taken over a quiet window rather than across the change itself.
-    sleep(1)
+    sleep(0.5)
     shown = cockpit.screen.scan("fleet:1 inbox:0").size
 
     cockpit.resize(6)
@@ -457,11 +457,11 @@ RSpec.describe "a chat fed by an input pane", :seam do
     cockpit.settles { cockpit.screen.include?("dev  running  1t") || nil }
     cockpit.type("half a line")
     cockpit.settles { cockpit.screen.include?("half a line") || nil }
-    sleep(1)
+    sleep(0.5)
     shown = cockpit.screen.scan("fleet:1 inbox:0").size
 
     cockpit.resize(6)
-    sleep(2)
+    sleep(0.6)
 
     expect(cockpit.screen.scan("fleet:1 inbox:0").size).to eq(shown)
   end
@@ -478,10 +478,10 @@ RSpec.describe "a chat fed by an input pane", :seam do
     cockpit.settles { cockpit.screen.include?("dev  running  1t") || nil }
     cockpit.type("half a line")
     cockpit.settles { cockpit.screen.include?("half a line") || nil }
-    sleep(1)
+    sleep(0.5)
     shown = cockpit.screen.scan("fleet:1 inbox:0").size
     cockpit.resize(6)
-    sleep(1)
+    sleep(0.5)
 
     cockpit.type("\x15")
 
