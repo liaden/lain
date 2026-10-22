@@ -68,6 +68,15 @@ RSpec.describe Lain::Approval::Parked::PathGate do
     it "answers nil when the path is not a String" do
       expect(gate.path_for(pending("read_file", { "path" => 3 }))).to be_nil
     end
+
+    # A write outside the root is asked about where it lands, which no read oracle may judge.
+    it "answers nil for a write outside the project root" do
+      rooted = Lain::Sensitivity::Policy.new(sensitivity:, root: "/home/tester/project")
+      outside = pending("write_file", { "path" => "/tmp/frugirl-spike/src/main.rs", "content" => "x" })
+
+      expect([described_class.new(rooted).path_for(outside), described_class.new(rooted).verdict_for(outside)])
+        .to eq([nil, nil])
+    end
   end
 
   describe "#verdict_for" do

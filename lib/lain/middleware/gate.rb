@@ -124,7 +124,7 @@ module Lain
       # @param policy [#rule, #call] the approval decision, `(effect, context)
       #   -> Ruling`, or a bare `-> Boolean` callable adapted once here; receives
       #   the inner ToolCall even when wrapped in an Approval
-      # @param sensitivity [#gates?] the second gating axis, `(effect, cwd:)
+      # @param sensitivity [#gates?, #judge, #root, #home, #confined] the second gating axis, `(effect, cwd:)
       #   -> Boolean`, over the PATH a call names rather than the tool's tier.
       #   ROOT-QUALIFIED because {Middleware::Sensitivity} is a sibling under
       #   this very namespace, and a bare `Sensitivity` resolves to it.
@@ -201,10 +201,43 @@ module Lain
         Approval::Escalation::Noted.new(context, path_verdict(effect, context).explanation)
       end
 
-      def path_gated?(effect, context) = @sensitivity.gates?(effect, **where(context))
+      def path_gated?(effect, context)
+        @sensitivity.gates?(effect, **where(context)) || writes_outside?(effect, context)
+      end
 
+      # The stricter of what the named path is and where the call writes, so a
+      # credential name outside the root still says it is a credential.
       def path_verdict(effect, context)
-        @sensitivity.judge(::Lain::Sensitivity::Policy.path_in(effect), **where(context))
+        named = ::Lain::Sensitivity::Policy.path_in(effect)
+        verdicts = [*(@sensitivity.judge(named, **where(context)) if named),
+                    *(::Lain::Sensitivity::Policy::OUTSIDE_PROJECT if writes_outside?(effect, context))]
+        verdicts.inject(:|)
+      end
+
+      # Checkout scope confines no write, so the gate asks where one lands; a
+      # policy with no root has no project to be outside of.
+      def writes_outside?(effect, context)
+        written = written(effect, context)
+        return false if written.empty? || @sensitivity.root.nil?
+
+        project = @sensitivity.confined(roots: [::Lain::Sensitivity::Policy.base_of(context)])
+        cwd = ::Lain::Session.cwd_of(context)
+        written.any? { project.outside?(_1, cwd:) }
+      end
+
+      def written(effect, context)
+        named = ::Lain::Sensitivity::Policy.path_in(effect)
+        case effect.name
+        when "write_file", "edit_file" then [*named]
+        when "bash" then [*named, *commanded(effect, context)]
+        else []
+        end
+      end
+
+      # The parse is always given, so Reach's own command and cwd go unread.
+      def commanded(effect, context)
+        parsed = ParsedCommand.named_in(effect, context, home: @sensitivity.home)
+        ConfineToScope::Reach.new(home: @sensitivity.home).call(nil, nil, parsed)
       end
 
       def where(context)

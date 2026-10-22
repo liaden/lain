@@ -623,6 +623,84 @@ RSpec.describe Lain::CLI::Switchboard do
     end
   end
 
+  # Checkout scope confines no write, so a write landing outside the project
+  # root reaches each level's ladder instead of running unasked.
+  describe "a checkout-scope write outside the project root" do
+    around do |example|
+      Dir.mktmpdir("lain-board-outside") do |dir|
+        @base = File.realpath(dir)
+        FileUtils.mkdir_p(%w[home project elsewhere].map { File.join(@base, _1) })
+        example.run
+      end
+    end
+
+    let(:root) { File.join(@base, "project") }
+    let(:outside) { File.join(@base, "elsewhere", "frugirl-spike", "src", "main.rs") }
+    let(:rooted) do
+      home = File.join(@base, "home")
+      Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root, root:), home:, root:)
+    end
+    let(:ran) { [] }
+
+    def in_project = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: root, env: {}))
+
+    def dispatched(board, name, input)
+      dispatch_call(name, input, toolset: board.toolset, layers: tool_stack(board), context: in_project,
+                                 handler: Lain::Effect::Handler::Mock.new { |effect, _| ran << effect.name })
+    end
+
+    def writes(board, path = outside) = dispatched(board, "write_file", { "path" => path, "content" => "x\n" })
+
+    def rungs = journal_records(journal_io, "escalation").map { [_1["rung"], _1["verdict"]] }
+
+    it "is answered by the judge under auto" do
+      asked = []
+      writes(switchboard(approval: :auto, judge: judge_answering(:approve, asked), sensitivity: rooted))
+
+      expect([asked, ran]).to eq([%w[write_file], %w[write_file]])
+      expect(rungs).to include(%w[auto allow])
+    end
+
+    it "parks for the human under ask, noting it is outside the project" do
+      board = switchboard(sensitivity: rooted)
+
+      pending = Sync do |task|
+        call = task.async { writes(board) }
+        task.with_timeout(1) { board.approvals.dequeue }.tap { _1.deny(surface: "tty", authority: :human) }
+      ensure
+        call&.wait
+      end
+
+      expect(pending.notes).to include(Lain::Sensitivity::Policy::OUTSIDE_PROJECT.explanation)
+      expect(ran).to be_empty
+      expect(rungs).to include(%w[surfaces deny])
+    end
+
+    it "is approved by the bypass rung under bypass, on the record" do
+      writes(switchboard(approval: :bypass, sensitivity: rooted))
+
+      expect(ran).to eq(%w[write_file])
+      expect(rungs).to include(%w[bypass allow])
+    end
+
+    it "is refused with nothing written under an unattended ask" do
+      result = writes(switchboard(attended: false, sensitivity: rooted))
+
+      expect(result).to have_attributes(is_error: true)
+      expect(ran).to be_empty
+      expect(rungs).to include(%w[unattended deny])
+    end
+
+    it "asks nothing about a read outside the root or a write inside it" do
+      board = switchboard(sensitivity: rooted)
+      dispatched(board, "read_file", { "path" => "/etc/hostname" })
+      writes(board, File.join(root, "src", "main.rs"))
+
+      expect(ran).to eq(%w[read_file write_file])
+      expect(rungs).to be_empty
+    end
+  end
+
   # An earlier card established WHERE the live mode lives; these are the examples that
   # say a flip DOES something -- it re-binds the gate policy the construction-
   # fixed Gate reads, and leaves the capability set the Agent renders alone.

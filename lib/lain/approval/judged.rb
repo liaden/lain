@@ -286,9 +286,17 @@ module Lain
       # The human's checkout is read-only to a session in its own tree, as its
       # confined policy keeps the project root, so only a write there is outside.
       def outside(effect, context, cwd, held)
-        readable = [*held, *@policy.root]
-        named_paths(effect, context, cwd).reject { |path, written| within?(written ? held : readable, path) }
+        writable = held_to(held)
+        readable = held_to([*held, *@policy.root])
+        named_paths(effect, context, cwd).select { |path, writes| (writes ? writable : readable).outside?(path, cwd:) }
                                          .map(&:first).uniq
+      end
+
+      # Where each path lands, as the gate judges it. Not {Sensitivity::Policy#confined},
+      # which always holds the project root, and a write there from a leased tree is outside.
+      def held_to(roots)
+        ::Lain::Sensitivity::Policy::Confined.new(policy: @policy, roots:,
+                                                  anchors: { home: @policy.home, root: @policy.root })
       end
 
       def facts_for(effect, context)

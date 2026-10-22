@@ -1052,6 +1052,14 @@ RSpec.describe Lain::Sensitivity::Policy do
         .to be(false)
     end
 
+    it "answers outside? for a write not yet on disk by where its directory lands" do
+      File.symlink(File.join(@base, "elsewhere"), File.join(root, "out"))
+      project = policy.confined(roots: [root])
+
+      expect(%w[lib/new.rb lib/new/deep.rb out/new.rb ../elsewhere/new/a.rb].map { project.outside?(_1, cwd: root) })
+        .to eq([false, false, true, true])
+    end
+
     it "gates a glob whose pattern climbs or reaches out of the roots, and one rooted at /" do
       expect(confined.gates?(glob(".", "../../**/*.md"), cwd: root)).to be(true)
       expect(confined.gates?(glob(".", "#{@base}/elsewhere/*.md"), cwd: root)).to be(true)

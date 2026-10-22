@@ -328,7 +328,9 @@ one round trip, never a loop — Lain owns the loop, because the loop is the obj
   (the default at launch) asks a judge first and parks only what it cannot settle; `bypass`
   approves what the rules allow, and **Triage is not a shell boundary under it**: a command the shell
   verdict cannot parse is not checked word by word. Every level but an unattended `ask` keeps the
-  triage and rule denies rather than replacing the ladder.
+  triage and rule denies rather than replacing the ladder. Checkout scope escalates a `write_file` or
+  `edit_file` landing outside the project root and its related directories, and notes a command that
+  writes or changes directory there.
 - **All durable memory lives in one `Memory::ProjectStore` per project**, so a fresh chat sees
   what earlier chats and `lain consolidate` wrote; compaction is a different subsystem with its
   own records, and neither reads the other.

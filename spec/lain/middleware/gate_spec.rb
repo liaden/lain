@@ -641,6 +641,92 @@ RSpec.describe Lain::Middleware::Gate do
     end
   end
 
+  # Checkout scope gates no write by its location, so a write or a command
+  # landing outside the project root is the one write the gate asks about for
+  # where it lands rather than for what it names.
+  describe "a write that lands outside the project root" do
+    around do |example|
+      Dir.mktmpdir("lain-gate-outside") do |dir|
+        @base = File.realpath(dir)
+        FileUtils.mkdir_p(%w[home/notes project/lib elsewhere spikes/w1].map { File.join(@base, _1) })
+        example.run
+      end
+    end
+
+    let(:shipped) { Lain::Toolset.new(ToolRegistry.names.map { |name| ToolRegistry.build(name) }) }
+    let(:home) { File.join(@base, "home") }
+    let(:root) { File.join(@base, "project") }
+    let(:elsewhere) { File.join(@base, "elsewhere") }
+    let(:rooted) do
+      rules = Lain::Sensitivity::Rules.new(related: ["~/notes"])
+      Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root, root:, rules:), home:, root:)
+    end
+    let(:in_project) { Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: root, env: {})) }
+
+    def write(path) = tool_call("write_file", { "path" => path, "content" => "x\n" })
+    def runs(command) = tool_call("bash", { "command" => command })
+
+    def asked(effect, sensitivity: rooted, context: in_project)
+      policy = spy
+      through(described_class.new(policy:, sensitivity:), effect, tool: held(effect.name, shipped), context:)
+      policy
+    end
+
+    def notes(effect, **)
+      context = asked(effect, **).contexts.first
+      context.respond_to?(:parked_because) ? context.parked_because : []
+    end
+
+    it "asks about a write_file or an edit_file outside the root, noting it is outside the project" do
+      edit = tool_call("edit_file", { "path" => File.join(elsewhere, "a.rb"), "old" => "a", "new" => "b" })
+
+      expect([write(File.join(elsewhere, "src", "main.rs")), edit].map { notes(_1) })
+        .to all(eq([Lain::Sensitivity::Policy::OUTSIDE_PROJECT.explanation]))
+    end
+
+    it "asks about a write through a link inside the root that lands outside it" do
+      File.symlink(elsewhere, File.join(root, "out"))
+
+      expect(asked(write("out/a.rb")).asked).not_to be_empty
+    end
+
+    it "notes a command that writes outside the root, changes directory out of it, or runs there" do
+      calls = [runs("echo x > #{elsewhere}/out.txt"), runs("cd #{elsewhere} && make"),
+               tool_call("bash", { "command" => "make", "cwd" => elsewhere })]
+
+      expect(calls.map { notes(_1) })
+        .to all(eq([Lain::Sensitivity::Policy::OUTSIDE_PROJECT.explanation]))
+    end
+
+    it "adds nothing for a command that writes inside the root or to a stream" do
+      calls = [runs("echo x > lib/out.txt"), runs("echo x >/dev/stderr"), runs("cat #{elsewhere}/a.md")]
+
+      expect(calls.map { notes(_1) }).to all(be_empty)
+    end
+
+    it "leaves a new file inside the root, one in a related directory and an outside read unasked" do
+      calls = [write("lib/new/deep.rb"), write(File.join(root, "b.rb")), write(File.join(home, "notes", "n.md")),
+               tool_call("read_file", { "path" => File.join(elsewhere, "a.md") })]
+
+      expect(calls.map { asked(_1).asked }).to all(be_empty)
+    end
+
+    it "holds a leased checkout as the root, so a write there is not outside" do
+      checkout = File.join(@base, "spikes", "w1")
+      leased = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: checkout, env: {}, checkout:))
+
+      expect(asked(write(File.join(checkout, "a.rb")), context: leased).asked).to be_empty
+      expect(asked(write(File.join(elsewhere, "a.rb")), context: leased).asked).not_to be_empty
+    end
+
+    it "asks nothing of a policy that holds no project root" do
+      rootless = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root))
+
+      expect([rootless, Lain::Sensitivity::Policy::Null.instance]
+               .map { asked(write(File.join(elsewhere, "a.rb")), sensitivity: _1).asked }).to all(be_empty)
+    end
+  end
+
   # The panel's probes, kept at the gate because the gate is where a user meets
   # this boundary. Two of them arrived asserting a defect and are inverted here
   # to guard the fix.

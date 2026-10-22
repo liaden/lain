@@ -432,6 +432,26 @@ RSpec.describe Lain::Approval::Judged do
     it "shows a path inside the project as not outside" do
       expect(prompt_for(bash("ls src"))).to include("outside the project root: none")
     end
+
+    context "when a link inside the project leads out of it" do
+      around do |example|
+        Dir.mktmpdir("lain-judged-link") do |dir|
+          @base = File.realpath(dir)
+          example.run
+        end
+      end
+
+      let(:home) { File.join(@base, "home") }
+      let(:root) { File.join(home, "project") }
+
+      it "shows a write through it as outside, where it lands" do
+        FileUtils.mkdir_p([root, File.join(@base, "elsewhere")])
+        File.symlink(File.join(@base, "elsewhere"), File.join(root, "out"))
+
+        expect(prompt_for(call("write_file", { "path" => "out/a.rb", "content" => "x" })))
+          .to include("outside the project root: #{"#{root}/out/a.rb".inspect}")
+      end
+    end
   end
 
   describe "the facts the judge is told" do

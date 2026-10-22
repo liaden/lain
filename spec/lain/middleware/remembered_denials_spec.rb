@@ -113,6 +113,14 @@ RSpec.describe Lain::Middleware::RememberedDenials do
     expect(through(call("dangerous", { "text" => "boom" })).first).to have_attributes(is_error: false)
   end
 
+  # Where a write lands is the gate's question, and a remembered no on its path is not asked for it.
+  it "passes a write outside the project even when the queue remembers a denial over its path" do
+    remembering("agent", "/tmp/frugirl-spike/src/main.rs")
+    write = call("write_file", { "path" => "/tmp/frugirl-spike/src/main.rs", "content" => "x" })
+
+    expect(through(write).last).to eq([write])
+  end
+
   it "asks for the requester its stack was built for" do
     remembering("researcher", "/home/joel")
 

@@ -419,6 +419,32 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     end
   end
 
+  # The outside-write clause is armed by the root the board hands its path
+  # policy, so a board that stops passing one goes red here.
+  describe "a write outside the project root, on the production path" do
+    it "parks for a human, saying the write lands outside the project" do
+      in_tree do |root, home|
+        board = board_for(root, home)
+        context = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: root, env: {}))
+        outside = File.join(File.dirname(root), "elsewhere", "main.rs")
+        layers = Lain::CLI::ToolGuard.stack(Lain::CLI::ToolGuard::Journaled.new(journal:), board).to_a
+
+        input = { "path" => outside, "content" => "x\n" }
+
+        pending = Sync do |task|
+          call = task.async { dispatch_call("write_file", input, toolset: board.toolset, layers:, context:) }
+          task.with_timeout(1) { board.approvals.dequeue }.tap { _1.deny(surface: "tty", authority: :human) }
+        ensure
+          call&.wait
+        end
+
+        expect(pending.notes)
+          .to include("outside the project, its related directories and every directory this session was given")
+        expect(File.exist?(outside)).to be(false)
+      end
+    end
+  end
+
   # The defect this whole group exists for: {Approval::Escalation::Triage}'s argv
   # check has been implemented and spec'd from the start and has never once run,
   # because nothing built a board that handed it a classifier. These examples
