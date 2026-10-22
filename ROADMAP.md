@@ -2142,6 +2142,14 @@ XDG path relative, which put machine state back inside the user's repository)
    against HEAD plus the batch render crossing the benchmark showed was missing, ending with the Ruby `Timeline`, `Store` and
    `Event` deleted; and the round-26 copies replaced by their owners. 53 cards, no back-compat owed.
 
+67. **Planned (2026-10-22, panel-reviewed)**: `planning/specs/qa-round-27-fixes.md`, the QA round-27 discharge
+   (`planning/qa-findings-round27-2026-10-21.md`) and a profiled lean-up of the suite: a default launch survives its
+   first compaction cut, a reader bench arm prices its gated calls, a leased run refuses a program it wrote, memory
+   writes refuse the credential shapes the read side masks, salvage keeps the prompt, todos follow `/rewind`, the epic
+   driver reads the newest decision and gc keeps unlanded anchors; rulings: a role's iteration ceiling is its own and
+   checkout scope escalates an outside write. The suite half rests on test-prof, stackprof, a GC hook and rbspy: child
+   boots (bootsnap in `exe/lain`), Reline's unanswered cursor query and fixed windows, plus `bin/suite-profile`. 45 cards.
+
 ## Map of the documents
 
 - **Architecture & why:** `ARCHITECTURE.md`, and this document's own `## Status`/`## Milestones`
