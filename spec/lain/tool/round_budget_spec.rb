@@ -31,6 +31,33 @@ RSpec.describe Lain::Tool::RoundBudget do
     [delivered, records]
   end
 
+  describe "results masked to the same placeholder" do
+    def answered_pair(content)
+      delivered, = bounded(round26, [result("tu_1", content), result("tu_2", content)], [call("tu_1"), call("tu_2")])
+      delivered.map { |block| block["content"] }
+    end
+
+    it "delivers both, since the same mask can hide different secrets" do
+      expect(answered_pair("<redacted:1>")).to eq(["<redacted:1>", "<redacted:1>"])
+    end
+
+    it "delivers both when the placeholder sits inside other text" do
+      content = "TOKEN=<redacted:1>\n"
+
+      expect(answered_pair(content)).to eq([content, content])
+    end
+
+    it "delivers both when the content is an array of blocks holding a placeholder" do
+      content = [{ "type" => "text", "text" => "<redacted:1>" }]
+
+      expect(answered_pair(content)).to eq([content, content])
+    end
+
+    it "still deduplicates identical results holding no placeholder" do
+      expect(answered_pair("plain")).to eq(["plain", "same result as call tu_1"])
+    end
+  end
+
   describe "the round 26 shape under the window budget" do
     let(:files) { (1..5).map { |n| "file #{n} ".ljust(8_000, n.to_s) } }
     let(:ids) { (1..15).map { |n| "tu_#{n}" } }

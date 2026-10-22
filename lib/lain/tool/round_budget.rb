@@ -139,7 +139,7 @@ module Lain
           return deliver(block, call) if block["is_error"]
 
           digest = Canonical.digest(block["content"])
-          return deduplicate(block, call, @seen.fetch(digest)) if @dedup && @seen.key?(digest)
+          return deduplicate(block, call, @seen.fetch(digest)) if duplicate?(block, digest)
           return withhold(block, call) if !fits?(block) && call.rerunnable?
 
           @seen[digest] ||= call.id
@@ -151,6 +151,13 @@ module Lain
         def record(basis:, head:) = Telemetry::RoundBounded.new(head:, basis:, budget: @limit.bytes, **@fates)
 
         private
+
+        # A mask numbers its slots per result, so equal masked bytes can hide different secrets.
+        def duplicate?(block, digest) = @dedup && @seen.key?(digest) && !masked?(block["content"])
+
+        def masked?(content)
+          Sensitivity::Regions::PLACEHOLDER_SHAPE.match?(content.is_a?(String) ? content : Canonical.dump(content))
+        end
 
         # Once one result is withheld the round has reached its budget, so a
         # smaller one after it is withheld too, rather than delivered past it.
