@@ -65,10 +65,20 @@ RSpec.describe Lain::Budget::Ceilings do
       expect(child.tokens).to eq(1000)
     end
 
-    it "clamps a request above the remaining room" do
+    it "grants the iterations requested even above the holder's remaining room" do
       child = ceilings(iterations: 5).attenuate(ceilings(iterations: 25))
 
-      expect(child.iterations).to eq(5)
+      expect(child.iterations).to eq(25)
+    end
+
+    it "still clamps tokens to the holder's remaining room" do
+      child = ceilings(tokens: 1000).attenuate(ceilings(tokens: 10_000))
+
+      expect(child.tokens).to eq(1000)
+    end
+
+    it "inherits the holder's iterations where the request is nil" do
+      expect(ceilings(iterations: 5).attenuate(ceilings).iterations).to eq(5)
     end
 
     it "grants a request below the remaining room" do
@@ -88,6 +98,16 @@ RSpec.describe Lain::Budget::Ceilings do
     it "refuses a holder with no iterations left, naming iterations" do
       expect { ceilings(iterations: 0).attenuate(ceilings) }
         .to raise_error(described_class::Unrunnable, /iterations/)
+    end
+
+    it "grants a role's request to a holder with no iterations left, which only a nil request refuses" do
+      expect(ceilings(iterations: 0).attenuate(ceilings(iterations: 60)).iterations).to eq(60)
+    end
+
+    it "bounds recursion by depth, since an unclamped child can still try to spawn" do
+      child = ceilings(iterations: 5, depth: 1).attenuate(ceilings(iterations: 60))
+
+      expect { child.attenuate(ceilings(iterations: 60)) }.to raise_error(described_class::Unrunnable, /depth/)
     end
 
     it "refuses a request for no iterations, naming iterations" do

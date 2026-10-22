@@ -213,9 +213,9 @@ RSpec.describe Lain::Skill::RoleSpawn do
       expect(spawn_over(:researcher, 30).content).to eq("finished")
     end
 
-    it "stops a researcher at what its parent has left, below the role's own ceiling" do
-      expect { spawn_over(:researcher, 30, room: Lain::Budget.ceilings(iterations: 10).with(depth: 1)) }
-        .to raise_error(Lain::Budget::Exceeded, /ceiling is 10/)
+    it "stops a researcher at the role's own ceiling, whatever its parent has left" do
+      expect { spawn_over(:researcher, 70, room: Lain::Budget.ceilings(iterations: 10).with(depth: 1)) }
+        .to raise_error(Lain::Budget::Exceeded, /ceiling is 60/)
     end
 
     it "gives a role spawned between asks its parent's whole iteration ceiling" do

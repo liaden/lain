@@ -29,13 +29,17 @@ module Lain
       end
 
       # A nil in the request inherits this holder's room and a finite one is
-      # clamped to it, so a child never outranks its spawner. Depth is what the
-      # holder may still spawn below itself, so a child at 0 runs as a leaf.
+      # clamped to it, so a child never outranks its spawner in tokens, dollars,
+      # width or depth. Iterations are the exception: a role's own ceiling is its
+      # shape (a researcher walks many files), so the request stands whatever the
+      # spawning ask has left, and only a nil request inherits. Depth is what the
+      # holder may still spawn below itself, so a child at 0 runs as a leaf, and
+      # depth alone bounds recursion now that iterations do not shrink.
       # @raise [Lain::Budget::Ceilings::Unrunnable] when the holder has no depth or the child no iterations or dollars
       def attenuate(requested)
         raise self.class::Unrunnable, :depth if depth&.zero?
 
-        child = descend.meet(requested)
+        child = descend.meet(requested).with(iterations: requested.iterations || iterations)
         raise self.class::Unrunnable, :iterations if child.iterations&.zero?
         raise self.class::Unrunnable, :dollars if child.dollars && !child.dollars.positive?
 

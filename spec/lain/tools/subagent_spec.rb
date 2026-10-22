@@ -1896,7 +1896,7 @@ RSpec.describe Lain::Tools::Subagent do
                       timeline: Lain::Dag::Factory.timeline(store:), budget:)
     end
 
-    it "gives the child what the parent has left of its iterations" do
+    it "gives the child its role's iteration ceiling, not what the parent has left" do
       parent_agent = nil
       tool = build_subagent(provider: mock(tool_response(["e1", "echo", { "text" => "again" }])),
                             holder: Lain::Tools::Subagent::Holder.of(-> { parent_agent }))
@@ -1906,7 +1906,7 @@ RSpec.describe Lain::Tools::Subagent do
 
       parent_agent.ask("spawn late")
 
-      expect(spawned_result(parent_agent)["content"]).to start_with("loop ran 5 iterations, ceiling is 5")
+      expect(spawned_result(parent_agent)["content"]).to start_with("loop ran 25 iterations, ceiling is 25")
     end
 
     it "gives a child whose role asks no token ceiling what the parent has left of its tokens" do
@@ -1994,14 +1994,14 @@ RSpec.describe Lain::Tools::Subagent do
       expect(probe["content"].to_s).to eq("1")
     end
 
-    it "warns the child against its own attenuated ceiling, not the role's request" do
+    it "warns the child against its own ceiling, which the role requests" do
       provider = mock(text_response("done"))
-      tool = build_subagent(provider:, budget: Lain::Budget.ceilings(iterations: 8),
-                            holder: Lain::Budget.ceilings(iterations: 5).with(depth: 1))
+      tool = build_subagent(provider:, budget: Lain::Budget.ceilings(iterations: 3),
+                            holder: Lain::Budget.ceilings(iterations: 2).with(depth: 1))
 
       tool.run("go")
 
-      expect(provider.requests.first.messages.to_s).to include("5 of 5 iterations remain")
+      expect(provider.requests.first.messages.to_s).to include("3 of 3 iterations remain")
     end
   end
 

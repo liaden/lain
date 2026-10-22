@@ -1694,16 +1694,16 @@ RSpec.describe Lain::CLI::Wiring do
 
       def child_digests = of_type("child_turn").map { |turn| turn["digest"] }
 
-      # The chat spawns on its first iteration of 25, so its researcher, which
-      # asks for 60, is held to the 24 the chat has left.
+      # The chat spawns on its first iteration of 25, and its researcher still
+      # gets the 60 its role asks.
       context "when the chat's child asks for more iterations than the chat has left" do
         let(:mock_provider) do
-          reads = Array.new(24) { |i| tool_response(["c#{i}", "read_file", { "path" => "missing-#{i}.txt" }]) }
+          reads = Array.new(60) { |i| tool_response(["c#{i}", "read_file", { "path" => "missing-#{i}.txt" }]) }
           Lain::Provider::Mock.new(responses: [tool_response(["s1", "subagent", { "prompt" => "look around" }]),
                                                *reads, text_response("parent done")])
         end
 
-        it "holds the chat's child to the iterations the chat has left" do
+        it "holds the chat's child to its role's own iterations" do
           recorder, session = wiring.run_state(nil)
           agent = wiring.wire_agent(channel:, recorder:, session:, backend:)
           wiring.instance_variable_get(:@switchboard)
@@ -1712,7 +1712,7 @@ RSpec.describe Lain::CLI::Wiring do
           spawned = agent.timeline.to_a.flat_map { |event| Array(event.content) }
                          .find { |block| block["type"] == "tool_result" && block["tool_use_id"] == "s1" }
 
-          expect(spawned["content"]).to start_with("loop ran 24 iterations, ceiling is 24")
+          expect(spawned["content"]).to start_with("loop ran 60 iterations, ceiling is 60")
         end
       end
 
