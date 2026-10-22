@@ -52,7 +52,7 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
   # A REAL queue, not a double: the claim is that N surfaces watch ONE queue
   # and a SIBLING fiber wakes the parked gated call, and only the real
   # park/decide path can show that.
-  let(:queue) { Lain::Approval::Parked::Queue.new(journal:, timeout: 0.3) }
+  let(:queue) { Lain::Approval::Parked::Queue.new(journal:, timeout: 0.1) }
   # A REAL terminal over a StringIO, because a cockpit's chat announces a parked
   # call through the frontend's own one-line note, and what it printed is half
   # of what these examples assert.
@@ -260,7 +260,7 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
       Sync do |task|
         watched = surfaces(attached: editor).watch(task)
         task.with_timeout(2) { task.async { queue.call(effect, nil) }.wait }
-        task.sleep(0.2)
+        pumped_until(task, reason: "the lapse was said") { output.string.include?("denied after") }
         watched.each(&:stop)
       end
 
@@ -274,25 +274,29 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
         watched = surfaces(attached: editor).watch(task)
         asked = Lain::Approval::Parked::PolicySwitch::Requested.new(nil, child)
         task.with_timeout(2) { task.async { queue.call(effect, asked) }.wait }
-        task.sleep(0.2)
+        pumped_until(task, reason: "the lapse was said") { output.string.include?("denied after") }
         watched.each(&:stop)
       end
 
       expect(output.string.lines.grep(/denied after/).join).to include("! dev (gherkin-tests) asks to run bash(")
     end
 
-    it "says nothing of the lapse for a call whose prompt drew, leaving that line to the prompt" do
-      Sync do |task|
-        watched = surfaces(attached: editor).watch(task)
-        gated = task.async { queue.call(effect, nil) }
-        task.sleep(0.1)
-        queue.reject(&:decided?).each(&:drawn)
-        task.with_timeout(2) { gated.wait }
-        task.sleep(0.2)
-        watched.each(&:stop)
-      end
+    context "when the prompt draws before the clock" do
+      let(:queue) { Lain::Approval::Parked::Queue.new(journal:, timeout: 0.3) }
 
-      expect(output.string.lines.grep(/denied after/)).to be_empty
+      it "says nothing of the lapse for a call whose prompt drew, leaving that line to the prompt" do
+        Sync do |task|
+          watched = surfaces(attached: editor).watch(task)
+          gated = task.async { queue.call(effect, nil) }
+          pumped_until(task, reason: "the call was parked") { queue.reject(&:decided?).any? }
+          queue.reject(&:decided?).each(&:drawn)
+          task.with_timeout(2) { gated.wait }
+          settle_for(task, 0.05)
+          watched.each(&:stop)
+        end
+
+        expect(output.string.lines.grep(/denied after/)).to be_empty
+      end
     end
 
     it "starts the announcement with the time it was made" do
@@ -305,7 +309,7 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
       Sync do |task|
         watched = surfaces(attached: editor).watch(task)
         task.with_timeout(2) { task.async { queue.call(effect, nil) }.wait }
-        task.sleep(0.2)
+        pumped_until(task, reason: "the lapse was said") { output.string.include?("denied after") }
         watched.each(&:stop)
       end
 
@@ -316,9 +320,9 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
       Sync do |task|
         watched = surfaces(attached: editor).watch(task)
         gated = task.async { queue.call(effect, nil) }
-        task.sleep(0.2)
+        pumped_until(task, reason: "the call was announced") { notes.any? }
         gated.stop
-        task.sleep(0.2)
+        pumped_until(task, reason: "the closure was said") { output.string.include?("requester was stopped") }
         watched.each(&:stop)
       end
 
@@ -336,7 +340,7 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
         gated = task.async { queue.call(effect, nil) }
         2.times do
           watched = built.watch(task)
-          task.sleep(0.1)
+          settle_for(task, 0.05)
           watched.each(&:stop)
         end
         gated.stop
