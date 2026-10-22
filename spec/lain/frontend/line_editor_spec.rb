@@ -1227,7 +1227,7 @@ RSpec.describe Lain::Frontend::LineEditor do
   # Whether the read open now holds typed words, which a dumb gate cannot know.
   describe ".typed?" do
     it "reads the open read's buffer, empty or not" do
-      editor = instance_double(Reline::LineEditor, whole_buffer: "")
+      editor = instance_double(Reline::LineEditor, whole_buffer: "", finished?: false)
       allow(Reline.core).to receive(:line_editor).and_return(editor)
 
       expect(described_class.typed?).to be(false)
@@ -1236,8 +1236,16 @@ RSpec.describe Lain::Frontend::LineEditor do
     end
 
     it "is never true on a dumb gate" do
-      allow(Reline.core).to receive(:line_editor).and_return(instance_double(Reline::LineEditor, whole_buffer: "x"))
+      editor = instance_double(Reline::LineEditor, whole_buffer: "x", finished?: false)
+      allow(Reline.core).to receive(:line_editor).and_return(editor)
       allow(Reline::IOGate).to receive(:dumb?).and_return(true)
+
+      expect(described_class.typed?).to be(false)
+    end
+
+    it "is false once Enter accepted the line, which is sent and no longer a draft" do
+      editor = instance_double(Reline::LineEditor, whole_buffer: "hello", finished?: true)
+      allow(Reline.core).to receive(:line_editor).and_return(editor)
 
       expect(described_class.typed?).to be(false)
     end
@@ -1285,7 +1293,20 @@ RSpec.describe Lain::Frontend::LineEditor do
             nil
           end
         end
-        File.write(ARGV[0], Lain::Frontend::LineEditor.new.read("> ").inspect)
+        if ARGV[1] == "int_after_enter"
+          interrupts = Queue.new
+          trap("INT") { interrupts << true }
+          Thread.new do
+            interrupts.pop
+            File.write(ARGV[3], Lain::Frontend::LineEditor.typed?.inspect)
+          end
+        end
+        line = Lain::Frontend::LineEditor.new.read("> ")
+        if ARGV[1] == "int_after_enter"
+          Process.kill("INT", Process.pid)
+          sleep 0.5
+        end
+        File.write(ARGV[0], line.inspect)
       RUBY
     end
 
@@ -1315,7 +1336,7 @@ RSpec.describe Lain::Frontend::LineEditor do
     def spawn_child(term, dir, out, mode)
       env = { "TERM" => term, "INPUTRC" => File.join(dir, "no-inputrc") }
       PTY.spawn(env, RbConfig.ruby, "-W0", "-I", File.expand_path("../../../lib", __dir__),
-                "-e", child, out, mode, File.join(dir, "hits"))
+                "-e", child, out, mode, File.join(dir, "hits"), File.join(dir, "typed_at_int"))
     end
 
     def answer_cursor_queries(reader, writer, drawn)
@@ -1376,6 +1397,16 @@ RSpec.describe Lain::Frontend::LineEditor do
         line = drive_child("xterm", "draft\e[Z\r", dir, "shift_tab")
 
         expect([line, File.readlines(File.join(dir, "hits")).size]).to eq(['"draft"', 1])
+      end
+    end
+
+    # A Ctrl-C in the same write as the Enter cannot be driven: the terminal discards unread input when
+    # it raises the interrupt. So the interrupt is raised once the read has returned its line.
+    it "does not take an accepted line for a draft when the interrupt is handled after its Enter" do
+      Dir.mktmpdir do |dir|
+        line = Timeout.timeout(20) { drive_child("xterm", "hello\r", dir, "int_after_enter") }
+
+        expect([line, File.read(File.join(dir, "typed_at_int"))]).to eq(['"hello"', "false"])
       end
     end
 

@@ -107,8 +107,15 @@ module Lain
 
         # Whether the read open now holds typed words. Not `!untouched?`: a dumb
         # gate can say neither, and here it must answer no, so a Ctrl-C at its
-        # prompt still reaches the chat.
-        def typed? = !::Reline::IOGate.dumb? && !::Reline.core.line_editor.whole_buffer.empty?
+        # prompt still reaches the chat. A line Enter has accepted is no draft
+        # though its buffer is not yet emptied: a Ctrl-C behind it must not
+        # withdraw what the human sent.
+        def typed?
+          return false if ::Reline::IOGate.dumb?
+
+          editor = ::Reline.core.line_editor
+          !editor.finished? && !editor.whole_buffer.empty?
+        end
 
         # How many screen rows of the open read sit above its cursor, so a
         # caller can wipe the whole read and not only the cursor's row. A dumb

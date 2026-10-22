@@ -1338,6 +1338,17 @@ RSpec.describe Lain::Frontend::InputPane do
         end
       end
 
+      it "sends a Ctrl-C behind an accepted line at you> to the chat, since that line is sent and not a draft" do
+        chat = drawn_pane("you")
+        echoed_until { |seen| seen.include?("you> ") }
+        @pty.first.write("hello\r")
+        frames_through_line(chat)
+
+        deliver("INT")
+
+        expect(next_frame(chat, of: "signal")).to eq({ "v" => "signal", "name" => "sigint" })
+      end
+
       it "sends a Ctrl-C over an empty line at you> to the chat" do
         chat = drawn_pane("you")
         echoed_until { |seen| seen.include?("you> ") }
