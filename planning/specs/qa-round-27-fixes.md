@@ -1,6 +1,6 @@
 # QA round 27 fixes and a leaner suite: a default launch that survives compaction, a lease a script cannot walk out of, and a suite that stops waiting on itself
 
-status: in-progress (panel-reviewed 2026-10-22)
+status: done (panel-reviewed 2026-10-22, closed 2026-10-22)
 commit-mode: orchestrator-commits
 language: ruby
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson)
@@ -1292,7 +1292,7 @@ Spec file: `spec/lain/seams/input_pane_socket_spec.rb`
 ```gherkin
 Scenario: the chat child boots before its example
   Given start_chat (line 143) takes a parked chat from the warm pool
-  Then all 11 examples pass, 5 rounds under bin/suite-load, and the file runs at least 4s faster alone
+  Then all 11 examples pass, 5 rounds under bin/suite-load, and the file runs about 2.5s faster alone
 ```
 Spec file: `spec/lain/seams/approval_cycle_key_spec.rb`
 
@@ -1617,3 +1617,95 @@ Spec file: `spec/docs_naming_spec.rb` stays green; `bin/runtime-census --check` 
   commit costs about 70s plus compile. The suite cannot run beside other tests (shared `TMPDIR`, timing specs);
   each worktree gets its own `TMPDIR`. No paths need user approval.
 - Box: 16 cores, 15 GB RAM. Cards run in waves of about 6 so landings get quiet windows.
+- Wave 1 started from `dcea7c9a`: T1, T4, T6, T11, T24 (opus), T10 (sonnet).
+- T8, T27, T28 started (sonnet) from `dcea7c9a`.
+- T3, T14, T22 (sonnet) and T16 (opus) started from `dcea7c9a`. Worktrees now get CARGO_TARGET_DIR=main's target, so lain-fence is found.
+- T28 scope widened by the main session to `lib/lain/confine/probe.rb` (its stop condition fired: Probe kept no reason; the panel asked for a reader instead of a duplicate check).
+- Window 1: T8 landed `4283b77f`, T27 landed `a34b2157`, T22 landed `315f50c0`, T3 landed `9dfab02c`, T14 landed
+  `f0ac65b9`. Scope widened by the main session: T3 (the 2 arm specs), T14 (`spec/lain/cli/compaction_strategy_spec.rb`),
+  T22 (`drain_spec.rb`), each a spec the card's change reached. Counted pspec after the window: 26,483 examples, 0 failures.
+- T17, T20 (sonnet), T19, T23 (opus) started from `f0ac65b9`. T28 approved by the main session after its third round (an unstartable fence no longer claims the box lacks landlock). T11 scope widened to 3 comments its change made false (`agent.rb`, `workspace.rb`, `tools/todo_write.rb`).
+- T4 REQUEST-CHANGES: quoted script names and a respawn over the same lease both ran a written script. Fix round ruled by the main session: 1 shared stage helper for Tools::Bash and the lease, 1 Fresh per lease, refuse fresh operands, docstring states the entry-point limit. Scope widened to `lib/lain/tools/bash.rb` and a shared stages unit.
+- Window 2: T10 landed `0703035b`, T11 landed `4a97f178`, T28 landed `976bc881`. Counted pspec: 26,498 examples,
+  0 failures. T10's literal 1-write Enter plus Ctrl-C cannot be driven: a tty with ISIG flushes pending input on
+  INTR, so the spec raises INT after the accept instead (panel agreed).
+- T16 review item 6 (gc's 'since lain created it' reason is false once a retry forwards the marker) routed to T19, which owns `gc.rb` now; T19's fix round or a follow-up rewords it to 'created or last moved it'.
+- Window 3: T17 landed `73063b3f`, T20 landed `088fc26b`, T23 landed `e89f38f6`, T25 landed `24371fd6`. Counted
+  pspec: 26,518 examples, 0 failures. T20 ruling by the main session: an approval supersedes only drafts parked
+  before the approved digest. T25 scope widened to `spec/lain/cli/consolidate_spec.rb`; its outcome reads
+  `:over_window`, the agent's own stop reason.
+- T6 and T13 REQUEST-CHANGES (T6: the write side refused references the read side leaves clear; T13: the real
+  child spawn never ran). T19's shared issue-branch prefix waits for T16, which owns `working_branch.rb`.
+- Window 4: T1 landed `2e2b29f3` (the panel's substantive route: `Context#pipeline_provider` holds only the class
+  and the stored pipeline; `flattened_twin` and `with_max_tokens` are gone), T13 landed `eb7d5e7f` (a subagent may
+  not be named "lain"), T16 landed `7237cfbc`. T18's hook went red on `fuzzy_spec.rb` "lets the calling thread keep
+  ticking while it matches" and "stops soon after its thread is killed"; green alone, so flaky. T18 is held until
+  T30 lands. Counted pspec after the window: 26,538 examples, 0 failures.
+- Window 5: T19 landed `cbe33920` (with the shared `WorkingBranch::ISSUE` prefix, after T16), T21 landed
+  `f7dfc866`, T41 landed `1a500ef8`, T45 landed `5d5dd48d`, T18 landed `31f525c0`. 2 red hooks on T19 were not the
+  card: first T30's busy-loop load probe outlived the pause, then T30's held-GVL mutant build had written main's
+  `target/` (worktrees shared it through `CARGO_TARGET_DIR`) and the hook's compile copied it into `lib/lain/lain.so`.
+  Rebuilt clean; worktrees now carry their own copy of the fence binary. T18's earlier fuzzy flake did not recur.
+  Counted pspec before T18: 26,570 examples, 0 failures.
+- Window 6: T32 landed `39eb5514`, T2 landed `19c1a19b`, T30 landed `6d2781a4` after its load proof
+  (`bin/suite-load`, 5 rounds: card 5 of 5 green at 105 examples, base 5 of 5). T42/T43's hook went red on
+  `pane_command_spec.rb` "accounts for every LAIN_ name in lib/ and exe/" and `cli_spec.rb` "writes a cache under
+  the XDG cache home on the first boot and reuses it on the second"; back to its implementer. Counted pspec:
+  26,581 examples, 0 failures. A load tree `tmp/worktrees/r27-load` (detached) is kept for the remaining load proofs.
+- T26 note for the user: `lain friction` reads lineages through `Lineages.read`, so a judge's tool calls no longer reach the friction detectors (the card names Friction as a reader that skips machinery).
+- T4 second review APPROVE-WITH-FIXES; last round ruled by the main session: interpreter found only at argv 0, a directory operand of an interpreter refused, plain globs expanded in `Named` (no `**`, no braces), a tripwire example for the quoted form. T42/T43 approved after its fix round (panes export `LAIN_BOOTSNAP*`; the cache-reuse example compares bytes).
+- 08:42: the user asked for at most 6 suite workers until 11:00 (Zoom calls). Landings, counted runs and load proofs use LAIN_SPEC_WORKERS=6; agents' by-path runs use 2 workers; the T46 timing waits until after 11:00.
+- Window 7: T35 landed `39b110bf`, T36 landed `d79f5a81`, T39 landed `4ea1d14c`, T33 landed `42bae0b9`, T37 landed
+  `edc4da2e`, T38 landed `1bbf9333`. Load proofs at 6 workers (the user's cap): T33, T37, T38 each 5 of 5 on card and
+  base. T26's hook went red on the e2e `session_passes` cassette (the spawn digest now covers the role; the cassette
+  takes the new digest, as a re-record would). T42's reuse example failed inside the suite again; reworked to pin the
+  setup call in process. Counted pspec (6 workers): 26,583 examples, 0 failures.
+- T9 stop condition (a pending mailbox note makes the rebuilt prompt's digest differ) ruled by the main session: salvage drops a trailing block that is exactly the mailbox rendering, keyed on a constant in `context/mailbox.rb`; no wire marker, so caches and cassettes keep their bytes; the note's link to the answer is lost and accepted. Trailing user messages are each rebuilt.
+- Window 8: T6 landed `b0c5d124`, T26 landed `720c5f11`. T42's hook went red on `child_boot_spec.rb` "once warm, adds nothing to the shared cache" (the same whole-cache fragility); ruled the same way.
+- T7 stop condition fired as the card foresaw: a full 64-hex digest under a hinted name is still masked by the entropy detector, which the user's ruling keeps. The name-hint exemption is shown with a short digest; the long digest is pinned as masked by entropy. For the user: round 27's `session_id = blake3:<64 hex>` stays masked.
+- T9 note for the user: a human note pending when a chat is killed is not redelivered on resume (true before this card too; each launch builds a fresh inbox). T9 pins it, and does not change it.
+- T42/T43 landed `0ebe8344` (after the main session reordered its gemspec wiring for Gemspec/OrderedDependencies). T4's hook went red on `run_clock_spec.rb` "MONOTONIC is the only place in lib/ that NAMES the monotonic clock primitive"; back to its implementer.
+- T4 landed `c0cbc4da`. T7 REQUEST-CHANGES: the ordinary-value exemption reached every assignment shape and unmasked numeric passwords; ruled to the name-hint arm only, never for a key that names a secret.
+- 09:58 T24 fix round 2 handed back (all panel fixes; nit 11 pathless child glob left as follow-up); second review sent to a361cfe5d344a719f.
+- 09:59 T7 fix round handed back (exemption on name-hint arm only, secret-naming keys never exempt, digest bounded 4-40 hex; HOST_PWD masked again); second review sent to ad0b47b489d6a4c65.
+- 09:59 T9 REQUEST-CHANGES (salvage invents a user turn after a handoff or compaction; re-resume after a partial closing write loses the prompt). Ruled: rebuild the tail always, the prior message only when the head is a pending tool_use; seam example on a spec-owned skill root. Follow-ups for the user: skill catalog reads files as US-ASCII under LC_ALL=C; RequestReplay raises ArgumentError on a {} payload; already_committed? matches on content only.
+- T24 landed `9b0a50e8` (attempt 1 failed only on a 79-char subject). Follow-up for the user: a confined child's pathless glob raises in Gate#path_verdict (before this card too).
+- 10:06 T31 started; T5 handed back, review started (opus, high).
+- T31 landed `39e3fc41`. T7 fix round 2: dbPwd dropped (NAME_HINT never matched it; follow-up). T5 APPROVE-WITH-FIXES (2 substantive).
+- 10:14 T7 hook red (real): memory_read_spec's masked fixture was token_count = 123456, which T7 now delivers; returned to T7 with scope widened to that fixture. T9 fix round done, second review started. T5 fix round started (race A fail-closed by label, ast_search extended, policy.rb doc line widened).
+- 10:14 T34 and T40 started.
+- T7 landed `6a55b2ea` (attempt 2; scope widened to memory_read_spec's fixture). Follow-up: camelCase dbPwd was never masked (NAME_HINT knows only _PWD).
+- 10:22 T40 load proof (6 workers, 5 rounds): card 5/5, base 5/5, 7 examples each; the single background pspec reported failed when it ended (it was most likely stopped at the end, not a real failure). T40 review started (low).
+- T40 landed `d5541d34`.
+- 10:30 T34 load proof (6 workers, 5 rounds): card 5/5, base 5/5, 11 examples each. Card is 2.5s faster alone (14.16s to about 11.6s), short of the card's 4s; to the reviewer. Both load proofs logged the background pspec at HEAD exiting non-zero once (its output goes to /dev/null, so unexplained); the landing hooks at the same HEAD were green. Follow-up: suite-load should keep the load run's failures.
+- 10:32 T5 second review APPROVE-WITH-FIXES (timestamp rows in a relative single-file grep withheld; sift file check unpinned; double-swap mask unpinned). Final fix round; main session verifies. Notes for the user: the double swap is a known limit, backed only by the content mask, which misses an unkeyed value; RedactSecretReads and WithholdSecretPaths resolve an exempted .env differently (stricter, not a leak).
+- 10:33 T9 second review APPROVE-WITH-FIXES with a blocker: content-equality on_record? fabricates turns over a user head (nvim edited resend, deduped parallel tool results, note-shaped typed prompt). Ruled: the reviewer's structural rule (proven green in its probe), plus cancellation minted when messages[-2] does not answer the head's tool_use. Main session verifies; no third review. Follow-up: skill/catalog.rb reads shipped skills without an encoding (red under LC_ALL=C).
+- 10:36 T5 final round verified by the main session (reviewer probes rerun: no leak through the path boundary). T34 APPROVE-WITH-FIXES: criterion amended from 4s to about 2.5s (measured 14.4s to 11.6s; the rest is per-example tmux pane boots, outside the file).
+- T5 landed `37c9ffa3`. T34 landed `3dccf3fb`.
+- 10:44 T9 final round verified by the main session (reviewer's user-head and handoff probes: 4 examples, 0 failures).
+- T9 landed `bf552483`. Follow-ups for the user: RequestReplay raises ArgumentError on a {} payload; already_committed? matches on content only. T12 started.
+- 10:49 Counted pspec on bf552483 at 6 workers: 26,769 examples, 0 failures, 13 pending.
+- 10:58 User lifted the 6-worker cap; landings and agents back to 12 workers.
+- 11:12 T12 APPROVE-WITH-FIXES (high depth; no real file reaches the unknown-head refusal; plain resume unchanged across 23 real QA files). Ruled all mechanical: Corrupt for a damaged head, drop the false plan-step claim, place headless snapshots at the last preceding turn, pin the memory-fold order with a spec instead of changing Session's API, on: required. Follow-ups: replayed plan-step count differs from live after a rewind (pre-existing); --fork at an unanswered todo_write restores that list.
+- 11:22 T12 fixes verified by the main session; scope widened to 7 spec files for the required on: keyword.
+- T12 landed `edf93d02`. T15 started.
+- 11:25 T46 base tree prepared at fb163f4d (tmp/worktrees/r27-base; no Rust change since base, so main's lain.so is reused).
+- 11:26 T15 stop fired: epic_project_keying_seam_spec pins epic journal readers on the cwd key. Ruled: chats file under the root key, epic writers unchanged, every sessions-dir reader folds root then cwd through one Paths method; seam spec rewritten to that. Scope widened to paths.rb, epic.rb, epic_mount.rb, watch/session_file readers and the seam spec. Review raised to high (opus).
+- 12:08 T15 REQUEST-CHANGES (high depth, real exe/lain drive): readers inside a --root chat used the process root (resume from elsewhere warned and /sessions was empty); a chain split across the two keys could not resume. Ruled: pass the chat's root to every reader; the chain resolver finds a parent by basename across session_dirs then every sibling sessions directory; root:/cwd: required on Paths; 14 surviving mutants killed. One second review.
+- 12:59 T15 fix round 1 handed back (33 mutants, 0 survive; card specs 7289 examples, 0 failures). The Paths code came before its specs, so no red run for items 1 and 2; the reviewer is asked to prove those specs red against the round-0 lib in a copy. Second and final review started.
+- 13:20 T15 second review APPROVE-WITH-FIXES: blockers fixed on the real binary, 33/33 mutants killed, the new specs red against the round-0 readers. Fixes: a driven epic land example (the source scan missed a wrong root, 3 mutants), a duplicate @param, a lazy root in EpicQueue, long lines. Ruled: sessions the old code filed under hash(cwd) for a --root chat are not folded (no back-compat needed). I verify; no third review.
+- 14:03 T15 land attempt 1 red (hook-T15-1.log): project_dir_spec :626 and :772, paths.rb composes sessions+state_home by hand in 6 places. Deterministic, a lint-style spec, not a flake. Main restored. Returned to the implementer. Finish and submit read-back root mutants survive: follow-up.
+- 14:26 T15 landed ce226ef3 (attempt 2; fix round 3 routed chain_file's sibling dirs through ProjectDir#container).
+- 14:27 T29 started (cut at ce226ef3, sonnet).
+- 15:50 T29 handed back (method.md, 16 scenarios, ARCHITECTURE, docs/commands.md; doc specs green). Low-depth review started, no tests. T46 timing started: 5 interleaved pspec pairs, base fb163f4d vs HEAD ce226ef3, box quiet (user stopped a game).
+- 15:51 T29 review APPROVE-WITH-FIXES (low depth): all 4 doc claims hold against the code; guesses settled. 1 mechanical fix applied by me (bash-confinement §3 names the non-parking write_file). Lands after T46 timing.
+- 16:05 T29 landed 4754ee7e. T46 timing: base fb163f4d walls 136/78/77/77/78s (median 78, first run cold), HEAD 73/73/74/75/74s (median 74); 26464 vs 26817 examples, 0 failures in all 10. runtime-census --record x3 and --check rc=0.
+- 16:08 Integration: rubocop, comment-census tickets/load-order, zeitwerk-census all rc=0. spec-census --check FAIL lib_reach 50 > 49 (base 49): Shell::Verdict.literal? lost its last lib caller in c0cbc4da and is now named only by verdict_spec. Deleting it was blocked by the permission classifier; asked the user.
+- 16:43 T46 landed 298e059e. Also ec313138: dropped Shell::Verdict.literal?, orphaned by T4, at the user's ruling, so spec-census lib_reach is back to 49.
+- 16:43 Close-out. Integration checks:
+  1. 5 pspec runs at HEAD's code (the T46 timing), all 26,817 examples, 0 failures in 5 of 5.
+  2. rubocop and comment-census --check-tickets and --check-load-order: rc 0.
+  3. zeitwerk-census --check rc 0; spec-census --check rc 0 after ec313138.
+  4. runtime-census --check rc 0 with the lowered ceilings.
+  5. Manual QA round 28 is owed by the user.
+  Worktrees and branches match the start: main, flake/review, spike/combined, spike/combined2. Status done.
