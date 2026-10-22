@@ -573,7 +573,10 @@ builder the spawn seam carries, reading the parent's board when the child is bui
 with no chat (`.detached`, whose gate approves deliberately: nobody is at a surface to answer; a child
 leased a checkout, a bench arm under `--isolation worktree`, is held to it instead, and a call its path
 policy gates outside the lease is refused, saying no human is attached; a leased child with no chat also refuses any bash command
-whose paths cannot be read, though a script's own writes (`ruby x.rb`) are still not confined). The
+whose paths cannot be read, and refuses a script the run wrote (`LeasedPolicy`, the freshness check, with the lease's own
+clock started when its checkout finished). The check covers the program a command runs, the files that program is known
+to run, and the regular files it hands an interpreter as an operand or a -r feature; it does not follow what those files
+load or require. A script that predates the run still runs, and its own writes are not confined). The
 layers, in order: the members a user's `config.rb` registered (see below), `ConfineToScope`,
 `RefuseSecretWrites`, `RedactSecretReads`, `WithholdSecretPaths`, `GuardTestLayout`,
 `WithholdAutomaticOutput`, then `Sensitivity`, then `Gate`. `Middleware::Gate.closes!` refuses any stack
@@ -671,7 +674,13 @@ are the axes:
 | scope (`mode/scope.rb`) | `checkout`, `plan` | *where* a write or a command may land |
 | approval (`mode/approval.rb`) | `ask`, `auto`, `bypass` | *who* answers for a gated call |
 
-`checkout` is the project's own working tree, unconfined. `plan` confines the paths a tool
+`checkout` is the project's own working tree. It does not confine where a tool may write, but it
+escalates what lands outside: a `write_file` or `edit_file` path, or the written or changed-into
+path of a `bash` command, that falls outside the project root and its `related` directories is
+gated and noted `outside_project`, so the judge answers it under `auto`, a human under `ask`, and
+the rules under `bypass` (an unattended `ask` refuses it). The check is `Middleware::Gate`'s, made
+with the same symlink-aware containment the read side uses. Reads are unchanged, and so is the rest
+of the ladder. `plan` confines the paths a tool
 **names** — `write_file`/`edit_file`'s `path`, `bash`'s `cwd` — to a leased spike, refusing
 anything else by name and pointing at `/mode checkout`. `Isolation::Spike`
 (`lib/lain/isolation/spike.rb`) cuts that spike as a worktree on `lain/plan/<key>` from a commit
@@ -1500,8 +1509,8 @@ head the child was spawned from, and a `:message` event carries the child's resu
 Neither is in any render chain, so the render order (`Ext::Dag::RenderAncestry`) and the first-parent
 walk are untouched by spawning. A child's tool stack is its parent's, built by the same
 `CLI::ToolGuard` over the parent's board, so a child is guarded and gated as its parent is, and a
-child's refused path lands in the same session journal. `max_depth` is a hard, transitively-decrementing ceiling enforced at construction
-time, not at call time.
+child's refused path lands in the same session journal. A child's token budget is attenuated from the room its parent has left,
+and its iteration ceiling is its role's own, whatever iterations the parent's ask has left.
 
 Those two events are the **record**, and they are deliberately not the whole of what a watching
 human needs. What a child is *for* and how far it has got ride beside them in
@@ -1630,6 +1639,15 @@ NDJSON file lands
 under `$XDG_STATE_HOME/lain/sessions/<project-hash>/` (`Paths#sessions_dir`, where
 `project_hash` is the first 12 hex chars of `SHA256(realpath(project_dir))`) as a timestamped
 file that `Journal.open` creates.
+
+A chat started with `--root` files its session under the root's key, wherever it was launched
+from, and `Paths#filing_dir(root:)` names that directory. A reader folds two directories, the
+root's sessions directory first and then the cwd's (`Paths#session_dirs`), so a session filed
+under the cwd's key by an earlier version stays visible, and `lain sessions` and `--resume` run
+inside the root find a chat launched from elsewhere. A chain parent is named by basename alone, so
+`Paths#chain_file` looks in those two directories and then across every project's sessions
+directory; the timestamp and pid make a basename unique among them. Epic writers still file under
+the cwd's key.
 
 Its companion write-ahead log sits beside it. `Paths.wal_for(ndjson_path)` strips whatever
 extension the NDJSON path carries and appends `.wal`, so `<stem>.ndjson` gets `<stem>.wal`.

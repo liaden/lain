@@ -89,8 +89,8 @@ cd "$REPO" && lain chat --provider ollama --model qwen3-coder:30b < /dev/null; e
 Expected: refused naming `.lain/config.rb:2`, with `has no verb :modle; known verbs: model, tool,
 turn, repl, http`. Repeat with `turn SomeClass`, where `SomeClass` is a class with neither method (a named class prints as its plain name, `<Name>`: classes defined in the `instance_eval`'d builder live under its singleton class, and the `#<Class:0x…>::` prefix that showed in round 26 is stripped (j26-4 fixed, T73); an unnamed one prints
 `an anonymous class`). The refusal reads `<name> has no instance #call or #settle`, one sentence naming both missing methods (round 25, j25-3,
-fixed); a `tool` or `repl` class lacking `#call` reads `has no instance #call`. A module is refused as
-`a middleware is a Class, not a Module: <inspect>`. Also try `http { }` (a block): `http takes a Faraday middleware class, not a block`; each is refused at its own line. A class defined in the user file is not
+fixed); a `tool` or `repl` class lacking `#call` reads `has no instance #call`. A module (define `module Hooks; end` in the user file and write `turn Hooks`) is refused as
+`a middleware is a Class, not a Module: Hooks`, before the missing-method check and never as `has no instance #call`; a value that is neither (`turn 5`) reads `a middleware is a Class or a block, got 5`. Also try `http { }` (a block): `http takes a Faraday middleware class, not a block`; each is refused at its own line. A class defined in the user file is not
 visible to a project file, so naming one from there refuses as `uninitialized constant`, for the wrong reason. Remove the project file before step 4.
 
 ## 4. a tool middleware in a live cockpit runs outermost
@@ -139,7 +139,7 @@ middleware twice`.
 
 (Replace `TRACEPATH` with the value of `$TRACE`.) Drive 1 ordinary turn.
 
-Expected: a line `http post /api/chat Hash`: the body is still the caller's Hash because the
+The load-time probe for `#call` (and `#settle` for `turn`) skips `http` entries, because a Faraday handler is constructed by Faraday and has no such contract here: an `http` class lacking `#call` is accepted at load, so do not expect a method refusal for one (a non-class or a Module still refuses, and so does a block). Expected: a line `http post /api/chat Hash`: the body is still the caller's Hash because the
 entry sits ahead of JSON encoding, and the request is the streamed one. Force a retry with a closed `--api-base` port or a severing proxy, never by killing the shared model server, and confirm the line repeats for each attempt: entries run on every
 attempt.
 

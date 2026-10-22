@@ -79,7 +79,7 @@ entries to report the branch moved. Past the cap, `wait` exits 1 with `did not l
 
 With a drainer mid-verify, run `lain epic land <issue>` on an approved issue. Expect it to wait on the
 drain lock, not to verify in parallel: 1 verify process at a time (`pgrep -af` the verify command).
-Its output ends with `verification passed on <tip>` or `verification skipped: ...`. The drainer must be on `epic/<slug>` to share the drain lock; across branches only the suite lock serializes the verifies. Round 26 read this from the code only.
+Its output ends with `verification passed on <tip>` or `verification skipped: ...`. The drainer must be on `epic/<slug>` to share the drain lock; across branches only the suite lock serializes the verifies. Rounds 26 and 27 both read this from the code only, because it needs an approved epic issue and the merge fork never had one. **Schedule it in the epic-tier fork** (`epic-tier.md`), which drives an approved issue anyway, and record the 2 verify processes it should never show at once.
 
 ## 6: A killed drainer
 

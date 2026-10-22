@@ -134,7 +134,7 @@ lain up "$QA/proj" -- --provider ollama --model <model> --approval ask
 W=1800 jr tripwire; W=600 jr exec_resolution | tail -1
 ```
 
-Drive it in a cockpit under `--approval ask` and approve the 3 calls by hand after reading them. A human's allow runs `traced` and the tripwire still records `fresh_program` (driven round 26). The parked `./run.sh` row now carries a note naming the binary, its class and `written this session` (e26-2 fixed, T31); re-check it, and that a mixed term with a refused flag on a listed program still gets no note. Whether §3 needs an approve-all leg at all is for the human to rule; until then, do not launch it under bypass. Each step must be its own call: a combined `chmod +x run.sh && ./run.sh`
+Drive it in a cockpit under `--approval ask` and approve by hand each call that parks, after reading it. Only 2 of the 3 calls park under `ask` (round 27): the `write_file run.sh` is an in-project write and runs without a prompt, so approve only `chmod +x run.sh` and `./run.sh`, and do not wait for a third approval. A human's allow runs `traced` and the tripwire still records `fresh_program` (driven round 26). The parked `./run.sh` row now carries a note naming the binary, its class and `written this session` (e26-2 fixed, T31); re-check it, and that a mixed term with a refused flag on a listed program still gets no note. Whether §3 needs an approve-all leg at all is for the human to rule; until then, do not launch it under bypass. Each step must be its own call: a combined `chmod +x run.sh && ./run.sh`
 is one unresolved string stage, and no `fresh` fact exists for it (driven: no tripwire record).
 
 Driven 2026-10-17 on the three separate calls:
@@ -232,22 +232,22 @@ W=700 jr capability_degraded sandbox exec_record
 ```
 
 Driven 2026-10-17. The first line of the output, before the model's own, is the startup notice:
-`the bash sandbox could not be built (the box lacks landlock), so bash runs unconfined`. The journal holds:
+`the bash sandbox could not be built (the lain-fence cannot start <target>/release/lain-fence: No such file or directory), so bash runs unconfined` (round 27, e27-1, fixed: a missing binary is announced as missing; it used to read `the box lacks landlock`, which a box with landlock never lacked, and `the box lacks landlock` stays correct only where the kernel really lacks it). The journal holds:
 
 - `capability_degraded` with `"capability":"landlock"`, `"requirer":"Lain::Confine::Probe"` and a `provider`
   naming the missing path (`cannot start <target>/release/lain-fence: No such file or directory`);
 - `capability_degraded` with `"capability":"sandbox"`, `"requirer":"Lain::CLI::Wiring::ToolsetBuild"` and
-  `"provider":"the box lacks landlock"`;
+  `"provider"` carrying the same lain-fence reason as the notice;
 - **no** `sandbox` record and **no** `exec_record` for the `cat` call, which still prints `hello readme`;
-- the header still reads `"arms":{"confine":"reader","tripwire":"observe"}` (`grep -o '"arms":{[^}]*}'` on the
-  session file). The header records the flag, not the outcome, which is why the notice exists.
+- the header still reads `"arms":{"confine":"reader","tripwire":"observe","round_budget":"window","round_dedup":"on"}` (`grep -o '"arms":{[^}]*}'` on the
+  session file). Both `capability_degraded` records come BEFORE the header in the file, since they are raised while the toolset is built, so read the header by `type`, not as the first line. The header records the flag, not the outcome, which is why the notice exists.
 
 An unsandboxed call also writes no `exec_record`, so the tripwire has nothing to fold for it: a degraded box
 is blind to refused execs. Note it; it is how the design works, not a finding.
 
 `--confine off` is the other way to run unsandboxed and it is silent by design: no notice, no
-`capability_degraded`, no `sandbox` or `exec_record`, but still an `exec_resolution` (driven: the header has no
-`arms` key at all when `--tripwire off` is given too).
+`capability_degraded`, no `sandbox` or `exec_record`, but still an `exec_resolution` (the header still has an `arms` key since round 27: `round_dedup` is always written, and `round_budget` is on by default,
+so only `--round-budget off` as well leaves `{"round_dedup":"on"}` alone).
 
 ## 7: Close-out
 

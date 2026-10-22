@@ -250,7 +250,7 @@ Checks:
    *Wrong looks like:* 5 of 5 flags false positives, as in the trial.
 8. **A related directory never prompts for a flagged region.** Add `sensitivity related: %w[<literal value of $QA>/parent/sibling]` to `.lain/config.rb`, `lain trust`, restart. Read a file in
    `sibling/` that holds the real-looking key line from check 6: the read completes with the region
-   masked and no release prompt, and the journal's redaction record shows released 0. A `.env`
+   masked and no release prompt, and the journal holds a `source_masked` record for the read and no `read_released` record (nothing was released). A `.env`
    under that tree still parks at the read gate. `related: %w[/]` and `related: %w[~]` refuse at
    launch, naming the entry.
 
@@ -361,7 +361,7 @@ Checks:
    after the ceiling. A child whose ceiling is 5 or less gets the warning on its first request.
    *Wrong looks like:* the trial's empty handback, a warning in every request, or one after the ceiling.
 8. **A child's writes are reported under its role (2026-10-09 trial fixes).** The chat's `subagent` tool has no role and spawns a researcher; ask it to write 1 line (`write 1
-   line to notes.txt in the project`). When its round settles the chat pane shows one stamped line, `HH:MM:SS researcher wrote
+   line to notes.txt` in its own working directory). A write aimed at a file in the project itself is refused by the lease: a spawn with no `extends` works in a scratch directory (`Isolation::Scratch`), and one under `extends` in an `Isolation::Spike` worktree, and neither reaches the checkout. Drive the refusal as its own step and record the sentence. When its round settles the chat pane shows one stamped line, `HH:MM:SS researcher wrote
    notes.txt`; several files in one round are 1 line, `dev wrote 4 files: a, b, c (+1 more)`. A researcher that only reads
    prints nothing. Known gap: a child in its own worktree reports a path relative to that worktree without naming
    it, so the line reads as if it were your checkout; record it rather than failing.

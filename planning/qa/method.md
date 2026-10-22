@@ -1601,10 +1601,6 @@ fallback rather than redesigning mid-run.
 
 ## Round 27 (2026-10-21): what 13 forks taught the process
 
-- **Launch every long session with `--max-tokens 32768` until b27-4 is fixed**, and re-pass it on `--resume`, which
-  drops it (a27-1). With no `--max-tokens`, the first committed compaction cut ends the chat, about 22 turns into an
-  ordinary ollama session. `/btw`'s printed command needs it appended too. Record 1 untyped control when a section
-  tests the default.
 - **Source `env.sh` in the same call as every `lain` subcommand**, `lain worktrees gc` included. Fork l's bare gc wrote
   2 files under the real `~/.local/state/lain/gc/`, and a `sed` `w` flag wrote a scrap into the repo root.
 - **A planted GitHub token is `ghp_` plus exactly 36 characters.** A 40-character one is below the detector, and the

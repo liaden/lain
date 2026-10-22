@@ -196,7 +196,7 @@ until its bytes are trusted; before that every launch refuses, naming `lain trus
 ```ruby
 # .lain/config.rb
 sensitivity denied: %w[/vault],           # the project's vault/ subtree, and everything under it
-            gated: %w[*.secret],          # a basename glob, anywhere
+            gated: %w[*.sealed],          # a basename glob, anywhere; not `*.secret`, which the built-in name rule already gates, so the config line would prove nothing
             exempt: %w[/fixtures/.env]    # exactly one file, under the project root
 ```
 
@@ -553,7 +553,7 @@ sensitivity related: %w[/abs/path/to/sibling]      # or home-anchored: ~/dev/sib
 
    ```ruby
    sensitivity related: %w[/]            # must name a specific tree, not the filesystem root, ...
-   sensitivity related: %w[~]            # is a directory, home-anchored ... or absolute: the shape sentence, not a home-directory sentence (round 25)
+   sensitivity related: %w[~]            # the same unspecific sentence as `~/` and `/`: is a directory, home-anchored ... or absolute (round 27 settled it; the shape sentence is gone)
    sensitivity related: %w[dev/sibling]  # is a directory, home-anchored ("~/dev/app") or absolute ("/srv/app")
    sensitivity related: %w[/abs/file.txt]  # an existing file: takes directories, and this is not one
    sensitivity related: %w[/abs/a/../b]  # is not a clean directory path: no empty, `.` or `..` segment
@@ -801,7 +801,7 @@ reason, then ask the model to `read_file .env`. The read is refused from memory 
 nothing parks. A deny with no reason now repeats as `approval denied for tool "read_file": a human denied this path earlier this session` (`call` for a command), not the bare sentence (T56). Do the reverse in a fresh session: deny `read_file .env`, then `run: cat .env`, which is
 refused from memory too. Control: deny `run: rm -rf build` with a reason, then `read_file .env` parks
 as usual, because a command does not deny the directory it runs in. A denied `cat "$HOME/.netrc"` (a
-command whose paths cannot be named) remembers nothing, and a later `read_file ~/.netrc` parks.
+command whose paths cannot be named) remembers nothing, and a later `read_file ~/.netrc` is refused outright: `~/.netrc` is a denied path, so nothing parks and no memory is needed.
 
 **The control that makes an answer diagnosable.** Before concluding anything, drive `P` — the same
 characters, in the same session — through `read_file` rather than `bash`:
@@ -825,8 +825,7 @@ home-anchored rule" — are not ruled out, and a finding that has not ruled them
 plant a credential-shaped line in `config/master.key` and ask for `cat config/master.key`. A file whose content holds no detectable region runs and returns raw under `bypass`, by design. Or use any command whose automatically approved output holds a credential. The `tool_result` must
 name **`/mode ask`**: `... If approval is bypass, no approval is possible, so a human must first switch to
 /mode ask.` A refusal that says only "a human must approve" is A-3 back, because under `bypass` there is no
-queue for a human to approve on. Retype the same command: it must refuse again, finally, with the same
-sentence (`Escalation::Bypass`), and `/approve` must still answer `no pending approvals`.
+queue for a human to approve on. Retype the same command: it must refuse again, finally, but with a different sentence by design (`Escalation::Bypass::TOLD`): `this command's automatically approved output held a credential, so only a human may approve it, and no approval is possible while approval is bypass; do not re-send it`. The first sentence tells the human to switch to `/mode ask`; the second goes to the model, which cannot switch modes. `/approve` must still answer `no pending approvals`.
 
 Then `/mode !` and confirm the floor is back before anything else — the mode is session state,
 and carrying `bypass` forward would silently change what every later check measures. **`!` lands in
@@ -1033,9 +1032,11 @@ template used to end with a JSON example reading `"confidence": 0.0`, and `--sec
 path-gate pending never reached it. Drive it:
 
 - `read_file .env.local` (gated, a path-gate pending) under `--secret-oracle`: exactly **one**
-  `oracle_answer` is journaled for it, the call parks only until that answer, and a confident `approve`
-  releases it. A pending that stays parked with **no** `oracle_answer` is D-3 back (the surface never
-  asked).
+  `oracle_answer` is journaled for it, and the call then waits for the human whatever the answer says: a path
+  gated for what it is (`.env.local` is a credential name) is never released by an oracle approve (round 23 d-1;
+  round 27 saw qwen3:4b approve it at 0.9 and lain apply nothing). A pending that stays parked with **no**
+  `oracle_answer` is D-3 back (the surface never asked). To see a release by the oracle, use an `ordinary` or
+  `out_of_scope` path instead.
 - `read_file ~/.ssh/id_qa` (denied): **zero** `oracle_answer` records and no `approval_pending`. The
   oracle must never be asked about a denial, so an answer here is the worse failure.
 - The confidences across the round are not all `0.0`. A column of `0.0` and `defer` is the anchored

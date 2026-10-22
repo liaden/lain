@@ -228,7 +228,7 @@ Checks:
     *Wrong looks like:* `configur` on one row and `ation` on the next, or a code line cut mid-token.
 15. **The header redraws when its row count changes, and a draft is never clobbered.** With a child
     running and nothing typed, spawn a subagent so the fleet grows by a row: the header goes from 1 row to 2 in
-    place, and exactly 2 header rows are on screen (count them with `capture-pane -p -t <input>`, not by
+    place, and exactly 2 header rows are on screen (count them with `capture-pane -p -t <input>` AFTER pressing `c`, or the close countdown's own row inflates the count; do not count by
     eye). When the fleet shrinks back, exactly 1 header row is on screen and no stale row is left under it. Then
     type `abc` without sending it and change the fleet again: `abc` stays on the input row and is what Enter
     sends, and the new header is drawn whole at the next prompt. A header drawn twice, or a stale fleet row
@@ -241,6 +241,10 @@ Checks:
       no signal frame reaches the chat, so no close countdown opens and the ask keeps running. The input row is
       empty. A second Ctrl-C with nothing typed is the ordinary interrupt (`--grace`, the countdown above); answer
       that countdown with `c` if you drive it. Round 26 re-checks both halves.
+    - **Enter then an immediate Ctrl-C keeps the line** (round 27, b27-1, fixed). Send the characters, Enter and Ctrl-C in 1
+      tmux command (`send-keys 'hello' Enter C-c`). A line the editor already accepted is not a draft, so `hello` is
+      committed as the prompt and nothing is withdrawn; the same happens at the plain chat's `you>`. The control is
+      `abc` typed with no Enter, which Ctrl-C still discards. A prompt that vanishes with nothing journaled is the finding.
     - **Tab goes into the draft** as a tab character; it does not trigger completion or move focus.
     - **Ctrl-Z** in a cockpit input pane does not stop the process (it is exec'd with no shell, so there is no `fg`);
       check only that the pane keeps working.

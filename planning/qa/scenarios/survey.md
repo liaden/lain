@@ -76,7 +76,7 @@ cwd, `lain survey` listed `anchor.rb` where `/survey` listed `dev/lain/lib/lain/
 the same file. *Driven 2026-09-14*, the one-shot side: from a sibling directory,
 `lain survey <abs>/cs/changeset/lib` headlined `surveying <abs>/cs/changeset/lib at cumulative scope:
 1 file` and listed `[ ] cs/changeset/lib/tally.rb`; run from inside the repository as
-`lain survey lib` it listed `[ ] lib/tally.rb`. Survey the same absolute path with `/survey` from
+`lain survey lib` it listed `[ ] lib/tally.rb`. A one-shot run from another directory names every row relative to that cwd (`../` prefixes included), never relative to the surveyed root; read the rows against the directory you launched from. Survey the same absolute path with `/survey` from
 the same cwd and confirm the rows read identically. b25-10 is fixed (T10): the refusal, the `opened` report and the hunk count in `lain://review` now name a row's path as the sidebar displays it, so a leading `../` is stripped in all of them; check the sidebar naming against the refusal text. *(Prediction, not yet driven: the `/survey` side
 needs the cockpit.)*
 

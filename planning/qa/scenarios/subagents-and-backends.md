@@ -159,7 +159,7 @@ declares none keeps 25), the researcher can `grep` and `glob` as well as `read_f
    first request in the journal: the tool list holds `grep` and `glob`, and, since the lease change below, `bash` and `write_file`. The
    `subagent` tool's own description names each of the child's tools, and says a role with no `bash` cannot run commands, so
    the parent should run them and pass the output in. A role
-   with no `max_iterations` (any other built-in) stops at 25. The researcher stops at 60.
+   with no `max_iterations` (any other built-in) stops at 25. The researcher stops at 60. A child's iteration ceiling is its role's own, whatever iterations the parent's ask has left (round 27 saw 24 and ruled against it, i27-3); tokens are still attenuated from the parent's room. A researcher stopping at 24 is the finding back.
    **Round 23 j-10, fixed: the researcher's reads are confined.** A `glob`, `list_files`, `grep` or `ast_search` it aims
    above the project, outside every `related` directory and outside its own working root parks for a human as
    `outside_project` (`secret-boundary.md` section 3b); the same call from the chat itself does not. Reads inside the
@@ -191,7 +191,7 @@ declares none keeps 25), the researcher can `grep` and `glob` as well as `read_f
    `Its last text block:`. Still no model request after the ceiling. Actor children are not warned (the note's recipient exists only
    after launch); record that rather than failing it.
 3. **The lifecycle still records the failure.** The completion `message` carries `lifecycle: failed` and
-   `error: Lain::Agent::Budget::Exceeded`, and no `result` key (§2's reduction). The fleet count comes back
+   `error: Lain::Budget::Exceeded`, and no `result` key (§2's reduction). The fleet count comes back
    down. *Wrong looks like:* the bare ceiling sentence with nothing after it, `settled`, or a second model
    request for the stopped child.
 4. **A ceiling hit in a child that runs the parent's own loop is not rewritten.** If the budget is exceeded
@@ -453,7 +453,7 @@ lain watch <prefix> --session <path>
 17 found only the `blake3:` spelling matched (F119). *Driven 2026-09-14* against a recorded chat
 session: `lain watch bfc36418ae69 --session <file>` rendered
 `[blake3:bfc36418ae69 spawn] fresh/schema spawned from blake3:ff9ca1f05f4a` and its completion, the
-same as the full digest. **A no-match names the file it searched**: `lain watch zzzz --session
+same as the full digest. A one-shot child's `lain watch` is exactly 2 lines, the spawn and its completion; more means a record leaked into the lineage. **A no-match names the file it searched**: `lain watch zzzz --session
 <file>` → `no spawn matched selector "zzzz" in <file's basename>`, exit 1. The `in <file>` refusal comes only
 from a closed session (round 25). `lain watch` with stdout redirected to a file printed nothing until it exited (i26-5); it now flushes each line (T77).
 

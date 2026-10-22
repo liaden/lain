@@ -224,10 +224,10 @@ lain chat --fork "TORN-turn.ndjson@${HEAD}" --provider ollama --model qwen3-code
 
 Expected from that fork:
 
-    cannot fork <session>: turn record 3 (user) recorded as blake3:6dbf0c8b… re-commits to
-    blake3:6aaa90f1…; its content no longer matches its content address
+    cannot fork <session>: turn record 3 (user) recorded as "blake3:<64 hex>" re-commits to
+    "blake3:<64 hex>"; its content no longer matches its content address
 
-Exit 1, no backtrace, naming the record index, its role, and **both** digests. Corruption is meant
+Exit 1, no backtrace, naming the record index, its role, and **both** digests, each quoted and printed in full (a digest is 64 hex characters, under the 160 character cap on a quoted value). Corruption is meant
 to be **invisible at rest but unforgeable on use** — check both halves, not just the first.
 
 ## 3 — A dangling causal edge
@@ -246,8 +246,8 @@ ruby -rjson -e 'k=Hash.new(0); ARGF.each_line{|l| r=JSON.parse(l) rescue next; k
 Then remove a turn a later turn names, and expect **the same clean refusal from both**:
 
 ```
-cannot fork <session>: turn record 0 (assistant) recorded as blake3:53f6b032… re-commits to blake3:465e9071…
-cannot resume <session>: turn record 0 (assistant) recorded as blake3:53f6b032… re-commits to blake3:465e9071…
+cannot fork <session>: turn record 0 (assistant) recorded as "blake3:<64 hex>" re-commits to "blake3:<64 hex>"; its content no longer matches its content address
+cannot resume <session>: turn record 0 (assistant) recorded as "blake3:<64 hex>" re-commits to "blake3:<64 hex>"; its content no longer matches its content address
 ```
 
 Both exit 1. An earlier follow-up recorded this as "fixed for `--fork` only"; that is now stale in
@@ -257,7 +257,7 @@ A bad digest **prefix** must also refuse by name: `no turn matching "<prefix>" r
 
 ### A crashed session, salvaged from the response log
 
-Round 26: j25-1 is fixed. A crashed copy of a real session (journal cut after `request_sent`, WAL kept, writer pid dead) resumes with `recovered turn blake3:...` equal to the original's digest; an empty complete frame is refused: `the response log held no answer (a complete ollama-ndjson frame of N bytes: it reassembled to no content)`. A header without `wire` is refused as corrupt.
+Round 26: j25-1 is fixed. A crashed copy of a real session (journal cut after `request_sent`, WAL kept, writer pid dead) resumes with `recovered turn blake3:...` equal to the original's digest; an empty complete frame is refused: `the response log held no answer (a complete ollama-ndjson frame of N bytes: it reassembled to no content)`. A header without `wire` is refused as corrupt. **The cut must drop the human's prompt**, as a real SIGKILL does: the user turn is journaled only together with its reply, so a crash mid-stream leaves `request_sent` and no user turn. Cut the journal after the last `request_sent` and before the user `turn` that follows it (a cut that keeps the user turn is the easy shape and proves less). The salvaged chain must hold the prompt as a user turn rebuilt from the `request_sent` payload, with the recovered answer parented on it, not on the previous head (d27-6, fixed).
 
 ### Every door, not just `--fork`
 
@@ -550,7 +550,6 @@ Five more things to check, because each is a way the shape can be right and the 
   Losing it turns a refusal into a second failure the model cannot diagnose. Ask for a command that
   prints past the ceiling *and* fails — `head -c 200000 /dev/zero | tr '\0' x; exit 1` is enough,
   and being gated it also puts one more approval through the surface.
-- `Exec::Core` and the daemon lifecycle were removed on 2026-10-17 (`6c25ea68`), so there is 1 arm to check.
 - **The decision precedes the read.** An oversized file must be refused from its size, not read and
   then measured. Watch for a multi-second pause or a memory spike before the refusal — either means
   the file was materialised first, which is the memory half of the claim failing quietly.
@@ -612,9 +611,10 @@ this order:
 2. `read_file offset: 1, limit: 50` → returns lines 1–50, and *only* those.
 3. `edit_file` on `mid.rb` → **must refuse, naming the window**:
 
-       only a window of /abs/path/to/mid.rb was read this session -- an offset/limit read showed you part of the
-       file, so editing it would clobber lines you never saw. Read it again with no offset and no
-       limit, or with a window covering the whole file, then edit
+       only part of /abs/path/to/mid.rb was read in this conversation's current history -- the windows you read
+       do not cover every line of one version of the file, so editing it would clobber lines you never saw.
+       Windows add up: read the lines you have not seen with offset and limit, or the whole file again if it
+       changed, then edit
 
 4. `read_file offset: 1, limit: <lines beyond the end>` — a window covering the whole file → the
    read is recorded as **complete**. **A single full-cover window can no longer reach the

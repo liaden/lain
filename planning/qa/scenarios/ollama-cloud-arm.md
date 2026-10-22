@@ -148,7 +148,7 @@ gone, so:
 §3's 128,000-token published window was confirmed by round 17.
 
 **And the wire, since the same round-20 forks read it:** the captured request body carries
-`options={"num_predict"=><the per-model ceiling, or the typed --max-tokens>,"num_batch"=>2048}` `truncate=false` and `shift=false` (a `--max-tokens 40` chat stopped at 40 on
+`options={"num_predict"=><the per-model ceiling (32768, `max_tokens_source: fallback`, for a cloud model with no table row), or the typed --max-tokens>,"num_batch"=>2048}` `truncate=false` and `shift=false` (a `--max-tokens 40` chat stopped at 40 on
 ollama.com), and `--max-tokens 0` refuses at construction. A body without `num_predict` is the round-19 defect
 (no generation cap on the ollama wire) back.
 
@@ -176,7 +176,7 @@ invisible to a frame **count**. Read the bytes.
 **Expected and normal:** a *failed* round trip leaves one empty aborted frame per attempt — four
 for a retried 500. That is the retry envelope working, not corruption.
 
-To drive salvage with no spend, cut a completed cloud session's journal after its last `request_sent`, keep its WAL, make sure the writer named in the header is dead (a live writer skips salvage: `still open in process N`), then `--resume`. The recovered turn's digest must equal the original's (round 26, j25-1 fixed). Control: SIGKILL mid-stream gives `did not finish before the crash (N bytes recovered); not recovered`.
+To drive salvage with no spend, cut a completed cloud session's journal after its last `request_sent`, keep its WAL, make sure the writer named in the header is dead (a live writer skips salvage: `still open in process N`), then `--resume`. The recovered turn's digest must equal the original's (round 26, j25-1 fixed). Cut after the `request_sent` and before the user `turn` that follows it, as a real SIGKILL does: the prompt must come back as a user turn rebuilt from the `request_sent` payload, the answer parented on it with a non-null `render_parent` (round 27, d27-6, fixed). Control: SIGKILL mid-stream gives `did not finish before the crash (N bytes recovered); not recovered`.
 
 An HTTP 404 from `/api/chat` used to be journaled `run_interrupted reason: torn` (j26-2); it is now `reason: rejected` with the status (T64), and an ordinary refusal, a cut-off reply and a malformed reply journal their own reasons instead of nothing (T65). The retired `LAIN_OLLAMA_CLOUD_CONCURRENCY` was ignored without a word (j26-5); the cloud arm now says `LAIN_OLLAMA_CLOUD_CONCURRENCY was retired and is ignored; use LAIN_PROVIDER_CONCURRENCY.` (T71), and the local arm prints nothing.
 

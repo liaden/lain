@@ -216,7 +216,7 @@ Expected once occupancy climbs: `signals` stops being `[]`, a compaction is warr
 in this bench can make.** Pull the rewritten span out of the derived context and confirm the split:
 
 - **tool-carrying messages became attestations** — one line each, of the shape
-  `[<role> <12 hex characters> <bytes> bytes] …`, with the elision prose after it. Count the attestation text
+  `[<role> <12 hex characters> <bytes> bytes] …`, with the elision prose after it, which ends `(elided -- no summary was taken)` (any gist lines come before it). Count the attestation text
   against the message count: a run with 176 elided messages costs about 40% of what the full digest cost;
 - **conversational turns survive verbatim and in position** — not summarized, not reordered;
 - a **lone** conversational turn sitting between two tool runs is *retained*, not summarized. The
@@ -475,7 +475,7 @@ Four things to check, and three of them are about honesty rather than arithmetic
   indistinguishable from a real prefix edit unless the journal is segmented per model, and `/model`
   is a normal move. The report must say so:
 
-      <n> model switch(es) counted, not charged -- <reason>
+      <n> model switch(es) counted, not charged -- a model switch forfeits the whole prompt prefix by design, so it is segmented out rather than counted as a prompt edit
 
   A waste figure that jumps by roughly a whole prefix at the switch is the metric inflating, which
   is the single most likely defect in this analyzer.

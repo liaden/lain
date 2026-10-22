@@ -34,13 +34,13 @@ lain --fork 20260725-1a2b@blake3:9f3c  # branch a recorded session at a digest
 | `--api-base` | Ollama's localhost | Overrides the Ollama base URL — for whichever of the chat and the summarizer is on Ollama (see [Compaction](#compaction-flags)). |
 | `--round-budget` | `window` | What one tool round's results may cost together. `window` holds them to the context window left after the turn that made the calls, its reply and the reserve for the next reply; `static` to a fixed byte cap of two results' worth; `off` sets no round limit. The session header records it, and a resume runs under the recorded arm and says so when it is weaker than a fresh chat's. |
 | `--round-dedup` | `on` | Answers a repeated tool result by naming the first call that returned it, whatever the round budget. `off` delivers repeats whole. With `--round-budget off` and this `off`, a round is unbounded. The session header records it. |
-| `--max-tokens` | the model's own | Per model turn. Unset, the ceiling comes from the model: Anthropic's table (128,000 for Opus 4.6 and later), the window an ollama server says it serves, else 32,768; a typed value overrides it, and the session header records which (`max_tokens_source`). A cap, not a reservation: it changes nothing for a reply under it. A thinking model's reasoning counts against it, so a turn cut at the cap prints `model hit max_tokens before finishing` and then `raise --max-tokens (now N); a thinking model's reasoning counts against it`. On Ollama every request sends `shift: false` beside `truncate: false`, so a reply that fills the context window is cut rather than shifted, and the line names the window instead: `the reply filled the context window; raise LAIN_NUM_CTX or start a shorter chat`. |
+| `--max-tokens` | the model's own | Per model turn. Unset, the ceiling comes from the model: Anthropic's table (128,000 for Opus 4.6 and later), the window an ollama server says it serves, else 32,768; a typed value overrides it, and the session header records which (`max_tokens_source`). A typed `--max-tokens` survives a resume: `--resume` and `--fork`, and the `/btw` fork, send the recorded value when you type none, and a different value typed on the resume prints `recorded with --max-tokens N; continuing with M (the current flags win)` and wins. Only a typed ceiling is inherited; a per-model one is worked out again for the resumed chat. A cap, not a reservation: it changes nothing for a reply under it. A thinking model's reasoning counts against it, so a turn cut at the cap prints `model hit max_tokens before finishing` and then `raise --max-tokens (now N); a thinking model's reasoning counts against it`. On Ollama every request sends `shift: false` beside `truncate: false`, so a reply that fills the context window is cut rather than shifted, and the line names the window instead: `the reply filled the context window; raise LAIN_NUM_CTX or start a shorter chat`. |
 | `--secret-oracle` | off | A local model answers a parked read of a gated path, shown the path and region count, never the contents. The local qwen3:4b oracle was measured approving `.env` at 0.8 to 1.0 confidence (`planning/approval-layering-research-2026-10.md`), so an oracle approve is applied only when the path is gated for where it is (ordinary, exempt, `out_of_scope`, `outside_project`), checked when the surface claims the pending and again when it settles. A deny is always applied. The oracle never releases a region a named pattern flagged (any detector but entropy); its confident approve of one is journaled as an `approval_surface_deferred` record, and the read waits for a human. `.env`, keys, named, configured, protected and malformed paths always wait for a human. Known gaps: a link repointed before the surface first claims the pending, and the oracle is never offered an `outside_project` park. |
 | `--context-pipeline` | unset | `default`, `reminder`, `cache-breakpoints`, `prune`, `dedupe-tool-calls`, `purge-failed-inputs`, or several joined by `+` and applied left to right. Which combinators render every request. A word **replaces** the default: `prune` alone sends no reminders and no cache breakpoints; `prune+default` keeps both. Unset renders the default and writes no `context_pipeline` key into the session header; a named pipeline, `default` included, is recorded. An unknown, empty or repeated part is refused at launch. |
 | `--temperature`, `--seed` | unset | Ride `Request#extra`. Ollama honors both; `--temperature 0` is the determinism recipe. |
 | `--approval` | `auto` | `ask`, `auto` or `bypass`: who decides a gated call the rules left open. `ask` parks it for you, `auto` asks a model judge first and parks only what it is unsure of, `bypass` approves it. See [/mode](#mode) for what each does and what none of them guarantee. |
 | `--journal` / `--no-journal` | on | The durable, fsync'd, replayable session record. `--no-journal` also disables `--windows`. |
-| `--resume [SESSION]` | off | Bare picks the newest; or give a filename or prefix under this project's session dir. |
+| `--resume [SESSION]` | off | Bare picks the newest; or give a filename or prefix under this project's session dir. A typed `--max-tokens`, the compaction flags and the bench arms of the recorded session carry over unless you type them again. A salvaged crash rebuilds the prompt it lost as a user turn and puts the recovered answer after it. |
 | `--fork SESSION@DIGEST` | off | Fork a recorded session at a digest prefix. The parent opens read-only. |
 | `--btw` | off | Ephemeral session (`<ts>-<pid>.btw.ndjson`), reaped on clean exit unless promoted with [`/keep`](#keep). |
 | `--prompt` | unset | Seed the first question, then read the terminal as usual. |
@@ -52,7 +52,7 @@ lain --fork 20260725-1a2b@blake3:9f3c  # branch a recorded session at a digest
 | `--epic SLUG` | the sole epic in the home | Mount an epic: its documents become reviewable, [`/implement-epic`](#implement-epic) has something to work, and `lain://status` draws its graph. A home holding several epics with no slug here starts anyway, with a notice. |
 | `--grace` | `60` | Seconds a first Ctrl-C or SIGTERM grants a run before it is stopped. A `human>`, `[y/N]` or `command>` prompt open at that moment steps aside for the countdown, and anything half typed there is discarded; it comes back empty if the countdown is cancelled. That includes a `[y/N]` that took the terminal from an idle `you>`. At `you>` in this terminal, or at `you>` or `command>` in the `lain input` pane, a Ctrl-C over a typed line only clears that line and reaches no chat; over an empty line it goes to the chat as before, and at `you>` that ends the chat. |
 | `--max-cost DOLLARS` | off | Stop the run once its priced turns, children included, have cost this many dollars. A model with no price counts nothing against it, and the launch says so once. |
-| `--root PATH` | detected | Treat `PATH` as this run's project root instead of walking up from the working directory. An explicit root is intent, so it skips the walk's refusal set. |
+| `--root PATH` | detected | Treat `PATH` as this run's project root instead of walking up from the working directory. An explicit root is intent, so it skips the walk's refusal set. The session is filed under the root's key, wherever you launched from, so `lain sessions` and `--resume` run inside the root find it. |
 | `--cwd PATH` | **the root** | Run as if the working directory were `PATH`. Must lie under the root — and defaults to it, so `--root PATH` alone means "open that project" rather than "that root, from wherever the shell happens to be". |
 
 #### Compaction flags
@@ -296,6 +296,8 @@ List this project's recorded sessions, newest first. Offline.
 
 `--all` includes ephemeral `--btw` sessions, which are hidden by default.
 
+It lists the root's sessions directory and then the working directory's, so a session filed under the working directory's key by an earlier version still shows.
+
 A row ending in `N lines unparsed` names a session with unparseable lines in its journal
 (`Journal.records` skips them rather than raising, since a crash can tear
 the last line or another writer can leave bytes in it). Nothing wrong can be *built* on the gap -- forking such a session refuses precisely,
@@ -344,12 +346,16 @@ Court-clerk pass: distill a session's completed subagent lineages into memory.
 `--model`, and `--max-tokens` like [`lain chat`](#lain-chat), so you can clerk locally against
 Ollama.
 
+A clerk whose prompt outgrows its window is recorded as a failed lineage and the pass reports the failure.
+
 ### lain improve
 
 Harness-improver pass: record what would make lain itself better into the dogfood queue.
 
 Same `--dry-run` / `--provider` / `--model` / `--max-tokens` shape as
 [`lain consolidate`](#lain-consolidate).
+
+A pass whose prompt outgrows the model's window ends with one line naming the prompt size, the window and how many notes it stored (`improve: the N-token prompt exceeds the M-token window, stored K notes`), not the server's raw error. A note is stored once, however many times the model repeats the call.
 
 ### lain improvements
 
@@ -830,7 +836,7 @@ the ask while `c` cancels the countdown, `w` extends it and `r` waits for respon
 
 `/rewind` moves the session back one turn. `/rewind N` moves back N. `/rewind <digest>` moves to a
 recorded turn. The Timeline is content-addressed, so nothing is destroyed and the old head stays
-reachable.
+reachable. The todo list follows the chain: rewinding past a `todo_write` drops that list from the next request, and a list written on the kept chain stays in force. The same holds for a replay and for `--fork`.
 
 **A prompt left unanswered at the head goes out again with your next one.** A failure after the
 request reached the provider, a Ctrl-C or [`/stop`](#stop), a failed resend, or a `/rewind` that

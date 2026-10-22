@@ -128,7 +128,7 @@ ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next;
 
 Two properties, and the second is the one a casual read misses:
 
-1. **Every `turn_usage` is followed by a `memory_root` naming the same turn digest.** The root is
+1. **Every main-agent `turn_usage` is followed by a `memory_root` naming the same turn digest.** A child's `turn_usage` is journaled as a plain record with no paired `memory_root` and no `memory_root` of its own, so do not file the missing root; count roots against the main agent's turns only. The root is
    read from the recorder at the instant the record is written, never cached.
 2. **`turn_usage` comes FIRST.** A reader scanning forward must see a turn before its snapshot —
    commit order all the way through. A `memory_root` preceding its `turn_usage` is the finding, and
