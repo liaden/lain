@@ -111,6 +111,8 @@ module Lain
         super()
         @seam = Seam.resolve(seam, **spawn_over)
         @announces_as = Requester.of(announces_as)
+        raise ArgumentError, %("lain" is the root's name, not a child's) if @announces_as.label == "lain"
+
         @answer = answer
         @kept = kept
         @builder = ChildBuilder.new(seam: @seam, toolset:, policy:, budget:, persona:, model:,

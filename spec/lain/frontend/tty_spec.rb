@@ -102,6 +102,17 @@ RSpec.describe Lain::Frontend::TTY do
     end
   end
 
+  describe "an assistant_text record" do
+    it "draws the text as a response line, above the tool output that follows it" do
+      channel.push(Lain::Telemetry::AssistantText.new(text: "Here are the paragraphs"))
+      channel.push(tool_output(bytes: "raw\n"))
+
+      tty.drain_and_render
+
+      expect(output.string).to match(/Here are the paragraphs.*\n.*\[tu_1 stdout\] raw/m)
+    end
+  end
+
   describe "#run" do
     it "enters the alternate screen before yielding and restores it after" do
       tty.run { channel.close }

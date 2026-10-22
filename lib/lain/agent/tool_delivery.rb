@@ -66,6 +66,7 @@ module Lain
       #   after the errored commit answers the calls
       def perform(response, timeline:, session:, &commit)
         answers = ToolRunner::Answers.for(response)
+        report_text(response)
         @snapshots.prime
         session.open_pre_images.on_chain(timeline)
         delivery = @runner.delivery(response, context: session, answers:)
@@ -93,6 +94,16 @@ module Lain
         report_writes(session)
         @snapshots.write(timeline: committed, paths: session.writes, pre_images: session.pre_images)
         session.settle_pre_images
+      end
+
+      # Said before the tools run so it draws above their output. A child's
+      # words stay in its own record: its display is the parent's channel.
+      def report_text(response)
+        return unless @display_as == "lain" && !response.text.empty?
+
+        record = Telemetry::AssistantText.new(text: response.text)
+        @journal << record
+        @display << record
       end
 
       # Before the snapshot write, which can raise, and before the settle that

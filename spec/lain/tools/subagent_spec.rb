@@ -329,6 +329,11 @@ RSpec.describe Lain::Tools::Subagent do
     )
   end
 
+  it "refuses to announce a child as lain, the name the root's own lines carry" do
+    expect { build_subagent(provider: mock(text_response), announces_as: "lain") }
+      .to raise_error(ArgumentError, /"lain" is the root's name/)
+  end
+
   it "lists the tools its child holds" do
     tool = build_subagent(provider: mock(text_response), policy: Lain::Tool::SpawnPolicy.new(only: %w[read_file]))
 

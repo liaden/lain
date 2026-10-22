@@ -426,6 +426,81 @@ RSpec.describe Lain::Agent do
     end
   end
 
+  describe "the text written beside a tool call" do
+    def spoken_tool_response(text)
+      Lain::Response.new(content: [{ "type" => "text", "text" => text },
+                                   { "type" => "tool_use", "id" => "tu_1", "name" => "echo",
+                                     "input" => { "text" => "a" } }], stop_reason: :tool_use)
+    end
+
+    it "reaches the display channel and the journal, once, ahead of the round's tool output" do
+      display = []
+      journal = []
+      noisy = Class.new(EchoTool) do
+        define_method(:perform) do |input, context|
+          display << Lain::Telemetry::ToolOutput.new(tool_use_id: "tu_1", stream: :stdout, bytes: "out\n")
+          super(input, context)
+        end
+      end
+      toolset = CoreGraph.toolset([noisy.new])
+      a = agent([spoken_tool_response("Here are the paragraphs"), text_response("done")],
+                display:, journal:, toolset:)
+      a.ask("write")
+
+      expected = [Lain::Telemetry::AssistantText.new(text: "Here are the paragraphs")]
+      expect(display.grep(Lain::Telemetry::AssistantText)).to eq(expected)
+      expect(journal.grep(Lain::Telemetry::AssistantText)).to eq(expected)
+      expect(display.index(expected.first)).to be < display.index { |event| event.is_a?(Lain::Telemetry::ToolOutput) }
+    end
+
+    it "is not sent for the final text-only reply, which render_response draws" do
+      display = []
+      agent([text_response("all done")], display:).ask("hi")
+
+      expect(display.grep(Lain::Telemetry::AssistantText)).to be_empty
+    end
+
+    it "is not sent for a tool call with no text beside it" do
+      display = []
+      agent([tool_response(["tu_1", "echo", { "text" => "a" }]), text_response], display:).ask("hi")
+
+      expect(display.grep(Lain::Telemetry::AssistantText)).to be_empty
+    end
+
+    it "is not sent by an agent displaying as a child" do
+      display = []
+      agent([spoken_tool_response("child words"), text_response("done")], display:, display_as: "dev").ask("hi")
+
+      expect(display.grep(Lain::Telemetry::AssistantText)).to be_empty
+    end
+
+    it "stays out of the parent's display when a real spawned child writes it" do
+      shown = Lain::Channel.new
+      child_provider = Lain::Provider::Mock.new(responses: [spoken_tool_response("child words"),
+                                                            text_response("child done")])
+      parent = nil
+      tool = Lain::Tools::Subagent.new(
+        seam: Lain::Tools::Subagent::Seam.new(
+          tool_middleware: ToolRegistry::UNGUARDED, provider: child_provider,
+          context_factory: -> { Lain::Context.new(model: "child-model", max_tokens: 256) },
+          parent: -> { parent.timeline }, observer: ->(_event) {}, holder: Lain::Tools::Subagent::Holder.at(3),
+          display_channel: shown
+        ),
+        toolset: Lain::Toolset.new([EchoTool.new]),
+        policy: Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: %i[echo])
+      )
+      parent = described_class.new(
+        provider: Lain::Provider::Mock.new(responses: [tool_response(["call_1", "subagent", { "prompt" => "go" }]),
+                                                       text_response("parent done")]),
+        toolset: Lain::Toolset.new([tool]), context:
+      )
+      parent.ask("spawn")
+
+      expect(child_provider.requests.size).to eq(2)
+      expect(shown.drain.grep(Lain::Telemetry::AssistantText)).to be_empty
+    end
+  end
+
   # The window a tear strands a tool_use in is #perform_tools: the
   # assistant turn is committed and its results are not. What the Agent owns
   # here is WHEN the cancellation is committed, not what it says -- the block

@@ -107,6 +107,15 @@ RSpec.describe Lain::Telemetry do
     end
   end
 
+  describe Lain::Telemetry::AssistantText do
+    it "journals its text under its own type and is deeply frozen" do
+      record = described_class.new(text: +"Here are the paragraphs")
+
+      expect(record.to_journal).to include("type" => "assistant_text", "text" => "Here are the paragraphs")
+      expect(record).to be_deeply_frozen
+    end
+  end
+
   describe "#journal_type" do
     # The discriminator is pinned by recorded journals, so String#underscore
     # (the ActiveSupport form) MUST produce the exact string recorded journals

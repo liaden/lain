@@ -69,6 +69,16 @@ RSpec.describe Lain::Frontend::Decorators::ToolOutput do
       expect(Lain::Frontend::Decorators.for(unclosed)).to be_a(Lain::Frontend::Decorators::PromptUnclosed)
     end
 
+    it "returns a decorator for assistant text, painted as a response" do
+      text = Lain::Telemetry::AssistantText.new(text: "Here are the paragraphs")
+      decorator = Lain::Frontend::Decorators.for(text)
+      theme = Lain::Frontend::Theme.new(pastel: Pastel.new(enabled: true))
+
+      expect(decorator).to be_a(Lain::Frontend::Decorators::AssistantText)
+      expect(decorator.render(theme)).to eq(theme.paint(:response, "Here are the paragraphs"))
+      expect(decorator).to be_line_shaped
+    end
+
     it "returns nil for an event it does not render, the seam skipping it silently" do
       expect(Lain::Frontend::Decorators.for(Lain::Telemetry::Dropped.new(count: 1))).to be_nil
     end
