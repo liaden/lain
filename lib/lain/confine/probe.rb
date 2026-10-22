@@ -27,6 +27,16 @@ module Lain
         fence_report.first
       end
 
+      # @return [String, nil] why the lain-fence binary gives no Landlock, nil when it does
+      def fence_gap
+        fence_report[1]
+      end
+
+      # @return [Boolean] whether the lain-fence binary could not be started at all
+      def fence_unstartable?
+        fence_report[2]
+      end
+
       # @param layer [Symbol] one of :bwrap, :landlock, :trace
       # @return [Boolean]
       def supports?(layer)
@@ -52,9 +62,7 @@ module Lain
         "bwrap cannot unshare a user namespace" unless ok
       end
 
-      def landlock_gap
-        fence_report.last
-      end
+      def landlock_gap = fence_gap
 
       def trace_gap
         _, ok = attempt(%w[strace -f -o /dev/null true])
@@ -71,12 +79,12 @@ module Lain
         !scope.nil? && scope <= 1
       end
 
-      # Memoized pair of [abi, gap reason or nil].
+      # Memoized triple of [abi, gap reason or nil, whether the binary failed to start].
       def fence_report
         @fence_report ||= begin
           out, ok = attempt([@fence, "--status"])
           level = ok ? parse_abi(out) : 0
-          [level, gap_for(out, ok, level)]
+          [level, gap_for(out, ok, level), out.start_with?(START_FAILED)]
         end
       end
 

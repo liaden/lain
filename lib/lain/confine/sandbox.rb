@@ -66,7 +66,16 @@ module Lain
       private
 
       def unsandboxed(inner, requirer, lacking)
-        self.class.degraded(inner, journal: @notes, requirer:, because: "the box lacks #{lacking.join(" and ")}")
+        self.class.degraded(inner, journal: @notes, requirer:, because: reason_for(lacking))
+      end
+
+      def reason_for(lacking)
+        return "the box lacks #{lacking.join(" and ")}" unless lacking.include?(:landlock)
+        return "the box lacks #{lacking.join(" and ")} (#{@probe.fence_gap})" unless @probe.fence_unstartable?
+
+        others = lacking - [:landlock]
+        [("the box lacks #{others.join(" and ")}" if others.any?),
+         "the lain-fence #{@probe.fence_gap}"].compact.join("; ")
       end
 
       # The probe finds both programs on PATH, so the launcher runs the ones it found.

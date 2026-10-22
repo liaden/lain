@@ -48,6 +48,26 @@ RSpec.describe Lain::Confine::Sandbox do
         expect(notes.events.grep(Lain::Telemetry::CapabilityDegraded).map(&:capability)).to eq([:sandbox])
         expect(journal.events.grep(Lain::Telemetry::CapabilityDegraded).map(&:capability)).not_to include(:sandbox)
       end
+
+      it "names the missing lain-fence when the binary cannot be started" do
+        missing = ->(_argv) { raise Errno::ENOENT, "/srv/lain-fence" }
+        probe = Lain::Confine::Probe.new(fence:, journal:, runner: missing, ptrace_scope: -> { "0" })
+        described_class.new(root: "/srv/project", home: "/home/h", masks:, probe:, fence:, journal:)
+                       .wrap(inner, requirer: "Spec")
+
+        notice = degraded.find { _1.capability == :sandbox }.provider
+        expect(notice).to include("lain-fence cannot start #{fence}")
+        expect(notice).not_to include("landlock")
+      end
+
+      it "names the probe's reason when an executable fence reports ABI 0" do
+        zero = ->(argv) { [argv.include?("--status") ? '{"abi":0}' : "", true] }
+        probe = Lain::Confine::Probe.new(fence:, journal:, runner: zero, ptrace_scope: -> { "0" })
+        described_class.new(root: "/srv/project", home: "/home/h", masks:, probe:, fence:, journal:)
+                       .wrap(inner, requirer: "Spec")
+
+        expect(degraded.find { _1.capability == :sandbox }.provider).to include("#{fence} reports ABI 0")
+      end
     end
   end
 

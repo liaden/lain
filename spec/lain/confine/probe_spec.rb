@@ -66,6 +66,28 @@ RSpec.describe Lain::Confine::Probe do
     end
   end
 
+  describe "#fence_gap" do
+    it "is nil when the fence reports an ABI" do
+      expect(probe.fence_gap).to be_nil
+    end
+
+    it "says why the fence cannot be used" do
+      answers["lain-fence"] = ["", false]
+
+      expect(probe.fence_gap).to eq("/x/lain-fence exited with failure")
+    end
+
+    it "tells a fence that cannot start from one that runs and offers nothing" do
+      answers["lain-fence"] = ["", false]
+      refused = described_class.new(fence: "/x/lain-fence", ptrace_scope: scope, journal:,
+                                    runner: lambda { |argv|
+                                      argv.first == "/x/lain-fence" ? raise(Errno::ENOENT) : ["", true]
+                                    })
+
+      expect([refused.fence_unstartable?, probe.fence_unstartable?]).to eq([true, false])
+    end
+  end
+
   describe "production construction" do
     it "probes the real box without a double" do
       real = described_class.new(fence: "/nonexistent/lain-fence", journal:)

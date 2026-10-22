@@ -120,11 +120,14 @@ RSpec.describe Lain::CLI::Wiring::Observers do
 
     describe "when the bash sandbox is built" do
       def sandbox_on(runner)
-        probe = Lain::Confine::Probe.new(fence: "/srv/lain-fence", journal: chronicle.durable_journal, runner:,
+        fence = File.join(@state, "lain-fence")
+        FileUtils.touch(fence)
+        File.chmod(0o755, fence)
+        probe = Lain::Confine::Probe.new(fence:, journal: chronicle.durable_journal, runner:,
                                          ptrace_scope: -> { "0" })
         Lain::Confine::Sandbox.new(root: @state, home: @state, masks: Lain::Confine::MaskList.new(root: @state,
                                                                                                   policy: -> {}),
-                                   probe:, fence: "/srv/lain-fence", journal: chronicle.durable_journal)
+                                   probe:, fence:, journal: chronicle.durable_journal)
                               .wrap(Lain::Exec::Local.new, requirer: "spec")
       end
 
