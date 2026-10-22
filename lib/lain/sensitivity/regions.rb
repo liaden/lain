@@ -52,6 +52,16 @@ module Lain
 
       ALPHANUMERIC_RUN = /[A-Za-z0-9]/
 
+      # A count, a short content digest or a filesystem path under a name that
+      # only hints (`token_count`, `session_id`) is not a secret. A name that
+      # NAMES one never gets this: a password can be all digits or look like a path.
+      # The test reads the name the assignment captured, so a dotted key such as
+      # `db.password` takes the whole-match path and is never exempt.
+      ORDINARY_VALUE = %r{\A(?:\d+|(?:blake3|sha\d+|md5):[0-9a-f]{4,40}|/[\w.@+-]+(?:/[\w.@+-]+)*/?)\z}i
+      SECRET_WORDS = /pass(?!port)|secret|(?:\A|[_-])(?:credentials?|private|pwd)(?:[_-]|\z)/i
+      SECRET_NOUN_LAST = /(?:\A|[_-]|(?<=[a-z]))(?:key|token)\z/i
+      SECRET_NAMING = Regexp.union(SECRET_WORDS, SECRET_NOUN_LAST)
+
       # `yaml assignment` needs only a colon and a space, so its name arm admits
       # any `word: text` line in prose or code -- it is the shape that floods.
       # Value-shape only for it, and nothing real is lost: a genuinely named
@@ -281,8 +291,10 @@ module Lain
         def qualifies?(name, key, value)
           return secret_shaped?(value) if VALUE_GATED_ONLY.include?(name)
 
-          (key.match?(NAME_HINT) && substantial?(value)) || secret_shaped?(value)
+          (key.match?(NAME_HINT) && substantial?(value) && !ordinary?(key, value)) || secret_shaped?(value)
         end
+
+        def ordinary?(key, value) = !key.match?(SECRET_NAMING) && unquote(value).match?(ORDINARY_VALUE)
 
         def substantial?(value)
           token = unquote(value)

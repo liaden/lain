@@ -89,15 +89,15 @@ RSpec.describe Lain::Tools::MemoryRead do
     end
 
     it "cannot rewrite an item it read masked" do
-      item = Lain::Memory::Item.new(id: "note", description: "d", body: "token_count = 123456\n",
+      item = Lain::Memory::Item.new(id: "note", description: "d", body: "API_KEY=12345678\n",
                                     author: Lain::Memory::Author.clerk(spawn:))
       recorder = Lain::Memory::Recorder.new(index: Lain::Memory::Index.empty.write(item))
-      rewrite = { "id" => "note", "description" => "d", "body" => "token_count = 1\n" }
+      rewrite = { "id" => "note", "description" => "d", "body" => "API_KEY=1\n" }
       consolidate(Lain::Provider::Mock.new(responses: [tool_response(["tu_r", "memory_read", { "id" => "note" }]),
                                                        tool_response(["tu_w", "memory_write", rewrite]),
                                                        text_response("done")]), recorder)
 
-      expect(recorder.fetch("note").body).to eq("token_count = 123456\n")
+      expect(recorder.fetch("note").body).to eq("API_KEY=12345678\n")
     end
   end
 

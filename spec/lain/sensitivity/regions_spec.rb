@@ -661,6 +661,49 @@ RSpec.describe Lain::Sensitivity::Regions do
       end
     end
 
+    context "when a name that does not name a secret holds an ordinary value" do
+      [
+        "token_count = 123456",
+        'token_count = "123456"',
+        "session_id = blake3:abc123def456",
+        "session_dir=/tmp/foo-bar"
+      ].each do |line|
+        it "reports nothing for #{line}" do
+          expect(detect(line)).to be_empty
+        end
+      end
+
+      it "still masks a full-length digest, which only a short one escapes" do
+        hex = "9f2c4a0e1b7d3f5a6c8e0b2d4f6a8c0e1b3d5f7a9c1e3b5d7f9a1c3e5b7d9f1a3"
+
+        expect(detect("session_id = blake3:#{hex}").map(&:bytes).join).to include(hex)
+      end
+    end
+
+    context "when a name that names a secret holds a number, a digest or a path" do
+      [
+        "PASSWORD=12345678", "passwd=00000000", "OTP_SECRET=12345678", "DB_PASSWORD=987654321",
+        "SESSION_SECRET=1234567890123456", "PASSWORD=\"123456\"", "PIN_TOKEN=482913", "API_KEY=12345678",
+        "PASSWORD=/hunter2/pass", "SECRET=/xK9Zq8pR2vLmN4tYw7", "AUTH_TOKEN=/etc/x",
+        "export CREDENTIALS=/home/x/.aws/creds", "HOST_PWD=/home/tara/dev/lain", "private_checkout=/srv/private/w1",
+        "PASSPHRASE=12345678", "ssh_passphrase=12345678", "DBPASSWORD=12345678", "userpass=12345678",
+        "API_KEY=sha256:9f2c4a0e1b7d", "TOKEN=sha1:abcdef0123", "SECRET_KEY=0123456789abcdef"
+      ].each do |line|
+        it "still masks #{line}" do
+          expect(detect(line)).not_to be_empty
+        end
+      end
+
+      it "masks only the value of DATABASE_PASSWORD and SESSION_SECRET" do
+        expect(detect("DATABASE_PASSWORD=hunter2").map(&:bytes)).to eq(["hunter2"])
+        expect(detect("SESSION_SECRET=Zq8x!pR2vL").map(&:bytes)).to eq(["Zq8x!pR2vL"])
+      end
+
+      it "still masks an issuer token under a hinted name" do
+        expect(detect("API_TOKEN=#{secret}").map(&:bytes)).to eq([secret])
+      end
+    end
+
     # Quotes belong to the file's syntax, not to the secret. Including them would
     # split one secret across two digests -- quoted and unquoted differ, so the
     # digest cache misses -- and, decisively, masking a span that carries its own

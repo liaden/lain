@@ -1510,10 +1510,18 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       expect(recall(clean)).to eq(Lain::Tool::Result.ok("author: chat\n#{clean}"))
     end
 
-    # A known false positive, accepted: bash output masks it the same way. A
-    # detector that narrows it turns this red on purpose.
+    # A known false positive, accepted: a word under a hinted name is masked as
+    # bash output masks it. A detector that narrows it turns this red on purpose.
     it "masks a substantial value under a name holding a credential word, as bash output does" do
-      expect(recall("token_count = 123456").content).to start_with("author: chat\ntoken_count = <redacted:1>")
+      expect(recall("token_label = abc123def").content).to start_with("author: chat\ntoken_label = <redacted:1>")
+    end
+
+    it "masks a number under a name that names a password" do
+      expect(recall("PASSWORD=12345678").content).to start_with("author: chat\nPASSWORD=<redacted:1>")
+    end
+
+    it "delivers a number under a name holding a credential word unmasked" do
+      expect(recall("token_count = 123456")).to eq(Lain::Tool::Result.ok("author: chat\ntoken_count = 123456"))
     end
 
     it "leaves a whole lineage digest unmasked, as lain's own content address" do
