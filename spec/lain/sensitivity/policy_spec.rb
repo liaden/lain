@@ -839,11 +839,21 @@ RSpec.describe Lain::Sensitivity::Policy do
       names = Array.new(300) { |i| File.join(dirs[i % 20], "f#{i}.txt").delete_prefix("./") }
       names.each { File.write(File.join(real_root, _1), "x\n") }
       policy = listed_policy(real_root)
-      allow(File).to receive(:realpath).and_call_original
+      own = Thread.current
+      calls = 0
+      allow(File).to receive(:realpath).and_wrap_original do |original, *args|
+        calls += 1 if Thread.current.equal?(own)
+        original.call(*args)
+      end
+      stray = Thread.new { loop { File.realpath(real_root) } }
 
-      masks = masked(policy, names, real_root)
+      masks = begin
+        masked(policy, names, real_root)
+      ensure
+        stray.kill.join
+      end
 
-      expect(File).to have_received(:realpath).at_most(21).times
+      expect(calls).to be <= 21
       expect(masks).to eq(judged(policy, names, real_root))
     end
 
