@@ -88,7 +88,7 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
     [sha, ref]
   end
 
-  def red_worker(id)
+  def red_worker(id, attempt: 1)
     git("switch", "-q", "--detach", tip)
     path = "spec/unit/models/order_spec.rb"
     FileUtils.mkdir_p(File.join(@repo, File.dirname(path)))
@@ -96,16 +96,22 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
     git("add", path)
     git("commit", "-q", "-m", Lain::Epic::RedCommit.subject(path, "c0ffee"))
     sha = git("rev-parse", "HEAD")
-    git("update-ref", Lain::Isolation::Worktree::Handback::Naming.new("issue.demo.#{id}.1").ref, sha)
+    git("update-ref", Lain::Isolation::Worktree::Handback::Naming.new("issue.demo.#{id}.#{attempt}").ref, sha)
     git("switch", "-q", "epic/demo")
     sha
   end
 
-  def approve(issue_id, sha)
+  def approve(issue_id, sha, approved: true)
     digest = Lain::Epic::Submission.implementation(slug: "demo", issue_id:, digest: sha).digest
     decisions << Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: "demo", stage: "implementation",
-                                              approved: true, answered_by: "human", policy: "hands_off",
+                                              approved:, answered_by: "human", policy: "hands_off",
                                               latency: 0.0, issue_id:)
+  end
+
+  def deny(issue_id, sha) = approve(issue_id, sha, approved: false)
+
+  def anchor(id, attempt, sha)
+    git("update-ref", Lain::Isolation::Worktree::Handback::Naming.new("issue.demo.#{id}.#{attempt}").ref, sha)
   end
 
   def transitions
@@ -169,6 +175,22 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
 
       expect { landing.call("b", sha:, ref:) }.to raise_error(Lain::Epic::Gate::NotApproved, /issue b/)
       expect(contains?(sha)).to be(false)
+    end
+
+    it "does not count a digest approved and then denied as approved" do
+      approve("a", "a" * 40)
+      deny("a", "a" * 40)
+      digest = Lain::Epic::Submission.implementation(slug: "demo", issue_id: "a", digest: "a" * 40).digest
+
+      expect(approvals.approved?(digest, "a")).to be(false)
+    end
+
+    it "counts a digest denied and then approved as approved" do
+      deny("a", "a" * 40)
+      approve("a", "a" * 40)
+      digest = Lain::Epic::Submission.implementation(slug: "demo", issue_id: "a", digest: "a" * 40).digest
+
+      expect(approvals.approved?(digest, "a")).to be(true)
     end
 
     # Read as "not approved", a damaged decision sent the human to approve a
@@ -414,6 +436,71 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
         expect(error.message).to include("only the failing-test commit is anchored for issue greet; re-run the issue")
         expect(error.message).not_to include(sha, "epic submit")
       }
+    end
+
+    context "when an issue was re-run and its first attempt's commit was denied" do
+      it "names no sha when the later attempt anchored only its failing-test commit" do
+        old, = worker("greet", "README" => "attempt 1\n")
+        deny("greet", old)
+        red_worker("greet", attempt: 2)
+
+        expect { landing.anchored("greet") }.to raise_error(Lain::Epic::Gate::NotApproved) { |error|
+          expect(error.message).to include("only the failing-test commit is anchored for issue greet; re-run the issue")
+          expect(error.message).not_to include(old, "epic submit")
+        }
+      end
+
+      it "offers the newest attempt's commit and not an older one" do
+        old, = worker("greet", "README" => "attempt 1\n")
+        git("switch", "-q", "--detach", tip)
+        newest = commit("README" => "attempt 2\n")
+        git("switch", "-q", "epic/demo")
+        anchor("greet", 2, newest)
+
+        expect { landing.anchored("greet") }.to raise_error(Lain::Epic::Gate::NotApproved) { |error|
+          expect(error.message).to include(newest)
+          expect(error.message).not_to include(old)
+        }
+      end
+
+      context "with an issue id long enough that Naming cuts the attempt number off" do
+        let(:long_id) { "x" * 70 }
+
+        it "still offers every anchor, whichever attempt it was" do
+          first, = worker(long_id, "README" => "attempt 1\n")
+          git("switch", "-q", "--detach", tip)
+          second = commit("README" => "attempt 2\n")
+          git("switch", "-q", "epic/demo")
+          anchor(long_id, 2, second)
+
+          expect { landing.anchored(long_id) }.to raise_error(Lain::Epic::Gate::NotApproved) { |error|
+            expect(error.message).to include(first, second)
+          }
+        end
+
+        it "still withholds a denied one among them" do
+          first, = worker(long_id, "README" => "attempt 1\n")
+          deny(long_id, first)
+          git("switch", "-q", "--detach", tip)
+          second = commit("README" => "attempt 2\n")
+          git("switch", "-q", "epic/demo")
+          anchor(long_id, 2, second)
+
+          expect { landing.anchored(long_id) }.to raise_error(Lain::Epic::Gate::NotApproved) { |error|
+            expect(error.message).to include(second)
+            expect(error.message).not_to include(first)
+          }
+        end
+      end
+
+      it "offers no denied commit even when it is the newest anchored" do
+        old, = worker("greet", "README" => "attempt 1\n")
+        deny("greet", old)
+
+        expect { landing.anchored("greet") }.to raise_error(Lain::Epic::Gate::NotApproved) { |error|
+          expect(error.message).not_to include(old)
+        }
+      end
     end
 
     it "refuses a failing-test commit an implementation gate approved, and moves nothing to done" do

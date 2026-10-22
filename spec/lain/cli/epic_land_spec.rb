@@ -83,7 +83,7 @@ RSpec.describe Lain::CLI::EpicLand, :seam do
     sha
   end
 
-  def red_worker(id)
+  def red_worker(id, attempt: 1)
     git("switch", "-q", "--detach", tip)
     path = "spec/unit/models/order_spec.rb"
     FileUtils.mkdir_p(File.join(root, File.dirname(path)))
@@ -91,7 +91,7 @@ RSpec.describe Lain::CLI::EpicLand, :seam do
     git("add", path)
     git("commit", "-q", "-m", Lain::Epic::RedCommit.subject(path, "c0ffee"))
     sha = git("rev-parse", "HEAD")
-    git("update-ref", Lain::Isolation::Worktree::Handback::Naming.new("issue.demo.#{id}.1").ref, sha)
+    git("update-ref", Lain::Isolation::Worktree::Handback::Naming.new("issue.demo.#{id}.#{attempt}").ref, sha)
     git("switch", "-q", "epic/demo")
     sha
   end
@@ -105,8 +105,8 @@ RSpec.describe Lain::CLI::EpicLand, :seam do
     end
   end
 
-  def decision(stage, issue_id, digest)
-    Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: "demo", stage:, approved: true,
+  def decision(stage, issue_id, digest, approved: true)
+    Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: "demo", stage:, approved:,
                                  answered_by: "human", policy: "hands_off", latency: 0.0, issue_id:)
   end
 
@@ -286,6 +286,20 @@ RSpec.describe Lain::CLI::EpicLand, :seam do
       expect { command.land("a", "demo") }.to raise_error(Lain::Epic::Gate::NotApproved, /failing-test commit/)
       expect(tip).to eq(before)
       expect(progress.status("a")).to eq("in_flight")
+    end
+
+    it "offers no sha of a denied first attempt when the re-run anchored only its failing-test commit" do
+      old = worker("a", "README" => "attempt 1\n")
+      denial = decision("implementation", "a",
+                        Lain::Epic::Submission.implementation(slug: "demo", issue_id: "a", digest: old).digest,
+                        approved: false)
+      session(plan_approval("a"), denial)
+      red_worker("a", attempt: 2)
+
+      expect { command.land("a", "demo") }.to raise_error(Lain::Epic::Gate::NotApproved) { |error|
+        expect(error.message).to include("re-run the issue")
+        expect(error.message).not_to include(old)
+      }
     end
 
     it "refuses an issue whose plan is not approved as it stands now" do

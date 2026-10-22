@@ -230,11 +230,24 @@ module Lain
       end
 
       def missing_approval(issue_id, candidates)
-        shas = candidates.select { |_, ref| anchored_for?(issue_id, ref) }.map(&:first).uniq
+        shas = offerable(issue_id, candidates)
         return unanchored(issue_id) if shas.empty?
 
         implementations = shas.reject { |sha| @red.only?(sha) }
         implementations.empty? ? failing_tests_only(issue_id) : unapproved(issue_id, implementations)
+      end
+
+      # Only the newest attempt's commits, and none a gate denied: an older
+      # attempt was superseded by the re-run, and a denial is not an invitation.
+      def offerable(issue_id, candidates)
+        anchors = candidates.filter_map { |sha, ref| [sha, attempt_of(issue_id, ref)] if anchored_for?(issue_id, ref) }
+        newest = anchors.filter_map(&:last).max
+        current = anchors.select { |_, attempt| newest.nil? || attempt == newest }
+        current.map(&:first).uniq.reject { |sha| denied?(issue_id, sha) }
+      end
+
+      def denied?(issue_id, sha)
+        @approvals.denied?(Epic::Submission.implementation(slug: @epic_slug, issue_id:, digest: sha).digest, issue_id)
       end
 
       def failing_tests(issue_id) = "holds only issue #{issue_id}'s failing tests; re-run the issue -- nothing landed"
@@ -259,14 +272,28 @@ module Lain
       # free; an epic slug holds no dot and the attempt is digits, so another id
       # cannot match.
       def anchored_for?(issue_id, ref)
+        stem, name = anchor_parts(issue_id, ref)
+        return name.start_with?(stem) if truncated?(stem)
+
+        name.match?(attempt_pattern(stem))
+      end
+
+      # nil when the slug was cut at SLUG_LIMIT: the attempt number went with
+      # it, so such an anchor stays offered whatever the others' attempts are.
+      def attempt_of(issue_id, ref)
+        stem, name = anchor_parts(issue_id, ref)
+        truncated?(stem) ? nil : name[attempt_pattern(stem), 1]&.to_i
+      end
+
+      def anchor_parts(issue_id, ref)
         naming = Isolation::Worktree::Handback::Naming
         sample = naming.new("issue.#{@epic_slug}.#{issue_id}.1").ref.delete_prefix("#{naming::REF_NAMESPACE}/")
-        stem = sample.sub(/-\h+\z/, "")
-        name = ref.to_s.delete_prefix("#{naming::REF_NAMESPACE}/")
-        return name.start_with?(stem) if stem.length >= naming::SLUG_LIMIT
-
-        name.match?(/\A#{Regexp.escape(stem.delete_suffix("1"))}\d+-\h+\z/)
+        [sample.sub(/-\h+\z/, ""), ref.to_s.delete_prefix("#{naming::REF_NAMESPACE}/")]
       end
+
+      def truncated?(stem) = stem.length >= Isolation::Worktree::Handback::Naming::SLUG_LIMIT
+
+      def attempt_pattern(stem) = /\A#{Regexp.escape(stem.delete_suffix("1"))}(\d+)-\h+\z/
 
       def ambiguous(issue_id, shas)
         "issue #{issue_id}'s implementation gate approved #{shas.size} different commits (#{shas.join(", ")}); " \
@@ -325,11 +352,11 @@ module Lain
           new(Journal.records(entries, type: Epic::SignoffQueue::JOURNAL_TYPE)
                      .map { |decision| readable!(decision) }
                      .select { |decision| implementation?(decision) }
-                     .to_set { |decision| [decision["issue_id"], decision["artifact_digest"]] })
+                     .to_h { |decision| [[decision["issue_id"], decision["artifact_digest"]], decision["approved"]] })
         end
 
         def self.implementation?(decision)
-          decision["approved"] == true && decision["stage"] == "implementation" && !decision["issue_id"].to_s.empty?
+          decision["stage"] == "implementation" && !decision["issue_id"].to_s.empty?
         end
         private_class_method :implementation?
 
@@ -344,12 +371,16 @@ module Lain
         end
         private_class_method :readable!
 
-        def initialize(pairs)
-          @pairs = pairs.freeze
+        # @param verdicts [Hash{Array, String, String => Boolean}] the newest
+        #   verdict per issue and digest, the rule {Epic::SignoffQueue#approved?} reads by
+        def initialize(verdicts)
+          @verdicts = verdicts.freeze
           freeze
         end
 
-        def approved?(digest, issue_id) = @pairs.include?([issue_id.to_s, digest.to_s])
+        def approved?(digest, issue_id) = @verdicts[[issue_id.to_s, digest.to_s]] == true
+
+        def denied?(digest, issue_id) = @verdicts[[issue_id.to_s, digest.to_s]] == false
       end
 
       # A re-sync's commit, handed to the queue only when it would itself be
