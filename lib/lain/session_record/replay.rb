@@ -12,7 +12,8 @@ module Lain
     # calls they answer, in recorded order -- so a read counts on a resumed
     # chain exactly when the turn that delivered it is on that chain. A
     # {Telemetry::TodoSnapshot} folds into {Session#write_todos} in RECORDED
-    # order, so its replace-not-merge semantics do the rest. A
+    # order and at the head it was written at, so the list a chain restores is
+    # the newest one written on that chain. A
     # {Telemetry::CompactionCut} folds into {Session#record_compaction_cut} in
     # recorded order too, which is how a resumed session renders a committed
     # cut's replacement byte for byte instead of asking a model for it again,
@@ -57,17 +58,23 @@ module Lain
         @records = entries.to_a
       end
 
+      # The recorded memory view is attached last: placing the todo lists on
+      # `on` moves the Session along that chain, and the view is already the
+      # chain's own fold, which a second follow would re-derive differently.
+      #
+      # @param on [Ext::Timeline] the chain the resumed run stands on; its todo
+      #   list is the newest one written on it
       # @return [Session] a fresh Session carrying the recorded read-set, the
-      #   pin-set the recorded transitions fold to, the LAST recorded todo
-      #   list, every committed compaction cut, and the manifest reminders the
-      #   recorded memory chain reconstructs
-      def session
-        Session.new(memory:).tap do |fresh|
+      #   pin-set the recorded transitions fold to, the todo list, every
+      #   committed compaction cut, and the manifest reminders the recorded
+      #   memory chain reconstructs
+      def session(on:)
+        Session.new.tap do |fresh|
           restore_reads(fresh)
           restore_pins(fresh)
-          restore_todos(fresh)
+          restore_todos(fresh, on)
           restore_cuts(fresh)
-        end
+        end.watch_memory(memory)
       end
 
       # The ONE recorder {#session}'s manifest projects from -- public and
@@ -145,7 +152,24 @@ module Lain
 
       def restore_pins(fresh) = pins.each { |record| apply_pin(fresh, record) }
 
-      def restore_todos(fresh) = todo_records.each { |record| fresh.write_todos(items(record)) }
+      # Every list is written again at the head it was recorded at, so a later
+      # rewind finds each list where the live session held it.
+      def restore_todos(fresh, chain)
+        placed_todos.each { |record, head| fresh.on_chain(placed_on(chain, head)).write_todos(items(record)) }
+        fresh.rewound_to(chain)
+      end
+
+      def placed_on(chain, head)
+        raise Bench::Session::Corrupt, unwritten_head(head) unless head.nil? || head.is_a?(String)
+
+        chain.checkout(head)
+      rescue Ext::Store::MissingObject
+        raise Bench::Session::Corrupt, unwritten_head(head)
+      end
+
+      def unwritten_head(head)
+        "a todo_snapshot record names head #{head.inspect}, which this session record never wrote"
+      end
 
       # Recorded order puts every parent ahead of its child, and the Session
       # refuses a child whose parent it has not folded -- so a truncated record
@@ -242,8 +266,16 @@ module Lain
         direction ? fresh.record_pin(digest) : fresh.record_unpin(digest)
       end
 
-      def todo_records
-        Journal.records(@records, type: TODO_SNAPSHOT_TYPE)
+      # A snapshot written before snapshots carried their head is placed at the
+      # turn recorded last before it, which is the round it was written in.
+      def placed_todos
+        Journal.records(@records).inject([nil, []]) do |(turn, placed), record|
+          case record["type"]
+          when TODO_SNAPSHOT_TYPE then [turn, placed << [record, record.fetch("head", turn)]]
+          when SessionRecord::TURN_TYPE then [record.fetch("digest"), placed]
+          else [turn, placed]
+          end
+        end.last
       end
 
       def items(record)

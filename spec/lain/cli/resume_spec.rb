@@ -98,6 +98,16 @@ RSpec.describe Lain::CLI::Resume do
     path
   end
 
+  # A spec-owned root, so the launch reads no skills from the developer's tree.
+  def through_launch(options)
+    root = File.join(@state_home, "project").tap { |dir| FileUtils.mkdir_p(dir) }
+    project = Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag)
+    launch = Lain::CLI::ChatLaunch.new({ journal: false, provider: "ollama", max_tokens: 16, **options },
+                                       resume_factory: -> { described_class.new(paths:) },
+                                       project_factory: -> { project })
+    launch.send(:resumed_run, launch.backend)
+  end
+
   def write_closed(name, timeline, extra: [], provider: nil, compaction: {})
     write_session(name,
                   [open_header(provider:,
@@ -496,22 +506,12 @@ RSpec.describe Lain::CLI::Resume do
         agent.timeline
       end
 
-      # A spec-owned root, so the launch reads no skills from the developer's tree.
-      def resumed_through_launch
-        root = File.join(@state_home, "project").tap { |dir| FileUtils.mkdir_p(dir) }
-        project = Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag)
-        launch = Lain::CLI::ChatLaunch.new({ resume: "", journal: false, provider: "ollama", max_tokens: 16 },
-                                           resume_factory: -> { described_class.new(paths:) },
-                                           project_factory: -> { project })
-        launch.send(:resumed_run, launch.backend)
-      end
-
       it "comes back with the prompt under its recovered answer, at the digests an uninterrupted run gives" do
         path = killed_session
         expect(journal_records(path).map { |record| record["type"] }).not_to include("turn")
         frame_the_reply(path)
 
-        result = resumed_through_launch
+        result = through_launch(resume: "")
 
         expect(result.timeline.to_a.map { |turn| [turn.role, turn.content] })
           .to eq([["user", text("say iota")], ["assistant", text("iota")]])
@@ -970,6 +970,99 @@ RSpec.describe Lain::CLI::Resume do
       expect { resume.call }.to raise_error(described_class::Refusal, refusal.call("resume"))
       expect { resume.fork(selector: "20260101@#{prefix}") }
         .to raise_error(described_class::Refusal, refusal.call("fork"))
+    end
+  end
+
+  # A todo list is written at a head, and a rewind or a fork leaves some of
+  # those heads off the chain the next run stands on. Either door restores the
+  # newest list its own chain still carries, never the newest one written.
+  describe "the todo list a resumed chain restores" do
+    let(:planned) do
+      chain("plan the garden", "writing IRIS", "IRIS written", "writing TULIP", "TULIP written")
+    end
+    let(:turns) { planned.to_a }
+    let(:kept) { turns[2].digest }
+
+    def todos(*contents) = contents.map { |content| Struct.new(:content, :status).new(content, "pending") }
+
+    def snapshot(content, head) = Lain::Telemetry::TodoSnapshot.from(todos(content), head:).to_journal
+
+    def headless(content) = snapshot(content, nil).except("head")
+
+    def turn_record(index) = Lain::SessionRecord.turn(turns[index])
+
+    def rewound_past_tulip = Lain::SessionRecord.rewound(from: planned.head_digest, to: kept)
+
+    # The record a live chat writes: each list journaled at the head its round
+    # opened on, the two turns of a round between.
+    def recorded(snapshots)
+      [open_header, turn_record(0), turn_record(1), snapshots.first, turn_record(2), turn_record(3),
+       snapshots.last, turn_record(4), rewound_past_tulip, closed_record(kept)]
+    end
+
+    def todo_reminder(result) = result.session.reminders.grep(/\ACurrent todo list/).join
+
+    it "restores the list the rewound chain kept, not the one written after it" do
+      write_session("20260101T000000-1.ndjson",
+                    recorded([snapshot("IRIS", turns[1].digest), snapshot("TULIP", turns[3].digest)]))
+
+      result = through_launch(resume: "")
+
+      expect(result.timeline.head_digest).to eq(kept)
+      expect(todo_reminder(result)).to include("IRIS")
+      expect(todo_reminder(result)).not_to include("TULIP")
+    end
+
+    it "restores, through the fork door, the list of the chain the fork stands on" do
+      write_session("20260101T000000-1.ndjson",
+                    recorded([snapshot("IRIS", turns[1].digest), snapshot("TULIP", turns[3].digest)]))
+
+      result = through_launch(fork: "20260101@#{kept.delete_prefix("blake3:")[0, 12]}")
+
+      expect(todo_reminder(result)).to include("IRIS")
+      expect(todo_reminder(result)).not_to include("TULIP")
+    end
+
+    it "restores the kept chain's list when a kept /btw fork of the rewound head is resumed" do
+      write_session("20260101T000000-1.ndjson",
+                    recorded([snapshot("IRIS", turns[1].digest), snapshot("TULIP", turns[3].digest)]))
+      side = Lain::Dag::Factory.timeline(store: planned.store, head_digest: kept)
+                               .commit(role: :assistant, content: text("a side answer"))
+      write_session("20260102T000000-1.ndjson",
+                    [open_header(resumed_from: { "file" => "20260101T000000-1.ndjson", "head" => kept }),
+                     Lain::SessionRecord.turn(side.head), closed_record(side.head_digest)])
+
+      result = through_launch(resume: "20260102")
+
+      expect(todo_reminder(result)).to include("IRIS")
+      expect(todo_reminder(result)).not_to include("TULIP")
+    end
+
+    it "places a headless snapshot on the chain by where the file wrote it" do
+      write_session("20260101T000000-1.ndjson", recorded([headless("IRIS"), headless("TULIP")]))
+
+      result = through_launch(resume: "")
+
+      expect(todo_reminder(result)).to include("IRIS")
+      expect(todo_reminder(result)).not_to include("TULIP")
+    end
+
+    it "refuses a snapshot whose head is not a digest, naming the record" do
+      write_session("20260101T000000-1.ndjson", recorded([snapshot("IRIS", turns[1].digest),
+                                                          snapshot("TULIP", turns[3].digest).merge("head" => 7)]))
+
+      expect { through_launch(resume: "") }
+        .to raise_error(described_class::Refusal,
+                        /\Acannot resume 20260101T000000-1.ndjson: a todo_snapshot record names head 7,/)
+    end
+
+    it "refuses a snapshot whose head this session record never wrote, naming the record" do
+      unwritten = "blake3:#{"0" * 64}"
+      write_session("20260101T000000-1.ndjson", recorded([snapshot("IRIS", unwritten),
+                                                          snapshot("TULIP", turns[3].digest)]))
+
+      expect { through_launch(resume: "") }
+        .to raise_error(described_class::Refusal, /a todo_snapshot record names head "#{unwritten}"/)
     end
   end
 

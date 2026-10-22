@@ -146,7 +146,10 @@ RSpec.describe Lain::SessionRecord::Replay do
   let(:journal) { Lain::Journal.new(io: journal_io) }
   let(:journaled) { Lain::Session.new(journal:) }
 
-  def replayed = described_class.new(journal_io.string.each_line).session
+  # The chain a record with no turn records resumes onto.
+  def empty_chain = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+
+  def replayed = described_class.new(journal_io.string.each_line).session(on: empty_chain)
 
   it "rebuilds a pin, and a pin that was later retracted rebuilds as not pinned" do
     journaled.record_pin("blake3:aaaa1111")
@@ -187,8 +190,8 @@ RSpec.describe Lain::SessionRecord::Replay do
       pin_lines = lines.select { |line| JSON.parse(line)["type"] == "session_pin" }
       reversed = (lines - pin_lines) + pin_lines.reverse
 
-      expect(described_class.new(lines).session.pinned?("blake3:aaaa1111")).to be(false)
-      expect(described_class.new(reversed).session.pinned?("blake3:aaaa1111")).to be(true)
+      expect(described_class.new(lines).session(on: empty_chain).pinned?("blake3:aaaa1111")).to be(false)
+      expect(described_class.new(reversed).session(on: empty_chain).pinned?("blake3:aaaa1111")).to be(true)
     end
 
     it "folds interleaved digests independently, with no cross-talk" do
@@ -230,7 +233,7 @@ RSpec.describe Lain::SessionRecord::Replay do
   # folds by truthiness trusts more than the writer ever promised. Salvaged and
   # hand-edited journals are exactly what this record type exists to survive.
   describe "a malformed pinned field" do
-    def replay_raw(*records) = described_class.new(records.map(&:to_json)).session
+    def replay_raw(*records) = described_class.new(records.map(&:to_json)).session(on: empty_chain)
 
     it "refuses a string 'false' rather than replaying it as PINNED" do
       expect { replay_raw({ "type" => "session_pin", "digest" => "blake3:aaaa1111", "pinned" => "false" }) }

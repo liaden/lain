@@ -80,9 +80,9 @@ RSpec.describe "Project memory across chats", :seam do
   # the rebuilt timeline, which rides separately.
   def resumption(io)
     replayed = replay(io)
+    timeline = Lain::Bench::Session::Loader.new(io.string.each_line).recording.timeline
     Struct.new(:recorder, :session, :notices, :timeline)
-          .new(replayed.memory, replayed.session, [],
-               Lain::Bench::Session::Loader.new(io.string.each_line).recording.timeline)
+          .new(replayed.memory, replayed.session(on: timeline), [], timeline)
   end
 
   def manifest_of(run) = run.fetch(:provider).requests.map { |request| request.cache_payload.to_s }.join

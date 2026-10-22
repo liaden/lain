@@ -346,7 +346,7 @@ RSpec.describe "a handoff when no cut can make room", :seam do
     end
 
     def resumed(line, keep_last:)
-      session = Lain::SessionRecord::Replay.new(journal_io.string.each_line).session
+      session = Lain::SessionRecord::Replay.new(journal_io.string.each_line).session(on: line)
       built = source(fallback: Lain::Compaction::Source::Fallback::None, keep_last:)
       [built.context_for(base: context, timeline: line, usage: nil, session:)
             .render(timeline: line, toolset:, workspace: Lain::Workspace.empty).messages, session]
@@ -403,7 +403,7 @@ RSpec.describe "a handoff when no cut can make room", :seam do
 
     def resumed_text(compaction)
       line = live_line
-      session = Lain::SessionRecord::Replay.new(journal_io.string.each_line).session
+      session = Lain::SessionRecord::Replay.new(journal_io.string.each_line).session(on: line)
       backend = Lain::CLI::Backend.new(flags, compaction:, root: Dir.pwd)
       built = backend.pipeline_source(cache_profile: Lain::CacheProfile::NO_CACHING)
       Lain::Canonical.dump(built.context_for(base: context, timeline: line, usage: nil, session:)

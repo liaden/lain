@@ -1004,8 +1004,10 @@ RSpec.describe Lain::CLI::ToolGuard do
         Lain::Telemetry::SourceMasked.new(tool_use_id: "tu_1", kind: :file, key: "/repo/.env", regions: 1,
                                           released: 0)
 
-      expect(Lain::SessionRecord::Replay.new(journal_io.string.each_line).session.withheld?(Lain::Session::Withheld::Source.file("/repo/.env")))
-        .to be(true)
+      resumed = Lain::SessionRecord::Replay.new(journal_io.string.each_line)
+                                           .session(on: Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store))
+
+      expect(resumed.withheld?(Lain::Session::Withheld::Source.file("/repo/.env"))).to be(true)
     end
   end
 

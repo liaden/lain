@@ -72,6 +72,9 @@ RSpec.describe Lain::SessionRecord::Replay do
 
   def records = journal_records(journal_io)
 
+  # The chain a record with no turn records resumes onto.
+  def empty_chain = timeline(0)
+
   def todo(content) = Struct.new(:content, :status).new(content, "completed")
 
   # The same chain, grown to `size` turns under {#timeline}'s roles.
@@ -93,7 +96,7 @@ RSpec.describe Lain::SessionRecord::Replay do
       resumed_source = source(oracle: resumed_oracle, need: Lain::Compaction::Need.new(byte_threshold: 1_000_000),
                               hard_cap: 1_000_000)
 
-      resumed = rendered(resumed_source, line, described_class.new(journal_io.string.each_line).session)
+      resumed = rendered(resumed_source, line, described_class.new(journal_io.string.each_line).session(on: line))
 
       expect(records.map { |record| record["type"] }).to include("compaction_cut")
       expect(recorded_oracle.asks).to eq(1)
@@ -116,7 +119,7 @@ RSpec.describe Lain::SessionRecord::Replay do
       end
       recorded = rendered(recorder, grown, recording)
       resumed_oracle = counting_oracle_class.new
-      resumed_session = described_class.new(journal_io.string.each_line).session
+      resumed_session = described_class.new(journal_io.string.each_line).session(on: grown)
 
       resumed = rendered(stepping(resumed_oracle, Lain::Channel::Null.instance), grown, resumed_session)
 
@@ -144,7 +147,7 @@ RSpec.describe Lain::SessionRecord::Replay do
       end
       live = step.call(line)
       resumed_oracle = counting_oracle_class.new
-      resumed_session = described_class.new(journal_io.string.each_line).session
+      resumed_session = described_class.new(journal_io.string.each_line).session(on: line)
 
       resumed = rendered(stepping(resumed_oracle, Lain::Channel::Null.instance), line, resumed_session)
 
@@ -173,7 +176,7 @@ RSpec.describe Lain::SessionRecord::Replay do
                                            collapses: [{ "span" => %w[blake3:one blake3:two], "content" => [] }])
       )
 
-      expect { described_class.new(journal_io.string.each_line).session }
+      expect { described_class.new(journal_io.string.each_line).session(on: empty_chain) }
         .to raise_error(Lain::Bench::Session::Corrupt, /supersedes.*blake3:lost/)
     end
 
@@ -187,7 +190,7 @@ RSpec.describe Lain::SessionRecord::Replay do
         cut.address
       end
 
-      expect(described_class.new(journal_io.string.each_line).session.compaction_cuts)
+      expect(described_class.new(journal_io.string.each_line).session(on: empty_chain).compaction_cuts)
         .to eq(writer.compaction_cuts)
     end
 
@@ -203,14 +206,14 @@ RSpec.describe Lain::SessionRecord::Replay do
       )
       orphaned = journal_io.string.each_line.map { |line| JSON.parse(line).merge("parent" => "blake3:lost") }
 
-      expect { described_class.new(orphaned).session }
+      expect { described_class.new(orphaned).session(on: empty_chain) }
         .to raise_error(Lain::Bench::Session::Corrupt, /record chain is incomplete.*blake3:lost/)
     end
 
     it "replays a record with no cut to a session holding none" do
       Lain::Session.new(journal:).record_read("/tmp/a.rb")
 
-      expect(described_class.new(journal_io.string.each_line).session.compaction_cuts).to eq([])
+      expect(described_class.new(journal_io.string.each_line).session(on: empty_chain).compaction_cuts).to eq([])
     end
   end
 
@@ -252,8 +255,9 @@ RSpec.describe Lain::SessionRecord::Replay do
 
     def resume_and_edit
       lines = journal_io.string.each_line.to_a
-      resumed = agent([edit, text_response("tried")], session: described_class.new(lines).session,
-                                                      timeline: Lain::Bench::Session.load(lines).timeline)
+      timeline = Lain::Bench::Session.load(lines).timeline
+      resumed = agent([edit, text_response("tried")], session: described_class.new(lines).session(on: timeline),
+                                                      timeline:)
       resumed.ask("edit it")
       resumed.timeline.ancestors.flat_map(&:content).find { |block| block["tool_use_id"] == "tu_edit" }
     end
@@ -323,7 +327,7 @@ RSpec.describe Lain::SessionRecord::Replay do
       it "still parks a read_file of the file after the resume" do
         searched
         queue = Lain::Approval::Parked::Queue.new(journal: Lain::Journal.new(io: approvals_io), timeout: 0.1)
-        resumed = described_class.new(journal_io.string.each_line).session
+        resumed = described_class.new(journal_io.string.each_line).session(on: Lain::Bench::Session.load(journal_io.string.each_line.to_a).timeline)
 
         through(guard(queue), "read_file", { "path" => path }, Lain::Tools::ReadFile.new, resumed)
 
@@ -334,14 +338,14 @@ RSpec.describe Lain::SessionRecord::Replay do
     it "withholds a read no recorded turn delivered, as a round torn before its results landed" do
       Lain::Session.new(journal:).record_read(path, tool_use_id: "tu_torn")
 
-      expect(described_class.new(journal_io.string.each_line).session.read?(path)).to be(false)
+      expect(described_class.new(journal_io.string.each_line).session(on: empty_chain).read?(path)).to be(false)
     end
 
     it "refuses a read record whose span names no lines, as a corrupt session record" do
       Lain::Session.new(journal:).record_read(path, lines: 3..9)
       bogus = journal_io.string.each_line.map { |line| JSON.parse(line).merge("lines" => [0, nil]) }
 
-      expect { described_class.new(bogus).session }
+      expect { described_class.new(bogus).session(on: empty_chain) }
         .to raise_error(Lain::Bench::Session::Corrupt, /session_read record .* cannot be rebuilt.*lines must be/)
     end
 
@@ -351,12 +355,14 @@ RSpec.describe Lain::SessionRecord::Replay do
     it "refuses a read record written before reads carried spans, as a corrupt session record" do
       old = [{ "type" => "session_read", "path" => "/tmp/a.rb", "complete" => true }]
 
-      expect { described_class.new(old).session }
+      expect { described_class.new(old).session(on: empty_chain) }
         .to raise_error(Lain::Bench::Session::Corrupt, /before reads carried line spans/)
     end
 
     it "refuses a withheld-round marker that names no round, as a corrupt session record" do
-      expect { described_class.new([{ "type" => "session_read_withheld", "rounds" => [["h", nil]] }]).session }
+      unbuildable = [{ "type" => "session_read_withheld", "rounds" => [["h", nil]] }]
+
+      expect { described_class.new(unbuildable).session(on: empty_chain) }
         .to raise_error(Lain::Bench::Session::Corrupt, /session_read_withheld record cannot be rebuilt/)
     end
 
@@ -364,7 +370,7 @@ RSpec.describe Lain::SessionRecord::Replay do
       bad = [{ "type" => "session_read", "path" => "/tmp/a.rb", "lines" => [1, nil], "identity" => {},
                "tool_use_id" => nil, "head" => nil }]
 
-      expect { described_class.new(bad).session }
+      expect { described_class.new(bad).session(on: empty_chain) }
         .to raise_error(Lain::Bench::Session::Corrupt, /identity must carry exactly/)
     end
   end
@@ -432,7 +438,7 @@ RSpec.describe Lain::SessionRecord::Replay do
     end
 
     def disagreements(live, timeline, heads)
-      sessions = [live.withhold_undelivered, described_class.new(journal_io.string.each_line).session]
+      sessions = [live.withhold_undelivered, described_class.new(journal_io.string.each_line).session(on: timeline)]
       heads.flat_map { |head| head.ancestors.map(&:digest) }.uniq.filter_map do |digest|
         differing = differing_at(sessions, timeline.checkout(digest))
         [digest, differing] unless differing.empty?
@@ -476,7 +482,7 @@ RSpec.describe Lain::SessionRecord::Replay do
       [asked, delivered].each { |turn| journal << Lain::SessionRecord.turn(turn.head) }
       lines = parent_io.string.lines + ["#{JSON.generate(header(root.head_digest))}\n"] + journal_io.string.lines
 
-      replayed = described_class.new(lines).session.on_chain(delivered)
+      replayed = described_class.new(lines).session(on: delivered)
 
       expect([replayed.read?(file("b")), replayed.read?(file("a"))]).to eq([true, false])
     end
@@ -496,7 +502,7 @@ RSpec.describe Lain::SessionRecord::Replay do
       delivered.ancestors.take(4).reverse_each { |turn| journal << Lain::SessionRecord.turn(turn) }
       session.on_chain(delivered)
 
-      replayed = described_class.new(journal_io.string.each_line).session.on_chain(delivered)
+      replayed = described_class.new(journal_io.string.each_line).session(on: delivered)
 
       expect([session.read?(file("b")), session.read?(file("a"))]).to eq([true, false])
       expect([replayed.read?(file("b")), replayed.read?(file("a"))]).to eq([true, false])
@@ -512,14 +518,14 @@ RSpec.describe Lain::SessionRecord::Replay do
       [root, torn].each { |turn| torn_io << "#{JSON.generate(Lain::SessionRecord.turn(turn.head))}\n" }
       killed.on_chain(torn)
       killed.record_read(file("a"), tool_use_id: "ollama-tool-0")
-      resumed = described_class.new(torn_io.string.lines).session.journals_into(journal)
+      resumed = described_class.new(torn_io.string.lines).session(on: torn).journals_into(journal)
       repair = torn.commit(role: :user, content: Lain::Tool::Cancellation.new(torn.head, kind: :unknown).blocks)
       asked = asking(repair.commit(role: :user, content: [{ "type" => "text", "text" => "again" }]), 2)
       delivered = live_round(resumed, asked, "b")
       delivered.ancestors.take(4).reverse_each { |turn| journal << Lain::SessionRecord.turn(turn) }
       lines = torn_io.string.lines + ["#{JSON.generate(header(torn.head_digest))}\n"] + journal_io.string.lines
 
-      again = described_class.new(lines).session.on_chain(delivered)
+      again = described_class.new(lines).session(on: delivered)
 
       expect([resumed.on_chain(delivered).read?(file("b")), again.read?(file("b"))]).to eq([true, true])
     end
@@ -548,7 +554,7 @@ RSpec.describe Lain::SessionRecord::Replay do
       session.record_delivery(digest: rerun.head_digest, parent: asked.head_digest, content: rerun.head.content)
       rerun.ancestors.take(5).reverse_each { |turn| journal << Lain::SessionRecord.turn(turn) }
 
-      replayed = described_class.new(journal_io.string.each_line).session
+      replayed = described_class.new(journal_io.string.each_line).session(on: rerun)
 
       expect([session, replayed].map { |side| side.on_chain(rerun).read?(path) }).to eq([false, false])
     end
@@ -578,7 +584,7 @@ RSpec.describe Lain::SessionRecord::Replay do
       journal << Lain::Telemetry::SourceMasked.new(tool_use_id: "tu_m", kind:, key:, regions: 1, released: 0)
     end
 
-    def resumed = described_class.new(journal_io.string.each_line).session
+    def resumed = described_class.new(journal_io.string.each_line).session(on: empty_chain)
 
     def overwrite(session)
       invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_w", context: session)
@@ -671,7 +677,7 @@ RSpec.describe Lain::SessionRecord::Replay do
       replayed = described_class.new(recorded)
 
       expect(replayed.memory.index.to_h.keys).to contain_exactly("seeded", "written")
-      expect(replayed.session.reminders.join).to include("seeded", "written")
+      expect(replayed.session(on: empty_chain).reminders.join).to include("seeded", "written")
     end
 
     it "drops a write the chain was rewound past" do
@@ -722,6 +728,88 @@ RSpec.describe Lain::SessionRecord::Replay do
 
     it "rebuilds an empty view for a record that carries no memory at all" do
       expect(described_class.new([{ "type" => "session" }]).memory.index).to be_empty
+    end
+
+    # Placing the todo lists walks the Session along the chain, and a walk
+    # that refolded this view would lay the first file's write back over the
+    # newer seed the resumed file opened on.
+    it "renders the newest file's seed over an earlier file's write once the session is placed on its chain" do
+      written = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                                  .commit(role: :user, content: [text(1)])
+                                  .commit(role: :assistant, content: write_turn("d1", "shared").fetch("content"))
+                                  .commit(role: :user, content: answered("d2", "shared", parent: "d1").fetch("content"))
+      reseeded = Lain::Memory::Item.new(id: "shared", description: "rewritten since", body: "newer body")
+      chain = [{ "type" => "session" }, *written.to_a.map { |turn| Lain::SessionRecord.turn(turn) },
+               { "type" => "session" }, loaded_record(reseeded)]
+
+      manifest = described_class.new(chain).session(on: written).reminders.join
+
+      expect(manifest).to include("rewritten since")
+      expect(manifest).not_to include("about shared")
+    end
+  end
+
+  # A todo list is written at a head; the list a chain restores is the newest
+  # one written on that chain, so a list a rewind or a fork left behind stays
+  # behind across the resume.
+  describe "the todo list a chain restores" do
+    let(:line) { timeline(5) }
+    let(:turns) { line.to_a }
+    let(:kept) { line.checkout(turns[2].digest) }
+
+    def list(content) = [Struct.new(:content, :status).new(content, "pending")]
+
+    def snapshot(content, head) = Lain::Telemetry::TodoSnapshot.from(list(content), head:).to_journal
+
+    def turn_record(index) = Lain::SessionRecord.turn(turns[index])
+
+    def written(first, last)
+      [{ "type" => "session" }, turn_record(0), turn_record(1), first, turn_record(2), turn_record(3), last,
+       turn_record(4), Lain::SessionRecord.rewound(from: line.head_digest, to: turns[2].digest)]
+    end
+
+    def headed = written(snapshot("IRIS", turns[1].digest), snapshot("TULIP", turns[3].digest))
+
+    def todo_reminder(session) = session.reminders.grep(/\ACurrent todo list/).join
+
+    it "restores the newest list on the chain, not the newest written" do
+      restored = described_class.new(headed).session(on: kept)
+
+      expect(todo_reminder(restored)).to include("IRIS")
+      expect(todo_reminder(restored)).not_to include("TULIP")
+    end
+
+    it "restores the newest list written when the chain carries it" do
+      expect(todo_reminder(described_class.new(headed).session(on: line))).to include("TULIP")
+    end
+
+    it "carries a list written before any turn onto every chain" do
+      record = [{ "type" => "session" }, snapshot("IRIS", nil), turn_record(0), turn_record(1)]
+
+      expect(todo_reminder(described_class.new(record).session(on: kept))).to include("IRIS")
+    end
+
+    it "places a snapshot with no head at the head the file had moved to when it was written" do
+      headless = written(snapshot("IRIS", nil).except("head"), snapshot("TULIP", nil).except("head"))
+      restored = described_class.new(headless).session(on: kept)
+
+      expect(todo_reminder(restored)).to include("IRIS")
+      expect(todo_reminder(restored)).not_to include("TULIP")
+    end
+
+    it "keeps the plan-step count of every list written, the rewound ones included" do
+      stepped = written(Lain::Telemetry::TodoSnapshot.from([todo("a")], head: turns[1].digest).to_journal,
+                        Lain::Telemetry::TodoSnapshot.from([todo("a"), todo("b")], head: turns[3].digest).to_journal)
+
+      expect(described_class.new(stepped).session(on: kept).plan_step_completions).to eq(2)
+    end
+
+    it "puts a rewind after the resume back on the list its chain carries" do
+      restored = described_class.new(headed[0..-2]).session(on: line)
+      restored.rewound_to(kept)
+
+      expect(todo_reminder(restored)).to include("IRIS")
+      expect(todo_reminder(restored)).not_to include("TULIP")
     end
   end
 end

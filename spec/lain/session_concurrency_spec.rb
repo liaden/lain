@@ -208,7 +208,7 @@ RSpec.describe "Session read completeness under concurrent gather" do
   let(:release) { Async::Queue.new }
 
   def read_records = journal_records(journal_io, "session_read")
-  def replayed = Lain::SessionRecord::Replay.new(journal_io.string.each_line).session.on_chain(@delivered)
+  def replayed = Lain::SessionRecord::Replay.new(journal_io.string.each_line).session(on: @delivered)
 
   def reader(name, complete)
     SessionConcurrencySpecSupport::GatedReadTool.new(name:, path:, complete:, entered:, release:)

@@ -298,7 +298,7 @@ module Lain
       # human is told when the repair CANNOT be made names which door they used.
       def result(door, timeline, replay, open:, notices:)
         built = Result.new(file: door.file, timeline: settled(door, timeline),
-                           recorded: timeline, session: replay.session, recorder: replay.memory,
+                           recorded: timeline, session: replay.session(on: timeline), recorder: replay.memory,
                            open:, notices:)
         built.repaired? ? built.with(notices: [*notices, repair_notice(built)]) : built
       end

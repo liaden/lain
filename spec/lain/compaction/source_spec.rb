@@ -1843,8 +1843,8 @@ RSpec.describe Lain::Compaction::Source do
       line = timeline(8)
       complete_a_step(session)
       context_for(built, line)
-      forked_session = Lain::SessionRecord::Replay.new(journal_io.string.each_line).session
       forked = at(line, 6)
+      forked_session = Lain::SessionRecord::Replay.new(journal_io.string.each_line).session(on: forked)
       fresh = stepping
 
       messages = render(fresh.context_for(base:, timeline: forked, usage: nil, session: forked_session),
@@ -1866,7 +1866,7 @@ RSpec.describe Lain::Compaction::Source do
         render(context_for(built, line), line).messages
       end
       sizes = journal_io.string.each_line.select { |entry| entry.include?(%("type":"compaction_cut")) }.map(&:bytesize)
-      resumed = Lain::SessionRecord::Replay.new(journal_io.string.each_line).session
+      resumed = Lain::SessionRecord::Replay.new(journal_io.string.each_line).session(on: line)
 
       replayed = render(forcing.context_for(base:, timeline: line, usage: nil, session: resumed), line).messages
 
@@ -1883,7 +1883,7 @@ RSpec.describe Lain::Compaction::Source do
     it "does not hold a cut another arm committed, and journals the retreat" do
       line = timeline(6)
       context_for(forcing, line)
-      resumed = Lain::SessionRecord::Replay.new(journal_io.string.each_line).session
+      resumed = Lain::SessionRecord::Replay.new(journal_io.string.each_line).session(on: line)
       other = source(need: build_need(byte_threshold: 1_000_000), hard_cap: 1_000_000,
                      strategy: Lain::Compaction::Strategy::Summarizing.new(oracle: SourceSpecSpanOracle.new("b")))
 
@@ -2035,7 +2035,7 @@ RSpec.describe Lain::Compaction::Source do
         JSON.generate(record)
       end
       expect(old_shape).not_to eq(journal_io.string.each_line.map { |entry| JSON.generate(JSON.parse(entry)) })
-      resumed = Lain::SessionRecord::Replay.new(old_shape).session
+      resumed = Lain::SessionRecord::Replay.new(old_shape).session(on: line)
 
       messages = render(stepping.context_for(base:, timeline: line, usage: nil, session: resumed), line).messages
 

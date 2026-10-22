@@ -756,8 +756,11 @@ RSpec.describe Lain::SessionRecord::Replay do
 
   def todo(content, status) = Struct.new(:content, :status).new(content, status)
 
+  # The chain a record with no turn records resumes onto.
+  def empty_chain = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+
   def replayed_session(source = journal_io.string.each_line)
-    described_class.new(source).session
+    described_class.new(source).session(on: empty_chain)
   end
 
   # Reads and todos round-trip.
@@ -857,8 +860,8 @@ RSpec.describe Lain::SessionRecord::Replay do
       # on a read line: a salvaged journal that lost the read still rebuilds the
       # refusal.
       it "masks from the redaction alone, with no session_read to modify" do
-        fresh = described_class.new([{ "type" => "source_masked", "tool_use_id" => "t", "kind" => "file",
-                                       "key" => "/tmp/.env", "regions" => 1, "released" => 0 }]).session
+        fresh = replayed_session([{ "type" => "source_masked", "tool_use_id" => "t", "kind" => "file",
+                                    "key" => "/tmp/.env", "regions" => 1, "released" => 0 }])
 
         expect(fresh.withheld?(Lain::Session::Withheld::Source.file("/tmp/.env"))).to be(true)
         expect(fresh.read?("/tmp/.env")).to be(false)
@@ -923,8 +926,8 @@ RSpec.describe Lain::SessionRecord::Replay do
       end
 
       it "replays a memory source_masked record alone, for its id only" do
-        fresh = described_class.new([{ "type" => "source_masked", "tool_use_id" => "t", "kind" => "memory",
-                                       "key" => "db-creds", "regions" => 1, "released" => 0 }]).session
+        fresh = replayed_session([{ "type" => "source_masked", "tool_use_id" => "t", "kind" => "memory",
+                                    "key" => "db-creds", "regions" => 1, "released" => 0 }])
 
         expect(fresh.withheld?(Lain::Session::Withheld::Source.memory("db-creds"))).to be(true)
         expect(fresh.withheld?(Lain::Session::Withheld::Source.memory("other"))).to be(false)
