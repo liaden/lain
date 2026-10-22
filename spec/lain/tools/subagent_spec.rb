@@ -2724,6 +2724,24 @@ RSpec.describe Lain::Tools::Subagent do
         end
       end
 
+      context "when a worker that committed hits its iteration ceiling" do
+        let(:report) do
+          Lain::Isolation::WorkerHandoff::Report.new(kind: :queued, ref: "refs/lain/worker/subagent-1-abc")
+        end
+        let(:looping) { mock(tool_response(["c1", "cwd", {}]), tool_response(["c2", "cwd", {}])) }
+
+        it "tells the parent where the commits went, once" do
+          tool = build_subagent(provider: looping, toolset: cwd_only, policy: spawn_policy(only: %i[cwd]),
+                                isolation: handing, budget: Lain::Budget.ceilings(iterations: 2))
+
+          expect { tool.run("go") }.to raise_error(Lain::Budget::Exceeded) do |error|
+            expect(error.message).to start_with("loop ran 2 iterations, ceiling is 2")
+            expect(error.message).to end_with("[#{report.summary}]")
+          end
+          expect(handoff.calls).to eq([[:surrender, spawned_id, false]])
+        end
+      end
+
       it "gives the answer back byte-identical when the handback has nothing to report" do
         tool = build_subagent(provider: mock(text_response("child answer")), toolset: cwd_only,
                               policy: spawn_policy(only: %i[cwd]), isolation: handing)

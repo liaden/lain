@@ -236,6 +236,54 @@ RSpec.describe Lain::Isolation::Leases do
     end
   end
 
+  # The surrender is the one place that knows where a failed worker's commits
+  # went, and the parent is reading the error, so the error carries it.
+  describe "the handback of a dispatch that raised" do
+    let(:calls) { [] }
+    let(:report) do
+      Lain::Isolation::WorkerHandoff::Report.new(kind: :queued, ref: "refs/lain/worker/subagent-spawn.1")
+    end
+    let(:handoff) do
+      recorded = calls
+      told = report
+      Class.new do
+        define_method(:surrender) do |lease, worker_id:, sync:|
+          recorded << [:surrender, worker_id, sync]
+          lease.release
+          told
+        end
+      end.new
+    end
+    let(:leases) { described_class.new(backend:, handoff:) }
+
+    def ceiling = Lain::Budget::Exceeded.new("loop ran 2 iterations, ceiling is 2", kind: :iterations)
+
+    it "appends where the commits went, keeping the error's class and kind" do
+      expect { leases.hold("subagent", journal:) { raise ceiling } }.to raise_error do |error|
+        expect(error).to be_a(Lain::Budget::Exceeded)
+        expect(error.kind).to eq(:iterations)
+        expect(error.message).to eq("loop ran 2 iterations, ceiling is 2\n\n" \
+                                    "[the worker's commits are on refs/lain/worker/subagent-spawn.1, " \
+                                    "not yet on the branch]")
+      end
+    end
+
+    it "surrenders once" do
+      expect { leases.hold("subagent", journal:) { raise ceiling } }.to raise_error(Lain::Budget::Exceeded)
+
+      expect(calls.map(&:first)).to eq([:surrender])
+    end
+
+    it "leaves the message alone when nothing was handed back" do
+      nothing = described_class.new(backend:, handoff: Class.new do
+        def surrender(lease, **) = lease.release.then { Lain::Isolation::WorkerHandoff::Report.nothing }
+      end.new)
+
+      expect { nothing.hold("subagent", journal:) { raise ceiling } }
+        .to raise_error(Lain::Budget::Exceeded, "loop ran 2 iterations, ceiling is 2")
+    end
+  end
+
   # A lane names where this pool's workers are numbered. Every worktree of one
   # repository shares refs/lain/worker/, so two lanes' worker 1 must not spell
   # one id.

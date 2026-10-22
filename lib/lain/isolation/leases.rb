@@ -180,13 +180,15 @@ module Lain
       # block under the leased environment, give it back.
       #
       # A block that RETURNED is reclaimed: its work is handed back, and a
-      # conflict may spawn a resolver. Every other exit is SURRENDERED from
-      # the `ensure` -- anchored, with nothing spawned while an exception
-      # climbs. `ensure` and not `rescue StandardError`, because a cancelled
-      # dispatch raises `Async::Stop`, which is not a StandardError, and a
-      # child cancelled mid-ask has left its checkout as unreachable as one
-      # that returned. The lease is how the two are told apart: a reclaim
-      # always releases it, and an acquire that refused left none.
+      # conflict may spawn a resolver. Every other exit is SURRENDERED --
+      # anchored, with nothing spawned while an exception climbs. A
+      # StandardError is surrendered from the rescue, so its report can ride
+      # the error and the parent reading it learns where the commits went. All
+      # else is surrendered from the `ensure`, because a cancelled dispatch
+      # raises `Async::Stop`, which is not a StandardError, and a child
+      # cancelled mid-ask has left its checkout as unreachable as one that
+      # returned. The lease is how the two are told apart: a reclaim always
+      # releases it, and an acquire that refused left none.
       #
       # A surrendered checkout is synced first when its block never did, with
       # nobody to ask, so uncommitted work a failed child left behind is named
@@ -212,11 +214,22 @@ module Lain
                       ->(asked) { synced = @sync.call(lease, worker: asked, worker_id: worker) }, worker)
         synced ||= SelfSync::Result::NONE
         Held.new(value:, sync: synced, report: reclaim(lease, worker, journal, synced))
+      rescue StandardError => e
+        raise told(e, lease, worker, journal, synced)
       ensure
         surrender(lease, worker, journal, synced) unless lease.nil? || lease.released?
       end
 
       private
+
+      # The surrender runs here for a StandardError, so its report can ride the
+      # error the parent reads; the `ensure` then finds the lease released.
+      def told(error, lease, worker, journal, synced)
+        return error if lease.nil?
+
+        note = surrender(lease, worker, journal, synced).summary
+        note.empty? ? error : error.exception("#{error.message}\n\n[#{note}]")
+      end
 
       def reclaim(lease, worker, journal, synced)
         tolerated(worker, journal) { @handoff.reclaim(lease, worker_id: worker, sync: synced) }
