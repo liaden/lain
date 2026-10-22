@@ -1099,7 +1099,7 @@ RSpec.describe Lain::CLI::Repl do
     def typed_during(iteration, bytes)
       terminal.await(/ITERATION #{iteration}\b/)
       terminal.type(bytes)
-      sleep(0.2)
+      terminal.await(Regexp.new(Regexp.escape(bytes.chomp)))
       terminal.finish(iteration)
     end
 
@@ -1167,10 +1167,8 @@ RSpec.describe Lain::CLI::Repl do
         terminal.await(/ITERATION 2\b/)
         terminal.finish(2)
         terminal.await(%r{\[y/N\] })
-        sleep(0.3)
         terminal.type("/goal off\r")
-        terminal.await(%r{held as your next prompt: /goal off})
-        sleep(0.5)
+        terminal.await(%r{held as your next prompt: /goal off(.|\n)*\[y/N\] })
       end
 
       def answered_n
