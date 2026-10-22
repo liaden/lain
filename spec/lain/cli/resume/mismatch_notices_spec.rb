@@ -115,4 +115,37 @@ RSpec.describe Lain::CLI::Resume::MismatchNotices do
 
     expect(described_class.new(path:).call(profile: Lain::CLI::RunProfile::UNRECORDED, model: nil)).to be_empty
   end
+
+  describe "the output ceiling" do
+    def session_with_ceiling(ceiling)
+      header = Lain::SessionRecord.header(context: Lain::Context.new(model: "qwen3:4b", max_tokens: ceiling),
+                                          toolset: Lain::Toolset.new, writer: CoreGraph::NO_WRITER)
+      File.join(@dir, "session.ndjson").tap { |path| File.write(path, "#{JSON.generate(header)}\n") }
+    end
+
+    def mismatch(path) = described_class.new(path:)
+
+    let(:typed_path) { session_with_ceiling(Lain::OutputCeiling.typed(4096)) }
+
+    it "hands an untyped resume the typed ceiling the session launched with" do
+      expect(mismatch(typed_path).typed_ceiling).to eq(4096)
+    end
+
+    it "inherits nothing from a ceiling nobody typed" do
+      [Lain::OutputCeiling.command_default(4096), Lain::OutputCeiling.for(model: "sonnet", window: nil),
+       Lain::OutputCeiling.fixed(4096)].each do |ceiling|
+        expect(mismatch(session_with_ceiling(ceiling)).typed_ceiling).to be_nil
+      end
+    end
+
+    it "names a different typed value against the recorded typed one" do
+      expect(mismatch(typed_path).ceiling_notice(8192))
+        .to eq("recorded with --max-tokens 4096; continuing with 8192 (the current flags win)")
+    end
+
+    it "stays silent when the typed value agrees, or none was typed" do
+      expect(mismatch(typed_path).ceiling_notice(4096)).to be_nil
+      expect(mismatch(typed_path).ceiling_notice(nil)).to be_nil
+    end
+  end
 end

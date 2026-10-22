@@ -319,7 +319,10 @@ RSpec.describe Lain::CLI::Command::Btw, "the side chat's backend" do
   def resolved_backend(argv)
     seen = nil
     wiring = instance_double(Lain::CLI::Wiring, conductor: instance_spy(Lain::CLI::Conductor), exit_status: 0)
-    allow(wiring).to receive(:run) { |backend:, **| seen = backend }
+    allow(wiring).to receive(:run) do |backend:, resumed: nil, **|
+      @resumed = resumed
+      seen = backend
+    end
     allow(Lain::CLI::Wiring).to receive(:new).and_return(wiring)
     views = instance_double(Lain::CLI::LiveViews, views: nil, fleet: nil)
     allow(Lain::CLI::LiveViews).to receive(:new).and_return(views)
@@ -332,5 +335,35 @@ RSpec.describe Lain::CLI::Command::Btw, "the side chat's backend" do
 
     expect(argv).to include("--btw", "--fork", "--prompt", "a side question")
     expect(resolved_backend(argv).run_profile.provider).to eq("ollama")
+  end
+
+  describe "a parent launched with --max-tokens" do
+    let(:session_path) do
+      context = Lain::Context.new(model: "qwen3:4b", max_tokens: Lain::OutputCeiling.typed(4096))
+      records = [Lain::SessionRecord.header(context:, toolset: Lain::Toolset.new, profile: { "provider" => "ollama" },
+                                            writer: CoreGraph::NO_WRITER),
+                 *timeline.to_a.map { |turn| Lain::SessionRecord.turn(turn) },
+                 Lain::Telemetry::SessionClosed.new(head: timeline.head_digest, reason: :exit).to_journal]
+      File.join(Lain::Paths.new.sessions_dir, "20260101T000000-1.ndjson").tap do |path|
+        File.write(path, records.map { |record| "#{JSON.generate(record)}\n" }.join)
+      end
+    end
+
+    let(:fork_argv) { composed_command("a side question").shellsplit.drop_while { |word| word != "exec" }.drop(2) }
+
+    it "sends the same ceiling from the child, recorded as typed" do
+      backend = resolved_backend(fork_argv)
+
+      expect(backend.context.max_tokens).to eq(4096)
+      expect(backend.context.output_ceiling.source).to eq(:typed)
+    end
+
+    it "keeps a --max-tokens typed on the fork, and says what it replaced" do
+      backend = resolved_backend([*fork_argv, "--max-tokens", "8192"])
+
+      expect(backend.context.max_tokens).to eq(8192)
+      expect(@resumed.notices)
+        .to include("recorded with --max-tokens 4096; continuing with 8192 (the current flags win)")
+    end
   end
 end

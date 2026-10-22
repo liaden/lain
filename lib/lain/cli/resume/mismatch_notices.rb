@@ -28,8 +28,11 @@ module Lain
 
         # @param path [String] the session file's own path, whose header holds
         #   both the recorded model and the recorded profile
-        def initialize(path:)
+        # @param header [Hash, nil] a header the caller already read, so a path
+        #   is not read twice
+        def initialize(path:, header: nil)
           @path = path
+          @header = header
         end
 
         # What the header recorded, for a caller that lays its typed flags over
@@ -48,6 +51,22 @@ module Lain
         # @return [Array<String>] one notice per disagreement, model first
         def call(profile:, model:, compaction: nil, arms: nil)
           [model_notice(model), *typed_notices(profile), *compaction_notices(compaction), *arm_notices(arms)].compact
+        end
+
+        # Only a ceiling the human typed carries over: a per-model or default
+        # one is re-resolved by the run that resumes it.
+        #
+        # @return [Integer, nil] the ceiling the session was launched with via
+        #   `--max-tokens`; nil when the recording did not type one
+        def typed_ceiling
+          header["max_tokens"] if header["max_tokens_source"] == "typed"
+        end
+
+        # @param typed [Integer, nil] the `--max-tokens` the current run was typed with
+        # @return [String, nil] a notice when it replaces the recorded typed ceiling
+        def ceiling_notice(typed)
+          recorded = typed_ceiling
+          continuing("--max-tokens", recorded, typed) unless typed.nil? || recorded.nil? || typed == recorded
         end
 
         private

@@ -224,8 +224,8 @@ module Lain
       # into the system prompt: the skills and slots the Backend loads are the
       # named project's, not the ones in whatever directory the shell was in.
       def backend
-        @backend ||= Backend.new(@options, profile:, compaction:, root: project.root, middleware: configured_middleware,
-                                           environment:)
+        @backend ||= Backend.new(backend_options, profile:, compaction:, root: project.root,
+                                                  middleware: configured_middleware, environment:)
       end
 
       # The ONE {RunProfile} the run's backend is built from: what was typed,
@@ -386,15 +386,29 @@ module Lain
       # read-only (never salvages it) and wins over --resume when both are
       # given.
       def resumed_run(backend)
-        if @options[:fork]
-          return resume.fork_at(fork_point, profile:, model: backend.context.model,
-                                            compaction: @typed_compaction, arms: typed_arms)
-        end
-
-        @options[:resume] &&
-          resume.resume_at(resumed_path, profile:, model: backend.context.model, compaction: @typed_compaction,
-                                         arms: typed_arms)
+        result = if @options[:fork]
+                   resume.fork_at(fork_point, profile:, model: backend.context.model,
+                                              compaction: @typed_compaction, arms: typed_arms)
+                 elsif @options[:resume]
+                   resume.resume_at(resumed_path, profile:, model: backend.context.model, compaction: @typed_compaction,
+                                                  arms: typed_arms)
+                 end
+        result && with_ceiling_notice(result)
       end
+
+      # An untyped ceiling follows the recording only where the recording typed
+      # one, the way a typed compaction flag does.
+      def backend_options
+        inherited = recorded_notices.typed_ceiling
+        inherited.nil? || @options[:max_tokens] ? @options : @options.merge(max_tokens: inherited)
+      end
+
+      def with_ceiling_notice(result)
+        notice = recorded_notices.ceiling_notice(@options[:max_tokens])
+        notice ? result.with(notices: [*result.notices, notice]) : result
+      end
+
+      def recorded_notices = Resume::MismatchNotices.new(path: nil, header: recorded_header)
 
       # Only the header, so a pre-flight may read it too: a recorded profile
       # decides which arm's refusals the flags must pass. Read once, and both
