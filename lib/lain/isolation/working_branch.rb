@@ -12,7 +12,9 @@ module Lain
     # where git's DWIM would turn it into a branch checkout.
     #
     # NEVER FORCE-MOVED. An epic branch is created with git's compare-and-swap
-    # against "must not exist", and an existing one is left exactly where it is.
+    # against "must not exist", and an existing one is left where it is: the
+    # one move this class ever makes is a fast-forward, asked for, of a branch
+    # lain owns.
     # One lain created carries a marker under {OWNED}, which is the only
     # licence anything has to delete it later; a branch a human made never gets
     # one.
@@ -33,6 +35,12 @@ module Lain
       # Stamped into the reflog because git's default `core.logAllRefUpdates`
       # does not log the `refs/lain/` namespace at all.
       CREATED = "lain: created this working branch"
+
+      # Stamped into the reflog of a branch moved onto the base it landed on.
+      FORWARDED = "lain: moved this working branch onto the base it has landed on"
+
+      # Stamped into the reflog of a moved branch a checkout took as it moved.
+      PUT_BACK = "lain: put this working branch back, as a checkout took it while it moved"
 
       # Stamped into the reflog of the anchor a deleted branch's tip is kept on.
       DISCARDED = "lain: kept this working branch's tip before deleting it"
@@ -93,13 +101,19 @@ module Lain
       # @param repo_root [String] the repository the branch lives in
       # @param from [String] where a new branch starts: a full SHA, or the name
       #   of a branch whose tip to take
+      # @param forward [Boolean] move a standing branch that has landed on
+      #   `from` onto it ({#forward})
       # @param shell_out_factory [#call] builds the subprocess runner
       # @return [WorkingBranch]
       # @raise [Refused] when the name is not a legal branch, branches nest
       #   against it, the base names no commit, or a branch stands there that
       #   lain did not create
-      def self.owned(name, repo_root:, from:, shell_out_factory: Shell::Out.public_method(:new))
-        new(name, repo_root:, git: checkout(repo_root, shell_out_factory)).establish(from:, owned_only: true)
+      def self.owned(name, repo_root:, from:, forward: false, shell_out_factory: Shell::Out.public_method(:new))
+        branch = new(name, repo_root:, git: checkout(repo_root, shell_out_factory)).establish(from:, owned_only: true)
+        return branch unless forward
+
+        registry = Worktree::Registry.new(repo_root: File.expand_path(repo_root), shell_out_factory:)
+        branch.forward(from, registry:)
       end
 
       # @param prefix [String] a branch-name prefix, without `refs/heads/` or a
@@ -185,6 +199,31 @@ module Lain
         refuse_unholdable
         refuse_nesting_clash
         exists? ? standing(owned_only) : create(from)
+        self
+      end
+
+      # A branch whose every commit has landed on `from` carries nothing to
+      # keep, so it moves there rather than restart work from a stale base.
+      # Its marker moves in the same transaction: gc reads a branch at its
+      # marker as one nothing has landed on, and one past it as landed work to
+      # reap. A lost race leaves both where the sibling put them.
+      #
+      # A checkout can take the branch between the read of checkouts and the
+      # move, and would then hold a staged revert of everything the move
+      # brought; so checkouts are read again after it, and both refs go back.
+      #
+      # @param from [String] a full SHA, or the name of a branch whose tip to take
+      # @param registry [Worktree::Registry] the repository's checkouts; a
+      #   branch one has out or is rebasing stays where it stands
+      # @return [self]
+      # @raise [Refused] when `from` names a branch that does not exist, or a
+      #   checkout took the branch as it moved and it could not be put back
+      def forward(from, registry:)
+        base = onto(from)
+        held = @git.target(ref)
+        marked = @git.target(owned_ref)
+        moved = behind?(held, base) && !marked.empty? && unheld?(registry) && forwarded?(base, held, marked)
+        put_back!(base, held, marked, registry) if moved && !unheld?(registry)
         self
       end
 
@@ -294,6 +333,39 @@ module Lain
 
       def anchor_for(held) = WorkingBranch.anchor_for(name, held)
 
+      def behind?(held, base) = held != base && @git.ancestor?(held, base)
+
+      def unheld?(registry) = WorkingBranch.holders(registry).fetch(ref, []).empty?
+
+      def forwarded?(base, held, marked)
+        Shell::Out.ok?(swapped(FORWARDED, ref => [base, held], owned_ref => [base, marked]))
+      end
+
+      # A checkout that takes the branch just after the move is put back with
+      # it, so undoing closes one window and opens its mirror; only a human or
+      # a second lain process can reach that one, within milliseconds.
+      def put_back!(base, held, marked, registry)
+        back = swapped(PUT_BACK, ref => [held, base], owned_ref => [marked, base])
+        return if Shell::Out.ok?(back)
+
+        raise Refused, "#{ref} moved onto #{base} as a checkout took it at " \
+                       "#{WorkingBranch.holders(registry).fetch(ref, []).join(", ")}, and could not be put back " \
+                       "at #{held}: #{said(back)}"
+      end
+
+      # Each ref moves from its old value to its new one, compare-and-swapped,
+      # and git applies every line or none.
+      def swapped(reason, moves)
+        lines = moves.map { |name, (to, from)| "update #{name} #{to} #{from}\n" }
+        @git.run("update-ref", "--create-reflog", "-m", reason, "--stdin", input: lines.join)
+      end
+
+      def onto(from)
+        based(from)
+      rescue Refused
+        raise Refused, "#{ref} cannot be moved onto #{from}, which names no commit in #{@repo_root}"
+      end
+
       def anchored(held)
         anchor = anchor_for(held)
         return anchor if Shell::Out.ok?(@git.update_ref(anchor, held, "", reason: DISCARDED))
@@ -401,7 +473,7 @@ module Lain
       # lost swap is a sibling that created it first -- that sibling marks it,
       # and this resolve answers the branch as it found it.
       def create(from)
-        base = FULL_SHA.match?(from) ? from : trunk_tip(from)
+        base = based(from)
         made = @git.update_ref(ref, base, "", reason: CREATED)
         return mark(base) if Shell::Out.ok?(made)
         return if exists?
@@ -415,6 +487,8 @@ module Lain
       # anything non-ASCII -- and the named refusal a caller rescues never
       # arrives. {Checkout#unmerged} re-tags for the same reason.
       def said(shell) = Utf8.legible(shell.stderr).strip
+
+      def based(from) = FULL_SHA.match?(from) ? from : trunk_tip(from)
 
       def trunk_tip(trunk)
         WorkingBranch.new(trunk, repo_root: @repo_root, git: @git).tip

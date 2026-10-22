@@ -21,6 +21,23 @@ class WorkingBranchSpecRacingCheckout < Lain::Isolation::Checkout
   end
 end
 
+# A Registry that runs a hook once, right after its first read of the
+# checkouts: how a sibling's checkout lands between that read and a move.
+class WorkingBranchSpecRacingRegistry < Lain::Isolation::Worktree::Registry
+  def initialize(repo_root:, &hook)
+    super(repo_root:, shell_out_factory: Lain::Shell::Out.public_method(:new))
+    @hook = hook
+  end
+
+  def entries
+    super.tap do
+      fire = @hook
+      @hook = nil
+      fire&.call
+    end
+  end
+end
+
 # What a process killed mid-delete looks like from outside: a git invocation
 # that never runs.
 class WorkingBranchSpecCrash < StandardError; end
@@ -236,6 +253,107 @@ RSpec.describe Lain::Isolation::WorkingBranch, :seam do
 
       expect(again.tip).to eq(created)
       expect(sha("refs/lain/owned/heads/#{name}")).to eq(created)
+    end
+
+    context "when asked to forward a branch lain owns" do
+      def owned_at_main
+        described_class.owned(name, repo_root: @repo_root, from: sha("main"))
+        sha("main")
+      end
+
+      def marker = "refs/lain/owned/heads/#{name}"
+
+      def reasons = run_git(@repo_root, "reflog", "show", "--format=%gs", "refs/heads/#{name}")
+
+      def plain_branch
+        described_class.new(name, repo_root: @repo_root, git: Lain::Isolation::Checkout.new(@repo_root))
+      end
+
+      def registry
+        Lain::Isolation::Worktree::Registry.new(repo_root: @repo_root, shell_out_factory: Lain::Shell::Out.public_method(:new))
+      end
+
+      it "moves a branch that has landed on the base onto it, and its marker with it" do
+        owned_at_main
+        moved = commit("main moved on")
+
+        again = described_class.owned(name, repo_root: @repo_root, from: moved, forward: true)
+
+        expect([again.tip, sha(marker)]).to eq([moved, moved])
+        expect(reasons).to include(described_class::FORWARDED)
+      end
+
+      it "writes nothing when the branch already stands at the base" do
+        base = owned_at_main
+
+        described_class.owned(name, repo_root: @repo_root, from: base, forward: true)
+
+        expect(reasons).not_to include(described_class::FORWARDED)
+      end
+
+      # A delete takes the marker first, so a branch standing without one is
+      # a delete in flight: moving it would hand that delete a moved tip.
+      it "leaves a branch whose marker is gone where it stands, and marks nothing" do
+        base = owned_at_main
+        run_git(@repo_root, "update-ref", "-d", marker)
+        moved = commit("main moved on")
+
+        plain_branch.forward(moved, registry:)
+
+        expect([sha("refs/heads/#{name}"), ref?(marker)]).to eq([base, false])
+      end
+
+      it "refuses a base that names no commit, naming the move" do
+        owned_at_main
+
+        expect { described_class.owned(name, repo_root: @repo_root, from: "nonesuch", forward: true) }
+          .to raise_error(described_class::Refused, /cannot be moved onto nonesuch/)
+      end
+
+      # The checkout took the old tip; moving the branch under it would leave
+      # that checkout holding a staged revert of everything the move brought.
+      it "puts the branch and its marker back when a checkout took it as it moved, leaving that checkout clean" do
+        base = owned_at_main
+        moved = commit("main moved on")
+        Dir.mktmpdir("lain-working-branch-forward-race") do |dir|
+          held = File.join(File.realpath(dir), "held")
+          racing = WorkingBranchSpecRacingRegistry.new(repo_root: @repo_root) do
+            run_git(@repo_root, "worktree", "add", "-q", held, name)
+          end
+
+          branch = plain_branch.forward(moved, registry: racing)
+
+          expect([branch.tip, sha(marker), run_git(held, "status", "--porcelain")]).to eq([base, base, ""])
+        ensure
+          run_git(@repo_root, "worktree", "remove", "--force", held)
+        end
+      end
+
+      it "leaves a branch carrying work the base lacks where it stands, marker and all" do
+        base = owned_at_main
+        work = run_git(@repo_root, "commit-tree", sha("main^{tree}"), "-p", base, "-m", "issue work").strip
+        run_git(@repo_root, "update-ref", "refs/heads/#{name}", work)
+        moved = commit("main moved on")
+
+        again = described_class.owned(name, repo_root: @repo_root, from: moved, forward: true)
+
+        expect([again.tip, sha("refs/lain/owned/heads/#{name}")]).to eq([work, base])
+      end
+
+      it "leaves a branch a checkout has out where it stands, marker and all" do
+        base = owned_at_main
+        moved = commit("main moved on")
+        Dir.mktmpdir("lain-working-branch-forward-held") do |dir|
+          held = File.join(File.realpath(dir), "held")
+          run_git(@repo_root, "worktree", "add", "-q", held, name)
+
+          again = described_class.owned(name, repo_root: @repo_root, from: moved, forward: true)
+
+          expect([again.tip, sha("refs/lain/owned/heads/#{name}")]).to eq([base, base])
+        ensure
+          run_git(@repo_root, "worktree", "remove", "--force", held)
+        end
+      end
     end
 
     # The marker is the only licence anything has to delete a branch later, so

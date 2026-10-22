@@ -402,19 +402,37 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
     expect(provider.call_count).to eq(0)
   end
 
-  # A retry finds the branch its first attempt made. It is reused where it
-  # stands, never reset onto the epic's newer tip.
-  it "reuses an issue branch lain owns where it stands, moving neither it nor its marker" do
-    git(repo, "branch", "lain/issue/demo/a", "main")
+  # A retry finds the branch its first attempt made. One carrying work the
+  # epic lacks is reused where it stands, never reset onto the epic's newer tip.
+  it "reuses an issue branch lain owns that carries unlanded work where it stands, moving neither it nor its marker" do
     main = git(repo, "rev-parse", "main")
+    work = git(repo, "commit-tree", git(repo, "rev-parse", "main^{tree}"), "-p", "main", "-m", "a's work")
+    git(repo, "branch", "lain/issue/demo/a", work)
     git(repo, "update-ref", "refs/lain/owned/heads/lain/issue/demo/a", main)
 
     supervising do |supervisor|
       checkout = launch(supervisor, "a").actor.tap(&:settle).session.worker_env.cwd
 
-      expect(git(checkout, "rev-parse", "HEAD^")).to eq(main)
+      expect(git(checkout, "rev-parse", "HEAD^")).to eq(work)
       expect(git(repo, "rev-parse", "refs/lain/owned/heads/lain/issue/demo/a")).to eq(main)
     end
+    expect(first_prompt(provider.requests.last)).to include("reused", work)
+  end
+
+  # One whose every commit has landed on the epic carries nothing to keep, so
+  # a retry starts it from the epic's tip rather than from a stale base.
+  it "moves a landed issue branch lain owns and its marker to epic/demo's tip, and says it was cut from there" do
+    main = git(repo, "rev-parse", "main")
+    git(repo, "branch", "lain/issue/demo/a", main)
+    git(repo, "update-ref", "refs/lain/owned/heads/lain/issue/demo/a", main)
+
+    supervising do |supervisor|
+      checkout = launch(supervisor, "a").actor.tap(&:settle).session.worker_env.cwd
+
+      expect(git(checkout, "rev-parse", "HEAD^")).to eq(epic_tip)
+      expect(git(repo, "rev-parse", "refs/lain/owned/heads/lain/issue/demo/a")).to eq(epic_tip)
+    end
+    expect(first_prompt(provider.requests.last)).to include("cut from the tip of `epic/demo`")
   end
 
   # A delete running in a sibling reads checkouts once its marker is gone, so a

@@ -384,13 +384,15 @@ module Lain
         # The issue's own lain-owned branch, established at the tip the lease
         # was cut from and checked out. {Isolation::WorkingBranch} owns every
         # rule about it: the legal name, the clash with a branch nested against
-        # it, the marker that licenses a later reaping, and the refusal to claim
-        # a branch lain did not create.
+        # it, the marker that licenses a later reaping, the refusal to claim
+        # a branch lain did not create, and the move of one that has landed.
+        # Held over the repository rather than the lease, so the checkouts the
+        # move reads, and the lock they are keyed by, are the repository's.
         def cut(worker_env, issue_id)
           git = checkout(worker_env.cwd)
           from = git.head.stdout.strip
           branch = Lain::Isolation::WorkingBranch.owned(self.class.branch_name(@slug, issue_id),
-                                                        repo_root: worker_env.cwd, from:,
+                                                        repo_root: @repo_root, from:, forward: true,
                                                         shell_out_factory: @shell_out_factory)
           Cut.new(branch: switched!(git, branch), from:, stood_at: branch.tip)
         end
