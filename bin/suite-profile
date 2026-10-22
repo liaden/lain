@@ -1,0 +1,345 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "fileutils"
+require "json"
+require "open3"
+require "pathname"
+
+# Profiles the whole spec suite through one lens per run and keeps each run in its own directory,
+# tmp/suite-profile/<date>-<lens>/, with a summary.txt. A lens is a whole suite: run it on a quiet box.
+#
+#   bin/suite-profile <lens> [--dry-run]
+#
+# A profiled run is slower, so it is packed by the real runtime log but writes its own, and never
+# overwrites tmp/parallel_runtime_rspec.log. Not a spec: nothing gates on it.
+module SuiteProfile
+  ROOT = Pathname(__dir__).join("..").expand_path
+  SUPPORT = "spec/support/suite_profile"
+  HOOKS = ROOT.join(SUPPORT)
+  USAGE = "usage: bin/suite-profile <dissect|stack-cpu|stack-wall|gc|spawns|rbspy> [--dry-run]"
+
+  # The same two counts CLAUDE.md names for "nothing else is running"; ps | grep over-counts.
+  BUSY_PATTERNS = ["mise/installs/ruby/[0-9.]*/bin/parallel_rspec", "[p]re-commit (hook-impl|run)"].freeze
+
+  # env is what the lens sets; requires are rspec --require hooks under spec/support/suite_profile.
+  Lens = Data.define(:env, :requires) do
+    def initialize(env: {}, requires: [])
+      super
+    end
+  end
+
+  LENSES = {
+    "dissect" => Lens.new(env: { "RD_PROF" => "1", "RD_PROF_TOP" => "25", "TAG_PROF" => "seam" }),
+    "stack-cpu" => Lens.new(env: { "TEST_STACK_PROF" => "1", "TEST_STACK_PROF_MODE" => "cpu" }),
+    "stack-wall" => Lens.new(env: { "TEST_STACK_PROF" => "1", "TEST_STACK_PROF_MODE" => "wall" }),
+    "gc" => Lens.new(requires: %w[gc_per_file]),
+    "spawns" => Lens.new(requires: %w[spawn_tally]),
+    "rbspy" => Lens.new
+  }.freeze
+
+  # A reason to stop before anything runs; status 2 is a usage error, 1 a box that cannot be profiled.
+  class Refusal < StandardError
+    attr_reader :status
+
+    def initialize(message, status: 1)
+      super(message)
+      @status = status
+    end
+  end
+
+  module_function
+
+  def busy_count
+    BUSY_PATTERNS.sum { |pattern| Open3.capture2("pgrep", "-cf", pattern).first.to_i }
+  end
+
+  def which(program, path)
+    path.split(File::PATH_SEPARATOR).map { |dir| File.join(dir, program) }.find { |file| File.executable?(file) }
+  end
+
+  def output_dir(root, date, lens) = root.join("tmp/suite-profile", "#{date}-#{lens}")
+
+  # RUBYOPT reaches the lain children the specs spawn too, so their dumps are suffixed as well.
+  def environment(lens, dir)
+    suffix = "-r#{HOOKS.join("worker_suffix.rb")}"
+    LENSES.fetch(lens).env.merge(
+      "LAIN_SLOW" => "1", "SUITE_PROFILE_DIR" => dir.to_s, "SUITE_PROFILE_LENS" => lens,
+      "RUBYOPT" => [suffix, ENV.fetch("RUBYOPT", nil)].compact.join(" ")
+    )
+  end
+
+  def suite_command(lens, dir)
+    options = ["--format progress", "--format ParallelTests::RSpec::RuntimeLogger --out #{dir.join("runtime.log")}"]
+    options += LENSES.fetch(lens).requires.map { |hook| "--require #{HOOKS.join("#{hook}.rb")}" }
+    ["bundle", "exec", "parallel_rspec", "spec", "-n", ENV.fetch("LAIN_SPEC_WORKERS", "12"),
+     "--group-by", "runtime", "--runtime-log", "tmp/parallel_runtime_rspec.log", "--allowed-missing", "100",
+     "--test-options", options.join(" ")]
+  end
+
+  def command(lens, dir, rbspy: nil)
+    suite = suite_command(lens, dir)
+    return suite unless lens == "rbspy"
+
+    [rbspy, "record", "--subprocesses", "--nonblocking", "--rate", "50", "--format", "summary",
+     "--file", dir.join("rbspy-own.txt").to_s, "--raw-file", dir.join("raw.gz").to_s, "--", *suite]
+  end
+
+  def rbspy_report_command(rbspy, dir)
+    [rbspy, "report", "--format", "collapsed", "--input", dir.join("raw.gz").to_s,
+     "--output", dir.join("collapsed.txt").to_s]
+  end
+
+  def stack_report_command(dir)
+    ["bundle", "exec", "stackprof", "--text", "--limit", "25", *Dir[dir.join("dumps", "*.dump")]]
+  end
+
+  def shown(argv) = argv.map { |arg| arg.match?(/\s/) ? "'#{arg}'" : arg }.join(" ")
+
+  def describe_run(out, dir, env, argv)
+    out.puts "directory  #{dir}"
+    out.puts "env        #{env.map { |key, value| "#{key}=#{value}" }.join(" ")}"
+    out.puts "command    #{shown(argv)}"
+  end
+
+  # Each summarizer turns what its lens left behind into the text of summary.txt.
+  module Summary
+    SECONDS = ->(clock) { clock.split(":").then { |minutes, rest| (minutes.to_i * 60) + rest.to_f } }
+
+    # RSpecDissect's per-worker totals, and the groups with the most setup time across all workers.
+    module Dissect
+      GROUP = %r{^(.+?) \((\S+?):\d+\) – (\S+) of (\S+) / (\d+)}
+
+      module_function
+
+      def call(text)
+        log = text.gsub(/\e\[\d+m/, "")
+        total = log.scan(/^Total time: (\S+)/).flatten.sum(&SECONDS)
+        setup = log.scan(/^Total setup time: (\S+)/).flatten.sum(&SECONDS)
+        header = format("workers %<n>d  total %<total>.1fs  setup %<setup>.1fs (%<pct>.1f%%)",
+                        n: log.scan(/^Total time/).size, total:, setup:, pct: percent(setup, total))
+        [header, *groups(log), "-- TagProf", *log.scan(/^\|\s*seam.*?\n((?:\|.*\n)+)/).flatten.first(3)].join("\n")
+      end
+
+      def percent(part, whole) = whole.zero? ? 0.0 : 100 * part / whole
+
+      def groups(log)
+        rows = log.scan(GROUP).map do |name, file, setup, total, count|
+          [SECONDS[setup], SECONDS[total], count.to_i, file, name]
+        end
+        rows.sort_by { |row| -row[0] }.first(15).map do |setup, total, count, file, name|
+          format("%<setup>6.2fs setup of %<total>6.2fs  %<count>4d ex  %<file>s  %<name>s", setup:, total:, count:,
+                                                                                            file:, name:)
+        end
+      end
+    end
+
+    # One NDJSON file per worker, one record per example plus a closing suite_end record.
+    module Gc
+      FIELDS = %w[wall time total_allocated_objects major_gc_count minor_gc_count].freeze
+
+      module_function
+
+      def call(dir)
+        by_file = Hash.new { |hash, file| hash[file] = Hash.new(0) }
+        ends = []
+        Dir[File.join(dir, "*.ndjson")].each do |path|
+          File.foreach(path) { |line| tally(JSON.parse(line), by_file, ends) }
+        end
+        lines(by_file, ends).join("\n")
+      end
+
+      def tally(record, by_file, ends)
+        return ends << record if record["suite_end"]
+
+        FIELDS.each { |field| by_file[record["file"]][field] += record[field] }
+      end
+
+      def lines(by_file, ends)
+        [headline(by_file), format("whole worker lifetimes: gc %<gc>.1fs", gc: lifetimes(ends)),
+         "top by GC time:", *top(by_file)]
+      end
+
+      def headline(by_file)
+        rows = by_file.values
+        gc = rows.sum { |row| row["time"] } / 1000.0
+        wall = rows.sum { |row| row["wall"] }
+        format("in examples: gc %<gc>.1fs of %<wall>.1fs example wall (%<pct>.1f%%), " \
+               "%<objects>.0fM objects, %<major>d major",
+               gc:, wall:, pct: wall.zero? ? 0.0 : 100 * gc / wall,
+               objects: rows.sum { |row| row["total_allocated_objects"] } / 1e6,
+               major: rows.sum { |row| row["major_gc_count"] })
+      end
+
+      def lifetimes(ends) = ends.sum { |row| row["suite_end"]["time"] } / 1000.0
+
+      def top(by_file)
+        by_file.max_by(20) { |_, row| row["time"] }.map do |file, row|
+          format("%<gc>6.2fs gc %<wall>6.1fs wall %<objects>7.1fM obj %<major>4d major  %<file>s",
+                 gc: row["time"] / 1000.0, wall: row["wall"], objects: row["total_allocated_objects"] / 1e6,
+                 major: row["major_gc_count"], file:)
+        end
+      end
+    end
+
+    # Every git command lib/ spawned, by shape and call site, summed across the workers' files.
+    module Spawns
+      module_function
+
+      def call(dir)
+        tally = Hash.new(0)
+        Dir[File.join(dir, "*.ndjson")].each do |path|
+          File.foreach(path) do |line|
+            row = JSON.parse(line)
+            tally[[row["shape"], row["site"]]] += row["n"]
+          end
+        end
+        top = tally.max_by(40) { |_, count| count }
+        ["== #{tally.values.sum} git spawns", *top.map { |key, count| row(key, count) }].join("\n")
+      end
+
+      def row((shape, site), count) = format("%<count>5d  %<shape>-60s %<site>s", count:, shape: shape[0, 60], site:)
+    end
+
+    # rbspy's collapsed stacks (root first, leaf last; 50 Hz, every thread of every Ruby process), split by
+    # process kind and by what the leaf is doing, then the spec/lib frames that sleep and require most.
+    module Rbspy
+      WAITING = %w[Kernel#sleep Kernel.sleep IO.select IO#readpartial IO#read IO#wait_readable IO#gets
+                   Thread.handle_interrupt Thread::ConditionVariable#wait Thread::SizedQueue#pop Thread::Queue#pop
+                   Process.wait Process.wait2 Thread#value Thread#join].freeze
+      LOADING = /Kernel[#.]require|require_relative|load_from_binary|Zeitwerk/
+      Sample = Data.define(:kind, :state, :site, :sleeping, :count)
+
+      module_function
+
+      def call(collapsed, root: SuiteProfile::ROOT.to_s)
+        samples = collapsed.each_line.map { |line| sample(line, root) }
+        total = samples.sum(&:count)
+        ["#{total} samples = #{(total / 50.0).round} thread-seconds", *states(samples),
+         "-- sleep, by innermost spec/lib frame", *sites(samples.select(&:sleeping), 25),
+         "-- booting (a require on the stack), by innermost spec/lib frame",
+         *sites(samples.select { |s| s.state == :booting }, 12)].join("\n")
+      end
+
+      def sample(line, root)
+        stack, count = line.strip.rpartition(" ").then { |head, _, tail| [head, tail.to_i] }
+        frames = stack.split(";")
+        top = frames.last.split(" - ").first
+        state = state_of(frames, top)
+        Sample.new(kind: kind_of(frames), state:, site: site_of(frames, root),
+                   sleeping: top.start_with?("Kernel#sleep", "Kernel.sleep"), count:)
+      end
+
+      def kind_of(frames)
+        return :rspec_worker if frames.any? { |frame| frame.include?("rspec-core") }
+
+        frames.any? { |frame| frame.include?("exe/lain") } ? :lain_child : :other
+      end
+
+      def state_of(frames, top)
+        return :waiting if WAITING.any? { |name| top.start_with?(name) }
+
+        run_at = frames.rindex { |frame| frame.include?("rspec-core") } || -1
+        frames[(run_at + 1)..].any? { |frame| frame.match?(LOADING) } ? :booting : :cpu
+      end
+
+      def site_of(frames, root)
+        ours = frames.reverse.find { |frame| frame.match?(%r{#{Regexp.escape(root)}/(spec|lib|exe)/}) }
+        ours&.sub(%r{.*?#{Regexp.escape(root)}/}, "")
+      end
+
+      def states(samples)
+        samples.group_by { |s| [s.kind, s.state] }.transform_values { |rows| rows.sum(&:count) }
+               .sort_by { |_, count| -count }
+               .map do |(kind, state), count|
+          format("%<kind>-13s %<state>-8s %<seconds>7.1f s", kind:, state:,
+                                                             seconds: count / 50.0)
+        end
+      end
+
+      def sites(samples, limit)
+        samples.group_by { |s| [s.kind, s.site] }.transform_values { |rows| rows.sum(&:count) }
+               .max_by(limit) { |_, count| count }
+               .map do |(kind, site), count|
+          format("%<seconds>7.1f s  %<kind>-12s %<site>s", seconds: count / 50.0,
+                                                           kind:, site:)
+        end
+      end
+    end
+  end
+
+  def summarize(lens, dir, rbspy:)
+    case lens
+    when "dissect" then Summary::Dissect.call(dir.join("run.log").read)
+    when "gc" then Summary::Gc.call(dir.join("gc"))
+    when "spawns" then Summary::Spawns.call(dir.join("spawns"))
+    when "rbspy"
+      system(*rbspy_report_command(rbspy, dir), exception: true)
+      Summary::Rbspy.call(dir.join("collapsed.txt").read)
+    else Open3.capture2(*stack_report_command(dir)).first
+    end
+  end
+
+  def run_lens(lens, dir, rbspy:, root:)
+    FileUtils.mkdir_p(dir)
+    FileUtils.rm_rf(root.join("tmp/test_prof"))
+    started = Time.now
+    log = dir.join("run.log").to_s
+    success = system(environment(lens, dir), *command(lens, dir, rbspy:), chdir: root.to_s, out: log,
+                                                                          err: %i[child out])
+    FileUtils.mv(root.join("tmp/test_prof"), dir.join("dumps")) if root.join("tmp/test_prof").directory?
+    examples = example_count(dir.join("run.log").read)
+    "lens #{lens}: #{success ? "exit 0" : "failed"}, wall #{(Time.now - started).round}s, #{examples}\n"
+  end
+
+  def example_count(log) = log.scan(/^\d+ examples?, .*$/).last || "no example count"
+
+  def guard_ok? = system(ROOT.join("bin/box-state").to_s, "--guard", out: File::NULL)
+
+  def check!(lens, dir, counter:, path:)
+    running = counter.call
+    raise Refusal, "busy: #{running} suite or hook processes are running" unless running.zero?
+    raise Refusal, "#{dir} already exists; a profile is never overwritten" if dir.exist?
+
+    return nil unless lens == "rbspy"
+
+    which("rbspy", path) || raise(Refusal, "rbspy not found on PATH; install it with `cargo install rbspy`")
+  end
+
+  def parse(argv)
+    lens, flag = argv
+    unknown = !lens.nil? && LENSES.keys.none?(lens)
+    raise Refusal.new("unknown lens #{lens}; lenses: #{LENSES.keys.join(", ")}", status: 2) if unknown
+    raise Refusal.new(USAGE, status: 2) if lens.nil? || argv.size > 2 || ![nil, "--dry-run"].include?(flag)
+
+    [lens, flag]
+  end
+
+  def main(argv, out: $stdout, err: $stderr, counter: method(:busy_count), path: ENV.fetch("PATH", ""),
+           root: ROOT, date: Time.now.strftime("%Y-%m-%d"), guard: method(:guard_ok?))
+    lens, flag = parse(argv)
+    dir = output_dir(root, date, lens)
+    rbspy = check!(lens, dir, counter:, path:)
+    return preview(out, lens, dir, rbspy) if flag
+    raise Refusal, "the box is not quiet; see bin/box-state --guard" unless guard.call
+
+    out.puts record(lens, dir, rbspy:, root:)
+    0
+  rescue Refusal => e
+    err.puts e.message
+    e.status
+  end
+
+  def record(lens, dir, rbspy:, root:)
+    summary = run_lens(lens, dir, rbspy:, root:) + summarize(lens, dir, rbspy:)
+    dir.join("summary.txt").write(summary)
+    summary
+  end
+
+  def preview(out, lens, dir, rbspy)
+    describe_run(out, dir, environment(lens, dir), command(lens, dir, rbspy:))
+    0
+  end
+end
+
+exit SuiteProfile.main(ARGV) if $PROGRAM_NAME == __FILE__
