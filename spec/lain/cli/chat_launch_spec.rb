@@ -93,6 +93,95 @@ RSpec.describe Lain::CLI::ChatLaunch do
     end
   end
 
+  # Built as `exe/lain chat --root P` builds it, the chronicle and the readers
+  # real; only the conversation (the wiring) is swapped out. A project is a
+  # `.lain` directory, so the readers resolve the same root with no help.
+  describe "where the session is filed" do
+    around do |example|
+      Dir.mktmpdir("lain-chat-filing") do |dir|
+        @base = File.realpath(dir)
+        @root = File.join(@base, "project")
+        @elsewhere = File.join(@base, "elsewhere")
+        FileUtils.mkdir_p([File.join(@root, ".lain"), File.join(@root, "sub"), @elsewhere])
+        with_env("HOME" => @base, "XDG_STATE_HOME" => File.join(@base, "state")) { example.run }
+      end
+    end
+
+    def chat_with_root_from(dir)
+      load File.expand_path("../../../exe/lain", __dir__) unless defined?(LainCLI)
+      wiring = instance_double(Lain::CLI::Wiring, conductor: instance_spy(Lain::CLI::Conductor), exit_status: 0)
+      allow(wiring).to receive(:run)
+      allow(Lain::CLI::Wiring).to receive(:new).and_return(wiring)
+      Dir.chdir(dir) { LainCLI.start(["chat", "--root", @root, "--journal"], debug: true) }
+    end
+
+    it "lists a chat run from elsewhere with --root under the root, for `lain sessions` run there" do
+      chat_with_root_from(@elsewhere)
+
+      listing = Dir.chdir(@root) { Lain::CLI::Sessions.new.listing }
+
+      expect(listing).to match(/\d{8}T\d{6}-\d+\.ndjson/)
+    end
+
+    describe "resuming or forking a session of the root from elsewhere" do
+      before do
+        stub_request(:get, %r{/api/ps})
+          .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                     body: JSON.generate("models" => []))
+      end
+
+      let(:timeline) do
+        Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                          .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                          .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
+      end
+
+      def file_under(dir, name)
+        context = Lain::Context.new(model: "qwen3:4b", max_tokens: 64)
+        header = Lain::SessionRecord.header(context:, toolset: Lain::Toolset.new, profile: { "provider" => "ollama" },
+                                            writer: CoreGraph::NO_WRITER)
+        records = [header, *timeline.to_a.map { |turn| Lain::SessionRecord.turn(turn) },
+                   Lain::Telemetry::SessionClosed.new(head: timeline.head_digest, reason: :exit).to_journal]
+        File.write(File.join(dir, name), records.map { |record| "#{JSON.generate(record)}\n" }.join)
+      end
+
+      def launched_from_elsewhere(options)
+        project = Lain::Project.new(root: @root, cwd: @root, kind: :project, detected_by: :flag)
+        seen = {}
+        wiring = instance_double(Lain::CLI::Wiring, conductor: instance_spy(Lain::CLI::Conductor), exit_status: 0)
+        allow(wiring).to receive(:run) { |resumed:, **| seen[:resumed] = resumed }
+        Dir.chdir(@elsewhere) do
+          described_class.new({ journal: false, max_tokens: 16, **options },
+                              profile: Lain::CLI::RunProfile.from_options({}).with_defaults(provider: "ollama"),
+                              wiring_factory: ->(**) { wiring }, project_factory: -> { project },
+                              gc_schedule_factory: ->(**) { -> {} }).call { |_notice| nil }
+        end
+        seen.fetch(:resumed)
+      end
+
+      it "resumes the newest session filed under the root" do
+        file_under(Lain::Paths.new.filing_dir(root: @root), "20260101T000000-1.ndjson")
+
+        expect(launched_from_elsewhere(resume: "").file).to eq("20260101T000000-1.ndjson")
+      end
+
+      it "forks a session filed under the root" do
+        file_under(Lain::Paths.new.filing_dir(root: @root), "20260101T000000-1.ndjson")
+        head = timeline.head_digest.delete_prefix("blake3:")[0, 12]
+
+        expect(launched_from_elsewhere(fork: "20260101@#{head}").timeline.head_digest).to eq(timeline.head_digest)
+      end
+    end
+
+    it "does not file it under the directory the chat was started from" do
+      chat_with_root_from(@elsewhere)
+
+      listing = Dir.chdir(@elsewhere) { Lain::CLI::Sessions.new.listing }
+
+      expect(listing).to start_with("no sessions recorded")
+    end
+  end
+
   describe "resume-before-journal ordering" do
     # The invariant the exe's #chat comment pinned: a resume refusal (nothing
     # to resume, ambiguous selector, mid-tool head) must raise BEFORE any
@@ -271,15 +360,15 @@ RSpec.describe Lain::CLI::ChatLaunch do
   describe "the --nvim + --journal wiring (one journal, not two)" do
     def context = Lain::Context.new(model: "claude-opus-4-8", max_tokens: 16)
 
-    it "opens Journal.default_path exactly once for --journal + --nvim, even across a split-second clock tick" do
+    it "names the journal exactly once for --journal + --nvim, even across a split-second clock tick" do
       Dir.mktmpdir do |dir|
         with_env("XDG_STATE_HOME" => dir) do
           calls = 0
-          allow(Lain::Journal).to receive(:default_path).and_wrap_original do |original, **kwargs|
+          allow(Lain::Journal).to receive(:stem).and_wrap_original do |original|
             calls += 1
             # Simulates the split second: each call would name a DIFFERENT
             # file if more than one were ever made.
-            original.call(**kwargs).sub(/\.ndjson\z/, "-take#{calls}.ndjson")
+            original.call.sub(/\.ndjson\z/, "-take#{calls}.ndjson")
           end
 
           instance = launch({ journal: true, nvim: "/tmp/lain-cli-spec.sock" })
@@ -903,7 +992,8 @@ RSpec.describe Lain::CLI::ChatLaunch, "fork and btw flags" do
                                    live_views_factory: ->(**) {})
 
     expect { instance.call { |_notice| nil } }.to raise_error(Lain::Error, "stop here")
-    expect(chronicle_factory).to have_received(:call).with(enabled: true, btw: true)
+    expect(chronicle_factory).to have_received(:call).with(hash_including(enabled: true, btw: true,
+                                                                          root: kind_of(String)))
   end
 end
 
@@ -1229,7 +1319,7 @@ RSpec.describe Lain::CLI::ChatLaunch, "the session a door selects" do
     records = [Lain::SessionRecord.header(context:, toolset: Lain::Toolset.new, profile:, writer: CoreGraph::NO_WRITER),
                *timeline.to_a.map { |turn| Lain::SessionRecord.turn(turn) },
                Lain::Telemetry::SessionClosed.new(head: timeline.head_digest, reason: :exit).to_journal]
-    File.write(File.join(Lain::Paths.new.sessions_dir, name), records.map do |record|
+    File.write(File.join(Lain::Paths.new.filing_dir(root: @dir), name), records.map do |record|
       "#{JSON.generate(record)}\n"
     end.join)
   end
@@ -1283,7 +1373,7 @@ RSpec.describe Lain::CLI::ChatLaunch, "the session a door selects" do
   describe "the arms a resumed or forked chat runs" do
     def write_armed(arms)
       write_session("20260101T000000-1.ndjson", "http://127.0.0.1:11500")
-      path = File.join(Lain::Paths.new.sessions_dir, "20260101T000000-1.ndjson")
+      path = File.join(Lain::Paths.new.filing_dir(root: @dir), "20260101T000000-1.ndjson")
       header, *rest = File.readlines(path)
       armed = JSON.parse(header).merge("arms" => arms)
       File.write(path, [JSON.generate(armed), "\n", *rest].join)
@@ -1418,7 +1508,10 @@ RSpec.describe Lain::CLI::ChatLaunch, "the session a door selects" do
   it "hands the backend a profile whose typed fields are only the ones the human typed" do
     write_session("20260101T000000-1.ndjson", "http://127.0.0.1:11500")
     profile = Lain::CLI::RunProfile.from_options(model: "qwen3:8b").with_defaults(provider: "anthropic")
-    launch = described_class.new({ resume: "", journal: false, max_tokens: 16 }, profile:)
+    project = Lain::Project.new(root: @dir, cwd: @dir, kind: :project, detected_by: :flag)
+    launch = described_class.new({ resume: "", journal: false, max_tokens: 16 }, profile:, project_factory: lambda {
+      project
+    })
 
     expect(launch.backend.run_profile)
       .to have_attributes(provider: "ollama", api_base: "http://127.0.0.1:11500", model: "qwen3:8b", typed: [:model])
@@ -1621,7 +1714,7 @@ RSpec.describe Lain::CLI::ChatLaunch, "a refused --isolation" do
   # resuming it salvages, and salvage appends a close anchor to the file.
   def write_crashed_session
     records = [dead_writer_header, *answered_turns, unanswered_request]
-    File.join(Lain::Paths.new.sessions_dir, "20260101T000000-1.ndjson")
+    File.join(Lain::Paths.new.filing_dir(root: project.root), "20260101T000000-1.ndjson")
         .tap { |path| File.write(path, records.map { |record| "#{JSON.generate(record)}\n" }.join) }
   end
 

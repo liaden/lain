@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require "fileutils"
 require "tmpdir"
 
 # `lain sessions` -- an honest listing of this project's recorded
@@ -306,6 +307,42 @@ RSpec.describe Lain::CLI::Sessions do
       counter.to_a
 
       expect(counter.lines_read).to eq(3)
+    end
+  end
+
+  # A session is filed under its project root, but earlier versions filed it
+  # under the directory the chat started in, and those files must stay listed.
+  describe "listing both the root's directory and the working directory's" do
+    around do |example|
+      @root = File.join(File.realpath(@state_home), "project")
+      @sub = File.join(@root, "sub")
+      FileUtils.mkdir_p([File.join(@root, ".lain"), @sub])
+      with_env("HOME" => File.realpath(@state_home)) { example.run }
+    end
+
+    def file_under(dir, name)
+      File.write(File.join(paths.sessions_dir(project: paths.project_hash(dir)), name), "")
+    end
+
+    it "lists a session filed under the old cwd key when run in that subdirectory" do
+      file_under(@sub, "20260101T000000-1.ndjson")
+
+      expect(Dir.chdir(@sub) { sessions.listing }).to include("20260101T000000-1.ndjson")
+    end
+
+    it "lists the root's sessions and the cwd's together, newest first, from the subdirectory" do
+      file_under(@root, "20260102T000000-1.ndjson")
+      file_under(@sub, "20260103T000000-1.ndjson")
+
+      names = Dir.chdir(@sub) { sessions.listing }.lines.map { |line| line[/\S+/] }
+
+      expect(names).to eq(%w[20260103T000000-1.ndjson 20260102T000000-1.ndjson])
+    end
+
+    it "lists a session filed under the root when run at the root" do
+      file_under(@root, "20260102T000000-1.ndjson")
+
+      expect(Dir.chdir(@root) { sessions.listing }).to include("20260102T000000-1.ndjson")
     end
   end
 end

@@ -185,17 +185,24 @@ module Lain
         # journal this method opened. Two independent `Journal.open` calls
         # straddling a clock tick land on different filenames.
         #
+        # `root:` is the project the session is filed under, so `--root` from
+        # elsewhere still files where `lain sessions` run in that project looks.
+        #
         # `btw:` marks the session ephemeral: the SAME default path wearing the
         # `.btw` mark, so the wal derivation and the record format are untouched.
         # Ephemerality is the filename, reaped by {#close} on a clean exit unless
         # {#promote!} ran first.
-        def for(enabled:, btw: false, paths: Paths.new)
+        # @param enabled [Boolean] whether the run records at all
+        # @param root [String] the project root the session is filed under
+        # @param btw [Boolean] whether the session is ephemeral
+        # @param paths [Paths] resolves the sessions directory
+        def for(enabled:, root:, btw: false, paths: Paths.new)
           return Null.new unless enabled
 
           # Computed here, not left to Journal.open's own default, so THIS path
           # is the one #spool derives the sibling `.wal` from -- the journal and
           # the spool must never be able to name different sessions.
-          path = Journal.default_path(paths:)
+          path = File.join(paths.filing_dir(root:), Journal.stem)
           path = Paths.ephemeral_for(path) if btw
           new(journal: Journal.open(path, fsync: true), journal_path: path)
         end

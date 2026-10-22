@@ -318,7 +318,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       let(:root) { @project }
       let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@project, "state"), "HOME" => @project }) }
       let(:config) { Lain::Config.new(epics: Lain::Config::Epics.new(home: :repo)) }
-      let(:chronicle) { @chronicle ||= Lain::CLI::Chronicle.for(enabled: true, paths:) }
+      let(:chronicle) { @chronicle ||= Lain::CLI::Chronicle.for(enabled: true, paths:, root: Dir.pwd) }
       let(:epic) { Lain::CLI::EpicMount.for(chronicle:, options: {}, root:, config:, paths:, told: ->(_line) {}) }
       let(:ask_human) { Lain::Tools::AskHuman.new(parent: CoreGraph.timeline) }
       let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
@@ -356,7 +356,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       let(:root) { @project }
       let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@project, "state"), "HOME" => @project }) }
       let(:config) { Lain::Config.new(epics: Lain::Config::Epics.new(home: :repo)) }
-      let(:chronicle) { @chronicle ||= Lain::CLI::Chronicle.for(enabled: true, paths:) }
+      let(:chronicle) { @chronicle ||= Lain::CLI::Chronicle.for(enabled: true, paths:, root: Dir.pwd) }
       let(:epic) { Lain::CLI::EpicMount.for(chronicle:, options: {}, root:, config:, paths:, told: ->(_line) {}) }
       let(:ask_human) { Lain::Tools::AskHuman.new(parent: CoreGraph.timeline) }
       let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }

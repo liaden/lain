@@ -30,7 +30,7 @@ RSpec.describe Lain::Tools::EpicSubmit do
       drawn.replace(lines) unless lines.nil?
     })
   end
-  let(:chronicle) { @chronicle ||= Lain::CLI::Chronicle.for(enabled: true, paths:) }
+  let(:chronicle) { @chronicle ||= Lain::CLI::Chronicle.for(enabled: true, paths:, root: Dir.pwd) }
   let(:submitter) do
     Lain::CLI::EpicSubmit.in_chat(chronicle:, root: @dir, paths:, config:, asker: ask_human, role_spawn: nil)
   end

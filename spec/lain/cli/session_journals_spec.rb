@@ -41,6 +41,20 @@ RSpec.describe Lain::CLI::SessionJournals do
 
   def torn_decision = halved(padded("gate_decision"))
 
+  describe "several directories" do
+    it "folds a record held only by the second directory, ordered by time across both" do
+      other = File.join(@dir, "other").tap { |dir| Dir.mkdir(dir) }
+      write("20260727T090000-1.ndjson", [record(type: "gate_decision", at: "2026-07-27T09:00:00Z", id: "a")])
+      write("20260726T090000-2.ndjson", [record(type: "gate_decision", at: "2026-07-26T09:00:00Z", id: "b")],
+            dir: other)
+
+      folded = described_class.new(dir: [@dir, other], types:)
+
+      expect(folded.map { |r| r["id"] }).to eq(%w[b a])
+      expect(folded.where).to eq("#{@dir}, #{other}")
+    end
+  end
+
   # Clause 1
   describe "the file set" do
     it "reads every .ndjson in the directory" do

@@ -1809,8 +1809,17 @@ RSpec.describe Lain::CLI::Wiring do
 
       def session_file(name, *records, resumed_from: nil)
         header = { "ts" => "2099-01-01T00:00:00.000000Z", "type" => "session", "resumed_from" => resumed_from }
-        File.write(File.join(paths.sessions_dir, name),
+        File.write(File.join(paths.filing_dir(root: @state), name),
                    [header.compact, *records].map { |record| "#{JSON.generate(record)}\n" }.join)
+      end
+
+      # The same basename under the process's own working directory, with a
+      # chain that cannot be walked: a lineage read from there answers every
+      # path fresh.
+      def decoy(name)
+        File.write(File.join(paths.sessions_dir, name),
+                   "#{JSON.generate("ts" => "2099-01-01T00:00:00.000000Z", "type" => "session",
+                                    "resumed_from" => { "file" => "missing.ndjson" })}\n")
       end
 
       def resumed
@@ -1821,6 +1830,13 @@ RSpec.describe Lain::CLI::Wiring do
                                       timeline: Lain::Dag::Factory.timeline(head_digest: nil, store: Lain::Dag::Factory.store),
                                       session: Lain::Session.new, open: false, notices: [],
                                       recorder: Lain::Memory::Recorder.new(index: Lain::Memory::Index.empty))
+      end
+
+      it "reads the lineage from the project's directory, not the process's" do
+        decoy("second.ndjson")
+        converse("plant it", resumed:)
+
+        expect([old, untouched, cat].map { |path| fresh.fresh?(path) }).to eq([true, false, true])
       end
 
       it "remembers the first file's write, and folds this session's own" do
@@ -2553,7 +2569,7 @@ RSpec.describe Lain::CLI::Wiring do
       it "raises a Lain::Error and leaves no session record behind" do
         Dir.mktmpdir("lain-d2-state") do |state|
           paths = Lain::Paths.new(env: { "HOME" => "/home/nobody", "XDG_STATE_HOME" => state })
-          journaled = Lain::CLI::Chronicle.for(enabled: true, paths:)
+          journaled = Lain::CLI::Chronicle.for(enabled: true, paths:, root: Dir.pwd)
           wiring = new_wiring(options: { grace: 5, isolation: "docker" }, chronicle: journaled, status_feed:)
           recorder, session = wiring.run_state(nil)
 
@@ -3463,7 +3479,8 @@ RSpec.describe Lain::CLI::Wiring do
 
       it "is not said for a lineage that reads cleanly" do
         Dir.mktmpdir do |state|
-          sessions = Lain::Paths.new(env: { "XDG_STATE_HOME" => state, "HOME" => state }).sessions_dir
+          store = Lain::Paths.new(env: { "XDG_STATE_HOME" => state, "HOME" => state })
+          sessions = store.filing_dir(root: File.realpath(project_dir))
           header = JSON.generate("ts" => "2099-01-01T00:00:00.000000Z", "type" => "session")
           File.write(File.join(sessions, "ok.ndjson"), "#{header}\n")
 

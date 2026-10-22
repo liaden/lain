@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "json"
 require "stringio"
 require "tmpdir"
@@ -13,6 +14,7 @@ RSpec.describe Lain::CLI::Wiring::Observers do
   end
 
   let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state }) }
+  let(:project) { Lain::Paths::Place.new(root: Dir.pwd, cwd: Dir.pwd) }
   let(:journal) { Lain::Journal.new(io: StringIO.new) }
   let(:chronicle) { Lain::CLI::Chronicle.new(journal:) }
   let(:file) { File.join(@state, "cat").tap { |path| File.write(path, "") } }
@@ -33,17 +35,56 @@ RSpec.describe Lain::CLI::Wiring::Observers do
   end
 
   it "folds the write records the session's journal writes into the lineage's Fresh" do
-    observers = described_class.register(chronicle:, paths:, resumed: lineage("first.ndjson"), arms:)
+    observers = described_class.register(chronicle:, paths:, project:, resumed: lineage("first.ndjson"), arms:)
 
     expect(observers.fresh.fresh?(file)).to be(false)
     journal << Lain::Telemetry::FileWritten.from_stat(File.stat(file), path: file, tool_use_id: "tu_1")
     expect(observers.fresh.fresh?(file)).to be(true)
   end
 
+  describe "a chat started from another directory with --root" do
+    let(:root) { File.realpath(FileUtils.mkdir_p(File.join(@state, "project")).first) }
+    let(:elsewhere) { File.realpath(FileUtils.mkdir_p(File.join(@state, "elsewhere")).first) }
+    let(:chat) { Lain::Paths::Place.new(root:, cwd: root) }
+
+    def file_session(dir, name, resumed_from: nil)
+      header = { "ts" => "2099-01-01T00:00:00.000000Z", "type" => "session" }
+      header["resumed_from"] = { "file" => resumed_from, "head" => "blake3:#{"0" * 64}" } if resumed_from
+      File.write(File.join(dir, name), "#{JSON.generate(header)}\n")
+    end
+
+    it "walks a resumed session filed under the root, with no journal_error" do
+      file_session(paths.filing_dir(root:), "first.ndjson")
+      file_session(paths.sessions_dir(project: paths.project_hash(elsewhere)), "first.ndjson",
+                   resumed_from: "gone.ndjson")
+      io = StringIO.new
+      chronicle = Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io:))
+
+      Dir.chdir(elsewhere) do
+        described_class.register(chronicle:, paths:, project: chat, resumed: resumed("first.ndjson"), arms:)
+      end
+
+      expect(journal_records(io)).to be_empty
+    end
+
+    it "walks a chain whose parent is filed under the directory it was started in" do
+      file_session(paths.sessions_dir(project: paths.project_hash(elsewhere)), "first.ndjson")
+      file_session(paths.filing_dir(root:), "second.ndjson", resumed_from: "first.ndjson")
+      io = StringIO.new
+      chronicle = Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io:))
+
+      Dir.chdir(elsewhere) do
+        described_class.register(chronicle:, paths:, project: chat, resumed: resumed("second.ndjson"), arms:)
+      end
+
+      expect(journal_records(io)).to be_empty
+    end
+  end
+
   it "answers every path fresh when the resumed chain cannot be walked, and records why" do
     io = StringIO.new
     chronicle = Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io:))
-    observers = described_class.register(chronicle:, paths:, resumed: resumed("missing.ndjson"), arms:)
+    observers = described_class.register(chronicle:, paths:, project:, resumed: resumed("missing.ndjson"), arms:)
 
     expect(observers.fresh.fresh?(file)).to be(true)
     expect(journal_records(io))
@@ -55,7 +96,7 @@ RSpec.describe Lain::CLI::Wiring::Observers do
     let(:chronicle) { Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io:)) }
 
     def tripwires_after_a_remembered_deny(arms)
-      described_class.register(chronicle:, paths:, resumed: nil, arms:)
+      described_class.register(chronicle:, paths:, project:, resumed: nil, arms:)
       chronicle.durable_journal << { "type" => "escalation", "tool" => "bash", "tool_use_id" => "tu_1",
                                      "requester" => "agent", "verdict" => "deny", "rung" => "remembered",
                                      "reason" => "", "final" => false }
@@ -80,7 +121,7 @@ RSpec.describe Lain::CLI::Wiring::Observers do
         new.call(**kwargs).tap { |ledger| ledgers << ledger }
       end
       null = Lain::CLI::Chronicle::Null.new
-      described_class.register(chronicle: null, paths:, resumed: nil,
+      described_class.register(chronicle: null, paths:, project:, resumed: nil,
                                arms: Lain::CLI::Arms::OFF.with(tripwire: :observe))
       null.wrap_tee(Lain::Channel.new)
 
@@ -96,26 +137,26 @@ RSpec.describe Lain::CLI::Wiring::Observers do
       name = "torn.ndjson"
       lineage(name)
       File.write(File.join(paths.sessions_dir, name), %({"type":"file_written"\n), mode: "a")
-      observers = described_class.register(chronicle:, paths:, resumed: resumed(name), arms:)
+      observers = described_class.register(chronicle:, paths:, project:, resumed: resumed(name), arms:)
 
       expect(observers.notices)
         .to contain_exactly(match(/could not be read.*changed this session.*resume from an intact session/))
     end
 
     it "says the same when the resumed chain cannot be walked" do
-      observers = described_class.register(chronicle:, paths:, resumed: resumed("missing.ndjson"), arms:)
+      observers = described_class.register(chronicle:, paths:, project:, resumed: resumed("missing.ndjson"), arms:)
 
       expect(observers.notices).to contain_exactly(/write records could not be read/)
     end
 
     it "says nothing for a clean lineage" do
-      observers = described_class.register(chronicle:, paths:, resumed: lineage("first.ndjson"), arms:)
+      observers = described_class.register(chronicle:, paths:, project:, resumed: lineage("first.ndjson"), arms:)
 
       expect(observers.notices).to be_empty
     end
 
     it "says nothing for a fresh chat" do
-      expect(described_class.register(chronicle:, paths:, resumed: nil, arms:).notices).to be_empty
+      expect(described_class.register(chronicle:, paths:, project:, resumed: nil, arms:).notices).to be_empty
     end
 
     describe "when the bash sandbox is built" do
@@ -132,14 +173,14 @@ RSpec.describe Lain::CLI::Wiring::Observers do
       end
 
       it "says once that bash runs unconfined, naming what the box lacks" do
-        observers = described_class.register(chronicle:, paths:, resumed: nil, arms:)
+        observers = described_class.register(chronicle:, paths:, project:, resumed: nil, arms:)
         sandbox_on(->(_argv) { ["", false] })
 
         expect(observers.notices).to contain_exactly(match(/lacks bwrap and landlock.*bash runs unconfined/))
       end
 
       it "says bash runs in the docker container, never unconfined, under --exec docker" do
-        observers = described_class.register(chronicle:, paths:, resumed: nil, arms:)
+        observers = described_class.register(chronicle:, paths:, project:, resumed: nil, arms:)
         chronicle.durable_journal << Lain::Telemetry::CapabilityDegraded.new(capability: :container,
                                                                              requirer: "spec", provider: "docker")
 
@@ -147,7 +188,7 @@ RSpec.describe Lain::CLI::Wiring::Observers do
       end
 
       it "says nothing when the box offers every layer" do
-        observers = described_class.register(chronicle:, paths:, resumed: nil, arms:)
+        observers = described_class.register(chronicle:, paths:, project:, resumed: nil, arms:)
         sandbox_on(->(argv) { [argv.include?("--status") ? '{"abi":3}' : "", true] })
 
         expect(observers.notices).to be_empty

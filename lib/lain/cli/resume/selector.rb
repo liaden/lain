@@ -31,9 +31,11 @@ module Lain
         # one sentence.
         NAMED_LIMIT = 3
 
-        # @param dir [String] the project's session directory
+        # @param dir [String, Array<String>] the project's session directory, or every
+        #   directory its sessions are filed in
         def initialize(dir:)
-          @dir = dir
+          @dirs = Array(dir)
+          @dir = @dirs.join(", ")
         end
 
         # @param selector [String, nil]
@@ -56,14 +58,14 @@ module Lain
 
         def header_reason(header) = self.class.header_reason(header)
 
-        def path_of(name) = File.join(@dir, name)
+        def path_of(name) = Paths.session_file(name, dirs: @dirs)
 
         # UTC-timestamped filenames sort chronologically, so `.last` is the
         # newest -- also what makes resume idempotent: a resumed session that
         # exited immediately is itself the newest file, so a second `--resume`
         # continues the head of the CHAIN rather than forking the original.
         def session_names
-          Dir.children(@dir).select { |name| name.end_with?(".ndjson") }.sort
+          Paths.session_names(@dirs)
         end
 
         # The bare pick and prefix matching see only the durable record -- the

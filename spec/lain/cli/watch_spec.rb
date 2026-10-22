@@ -699,4 +699,38 @@ RSpec.describe Lain::CLI::Watch do
       expect(watch_until_closed(path).last).to eq(3)
     end
   end
+
+  describe "the newest session across the root's directory and the working directory's" do
+    around do |example|
+      @root = File.join(File.realpath(@state_home), "project")
+      @sub = File.join(@root, "sub")
+      FileUtils.mkdir_p([File.join(@root, ".lain"), @sub])
+      with_env("HOME" => File.realpath(@state_home)) { example.run }
+    end
+
+    def closed_session
+      (opening_records + traffic_records + [closed_record]).map { |record| "#{JSON.generate(record)}\n" }.join
+    end
+
+    def tail_from_subdirectory
+      Dir.chdir(@sub) do
+        watch = described_class.new(selector:, sink: output, paths:, sleeper: ->(_seconds) { raise "polled" })
+        watch.run
+      end
+    end
+
+    it "tails a session filed under the root when run from a subdirectory" do
+      root_dir = paths.sessions_dir(project: paths.project_hash(@root))
+      File.write(File.join(root_dir, "20260723T000000-1.ndjson"), closed_session)
+
+      expect(tail_from_subdirectory).to eq(0)
+    end
+
+    it "tails a session filed under the working directory's key, the one an earlier version used" do
+      sub_dir = paths.sessions_dir(project: paths.project_hash(@sub))
+      File.write(File.join(sub_dir, "20260723T000000-1.ndjson"), closed_session)
+
+      expect(tail_from_subdirectory).to eq(0)
+    end
+  end
 end

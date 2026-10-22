@@ -91,8 +91,10 @@ module Lain
 
       # @param paths [Paths] resolves this project's session directory
       # @param probe [Liveness::Probe] asks whether an open session's writer runs
-      def initialize(paths: Paths.new, probe: Liveness::Probe.new)
+      # @param project [Project] whose sessions are read
+      def initialize(paths: Paths.new, probe: Liveness::Probe.new, project: Project::Resolver.default_project)
         @paths = paths
+        @project = project
         @probe = probe
       end
 
@@ -106,12 +108,12 @@ module Lain
       #   project's session dir
       # @return [String] the selected session's path
       # @raise [Refusal]
-      def locate(selector) = Selector.new(dir:).call(selector)
+      def locate(selector) = Selector.new(dir: dirs).call(selector)
 
       # @param selector [String] `<session>@<digest-prefix>`
       # @return [ForkPoint::Point]
       # @raise [Refusal]
-      def fork_point(selector) = ForkPoint.new(dir:).call(selector)
+      def fork_point(selector) = ForkPoint.new(dir: dirs).call(selector)
 
       # The header a selected session recorded, read BEFORE the backend exists
       # so an untyped flag can default to it. Reads the header and nothing
@@ -191,7 +193,7 @@ module Lain
 
       private
 
-      def dir = @dir ||= @paths.sessions_dir
+      def dirs = @dirs ||= @paths.session_dirs(root: @project.root, cwd: @project.cwd)
 
       # An OPEN recording gets one salvage attempt before anything else runs.
       # {Salvager#close!} retroactively turns a crash whose writer is dead into an ordinary
@@ -263,7 +265,7 @@ module Lain
       # Run-state and memory replay are chain-wide, where the Loader folds only
       # the Timeline and message events across `resumed_from` -- so the entries
       # come from {ChainWalk}, every file of the chain, oldest first.
-      def replay(path) = SessionRecord::Replay.new(ChainWalk.new(dir:).entries(path))
+      def replay(path) = SessionRecord::Replay.new(ChainWalk.new(paths: @paths, dirs:).entries(path))
 
       def mismatches(path, current)
         MismatchNotices.new(path:).call(**current.to_h)
@@ -380,7 +382,7 @@ module Lain
       # into the Corrupt refusal naming the missing file.
       def resolver
         lambda do |basename|
-          path = File.join(dir, basename)
+          path = @paths.chain_file(basename, dirs:)
           File.file?(path) ? File.foreach(path) : nil
         end
       end

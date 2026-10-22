@@ -10,8 +10,9 @@ module Lain
     # prefix-matches instead, see {CLI::SessionFile}). Returns a String; only the
     # frontend prints (output discipline, {Bench::CLI}'s precedent).
     class Friction
-      def initialize(paths: Paths.new)
+      def initialize(paths: Paths.new, project: Project::Resolver.default_project)
         @paths = paths
+        @project = project
       end
 
       # The lineages come from the file rather than from its records: only a
@@ -25,7 +26,7 @@ module Lain
       # @raise [SessionFile::SessionNotFound]
       # @raise [Lain::Error] naming the file, for a session that cannot be read
       def report(selector)
-        path = SessionFile.resolve(selector, paths: @paths)
+        path = SessionFile.resolve(selector, paths: @paths, project: @project)
         lineages = Bench::Session::Lineages.read(path)
         render(path, Journal.records(File.foreach(path)).to_a, lineages)
       end

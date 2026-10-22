@@ -339,7 +339,7 @@ module Lain
         parent = -> { @agent.timeline }
         @supervisor = supervise
         @ask_human = wire_askers(parent)
-        @observers = Observers.register(chronicle:, paths: @paths, resumed:, arms:)
+        @observers = Observers.register(chronicle:, paths: @paths, project:, resumed:, arms:)
         toolset = build_toolset(recorder, backend:, parent:, ask_human: @ask_human, session:, notice:)
         # Resolved BEFORE the record opens, and the statement order IS the
         # guarantee -- see #switchboard for what can refuse here and why a

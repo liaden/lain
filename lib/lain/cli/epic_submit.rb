@@ -665,7 +665,8 @@ module Lain
         @journal.hold do |journal|
           @spike_journal.within(journal) do
             @tool_guard.within(epic_home) do
-              settled(stage, submission, required, records, ReadBack.new(journal, dir: @paths.sessions_dir))
+              settled(stage, submission, required, records,
+                      ReadBack.new(journal, dir: @paths.session_dirs(root: @root, cwd: Dir.pwd)))
             end
           end
         end
@@ -773,7 +774,8 @@ module Lain
       # same artifact twice, journaled two verdicts, and advanced the stage twice.
       # One object per process is a property of the executable, not of this class.
       def journals
-        SessionJournals.new(dir: @paths.sessions_dir, types: [Lain::Epic::SignoffQueue::JOURNAL_TYPE])
+        SessionJournals.new(dir: @paths.session_dirs(root: @root, cwd: Dir.pwd),
+                            types: [Lain::Epic::SignoffQueue::JOURNAL_TYPE])
       end
 
       # A second verdict over the partition's standing approval of these bytes

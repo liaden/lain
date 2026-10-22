@@ -36,8 +36,10 @@ module Lain
       # @param sleeper [#call] the poll wait, injectable so a spec tails
       #   deterministically instead of sleeping
       # @param probe [Liveness::Probe] asks whether the session's writer runs
+      # @param project [#root, #cwd] whose sessions are searched when `path` is nil
       def initialize(selector:, sink:, path: nil, paths: Paths.new, view: View.new,
-                     sleeper: ->(seconds) { sleep(seconds) }, probe: Liveness::Probe.new)
+                     sleeper: ->(seconds) { sleep(seconds) }, probe: Liveness::Probe.new,
+                     project: Project::Resolver.default_project)
         # A bare selector would anchor on the first spawn in the file -- a guess
         # wearing a match's clothes -- so it is refused before any read happens.
         raise Error, "selector must be a spawn-digest prefix, got #{selector.inspect}" if selector.to_s.empty?
@@ -47,6 +49,7 @@ module Lain
         @sink = sink
         @path = path
         @paths = paths
+        @project = project
         @view = view
         @sleeper = sleeper
         @probe = probe
@@ -146,22 +149,22 @@ module Lain
       # {Sessions}' discovery idiom: Dir.children, sorted -- the filenames are
       # UTC-timestamped, so lexicographic IS chronological.
       def newest_session
-        dir = @paths.sessions_dir
-        names = watchable(dir)
+        dirs = @paths.session_dirs(root: @project.root, cwd: @project.cwd)
+        names = watchable(dirs)
         # No `path:` and no recorded sessions: nothing to tail, said loudly.
-        raise Error, "no sessions to watch under #{dir}#{skipped(dir)}" if names.empty?
+        raise Error, "no sessions to watch under #{dirs.join(", ")}#{skipped(dirs)}" if names.empty?
 
-        File.join(dir, names.last)
+        Paths.session_file(names.last, dirs:)
       end
 
       # "No sessions" said about a directory the user can SEE files in is a
       # refusal they stop believing. Name what was passed over, and why it could
       # never have ended: an empty file has no writer, so the session_closed
       # that stops the tail is never coming.
-      def skipped(dir)
+      def skipped(dirs)
         counts = { "empty (nothing is writing them, so they can never close)" =>
-                     durable_names(dir).size - watchable(dir).size,
-                   "ephemeral (--btw)" => session_names(dir).size - durable_names(dir).size }
+                     durable_names(dirs).size - watchable(dirs).size,
+                   "ephemeral (--btw)" => Paths.session_names(dirs).size - durable_names(dirs).size }
         named = counts.filter_map { |label, count| "#{count} #{label}" if count.positive? }
         named.empty? ? "" : ": skipped #{named.join(" and ")}"
       end
@@ -172,11 +175,11 @@ module Lain
       # FINISH. A zero-byte file is the sharpest case: it is what
       # {Journal.open} leaves when a chat dies before its header, nobody is
       # writing it, and a choice that lands on it chose nothing to watch.
-      def session_names(dir) = Dir.children(dir).select { |name| name.end_with?(".ndjson") }
+      def durable_names(dirs) = Paths.session_names(dirs).reject { |name| Paths.ephemeral?(name) }
 
-      def durable_names(dir) = session_names(dir).reject { |name| Paths.ephemeral?(name) }
-
-      def watchable(dir) = durable_names(dir).reject { |name| Journal.empty?(File.join(dir, name)) }.sort
+      def watchable(dirs)
+        durable_names(dirs).reject { |name| Journal.empty?(Paths.session_file(name, dirs:)) }.sort
+      end
 
       # The fd tail as an Enumerable of COMPLETE ("\n"-terminated) lines,
       # composing with {Journal.records}. The fragment buffer lives here: at

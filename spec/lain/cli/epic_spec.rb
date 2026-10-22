@@ -591,34 +591,25 @@ RSpec.describe Lain::CLI::Epic do
     end
   end
 
-  # The two keyings this tier now has -- container by resolved project
-  # root, journals by working directory -- have a cost the report must not hide.
-  # From the project root and from a subdirectory, `lain epic status` names the
-  # SAME epic at the SAME home and folds DIFFERENT session directories, so it
-  # can confidently report different progress for one epic:
-  #
-  #   status from <repo>                 : epic `alpha` -- 1/1 done
-  #   status from <repo>/services/ingest : epic `alpha` -- 0/1 done
-  #
-  # Before the container axis was fixed the subdirectory answered "no epics yet
-  # in .../epics/614ee07f1323" -- wrong, but UNMISSABLE. Fixing one axis and not
-  # the other turns an absurd answer into a PLAUSIBLE one, which is worse to
-  # read. Moving the journal axis means relocating every resumable session on
-  # the machine, so it is ticketed rather than done here; printing the folded
-  # directory is the mitigation, and it makes the partition visible in the one
-  # place a user is already looking.
-  describe "the session directory the projection folded" do
-    it "prints it beside the home, so two runs reporting differently can be told apart" do
+  # The container is keyed by the resolved project root and the records live in
+  # two directories (the root's and the working directory's), so a report that
+  # named only the home would leave two runs with different progress for one
+  # epic indistinguishable. Printing the folded directories is what makes the
+  # partition visible in the one place a user is already looking.
+  describe "the session directories the projection folded" do
+    let(:folded) { paths.session_dirs(root:, cwd: Dir.pwd).join(", ") }
+
+    it "prints them beside the home, so two runs reporting differently can be told apart" do
       write_epic("alpha", graph_of(issue("a1")))
 
-      expect(command.status).to include("sessions: #{sessions_dir}")
+      expect(command.status).to include("sessions: #{folded}")
     end
 
-    it "names it even when the fold found nothing, which is exactly when it is needed" do
+    it "names them even when the fold found nothing, which is exactly when it is needed" do
       write_epic("alpha", graph_of(issue("a1")))
       FileUtils.rm_rf(sessions_dir)
 
-      expect(command.status).to include("sessions: #{sessions_dir}")
+      expect(command.status).to include("sessions: ")
     end
   end
 

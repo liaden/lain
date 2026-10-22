@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "stringio"
+require "tmpdir"
 
 RSpec.describe Lain::Paths do
   # Every scenario builds its own env Hash -- injected via `env:`, never mutating the
@@ -559,6 +561,67 @@ RSpec.describe Lain::Paths do
       ensure
         File.chmod(0o700, tmp) # so Dir.mktmpdir's own cleanup can remove it
       end
+    end
+  end
+
+  describe "the session directories" do
+    around { |example| Dir.mktmpdir { |dir| @state = dir and example.run } }
+
+    let(:store) { paths("XDG_STATE_HOME" => @state) }
+
+    def key(dir) = store.container("sessions", key: store.project_hash(dir))
+
+    it "answers the root's directory first, then the working directory's" do
+      expect(store.session_dirs(root: "/", cwd: "/tmp")).to eq([key("/"), key("/tmp")])
+    end
+
+    it "answers one directory when the working directory is the root" do
+      expect(store.session_dirs(root: "/tmp", cwd: "/tmp").length).to eq(1)
+    end
+
+    it "files a chat under its root's directory alone" do
+      expect(store.filing_dir(root: "/")).to eq(key("/"))
+      expect(Dir.children(File.join(@state, "lain", "sessions")).length).to eq(1)
+    end
+
+    it "names a file in whichever directory holds it, else in the first" do
+      first = File.join(@state, "a")
+      second = File.join(@state, "b")
+      FileUtils.mkdir_p([first, second])
+      File.write(File.join(second, "s.ndjson"), "")
+
+      expect(described_class.session_file("s.ndjson", dirs: [first, second])).to eq(File.join(second, "s.ndjson"))
+      expect(described_class.session_file("t.ndjson", dirs: [first, second])).to eq(File.join(first, "t.ndjson"))
+    end
+
+    it "lists every session file's name once across the directories, oldest first" do
+      first = File.join(@state, "a")
+      second = File.join(@state, "b")
+      FileUtils.mkdir_p([first, second])
+      File.write(File.join(first, "2.ndjson"), "")
+      File.write(File.join(first, "notes.txt"), "")
+      File.write(File.join(second, "1.ndjson"), "")
+      File.write(File.join(second, "2.ndjson"), "")
+
+      expect(described_class.session_names([first, second])).to eq(%w[1.ndjson 2.ndjson])
+    end
+
+    it "finds a chain's file in a sibling project directory when the given ones lack it" do
+      listed = store.filing_dir(root: "/")
+      sibling = store.sessions_dir(project: store.project_hash("/tmp"))
+      File.write(File.join(sibling, "s.ndjson"), "")
+
+      expect(store.chain_file("s.ndjson", dirs: [listed])).to eq(File.join(sibling, "s.ndjson"))
+      expect(store.chain_file("gone.ndjson", dirs: [listed])).to eq(File.join(listed, "gone.ndjson"))
+    end
+
+    it "prefers the given directories to a sibling for a chain's file" do
+      listed = store.filing_dir(root: "/")
+      sibling = store.sessions_dir(project: store.project_hash("/tmp"))
+      File.write(File.join(sibling, "s.ndjson"), "")
+      File.write(File.join(listed, "s.ndjson"), "")
+
+      expect(store.chain_file("s.ndjson", dirs: [listed])).to eq(File.join(listed, "s.ndjson"))
     end
   end
 end

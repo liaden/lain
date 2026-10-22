@@ -63,7 +63,7 @@ module Lain
       # @return [ChatLaunch]
       def initialize(options,
                      profile: RunProfile.from_options(options),
-                     resume_factory: -> { Resume.new },
+                     resume_factory: -> { Resume.new(project:) },
                      chronicle_factory: Chronicle.public_method(:for),
                      live_views_factory: LiveViews.public_method(:new),
                      wiring_factory: Wiring.public_method(:new),
@@ -192,7 +192,8 @@ module Lain
       # independent Journal.open calls straddle a second tick and split
       # telemetry from the session file it belonged in.
       def open_chronicle
-        @chronicle = @chronicle_factory.call(enabled: @options[:journal], btw: @options[:btw] || false)
+        @chronicle = @chronicle_factory.call(enabled: @options[:journal], btw: @options[:btw] || false,
+                                             root: project.root)
         # A tee is built for --nvim (its Channel) OR --journal (the state feed
         # publishes for the tmux HUD), so a pure --no-journal --no-nvim run
         # opens neither and stays byte-identical.

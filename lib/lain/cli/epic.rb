@@ -359,7 +359,7 @@ module Lain
         home = home_for(slug)
         walked = journals_for(slug)
         progress = Lain::Epic::Progress.fold(walked.to_a, graph: home.read_epic, epic_slug: slug)
-        Report.new(slug:, path: home.path, sessions: walked.dir, progress:,
+        Report.new(slug:, path: home.path, sessions: walked.where, progress:,
                    note: untracked_note(home.path), closed: closed_stage_note(slug, progress.stage, walked.to_a)).to_s
       end
 
@@ -662,23 +662,17 @@ module Lain
         # {SessionJournals} uses `Dir.children` and pins the case.
         def files = walk.files
 
-        # WHICH directory this walk folded, forwarded so {Report} can print it.
-        # Journals are keyed on the working directory while the container is
-        # keyed on the resolved root, so a report naming only the home would
-        # leave two runs with different progress for one epic indistinguishable.
-        def dir = walk.dir
+        # The directories this walk folded, forwarded so {Report} can print them:
+        # the container is keyed on the root, the records on two directories.
+        def where = walk.where
 
         private
 
-        # `sessions_dir`'s OWN default -- the working directory -- and not
-        # `project_hash(@root)`, which this line said until the project resolver
-        # landed. The two were one string while `@root` WAS `Dir.pwd`; once
-        # `@root` became the resolved root this quietly stopped folding the
-        # directory `lain epic submit` writes into, and a verdict submitted from
-        # a subdirectory became invisible to `status`. The alternative, moving
-        # `sessions_dir`, relocates every resumable session on the machine.
+        # Both the root's directory (where a chat files) and the working
+        # directory's (where `lain epic submit` writes), or a verdict submitted
+        # from a subdirectory would be invisible to `status`.
         # Pinned by spec/lain/seams/epic_project_keying_seam_spec.rb.
-        def walk = @walk ||= SessionJournals.new(dir: @paths.sessions_dir, types: epic_types)
+        def walk = @walk ||= SessionJournals.new(dir: @paths.session_dirs(root: @root, cwd: Dir.pwd), types: epic_types)
 
         # The list bounds WHAT GETS MATERIALIZED, not what gets believed.
         # Ordering has to sort, so without this filter every record of every

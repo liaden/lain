@@ -97,8 +97,10 @@ module Lain
           private_constant :NO_ROUND
 
           # @param journal_path [String, nil] this chat's own session file
-          def initialize(journal_path)
+          # @param paths [Paths] finds an earlier file of the chain by basename
+          def initialize(journal_path, paths: Lain::Paths.new)
             @journal_path = journal_path
+            @paths = paths
             freeze
           end
 
@@ -116,7 +118,8 @@ module Lain
           def earlier
             return [] if @journal_path.nil? || !File.file?(@journal_path)
 
-            Lain::CLI::Resume::ChainWalk.new(dir: File.dirname(@journal_path)).paths(@journal_path)[0...-1]
+            walk = Lain::CLI::Resume::ChainWalk.new(paths: @paths, dirs: [File.dirname(@journal_path)])
+            walk.paths(@journal_path)[0...-1]
           end
 
           def answer(file, target)

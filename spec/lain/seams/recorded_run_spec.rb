@@ -261,7 +261,7 @@ module T14RecordedRun
   # only corroborate -- but it is not what the word "ensure" promises on its own.
   def journaled(state)
     paths = Lain::Paths.new(env: { "HOME" => "/home/nobody", "XDG_STATE_HOME" => state })
-    chronicle = Lain::CLI::Chronicle.for(enabled: true, paths:)
+    chronicle = Lain::CLI::Chronicle.for(enabled: true, paths:, root: Dir.pwd)
     path = chronicle.journal_path
     answer = begin
       yield chronicle

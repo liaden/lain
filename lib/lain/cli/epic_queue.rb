@@ -74,8 +74,11 @@ module Lain
       #   when an approval advances its epic ({Epic::Advance#moves?}); nil builds the
       #   default one at that moment, so a drain that moves nothing never
       #   resolves a project
-      def initialize(paths: Paths.new, clock: DEFAULT_CLOCK, epics: nil)
+      # @param root [String, nil] the project root, where a chat files its journal; resolved when
+      #   first read if nil, so a drain that moves nothing still resolves no project
+      def initialize(paths: Paths.new, clock: DEFAULT_CLOCK, epics: nil, root: nil)
         @paths = paths
+        @root = root
         @clock = clock
         @epics = epics
       end
@@ -107,7 +110,7 @@ module Lain
       # decision landed. Right for a one-shot CLI -- Thor builds a fresh one per
       # invocation, and `unknown_message` wants the same fold `find` just missed
       # in -- and why nothing here is offered as a long-lived object.
-      def dir = @dir ||= @paths.sessions_dir
+      def dirs = @dirs ||= @paths.session_dirs(root: @root ||= Project::Resolver.default_project.root, cwd: Dir.pwd)
       def review = @review ||= Review.new(journals.to_a, now: @clock.call)
 
       # The journal-discovery contract lives in {SessionJournals}, so this
@@ -122,7 +125,7 @@ module Lain
       # listing's read is its own and never cached, so its tolerance cannot
       # reach the {#review} the deciding verbs read.
       def walk(damage)
-        SessionJournals.new(dir:, types: [Lain::Epic::SignoffQueue::JOURNAL_TYPE, EVIDENCE_TYPE], damage:)
+        SessionJournals.new(dir: dirs, types: [Lain::Epic::SignoffQueue::JOURNAL_TYPE, EVIDENCE_TYPE], damage:)
       end
 
       def drain(digest, approved:, reason:)
@@ -215,7 +218,7 @@ module Lain
       # could parse might BE the deferral, and a lost deferral reads as drained.
       def empty_listing(slug, counts)
         about = slug.to_s.empty? ? "" : " for epic #{slug.to_s.inspect}"
-        "nothing parked for sign-off#{about} (folded #{counted(counts.files, "journal")} under #{dir}: " \
+        "nothing parked for sign-off#{about} (folded #{counted(counts.files, "journal")} under #{dirs.join(", ")}: " \
           "#{counted(counts.lines, "line")}, #{counted(counts.records, "gate record")})"
       end
 

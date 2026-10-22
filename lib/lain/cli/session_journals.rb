@@ -181,9 +181,10 @@ module Lain
       # "could not be parsed" would hunt for torn bytes that are not there.
       Tally = Data.define(:files, :lines, :records, :unreadable, :misfiled)
 
-      # @param dir [String] the project's session directory, already resolved --
-      #   this object does no `Paths` arithmetic, which lets one caller scope by
-      #   `Dir.pwd` and another by an explicit root
+      # @param dir [String, Array<String>] the project's session directory, or every
+      #   directory its sessions are filed in, already resolved -- this object does
+      #   no `Paths` arithmetic, which lets one caller scope by `Dir.pwd` and
+      #   another by an explicit root
       # @param types [Array<String>] the journal discriminators to keep.
       #   REQUIRED, and deliberately so: every caller knows which records it is
       #   about, and a "keep everything" default would quietly make the
@@ -191,16 +192,14 @@ module Lain
       # @param damage [#call] handed each {Torn} line and {Misfiled} record;
       #   {Refuse} unless this reader only reports
       def initialize(dir:, types:, damage: Refuse)
-        @dir = dir
+        @dirs = Array(dir)
         @types = types
         @damage = damage
       end
 
       # Public because a report that prints a fold has to say where the fold
-      # came from: the epic tier keys its container on the project root and its
-      # journals on the working directory, so "which epic" and "whose records"
-      # are two answers and a reader cannot infer the second from the first.
-      attr_reader :dir
+      # came from: "which epic" and "whose records" are two answers.
+      def where = @dirs.join(", ")
 
       def each(&block)
         return to_enum(:each) unless block
@@ -222,11 +221,14 @@ module Lain
       # in {#ordered} -- is a function of the directory rather than of readdir
       # order.
       def files
-        @files ||= Dir.children(@dir).select { |name| name.end_with?(".ndjson") }.sort
-                      .map { |name| File.join(@dir, name) }
+        @files ||= @dirs.flat_map { |dir| ndjson_in(dir) }.sort_by { |path| [File.basename(path), path] }
       end
 
       private
+
+      def ndjson_in(dir)
+        Dir.children(dir).select { |name| name.end_with?(".ndjson") }.map { |name| File.join(dir, name) }
+      end
 
       # The records we keep, and the counts that say what it cost to find them.
       Reading = Data.define(:records, :lines, :unreadable, :misfiled)

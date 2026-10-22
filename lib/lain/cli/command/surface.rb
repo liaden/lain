@@ -119,6 +119,8 @@ module Lain
           epic.driver(root: @root, library: @library, chronicle:)
         end
 
+        def place = Paths::Place.new(root: @root, cwd: @cwd)
+
         # The one Env assembly -- extracted so initialize stays the plain seeding
         # it reads as (the Metrics trip said so: extract, do not loosen). Only
         # `approvals` falls back, to the genuine {Env::NoApprovals} Null when the
@@ -126,9 +128,9 @@ module Lain
         def assemble_env(agent:, replies:, supervisor:, approvals:, chronicle:, status_feed:,
                          model_switch:, mode_switch:, snapshots:, epic_driver:)
           Env.new(
-            status: status_feed, sessions: Lain::CLI::Sessions.new,
+            status: status_feed, sessions: Lain::CLI::Sessions.new(project: place),
             approvals: approvals || Env::NoApprovals, supervisor:,
-            replies:, fork_point: ForkPoint.new(dir: Paths.new.sessions_dir),
+            replies:, fork_point: ForkPoint.new(dir: Paths.new.session_dirs(root: place.root, cwd: place.cwd)),
             tmux_surface: TmuxSurface.new, agent:, chronicle:,
             model_switch:, mode_switch:, role_spawn: @role_spawn, snapshots:, epic_driver:
           )

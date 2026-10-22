@@ -47,6 +47,35 @@ RSpec.describe Lain::CLI::Command::Surface do
                         status_feed:, model_switch:, mode_switch:, ledger:, sensitivity:, snapshots:, window:, **rest)
   end
 
+  describe "the session readers a chat started with --root hands its commands" do
+    around do |example|
+      with_project do |root|
+        Dir.mktmpdir do |state|
+          @root = File.realpath(root)
+          @state = state
+          with_env("XDG_STATE_HOME" => state) { Dir.chdir(Dir.tmpdir) { example.run } }
+        end
+      end
+    end
+
+    let(:store) { Lain::Paths.new }
+
+    it "lists the sessions of the root in /sessions" do
+      File.write(File.join(store.filing_dir(root: @root), "20260101T000000-1.ndjson"), "")
+
+      listing = build_surface(@root, cwd: @root).env.sessions.listing
+
+      expect(listing).to include("20260101T000000-1.ndjson")
+    end
+
+    it "forks from a session filed under the root" do
+      File.write(File.join(store.filing_dir(root: @root), "20260101T000000-1.ndjson"), "")
+      fork_point = build_surface(@root, cwd: @root).env.fork_point
+
+      expect { fork_point.call("20260101@abc") }.to raise_error(Lain::CLI::Resume::Refusal, /is empty/)
+    end
+  end
+
   it "refuses to construct without the run's library, rather than reading one of its own" do
     with_project do |root|
       libraryless = lambda do

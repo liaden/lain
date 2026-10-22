@@ -13,10 +13,12 @@ module Lain
       # invariant a reorder of {Resume}'s statements silently breaks,
       # reintroducing the SystemStackError the guard exists to prevent.
       class ChainWalk
-        # @param dir [String] the project's session directory chain basenames
-        #   resolve within
-        def initialize(dir:)
-          @dir = dir
+        # @param paths [Paths] finds a chain file by basename, in `dirs` first and then in any
+        #   other project's directory
+        # @param dirs [Array<String>] the directories the project's sessions are filed in
+        def initialize(paths:, dirs:)
+          @paths = paths
+          @dirs = dirs
         end
 
         # @return [Array<String>] every line of every file, oldest file first
@@ -30,7 +32,7 @@ module Lain
           basename = File.basename(path)
           revisit!(basename, visited)
           prior = prior_basename(path)
-          prior.nil? ? [path] : paths(File.join(@dir, prior), visited + [basename]) + [path]
+          prior.nil? ? [path] : paths(@paths.chain_file(prior, dirs: @dirs), visited + [basename]) + [path]
         end
 
         private

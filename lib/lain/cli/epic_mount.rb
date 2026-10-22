@@ -96,7 +96,8 @@ module Lain
         private
 
         def reviews(slug)
-          Lain::Epic::Review.from_journal(EpicMount.prior_claims(@paths), journal: @journal, epic_slug: slug)
+          Lain::Epic::Review.from_journal(EpicMount.prior_claims(@paths, root: @root), journal: @journal,
+                                                                                       epic_slug: slug)
         end
       end
 
@@ -194,15 +195,15 @@ module Lain
       # every session back at 1. What is left is the genuinely concurrent case,
       # which a generation carrying a session id would close.
       #
-      # `sessions_dir`'s OWN default, NOT `project_hash(root)` -- see the note
-      # on {CLI::Epic::Journals#walk}. The claims replayed here were written by a
-      # chat whose journal lands in the cwd-keyed directory, so keying the read
-      # on the resolved root looked somewhere nothing is ever written.
+      # Both the root's directory and the working directory's, as
+      # {CLI::Epic::Journals#walk}: a chat files its claims under the root, an
+      # earlier version under the cwd.
       #
       # @param paths [Paths] the state home the sessions directory resolves under
+      # @param root [String] the project root
       # @return [Array<Hash>] every review open and close record on disk
-      def self.prior_claims(paths)
-        SessionJournals.new(dir: paths.sessions_dir,
+      def self.prior_claims(paths, root:)
+        SessionJournals.new(dir: paths.session_dirs(root:, cwd: Dir.pwd),
                             types: [Lain::Epic::ReviewOpened::JOURNAL_TYPE,
                                     Lain::Epic::ReviewClosed::JOURNAL_TYPE]).to_a
       end
@@ -328,7 +329,7 @@ module Lain
         Lain::Epic::Review.from_journal(prior_claims, journal: notes, epic_slug: slug)
       end
 
-      def prior_claims = EpicMount.prior_claims(@paths)
+      def prior_claims = EpicMount.prior_claims(@paths, root: @root)
     end
   end
 end

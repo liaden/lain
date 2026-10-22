@@ -989,7 +989,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
     # A --btw session's file is reaped at close, and the decision with it.
     it "refuses in an ephemeral session until it is kept, naming --btw and /keep" do
-      chronicle = Lain::CLI::Chronicle.for(enabled: true, btw: true, paths:)
+      chronicle = Lain::CLI::Chronicle.for(enabled: true, btw: true, paths:, root: Dir.pwd)
       submitter = in_chat(chronicle)
 
       expect { submitter.submit("research", "alpha") }.to raise_error(Lain::Error, %r{--btw.*/keep}m)

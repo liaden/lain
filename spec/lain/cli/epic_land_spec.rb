@@ -345,6 +345,24 @@ RSpec.describe Lain::CLI::EpicLand, :seam do
       expect(output).to include("resumed a at #{sha}", "a moved in_flight -> done")
     end
 
+    it "finds the landing a chat filed under the project root when run from a subdirectory, and merges nothing" do
+      sub = File.join(root, "sub").tap { |dir| FileUtils.mkdir_p(dir) }
+      sha = worker("a", "README" => "a's work\n")
+      git("merge", "-q", "--ff-only", sha)
+      filed = paths.filing_dir(root:)
+      File.open(File.join(filed, "chat.ndjson"), "a") do |io|
+        journal = Lain::Journal.new(io:, clock: -> { "2026-01-01T00:00:00Z" })
+        [plan_approval("a"), implementation_approval("a", sha), landed_record("a", sha)].each { |r| journal.record(r) }
+      end
+      calls.clear
+
+      output = Dir.chdir(sub) { command.resume("a", "demo") }
+
+      expect(tip).to eq(sha)
+      expect(calls.flatten).not_to include("merge")
+      expect(output).to include("resumed a at #{sha}", "a moved in_flight -> done")
+    end
+
     it "refuses a resume when nothing was ever merged, naming the issue" do
       sha = worker("a", "README" => "a's work\n")
       session(plan_approval("a"), implementation_approval("a", sha))

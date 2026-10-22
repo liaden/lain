@@ -226,7 +226,7 @@ module Lain
           end
 
           # FRESH per read, for {SessionJournals}' own reason: it caches its walk.
-          def records(type) = SessionJournals.new(dir: @paths.sessions_dir, types: [type])
+          def records(type) = SessionJournals.new(dir: @paths.session_dirs(root: @root, cwd: Dir.pwd), types: [type])
         end
 
         # Lain's own checkout of the epic's branch, which the landing queue
@@ -681,7 +681,8 @@ module Lain
         # FRESH per read, never memoized: a decision this run just journaled has
         # to be visible to the very next question about it.
         def signoffs
-          SessionJournals.new(dir: @paths.sessions_dir, types: [Lain::Epic::SignoffQueue::JOURNAL_TYPE]).to_a
+          dirs = @paths.session_dirs(root: @root, cwd: Dir.pwd)
+          SessionJournals.new(dir: dirs, types: [Lain::Epic::SignoffQueue::JOURNAL_TYPE]).to_a
         end
       end
 

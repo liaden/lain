@@ -1556,7 +1556,7 @@ RSpec.describe Lain::CLI::Resume do
       write_session("20260101T000000-1.ndjson", [a])
       write_session("20260102T000000-1.ndjson", [b])
 
-      walk = described_class::ChainWalk.new(dir: paths.sessions_dir)
+      walk = described_class::ChainWalk.new(paths:, dirs: [paths.sessions_dir])
       expect { walk.paths(File.join(paths.sessions_dir, "20260101T000000-1.ndjson")) }
         .to raise_error(described_class::Refusal) do |error|
           expect(error.message).to include("20260101T000000-1.ndjson", "cycle")
@@ -1995,6 +1995,72 @@ RSpec.describe Lain::CLI::Resume do
 
       expect(forked.timeline.head_digest).to eq(continued.head_digest)
       expect(forked.resumed_from).to eq("file" => "20260101T000000-1.ndjson", "head" => continued.head_digest)
+    end
+  end
+
+  describe "sessions filed under the project root or under the working directory" do
+    around do |example|
+      @root = File.join(File.realpath(@state_home), "project")
+      @sub = File.join(@root, "sub")
+      FileUtils.mkdir_p([File.join(@root, ".lain"), @sub])
+      with_env("HOME" => File.realpath(@state_home)) { example.run }
+    end
+
+    def file_under(dir, name, timeline)
+      path = File.join(paths.sessions_dir(project: paths.project_hash(dir)), name)
+      records = [open_header, *turn_records(timeline), Lain::Telemetry::SessionClosed.new(head: timeline.head_digest,
+                                                                                          reason: :exit).to_journal]
+      File.write(path, "#{records.map { |record| JSON.generate(record) }.join("\n")}\n")
+      path
+    end
+
+    it "finds the root's newest session from a subdirectory" do
+      path = file_under(@root, "20260101T000000-1.ndjson", chain("one", "two"))
+
+      expect(Dir.chdir(@sub) { resume.locate("") }).to eq(path)
+    end
+
+    it "finds a session filed under the old cwd key, and picks the newest across both" do
+      file_under(@root, "20260101T000000-1.ndjson", chain("one", "two"))
+      newer = file_under(@sub, "20260102T000000-1.ndjson", chain("three", "four"))
+
+      expect(Dir.chdir(@sub) { resume.locate("") }).to eq(newer)
+    end
+
+    def split_chain(parent_dir:, child_dir:)
+      parent = chain("one", "two")
+      file_under(parent_dir, "20260101T000000-1.ndjson", parent)
+      chained = open_header(resumed_from: { "file" => "20260101T000000-1.ndjson", "head" => parent.head_digest })
+      closed = Lain::Telemetry::SessionClosed.new(head: parent.head_digest, reason: :exit).to_journal
+      child = File.join(paths.sessions_dir(project: paths.project_hash(child_dir)), "20260102T000000-1.ndjson")
+      File.write(child, "#{[chained, closed].map { |record| JSON.generate(record) }.join("\n")}\n")
+      parent
+    end
+
+    it "resumes a chain whose parent is filed in the other directory" do
+      parent = split_chain(parent_dir: @sub, child_dir: @root)
+
+      result = Dir.chdir(@sub) { resume.call(selector: "20260102") }
+
+      expect(result.timeline.head_digest).to eq(parent.head_digest)
+    end
+
+    it "resumes that chain from the root, where the parent's directory is not among the two" do
+      parent = split_chain(parent_dir: @sub, child_dir: @root)
+
+      result = Dir.chdir(@root) { resume.call(selector: "20260102") }
+
+      expect(result.timeline.head_digest).to eq(parent.head_digest)
+    end
+
+    it "resumes a root-filed chat whose parent is filed under the directory it was started from" do
+      elsewhere = File.join(File.realpath(@state_home), "elsewhere").tap { |dir| FileUtils.mkdir_p(dir) }
+      parent = split_chain(parent_dir: elsewhere, child_dir: @root)
+      project = Lain::Paths::Place.new(root: @root, cwd: @root)
+
+      result = Dir.chdir(elsewhere) { described_class.new(paths:, project:).call(selector: "20260102") }
+
+      expect(result.timeline.head_digest).to eq(parent.head_digest)
     end
   end
 end

@@ -4,44 +4,36 @@ require "fileutils"
 require "stringio"
 require "tmpdir"
 
-# The epic tier answers "which project am I in?" on TWO axes, and they are keyed
-# DIFFERENTLY on purpose. Nothing states that anywhere else, and until the
-# project resolver landed nothing could tell: both answers resolved to the
-# working directory, so the two spellings agreed by accident.
+# A session record lands in one of two directories, and every reader folds both.
 #
-#   * the epic CONTAINER -- where the documents live -- is keyed on the resolved
-#     PROJECT ROOT ({Lain::Project::Resolver.default_project}), so a chat and every
-#     `lain epic ...` invocation see one set of epics from anywhere in the tree;
-#   * the epic JOURNAL DIRECTORY -- where verdicts, intents and review claims are
-#     recorded -- is keyed on the WORKING DIRECTORY, through
-#     {Lain::Paths#sessions_dir}'s `project_hash(Dir.pwd)` default.
+#   * a CHAT files its journal under the resolved PROJECT ROOT
+#     ({Lain::CLI::Chronicle} keys it on `project_hash(root)`), so `--root P`
+#     from anywhere files the session where `lain sessions` run in P looks;
+#   * the epic WRITERS (`submit`, `land`, `queue`, `finish`, the driver) keep
+#     filing under the WORKING DIRECTORY, through {Lain::Paths#sessions_dir}'s
+#     `project_hash(Dir.pwd)` default -- nothing was migrated;
+#   * EVERY reader of a session directory folds
+#     {Lain::Paths#session_dirs}: the root's directory first, then the working
+#     directory's, once when they are the same. So a chat started below the
+#     root and `lain epic status` run from anywhere in the tree agree on what
+#     was recorded, and a session filed under the old working-directory key
+#     stays visible.
 #
-# The second reads as odd until you notice what the alternative costs. Making the
-# journal directory follow the root means changing where `sessions_dir` points,
-# which relocates every resumable session on the machine and orphans the ones
-# that exist -- `--resume`, `watch`, `sessions` and `--fork` all read that
-# directory. That is a migration, not a keying change, and it is ticketed
-# separately. A card should not half-do a migration on its way past.
+# The epic CONTAINER -- where the documents live -- is keyed on the resolved
+# PROJECT ROOT as before ({Lain::Project::Resolver.default_project}).
 #
 # == Why this file exists, and why it is a seam
 #
-# The project resolver threaded a resolved project root through the chat and the
-# epic subcommands. It did not edit either of the two journal-directory lines --
-# it changed what `@root` MEANS, and two sites keyed on `project_hash(@root)`
-# ({Lain::CLI::Epic::Journals}, {Lain::CLI::EpicMount#prior_claims}) silently
-# stopped agreeing with the four that take the `sessions_dir` default. From a
+# The project resolver once changed what `@root` MEANS and two readers silently
+# stopped agreeing with the four that took the `sessions_dir` default: from a
 # subdirectory, `lain epic submit` wrote its verdict where `lain epic status`
-# would not look. Both lines are back on the default now, and this is what says
-# so.
-#
-# THE WHOLE SUITE STAYED GREEN THROUGHOUT. Every epic spec injects `paths:` and
-# `root:` together, so the two keyings cannot disagree inside a fixture: A
-# FIXTURE THAT SUPPLIES BOTH HALVES OF A RELATIONSHIP CANNOT TEST THE
-# RELATIONSHIP. That is the same family as this chunk's other vacuity findings,
-# and it is why nothing below injects `paths:` or a root the object could have
-# resolved itself. `HOME` and `XDG_STATE_HOME` move into the fixture -- that is
-# environment, not injection -- and every object is built the way `exe/lain`
-# builds it.
+# would not look. THE WHOLE SUITE STAYED GREEN THROUGHOUT. Every epic spec
+# injects `paths:` and `root:` together, so the keyings cannot disagree inside
+# a fixture: A FIXTURE THAT SUPPLIES BOTH HALVES OF A RELATIONSHIP CANNOT TEST
+# THE RELATIONSHIP. That is why nothing below injects `paths:` or a root the
+# object could have resolved itself. `HOME` and `XDG_STATE_HOME` move into the
+# fixture -- that is environment, not injection -- and every object is built
+# the way `exe/lain` builds it.
 RSpec.describe "the epic tier's project keying", :seam do
   # A real project: a `.lain/` marker for the resolver to stop on, and a
   # repo-mode epics home so the container is a path inside the project rather
@@ -87,7 +79,7 @@ RSpec.describe "the epic tier's project keying", :seam do
   def journal_dirs
     dirs = {}
     allow(Lain::CLI::SessionJournals).to receive(:new).and_wrap_original do |original, **kwargs|
-      dirs[@asking] = kwargs[:dir]
+      dirs[@asking] = Array(kwargs[:dir])
       original.call(**kwargs)
     end
     verbs.each do |name, verb|
@@ -97,49 +89,90 @@ RSpec.describe "the epic tier's project keying", :seam do
     dirs
   end
 
-  describe "the journal directory -- ONE directory, whichever verb asks" do
+  describe "the journal directories -- the same pair, whichever verb asks" do
     it "agrees across every epic verb, from a subdirectory of the project" do
       in_subdirectory_of_a_project do
         dirs = journal_dirs
 
         expect(dirs.values.uniq.length).to eq(1), lambda {
           listing = dirs.map { |name, dir| "  #{name} -> #{dir}" }.join("\n")
-          "the epic tier folds more than one session directory:\n#{listing}"
+          "the epic tier folds more than one set of session directories:\n#{listing}"
         }
       end
     end
 
-    # It follows the WORKING DIRECTORY, which is the half a reader will doubt.
-    # Stated positively, because four objects agreeing on the WRONG directory
-    # would satisfy the example above perfectly well.
-    it "is keyed on the working directory, not on the resolved project root" do
+    it "folds the root's directory, then the working directory's" do
       in_subdirectory_of_a_project do |root, sub|
         paths = Lain::Paths.new
-        dir = journal_dirs.values.first
 
-        expect(dir).to eq(paths.sessions_dir(project: paths.project_hash(sub)))
-        expect(dir).not_to eq(paths.sessions_dir(project: paths.project_hash(root)))
+        expect(journal_dirs.values.first)
+          .to eq([paths.sessions_dir(project: paths.project_hash(root)),
+                  paths.sessions_dir(project: paths.project_hash(sub))])
       end
     end
 
-    # The chat writes into that same directory ({Lain::CLI::Chronicle} opens
-    # `Journal.default_path`), and {Lain::CLI::EpicMount} reads review claims
-    # back out of it. A chat whose claims land where its own mount cannot see
-    # them replays nothing across a restart -- and the mount is handed the
-    # PROJECT ROOT, so this is also the assertion that the journal axis ignores
-    # the root it is given.
-    it "is where the chat writes, and where a root-bearing EpicMount reads back" do
+    it "folds a single directory when the working directory is the root" do
       in_subdirectory_of_a_project do |root, _sub|
-        dir = journal_dirs.values.first
+        Dir.chdir(root) { expect(journal_dirs.values.first.length).to eq(1) }
+      end
+    end
+
+    it "is where a chat files its journal, and where a root-bearing EpicMount reads back" do
+      in_subdirectory_of_a_project do |root, _sub|
         seen = nil
         allow(Lain::CLI::SessionJournals).to receive(:new).and_wrap_original do |original, **kwargs|
-          seen = kwargs[:dir]
+          seen = Array(kwargs[:dir])
           original.call(**kwargs)
         end
         mount_for(root).send(:prior_claims)
+        chat_dir = File.dirname(Lain::CLI::Chronicle.for(enabled: true, root:).journal_path)
 
-        expect(File.dirname(Lain::Journal.default_path(paths: Lain::Paths.new))).to eq(dir)
-        expect(seen).to eq(dir)
+        expect(seen).to include(chat_dir)
+      end
+    end
+  end
+
+  # The verbs above are the ones a fixture can drive end to end; the rest of the
+  # readers (land's landings, submit's read-back, finish, the driver's records)
+  # are held to the same pair by what they hand SessionJournals.
+  describe "every reader of the session directories" do
+    it "hands its fold the directories Paths#session_dirs names, never one of them" do
+      lib = File.expand_path("../../../lib", __dir__)
+      folds = Dir.glob(File.join(lib, "**", "*.rb")).flat_map do |file|
+        File.readlines(file).grep(/(SessionJournals|ReadBack)\.new\(.*\bdir:/).map { |line| [file, line.strip] }
+      end
+      single = folds.reject { |_file, line| line.match?(/session_dirs\(|dir: dirs?\b|dir: @dir\b/) }
+
+      expect(folds).not_to be_empty
+      expect(single).to be_empty, "readers folding a single directory:\n#{single.map do |f, l|
+        "  #{f}: #{l}"
+      end.join("\n")}"
+    end
+  end
+
+  describe "a review chat launched below the root with --root" do
+    def claim = { "type" => Lain::Epic::ReviewOpened::JOURNAL_TYPE, "epic_slug" => "alpha", "generation" => 7 }
+
+    def launch_chat_recording_a_claim(root)
+      load File.expand_path("../../../exe/lain", __dir__) unless defined?(LainCLI)
+      wiring = instance_double(Lain::CLI::Wiring, conductor: instance_spy(Lain::CLI::Conductor), exit_status: 0)
+      allow(wiring).to receive(:run)
+      allow(Lain::CLI::Wiring).to receive(:new) do |**wired|
+        wired.fetch(:chronicle).durable_journal.record(claim)
+        wiring
+      end
+      LainCLI.start(["chat", "--root", root, "--journal"], debug: true)
+    end
+
+    it "has its claim seen from the root and from the subdirectory" do
+      in_subdirectory_of_a_project do |root, sub|
+        Dir.chdir(sub) { launch_chat_recording_a_claim(root) }
+
+        seen = [root, sub].map do |from|
+          Dir.chdir(from) { Lain::CLI::EpicMount.prior_claims(Lain::Paths.new, root:).map { |record| record["generation"] } }
+        end
+
+        expect(seen).to eq([[7], [7]])
       end
     end
   end

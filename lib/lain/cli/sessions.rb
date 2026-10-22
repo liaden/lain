@@ -9,8 +9,9 @@ module Lain
     # the Loader's job at resume time. Returns a String; only the frontend
     # renders (output discipline).
     class Sessions
-      def initialize(paths: Paths.new)
+      def initialize(paths: Paths.new, project: Project::Resolver.default_project)
         @paths = paths
+        @project = project
       end
 
       # @param all [Boolean] include ephemeral (`.btw.ndjson`) sessions; the
@@ -20,19 +21,19 @@ module Lain
       #   empty state naming the directory searched
       def listing(all: false)
         names = session_names(all:)
-        return "no sessions recorded under #{dir}" if names.empty?
+        return "no sessions recorded under #{dirs.join(", ")}" if names.empty?
 
-        names.reverse.map { |name| Row.for(name:, path: File.join(dir, name)).to_s }.join("\n")
+        names.reverse.map { |name| Row.for(name:, path: Paths.session_file(name, dirs:)).to_s }.join("\n")
       end
 
       private
 
-      def dir = @dir ||= @paths.sessions_dir
+      def dirs = @dirs ||= @paths.session_dirs(root: @project.root, cwd: @project.cwd)
 
       # Bench::CLI's discovery idiom: Dir.children (never glob-parsed), sorted
       # -- the filenames are UTC-timestamped, so lexicographic IS chronological.
       def session_names(all:)
-        Dir.children(dir).select { |name| name.end_with?(".ndjson") && (all || !Paths.ephemeral?(name)) }.sort
+        Paths.session_names(dirs).select { |name| all || !Paths.ephemeral?(name) }
       end
 
       # Counts the entries {Journal.records} already walks, so the number of

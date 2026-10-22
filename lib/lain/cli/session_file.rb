@@ -33,12 +33,13 @@ module Lain
 
       # @param selector [String] an explicit path, a bare filename, or a
       #   filename missing its ".ndjson" suffix
-      # @param paths [Paths] resolves this project's session dir
+      # @param paths [Paths] resolves this project's session dirs
+      # @param project [Project] whose sessions are searched
       # @return [String] the resolved path
       # @raise [SessionNotFound] naming every candidate, so a typo against a
       #   session dir the user did not expect is diagnosable from the message
-      def self.resolve(selector, paths:)
-        tried = candidates(selector, paths)
+      def self.resolve(selector, paths:, project:)
+        tried = candidates(selector, paths.session_dirs(root: project.root, cwd: project.cwd))
         tried.find { |candidate| File.file?(candidate) } ||
           raise(SessionNotFound, "no session found for #{selector.inspect} -- looked at #{tried.join(", ")}")
       end
@@ -47,9 +48,8 @@ module Lain
       # outside this project stays reachable), then under this project's session
       # dir, then with the suffix a user drops reading a name off
       # `lain sessions`.
-      def self.candidates(selector, paths)
-        dir = paths.sessions_dir
-        [selector, File.join(dir, selector), File.join(dir, "#{selector}.ndjson")]
+      def self.candidates(selector, dirs)
+        [selector, *dirs.flat_map { |dir| [File.join(dir, selector), File.join(dir, "#{selector}.ndjson")] }]
       end
       private_class_method :candidates
     end

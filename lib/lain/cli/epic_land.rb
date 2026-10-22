@@ -169,9 +169,15 @@ module Lain
 
       # FRESH per invocation, never memoized, for {CLI::EpicSubmit#journals}'
       # reason: {SessionJournals} caches its own walk.
-      def journals = SessionJournals.new(dir: @paths.sessions_dir, types: [Lain::Epic::SignoffQueue::JOURNAL_TYPE])
+      def journals
+        SessionJournals.new(dir: @paths.session_dirs(root: @root, cwd: Dir.pwd),
+                            types: [Lain::Epic::SignoffQueue::JOURNAL_TYPE])
+      end
 
-      def landings = SessionJournals.new(dir: @paths.sessions_dir, types: [Lain::Forge::LocalLanding::LANDED])
+      def landings
+        SessionJournals.new(dir: @paths.session_dirs(root: @root, cwd: Dir.pwd),
+                            types: [Lain::Forge::LocalLanding::LANDED])
+      end
 
       def named!(value)
         named = value.to_s.strip

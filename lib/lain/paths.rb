@@ -26,6 +26,10 @@ module Lain
   # Hash instead of mutating process-wide state -- the real `$HOME` is never
   # touched by this class or by its specs.
   class Paths
+    # All a session reader needs of a {Project}, for a caller that holds a root
+    # and a cwd without one.
+    Place = Data.define(:root, :cwd)
+
     # A directory this class had to create and could not.
     class Unwritable < Error
       def initialize(path, cause)
@@ -283,6 +287,51 @@ module Lain
       ensure_dir(container("sessions", key: project))
     end
 
+    # Every directory a session reader folds, root first: a chat files under its
+    # project root, while earlier versions and the epic writers file under the
+    # working directory, and a reader that looked at one would lose the other.
+    # One place computes the pair so no reader can disagree with another.
+    #
+    # @param root [String] the project root
+    # @param cwd [String] the working directory
+    # @return [Array<String>] one directory when the two keys are the same
+    def session_dirs(root:, cwd:)
+      [filing_dir(root:), sessions_dir(project: project_hash(cwd))].uniq
+    end
+
+    # @param root [String] the project root
+    # @return [String] where a chat files its journal, created
+    def filing_dir(root:) = sessions_dir(project: project_hash(root))
+
+    # @param name [String] a session's basename
+    # @param dirs [Array<String>] where to look
+    # @return [String] its path in the first directory holding it, else in the first directory
+    def self.session_file(name, dirs:)
+      candidates = dirs.map { |dir| File.join(dir, name) }
+      candidates.find { |path| File.exist?(path) } || candidates.first
+    end
+
+    # @param dirs [Array<String>] session directories
+    # @return [Array<String>] the basenames of every session file in them, oldest first
+    def self.session_names(dirs)
+      dirs.flat_map { |dir| Dir.children(dir) }.select { |name| name.end_with?(".ndjson") }.uniq.sort
+    end
+
+    # A chain's parent is named by basename alone, and a chat may have been
+    # resumed from another directory than the one it was filed in; the stamp
+    # and pid make a basename unique across every project's directory.
+    #
+    # @param name [String] a session's basename
+    # @param dirs [Array<String>] where to look first
+    # @return [String] its path in `dirs`, else in any sibling project directory, else in the first of `dirs`
+    def chain_file(name, dirs:)
+      listed = self.class.session_file(name, dirs:)
+      return listed if File.exist?(listed)
+
+      siblings = sibling_session_dirs.map { |dir| File.join(dir, name) }
+      siblings.find { |path| File.exist?(path) } || listed
+    end
+
     # The cross-project harness-improver sink: ONE file, not partitioned by
     # project_hash the way {#sessions_dir} is -- a dogfood note about lain
     # ITSELF is worth keeping across every project lain has run in, unlike a
@@ -304,6 +353,13 @@ module Lain
     end
 
     private
+
+    # Every project's session directory that exists, found from the same
+    # container recipe {#sessions_dir} uses.
+    def sibling_session_dirs
+      parent = File.dirname(container("sessions", key: project_hash))
+      File.directory?(parent) ? Dir.children(parent).map { |key| File.join(parent, key) } : []
+    end
 
     # Expansion first (`~`, relative segments), THEN kernel resolution, so the
     # fallback hashes the same lexical form realpath would have started from.

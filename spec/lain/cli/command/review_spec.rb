@@ -841,12 +841,12 @@ RSpec.describe Lain::CLI::Command::Review do
     # The earlier chat, which opened a review of `earlier` and stopped with it
     # open, written where its session file would be; then the resumed one,
     # whose header names that file.
-    def resumed(dir, earlier: "feature")
+    def resumed(dir, earlier: "feature", earlier_dir: dir)
       prior = StringIO.new
       described_class.new(root: @repo, outbox: Lain::Review::Submit::Outbox.new, ledger: Lain::Sensitivity::Ledger.new)
                      .call(earlier, build_command_env(replies:,
                                                       chronicle: chronicle_on(Lain::Journal.new(io: prior), nil)))
-      File.write(File.join(dir, "earlier.ndjson"), prior.string)
+      File.write(File.join(earlier_dir, "earlier.ndjson"), prior.string)
       current = File.join(dir, "resumed.ndjson")
       File.write(current, "#{JSON.generate("type" => Lain::SessionRecord::HEADER_TYPE,
                                            "resumed_from" => { "file" => "earlier.ndjson", "head" => "x" })}\n")
@@ -870,6 +870,21 @@ RSpec.describe Lain::CLI::Command::Review do
         answer = command.call("feature", resumed(dir))
 
         expect(answer).to include("not carried over").and include("branch feature")
+        expect(answer).not_to include("could not read")
+      end
+    end
+
+    it "finds the earlier session when it is filed under another project's directory" do
+      attached
+      Dir.mktmpdir("lain-review-resumed") do |state|
+        with_env("XDG_STATE_HOME" => state) do
+          store = Lain::Paths.new
+          elsewhere = store.sessions_dir(project: "0123456789ab")
+          answer = command.call("feature", resumed(store.sessions_dir(project: "ba9876543210"), earlier_dir: elsewhere))
+
+          expect(answer).to include("not carried over").and include("branch feature")
+          expect(answer).not_to include("could not read")
+        end
       end
     end
 

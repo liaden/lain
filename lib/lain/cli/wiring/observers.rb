@@ -41,22 +41,24 @@ module Lain
         # @param chronicle [#observe, #durable_journal] registers each observer on every journal the chat
         #   writes, and takes the reason a lineage could not be read
         # @param paths [Paths] resolves the sessions directory a resume chains through
+        # @param project [Project] the chat's own, whose directories hold the sessions
         # @param resumed [Resume::Result, nil] nil for a fresh chat
         # @param arms [Arms] under `tripwire: :observe` a {Tripwire::Ledger} folds the journal too
         # @return [Observers]
-        def self.register(chronicle:, paths:, resumed:, arms:)
-          new(fresh: lineage_fresh(paths, resumed, chronicle.durable_journal)).tap do |observers|
+        def self.register(chronicle:, paths:, project:, resumed:, arms:)
+          new(fresh: lineage_fresh(paths, project, resumed, chronicle.durable_journal)).tap do |observers|
             observers.register(chronicle)
             chronicle.observe(Tripwire::Ledger.new(journal: chronicle.durable_journal)) if arms.tripwire == :observe
           end
         end
 
         # A chain that cannot be walked is one whose writes are unknown.
-        def self.lineage_fresh(paths, resumed, faults)
+        def self.lineage_fresh(paths, project, resumed, faults)
           return Shell::Executable::Fresh.for_lineage([], faults:) if resumed.nil?
 
-          dir = paths.sessions_dir
-          Shell::Executable::Fresh.for_lineage(Resume::ChainWalk.new(dir:).paths(File.join(dir, resumed.file)), faults:)
+          dirs = paths.session_dirs(root: project.root, cwd: project.cwd)
+          chain = Resume::ChainWalk.new(paths:, dirs:).paths(Paths.session_file(resumed.file, dirs:))
+          Shell::Executable::Fresh.for_lineage(chain, faults:)
         rescue Resume::Refusal, SystemCallError => e
           Shell::Executable::Fresh.unknown(e, faults:)
         end

@@ -155,6 +155,7 @@ module Lain
       # @param selector [String] the session under review
       # @param profile [RunProfile] what the model flag band resolved
       # @param paths [Paths] resolves the session dir and the improvements sink
+      # @param project [Project] whose sessions the selector names
       # @param project_dir [ProjectDir] keyed to the PROJECT's root rather than
       #   to `Dir.pwd`, so a pass run from a subdirectory journals under the
       #   project it is in
@@ -164,8 +165,9 @@ module Lain
       # @return [Improve]
       # @raise [SessionFile::SessionNotFound] before anything else is read
       def self.from_options(options, selector:, profile: RunProfile.from_options(options), paths: Paths.new,
-                            project_dir: ProjectDir.new(root: Project::Resolver.default_project.root, paths:))
-        path = SessionFile.resolve(selector, paths:)
+                            project: Project::Resolver.default_project,
+                            project_dir: ProjectDir.new(root: project.root, paths:))
+        path = SessionFile.resolve(selector, paths:, project:)
         mismatches = Resume::MismatchNotices.new(path:)
         resolved = profile.over(mismatches.recorded_profile)
         Backend.validated(resolved.provider)
