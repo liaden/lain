@@ -74,7 +74,7 @@ module Lain
       # @return [Progress]
       def call(graph)
         stage = self.stage
-        Progress.new(graph: overlaid(graph), stage:, epic_slug: @epic_slug, parked: parked_at(stage))
+        Progress.new(graph: overlaid(graph), stage:, epic_slug: @epic_slug, parked: parked_at)
       end
 
       # The last stage STARTED, or the first when nothing has. A completion
@@ -176,16 +176,13 @@ module Lain
       # The rebuild NEVER degrades to an empty queue on failure, so there is no
       # rescue here and must not be one: an empty queue reads as drained, and
       # drained opens the next stage over work nobody signed off.
-      def parked_at(stage)
+      #
+      # Every stage is shown, not the current one's: a draft left parked at an
+      # earlier stage after a newer one was approved is still awaiting a human.
+      def parked_at
         queue = Epic::SignoffQueue.from_journal(@records)
-        watched(stage).flat_map { |shown| queue.parked(@epic_slug, shown.name) }
+        Stage.all.flat_map { |shown| queue.parked(@epic_slug, shown.name) }
       end
-
-      # An issue-scoped verdict moves no epic-wide stage, so once the epic is
-      # planning its issues the stage reads the first issue-scoped one for the
-      # rest of the run -- and from there every issue-scoped partition is this
-      # epic's current business.
-      def watched(stage) = stage.issue_scoped? ? Stage.all.select(&:issue_scoped?) : [stage]
 
       def of_type(type) = Journal.records(@records, type:)
     end

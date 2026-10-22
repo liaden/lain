@@ -250,6 +250,15 @@ RSpec.describe Lain::Epic::Progress do
       expect(fold(entries, graph: chain).parked.map(&:artifact_digest)).to eq(["blake3:plan"])
     end
 
+    it "still shows a research draft left parked after a newer one was approved, once the epic is past research" do
+      entries = journaled(gate(digest: "blake3:v1"), gate(policy: "signoff", approved: true, digest: "blake3:v2"),
+                          stage_event(stage: "epic_plan"))
+      progress = fold(entries, graph: chain)
+
+      expect(progress.parked.map { |item| [item.stage, item.artifact_digest] }).to eq([%w[research blake3:v1]])
+      expect(progress.summary).to include("1 gate parked")
+    end
+
     it "drops an item a later terminal decision answered" do
       entries = journaled(gate, gate(policy: "signoff", approved: true))
 

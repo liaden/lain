@@ -410,6 +410,38 @@ RSpec.describe Lain::Epic::SignoffQueue do
       expect(queue.approved?("alpha", "research")).to be(false)
     end
 
+    it "keeps a newer approval when a superseded draft that was parked before it is denied" do
+      queue = described_class.from_journal(journaled(deferral(digest: "blake3:v1"), approval(digest: "blake3:v2"),
+                                                     decision(policy: "signoff", approved: false, digest: "blake3:v1")))
+
+      expect(queue.approved?("alpha", "research")).to be(true)
+      expect(queue.standing?("blake3:v2", "alpha", "research")).to be(true)
+      expect(queue.drained?("alpha", "research")).to be(true)
+    end
+
+    it "withdraws the approval again when a superseded draft is re-deferred and then denied" do
+      queue = described_class.from_journal(journaled(deferral(digest: "blake3:v1"), approval(digest: "blake3:v2"),
+                                                     deferral(digest: "blake3:v1"),
+                                                     decision(policy: "signoff", approved: false, digest: "blake3:v1")))
+
+      expect(queue.approved?("alpha", "research")).to be(false)
+    end
+
+    it "withdraws an older approval when a newer draft parked beside it is denied" do
+      queue = described_class.from_journal(journaled(deferral(digest: "blake3:v1"), deferral(digest: "blake3:v2"),
+                                                     approval(digest: "blake3:v1"),
+                                                     decision(policy: "signoff", approved: false, digest: "blake3:v2")))
+
+      expect(queue.approved?("alpha", "research")).to be(false)
+    end
+
+    it "withdraws an approval when a draft parked after it is denied" do
+      queue = described_class.from_journal(journaled(approval(digest: "blake3:v1"), deferral(digest: "blake3:v2"),
+                                                     decision(policy: "signoff", approved: false, digest: "blake3:v2")))
+
+      expect(queue.approved?("alpha", "research")).to be(false)
+    end
+
     it "is true again once a re-approval follows that denial" do
       queue = described_class.from_journal(journaled(approval(digest: "blake3:v1"),
                                                      decision(policy: "signoff", approved: false, digest: "blake3:v2"),

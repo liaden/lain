@@ -250,6 +250,10 @@ module Lain
         @parked = {}
         # {Partition} => the digest its newest terminal verdict approved.
         @approved = {}
+        # [partition, digest] pairs for drafts parked BEFORE the draft that was
+        # approved: the approval replaced them, so denying one withdraws nothing.
+        # A draft parked after the approved one is newer and is not in here.
+        @superseded = Set.new
       end
 
       # Idempotent on `(artifact_digest, epic_slug, stage, issue_id)`: an
@@ -268,6 +272,7 @@ module Lain
                criteria_digest: nil)
         item = Item.new(artifact_digest:, epic_slug:, stage:, issue_id:, question:, evidence_digest:,
                         criteria_digest:)
+        @superseded.delete([item.partition, item.artifact_digest])
         (@parked[item.partition] ||= {})[item.artifact_digest] = item
       end
 
@@ -389,9 +394,17 @@ module Lain
 
       def settle(decision)
         address = address_attributes(decision)
-        drain(**address)
         partition = Partition.new(**address.except(:artifact_digest))
-        decision["approved"] ? @approved[partition] = -address[:artifact_digest].to_s : @approved.delete(partition)
+        digest = address[:artifact_digest].to_s
+        replaced = @superseded.delete?([partition, digest])
+        older = @parked.fetch(partition, {}).keys.take_while { |parked| parked != digest }
+        drain(**address)
+        decision["approved"] ? approve(partition, digest, older) : (@approved.delete(partition) unless replaced)
+      end
+
+      def approve(partition, digest, older)
+        older.each { |parked| @superseded << [partition, parked] }
+        @approved[partition] = -digest
       end
 
       def deferred?(decision) = decision["policy"].to_s == DEFERRED_POLICY
