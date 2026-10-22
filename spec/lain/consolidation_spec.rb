@@ -79,6 +79,24 @@ RSpec.describe Lain::Consolidation do
     end
   end
 
+  describe "a clerk whose prompt exceeds its window" do
+    it "reports the lineage as failed and writes its lineage record" do
+      refusal = Class.new(Lain::Error) { include Lain::WindowExceeded }
+      provider = Class.new(Lain::Provider::Mock) do
+        define_method(:complete) do |_request, **|
+          raise refusal.new('{"error":"too big"}', prompt_tokens: 41_000, window_tokens: 32_768, source: "ollama")
+        end
+      end.new
+
+      failed, = consolidation(provider).call(lineages.first(1))
+
+      expect(failed).to have_attributes(spawn: spawn_a, result: nil, wrote: false, failed?: true)
+      expect(failed.failure.message).to include("32768", "41000")
+      expect(failed.failure.message).not_to include("{")
+      expect(journal_records(journal, "consolidation_lineage").size).to eq(1)
+    end
+  end
+
   describe "each completed lineage gets one clerk pass" do
     it "spawns one clerk per lineage, lands one memory each, and each names its lineage spawn" do
       provider = Lain::Provider::Mock.new(responses: [

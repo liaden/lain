@@ -189,6 +189,20 @@ RSpec.describe Lain::CLI::Consolidate do
       expect(journaled("turn_usage")).not_to be_empty
     end
 
+    it "names a window overflow with the prompt and window sizes" do
+      refusal = Class.new(Lain::Error) { include Lain::WindowExceeded }
+      provider = Class.new(Lain::Provider::Mock) do
+        define_method(:complete) do |_request, **|
+          raise refusal.new('{"error":"too big"}', prompt_tokens: 41_000, window_tokens: 32_768, source: "ollama")
+        end
+      end.new
+
+      expect { cli(provider).report }.to raise_error(Lain::CLI::Consolidate::PassFailed) { |error|
+        expect(error.message).to include("failed (over_window): the 41000-token prompt exceeds the 32768-token window")
+        expect(error.message).not_to include("{")
+      }
+    end
+
     it "reports a pass of answers as a plain String, as before" do
       provider = Lain::Provider::Mock.new(responses: [text_response("A done"), text_response("B done")])
 

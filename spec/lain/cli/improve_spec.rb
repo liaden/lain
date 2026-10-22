@@ -251,6 +251,33 @@ RSpec.describe Lain::CLI::Improve do
     end
   end
 
+  describe "a pass that overflows its window still says what it stored" do
+    let(:refusing_class) do
+      Class.new(Lain::Provider::Mock) do
+        const_set(:Refusal, Class.new(Lain::Error) { include Lain::WindowExceeded })
+
+        def complete(request, **)
+          return super if call_count < 2
+
+          raise self.class::Refusal.new('{"error":"requires more system memory"}',
+                                        prompt_tokens: 41_000, window_tokens: 32_768, source: "ollama")
+        end
+      end
+    end
+
+    it "names the window, the prompt size and the stored count, not the server body" do
+      provider = refusing_class.new(responses: [tool_response(improvement_write("k1", "first")),
+                                                tool_response(improvement_write("k2", "second", kind: "doc"))])
+
+      expect { improve(provider).report }.to raise_error(Lain::Error) do |error|
+        expect(error.message.lines.size).to eq(1)
+        expect(error.message).to include("32768", "41000", "stored 2 notes")
+        expect(error.message).not_to include("{")
+        expect(error.cause).to be_a(Lain::WindowExceeded)
+      end
+    end
+  end
+
   describe "the improver cannot write memories" do
     # A named capability the union can hold, without wiring the recorder-bearing
     # real tools (role_spec's idiom).

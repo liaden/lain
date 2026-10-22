@@ -231,6 +231,9 @@ module Lain
         raise Lain::Error, "improve: stopped at the ceiling, #{stored(sink)} (#{e.message})"
       rescue Response::Failed => e
         raise Lain::Error, "improve: #{e.message}, #{stored(sink)}"
+      rescue WindowExceeded => e
+        raise Lain::Error, "improve: the #{e.prompt_tokens}-token prompt exceeds the #{e.window_tokens}-token " \
+                           "window, #{stored(sink)}"
       end
 
       def stored(sink)

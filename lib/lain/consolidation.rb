@@ -30,6 +30,7 @@ module Lain
 
     # The name a ceiling stop goes by elsewhere (Agent::StopReason::RULES, Arm::Driver).
     CEILING = :ceiling
+    WINDOW = :over_window
 
     # `spawn` is the evidence a memory cites: the digest of the lineage's
     # `:spawn`, the address `lain watch` and the fleet already know it by. Twin
@@ -134,6 +135,13 @@ module Lain
       failed_outcome(scaffold, view, root_before, e.failure)
     rescue Budget::Exceeded => e
       failed_outcome(scaffold, view, root_before, Response::Failure.new(stop_reason: CEILING, message: e.message))
+    rescue WindowExceeded => e
+      failed_outcome(scaffold, view, root_before, window_failure(e))
+    end
+
+    def window_failure(error)
+      message = "the #{error.prompt_tokens}-token prompt exceeds the #{error.window_tokens}-token window"
+      Response::Failure.new(stop_reason: WINDOW, message:)
     end
 
     def failed_outcome(scaffold, view, root_before, failure)
