@@ -88,7 +88,7 @@ module SuiteLoad
     end
 
     def stop
-      sleep 0.2 if signal("TERM")
+      await_end(0.2) if signal("TERM")
       signal("KILL")
       Process.wait(@pid)
     rescue Errno::ECHILD
@@ -96,6 +96,11 @@ module SuiteLoad
     end
 
     private
+
+    def await_end(grace)
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + grace
+      sleep 0.01 until (exited? && !signal(0)) || Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+    end
 
     # False once no process is left in the group.
     def signal(name)

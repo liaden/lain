@@ -61,6 +61,26 @@ RSpec.describe "bin/suite-load and bin/suite-redrate" do
                     "--rounds", rounds.to_s, "spec/a_spec.rb")
   end
 
+  describe "SuiteLoad::Group#stop" do
+    before { load suite_load }
+
+    def stop_time(command)
+      group = SuiteLoad::Group.spawn({}, "sh", "-c", command)
+      sleep 0.2
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      group.stop
+      Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+    end
+
+    it "returns as soon as a group that exits on TERM has ended" do
+      expect(stop_time("exec sleep 30")).to be < 0.15
+    end
+
+    it "still kills a group that ignores TERM after the grace" do
+      expect(stop_time("trap '' TERM; while :; do sleep 1; done")).to be_between(0.2, 1.0)
+    end
+  end
+
   describe "suite-load" do
     it "counts a card failure with its location and seed, apart from the base" do
       card = tree("card", counting_stub(fail_every: 3))
@@ -142,10 +162,10 @@ RSpec.describe "bin/suite-load and bin/suite-redrate" do
     it "gives up on a run held open by a grandchild" do
       held = "sleep 30 & echo '3 examples, 0 failures'"
       out, = Timeout.timeout(20) do
-        load_run(tree("card", held), tree("base", held), { "SUITE_LOAD_RUN_TIMEOUT" => "1" }, rounds: 1)
+        load_run(tree("card", held), tree("base", held), { "SUITE_LOAD_RUN_TIMEOUT" => "0.3" }, rounds: 1)
       end
 
-      expect(out).to include("card failure: timed out after 1.0s")
+      expect(out).to include("card failure: timed out after 0.3s")
     end
 
     %w[INT TERM].product([false, true]).each do |signal, ignored_at_start|
