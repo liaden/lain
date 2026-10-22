@@ -138,6 +138,8 @@ module InputPaneSocket
 
   # One cockpit's two processes and the directory they meet in.
   class Cockpit
+    include CursorReport
+
     attr_reader :dir, :path, :chats
 
     # @param warm [WarmCockpit::Booted] a pane already spawned on `warm.dir`'s socket
@@ -232,8 +234,10 @@ module InputPaneSocket
       nil
     end
 
-    def drain(reader)
-      Enumerator.produce { reader.readpartial(4096) }.each { |bytes| @lock.synchronize { @screen << bytes } }
+    def drain(reader, writer = @warm.writer)
+      Enumerator.produce { reader.readpartial(4096) }.each do |bytes|
+        @lock.synchronize { @screen << answered(writer, bytes) }
+      end
     rescue Errno::EIO, IOError
       nil
     end

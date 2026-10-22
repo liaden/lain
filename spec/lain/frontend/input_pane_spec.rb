@@ -1293,8 +1293,11 @@ RSpec.describe Lain::Frontend::InputPane do
 
       def keyed_pane = described_class.new(path:, tty:, input: @pty.last, commands:, layers:, tick: 0.01, geometry:)
 
-      def echoed_until(seen = +"", &)
-        Enumerator.produce { seen << pty_read(@pty.first, 1) }.find(&)
+      def echoed_until(seen = +"")
+        Enumerator.produce { seen << pty_read(@pty.first, 1) }.find do |bytes|
+          answered(@pty.first, bytes.byteslice(-CursorReport::QUERY.bytesize, CursorReport::QUERY.bytesize).to_s)
+          yield(bytes)
+        end
       end
 
       Lain::Frontend::Intake::LINE_KINDS.map(&:to_s).each do |kind|
