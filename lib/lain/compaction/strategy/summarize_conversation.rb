@@ -57,21 +57,23 @@ module Lain
         #   the span. {Summarizing#propose_ranges} keeps those the oracle
         #   answers for.
         def propose_claims(messages, span:)
-          ToolMessages.conversational_runs(messages, span: unanswered_prompt_kept(messages, span), owner: name)
+          ToolMessages.conversational_runs(messages, span:, owner: name)
+                      .map { |run| unanswered_prompt_kept(messages, run) }
+                      .select { |run| run.size > 1 }
                       .flat_map { |run| super(messages, span: run) }
         end
 
         private
 
-        # A summary of a prompt whose answer lies past the cut reads as a
+        # A summary of a prompt whose answer lies past the run reads as a
         # request that went unanswered, so the prompt stays verbatim beside it
         # (and, sitting below the cut's floor, no later collapse folds it).
-        def unanswered_prompt_kept(messages, span)
-          prompt_awaiting_answer?(messages, span) ? span.begin..(span.last - 1) : span
+        def unanswered_prompt_kept(messages, run)
+          prompt_awaiting_answer?(messages, run) ? run.begin..(run.last - 1) : run
         end
 
-        def prompt_awaiting_answer?(messages, span)
-          span.any? && messages[span.last + 1] && Oracle::Handoff.human?(messages.fetch(span.last))
+        def prompt_awaiting_answer?(messages, run)
+          messages[run.last + 1] && Oracle::Handoff.human?(messages.fetch(run.last))
         end
       end
     end

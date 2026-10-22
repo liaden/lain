@@ -198,7 +198,7 @@ RSpec.describe Lain::CLI::CompactionStrategy do
       strategy = resolve("summarize-conversation", tier: tier_factory, journal: [])
 
       expect(strategy).to be_a(Lain::Compaction::Strategy::SummarizeConversation)
-      expect(strategy.ranges(mixed, span: whole)).to eq([3..4, 7..10])
+      expect(strategy.ranges(mixed, span: whole)).to eq([7..10])
     end
 
     it "refuses summarize-conversation with no tier:, naming IT and not its parent" do
@@ -229,7 +229,7 @@ RSpec.describe Lain::CLI::CompactionStrategy do
     it "proposes a disjoint partition of a mixed span, raising nothing" do
       strategy = resolve("elide-tools+summarize-conversation", tier: tier_factory, journal: [])
 
-      expect(strategy.ranges(mixed, span: whole)).to eq([1..2, 3..4, 5..6, 7..10])
+      expect(strategy.ranges(mixed, span: whole)).to eq([1..2, 5..6, 7..10])
     end
 
     # The one production fold over strategies with a law behind it: the name
@@ -254,7 +254,7 @@ RSpec.describe Lain::CLI::CompactionStrategy do
     it "partitions the same span whichever way round the two are spelled" do
       strategy = resolve("summarize-conversation+elide-tools", tier: tier_factory, journal: [])
 
-      expect(strategy.ranges(mixed, span: whole)).to eq([1..2, 3..4, 5..6, 7..10])
+      expect(strategy.ranges(mixed, span: whole)).to eq([1..2, 5..6, 7..10])
     end
 
     # One `tier:` call, so one Oracle::Recorded::Journaling and one journal --

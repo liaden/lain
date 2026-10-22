@@ -20,31 +20,39 @@ module SummarizeConversationFixtures
 
   def tool_result(id) = { "type" => "tool_result", "tool_use_id" => "toolu_#{id}", "content" => "ok" }
 
-  # Roles alternate by index, so a `tool_use` is always the assistant's and its
-  # answer always the user's -- the shape a real transcript has, and the one
-  # spec/lain/compaction/derivation_spec.rb builds.
+  # Text roles alternate by index; a `tool_use` is always the assistant's and its
+  # answer always the user's, wherever they fall, so a conversational run can end
+  # on either role before a tool round.
+  def role(content, index)
+    return "assistant" if content.any? { |block| block["type"] == "tool_use" }
+    return "user" if content.any? { |block| block["type"] == "tool_result" }
+
+    index.even? ? "user" : "assistant"
+  end
+
   def messages(blocks)
-    blocks.each_with_index.map do |content, index|
-      { "role" => index.even? ? "user" : "assistant", "content" => content }
-    end
+    blocks.each_with_index.map { |content, index| { "role" => role(content, index), "content" => content } }
   end
 
   def history(blocks, store: Lain::Dag::Factory.store)
     blocks.each_with_index.inject(Lain::Dag::Factory.timeline(store:)) do |timeline, (content, index)|
-      timeline.commit(role: index.even? ? "user" : "assistant", content:)
+      timeline.commit(role: role(content, index), content:)
     end
   end
 
   # One LONE conversational turn, two tool rounds, and two conversational runs
   # long enough to be worth a call:
   #
-  #   0 lone | 1-2 tool | 3-4 conv | 5-6 tool | 7-10 conv
+  #   0 lone | 1-2 tool | 3-5 conv | 6-7 tool | 8-11 conv
+  #
+  # Each run ends on the assistant's turn: a run ending on a user prompt whose
+  # answer is a tool round is trimmed, which is its own example below.
   #
   # The opening turn's body is unmistakable on purpose: the oracle must never
   # see it, and an example asserts exactly that by looking for the string.
   def mixed_blocks
     [[text("lone opening")], [tool_use(0)], [tool_result(0)],
-     [text("so")], [text("then")], [tool_use(1)], [tool_result(1)],
+     [text("so")], [text("then")], [text("well")], [tool_use(1)], [tool_result(1)],
      [text("ok")], [text("more")], [text("and")], [text("last")]]
   end
 
@@ -55,10 +63,10 @@ module SummarizeConversationFixtures
   # pass on a single replayed answer, which is a weaker claim than the card
   # makes.
   #
-  #   0 lone | 1-2 tool | 3-4 conv | 5-6 tool | 7-8 conv | 9-10 tool | 11 lone | 12-14 tail
+  #   0 lone | 1-2 tool | 3-5 conv | 6-7 tool | 8-9 conv | 10-11 tool | 12 lone | 13-15 tail
   def long_blocks
     [[text("lone opening")], [tool_use(0)], [tool_result(0)],
-     [text("so")], [text("then")], [tool_use(1)], [tool_result(1)],
+     [text("so")], [text("then")], [text("well")], [tool_use(1)], [tool_result(1)],
      [text("ok")], [text("next")], [tool_use(2)], [tool_result(2)],
      [text("lone middle")], [text("tail one")], [text("tail two")], [text("tail three")]]
   end
@@ -152,14 +160,14 @@ RSpec.describe Lain::Compaction::Strategy::SummarizeConversation do
 
   describe "the runs it claims out of a mixed span" do
     it "claims the conversational runs of two or more and nothing else" do
-      expect(strategy.ranges(mixed, span: 0..10)).to eq([3..4, 7..10])
+      expect(strategy.ranges(mixed, span: 0..11)).to eq([3..5, 8..11])
     end
 
     it "claims no index carrying a tool block" do
-      claimed = strategy.ranges(mixed, span: 0..10).flat_map(&:to_a)
-      carrying = (0..10).select { |index| Lain::Compaction::ToolMessages.tool?(mixed.fetch(index)) }
+      claimed = strategy.ranges(mixed, span: 0..11).flat_map(&:to_a)
+      carrying = (0..11).select { |index| Lain::Compaction::ToolMessages.tool?(mixed.fetch(index)) }
 
-      expect(carrying).to eq([1, 2, 5, 6])
+      expect(carrying).to eq([1, 2, 6, 7])
       expect(claimed & carrying).to be_empty
     end
 
@@ -176,7 +184,7 @@ RSpec.describe Lain::Compaction::Strategy::SummarizeConversation do
     end
 
     it "leaves a lone conversational turn at the edge of the span unclaimed too" do
-      expect(strategy.ranges(mixed, span: 0..10).flat_map(&:to_a)).not_to include(0)
+      expect(strategy.ranges(mixed, span: 0..11).flat_map(&:to_a)).not_to include(0)
     end
 
     it "claims a wholly conversational span in one run" do
@@ -223,6 +231,21 @@ RSpec.describe Lain::Compaction::Strategy::SummarizeConversation do
       expect(strategy.ranges(marked, span: 0..2)).to eq([0..2])
     end
 
+    it "keeps a prompt whose answer is a tool round inside the span, and never shows it to the oracle" do
+      round = fixtures.messages([[fixtures.text("u1")], [fixtures.text("a1")], [fixtures.text("fix the bug")],
+                                 [fixtures.tool_use(0)], [fixtures.tool_result(0)]])
+
+      expect(strategy.ranges(round, span: 0..4)).to eq([0..1])
+      expect(tier.asked.map { |inputs| inputs.fetch(described_class::SLOT) }.join).not_to include("fix the bug")
+    end
+
+    it "drops a run the trim leaves with 1 message" do
+      round = fixtures.messages([[fixtures.tool_use(0)], [fixtures.text("a1")], [fixtures.text("fix the bug")],
+                                 [fixtures.tool_use(1)], [fixtures.tool_result(1)]])
+
+      expect(strategy.ranges(round, span: 0..4)).to be_empty
+    end
+
     it "still claims a span that ends on the assistant's turn whole" do
       expect(strategy.ranges(prompted, span: 0..3)).to eq([0..3])
     end
@@ -232,15 +255,15 @@ RSpec.describe Lain::Compaction::Strategy::SummarizeConversation do
     let(:strategy) { fixtures.strategy(oracle: Class.new { def ask(_inputs) = raise("the oracle was asked") }.new) }
 
     it "claims the conversational runs it would propose" do
-      expect(strategy.claims(mixed, span: 0..10)).to eq([3..4, 7..10])
+      expect(strategy.claims(mixed, span: 0..11)).to eq([3..5, 8..11])
     end
 
     it "proposes only ranges inside what it claims, with an oracle that answers" do
       answering = fixtures.strategy(oracle: fixtures.counting)
-      ranges = answering.ranges(mixed, span: 0..10)
+      ranges = answering.ranges(mixed, span: 0..11)
 
-      expect(ranges).to eq([3..4, 7..10])
-      expect(ranges.flat_map(&:to_a) - answering.claims(mixed, span: 0..10).flat_map(&:to_a)).to be_empty
+      expect(ranges).to eq([3..5, 8..11])
+      expect(ranges.flat_map(&:to_a) - answering.claims(mixed, span: 0..11).flat_map(&:to_a)).to be_empty
     end
 
     it "claims nothing in a span of tool rounds" do
@@ -248,7 +271,7 @@ RSpec.describe Lain::Compaction::Strategy::SummarizeConversation do
     end
 
     it "claims the tool rounds too when composed with their complement" do
-      expect((fixtures.eliding_tools | strategy).claims(mixed, span: 0..10)).to eq([1..2, 3..4, 5..6, 7..10])
+      expect((fixtures.eliding_tools | strategy).claims(mixed, span: 0..11)).to eq([1..2, 3..5, 6..7, 8..11])
     end
   end
 
@@ -257,21 +280,21 @@ RSpec.describe Lain::Compaction::Strategy::SummarizeConversation do
     let(:strategy) { fixtures.strategy(oracle: tier) }
 
     it "asks exactly one question per claimed run" do
-      strategy.ranges(mixed, span: 0..10)
+      strategy.ranges(mixed, span: 0..11)
 
       expect(tier.asked.size).to eq(2)
     end
 
     it "asks about the claimed runs themselves, and never about the lone turn" do
-      strategy.ranges(mixed, span: 0..10)
+      strategy.ranges(mixed, span: 0..11)
       asked = tier.asked.map { |inputs| inputs.fetch(described_class::SLOT) }
 
-      expect(asked).to eq([strategy.question(mixed[3..4]), strategy.question(mixed[7..10])])
+      expect(asked).to eq([strategy.question(mixed[3..5]), strategy.question(mixed[8..11])])
       expect(asked.join).not_to include("lone opening")
     end
 
     it "asks no further question when each claimed run is then collapsed" do
-      ranges = strategy.ranges(mixed, span: 0..10)
+      ranges = strategy.ranges(mixed, span: 0..11)
       ranges.each { |range| strategy.collapse(mixed[range], range:) }
 
       expect(ranges.size).to eq(2)
@@ -317,7 +340,7 @@ RSpec.describe Lain::Compaction::Strategy::SummarizeConversation do
     let(:down) { fixtures.strategy(oracle: fixtures.failing, sink:) }
 
     it "leaves every run uncollapsed and reports why, once per run" do
-      expect(down.ranges(mixed, span: 0..10)).to be_empty
+      expect(down.ranges(mixed, span: 0..11)).to be_empty
       expect(sink.string.lines.size).to eq(2)
       expect(sink.string).to include(described_class.name, "Unrecorded")
     end
@@ -330,7 +353,7 @@ RSpec.describe Lain::Compaction::Strategy::SummarizeConversation do
       projected = Lain::EventLog::Messages.project(derived.to_a)
 
       expect(projected.select { |message| Lain::Compaction::ToolMessages.tool?(message) })
-        .to eq(mixed.values_at(1, 2, 5, 6))
+        .to eq(mixed.values_at(1, 2, 6, 7))
       expect(projected.first).to eq(mixed.fetch(0))
     end
   end
@@ -344,9 +367,9 @@ RSpec.describe Lain::Compaction::Strategy::SummarizeConversation do
     it "proposes the union of the two selections rather than raising Overlap" do
       eliding = fixtures.eliding_tools
 
-      expect { (strategy | eliding).ranges(mixed, span: 0..10) }.not_to raise_error
-      expect((strategy | eliding).ranges(mixed, span: 0..10)).to eq([1..2, 3..4, 5..6, 7..10])
-      expect(eliding.ranges(mixed, span: 0..10)).to eq([1..2, 5..6])
+      expect { (strategy | eliding).ranges(mixed, span: 0..11) }.not_to raise_error
+      expect((strategy | eliding).ranges(mixed, span: 0..11)).to eq([1..2, 3..5, 6..7, 8..11])
+      expect(eliding.ranges(mixed, span: 0..11)).to eq([1..2, 6..7])
     end
 
     # `|` is a COMMUTATIVE monoid, held to its laws in
@@ -355,8 +378,8 @@ RSpec.describe Lain::Compaction::Strategy::SummarizeConversation do
     it "claims the same ranges whichever way round the pair is composed" do
       eliding = fixtures.eliding_tools
 
-      expect((eliding | strategy).ranges(mixed, span: 0..10))
-        .to eq((strategy | eliding).ranges(mixed, span: 0..10))
+      expect((eliding | strategy).ranges(mixed, span: 0..11))
+        .to eq((strategy | eliding).ranges(mixed, span: 0..11))
     end
   end
 
