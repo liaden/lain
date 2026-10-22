@@ -1281,6 +1281,18 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
 
     def issue_epic = issued(toolset_build)
 
+    def commit_all(dir)
+      system(SeedRepo::SCRUB, "git", "-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "seed",
+             exception: true, out: File::NULL)
+    end
+
+    def committed_repo(dir)
+      system(SeedRepo::SCRUB, "git", "init", "-q", dir, exception: true)
+      File.write(File.join(dir, "seed.rb"), "1\n")
+      system(SeedRepo::SCRUB, "git", "-C", dir, "add", ".", exception: true)
+      commit_all(dir)
+    end
+
     def spawned(ordinal) = Lain::Isolation::WorkerId.spawned(role: "subagent", ordinal:).to_s
 
     # The epic's own workers carry its lane, so their anchors cannot meet
@@ -1386,11 +1398,15 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     end
 
     context "when the orchestrator hands a review to a child" do
+      let(:issue_isolation) { Lain::Isolation::Null.new(root: repo) }
+      let(:repo) { Dir.mktmpdir("lain-reviewed").tap { |dir| committed_repo(dir) } }
       let(:provider) do
         Lain::Provider::Mock.new(responses: [tool_response(["o1", "subagent", { "prompt" => "review it",
                                                                                 "role" => "reviewer_code" }]),
                                              text_response("looks right"), text_response("plan done")])
       end
+
+      after { FileUtils.rm_rf(repo) }
 
       # It reads the code it judges and changes none of it, and it cannot
       # reach the network while doing so.
@@ -1402,6 +1418,56 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         expect(shown(provider.requests[1])).to include("read_file", "list_files", "glob", "grep")
         expect(shown(provider.requests[1]))
           .not_to include("edit_file", "write_file", "bash", "web_fetch", "web_search", "subagent")
+      end
+    end
+
+    context "when the orchestrator's checkout holds work it has not committed" do
+      let(:checkout) { Dir.mktmpdir("lain-reviewer-gate") }
+      let(:isolation_over_checkout) { Lain::Isolation::Null.new(root: checkout) }
+      let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
+
+      before do
+        committed_repo(checkout)
+        File.write(File.join(checkout, "greeting.rb"), "puts 1\n")
+        toolset_build.build(recorder, ask_human:)
+      end
+
+      after { FileUtils.rm_rf(checkout) }
+
+      def offer
+        toolset_build.epic_subagent(isolation: isolation_over_checkout, handoff: issue_handoff, lane: "issue.demo.a")
+                     .attenuates_from.fetch("subagent")
+      end
+
+      it "refuses a reviewer spawn and says to commit first" do
+        result = offer["reviewer_code"].call({ "prompt" => "review it" }, invocation)
+
+        expect(result.content).to include("commit your work first; the reviewer reads the committed tip")
+        expect(result).to be_error
+        expect(provider.requests).to be_empty
+      end
+
+      it "spawns a reviewer once the work is committed" do
+        system(SeedRepo::SCRUB, "git", "-C", checkout, "add", ".", exception: true)
+        commit_all(checkout)
+
+        expect(offer["reviewer_code"].call({ "prompt" => "review it" }, invocation)).to be_ok
+      end
+
+      it "refuses through a descended copy of the reviewer spawner too" do
+        copy = offer["reviewer_code"].descend(parent:, escalation: [], holder: Lain::Tools::Subagent::Holder.at(1))
+
+        expect(copy.call({ "prompt" => "review it" }, invocation).content).to include("commit your work first")
+      end
+
+      it "refuses when git cannot say whether the tree is clean" do
+        FileUtils.rm_rf(File.join(checkout, ".git"))
+
+        expect(offer["reviewer_code"].call({ "prompt" => "review it" }, invocation)).to be_error
+      end
+
+      it "still spawns a dev child over the same dirty tree" do
+        expect(offer["dev"].call({ "prompt" => "implement it" }, invocation)).to be_ok
       end
     end
 

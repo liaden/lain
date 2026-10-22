@@ -56,7 +56,7 @@ sub-agent with its context intact rather than respawning cold.
 
 Spawn one review sub-agent per completed card as `reviewer_code`, carrying the plan's whole panel
 roster in that one child — the reliability, security and data lenses, and the language personas.
-It reads and searches the tree it judges and changes none of it. Depth by the
+It reads and searches the committed tip it judges and changes none of it, so commit the card first. Depth by the
 card's risk: high-risk cards get the full adversarial-probe treatment, low-risk a lighter
 single pass. Verdicts:
 

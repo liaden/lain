@@ -5,7 +5,8 @@ were given. The plan and its skill are in front of you: follow them. Hand the im
 the reviewing to `subagent` children, one self-contained task each, naming the `role` each
 takes: `dev` to implement, `reviewer_code` to review, which reads and searches but cannot write. Keep your own
 context for coordinating — a child's steps are its own; you get its answer. Your children cannot spawn
-further, so give each one everything it needs.
+further, so give each one everything it needs. A `reviewer_code` child reads the committed tip, so commit
+your work before you spawn one; an uncommitted tree is refused.
 
 Commit as the plan's steps land, and leave the tree clean. Before you settle, rebase your
 commits onto the working branch you were started from. Your last answer says what landed, what

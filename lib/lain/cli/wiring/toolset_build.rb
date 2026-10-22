@@ -60,6 +60,32 @@ module Lain
         # role.
         attr_reader :role_spawn, :docent
 
+        # Refuses a spawn while the checkout holds work git has not recorded,
+        # and stays that way for every spawner descended from it.
+        class CommittedOnly < SimpleDelegator
+          REFUSAL = "subagent spawn refused: commit your work first; the reviewer reads the committed tip " \
+                    "(untracked files count)"
+
+          def initialize(spawner, isolation)
+            super(spawner)
+            @isolation = isolation
+          end
+
+          def call(input, invocation) = uncommitted? ? Lain::Tool::Result.error(REFUSAL) : super
+
+          def descend(**) = self.class.new(__getobj__.descend(**), @isolation)
+
+          private
+
+          # A git that cannot answer counts as uncommitted: unknown must not read as clean.
+          def uncommitted?
+            shell = Lain::Isolation::Checkout.new(@isolation.repo_root).run("status", "--porcelain")
+            !Lain::Shell::Out.ok?(shell) || !shell.stdout.empty?
+          rescue StandardError
+            true
+          end
+        end
+
         # @return [Lain::CLI::Arms] the bench arms the run was started with
         attr_reader :arms
 
@@ -288,7 +314,7 @@ module Lain
 
           issue = seam.with(isolation: issue_leases(isolation, handoff, lane), holder: EPIC_ROOM)
           Lain::Tools::Subagent.new(seam: announcing(ISSUE_ORCHESTRATOR.to_s, over: issue),
-                                    toolset: orchestrating(issue),
+                                    toolset: orchestrating(issue, isolation),
                                     policy: backend.spawn_policy(ISSUE_ORCHESTRATOR), budget: ORCHESTRATOR_BUDGET,
                                     persona: persona(ISSUE_ORCHESTRATOR), mode: :actor,
                                     announces_as: ISSUE_ORCHESTRATOR.to_s)
@@ -487,15 +513,28 @@ module Lain
         # The floor plus the two names only the orchestrator holds: one spawner
         # over both roles it fans work out to, and the renderer that puts the
         # plan's skill in front of it.
-        def orchestrating(issue)
-          Lain::Toolset.new(@floor.to_a + [spawning(issue), run_skill])
+        def orchestrating(issue, isolation)
+          Lain::Toolset.new(@floor.to_a + [spawning(issue, isolation), run_skill])
         end
 
         # The one spawner the orchestrator holds, offering both roles it fans
         # work out to. Which one a child takes is the orchestrator's choice per
         # call; that the set is these two is not.
-        def spawning(issue)
-          Lain::Tools::Subagent::Choice.new([IMPLEMENTER, REVIEWER].to_h { |role| [role, spawner(role, issue)] })
+        def spawning(issue, isolation)
+          offered = [IMPLEMENTER, REVIEWER].to_h { |role| [role, guarded(role, spawner(role, issue), isolation)] }
+          Lain::Tools::Subagent::Choice.new(offered)
+        end
+
+        def guarded(role, spawner, isolation)
+          role == REVIEWER ? reviewing(spawner, isolation) : spawner
+        end
+
+        # A reviewer is cut from the committed tip, so work the orchestrator has
+        # not committed is invisible to it and would be reviewed as absent.
+        def reviewing(spawner, isolation)
+          return spawner unless isolation.respond_to?(:repo_root)
+
+          CommittedOnly.new(spawner, isolation)
         end
 
         # Descended into the orchestrator's union, so its child gets what the
