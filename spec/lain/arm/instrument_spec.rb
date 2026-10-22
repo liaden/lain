@@ -44,6 +44,19 @@ RSpec.describe Lain::Arm::Instrument do
     end
   end
 
+  describe ".records -- a drained channel as journal hashes" do
+    it "answers a telemetry record's journal hash and a Hash as it is, in order" do
+      usage = Lain::Telemetry::TurnUsage.new(digest: "d1", model: "claude-sonnet-4", stop_reason: :end_turn,
+                                             usage: { "input_tokens" => 1 })
+      escalation = { "type" => "escalation", "tool" => "bash" }
+      channel = Lain::Channel.new
+      channel << usage
+      channel << escalation
+
+      expect(described_class.records(channel)).to eq([usage.to_journal, escalation])
+    end
+  end
+
   describe "#price -- the run's journal folded into a Ledger" do
     let(:timeline) do
       Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
@@ -63,6 +76,14 @@ RSpec.describe Lain::Arm::Instrument do
 
       expect(ledger.usage(timeline).total_tokens).to eq(1100)
       expect(ledger.cost(timeline)).to be > 0
+    end
+
+    it "prices a channel that also holds a journaled Hash" do
+      journal = Lain::Channel.new
+      journal << usage_record(timeline.head_digest)
+      journal << { "type" => "escalation", "tool" => "bash" }
+
+      expect(described_class.new.price(journal).usage(timeline).total_tokens).to eq(1100)
     end
 
     it "prices through the INJECTED price book, not the default" do

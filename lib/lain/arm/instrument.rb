@@ -38,6 +38,13 @@ module Lain
         super
       end
 
+      # Drain a channel into journal hashes, taking a record's `#to_journal` or a Hash as it is.
+      # An escalation is pushed as a Hash, so the drain cannot assume every entry is a record.
+      #
+      # @param channel [Lain::Channel]
+      # @return [Array<Hash>]
+      def self.records(channel) = channel.drain.map { _1.respond_to?(:to_journal) ? _1.to_journal : _1 }
+
       # Run the block and answer BOTH what it took and what it produced.
       #
       # @return [Array(Float, Object)] elapsed monotonic seconds, and the block's
@@ -55,7 +62,7 @@ module Lain
       #
       # @param journal [Lain::Channel] the run's own recording channel
       # @return [Lain::Ledger]
-      def price(journal) = price_records(journal.drain.map(&:to_journal))
+      def price(journal) = price_records(self.class.records(journal))
 
       # The same fold over records a caller has ALREADY drained -- a fan-out arm
       # collects one journal per worker and merges them before pricing.

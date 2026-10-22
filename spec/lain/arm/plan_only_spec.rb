@@ -71,6 +71,18 @@ end
 #
 # Every collaborator is scripted. The planner is a seam, the actor is a seam,
 # and no provider is resolved: this arm spends real money in production.
+# Passes the fold through while keeping what each worker handed it.
+class PlanOnlySpecSpySynthesis
+  attr_reader :results
+
+  def initialize = (@inner = Lain::Arm::Synthesis.new)
+
+  def fold(lead, results)
+    @results = results
+    @inner.fold(lead, results)
+  end
+end
+
 RSpec.describe Lain::Arm::PlanOnly do
   subject(:arm) { described_class.new(instrument: zero_clock, planner:, actors:, supervisor:) }
 
@@ -209,6 +221,26 @@ RSpec.describe Lain::Arm::PlanOnly do
     # inside an ordinary comparison is unchanged.
     it "falls through to the Driver's own grader when no grading seam is given" do
       expect(run_arm.grade).to be_a(Lain::Grader::Grade)
+    end
+  end
+
+  describe "the journal the run drained holds both record shapes" do
+    it "hands the synthesis the usage record's hash and the escalation Hash, in order" do
+      usage = Lain::Telemetry::TurnUsage.new(digest: "d1", model: "claude-sonnet-4", stop_reason: :end_turn,
+                                             usage: { "input_tokens" => 1 })
+      escalation = { "type" => "escalation", "tool" => "bash" }
+      spy = PlanOnlySpecSpySynthesis.new
+      pushing = lambda do |task, spawn_seam:, journal:, **|
+        journal << usage
+        journal << escalation
+        spawn_seam.call(journal: Lain::Channel.new).ask(task)
+        plan_text
+      end
+
+      described_class.new(instrument: zero_clock, planner: pushing, actors:, supervisor:, synthesis: spy)
+                     .run("add a refund to Order", spawn_seam:, grader:)
+
+      expect(spy.results.map(&:usage_records)).to eq([[usage.to_journal, escalation]])
     end
   end
 

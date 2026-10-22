@@ -143,7 +143,7 @@ module Lain
       # does not hold, so it is named causally by nothing -- the usage still
       # re-attributes, which is the half that must not be lost.
       def settled(report, journal)
-        Synthesis::Result.ok(head_digest: nil, text: report.to_s, usage_records: journal.drain.map(&:to_journal))
+        Synthesis::Result.ok(head_digest: nil, text: report.to_s, usage_records: Instrument.records(journal))
       end
     end
   end

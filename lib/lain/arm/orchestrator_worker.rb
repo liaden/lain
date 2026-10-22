@@ -142,7 +142,7 @@ module Lain
 
       # `journal` is bound before any spawn can raise (settle's first line), so
       # both the ok and rescue paths always have it -- no nil-guard.
-      def drain(journal) = journal.drain.map(&:to_journal)
+      def drain(journal) = Instrument.records(journal)
     end
   end
 end
