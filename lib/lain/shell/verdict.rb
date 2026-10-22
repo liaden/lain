@@ -156,18 +156,6 @@ module Lain
       #   send to its target, empty for anything {DISCARDS} does not name
       def self.discarded(redirect) = DISCARDS.fetch([redirect.descriptor, redirect.operator], [])
 
-      # Asked of a parse whatever the verdict made of it. A substitution or a
-      # heredoc can run a program no stage names, an assignment or an export
-      # can change what a later stage resolves to, and an escaped or expanding
-      # word is not the word the shell will run.
-      #
-      # @param result [Parse::Result]
-      # @return [Boolean] whether every node is literal structure and every word means itself
-      def self.literal?(result)
-        result.covered? && (result.kinds - LITERAL_KINDS - REDIRECT_KINDS).empty? &&
-          result.stages.flat_map(&:argv).none? { ESCAPING.match?(_1) || EXPANDING.match?(_1) }
-      end
-
       # A name with a slash in it is exec'd even when its last segment is a builtin's.
       #
       # @param program [String, nil] a stage's first word, as written
