@@ -283,6 +283,22 @@ RSpec.describe Lain::Isolation::WorkingBranch, :seam do
         expect(reasons).to include(described_class::FORWARDED)
       end
 
+      it "spawns no more git for a branch it has just created than when asked not to forward it" do
+        real = Lain::Shell::Out.public_method(:new)
+        spawned = lambda do |forward|
+          count = 0
+          counting = lambda do |*args, **kwargs|
+            count += 1
+            real.call(*args, **kwargs)
+          end
+          described_class.owned("#{name}-#{forward}", repo_root: @repo_root, from: sha("main"), forward:,
+                                                      shell_out_factory: counting)
+          count
+        end
+
+        expect(spawned.call(true)).to eq(spawned.call(false))
+      end
+
       it "writes nothing when the branch already stands at the base" do
         base = owned_at_main
 

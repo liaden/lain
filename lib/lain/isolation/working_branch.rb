@@ -112,8 +112,9 @@ module Lain
       #   against it, the base names no commit, or a branch stands there that
       #   lain did not create
       def self.owned(name, repo_root:, from:, forward: false, shell_out_factory: Shell::Out.public_method(:new))
-        branch = new(name, repo_root:, git: checkout(repo_root, shell_out_factory)).establish(from:, owned_only: true)
-        return branch unless forward
+        branch = new(name, repo_root:, git: checkout(repo_root, shell_out_factory))
+        created = branch.claim(from:, owned_only: true)
+        return branch if created || !forward
 
         registry = Worktree::Registry.new(repo_root: File.expand_path(repo_root), shell_out_factory:)
         branch.forward(from, registry:)
@@ -199,10 +200,22 @@ module Lain
       # @return [self]
       # @raise [Refused]
       def establish(from:, owned_only: false)
+        claim(from:, owned_only:)
+        self
+      end
+
+      # {#establish}, saying whether this call made the branch: one it just made
+      # stands at its base, so there is nothing to {#forward}.
+      #
+      # @return [Boolean]
+      # @raise [Refused]
+      def claim(from:, owned_only: false)
         refuse_unholdable
         refuse_nesting_clash
-        exists? ? standing(owned_only) : create(from)
-        self
+        return create(from) unless exists?
+
+        standing(owned_only)
+        false
       end
 
       # A branch whose every commit has landed on `from` carries nothing to
@@ -478,8 +491,11 @@ module Lain
       def create(from)
         base = based(from)
         made = @git.update_ref(ref, base, "", reason: CREATED)
-        return mark(base) if Shell::Out.ok?(made)
-        return if exists?
+        if Shell::Out.ok?(made)
+          mark(base)
+          return true
+        end
+        return false if exists?
 
         raise Refused, "#{ref} could not be created at #{from}, and lain never force-moves a " \
                        "working branch: #{said(made)}"
