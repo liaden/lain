@@ -121,6 +121,9 @@ module Lain
       end
       private_constant :CopyingSeam
 
+      PAIRED_HEADERS = %w[arm metric pairs mean-diff ci95 wins losses ties].freeze
+      private_constant :PAIRED_HEADERS
+
       TaskFailure = Data.define(:index, :reason)
       private_constant :TaskFailure
 
@@ -208,6 +211,7 @@ module Lain
         @arms = Array(arms).freeze
         @tasks = Array(tasks).freeze
         raise ArgumentError, "the driver needs at least one arm to compare" if @arms.empty?
+        raise ArgumentError, "arm names must be unique; reports key by name" if @arms.map(&:name).uniq.size < @arms.size
         raise ArgumentError, "a distribution needs n >= 2 tasks; one run is not a distribution" if @tasks.size < 2
         raise ArgumentError, "journal: nil has nowhere to record a grade; pass Channel::Null::INSTANCE" if journal.nil?
 
@@ -232,19 +236,18 @@ module Lain
       #
       # @return [String]
       def report
-        @report ||= render(measured)
+        @report ||= render(runs_by_arm)
       end
 
       private
 
-      # [arm_name, {metric_label => Distribution}] per arm, in the order given.
-      def measured
-        @arms.map { |arm| [arm.name, distributions_for(arm)] }
+      def runs_by_arm
+        @arms.to_h { |arm| [arm.name, @tasks.each_with_index.map { |task, index| run_task(arm, task, index + 1) }] }
       end
 
-      def distributions_for(arm)
-        runs = @tasks.each_with_index.map { |task, index| run_task(arm, task, index + 1) }
-        METRICS.transform_values { |spec| fold(runs, spec) }
+      # [arm_name, {metric_label => Distribution}] per arm, in the order given.
+      def measured(runs_by_arm)
+        runs_by_arm.map { |name, runs| [name, METRICS.transform_values { |spec| fold(runs, spec) }] }
       end
 
       def run_task(arm, task, number)
@@ -311,8 +314,59 @@ module Lain
       # METRICS' comment on `cache write tokens`.
       def value_of(run, of) = of.respond_to?(:call) ? of.call(run) : run.public_send(of)
 
-      def render(measured_arms)
-        [header, *METRICS.keys.map { |label| section(label, measured_arms) }].join("\n\n")
+      def render(runs_by_arm)
+        measured_arms = measured(runs_by_arm)
+        [header, *METRICS.keys.map do |label|
+          section(label, measured_arms)
+        end, *paired_sections(runs_by_arm)].join("\n\n")
+      end
+
+      def paired_sections(runs_by_arm)
+        (baseline, base_runs), *others = runs_by_arm.to_a
+        return [] if others.empty?
+
+        parts = others.map { |name, runs| rows_and_notes(baseline, name, base_runs.zip(runs)) }
+        grid = Compare::Table.new(headers: PAIRED_HEADERS, rows: parts.flat_map(&:first))
+        notes = ["wins = candidate higher", *parts.flat_map(&:last)]
+        [["paired vs #{baseline}\n#{grid}", *notes.map { |note| "  #{note}" }].join("\n")]
+      end
+
+      def rows_and_notes(baseline, name, run_pairs)
+        results = METRICS.reject { |_label, spec| spec.fetch(:optional, false) }
+                         .transform_values { |spec| paired_of(baseline, name, run_pairs, spec) }
+        refusals, measured = results.partition { |_label, result| result.is_a?(String) }
+        [measured.map { |label, result| paired_row(name, label, result) },
+         [*refusals.map { |label, why| "#{label}: #{why}" }, *unpaired_note(name, measured.map(&:last))]]
+      end
+
+      def paired_of(baseline, name, run_pairs, spec)
+        sides = run_pairs.each_with_index.to_h { |pair, index| [index + 1, pair.map { |run| side(run, spec) }] }
+        unpriced = sides.values.flatten.select { |side| side.respond_to?(:refuses?) && side.refuses? }
+        return Compare::Cost::Unpriced.describe(unpriced) if unpriced.any?
+
+        Compare::Paired.of(baseline:, candidate: name,
+                           values_by_task: sides.transform_values { |pair| pair.map { |side| amount(side) } })
+      end
+
+      def side(run, spec) = run.is_a?(TaskFailure) ? run.reason : value_of(run, spec.fetch(:of))
+
+      def amount(side) = side.respond_to?(:amount) ? side.amount : side
+
+      def paired_row(name, label, result)
+        return [name, label, "0", *Array.new(5, "-")] if result.pairs.empty?
+
+        [name, label, result.pairs.size.to_s, format("%+.3f", result.mean_difference),
+         interval_cell(result.interval, METRICS.fetch(label).fetch(:fmt)),
+         result.wins.to_s, result.losses.to_s, result.ties.to_s]
+      end
+
+      def interval_cell(interval, fmt) = interval ? "#{fmt.call(interval.low)}..#{fmt.call(interval.high)}" : "-"
+
+      def unpaired_note(name, results)
+        unpaired = results.map(&:unpaired).reduce({}, :merge)
+        return [] if unpaired.empty?
+
+        ["#{name}: #{unpaired.map { |index, reason| "task #{index} unpaired: #{reason}" }.join("; ")}"]
       end
 
       # An unattributable bench report is a weak experiment record, and a DOLLAR

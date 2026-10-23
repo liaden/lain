@@ -54,6 +54,21 @@ module DriverSpecSupport
     end
   end
 
+  class ScoredArm < Lain::Arm
+    def initialize(name:, base:, ceiling_on: nil)
+      super(name:)
+      @base = base
+      @ceiling_on = ceiling_on
+      @ledger = FixedLedger.new(cache_creation_input_tokens: 0)
+    end
+
+    def run(task, **)
+      raise Lain::Budget::Exceeded, "ceiling" if task == @ceiling_on
+
+      Lain::Arm::Run.new(arm: name, timeline: nil, grade: FakeGrade.new(@base), elapsed: 0.1, ledger: @ledger)
+    end
+  end
+
   class CeilingArm < Lain::Arm
     def run(_task, **)
       raise Lain::Budget::Exceeded, "loop ran 25 iterations, ceiling is 25"
@@ -814,6 +829,65 @@ RSpec.describe Lain::Arm::Driver do
       plain = described_class.new(arms, tasks:, spawn_seam:, grader:).report
 
       expect(section_for(journaled, "grader score")).to eq(section_for(plain, "grader score"))
+    end
+  end
+
+  describe "#report — paired differences against the first arm" do
+    let(:journal) { Lain::Channel.new }
+    let(:four) { %w[one two three four] }
+    let(:paired_arms) do
+      [DriverSpecSupport::ScoredArm.new(name: "single", base: 0.5),
+       DriverSpecSupport::ScoredArm.new(name: "orchestrator", base: 0.6)]
+    end
+    let(:report) { described_class.new(paired_arms, tasks: four, spawn_seam:, grader:, journal:).report }
+
+    def paired_section(report) = report.split("\n\n").find { |block| block.start_with?("paired vs ") }
+
+    def paired_row(report, metric, arm = "orchestrator")
+      paired_section(report).lines.map(&:chomp).find { |line| line.start_with?("#{arm} ") && line.include?(metric) }
+    end
+
+    it "gives the later arm one paired row per metric under the first arm's name" do
+      row = paired_row(report, "grader score")
+
+      expect(row).to match(/orchestrator\s+grader score\s+4\s+\+0\.100\s+\S+\.\.\S+\s+4\s+0\s+0\z/)
+    end
+
+    it "says what a win is" do
+      expect(paired_section(report)).to include("wins = candidate higher")
+    end
+
+    it "leaves the optional cache write metric out of the paired section" do
+      expect(paired_section(report)).not_to include("cache write")
+    end
+
+    it "refuses two arms with the same name" do
+      twins = [paired_arms.first, DriverSpecSupport::ScoredArm.new(name: "single", base: 0.6)]
+
+      expect { described_class.new(twins, tasks: four, spawn_seam:, grader:) }
+        .to raise_error(ArgumentError, /unique/)
+    end
+
+    it "has no paired section for a single arm" do
+      one = described_class.new([paired_arms.first], tasks: four, spawn_seam:, grader:, journal:).report
+
+      expect(one).not_to include("paired vs")
+    end
+
+    it "leaves out a task one arm failed and says so" do
+      arms = [paired_arms.first, DriverSpecSupport::ScoredArm.new(name: "orchestrator", base: 0.6, ceiling_on: "two")]
+      report = described_class.new(arms, tasks: four, spawn_seam:, grader:, journal:).report
+
+      expect(paired_row(report, "grader score")).to match(/\s3\s+\+0\.100/)
+      expect(paired_section(report)).to include("orchestrator: task 2 unpaired: ceiling")
+    end
+
+    it "refuses the paired cost row in the unpriced wording" do
+      unpriced = described_class.new(arms, tasks: four, spawn_seam: seam_for(model: "qwen3:4b"), grader:,
+                                           journal:).report
+
+      expect(paired_section(unpriced)).to include("cost (USD): not priced")
+      expect(paired_section(unpriced)).not_to match(/^control-b\s+cost/)
     end
   end
 
