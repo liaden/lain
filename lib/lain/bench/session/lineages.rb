@@ -168,8 +168,9 @@ module Lain
         def each(&)
           return enum_for(:each) unless block_given?
 
-          completions.uniq(&:digest).select { |completion| kept?(completion) }
-                     .each { |completion| yield lineage(completion) }
+          completions.uniq(&:digest).map { |completion| [completion, spawn_of(completion)] }
+                     .select { |_completion, spawn| @skip_roles.exclude?(spawn.body["role"]) }
+                     .each { |completion, spawn| yield lineage(completion, spawn) }
         end
 
         private
@@ -185,10 +186,7 @@ module Lain
           end
         end
 
-        def kept?(completion) = !@skip_roles.include?(spawn_of(completion).body["role"])
-
-        def lineage(completion)
-          spawn = spawn_of(completion)
+        def lineage(completion, spawn)
           Lineage.new(spawn:, completion:, child_turns: child_turns(completion, spawn))
         end
 

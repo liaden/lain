@@ -52,6 +52,20 @@ RSpec.describe Lain::Bench::Session::Lineages do
     end
   end
 
+  describe "reading each completion's spawn" do
+    it "fetches it from the store once per completion" do
+      recording = Lain::Bench::Session.load(two_spawns.lines)
+      fetched = []
+      allow(recording.timeline.store).to receive(:fetch).and_wrap_original do |original, digest|
+        original.call(digest).tap { |event| fetched << event.digest if event.kind == :spawn }
+      end
+
+      described_class.of(recording).to_a
+
+      expect(fetched.tally.values).to eq([1, 1])
+    end
+  end
+
   describe "a chat that spawned two one-shot subagents" do
     let(:session) { two_spawns }
     let(:lineages) { lineages_of(session).to_a }
