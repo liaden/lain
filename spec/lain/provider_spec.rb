@@ -22,7 +22,23 @@ RSpec.describe Lain::Provider do
   describe "CAPABILITIES" do
     it "names the tactics a context strategy can depend on" do
       expect(described_class::CAPABILITIES)
-        .to include(:streaming, :prompt_caching, :strict_tools, :thinking, :parallel_tool_use)
+        .to include(:streaming, :prompt_caching, :strict_tools, :thinking, :parallel_tool_use, :token_counting)
+    end
+  end
+
+  describe "#count_tokens" do
+    it "names the capability a provider lacks" do
+      provider = Lain::Provider::Mock.new(capabilities: %i[streaming])
+
+      expect { provider.count_tokens(nil) }
+        .to raise_error(described_class::Unsupported, /token_counting/)
+    end
+
+    it "is unsupported by Ollama" do
+      ollama = Lain::Provider::Ollama.new
+
+      expect(ollama.supports?(:token_counting)).to be(false)
+      expect { ollama.count_tokens(nil) }.to raise_error(described_class::Unsupported, /token_counting/)
     end
   end
 

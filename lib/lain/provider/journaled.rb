@@ -82,7 +82,7 @@ module Lain
       # is the only method in the class and a reader cannot miss it.
       delegate :capabilities, :supports?, :require!, :cache_profile, :context_window_tokens, :window_probe,
                :trained_context_tokens, :serves?, :model_capabilities, :admission_endpoint, :encode, :to_s,
-               to: :@inner
+               :count_tokens, to: :@inner
     end
   end
 end

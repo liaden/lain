@@ -50,6 +50,7 @@ module Lain
       server_context_editing
       server_tools
       structured_output
+      token_counting
     ].freeze
 
     # @return [Array<Symbol>] a subset of {CAPABILITIES}
@@ -182,6 +183,13 @@ module Lain
       return true if supports?(capability)
 
       raise Unsupported, "#{self.class} does not support #{capability.inspect}"
+    end
+
+    # @return [Integer] the input tokens the request's prompt would bill
+    # @raise [Unsupported] unless {#supports?} `:token_counting`
+    def count_tokens(_request)
+      require!(:token_counting)
+      raise NotImplementedError, "#{self.class} declares :token_counting but must implement #count_tokens"
     end
 
     # The exact payload this provider would send. Separated from {#complete} so

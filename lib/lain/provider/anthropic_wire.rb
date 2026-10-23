@@ -70,6 +70,14 @@ module Lain
         payload
       end
 
+      # The count endpoint rejects `max_tokens` and `stream`, so it takes only the
+      # prompt-bearing fields of the completion body. It drops thinking and
+      # tool_choice, which wire_payload does not send today: a field added there
+      # must be added here too or the count undercounts.
+      def count_payload(request)
+        wire_payload(request).slice(:model, :system, :tools, :messages)
+      end
+
       # The FULL, ordered block list with every extended-thinking signature
       # intact -- never the SDK's or RubyLLM's flattened text.
       def build_response(assembled)

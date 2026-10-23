@@ -25,8 +25,61 @@ RSpec.describe Lain::Provider::Anthropic do
   describe "#capabilities" do
     it "claims exactly what it can demonstrate, and only known capabilities" do
       provider = described_class.new(transport: transport_sync({}))
-      expect(provider.capabilities).to eq(%i[streaming prompt_caching strict_tools thinking parallel_tool_use])
+      expect(provider.capabilities)
+        .to eq(%i[streaming prompt_caching strict_tools thinking parallel_tool_use token_counting])
       expect(Lain::Provider::CAPABILITIES).to include(*provider.capabilities)
+    end
+  end
+
+  describe "#count_tokens" do
+    let(:url) { "https://api.anthropic.com/v1/messages/count_tokens" }
+    let(:tool) do
+      { name: "read_file", description: "read", input_schema: { type: "object", properties: {}, required: [] } }
+    end
+    let(:counted) do
+      Lain::Request.new(model: "claude-opus-4-8", max_tokens: 64, system: [{ type: "text", text: "be terse" }],
+                        tools: [tool, tool.merge(name: "grep")],
+                        messages: [{ role: "user", content: "a" }, { role: "assistant", content: "b" },
+                                   { role: "user", content: "c" }])
+    end
+
+    it "posts the completion's model, system, tools and messages without generating" do
+      stub = stub_request(:post, url).to_return(status: 200, body: JSON.generate("input_tokens" => 42),
+                                                headers: { "Content-Type" => "application/json" })
+
+      expect(described_class.new(api_key: "test").count_tokens(counted)).to eq(42)
+
+      sent = nil
+      expect(stub).to have_been_requested.once
+      expect(a_request(:post, url).with { |req| sent = JSON.parse(req.body) }).to have_been_made
+      expect(sent.keys).to contain_exactly("model", "system", "tools", "messages")
+      expect(sent["tools"].map { |t| t["name"] }).to eq(%w[read_file grep])
+      expect(sent["messages"].size).to eq(3)
+    end
+
+    it "counts through the provider the backend builds" do
+      stub_request(:post, url).to_return(status: 200, body: JSON.generate("input_tokens" => 9),
+                                         headers: { "Content-Type" => "application/json" })
+      backend = Lain::CLI::Backend.new({ provider: "anthropic", model: "claude-opus-4-8", max_tokens: 64 },
+                                       root: Dir.pwd)
+
+      allow(ENV).to receive(:[]).and_call_original
+      allow(ENV).to receive(:[]).with("ANTHROPIC_API_KEY").and_return("test")
+      allow(ENV).to receive(:fetch).and_call_original
+      allow(ENV).to receive(:fetch).with("ANTHROPIC_API_KEY", nil).and_return("test")
+      built = backend.provider
+
+      expect(built.count_tokens(counted)).to eq(9)
+    end
+
+    it "raises the wrapped error complete raises for a 400" do
+      stub_request(:post, url)
+        .to_return(status: 400, headers: { "Content-Type" => "application/json" },
+                   body: JSON.generate("type" => "error",
+                                       "error" => { "type" => "invalid_request_error", "message" => "bad" }))
+
+      expect { described_class.new(api_key: "test").count_tokens(counted) }
+        .to raise_error(described_class::APIStatusError) { |e| expect(e.status).to eq(400) }
     end
   end
 

@@ -34,6 +34,12 @@ module Lain
           response
         end
 
+        # No frame or witness: a count has no response bytes worth spooling, so
+        # {WalResponseTee} finds no frame on the context and does nothing.
+        def count_post(payload)
+          connection.post("v1/messages/count_tokens", payload)
+        end
+
         # It posts through the vendored {Streaming#post_stream} rather than
         # `connection.post` directly, because that is what performs the
         # end-of-stream flush -- without it an `event: error` the server never

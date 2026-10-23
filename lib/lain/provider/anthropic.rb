@@ -35,7 +35,7 @@ module Lain
       include Admitted
 
       DEFAULT_MODEL = "claude-opus-4-8"
-      CAPABILITIES = %i[streaming prompt_caching strict_tools thinking parallel_tool_use].freeze
+      CAPABILITIES = %i[streaming prompt_caching strict_tools thinking parallel_tool_use token_counting].freeze
 
       # The {Admission} key a bare construction contends on. It RESTATES the
       # literal inside the vendored {Provider::HTTP::Providers::Anthropic#api_base},
@@ -101,6 +101,14 @@ module Lain
       def complete(request, on_stream_started: nil)
         witness = ErrorWrapping::WireWitness.new
         admitted { wrapping_errors(witness) { build_response(dispatch(request, on_stream_started, witness)) } }
+      end
+
+      def count_tokens(request)
+        admitted do
+          wrapping_errors do
+            Integer(@transport.count_post(count_payload(request)).body.fetch("input_tokens"))
+          end
+        end
       end
 
       private

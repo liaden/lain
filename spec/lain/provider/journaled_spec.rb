@@ -121,6 +121,14 @@ RSpec.describe Lain::Provider::Journaled do
     # be asked, through however many decorators sit above it -- see
     # `oracle/secret_read_spec.rb`, where "the judge is a LOCAL ollama" is the
     # claim under test.
+    it "forwards count_tokens to the provider it wraps, journaling nothing" do
+      sent = request
+      allow(inner).to receive(:count_tokens).with(sent).and_return(7)
+
+      expect(provider.count_tokens(sent)).to eq(7)
+      expect(records).to be_empty
+    end
+
     it "names the provider it wraps" do
       expect(provider.inner).to equal(inner)
     end
