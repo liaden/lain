@@ -447,6 +447,16 @@ class LainCLI < Thor
       sampling(thor, max_tokens, ceiling)
       throughput(thor, recorded)
       residency(thor)
+      price_tier(thor)
+    end
+
+    # Every command that builds a Backend can reach an Anthropic client, so
+    # each one says what happens at a price tier. Only chat can ask.
+    def self.price_tier(thor)
+      thor.method_option :confirm_price_tier, type: :string, enum: %w[ask allow refuse], default: "ask",
+                                              desc: "Before a request crosses its model's prompt-size price " \
+                                                    "tier: ask the human, allow, or refuse. Where no human " \
+                                                    "is attached, ask refuses"
     end
 
     # The six {Lain::CLI::RunProfile} flags carry NO Thor `default:`. A default
@@ -1186,7 +1196,8 @@ class LainCLI < Thor
     # the same reason.
     HEADLESS = "Run --prompt's question and stop, reading nothing from the terminal: a gated tool call the " \
                "rules leave open is refused under ask, decided by the judge under auto (a call it is unsure " \
-               "of is refused), and approved under bypass; ask_human refuses by name (no human is attached), and " \
+               "of is refused), and approved under bypass; ask_human refuses by name (no human is attached), a " \
+               "request that would cross its model's price tier is refused unless --confirm-price-tier allow, and " \
                "the process exits non-zero when a turn could not finish. Needs --prompt. Run it " \
                "DIRECTLY, not through `lain up` -- that puts the chat in a tmux pane whose exit status " \
                "nothing reads, which is the whole of what this flag adds"

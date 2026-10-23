@@ -412,7 +412,8 @@ RSpec.describe Lain::CLI::Backend do
         backend_with(configured_with(counter), provider: "anthropic").provider
       end
 
-      expect(entries_of(provider)).to eq([[counter, {}]])
+      expect(entries_of(provider).first).to eq([counter, {}])
+      expect(entries_of(provider).last.first).to be(Lain::Provider::HTTP::PriceTierGuard)
     end
 
     it "hands the entries to the local ollama arm" do
@@ -440,6 +441,137 @@ RSpec.describe Lain::CLI::Backend do
       provider = backend_for(provider: "ollama").provider
 
       expect(entries_of(provider)).to eq([])
+    end
+  end
+
+  describe "the price tier guard on every anthropic client" do
+    let(:messages_url) { "https://api.anthropic.com/v1/messages" }
+    let(:count_url) { "https://api.anthropic.com/v1/messages/count_tokens" }
+    let(:records) { [] }
+    let(:reply) do
+      { status: 200, headers: { "Content-Type" => "application/json" },
+        body: JSON.generate("id" => "msg_1", "type" => "message", "role" => "assistant",
+                            "model" => "claude-haiku-5-5", "content" => [{ "type" => "text", "text" => "ok" }],
+                            "stop_reason" => "end_turn", "usage" => { "input_tokens" => 1, "output_tokens" => 1 }) }
+    end
+    let!(:sent) { stub_request(:post, messages_url).to_return(reply) }
+    let!(:count) do
+      stub_request(:post, count_url).to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                                               body: JSON.generate("input_tokens" => 104_000))
+    end
+
+    around { |example| with_env("ANTHROPIC_API_KEY" => "sk-test") { example.run } }
+
+    def anthropic(**options) = backend_for(**options)
+
+    def haiku(**options) = anthropic(provider: "anthropic", model: "claude-haiku-5-5", **options)
+
+    def ask(model: "claude-haiku-5-5", bytes: 400_000)
+      Lain::Request.new(model:, max_tokens: 64, stream: false,
+                        messages: [{ role: "user", content: "x" * bytes }])
+    end
+
+    def approving_queue(answer: true, &observe)
+      Class.new do
+        attr_reader :asked
+
+        define_method(:ask_decision) do |decision|
+          (@asked ||= []) << decision
+          observe&.call
+          answer
+        end
+      end.new
+    end
+
+    it "sends a request far below the tier without counting it" do
+      haiku.provider.complete(ask(bytes: 4_000))
+
+      expect(count).not_to have_been_requested
+      expect(sent).to have_been_requested.once
+    end
+
+    it "asks the bound hold once, sends after approval, and journals the crossing" do
+      backend = haiku
+      queue = approving_queue { expect(sent).not_to have_been_requested }
+      backend.price_tier_hold.bind(queue)
+
+      backend.provider(journal: records).complete(ask)
+
+      expect(queue.asked.map(&:kind)).to eq(["price_tier"])
+      expect(sent).to have_been_requested.once
+      expect(records.grep(Lain::Telemetry::PriceTierCrossed).map(&:decision)).to eq([:approve])
+    end
+
+    it "shows a crossing carried by an earlier approval on the channel the hold was bound with" do
+      backend = haiku
+      channel = Lain::Channel.new
+      backend.price_tier_hold.bind(approving_queue, channel)
+      provider = backend.provider(journal: records)
+
+      provider.complete(ask)
+      provider.complete(ask(bytes: 400_001))
+
+      carried = channel.drain.grep(Lain::Telemetry::PriceTierCrossed)
+      expect(carried.map(&:decision)).to eq([:carried])
+    end
+
+    it "refuses a denied crossing with a message naming the tier, and sends nothing" do
+      backend = haiku
+      backend.price_tier_hold.bind(approving_queue(answer: false))
+
+      expect { backend.provider.complete(ask) }
+        .to raise_error(Lain::Provider::HTTP::PriceTierGuard::Refused, /100,000-token price tier/)
+      expect(sent).not_to have_been_requested
+    end
+
+    it "refuses a crossing when no hold is bound, as in a headless run" do
+      expect { haiku.provider.complete(ask) }
+        .to raise_error(Lain::Provider::HTTP::PriceTierGuard::Refused, /100,000-token price tier/)
+      expect(sent).not_to have_been_requested
+    end
+
+    it "refuses without asking under --confirm-price-tier=refuse" do
+      backend = haiku(confirm_price_tier: "refuse")
+      queue = approving_queue
+      backend.price_tier_hold.bind(queue)
+
+      expect { backend.provider.complete(ask) }.to raise_error(Lain::Provider::HTTP::PriceTierGuard::Refused)
+      expect(queue.asked).to be_nil
+      expect(sent).not_to have_been_requested
+    end
+
+    it "sends without asking under --confirm-price-tier=allow" do
+      haiku(confirm_price_tier: "allow").provider.complete(ask)
+
+      expect(sent).to have_been_requested.once
+    end
+
+    it "parks the same decision before a summarizer request crosses the tier" do
+      backend = anthropic(provider: "ollama", summarizer_provider: "anthropic",
+                          summarizer_model: "claude-haiku-5-5")
+      queue = approving_queue { expect(sent).not_to have_been_requested }
+      backend.price_tier_hold.bind(queue)
+
+      backend.summarizer_provider.complete(ask)
+
+      expect(queue.asked.map(&:kind)).to eq(["price_tier"])
+      expect(sent).to have_been_requested.once
+    end
+
+    it "sends an unpriced anthropic model's request without counting it" do
+      anthropic(provider: "anthropic", model: "claude-fable-5").provider
+                                                               .complete(ask(model: "claude-fable-5"))
+
+      expect(count).not_to have_been_requested
+      expect(sent).to have_been_requested.once
+    end
+
+    it "never counts a model without tiers" do
+      anthropic(provider: "anthropic", model: "claude-opus-5-5").provider
+                                                                .complete(ask(model: "claude-opus-5-5"))
+
+      expect(count).not_to have_been_requested
+      expect(sent).to have_been_requested.once
     end
   end
 

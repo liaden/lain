@@ -198,6 +198,7 @@ module Lain
       # @option options [String] :summarizer_provider provider for the summarizer tier
       # @option options [String] :summarizer_model model id for the summarizer tier
       # @option options [Integer] :summarizer_max_tokens ceiling on a summarizer answer
+      # @option options [String] :confirm_price_tier ask, allow or refuse before a request crosses its price tier
       def initialize(options, root:, profile: RunProfile.from_options(options),
                      compaction: CompactionProfile.typed(options), middleware: Config::Middleware.empty,
                      paths: Paths.new, environment: Prompt::Environment.none, ceiling_default: nil)
@@ -383,6 +384,14 @@ module Lain
 
       # @return [Summarizer::Slot] what a late-bound journal reader holds instead of this Backend
       def journal_slot = @journal_slot ||= Summarizer::Slot.new
+
+      # Where every Anthropic client built here asks before a request crosses
+      # its model's price tier, and the approvals they share. Late-bound
+      # because the providers are built before the approval queue; {Wiring}
+      # binds it, and unbound it refuses.
+      #
+      # @return [Provider::HTTP::PriceTierGuard::Hold]
+      def price_tier_hold = @price_tier_hold ||= Provider::HTTP::PriceTierGuard::Hold.new
 
       # `--model` defaults to the SELECTED provider's own default (resolved here,
       # not in the Thor flag, whose default is fixed at load before `--provider`
@@ -734,7 +743,17 @@ module Lain
         raise MissingAPIKey, "ANTHROPIC_API_KEY is not set; #{flag} anthropic needs it to build a client" \
           if ENV["ANTHROPIC_API_KEY"].to_s.empty?
 
-        Provider::Anthropic.new(spool:, channel:, queue:, journal:, http_middleware: middleware.http_entries)
+        counter = Provider::HTTP::PriceTierGuard::LateCounter.new
+        entries = [*middleware.http_entries, price_tier_entry(journal, counter)]
+        counter.bind(Provider::Anthropic.new(spool:, channel:, queue:, journal:, http_middleware: entries))
+      end
+
+      # The compaction book, because it degrades to zero: an unpriced model has
+      # no tier to cross and is sent uncounted, where the default book raises.
+      def price_tier_entry(journal, counter)
+        [Provider::HTTP::PriceTierGuard,
+         { prices: COMPACTION_PRICES, counter:, hold: price_tier_hold, journal:,
+           mode: knob(:confirm_price_tier, :ask) }.freeze].freeze
       end
 
       # Where a provider's {Telemetry::ProviderWait} lands: this run's journal,

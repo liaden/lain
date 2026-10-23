@@ -37,6 +37,7 @@ module Lain
         return FilesWritten.new(event) if event.is_a?(Telemetry::FilesWritten)
         return AssistantText.new(event) if event.is_a?(Telemetry::AssistantText)
         return JudgeRuled.new(event) if event.is_a?(Telemetry::JudgeRuled)
+        return PriceTierCarried.new(event) if event.is_a?(Telemetry::PriceTierCrossed) && event.decision == :carried
 
         nil
       end

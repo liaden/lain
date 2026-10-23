@@ -586,8 +586,8 @@ module Lain
       # reading `resumed&.timeline` at the caller cost #wire_agent the one
       # branch that put it over AbcSize.
       def build_agent(toolset:, channel:, session:, backend:, resumed: nil, views: nil)
-        agent_over(board: switchboard(backend, toolset), channel:, session:, backend:,
-                   timeline: resumed&.timeline, views:)
+        board = switchboard(backend, toolset).tap { backend.price_tier_hold.bind(_1.approvals, channel) }
+        agent_over(board:, channel:, session:, backend:, timeline: resumed&.timeline, views:)
       end
 
       # What the Agent is built FROM: the provider the run talks to, the

@@ -72,6 +72,17 @@ RSpec.describe Lain::Provider::Anthropic do
       expect(built.count_tokens(counted)).to eq(9)
     end
 
+    it "counts a completion's wire body by its prompt-bearing fields, dropping max_tokens and stream" do
+      stub_request(:post, url).to_return(status: 200, body: JSON.generate("input_tokens" => 7),
+                                         headers: { "Content-Type" => "application/json" })
+      prompt = { model: "claude-haiku-5-5", system: "s", tools: [], messages: [{ role: "user", content: "a" }] }
+
+      counted = described_class.new(api_key: "test").count_wire(prompt.merge(max_tokens: 64, stream: true))
+
+      expect(counted).to eq(7)
+      expect(a_request(:post, url).with(body: JSON.generate(prompt))).to have_been_made.once
+    end
+
     it "raises the wrapped error complete raises for a 400" do
       stub_request(:post, url)
         .to_return(status: 400, headers: { "Content-Type" => "application/json" },

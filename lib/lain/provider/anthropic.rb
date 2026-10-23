@@ -37,6 +37,11 @@ module Lain
       DEFAULT_MODEL = "claude-opus-4-8"
       CAPABILITIES = %i[streaming prompt_caching strict_tools thinking parallel_tool_use token_counting].freeze
 
+      # The count endpoint rejects `max_tokens` and `stream`, so it takes only
+      # the prompt-bearing fields of a completion body. A prompt field added to
+      # the wire body must be added here too, or the count undercounts.
+      COUNTED_KEYS = %i[model system tools messages].freeze
+
       # The {Admission} key a bare construction contends on. It RESTATES the
       # literal inside the vendored {Provider::HTTP::Providers::Anthropic#api_base},
       # which has no constant to borrow, so it is pinned by spec rather than
@@ -103,12 +108,17 @@ module Lain
         admitted { wrapping_errors(witness) { build_response(dispatch(request, on_stream_started, witness)) } }
       end
 
-      def count_tokens(request)
-        admitted do
-          wrapping_errors do
-            Integer(@transport.count_post(count_payload(request)).body.fetch("input_tokens"))
-          end
-        end
+      def count_tokens(request) = admitted { count_wire(wire_payload(request)) }
+
+      # Not admitted: its one other caller is {HTTP::PriceTierGuard}, which
+      # runs inside a completion's admission, and a second slot there could
+      # wait on itself.
+      #
+      # @param payload [Hash] a completion's wire body
+      # @return [Integer] the prompt's input tokens
+      def count_wire(payload)
+        counted = payload.slice(*COUNTED_KEYS)
+        wrapping_errors { Integer(@transport.count_post(counted).body.fetch("input_tokens")) }
       end
 
       private

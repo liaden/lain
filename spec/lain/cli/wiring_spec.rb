@@ -1292,6 +1292,131 @@ RSpec.describe Lain::CLI::Wiring do
     end
   end
 
+  describe "the price tier hold the backend's anthropic clients ask" do
+    def json_reply
+      { status: 200, headers: { "Content-Type" => "application/json" },
+        body: JSON.generate("id" => "m", "type" => "message", "role" => "assistant", "model" => "claude-haiku-5-5",
+                            "content" => [{ "type" => "text", "text" => "ok" }], "stop_reason" => "end_turn",
+                            "usage" => { "input_tokens" => 1, "output_tokens" => 1 }) }
+    end
+
+    def streamed_reply
+      events = [
+        { "type" => "message_start",
+          "message" => { "id" => "m", "type" => "message", "role" => "assistant", "model" => "claude-haiku-5-5",
+                         "content" => [], "usage" => { "input_tokens" => 1, "output_tokens" => 1 } } },
+        { "type" => "content_block_start", "index" => 0, "content_block" => { "type" => "text", "text" => "" } },
+        { "type" => "content_block_delta", "index" => 0, "delta" => { "type" => "text_delta", "text" => "ok" } },
+        { "type" => "content_block_stop", "index" => 0 },
+        { "type" => "message_delta", "delta" => { "stop_reason" => "end_turn" }, "usage" => { "output_tokens" => 1 } },
+        { "type" => "message_stop" }
+      ]
+      { status: 200, headers: { "Content-Type" => "text/event-stream" },
+        body: events.map { |event| "event: #{event["type"]}\ndata: #{JSON.generate(event)}\n\n" }.join }
+    end
+
+    let(:decision) do
+      Lain::Approval::Parked::Queue::Decision.new(requester: Lain::Requester.main, kind: "price_tier",
+                                                  summary: "claude-haiku-5-5 crosses its tier",
+                                                  digest: "blake3:00")
+    end
+
+    it "parks a crossing on the attended approval queue and answers the human's verdict" do
+      wire_agent
+
+      verdict = Sync do |task|
+        asking = task.async { backend.price_tier_hold.decide(decision) }
+        pending = wiring.approvals.dequeue
+        expect(pending.kind).to eq("price_tier")
+        pending.approve(surface: "spec", authority: :human)
+        asking.wait
+      end
+
+      expect(verdict).to eq(:approve)
+    end
+
+    it "sends a summarizer request past the tier only after the human approves it" do
+      stub_request(:post, "https://api.anthropic.com/v1/messages/count_tokens")
+        .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                   body: JSON.generate("input_tokens" => 104_000))
+      sent = stub_request(:post, "https://api.anthropic.com/v1/messages")
+             .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                        body: JSON.generate("id" => "m", "type" => "message", "role" => "assistant",
+                                            "model" => "claude-haiku-5-5", "content" => [],
+                                            "stop_reason" => "end_turn",
+                                            "usage" => { "input_tokens" => 1, "output_tokens" => 1 }))
+      hosted_summarizer = Class.new(Lain::CLI::Backend) do
+        def initialize(options, mock:, root:)
+          super(options, root:)
+          @mock = mock
+        end
+
+        def provider(name: provider_name, **) = name == "anthropic" ? super : @mock
+      end
+      hosted = hosted_summarizer.new({ provider: "ollama", model: nil, max_tokens: 64,
+                                       summarizer_provider: "anthropic", summarizer_model: "claude-haiku-5-5" },
+                                     mock: mock_provider, root: backend_root)
+      summarizer = nil
+      with_env("ANTHROPIC_API_KEY" => "sk-wiring-spec") do
+        summarizer = hosted.summarizer_provider
+        recorder, session = wiring.run_state(nil)
+        wiring.wire_agent(channel:, recorder:, session:, backend: hosted)
+      end
+      request = Lain::Request.new(model: "claude-haiku-5-5", max_tokens: 64, stream: false,
+                                  messages: [{ role: "user", content: "x" * 400_000 }])
+
+      Sync do |task|
+        sending = task.async { summarizer.complete(request) }
+        pending = wiring.approvals.dequeue
+        expect(pending.ask_face).to include("104,000", "100,000")
+        expect(sent).not_to have_been_requested
+        pending.approve(surface: "spec", authority: :human)
+        sending.wait
+      end
+
+      expect(sent).to have_been_requested.once
+      expect(wiring.approvals.to_a).to be_empty
+    end
+
+    it "carries an approval given on the chat to its subagents' provider, and shows it on the chat's channel" do
+      stub_request(:post, "https://api.anthropic.com/v1/messages/count_tokens")
+        .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                   body: JSON.generate("input_tokens" => 104_000))
+      stub_request(:post, "https://api.anthropic.com/v1/messages").to_return do |request|
+        JSON.parse(request.body)["stream"] ? streamed_reply : json_reply
+      end
+      hosted = Lain::CLI::Backend.new({ provider: "anthropic", model: "claude-haiku-5-5", max_tokens: 64 },
+                                      root: backend_root)
+      agent = with_env("ANTHROPIC_API_KEY" => "sk-wiring-spec") do
+        recorder, session = wiring.run_state(nil)
+        wiring.wire_agent(channel:, recorder:, session:, backend: hosted)
+      end
+      subagents = agent.toolset.fetch("subagent").seam.provider
+      later = Lain::Request.new(model: "claude-haiku-5-5", max_tokens: 64, stream: false,
+                                messages: [{ role: "user", content: "y" * 400_000 }])
+
+      Sync do |task|
+        task.with_timeout(20) do
+          asking = task.async { agent.ask("x" * 400_000) }
+          wiring.approvals.dequeue.approve(surface: "spec", authority: :human)
+          asking.wait
+          task.with_timeout(5) { subagents.complete(later) }
+        end
+      end
+
+      expect(wiring.approvals.to_a).to be_empty
+      expect(channel.drain.grep(Lain::Telemetry::PriceTierCrossed).map(&:decision)).to eq([:carried])
+    end
+
+    it "refuses every crossing when no human is attached" do
+      wiring = new_wiring(options: { grace: 5, non_interactive: true }, chronicle:, status_feed:)
+      recorder, session = wiring.run_state(nil)
+      wiring.wire_agent(channel:, recorder:, session:, backend:)
+
+      expect(backend.price_tier_hold.decide(decision)).to eq(:refuse)
+    end
+  end
+
   # The flip a real Wiring's board journals, onto the run's own record.
   describe "a mode flip's journaled record" do
     let(:journal) { RecordingChannel.new }
