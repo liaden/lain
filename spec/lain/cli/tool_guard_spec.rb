@@ -1611,6 +1611,16 @@ RSpec.describe Lain::CLI::ToolGuard do
         expect(freshness.for(lease)).not_to be(freshness.for(env))
       end
 
+      it "still reads an earlier write as fresh after a garbage collection while the lease lives" do
+        env = lease
+        freshness.for(env)
+        written = File.join(@lease, "written").tap { File.write(_1, "") }
+
+        4.times { GC.start(full_mark: true, immediate_sweep: true) }
+
+        expect(freshness.for(env).fresh?(written)).to be(true)
+      end
+
       it "reads a file written before the lease's start as not fresh, and one written just after as fresh" do
         before = File.join(@lease, "before").tap { File.write(_1, "") }
 

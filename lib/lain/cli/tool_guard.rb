@@ -52,8 +52,10 @@ module Lain
       # One freshness per lease, keyed by the lease's own environment: an arm
       # that spawns an agent per step builds a guard per step over that one
       # object, and a later step must still read what an earlier one wrote as
-      # written. Keyed by identity, so a new lease cut at the same path starts
-      # its own clock.
+      # written. Strong and by identity: WorkerEnv compares by value, and a
+      # WeakMap's values are weak, so a GC restarted the clock. Each lease and
+      # its env snapshot, about 20 KB, are kept for the life of the process;
+      # only a bench run creates many.
       #
       # A file's ctime comes from the kernel's coarse clock, which trails the
       # real one by up to a tick, so a write just after the start could stamp a
@@ -67,7 +69,7 @@ module Lain
         Begun = Data.define(:fresh, :start)
 
         def initialize
-          @by_lease = ObjectSpace::WeakMap.new
+          @by_lease = {}.compare_by_identity
           @lock = Mutex.new
         end
 
