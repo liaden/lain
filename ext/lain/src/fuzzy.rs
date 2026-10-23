@@ -41,7 +41,8 @@
 //! nothing else, the Ruby Array it comes from is already that large, and any cap
 //! would be a number invented to look careful.
 
-use crate::nogvl::{Cancel, Halted};
+use crate::local::with_local;
+use crate::nogvl::{Cancel, Halted, Threshold};
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use std::cell::RefCell;
@@ -111,7 +112,7 @@ pub struct Hit {
 /// Holds nothing but owned `String`s and their grapheme segmentation, built once
 /// in `new` so a match never re-segments -- no cell, no lock, no lazy cache, no Ruby
 /// object -- which is what lets [`ffi::Fuzzy`] promise `frozen_shareable`. The
-/// 135 KB scratch buffer `nucleo` needs lives in [`with_matcher`]'s thread-local
+/// 135 KB scratch buffer `nucleo` needs lives in [`MATCHER`]'s thread-local
 /// and is deliberately *not* a field here; see that function for why.
 pub struct Candidates {
     items: Vec<String>,
@@ -141,12 +142,7 @@ const _: () = {
 /// the lock to any busy Ruby thread and waits out its time slice, about 20 ms
 /// beside a thread at `Tool::Offload`'s priority, to get it back. A match costs
 /// about 0.32 us per candidate, so 30,000 costs about 10 ms, half a slice: a stall budget, since the curves do not cross there.
-pub const HOLD_BELOW: usize = 30_000;
-
-/// Whether a match over `candidates` is worth releasing the GVL for.
-pub fn releases(candidates: usize) -> bool {
-    candidates >= HOLD_BELOW
-}
+pub const HOLD_BELOW: Threshold = Threshold::new(30_000);
 
 impl Candidates {
     /// Take ownership of a batch, refusing any candidate over
@@ -188,7 +184,11 @@ impl Candidates {
         limit: Option<usize>,
         cancel: &Cancel<'_>,
     ) -> Result<Result<Vec<Hit>, QueryError>, Halted> {
-        with_matcher(|matcher| self.rank_with(query, limit, matcher, cancel))
+        with_local(
+            &MATCHER,
+            || Matcher::new(Config::DEFAULT),
+            |matcher| self.rank_with(query, limit, matcher, cancel),
+        )
     }
 
     /// [`rank_until`](Candidates::rank_until) with the scratch matcher supplied
@@ -221,8 +221,8 @@ impl Candidates {
         let mut positions = Vec::new();
         let mut hits = Vec::new();
         for (index, haystack) in self.segmented.iter().enumerate() {
-            if check_due(index) && cancel.requested() {
-                return Err(Halted);
+            if Cancel::due(index, CANDIDATES_PER_CHECK) {
+                cancel.check()?;
             }
             positions.clear();
             let score = pattern.indices(Utf32Str::Unicode(haystack), matcher, &mut positions);
@@ -255,10 +255,6 @@ impl Candidates {
 /// Candidates matched between reads of the stop request: about 20 microseconds
 /// of matching, so a stop lands well inside a millisecond.
 const CANDIDATES_PER_CHECK: usize = 64;
-
-fn check_due(seen: usize) -> bool {
-    seen.is_multiple_of(CANDIDATES_PER_CHECK)
-}
 
 /// Fill `buf` with one `char` per grapheme cluster of `text` -- the cluster's
 /// first codepoint, which is the representative `nucleo` itself uses.
@@ -327,26 +323,6 @@ thread_local! {
     static MATCHER: RefCell<Matcher> = RefCell::new(Matcher::new(Config::DEFAULT));
 }
 
-/// Run `f` against the thread's scratch matcher, falling back to a fresh one if
-/// the thread-local is unreachable (during TLS teardown) or already borrowed
-/// (re-entrancy). Neither is reachable from a Ruby method call, but both are
-/// *panics* on the ergonomic API, and a panic here is undefined behaviour.
-///
-/// The `FnMut` bound looks wrong for something called once. It is what lets the
-/// fallback call `f` after `try_with` has borrowed and released it, instead of
-/// duplicating the body.
-fn with_matcher<T>(mut f: impl FnMut(&mut Matcher) -> T) -> T {
-    MATCHER
-        .try_with(|cell| {
-            cell.try_borrow_mut()
-                .ok()
-                .map(|mut matcher| f(&mut matcher))
-        })
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| f(&mut Matcher::new(Config::DEFAULT)))
-}
-
 /// The `Lain::Ext::Fuzzy` binding.
 ///
 /// Two crossings and no more: `.new` takes the whole candidate Array, `#match`
@@ -354,7 +330,7 @@ fn with_matcher<T>(mut f: impl FnMut(&mut Matcher) -> T) -> T {
 /// rule a naive binding breaks first.
 #[cfg(not(test))]
 pub mod ffi {
-    use super::{BuildError, Candidates, Hit, QueryError, releases};
+    use super::{BuildError, Candidates, HOLD_BELOW, Hit, QueryError};
     use crate::ffi::{frozen_str, int, lookup_error};
     use crate::nogvl::{Cancel, without_gvl_when};
     // The one string-boundary policy, shared with `prompt`, `astgrep` and
@@ -378,7 +354,7 @@ pub mod ffi {
     /// no `Cell`/`RefCell`/`Mutex`/`OnceCell`/atomic/lazy cache is reachable from
     /// it, and it holds no Ruby object. The one piece of mutable state this
     /// binding needs, `nucleo`'s 135 KB scratch matcher, is deliberately NOT a
-    /// field: it lives in a thread-local (see `with_matcher`), so the handle
+    /// field: it lives in a thread-local (see `MATCHER`), so the handle
     /// carries no mutable state and the `frozen_shareable` promise stays honest.
     /// That placement is the whole reason this object can make the same claim
     /// `Bm25` does.
@@ -448,7 +424,7 @@ pub mod ffi {
 
             // The job outlives this frame's borrows, so it gets its own handle
             // and query; `prepare` runs again after a quiet wakeup.
-            let release = releases(rb_self.inner.items().len());
+            let release = HOLD_BELOW.releases(rb_self.inner.items().len());
             let ranked = without_gvl_when(ruby, release, || {
                 let (inner, query) = (Arc::clone(&rb_self.inner), query.clone());
                 Ok(move |cancel: &Cancel<'_>| inner.rank_until(&query, limit, cancel))
@@ -555,13 +531,9 @@ pub mod ffi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicBool;
-
-    static NEVER: AtomicBool = AtomicBool::new(false);
-
     impl Candidates {
         fn rank(&self, query: &str, limit: Option<usize>) -> Result<Vec<Hit>, QueryError> {
-            self.rank_until(query, limit, &Cancel::watching(&NEVER))
+            self.rank_until(query, limit, &Cancel::never())
                 .expect("nothing asked to stop")
         }
     }
@@ -829,12 +801,12 @@ mod tests {
         let mut reused = Matcher::new(Config::DEFAULT);
 
         let warm = candidates
-            .rank_with("lib", None, &mut reused, &Cancel::watching(&NEVER))
+            .rank_with("lib", None, &mut reused, &Cancel::never())
             .expect("nothing asked to stop")
             .expect("query within bounds");
         assert!(!warm.is_empty());
         let again = candidates
-            .rank_with("tty", None, &mut reused, &Cancel::watching(&NEVER))
+            .rank_with("tty", None, &mut reused, &Cancel::never())
             .expect("nothing asked to stop")
             .expect("query within bounds");
         let fresh = candidates
@@ -842,7 +814,7 @@ mod tests {
                 "tty",
                 None,
                 &mut Matcher::new(Config::DEFAULT),
-                &Cancel::watching(&NEVER),
+                &Cancel::never(),
             )
             .expect("nothing asked to stop")
             .expect("query within bounds");
@@ -859,24 +831,14 @@ mod tests {
 
     #[test]
     fn a_stop_request_halts_the_ranking_instead_of_answering_a_partial_one() {
-        let stop = AtomicBool::new(true);
-        let halted = many_paths().rank_until("part", None, &Cancel::watching(&stop));
+        let halted = many_paths().rank_until("part", None, &Cancel::raised());
         assert_eq!(halted, Err(Halted));
     }
 
     #[test]
-    fn a_set_below_the_threshold_keeps_the_lock_and_a_larger_one_releases_it() {
-        assert!(!releases(0));
-        assert!(!releases(HOLD_BELOW - 1));
-        assert!(releases(HOLD_BELOW));
-    }
-
-    #[test]
-    fn a_stop_request_is_read_only_every_so_many_candidates() {
-        assert!(check_due(0));
-        assert!(!check_due(1));
-        assert!(!check_due(CANDIDATES_PER_CHECK - 1));
-        assert!(check_due(CANDIDATES_PER_CHECK));
+    fn the_hold_threshold_is_the_measured_30000_candidates() {
+        assert!(!HOLD_BELOW.releases(29_999));
+        assert!(HOLD_BELOW.releases(30_000));
     }
 
     #[test]

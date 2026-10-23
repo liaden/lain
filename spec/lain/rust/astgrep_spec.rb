@@ -63,101 +63,23 @@ RSpec.describe Lain::Ext::AstGrep do
   # A search over a large source runs for about a third of a second, with the lock between
   # threads released, so another thread runs meanwhile and an interrupt reaches it.
   describe ".search on another thread" do
-    let(:big) { "def m(a)\n  a.save(1, 2)\nend\n" * 15_000 }
     let(:pattern) { "def $NAME($$$A)" }
 
-    def monotonic = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-
-    include GapShare
-
-    def searching
-      Thread.new do
-        Thread.current.report_on_exception = false
-        described_class.search(big, "ruby", pattern)
+    it_behaves_like "a GVL-releasing binding" do
+      let(:work) do
+        big = "def m(a)\n  a.save(1, 2)\nend\n" * 15_000
+        -> { described_class.search(big, "ruby", pattern) }
       end
-    end
-
-    it "lets the calling thread keep running while it searches" do
-      worker = searching
-      share = longest_gap_share(worker)
-
-      expect(worker.value.size).to eq(15_000)
-      expect(share).to be < 0.3
-    end
-
-    # Timed from when the kill was meant to land: a search holding the lock also
-    # keeps this thread's sleep from ending, so its kill reaches a finished thread.
-    it "stops soon after its thread is killed, rather than at the end of the search" do
-      meant = monotonic + 0.05
-      worker = searching
-      sleep 0.05
-      expect(worker).to be_alive
-      worker.kill.join
-
-      expect(monotonic - meant).to be < 0.1
-    end
-
-    it "raises the interrupt's error rather than returning a partial list" do
-      worker = searching
-      sleep 0.05
-      expect(worker).to be_alive
-      worker.raise(IOError, "stopped")
-
-      expect { worker.value }.to raise_error(IOError, "stopped")
-    end
-
-    it "answers the whole list when an interrupt that raises nothing lands mid-search" do
-      worker = searching
-      sleep 0.05
-      expect(worker).to be_alive
-      worker.wakeup
-
-      expect(worker.value.size).to eq(15_000)
-    end
-
-    it "still finishes under a stream of interrupts that raise nothing, since its restarts are bounded" do
-      worker = searching
-      waker = Thread.new do
-        while worker.alive?
-          sleep 0.001
-          worker.wakeup
-        end
-      rescue ThreadError
-        nil
+      let(:small_work) do
+        small = "def m(a)\n  a.save(1, 2)\nend\n" * 20
+        -> { described_class.search(small, "ruby", pattern) }
       end
-
-      expect(worker.join(30)).to eq(worker)
-      expect(worker.value.size).to eq(15_000)
-    ensure
-      waker&.kill&.join
-    end
-
-    it "answers every search when more run at once than it has slots for" do
-      source = "def m(a)\n  a.save\nend\n" * 2_000
-      results = Array.new(80) { Thread.new { described_class.search(source, "ruby", pattern).size } }.map(&:value)
-
-      expect(results).to all(eq(2_000))
-    end
-  end
-
-  describe ".search beside a busy thread" do
-    def monotonic = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-
-    # Releasing hands the lock to a busy thread, and getting it back waits out that thread's time
-    # slice, about 20 ms; the bound is loose for a loaded suite and well under a slice.
-    it "keeps the lock for a small source, so a busy thread at the offload priority does not slow it" do
-      source = "def m(a)\n  a.save(1, 2)\nend\n" * 20
-      busy = Thread.new do
-        Thread.current.priority = Lain::Tool::Offload::PRIORITY
-        loop { nil }
+      let(:complete) { ->(matches) { matches.size == 15_000 } }
+      let(:crowd_work) do
+        source = "def m(a)\n  a.save\nend\n" * 2_000
+        -> { described_class.search(source, "ruby", pattern) }
       end
-      sleep 0.05
-      started = monotonic
-      20.times { described_class.search(source, "ruby", "def $NAME($$$A)") }
-
-      expect((monotonic - started) / 20).to be < 0.008
-    ensure
-      busy&.kill&.join
+      let(:crowd_complete) { ->(matches) { matches.size == 2_000 } }
     end
   end
 

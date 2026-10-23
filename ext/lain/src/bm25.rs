@@ -33,11 +33,9 @@
 //! own tokenizer, so `cached`/`stop-words`/`rust-stemmers`/`deunicode` are never
 //! compiled in and are unreachable by construction.
 
-use crate::nogvl::{Cancel, Halted};
+use crate::nogvl::{Cancel, Halted, Threshold};
 use bm25::{Document, SearchEngine, SearchEngineBuilder, Tokenizer};
 use std::collections::{BTreeSet, HashMap};
-#[cfg(test)]
-use std::sync::atomic::AtomicBool;
 
 /// A deterministic surface tokenizer: lowercase, split on any non-alphanumeric
 /// character, drop empties. No language detection, no stemming, no stopword
@@ -112,21 +110,11 @@ const _: fn() = || {
 /// the lock to any busy Ruby thread and waits out its time slice, about 20 ms
 /// beside a thread at `Tool::Offload`'s priority, to get it back. A build costs
 /// about 0.11 ms per KB, so 128 KiB costs about 14 ms, a stall budget of about half a slice rather than a measured crossover.
-pub const HOLD_BUILD_BELOW: usize = 128 * 1024;
+pub const HOLD_BUILD_BELOW: Threshold = Threshold::new(128 * 1024);
 
 /// Indexes under this many documents are searched with the GVL held, for the
 /// same reason. A search costs about 1 us per document, so 10,000 cost about 10 ms.
-pub const HOLD_SEARCH_BELOW: usize = 10_000;
-
-/// Whether a build over `batch_bytes` of ids and texts is worth releasing the GVL for.
-pub fn releases_build(batch_bytes: usize) -> bool {
-    batch_bytes >= HOLD_BUILD_BELOW
-}
-
-/// Whether a search over `documents` is worth releasing the GVL for.
-pub fn releases_search(documents: usize) -> bool {
-    documents >= HOLD_SEARCH_BELOW
-}
+pub const HOLD_SEARCH_BELOW: Threshold = Threshold::new(10_000);
 
 impl Bm25Index {
     /// How many documents the index holds.
@@ -139,9 +127,11 @@ impl Bm25Index {
     ///
     /// The crate's own batch build is one uninterruptible call, so this fits the
     /// average document length itself, exactly as the crate does, and adds the
-    /// documents one at a time with a stop request read between them.
+    /// documents one at a time with a stop request read between them. The pairs
+    /// are taken by value because the engine keeps each document, so a caller
+    /// that may run again after a halt hands in a copy.
     pub fn build_until(
-        pairs: &[(String, String)],
+        pairs: Vec<(String, String)>,
         cancel: &Cancel<'_>,
     ) -> Result<Result<Self, BuildError>, Halted> {
         if pairs.is_empty() {
@@ -151,7 +141,7 @@ impl Bm25Index {
         let mut doc_tokens = HashMap::with_capacity(pairs.len());
         let mut total_len = 0_u64;
         for (position, (id, text)) in pairs.iter().enumerate() {
-            Self::unless_stopped(cancel)?;
+            cancel.check()?;
             if order.contains_key(id) {
                 return Ok(Err(BuildError::DuplicateId(id.clone())));
             }
@@ -164,8 +154,8 @@ impl Bm25Index {
         let mut engine =
             SearchEngineBuilder::<String, u32, SurfaceTokenizer>::with_avgdl(avgdl).build();
         for (id, text) in pairs {
-            Self::unless_stopped(cancel)?;
-            engine.upsert(Document::new(id.clone(), text.clone()));
+            cancel.check()?;
+            engine.upsert(Document::new(id, text));
         }
         Ok(Ok(Self {
             engine,
@@ -192,10 +182,10 @@ impl Bm25Index {
         k: usize,
         cancel: &Cancel<'_>,
     ) -> Result<Vec<(String, f32, Vec<String>)>, Halted> {
-        Self::unless_stopped(cancel)?;
+        cancel.check()?;
         let query_tokens: BTreeSet<String> = tokenize(query).into_iter().collect();
         let mut hits = self.engine.search(query, None);
-        Self::unless_stopped(cancel)?;
+        cancel.check()?;
         hits.sort_by(|a, b| {
             // `total_cmp` is a total order over f32 (no NaN unwrap); scores are
             // finite and non-negative here regardless.
@@ -218,24 +208,14 @@ impl Bm25Index {
             .collect())
     }
 
-    fn unless_stopped(cancel: &Cancel<'_>) -> Result<(), Halted> {
-        if cancel.requested() {
-            Err(Halted)
-        } else {
-            Ok(())
-        }
-    }
-
     #[cfg(test)]
     fn build(pairs: Vec<(String, String)>) -> Result<Self, BuildError> {
-        let flag = AtomicBool::new(false);
-        Self::build_until(&pairs, &Cancel::watching(&flag)).expect("nothing asked to stop")
+        Self::build_until(pairs, &Cancel::never()).expect("nothing asked to stop")
     }
 
     #[cfg(test)]
     fn search(&self, query: &str, k: usize) -> Vec<(String, f32, Vec<String>)> {
-        let flag = AtomicBool::new(false);
-        self.search_until(query, k, &Cancel::watching(&flag))
+        self.search_until(query, k, &Cancel::never())
             .expect("nothing asked to stop")
     }
 
@@ -254,12 +234,12 @@ mod tests {
 
     #[test]
     fn a_batch_or_index_below_the_threshold_keeps_the_lock_and_a_larger_one_releases_it() {
-        assert!(!releases_build(0));
-        assert!(!releases_build(128 * 1024 - 1));
-        assert!(releases_build(128 * 1024));
-        assert!(!releases_search(0));
-        assert!(!releases_search(HOLD_SEARCH_BELOW - 1));
-        assert!(releases_search(HOLD_SEARCH_BELOW));
+        assert!(!HOLD_BUILD_BELOW.releases(0));
+        assert!(!HOLD_BUILD_BELOW.releases(128 * 1024 - 1));
+        assert!(HOLD_BUILD_BELOW.releases(128 * 1024));
+        assert!(!HOLD_SEARCH_BELOW.releases(0));
+        assert!(!HOLD_SEARCH_BELOW.releases(9_999));
+        assert!(HOLD_SEARCH_BELOW.releases(10_000));
     }
 
     #[test]
@@ -420,9 +400,8 @@ mod tests {
 
     #[test]
     fn a_build_asked_to_stop_halts_and_a_search_asked_to_stop_halts() {
-        let stopped = AtomicBool::new(true);
-        let cancel = Cancel::watching(&stopped);
-        assert!(Bm25Index::build_until(&corpus(), &cancel).is_err());
+        let cancel = Cancel::raised();
+        assert!(Bm25Index::build_until(corpus(), &cancel).is_err());
 
         let index = Bm25Index::build(corpus()).unwrap();
         assert_eq!(index.search_until("drug", 5, &cancel), Err(Halted));
@@ -430,8 +409,7 @@ mod tests {
 
     #[test]
     fn an_empty_batch_is_refused_even_when_a_stop_was_asked_for() {
-        let stopped = AtomicBool::new(true);
-        let built = Bm25Index::build_until(&[], &Cancel::watching(&stopped));
+        let built = Bm25Index::build_until(vec![], &Cancel::raised());
         assert!(matches!(built, Ok(Err(BuildError::EmptyCorpus))));
     }
 

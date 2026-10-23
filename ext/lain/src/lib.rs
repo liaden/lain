@@ -47,9 +47,12 @@ mod event;
 mod fuzzy;
 #[deny(clippy::missing_docs_in_private_items)]
 mod graph;
+mod local;
 mod nogvl;
 mod prompt;
 mod read_text;
+#[cfg(test)]
+mod test_sources;
 mod treesitter;
 
 /// The lowercase-hex BLAKE3 digest of `bytes`.
@@ -2663,15 +2666,22 @@ mod ffi {
                 .collect::<Result<Vec<_>, Refusal>>()
                 .map_err(|refusal| refusal.raise(ruby))?;
             // The build runs with the GVL released, so a kill or a raise stops it
-            // early; the batch is shared into the job, not copied per attempt.
+            // early, and a halted attempt runs again from the start, so a released
+            // build hands each attempt a copy. A held build runs exactly once and
+            // takes the batch itself, so the large case copies nothing.
             // Scoped so the batch is freed before a refusal looks up its Ruby class.
             let built = {
-                let batch: Arc<[(String, String)]> = batch.into();
+                let mut batch = batch;
                 let bytes = batch.iter().map(|(id, text)| id.len() + text.len()).sum();
-                crate::nogvl::without_gvl_when(ruby, crate::bm25::releases_build(bytes), || {
-                    let batch = Arc::clone(&batch);
+                let release = crate::bm25::HOLD_BUILD_BELOW.releases(bytes);
+                crate::nogvl::without_gvl_when(ruby, release, || {
+                    let pairs = if release {
+                        batch.clone()
+                    } else {
+                        std::mem::take(&mut batch)
+                    };
                     Ok(move |cancel: &crate::nogvl::Cancel<'_>| {
-                        crate::bm25::Bm25Index::build_until(&batch, cancel)
+                        crate::bm25::Bm25Index::build_until(pairs, cancel)
                     })
                 })?
             };
@@ -2702,7 +2712,7 @@ mod ffi {
         /// the exception. The outer freeze is also what makes the whole answer
         /// `Ractor.shareable?`, not merely frozen a layer down.
         fn search(ruby: &Ruby, rb_self: &Bm25, query: String, k: usize) -> Result<RArray, Error> {
-            let release = crate::bm25::releases_search(rb_self.inner.documents());
+            let release = crate::bm25::HOLD_SEARCH_BELOW.releases(rb_self.inner.documents());
             let hits = crate::nogvl::without_gvl_when(ruby, release, || {
                 let (index, query) = (Arc::clone(&rb_self.inner), query.clone());
                 Ok(move |cancel: &crate::nogvl::Cancel<'_>| index.search_until(&query, k, cancel))

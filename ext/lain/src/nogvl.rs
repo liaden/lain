@@ -32,14 +32,64 @@ pub struct Cancel<'a> {
     flag: &'a AtomicBool,
 }
 
+/// Never stored to, so a cancel over it can never be raised.
+static NEVER: AtomicBool = AtomicBool::new(false);
+
+/// Never stored to either, so a test's cancel over it stays raised.
+#[cfg(test)]
+static RAISED: AtomicBool = AtomicBool::new(true);
+
 impl<'a> Cancel<'a> {
     pub(crate) fn watching(flag: &'a AtomicBool) -> Self {
         Self { flag }
     }
 
+    /// The cancel of a call that runs with the GVL held, which nothing can stop.
+    pub(crate) fn never() -> Cancel<'static> {
+        Cancel::watching(&NEVER)
+    }
+
+    /// A cancel already raised, for a test of how a job reacts to a stop.
+    #[cfg(test)]
+    pub(crate) fn raised() -> Cancel<'static> {
+        Cancel::watching(&RAISED)
+    }
+
     /// One relaxed load, so a hot loop can afford it every few dozen iterations.
     pub fn requested(&self) -> bool {
         self.flag.load(Ordering::Relaxed)
+    }
+
+    /// [`requested`](Cancel::requested) as the `?`-able form every job spells.
+    pub fn check(&self) -> Result<(), Halted> {
+        if self.requested() {
+            Err(Halted)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Whether the `seen`th step of a loop is one that reads the stop request,
+    /// which a hot loop does only every `every` steps.
+    pub fn due(seen: usize, every: usize) -> bool {
+        seen.is_multiple_of(every)
+    }
+}
+
+/// A binding's measured crossover: work smaller than it runs with the GVL held.
+/// One comparison for every binding, so the boundary is pinned once.
+#[derive(Clone, Copy, Debug)]
+pub struct Threshold(usize);
+
+impl Threshold {
+    /// `hold_below` is the smallest size worth releasing the GVL for.
+    pub const fn new(hold_below: usize) -> Self {
+        Self(hold_below)
+    }
+
+    /// Whether work of `size` is worth releasing the GVL for.
+    pub const fn releases(self, size: usize) -> bool {
+        size >= self.0
     }
 }
 
@@ -64,6 +114,15 @@ type Work = dyn FnOnce(&Cancel<'_>) -> Result<Answer, Halted> + Send;
 /// The answer's type is erased so one static table serves every binding.
 struct Job(Box<Work>);
 
+/// A panic or a halt becomes an outcome rather than unwinding into C.
+fn settle<T>(ran: std::thread::Result<Result<T, Halted>>) -> Outcome<T> {
+    match ran {
+        Ok(Ok(answer)) => Outcome::Done(answer),
+        Ok(Err(Halted)) => Outcome::Halted,
+        Err(payload) => Outcome::Panicked(panic_message(payload.as_ref())),
+    }
+}
+
 impl Job {
     fn new<T, W>(work: W) -> Self
     where
@@ -76,11 +135,7 @@ impl Job {
     }
 
     fn answer(self, flag: &AtomicBool) -> Outcome<Answer> {
-        match quietly(|| (self.0)(&Cancel::watching(flag))) {
-            Ok(Ok(answer)) => Outcome::Done(answer),
-            Ok(Err(Halted)) => Outcome::Halted,
-            Err(payload) => Outcome::Panicked(panic_message(payload.as_ref())),
-        }
+        settle(quietly(|| (self.0)(&Cancel::watching(flag))))
     }
 }
 
@@ -99,15 +154,16 @@ impl Outcome<Answer> {
 }
 
 /// Runs `work` on the calling thread with nothing able to stop it. A job that
-/// halts anyway would be run again forever, so that becomes a failure.
+/// halts anyway would be run again forever, so that becomes a failure. It skips
+/// the erased `Job`, which only the slot table needs, so a small call boxes nothing.
 fn held<T, W>(work: W) -> Outcome<T>
 where
     T: Send + 'static,
     W: FnOnce(&Cancel<'_>) -> Result<T, Halted> + Send + 'static,
 {
-    match Job::new(work).answer(&AtomicBool::new(false)) {
+    match settle(quietly(|| work(&Cancel::never()))) {
         Outcome::Halted => Outcome::Panicked("a job halted with no cancel asked for".into()),
-        other => other.typed(),
+        other => other,
     }
 }
 
@@ -539,6 +595,27 @@ mod tests {
             flags,
             rb_sys::RB_NOGVL_INTR_FAIL | rb_sys::RB_NOGVL_UBF_ASYNC_SAFE
         );
+    }
+
+    #[test]
+    fn a_threshold_releases_at_its_bound_and_above_and_holds_below() {
+        let threshold = Threshold::new(10);
+        assert!(!threshold.releases(0));
+        assert!(!threshold.releases(9));
+        assert!(threshold.releases(10));
+        assert!(threshold.releases(11));
+    }
+
+    #[test]
+    fn a_loop_reads_its_stop_request_only_every_so_many_steps() {
+        let due: Vec<usize> = (0..=128).filter(|&seen| Cancel::due(seen, 64)).collect();
+        assert_eq!(due, vec![0, 64, 128]);
+    }
+
+    #[test]
+    fn check_halts_exactly_when_a_stop_was_asked_for() {
+        assert_eq!(Cancel::never().check(), Ok(()));
+        assert_eq!(Cancel::raised().check(), Err(Halted));
     }
 
     #[test]

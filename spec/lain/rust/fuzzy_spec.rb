@@ -177,106 +177,42 @@ RSpec.describe Lain::Ext::Fuzzy do
     end
   end
 
+  # One candidate set per file, since the handle is immutable and each costs a build to make.
   describe "#match on another thread" do
-    let(:many) { described_class.new(Array.new(300_000) { |i| "w#{i % 37}/lib/lain/part#{i}/file#{i}.rb" }) }
-    let(:few) { described_class.new(Array.new(50_000) { |i| "w#{i % 37}/lib/lain/part#{i}/file#{i}.rb" }) }
+    def candidates(count) = Array.new(count) { |i| "w#{i % 37}/lib/lain/part#{i}/file#{i}.rb" }
 
-    def monotonic = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    once(:many) { described_class.new(candidates(300_000)) }
+    once(:few) { described_class.new(candidates(50_000)) }
+    once(:ranked) { many.match("lnpart9f1", limit: 50) }
 
-    def timed
-      started = monotonic
-      yield
-      monotonic - started
-    end
-
-    def matching(fuzzy)
-      Thread.new do
-        Thread.current.report_on_exception = false
-        fuzzy.match("lnpart9f1", limit: 50)
+    it_behaves_like "a GVL-releasing binding" do
+      # The handles are fetched here, in the example's thread, so a build never lands inside a timed call.
+      let(:work) do
+        handle = many
+        -> { handle.match("lnpart9f1", limit: 50) }
       end
-    end
-
-    include GapShare
-
-    it "lets the calling thread keep ticking while it matches" do
-      worker = matching(many)
-      share = longest_gap_share(worker)
-
-      expect(worker.value.size).to eq(50)
-      expect(share).to be < 0.5
-    end
-
-    # A held GVL is caught by the be_alive guard, since the sleep never ends before the match does;
-    # the share only bounds the released path.
-    it "stops soon after its thread is killed, rather than at the end of the match" do
-      whole = timed { many.match("lnpart9f1", limit: 50) }
-      worker = matching(many)
-      sleep 0.02
-      expect(worker).to be_alive
-      killed = monotonic
-      worker.kill.join
-
-      expect((monotonic - killed) / whole).to be < 0.3
-    end
-
-    it "raises the interrupt's error rather than returning a partial list" do
-      worker = matching(many)
-      sleep 0.02
-      expect(worker).to be_alive
-      worker.raise(IOError, "stopped")
-
-      expect { worker.value }.to raise_error(IOError, "stopped")
-    end
-
-    it "answers the whole ranking when an interrupt that raises nothing lands mid-match" do
-      expected = many.match("lnpart9f1", limit: 50)
-      worker = matching(many)
-      sleep 0.02
-      expect(worker).to be_alive
-      worker.wakeup
-
-      expect(worker.value).to eq(expected)
-    end
-
-    it "still finishes under a stream of interrupts that raise nothing, since its restarts are bounded" do
-      worker = matching(many)
-      waker = Thread.new do
-        while worker.alive?
-          sleep 0.001
-          worker.wakeup
-        end
-      rescue ThreadError
-        nil
+      let(:small_work) do
+        small = described_class.new(Array.new(100) { |i| "lib/lain/part#{i}/file#{i}.rb" })
+        -> { small.match("lnpart9f1", limit: 50) }
       end
-
-      expect(worker.join(30)).to eq(worker)
-      expect(worker.value.size).to eq(50)
-    ensure
-      waker&.kill&.join
-    end
-
-    # Releasing hands the lock to a busy thread, and getting it back waits out that thread's time
-    # slice, about 20 ms; the bound is loose for a loaded suite and well under a slice.
-    it "keeps the lock for a small candidate set, so a busy thread at the offload priority does not slow it" do
-      small = described_class.new(Array.new(100) { |i| "lib/lain/part#{i}/file#{i}.rb" })
-      busy = Thread.new do
-        Thread.current.priority = Lain::Tool::Offload::PRIORITY
-        loop { nil }
+      let(:complete) do
+        expected = ranked
+        ->(hits) { hits == expected }
       end
-      sleep 0.05
-      started = monotonic
-      20.times { small.match("lnpart9f1", limit: 50) }
-
-      expect((monotonic - started) / 20).to be < 0.008
-    ensure
-      busy&.kill&.join
-    end
-
-    it "answers every match when more run at once than it has slots for" do
-      results = Array.new(80) { matching(few) }.map(&:value)
-
-      expect(results.map(&:size)).to all(eq(50))
-      expect(results.uniq.size).to eq(1)
+      let(:crowd_work) do
+        handle = few
+        -> { handle.match("lnpart9f1", limit: 50) }
+      end
+      let(:crowd_complete) { ->(hits) { hits.size == 50 } }
+      let(:settle) { 0.02 }
+      let(:max_gap_share) { 0.5 }
+      # Relative to one whole match, since a kill that waited for the end would still fit an
+      # absolute bound.
+      let(:stop_bound) do
+        started = clock.call
+        work.call
+        0.3 * (clock.call - started)
+      end
     end
   end
 

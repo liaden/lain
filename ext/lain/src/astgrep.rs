@@ -17,17 +17,16 @@
 //! we surface the node's own 0-based start line as a convenience but the pinned
 //! contract is the byte range.
 
-use crate::nogvl::{Cancel, Halted};
+use crate::local::{BoundedCache, with_local};
+use crate::nogvl::{Cancel, Halted, Threshold};
+use crate::treesitter::{ParseRefusal, parse_until};
 use ast_grep_core::matcher::MatcherExt;
 use ast_grep_core::meta_var::{MetaVarEnv, MetaVariable};
-use ast_grep_core::tree_sitter::{LanguageExt, StrDoc};
+use ast_grep_core::tree_sitter::StrDoc;
 use ast_grep_core::{AstGrep, Doc, Language, Matcher, Node, NodeMatch, Pattern};
 use ast_grep_language::SupportLang;
 use std::cell::RefCell;
-use std::collections::HashMap;
-use std::ops::ControlFlow;
 use std::rc::Rc;
-use tree_sitter::{LanguageError, ParseOptions, ParseState, Parser, Tree};
 
 /// A captured metavariable (`$NAME`) and where its node sits in the source.
 #[derive(Debug, PartialEq, Eq)]
@@ -121,68 +120,20 @@ fn build_pattern(pattern: &str, lang: SupportLang) -> Result<Pattern, SearchErro
     Ok(pat)
 }
 
-/// Only successes are stored, so a malformed pattern keeps raising and takes no
-/// slot. Nothing is evicted: the cap bounds memory, not cost. A hit lasts one
-/// tool call, because `Tool::Offload` starts a thread per call.
-struct PatternCache {
-    built: HashMap<SupportLang, HashMap<String, Rc<Pattern>>>,
-    len: usize,
-    cap: usize,
-}
-
-impl PatternCache {
-    fn new(cap: usize) -> Self {
-        Self {
-            built: HashMap::new(),
-            len: 0,
-            cap,
-        }
-    }
-
-    fn get_or_build(
-        &mut self,
-        lang: SupportLang,
-        pattern: &str,
-    ) -> Result<Rc<Pattern>, SearchError> {
-        if let Some(hit) = self
-            .built
-            .get(&lang)
-            .and_then(|by_text| by_text.get(pattern))
-        {
-            return Ok(Rc::clone(hit));
-        }
-        let built = Rc::new(build_pattern(pattern, lang)?);
-        // Admit until full, then never evict: the first patterns a thread sees keep their slots.
-        if self.len < self.cap {
-            self.built
-                .entry(lang)
-                .or_default()
-                .insert(pattern.to_string(), Rc::clone(&built));
-            self.len += 1;
-        }
-        Ok(built)
-    }
-}
-
 thread_local! {
-    /// Per thread, so the cache needs no lock and holds `Rc` rather than `Arc`.
-    /// `Tool::Offload` starts a thread per call, so a hit lasts one tool call.
-    static PATTERNS: RefCell<PatternCache> = RefCell::new(PatternCache::new(64));
+    /// Built patterns by language, then by pattern text. Per thread, so the
+    /// cache needs no lock and holds `Rc` rather than `Arc`. `Tool::Offload`
+    /// starts a thread per call, so a hit lasts one tool call.
+    static PATTERNS: RefCell<BoundedCache<SupportLang, Pattern>> = RefCell::new(BoundedCache::new(64));
 }
 
-/// The thread's cached build of `pattern`, falling back to an uncached build
-/// if the thread-local is unreachable (TLS teardown) or already borrowed;
-/// both are panics on the ergonomic API.
+/// The thread's cached build of `pattern`.
 fn built_pattern(pattern: &str, lang: SupportLang) -> Result<Rc<Pattern>, SearchError> {
-    PATTERNS
-        .try_with(|cell| {
-            cell.try_borrow_mut()
-                .ok()
-                .map(|mut cache| cache.get_or_build(lang, pattern))
-        })
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| build_pattern(pattern, lang).map(Rc::new))
+    with_local(
+        &PATTERNS,
+        || BoundedCache::new(64),
+        |cache| cache.get_or_insert_with(lang, pattern, || build_pattern(pattern, lang)),
+    )
 }
 
 /// Whether `node` or any descendant is an ERROR or MISSING node -- the two ways
@@ -212,9 +163,10 @@ fn has_metavariable(pattern: &str) -> bool {
 ///
 /// It parses with its own parser rather than `AstGrep::new`, because ast-grep
 /// keeps its parser private and so offers no way to stop a parse; the tree and
-/// the walk are the same ones `find_all` uses.
+/// the walk are the same ones `find_all` uses. `src` is taken by value because
+/// the document keeps it.
 pub fn search_until(
-    src: &str,
+    src: String,
     lang: &str,
     pattern: &str,
     cancel: &Cancel<'_>,
@@ -226,16 +178,19 @@ pub fn search_until(
         Ok(pat) => pat,
         Err(refused) => return Ok(Err(refused)),
     };
-    let tree = match tree_or_halt(parse(src, lang, cancel), lang)? {
+    let tree = match parse_until(&src, lang, cancel)? {
         Ok(tree) => tree,
-        Err(refused) => return Ok(Err(refused)),
+        Err(refused) => return Ok(Err(grammar_refused(lang, &refused))),
     };
-    let ast = AstGrep::doc(StrDoc {
-        src: src.to_string(),
-        lang,
-        tree,
-    });
+    let ast = AstGrep::doc(StrDoc { src, lang, tree });
     walk(&ast.root(), &pat, cancel).map(Ok)
+}
+
+fn grammar_refused(lang: SupportLang, refused: &ParseRefusal) -> SearchError {
+    SearchError::GrammarRefused {
+        lang: lang.to_string(),
+        reason: refused.to_string(),
+    }
 }
 
 /// Nodes visited between reads of the stop request: often enough to stop
@@ -246,16 +201,7 @@ const NODES_PER_CHECK: usize = 64;
 /// lock to any busy Ruby thread and waits out its time slice, about 20 ms beside
 /// a thread at `Tool::Offload`'s priority, to get it back. A search costs about
 /// 0.7 ms per KB over this checkout's shapes, so 16 KiB costs about 11 ms, half a slice: a stall budget, since the curves do not cross there.
-pub const HOLD_BELOW: usize = 16 * 1024;
-
-/// Whether a search over `source_len` bytes is worth releasing the GVL for.
-pub fn releases(source_len: usize) -> bool {
-    source_len >= HOLD_BELOW
-}
-
-fn check_due(seen: usize) -> bool {
-    seen.is_multiple_of(NODES_PER_CHECK)
-}
+pub const HOLD_BELOW: Threshold = Threshold::new(16 * 1024);
 
 /// `find_all`'s walk, with a stop request read every [`NODES_PER_CHECK`] nodes.
 fn walk<D: Doc>(
@@ -266,8 +212,8 @@ fn walk<D: Doc>(
     let kinds = pat.potential_kinds();
     let mut found = Vec::new();
     for (seen, node) in root.dfs().enumerate() {
-        if check_due(seen) && cancel.requested() {
-            return Err(Halted);
+        if Cancel::due(seen, NODES_PER_CHECK) {
+            cancel.check()?;
         }
         let candidate = kinds
             .as_ref()
@@ -277,62 +223,6 @@ fn walk<D: Doc>(
         }
     }
     Ok(found)
-}
-
-/// `Ok(None)` when `cancel` stopped the parse.
-fn parse(src: &str, lang: SupportLang, cancel: &Cancel<'_>) -> Result<Option<Tree>, LanguageError> {
-    let bytes = src.as_bytes();
-    let mut progress = |_: &ParseState| {
-        if cancel.requested() {
-            ControlFlow::Break(())
-        } else {
-            ControlFlow::Continue(())
-        }
-    };
-    with_parser(|parser| {
-        parser.set_language(&lang.get_ts_language())?;
-        // A halted parse resumes on the next call unless the parser is reset.
-        parser.reset();
-        Ok(parser.parse_with_options(
-            &mut |at, _| bytes.get(at..).unwrap_or_default(),
-            None,
-            Some(ParseOptions::new().progress_callback(&mut progress)),
-        ))
-    })
-}
-
-fn tree_or_halt(
-    parsed: Result<Option<Tree>, LanguageError>,
-    lang: SupportLang,
-) -> Result<Result<Tree, SearchError>, Halted> {
-    match parsed {
-        Ok(Some(tree)) => Ok(Ok(tree)),
-        Ok(None) => Err(Halted),
-        Err(refused) => Ok(Err(SearchError::GrammarRefused {
-            lang: lang.to_string(),
-            reason: refused.to_string(),
-        })),
-    }
-}
-
-thread_local! {
-    /// One per thread, so a search reuses the parser's allocations. The parse
-    /// that `search_until` runs is on the calling thread even with the GVL released.
-    static PARSER: RefCell<Parser> = RefCell::new(Parser::new());
-}
-
-/// The thread's parser, or a fresh one if the thread-local is unreachable (TLS
-/// teardown) or already borrowed; both are panics on the ergonomic API.
-fn with_parser<T>(mut parse: impl FnMut(&mut Parser) -> T) -> T {
-    PARSER
-        .try_with(|cell| {
-            cell.try_borrow_mut()
-                .ok()
-                .map(|mut parser| parse(&mut parser))
-        })
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| parse(&mut Parser::new()))
 }
 
 /// Convert one borrowed `NodeMatch` into an owned [`Match`] before its backing
@@ -496,13 +386,12 @@ fn write_node<D: Doc>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicBool;
+    use crate::test_sources::sources;
 
     #[test]
-    fn a_source_below_the_threshold_keeps_the_lock_and_a_larger_one_releases_it() {
-        assert!(!releases(0));
-        assert!(!releases(HOLD_BELOW - 1));
-        assert!(releases(HOLD_BELOW));
+    fn the_hold_threshold_is_the_measured_16_kib() {
+        assert!(!HOLD_BELOW.releases(16 * 1024 - 1));
+        assert!(HOLD_BELOW.releases(16 * 1024));
     }
 
     #[test]
@@ -797,62 +686,23 @@ mod tests {
     }
 
     #[test]
-    fn a_second_build_of_the_same_pattern_is_the_same_object() {
-        let mut cache = PatternCache::new(64);
-        let first = cache.get_or_build(SupportLang::Ruby, "$A.save").unwrap();
-        let second = cache.get_or_build(SupportLang::Ruby, "$A.save").unwrap();
-        assert!(Rc::ptr_eq(&first, &second));
-    }
-
-    #[test]
-    fn the_same_text_in_another_language_is_a_separate_entry() {
-        let mut cache = PatternCache::new(64);
-        let ruby = cache.get_or_build(SupportLang::Ruby, "$A").unwrap();
-        let rust = cache.get_or_build(SupportLang::Rust, "$A").unwrap();
-        assert!(!Rc::ptr_eq(&ruby, &rust));
-        assert_eq!(cache.len, 2);
-    }
-
-    #[test]
-    fn failures_are_not_stored_and_the_cap_holds() {
-        let mut cache = PatternCache::new(64);
-        assert!(matches!(
-            cache.get_or_build(SupportLang::Ruby, "def"),
-            Err(SearchError::BadPattern { .. })
-        ));
-        assert_eq!(cache.len, 0, "the bad pattern took no slot");
-
-        let sources: Vec<String> = (0..65).map(|n| format!("$A.save{n}")).collect();
-        let firsts: Vec<Rc<Pattern>> = sources
-            .iter()
-            .map(|src| cache.get_or_build(SupportLang::Ruby, src).unwrap())
-            .collect();
-        let kept: Vec<bool> = sources
-            .iter()
-            .zip(&firsts)
-            .map(|(src, first)| {
-                Rc::ptr_eq(first, &cache.get_or_build(SupportLang::Ruby, src).unwrap())
-            })
-            .collect();
-
-        assert!(kept[..64].iter().all(|&hit| hit));
-        assert!(!kept[64], "the 65th pattern is built but not kept");
-    }
-
-    #[test]
     fn search_reuses_the_threads_cached_pattern() {
-        let before = PATTERNS.with(|cell| cell.borrow().len);
+        let before = PATTERNS.with(|cell| cell.borrow().entries());
         let first = search("a.save_twice", "ruby", "$A.save_twice").unwrap();
         let second = search("a.save_twice", "ruby", "$A.save_twice").unwrap();
         assert_eq!(first, second);
-        assert_eq!(PATTERNS.with(|cell| cell.borrow().len), before + 1);
+        assert_eq!(PATTERNS.with(|cell| cell.borrow().entries()), before + 1);
     }
 
     #[test]
     fn a_cached_pattern_agrees_with_a_fresh_one() {
         let src = "a.save\nb.save\n";
-        let mut cache = PatternCache::new(64);
-        let cached = cache.get_or_build(SupportLang::Ruby, "$A.save").unwrap();
+        let mut cache = BoundedCache::new(64);
+        let cached = cache
+            .get_or_insert_with(SupportLang::Ruby, "$A.save", || {
+                build_pattern("$A.save", SupportLang::Ruby)
+            })
+            .unwrap();
         let fresh = build_pattern("$A.save", SupportLang::Ruby).unwrap();
         let find = |pat: &Pattern| {
             AstGrep::new(src, SupportLang::Ruby)
@@ -867,20 +717,10 @@ mod tests {
         assert_eq!(first.len(), 2);
     }
 
-    static RAISED: AtomicBool = AtomicBool::new(true);
-    static LOWERED: AtomicBool = AtomicBool::new(false);
-
-    fn raised() -> Cancel<'static> {
-        Cancel::watching(&RAISED)
-    }
-
-    fn lowered() -> Cancel<'static> {
-        Cancel::watching(&LOWERED)
-    }
-
     /// Every existing test's view: a search nothing cancels.
     fn search(src: &str, lang: &str, pattern: &str) -> Result<Vec<Match>, SearchError> {
-        search_until(src, lang, pattern, &lowered()).expect("nothing asked it to halt")
+        search_until(src.to_string(), lang, pattern, &Cancel::never())
+            .expect("nothing asked it to halt")
     }
 
     /// The search every caller made before the cancellable walk, kept as the oracle.
@@ -893,30 +733,9 @@ mod tests {
             .collect()
     }
 
-    fn ruby_sources(every: usize) -> Vec<String> {
-        let mut paths = Vec::new();
-        let mut dirs = vec![std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../lib")];
-        while let Some(dir) = dirs.pop() {
-            for entry in std::fs::read_dir(dir).unwrap() {
-                let path = entry.unwrap().path();
-                if path.is_dir() {
-                    dirs.push(path);
-                } else if path.extension().is_some_and(|ext| ext == "rb") {
-                    paths.push(path);
-                }
-            }
-        }
-        paths.sort();
-        paths
-            .iter()
-            .step_by(every)
-            .map(|path| std::fs::read_to_string(path).unwrap())
-            .collect()
-    }
-
     #[test]
     fn the_cancellable_walk_finds_what_find_all_finds_over_this_repositorys_ruby() {
-        let sources = ruby_sources(8);
+        let sources = sources(&["lib"], "rb", 8);
         assert!(sources.len() > 50, "read {} files", sources.len());
         let mut total = 0;
         for pattern in [
@@ -935,18 +754,10 @@ mod tests {
     }
 
     #[test]
-    fn the_walk_reads_its_stop_request_once_every_nodes_per_check() {
-        let due: Vec<usize> = (0..=2 * NODES_PER_CHECK)
-            .filter(|&seen| check_due(seen))
-            .collect();
-        assert_eq!(due, vec![0, NODES_PER_CHECK, 2 * NODES_PER_CHECK]);
-    }
-
-    #[test]
     fn a_raised_flag_halts_the_parse() {
         let src = "def m(a)\n  a.save\nend\n".repeat(2_000);
         assert_eq!(
-            search_until(&src, "ruby", "def $NAME($$$A)", &raised()),
+            search_until(src, "ruby", "def $NAME($$$A)", &Cancel::raised()),
             Err(Halted)
         );
     }
@@ -955,15 +766,15 @@ mod tests {
     fn a_raised_flag_halts_the_walk_over_a_parsed_tree() {
         let ast = AstGrep::new("a.save\nb.save\n", SupportLang::Ruby);
         let pat = build_pattern("$A.save", SupportLang::Ruby).unwrap();
-        assert_eq!(walk(&ast.root(), &pat, &raised()), Err(Halted));
-        assert_eq!(walk(&ast.root(), &pat, &lowered()).unwrap().len(), 2);
+        assert_eq!(walk(&ast.root(), &pat, &Cancel::raised()), Err(Halted));
+        assert_eq!(walk(&ast.root(), &pat, &Cancel::never()).unwrap().len(), 2);
     }
 
     #[test]
     fn a_halted_search_leaves_a_parser_that_parses_the_next_source_whole() {
         let first = "def a(x)\n  x.save\nend\n".repeat(3_000);
         assert_eq!(
-            search_until(&first, "ruby", "$A.save", &raised()),
+            search_until(first, "ruby", "$A.save", &Cancel::raised()),
             Err(Halted)
         );
 
@@ -976,31 +787,24 @@ mod tests {
 
     #[test]
     fn a_grammar_the_parser_refuses_is_a_search_error_not_a_halt() {
-        let refused = tree_or_halt(
-            Err(tree_sitter::LanguageError::Version(0)),
-            SupportLang::Ruby,
-        );
+        let refused = ParseRefusal::Grammar(tree_sitter::LanguageError::Version(0));
         assert!(matches!(
-            refused,
-            Ok(Err(SearchError::GrammarRefused { .. }))
-        ));
-        assert!(matches!(
-            tree_or_halt(Ok(None), SupportLang::Ruby),
-            Err(Halted)
+            grammar_refused(SupportLang::Ruby, &refused),
+            SearchError::GrammarRefused { .. }
         ));
     }
 
     #[test]
     fn a_bad_pattern_is_refused_not_halted() {
         assert!(matches!(
-            search_until("x = 1", "ruby", "def (", &lowered()),
+            search_until("x = 1".into(), "ruby", "def (", &Cancel::never()),
             Ok(Err(SearchError::BadPattern { .. }))
         ));
     }
 }
 #[cfg(not(test))]
 pub mod ffi {
-    use super::{Capture, Match, SearchError, dump as pure_dump, releases, search_until};
+    use super::{Capture, HOLD_BELOW, Match, SearchError, dump as pure_dump, search_until};
     use crate::ffi::{frozen_str, int, lookup_error};
     use crate::nogvl::{Cancel, without_gvl_when};
     // The one string-boundary policy, shared with `fuzzy`, `prompt` and
@@ -1031,7 +835,7 @@ pub mod ffi {
     /// so a kill or a raise stops it early; the arguments' Rust copies live in
     /// the job and are gone by the time a refusal runs Ruby.
     pub fn search(ruby: &Ruby, src: Value, lang: Value, pattern: Value) -> Result<RArray, Error> {
-        let release = RString::from_value(src).is_some_and(|text| releases(text.len()));
+        let release = RString::from_value(src).is_some_and(|text| HOLD_BELOW.releases(text.len()));
         let searched = without_gvl_when(ruby, release, || {
             let (src, lang, pattern) = (
                 text_of(ruby, src, "source")?,
@@ -1039,7 +843,7 @@ pub mod ffi {
                 text_of(ruby, pattern, "pattern")?,
             );
             let (src, lang, pattern) = (src.read(ruby)?, lang.read(ruby)?, pattern.read(ruby)?);
-            Ok(move |cancel: &Cancel<'_>| search_until(&src, &lang, &pattern, cancel))
+            Ok(move |cancel: &Cancel<'_>| search_until(src, &lang, &pattern, cancel))
         })?;
         let matches = searched.map_err(|err| raised(ruby, err))?;
         let out = ruby.ary_new_capa(matches.len());

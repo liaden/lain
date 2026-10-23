@@ -99,8 +99,6 @@ RSpec.describe Lain::Ext::Bm25 do
   # this many documents takes a few hundred milliseconds and a search a few dozen, long
   # enough for both to show.
   describe "on another thread" do
-    def monotonic = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-
     include GapShare
 
     def synthetic(count, words = 30)
@@ -109,18 +107,11 @@ RSpec.describe Lain::Ext::Bm25 do
       Array.new(count) { |i| ["d#{i}", Array.new(words) { vocabulary[((rng.rand**2) * 4000).to_i] }.join(" ")] }
     end
 
-    let(:pairs) { synthetic(20_000) }
+    # Fixed by their seed, so each is made once and only the examples that ask pay for it.
+    once(:pairs) { synthetic(20_000) }
     # Few long documents, so most of a build is the index work that runs unlocked and little is
     # the copy-in that cannot be interrupted.
-    let!(:long_pairs) { synthetic(1_500, 400) }
-
-    def building
-      batch = long_pairs
-      Thread.new do
-        Thread.current.report_on_exception = false
-        described_class.build(batch)
-      end
-    end
+    once(:long_pairs) { synthetic(1_500, 400) }
 
     it "ranks a recorded corpus exactly as before the lock was released" do
       index = described_class.build(synthetic(2_000))
@@ -128,14 +119,6 @@ RSpec.describe Lain::Ext::Bm25 do
 
       expect(Lain::Canonical.digest(ranked))
         .to eq("blake3:53ba3d2aa5165958cc50b890a256f4bd4c7eddea95e250b597da9a9eace0ccd0")
-    end
-
-    it "lets the calling thread keep running while it builds" do
-      worker = building
-      share = longest_gap_share(worker)
-
-      expect(worker.value).to be_a(described_class)
-      expect(share).to be < 0.3
     end
 
     it "lets the calling thread keep running while it searches" do
@@ -147,86 +130,25 @@ RSpec.describe Lain::Ext::Bm25 do
       expect(share).to be < 0.3
     end
 
-    # The card's 20 ms was met in bench-stats; this bound allows for suite load and stays well under the
-    # roughly 600 ms a build holding the GVL would take.
-    # Timed from when the interrupt was meant to land: a build holding the GVL also keeps
-    # this thread's sleep from ending, so its interrupt reaches a thread that is nearly done.
-    it "stops within 100 ms of its thread being killed, rather than at the end of the build" do
-      GC.start # a collection pause inside the window would count against the bound
-      meant = monotonic + 0.05
-      worker = building
-      sleep 0.05
-      expect(worker).to be_alive
-      worker.kill.join
-
-      expect(monotonic - meant).to be < 0.1
-    end
-
-    it "raises the interrupt's error within 100 ms, rather than returning a partial index" do
-      GC.start # a collection pause inside the window would count against the bound
-      meant = monotonic + 0.05
-      worker = building
-      sleep 0.05
-      expect(worker).to be_alive
-      worker.raise(IOError, "stopped")
-
-      expect { worker.value }.to raise_error(IOError, "stopped")
-      expect(monotonic - meant).to be < 0.1
-    end
-
-    it "builds the whole index when an interrupt that raises nothing lands mid-build" do
-      worker = building
-      sleep 0.05
-      expect(worker).to be_alive
-      worker.wakeup
-
-      expect(worker.value.search("w0", 5).size).to eq(5)
-    end
-
-    it "still finishes under a stream of interrupts that raise nothing, since its restarts are bounded" do
-      worker = building
-      waker = Thread.new do
-        while worker.alive?
-          sleep 0.001
-          worker.wakeup
-        end
-      rescue ThreadError
-        nil
+    # A build over this many documents takes a few hundred milliseconds, and the bound allows for
+    # suite load while staying well under the roughly 600 ms a build holding the lock would take.
+    it_behaves_like "a GVL-releasing binding" do
+      let(:work) do
+        batch = long_pairs
+        -> { described_class.build(batch) }
       end
-
-      expect(worker.join(30)).to eq(worker)
-      expect(worker.value.search("w0", 5).size).to eq(5)
-    ensure
-      waker&.kill&.join
-    end
-
-    # Releasing hands the lock to a busy thread, and getting it back waits out that thread's time
-    # slice, about 20 ms; the bound is loose for a loaded suite and well under a slice.
-    it "keeps the lock for a small build and search, so a busy offload-priority thread does not slow them" do
-      small = synthetic(100)
-      busy = Thread.new do
-        Thread.current.priority = Lain::Tool::Offload::PRIORITY
-        loop { nil }
+      let(:complete) { ->(index) { index.is_a?(described_class) && index.search("w0", 5).size == 5 } }
+      # A build and a search beside each other, each under its threshold.
+      let(:small_work) do
+        small = synthetic(100)
+        -> { described_class.build(small).search("w0 w1 w2", 10) }
       end
-      sleep 0.05
-      index = described_class.build(small)
-      started = monotonic
-      20.times { described_class.build(small) }
-      built = (monotonic - started) / 20
-      started = monotonic
-      20.times { index.search("w0 w1 w2", 10) }
-      searched = (monotonic - started) / 20
-
-      expect([built, searched]).to all(be < 0.008)
-    ensure
-      busy&.kill&.join
-    end
-
-    it "answers every build when more run at once than it has slots for" do
-      small = synthetic(500)
-      sizes = Array.new(80) { Thread.new { described_class.build(small).search("w0", 3).size } }.map(&:value)
-
-      expect(sizes).to all(eq(3))
+      # Over the build threshold, though far cheaper than `work`.
+      let(:crowd_work) do
+        crowd = synthetic(1_000)
+        -> { described_class.build(crowd).search("w0", 3) }
+      end
+      let(:crowd_complete) { ->(hits) { hits.size == 3 } }
     end
 
     it "still names the refusal of a degenerate batch when built on another thread" do

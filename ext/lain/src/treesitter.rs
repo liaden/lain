@@ -12,7 +12,7 @@
 //!
 //! Every call is observably STATELESS: parse an in-memory `&str`, run one
 //! compiled query, return an owned `Vec<Capture>` in match-then-capture order.
-//! The one thing kept between calls is a per-thread `QueryCache` of compiled
+//! The one thing kept between calls is a per-thread cache of compiled
 //! queries, which changes cost and never an answer. There is no index handle to
 //! keep, so -- unlike `Bm25` -- this needs no `TypedData` wrapper and makes no
 //! `frozen_shareable` promise; the FFI wrapper just freezes the Ruby Array it
@@ -24,10 +24,10 @@
 //!
 //! Byte offsets only. Byte -> line/column conversion is the Ruby wrapper's job.
 
-use crate::nogvl::{Cancel, Halted};
+use crate::local::{BoundedCache, with_local};
+use crate::nogvl::{Cancel, Halted, Threshold};
 use ast_grep_language::{LanguageExt, SupportLang};
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 use std::ops::ControlFlow;
 use std::rc::Rc;
 use tree_sitter::{
@@ -86,12 +86,7 @@ fn parse_lang(lang: &str) -> Result<SupportLang, QueryFailure> {
 /// checkout's sources (859 us per KB, markdown sections) 32 KiB costs about 27 ms,
 /// about 1 offload slice, so below it holding costs a busy thread no more than
 /// releasing would cost the caller.
-pub const HOLD_BELOW: usize = 32 * 1024;
-
-/// Whether a query over `source_len` bytes is worth releasing the GVL for.
-pub fn releases(source_len: usize) -> bool {
-    source_len >= HOLD_BELOW
-}
+pub const HOLD_BELOW: Threshold = Threshold::new(32 * 1024);
 
 /// All captures bound by running `query_src` against `src`, in match-then-capture
 /// order, or [`Halted`] once `cancel` asks, during the parse or the matching. A
@@ -143,85 +138,30 @@ fn compile(lang: SupportLang, query_src: &str) -> Result<Query, QueryFailure> {
     Ok(compiled)
 }
 
-/// Compiled queries by language, then by query source.
-///
-/// `Query::new` resolves every name against the whole grammar, so it costs
-/// milliseconds even for a one-node query, while running it on a short command
-/// costs microseconds; `Shell::Parse` compiles the same constant query for every
-/// command it classifies. A compiled `Query` carries no per-run state (that is
-/// the `QueryCursor`, which stays per call), so a reused one answers exactly as
-/// a fresh one does -- `a_cached_query_agrees_with_a_fresh_one` is the proof.
-///
-/// Keyed by language first so a hit is looked up by `&str` without allocating
-/// the key. Only successes are stored, so a malformed query keeps raising and
-/// cannot take a slot. A full cache stops admitting: every later query is
-/// compiled on each call and stays uncached on that thread. The cap bounds
-/// memory, not cost; a caller building queries from input still pays a
-/// compile per call once the slots are gone.
-struct QueryCache {
-    compiled: HashMap<SupportLang, HashMap<String, Rc<Query>>>,
-    len: usize,
-    cap: usize,
-}
-
-impl QueryCache {
-    fn new(cap: usize) -> Self {
-        Self {
-            compiled: HashMap::new(),
-            len: 0,
-            cap,
-        }
-    }
-
-    fn get_or_compile(
-        &mut self,
-        lang: SupportLang,
-        query_src: &str,
-    ) -> Result<Rc<Query>, QueryFailure> {
-        if let Some(hit) = self
-            .compiled
-            .get(&lang)
-            .and_then(|by_src| by_src.get(query_src))
-        {
-            return Ok(Rc::clone(hit));
-        }
-        let query = Rc::new(compile(lang, query_src)?);
-        // Admit until full, then never evict: the first queries a thread sees keep their slots.
-        if self.len < self.cap {
-            self.compiled
-                .entry(lang)
-                .or_default()
-                .insert(query_src.to_string(), Rc::clone(&query));
-            self.len += 1;
-        }
-        Ok(query)
-    }
-}
-
 thread_local! {
+    /// Compiled queries by language, then by query source.
+    ///
+    /// `Query::new` resolves every name against the whole grammar, so it costs
+    /// milliseconds even for a one-node query, while running it on a short command
+    /// costs microseconds; `Shell::Parse` compiles the same constant query for every
+    /// command it classifies. A compiled `Query` carries no per-run state (that is
+    /// the `QueryCursor`, which stays per call), so a reused one answers exactly as
+    /// a fresh one does -- `a_cached_query_agrees_with_a_fresh_one` is the proof.
+    ///
     /// Per thread, so the cache needs no lock and holds `Rc` rather than `Arc`.
     /// It stays safe with the GVL released because `rb_nogvl` runs the job on
-    /// the calling thread, so only that thread ever reaches its cache, and
-    /// `try_borrow_mut` covers re-entrancy. 64 is far above the handful of
-    /// constant queries `lib/` passes.
-    static QUERIES: RefCell<QueryCache> = RefCell::new(QueryCache::new(64));
+    /// the calling thread, so only that thread ever reaches its cache. 64 is far
+    /// above the handful of constant queries `lib/` passes.
+    static QUERIES: RefCell<BoundedCache<SupportLang, Query>> = RefCell::new(BoundedCache::new(64));
 }
 
-/// The thread's cached compile of `query_src`, falling back to an uncached
-/// compile if the thread-local is unreachable (during TLS teardown) or already
-/// borrowed (re-entrancy). Neither is reachable from a Ruby method call, but
-/// both are *panics* on the ergonomic API, and a panic here is undefined
-/// behaviour.
+/// The thread's cached compile of `query_src`.
 fn compiled(lang: SupportLang, query_src: &str) -> Result<Rc<Query>, QueryFailure> {
-    QUERIES
-        .try_with(|cell| {
-            cell.try_borrow_mut()
-                .ok()
-                .map(|mut cache| cache.get_or_compile(lang, query_src))
-        })
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| compile(lang, query_src).map(Rc::new))
+    with_local(
+        &QUERIES,
+        || BoundedCache::new(64),
+        |cache| cache.get_or_insert_with(lang, query_src, || compile(lang, query_src)),
+    )
 }
 
 /// Every capture `compiled` binds in `src`, in match-then-capture order.
@@ -231,11 +171,31 @@ fn run(
     lang: SupportLang,
     cancel: &Cancel<'_>,
 ) -> Result<Result<Vec<Capture>, QueryFailure>, Halted> {
-    let tree = match parsed(src, lang, cancel)? {
+    let tree = match parse_until(src, lang, cancel)? {
         Ok(tree) => tree,
-        Err(refused) => return Ok(Err(refused)),
+        Err(refused) => return Ok(Err(refused.into_failure(lang))),
     };
     captures_of(compiled, &tree, src, cancel).map(Ok)
+}
+
+/// Why a parse produced no tree for a reason other than a stop request.
+#[derive(Debug, thiserror::Error)]
+pub enum ParseRefusal {
+    /// tree-sitter refused the bundled grammar.
+    #[error("{0}")]
+    Grammar(LanguageError),
+    /// The parser answered nothing though nobody asked it to stop.
+    #[error("parser produced no tree")]
+    NoTree,
+}
+
+impl ParseRefusal {
+    fn into_failure(self, lang: SupportLang) -> QueryFailure {
+        QueryFailure::Backend(match self {
+            Self::Grammar(refused) => refused.to_string(),
+            Self::NoTree => format!("parser produced no tree for {lang}"),
+        })
+    }
 }
 
 /// Reads the stop request for tree-sitter's progress callbacks, and remembers
@@ -255,11 +215,12 @@ impl<'c> Watch<'c> {
     }
 
     fn tick(&self) -> ControlFlow<()> {
-        if self.cancel.requested() {
-            self.stopped.set(true);
-            ControlFlow::Break(())
-        } else {
-            ControlFlow::Continue(())
+        match self.cancel.check() {
+            Ok(()) => ControlFlow::Continue(()),
+            Err(Halted) => {
+                self.stopped.set(true);
+                ControlFlow::Break(())
+            }
         }
     }
 
@@ -274,37 +235,44 @@ impl<'c> Watch<'c> {
     fn tree_or_halt(
         &self,
         parsed: Result<Option<Tree>, LanguageError>,
-        lang: SupportLang,
-    ) -> Result<Result<Tree, QueryFailure>, Halted> {
+    ) -> Result<Result<Tree, ParseRefusal>, Halted> {
         match parsed {
             Ok(Some(tree)) => Ok(Ok(tree)),
-            Ok(None) => self.halted().map(|()| {
-                Err(QueryFailure::Backend(format!(
-                    "parser produced no tree for {lang}"
-                )))
-            }),
-            Err(refused) => Ok(Err(QueryFailure::Backend(refused.to_string()))),
+            Ok(None) => self.halted().map(|()| Err(ParseRefusal::NoTree)),
+            Err(refused) => Ok(Err(ParseRefusal::Grammar(refused))),
         }
     }
 }
 
-fn parsed(
+thread_local! {
+    /// One per thread, so a parse reuses the parser's allocations: `Shell::Parse`
+    /// parses several times per command. The parse runs on the calling thread
+    /// even with the GVL released.
+    static PARSER: RefCell<Parser> = RefCell::new(Parser::new());
+}
+
+/// Parses `src` as `lang`, or gives up with [`Halted`] once `cancel` asks. Shared
+/// with `astgrep`, which parses the same way.
+pub fn parse_until(
     src: &str,
     lang: SupportLang,
     cancel: &Cancel<'_>,
-) -> Result<Result<Tree, QueryFailure>, Halted> {
+) -> Result<Result<Tree, ParseRefusal>, Halted> {
     let watch = Watch::over(cancel);
     let mut progress = |_: &_| watch.tick();
     let bytes = src.as_bytes();
-    let mut parser = Parser::new();
-    let parsed = parser.set_language(&lang.get_ts_language()).map(|()| {
-        parser.parse_with_options(
-            &mut |at, _| bytes.get(at..).unwrap_or_default(),
-            None,
-            Some(ParseOptions::new().progress_callback(&mut progress)),
-        )
+    let parsed = with_local(&PARSER, Parser::new, |parser| {
+        parser.set_language(&lang.get_ts_language()).map(|()| {
+            // A halted parse resumes on the next call unless the parser is reset.
+            parser.reset();
+            parser.parse_with_options(
+                &mut |at, _| bytes.get(at..).unwrap_or_default(),
+                None,
+                Some(ParseOptions::new().progress_callback(&mut progress)),
+            )
+        })
     });
-    watch.tree_or_halt(parsed, lang)
+    watch.tree_or_halt(parsed)
 }
 
 fn captures_of(
@@ -354,26 +322,14 @@ fn captures_of(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::{Path, PathBuf};
-    use std::sync::atomic::AtomicBool;
-
-    static RAISED: AtomicBool = AtomicBool::new(true);
-    static LOWERED: AtomicBool = AtomicBool::new(false);
-
-    fn raised() -> Cancel<'static> {
-        Cancel::watching(&RAISED)
-    }
-
-    fn lowered() -> Cancel<'static> {
-        Cancel::watching(&LOWERED)
-    }
+    use crate::test_sources::{checkout, sources};
 
     /// Every test's view: a query nothing cancels.
     /// `Shell::Parse::MAX_BYTES`, the longest command it hands to a query.
     const SHELL_PARSE_CAP: usize = 4096;
 
     fn query(src: &str, lang: &str, query_src: &str) -> Result<Vec<Capture>, QueryFailure> {
-        query_until(src, lang, query_src, &lowered()).expect("nothing asked it to halt")
+        query_until(src, lang, query_src, &Cancel::never()).expect("nothing asked it to halt")
     }
 
     /// The query every caller ran before the cancellable one, kept as the oracle.
@@ -397,31 +353,6 @@ mod tests {
             }
         }
         out
-    }
-
-    fn checkout() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
-    }
-
-    fn sources(dirs: &[&str], extension: &str, every: usize) -> Vec<String> {
-        let mut paths = Vec::new();
-        let mut pending: Vec<PathBuf> = dirs.iter().map(|dir| checkout().join(dir)).collect();
-        while let Some(dir) = pending.pop() {
-            for entry in std::fs::read_dir(dir).unwrap() {
-                let path = entry.unwrap().path();
-                if path.is_dir() {
-                    pending.push(path);
-                } else if path.extension().is_some_and(|ext| ext == extension) {
-                    paths.push(path);
-                }
-            }
-        }
-        paths.sort();
-        paths
-            .iter()
-            .step_by(every)
-            .filter_map(|path| std::fs::read_to_string(path).ok())
-            .collect()
     }
 
     fn chunker_query(lang: &str, name: &str) -> String {
@@ -463,33 +394,33 @@ mod tests {
     fn a_raised_flag_halts_the_parse() {
         let src = "def m(a)\n  a.save\nend\n".repeat(2_000);
         assert_eq!(
-            parsed(&src, SupportLang::Ruby, &raised()).err(),
+            parse_until(&src, SupportLang::Ruby, &Cancel::raised()).err(),
             Some(Halted)
         );
         assert_eq!(
-            query_until(&src, "ruby", "(method) @m", &raised()),
+            query_until(&src, "ruby", "(method) @m", &Cancel::raised()),
             Err(Halted)
         );
     }
 
     #[test]
-    fn a_source_below_the_threshold_keeps_the_lock_and_a_larger_one_releases_it() {
-        assert!(!releases(0));
-        assert!(!releases(SHELL_PARSE_CAP));
-        assert!(!releases(HOLD_BELOW - 1));
-        assert!(releases(HOLD_BELOW));
+    fn a_shell_command_at_the_parse_cap_keeps_the_lock() {
+        assert!(!HOLD_BELOW.releases(SHELL_PARSE_CAP));
     }
 
     #[test]
     fn a_raised_flag_halts_the_matches_over_a_parsed_tree() {
         let src = "def m(a)\n  a.save\nend\n".repeat(2_000);
         let compiled = compile(SupportLang::Ruby, "(method) @m").unwrap();
-        let tree = parsed(&src, SupportLang::Ruby, &lowered())
+        let tree = parse_until(&src, SupportLang::Ruby, &Cancel::never())
             .unwrap()
             .unwrap();
-        assert_eq!(captures_of(&compiled, &tree, &src, &raised()), Err(Halted));
         assert_eq!(
-            captures_of(&compiled, &tree, &src, &lowered())
+            captures_of(&compiled, &tree, &src, &Cancel::raised()),
+            Err(Halted)
+        );
+        assert_eq!(
+            captures_of(&compiled, &tree, &src, &Cancel::never())
                 .unwrap()
                 .len(),
             2_000
@@ -499,29 +430,26 @@ mod tests {
     #[test]
     fn a_refused_query_or_language_is_a_failure_not_a_halt() {
         assert!(matches!(
-            query_until("x = 1", "ruby", "(method name: @nope", &raised()),
+            query_until("x = 1", "ruby", "(method name: @nope", &Cancel::raised()),
             Ok(Err(QueryFailure::BadQuery { .. }))
         ));
         assert!(matches!(
-            query_until("x = 1", "klingon", "(identifier) @i", &raised()),
+            query_until("x = 1", "klingon", "(identifier) @i", &Cancel::raised()),
             Ok(Err(QueryFailure::UnknownLanguage(_)))
         ));
     }
 
     #[test]
     fn a_parser_with_no_tree_and_no_stop_is_a_backend_failure() {
-        let (lowered, raised) = (lowered(), raised());
-        let watch = Watch::over(&lowered);
+        let (never, raised) = (Cancel::never(), Cancel::raised());
+        let watch = Watch::over(&never);
         assert!(matches!(
-            watch.tree_or_halt(Ok(None), SupportLang::Ruby),
-            Ok(Err(QueryFailure::Backend(_)))
+            watch.tree_or_halt(Ok(None)),
+            Ok(Err(ParseRefusal::NoTree))
         ));
         let stopped = Watch::over(&raised);
         assert!(stopped.tick().is_break());
-        assert_eq!(
-            stopped.tree_or_halt(Ok(None), SupportLang::Ruby).err(),
-            Some(Halted)
-        );
+        assert_eq!(stopped.tree_or_halt(Ok(None)).err(), Some(Halted));
     }
 
     #[test]
@@ -637,78 +565,23 @@ mod tests {
     }
 
     #[test]
-    fn a_second_compile_of_the_same_query_is_the_same_object() {
-        let mut cache = QueryCache::new(64);
-        let first = cache
-            .get_or_compile(SupportLang::Ruby, "(method) @m")
-            .unwrap();
-        let second = cache
-            .get_or_compile(SupportLang::Ruby, "(method) @m")
-            .unwrap();
-        assert!(Rc::ptr_eq(&first, &second));
-    }
-
-    #[test]
-    fn the_same_source_in_another_language_is_a_separate_entry() {
-        let mut cache = QueryCache::new(64);
-        let ruby = cache
-            .get_or_compile(SupportLang::Ruby, "(identifier) @i")
-            .unwrap();
-        let rust = cache
-            .get_or_compile(SupportLang::Rust, "(identifier) @i")
-            .unwrap();
-        assert!(!Rc::ptr_eq(&ruby, &rust));
-    }
-
-    #[test]
-    fn failures_are_not_stored_and_the_cap_holds() {
-        let mut cache = QueryCache::new(64);
-        assert!(matches!(
-            cache.get_or_compile(SupportLang::Ruby, "(method name: @nope"),
-            Err(QueryFailure::BadQuery { .. })
-        ));
-        assert!(matches!(
-            cache.get_or_compile(SupportLang::Ruby, "(method)"),
-            Err(QueryFailure::BadQuery { .. })
-        ));
-
-        let sources: Vec<String> = (0..65).map(|n| format!("(identifier) @c{n}")).collect();
-        let firsts: Vec<Rc<Query>> = sources
-            .iter()
-            .map(|src| cache.get_or_compile(SupportLang::Ruby, src).unwrap())
-            .collect();
-        let kept: Vec<bool> = sources
-            .iter()
-            .zip(&firsts)
-            .map(|(src, first)| {
-                Rc::ptr_eq(
-                    first,
-                    &cache.get_or_compile(SupportLang::Ruby, src).unwrap(),
-                )
-            })
-            .collect();
-
-        assert!(
-            kept[..64].iter().all(|&hit| hit),
-            "the 2 failures took no slot"
-        );
-        assert!(!kept[64], "the 65th query is compiled but not kept");
-    }
-
-    #[test]
     fn a_cached_query_agrees_with_a_fresh_one() {
         let src = "a.save\nb.save\ndef total(x)\n  x\nend\n";
         let query_src = "(call receiver: (identifier) @recv) (method name: (identifier) @name)";
-        let mut cache = QueryCache::new(64);
-        let cached = cache.get_or_compile(SupportLang::Ruby, query_src).unwrap();
+        let mut cache = BoundedCache::new(64);
+        let cached = cache
+            .get_or_insert_with(SupportLang::Ruby, query_src, || {
+                compile(SupportLang::Ruby, query_src)
+            })
+            .unwrap();
         let fresh = compile(SupportLang::Ruby, query_src).unwrap();
-        let first = run(&cached, src, SupportLang::Ruby, &lowered())
+        let first = run(&cached, src, SupportLang::Ruby, &Cancel::never())
             .unwrap()
             .unwrap();
-        let reused = run(&cached, src, SupportLang::Ruby, &lowered())
+        let reused = run(&cached, src, SupportLang::Ruby, &Cancel::never())
             .unwrap()
             .unwrap();
-        let expected = run(&fresh, src, SupportLang::Ruby, &lowered())
+        let expected = run(&fresh, src, SupportLang::Ruby, &Cancel::never())
             .unwrap()
             .unwrap();
         assert_eq!(first, expected);
@@ -719,7 +592,7 @@ mod tests {
 
 #[cfg(not(test))]
 pub mod ffi {
-    use super::{Capture, QueryFailure, query_until, releases};
+    use super::{Capture, HOLD_BELOW, QueryFailure, query_until};
     use crate::ffi::{frozen_str, int, lookup_error};
     use crate::nogvl::{Cancel, without_gvl_when};
     // The one string-boundary policy, shared with `fuzzy`, `prompt` and
@@ -745,7 +618,7 @@ pub mod ffi {
     /// released, so a kill or a raise stops it early; the arguments' Rust copies live in the job and are gone by the
     /// time a refusal runs Ruby.
     pub fn query(ruby: &Ruby, src: Value, lang: Value, query_src: Value) -> Result<RArray, Error> {
-        let release = RString::from_value(src).is_some_and(|text| releases(text.len()));
+        let release = RString::from_value(src).is_some_and(|text| HOLD_BELOW.releases(text.len()));
         let queried = without_gvl_when(ruby, release, || {
             let (src, lang, query_src) = (
                 text_of(ruby, src, "source")?,
