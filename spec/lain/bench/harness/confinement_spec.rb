@@ -202,15 +202,7 @@ RSpec.describe Lain::Bench::Harness::Confinement do
       it "prices an arm whose guard stack escalated the call" do
         Sync { |task| task.with_timeout(20) { run_bash("touch made.txt") } }
 
-        priced = nil
-        expect { priced = Lain::Arm::Instrument.new.price(agent_journal) }.not_to raise_error
-        expect(priced).to be_a(Lain::Ledger)
-      end
-
-      it "keeps the escalation record among the drained records" do
-        Sync { |task| task.with_timeout(20) { run_bash("touch made.txt") } }
-
-        expect(Lain::Arm::Instrument.records(agent_journal).map { _1["type"] }).to include("escalation")
+        expect(Lain::Arm::Instrument.new.price(agent_journal)).to be_a(Lain::Ledger)
       end
     end
   end

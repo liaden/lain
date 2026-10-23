@@ -38,12 +38,12 @@ module Lain
         super
       end
 
-      # Drain a channel into journal hashes, taking a record's `#to_journal` or a Hash as it is.
-      # An escalation is pushed as a Hash, so the drain cannot assume every entry is a record.
+      # Drain a channel into journal hashes. An escalation is pushed as a Hash, so
+      # the drain cannot assume every entry is a record.
       #
       # @param channel [Lain::Channel]
       # @return [Array<Hash>]
-      def self.records(channel) = channel.drain.map { _1.respond_to?(:to_journal) ? _1.to_journal : _1 }
+      def self.records(channel) = channel.drain.map { Journal.hash_of(_1) }
 
       # Run the block and answer BOTH what it took and what it produced.
       #

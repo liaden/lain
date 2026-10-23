@@ -132,6 +132,16 @@ module Lain
       nil
     end
 
+    # @param entry [Hash, #to_journal] a record as written
+    # @return [Hash] the entry's journal hash, keys as given
+    # @raise [TypeError] when the entry is neither, because a stray value must fail loudly
+    def self.hash_of(entry)
+      hash = entry.respond_to?(:to_journal) ? entry.to_journal : entry
+      return hash if hash.is_a?(Hash)
+
+      raise TypeError, "journal entry must be a Hash or respond to #to_journal, got #{hash.class}"
+    end
+
     # The ONE walk every Journal reader shares. Skipping is the contract, not a
     # convenience: the Journal's own lines always parse, but a file may have been
     # touched by another writer or torn by a crash, so a reader skips what
@@ -298,15 +308,7 @@ module Lain
       )
     end
 
-    def record_hash(entry)
-      hash = entry.respond_to?(:to_journal) ? entry.to_journal : entry
-      unless hash.is_a?(Hash)
-        raise TypeError,
-              "journal entry must be a Hash or respond to #to_journal, got #{hash.class}"
-      end
-
-      { "ts" => timestamp }.merge(hash.transform_keys(&:to_s))
-    end
+    def record_hash(entry) = { "ts" => timestamp }.merge(self.class.hash_of(entry).transform_keys(&:to_s))
 
     def timestamp
       @clock.call

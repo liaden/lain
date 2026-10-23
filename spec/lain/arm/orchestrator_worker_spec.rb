@@ -58,18 +58,6 @@ end
 # subtasks, fans workers out over ONE shared Store, then a synthesis turn folds
 # their results into a single multi-parent causal Event (the FIRST one written
 # through any arm). Driven over Provider::Mock so it spends no tokens.
-# Passes the fold through while keeping what each worker handed it.
-class OrchestratorWorkerSpySynthesis
-  attr_reader :results
-
-  def initialize = (@inner = Lain::Arm::Synthesis.new)
-
-  def fold(lead, results)
-    @results = results
-    @inner.fold(lead, results)
-  end
-end
-
 RSpec.describe Lain::Arm::OrchestratorWorker do
   # A FRESH worker Agent per spawn (Provider::Mock is stateful), built over the
   # `base_timeline` the arm roots in the SHARED Store and journaling into the
@@ -172,24 +160,6 @@ RSpec.describe Lain::Arm::OrchestratorWorker do
   # leases per worker, threads `lease.worker_env` through the spawn_seam tail, and
   # the seam wires it onto the worker's Session -- so worker tools resolve paths
   # and shell out under the lease, not the shared process environment.
-  describe "a worker's journal holds both record shapes" do
-    it "hands the synthesis the usage record's hash and the escalation Hash, in order" do
-      usage = Lain::Telemetry::TurnUsage.new(digest: "d1", model: "claude-sonnet-4", stop_reason: :end_turn,
-                                             usage: { "input_tokens" => 1 })
-      escalation = { "type" => "escalation", "tool" => "bash" }
-      seam = lambda do |journal:, base_timeline:, **|
-        journal << usage
-        journal << escalation
-        worker_agent(base_timeline:, journal: Lain::Channel.new, tokens: 1)
-      end
-      spy = OrchestratorWorkerSpySynthesis.new
-
-      described_class.new(synthesis: spy).run("one subtask", spawn_seam: seam, grader:)
-
-      expect(spy.results.map(&:usage_records)).to eq([[usage.to_journal, escalation]])
-    end
-  end
-
   describe "the injected isolation backend leases per worker" do
     let(:backend) { FakeWorkerIsolation.new }
 

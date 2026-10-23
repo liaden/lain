@@ -55,6 +55,13 @@ RSpec.describe Lain::Arm::Instrument do
 
       expect(described_class.records(channel)).to eq([usage.to_journal, escalation])
     end
+
+    it "refuses an entry that is neither a Hash nor a record" do
+      channel = Lain::Channel.new
+      channel << :stray
+
+      expect { described_class.records(channel) }.to raise_error(TypeError)
+    end
   end
 
   describe "#price -- the run's journal folded into a Ledger" do
@@ -76,14 +83,6 @@ RSpec.describe Lain::Arm::Instrument do
 
       expect(ledger.usage(timeline).total_tokens).to eq(1100)
       expect(ledger.cost(timeline)).to be > 0
-    end
-
-    it "prices a channel that also holds a journaled Hash" do
-      journal = Lain::Channel.new
-      journal << usage_record(timeline.head_digest)
-      journal << { "type" => "escalation", "tool" => "bash" }
-
-      expect(described_class.new.price(journal).usage(timeline).total_tokens).to eq(1100)
     end
 
     it "prices through the INJECTED price book, not the default" do

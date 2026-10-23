@@ -66,6 +66,19 @@ RSpec.describe Lain::Journal do
   # A caller whose records only make sense together -- a retreat and the turn
   # that replaces what it retreated past -- needs them in ONE write, so a
   # process killed between two records cannot leave the first alone.
+  describe ".hash_of" do
+    it "unwraps a #to_journal record and passes a Hash through" do
+      record = Struct.new(:id) { def to_journal = { "type" => "t", "id" => id } }.new(7)
+
+      expect(described_class.hash_of(record)).to eq("type" => "t", "id" => 7)
+      expect(described_class.hash_of("a" => 1)).to eq("a" => 1)
+    end
+
+    it "refuses an entry that is neither" do
+      expect { described_class.hash_of(:stray) }.to raise_error(TypeError, /got Symbol/)
+    end
+  end
+
   describe "#record_all" do
     it "writes every record, in order, in one write" do
       writes = []

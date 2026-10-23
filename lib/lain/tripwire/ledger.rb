@@ -69,7 +69,7 @@ module Lain
       # Live records carry symbol keys and values deeper down, replayed ones
       # strings; one JSON round trip reads both the same.
       def folded(event)
-        hash = Journal.parse(event.respond_to?(:to_journal) ? event.to_journal : event)
+        hash = Journal.parse(Journal.hash_of(event))
         JSON.parse(JSON.generate(hash)) if hash && FOLDED.include?(hash["type"])
       end
 
