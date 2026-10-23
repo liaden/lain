@@ -107,6 +107,8 @@ end
 # so what is typed "during an iteration" is typed while nothing reads stdin.
 # The `approval` shape parks one gated call in the second iteration.
 class ReplGoalTerminal
+  include CursorReport
+
   CHILD = <<~'RUBY'
     require "lain"
 
@@ -175,9 +177,6 @@ class ReplGoalTerminal
     end
     File.write(File.join(ARGV[0], "pipes"), intact.to_s)
   RUBY
-
-  CURSOR_QUERY = "\e[6n"
-  CURSOR_REPORT = "\e[1;1R"
 
   attr_reader :pid
 
@@ -296,7 +295,7 @@ class ReplGoalTerminal
     loop do
       chunk = @output.readpartial(4096)
       @lock.synchronize { @screen << chunk }
-      @output.write(CURSOR_REPORT) if chunk.include?(CURSOR_QUERY)
+      answered(@output, chunk)
     end
   rescue IOError, Errno::EIO
     nil
@@ -1134,7 +1133,7 @@ RSpec.describe Lain::CLI::Repl do
         terminal.type("lo\r")
         terminal.await_dispatched("hello")
 
-        expect([terminal.dispatched.last, terminal.screen.include?(ReplGoalTerminal::CURSOR_QUERY)])
+        expect([terminal.dispatched.last, terminal.screen.include?(CursorReport::QUERY)])
           .to eq(["hello", true])
       end
 
@@ -1149,7 +1148,7 @@ RSpec.describe Lain::CLI::Repl do
           terminal.type("lo\r")
           terminal.await_dispatched("hello")
 
-          expect([terminal.dispatched.last, terminal.screen.include?(ReplGoalTerminal::CURSOR_QUERY)])
+          expect([terminal.dispatched.last, terminal.screen.include?(CursorReport::QUERY)])
             .to eq(["hello", false])
         end
       end

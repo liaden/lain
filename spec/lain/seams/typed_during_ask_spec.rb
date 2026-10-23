@@ -56,6 +56,8 @@ module TypedDuringAsk
 
   # The chat process and whichever terminal the human types at.
   class Cockpit
+    include CursorReport
+
     attr_reader :dir
 
     def initialize(warm)
@@ -124,7 +126,7 @@ module TypedDuringAsk
     def drain
       Enumerator.produce { @reader.readpartial(4096) }.each do |bytes|
         @lock.synchronize { @screen << bytes }
-        @writer.write("\e[1;1R") if bytes.include?("\e[6n")
+        answered(@writer, bytes)
       end
     rescue Errno::EIO, IOError
       nil

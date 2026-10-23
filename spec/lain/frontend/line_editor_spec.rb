@@ -1291,10 +1291,11 @@ RSpec.describe Lain::Frontend::LineEditor do
             nil
           end
         end
+        trap_writer = nil
         if ARGV[1] == "int_after_enter"
           interrupts = Queue.new
           trap("INT") { interrupts << true }
-          Thread.new do
+          trap_writer = Thread.new do
             interrupts.pop
             File.write(ARGV[3], Lain::Frontend::LineEditor.typed?.inspect)
           end
@@ -1306,7 +1307,7 @@ RSpec.describe Lain::Frontend::LineEditor do
         end
         if ARGV[1] == "int_after_enter"
           Process.kill("INT", Process.pid)
-          sleep 0.5
+          trap_writer.join(5)
         end
         File.write(ARGV[0], lines.map(&:inspect).join("\\n"))
       RUBY
@@ -1357,7 +1358,7 @@ RSpec.describe Lain::Frontend::LineEditor do
         armed = false
         loop do
           chunk = reader.readpartial(4096)
-          writer.write("\e[1;1R") if chunk.include?("\e[6n")
+          answered(writer, chunk)
           seen, armed = after_ready(seen + chunk, armed)
           armed = signal_prompt(drawn, seen, armed)
         end

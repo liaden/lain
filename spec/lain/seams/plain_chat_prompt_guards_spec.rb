@@ -192,8 +192,7 @@ module PlainChatPromptGuards
   # `answers_cursor: false` is a terminal that never replies to Reline's
   # cursor-position query, which Reline waits out for half a second.
   class Terminal
-    CURSOR_QUERY = "\e[6n"
-    CURSOR_REPORT = "\e[1;1R"
+    include CursorReport
 
     def initialize(child:, window:, shape:, answers_cursor: true, grace: nil)
       @child = child
@@ -302,16 +301,16 @@ module PlainChatPromptGuards
       loop do
         chunk = @output.readpartial(4096)
         @lock.synchronize { @screen << chunk }
-        queried(chunk) if chunk.include?(CURSOR_QUERY)
+        queried(chunk) if chunk.include?(CursorReport::QUERY)
       end
     rescue IOError, Errno::EIO
       nil
     end
 
-    def queried(_chunk)
+    def queried(chunk)
       typed = @lock.synchronize { @during_query.tap { @during_query = nil } }
       @input.write(typed) if typed
-      @input.write(CURSOR_REPORT) if @answers_cursor
+      answered(@input, chunk) if @answers_cursor
     end
   end
 end

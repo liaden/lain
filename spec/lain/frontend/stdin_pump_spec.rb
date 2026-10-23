@@ -10,6 +10,8 @@ require "tmpdir"
 
 # The far end of a PTY a pump child reads: what the human types, and everything drawn.
 class StdinPumpRaceTerminal
+  include CursorReport
+
   # @param warm [WarmCockpit::Booted] a pump child already booted and parked in
   #   its own directory
   def initialize(warm)
@@ -61,7 +63,7 @@ class StdinPumpRaceTerminal
     loop do
       chunk = @output.readpartial(4096)
       @screen << chunk
-      @input.write("\e[1;1R") if chunk.include?("\e[6n")
+      answered(@input, chunk)
     end
   rescue IOError, Errno::EIO
     nil
