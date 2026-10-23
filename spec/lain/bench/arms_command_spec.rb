@@ -359,6 +359,20 @@ RSpec.describe "lain bench arms" do
       expect(kwargs).to include(system: "be terse", isolation: "none")
     end
 
+    it "declares --attempts and --subset-of, and carries them through the real parser to the entry point" do
+      expect(command.options.keys).to include(:attempts, :subset_of)
+
+      run("arms", "suite/tasks.yml", "--attempts", "2", "--subset-of", "full")
+
+      expect(kwargs).to include(attempts: 2, subset_of: "full")
+    end
+
+    it "defaults to 1 attempt and no subset" do
+      run("arms", "suite/tasks.yml")
+
+      expect(kwargs).to include(attempts: 1, subset_of: nil)
+    end
+
     it "records confine off and tripwire off when no arm flag is given" do
       run("arms", "suite/tasks.yml")
 

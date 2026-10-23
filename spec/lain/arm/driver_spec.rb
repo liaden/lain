@@ -69,6 +69,30 @@ module DriverSpecSupport
     end
   end
 
+  FakePassGrade = Struct.new(:score, :pass) do
+    def pass? = pass
+  end
+
+  # Passes or fails each attempt at a task as scripted, spending a fixed
+  # price per attempt; each call is a fresh run, as the Driver promises.
+  class ScriptedPassArm < Lain::Arm
+    def initialize(name:, script:, price: "0.10")
+      super(name:)
+      @script = script.transform_values(&:dup)
+      @ledger = Class.new(FixedLedger) do
+        define_method(:cost) { |_timeline| BigDecimal(price) }
+      end.new(cache_creation_input_tokens: 0)
+    end
+
+    def run(task, **)
+      passed = @script.fetch(task).shift
+      raise Lain::Budget::Exceeded, "ceiling" if passed == :ceiling
+
+      Lain::Arm::Run.new(arm: name, timeline: nil, grade: FakePassGrade.new(passed ? 1.0 : 0.0, passed),
+                         elapsed: 0.1, ledger: @ledger)
+    end
+  end
+
   class CeilingArm < Lain::Arm
     def run(_task, **)
       raise Lain::Budget::Exceeded, "loop ran 25 iterations, ceiling is 25"
@@ -190,6 +214,140 @@ RSpec.describe Lain::Arm::Driver do
     it "renders byte-identical reports when the same instance reports twice" do
       driver = described_class.new(arms, tasks:, spawn_seam:, grader:)
       expect(driver.report).to eq(driver.report)
+    end
+  end
+
+  describe "#report — repeated attempts" do
+    def driver(script, attempts: 3, price: "0.10", **options)
+      arm = DriverSpecSupport::ScriptedPassArm.new(name: "a", script:, price:)
+      described_class.new([arm], tasks: script.keys, spawn_seam:, grader:, attempts:, **options)
+    end
+
+    let(:script) { { "t1" => [true, true, true], "t2" => [false, false, true] } }
+
+    it "reports the share of tasks that passed every attempt" do
+      expect(row_for(driver(script).report, "pass^k", "a")).to match(/\ba\s+2\s+3\s+0\.50\b/)
+    end
+
+    it "folds the attempt a task first passed on into a rounds-to-pass table" do
+      row = row_for(driver(script).report, "rounds to pass", "a")
+      n, *_mean_and_interval, _median, min, max = row.split.drop(1)
+      expect([n, min, max]).to eq(%w[2 1.0 3.0])
+    end
+
+    it "says how many tasks needed 5 or more rounds" do
+      expect(driver(script).report).to include("a: 0 of 2 tasks needed 5 or more rounds")
+    end
+
+    it "divides the spend by the attempts that passed" do
+      report = driver({ "t1" => [true, false, true], "t2" => [false, false, false] }, price: "0.05").report
+      expect(row_for(report, "cost per solved task (USD)", "a")).to include("0.150000")
+    end
+
+    it "says no task solved rather than dividing by zero" do
+      report = driver({ "t1" => [false, false, false], "t2" => [false, false, false] }).report
+      expect(row_for(report, "cost per solved task (USD)", "a")).to include("no task solved")
+    end
+
+    it "keeps the single-attempt report free of the outcome sections" do
+      report = driver({ "t1" => [true], "t2" => [true] }, attempts: 1).report
+      expect(report).not_to include("pass^k")
+    end
+
+    it "runs every attempt as a fresh arm run" do
+      arm = DriverSpecSupport::ScriptedPassArm.new(name: "a", script:)
+      allow(arm).to receive(:run).and_call_original
+      described_class.new([arm], tasks: script.keys, spawn_seam:, grader:, attempts: 3).report
+      expect(arm).to have_received(:run).exactly(6).times
+    end
+
+    it "counts a task solved on round 5 among those needing 5 or more rounds" do
+      late = { "t1" => [false, false, false, false, true], "t2" => [true, true, true, true, true] }
+      expect(driver(late, attempts: 5).report).to include("a: 1 of 2 tasks needed 5 or more rounds")
+    end
+
+    it "folds every attempt into the metric tables, so n is tasks times attempts" do
+      expect(row_for(driver(script, attempts: 3).report, "grader score", "a")).to match(/\Aa\s+6\s/)
+    end
+
+    it "says the tables run over every attempt and the paired section over the first" do
+      expect(driver(script).report)
+        .to include("3 attempts per task; tables fold all, paired section uses the first")
+    end
+
+    it "pairs on each task's first attempt, one pair per task" do
+      worse = DriverSpecSupport::ScriptedPassArm.new(name: "a",
+                                                     script: {
+                                                       "t1" => [false, true], "t2" => [false, true]
+                                                     })
+      better = DriverSpecSupport::ScriptedPassArm.new(name: "b",
+                                                      script: {
+                                                        "t1" => [true, false], "t2" => [true, false]
+                                                      })
+      report = described_class.new([worse, better], tasks: %w[t1 t2], spawn_seam:, grader:, attempts: 2).report
+      expect(report).to match(/^b\s+grader score\s+2\s+\+1\.000/)
+    end
+
+    it "names the attempt of a failed one in the note, and says the spend excludes it" do
+      report = driver({ "t1" => [true, :ceiling, true], "t2" => [true, true, true] }).report
+      expect(report).to include("a: failed: ceiling (task 1 attempt 2)")
+      expect(report).to include("spend excludes 1 failed attempt")
+    end
+
+    it "pluralizes the excluded spend for 2 or more failed attempts" do
+      report = driver({ "t1" => [:ceiling, :ceiling, true], "t2" => [true, true, true] }).report
+      expect(report).to include("spend excludes 2 failed attempts")
+    end
+
+    it "leaves the attempts header out of a single-attempt report" do
+      expect(driver({ "t1" => [true], "t2" => [true] }, attempts: 1).report).not_to include("attempts per task")
+    end
+
+    it "journals the attempt number on a failed attempt's grade record" do
+      journal = Lain::Channel.new
+      driver({ "t1" => [true, :ceiling, true], "t2" => [true, true, true] }, journal:).report
+      whys = journal.drain.grep(Lain::Telemetry::Stamped).map(&:record).grep(Lain::Telemetry::GradeRecord).map(&:why)
+      expect(whys).to include("task 1 attempt 2 failed at the ceiling: ceiling")
+    end
+
+    it "refuses, before any run, a grader that cannot grade" do
+      arm = DriverSpecSupport::ScriptedPassArm.new(name: "a", script:)
+      expect { described_class.new([arm], tasks: script.keys, spawn_seam:, grader: nil, attempts: 3) }
+        .to raise_error(ArgumentError, /grader/)
+    end
+
+    it "refuses at the first run a grade that cannot say pass?" do
+      arm = DriverSpecSupport::FixedCacheArm.new(name: "a", cache_creation_input_tokens: 0)
+      driver = described_class.new([arm], tasks: %w[t1 t2], spawn_seam:, grader:, attempts: 2)
+      expect { driver.report }.to raise_error(ArgumentError, /pass\?/)
+    end
+
+    it "refuses fewer than 1 attempt" do
+      expect { driver(script, attempts: 0) }.to raise_error(ArgumentError, /attempts/)
+    end
+  end
+
+  describe "#report — a subset of a larger suite" do
+    subject(:report) { described_class.new(arms, tasks:, spawn_seam:, grader:, subset:).report }
+
+    let(:subset) { described_class::Subset.new(of: "full-suite", gap: nil) }
+
+    it "states the subset and that its gap to the full set was not measured" do
+      expect(report).to include("subset of full-suite (2 tasks); gap to the full set not measured")
+    end
+
+    it "states a measured gap" do
+      subset = described_class::Subset.new(of: "full-suite", gap: 0.05)
+      report = described_class.new(arms, tasks:, spawn_seam:, grader:, subset:).report
+      expect(report).to include("subset of full-suite (2 tasks); gap to the full set 0.050")
+    end
+
+    it "claims no winner" do
+      expect(report).not_to match(/winner|best arm/i)
+    end
+
+    it "leaves a full suite's header without a subset line" do
+      expect(described_class.new(arms, tasks:, spawn_seam:, grader:).report).not_to include("subset of")
     end
   end
 

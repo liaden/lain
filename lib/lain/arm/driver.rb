@@ -124,11 +124,100 @@ module Lain
       PAIRED_HEADERS = %w[arm metric pairs mean-diff ci95 wins losses ties].freeze
       private_constant :PAIRED_HEADERS
 
-      TaskFailure = Data.define(:index, :reason)
+      # `attempt` is nil on a single-attempt run, where "task 2" already says everything.
+      TaskFailure = Data.define(:index, :attempt, :reason) do
+        def label = attempt.nil? ? index.to_s : "#{index} attempt #{attempt}"
+      end
       private_constant :TaskFailure
 
       CEILING_REASON = "ceiling"
       private_constant :CEILING_REASON
+
+      # Past this many rounds a task is slow enough to be worth counting apart from the rest.
+      LATE_ROUNDS = 5
+      private_constant :LATE_ROUNDS
+
+      # A suite that is a cut of a larger one. Naming the cut is the point: a quick tier's ranking says nothing
+      # about the full set until the gap between them has been measured.
+      Subset = Data.define(:of, :gap) do
+        def stated? = !of.nil?
+
+        def line(task_count)
+          measured = gap.nil? ? "not measured" : format("%.3f", gap)
+          "  subset of #{of} (#{task_count} tasks); gap to the full set #{measured}"
+        end
+      end
+      Subset::NONE = Subset.new(of: nil, gap: nil)
+
+      # Kept apart from the per-metric folds because these read pass/fail and the attempt order of each task,
+      # which a flat list of runs has already thrown away.
+      Outcomes = Data.define(:attempts_by_arm, :attempts) do
+        def sections = [pass_k, rounds_to_pass, cost_per_solved]
+
+        private
+
+        def tasks_of(name) = attempts_by_arm.fetch(name)
+
+        def passed?(result) = !result.is_a?(TaskFailure) && result.grade.pass?
+
+        def pass_k
+          rows = attempts_by_arm.map do |name, tasks|
+            held = tasks.count { |tries| tries.all? { |result| passed?(result) } }
+            [name, tasks.size.to_s, attempts.to_s, format("%.2f", held.fdiv(tasks.size))]
+          end
+          "pass^k\n#{Compare::Table.new(headers: %w[arm tasks k pass^k], rows:)}"
+        end
+
+        def rounds_to_pass
+          rounds = attempts_by_arm.transform_values { |tasks| tasks.filter_map { |tries| first_pass(tries) } }
+          rows = rounds.map { |name, values| rounds_row(name, values, tasks_of(name).size) }
+          notes = rounds.map { |name, values| late_note(name, values, tasks_of(name).size) }
+          ["rounds to pass\n#{Compare::Table.new(headers: Compare::ArmFold::HEADERS, rows:)}",
+           *notes.map { |note| "  #{note}" }].join("\n")
+        end
+
+        def first_pass(tries) = tries.index { |result| passed?(result) }&.succ
+
+        def rounds_row(name, values, total)
+          return STAT_FOLD.absent_row(name, count: "0 of #{total}", marker: "no task passed") if values.empty?
+
+          STAT_FOLD.row(name, Compare::Distribution.new(values), fmt: ->(value) { format("%.1f", value) })
+        end
+
+        def late_note(name, values, total)
+          late = values.count { |rounds| rounds >= LATE_ROUNDS }
+          "#{name}: #{late} of #{total} tasks needed #{LATE_ROUNDS} or more rounds"
+        end
+
+        def cost_per_solved
+          label = "cost per solved task (USD)"
+          priced = attempts_by_arm.transform_values do |tasks|
+            tasks.flatten.grep_v(TaskFailure).map do |run|
+              run.compare_run.price
+            end
+          end
+          unpriced = priced.values.flatten.select(&:refuses?)
+          return "#{label}\n  #{Compare::Cost::Unpriced.describe(unpriced)}" if unpriced.any?
+
+          rows = priced.map { |name, prices| cost_row(name, prices) }
+          ["#{label}\n#{Compare::Table.new(headers: %w[arm spent passed cost], rows:)}", *excluded_notes].join("\n")
+        end
+
+        # A failed attempt was paid for but its spend died with the exception, so the cost above is a floor.
+        def excluded_notes
+          attempts_by_arm.filter_map do |name, tasks|
+            lost = tasks.flatten.count { |result| result.is_a?(TaskFailure) }
+            "  #{name}: spend excludes #{lost} failed #{lost == 1 ? "attempt" : "attempts"}" if lost.positive?
+          end
+        end
+
+        def cost_row(name, prices)
+          spent = prices.sum(BigDecimal(0), &:amount)
+          passes = tasks_of(name).flatten.count { |result| passed?(result) }
+          [name, format("%.6f", spent), passes.to_s, passes.zero? ? "no task solved" : format("%.6f", spent / passes)]
+        end
+      end
+      private_constant :Outcomes
 
       NOT_MEASURED_CELL = "not measured"
       private_constant :NOT_MEASURED_CELL
@@ -156,8 +245,8 @@ module Lain
       module FailureReasons
         def self.describe(failures)
           failures.group_by(&:reason).map do |reason, group|
-            indexes = group.map(&:index)
-            "#{reason} (#{indexes.size == 1 ? "task" : "tasks"} #{indexes.join(", ")})"
+            labels = group.map(&:label)
+            "#{reason} (#{labels.size == 1 ? "task" : "tasks"} #{labels.join(", ")})"
           end.join("; ")
         end
       end
@@ -205,16 +294,18 @@ module Lain
       #   its three sibling optional keywords a nil here survives construction
       #   and dies inside the decorator, after every arm has already been paid
       #   for. {Channel::Null::INSTANCE} is how a caller says "nowhere".
-      # @raise [ArgumentError] on fewer than two tasks, no arms, or a nil journal
-      def initialize(arms, tasks:, spawn_seam:, grader:, isolation: NoIsolation, isolation_name: nil,
-                     fixture: nil, model: nil, confine: nil, journal: Channel::Null::INSTANCE)
+      # @param attempts [Integer] fresh runs of each task per arm; above 1 the report adds pass^k, rounds to pass
+      #   and cost per solved task
+      # @param subset [Subset] what larger suite the tasks are a cut of, named in the header
+      # @raise [ArgumentError] on fewer than two tasks, no arms, fewer than one attempt, or a nil journal
+      def initialize(arms, tasks:, spawn_seam:, grader:, attempts: 1, subset: Subset::NONE, isolation: NoIsolation,
+                     isolation_name: nil, fixture: nil, model: nil, confine: nil, journal: Channel::Null::INSTANCE)
         @arms = Array(arms).freeze
         @tasks = Array(tasks).freeze
-        raise ArgumentError, "the driver needs at least one arm to compare" if @arms.empty?
-        raise ArgumentError, "arm names must be unique; reports key by name" if @arms.map(&:name).uniq.size < @arms.size
-        raise ArgumentError, "a distribution needs n >= 2 tasks; one run is not a distribution" if @tasks.size < 2
-        raise ArgumentError, "journal: nil has nowhere to record a grade; pass Channel::Null::INSTANCE" if journal.nil?
+        refuse_unrunnable!(attempts:, journal:, grader:)
 
+        @attempts = attempts
+        @subset = subset
         @spawn_seam = spawn_seam
         # DECORATED ONCE, HERE, because the grader is threaded verbatim into
         # every arm's `#run` -- so one wrap attests every arm's every run. An
@@ -236,13 +327,30 @@ module Lain
       #
       # @return [String]
       def report
-        @report ||= render(runs_by_arm)
+        @report ||= render(attempts_by_arm)
       end
 
       private
 
-      def runs_by_arm
-        @arms.to_h { |arm| [arm.name, @tasks.each_with_index.map { |task, index| run_task(arm, task, index + 1) }] }
+      def refuse_unrunnable!(attempts:, journal:, grader:)
+        raise ArgumentError, "the driver needs at least one arm to compare" if @arms.empty?
+        raise ArgumentError, "arm names must be unique; reports key by name" if @arms.map(&:name).uniq.size < @arms.size
+        raise ArgumentError, "a distribution needs n >= 2 tasks; one run is not a distribution" if @tasks.size < 2
+        raise ArgumentError, "attempts must be an Integer >= 1" unless attempts.is_a?(Integer) && attempts >= 1
+        if attempts > 1 && !grader.respond_to?(:grade)
+          raise ArgumentError,
+                "attempts above 1 need a grader that answers grade"
+        end
+        raise ArgumentError, "journal: nil has nowhere to record a grade; pass Channel::Null::INSTANCE" if journal.nil?
+      end
+
+      def attempts_by_arm
+        @arms.to_h do |arm|
+          tries = @tasks.each_with_index.map do |task, index|
+            Array.new(@attempts) { |attempt| run_task(arm, task, index + 1, attempt + 1) }
+          end
+          [arm.name, tries]
+        end
       end
 
       # [arm_name, {metric_label => Distribution}] per arm, in the order given.
@@ -250,18 +358,29 @@ module Lain
         runs_by_arm.map { |name, runs| [name, METRICS.transform_values { |spec| fold(runs, spec) }] }
       end
 
-      def run_task(arm, task, number)
+      def run_task(arm, task, number, attempt)
         copy = run_copy(arm, task)
         grader = Grader::Journaling.new(inner: @grader, journal: copy, subject_digest: SUBJECT_DIGEST)
         seam = CopyingSeam.new(@spawn_seam, copy)
-        arm.run(task, spawn_seam: seam, isolation: @isolation, grader:)
-      rescue Budget::Exceeded => e
-        journal_failure(arm, task, number, "at the ceiling", e)
-        TaskFailure.new(index: number, reason: CEILING_REASON)
-      rescue Response::Failed => e
-        reason = e.failure.stop_reason.to_s
-        journal_failure(arm, task, number, reason, e)
-        TaskFailure.new(index: number, reason:)
+        require_pass!(arm.run(task, spawn_seam: seam, isolation: @isolation, grader:))
+      rescue Budget::Exceeded, Response::Failed => e
+        failed(arm, task, [number, attempt], e)
+      end
+
+      def failed(arm, task, (number, attempt), error)
+        reason = error.is_a?(Budget::Exceeded) ? CEILING_REASON : error.failure.stop_reason.to_s
+        shown = @attempts > 1 ? attempt : nil
+        where = reason == CEILING_REASON ? "at the ceiling" : reason
+        journal_failure(arm, task, shown ? "#{number} attempt #{shown}" : number, where, error)
+        TaskFailure.new(index: number, attempt: shown, reason:)
+      end
+
+      # The outcome tables read pass? off every grade, and learning a grade lacks it after the last arm was paid
+      # for would waste the whole run.
+      def require_pass!(run)
+        return run if @attempts == 1 || run.grade.respond_to?(:pass?)
+
+        raise ArgumentError, "attempts above 1 need a grade that answers pass?, got #{run.grade.class}"
       end
 
       def run_copy(arm, task) = Telemetry::Stamped::Sink.new(@journal, arm.name, Canonical.digest(task))
@@ -314,11 +433,17 @@ module Lain
       # METRICS' comment on `cache write tokens`.
       def value_of(run, of) = of.respond_to?(:call) ? of.call(run) : run.public_send(of)
 
-      def render(runs_by_arm)
-        measured_arms = measured(runs_by_arm)
+      def render(attempts_by_arm)
+        measured_arms = measured(attempts_by_arm.transform_values(&:flatten))
         [header, *METRICS.keys.map do |label|
           section(label, measured_arms)
-        end, *paired_sections(runs_by_arm)].join("\n\n")
+        end, *paired_sections(attempts_by_arm.transform_values { |tries| tries.map(&:first) }),
+         *outcome_sections(attempts_by_arm)].join("\n\n")
+      end
+
+      # Grade records exist for every attempt; the pairing uses each task's first, so a pair is still one task.
+      def outcome_sections(attempts_by_arm)
+        @attempts > 1 ? Outcomes.new(attempts_by_arm:, attempts: @attempts).sections : []
       end
 
       def paired_sections(runs_by_arm)
@@ -378,8 +503,14 @@ module Lain
         ["Arm driver — #{@arms.size} arms over #{@tasks.size} tasks",
          "  fixture:   #{attributed(@fixture)}",
          "  model:     #{attributed(@model)}",
-         "  isolation: #{isolation_label}", *confine_field].join("\n")
+         "  isolation: #{isolation_label}", *confine_field, *attempts_field, *subset_field].join("\n")
       end
+
+      def attempts_field
+        @attempts == 1 ? [] : ["  #{@attempts} attempts per task; tables fold all, paired section uses the first"]
+      end
+
+      def subset_field = @subset.stated? ? [@subset.line(@tasks.size)] : []
 
       def confine_field = @confine.nil? ? [] : ["  confine:   #{@confine}"]
 

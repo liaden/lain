@@ -6,7 +6,7 @@ module Lain
   # Compares n>=2 runs by DISTRIBUTION, because a single A/B is noise: one run
   # each of two arms tells you nothing about whether the difference you see is
   # the tactic or the variance. So Compare folds each metric -- {METRICS} names
-  # all 8 -- into a distribution across the runs and reports mean/median/min/max.
+  # all 9 -- into a distribution across the runs and reports mean/median/min/max.
   #
   # It also REFUSES, up front, on the two axes that decide whether these runs
   # were comparable at all. {Capability::DegradedSet}: if one arm silently lost
@@ -52,7 +52,7 @@ module Lain
     # `price` is {Cost::Priced} or {Cost::Unpriced}, never a bare number, so a run the book
     # cannot price is still a run: the refusal travels with it to the report
     # instead of unwinding the whole comparison from its constructor.
-    Run = Data.define(:name, :usage, :price, :score, :degraded, :mode, :compaction) do
+    Run = Data.define(:name, :usage, :price, :score, :degraded, :mode, :compaction, :turns) do
       # @param name [String] this run's label in the comparison table (the arm
       #   it came from)
       # @param timeline [Lain::Ext::Timeline] the recorded run
@@ -70,8 +70,12 @@ module Lain
       def self.from_timeline(name:, timeline:, ledger:, grade: nil,
                              degraded: Capability::DegradedSet.new([]), mode: nil, compaction: CompactionTally::NONE)
         new(name:, usage: ledger.usage(timeline), price: price_of(ledger, timeline),
-            score: grade&.score, degraded:, mode:, compaction:)
+            score: grade&.score, degraded:, mode:, compaction:, turns: turns_of(timeline))
       end
+
+      # A run whose arm handed back no Timeline has no count to give, and 0 would read as a run that never answered.
+      def self.turns_of(timeline) = timeline&.to_a&.count { |turn| turn.role == "assistant" }
+      private_class_method :turns_of
 
       # The Ledger keeps raising on a model its book has no row for; this is the
       # one place that refusal becomes a value rather than an unwound report.
@@ -82,8 +86,9 @@ module Lain
       end
       private_class_method :price_of
 
-      def initialize(name:, usage:, price:, degraded:, score: nil, mode: nil, compaction: CompactionTally::NONE)
-        super(name: -name.to_s, usage:, price:, score:, degraded:, mode: Mode.coerce(mode), compaction:)
+      def initialize(name:, usage:, price:, degraded:, score: nil, mode: nil, compaction: CompactionTally::NONE,
+                     turns: nil)
+        super(name: -name.to_s, usage:, price:, score:, degraded:, mode: Mode.coerce(mode), compaction:, turns:)
       end
 
       # @return [BigDecimal]
@@ -94,6 +99,7 @@ module Lain
       def cache_hit_ratio = usage.cache_hit_ratio
       def cache_write_tokens = usage.cache_creation_input_tokens
       def graded? = !score.nil?
+      def counted? = !turns.nil?
       def summary_misses = compaction.summary_misses
       def prepared_unapplied = compaction.unapplied
       def compaction_cost_delta = compaction.cost_delta
@@ -153,7 +159,8 @@ module Lain
       prepared_unapplied: { label: "prepared unapplied", reader: :prepared_unapplied,
                             fmt: ->(v) { format("%.1f", v) } },
       compaction_cost_delta: { label: "compaction cost delta", reader: :compaction_cost_delta,
-                               fmt: ->(v) { v.is_a?(Cost::Priced) ? format("%.6f", v.amount) : v.to_s } }
+                               fmt: ->(v) { v.is_a?(Cost::Priced) ? format("%.6f", v.amount) : v.to_s } },
+      turns: { label: "turns", reader: :turns, fmt: ->(v) { format("%.1f", v) } }
     }.freeze
 
     # A comparison is a DISTRIBUTION, and one sample is not one. Declared over
@@ -234,12 +241,17 @@ module Lain
       "mode: #{@runs.map { |run| "#{run.name}=#{run.mode}" }.join(", ")}"
     end
 
+    # Turns follow score: a count missing from one run is dropped, not zeroed.
     # Score is only reportable when EVERY run was graded; a distribution over a
     # subset would silently compare different populations. It is dropped
     # without a line, unlike {#withheld}, because an ungraded run is an
     # experiment that asked no grader rather than a measurement that failed.
     def shown_metrics
-      METRICS.keys.select { |key| key != :score || @runs.all?(&:graded?) } - withheld.keys
+      METRICS.keys.select { |key| shown?(key) } - withheld.keys
+    end
+
+    def shown?(key)
+      (key != :score || @runs.all?(&:graded?)) && (key != :turns || @runs.all?(&:counted?))
     end
 
     # Each metric some run cannot honestly answer, with the reason. Cost goes

@@ -15,9 +15,9 @@ RSpec.describe Lain::Compare do
   end
 
   def run(name, usage:, cost:, score: nil, degraded: Lain::Capability::DegradedSet.new([]), mode: nil,
-          compaction: Lain::Compare::CompactionTally::NONE)
+          compaction: Lain::Compare::CompactionTally::NONE, turns: nil)
     Lain::Compare::Run.new(name:, usage:, price: Lain::Compare::Cost::Priced.new(amount: BigDecimal(cost.to_s)), score:,
-                           degraded:, mode:, compaction:)
+                           degraded:, mode:, compaction:, turns:)
   end
 
   # A run with no journal withholds the compaction cost column; a fully priced report needs this.
@@ -186,9 +186,9 @@ RSpec.describe Lain::Compare do
         .to eq(%i[total_tokens cache_hit_ratio cost score cache_write_tokens])
     end
 
-    it "ends with the 3 compaction metrics, in order" do
-      expect(described_class::METRICS.keys.last(3))
-        .to eq(%i[summary_misses prepared_unapplied compaction_cost_delta])
+    it "ends with the 3 compaction metrics, in order, then turns" do
+      expect(described_class::METRICS.keys.last(4))
+        .to eq(%i[summary_misses prepared_unapplied compaction_cost_delta turns])
     end
 
     describe "the compaction columns" do
@@ -505,6 +505,31 @@ RSpec.describe Lain::Compare do
         expect(described_class.new(pair).report.lines.first.chomp)
           .to eq("Compare — 2 runs | degraded: extended_output, thinking | mode: not recorded")
       end
+    end
+  end
+
+  describe "turns" do
+    def turned(turns)
+      Array(turns).each_with_index.map do |n, i|
+        run("r#{i}", usage: usage(input: 10, output: 1), cost: "0.001", turns: n)
+      end
+    end
+
+    it "reports the mean assistant turns across the runs" do
+      expect(described_class.new(turned([4, 6])).distribution(:turns).mean).to eq(5.0)
+      expect(described_class.new(turned([4, 6])).report.lines.find { |l| l.start_with?("turns") }).to include("5.0")
+    end
+
+    it "withholds the row when any run has no turn count" do
+      expect(described_class.new(turned([4, nil])).report.lines.grep(/\Aturns/)).to be_empty
+    end
+
+    it "counts the assistant turns of a recorded timeline" do
+      timeline = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                                   .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                                   .commit(role: :assistant, content: [{ "type" => "text", "text" => "ok" }])
+      ledger = Lain::Ledger.from_journal([])
+      expect(described_class::Run.from_timeline(name: "x", timeline:, ledger:).turns).to eq(1)
     end
   end
 end

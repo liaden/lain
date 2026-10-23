@@ -4,6 +4,29 @@ require "fileutils"
 require "json"
 require "tmpdir"
 
+# Passes or fails each attempt at a task as scripted; every call is a fresh run.
+class BenchAttemptArm < Lain::Arm
+  Grade = Struct.new(:score, :pass) do
+    def pass? = pass
+  end
+
+  Ledger = Struct.new(:cost_each) do
+    def usage(_timeline) = Lain::Usage.new(input_tokens: 10, output_tokens: 1)
+    def cost(_timeline) = cost_each
+  end
+
+  def initialize(name:, script:)
+    super(name:)
+    @script = script.transform_values(&:dup)
+  end
+
+  def run(task, **)
+    passed = @script.fetch(task).shift
+    Lain::Arm::Run.new(arm: name, timeline: nil, grade: Grade.new(passed ? 1.0 : 0.0, passed), elapsed: 0.1,
+                       ledger: Ledger.new(BigDecimal("0.10")))
+  end
+end
+
 # Answers every `git` the worktree backend shells out with success, recording
 # the argv. This spec's claim is WHICH backend reaches the arms, not what git
 # does with a checkout -- spec/lain/cli/isolation_backend_spec.rb runs the real
@@ -346,6 +369,26 @@ RSpec.describe Lain::Bench::CLI do
 
     # What every arm was handed, across every task in the suite.
     def isolations = arms.flat_map(&:isolations)
+
+    describe "with attempts" do
+      let(:arms) do
+        [BenchAttemptArm.new(name: "a", script: { "t1" => [true, true, true], "t2" => [false, false, true] })]
+      end
+      let(:tasks) { %w[t1 t2] }
+
+      it "reports pass^k and rounds to pass for each arm" do
+        report = cli.arm_report(arms, tasks:, spawn_seam:, grader:, attempts: 3)
+
+        expect(report).to match(/^a\s+2\s+3\s+0\.50\b/)
+        expect(report).to include("a: 0 of 2 tasks needed 5 or more rounds")
+      end
+
+      it "names the subset it was told it ran" do
+        report = cli.arm_report(arms, tasks:, spawn_seam:, grader:, attempts: 3, subset_of: "full-suite")
+
+        expect(report).to include("subset of full-suite (2 tasks); gap to the full set not measured")
+      end
+    end
 
     it "returns the driver's report as a String, without printing" do
       report = nil
