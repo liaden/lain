@@ -469,8 +469,9 @@ RSpec.describe Lain::CLI::Backend::OllamaTier do
     end
 
     it "says a loopback base is held to 1 request, not the declared width" do
-      tier = cloud(api_base: "https://127.0.0.1:9443")
-      notice = with_env(provider_key => nil, "OLLAMA_API_KEY" => "sk-ollama-test") { tier.startup_notices.first }
+      notice = with_env(provider_key => nil, "OLLAMA_API_KEY" => "sk-ollama-test") do
+        cloud(api_base: "https://127.0.0.1:9443").startup_notices.first
+      end
       expect(notice).to include("loopback").and include("held to 1 request")
       expect(notice).to include("set #{provider_key} to override it")
     end
@@ -488,8 +489,9 @@ RSpec.describe Lain::CLI::Backend::OllamaTier do
 
     %w[2 5].each do |value|
       it "reports the plain width when the variable sets #{value} on a loopback base" do
-        tier = cloud(api_base: "https://127.0.0.1:9443")
-        notice = with_env(provider_key => value, "OLLAMA_API_KEY" => "sk-ollama-test") { tier.startup_notices.first }
+        notice = with_env(provider_key => value, "OLLAMA_API_KEY" => "sk-ollama-test") do
+          cloud(api_base: "https://127.0.0.1:9443").startup_notices.first
+        end
         expect(notice).to include("up to #{value} cloud requests at once")
         expect(notice).not_to include("loopback")
       end

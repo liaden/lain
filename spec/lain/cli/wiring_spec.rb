@@ -3377,10 +3377,10 @@ RSpec.describe Lain::CLI::Wiring do
 
       def startup_notices_for(provider)
         notices = []
-        cloud_backend = offline_backend_class.new({ provider:, model: nil, max_tokens: 64 },
-                                                  mock: mock_provider, root: backend_root)
         Lain::Provider::Admission.reset!
         with_env("OLLAMA_API_KEY" => "sk-ollama-test", "LAIN_PROVIDER_CONCURRENCY" => nil) do
+          cloud_backend = offline_backend_class.new({ provider:, model: nil, max_tokens: 64 },
+                                                    mock: mock_provider, root: backend_root)
           seen = []
           Dir.mktmpdir do |dir|
             wiring = new_wiring(options: { grace: 5 }, chronicle:, status_feed:,
