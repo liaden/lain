@@ -128,7 +128,7 @@ module Lain
 
       # One model round trip the Journal actually BILLED: the request that went
       # out, paired with the usage that came back.
-      Call = Data.define(:model, :chain, :chain_version, :usage) do
+      Call = Data.define(:model, :chain, :chain_version, :usage, :at) do
         # ROADMAP.md:221-225's cache-aware compaction scheduler sensor,
         # verbatim: "run only when the cache is already cold ... confirmed by
         # `cache_read_input_tokens == 0`". Reachable from a single record
@@ -136,8 +136,8 @@ module Lain
         # a journal to ask it.
         def cold? = usage.cache_read_input_tokens.zero?
 
-        def initialize(model:, chain:, chain_version:, usage:)
-          super(model: -model.to_s, chain: Canonical.normalize(chain), chain_version:, usage:)
+        def initialize(model:, chain:, chain_version:, usage:, at: nil)
+          super(model: -model.to_s, chain: Canonical.normalize(chain), chain_version:, usage:, at:)
         end
       end
 
@@ -178,7 +178,7 @@ module Lain
       # @raise [ArgumentError] if the record carries no usage
       def self.cache_fact(record)
         entry = Ledger::Index::Entry.from_record(record)
-        Call.new(model: safe_name(entry.model), chain: nil, chain_version: nil, usage: entry.usage)
+        Call.new(model: safe_name(entry.model), chain: nil, chain_version: nil, usage: entry.usage, at: entry.at)
       end
 
       # Reduce a recorded model to a name safe to print, or {UNRECORDED_MODEL}.
@@ -262,7 +262,7 @@ module Lain
           return nil unless agrees?(requested, entry.model)
 
           Call.new(model: CacheWaste.safe_name(requested || entry.model), chain: request["prefix_digests"],
-                   chain_version: request["prefix_chain_version"], usage: entry.usage)
+                   chain_version: request["prefix_chain_version"], usage: entry.usage, at: entry.at)
         rescue ArgumentError
           nil
         end
@@ -429,8 +429,8 @@ module Lain
       # nil is the REFUSAL, distinct from `Dollars.zero`: the caller turns it
       # into {Dollars.unknown} so the incompleteness survives the sum.
       def rebill_cost(call)
-        price = price_for(call.model)
-        price && Dollars.of(price.cache_creation * call.usage.cache_creation_input_tokens)
+        rate = rate_for(call)
+        rate && Dollars.of(rate.cache_creation * call.usage.cache_creation_input_tokens)
       end
 
       # Zero tokens at an unknown rate is exactly zero, so an unpriced model
@@ -448,8 +448,14 @@ module Lain
         tokens = call.usage.cache_read_input_tokens
         return Dollars.zero if tokens.zero?
 
-        price = price_for(call.model)
-        price ? Dollars.of((price.input - price.cache_read) * tokens) : Dollars.unknown
+        rate = rate_for(call)
+        rate ? Dollars.of((rate.input - rate.cache_read) * tokens) : Dollars.unknown
+      end
+
+      def rate_for(call)
+        @price_book.rate(call.model, call.usage, at: call.at)
+      rescue PriceBook::UnknownModel
+        nil
       end
 
       # {PriceBook} raises rather than guessing, which is right for a bench

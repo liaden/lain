@@ -251,4 +251,58 @@ RSpec.describe Lain::Ledger do
       expect(priced.cost(parent, spawned.child(store))).to eq(BigDecimal("0.00021"))
     end
   end
+
+  describe "pricing each payment at the time it was journaled" do
+    let(:half) { Lain::Price.per_mtok(input: 0.5, output: 0, cache_creation: 0, cache_read: 0) }
+    let(:price_book) do
+      Lain::PriceBook.new(prices: {
+                            "deepseek" => Lain::Price.per_mtok(
+                              input: 1, output: 0, cache_creation: 0, cache_read: 0,
+                              off_peak: Lain::Price::OffPeak.new(price: half)
+                            )
+                          })
+    end
+
+    def paid(timeline, stamp)
+      committed = commit(timeline, "t#{records.size}", model: "deepseek-v4",
+                                                       usage: turn_usage(input: 1_000_000, output: 0))
+      records.last["ts"] = stamp if stamp
+      committed
+    end
+
+    def priced(timeline) = described_class.from_journal(records, price_book:).cost(timeline)
+
+    it "uses the standard rate for a weekday peak payment" do
+      timeline = paid(Lain::Dag::Factory.timeline(store:), "2026-10-21T14:00:00Z")
+
+      expect(priced(timeline)).to eq(BigDecimal(1))
+    end
+
+    it "uses the off-peak rate for a Sunday payment" do
+      timeline = paid(Lain::Dag::Factory.timeline(store:), "2026-10-25T14:00:00Z")
+
+      expect(priced(timeline)).to eq(BigDecimal("0.5"))
+    end
+
+    it "prices a record with no ts at the standard rate" do
+      timeline = paid(Lain::Dag::Factory.timeline(store:), nil)
+
+      expect(priced(timeline)).to eq(BigDecimal(1))
+    end
+
+    [["a string that is not a time", "garbage"], ["an Integer", 1_761_400_000]].each do |label, stamp|
+      it "prices a record whose ts is #{label} at the standard rate without raising" do
+        timeline = paid(Lain::Dag::Factory.timeline(store:), stamp)
+
+        expect(priced(timeline)).to eq(BigDecimal(1))
+      end
+    end
+
+    it "carries the parsed time on the index entry, nil when absent" do
+      record = { "usage" => turn_usage, "model" => model, "ts" => "2026-10-25T14:00:00.5Z" }
+
+      expect(Lain::Ledger::Index::Entry.from_record(record).at).to eq(Time.utc(2026, 10, 25, 14, 0, 0.5r))
+      expect(Lain::Ledger::Index::Entry.from_record(record.except("ts")).at).to be_nil
+    end
+  end
 end

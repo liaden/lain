@@ -42,12 +42,14 @@ module Lain
       #   so a reader of the parent's file can tell them from the parent's own
       # @param spend [Budget::Shared] where this run's children settle
       # @param prices [PriceBook] what each response is priced under
+      # @param clock [#call] the time a response arrived, which a rate may depend on
       def initialize(journal: Channel::Null.instance, spawn: nil, spend: Budget::Shared::Null,
-                     prices: PriceBook.default)
+                     prices: PriceBook.default, clock: -> { Time.now.utc })
         @journal = journal
         @spawn = spawn
         @spend = spend
         @prices = prices
+        @clock = clock
         @usage = Usage.zero
         @dollars = Friction::CacheWaste::Dollars.zero
         @reading = Unread
@@ -116,7 +118,7 @@ module Lain
       # A pricing gap must never fail a turn already paid for; it marks the
       # total incomplete instead.
       def priced(response)
-        Friction::CacheWaste::Dollars.of(@prices.cost(response.model, response.usage))
+        Friction::CacheWaste::Dollars.of(@prices.cost(response.model, response.usage, at: @clock.call))
       rescue PriceBook::UnknownModel
         Friction::CacheWaste::Dollars.unknown
       end

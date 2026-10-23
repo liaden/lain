@@ -10,9 +10,10 @@ module Lain
     # Deeply frozen at construction; an Index is a value derived from the
     # Journal, and `Ractor.shareable?` is the project's mechanical proof of that.
     class Index
-      # One payment: the tokens bought and the model they were bought from
-      # (nil when the provider reported none -- a bare mock).
-      Entry = Data.define(:usage, :model) do
+      # One payment: the tokens bought, the model they were bought from
+      # (nil when the provider reported none -- a bare mock) and when the
+      # journal recorded it (nil for a record with no `ts`).
+      Entry = Data.define(:usage, :model, :at) do
         def self.from_record(record)
           usage = record["usage"]
           if usage.nil?
@@ -21,11 +22,18 @@ module Lain
                   "a corrupt payment record must not price as free"
           end
 
-          new(usage: Usage.new(**usage.transform_keys(&:to_sym)), model: record["model"])
+          new(usage: Usage.new(**usage.transform_keys(&:to_sym)), model: record["model"], at: stamped(record["ts"]))
         end
 
-        def initialize(usage:, model:)
-          super(usage:, model: model&.to_s&.freeze)
+        # A torn ts must not destroy a report over a journal a user pointed us at, so it prices as unstamped.
+        def self.stamped(value)
+          Time.iso8601(value) if value.is_a?(String)
+        rescue ArgumentError
+          nil
+        end
+
+        def initialize(usage:, model:, at: nil)
+          super(usage:, model: model&.to_s&.freeze, at: at&.freeze)
         end
       end
 

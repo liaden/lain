@@ -92,7 +92,7 @@ module Lain
     # rather than pre-checked: PriceBook's own "no price for model \"\"" would
     # send the first mock-journal user grepping the wrong codebase.
     def turn_cost(turn, entry)
-      @price_book.cost(entry.model, entry.usage)
+      @price_book.cost(entry.model, entry.usage, at: entry.at)
     rescue PriceBook::UnknownModel
       raise unless entry.model.nil?
 

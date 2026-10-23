@@ -951,4 +951,62 @@ RSpec.describe Lain::Friction::CacheWaste do
       expect(rendered).not_to include("/home/someone")
     end
   end
+
+  describe "a long prompt that rewrote its prefix" do
+    let(:tier) { Lain::Price.per_mtok(input: 2, output: 10, cache_creation: 2.5, cache_read: 0.2) }
+    let(:price_book) do
+      Lain::PriceBook.new(prices: {
+                            "haiku" => Lain::Price.per_mtok(
+                              input: 1, output: 5, cache_creation: 1.25, cache_read: 0.1,
+                              tiers: [Lain::Price::Tier.new(above_prompt_tokens: 100_000, price: tier)]
+                            )
+                          })
+    end
+    let(:entries) do
+      [request_sent([[0, "blake3:a"]], model: "claude-haiku-5-5"),
+       turn_usage(model: "claude-haiku-5-5", creation: 20_000),
+       request_sent([[0, "blake3:a-EDITED"]], model: "claude-haiku-5-5"),
+       turn_usage(model: "claude-haiku-5-5", creation: 150_000)]
+    end
+
+    it "charges the rebill at the tier's cache-write rate" do
+      waste = described_class.from_journal(entries, price_book:)
+
+      expect(waste.rebilled_cost.amount).to eq(BigDecimal("0.375"))
+    end
+
+    it "prices the saving of a long cached prompt at the tier's rates" do
+      cached = entries + [request_sent([[0, "blake3:a-EDITED"]], model: "claude-haiku-5-5"),
+                          turn_usage(model: "claude-haiku-5-5", read: 150_000)]
+
+      expect(described_class.from_journal(cached, price_book:).cached_savings.amount).to eq(BigDecimal("0.27"))
+    end
+  end
+
+  describe "the time a call was journaled" do
+    let(:half) { Lain::Price.per_mtok(input: 0, output: 0, cache_creation: 3, cache_read: 0) }
+    let(:price_book) do
+      Lain::PriceBook.new(prices: {
+                            "deepseek" => Lain::Price.per_mtok(
+                              input: 0, output: 0, cache_creation: 6, cache_read: 0,
+                              off_peak: Lain::Price::OffPeak.new(price: half)
+                            )
+                          })
+    end
+
+    def rebilled_at(stamp)
+      usage = turn_usage(model: "deepseek-v4", creation: 1_000_000).merge("ts" => stamp)
+      entries = [request_sent([[0, "blake3:a"]], model: "deepseek-v4"), turn_usage(model: "deepseek-v4"),
+                 request_sent([[0, "blake3:b"]], model: "deepseek-v4"), usage]
+      described_class.from_journal(entries, price_book:).rebilled_cost.amount
+    end
+
+    it "charges a Sunday rebill at the off-peak rate" do
+      expect(rebilled_at("2026-10-25T14:00:00Z")).to eq(BigDecimal(3))
+    end
+
+    it "charges a record with no ts at the standard rate" do
+      expect(rebilled_at(nil)).to eq(BigDecimal(6))
+    end
+  end
 end

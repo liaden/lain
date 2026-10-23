@@ -326,4 +326,32 @@ RSpec.describe Lain::Agent::Accounting do
       expect(records.size).to eq(1)
     end
   end
+
+  describe "pricing at the time the response arrived" do
+    let(:half) { Lain::Price.per_mtok(input: 0.66, output: 0, cache_creation: 0, cache_read: 0) }
+    let(:prices) do
+      Lain::PriceBook.new(prices: {
+                            "deepseek-v4-pro" => Lain::Price.per_mtok(
+                              input: 1.32, output: 0, cache_creation: 0, cache_read: 0,
+                              off_peak: Lain::Price::OffPeak.new(price: half)
+                            )
+                          })
+    end
+
+    it "prices a response under the clock's time" do
+      accounting = described_class.new(prices:, clock: -> { Time.utc(2026, 10, 25, 14) })
+
+      accounting.observe(response(input: 1_000_000, output: 0, model: "deepseek-v4-pro:cloud"), digest: "blake3:d1")
+
+      expect(accounting.spent.dollars).to have_attributes(amount: BigDecimal("0.66"), complete: true)
+    end
+
+    it "prices at the standard rate when the clock reads a weekday peak" do
+      accounting = described_class.new(prices:, clock: -> { Time.utc(2026, 10, 21, 14) })
+
+      accounting.observe(response(input: 1_000_000, output: 0, model: "deepseek-v4-pro:cloud"), digest: "blake3:d1")
+
+      expect(accounting.spent.dollars.amount).to eq(BigDecimal("1.32"))
+    end
+  end
 end
