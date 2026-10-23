@@ -33,6 +33,17 @@ module Lain
       include TailInjection
 
       TAG = "mailbox"
+      private_constant :TAG
+
+      # A fold is told apart by its exact rendering, not a marker: adding one
+      # would move every cached prompt's bytes.
+      #
+      # @param block [Object] a content block
+      # @return [Boolean] whether {#mailbox_block} could have produced it
+      def self.note?(block)
+        text = block.is_a?(Hash) && block.keys.sort == %w[text type] && block["type"] == "text" && block["text"]
+        text.is_a?(String) && text.start_with?("<#{TAG}>\n") && text.end_with?("\n</#{TAG}>")
+      end
 
       # The projection for ONE turn, as a frozen value. The render-side
       # {Mailbox} folds `pending`; the commit records `folded` as the turn's

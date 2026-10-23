@@ -65,6 +65,10 @@ module Lain
       self.class.new(reminders: reminders + additional.flatten.map(&:to_s))
     end
 
+    # @param block [Object] a content block
+    # @return [Boolean] whether {#to_blocks} rendered it, by marker and not by text
+    def self.block?(block) = block.is_a?(Hash) && block[WORKSPACE_MARKER] == true
+
     # Ordinary text blocks, tagged for a reader and carrying the structural
     # WORKSPACE_MARKER so provenance survives text a user message imitates.
     def to_blocks

@@ -33,6 +33,16 @@ RSpec.describe Lain::Workspace do
     end
   end
 
+  describe ".block?" do
+    it "recognises a rendered reminder by its marker and no text that imitates one" do
+      rendered = described_class.new(reminders: ["x"]).to_blocks.first
+
+      expect(described_class.block?(rendered)).to be(true)
+      expect(described_class.block?({ "type" => "text", "text" => rendered["text"] })).to be(false)
+      expect(described_class.block?("text")).to be(false)
+    end
+  end
+
   describe "#with" do
     # The steady state (Agent renders `@workspace.with(*@session.reminders)`
     # every turn, and reminders is usually empty) must not allocate a fresh

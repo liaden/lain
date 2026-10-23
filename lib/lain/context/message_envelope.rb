@@ -54,9 +54,7 @@ module Lain
       # than off any wire-shaped hint. A genuine user message that happens to
       # start with the literal "<workspace>" tag carries no WORKSPACE_MARKER and
       # is real query material, not swallowed.
-      def workspace_tagged?(block)
-        block[Workspace::WORKSPACE_MARKER] == true
-      end
+      def workspace_tagged?(block) = Workspace.block?(block)
 
       private
 

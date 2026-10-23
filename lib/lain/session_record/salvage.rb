@@ -301,23 +301,15 @@ module Lain
       def prompt_of(content)
         return [{ "type" => "text", "text" => content }] if content.is_a?(String)
 
-        Request.strip_cache_markers(content.reject { |block| workspace_block?(block) })
+        Request.strip_cache_markers(content.reject { |block| Workspace.block?(block) })
       end
 
       # A note has no marker of its own; adding one would move every cached
       # prompt's bytes, so its exact rendering is what names it. It is appended
       # after the prompt, so a sole block is never one.
       def without_folded_note(blocks)
-        blocks.size > 1 && folded_note?(blocks.last) ? blocks[0..-2] : blocks
+        blocks.size > 1 && Context::Mailbox.note?(blocks.last) ? blocks[0..-2] : blocks
       end
-
-      def folded_note?(block)
-        tag = Context::Mailbox::TAG
-        text = block.is_a?(Hash) && block.keys.sort == %w[text type] && block["type"] == "text" && block["text"]
-        text.is_a?(String) && text.start_with?("<#{tag}>\n") && text.end_with?("\n</#{tag}>")
-      end
-
-      def workspace_block?(block) = block.is_a?(Hash) && block[Workspace::WORKSPACE_MARKER] == true
 
       # Content, never digest: a re-resume commits the SAME response onto a
       # Timeline that already carries it, so the recovered turn's PARENT (and

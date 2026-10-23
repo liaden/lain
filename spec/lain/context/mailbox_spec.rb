@@ -60,6 +60,17 @@ RSpec.describe Lain::Context::Mailbox do
     end
   end
 
+  describe ".note?" do
+    it "knows the block the fold appended, and nothing that merely resembles it" do
+      folded = mailbox.call(conversation).last["content"].last
+
+      expect(described_class.note?(folded)).to be(true)
+      expect(described_class.note?(folded.merge("cache" => true))).to be(false)
+      expect(described_class.note?({ "type" => "text", "text" => "<mailbox>\nnot a note" })).to be(false)
+      expect(described_class.note?("<mailbox>\nx\n</mailbox>")).to be(false)
+    end
+  end
+
   # Scenario: the parent folds deliberately -- the fold rides AFTER the last
   # cache breakpoint, so the cached prefix is byte-identical to a render without
   # it (the Recall tail rule: strictly after the last neutral marker).

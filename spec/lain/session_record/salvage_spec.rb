@@ -260,7 +260,7 @@ RSpec.describe Lain::SessionRecord::Salvage do
     end
 
     it "keeps a typed prompt that only resembles a folded note" do
-      typed = "<#{Lain::Context::Mailbox::TAG}>\nnot a note\n</#{Lain::Context::Mailbox::TAG}>"
+      typed = "<mailbox>\nnot a note\n</mailbox>"
       asked = answered.commit(role: :user, content: text(typed))
       request = render(asked)
       spool(canned, request)
