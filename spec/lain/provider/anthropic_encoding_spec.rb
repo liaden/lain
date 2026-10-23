@@ -214,4 +214,28 @@ RSpec.describe Lain::Provider::AnthropicEncoding do
         .to raise_error(Lain::Attachment::Reference::Unresolved)
     end
   end
+
+  # A recap's marker is provenance for readers inside lain, like the workspace marker, and never a
+  # wire field.
+  describe "the recap marker" do
+    let(:derived) { RecapChain.messages }
+    let(:rendered) { request(messages: derived) }
+
+    it "is on no block of the body, while the rendered request's recap blocks still carry it" do
+      encoded = encoder.encode(rendered)
+
+      expect(RecapChain.keys_anywhere(encoded)).not_to include(Lain::Compaction::Recap::MARKER)
+      expect(encoded[:messages].first["content"].first["text"]).to eq(Lain::Compaction::Recap::PREAMBLE)
+      expect(rendered.messages.first["content"]).to all(include(Lain::Compaction::Recap::MARKER => true))
+    end
+
+    it "still translates a cache marker the context placed on a recap block" do
+      cached = derived.first.merge("content" => [*derived.first["content"][0...-1],
+                                                 derived.first["content"].last.merge("cache" => true)])
+      emitted = encoder.encode(request(messages: [cached, *derived.drop(1)]))[:messages].first["content"].last
+
+      expect(emitted).to eq("type" => "text", "text" => Lain::Compaction::Recap::CLOSING,
+                            "cache_control" => { "type" => "ephemeral" })
+    end
+  end
 end

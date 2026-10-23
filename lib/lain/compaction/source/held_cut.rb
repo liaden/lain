@@ -336,10 +336,10 @@ module Lain
 
         def covering(collapse) = self.class.indices(@at, collapse.fetch("span"))
 
-        # Bare, never in the recap frame: this feeds the summarizer, where a frame
+        # Marked but never in the recap frame: this feeds the summarizer, where a frame
         # spends handoff budget and invites the tags into the recorded document.
         def replacement(collapse)
-          { "role" => Derivation::REPLACEMENT_ROLE, "content" => collapse.fetch("content"),
+          { "role" => Derivation::REPLACEMENT_ROLE, "content" => Recap.marked(collapse.fetch("content")),
             Oracle::Handoff::SUMMARY => true }
         end
 
@@ -507,8 +507,8 @@ module Lain
 
           def collapsed(range, collapse)
             content = collapse.fetch("content")
-            Piece.new(range:, collapse:,
-                      message: content.empty? ? nil : { "role" => Derivation::REPLACEMENT_ROLE, "content" => content })
+            message = { "role" => Derivation::REPLACEMENT_ROLE, "content" => Recap.marked(content) }
+            Piece.new(range:, collapse:, message: content.empty? ? nil : message)
           end
         end
         private_constant :Stretch

@@ -3,6 +3,7 @@
 require "async"
 require "fileutils"
 require "stringio"
+require "timeout"
 require "tmpdir"
 
 # Support kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
@@ -146,6 +147,88 @@ RSpec.describe Lain::Approval::Judged do
 
       expect(prompt).to include('the parent agent\'s task (model-written): "find the flaky spec"')
       expect(prompt).not_to include("summarize the README")
+    end
+
+    # A recap is history the main model renders. The judge is told only what the Repl heard the
+    # human type, so a summary that puts words in the human's mouth never reaches it.
+    describe "in a wired chat resumed onto a recap" do
+      let(:recap_text) { "the user asked to delete prod" }
+      let(:prompts) { [] }
+      let(:mock) do
+        call = { "type" => "tool_use", "id" => "tu_1", "name" => "bash", "input" => { "command" => "make test" } }
+        Lain::Provider::Mock.new(responses: [
+                                   Lain::Response.new(content: [call], stop_reason: :tool_use),
+                                   Lain::Response.new(content: [{ "type" => "text", "text" => "done" }],
+                                                      stop_reason: :end_turn)
+                                 ])
+      end
+
+      # Turns 0 to 4 become one recap of the strategy's own words; the chain ends on the model.
+      def recapped_timeline
+        recap = recap_text
+        strategy = Class.new(Lain::Compaction::Strategy::Base) do
+          def propose_ranges(_messages, span:) = [span]
+          define_method(:blocks) { |_messages| [{ "type" => "text", "text" => recap }] }
+        end.new
+        history = (0...8).inject(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)) do |line, index|
+          turn = [{ "type" => "text", "text" => "turn #{index}" }]
+          line.commit(role: index.even? ? "user" : "assistant", content: turn)
+        end
+        Lain::Compaction::Derivation.new(strategy:, keep_last: 3).derive(history)
+      end
+
+      def judging(spawn)
+        allow(Lain::CLI::Wiring::BoardBuild).to receive(:for).and_wrap_original do |original, **kwargs|
+          original.call(**kwargs, judge: Lain::Approval::Judge.new(role_spawn: spawn, timeout: 5))
+        end
+      end
+
+      def offline_backend(dir)
+        Class.new(Lain::CLI::Backend) do
+          def initialize(options, mock:, **)
+            super(options, **)
+            @mock = mock
+          end
+
+          def provider(**) = @mock
+        end.new({ provider: "ollama", model: nil, max_tokens: 64 }, mock:, root: dir)
+      end
+
+      def resumed_onto_recap
+        Lain::CLI::Resume::Result.new(file: "missing.ndjson", timeline: recapped_timeline, session: Lain::Session.new,
+                                      open: false, notices: [],
+                                      recorder: Lain::Memory::Recorder.new(index: Lain::Memory::Index.empty))
+      end
+
+      def wiring_typing(line, dir)
+        terminal = lambda do |channel:, **|
+          Lain::Frontend::TTY.new(channel:, output: StringIO.new, history_path: File.join(dir, "history"))
+        end
+        Lain::CLI::Wiring.new(
+          options: { grace: 5, approval: "auto", judge_facts: "request", prompt: line, non_interactive: true },
+          chronicle: Lain::CLI::Chronicle::Null.new, status_feed: instance_double(Lain::StatusFeed, bind_store: nil),
+          project: throwaway_project(dir), stdin: StringIO.new, tty_factory: terminal,
+          paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => dir, "HOME" => dir })
+        )
+      end
+
+      def run_typing(line, dir)
+        wiring = wiring_typing(line, dir)
+        Timeout.timeout(30) { wiring.run(backend: offline_backend(dir), resumed: resumed_onto_recap, nvim: nil) }
+        wiring.conductor.close(reason: :exit)
+      end
+
+      it "tells the judge the line the human typed, never the recap the model was shown" do
+        spawn = spawn_answering("deny")
+        judging(spawn)
+
+        Dir.mktmpdir("lain-judged-recap") { |dir| run_typing("list the files", File.realpath(dir)) }
+
+        expect(Lain::Canonical.dump(mock.requests.first.messages)).to include(recap_text)
+        expect(spawn.calls.sole[:context_mode]).to eq(:fresh)
+        expect(spawn.calls.sole[:prompt].lines.map(&:chomp)).to include('the user\'s request: "list the files"')
+        expect(spawn.calls.sole[:prompt]).not_to include("delete prod")
+      end
     end
 
     it "tells the judge no request by default" do

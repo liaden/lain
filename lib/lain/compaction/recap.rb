@@ -19,8 +19,13 @@ module Lain
 
       CLOSING = "</recap>"
 
-      PREAMBLE_BLOCK = Ractor.make_shareable({ "type" => "text", "text" => PREAMBLE })
-      CLOSING_BLOCK = Ractor.make_shareable({ "type" => "text", "text" => CLOSING })
+      # Provenance a reader inside lain can trust where text can be imitated, the way
+      # {Workspace::WORKSPACE_MARKER} is: never a wire field. The Anthropic encoder strips it,
+      # and the Ollama encoder copies only text, so it has nowhere to land there.
+      MARKER = "recap"
+
+      PREAMBLE_BLOCK = Ractor.make_shareable({ "type" => "text", "text" => PREAMBLE, MARKER => true })
+      CLOSING_BLOCK = Ractor.make_shareable({ "type" => "text", "text" => CLOSING, MARKER => true })
       private_constant :PREAMBLE_BLOCK, :CLOSING_BLOCK
 
       # Wide on purpose: a model reading the text takes `</recap foo=1>`, `<recap/>` or
@@ -29,12 +34,21 @@ module Lain
       private_constant :TAG
 
       # @param blocks [Array<Hash>] a strategy's replacement content
-      # @return [Array<Hash>] the preamble, the blocks and the end tag, deeply frozen. A recap
-      #   tag inside a block's text is rewritten inert, so quoted text cannot close the frame
-      #   early once a provider joins the blocks into one string.
+      # @return [Array<Hash>] the preamble, the blocks and the end tag, each carrying {MARKER},
+      #   deeply frozen. A recap tag inside a block's text is rewritten inert, so quoted text
+      #   cannot close the frame early once a provider joins the blocks into one string.
       def self.frame(blocks)
-        Ractor.make_shareable([PREAMBLE_BLOCK, *shareable(blocks).map { |block| inert(block) }, CLOSING_BLOCK])
+        Ractor.make_shareable([PREAMBLE_BLOCK, *marked(shareable(blocks).map { |block| inert(block) }), CLOSING_BLOCK])
       end
+
+      # @param blocks [Array<Hash>] a strategy's replacement content
+      # @return [Array<Hash>] the same blocks, each carrying {MARKER}, with no frame and the text
+      #   as recorded, deeply frozen
+      def self.marked(blocks) = Ractor.make_shareable(shareable(blocks).map { |block| block.merge(MARKER => true) })
+
+      # @param block [Object] a content block
+      # @return [Boolean] whether {.frame} rendered it, by marker and not by text
+      def self.block?(block) = block.is_a?(Hash) && block[MARKER] == true
 
       # @param content [Array<Hash>] a strategy's replacement content
       # @param extra [Hash] further keys the message carries

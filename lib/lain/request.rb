@@ -140,7 +140,8 @@ module Lain
     # Neither neutral marker is a wire field, and both move for reasons that are
     # not rewrites: a "cache" breakpoint slides across messages as a session grows,
     # and the "workspace" tail (Workspace::WORKSPACE_MARKER) is re-rendered fresh
-    # every turn.
+    # every turn. The recap marker is kept: it is on every recap block whenever one
+    # is rendered, so it never moves and prefix digests stay stable.
     #
     # @param value [Object] a message, a block, or any part of one
     # @return [Object] the value with both markers removed at every depth

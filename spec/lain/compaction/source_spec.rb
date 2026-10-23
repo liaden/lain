@@ -260,9 +260,10 @@ RSpec.describe Lain::Compaction::Source do
   # MOVED A THIRD TIME, 85 -> 70: an attestation now carries a 12 character
   # digest, so the rewrite saves 59 bytes less per dropped message; the five
   # filler bodies went from 100 to 30 characters to give that back.
-  # 238 rather than 70 because each rendered replacement carries the recap
-  # frame, bytes the rewrite adds.
-  def neutral_pad = 238
+  # 277 rather than 70 because each rendered replacement carries the recap
+  # frame, bytes the rewrite adds, and a `recap` marker key on each of its 3
+  # blocks, which the measurement counts as it counts the workspace marker.
+  def neutral_pad = 277
 
   def crossover_timeline(pad)
     bodies = (1..5).map { |index| "pad#{index}-#{"m" * 30}" } + ["Z" * pad, "tail-a", "tail-b"]

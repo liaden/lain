@@ -37,7 +37,8 @@ RSpec.describe Lain::Context::Compact do
 
     expect(summary).to eq(Lain::Compaction::Recap.message(text("summary of 3 turns")))
     expect(summary["role"]).to eq("user")
-    expect(summary["content"].first).to eq(text(Lain::Compaction::Recap::PREAMBLE).first)
+    expect(summary["content"].first)
+      .to eq(text(Lain::Compaction::Recap::PREAMBLE).first.merge(Lain::Compaction::Recap::MARKER => true))
   end
 
   it "calls the summarizer with exactly the dropped messages" do

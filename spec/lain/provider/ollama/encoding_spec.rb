@@ -338,4 +338,17 @@ RSpec.describe Lain::Provider::Ollama::Encoding do
         .to raise_error(Lain::Attachment::Reference::Unresolved)
     end
   end
+
+  # The payload is rebuilt field by field, so a recap's provenance marker has nowhere to land.
+  describe "the recap marker" do
+    let(:derived) { RecapChain.messages }
+
+    it "rides on no message of the body, while the recap's text does" do
+      encoded = encoder.encode(request(messages: derived))
+
+      expect(derived.first["content"]).to all(include(Lain::Compaction::Recap::MARKER => true))
+      expect(RecapChain.keys_anywhere(encoded)).not_to include(Lain::Compaction::Recap::MARKER)
+      expect(encoded[:messages].first[:content]).to start_with(Lain::Compaction::Recap::PREAMBLE)
+    end
+  end
 end

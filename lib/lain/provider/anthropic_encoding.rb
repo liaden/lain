@@ -35,6 +35,10 @@ module Lain
       # wire field, so it must be stripped from every emitted payload.
       CACHE_MARKER = "cache"
 
+      # Every key a block may carry inside lain that is not a wire field.
+      NEUTRAL_KEYS = [CACHE_MARKER, Workspace::WORKSPACE_MARKER, Compaction::Recap::MARKER].freeze
+      private_constant :NEUTRAL_KEYS
+
       # The neutral key a Request uses to carry a forced typed-answer format on
       # #extra. The same string as Ollama::Encoding::STRUCTURED_OUTPUT_KEY,
       # defined separately because these are two leaf files carrying no internal
@@ -185,17 +189,17 @@ module Lain
 
       # Translate Lain's neutral cache marker into Anthropic's wire field and
       # strip the marker itself, which is not a wire field. A falsy marker is
-      # simply removed. {Workspace::WORKSPACE_MARKER} is the same kind of
-      # neutral key -- structural provenance, never a wire field -- so it is
-      # always stripped too, independent of whether the block also carries a
-      # cache marker (CacheBreakpoints can mark the workspace tail's own last
-      # block). Non-Hash blocks (a bare String) pass through untouched.
+      # simply removed. {Workspace::WORKSPACE_MARKER} and {Compaction::Recap::MARKER}
+      # are the same kind of neutral key -- structural provenance, never a wire
+      # field -- so they are always stripped too, independent of whether the
+      # block also carries a cache marker (CacheBreakpoints can mark the last
+      # block of either). Non-Hash blocks (a bare String) pass through untouched.
       def translate_block(block)
         return block unless block.is_a?(Hash)
-        return block unless block.key?(CACHE_MARKER) || block.key?(Workspace::WORKSPACE_MARKER)
+        return block unless NEUTRAL_KEYS.any? { |key| block.key?(key) }
 
         cached = block[CACHE_MARKER]
-        stripped = block.except(CACHE_MARKER, Workspace::WORKSPACE_MARKER)
+        stripped = block.except(*NEUTRAL_KEYS)
         cached ? stripped.merge("cache_control" => EPHEMERAL) : stripped
       end
     end

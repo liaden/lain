@@ -27,8 +27,8 @@ RSpec.describe "Lain::Compaction::Source::HeldCut" do
   def on(line, derived: self.derived) = held_cut.on(session:, timeline: line, derived:, arm:)
 
   # One advance over whatever is droppable past the cut holding on `line`.
-  def advance(line)
-    current = on(line)
+  def advance(line, derived: self.derived)
+    current = on(line, derived:)
     head = Lain::Compaction::Head.new(messages: current.remaining, keep_last: derived.keep_last)
     snapshot = Lain::Compaction::SummarySnapshot.take(messages: head.messages,
                                                       eager: Lain::Compaction::Source::NoSummaries)
@@ -342,8 +342,34 @@ RSpec.describe "Lain::Compaction::Source::HeldCut" do
       stretch = on(line).stretch.messages
 
       expect(stretch.map { |message| message.fetch("content") })
-        .to eq(session.compaction_cuts.flat_map(&:collapses).map { |collapse| collapse.fetch("content") })
+        .to eq(session.compaction_cuts.flat_map(&:collapses)
+                      .map { |collapse| Lain::Compaction::Recap.marked(collapse.fetch("content")) })
       expect(Lain::Canonical.dump(stretch)).not_to include(Lain::Compaction::Recap::PREAMBLE, Lain::Compaction::Recap::CLOSING)
+    end
+
+    # A re-collapse must be able to tell an earlier summary from a typed turn, as a render can.
+    it "offers the policy each earlier summary marked as a recap, and every other turn unmarked" do
+      seen = []
+      recording = Class.new(Lain::Compaction::Strategy::Elide) do
+        define_method(:blocks) { |messages| super(messages).tap { seen.concat(messages) } }
+      end.new
+      over = Lain::Compaction::Source::Derived.new(keep_last: 2, strategy: recording)
+      line = timeline(6)
+      advance(line, derived: over)
+      longer = grow(line, 7..8)
+      advance(longer, derived: over)
+      seen.clear
+
+      current = on(longer, derived: over)
+      over.collapsed(current.stretch, pins: Lain::Context::PinnedMessages::NONE,
+                                      snapshot: Lain::Compaction::SummarySnapshot.take(
+                                        messages: current.stretch.messages, eager: Lain::Compaction::Source::NoSummaries
+                                      ))
+
+      summaries, turns = seen.partition { |message| message.fetch("content").first["text"].include?("elided") }
+      expect(summaries).not_to be_empty
+      expect(summaries.flat_map { _1.fetch("content") }).to all(satisfy { Lain::Compaction::Recap.block?(_1) })
+      expect(turns.flat_map { _1.fetch("content") }).to all(satisfy { !Lain::Compaction::Recap.block?(_1) })
     end
 
     it "records a collapse cut that supersedes every cut it held, past the last of them" do

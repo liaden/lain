@@ -289,7 +289,8 @@ RSpec.describe Lain::Compaction::Derivation do
 
         expect(replacements).not_to be_empty, strategy.name
         expect(replacements.map { |event| [event.content.first, event.content.last] })
-          .to all(eq([fixtures.text(Lain::Compaction::Recap::PREAMBLE), fixtures.text(Lain::Compaction::Recap::CLOSING)]))
+          .to all(eq([fixtures.text(Lain::Compaction::Recap::PREAMBLE), fixtures.text(Lain::Compaction::Recap::CLOSING)]
+                       .map { _1.merge(Lain::Compaction::Recap::MARKER => true) }))
       end
     end
 
