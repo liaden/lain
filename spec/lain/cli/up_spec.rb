@@ -570,9 +570,10 @@ RSpec.describe Lain::CLI::Up do
       end
 
       # A real tmux CLIENT on a real pty, which is what `lain up` execs and
-      # the only thing that reproduces the redistribution.
+      # the only thing that reproduces the redistribution. The pty is ours, so
+      # its TERM is too: a client refuses to start without one, and CI sets none.
       def attached(rows)
-        reader, writer, pid = PTY.spawn("tmux", "-L", socket, "attach", "-t", session)
+        reader, writer, pid = PTY.spawn({ "TERM" => "xterm-256color" }, "tmux", "-L", socket, "attach", "-t", session)
         writer.winsize = [rows, 100]
         laid_out(rows)
         yield(writer)
