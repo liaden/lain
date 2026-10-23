@@ -160,7 +160,7 @@ module Lain
       end
 
       def placed_on(chain, head)
-        raise Bench::Session::Corrupt, unwritten_head(head) unless head.nil? || head.is_a?(String)
+        raise Bench::Session::Corrupt, unwritten_head(head) unless Telemetry::TodoSnapshot.writable_head?(head)
 
         chain.checkout(head)
       rescue Ext::Store::MissingObject

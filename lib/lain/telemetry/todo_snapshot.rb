@@ -20,9 +20,12 @@ module Lain
         attribute :todos, :lain_canonical
         attribute :head
         validate do
-          errors.add(:head, "must be a String or nil, got #{head.inspect}") unless head.nil? || head.is_a?(String)
+          errors.add(:head, "must be a String or nil, got #{head.inspect}") unless TodoSnapshot.writable_head?(head)
         end
       end
+
+      # @return [Boolean] whether `head` is a value a snapshot may carry
+      def self.writable_head?(head) = head.nil? || head.is_a?(String)
 
       # Built from the duck {Session#write_todos} itself accepts, so the caller
       # hands over the list it already has rather than pre-shaping it.
