@@ -257,6 +257,14 @@ fn status_names_the_abi_and_each_requested_right() {
 }
 
 #[test]
+fn status_says_the_fence_can_run_as_a_reaper() {
+    let report = status(&["--status", "--exec-dir", "/usr"]);
+
+    assert_eq!(report["reap"], serde_json::json!(true), "{report}");
+    assert!(report["rights"].get("reap").is_none(), "{report}");
+}
+
+#[test]
 fn status_names_tcp_connect_and_bind_even_with_no_port_granted() {
     let report = status(&["--status", "--exec-dir", "/usr"]);
 

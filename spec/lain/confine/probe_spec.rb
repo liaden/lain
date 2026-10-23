@@ -3,7 +3,7 @@
 RSpec.describe Lain::Confine::Probe do
   let(:journal) { [] }
   let(:answers) do
-    { "bwrap" => ["", true], "lain-fence" => ["{\"abi\":9,\"rights\":{},\"skipped\":[]}\n", true],
+    { "bwrap" => ["", true], "lain-fence" => ["{\"abi\":9,\"reap\":true,\"rights\":{},\"skipped\":[]}\n", true],
       "strace" => ["strace 6.1", true] }
   end
   let(:runner) { ->(argv) { answers.fetch(File.basename(argv.first)) } }
@@ -158,6 +158,22 @@ RSpec.describe Lain::Confine::Probe do
 
       expect([subject.supports?(:landlock), subject.abi]).to eq([false, 0])
       expect(journal.first.provider).to include("exited with failure")
+    end
+
+    it "offers the reaper when the fence's status says it reaps" do
+      expect(probe.supports?(:reap)).to be(true)
+      expect(journal).to be_empty
+    end
+
+    # An older fence rejects --reap-only and exits 125, which would fail every unconfined call.
+    it "journals a fence whose status says nothing of reaping as unable to reap, once" do
+      answers["lain-fence"] = ['{"abi":9,"rights":{},"skipped":[]}', true]
+      subject = probe
+
+      expect([subject.supports?(:reap), subject.supports?(:reap), subject.supports?(:landlock)])
+        .to eq([false, false, true])
+      expect(journal.map(&:capability)).to eq([:reap])
+      expect(journal.first.provider).to include("/x/lain-fence cannot reap")
     end
 
     it "exposes the ABI the fence reported" do

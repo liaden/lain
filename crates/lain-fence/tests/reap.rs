@@ -7,6 +7,7 @@
 //! children", which is why the tests in this file run one at a time.
 
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::process::{Child, Command, ExitStatus, Output, Stdio};
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -302,4 +303,97 @@ fn a_stop_wins_over_the_childs_own_exit() {
     }
 
     expect_nothing_left(&mut fence, Duration::from_secs(2));
+}
+
+#[test]
+fn an_executable_with_no_shebang_runs_under_the_shell_as_execvp_runs_it() {
+    let _serial = serial();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let script = dir.path().join("plain");
+    fs::write(&script, "echo ran \"$1\"\n").expect("write script");
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).expect("chmod");
+    let path = format!("{}:/usr/bin:/bin", dir.path().display());
+
+    let by_path = Command::new(FENCE)
+        .args(["--reap-only", "--"])
+        .arg(&script)
+        .arg("one")
+        .output()
+        .expect("spawn fence");
+    let by_name = Command::new(FENCE)
+        .args(["--reap-only", "--", "plain", "two"])
+        .env("PATH", path)
+        .output()
+        .expect("spawn fence");
+
+    assert_eq!(by_path.status.code(), Some(0), "{by_path:?}");
+    assert_eq!(text(&by_path.stdout), "ran one\n");
+    assert_eq!(by_name.status.code(), Some(0), "{by_name:?}");
+    assert_eq!(text(&by_name.stdout), "ran two\n");
+}
+
+#[test]
+fn a_stopped_command_gets_its_term_trap_before_the_kill() {
+    let _serial = serial();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let lock = dir.path().join("index.lock");
+    let script = format!(
+        "touch '{lock}'; trap \"sleep 0.2; rm -f '{lock}'; exit 1\" TERM; sleep 30 & wait",
+        lock = lock.display()
+    );
+    let mut fence = reaper(&script).spawn().expect("spawn fence");
+    let started = wait_for(Duration::from_secs(5), || {
+        lock.exists()
+            && descendants(fence.id())
+                .into_iter()
+                .any(|pid| command_line(pid) == "sleep 30")
+    });
+    if !started {
+        sweep(&mut fence);
+        panic!("the command never took its lock under the fence");
+    }
+
+    kill(Pid::from_raw(fence.id() as i32), Signal::SIGTERM).expect("TERM the fence");
+    expect_nothing_left(&mut fence, Duration::from_secs(3));
+    assert!(!lock.exists(), "the TERM trap never removed the lock");
+}
+
+#[test]
+fn a_command_that_ignores_term_is_still_killed() {
+    let _serial = serial();
+    let mut fence = reaper("trap '' TERM; setsid sleep 30 & sleep 30 & wait")
+        .spawn()
+        .expect("spawn fence");
+    let started = wait_for(Duration::from_secs(5), || {
+        descendants(fence.id())
+            .into_iter()
+            .filter(|pid| command_line(*pid) == "sleep 30")
+            .count()
+            == 2
+    });
+    if !started {
+        sweep(&mut fence);
+        panic!("both sleeps never started under the fence");
+    }
+
+    stop_and_expect_nothing_left(&mut fence, Duration::from_secs(3));
+}
+
+#[test]
+fn an_orphan_that_exits_early_is_reaped_while_the_command_runs() {
+    let _serial = serial();
+    let mut fence = reaper("(sleep 0.1 &); exec sleep 30")
+        .spawn()
+        .expect("spawn fence");
+    let only_the_command = wait_for(Duration::from_secs(3), || {
+        let left: Vec<String> = children(fence.id()).into_iter().map(command_line).collect();
+        left == ["sleep 30"]
+    });
+    let left: Vec<(String, Option<char>)> = children(fence.id())
+        .into_iter()
+        .map(|pid| (command_line(pid), state(pid)))
+        .collect();
+
+    stop_and_expect_nothing_left(&mut fence, Duration::from_secs(3));
+    assert!(only_the_command, "the fence still holds {left:?}");
 }

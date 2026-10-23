@@ -9,8 +9,8 @@ module Lain
     # still unfinished, a line cut short, or a stage's first process not yet exited, when the
     # trace was read; either way the lists are a prefix and absence proves nothing.
     #
-    # Each stage's execs start with the launcher's own: under `:traced` the `/bin/sh` that
-    # closes the trace descriptors before it runs the command, under `:reader` lain-fence.
+    # Each stage's execs start with the launcher's own, lain-fence: under `:traced` as a reaper
+    # that closes the trace descriptors before it spawns the command, under `:reader` confining.
     #
     # Under the `:traced` profile this is an audit trail and not tamper-proof: any process of
     # the same user, the traced command included, can write lines into the trace through

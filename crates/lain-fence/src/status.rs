@@ -41,8 +41,15 @@ impl Status {
         self.rights.insert(name.into(), verdict.into());
     }
 
+    /// `reap` says this binary takes `--reap-only`, so a caller can tell a build
+    /// that predates it from one that does not.
     pub fn line(&self) -> String {
-        let object = json!({ "abi": self.abi, "rights": self.rights, "skipped": self.skipped });
+        let object = json!({
+            "abi": self.abi,
+            "rights": self.rights,
+            "skipped": self.skipped,
+            "reap": true,
+        });
         format!("{object}\n")
     }
 }

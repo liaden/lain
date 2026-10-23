@@ -52,7 +52,7 @@ module Lain
         @built = true
         Exec::Sandboxed.new(inner:, launcher:, profiles: Profiles.new(masks: @masks, probe: @probe, home: @home,
                                                                       root: @root),
-                            journal: @journal)
+                            journal: @journal, reaps: @probe.supports?(:reap))
       end
 
       # Starts the mask classification of a sandbox that was built.

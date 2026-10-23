@@ -666,7 +666,7 @@ RSpec.describe Lain::Bench::CLI do
         Lain::Bench::Harness::NO_TOOLS.call(recorder:, journal:, resolver:)
       }
     end
-    let(:box) { ->(argv) { [argv.include?("--status") ? '{"abi":3}' : "", true] } }
+    let(:box) { ->(argv) { [argv.include?("--status") ? '{"abi":3,"reap":true}' : "", true] } }
     let(:probe) do
       ->(journal:, fence:) { Lain::Confine::Probe.new(fence:, journal:, runner: box, ptrace_scope: -> { "0" }) }
     end

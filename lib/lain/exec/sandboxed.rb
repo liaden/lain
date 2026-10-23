@@ -53,12 +53,16 @@ module Lain
       # @param journal [#<<] receives a {Telemetry::Sandbox} per call and a
       #   {Telemetry::ExecRecord} per traced call
       # @param ceiling [Integer] the output ceiling a refusal is bound for, as {Local}'s is
-      def initialize(inner:, launcher:, profiles:, journal:, ceiling: Tool::Bounds::CEILINGS.fetch("bash"))
+      # @param reaps [Boolean] whether the fence can run an unconfined call as its reaper; when it
+      #   cannot, such a call runs as written, untraced, since the fence would refuse it outright
+      def initialize(inner:, launcher:, profiles:, journal:, ceiling: Tool::Bounds::CEILINGS.fetch("bash"),
+                     reaps: true)
         @inner = inner
         @launcher = launcher
         @profiles = profiles
         @journal = journal
         @ceiling = ceiling
+        @reaps = reaps
       end
 
       # @param term [Shell::Term]
@@ -78,7 +82,7 @@ module Lain
       # @raise [Timeout] when the deadline passed and the group was killed
       def call(command:, cwd:, env:, timeout:, confinement: Confine::Request::NONE, **sinks)
         begin
-          profile = @profiles.for(confinement)
+          profile = reaped(@profiles.for(confinement))
         rescue Confine::Profiles::Overmasked => e
           return overmasked(confinement, e, sinks)
         end
@@ -94,7 +98,15 @@ module Lain
 
       private
 
-      def launch(profile) = ->(term) { @launcher.wrap(term, profile, trace_fd: TRACE_FD) }
+      def unreaped?(profile) = !profile.confined? && !@reaps
+
+      def reaped(profile) = unreaped?(profile) ? Confine::Profile::NONE : profile
+
+      def launch(profile)
+        return Shell::Pipeline::AS_WRITTEN if unreaped?(profile)
+
+        ->(term) { @launcher.wrap(term, profile, trace_fd: TRACE_FD) }
+      end
 
       def stages(command) = command.is_a?(String) ? 1 : command.stages.size
 

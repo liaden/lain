@@ -195,12 +195,16 @@ module Lain
           @probe = probe
         end
 
+        # Every profile runs under the fence, and a missing or stale one exits 127 or 125 at once,
+        # which would read as a fast row.
+        #
         # @return [String, nil] why this box cannot run the profile, nil when it can
         def unavailable(profile)
-          case profile
-          when "traced" then ("no strace" unless @probe.supports?(:trace))
-          when "reader" then reader_gap
-          end
+          gap = case profile
+                when "traced" then ("no strace" unless @probe.supports?(:trace))
+                when "reader" then reader_gap
+                end
+          gap || fence_gap
         end
 
         # @return [#call] one `true` through the profile
@@ -215,9 +219,14 @@ module Lain
 
         def reader_gap
           missing = %i[bwrap landlock].reject { @probe.supports?(_1) }
-          return "no #{missing.join(" and no ")}" if missing.any?
+          "no #{missing.join(" and no ")}" if missing.any?
+        end
 
-          STALE_FENCE if fence_stale?
+        def fence_gap
+          fence = Confine::Bwrap.fence_binary
+          return "no lain-fence at #{fence}: run bundle exec rake compile" unless File.executable?(fence)
+
+          STALE_FENCE if fence_stale?(fence)
         end
 
         def profiles(profile)
@@ -229,9 +238,10 @@ module Lain
           Confine::Request.new(ruling: ALLOWED, executables: [], cwd: Dir.pwd, root: Dir.pwd, tool_use_id: "bench")
         end
 
-        def fence_stale?
+        def fence_stale?(fence)
+          built = File.mtime(fence)
           sources = Dir.glob(File.join(Paths::Shipped::GEM_ROOT, "crates/lain-fence/{src/**/*.rs,Cargo.toml}"))
-          sources.any? { File.mtime(_1) > File.mtime(Confine::Bwrap.fence_binary) }
+          sources.any? { File.mtime(_1) > built }
         end
       end
       private_constant :Bash

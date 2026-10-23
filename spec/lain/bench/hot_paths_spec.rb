@@ -48,6 +48,46 @@ RSpec.describe Lain::Bench::HotPaths do
     end
   end
 
+  describe "a box whose lain-fence cannot run the build's own code" do
+    let(:probe) do
+      instance_double(Lain::Confine::Probe, fence_gap: nil, fence_unstartable?: false, supports?: true)
+    end
+
+    around do |example|
+      Dir.mktmpdir("hot-path-fence") do |dir|
+        @target = dir
+        saved = ENV.fetch("CARGO_TARGET_DIR", nil)
+        ENV["CARGO_TARGET_DIR"] = dir
+        example.run
+      ensure
+        ENV["CARGO_TARGET_DIR"] = saved
+      end
+    end
+
+    def bash_rows
+      rows = NetworkAccess.permit { described_class.new(turns: 10, reps: 1, sizes: [1_000], probe:).rows }
+      rows.select { _1.name.start_with?("bash_true_") }
+    end
+
+    # Without the fence every bash row would time an exit of 127, which reads as fast.
+    it "skips every bash row when the fence is missing", :seam do
+      expect(bash_rows).to all(have_attributes(skipped: /no lain-fence/, median_ms: nil))
+      expect(bash_rows.size).to eq(3)
+    end
+
+    # An older fence rejects a flag the launcher passes and exits 125, which reads as fast too.
+    it "skips every bash row when the fence is older than its sources", :seam do
+      fence = File.join(@target, "release", "lain-fence")
+      FileUtils.mkdir_p(File.dirname(fence))
+      File.write(fence, "#!/bin/sh\nexit 125\n")
+      File.chmod(0o755, fence)
+      File.utime(Time.at(0), Time.at(0), fence)
+
+      expect(bash_rows).to all(have_attributes(skipped: /stale lain-fence/, median_ms: nil))
+      expect(bash_rows.size).to eq(3)
+    end
+  end
+
   describe "the measured fixture" do
     it "pins what a render is measured over, so a card cannot change it unseen" do
       expect(described_class::Corpus.cold_request(turns: 10).digest)

@@ -1003,7 +1003,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
   describe "the sandbox the bash tool's exec is built into" do
     let(:fence) { "/srv/lain-fence" }
     let(:bare_box) { ->(_argv) { ["", false] } }
-    let(:full_box) { ->(argv) { [argv.include?("--status") ? '{"abi":3}' : "", true] } }
+    let(:full_box) { ->(argv) { [argv.include?("--status") ? '{"abi":3,"reap":true}' : "", true] } }
     let(:runner) { full_box }
     let(:probe) do
       Lain::Confine::Probe.new(fence:, journal:, runner:, ptrace_scope: -> { "0" })

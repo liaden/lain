@@ -189,7 +189,7 @@ RSpec.describe Lain::CLI::Wiring::Observers do
 
       it "says nothing when the box offers every layer" do
         observers = described_class.register(chronicle:, paths:, project:, resumed: nil, arms:)
-        sandbox_on(->(argv) { [argv.include?("--status") ? '{"abi":3}' : "", true] })
+        sandbox_on(->(argv) { [argv.include?("--status") ? '{"abi":3,"reap":true}' : "", true] })
 
         expect(observers.notices).to be_empty
       end

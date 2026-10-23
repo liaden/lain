@@ -991,7 +991,10 @@ three places, and each answers a different question. All three read one `Shell::
    exec beneath `/usr` and the rustup toolchains plus exactly the unchanged `user` files the call resolved, read beneath the project and a
    short system list, write only `/dev/null` and the private `/tmp`, no TCP, no abstract sockets, and a
    seccomp filter refusing a `memfd_create` without `MFD_NOEXEC_SEAL`. Any other allow (a human's, a config
-   rule's, the judge's) runs `traced`: watched and journaled, not confined. `--exec docker` is not wrapped; the
+   rule's, the judge's) runs `traced`: watched and journaled, not confined. A traced or untraced unconfined call
+   runs under the fence as a reaper only, so stopping it kills every descendant, a re-setsid one included,
+   while a normal exit leaves background children running; that covers sandboxed calls only, and
+   `--confine off` or a box lacking bwrap or Landlock builds no sandbox. `--exec docker` is not wrapped; the
    container is its boundary. A refused exec ends the tool output with the `REFUSED by the sandbox` line, so
    the model asks instead of retrying.
 

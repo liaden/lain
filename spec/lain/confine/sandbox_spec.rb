@@ -6,7 +6,7 @@ require "tmpdir"
 RSpec.describe Lain::Confine::Sandbox do
   let(:journal) { RecordingChannel.new }
   let(:fence) { "/srv/lain-fence" }
-  let(:runner) { ->(argv) { [argv.include?("--status") ? '{"abi":3}' : "", true] } }
+  let(:runner) { ->(argv) { [argv.include?("--status") ? '{"abi":3,"reap":true}' : "", true] } }
   let(:probe) { Lain::Confine::Probe.new(fence:, journal:, runner:, ptrace_scope: -> { "0" }) }
   let(:masks) { Lain::Confine::MaskList.new(root: "/srv/project", policy: -> { :the_policy }) }
   let(:inner) { Lain::Exec::Local.new }
@@ -30,6 +30,19 @@ RSpec.describe Lain::Confine::Sandbox do
       expect(profiles.instance_variable_get(:@masks)).to be(masks)
       expect([profiles.instance_variable_get(:@home), profiles.instance_variable_get(:@root)])
         .to eq(["/home/h", "/srv/project"])
+    end
+
+    context "when the fence cannot reap" do
+      let(:runner) { ->(argv) { [argv.include?("--status") ? '{"abi":3}' : "", true] } }
+
+      it "runs an unconfined call as written, untraced, and journals the reaper as degraded" do
+        capture = sandbox.wrap(inner, requirer: "Spec")
+                         .call(command: "echo hi", cwd: Dir.pwd, env: {}, timeout: 5)
+
+        expect(capture).to have_attributes(exit_status: 0, stdout: "hi\n")
+        expect(degraded.map(&:capability)).to eq([:reap])
+        expect(journal.events.grep(Lain::Telemetry::Sandbox).sole).to have_attributes(profile: :none, trace: false)
+      end
     end
 
     context "when the box lacks a layer" do

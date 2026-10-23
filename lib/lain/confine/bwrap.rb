@@ -7,6 +7,11 @@ module Lain
     # strace sits inside bwrap, where its cost simply adds. Each stage gets its
     # own stack, so the pipeline still wires its stages together. The reader is
     # given no --connect-port, so the fence refuses all of its TCP.
+    #
+    # An unconfined profile has no bwrap, whose pid namespace is what ends a
+    # reader's processes with the call, so its fence runs as a reaper only: a
+    # stop kills every descendant, a setsid one included, and a normal exit
+    # leaves background children running.
     class Bwrap
       include Launcher
 
@@ -29,25 +34,22 @@ module Lain
       # @param profile [Profile]
       # @param trace_fd [Integer] the first stage's trace descriptor; stage i,
       #   counted across every pipeline, writes to `trace_fd + i`
-      # @return [Shell::Term] `term` itself under a profile that neither confines nor traces
+      # @return [Shell::Term]
       def wrap(term, profile, trace_fd:)
-        return term unless profile.trace || profile.confined?
-
-        fds = (trace_fd...(trace_fd + term.stages.size)).to_a
-        stage_fds = fds.each
+        stage_fds = (trace_fd..).each
         Shell::Term.new(pipelines: term.pipelines.map do |pipeline|
           Shell::Term::Pipeline.new(stages: pipeline.stages.map do |stage|
-            Shell::Term::Stage.new(argv: prefix(profile, stage_fds.next, fds) + stage.argv, discards: stage.discards)
+            Shell::Term::Stage.new(argv: prefix(profile, stage_fds.next) + stage.argv, discards: stage.discards)
           end)
         end)
       end
 
       private
 
-      def prefix(profile, own, fds)
-        return trace(profile, own, fds) unless profile.confined?
+      def prefix(profile, own)
+        return [*trace(profile, own), @fence, "--reap-only", "--"] unless profile.confined?
 
-        [*namespace(profile), *trace(profile, own, fds), *fence(profile)]
+        [*namespace(profile), *trace(profile, own), *fence(profile)]
       end
 
       def namespace(profile)
@@ -88,23 +90,15 @@ module Lain
       # tracer writes to the descriptor itself: a `|cmd` relay can lose its
       # tracer at start under load, and a seccomp tracer that exits kills its
       # tracees. A direct write outlives the call, since strace ignores SIGPIPE
-      # under -D and the tracee keeps running once the reader has closed.
-      def trace(profile, own, fds)
+      # under -D and the tracee keeps running once the reader has closed. The
+      # fence after it closes every descriptor above stderr, so the command
+      # cannot write exec lines of its own into the record.
+      def trace(profile, own)
         return [] unless profile.trace
 
         [@strace, "-DD", "-f", "-s", STRING_BYTES.to_s, "--seccomp-bpf", "-e", "trace=execve,execveat",
-         "-o", "/dev/fd/#{own}", "--", *closing(profile, fds)]
+         "-o", "/dev/fd/#{own}", "--"]
       end
-
-      # The fence closes every descriptor above 2 in a confined call. Nothing
-      # does in a traced one, and a command holding a trace descriptor could
-      # write exec lines of its own into the record, or a partial line that
-      # swallows the next real one.
-      def closing(profile, fds)
-        profile.confined? ? [] : [Exec::Local::SHELL, "-c", ['exec "$@"', *closed(fds)].join(" "), "sh"]
-      end
-
-      def closed(fds) = fds.map { "#{_1}>&-" }
 
       def fence(profile)
         grants = { "--exec-dir" => profile.exec_dirs, "--exec-file" => profile.exec_files,

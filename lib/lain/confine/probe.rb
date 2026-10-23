@@ -10,7 +10,7 @@ module Lain
     class Probe
       PTRACE_SCOPE = "/proc/sys/kernel/yama/ptrace_scope"
       START_FAILED = "\0start-failed:"
-      FenceReport = Data.define(:abi, :gap, :unstartable)
+      FenceReport = Data.define(:abi, :gap, :unstartable, :reaps)
       private_constant :FenceReport
 
       # @param fence [String] path to the lain-fence binary
@@ -39,10 +39,12 @@ module Lain
         fence_report.unstartable
       end
 
-      # @param layer [Symbol] one of :bwrap, :landlock, :trace
+      # `:reap` is asked apart from the layers, because a fence that cannot reap still confines a reader.
+      #
+      # @param layer [Symbol] one of :bwrap, :landlock, :trace, :reap
       # @return [Boolean]
       def supports?(layer)
-        layers.fetch(layer)
+        layer == :reap ? reaps? : layers.fetch(layer)
       end
 
       private
@@ -53,6 +55,15 @@ module Lain
           found[layer] = reason.nil?
           degrade(layer, reason) if reason
         end.freeze
+      end
+
+      # An older fence rejects `--reap-only` and exits 125, so its status must say it reaps.
+      def reaps?
+        return @reaps unless @reaps.nil?
+
+        @reaps = fence_report.reaps
+        degrade(:reap, "#{@fence} cannot reap: rebuild it with bundle exec rake compile") unless @reaps
+        @reaps
       end
 
       def verdicts
@@ -83,8 +94,10 @@ module Lain
       def fence_report
         @fence_report ||= begin
           out, ok = attempt([@fence, "--status"])
-          level = ok ? parse_abi(out) : 0
-          FenceReport.new(abi: level, gap: gap_for(out, ok, level), unstartable: out.start_with?(START_FAILED))
+          report = ok ? parse(out) : {}
+          level = report["abi"].is_a?(Integer) ? report["abi"] : 0
+          FenceReport.new(abi: level, gap: gap_for(out, ok, level), unstartable: out.start_with?(START_FAILED),
+                          reaps: report["reap"] == true)
         end
       end
 
@@ -95,12 +108,11 @@ module Lain
         started ? "#{@fence} reports ABI 0" : "#{@fence} exited with failure"
       end
 
-      def parse_abi(text)
+      def parse(text)
         report = JSON.parse(text)
-        level = report["abi"] if report.is_a?(Hash)
-        level.is_a?(Integer) ? level : 0
+        report.is_a?(Hash) ? report : {}
       rescue JSON::ParserError
-        0
+        {}
       end
 
       def attempt(argv)

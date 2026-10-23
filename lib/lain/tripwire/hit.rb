@@ -94,10 +94,10 @@ module Lain
       # missing grant, and one its PATH search saw as not executable is the
       # shell trying a stray file; neither is probing.
       #
-      # Only a confined trace starts at the fence, so only here is every stage's
-      # first exec the launcher's own, the same program in each, and the
-      # record's first names them all. A string command also runs under the
-      # exec's own shell.
+      # Only a confined trace is one the command cannot write into, so only
+      # here can every stage's first exec be trusted as the launcher's own, the
+      # same program in each, named by the record's first. A string command
+      # also runs under the exec's own shell.
       def self.confined_hits(record, resolution, loaders)
         refused = refused(record).reject { resolution.toolchain?(_1) || resolution.skipped?(_1) }
         execs = record["execs"]

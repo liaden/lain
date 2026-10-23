@@ -32,13 +32,17 @@
 //! `--status` reports what the kernel would enforce for those grants, as one
 //! JSON line on stdout, and runs nothing. `--status-fd N` (3 or above) writes
 //! the same line to fd N just before the exec. `skipped` in that line lists the
-//! granted paths that could not be opened, which therefore granted nothing.
+//! granted paths that could not be opened, which therefore granted nothing, and
+//! `"reap": true` says this build takes `--reap-only`.
 //!
 //! `--reap-only -- cmd args...` takes no other flag, applies no domain and no
-//! filter, and runs `cmd` as a child rather than exec'ing it. On TERM, INT or
-//! HUP it kills every process descended from it, re-setsid or not, then dies
-//! of that signal; when `cmd` exits on its own, its background children live
-//! on and the fence exits with `cmd`'s status. Inherited fds are closed still.
+//! filter, and runs `cmd` as a child rather than exec'ing it, falling back to
+//! `/bin/sh` for a file with no shebang as execvp does. On TERM, INT or HUP it
+//! sends that signal to every process descended from it, re-setsid or not,
+//! gives them a grace to exit, kills what is left, then dies of that signal.
+//! When `cmd` exits on its own, its background children live on and the fence
+//! exits with `cmd`'s status; an orphan that exits first is reaped meanwhile.
+//! Inherited fds are closed still.
 //!
 //! Exit codes: 125 for a bad invocation, 126 when Landlock enforces nothing,
 //! 127 when the exec itself fails. The command can exit 126 or 127 itself; only

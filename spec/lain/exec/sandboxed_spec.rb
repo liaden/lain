@@ -104,6 +104,29 @@ RSpec.describe Lain::Exec::Sandboxed do
         .to eq("/usr/bin/bwrap")
     end
 
+    context "when the fence cannot reap" do
+      let(:profile) { Lain::Confine::Profile::TRACED }
+      let(:sandboxed) { described_class.new(inner:, launcher:, profiles:, journal:, ceiling: 4096, reaps: false) }
+
+      it "runs an unconfined call as written and untraced, rather than under a fence that would refuse it" do
+        run(confinement: judged)
+
+        expect(inner.calls.sole).not_to include(:fds)
+        expect(inner.calls.sole[:launch]).to be(Lain::Shell::Pipeline::AS_WRITTEN)
+        expect(recorded("sandbox").sole).to have_attributes(profile: :none, trace: false)
+        expect(recorded("exec_record")).to be_empty
+      end
+
+      it "still confines a reader call" do
+        readers = Struct.new(:profile) { def for(_request) = profile }.new(Lain::Confine::Profile.reader(root:, home:))
+        described_class.new(inner:, launcher:, profiles: readers, journal:, reaps: false)
+                       .call(command: Lain::Shell::Term.of(%w[cat README.md]), cwd: root, env: {}, timeout: 5,
+                             confinement: composed)
+
+        expect(recorded("sandbox").sole).to have_attributes(profile: :reader)
+      end
+    end
+
     it "closes its trace writers and journals the trace when the call times out" do
       inner.behaviour = ->(**) { raise Lain::Exec::Timeout, "too slow" }
 
@@ -287,13 +310,23 @@ RSpec.describe Lain::Exec::Sandboxed do
   end
 
   describe "as an exec backend over a real Local" do
+    let(:fence) { Lain::Confine::Bwrap.fence_binary }
     let(:backend) do
-      described_class.new(inner: Lain::Exec::Local.new, launcher: Lain::Confine::Bwrap.new(fence: "/x/lain-fence"),
+      described_class.new(inner: Lain::Exec::Local.new, launcher: Lain::Confine::Bwrap.new(fence:),
                           profiles: Struct.new(:none) { def for(_request) = none }.new(Lain::Confine::Profile::NONE),
                           journal:)
     end
 
-    def run_term(term) = backend.call(command: term, cwd: Dir.pwd, env: {}, timeout: 10)
+    before do
+      skip("lain-fence is not built at #{fence} -- run `bundle exec rake compile`") unless File.executable?(fence)
+    end
+
+    # The contract ignores what a call returns, so this host checks each one really ran.
+    def run_term(term)
+      capture = backend.call(command: term, cwd: Dir.pwd, env: {}, timeout: 10)
+      expect(capture.exit_status).to eq(0), capture.stderr
+    end
+
     def terms_taken = [Lain::Shell::Term.of(%w[printf hi]), Lain::Shell::Term.of(%w[printf hi], %w[cat])]
     def terms_refused = []
 
@@ -312,9 +345,10 @@ RSpec.describe Lain::Exec::Sandboxed do
       end
     end
     let(:probe) { Lain::Confine::Probe.new(fence:, journal:, runner:) }
+    let(:launcher) { Lain::Confine::Bwrap.new(fence:) }
     let(:sandboxed) do
       described_class.new(
-        inner: Lain::Exec::Local.new, launcher: Lain::Confine::Bwrap.new(fence:), journal:,
+        inner: Lain::Exec::Local.new, launcher:, journal:,
         profiles: Lain::Confine::Profiles.new(
           masks: Lain::Confine::MaskList.new(root:, policy: -> { policy }), probe:, home: Dir.home, root:
         )
@@ -417,6 +451,27 @@ RSpec.describe Lain::Exec::Sandboxed do
       expect(paths).not_to include("/usr/lib/forged")
     end
 
+    # The reaper spawns the command where a shell's exec "$@" used to, so it must fall back to sh as execvp does.
+    it "runs an executable with no shebang under the reaper, as a shell would" do
+      script = File.join(root, "plain")
+      File.write(script, "echo noshebang ran\n")
+      File.chmod(0o755, script)
+
+      expect(run(term([script]), confinement: judged))
+        .to have_attributes(exit_status: 0, stdout: "noshebang ran\n")
+    end
+
+    it "closes a traced command's trace descriptor through the reaper, with no shell shim in front of it" do
+      launched = []
+      allow(launcher).to receive(:wrap).and_wrap_original do |wrap, *args, **kwargs|
+        wrap.call(*args, **kwargs).tap { launched << _1 }
+      end
+
+      expect(run("printf x >&3 || echo refused", confinement: judged).stdout).to eq("refused\n")
+      expect(launched.sole.stages.sole.argv.drop_while { _1 != "--" }.take(4))
+        .to eq(["--", fence, "--reap-only", "--"])
+    end
+
     describe "a command that leaves a background process behind" do
       let(:marker) { "30#{rand(1000)}.#{Process.pid}" }
 
@@ -430,15 +485,15 @@ RSpec.describe Lain::Exec::Sandboxed do
 
       after { system("pkill", "-f", "sleep #{marker}") }
 
-      it "returns once the traced command exits, leaves the process running, and lists the command's execs" do
+      # No nohup: the reaper sends nothing to a background child when the command exits on its own.
+      it "returns once the traced command exits, keeps its background child running, and lists its execs" do
         seconds = took do
-          expect(run("nohup sleep #{marker} >/dev/null 2>&1 & /usr/bin/true; echo started", confinement: judged).stdout)
-            .to eq("started\n")
+          expect(run("sleep #{marker} & /usr/bin/true; echo hi", confinement: judged).stdout).to eq("hi\n")
         end
         sleep 0.2
 
         expect(seconds).to be < 2
-        expect(alive?("^sleep #{marker}")).to be(true)
+        expect(alive?("^sleep #{marker}$")).to be(true)
         expect(recorded("exec_record").sole.execs).to include(a_hash_including(path: "/usr/bin/true", rc: 0))
       end
 
@@ -453,13 +508,31 @@ RSpec.describe Lain::Exec::Sandboxed do
         expect(alive?("sleep #{marker}")).to be(false)
       end
 
-      it "times a traced call out within its deadline and the pipeline's grace" do
+      it "times a traced call out within its deadline and the pipeline's grace, and reaps its setsid grandchild" do
         seconds = took do
           expect { run("setsid sleep #{marker} & sleep #{marker}1", confinement: judged, timeout: 1) }
             .to raise_error(Lain::Exec::Timeout)
         end
+        sleep 0.5
 
         expect(seconds).to be < 1 + Lain::Shell::Pipeline::DEFAULT_GRACE
+        expect(alive?("^sleep #{marker}$")).to be(false)
+      end
+
+      context "when this kernel cannot trace" do
+        let(:runner) do
+          real = super()
+          ->(argv) { File.basename(argv.first) == "strace" ? ["", false] : real.call(argv) }
+        end
+
+        it "reaps an untraced unconfined call's setsid grandchild on a timeout" do
+          expect { run("setsid sleep #{marker} & sleep #{marker}1", confinement: judged, timeout: 1) }
+            .to raise_error(Lain::Exec::Timeout)
+          sleep 0.5
+
+          expect(recorded("sandbox").sole).to have_attributes(profile: :none, trace: false)
+          expect(alive?("^sleep #{marker}$")).to be(false)
+        end
       end
     end
 

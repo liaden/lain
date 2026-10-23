@@ -261,7 +261,7 @@ RSpec.describe Lain::Bench::Harness do
     def reader
       project = Lain::Project.new(root: @lease, cwd: @lease, kind: :project, detected_by: :flag)
       paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@tmp, "state"), "HOME" => File.join(@tmp, "home") })
-      box = ->(argv) { [argv.include?("--status") ? '{"abi":3}' : "", true] }
+      box = ->(argv) { [argv.include?("--status") ? '{"abi":3,"reap":true}' : "", true] }
       probe = ->(journal:, fence:) { Lain::Confine::Probe.new(fence:, journal:, runner: box, ptrace_scope: -> { "0" }) }
       described_class::Confinement.new(project:, paths:, journal: Lain::Channel.new, probe:).instrumentation
     end

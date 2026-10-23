@@ -21,7 +21,7 @@ RSpec.describe Lain::Bench::Harness::Confinement do
   let(:paths) do
     Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@base, "state"), "HOME" => File.join(@base, "home") })
   end
-  let(:box) { ->(argv) { [argv.include?("--status") ? '{"abi":3}' : "", true] } }
+  let(:box) { ->(argv) { [argv.include?("--status") ? '{"abi":3,"reap":true}' : "", true] } }
   let(:probes) { [] }
   let(:probe) do
     lambda { |journal:, fence:|

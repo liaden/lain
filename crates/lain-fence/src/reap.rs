@@ -1,33 +1,41 @@
 //! `--reap-only`: no domain, only a reaper over the command's whole tree.
 
 use std::fs;
+use std::io;
 use std::os::raw::c_int;
 use std::os::unix::process::ExitStatusExt;
-use std::process::{Command, ExitCode, ExitStatus};
+use std::path::PathBuf;
+use std::process::{Child, Command, ExitCode, ExitStatus};
 use std::time::{Duration, Instant};
 
 use nix::errno::Errno;
 use nix::sys::prctl::set_child_subreaper;
 use nix::sys::signal::{Signal, kill};
 use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
-use nix::unistd::{Pid, getpid};
+use nix::unistd::{AccessFlags, Pid, access, getpid};
 use signal_hook::consts::{SIGCHLD, SIGHUP, SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
 use signal_hook::low_level::{emulate_default_handler, raise};
 
 use crate::{EXEC_FAILED, NOT_ENFORCED, complain, fail};
 
-/// How long a stop may spend killing and reaping before the fence gives up and
-/// dies anyway: inside Shell::Pipeline::DEFAULT_GRACE (3s), so the fence still
-/// exits on its own signal before the caller's group KILL lands on it.
+/// How long a stop may spend before the fence gives up and dies anyway: inside
+/// Shell::Pipeline::DEFAULT_GRACE (3s), so the fence finishes its own KILL rounds
+/// and exits on its own signal before the caller's group KILL lands on it.
 const STOP_BUDGET: Duration = Duration::from_secs(2);
+
+/// The part of `STOP_BUDGET` the tree gets to run its own stop handlers, such as
+/// git removing index.lock; the rest is for the KILL rounds.
+const STOP_GRACE: Duration = Duration::from_millis(1500);
 
 const STOPS: [c_int; 3] = [SIGTERM, SIGINT, SIGHUP];
 
-/// Marks this process a child subreaper, spawns argv, waits for it, and on TERM, INT or HUP
-/// stops the tree: rounds of SIGKILL to every descendant, each followed by waitpid(-1), until
-/// ECHILD or until `STOP_BUDGET` runs out. A descendant forked while a round runs is found by
-/// the next one, and one that has been killed cannot fork. A normal exit kills and reaps nothing.
+/// Marks this process a child subreaper, spawns argv, waits for it, and reaps any orphan
+/// that exits meanwhile. On TERM, INT or HUP it stops the tree: the same signal to every
+/// descendant, up to `STOP_GRACE` for the tree to exit on its own, then rounds of SIGKILL to
+/// every descendant, each followed by waitpid(-1), until ECHILD or until `STOP_BUDGET` runs
+/// out. A descendant forked while a round runs is found by the next one, and one that has
+/// been killed cannot fork. A normal exit kills nothing.
 /// Exits with the child's code, or re-raises its terminating signal.
 pub fn run(argv: &[String]) -> ExitCode {
     if let Err(error) = set_child_subreaper(true) {
@@ -41,7 +49,7 @@ pub fn run(argv: &[String]) -> ExitCode {
         Ok(signals) => signals,
         Err(error) => return fail(NOT_ENFORCED, &format!("handling stop signals: {error}")),
     };
-    let mut child = match Command::new(&argv[0]).args(&argv[1..]).spawn() {
+    let mut child = match spawn(argv) {
         Ok(child) => child,
         Err(error) => return fail(EXEC_FAILED, &format!("exec {}: {error}", argv[0])),
     };
@@ -49,10 +57,10 @@ pub fn run(argv: &[String]) -> ExitCode {
         let arrived: Vec<c_int> = signals.wait().collect();
         // A stop sent to the whole group kills the child too, so the stop must win over its exit.
         if let Some(stop) = arrived.into_iter().find(|signal| STOPS.contains(signal)) {
-            stop_tree();
+            stop_tree(stop);
             return reraise(stop);
         }
-        match child.try_wait() {
+        match reap_exited(&mut child) {
             Ok(Some(status)) => return pass_through(status),
             Ok(None) => {}
             Err(error) => return fail(EXEC_FAILED, &format!("waiting for {}: {error}", argv[0])),
@@ -60,9 +68,53 @@ pub fn run(argv: &[String]) -> ExitCode {
     }
 }
 
-fn stop_tree() {
+/// posix_spawnp, unlike execvp, has no fallback for a file with no shebang, so
+/// this gives it the one glibc's execvp gives: the resolved file under /bin/sh.
+fn spawn(argv: &[String]) -> io::Result<Child> {
+    match Command::new(&argv[0]).args(&argv[1..]).spawn() {
+        Err(error) if error.raw_os_error() == Some(Errno::ENOEXEC as i32) => {
+            Command::new("/bin/sh")
+                .arg(on_path(&argv[0]))
+                .args(&argv[1..])
+                .spawn()
+        }
+        spawned => spawned,
+    }
+}
+
+/// The file execvp would have run: the first executable match on PATH.
+fn on_path(program: &str) -> PathBuf {
+    if program.contains('/') {
+        return PathBuf::from(program);
+    }
+    let path = std::env::var("PATH").unwrap_or_else(|_| "/bin:/usr/bin".into());
+    path.split(':')
+        .map(|dir| PathBuf::from(if dir.is_empty() { "." } else { dir }).join(program))
+        .find(|file| file.is_file() && access(file, AccessFlags::X_OK).is_ok())
+        .unwrap_or_else(|| PathBuf::from(program))
+}
+
+/// Orphans are reaped by pid, never by waitpid(-1), which could take the child's
+/// status; and nix cannot decode a realtime signal, so the child's own status
+/// comes from std.
+fn reap_exited(child: &mut Child) -> io::Result<Option<ExitStatus>> {
+    let own = Pid::from_raw(child.id().cast_signed());
+    for orphan in children(getpid()).into_iter().filter(|pid| *pid != own) {
+        let _ = waitpid(orphan, Some(WaitPidFlag::WNOHANG));
+    }
+    child.try_wait()
+}
+
+fn stop_tree(stop: c_int) {
     let me = getpid();
-    let reaped = in_rounds(STOP_BUDGET, || {
+    let stop = Signal::try_from(stop).unwrap_or(Signal::SIGTERM);
+    for pid in descendants(me) {
+        let _ = kill(pid, stop);
+    }
+    if in_rounds(STOP_GRACE, reaped_all) {
+        return;
+    }
+    let reaped = in_rounds(STOP_BUDGET.saturating_sub(STOP_GRACE), || {
         for pid in descendants(me) {
             let _ = kill(pid, Signal::SIGKILL);
         }
@@ -70,7 +122,7 @@ fn stop_tree() {
     });
     if !reaped {
         complain(&format!(
-            "descendants still alive after {STOP_BUDGET:?} of killing; leaving them"
+            "descendants still alive after {STOP_BUDGET:?} of stopping; leaving them"
         ));
     }
 }
@@ -149,7 +201,6 @@ fn children(pid: Pid) -> Vec<Pid> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::Child;
     use std::sync::mpsc;
 
     /// Kills the whole tree on drop, so a failed assertion leaks nothing to init.

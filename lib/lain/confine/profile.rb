@@ -7,7 +7,10 @@ module Lain
     # What one call may do: run beneath `exec_dirs` and exactly `exec_files`,
     # read beneath `read_dirs`, write beneath `write_dirs`, and never see
     # `masks`. `trace` records every exec. `:none` runs as before, `:traced`
-    # only watches, and `:reader` confines.
+    # only watches, and `:reader` confines. Both unconfined profiles still run
+    # under lain-fence as a reaper, so a stopped call leaves no descendant
+    # behind; that covers a call made through a sandbox, and `--confine off`
+    # or a box lacking bwrap or Landlock builds none.
     #
     # A value: a {Launcher} turns it into argv. Every path is absolute and,
     # for a mask, already resolved, because bwrap aborts on a mask that is a
