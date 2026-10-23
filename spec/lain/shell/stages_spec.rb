@@ -39,7 +39,7 @@ RSpec.describe Lain::Shell::Stages do
   it "keeps a stage it cannot place, unplaced and unresolved" do
     read = of("cd sub && ls ; ls")
 
-    expect(read.stages.map(&:placed?)).to eq([true, false])
+    expect(read.stages.map { |stage| stage.directory.nil? }).to eq([false, true])
     expect(read.stages.last.executable.klass).to eq(:unresolved)
   end
 

@@ -14,9 +14,7 @@ module Lain
 
       # One exec'd stage: its words, where it runs (nil when a join lets it run
       # where a cd failed to leave), and what those resolve to.
-      Stage = Data.define(:argv, :directory, :executable) do
-        def placed? = !directory.nil?
-      end
+      Stage = Data.define(:argv, :directory, :executable)
 
       Read = Data.define(:stages) do
         def known? = true
