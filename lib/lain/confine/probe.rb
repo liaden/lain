@@ -10,6 +10,8 @@ module Lain
     class Probe
       PTRACE_SCOPE = "/proc/sys/kernel/yama/ptrace_scope"
       START_FAILED = "\0start-failed:"
+      FenceReport = Data.define(:abi, :gap, :unstartable)
+      private_constant :FenceReport
 
       # @param fence [String] path to the lain-fence binary
       # @param runner [#call] takes an argv, returns [output, success]
@@ -24,17 +26,17 @@ module Lain
 
       # @return [Integer] the Landlock ABI the fence reported, 0 when none
       def abi
-        fence_report.first
+        fence_report.abi
       end
 
       # @return [String, nil] why the lain-fence binary gives no Landlock, nil when it does
       def fence_gap
-        fence_report[1]
+        fence_report.gap
       end
 
       # @return [Boolean] whether the lain-fence binary could not be started at all
       def fence_unstartable?
-        fence_report[2]
+        fence_report.unstartable
       end
 
       # @param layer [Symbol] one of :bwrap, :landlock, :trace
@@ -54,15 +56,13 @@ module Lain
       end
 
       def verdicts
-        { bwrap: bwrap_gap, landlock: landlock_gap, trace: trace_gap }
+        { bwrap: bwrap_gap, landlock: fence_gap, trace: trace_gap }
       end
 
       def bwrap_gap
         _, ok = attempt(%w[bwrap --unshare-user --ro-bind / / true])
         "bwrap cannot unshare a user namespace" unless ok
       end
-
-      def landlock_gap = fence_gap
 
       def trace_gap
         _, ok = attempt(%w[strace -f -o /dev/null true])
@@ -79,12 +79,12 @@ module Lain
         !scope.nil? && scope <= 1
       end
 
-      # Memoized triple of [abi, gap reason or nil, whether the binary failed to start].
+      # Memoized: the ABI, the gap reason or nil, and whether the binary failed to start.
       def fence_report
         @fence_report ||= begin
           out, ok = attempt([@fence, "--status"])
           level = ok ? parse_abi(out) : 0
-          [level, gap_for(out, ok, level), out.start_with?(START_FAILED)]
+          FenceReport.new(abi: level, gap: gap_for(out, ok, level), unstartable: out.start_with?(START_FAILED))
         end
       end
 

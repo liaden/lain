@@ -1,6 +1,18 @@
 # frozen_string_literal: true
 
 RSpec.describe Lain::Utf8 do
+  describe ".bytes?" do
+    it "accepts ASCII and valid UTF-8 whatever the tag" do
+      expect([described_class.bytes?("abc"), described_class.bytes?("caf\xC3\xA9".b)]).to all(be(true))
+    end
+
+    it "refuses bytes that are not UTF-8, binary-tagged or not" do
+      invalid = (+"a\xFF").force_encoding(Encoding::UTF_8)
+
+      expect([described_class.bytes?("a\xFF".b), described_class.bytes?(invalid)]).to all(be(false))
+    end
+  end
+
   describe ".legible" do
     it "replaces the bytes that are not valid UTF-8 and leaves the rest" do
       expect(described_class.legible("caf\xC3\xA9 \xFF".b)).to eq("café �")

@@ -202,10 +202,7 @@ RSpec.describe Lain::Confine::MaskList do
 
     def plant
       stale_tracked_under_a_link
-      { "key_link" => File.join(home, ".ssh", "id_rsa"), "envlink" => ".env", "linkdir" => File.join(home, ".ssh"),
-        "aws" => File.join(home, ".aws", "credentials"), "shadow" => "/etc/shadow",
-        "tokdir" => File.join(home, "tokens"), "readme.key" => "README.md", "kubedir" => File.join(home, ".kube") }
-        .each { |name, target| File.symlink(target, File.join(root, name)) }
+      CredentialLinks.plant(root, home:)
       write(".env", "A=1\n")
       write("README.md")
     end

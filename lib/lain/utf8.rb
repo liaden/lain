@@ -10,6 +10,17 @@ module Lain
   module Utf8
     module_function
 
+    # The bytes must decode as UTF-8 whatever the tag says: a binary-tagged
+    # String is always `valid_encoding?`, so the label alone proves nothing.
+    #
+    # @param text [String]
+    # @return [Boolean]
+    def bytes?(text)
+      return text.valid_encoding? if text.encoding == Encoding::UTF_8
+
+      text.ascii_only? || text.dup.force_encoding(Encoding::UTF_8).valid_encoding?
+    end
+
     # @param bytes [#to_s] any encoding, invalid sequences included
     # @param replacement [String, nil] what an invalid sequence becomes; nil is U+FFFD
     # @return [String] a new, valid UTF-8 String

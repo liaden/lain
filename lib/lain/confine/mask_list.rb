@@ -60,7 +60,7 @@ module Lain
 
       # Held as bytes, handed out in the filesystem's encoding, which is what
       # every caller compares a path in.
-      def outward(bytes) = bytes.dup.force_encoding(Encoding.find("filesystem")).freeze
+      def outward(bytes) = bytes.dup.force_encoding(FILESYSTEM).freeze
 
       def join_priming
         priming = @priming
@@ -223,7 +223,7 @@ module Lain
 
         def walkable?(spelling, real) = inside_root?(real) && !pruned?(spelling) && !pruned?(relative(real))
 
-        def inside_root?(real) = real == real_root || real.start_with?("#{real_root}#{SEPARATOR}")
+        def inside_root?(real) = Landing.under?(real, real_root)
 
         def relative(real) = real.delete_prefix(real_root).delete_prefix(SEPARATOR)
 

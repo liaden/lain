@@ -950,13 +950,7 @@ module Lain
     # rescues the same pair, and the `&&` order matters: `include?` on a UTF-16
     # String raises the very error being tested for.
     def self.readable?(text)
-      text.encoding.ascii_compatible? && text.valid_encoding? && !text.include?(NUL) && utf8_bytes?(text)
-    end
-
-    # A binary String is always valid, so its bytes are asked as UTF-8: the
-    # same name is then readable or not whatever label it arrives under.
-    def self.utf8_bytes?(text)
-      text.ascii_only? || text.encoding == Encoding::UTF_8 || text.dup.force_encoding(Encoding::UTF_8).valid_encoding?
+      text.encoding.ascii_compatible? && text.valid_encoding? && !text.include?(NUL) && Utf8.bytes?(text)
     end
 
     # A readable path relabelled UTF-8, the one encoding this class compares

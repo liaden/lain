@@ -93,17 +93,7 @@ module Lain
       # source that fails goes to the paragraph floor: a survey that drops a
       # stray latin-1 file is worse than one that reads it as prose.
       def parseable?(source)
-        PARSEABLE_ENCODINGS.include?(source.encoding) && utf8_bytes?(source)
-      end
-
-      # The bytes must decode as UTF-8 whatever the tag says -- a binary-tagged
-      # String is always `valid_encoding?` and still refused if its bytes are
-      # not UTF-8. The `ascii_only?` arm is there to skip the copy in the common
-      # case rather than to widen what is accepted.
-      def utf8_bytes?(source)
-        return source.valid_encoding? if source.encoding == Encoding::UTF_8
-
-        source.ascii_only? || source.dup.force_encoding(Encoding::UTF_8).valid_encoding?
+        PARSEABLE_ENCODINGS.include?(source.encoding) && Utf8.bytes?(source)
       end
     end
   end

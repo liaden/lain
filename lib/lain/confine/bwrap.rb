@@ -65,8 +65,7 @@ module Lain
       # name back.
       def masking(masks)
         dirs = masks.select { File.directory?(_1) }
-        covers = dirs.map { "#{_1}/" }
-        masks.reject { |mask| covers.any? { mask.start_with?(_1) } }.flat_map do |mask|
+        masks.reject { |mask| dirs.any? { mask != _1 && Landing.under?(mask, _1) } }.flat_map do |mask|
           dirs.include?(mask) ? ["--tmpfs", mask, "--remount-ro", mask] : ["--ro-bind", "/dev/null", mask]
         end
       end
