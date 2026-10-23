@@ -61,7 +61,15 @@ RSpec.describe "Shift+Enter in a pane", :seam do
     expect(File.read(submitted)).to eq("ab\ncd".inspect)
   end
 
+  # Before 3.5a, send-keys types a Shift+Enter the pane did not ask for as its own name.
+  def tmux_encodes_shift_enter?
+    major, minor, letter = `tmux -V`.match(/(\d+)\.(\d+)([a-z]?)/).captures
+    ([major.to_i, minor.to_i, letter] <=> [3, 5, "a"]) >= 0
+  end
+
   it "hands the next program a plain CR for Shift+Enter once the read returns" do
+    skip "tmux #{`tmux -V`.strip} sends S-Enter as text" unless tmux_encodes_shift_enter?
+
     start_pane
     tmux("send-keys", "x", "Enter")
     wait_for { File.exist?(submitted) }
