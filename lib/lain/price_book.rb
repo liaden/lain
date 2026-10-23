@@ -25,8 +25,9 @@ module Lain
     # 1.4 MB table. Cache-write is Anthropic's 1.25x input, cache-read its 0.1x.
     #
     # Reviewed 2026-08-18 against published list rates for the Opus 5/4.8/4.7/4.6
-    # family, Sonnet and Haiku 4.5. Three gaps a single-rate-per-model row cannot
-    # express, recorded rather than silently left wrong:
+    # family, Sonnet and Haiku 4.5. A row can carry prompt-size tiers and a daily
+    # off-peak window, but not a rate that expires on a date or one chosen by a
+    # request flag. Three gaps, recorded rather than silently left wrong:
     #
     # * Sonnet carries an introductory $2/$10 per MTok through 2026-08-31 while
     #   this table holds the $3/$15 list rate that takes over after; the
@@ -71,11 +72,25 @@ module Lain
       @prices.fetch(name) { matched(name) || @fallback || unknown!(name) }
     end
 
+    # The flat rate one request under `model` is billed at, its prompt-size
+    # tier and off-peak window already applied.
+    #
+    # @param model [String, Symbol]
+    # @param usage [Lain::Usage]
+    # @param at [Time, nil] when the request was sent; nil is the standard rate
+    # @return [Price] with no tiers and no off_peak
+    def rate(model, usage, at: nil)
+      price(model).rate_for(usage, at:)
+    end
+
     # The dollar cost of `usage` under `model`.
     #
+    # @param model [String, Symbol]
+    # @param usage [Lain::Usage]
+    # @param at [Time, nil] when the request was sent; nil is the standard rate
     # @return [BigDecimal]
-    def cost(model, usage)
-      price(model).cost(usage)
+    def cost(model, usage, at: nil)
+      price(model).cost(usage, at:)
     end
 
     # A constant, not a memoized class ivar, so there is no first-call race. Deep

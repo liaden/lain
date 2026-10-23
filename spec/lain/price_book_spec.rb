@@ -59,6 +59,12 @@ RSpec.describe Lain::PriceBook do
       expect(dated).to eq(exact)
     end
 
+    it "prices a flat row the same whether or not a request time is given" do
+      million = usage(input: 1_000_000)
+      expect(book.cost("claude-opus-4-8", million)).to eq(BigDecimal("5"))
+      expect(book.cost("claude-opus-4-8", million, at: Time.utc(2026, 10, 24, 20))).to eq(BigDecimal("5"))
+    end
+
     it "prefers the longest matching family token" do
       book = described_class.new(prices: {
                                    "opus" => Lain::Price.per_mtok(input: 15, output: 75, cache_creation: 0,
@@ -67,6 +73,39 @@ RSpec.describe Lain::PriceBook do
                                                                            cache_read: 0)
                                  })
       expect(book.cost("claude-opus-4-8", usage(input: 1_000_000))).to eq(BigDecimal("20"))
+    end
+  end
+
+  describe "#rate" do
+    it "answers a flat Price at the tier the prompt reaches" do
+      tier = Lain::Price.per_mtok(input: 0.50, output: 2.50, cache_creation: 0, cache_read: 0)
+      base = Lain::Price.per_mtok(input: 0.10, output: 0.50, cache_creation: 0, cache_read: 0,
+                                  tiers: [Lain::Price::Tier.new(above_prompt_tokens: 100_000, price: tier)])
+      book = described_class.new(prices: { "haiku" => base })
+
+      rate = book.rate("claude-haiku-9", usage(input: 80_000, read: 30_000))
+
+      expect(rate).to eq(tier)
+      expect(rate.tiers).to be_empty
+    end
+  end
+
+  describe "a row with an off-peak window" do
+    let(:half) { Lain::Price.per_mtok(input: 0.5, output: 0, cache_creation: 0, cache_read: 0) }
+    let(:book) do
+      described_class.new(prices: {
+                            "deepseek" => Lain::Price.per_mtok(input: 1, output: 0, cache_creation: 0, cache_read: 0,
+                                                               off_peak: Lain::Price::OffPeak.new(price: half))
+                          })
+    end
+    let(:sunday) { Time.utc(2026, 10, 25, 14) }
+
+    it "costs the off-peak rate when priced on a Sunday" do
+      expect(book.cost("deepseek-v4", usage(input: 1_000_000), at: sunday)).to eq(BigDecimal("0.5"))
+    end
+
+    it "answers the off-peak rate when asked on a Sunday" do
+      expect(book.rate("deepseek-v4", usage(input: 1_000_000), at: sunday)).to eq(half)
     end
   end
 
