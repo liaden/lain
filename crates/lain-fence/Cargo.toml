@@ -18,7 +18,9 @@ landlock = "0.4.7"
 # must not write into a trace or status pipe its caller reads as evidence.
 # `process` and `signal` give the reaper its subreaper flag, waitpid and kill.
 nix = { version = "0.31", default-features = false, features = ["fs", "process", "signal"] }
-# seccomp(2) without new unsafe here: the BPF for the memfd_create rule.
+# seccomp(2) without new unsafe here: the BPF for the memfd_create rule, the
+# socket allowlist, the MSG_FASTOPEN and TCP_FASTOPEN_CONNECT refusals and the
+# io_uring refusal.
 seccompiler = { version = "0.5", default-features = false }
 # The reaper's TERM, INT, HUP and CHLD handling, and re-raising the child's
 # signal, without unsafe here.

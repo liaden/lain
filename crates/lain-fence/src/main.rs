@@ -15,6 +15,11 @@
 //! signals are always scoped to the domain. A seccomp filter refuses
 //! memfd_create(2) without `MFD_NOEXEC_SEAL`, since a memfd is executable
 //! code no path grant can name; the status line reports it as `memfd_noexec`.
+//! The same filter allows only Unix and netlink sockets and plain TCP over
+//! IPv4 and IPv6, since Landlock governs TCP alone; it refuses any send with
+//! `MSG_FASTOPEN`, which connects past Landlock, and the `TCP_FASTOPEN_CONNECT`
+//! socket option; it refuses io_uring. Those read `inet_socket_types` and
+//! `io_uring`.
 //! The filter kills any syscall from a foreign arch, so a 32-bit tool dies
 //! with SIGSYS and no `lain-fence:` line, never with a 125, 126 or 127 exit.
 //!
@@ -205,9 +210,13 @@ fn enforce(grants: &Grants) -> Result<rules::Enforcement, rules::Error> {
     let loaded = seccomp::install()
         .inspect_err(|error| complain(&format!("seccomp filter not installed: {error}")))
         .is_ok();
-    enforcement
-        .status
-        .seccomp_verdict(seccomp::MEMFD_NOEXEC, loaded);
+    for verdict in [
+        seccomp::MEMFD_NOEXEC,
+        seccomp::INET_SOCKET_TYPES,
+        seccomp::IO_URING,
+    ] {
+        enforcement.status.seccomp_verdict(verdict, loaded);
+    }
     Ok(enforcement)
 }
 
