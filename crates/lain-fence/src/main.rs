@@ -29,6 +29,12 @@
 //! the same line to fd N just before the exec. `skipped` in that line lists the
 //! granted paths that could not be opened, which therefore granted nothing.
 //!
+//! `--reap-only -- cmd args...` takes no other flag, applies no domain and no
+//! filter, and runs `cmd` as a child rather than exec'ing it. On TERM, INT or
+//! HUP it kills every process descended from it, re-setsid or not, then dies
+//! of that signal; when `cmd` exits on its own, its background children live
+//! on and the fence exits with `cmd`'s status. Inherited fds are closed still.
+//!
 //! Exit codes: 125 for a bad invocation, 126 when Landlock enforces nothing,
 //! 127 when the exec itself fails. The command can exit 126 or 127 itself; only
 //! the fence's own failures, and a seccomp filter it could not install, write a
@@ -36,6 +42,7 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
+mod reap;
 mod rules;
 mod seccomp;
 mod status;
@@ -59,6 +66,9 @@ enum Mode {
         argv: Vec<String>,
         status_fd: Option<RawFd>,
     },
+    Reap {
+        argv: Vec<String>,
+    },
 }
 
 struct Invocation {
@@ -78,9 +88,15 @@ fn parse(mut args: impl Iterator<Item = String>) -> Result<Invocation, String> {
     let mut status = false;
     let mut status_fd = None;
     let mut argv = Vec::new();
+    let mut reap = false;
+    let mut flags = Vec::new();
     while let Some(flag) = args.next() {
+        if !matches!(flag.as_str(), "--" | "--reap-only") {
+            flags.push(flag.clone());
+        }
         match flag.as_str() {
             "--" => argv = args.by_ref().collect(),
+            "--reap-only" => reap = true,
             "--status" => status = true,
             "--status-fd" => status_fd = Some(above_stdio(&flag, args.next())?),
             "--connect-port" => grants.connect_ports.push(number(&flag, args.next())?),
@@ -92,6 +108,9 @@ fn parse(mut args: impl Iterator<Item = String>) -> Result<Invocation, String> {
             _ => return Err(format!("unknown argument {flag}")),
         }
     }
+    if reap {
+        return reap_only(flags, argv).map(|mode| Invocation { grants, mode });
+    }
     let mode = match (status, status_fd, argv.is_empty()) {
         (true, None, true) => Mode::Status,
         (true, _, _) => return Err("--status runs nothing and takes no --status-fd".into()),
@@ -99,6 +118,19 @@ fn parse(mut args: impl Iterator<Item = String>) -> Result<Invocation, String> {
         (false, status_fd, false) => Mode::Exec { argv, status_fd },
     };
     Ok(Invocation { grants, mode })
+}
+
+fn reap_only(flags: Vec<String>, argv: Vec<String>) -> Result<Mode, String> {
+    if !flags.is_empty() {
+        return Err(format!(
+            "--reap-only takes no other flag, got {}",
+            flags.join(" ")
+        ));
+    }
+    if argv.is_empty() {
+        return Err("no command after --".into());
+    }
+    Ok(Mode::Reap { argv })
 }
 
 fn value(flag: &str, next: Option<String>) -> Result<String, String> {
@@ -125,6 +157,10 @@ fn run(invocation: Invocation) -> ExitCode {
     match invocation.mode {
         Mode::Status => report(&invocation.grants),
         Mode::Exec { argv, status_fd } => fence(&invocation.grants, &argv, status_fd),
+        Mode::Reap { argv } => match close_inherited(None) {
+            Ok(()) => reap::run(&argv),
+            Err(message) => fail(NOT_ENFORCED, &message),
+        },
     }
 }
 
