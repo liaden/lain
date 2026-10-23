@@ -1,6 +1,6 @@
 # October adoption: bench instruments, a compaction sweep, egress confinement and a supervised cloud oracle
 
-status: draft
+status: in-progress
 commit-mode: orchestrator-commits
 language: ruby (Rust cards: T30, T32)
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson); Rust cards add Raph Levien and Andrew Gallant
@@ -5972,3 +5972,8 @@ After the last card lands, with nothing else running (`pgrep -cf 'mise/installs/
 8. Update `ROADMAP.md` item 68 to point at this plan with its landed status, and mark the adopted items in `planning/roadmap-adoption-research-2026-10.md`.
 
 ## Execution log
+
+- 2026-10-23 run start. Base `main` at `be0ddefd`. `git worktree list`: only the main checkout. Box quiet (0 suite, 0 hook processes, load 0.4 on 16 cpus).
+- Hook checks, each runnable on an agent's own paths: pre-commit-hooks (shebangs, merge markers, yaml, end of file, trailing space); `shellcheck <file>`; for Rust `cargo fmt -- --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo deny check` when Cargo files change; `bundle exec rubocop <paths>` and the specs by path (the hook runs `rake compile check`, which is rubocop plus the full `rake pspec`); `bundle exec yard-lint <ruby paths>`; `bin/lint-gherkin-docs <plan doc>`; `bin/lint-commit-msg` on the message; `bin/lint-price-freshness`.
+- A Ruby commit costs about 90 s (compile plus a 74 s suite). The suite cannot run beside another test run: `TMPDIR` is shared, and no suite lock exists until T1. Agents get their own `TMPDIR` per worktree. No path needs user approval.
+- The main checkout holds the user's staged `.gitmodules` and 2 submodule adds: every landing commits by explicit path (`git commit -- <paths>`), never the whole index.
