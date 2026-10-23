@@ -1117,16 +1117,21 @@ RSpec.describe "exe/lain bootsnap cache", :seam do
   end
 
   # A copy of the exe with no Gemfile beside it boots without bundler, so a bootsnap on -I is the one it requires.
-  def cache_dir_given_to_bootsnap(**env)
+  # The stand-in lain ends the process at the require, so these examples pay for the exe's bootsnap decision and
+  # not for loading lain.
+  def run_stand_in(**env)
     stand_in = File.join(root, "stand-in")
     FileUtils.mkdir_p(File.join(stand_in, "exe"))
     FileUtils.cp(exe, File.join(stand_in, "exe", "lain"))
     File.write(File.join(stand_in, "bootsnap.rb"),
                %(module Bootsnap; def self.setup(cache_dir:) = File.write(ENV.fetch("SETUP_RECORD"), cache_dir); end))
-    record = File.join(root, "record")
-    lain(**env, "SETUP_RECORD" => record, script: File.join(stand_in, "exe", "lain"), include: stand_in)
-    File.read(record)
+    File.write(File.join(stand_in, "lain.rb"), "exit!(0)")
+    File.join(root, "record").tap do |record|
+      lain(**env, "SETUP_RECORD" => record, script: File.join(stand_in, "exe", "lain"), include: stand_in)
+    end
   end
+
+  def cache_dir_given_to_bootsnap(**env) = File.read(run_stand_in(**env))
 
   it "writes a non-empty cache under the XDG cache home" do
     _, status = lain("XDG_CACHE_HOME" => root)
@@ -1144,10 +1149,10 @@ RSpec.describe "exe/lain bootsnap cache", :seam do
       .to eq("/elsewhere")
   end
 
-  it "boots with no bootsnap and writes no cache when LAIN_BOOTSNAP is 0" do
-    _, status = lain("XDG_CACHE_HOME" => root, "LAIN_BOOTSNAP" => "0")
+  it "sets bootsnap up not at all and writes no cache when LAIN_BOOTSNAP is 0" do
+    record = run_stand_in("XDG_CACHE_HOME" => root, "LAIN_BOOTSNAP" => "0")
 
-    expect([status, Dir.exist?(File.join(root, "lain"))]).to eq([0, false])
+    expect([File.exist?(record), Dir.exist?(File.join(root, "lain"))]).to eq([false, false])
   end
 
   it "leaves the setup of a process that already ran Bootsnap.setup alone" do

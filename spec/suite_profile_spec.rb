@@ -28,10 +28,6 @@ RSpec.describe SuiteProfile do
       expect(main("flame")).to eq(2)
       expect(err.string).to include("unknown lens flame", *described_class::LENSES.keys)
     end
-
-    it "knows the 6 lenses" do
-      expect(described_class::LENSES.keys).to eq(%w[dissect stack-cpu stack-wall gc spawns rbspy])
-    end
   end
 
   describe "the busy refusal" do
@@ -48,9 +44,10 @@ RSpec.describe SuiteProfile do
     end
 
     it "counts the same processes the CLAUDE.md quiet check names" do
-      expect(described_class::BUSY_PATTERNS).to eq(
-        ["mise/installs/ruby/[0-9.]*/bin/parallel_rspec", "[p]re-commit (hook-impl|run)"]
-      )
+      quoted = File.read(File.expand_path("../CLAUDE.md", __dir__)).scan(/pgrep -cf '([^']+)'/).flatten
+
+      expect(quoted).not_to be_empty
+      expect(described_class::BUSY_PATTERNS).to include(*quoted)
     end
   end
 

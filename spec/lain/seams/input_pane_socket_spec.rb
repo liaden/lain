@@ -213,6 +213,17 @@ module InputPaneSocket
                 .find { |answer| !answer.nil? || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline }
     end
 
+    # What the block reads once it has held still for `ticks` publish ticks: whatever the last change drew has
+    # drawn by then. The whole screen is no such measure, since a clock moving under a fleet keeps writing to it.
+    # Bounded like {#settles}, so a block that never holds still fails the example rather than hanging it.
+    def quiet(ticks: 4, within: 20)
+      samples = Enumerator.produce(yield) do
+        sleep(0.05 * ticks)
+        yield
+      end
+      samples.each_cons(2).lazy.take((within / (0.05 * ticks)).ceil).find { |was, now| was == now }&.last
+    end
+
     private
 
     # Forked from the worker, which already holds `lain`: the chat stands in for
@@ -417,12 +428,11 @@ RSpec.describe "a chat fed by an input pane", :seam do
     cockpit_at("lines")
     publish(fleet: %w[a], fleet_tree: [fleet_row])
     cockpit.settles { cockpit.screen.include?("dev  running  1t") || nil }
-    # One publish tick past the redraw that carried the row, so the count is
-    # taken over a quiet window rather than across the change itself.
-    sleep(0.5)
-    settled = cockpit.screen.scan("you> ").size
+    # The count is taken over a quiet window rather than across the change itself.
+    prompts = -> { cockpit.screen.scan("you> ").size }
+    settled = cockpit.quiet(&prompts)
 
-    sleep(0.6)
+    cockpit.quiet(ticks: 8, &prompts)
 
     expect(cockpit.screen.scan("you> ").size).to eq(settled)
   end
@@ -437,10 +447,8 @@ RSpec.describe "a chat fed by an input pane", :seam do
     cockpit_at("lines")
     publish(fleet: %w[a], fleet_tree: [fleet_row])
     cockpit.settles { cockpit.screen.include?("dev  running  1t") || nil }
-    # One publish tick past the redraw that carried the row, so the count is
-    # taken over a quiet window rather than across the change itself.
-    sleep(0.5)
-    shown = cockpit.screen.scan("fleet:1 inbox:0").size
+    # The count is taken over a quiet window rather than across the change itself.
+    shown = cockpit.quiet { cockpit.screen.scan("fleet:1 inbox:0").size }
 
     cockpit.resize(6)
 
@@ -457,11 +465,10 @@ RSpec.describe "a chat fed by an input pane", :seam do
     cockpit.settles { cockpit.screen.include?("dev  running  1t") || nil }
     cockpit.type("half a line")
     cockpit.settles { cockpit.screen.include?("half a line") || nil }
-    sleep(0.5)
-    shown = cockpit.screen.scan("fleet:1 inbox:0").size
+    shown = cockpit.quiet { cockpit.screen.scan("fleet:1 inbox:0").size }
 
     cockpit.resize(6)
-    sleep(0.6)
+    cockpit.quiet(ticks: 8) { cockpit.screen.scan("fleet:1 inbox:0").size }
 
     expect(cockpit.screen.scan("fleet:1 inbox:0").size).to eq(shown)
   end
@@ -478,10 +485,9 @@ RSpec.describe "a chat fed by an input pane", :seam do
     cockpit.settles { cockpit.screen.include?("dev  running  1t") || nil }
     cockpit.type("half a line")
     cockpit.settles { cockpit.screen.include?("half a line") || nil }
-    sleep(0.5)
-    shown = cockpit.screen.scan("fleet:1 inbox:0").size
+    shown = cockpit.quiet { cockpit.screen.scan("fleet:1 inbox:0").size }
     cockpit.resize(6)
-    sleep(0.5)
+    cockpit.quiet { cockpit.screen.scan("fleet:1 inbox:0").size }
 
     cockpit.type("\x15")
 
