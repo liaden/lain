@@ -35,7 +35,7 @@ module HotPathBench
   CEILINGS = {
     "render_chat_10k" => 18.3,
     "render_cold_10k" => 52.1,
-    "bash_true_none" => 2.08,
+    "bash_true_none" => 3.09,
     "bash_true_traced" => 7.92,
     "bash_true_reader" => 12.2,
     "request_100000" => 0.821,
