@@ -208,8 +208,14 @@ module Lain
             @tool = effect.name
             @tool_use_id = effect.tool_use_id
             @input = effect.input
+            @input_digest = tool_call? ? ::Lain::Effect.input_digest(input) : nil
           end
           private :take
+
+          # A decision's `tool_use_id` is already the digest of what it asks.
+          #
+          # @return [String, nil] what the journal names the input's bytes by
+          attr_reader :input_digest
 
           # Answers whether THIS answer won; a later answer returns false and
           # changes nothing. Latency is stamped decision-side, so it measures how
@@ -347,7 +353,7 @@ module Lain
           def to_journal
             { "type" => "approval_decision", "tool_use_id" => tool_use_id, "requester" => requester,
               "tool" => tool, "surface" => surface, "verdict" => decision.to_s, "timed_out" => timed_out?,
-              "latency" => latency }.merge(reason ? { "reason" => reason } : {}).merge(kind_entry)
+              "latency" => latency }.merge(reason ? { "reason" => reason } : {}, digest_entry, kind_entry)
           end
 
           private
@@ -355,6 +361,8 @@ module Lain
           def flattened(words) = words.to_s.gsub(/[[:cntrl:]]/, " ").squish.presence
 
           def kind_entry = tool_call? ? {} : { "kind" => kind }
+
+          def digest_entry = input_digest ? { "input_digest" => input_digest } : {}
         end
 
         # Reuses Pending's park, journal and surface machinery so no surface

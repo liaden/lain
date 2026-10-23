@@ -39,6 +39,16 @@ RSpec.describe Lain::Telemetry::ApprovalPending do
     expect(record).to be_deeply_frozen
   end
 
+  it "carries the digest of the parked call's input, and never the input" do
+    effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => "rm -rf build" })
+    pending = Lain::Approval::Parked::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 })
+
+    journaled = described_class.from(pending).to_journal
+    expect(journaled).to include("input_digest" => Lain::Canonical.digest(effect.input))
+    expect(journaled.to_json).not_to include("rm -rf build")
+    expect(event.to_journal).not_to have_key("input_digest")
+  end
+
   it "says so when the Pending it is built from may be decided by a person only" do
     pending = Lain::Approval::Parked::Queue::Pending.new(
       effect: Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: {}),

@@ -17,11 +17,14 @@ module Lain
       # @param effect [Effect::ToolCall]
       # @param context [Object, nil] names the requester unless one is given
       # @param requester [String, nil]
-      # @param extra [Hash] further fields; nil values are left off
+      # @param extra [Hash] further fields; nil values are left off. Any
+      #   `input_digest` given is replaced by the digest of the effect's input,
+      #   so a replay can tell which bytes were ruled on.
       # @return [void]
       def self.write(journal, ruling, effect, context, requester: nil, **extra)
         record = new(tool: effect.name, tool_use_id: effect.tool_use_id,
                      requester: requester_of(context, requester), rule: ruling.rule, ruling:)
+        extra = { **extra, input_digest: Effect.input_digest(effect.input) }
         journal << record.to_journal.merge(extra.compact.transform_keys(&:to_s)).merge(ruling.record)
         nil
       rescue StandardError

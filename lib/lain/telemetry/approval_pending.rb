@@ -36,8 +36,9 @@ module Lain
     #
     # The Pending's `input` is deliberately left off: tool arguments are
     # unbounded and may carry exactly the credential bytes {WriteRefused} exists
-    # to keep out of the journal. Id in, payload out.
-    ApprovalPending = Data.define(:requester, :tool, :tool_use_id, :humans_only, :notes, :kind) do
+    # to keep out of the journal. Id in, payload out; `input_digest` names the
+    # bytes without carrying them, and is absent for a decision that is no call.
+    ApprovalPending = Data.define(:requester, :tool, :tool_use_id, :humans_only, :notes, :kind, :input_digest) do
       include Journalable
 
       # Built from the parked {Approval::Parked::Queue::Pending} at admit time, so the
@@ -53,23 +54,26 @@ module Lain
       # the identical hazard and the identical note.
       def self.from(pending)
         new(requester: pending.requester, tool: pending.tool, tool_use_id: pending.tool_use_id,
-            humans_only: pending.humans_only?, notes: pending.notes, kind: pending.kind)
+            humans_only: pending.humans_only?, notes: pending.notes, kind: pending.kind,
+            input_digest: pending.input_digest)
       end
 
       # Interned rather than `dup.freeze`d: these three values repeat on every
       # park of a session, so two equal records share one String rather than
       # holding two copies of the same bytes.
-      def initialize(requester:, tool:, tool_use_id:, humans_only: false, notes: [], kind: "tool")
+      def initialize(requester:, tool:, tool_use_id:, humans_only: false, notes: [], kind: "tool", input_digest: nil)
         Carriers::ApprovalPending.check!(requester:, tool:, tool_use_id:)
 
         super(requester: -requester.to_s, tool: -tool.to_s, tool_use_id: -tool_use_id.to_s,
-              humans_only: humans_only == true, notes: notes.map { -_1.to_s }.freeze, kind: -kind.to_s)
+              humans_only: humans_only == true, notes: notes.map { -_1.to_s }.freeze, kind: -kind.to_s,
+              input_digest: input_digest&.then { -_1.to_s })
       end
 
       # Each absent when it says nothing, so a tool call nobody noted journals as it always did.
       def to_journal
         super.then do |record|
-          record.except(*[("notes" if record["notes"].empty?), ("kind" if kind == "tool")].compact)
+          record.except(*[("notes" if record["notes"].empty?), ("kind" if kind == "tool"),
+                          ("input_digest" if input_digest.nil?)].compact)
         end
       end
     end

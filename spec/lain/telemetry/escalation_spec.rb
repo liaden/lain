@@ -61,6 +61,21 @@ RSpec.describe Lain::Telemetry::Escalation do
     expect(written).to include("error" => "boom").and(satisfy { !_1.key?("bar") })
   end
 
+  it "names the digest of the call's input, and never the input" do
+    asked = Lain::Effect::ToolCall.new(name: "bash", input: { "command" => "rm -rf build" }, tool_use_id: "tu_1")
+
+    described_class.write(journal, ruling.deny(rung: "gate", because: "b"), asked, nil)
+
+    expect(written).to include("input_digest" => Lain::Canonical.digest(asked.input))
+    expect(written.to_json).not_to include("rm -rf build")
+  end
+
+  it "names the digest it computed, whatever input_digest a caller passes" do
+    described_class.write(journal, ruling.deny(rung: "gate", because: "b"), effect, nil, input_digest: "blake3:forged")
+
+    expect(written).to include("input_digest" => Lain::Canonical.digest(effect.input))
+  end
+
   it "writes to a Journal as one parseable record" do
     io = StringIO.new
 

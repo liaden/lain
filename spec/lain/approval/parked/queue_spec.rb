@@ -399,6 +399,20 @@ RSpec.describe Lain::Approval::Parked::Queue do
       expect(decision_records).to contain_exactly(a_hash_including("verdict" => "deny",
                                                                    "reason" => "stay inside ~/dev/frugirl"))
     end
+
+    it "pairs the pending and the decision with the digest of the input approved, never the input" do
+      call = tool_call("bash", { "command" => "rm -rf build" })
+
+      Sync do |task|
+        run = task.async { queue.call(call, nil) }
+        queue.dequeue.approve(surface: "tty", authority: :human)
+        run.wait
+      end
+
+      records = pending_records.to_a + decision_records.to_a
+      expect(records.map { _1["input_digest"] }).to eq([Lain::Canonical.digest(call.input)] * 2)
+      expect(records.map(&:to_json)).to all(satisfy { !_1.include?("rm -rf build") })
+    end
   end
 
   describe "the words a denial is given in" do
@@ -1488,6 +1502,12 @@ RSpec.describe Lain::Approval::Parked::Queue do
 
       expect(pending_records.first).not_to have_key("kind")
       expect(decision_records.first).not_to have_key("kind")
+    end
+
+    it "journals no input digest for a decision, whose digest is already its tool_use_id" do
+      asked { |pending| pending.approve(surface: "tty", authority: :human) }
+
+      expect(pending_records.to_a + decision_records.to_a).to all(satisfy { !_1.key?("input_digest") })
     end
 
     it "denies on its own timeout rather than the queue's" do

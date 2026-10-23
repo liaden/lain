@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require "active_support"
+require "active_support/core_ext/object/deep_dup"
+
 module Lain
   # The vocabulary of what an agent loop *performs*, as frozen value objects.
   #
@@ -21,14 +24,38 @@ module Lain
     # the Provider may string-match against wire JSON, so `tool_use.input` is
     # already parsed by the time it reaches here. `tool_use_id` is retained so
     # the eventual `tool_result` can carry the matching id.
+    #
+    # The input is deeply frozen here, where the call is made, so no layer
+    # before or after the gate can change the bytes a human approved; a
+    # middleware that rewrites a call builds a new one with `#with`. A copy is
+    # frozen so the caller's Hash stays theirs; the copy is skipped when the
+    # input is already shareable, as Response's always is, so a model's call is
+    # never copied.
     ToolCall = Data.define(:tool_use_id, :name, :input) do
       include Kind
 
       def initialize(tool_use_id:, name:, input:)
-        super(tool_use_id: -tool_use_id.to_s, name: -name.to_s, input:)
+        super(tool_use_id: -tool_use_id.to_s, name: -name.to_s, input: frozen(input))
       end
 
       def tool_call? = true
+
+      private
+
+      def frozen(input) = Ractor.shareable?(input) ? input : Ractor.make_shareable(input.deep_dup)
+    end
+
+    # Evidence must never cost the record it rides on, so an input Canonical
+    # cannot encode (invalid UTF-8, a NaN) names no digest rather than raising.
+    # A model's input never arrives that way, since Response refuses it, so nil
+    # covers only a call built by hand or rewritten by a middleware.
+    #
+    # @param input [Object] a tool call's input
+    # @return [String, nil]
+    def self.input_digest(input)
+      Canonical.digest(input)
+    rescue Canonical::UnsupportedType, Canonical::NonFiniteFloat, Canonical::AmbiguousKey
+      nil
     end
 
     # Holds a provider-neutral {Lain::Request}, so the same effect replays
