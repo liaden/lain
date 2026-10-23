@@ -49,16 +49,35 @@ module Lain
       CORPUS_PATH = Paths::Shipped::BENCH_CORPUS_PATH
       EMBEDDINGS_PATH = Paths::Shipped::BENCH_EMBEDDINGS_PATH
 
-      # ArmFold's six, plus this sweep's own seventh. Extended, never restated,
+      # ArmFold's seven, plus this sweep's own. Extended, never restated,
       # so a column added to the shared fold cannot silently skip this report.
-      COLUMNS = [*Compare::ArmFold::HEADERS, "recall tokens"].freeze
+      COLUMNS = [*Compare::ArmFold::HEADERS, "recall tokens", "ndcg@10", "abstention", "support@200",
+                 "graph from bm25 top 5"].freeze
       private_constant :COLUMNS
+
+      NDCG_K = 10
+      SUPPORT_BUDGET = 200
+      # Split by query; gold items may appear in both, since a wikilink query needs its hub's leaves.
+      SPLITS = %w[dev test].freeze
+
+      # How many bm25 hits seed the graph control, in place of the manifest seed.
+      CONTROL_SEEDS = 5
+      private_constant :CONTROL_SEEDS
+
+      WIKILINK = /\[\[([^\[\]]+)\]\]/
+      private_constant :WIKILINK
+
+      NO_CELL = "-"
+      private_constant :NO_CELL
 
       RECALL_FMT = ->(value) { format("%.3f", value) }
       private_constant :RECALL_FMT
 
-      # One gold query: the text, its gold ids, and the ability class it probes.
-      Query = Data.define(:text, :gold_ids, :klass)
+      # One gold query: the text, its gold ids, the ability class it probes, its split and its
+      # graded relevance. An abstention query has no gold ids: the right answer is no hits.
+      Query = Data.define(:text, :gold_ids, :klass, :split, :relevance) do
+        def abstention? = gold_ids.empty?
+      end
 
       # A committed text => vector map standing in for a live {Embedder}. Keyed
       # on the SAME text the arm embeds, resolved through each item's content
@@ -138,17 +157,57 @@ module Lain
       end
       private_constant :HopSearch
 
+      # The graph arm's control: the same one-hop wikilink walk, but from bm25's top hits instead of
+      # the manifest seed, so a graph win cannot be only a better seed.
+      SeededHop = Data.define(:bm25, :items) do
+        def search(query)
+          seeds = bm25.search(query).first(CONTROL_SEEDS)
+          reached = seeds.flat_map { |seed| linked(seed.id) }.uniq - seeds.map(&:id)
+          [*seeds, *reached.filter_map { |id| items[id] }.map { |item| hop_hit(item) }]
+        end
+
+        private
+
+        def linked(id) = items.key?(id) ? items.fetch(id).body.scan(WIKILINK).flatten.map(&:strip) : []
+
+        def hop_hit(item)
+          Memory::Manifest::Hit.new(id: item.id, description: item.description, score: 0.5, why: "linked from a seed")
+        end
+      end
+      private_constant :SeededHop
+
+      # True when every gold id's line sits wholly inside the first `budget` whitespace tokens of the
+      # recall block's lines.
+      #
+      # @param lines [Array<String>] the block's "id | description -- why" lines, in order
+      # @param gold_ids [Array<String>]
+      # @param budget [Integer] whitespace tokens the block may spend
+      # @return [Boolean]
+      def self.fully_supported?(lines, gold_ids, budget: SUPPORT_BUDGET)
+        spent = 0
+        held = lines.take_while { |line| (spent += line.split.size) <= budget }
+        (gold_ids - held.map { |line| line.split(" | ").first }).empty?
+      end
+
       # @param k [Integer] the retrieval depth recall is scored at (recall@k).
       # @param corpus_path [String] path to the retrieval fixture (queries, gold
       #   ids, classes); defaults to the committed corpus.
       # @param embeddings_path [String] path to the committed embeddings JSON,
       #   content-digest checked against the corpus at load.
       # @param model [String] the embedding model the fixture must match.
+      # @param split [String] "dev" or "test"; the splits are never mixed in one report.
       # rubocop:disable Naming/MethodParameterName -- `k` is the pinned recall@k
       # name, matching Grader::Recall and Context::Recall's own k:.
-      def initialize(k: DEFAULT_K, corpus_path: CORPUS_PATH, embeddings_path: EMBEDDINGS_PATH, model: DEFAULT_MODEL)
+      def initialize(k: DEFAULT_K, corpus_path: CORPUS_PATH, embeddings_path: EMBEDDINGS_PATH, model: DEFAULT_MODEL,
+                     split: "dev")
         @k = Integer(k)
         raise ArgumentError, "k must be positive, got #{@k}" unless @k.positive?
+        unless SPLITS.include?(split)
+          raise ArgumentError,
+                "split must be one of #{SPLITS.join(", ")}, got #{split.inspect}"
+        end
+
+        @split = split
 
         @corpus_path = corpus_path
         @embeddings_path = embeddings_path
@@ -174,21 +233,42 @@ module Lain
       end
 
       def distributions_for(arm)
-        { recall: Compare::Distribution.new(queries.map { |query| recall_at_k(arm, query) }),
-          tokens: Compare::Distribution.new(queries.map { |query| recall_tokens(arm, query) }) }
+        { recall: Compare::Distribution.new(positives.map { |query| recall_at_k(arm, query) }),
+          tokens: Compare::Distribution.new(positives.map { |query| recall_tokens(arm, query) }),
+          ndcg: Compare::Distribution.new(positives.map { |query| ndcg_at_k(arm, query) }),
+          support: Compare::Distribution.new(positives.map { |query| support_of(arm, query) }),
+          abstention: Compare::Distribution.new(abstaining.map { |query| abstains?(arm, query) ? 1.0 : 0.0 }) }
+      end
+
+      def ndcg_at_k(arm, query)
+        Grader::Ndcg.new(relevance: query.relevance).grade(arm.search(query.text), k: NDCG_K).score
+      end
+
+      def abstains?(arm, query) = arm.search(query.text).first(@k).empty?
+
+      def support_of(arm, query)
+        lines = recall_block(arm, query).to_s.lines.map(&:chomp).grep_v(%r{\A</?recall>\z})
+        self.class.fully_supported?(lines, query.gold_ids) ? 1.0 : 0.0
       end
 
       def recall_at_k(arm, query)
         Grader::Recall.new(gold_ids: query.gold_ids).grade(arm.search(query.text), k: @k).score
       end
 
+      def control_recall
+        arm = SeededHop.new(bm25: arms.fetch("bm25"), items: items.to_h { |item| [item.id, item] })
+        Compare::Distribution.new(positives.map { |query| recall_at_k(arm, query) }).mean
+      end
+
       # Tokens-on-recall from the dry-rendered Context::Recall block. No BPE
       # tokenizer lives in-process, so this is a whitespace-token proxy:
       # deterministic and offline, measuring relative cost across arms rather
       # than exact provider billing.
-      def recall_tokens(arm, query)
+      def recall_tokens(arm, query) = recall_block(arm, query)&.split&.size || 0
+
+      def recall_block(arm, query)
         tail = Context::Recall.new(index: arm, k: @k).call([user_message(query.text)]).last["content"].last
-        tail["text"].to_s.start_with?(RECALL_TAG) ? tail["text"].split.size : 0
+        tail["text"] if tail["text"].to_s.start_with?(RECALL_TAG)
       end
 
       def user_message(text)
@@ -216,9 +296,17 @@ module Lain
       end
 
       def queries
-        @queries ||= corpus.fetch("queries").map do |raw|
-          Query.new(text: raw.fetch("query"), gold_ids: raw.fetch("gold_ids"), klass: raw.fetch("class"))
-        end
+        @queries ||= corpus.fetch("queries").map { |raw| query_from(raw) }.select { |query| query.split == @split }
+      end
+
+      def positives = queries.reject(&:abstention?)
+
+      def abstaining = queries.select(&:abstention?)
+
+      def query_from(raw)
+        gold_ids = raw.fetch("gold_ids")
+        Query.new(text: raw.fetch("query"), gold_ids:, klass: raw.fetch("class"), split: raw.fetch("split"),
+                  relevance: raw.fetch("relevance") { gold_ids.to_h { |id| [id, 1] } })
       end
 
       def corpus
@@ -245,15 +333,32 @@ module Lain
 
       def render(ranked_arms)
         rows = ranked_arms.map { |name, dists| row_for(name, dists) }
-        [header, "", Compare::Table.new(headers: COLUMNS, rows:).to_s].join("\n")
+        [header, "", Compare::Table.new(headers: COLUMNS, rows:).to_s, *verdicts(ranked_arms)].join("\n")
       end
 
       def header
-        "Sweep — recall@#{@k} over #{queries.size} queries, #{items.size} items (model #{@model})"
+        "Sweep — #{split_note}: recall@#{@k} over #{positives.size} queries, #{abstaining.size} abstention, " \
+          "#{items.size} items (model #{@model})"
+      end
+
+      def split_note
+        @split == "dev" ? "dev split, the default; --split test scores the held-out queries" : "test split"
       end
 
       def row_for(name, dists)
-        [*fold.row(name, dists.fetch(:recall), fmt: RECALL_FMT), format("%.1f", dists.fetch(:tokens).mean)]
+        [*fold.row(name, dists.fetch(:recall), fmt: RECALL_FMT), format("%.1f", dists.fetch(:tokens).mean),
+         RECALL_FMT.call(dists.fetch(:ndcg).mean), rate(dists.fetch(:abstention)), rate(dists.fetch(:support)),
+         name == "graph" ? RECALL_FMT.call(control_recall) : NO_CELL]
+      end
+
+      def rate(dist) = dist.n.zero? ? NO_CELL : RECALL_FMT.call(dist.mean)
+
+      def verdicts(ranked_arms)
+        means = ranked_arms.to_h { |name, dists| [name, dists.fetch(:recall).mean] }
+        return [] if means.fetch("hybrid") > means.fetch("bm25")
+
+        ["", "hybrid does not beat bm25 on recall@#{@k} (#{RECALL_FMT.call(means.fetch("hybrid"))} vs " \
+             "#{RECALL_FMT.call(means.fetch("bm25"))})"]
       end
 
       def fold = @fold ||= Compare::ArmFold.new

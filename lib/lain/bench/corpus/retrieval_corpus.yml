@@ -21,6 +21,9 @@
 #                           reachable only by following a [[wikilink]] out of that hub.
 #                           Only a graph arm that expands from a lexical hit wins here;
 #                           gold_ids is the hub's full set of linked leaves.
+# Every query carries a `split` (dev is what a sweep scores by default; test is held out), an
+# optional `relevance` map of graded ids 0..3 (absent means each gold id is grade 1), and the
+# abstention class has `gold_ids: []`: the right answer is no hits.
 items:
   # NSAIDs -- linked from nsaid-class-overview
   - id: aspirin-dosage
@@ -138,42 +141,91 @@ queries:
   # exact-lexical: query tokens overlap the gold item's own text directly
   - query: aspirin dosing guidance
     class: exact-lexical
+    split: dev
     gold_ids: [aspirin-dosage]
   - query: imatinib chronic myeloid leukemia regimen
     class: exact-lexical
+    split: dev
     gold_ids: [imatinib-therapy]
   - query: amoxicillin dosing guidance
     class: exact-lexical
+    split: dev
     gold_ids: [amoxicillin-dosage]
   - query: warfarin interaction list
     class: exact-lexical
+    split: dev
     gold_ids: [warfarin-interactions]
 
   # semantic-paraphrase: zero token overlap with the gold item; only meaning bridges it
   - query: long-acting basal hormone injection given every night to steady blood sugar levels
     class: semantic-paraphrase
+    split: dev
     gold_ids: [insulin-glargine-dosage]
   - query: a blood-thinning tablet taken two times each day that does not need regular lab test checks
     class: semantic-paraphrase
+    split: dev
     gold_ids: [apixaban-dosage]
   - query: a kidney cancer treatment given two times per day that can cause painful palm and sole rash
     class: semantic-paraphrase
+    split: dev
     gold_ids: [sorafenib-therapy]
   - query: a cholesterol-reducing pill that can be taken whenever suits the morning or evening routine
     class: semantic-paraphrase
+    split: dev
     gold_ids: [rosuvastatin-dosage]
 
   # wikilink-reachable: query matches the hub only; gold leaves share no query tokens
   # and are reachable solely by following the hub's [[wikilinks]]
   - query: which medicines are grouped in the NSAID drug class overview
     class: wikilink-reachable
+    split: dev
     gold_ids: [aspirin-dosage, ibuprofen-dosage, naproxen-dosage, diclofenac-dosage]
+    relevance: {aspirin-dosage: 2, ibuprofen-dosage: 2, naproxen-dosage: 2, diclofenac-dosage: 2, nsaid-class-overview: 1}
   - query: list every medication catalogued in the tyrosine kinase inhibitor overview
     class: wikilink-reachable
+    split: dev
     gold_ids: [imatinib-therapy, dasatinib-therapy, nilotinib-therapy, sorafenib-therapy]
+    relevance: {imatinib-therapy: 2, dasatinib-therapy: 2, nilotinib-therapy: 2, sorafenib-therapy: 2, tki-class-overview: 1}
   - query: name each drug summarized under anticoagulant class overview
     class: wikilink-reachable
+    split: dev
     gold_ids: [warfarin-dosage, apixaban-dosage, rivaroxaban-dosage, heparin-dosage]
+    relevance: {warfarin-dosage: 2, apixaban-dosage: 2, rivaroxaban-dosage: 2, heparin-dosage: 2, anticoagulant-class-overview: 1}
   - query: enumerate the medicines documented in the antibiotic class overview
     class: wikilink-reachable
+    split: dev
     gold_ids: [amoxicillin-dosage, ciprofloxacin-dosage, doxycycline-dosage, azithromycin-dosage]
+    relevance: {amoxicillin-dosage: 2, ciprofloxacin-dosage: 2, doxycycline-dosage: 2, azithromycin-dosage: 2, antibiotic-class-overview: 1}
+
+  # test split: held out, scored only under --split test
+  - query: doxycycline dosing guidance
+    class: exact-lexical
+    split: test
+    gold_ids: [doxycycline-dosage]
+  - query: intravenous drip steered by a clotting blood test
+    class: semantic-paraphrase
+    split: test
+    gold_ids: [heparin-dosage]
+  - query: list every medication catalogued under statin overview
+    class: wikilink-reachable
+    split: test
+    gold_ids: [atorvastatin-dosage, simvastatin-dosage, rosuvastatin-dosage, pravastatin-dosage]
+    relevance: {atorvastatin-dosage: 2, simvastatin-dosage: 2, rosuvastatin-dosage: 2, pravastatin-dosage: 2, statin-class-overview: 1}
+
+  # abstention: the corpus holds nothing for these drug classes, so the right answer is no hits
+  - query: beta blocker for heart rate control
+    class: abstention
+    split: dev
+    gold_ids: []
+  - query: proton pump inhibitor for acid reflux
+    class: abstention
+    split: dev
+    gold_ids: []
+  - query: opioid analgesic for post surgical relief
+    class: abstention
+    split: test
+    gold_ids: []
+  - query: antihistamine for seasonal allergies
+    class: abstention
+    split: test
+    gold_ids: []

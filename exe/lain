@@ -887,7 +887,8 @@ class LainCLI < Thor
     desc "sweep", "Deterministic five-arm retrieval eval (recall@k over the gold corpus) -- offline, no API"
     method_option :k, type: :numeric, default: Lain::Bench::Sweep::DEFAULT_K,
                       aliases: "-k", desc: "retrieval depth (recall@k)"
-    def sweep = render { Lain::Bench::CLI.new.sweep_report(k: options[:k]) }
+    method_option :split, type: :string, default: "dev", desc: "dev or test"
+    def sweep = render { Lain::Bench::CLI.new.sweep_report(k: options[:k], split: options[:split]) }
 
     desc "arms FIXTURE", "Compare the four orchestration arms live over an ArmTasks fixture " \
                          "-- spends real API money"

@@ -119,11 +119,11 @@ RSpec.describe "the gold retrieval corpus" do
     expect(item_ids.uniq.size).to eq(item_ids.size)
   end
 
-  it "can separate the arms: at least 30 items and 10 queries spanning three classes" do
+  it "can separate the arms: at least 30 items and 10 queries spanning three classes and abstention" do
     expect(items.size).to be >= 30
     expect(queries.size).to be >= 10
     expect(queries.map { |query| query[:class] }.uniq.sort)
-      .to eq(%w[exact-lexical semantic-paraphrase wikilink-reachable])
+      .to eq(%w[abstention exact-lexical semantic-paraphrase wikilink-reachable])
   end
 
   it "is synthetic-only: no PHI-shaped content (patient names, MRNs, dates of birth)" do

@@ -96,10 +96,11 @@ module Lain
       # {Lain::CLI::Backend} nor the key gate.
       #
       # @param k [Integer] retrieval depth (recall@k)
+      # @param split [String] "dev" or "test"
       # @return [String] the Compare-style report; never printed here
-      # @raise [Refusal] on a k that is not a positive whole number
+      # @raise [Refusal] on a k that is not a positive whole number, or an unknown split
       # rubocop:disable-next Naming/MethodParameterName -- `k` is the pinned recall@k name.
-      def sweep_report(k: Sweep::DEFAULT_K) = Sweep.new(k: check_k(k)).report
+      def sweep_report(k: Sweep::DEFAULT_K, split: "dev") = Sweep.new(k: check_k(k), split: check_split(split)).report
 
       # The three orchestration arms (single-thread control, orchestrator-worker,
       # dual-ledger) over the ArmTasks suite, replayed offline through committed
@@ -721,6 +722,12 @@ module Lain
         raise Refusal, "k must be at least 1; recall@#{depth} retrieves nothing" if depth < 1
 
         depth
+      end
+
+      def check_split(split)
+        return split if Sweep::SPLITS.include?(split)
+
+        raise Refusal, "split must be one of #{Sweep::SPLITS.join(", ")}, got #{split.inspect}"
       end
 
       def prompts_from(taskfile)

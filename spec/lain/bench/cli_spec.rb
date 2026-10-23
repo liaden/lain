@@ -305,6 +305,15 @@ RSpec.describe Lain::Bench::CLI do
     it "refuses a fractional k rather than silently truncating recall@2.5 to recall@2" do
       expect { cli.sweep_report(k: 2.5) }.to raise_error(described_class::Refusal, /whole number/)
     end
+
+    it "refuses an unknown split with a Refusal, not a deep ArgumentError" do
+      expect { cli.sweep_report(split: "foo") }
+        .to raise_error(described_class::Refusal, /split must be one of dev, test, got "foo"/)
+    end
+
+    it "passes the split through to the sweep" do
+      expect(cli.sweep_report(k: 5, split: "test")).to include("test split")
+    end
   end
 
   # An arm run leases its workers from the SAME `--isolation` resolver the chat
