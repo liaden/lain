@@ -64,7 +64,8 @@ RSpec.describe Lain::CLI::Repl::IdleCompaction, :seam do
   def types = journal_records(journal_io).map { |record| record["type"] }
 
   it "prepares on the tick, so the human's next line renders through the cut for free" do
-    4.times { |index| agent.ask("turn #{index} " * 20) }
+    # Long enough that a summary, recap frame included, is smaller than the turn it replaces.
+    4.times { |index| agent.ask("turn #{index} " * 40) }
     expect(summarizer.asks).to eq(0)
     clock.advance(Lain::Compaction::Source::IdleGate::FLOOR)
 

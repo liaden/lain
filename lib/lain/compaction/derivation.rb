@@ -293,7 +293,10 @@ module Lain
       Write = Data.define(:role, :content, :causal_parents) do
         def self.retaining(turn) = new(role: turn.role, content: turn.content, causal_parents: [])
 
-        def self.replacing(content, subsumed) = new(role: REPLACEMENT_ROLE, content:, causal_parents: subsumed)
+        def self.replacing(content, subsumed)
+          message = Recap.message(content)
+          new(role: message.fetch("role"), content: message.fetch("content"), causal_parents: subsumed)
+        end
 
         # What this write will render as once committed -- {Head}'s projection,
         # available BEFORE the Store is touched, which is what lets the chain be

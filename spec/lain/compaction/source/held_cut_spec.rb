@@ -140,8 +140,16 @@ RSpec.describe "Lain::Compaction::Source::HeldCut" do
       line = timeline(6)
       hand_off(line)
 
-      expect(on(line).messages.map { |message| message["content"].first["text"] })
-        .to eq(["the state document", block(6)["text"]])
+      expect(on(line).messages)
+        .to eq([Lain::Compaction::Recap.message([{ "type" => "text", "text" => "the state document" }]),
+                { "role" => "user", "content" => [block(6)] }])
+    end
+
+    it "reads the recorded document back for the next handoff without the recap frame" do
+      line = timeline(6)
+      hand_off(line)
+
+      expect(on(line).previous_document).to eq("the state document")
     end
 
     it "supersedes the cuts that held, so no earlier summary is rendered beside it" do
@@ -283,6 +291,13 @@ RSpec.describe "Lain::Compaction::Source::HeldCut" do
       end
     end
 
+    it "shows the held replacement bare in the held slot, with no recap frame" do
+      held = question[:held]
+
+      expect(held).to include("the replacement")
+      expect(held).not_to include(Lain::Compaction::Recap::PREAMBLE, Lain::Compaction::Recap::CLOSING)
+    end
+
     it "shows a turn inside a held collapse once, as its replacement" do
       shown = question.values.join
 
@@ -321,13 +336,14 @@ RSpec.describe "Lain::Compaction::Source::HeldCut" do
       expect(on(two_advances)).to be_collapsible
     end
 
-    it "shows the summarizer the held replacements, and the turns between them, as the stretch it collapses" do
+    it "shows the summarizer the held replacements bare, as the cuts recorded them, as the stretch it collapses" do
       line = two_advances
 
       stretch = on(line).stretch.messages
 
-      expect(stretch).to eq(on(line).messages.first(stretch.size))
-      expect(stretch.size).to eq(2)
+      expect(stretch.map { |message| message.fetch("content") })
+        .to eq(session.compaction_cuts.flat_map(&:collapses).map { |collapse| collapse.fetch("content") })
+      expect(Lain::Canonical.dump(stretch)).not_to include(Lain::Compaction::Recap::PREAMBLE, Lain::Compaction::Recap::CLOSING)
     end
 
     it "records a collapse cut that supersedes every cut it held, past the last of them" do
@@ -365,8 +381,9 @@ RSpec.describe "Lain::Compaction::Source::HeldCut" do
 
       expect(session.compaction_cuts.map(&:kind)).to eq(%w[advance advance collapse handoff])
       expect(session.compaction_cuts.last.supersedes).to eq([collapsed.address])
-      expect(on(line).messages.map { |message| message["content"].first["text"] })
-        .to eq(["the state document", block(8)["text"]])
+      expect(on(line).messages)
+        .to eq([Lain::Compaction::Recap.message([{ "type" => "text", "text" => "the state document" }]),
+                { "role" => "user", "content" => [block(8)] }])
     end
 
     it "records the advance past a collapse as the collapse's child" do

@@ -336,6 +336,8 @@ module Lain
 
         def covering(collapse) = self.class.indices(@at, collapse.fetch("span"))
 
+        # Bare, never in the recap frame: this feeds the summarizer, where a frame
+        # spends handoff budget and invites the tags into the recorded document.
         def replacement(collapse)
           { "role" => Derivation::REPLACEMENT_ROLE, "content" => collapse.fetch("content"),
             Oracle::Handoff::SUMMARY => true }
@@ -431,7 +433,7 @@ module Lain
           # @return [Derivation::Seam] the seam this stretch renders
           attr_reader :cut
 
-          # @return [Array<Hash>] the stretch as the model sees it now
+          # @return [Array<Hash>] the stretch as the summarizer is shown it, held replacements bare
           def messages = @shown.map(&:message)
 
           # @param policy [Strategy::Base] the run's collapse policy, asked

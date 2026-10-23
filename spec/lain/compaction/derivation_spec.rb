@@ -10,6 +10,10 @@ module DerivationFixtures
 
   def text(body) = { "type" => "text", "text" => body }
 
+  def recap(body) = Lain::Compaction::Recap.frame([text(body)])
+
+  def unframed(message) = RecapText.unframed(message.fetch("content")).join
+
   # `user` on even indices, which is both the shape a well-formed conversation
   # has and the one {Lain::Compaction::Boundary}'s backward search reads.
   # `roles:` cycles a different pattern -- `%w[user]` is the all-user history
@@ -100,7 +104,7 @@ RSpec.describe Lain::Compaction::Derivation do
 
       replacement = derived.to_a.first
       expect(replacement.role).to eq("user")
-      expect(replacement.content).to eq([fixtures.text("[6 messages summarized]")])
+      expect(replacement.content).to eq(fixtures.recap("[6 messages summarized]"))
       expect(replacement.causal_parents).to match_array(source.to_a[0...6].map(&:digest))
       expect(derived.length).to eq(source.length - 6 + 1)
     end
@@ -120,7 +124,7 @@ RSpec.describe Lain::Compaction::Derivation do
       folded = derived.to_a.each_with_index.select { |event, _| event.causal_parents.any? }
       expect(folded.map(&:last)).to eq([0, 2, 4])
       expect(folded.map { |event, _| event.causal_parents.size }).to eq([2, 2, 2])
-      expect(fixtures.projected(derived).map { |message| message.fetch("content").first.fetch("text") })
+      expect(fixtures.projected(derived).map { |message| fixtures.unframed(message) })
         .to eq(["[2 messages summarized]", "turn 2", "[2 messages summarized]", "turn 5",
                 "[2 messages summarized]", "turn 8", "turn 9", "turn 10", "turn 11", "turn 12"])
     end
@@ -269,6 +273,32 @@ RSpec.describe Lain::Compaction::Derivation do
         derived = described_class.new(strategy:, keep_last: 3).derive(source)
         expect(Lain::Context::Conversation.new(fixtures.projected(derived))).to be_valid
       end
+    end
+
+    it "frames the replacement of every shipped strategy in the recap preamble and end tag" do
+      answer = Struct.new(:summary) { def await = self }.new("a summary")
+      oracle = Class.new { define_method(:ask) { |_inputs| answer } }.new
+      strategies = [Lain::Compaction::Strategy::Elide.new, Lain::Compaction::Strategy::ElideToolObservations.new,
+                    Lain::Compaction::Strategy::Summarizing.new(oracle:),
+                    Lain::Compaction::Strategy::SummarizeConversation.new(oracle:)]
+
+      strategies.zip([fixtures.history(13), fixtures.tool_history, fixtures.history(13), fixtures.history(13)])
+                .each do |strategy, source|
+        derived = described_class.new(strategy:, keep_last: 3).derive(source)
+        replacements = derived.to_a.select { |event| event.causal_parents.any? }
+
+        expect(replacements).not_to be_empty, strategy.name
+        expect(replacements.map { |event| [event.content.first, event.content.last] })
+          .to all(eq([fixtures.text(Lain::Compaction::Recap::PREAMBLE), fixtures.text(Lain::Compaction::Recap::CLOSING)]))
+      end
+    end
+
+    it "records the strategy's own content in the seam, with no frame" do
+      source = fixtures.history(9)
+      seam = described_class.new(strategy: fixtures.summarizing, keep_last: 3).derive(source) { |_, frozen| frozen }
+
+      expect(seam.collapses.map { |collapse| collapse.fetch("content") })
+        .to eq([[fixtures.text("[6 messages summarized]")]])
     end
 
     it "refuses a strategy whose replacement would orphan a tool_result" do
@@ -484,7 +514,7 @@ RSpec.describe Lain::Compaction::Derivation do
 
         derived = derivation.derive(later, cut: seam_of(earlier)).to_a
 
-        expect(derived.first.content).to eq([fixtures.text("[6 messages summarized]")])
+        expect(derived.first.content).to eq(fixtures.recap("[6 messages summarized]"))
         expect(derived.first.causal_parents).to match_array(earlier.to_a[0..5].map(&:digest))
         expect(derived.drop(1).map(&:content)).to eq(later.to_a.drop(6).map(&:content))
       end
@@ -497,7 +527,7 @@ RSpec.describe Lain::Compaction::Derivation do
         derived, seam = derivation.derive(later, cut: seam_of(earlier)) { |chain, frozen| [chain.to_a, frozen] }
 
         expect(derived.map(&:content).first(2))
-          .to eq([[fixtures.text("[6 messages summarized]")], [fixtures.text("[3 messages summarized]")]])
+          .to eq([fixtures.recap("[6 messages summarized]"), fixtures.recap("[3 messages summarized]")])
         expect(derived[1].causal_parents).to match_array(later.to_a[6..8].map(&:digest))
         expect(seam).to have_same_digest_as(later.to_a[8])
         expect(seam.spans).to eq([[later.to_a[0].digest, later.to_a[5].digest],
@@ -520,7 +550,7 @@ RSpec.describe Lain::Compaction::Derivation do
         derived = described_class.new(strategy: Lain::Compaction::Strategy::Identity.new, keep_last: 3)
                                  .derive(later, cut: one).to_a
 
-        expect(derived.map(&:content).first(2)).to eq([[fixtures.text("both, again")], later.to_a[9].content])
+        expect(derived.map(&:content).first(2)).to eq([fixtures.recap("both, again"), later.to_a[9].content])
         expect(derived.first.causal_parents).to match_array(later.to_a[0..8].map(&:digest))
       end
 

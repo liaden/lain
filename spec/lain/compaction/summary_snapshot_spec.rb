@@ -224,7 +224,7 @@ RSpec.describe Lain::Compaction::SummarySnapshot do
       compacted = compact.call(messages)
 
       expect(compacted.size).to eq(2)
-      text = compacted.first.fetch("content").first.fetch("text")
+      text = RecapText.unframed(compacted.first.fetch("content")).join
       messages.first(3).each { |message| expect_attested(text, message) }
     end
   end

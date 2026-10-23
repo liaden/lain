@@ -43,6 +43,8 @@ RSpec.describe Lain::Compaction::Scheduler do
 
   def need(*signals) = Lain::Compaction::Need::Result.new(signals:)
 
+  def summary_content = Lain::Compaction::Recap.frame([{ "type" => "text", "text" => "SUMMARY" }])
+
   # Runs the scheduler's chosen pipeline against `messages` the way #render
   # would: resolve the provider for a workspace, then apply it.
   def rendered(pipeline, messages)
@@ -159,7 +161,7 @@ RSpec.describe Lain::Compaction::Scheduler do
       result = rendered(pipeline, history)
 
       expect(result.size).to be < history.size
-      expect(result).to include(a_hash_including("content" => [a_hash_including("text" => "SUMMARY")]))
+      expect(result).to include(a_hash_including("content" => summary_content))
       expect(records).to contain_exactly(
         a_hash_including("type" => "compaction", "trigger" => ["token_threshold"], "cache_state" => "forced")
       )
@@ -188,7 +190,7 @@ RSpec.describe Lain::Compaction::Scheduler do
       )
 
       expect(rendered(pipeline, history)).to include(
-        a_hash_including("content" => [a_hash_including("text" => "SUMMARY")])
+        a_hash_including("content" => summary_content)
       )
       expect(records.map { |r| r["cache_state"] }).to eq(["forced"])
     end

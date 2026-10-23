@@ -93,7 +93,8 @@ RSpec.describe "compaction cuts on the HUD", :seam do
     end
 
     it "counts the prepared cut on the HUD exactly as many times as the record holds cuts" do
-      4.times { |index| agent.ask("turn #{index} " * 20) }
+      # Long enough that a summary, recap frame included, is smaller than the turn it replaces.
+      4.times { |index| agent.ask("turn #{index} " * 40) }
       clock.advance(Lain::Compaction::Source::IdleGate::FLOOR)
       Lain::CLI::Repl::IdleCompaction.new(agent:, sink: StringIO.new, sleeper: ->(_seconds) {}).tick
 

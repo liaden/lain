@@ -44,7 +44,7 @@ module ElideToolObservationsFixtures
     Array.new(size) { rand < 0.5 ? message(tool_use(0), tool_result(0), role: "assistant") : message(text("hi")) }
   end
 
-  def texts(turn) = turn.content.map { |block| block["text"] }
+  def texts(turn) = RecapText.unframed(turn.content)
 end
 
 RSpec.describe Lain::Compaction::Strategy::ElideToolObservations do

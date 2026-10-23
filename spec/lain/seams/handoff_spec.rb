@@ -457,7 +457,8 @@ RSpec.describe "a handoff when no cut can make room", :seam do
     it "shows the summarizer the directive the handoff replaces" do
       chat = agent(directed)
       chat.ask(HandoffSeam::Directed::DIRECTIVE)
-      2.times { |index| chat.ask("follow-up #{index}") }
+      # Long enough that the advance's summary, recap frame included, is smaller than the stretch it replaces.
+      2.times { |index| chat.ask("follow-up #{index}: #{"the lazy dog slept. " * 20}") }
 
       chat.ask("#{HandoffSeam::Directed::OVERSIZED} so what is left to do?")
 

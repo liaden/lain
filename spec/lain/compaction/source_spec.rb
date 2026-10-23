@@ -260,7 +260,9 @@ RSpec.describe Lain::Compaction::Source do
   # MOVED A THIRD TIME, 85 -> 70: an attestation now carries a 12 character
   # digest, so the rewrite saves 59 bytes less per dropped message; the five
   # filler bodies went from 100 to 30 characters to give that back.
-  def neutral_pad = 70
+  # 238 rather than 70 because each rendered replacement carries the recap
+  # frame, bytes the rewrite adds.
+  def neutral_pad = 238
 
   def crossover_timeline(pad)
     bodies = (1..5).map { |index| "pad#{index}-#{"m" * 30}" } + ["Z" * pad, "tail-a", "tail-b"]
@@ -287,6 +289,8 @@ RSpec.describe Lain::Compaction::Source do
   end
 
   def messages_of(line) = line.to_a.map { |turn| { "role" => turn.role, "content" => turn.content } }
+
+  def recap_text(message) = RecapText.unframed(message["content"]).join
 
   def build_need(byte_threshold: 1_000_000, approaching_ratio: 0.9)
     Lain::Compaction::Need.new(byte_threshold:, approaching_ratio:)
@@ -360,7 +364,7 @@ RSpec.describe Lain::Compaction::Source do
       messages = render(context_for(built, line), line).messages
 
       expect(messages.size).to eq(keep_last + 1)
-      expect(messages.first["content"].first["text"]).to include("elided")
+      expect(recap_text(messages.first)).to include("elided")
     end
 
     it "journals the forced-warm cache state" do
@@ -896,7 +900,7 @@ RSpec.describe Lain::Compaction::Source do
       line = tool_timeline
       built = source(need: build_need(byte_threshold: 100), hard_cap: 100, eager: held_summaries("a held summary"))
 
-      text = render(context_for(built, line), line).messages.first["content"].first["text"]
+      text = recap_text(render(context_for(built, line), line).messages.first)
 
       expect(text).to include("a held summary")
     end
@@ -997,10 +1001,9 @@ RSpec.describe Lain::Compaction::Source do
       # `user`, fixed by the Open decisions ruling and never computed from the
       # history's parity: with nothing pinned the summary IS `messages[0]`, and
       # the Messages API requires that to be `user`.
-      summary = { "role" => "user",
-                  "content" => [{ "type" => "text",
-                                  "text" => Lain::Compaction::SummarySnapshot.new
-                                                                             .call(messages[0...-keep_last]) }] }
+      summary = Lain::Compaction::Recap.message(
+        [{ "type" => "text", "text" => Lain::Compaction::SummarySnapshot.new.call(messages[0...-keep_last]) }]
+      )
 
       context_for(built, line)
 
@@ -1110,6 +1113,18 @@ RSpec.describe Lain::Compaction::Source do
       expect(decisions.first).to include("would_not_shrink" => true)
     end
 
+    # The frame is bytes the prompt really carries, so a summary that saves less
+    # than the frame costs is no saving.
+    it "declines a span whose summary would save bytes only if the recap frame went uncounted" do
+      built, line = forcing(crossover_timeline(neutral_pad - 80))
+      block = [{ "type" => "text", "text" => "a summary" }]
+      frame = Lain::Canonical.dump(Lain::Compaction::Recap.frame(block)).bytesize - Lain::Canonical.dump(block).bytesize
+
+      expect(rewrite_delta(line) - frame).to be < 0
+      expect(context_for(built, line)).to equal(base)
+      expect(decisions.first).to include("would_not_shrink" => true)
+    end
+
     it "takes a rewrite that saves a single byte" do
       built, line = forcing(crossover_timeline(neutral_pad + 1))
 
@@ -1177,10 +1192,10 @@ RSpec.describe Lain::Compaction::Source do
       messages = render(context_for(forcing, line, session: pinning), line).messages
 
       expect(messages.size).to eq(keep_last + 4)
-      expect(messages[0]["content"].first["text"]).to include("elided")
+      expect(recap_text(messages[0])).to include("elided")
       expect(messages[1]["content"].first).to eq(block(2))
       expect(messages[2]["content"].first).to eq(block(3))
-      expect(messages[3]["content"].first["text"]).to include("elided")
+      expect(recap_text(messages[3])).to include("elided")
     end
 
     it "keeps the reply that answered a pinned prompt verbatim beside it" do
@@ -1199,7 +1214,7 @@ RSpec.describe Lain::Compaction::Source do
       pinning = session_pinning(digests_of(line)[1])
 
       messages = render(context_for(forcing, line, session: pinning), line).messages
-      attested = messages.values_at(0, 3).map { |message| message["content"].first["text"] }.join("\n")
+      attested = messages.values_at(0, 3).map { |message| recap_text(message) }.join("\n")
 
       expect(attested).not_to include(block(2)["text"])
       expect(attested.lines.grep(/^\[user |^\[assistant /).size).to eq(2)
@@ -1742,7 +1757,8 @@ RSpec.describe Lain::Compaction::Source do
       expect(cuts.size).to eq(1)
       expect(cuts.first).to include("digest" => line.to_a[3].digest, "head" => line.to_a[4].digest,
                                     "strategy" => built.collapse_strategy, "parent" => nil)
-      expect(cuts.first["collapses"].map { |collapse| collapse["content"] }).to eq([rendered.first["content"]])
+      expect(cuts.first["collapses"].map { |collapse| Lain::Compaction::Recap.frame(collapse["content"]) })
+        .to eq([rendered.first["content"]])
     end
 
     # The commit head is the turn below the asked prompt, because an ask
@@ -3644,7 +3660,8 @@ RSpec.describe Lain::Compaction::Source do
 
       expect(oracle.asks).to eq(asked)
       expect(cuts.size).to eq(1)
-      expect(messages.first["content"]).to eq(session.compaction_cuts.last.collapses.first["content"])
+      expect(messages.first["content"])
+        .to eq(Lain::Compaction::Recap.frame(session.compaction_cuts.last.collapses.first["content"]))
       expect(of_type("compaction_applied"))
         .to contain_exactly(include("cut_digest" => session.compaction_cuts.last.address,
                                     "head_digest" => prompted.head_digest))
@@ -3708,8 +3725,7 @@ RSpec.describe Lain::Compaction::Source do
       line = idle_timeline
       clock.advance(Lain::Compaction::Source::IdleGate::FLOOR)
       prepare(built, line)
-      replacement = { "role" => Lain::Compaction::Derivation::REPLACEMENT_ROLE,
-                      "content" => session.compaction_cuts.last.collapses.first["content"] }
+      replacement = Lain::Compaction::Recap.message(session.compaction_cuts.last.collapses.first["content"])
       rewound = at(line, 1)
 
       messages = render(context_for(built, rewound), rewound).messages

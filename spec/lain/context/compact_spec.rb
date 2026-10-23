@@ -28,8 +28,16 @@ RSpec.describe Lain::Context::Compact do
     result = compact.call(messages)
 
     expect(result.size).to eq(2)
-    expect(result.first["content"].first["text"]).to eq("summary of 3 turns")
+    expect(RecapText.unframed(result.first["content"])).to eq(["summary of 3 turns"])
     expect(result.last).to eq(messages.last)
+  end
+
+  it "frames its summary as a recap, in a user message whose first block is the recap preamble" do
+    summary = described_class.new(threshold: 10, keep_last: 1, summarizer:).call(messages).first
+
+    expect(summary).to eq(Lain::Compaction::Recap.message(text("summary of 3 turns")))
+    expect(summary["role"]).to eq("user")
+    expect(summary["content"].first).to eq(text(Lain::Compaction::Recap::PREAMBLE).first)
   end
 
   it "calls the summarizer with exactly the dropped messages" do
@@ -147,7 +155,7 @@ RSpec.describe Lain::Context::Compact do
       pins = Lain::Context::PinnedMessages.new([pinned])
       rendered = compacting(3, pins).call(history)
 
-      expect(rendered.first["content"].first["text"]).to start_with("summary of")
+      expect(RecapText.unframed(rendered.first["content"]).join).to start_with("summary of")
       expect(rendered[1]).to eq(pinned)
       expect(rendered.drop(2)).to eq(history.drop(history.index(pinned) + 1).last(rendered.size - 2))
     end

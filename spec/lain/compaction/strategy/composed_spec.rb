@@ -81,7 +81,7 @@ module ComposedFixtures
     end.new.freeze
   end
 
-  def texts(turn) = turn.content.map { |block| block["text"] }
+  def texts(turn) = RecapText.unframed(turn.content)
 end
 
 RSpec.describe Lain::Compaction::Strategy::Composed do

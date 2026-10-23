@@ -90,7 +90,7 @@ module Lain
       # requires that to be `user`; the boundary is what then guarantees the
       # tail can follow it.
       def summary(summarizable)
-        { "role" => "user", "content" => [{ "type" => "text", "text" => @summarizer.call(summarizable) }] }
+        Compaction::Recap.message([{ "type" => "text", "text" => @summarizer.call(summarizable) }])
       end
 
       # Survivors in POSITION -- select indices in order, `values_at` -- rather
