@@ -61,6 +61,7 @@ module Lain
       "fable" => 1_000_000,
       "mythos" => 1_000_000,
       "haiku" => 200_000,
+      "claude-haiku-5-5" => 1_000_000,
       "claude-opus-4-5" => 200_000,
       "claude-opus-4-1" => 200_000,
       "claude-sonnet-4-5" => 200_000,

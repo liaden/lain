@@ -24,26 +24,35 @@ module Lain
     # makes that a one-line edit under version control rather than a vendored
     # 1.4 MB table. Cache-write is Anthropic's 1.25x input, cache-read its 0.1x.
     #
-    # Reviewed 2026-08-18 against published list rates for the Opus 5/4.8/4.7/4.6
-    # family, Sonnet and Haiku 4.5. A row can carry prompt-size tiers and a daily
+    # Reviewed 2026-10-23 against published list rates for the Claude 5.5
+    # family, Fable 5.1 and Mythos 5.1, plus the Opus 5/4.8/4.7/4.6 family,
+    # Sonnet and Haiku 4.5. A row can carry prompt-size tiers and a daily
     # off-peak window, but not a rate that expires on a date or one chosen by a
-    # request flag. Three gaps, recorded rather than silently left wrong:
+    # request flag. Two gaps, recorded rather than silently left wrong:
     #
-    # * Sonnet carries an introductory $2/$10 per MTok through 2026-08-31 while
-    #   this table holds the $3/$15 list rate that takes over after; the
-    #   freshness lint is what catches this drifting behind a later change.
     # * `claude-fable-5` and `claude-mythos-5` have no row and deliberately raise
-    #   {UnknownModel} rather than matching a family token -- no rate was
-    #   verified, and a guessed row is worse than a loud refusal.
+    #   {UnknownModel} rather than matching a family token -- they are
+    #   unpriced pending a row of their own, and a guessed row is worse than a
+    #   loud refusal.
     # * Opus 5's fast mode bills a different rate for the SAME model id, under a
     #   request-level flag this table cannot see.
     #
-    # Each closes with an exact-model key, not by changing the family match;
-    # none is in the table yet.
+    # Each closes with an exact-model key, not by changing the family match.
     DEFAULTS = {
       "opus" => Price.per_mtok(input: 5, output: 25, cache_creation: 6.25, cache_read: 0.5),
       "sonnet" => Price.per_mtok(input: 3, output: 15, cache_creation: 3.75, cache_read: 0.3),
-      "haiku" => Price.per_mtok(input: 1, output: 5, cache_creation: 1.25, cache_read: 0.1)
+      "haiku" => Price.per_mtok(input: 1, output: 5, cache_creation: 1.25, cache_read: 0.1),
+      "claude-opus-5-5" => Price.per_mtok(input: 4, output: 20, cache_creation: 5, cache_read: 0.2),
+      "claude-sonnet-5-5" => Price.per_mtok(input: 2, output: 10, cache_creation: 2.5, cache_read: 0.1),
+      "claude-haiku-5-5" => Price.per_mtok(
+        input: 0.1, output: 0.5, cache_creation: 0.125, cache_read: 0.01,
+        tiers: [Price::Tier.new(
+          above_prompt_tokens: 100_000,
+          price: Price.per_mtok(input: 0.5, output: 2.5, cache_creation: 0.625, cache_read: 0.05)
+        )]
+      ),
+      "claude-fable-5-1" => Price.per_mtok(input: 10, output: 50, cache_creation: 12.5, cache_read: 0.25),
+      "claude-mythos-5-1" => Price.per_mtok(input: 10, output: 50, cache_creation: 12.5, cache_read: 0.25)
     }.freeze
 
     # @return [PriceBook] the bench's default map

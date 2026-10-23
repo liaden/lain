@@ -78,7 +78,8 @@ RSpec.describe Lain::ContextWindow do
       {
         "claude-opus-4-8" => 1_000_000,
         "claude-sonnet-4-6" => 1_000_000,
-        "claude-haiku-4-5" => 200_000
+        "claude-haiku-4-5" => 200_000,
+        "claude-haiku-5-5" => 1_000_000
       }.each do |model, real_window|
         it "still resolves current-generation #{model} to #{real_window}" do
           expect(book.window_tokens(model)).to eq(real_window)
@@ -226,6 +227,7 @@ RSpec.describe Lain::ContextWindow do
         claude-sonnet-5
         claude-sonnet-4-6
         claude-haiku-4-5
+        claude-haiku-5-5
         claude-opus-4-5
         claude-sonnet-4-20250514
         claude-fable-5
@@ -484,7 +486,8 @@ RSpec.describe Lain::ContextWindow do
         "claude-opus-4-1" => 200_000,
         "claude-sonnet-4-5" => 200_000,
         "claude-sonnet-4-20250514" => 200_000,
-        "claude-3-5-sonnet" => 200_000
+        "claude-3-5-sonnet" => 200_000,
+        "claude-haiku-5-5" => 1_000_000
       }.each do |model, window|
         it "answers #{model} with an unmoved #{window}, still published" do
           resolution = book.resolve(model)
@@ -494,11 +497,11 @@ RSpec.describe Lain::ContextWindow do
         end
       end
 
-      it "carries exactly those ten rows in its Anthropic half" do
+      it "carries exactly those eleven rows in its Anthropic half" do
         expect(described_class::ANTHROPIC_WINDOWS.keys).to contain_exactly(
           "opus", "sonnet", "fable", "mythos", "haiku", "claude-opus-4-5",
           "claude-opus-4-1", "claude-sonnet-4-5", "claude-sonnet-4-20250514",
-          "claude-3-5-sonnet"
+          "claude-3-5-sonnet", "claude-haiku-5-5"
         )
       end
     end

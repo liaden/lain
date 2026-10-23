@@ -76,6 +76,100 @@ RSpec.describe Lain::PriceBook do
     end
   end
 
+  describe "the Claude 5.5 family and Fable 5.1" do
+    subject(:book) { described_class.default }
+
+    {
+      "claude-opus-5-5" => [4, 20],
+      "claude-sonnet-5-5" => [2, 10],
+      "claude-fable-5-1" => [10, 50],
+      "claude-mythos-5-1" => [10, 50]
+    }.each do |model, (input, output)|
+      it "prices #{model} at $#{input} in and $#{output} out per million" do
+        expect(book.cost(model, usage(input: 1_000_000))).to eq(BigDecimal(input))
+        expect(book.cost(model, usage(output: 1_000_000))).to eq(BigDecimal(output))
+      end
+    end
+
+    it "prices Opus 5.5 cache writes at $5 and reads at $0.20 per million" do
+      expect(book.cost("claude-opus-5-5", usage(creation: 1_000_000))).to eq(BigDecimal("5"))
+      expect(book.cost("claude-opus-5-5", usage(read: 1_000_000))).to eq(BigDecimal("0.2"))
+    end
+
+    it "bills Haiku 5.5 at $0.10 per million for a prompt of 90,000 tokens" do
+      expect(book.rate("claude-haiku-5-5", usage(input: 90_000)).input).to eq(BigDecimal("0.1") / 1_000_000)
+    end
+
+    it "bills Haiku 5.5 at $0.50 in and $2.50 out per million for a prompt of 150,000 tokens" do
+      rate = book.rate("claude-haiku-5-5", usage(input: 150_000))
+      expect(rate.input).to eq(BigDecimal("0.5") / 1_000_000)
+      expect(rate.output).to eq(BigDecimal("2.5") / 1_000_000)
+    end
+
+    {
+      "claude-opus-5-5" => [5, "0.2"],
+      "claude-sonnet-5-5" => [2.5, "0.1"],
+      "claude-fable-5-1" => [12.5, "0.25"],
+      "claude-mythos-5-1" => [12.5, "0.25"]
+    }.each do |model, (write, read)|
+      it "prices #{model} cache writes at $#{write} and reads at $#{read} per million" do
+        expect(book.cost(model, usage(creation: 1_000_000))).to eq(BigDecimal(write.to_s))
+        expect(book.cost(model, usage(read: 1_000_000))).to eq(BigDecimal(read))
+      end
+    end
+
+    it "prices Haiku 5.5 cache at $0.125 and $0.01 per million in its base tier" do
+      expect(book.rate("claude-haiku-5-5", usage(creation: 50_000, read: 50_000)))
+        .to have_attributes(cache_creation: BigDecimal("0.125") / 1_000_000, cache_read: BigDecimal("0.01") / 1_000_000)
+    end
+
+    it "prices Haiku 5.5 cache at $0.625 and $0.05 per million above 100,000 tokens" do
+      expect(book.rate("claude-haiku-5-5", usage(creation: 100_001)))
+        .to have_attributes(cache_creation: BigDecimal("0.625") / 1_000_000, cache_read: BigDecimal("0.05") / 1_000_000)
+    end
+
+    it "keeps a prompt of exactly 100,000 tokens in Haiku 5.5's low tier" do
+      expect(book.rate("claude-haiku-5-5", usage(input: 100_000)).input).to eq(BigDecimal("0.1") / 1_000_000)
+    end
+
+    it "moves a prompt of 100,001 tokens into Haiku 5.5's high tier" do
+      expect(book.rate("claude-haiku-5-5", usage(input: 100_001)).input).to eq(BigDecimal("0.5") / 1_000_000)
+    end
+
+    it "counts cache reads toward Haiku 5.5's prompt size" do
+      expect(book.rate("claude-haiku-5-5", usage(input: 10_000, read: 95_000)).input)
+        .to eq(BigDecimal("0.5") / 1_000_000)
+    end
+
+    it "keeps the older families at their own rates" do
+      expect(book.cost("claude-opus-4-8", usage(input: 1_000_000))).to eq(BigDecimal("5"))
+      expect(book.cost("claude-opus-4-8", usage(output: 1_000_000))).to eq(BigDecimal("25"))
+      expect(book.cost("claude-haiku-4-5", usage(input: 1_000_000))).to eq(BigDecimal("1"))
+      expect(book.cost("claude-haiku-4-5", usage(output: 1_000_000))).to eq(BigDecimal("5"))
+    end
+
+    it "still refuses the unpriced fable 5 and mythos 5" do
+      expect { book.price("claude-fable-5") }.to raise_error(described_class::UnknownModel)
+      expect { book.price("claude-mythos-5") }.to raise_error(described_class::UnknownModel)
+    end
+  end
+
+  describe "the shipped table against the freshness lint" do
+    let(:source) { File.read(File.expand_path("../../lib/lain/price_book.rb", __dir__)) }
+
+    it "passes on 2026-10-23" do
+      expect(PriceFreshnessLinter.check(source:, path: "price_book.rb", today: Date.new(2026, 10, 23)).ok?).to be(true)
+    end
+
+    it "passes on 2027-01-21" do
+      expect(PriceFreshnessLinter.check(source:, path: "price_book.rb", today: Date.new(2027, 1, 21)).ok?).to be(true)
+    end
+
+    it "fails on 2027-01-22" do
+      expect(PriceFreshnessLinter.check(source:, path: "price_book.rb", today: Date.new(2027, 1, 22)).ok?).to be(false)
+    end
+  end
+
   describe "#rate" do
     it "answers a flat Price at the tier the prompt reaches" do
       tier = Lain::Price.per_mtok(input: 0.50, output: 2.50, cache_creation: 0, cache_read: 0)
