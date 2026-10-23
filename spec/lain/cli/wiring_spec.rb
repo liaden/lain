@@ -1249,6 +1249,13 @@ RSpec.describe Lain::CLI::Wiring do
         expect([".env.local", "lib/lain.rb"].map { |path| surface.mine?(parked.call(path)) }).to eq([true, false])
       end
 
+      it "audits 5 percent of confident approves with a real random source" do
+        surface = wiring.secret_surface(backend)
+
+        expect([surface.instance_variable_get(:@audit_rate), surface.instance_variable_get(:@random)])
+          .to match([0.05, a_kind_of(Random)])
+      end
+
       it "memoizes it, so the Repl and any later reader share one surface and one journal fd" do
         expect(wiring.secret_surface(backend)).to be(wiring.secret_surface(backend))
       end

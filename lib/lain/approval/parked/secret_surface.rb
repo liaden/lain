@@ -67,6 +67,12 @@ module Lain
         # withheld beside the ones it applied.
         DEFERRED_TYPE = "approval_surface_deferred"
 
+        # A sampled share of confident approves is left to the human, so the
+        # oracle's approvals are checked against a person's answer.
+        DEFAULT_AUDIT_RATE = 0.05
+
+        AUDIT_RULE = "audit sample"
+
         # Shown only a region count, the oracle cannot tell a token a named
         # pattern recognised from one only entropy flagged, so it may never
         # release the first kind.
@@ -91,13 +97,18 @@ module Lain
         # @param ask_timeout [Numeric] seconds one oracle call may take
         #   ({DEFAULT_ASK_TIMEOUT}). Every other keyword forwards to
         #   {QueueSurface} -- `poll_interval:`, `pruning:`, `journal:`.
+        # @param audit_rate [Numeric] the fraction of otherwise-applied approves left
+        #   to the human ({DEFAULT_AUDIT_RATE}); a deny is never sampled.
+        # @param random [#rand] the sampling source, injected so a spec seeds it.
         # @param path_gate [#path_for, #verdict_for] which parked calls stopped at
         #   the path gate, before any region exists, and what the classifier says
         #   of each path; none by default, so a surface built without one judges
         #   regions only and never approves.
         def initialize(oracle:, threshold: DEFAULT_THRESHOLD, ask_timeout: DEFAULT_ASK_TIMEOUT,
-                       path_gate: PathGate::NONE, **)
+                       path_gate: PathGate::NONE, audit_rate: DEFAULT_AUDIT_RATE, random: Random.new, **)
           super(**)
+          @audit_rate = Float(audit_rate)
+          @random = random
           @path_gate = path_gate
           @oracle = oracle
           @threshold = Float(threshold)
@@ -152,8 +163,12 @@ module Lain
         def approve(pending, claimed)
           return journal_deferred(pending, PATTERN_RULE) if pattern_flagged?(pending)
 
-          pending.approve(surface: SURFACE) if approvable?(claimed, pending)
+          return unless approvable?(claimed, pending)
+
+          audited? ? journal_deferred(pending, AUDIT_RULE) : pending.approve(surface: SURFACE)
         end
+
+        def audited? = @random.rand < @audit_rate
 
         def pattern_flagged?(pending) = pending.outstanding.regions.any? { !_1.entropy? }
 

@@ -141,7 +141,8 @@ RSpec.describe Lain::Approval::Parked::PathGate do
 
     it "is claimed by the secret surface, which asks the oracle about the link and judges where it lands" do
       oracle = PathGateSpecSupport::ApprovingOracle.new
-      surface = Lain::Approval::Parked::SecretSurface.new(oracle:, threshold: 0.9, journal: [], path_gate: gate)
+      surface = Lain::Approval::Parked::SecretSurface.new(oracle:, threshold: 0.9, journal: [], path_gate: gate,
+                                                          audit_rate: 0.0)
 
       claimed, settled = park(surface)
 
@@ -175,7 +176,7 @@ RSpec.describe Lain::Approval::Parked::PathGate do
       read = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file", input: { "path" => path })
       surface = Lain::Approval::Parked::SecretSurface.new(oracle: PathGateSpecSupport::ApprovingOracle.new,
                                                           threshold: 0.9,
-                                                          journal: [], path_gate: gate)
+                                                          journal: [], path_gate: gate, audit_rate: 0.0)
       queue = Lain::Approval::Parked::Queue.new(journal: [], timeout: 0.5)
       Sync do |task|
         parked = task.async { queue.adjudicate(read, session) }

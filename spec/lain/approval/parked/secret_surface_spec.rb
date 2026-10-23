@@ -110,7 +110,7 @@ RSpec.describe Lain::Approval::Parked::SecretSurface do
   end
 
   def surface(tier, threshold: 0.8)
-    described_class.new(oracle: tier, threshold:, journal: journaled, path_gate:)
+    described_class.new(oracle: tier, threshold:, journal: journaled, path_gate:, audit_rate: 0.0)
   end
 
   # Park ONE gated call, sweep the surface over it once, and answer with the
@@ -133,6 +133,47 @@ RSpec.describe Lain::Approval::Parked::SecretSurface do
 
     expect(settled.approved?).to be(true)
     expect(settled.surface).to eq(described_class::SURFACE)
+  end
+
+  describe "the audit sample of confident approves" do
+    def audited(verdict, rate)
+      parked(described_class.new(oracle: oracle(verdict:, confidence: 0.99), journal: journaled, path_gate:,
+                                 audit_rate: rate))
+    end
+
+    it "leaves a sampled confident approve to the human and journals it as an audit sample" do
+      settled = audited("approve", 1.0)
+
+      expect(settled.surface).to eq(Lain::Approval::Parked::Queue::TIMEOUT_SURFACE)
+      expect(journaled.last).to include("type" => described_class::DEFERRED_TYPE, "verdict" => "approve",
+                                        "because" => "audit sample", "path" => path)
+      expect(described_class::AUDIT_RULE).to eq("audit sample")
+    end
+
+    it "never samples a confident deny" do
+      settled = audited("deny", 1.0)
+
+      expect([settled.approved?, settled.surface]).to eq([false, described_class::SURFACE])
+    end
+
+    it "samples 5 percent by default" do
+      expect(described_class::DEFAULT_AUDIT_RATE).to eq(0.05)
+      built = described_class.new(oracle: oracle(verdict: "approve", confidence: 0.99), journal: journaled,
+                                  path_gate:, random: Random.new(48))
+      queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 3)
+      settled = Sync do |task|
+        gated = Array.new(1000) do |i|
+          read = SecretSurfaceSpecSupport::Effect.new("read_file", { "path" => path }, "tu_#{i}")
+          task.async { queue.adjudicate(read, nil, outstanding:) }
+        end
+        gated.each { task.with_timeout(2) { queue.dequeue } }
+        built.sweep(queue)
+        gated.map { |park| task.with_timeout(5) { park.wait } }
+      end
+
+      left = settled.count { _1.surface == Lain::Approval::Parked::Queue::TIMEOUT_SURFACE }
+      expect(left).to be_between(30, 70)
+    end
   end
 
   describe "a region a named pattern flagged" do
