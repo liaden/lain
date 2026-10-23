@@ -203,9 +203,9 @@ module Lain
       # @param root [String] the project root
       # @return [Array<Hash>] every review open and close record on disk
       def self.prior_claims(paths, root:)
-        SessionJournals.new(dir: paths.session_dirs(root:, cwd: Dir.pwd),
-                            types: [Lain::Epic::ReviewOpened::JOURNAL_TYPE,
-                                    Lain::Epic::ReviewClosed::JOURNAL_TYPE]).to_a
+        SessionJournals.of(paths, Paths::Place.here(root),
+                           types: [Lain::Epic::ReviewOpened::JOURNAL_TYPE,
+                                   Lain::Epic::ReviewClosed::JOURNAL_TYPE]).to_a
       end
 
       private_class_method :mount, :worth_saying?, :unwired

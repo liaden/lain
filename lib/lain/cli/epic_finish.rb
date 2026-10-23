@@ -222,8 +222,8 @@ module Lain
 
         # FRESH per invocation, never memoized: {SessionJournals} caches its walk.
         def journals
-          SessionJournals.new(dir: @paths.session_dirs(root: @root, cwd: Dir.pwd),
-                              types: [Lain::Forge::Intent::JOURNAL_TYPE, Lain::Forge::Outcome::JOURNAL_TYPE])
+          SessionJournals.of(@paths, Paths::Place.here(@root),
+                             types: [Lain::Forge::Intent::JOURNAL_TYPE, Lain::Forge::Outcome::JOURNAL_TYPE])
         end
       end
 

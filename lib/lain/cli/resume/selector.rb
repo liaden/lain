@@ -35,7 +35,6 @@ module Lain
         #   directory its sessions are filed in
         def initialize(dir:)
           @dirs = Array(dir)
-          @dir = @dirs.join(", ")
         end
 
         # @param selector [String, nil]
@@ -168,7 +167,7 @@ module Lain
         end
 
         def newest
-          resumable_names.last or raise Refusal, "no sessions to resume under #{@dir}#{skipped}"
+          resumable_names.last or raise Refusal, "no sessions to resume under #{Paths.listing(@dirs)}#{skipped}"
         end
 
         # "No sessions" said about a directory the user can SEE files in is a
@@ -236,9 +235,9 @@ module Lain
           candidates = narrowed(matches)
           return candidates.first if candidates.size == 1
 
-          raise Refusal, "no session matching #{selector.inspect} under #{@dir}" if matches.empty?
+          raise Refusal, "no session matching #{selector.inspect} under #{Paths.listing(@dirs)}" if matches.empty?
 
-          raise Refusal, "#{selector.inspect} is ambiguous under #{@dir}: #{candidates.join(", ")}"
+          raise Refusal, "#{selector.inspect} is ambiguous under #{Paths.listing(@dirs)}: #{candidates.join(", ")}"
         end
 
         # An unloadable file never makes a prefix AMBIGUOUS: picking it could

@@ -79,7 +79,7 @@ RSpec.describe "the epic tier's project keying", :seam do
   def journal_dirs
     dirs = {}
     allow(Lain::CLI::SessionJournals).to receive(:new).and_wrap_original do |original, **kwargs|
-      dirs[@asking] = Array(kwargs[:dir])
+      dirs[@asking] = Array(kwargs[:dirs])
       original.call(**kwargs)
     end
     verbs.each do |name, verb|
@@ -121,7 +121,7 @@ RSpec.describe "the epic tier's project keying", :seam do
       in_subdirectory_of_a_project do |root, _sub|
         seen = nil
         allow(Lain::CLI::SessionJournals).to receive(:new).and_wrap_original do |original, **kwargs|
-          seen = Array(kwargs[:dir])
+          seen = Array(kwargs[:dirs])
           original.call(**kwargs)
         end
         mount_for(root).send(:prior_claims)
@@ -129,24 +129,6 @@ RSpec.describe "the epic tier's project keying", :seam do
 
         expect(seen).to include(chat_dir)
       end
-    end
-  end
-
-  # The verbs above are the ones a fixture can drive end to end; the rest of the
-  # readers (land's landings, submit's read-back, finish, the driver's records)
-  # are held to the same pair by what they hand SessionJournals.
-  describe "every reader of the session directories" do
-    it "hands its fold the directories Paths#session_dirs names, never one of them" do
-      lib = File.expand_path("../../../lib", __dir__)
-      folds = Dir.glob(File.join(lib, "**", "*.rb")).flat_map do |file|
-        File.readlines(file).grep(/(SessionJournals|ReadBack)\.new\(.*\bdir:/).map { |line| [file, line.strip] }
-      end
-      single = folds.reject { |_file, line| line.match?(/session_dirs\(|dir: dirs?\b|dir: @dir\b/) }
-
-      expect(folds).not_to be_empty
-      expect(single).to be_empty, "readers folding a single directory:\n#{single.map do |f, l|
-        "  #{f}: #{l}"
-      end.join("\n")}"
     end
   end
 

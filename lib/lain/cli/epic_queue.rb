@@ -110,7 +110,8 @@ module Lain
       # decision landed. Right for a one-shot CLI -- Thor builds a fresh one per
       # invocation, and `unknown_message` wants the same fold `find` just missed
       # in -- and why nothing here is offered as a long-lived object.
-      def dirs = @dirs ||= @paths.session_dirs(root: @root ||= Project::Resolver.default_project.root, cwd: Dir.pwd)
+      def root = @root ||= Project::Resolver.default_project.root
+      def dirs = @dirs ||= @paths.session_dirs(Paths::Place.here(root))
       def review = @review ||= Review.new(journals.to_a, now: @clock.call)
 
       # The journal-discovery contract lives in {SessionJournals}, so this
@@ -125,7 +126,7 @@ module Lain
       # listing's read is its own and never cached, so its tolerance cannot
       # reach the {#review} the deciding verbs read.
       def walk(damage)
-        SessionJournals.new(dir: dirs, types: [Lain::Epic::SignoffQueue::JOURNAL_TYPE, EVIDENCE_TYPE], damage:)
+        SessionJournals.new(dirs:, types: [Lain::Epic::SignoffQueue::JOURNAL_TYPE, EVIDENCE_TYPE], damage:)
       end
 
       def drain(digest, approved:, reason:)
@@ -218,7 +219,8 @@ module Lain
       # could parse might BE the deferral, and a lost deferral reads as drained.
       def empty_listing(slug, counts)
         about = slug.to_s.empty? ? "" : " for epic #{slug.to_s.inspect}"
-        "nothing parked for sign-off#{about} (folded #{counted(counts.files, "journal")} under #{dirs.join(", ")}: " \
+        folded = counted(counts.files, "journal")
+        "nothing parked for sign-off#{about} (folded #{folded} under #{Paths.listing(dirs)}: " \
           "#{counted(counts.lines, "line")}, #{counted(counts.records, "gate record")})"
       end
 

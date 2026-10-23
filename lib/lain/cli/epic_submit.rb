@@ -317,9 +317,11 @@ module Lain
       class ReadBack
         include Enumerable
 
-        def initialize(journal, dir:)
+        # @param journal [#record] where decisions are written
+        # @param readings [#call] a FRESH {SessionJournals} per call, which caches its walk
+        def initialize(journal, readings)
           @journal = journal
-          @dir = dir
+          @readings = readings
           @decided = []
         end
 
@@ -344,7 +346,7 @@ module Lain
           latest(digest)&.policy == Lain::Epic::SignoffQueue::DEFERRED_POLICY
         end
 
-        def each(&block) = SessionJournals.new(dir: @dir, types: [Lain::Epic::SignoffQueue::JOURNAL_TYPE]).each(&block)
+        def each(&block) = @readings.call.each(&block)
 
         private
 
@@ -666,7 +668,7 @@ module Lain
           @spike_journal.within(journal) do
             @tool_guard.within(epic_home) do
               settled(stage, submission, required, records,
-                      ReadBack.new(journal, dir: @paths.session_dirs(root: @root, cwd: Dir.pwd)))
+                      ReadBack.new(journal, -> { journals }))
             end
           end
         end
@@ -774,8 +776,7 @@ module Lain
       # same artifact twice, journaled two verdicts, and advanced the stage twice.
       # One object per process is a property of the executable, not of this class.
       def journals
-        SessionJournals.new(dir: @paths.session_dirs(root: @root, cwd: Dir.pwd),
-                            types: [Lain::Epic::SignoffQueue::JOURNAL_TYPE])
+        SessionJournals.of(@paths, Paths::Place.here(@root), types: [Lain::Epic::SignoffQueue::JOURNAL_TYPE])
       end
 
       # A second verdict over the partition's standing approval of these bytes

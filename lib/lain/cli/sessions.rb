@@ -21,14 +21,14 @@ module Lain
       #   empty state naming the directory searched
       def listing(all: false)
         names = session_names(all:)
-        return "no sessions recorded under #{dirs.join(", ")}" if names.empty?
+        return "no sessions recorded under #{Paths.listing(dirs)}" if names.empty?
 
         names.reverse.map { |name| Row.for(name:, path: Paths.session_file(name, dirs:)).to_s }.join("\n")
       end
 
       private
 
-      def dirs = @dirs ||= @paths.session_dirs(root: @project.root, cwd: @project.cwd)
+      def dirs = @dirs ||= @paths.session_dirs(@project)
 
       # Bench::CLI's discovery idiom: Dir.children (never glob-parsed), sorted
       # -- the filenames are UTC-timestamped, so lexicographic IS chronological.

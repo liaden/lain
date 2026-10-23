@@ -28,7 +28,11 @@ module Lain
   class Paths
     # All a session reader needs of a {Project}, for a caller that holds a root
     # and a cwd without one.
-    Place = Data.define(:root, :cwd)
+    Place = Data.define(:root, :cwd) do
+      # @return [Place] `root` with the process's working directory, for the epic
+      #   readers that key their journals on where they were started
+      def self.here(root) = new(root:, cwd: Dir.pwd)
+    end
 
     # A directory this class had to create and could not.
     class Unwritable < Error
@@ -292,11 +296,11 @@ module Lain
     # working directory, and a reader that looked at one would lose the other.
     # One place computes the pair so no reader can disagree with another.
     #
-    # @param root [String] the project root
-    # @param cwd [String] the working directory
+    # @param place [#root, #cwd] a {Project} or a {Place}
     # @return [Array<String>] one directory when the two keys are the same
-    def session_dirs(root:, cwd:)
-      [filing_dir(root:), sessions_dir(project: project_hash(cwd))].uniq
+    def session_dirs(place)
+      same = File.expand_path(place.cwd) == File.expand_path(place.root)
+      [place.root, *(place.cwd unless same)].map { |dir| sessions_dir(project: project_hash(dir)) }.uniq
     end
 
     # @param root [String] the project root
@@ -313,9 +317,20 @@ module Lain
 
     # @param dirs [Array<String>] session directories
     # @return [Array<String>] the basenames of every session file in them, oldest first
-    def self.session_names(dirs)
-      dirs.flat_map { |dir| Dir.children(dir) }.select { |name| name.end_with?(".ndjson") }.uniq.sort
+    def self.session_names(dirs) = dirs.flat_map { |dir| ndjson_in(dir) }.map { |path| File.basename(path) }.uniq.sort
+
+    # `Dir.children`, never a glob: a directory name carrying glob
+    # metacharacters is a name, not a pattern.
+    #
+    # @param dir [String] a session directory
+    # @return [Array<String>] the path of every session file in it
+    def self.ndjson_in(dir)
+      Dir.children(dir).select { |name| name.end_with?(".ndjson") }.map { |name| File.join(dir, name) }
     end
+
+    # @param dirs [Array<String>] session directories
+    # @return [String] them as a sentence names where it looked
+    def self.listing(dirs) = dirs.join(", ")
 
     # A chain's parent is named by basename alone, and a chat may have been
     # resumed from another directory than the one it was filed in; the stamp

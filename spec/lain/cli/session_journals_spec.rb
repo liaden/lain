@@ -17,9 +17,9 @@ require "tmpdir"
 #   4. ordered by `ts` ascending, with a STABLE tiebreak
 #   5. a file that cannot be read is named, never skipped
 RSpec.describe Lain::CLI::SessionJournals do
-  subject(:journals) { described_class.new(dir: @dir, types:) }
+  subject(:journals) { described_class.new(dirs: @dir, types:) }
 
-  let(:tolerant) { described_class.new(dir: @dir, types:, damage: described_class::Tolerate) }
+  let(:tolerant) { described_class.new(dirs: @dir, types:, damage: described_class::Tolerate) }
   let(:types) { %w[gate_decision gate_evidence] }
 
   around do |example|
@@ -41,6 +41,17 @@ RSpec.describe Lain::CLI::SessionJournals do
 
   def torn_decision = halved(padded("gate_decision"))
 
+  describe ".of" do
+    it "folds the directories Paths keys for the place it is handed" do
+      place = Lain::Paths::Place.new(root: "/root", cwd: "/cwd")
+      paths = instance_double(Lain::Paths, session_dirs: [@dir])
+      write("20260727T090000-1.ndjson", [record(type: "gate_decision", at: "2026-07-27T09:00:00Z", id: "a")])
+
+      expect(described_class.of(paths, place, types:).map { |r| r["id"] }).to eq(["a"])
+      expect(paths).to have_received(:session_dirs).with(place)
+    end
+  end
+
   describe "several directories" do
     it "folds a record held only by the second directory, ordered by time across both" do
       other = File.join(@dir, "other").tap { |dir| Dir.mkdir(dir) }
@@ -48,7 +59,7 @@ RSpec.describe Lain::CLI::SessionJournals do
       write("20260726T090000-2.ndjson", [record(type: "gate_decision", at: "2026-07-26T09:00:00Z", id: "b")],
             dir: other)
 
-      folded = described_class.new(dir: [@dir, other], types:)
+      folded = described_class.new(dirs: [@dir, other], types:)
 
       expect(folded.map { |r| r["id"] }).to eq(%w[b a])
       expect(folded.where).to eq("#{@dir}, #{other}")
@@ -97,7 +108,7 @@ RSpec.describe Lain::CLI::SessionJournals do
       write("20260728T090000-1.ndjson", [record(type: "gate_decision", at: "2026-07-28T09:00:00Z", id: "a")],
             dir: nested)
 
-      expect(described_class.new(dir: nested, types:).map { |r| r["id"] }).to eq(["a"])
+      expect(described_class.new(dirs: nested, types:).map { |r| r["id"] }).to eq(["a"])
     end
   end
 
@@ -142,7 +153,7 @@ RSpec.describe Lain::CLI::SessionJournals do
     it "refuses whichever types this reader keeps" do
       write("20260728T090000-1.ndjson", [misfiled])
 
-      expect { described_class.new(dir: @dir, types: ["landed"]).to_a }.to raise_error(described_class::Unreadable)
+      expect { described_class.new(dirs: @dir, types: ["landed"]).to_a }.to raise_error(described_class::Unreadable)
     end
 
     # It parsed, so it is not an unreadable line: it is counted apart, by the
@@ -412,7 +423,7 @@ RSpec.describe Lain::CLI::SessionJournals do
       write("20260728T090000-2.ndjson", [record(type: "gate_decision", at: same, id: "b1")])
 
       expect(ids).to eq(%w[a1 a2 b1])
-      expect(described_class.new(dir: @dir, types:).map { |r| r["id"] }).to eq(%w[a1 a2 b1])
+      expect(described_class.new(dirs: @dir, types:).map { |r| r["id"] }).to eq(%w[a1 a2 b1])
     end
   end
 

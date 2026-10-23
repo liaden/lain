@@ -149,10 +149,10 @@ module Lain
       # {Sessions}' discovery idiom: Dir.children, sorted -- the filenames are
       # UTC-timestamped, so lexicographic IS chronological.
       def newest_session
-        dirs = @paths.session_dirs(root: @project.root, cwd: @project.cwd)
+        dirs = @paths.session_dirs(@project)
         names = watchable(dirs)
         # No `path:` and no recorded sessions: nothing to tail, said loudly.
-        raise Error, "no sessions to watch under #{dirs.join(", ")}#{skipped(dirs)}" if names.empty?
+        raise Error, "no sessions to watch under #{Paths.listing(dirs)}#{skipped(dirs)}" if names.empty?
 
         Paths.session_file(names.last, dirs:)
       end

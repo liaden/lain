@@ -193,7 +193,7 @@ module Lain
 
       private
 
-      def dirs = @dirs ||= @paths.session_dirs(root: @project.root, cwd: @project.cwd)
+      def dirs = @dirs ||= @paths.session_dirs(@project)
 
       # An OPEN recording gets one salvage attempt before anything else runs.
       # {Salvager#close!} retroactively turns a crash whose writer is dead into an ordinary

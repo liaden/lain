@@ -672,7 +672,7 @@ module Lain
         # directory's (where `lain epic submit` writes), or a verdict submitted
         # from a subdirectory would be invisible to `status`.
         # Pinned by spec/lain/seams/epic_project_keying_seam_spec.rb.
-        def walk = @walk ||= SessionJournals.new(dir: @paths.session_dirs(root: @root, cwd: Dir.pwd), types: epic_types)
+        def walk = @walk ||= SessionJournals.of(@paths, Paths::Place.here(@root), types: epic_types)
 
         # The list bounds WHAT GETS MATERIALIZED, not what gets believed.
         # Ordering has to sort, so without this filter every record of every

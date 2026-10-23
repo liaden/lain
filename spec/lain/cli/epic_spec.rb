@@ -597,7 +597,7 @@ RSpec.describe Lain::CLI::Epic do
   # epic indistinguishable. Printing the folded directories is what makes the
   # partition visible in the one place a user is already looking.
   describe "the session directories the projection folded" do
-    let(:folded) { paths.session_dirs(root:, cwd: Dir.pwd).join(", ") }
+    let(:folded) { Lain::Paths.listing(paths.session_dirs(Lain::Paths::Place.here(root))) }
 
     it "prints them beside the home, so two runs reporting differently can be told apart" do
       write_epic("alpha", graph_of(issue("a1")))

@@ -56,7 +56,7 @@ module Lain
         def self.lineage_fresh(paths, project, resumed, faults)
           return Shell::Executable::Fresh.for_lineage([], faults:) if resumed.nil?
 
-          dirs = paths.session_dirs(root: project.root, cwd: project.cwd)
+          dirs = paths.session_dirs(project)
           chain = Resume::ChainWalk.new(paths:, dirs:).paths(Paths.session_file(resumed.file, dirs:))
           Shell::Executable::Fresh.for_lineage(chain, faults:)
         rescue Resume::Refusal, SystemCallError => e

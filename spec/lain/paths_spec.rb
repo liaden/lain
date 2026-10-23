@@ -571,12 +571,22 @@ RSpec.describe Lain::Paths do
 
     def key(dir) = store.container("sessions", key: store.project_hash(dir))
 
+    it "names the directories it folded in one phrase" do
+      expect(described_class.listing(%w[/a /b])).to eq("/a, /b")
+    end
+
     it "answers the root's directory first, then the working directory's" do
-      expect(store.session_dirs(root: "/", cwd: "/tmp")).to eq([key("/"), key("/tmp")])
+      expect(store.session_dirs(Lain::Paths::Place.new(root: "/", cwd: "/tmp"))).to eq([key("/"), key("/tmp")])
     end
 
     it "answers one directory when the working directory is the root" do
-      expect(store.session_dirs(root: "/tmp", cwd: "/tmp").length).to eq(1)
+      expect(store.session_dirs(Lain::Paths::Place.new(root: "/tmp", cwd: "/tmp")).length).to eq(1)
+    end
+
+    it "keys the working directory by where the process stands when asked for the epic readers' pair" do
+      allow(Dir).to receive(:pwd).and_return("/tmp")
+
+      expect(store.session_dirs(Lain::Paths::Place.here("/"))).to eq([key("/"), key("/tmp")])
     end
 
     it "files a chat under its root's directory alone" do

@@ -39,7 +39,7 @@ module Lain
       # @raise [SessionNotFound] naming every candidate, so a typo against a
       #   session dir the user did not expect is diagnosable from the message
       def self.resolve(selector, paths:, project:)
-        tried = candidates(selector, paths.session_dirs(root: project.root, cwd: project.cwd))
+        tried = candidates(selector, paths.session_dirs(project))
         tried.find { |candidate| File.file?(candidate) } ||
           raise(SessionNotFound, "no session found for #{selector.inspect} -- looked at #{tried.join(", ")}")
       end
