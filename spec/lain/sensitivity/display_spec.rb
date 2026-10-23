@@ -47,6 +47,16 @@ RSpec.describe Lain::Sensitivity::Display do
     expect(channel.events.map(&:bytes).join).to eq("<redacted:1>\n")
   end
 
+  it "masks a value history holds at a sensitive path" do
+    history = instance_double(Lain::Sensitivity::HistoryLiterals, to_a: ["48291377"])
+    display = described_class.new(child_env: Lain::Exec::ChildEnv.new(env: {}), history:)
+    sink = display.sinks(invocation_on(channel)).fetch(:stdout_sink)
+    sink << "ADMIN_PIN=48291377\n"
+    sink.flush
+
+    expect(channel.events.map(&:bytes).join).to eq("ADMIN_PIN=<redacted:1>\n")
+  end
+
   describe "masked live streaming through bash" do
     let(:environment) { ENV.to_h.merge("FOO" => token) }
     let(:child_env) { Lain::Exec::ChildEnv.new(pass: %w[FOO], env: environment) }

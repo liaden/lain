@@ -1360,6 +1360,33 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       end
     end
 
+    describe "a value a gitignored sensitive file holds" do
+      subject(:middleware) { described_class.new(ledger:, queue:, journal:, child_env:, history:) }
+
+      let(:history) { Lain::Sensitivity::HistoryLiterals.new(root: dir, policy:) }
+      let(:policy) do
+        Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home: File.join(dir, "home"), cwd: dir,
+                                                                         rules: Lain::Sensitivity::Rules.empty,
+                                                                         root: dir),
+                                      root: dir)
+      end
+
+      before do
+        SeedRepo.git(dir, "init", "-q")
+        write(".gitignore", ".env.local\n")
+        write(".env.local", "GREETING=correct horse battery\n")
+      end
+
+      it "masks it, though no detector shape names it" do
+        expect(Lain::Sensitivity::Regions.detect("GREETING=correct horse battery\n")).to be_empty
+
+        result = bash("echo 'GREETING=correct horse battery'")
+
+        expect(result.content).to include("--- stdout ---\nGREETING=<redacted:1>\n")
+        expect(result.content).not_to include("correct horse battery")
+      end
+    end
+
     it "says so, and journals nothing, when the output holds only placeholders" do
       result = bash("echo '<redacted:1>'")
 

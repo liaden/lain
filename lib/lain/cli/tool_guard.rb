@@ -117,10 +117,13 @@ module Lain
       # is what the chat's config.rb files registered; a run with no chat
       # reads no config, which is its default. `denied_tools` are the tools its
       # config refuses outright, which the gate refuses whatever their tier.
+      # `history` is what the project's sensitive paths hold in git history; a
+      # run with no project reads none.
       Inputs = Data.define(:ledger, :approvals, :sensitivity, :test_layout, :policy, :policy_for, :denial, :bar,
-                           :scope, :middleware, :child_env, :denied_tools) do
+                           :scope, :middleware, :child_env, :denied_tools, :history) do
         def initialize(scope: UNSCOPED, middleware: Config::Middleware.empty,
-                       child_env: Exec::ChildEnv::DEFAULT, denied_tools: Set[].freeze, **)
+                       child_env: Exec::ChildEnv::DEFAULT, denied_tools: Set[].freeze,
+                       history: Lain::Sensitivity::HistoryLiterals::Null, **)
           super
         end
       end
@@ -699,7 +702,7 @@ module Lain
         { ledger: inputs.ledger,
           queue: inputs.approvals || Middleware::RedactSecretReads::Unqueued.instance,
           journal: chronicle.instrumentation.journal, related: inputs.sensitivity,
-          child_env: inputs.child_env }
+          child_env: inputs.child_env, history: inputs.history }
       end
 
       # The journal is READ off the chronicle's {Agent::Instrumentation}, whose

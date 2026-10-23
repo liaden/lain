@@ -23,4 +23,11 @@ RSpec.describe Lain::Sensitivity::Secrets do
 
     expect(described_class.for(child_env:, context: nil)).to include(token)
   end
+
+  it "lists the values history holds at sensitive paths beside the environment's" do
+    history = instance_double(Lain::Sensitivity::HistoryLiterals, to_a: ["48291377-history"])
+    child_env = Lain::Exec::ChildEnv.new(pass: %w[FOO], env: { "FOO" => token })
+
+    expect(described_class.for(child_env:, context: nil, history:)).to include(token, "48291377-history")
+  end
 end

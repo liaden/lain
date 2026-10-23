@@ -331,7 +331,7 @@ ThreadSafety/ClassInstanceVariable:
     - "lib/lain/tool/contracts.rb"
     - "lib/lain/tool/input.rb"
 
-# The ten deliberate thread groups, and they have four legitimate owners.
+# The eleven deliberate thread groups, and they have four legitimate owners.
 #
 # Four are the frontend's: the neovim RPC drain/resend pair and its rpc_thread, the
 # TTY reader, and prompt_breaker's watchdog -- each a supervised reader
@@ -377,6 +377,12 @@ ThreadSafety/ClassInstanceVariable:
 # command once it fills, so the pump drains every stage's pipe alongside the run. The call
 # stops and joins it before returning, and closes every pipe in its own ensure.
 #
+# The eleventh is Sensitivity::HistoryLiterals#prime, one thread per session that reads
+# the sensitive paths of the project's git history once at board build. On a large
+# history that first read costs a second or more, and run on the first bash call it would
+# stall the model's turn. The thread touches only the reader's own state, under its
+# mutex, and #to_a joins it and re-raises what it raised, so an error is never silent.
+#
 # Specs spawn threads to TEST concurrency -- channel_spec's drop-oldest races are the
 # subject, not an accident -- so spec/ is excluded wholesale.
 ThreadSafety/NewThread:
@@ -391,6 +397,7 @@ ThreadSafety/NewThread:
     - "lib/lain/frontend/neovim/rpc_thread.rb"
     - "lib/lain/frontend/tty.rb"
     - "lib/lain/provider/http/streaming/faraday_handlers.rb"
+    - "lib/lain/sensitivity/history_literals.rb"
     - "lib/lain/tool/offload.rb"
     - "spec/**/*"
 

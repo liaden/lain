@@ -20,8 +20,10 @@ module Lain
     class Display
       # @param child_env [Exec::ChildEnv] the launch's child environment, the
       #   one the result masker is built from
-      def initialize(child_env:)
+      # @param history [#to_a] the project's history values, the result masker's too
+      def initialize(child_env:, history: HistoryLiterals::Null)
         @child_env = child_env
+        @history = history
       end
 
       # @param invocation [Tool::Invocation] the call whose output is shown
@@ -29,7 +31,8 @@ module Lain
       def sinks(invocation)
         return Null::SINKS if invocation.channel.is_a?(Channel::Null)
 
-        mask = TextMask.new(secrets: Secrets.for(child_env: @child_env, context: invocation.context))
+        mask = TextMask.new(secrets: Secrets.for(child_env: @child_env, context: invocation.context,
+                                                 history: @history))
         ordinals = (1..).each
         %i[stdout stderr].to_h do |stream|
           adapter = Sink::IOAdapter.new(invocation.channel, tool_use_id: invocation.tool_use_id, stream:)

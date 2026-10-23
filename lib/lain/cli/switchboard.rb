@@ -110,6 +110,8 @@ module Lain
       # @param child_env [Exec::ChildEnv] the launch's, which the result masker and the live display read;
       #   the process default by default
       # @param denied_tools [Enumerable<String>] the tools the trusted config refuses with `deny_tool`; none by default
+      # @param history [#to_a] what the project's sensitive paths hold in git history, which the result
+      #   masker and the live display read; none by default
       # @option options [Boolean] :non_interactive no human is at this
       #   session's terminal
       # @option options [String] :approval the session starts at this approval
@@ -122,10 +124,10 @@ module Lain
                    verdict: Lain::Shell::Verdict.new, spike: Scoping::NOWHERE, middleware: Config::Middleware.empty,
                    approval_timeout: Approval::Parked::Queue::DEFAULT_TIMEOUT, display: Channel::Null.instance, arms: Arms::OFF,
                    request: Approval::Judge::Unrequested, child_env: Exec::ChildEnv::DEFAULT,
-                   denied_tools: Set[].freeze)
+                   denied_tools: Set[].freeze, history: Sensitivity::HistoryLiterals::Null)
         new(journal: chronicle.record_journal, model:, toolset:, rules:, approving:, sensitivity:, classifiers:,
             verdict:, test_layout:, spike:, middleware:, approval_timeout:, judge:, display:, arms:, request:,
-            child_env:, denied_tools:,
+            child_env:, denied_tools:, history:,
             # A resumed session starts at the launch flag's approval, not its last recorded mode.
             attended: !options[:non_interactive], approval: options.fetch(:approval, :ask))
       end
@@ -149,7 +151,7 @@ module Lain
 
       # @return [Sensitivity::Display] the chat's live mask, over the child
       #   environment its result masker is built from
-      def live_display = Sensitivity::Display.new(child_env: guard_inputs.child_env)
+      def live_display = Sensitivity::Display.new(child_env: guard_inputs.child_env, history: guard_inputs.history)
 
       delegate :ledger, :sensitivity, :test_layout, to: :guard_inputs
 
@@ -231,6 +233,7 @@ module Lain
       # @param request [#call] as on {.for}; none by default
       # @param child_env [Exec::ChildEnv] as on {.for}; the process default by default
       # @param denied_tools [Enumerable<String>] as on {.for}; none by default
+      # @param history [#to_a] as on {.for}; none by default
       def initialize(journal:, model:, toolset:, rules: [], approving: REMEMBERED,
                      sensitivity: Sensitivity::Policy::Null.instance,
                      classifiers: Approval::Escalation::Triage::AnyPath.new,
@@ -238,7 +241,8 @@ module Lain
                      attended: true, approval: :ask, layers: [], spike: Scoping::NOWHERE, middleware: Config::Middleware.empty,
                      approval_timeout: Approval::Parked::Queue::DEFAULT_TIMEOUT, judge: DEFERRING,
                      display: Channel::Null.instance, arms: Arms::OFF, request: Approval::Judge::Unrequested,
-                     child_env: Exec::ChildEnv::DEFAULT, denied_tools: Set[].freeze)
+                     child_env: Exec::ChildEnv::DEFAULT, denied_tools: Set[].freeze,
+                     history: Sensitivity::HistoryLiterals::Null)
         @attended = attended
         @display = display
         @journal = journal
@@ -256,7 +260,7 @@ module Lain
         @guard_inputs = ToolGuard::Inputs.new(ledger: Sensitivity::Ledger.new, approvals: @approvals, sensitivity:,
                                               test_layout:, policy: @policy_switch, policy_for: method(:policy_for),
                                               denial:, bar: Middleware::WithholdAutomaticOutput::Bar.new,
-                                              scope: @scoping, middleware:, child_env:, denied_tools:)
+                                              scope: @scoping, middleware:, child_env:, denied_tools:, history:)
       end
 
       # The main agent's context grafted over the live model slot -- the ONLY

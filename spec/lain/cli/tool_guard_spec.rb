@@ -1227,6 +1227,24 @@ RSpec.describe Lain::CLI::ToolGuard do
     end
   end
 
+  describe "the history the result masker reads" do
+    let(:history) { instance_double(Lain::Sensitivity::HistoryLiterals, to_a: []) }
+
+    it "is the one the board's inputs carry" do
+      board = Lain::CLI::Switchboard.new(journal:, model: "m", toolset: Lain::Toolset.new([]), history:)
+
+      expect(board.guard_inputs.history).to be(history)
+      expect(read_guard(board).history).to be(history)
+    end
+
+    it "is the null history for a detached run" do
+      stack = described_class.detached(journal:).call(Lain::WorkerEnv.default)
+
+      expect(stack.to_a.grep(Lain::Middleware::RedactSecretReads).first.history)
+        .to be(Lain::Sensitivity::HistoryLiterals::Null)
+    end
+  end
+
   # Out of chat there is no board to borrow: the run builds its own, once, and
   # every child it spawns reads behind a stack over that one board.
   describe ".detached" do

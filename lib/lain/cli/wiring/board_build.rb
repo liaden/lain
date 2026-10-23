@@ -73,13 +73,15 @@ module Lain
           # in one command's argv lands.
           factory = classifiers(project:, paths:, table:, **identity)
           classes = arms.confine != :off
+          sensitivity = policy(project:, paths:, table:)
+          history = Lain::Sensitivity::HistoryLiterals.new(root: project.root, policy: sensitivity).prime
           Switchboard.for(chronicle:, options:, model:, toolset:, verdict:,
                           rules: [Lain::Approval::Remembered.from(config)].reject(&:empty?),
                           approving: ->(remembered, each) { approving(remembered, each, classes:) },
-                          sensitivity: policy(project:, paths:, table:), spike: PlanSpike.new(project:, paths:),
+                          sensitivity:, spike: PlanSpike.new(project:, paths:),
                           classifiers: factory, test_layout: test_layout(project:), middleware:,
                           approval_timeout: Config.approval_timeout(root: project.root), judge:, display:, arms:,
-                          request:, child_env:, denied_tools: config.approval.deny_tools)
+                          request:, child_env:, denied_tools: config.approval.deny_tools, history:)
         end
 
         # Where `/mode plan` confines this project's session: a spike worktree

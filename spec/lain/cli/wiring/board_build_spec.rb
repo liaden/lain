@@ -161,6 +161,21 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       end
     end
 
+    it "hands the board's guard stack a history over the project, already priming" do
+      in_tree do |root, home|
+        primed = []
+        allow(Lain::Sensitivity::HistoryLiterals).to receive(:new).and_wrap_original do |original, **kwargs|
+          original.call(**kwargs).tap do |history|
+            allow(history).to(receive(:prime).and_wrap_original { |prime| primed << history and prime.call })
+          end
+        end
+        board = board_for(root, home)
+
+        expect(primed).to eq([board.guard_inputs.history])
+        expect(Lain::Sensitivity::HistoryLiterals).to have_received(:new).with(root:, policy: board.sensitivity)
+      end
+    end
+
     it "hands the board the judge it is given, so auto approves what the judge approves" do
       in_tree do |root, home|
         judge = ->(**) { :approve }
@@ -415,6 +430,45 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
         board = board_for(root, home, verdict:)
 
         expect(board.ladder.first.instance_variable_get(:@verdict)).to be(verdict)
+      end
+    end
+  end
+
+  describe "a value git history holds at a sensitive path, on the production path", :seam do
+    def commit_then_delete_env(root)
+      SeedRepo.derived("board build: a deleted .env", into: root) do |dir|
+        File.write(File.join(dir, ".env"), "ADMIN_PIN=48291377\n")
+        SeedRepo.git(dir, "add", ".env")
+        SeedRepo.git(dir, "commit", "-q", "-m", "add env")
+        SeedRepo.git(dir, "rm", "-q", ".env")
+        SeedRepo.git(dir, "commit", "-q", "-m", "drop env")
+      end
+    end
+
+    def run_bash(board, command, channel:)
+      layers = Lain::CLI::ToolGuard.stack(Lain::CLI::ToolGuard::Journaled.new(journal:), board).to_a
+      handler = Lain::Effect::Handler::Live.new(channel:, display: board.live_display)
+      context = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: board.sensitivity.root, env: {}))
+      Sync do |task|
+        call = task.async do
+          dispatch_call("bash", { "command" => command }, toolset: board.toolset, layers:, handler:, context:)
+        end
+        task.with_timeout(5) { board.approvals.dequeue }.approve(surface: "tty", authority: :human)
+        call.wait
+      end
+    end
+
+    it "masks it in the tool result and on the live display alike" do
+      in_tree do |root, home|
+        commit_then_delete_env(root)
+        board = board_over(root, home)
+        channel = RecordingChannel.new
+
+        result = run_bash(board, "git --git-dir=.git show HEAD~1:.env", channel:)
+        shown = channel.events.map(&:bytes).join
+
+        expect([shown, result.content]).to all(include("ADMIN_PIN=<redacted:1>"))
+        expect([shown, result.content]).to all(satisfy { |text| !text.include?("48291377") })
       end
     end
   end
