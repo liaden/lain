@@ -240,7 +240,12 @@ module Lain
       # Only the newest attempt's commits, and none a gate denied: an older
       # attempt was superseded by the re-run, and a denial is not an invitation.
       def offerable(issue_id, candidates)
-        anchors = candidates.filter_map { |sha, ref| [sha, attempt_of(issue_id, ref)] if anchored_for?(issue_id, ref) }
+        stem = anchor_stem(issue_id)
+        pattern = attempt_pattern(stem)
+        anchors = candidates.filter_map do |sha, ref|
+          name = anchor_name(ref)
+          [sha, attempt_of(stem, pattern, name)] if anchored_for?(stem, pattern, name)
+        end
         newest = anchors.filter_map(&:last).max
         current = anchors.select { |_, attempt| newest.nil? || attempt == newest }
         current.map(&:first).uniq.reject { |sha| denied?(issue_id, sha) }
@@ -271,25 +276,23 @@ module Lain
       # Naming. Asking Naming for a sample ref gets its slugging of an odd id for
       # free; an epic slug holds no dot and the attempt is digits, so another id
       # cannot match.
-      def anchored_for?(issue_id, ref)
-        stem, name = anchor_parts(issue_id, ref)
+      def anchored_for?(stem, pattern, name)
         return name.start_with?(stem) if truncated?(stem)
 
-        name.match?(attempt_pattern(stem))
+        name.match?(pattern)
       end
 
       # nil when the slug was cut at SLUG_LIMIT: the attempt number went with
       # it, so such an anchor stays offered whatever the others' attempts are.
-      def attempt_of(issue_id, ref)
-        stem, name = anchor_parts(issue_id, ref)
-        truncated?(stem) ? nil : name[attempt_pattern(stem), 1]&.to_i
-      end
+      def attempt_of(stem, pattern, name) = truncated?(stem) ? nil : name[pattern, 1]&.to_i
 
-      def anchor_parts(issue_id, ref)
+      def anchor_stem(issue_id)
         naming = Isolation::Worktree::Handback::Naming
         sample = naming.new("issue.#{@epic_slug}.#{issue_id}.1").ref.delete_prefix("#{naming::REF_NAMESPACE}/")
-        [sample.sub(/-\h+\z/, ""), ref.to_s.delete_prefix("#{naming::REF_NAMESPACE}/")]
+        sample.sub(/-\h+\z/, "")
       end
+
+      def anchor_name(ref) = ref.to_s.delete_prefix("#{Isolation::Worktree::Handback::Naming::REF_NAMESPACE}/")
 
       def truncated?(stem) = stem.length >= Isolation::Worktree::Handback::Naming::SLUG_LIMIT
 
