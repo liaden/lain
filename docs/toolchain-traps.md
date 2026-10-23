@@ -398,6 +398,12 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   does 1 realpath per directory over a plain listing, with judge's verdicts` (156 `File.realpath` calls
   against at most 21; green 30 of 30 alone). That second one is a count, not a clock: the stub counts
   calls from every thread in the worker, so a thread an earlier example left running would inflate it.
+
+  Added 2026-10-23, a wall-clock bound red in 4 pre-commit suites in one plan run, at loads 28, 14, 6.8
+  and 0.7 (0.25 to 0.32 s against its 0.2 s bound), green alone each time and green in a full suite on the
+  base: `Lain::CredentialPatterns the credential assignment shape scans a 100 KB line in linear time for
+  each gated password shape`. Red at a load under 1 means the bound is too tight for a 12-worker suite,
+  not that the box was busy; it is a card to fix, not only a name to recognise.
 Unproven; counting only the example's own thread would settle it.
   Both are retired as of 2026-10-22, below.
 
