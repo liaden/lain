@@ -24,8 +24,9 @@ RSpec.describe Lain::Provider::AnthropicWire do
 
   let(:request) { Struct.new(:stream, :digest).new(true, "d1") }
 
-  def assembled(content:, usage: {}, id: "msg_1", model: "claude-opus-4-8", stop_reason: "end_turn")
-    Lain::Provider::Anthropic::StreamAssembler::Assembled.new(id:, model:, stop_reason:, content:, usage:)
+  def assembled(content:, usage: {}, id: "msg_1", model: "claude-opus-4-8", stop_reason: "end_turn", stop_details: nil)
+    Lain::Provider::Anthropic::StreamAssembler::Assembled.new(id:, model:, stop_reason:, content:, usage:,
+                                                              stop_details:)
   end
 
   describe "the hosted backend includes it" do
@@ -109,6 +110,21 @@ RSpec.describe Lain::Provider::AnthropicWire do
   end
 
   describe "#build_response" do
+    it "carries a refusal's stop_details onto the response and its failure message" do
+      details = { "type" => "refusal", "category" => "cyber", "explanation" => "no" }
+
+      response = includer.new.respond(assembled(content: [], stop_reason: "refusal", stop_details: details))
+
+      expect(response.stop_details).to eq(details)
+      expect(response.failure.message).to eq("model refused to continue (category: cyber)")
+    end
+
+    it "has no stop_details when the wire sent null" do
+      response = includer.new.respond(assembled(content: [], stop_details: nil))
+
+      expect(response.stop_details).to be_nil
+    end
+
     it "retains every block in order, thinking signatures included" do
       blocks = [{ "type" => "thinking", "thinking" => "...", "signature" => "sig" },
                 { "type" => "text", "text" => "hi" }]

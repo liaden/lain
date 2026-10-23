@@ -84,7 +84,8 @@ module Lain
         Response.new(id: assembled.id, model: assembled.model,
                      content: normalize_tool_inputs(assembled.content),
                      stop_reason: assembled.stop_reason,
-                     usage: Usage.from_anthropic_wire(assembled.usage), raw: assembled)
+                     usage: Usage.from_anthropic_wire(assembled.usage), raw: assembled,
+                     stop_details: assembled.stop_details)
       end
 
       def normalize_tool_inputs(content)

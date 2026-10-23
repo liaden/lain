@@ -68,6 +68,35 @@ RSpec.describe Lain::Response do
     end
   end
 
+  describe "stop_details" do
+    def refused(details) = described_class.new(content: [], stop_reason: :refusal, stop_details: details)
+
+    let(:details) { { "type" => "refusal", "category" => "cyber", "explanation" => "no" } }
+
+    it "is a frozen hash on a refusal, and the response stays shareable" do
+      response = refused(details)
+
+      expect(response.stop_details).to eq(details).and be_frozen
+      expect(Ractor.shareable?(response)).to be(true)
+    end
+
+    it "is nil for any other stop, whatever was passed" do
+      response = described_class.new(content: [], stop_reason: :end_turn, stop_details: details)
+
+      expect(response.stop_details).to be_nil
+      expect(Ractor.shareable?(response)).to be(true)
+    end
+
+    it "names the category in the failure message" do
+      expect(refused(details).failure.message).to eq("model refused to continue (category: cyber)")
+    end
+
+    it "keeps the plain message for a null category or no details" do
+      expect(refused({ "type" => "refusal", "category" => nil }).failure.message).to eq("model refused to continue")
+      expect(refused(nil).failure.message).to eq("model refused to continue")
+    end
+  end
+
   describe "#failure" do
     def stopped(reason, text: "")
       described_class.new(content: [{ "type" => "text", "text" => text }], stop_reason: reason)

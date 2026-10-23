@@ -11,16 +11,19 @@ module Lain
   #
   # `raw` carries the provider's own object for debugging and is deliberately not
   # part of #digest.
-  Response = Data.define(:id, :model, :content, :stop_reason, :usage, :raw, :malformed) do
-    def initialize(content:, stop_reason:, id: nil, model: nil, usage: Usage.zero, raw: nil, malformed: nil)
+  Response = Data.define(:id, :model, :content, :stop_reason, :usage, :raw, :malformed, :stop_details) do
+    def initialize(content:, stop_reason:, id: nil, model: nil, usage: Usage.zero, raw: nil, malformed: nil,
+                   stop_details: nil)
+      admitted = StopReason.admit(stop_reason)
       super(
         id: id&.to_s&.freeze,
         model: model&.to_s&.freeze,
         content: Canonical.normalize(content),
-        stop_reason: StopReason.admit(stop_reason),
+        stop_reason: admitted,
         usage:,
         raw:,
-        malformed:
+        malformed:,
+        stop_details: (Canonical.normalize(stop_details) if admitted == StopReason::REFUSAL && stop_details)
       )
     end
 
@@ -66,11 +69,19 @@ module Lain
 
     # Response:: for the same lexical-scope reason as #tool_uses.
     def failure_message
+      return refusal_message if stop_reason == StopReason::REFUSAL
       return Response::Failure::MESSAGES[stop_reason] unless stop_reason == StopReason::MALFORMED
 
       prose_call? ? Response::Failure::PROSE_CALL : Response::Failure::SILENT
     end
     private :failure_message
+
+    def refusal_message
+      base = Response::Failure::MESSAGES[StopReason::REFUSAL]
+      category = stop_details&.fetch("category", nil)
+      category ? "#{base} (category: #{category})" : base
+    end
+    private :refusal_message
 
     # The decoder's kind outlives a stripped text, which is what `text.empty?` alone could not tell from silence.
     def prose_call?

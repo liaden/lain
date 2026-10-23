@@ -22,7 +22,11 @@ module Lain
         # The completed turn: ordered wire blocks plus the envelope metadata the
         # response builder needs. `usage` stays a raw Hash so nil cache fields
         # survive to be normalized in one place.
-        Assembled = Data.define(:id, :model, :stop_reason, :content, :usage) do
+        Assembled = Data.define(:id, :model, :stop_reason, :content, :usage, :stop_details) do
+          def initialize(id:, model:, stop_reason:, content:, usage:, stop_details: nil)
+            super
+          end
+
           # A non-streaming body read into the shape a stream assembles to, so
           # both paths decode through one `#build_response`.
           #
@@ -30,7 +34,8 @@ module Lain
           # @return [Assembled]
           def self.from_body(body)
             new(id: body["id"], model: body["model"], stop_reason: body["stop_reason"],
-                content: body["content"] || [], usage: body["usage"] || {})
+                content: body["content"] || [], usage: body["usage"] || {},
+                stop_details: body["stop_details"])
           end
         end
 
@@ -52,7 +57,7 @@ module Lain
           "input_json_delta" => :append_input_json
         }.freeze
 
-        # Six ivars: the envelope identity here, and the four an attempt
+        # Seven ivars: the envelope identity here, and the five an attempt
         # accumulates in {#discard_attempt}, which a retry throws away.
         def initialize
           @id = nil
@@ -70,7 +75,8 @@ module Lain
         # @return [Assembled]
         def result
           Assembled.new(id: @id, model: @model, stop_reason: @stop_reason,
-                        content: @blocks.keys.sort.map { |index| @blocks[index] }, usage: @usage)
+                        content: @blocks.keys.sort.map { |index| @blocks[index] }, usage: @usage,
+                        stop_details: @stop_details)
         end
 
         private
@@ -123,6 +129,7 @@ module Lain
           @blocks = {}
           @input_buffers = {}
           @stop_reason = nil
+          @stop_details = nil
           @usage = {}
         end
 
@@ -180,6 +187,7 @@ module Lain
 
         def on_message_delta(data)
           @stop_reason = data.dig("delta", "stop_reason") || @stop_reason
+          @stop_details = data.dig("delta", "stop_details") || @stop_details
           merge_usage(data["usage"])
         end
 

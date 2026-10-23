@@ -225,4 +225,54 @@ RSpec.describe Lain::Provider::Anthropic::StreamAssembler do
 
     expect(result.content.first["text"]).to eq(fragments.join)
   end
+
+  describe "stop_details" do
+    let(:details) { { "type" => "refusal", "category" => "cyber", "explanation" => "no" } }
+
+    it "keeps the details a refusal's message_delta carries" do
+      result = feed(described_class.new, [
+                      message_start,
+                      { "type" => "message_delta",
+                        "delta" => { "stop_reason" => "refusal", "stop_details" => details } }
+                    ])
+
+      expect(result.stop_details).to eq(details)
+    end
+
+    it "is nil when the stream carries none" do
+      result = feed(described_class.new, [message_start,
+                                          { "type" => "message_delta", "delta" => { "stop_reason" => "end_turn" } }])
+
+      expect(result.stop_details).to be_nil
+    end
+
+    it "keeps the details when a later message_delta carries none" do
+      result = feed(described_class.new, [
+                      message_start,
+                      { "type" => "message_delta",
+                        "delta" => { "stop_reason" => "refusal", "stop_details" => details } },
+                      { "type" => "message_delta", "delta" => {}, "usage" => { "output_tokens" => 3 } }
+                    ])
+
+      expect(result.stop_details).to eq(details)
+    end
+
+    it "drops the details of an attempt a retry abandoned" do
+      refused = [message_start,
+                 { "type" => "message_delta",
+                   "delta" => { "stop_reason" => "refusal", "stop_details" => details } }]
+      answered = [message_start,
+                  { "type" => "message_delta", "delta" => { "stop_reason" => "end_turn" } }]
+
+      result = feed(described_class.new, refused + answered)
+
+      expect(result.stop_details).to be_nil
+    end
+
+    it "reads a sync body's top-level stop_details" do
+      body = { "id" => "m", "model" => "x", "stop_reason" => "refusal", "stop_details" => details }
+
+      expect(described_class::Assembled.from_body(body).stop_details).to eq(details)
+    end
+  end
 end
