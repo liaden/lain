@@ -3117,6 +3117,22 @@ RSpec.describe Lain::CLI::Wiring do
           .to contain_exactly(a_hash_including("from_approval" => "auto", "to_approval" => "auto",
                                                "surface" => Lain::CLI::Switchboard::LAUNCH_SURFACE))
       end
+
+      it "writes the session header ahead of what a box with no sandbox journals" do
+        allow(Lain::Confine::Probe).to receive(:new).and_wrap_original do |original, **kwargs|
+          original.call(**kwargs, runner: ->(_argv) { ["", false] })
+        end
+        Dir.mktmpdir do |dir|
+          wiring = new_wiring(options: { grace: 5 }, chronicle:, status_feed:, tty_factory: tty_factory(dir),
+                              stdin: StringIO.new("quit\n"), conductor_opener:)
+          wiring.run(backend:, resumed: nil, nvim: nil)
+          wiring.conductor.close(reason: :exit)
+        end
+
+        types = journal_records(journal_io).map { |record| record["type"] }
+        expect(types.first).to eq(Lain::SessionRecord::HEADER_TYPE)
+        expect(types).to include("capability_degraded")
+      end
     end
 
     # `--no-journal --nvim`: no session record, and every journal-role

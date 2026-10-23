@@ -1018,6 +1018,11 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       build_with(options, arms:, probe:, fence:, **over).build(recorder, ask_human:)
     end
 
+    def opened(arms, **over)
+      build = build_with(options, arms:, probe:, fence:, **over)
+      build.build(recorder, ask_human:).tap { build.record_opened }
+    end
+
     it "wraps Exec::Local in the sandbox when the probe offers every layer" do
       exec = bash_exec(built(reader))
 
@@ -1062,7 +1067,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       masks = bash_exec(build.build(recorder,
                                     ask_human:)).instance_variable_get(:@profiles).instance_variable_get(:@masks)
 
-      build.prime_masks
+      build.record_opened
 
       expect(masks.instance_variable_get(:@priming)).to be_a(Thread)
     end
@@ -1070,7 +1075,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     it "runs Exec::Docker unwrapped and journals that bash runs in the container" do
       chosen = Lain::Exec::Docker.new(image: "img:1", project: "/srv/project")
 
-      exec = bash_exec(built(reader, exec: chosen))
+      exec = bash_exec(opened(reader, exec: chosen))
 
       expect(exec).to be(chosen)
       expect(degraded.map(&:to_h)).to contain_exactly(
@@ -1078,11 +1083,20 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       )
     end
 
+    # A session file's first record is its header, which pins the toolset this builds.
+    it "journals what the box lacks only once the record opens" do
+      build = build_with(options, arms: reader, probe:, fence:,
+                                  exec: Lain::Exec::Docker.new(image: "img:1", project: "/srv/project"))
+      build.build(recorder, ask_human:)
+
+      expect { build.record_opened }.to change { degraded.map(&:capability) }.from([]).to([:container])
+    end
+
     context "when the box offers neither bwrap nor Landlock" do
       let(:runner) { bare_box }
 
       it "falls back to Exec::Local and journals both layers and the sandbox as degraded" do
-        exec = bash_exec(built(reader))
+        exec = bash_exec(opened(reader))
 
         expect(exec).to be_a(Lain::Exec::Local)
         expect(degraded.map(&:capability)).to include(:bwrap, :landlock, :sandbox)
@@ -1099,7 +1113,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       let(:runner) { ->(argv) { argv.include?("--status") ? ["", false] : ["", true] } }
 
       it "falls back to Exec::Local and says the sandbox is unavailable" do
-        expect(bash_exec(built(reader))).to be_a(Lain::Exec::Local)
+        expect(bash_exec(opened(reader))).to be_a(Lain::Exec::Local)
         expect(degraded.map(&:capability)).to contain_exactly(:landlock, :sandbox)
       end
     end
@@ -1108,7 +1122,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       let(:runner) { ->(argv) { argv.first == "bwrap" ? ["", false] : full_box.call(argv) } }
 
       it "falls back to Exec::Local and says the sandbox is unavailable" do
-        expect(bash_exec(built(reader))).to be_a(Lain::Exec::Local)
+        expect(bash_exec(opened(reader))).to be_a(Lain::Exec::Local)
         expect(degraded.map(&:capability)).to contain_exactly(:bwrap, :sandbox)
       end
     end

@@ -227,6 +227,7 @@ module Lain
         # @param resolver [#for] the run's ONE {Lain::Shell::Executable::Resolver}, handed to
         #   {BaseTools} so every bash tool, a child's included, names its stages by it
         # @param arms [Lain::CLI::Arms] the bench arms the run was started with
+        # @param notes [Lain::Journal::Held] what the box lacks, held for {#record_opened}
         # @param fence [String] the lain-fence binary, read once for the probe and the launcher alike
         # @param probe [Lain::Confine::Probe] what the box offers; runs nothing unless confine is reader (the default)
         # @option options [String] :exec the transport the `exec:` default
@@ -244,14 +245,14 @@ module Lain
                                                  image: options[:exec_image], root:,
                                                  child_env: Lain::Exec::ChildEnv.from(ENV, pass: config.env_pass)),
                        arms: Lain::CLI::Arms::OFF, resolver: Lain::Shell::Executable::Resolver::NULL,
-                       fence: Lain::Confine::Bwrap.fence_binary,
-                       probe: Lain::Confine::Probe.new(fence:, journal:))
+                       notes: Lain::Journal::Held.new, fence: Lain::Confine::Bwrap.fence_binary,
+                       probe: Lain::Confine::Probe.new(fence:, journal: notes))
           @arms = arms
           @library = library
           @backend = backend
           @attachments = attachments
           @root = root
-          bash_inputs(exec:, verdict:, resolver:, fence:, probe:)
+          bash_inputs(exec:, verdict:, resolver:, fence:, probe:, notes:)
           @epic = epic
           @in_chat = { chronicle:, root:, paths:, config: }.freeze
           @askers = askers
@@ -323,17 +324,25 @@ module Lain
                                     announces_as: ISSUE_ORCHESTRATOR.to_s)
         end
 
-        # Starts the sandbox's mask classification, when there is a sandbox. Separate from {#build}
-        # because it reads the board's policy, which {Wiring} builds after the toolset.
-        def prime_masks = @sandbox&.prime
+        # Journals what the box lacks and starts the sandbox's mask classification, when there is a
+        # sandbox. Separate from {#build}: a session file's first record is its header, which pins the
+        # toolset, and the classification reads the board's policy, which {Wiring} builds after it.
+        #
+        # @return [self]
+        def record_opened
+          @notes.release(seam.journal)
+          @sandbox&.prime
+          self
+        end
 
         private
 
         attr_reader :backend, :library, :seam, :epic, :askers
 
-        def bash_inputs(exec:, verdict:, resolver:, fence:, probe:)
+        def bash_inputs(exec:, verdict:, resolver:, fence:, probe:, notes:)
           @fence = fence
           @probe = probe
+          @notes = notes
           @exec = exec
           @verdict = verdict
           @resolver = resolver
@@ -362,8 +371,8 @@ module Lain
         end
 
         def contained(exec)
-          seam.journal << Lain::Telemetry::CapabilityDegraded.new(capability: :container, requirer: self.class.name,
-                                                                  provider: "docker")
+          @notes << Lain::Telemetry::CapabilityDegraded.new(capability: :container, requirer: self.class.name,
+                                                            provider: "docker")
           exec
         end
 
@@ -371,7 +380,7 @@ module Lain
           home = @in_chat.fetch(:paths).home
           masks = Lain::Confine::MaskList.new(root: @root, policy: -> { @switchboard.call.sensitivity })
           @sandbox = Lain::Confine::Sandbox.new(root: @root, home:, masks:, probe: @probe, fence: @fence,
-                                                journal: seam.journal)
+                                                journal: seam.journal, notes: @notes)
           @sandbox.wrap(inner, requirer: self.class.name)
         end
 
