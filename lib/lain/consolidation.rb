@@ -140,8 +140,7 @@ module Lain
     end
 
     def window_failure(error)
-      message = "the #{error.prompt_tokens}-token prompt exceeds the #{error.window_tokens}-token window"
-      Response::Failure.new(stop_reason: WINDOW, message:)
+      Response::Failure.new(stop_reason: WINDOW, message: error.overflow)
     end
 
     def failed_outcome(scaffold, view, root_before, failure)

@@ -234,8 +234,7 @@ module Lain
       rescue Response::Failed => e
         raise Lain::Error, "improve: #{e.message}, #{stored(sink)}"
       rescue WindowExceeded => e
-        raise Lain::Error, "improve: the #{e.prompt_tokens}-token prompt exceeds the #{e.window_tokens}-token " \
-                           "window, #{stored(sink)}"
+        raise Lain::Error, "improve: #{e.overflow}, #{stored(sink)}"
       end
 
       def stored(sink)

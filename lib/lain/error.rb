@@ -59,6 +59,9 @@ module Lain
       super(message, **rest)
     end
 
+    # @return [String]
+    def overflow = "the #{prompt_tokens}-token prompt exceeds the #{window_tokens}-token window"
+
     # The context the refuser loaded is a measured window, so a book that
     # adopts measured windows adopts it -- for the refused request's model when
     # this error names one, and for the book's own model otherwise.
