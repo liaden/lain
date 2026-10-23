@@ -31,6 +31,21 @@ RSpec.describe Lain::CLI::Friction do
     expect(cli.report(explicit)).to include("no friction found")
   end
 
+  it "names the cause of each cache rebill in a session file" do
+    sent = lambda do |digest, system|
+      { "type" => "request_sent", "digest" => "blake3:req", "prefix_chain_version" => Lain::Request::PREFIX_CHAIN_VERSION,
+        "payload" => { "model" => "claude-opus-4-8", "tools" => [], "system" => system },
+        "prefix_digests" => [[0, digest]] }
+    end
+    paid = { "type" => "turn_usage", "digest" => "blake3:turn", "model" => "claude-opus-4-8",
+             "usage" => { "input_tokens" => 1, "output_tokens" => 1,
+                          "cache_creation_input_tokens" => 900, "cache_read_input_tokens" => 0 } }
+    lines = [sent.call("a", "s"), paid, sent.call("b", "t"), paid].map { |record| JSON.generate(record) }
+    File.write(File.join(sessions_dir, "broken.ndjson"), "#{lines.join("\n")}\n")
+
+    expect(cli.report("broken")).to include("system changed 1")
+  end
+
   # The ONE session-resolution refusal, shared with `lain consolidate` and
   # `lain improve` ({CLI::SessionFile}) -- this class no longer owns a copy, so
   # a rescuer naming the type catches all three surfaces.

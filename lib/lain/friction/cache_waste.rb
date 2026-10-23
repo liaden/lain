@@ -65,9 +65,9 @@ module Lain
     # 2. TTL EXPIRY over-attributes the same way. Comparison groups are per MODEL
     #    over the whole session, so two calls of one model are compared however
     #    many turns apart they sit, and a prefix that broke only because the cache
-    #    had already EXPIRED counts as waste. This class does not read the clock
-    #    to exclude it -- does not, rather than cannot: {Journal#record} stamps
-    #    `ts` on every record, so the gap is already in the bytes walked here.
+    #    had already EXPIRED counts as waste. It is still counted, but a gap over
+    #    the assumed TTL on a cold cache is labelled `ttl_expired` by
+    #    {BreakCause}, so the report separates it from an edit.
     # 3. Only the MAIN agent's calls are covered. {Middleware::JournalRequests} is
     #    wired into the main Agent's `model_middleware` alone, so a subagent's
     #    `turn_usage` has no `request_sent` to pair with. Every figure is scoped
@@ -128,7 +128,7 @@ module Lain
 
       # One model round trip the Journal actually BILLED: the request that went
       # out, paired with the usage that came back.
-      Call = Data.define(:model, :chain, :chain_version, :usage, :at) do
+      Call = Data.define(:model, :chain, :chain_version, :usage, :at, :shape) do
         # ROADMAP.md:221-225's cache-aware compaction scheduler sensor,
         # verbatim: "run only when the cache is already cold ... confirmed by
         # `cache_read_input_tokens == 0`". Reachable from a single record
@@ -136,16 +136,18 @@ module Lain
         # a journal to ask it.
         def cold? = usage.cache_read_input_tokens.zero?
 
-        def initialize(model:, chain:, chain_version:, usage:, at: nil)
-          super(model: -model.to_s, chain: Canonical.normalize(chain), chain_version:, usage:, at:)
+        def initialize(model:, chain:, chain_version:, usage:, at: nil, shape: nil)
+          super(model: -model.to_s, chain: Canonical.normalize(chain), chain_version:, usage:, at:, shape:)
         end
       end
 
       # One attributed re-billing: the prefix broke at `depth`, and the call
       # after the break re-bought `rebilled_tokens` at cache-creation rates.
-      Rebill = Data.define(:model, :depth, :rebilled_tokens, :cost) do
-        def initialize(model:, depth:, rebilled_tokens:, cost:)
-          super(model: -model.to_s, depth: Integer(depth), rebilled_tokens: Integer(rebilled_tokens), cost:)
+      Rebill = Data.define(:model, :depth, :rebilled_tokens, :cost, :cause) do
+        def initialize(model:, depth:, rebilled_tokens:, cost:, cause: :unknown)
+          raise ArgumentError, "unknown break cause #{cause.inspect}" unless BreakCause::CAUSES.include?(cause)
+
+          super(model: -model.to_s, depth: Integer(depth), rebilled_tokens: Integer(rebilled_tokens), cost:, cause:)
         end
       end
 
@@ -262,7 +264,8 @@ module Lain
           return nil unless agrees?(requested, entry.model)
 
           Call.new(model: CacheWaste.safe_name(requested || entry.model), chain: request["prefix_digests"],
-                   chain_version: request["prefix_chain_version"], usage: entry.usage, at: entry.at)
+                   chain_version: request["prefix_chain_version"], usage: entry.usage, at: entry.at,
+                   shape: BreakCause.shape_of(request))
         rescue ArgumentError
           nil
         end
@@ -377,6 +380,12 @@ module Lain
       # @return [Integer] calls whose model has a price on record
       def priced_calls = @calls.count { |call| @unpriced_models.exclude?(call.model) }
 
+      # @return [Hash{Symbol => Integer}] rebills per cause, in {BreakCause::CAUSES} order, zeros left out
+      def causes
+        tally = @rebills.map(&:cause).tally
+        BreakCause::CAUSES.filter_map { |cause| [cause, tally[cause]] if tally.key?(cause) }.to_h
+      end
+
       # @return [Integer] tokens re-bought because a prefix broke
       def rebilled_tokens = @rebills.sum(&:rebilled_tokens)
 
@@ -423,7 +432,8 @@ module Lain
                                                [after.chain_version, after.chain]]).first
         rewrite && Rebill.new(model: after.model, depth: rewrite.depth,
                               rebilled_tokens: after.usage.cache_creation_input_tokens,
-                              cost: rebill_cost(after))
+                              cost: rebill_cost(after), cause: BreakCause.between(before.shape, after.shape,
+                                                                                  cold: after.cold?))
       end
 
       # nil is the REFUSAL, distinct from `Dollars.zero`: the caller turns it

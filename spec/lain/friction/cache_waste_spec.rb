@@ -1009,4 +1009,69 @@ RSpec.describe Lain::Friction::CacheWaste do
       expect(rebilled_at(nil)).to eq(BigDecimal(6))
     end
   end
+
+  describe "the cause of each rebill" do
+    def tool(name) = { "name" => name }
+
+    def sent(chain, tools: [tool("read")], system: "s", reasoning: nil, stamp: "2026-10-23T10:00:00Z")
+      request_sent(chain).merge("ts" => stamp, "payload" => { "model" => "claude-opus-4-8", "tools" => tools,
+                                                              "system" => system, "reasoning" => reasoning })
+    end
+
+    def paid(creation: 100, read: 0) = turn_usage(creation:, read:)
+
+    def causes_of(requests)
+      described_class.from_journal(requests.flat_map { |request| [request, paid] }).map(&:cause)
+    end
+
+    it "names why each prefix broke" do
+      requests = [sent([[0, "blake3:a"]]),
+                  sent([[0, "blake3:b"]], tools: [tool("read"), tool("bash")]),
+                  sent([[0, "blake3:c"]], tools: [tool("bash"), tool("read")]),
+                  sent([[0, "blake3:d"]], tools: [tool("bash"), tool("read")], system: "t"),
+                  sent([[0, "blake3:e"]], tools: [tool("bash"), tool("read")], system: "t",
+                                          reasoning: { "effort" => "high" })]
+
+      expect(causes_of(requests)).to eq(%i[tools_changed tool_order_changed system_changed effort_changed])
+    end
+
+    it "counts rebills by cause" do
+      requests = [sent([[0, "blake3:a"]]), sent([[0, "blake3:b"]], system: "t"), sent([[0, "blake3:c"]], system: "u")]
+      waste = described_class.from_journal(requests.flat_map { |request| [request, paid] })
+
+      expect(waste.causes).to eq(system_changed: 2)
+    end
+
+    it "calls an edit at a message position an earlier-messages edit" do
+      expect(causes_of([sent([[0, "blake3:a"]]), sent([[0, "blake3:b"]])])).to eq(%i[history_edited])
+    end
+
+    it "reads a six minute gap with a cold cache as expiry" do
+      requests = [sent([[0, "blake3:a"]]), sent([[0, "blake3:b"]], stamp: "2026-10-23T10:06:00Z")]
+
+      expect(causes_of(requests)).to eq(%i[ttl_expired])
+    end
+
+    it "does not read the gap as expiry when the second call read cache" do
+      requests = [sent([[0, "blake3:a"]]), sent([[0, "blake3:b"]], stamp: "2026-10-23T10:06:00Z")]
+      waste = described_class.from_journal([requests[0], paid, requests[1], paid(read: 50)])
+
+      expect(waste.map(&:cause)).to eq(%i[history_edited])
+    end
+
+    it "says unknown when the payloads were not recorded" do
+      bare = [request_sent([[0, "blake3:a"]]).except("payload"), request_sent([[0, "blake3:b"]]).except("payload")]
+
+      expect(causes_of(bare)).to eq(%i[unknown])
+    end
+
+    it "refuses a rebill whose cause is not a named one" do
+      expect { described_class::Rebill.new(model: "m", depth: 0, rebilled_tokens: 1, cost: nil, cause: :bogus) }
+        .to raise_error(ArgumentError, /bogus/)
+    end
+
+    it "builds a Call without a shape, as the cache sensor does" do
+      expect(described_class.cache_fact(turn_usage(creation: 5)).shape).to be_nil
+    end
+  end
 end

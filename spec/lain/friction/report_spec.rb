@@ -236,4 +236,24 @@ RSpec.describe Lain::Friction::Report do
       expect(rendered).to include("dollar figures exclude qwen3:4b -- no price recorded")
     end
   end
+
+  describe "a session whose prefix broke for named reasons" do
+    subject(:rendered) { described_class.new(entries).render }
+
+    def sent(digest, tools: [{ "name" => "read" }], system: "s")
+      { "type" => "request_sent", "digest" => "blake3:req", "prefix_chain_version" => Lain::Request::PREFIX_CHAIN_VERSION,
+        "payload" => { "model" => "claude-opus-4-8", "tools" => tools, "system" => system },
+        "prefix_digests" => [[0, digest]] }
+    end
+
+    let(:entries) do
+      both = [{ "name" => "read" }, { "name" => "bash" }]
+      [sent("a"), sent("b", tools: both), sent("c", tools: both, system: "t")]
+        .flat_map { |request| [request, turn_usage("claude-opus-4-8", create: 1_000)] }
+    end
+
+    it "lists the rebills by cause" do
+      expect(rendered).to include("tools changed 1", "system changed 1")
+    end
+  end
 end

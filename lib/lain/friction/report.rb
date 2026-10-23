@@ -259,7 +259,16 @@ module Lain
         # words put the error's DIRECTION in the number itself.
         def rebilled
           "at most #{@waste.rebilled_tokens} tokens re-billed across " \
-            "#{@waste.count} prefix break(s), #{cost_phrase(@waste.rebilled_cost)}"
+            "#{@waste.count} prefix break(s), #{cost_phrase(@waste.rebilled_cost)}#{cause_phrase}"
+        end
+
+        # The 5 minute TTL is assumed because the journal does not record which was used.
+        def cause_phrase
+          " (caused by #{@waste.causes.map do |cause, count|
+            "#{BreakCause::LABELS.fetch(cause) do
+              cause.to_s.tr("_", " ")
+            end} #{count}"
+          end.join(", ")})"
         end
 
         # Always reported, in both branches: a waste figure alone is an
