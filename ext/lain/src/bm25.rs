@@ -184,20 +184,25 @@ impl Bm25Index {
     ) -> Result<Vec<(String, f32, Vec<String>)>, Halted> {
         cancel.check()?;
         let query_tokens: BTreeSet<String> = tokenize(query).into_iter().collect();
-        let mut hits = self.engine.search(query, None);
+        let hits = self.engine.search(query, None);
         cancel.check()?;
-        hits.sort_by(|a, b| {
+        // The tie-breaker is looked up once per hit, not twice per comparison:
+        // those hash lookups were a quarter of a search's instructions, and
+        // whether the compiler inlined them into the sort moved with unrelated
+        // code, swinging a search by 7% between builds.
+        let mut ranked: Vec<_> = hits
+            .into_iter()
+            .map(|hit| (self.insertion(&hit.document.id), hit))
+            .collect();
+        ranked.sort_by(|(at_a, a), (at_b, b)| {
             // `total_cmp` is a total order over f32 (no NaN unwrap); scores are
             // finite and non-negative here regardless.
-            b.score.total_cmp(&a.score).then_with(|| {
-                self.insertion(&a.document.id)
-                    .cmp(&self.insertion(&b.document.id))
-            })
+            b.score.total_cmp(&a.score).then_with(|| at_a.cmp(at_b))
         });
-        Ok(hits
+        Ok(ranked
             .into_iter()
             .take(k)
-            .map(|hit| {
+            .map(|(_, hit)| {
                 let matched = self
                     .doc_tokens
                     .get(&hit.document.id)
