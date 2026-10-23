@@ -43,7 +43,7 @@ module Lain
       # One entry's search-ready projection. Tokens are computed once at
       # construction because entries never change and #search should not
       # re-tokenize the whole manifest per query.
-      Entry = Data.define(:id, :description, :tokens)
+      Entry = Data.define(:id, :description, :tokens, :line)
       private_constant :Entry
 
       # Tokenization rule: lowercase \w+ runs, deduplicated. \w is ASCII-only
@@ -69,9 +69,12 @@ module Lain
       # The `@entries`/`@lines` pair looks like a duplicate of the Index's items
       # but is a RENDER cache: `@entries` is tokenized and joined into one
       # String -- work #search and #to_reminder would otherwise redo per call.
-      def initialize(index)
-        @entries = index.map { |item| entry_for(item) }.sort_by(&:id).freeze
-        @lines = @entries.map { |entry| -"#{entry.id} | #{entry.description}" }.freeze
+      #
+      # `staleness#of` answers the changes to an item's sources, such as
+      # "lib/a.rb changed"; they ride the line only, never the search tokens.
+      def initialize(index, staleness: Staleness::Never)
+        @entries = index.map { |item| entry_for(item, staleness.of(item)) }.sort_by(&:id).freeze
+        @lines = @entries.map(&:line).freeze
         @reminder = @lines.join("\n").freeze
         freeze
       end
@@ -103,9 +106,10 @@ module Lain
 
       private
 
-      def entry_for(item)
+      def entry_for(item, mark)
         tokens = tokenize("#{item.id} #{item.description}".downcase).map(&:-@).freeze
-        Entry.new(id: item.id, description: item.description, tokens:)
+        line = -["#{item.id} | #{item.description}", (" (stale: #{mark.join(", ")})" unless mark.empty?)].join
+        Entry.new(id: item.id, description: item.description, tokens:, line:)
       end
 
       def tokenize(downcased)

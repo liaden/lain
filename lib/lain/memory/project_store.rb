@@ -255,7 +255,8 @@ module Lain
 
       def item_of(record, number)
         Item.new(id: record.fetch("id"), description: record.fetch("description"),
-                 body: record.fetch("body"), author: Author.from(record["author"]))
+                 body: record.fetch("body"), author: Author.from(record["author"]),
+                 sources: record.fetch("sources", {}))
       rescue Declarative::Types::CoercionError
         skipped(record, number)
       end

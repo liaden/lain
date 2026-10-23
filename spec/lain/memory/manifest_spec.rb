@@ -12,6 +12,23 @@ RSpec.describe Lain::Memory::Manifest do
     described_class.new(items.inject(index) { |idx, entry| idx.write(entry) })
   end
 
+  describe "staleness" do
+    let(:marks) { { "stale" => ["lib/a.rb changed", "lib/b.rb missing"] } }
+    let(:staleness) { Struct.new(:marks) { def of(entry) = marks.fetch(entry.id, []) }.new(marks) }
+
+    it "ends a stale item's line with its mark and leaves the others bare" do
+      manifest = described_class.new([item("fresh", "ok"), item("stale", "old")], staleness:)
+
+      expect(manifest.lines).to eq(["fresh | ok", "stale | old (stale: lib/a.rb changed, lib/b.rb missing)"])
+    end
+
+    it "keeps the mark out of search tokens" do
+      manifest = described_class.new([item("stale", "old")], staleness:)
+
+      expect(manifest.search("changed")).to be_empty
+    end
+  end
+
   describe "#lines" do
     it "renders one 'id | description' line per live entry, sorted by id" do
       manifest = manifest_over(item("b", "beta"), item("a", "alpha"))

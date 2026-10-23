@@ -27,7 +27,9 @@ module Lain
       LINE_BREAK = /\R|[\v  ]/
       private_constant :LINE_BREAK
 
-      attr_reader :id, :description, :body, :author, :digest
+      # @!attribute [r] sources
+      #   @return [Hash{String=>String}] project-relative path => "blake3:<hex>", frozen
+      attr_reader :id, :description, :body, :author, :digest, :sources
 
       # Only the id gets the blank check: an item that cannot be addressed is a
       # defect, where an empty description is merely a pointless manifest line.
@@ -49,25 +51,28 @@ module Lain
         return canon if canon.is_a?(self)
 
         new(id: canon.fetch("id"), description: canon.fetch("description"), body: canon.fetch("body"),
-            author: Author.from(canon["author"]))
+            author: Author.from(canon["author"]), sources: canon.fetch("sources", {}))
       end
 
       # The keywords stay spelled out rather than collected as `**attrs`: a
       # declaration has no arity, so a forgotten `body:` would settle to nil and
       # be digested instead of refused.
-      def initialize(id:, description:, body:, author: Author.chat)
+      def initialize(id:, description:, body:, author: Author.chat, sources: {})
         @id, @description, @body = self.class.settle!(id:, description:, body:).values_at(:id, :description, :body)
         @author = author
+        @sources = sources.to_h { |path, digest| [-path.to_s, -digest.to_s] }.freeze
         @digest = Canonical.digest(payload)
         freeze
       end
 
       # The exact structure that was hashed. Also what a Journal writes. The
-      # chat's authorship is omitted so every row and record written before
-      # authors existed keeps the digest it was stored under.
+      # chat's authorship and an empty sources map are omitted so every row and
+      # record written before either existed keeps the digest it was stored under.
       def payload
         base = { "id" => id, "description" => description, "body" => body }
-        author.chat? ? base : base.merge("author" => author.to_h)
+        base["author"] = author.to_h unless author.chat?
+        base["sources"] = sources unless sources.empty?
+        base
       end
       alias canonical payload
 

@@ -9,8 +9,53 @@ RSpec.describe Lain::Tools::MemoryWrite do
 
   it "declares id, description, and body as required string fields" do
     schema = tool.input_schema
-    expect(schema["properties"].keys).to eq(%w[id description body])
+    expect(schema["properties"].keys).to eq(%w[id description body sources])
     expect(schema["required"]).to eq(%w[id description body])
+  end
+
+  describe "sources" do
+    around do |example|
+      Dir.mktmpdir("lain-memory-sources") do |dir|
+        @root = File.realpath(dir)
+        example.run
+      end
+    end
+
+    let(:session) do
+      Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: @root, env: {}), root: @root)
+    end
+    let(:invocation) { Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: session) }
+
+    it "records the blake3 digest of each source file" do
+      File.write(File.join(@root, "a.rb"), "x = 1")
+      tool.call({ id: "s", description: "d", body: "b", sources: ["a.rb"] }, invocation)
+
+      expect(recorder.fetch("s").sources).to eq({ "a.rb" => "blake3:#{Lain::Ext.blake3_hex("x = 1")}" })
+    end
+
+    it "digests differently from the same item written with no sources" do
+      File.write(File.join(@root, "a.rb"), "x = 1")
+      tool.call({ id: "s", description: "d", body: "b", sources: ["a.rb"] }, invocation)
+      with = recorder.fetch("s").digest
+      tool.call({ id: "s", description: "d", body: "b" }, invocation)
+
+      expect(recorder.fetch("s").digest).not_to eq(with)
+    end
+
+    it "refuses a source outside the project, naming it, and writes nothing" do
+      result = tool.call({ id: "s", description: "d", body: "b", sources: ["/etc/hosts"] }, invocation)
+
+      expect(result.content).to include("/etc/hosts")
+      expect(result).to be_error
+      expect(recorder.index).to be_empty
+    end
+
+    it "refuses a source that does not exist, naming it" do
+      result = tool.call({ id: "s", description: "d", body: "b", sources: ["nope.rb"] }, invocation)
+
+      expect(result.content).to include("nope.rb")
+      expect(recorder.index).to be_empty
+    end
   end
 
   describe "authorship" do
@@ -32,7 +77,7 @@ RSpec.describe Lain::Tools::MemoryWrite do
     end
 
     it "offers the model no author field" do
-      expect(tool.input_schema["properties"].keys).to eq(%w[id description body])
+      expect(tool.input_schema["properties"].keys).to eq(%w[id description body sources])
     end
   end
 

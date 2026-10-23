@@ -1173,6 +1173,45 @@ RSpec.describe Lain::Session do
         .and include("warfarin-interactions | Warfarin interaction list")
     end
 
+    describe "a memory sourced from a file" do
+      subject(:session) do
+        described_class.new(memory: recorder, worker_env: Lain::WorkerEnv.new(cwd: @root, env: {}), root: @root)
+      end
+
+      around do |example|
+        Dir.mktmpdir("lain-session-stale") do |dir|
+          @root = File.realpath(dir)
+          example.run
+        end
+      end
+
+      def sourced(name)
+        digest = "blake3:#{Lain::Ext.blake3_hex(File.read(File.join(@root, name)))}"
+        Lain::Memory::Item.new(id: "from-#{name}", description: "about #{name}", body: "b", sources: { name => digest })
+      end
+
+      it "marks the manifest line once the file is edited, and only that line" do
+        File.write(File.join(@root, "a.rb"), "x = 1")
+        recorder.write(sourced("a.rb"))
+        recorder.write(item("plain", "no sources"))
+        expect(session.reminders.last).to include("from-a.rb | about a.rb\n").and include("plain | no sources")
+
+        File.write(File.join(@root, "a.rb"), "x = 2")
+
+        expect(session.reminders.last)
+          .to include("from-a.rb | about a.rb (stale: a.rb changed)")
+          .and end_with("plain | no sources")
+      end
+
+      it "marks a deleted source as missing" do
+        File.write(File.join(@root, "gone.rb"), "x")
+        recorder.write(sourced("gone.rb"))
+        File.delete(File.join(@root, "gone.rb"))
+
+        expect(session.reminders.last).to include("(stale: gone.rb missing)")
+      end
+    end
+
     # Ruling (b): the block is labeled at the SESSION layer, naming
     # memory_read as the way to open an id; Manifest#to_reminder stays bare.
     it "labels the manifest block, naming memory_read as the way to open an id" do

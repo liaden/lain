@@ -5,6 +5,35 @@ RSpec.describe Lain::Memory::Item do
     described_class.new(id:, description:, body:)
   end
 
+  describe "sources" do
+    let(:digest) { "blake3:#{"a" * 64}" }
+
+    it "keeps the digest an item without sources always had" do
+      expect(item.digest)
+        .to eq("blake3:e9384e8b29e9094f2bfb85cb79ffccf1a0e97d99c43ebff6e7b27f22a9374e92")
+    end
+
+    it "defaults to no sources, frozen" do
+      expect(item.sources).to eq({})
+      expect(item.sources).to be_frozen
+    end
+
+    it "changes the digest when sources are present" do
+      sourced = described_class.new(id: "dosage", description: "Adult amoxicillin dosing",
+                                    body: "500mg every 8 hours", sources: { "lib/a.rb" => digest })
+
+      expect(sourced.digest).not_to eq(item.digest)
+      expect(sourced.sources).to eq({ "lib/a.rb" => digest })
+      expect(sourced.sources).to be_frozen
+    end
+
+    it "round-trips through its canonical tree" do
+      sourced = described_class.new(id: "x", description: "d", body: "b", sources: { "lib/a.rb" => digest })
+
+      expect(described_class.from_canon(sourced.canonical).digest).to eq(sourced.digest)
+    end
+  end
+
   describe "construction" do
     # The Manifest renders one line per item; any vertical whitespace in an id
     # or description would let one item masquerade as two. The invariant is

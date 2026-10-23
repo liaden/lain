@@ -52,6 +52,9 @@ module Lain
               description: "One-line summary shown in the memory manifest, at most #{DESCRIPTION_BOUND.limit} bytes.",
               required: true
         field :body, :string, description: "The full content to store.", required: true
+        field :sources, :array, of: :string,
+                                description: "Project files this item was derived from. Their digests are " \
+                                             "recorded so the manifest can flag the item stale once one changes."
       end
 
       input_model Input
@@ -83,18 +86,24 @@ module Lain
       # #validate_input!. The one {Memory::Item} rejection that reaches this
       # rescue is a multi-line id or description, reported as an error Result
       # the model can act on rather than a raise.
-      def perform(input, _invocation)
+      def perform(input, invocation)
         refusal = oversized(input)
         return refusal if refusal
 
-        item = Memory::Item.new(id: input.id, description: input.description, body: input.body, author:)
+        sources = staleness_for(invocation).record(Array(input.sources))
+        item = Memory::Item.new(id: input.id, description: input.description, body: input.body, author:, sources:)
         root = recorder.write(item)
         Tool::Result.ok("wrote memory item #{item.id.inspect}; index root is now #{root}")
-      rescue ArgumentError, Memory::Ownership::Refused => e
+      rescue ArgumentError, Memory::Ownership::Refused, Memory::Staleness::Refused => e
         Tool::Result.error(e.message)
       end
 
       private
+
+      def staleness_for(invocation)
+        session = session_of(invocation)
+        Memory::Staleness.new(root: session.project_root, resolver: session.worker_env)
+      end
 
       # Asked BEFORE {Memory::Item}, so nothing oversized is ever hashed or
       # reaches the store: each refusal costs a `bytesize`. The id is judged

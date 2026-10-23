@@ -158,6 +158,19 @@ RSpec.describe Lain::Memory::ProjectStore do
     end
   end
 
+  describe "an item with sources" do
+    it "loads with the same sources and digest in a fresh store" do
+      sourced = Lain::Memory::Item.new(id: "a", description: "d", body: "b",
+                                       sources: { "lib/a.rb" => "blake3:#{"b" * 64}" })
+      store.append(sourced)
+
+      loaded = described_class.new(project_dir:).load.items.fetch(0)
+
+      expect(loaded.sources).to eq(sourced.sources)
+      expect(loaded.digest).to eq(sourced.digest)
+    end
+  end
+
   describe "#append" do
     it "is append-only on disk, and folds last-write-wins on the way out" do
       store.append(item("dosage", "v1"))

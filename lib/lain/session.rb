@@ -88,6 +88,15 @@ module Lain
     # @return [WorkerEnv]
     def worker_env = @scope.env_over(@worker_env)
 
+    # The root a project-relative path is shown against and a memory source is
+    # kept inside: the checkout, then the constructed root, then the cwd.
+    #
+    # @return [String]
+    def project_root
+      env = worker_env
+      env.checkout || @root || env.cwd
+    end
+
     # @return [Unconfined, Confined]
     attr_reader :scope
 
@@ -571,7 +580,7 @@ module Lain
     # @return [self]
     def watch_memory(memory)
       @memory = memory
-      @manifest_root = nil
+      @manifest_stamp = nil
       @manifest_reminders = [].freeze
       self
     end
@@ -805,22 +814,31 @@ module Lain
     # invalidation key -- equal roots mean an identical corpus by construction.
     def manifest_reminders
       index = @memory.index
-      refresh_manifest(index) unless index.root == @manifest_root
+      stamp = [index.root, index.map { |item| staleness.of(item) }]
+      refresh_manifest(index, stamp) unless stamp == @manifest_stamp
       @manifest_reminders
     end
 
-    def refresh_manifest(index)
-      @manifest_root = index.root
+    # A source file can change with the index root unmoved, so the marks are
+    # part of the memo key alongside the root.
+    # Held, not rebuilt, so its per-source digest memo survives between renders.
+    def staleness
+      @staleness = Memory::Staleness.new(root: project_root) unless @staleness&.root == File.join(project_root, "")
+      @staleness
+    end
+
+    def refresh_manifest(index, stamp)
+      @manifest_stamp = stamp
       @manifest_reminders = index.empty? ? [].freeze : [labeled_manifest(index)].freeze
     end
 
     def labeled_manifest(index)
-      -"#{MANIFEST_HEADING}\n#{Memory::Manifest.new(index).to_reminder}"
+      -"#{MANIFEST_HEADING}\n#{Memory::Manifest.new(index, staleness:).to_reminder}"
     end
 
     def display_path(path)
       env = worker_env
-      root = File.join(env.checkout || @root || env.cwd, "")
+      root = File.join(project_root, "")
       home = File.join(env.env.fetch("HOME") { Dir.home }, "")
       return path.delete_prefix(root) if path.start_with?(root)
 
@@ -1164,6 +1182,9 @@ module Lain
       #
       # @return [WorkerEnv]
       def worker_env = WorkerEnv.default
+
+      # @return [String]
+      def project_root = worker_env.cwd
 
       # @return [Unconfined]
       def scope = Unconfined
