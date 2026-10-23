@@ -170,6 +170,69 @@ RSpec.describe Lain::PriceBook do
     end
   end
 
+  describe "Ollama Cloud rows" do
+    subject(:book) { described_class.default }
+
+    # Dollars per million tokens, input then output, as ollama.com/pricing lists them.
+    let(:page_rates) do
+      {
+        "deepseek-v4.1-flash:cloud" => [0.30, 1.20], "deepseek-v4-pro:cloud" => [1.32, 3.96],
+        "gemma4:cloud" => [0.14, 0.40], "gemma4:31b-cloud" => [0.14, 0.40],
+        "glm-5.3:cloud" => [1.40, 4.40], "glm-5.3-flash:cloud" => [0.15, 0.50], "glm-5.2:cloud" => [1.40, 4.40],
+        "gpt-oss:120b-cloud" => [0.15, 0.60], "gpt-oss:20b-cloud" => [0.07, 0.30],
+        "kimi-k3:cloud" => [3.00, 15.00], "kimi-k2.7-code:cloud" => [0.95, 4.00], "kimi-k2.6:cloud" => [0.95, 4.00],
+        "minimax-m3:cloud" => [0.60, 2.40], "minimax-m2.7:cloud" => [0.30, 1.20],
+        "mistral-large-3:675b-cloud" => [0.50, 1.50],
+        "nemotron-3-nano:30b-cloud" => [0.06, 0.24], "nemotron-3-super:cloud" => [0.015, 0.60],
+        "nemotron-3-ultra:cloud" => [0.10, 3.00]
+      }
+    end
+
+    it "prices every cloud row at the page's input and output rate" do
+      billed = page_rates.keys.to_h do |tag|
+        [tag, [book.cost(tag, usage(input: 1_000_000)), book.cost(tag, usage(output: 1_000_000))]]
+      end
+      expect(billed).to eq(page_rates.transform_values { |pair| pair.map { BigDecimal(_1.to_s) } })
+    end
+
+    it "has a row for exactly the cloud tags the table lists" do
+      expect(described_class::DEFAULTS.keys.grep(/cloud\z/)).to match_array(page_rates.keys)
+    end
+
+    it "bills deepseek-v4-pro half on a weekend" do
+      peak = Time.utc(2026, 10, 21, 14)
+      weekend = Time.utc(2026, 10, 25, 14)
+      expect(book.cost("deepseek-v4-pro:cloud", usage(input: 1_000_000), at: peak)).to eq(BigDecimal("1.32"))
+      expect(book.cost("deepseek-v4-pro:cloud", usage(input: 1_000_000), at: weekend)).to eq(BigDecimal("0.66"))
+    end
+
+    it "bills deepseek-v4.1-flash half off-peak" do
+      off_peak = Time.utc(2026, 10, 21, 20)
+      expect(book.cost("deepseek-v4.1-flash:cloud", usage(output: 1_000_000), at: off_peak)).to eq(BigDecimal("0.6"))
+    end
+
+    it "leaves a local model with a cloud family name unpriced" do
+      expect { book.price("gemma4:e4b") }.to raise_error(described_class::UnknownModel)
+    end
+
+    it "carries no cached-input rate on any cloud row" do
+      cloud = described_class::DEFAULTS.select { |key, _| key.end_with?("cloud") }
+      expect(cloud).not_to be_empty
+      expect(cloud.values.map { [_1.cache_creation, _1.cache_read] }.uniq).to eq([[0, 0]])
+    end
+
+    it "gives a friction report a dollar figure for a cloud run" do
+      entries = [
+        { "type" => "request_sent", "digest" => "blake3:req", "payload" => { "model" => "glm-5.3:cloud" },
+          "prefix_chain_version" => Lain::Request::PREFIX_CHAIN_VERSION, "prefix_digests" => [[0, "a"]] },
+        { "type" => "turn_usage", "digest" => "blake3:t", "model" => "glm-5.3:cloud",
+          "usage" => { "input_tokens" => 10, "output_tokens" => 10,
+                       "cache_creation_input_tokens" => 0, "cache_read_input_tokens" => 0 } }
+      ]
+      expect(Lain::Friction::Report.new(entries).render).not_to include("no price recorded")
+    end
+  end
+
   describe "#rate" do
     it "answers a flat Price at the tier the prompt reaches" do
       tier = Lain::Price.per_mtok(input: 0.50, output: 2.50, cache_creation: 0, cache_read: 0)

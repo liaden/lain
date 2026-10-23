@@ -9,13 +9,11 @@ module Lain
   # metric is cost, a silently-free model is a lie. A deployment that wants
   # graceful degradation passes an explicit `fallback` Price.
   #
-  # Ollama Cloud is billed by subscription quota, not per token, so DEFAULT
-  # carries no ollama row and no fallback -- #price raises {UnknownModel} for one
-  # like any other unpriced model. A row or a process-wide fallback here would
-  # silently price every OTHER unknown model too, so the withholding lives one
-  # layer up: {Friction::CacheWaste#price_for} rescues UnknownModel per model and
-  # {Friction::Report::CacheWasteSection#figure_phrase} renders the gap as an
-  # explicit "no price recorded" rather than a fabricated dollar figure.
+  # Ollama Cloud is priced per token by exact cloud tag. Only those tags have a
+  # row, and there is no fallback, so a local tag that shares a family name
+  # raises {UnknownModel}. A cloud tag the pricing page does not list stays
+  # unpriced, and {Friction::CacheWaste#price_for} rescues it per model so
+  # {Friction::Report::CacheWasteSection#figure_phrase} says "no price recorded".
   class PriceBook
     class UnknownModel < Error; end
 
@@ -52,7 +50,35 @@ module Lain
         )]
       ),
       "claude-fable-5-1" => Price.per_mtok(input: 10, output: 50, cache_creation: 12.5, cache_read: 0.25),
-      "claude-mythos-5-1" => Price.per_mtok(input: 10, output: 50, cache_creation: 12.5, cache_read: 0.25)
+      "claude-mythos-5-1" => Price.per_mtok(input: 10, output: 50, cache_creation: 12.5, cache_read: 0.25),
+      # Ollama Cloud, read 2026-10-23 from ollama.com/pricing. Cached input is
+      # left at 0 because an ollama response reports only prompt_eval_count, so
+      # a cached rate could never be applied. DeepSeek bills half outside 12:00
+      # to 18:00 UTC on weekdays.
+      "deepseek-v4.1-flash:cloud" => Price.per_mtok(
+        input: 0.3, output: 1.2, cache_creation: 0, cache_read: 0,
+        off_peak: Price::OffPeak.new(price: Price.per_mtok(input: 0.15, output: 0.6, cache_creation: 0, cache_read: 0))
+      ),
+      "deepseek-v4-pro:cloud" => Price.per_mtok(
+        input: 1.32, output: 3.96, cache_creation: 0, cache_read: 0,
+        off_peak: Price::OffPeak.new(price: Price.per_mtok(input: 0.66, output: 1.98, cache_creation: 0, cache_read: 0))
+      ),
+      "gemma4:cloud" => Price.per_mtok(input: 0.14, output: 0.4, cache_creation: 0, cache_read: 0),
+      "gemma4:31b-cloud" => Price.per_mtok(input: 0.14, output: 0.4, cache_creation: 0, cache_read: 0),
+      "glm-5.3:cloud" => Price.per_mtok(input: 1.4, output: 4.4, cache_creation: 0, cache_read: 0),
+      "glm-5.3-flash:cloud" => Price.per_mtok(input: 0.15, output: 0.5, cache_creation: 0, cache_read: 0),
+      "glm-5.2:cloud" => Price.per_mtok(input: 1.4, output: 4.4, cache_creation: 0, cache_read: 0),
+      "gpt-oss:120b-cloud" => Price.per_mtok(input: 0.15, output: 0.6, cache_creation: 0, cache_read: 0),
+      "gpt-oss:20b-cloud" => Price.per_mtok(input: 0.07, output: 0.3, cache_creation: 0, cache_read: 0),
+      "kimi-k3:cloud" => Price.per_mtok(input: 3, output: 15, cache_creation: 0, cache_read: 0),
+      "kimi-k2.7-code:cloud" => Price.per_mtok(input: 0.95, output: 4, cache_creation: 0, cache_read: 0),
+      "kimi-k2.6:cloud" => Price.per_mtok(input: 0.95, output: 4, cache_creation: 0, cache_read: 0),
+      "nemotron-3-nano:30b-cloud" => Price.per_mtok(input: 0.06, output: 0.24, cache_creation: 0, cache_read: 0),
+      "nemotron-3-super:cloud" => Price.per_mtok(input: 0.015, output: 0.6, cache_creation: 0, cache_read: 0),
+      "nemotron-3-ultra:cloud" => Price.per_mtok(input: 0.1, output: 3, cache_creation: 0, cache_read: 0),
+      "mistral-large-3:675b-cloud" => Price.per_mtok(input: 0.5, output: 1.5, cache_creation: 0, cache_read: 0),
+      "minimax-m2.7:cloud" => Price.per_mtok(input: 0.3, output: 1.2, cache_creation: 0, cache_read: 0),
+      "minimax-m3:cloud" => Price.per_mtok(input: 0.6, output: 2.4, cache_creation: 0, cache_read: 0)
     }.freeze
 
     # @return [PriceBook] the bench's default map
