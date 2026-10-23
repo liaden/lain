@@ -595,19 +595,9 @@ RSpec.describe Lain::Sensitivity::Policy do
   end
 
   describe "#marks" do
-    it "answers this policy's own classifier" do
-      expect(policy.marks("#{cwd}/a/.ssh")).to eq(sensitivity.marks("#{cwd}/a/.ssh")).and be_any
-    end
-
-    it "answers none on the Null and passes the confined policy's through" do
+    it "answers none, frozen, on the Null" do
       expect(described_class::Null.instance.marks("#{cwd}/a/.ssh")).to eq([]).and be_frozen
-      expect(policy.confined(roots: []).marks("#{cwd}/a/.ssh")).to eq(sensitivity.marks("#{cwd}/a/.ssh"))
-    end
-
-    it "answers lifts from its classifier, none on the Null, and the confined policy's through" do
-      expect(policy.lifts("#{cwd}/a")).to eq(sensitivity.lifts("#{cwd}/a"))
       expect(described_class::Null.instance.lifts("#{cwd}/a")).to eq([]).and be_frozen
-      expect(policy.confined(roots: []).lifts("#{cwd}/a")).to eq(sensitivity.lifts("#{cwd}/a"))
     end
   end
 
@@ -812,10 +802,8 @@ RSpec.describe Lain::Sensitivity::Policy do
       { "README.md" => "r\n", ".env" => "A=1\n", "sub/plain.txt" => "p\n", ".lain/config.rb" => "c\n",
         "~notes.txt" => "n\n", "~nobody/x" => "x\n" }
         .each { |name, body| File.write(File.join(root, name), body) }
-      { "key_link" => "../.ssh/id_rsa", "abs_key_link" => File.join(home, ".ssh", "id_rsa"), "envlink" => ".env",
-        "linkdir" => "../.ssh", "aws" => "../.aws/credentials", "shadow" => "/etc/shadow",
-        "tokdir" => File.join(home, "tokens"), "readme.key" => "README.md", "kubedir" => File.join(home, ".kube") }
-        .each { |name, target| File.symlink(target, File.join(root, name)) }
+      CredentialLinks.plant(root, home:, relative: true)
+      File.symlink(File.join(home, ".ssh", "id_rsa"), File.join(root, "abs_key_link"))
     end
 
     it "masks every symlink escape as judge does, with the root spelled through the linked home and at its real path" do

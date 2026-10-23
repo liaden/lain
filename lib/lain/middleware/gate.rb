@@ -195,10 +195,12 @@ module Lain
       # {Approval::Parked::PathGate#verdict_for} makes, so the two cannot disagree.
       def noting(env, effect)
         context = env[:context]
-        return context unless effect.tool_call? && (env.fetch(:effect).approval? || env.fetch(:tool).held?) &&
-                              path_gated?(effect, context)
+        return context unless effect.tool_call? && (env.fetch(:effect).approval? || env.fetch(:tool).held?)
 
-        Approval::Escalation::Noted.new(context, path_verdict(effect, context).explanation)
+        outside = writes_outside?(effect, context)
+        return context unless outside || @sensitivity.gates?(effect, **where(context))
+
+        Approval::Escalation::Noted.new(context, path_verdict(effect, context, outside:).explanation)
       end
 
       def path_gated?(effect, context)
@@ -207,10 +209,10 @@ module Lain
 
       # The stricter of what the named path is and where the call writes, so a
       # credential name outside the root still says it is a credential.
-      def path_verdict(effect, context)
+      def path_verdict(effect, context, outside:)
         named = ::Lain::Sensitivity::Policy.path_in(effect)
         verdicts = [*(@sensitivity.judge(named, **where(context)) if named),
-                    *(::Lain::Sensitivity::Policy::OUTSIDE_PROJECT if writes_outside?(effect, context))]
+                    *(::Lain::Sensitivity::Policy::OUTSIDE_PROJECT if outside)]
         verdicts.inject(:|)
       end
 

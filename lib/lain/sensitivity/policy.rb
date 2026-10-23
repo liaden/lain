@@ -219,8 +219,7 @@ module Lain
         end
 
         def classify(path, within: nil) = @policy.classify(path, within:)
-        def related?(path) = @policy.related?(path)
-        def in_related_tree?(path) = @policy.in_related_tree?(path)
+        delegate :related?, :in_related_tree?, :filter, :mask_paths, :marks, :lifts, to: :@policy
 
         # Asked by where a path lands, never by the reason its name is judged
         # for: a home directory gated by name is still outside every root.
@@ -229,10 +228,6 @@ module Lain
         # @param cwd [String] absolute
         # @return [Boolean] whether it lands outside every root and related directory
         def outside?(path, cwd:) = !held?(File.expand_path(path, cwd))
-        def filter = @policy.filter
-        def mask_paths(...) = @policy.mask_paths(...)
-        def marks(path) = @policy.marks(path)
-        def lifts(path) = @policy.lifts(path)
 
         # @param effect [Lain::Effect]
         # @param cwd [String] absolute; the call's own base
@@ -380,24 +375,25 @@ module Lain
       # Asked by {Middleware::RedactSecretReads}, so the mask reads the same
       # `sensitivity` table the gate does.
       #
-      # @param path [String] absolute
-      # @return [Boolean] whether it lies under a `related` directory
-      def related?(path) = @sensitivity.related?(path)
-
-      # @param path [String] absolute
-      # @return [Boolean] whether it is a `related` directory or lies under one
-      def in_related_tree?(path) = @sensitivity.in_related_tree?(path)
-
+      # @!method related?(path)
+      #   @param path [String] absolute
+      #   @return [Boolean] whether it lies under a `related` directory
+      #
+      # @!method in_related_tree?(path)
+      #   @param path [String] absolute
+      #   @return [Boolean] whether it is a `related` directory or lies under one
+      #
       # Asked by {Confine::MaskList}, whose walk follows a link only where its
       # spelling carries a mark its landing does not.
       #
-      # @param path [String] an absolute directory, as spelled
-      # @return [Array] frozen; see {Sensitivity#marks}
-      def marks(path) = @sensitivity.marks(path)
-
-      # @param path [String] an absolute directory, as spelled
-      # @return [Array] frozen; see {Sensitivity#lifts}
-      def lifts(path) = @sensitivity.lifts(path)
+      # @!method marks(path)
+      #   @param path [String] an absolute directory, as spelled
+      #   @return [Array] frozen; see {Sensitivity#marks}
+      #
+      # @!method lifts(path)
+      #   @param path [String] an absolute directory, as spelled
+      #   @return [Array] frozen; see {Sensitivity#lifts}
+      delegate :related?, :in_related_tree?, :marks, :lifts, to: :@sensitivity
 
       # The stricter of the path as written and every spelling of where it
       # lands. The literal is asked first, so a denied name costs no syscall.
@@ -426,7 +422,7 @@ module Lain
 
       # @param context [Session, #worker_env, nil] as a middleware env carries it
       # @return [String, nil] the checkout a leased worker or a spike runs in; nil for a session without one
-      def self.checkout_of(context) = context.respond_to?(:worker_env) ? context.worker_env.checkout : nil
+      def self.checkout_of(context) = ::Lain::Session.worker_env_of(context).checkout
 
       # The same boundary for a spawned child, which also asks before it reads
       # outside the project, its related directories and `roots`.

@@ -113,8 +113,7 @@ module Lain
       # A location that cannot be resolved at all keeps a NUL byte no confined
       # scope holds, so it is refused rather than guessed at.
       def target(context, named)
-        session = context.respond_to?(:worker_env) ? context : Session::Null.instance
-        session.worker_env.resolve(named)
+        Session.worker_env_of(context).resolve(named)
       rescue TypeError, ArgumentError
         "\0#{named}"
       end

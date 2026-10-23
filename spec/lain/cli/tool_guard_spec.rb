@@ -1005,7 +1005,7 @@ RSpec.describe Lain::CLI::ToolGuard do
                                           released: 0)
 
       resumed = Lain::SessionRecord::Replay.new(journal_io.string.each_line)
-                                           .session(on: Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store))
+                                           .session(on: CoreGraph.timeline)
 
       expect(resumed.withheld?(Lain::Session::Withheld::Source.file("/repo/.env"))).to be(true)
     end

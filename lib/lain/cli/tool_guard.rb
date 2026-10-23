@@ -49,11 +49,6 @@ module Lain
     # through {.detached}. This module is the one place an agent's tool stack is
     # assembled.
     module ToolGuard
-      # A run with no project root to class a program by classes it by the lease, which is a copy of the project.
-      LEASE_RESOLVER = lambda { |worker_env:, fresh:|
-        ::Lain::Shell::Executable::Resolver.new(root: worker_env.checkout, fresh:)
-      }
-
       # One freshness per lease, keyed by the lease's own environment: an arm
       # that spawns an agent per step builds a guard per step over that one
       # object, and a later step must still read what an earlier one wrote as
@@ -202,11 +197,8 @@ module Lain
       # holds. Until then its gate asks as the run's own agent. No current
       # caller spawns a role over it except through {#never_parking}, whose
       # copy names the child's role the same way.
-      #
-      # `resolver` builds what a leased child's gate resolves a command through
-      # (`(worker_env:, fresh:) -> #for`), and `leases` holds each lease's freshness.
-      Detached = Data.define(:chronicle, :guard_inputs, :requester, :resolver, :leases) do
-        def initialize(chronicle:, guard_inputs:, requester: nil, resolver: LEASE_RESOLVER, leases: LEASES) = super
+      Detached = Data.define(:chronicle, :guard_inputs, :requester) do
+        def initialize(chronicle:, guard_inputs:, requester: nil) = super
 
         # @param worker_env [WorkerEnv] the environment the child runs in
         # @param task [String, nil] what the child was spawned to do, asked about beside its name
@@ -224,9 +216,10 @@ module Lain
         private
 
         def leased(worker_env, task)
-          fresh = leases.for(worker_env)
-          ToolGuard.leased(chronicle, guard_inputs, worker_env, requester:, task:, fresh:,
-                                                                resolver: resolver.call(worker_env:, fresh:))
+          fresh = LEASES.for(worker_env)
+          # A run with no project root classes a program by the lease, which is a copy of the project.
+          resolver = ::Lain::Shell::Executable::Resolver.new(root: worker_env.checkout, fresh:)
+          ToolGuard.leased(chronicle, guard_inputs, worker_env, requester:, task:, fresh:, resolver:)
         end
       end
 
@@ -453,7 +446,7 @@ module Lain
         def command_refusal(effect, context)
           return format(LEASED_OPAQUE, lease: @lease) if opaque?(effect, context)
 
-          read = ::Lain::Shell::Stages.for_input(effect.input, worker_env: worker_env_of(context),
+          read = ::Lain::Shell::Stages.for_input(effect.input, worker_env: ::Lain::Session.worker_env_of(context),
                                                                resolver: @resolver, home: @home)
           return format(LEASED_OPAQUE, lease: @lease) if !read.known? || @written.untellable?(read.stages)
 
@@ -462,10 +455,6 @@ module Lain
         end
 
         def opaque?(effect, context) = Middleware::ParsedCommand.named_in(effect, context, home: @home).opaque?
-
-        def worker_env_of(context)
-          (context.respond_to?(:worker_env) ? context : ::Lain::Session::Null.instance).worker_env
-        end
 
         def outside?(effect, context)
           @sensitivity.gates?(effect, cwd: ::Lain::Session.cwd_of(context),

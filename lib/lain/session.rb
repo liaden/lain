@@ -123,9 +123,11 @@ module Lain
     #
     # @param context [Session, #worker_env, nil] as a middleware env or a parked call carries it
     # @return [String]
-    def self.cwd_of(context)
-      (context.respond_to?(:worker_env) ? context : Null.instance).worker_env.cwd
-    end
+    def self.cwd_of(context) = worker_env_of(context).cwd
+
+    # @param context [Session, #worker_env, nil] as a middleware env or a parked call carries it
+    # @return [WorkerEnv] the context's own, or the process's for one that carries none
+    def self.worker_env_of(context) = (context.respond_to?(:worker_env) ? context : Null.instance).worker_env
 
     # Every line of a file, as a read's span: `(first..last)` for a window that
     # stopped short, `(first..)` for one that reached the end of the file.

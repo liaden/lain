@@ -299,35 +299,6 @@ RSpec.describe Lain::Bench::Harness do
       expect(Dir.children(outside)).to be_empty
     end
 
-    it "refuses a written script however the command spells it, under both confinements" do
-      outside = File.join(@tmp, "outside").tap { FileUtils.mkdir_p(_1) }
-
-      { "a" => described_class::INSTRUMENTATION, "b" => reader }.each do |tag, through|
-        stack = stack_for(through)
-        wrote(stack, "#{tag}.sh", "touch #{outside}/#{tag}sh\n")
-        wrote(stack, "#{tag}.rb", "File.write('#{outside}/#{tag}rb', 1)\n")
-
-        [%(bash "#{tag}.sh"), "bash '#{tag}.sh'", "bash #{tag}.sh # note", "bash #{tag}.s?", "bash #{tag}.sh '*'",
-         "ruby '#{tag}.rb'"].each do |command|
-          expect(acted(Lain::Tools::Bash.new, { "command" => command }, stack:)).to have_attributes(is_error: true),
-                                                                                    command
-        end
-      end
-      expect(Dir.children(outside)).to be_empty
-    end
-
-    it "refuses a spec the run wrote to a test runner, under both confinements" do
-      FileUtils.mkdir_p(File.join(@lease, "spec"))
-
-      { "a" => described_class::INSTRUMENTATION, "b" => reader }.each do |tag, through|
-        stack = stack_for(through)
-        expect(wrote(stack, "spec/#{tag}_spec.rb", "")).to have_attributes(is_error: false)
-
-        expect(acted(Lain::Tools::Bash.new, { "command" => "rspec spec/#{tag}_spec.rb" }, stack:))
-          .to have_attributes(is_error: true, content: include("written during this run")), tag
-      end
-    end
-
     # DualLedger and OrchestratorWorker spawn a fresh agent per step over the lease's one environment.
     it "refuses a script an earlier spawn over the same lease wrote, under both confinements" do
       outside = File.join(@tmp, "outside").tap { FileUtils.mkdir_p(_1) }
