@@ -162,26 +162,41 @@ RSpec.describe Lain::CredentialPatterns do
 
     # A long unbroken line is what a pasted blob or a minified file hands over,
     # and a shape that backtracks over it stalls every read and write it guards.
-    it "scans a 100 KB line in linear time on both sides" do
-      lines = ["token=" * 16_667, "token=#{"a" * 100_000}1", "x_token=#{"a" * 100_000}(", "token=abcdefg1(" * 6_667]
-      shapes = [shape, described_class.for(:content).fetch("credential literal assignment")]
-      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-      shapes.product(lines).each { |re, line| line.match?(re) }
+    # Scaling the same lines tenfold judges the growth, not the machine: linear
+    # is about 10x and quadratic about 100x, and no wall-clock bound holds on a
+    # loaded box.
+    def growth_ratio(shapes)
+      small, large = [10_000, 100_000].map do |size|
+        lines = yield(size)
+        Array.new(3) do
+          started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+          shapes.product(lines).each { |re, line| line.match?(re) }
+          Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+        end.min
+      end
+      large / small
+    end
 
-      expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started).to be < 0.2
+    it "scans a 100 KB line in linear time on both sides" do
+      shapes = [shape, described_class.for(:content).fetch("credential literal assignment")]
+      ratio = growth_ratio(shapes) do |size|
+        ["token=" * (size / 6), "token=#{"a" * size}1", "x_token=#{"a" * size}(", "token=abcdefg1(" * (size / 15)]
+      end
+
+      expect(ratio).to be < 30
     end
 
     it "scans a 100 KB line in linear time for each gated password shape" do
-      a = "a" * 100_000
-      lines = ["A_PWD=" * 16_667, "A_PWD=#{a}1(", "A#{"_" * 100_000}", "#{"A" * 100_000}PWD=x", "A_PWD='#{a}",
-               "A_PASSWORD=\"$(#{a}", %("password": "#{a}), %("password": "${#{a}), "postgres://#{a}",
-               "postgres://a:#{"b" * 100_000}", "postgres://a:$#{"B" * 100_000}", "ghp_#{a}",
-               "Authorization: Bearer #{a} ", "Authorization: Bearer x" * 4_000, "a:" * 50_000]
       shapes = described_class.for(:write).values_at("github token", *gated_today)
-      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-      shapes.product(lines).each { |re, line| line.match?(re) }
+      ratio = growth_ratio(shapes) do |size|
+        a = "a" * size
+        ["A_PWD=" * (size / 6), "A_PWD=#{a}1(", "A#{"_" * size}", "#{"A" * size}PWD=x", "A_PWD='#{a}",
+         "A_PASSWORD=\"$(#{a}", %("password": "#{a}), %("password": "${#{a}), "postgres://#{a}",
+         "postgres://a:#{"b" * size}", "postgres://a:$#{"B" * size}", "ghp_#{a}",
+         "Authorization: Bearer #{a} ", "Authorization: Bearer x" * (size / 25), "a:" * (size / 2)]
+      end
 
-      expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started).to be < 0.2
+      expect(ratio).to be < 30
     end
 
     it "ends a bare value before a backtick or trailing punctuation" do
