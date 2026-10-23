@@ -107,6 +107,36 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Batch, :seam do
     end
   end
 
+  describe "flags" do
+    let(:bad) { "w2" }
+    let(:asked) { [] }
+    let(:flagger) do
+      Class.new do
+        def initialize(asked) = @asked = asked
+
+        def for(report)
+          @asked << report.kind
+          ["spec #{report.sha[0, 7]}"]
+        end
+      end.new(asked)
+    end
+    let(:batch) { described_class.new(queue_for:, rebuild_cap: cap, flags: flagger) }
+
+    it "puts what the flagger says on each landed report, and asks about no other" do
+      landing = workers("w1", "w2")
+
+      outcome = batch.call(landing)
+
+      expect(outcome.reports.map(&:kind)).to eq(%i[merged declined])
+      expect(outcome.reports.map(&:flags)).to eq([["spec #{landing.first.sha[0, 7]}"], []])
+      expect(asked).to eq([:merged])
+    end
+
+    it "flags nothing when no flagger is given" do
+      expect(described_class.new(queue_for:, rebuild_cap: cap).call(workers("w1")).reports.first.flags).to eq([])
+    end
+  end
+
   describe "a batch of five with the fourth bad" do
     let(:bad) { "w4" }
 

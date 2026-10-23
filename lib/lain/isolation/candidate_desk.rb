@@ -34,6 +34,8 @@ module Lain
         @checkout = checkout
         @journal = journal
         @strategy = strategy
+        # The handback outcome has no base member, and only the desk knows the tip a commit landed onto.
+        @bases = {}
         root = File.expand_path(repo_root)
         @git = Checkout.new(root, shell_out_factory:)
         @forward = Forward.new(repo_root: root, base:, strategy:, shell_out_factory:)
@@ -82,7 +84,8 @@ module Lain
       end
 
       def landed(worker, outcome)
-        LandingQueue::Landed.new(worker:, report: WorkerHandoff::Report.from(outcome).with(ref: worker.ref))
+        report = WorkerHandoff::Report.from(outcome).with(ref: worker.ref, base: @bases[outcome.sha])
+        LandingQueue::Landed.new(worker:, report:)
       end
 
       def already(worker) = report(worker, :nothing_to_do, detail: "#{branch} already holds #{worker.sha}")
@@ -149,6 +152,7 @@ module Lain
       end
 
       def advanced(worker, commit, fast_forward:)
+        @bases[commit] = tip
         @tip = commit
         outcome(:merged, worker, sha: commit, fast_forward:)
       end

@@ -326,6 +326,26 @@ RSpec.describe Lain::Isolation::CandidateDesk, :seam do
     end
   end
 
+  describe "the tip a merged report was landed onto" do
+    it "names the branch tip for a fast-forward, and the candidate's head for a clean merge after it" do
+      started = tip
+      w1 = worker("w1", f: "a\nB1\nc\n")
+      w2 = worker("w2", from: started, g: "new\n")
+
+      result = queue.call([w1, w2])
+
+      expect([result.report("w1").fast_forward, result.report("w1").base]).to eq([true, started])
+      expect([result.report("w2").fast_forward, result.report("w2").base]).to eq([false, w1.sha])
+    end
+
+    it "names no base on a report that did not land" do
+      w1 = worker("w1", f: "a\nB1\nc\n")
+      queue.call([w1])
+
+      expect(queue.call([w1]).report("w1").base).to be_nil
+    end
+  end
+
   describe "a verdict taken against another tip" do
     it "is refused rather than landing a wrong tree" do
       w1 = worker("w1", f: "a\nB1\nc\n")

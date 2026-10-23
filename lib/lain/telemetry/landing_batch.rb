@@ -21,12 +21,14 @@ module Lain
     # keys in queue order; `landed`, `ejected` and `declined` partition them by
     # what became of each. `queue_wait_s` maps each worker key to the seconds
     # it waited, and `verify_wall_s` is the wall spent verifying the batch.
+    # `flagged` maps the key of each landed worker whose change raised flags to
+    # them; a worker that raised none is absent.
     LandingBatch = Data.define(:branch, :desk, :verifier, :worker_keys, :landed, :ejected, :declined,
-                               :verifies, :rebuilds, :verify_wall_s, :queue_wait_s, :outcome) do
+                               :verifies, :rebuilds, :verify_wall_s, :queue_wait_s, :outcome, :flagged) do
       include Journalable
 
       def initialize(branch:, desk:, verifier:, worker_keys:, landed:, ejected:, declined:, verifies:, rebuilds:,
-                     verify_wall_s:, queue_wait_s:, outcome:)
+                     verify_wall_s:, queue_wait_s:, outcome:, flagged: {})
         desk = desk&.to_sym
         outcome = outcome&.to_sym
         Carriers::LandingBatch.check!(branch:, desk:, outcome:)
@@ -36,7 +38,12 @@ module Lain
               ejected: Freezable::Fields.pinned_each(ejected), declined: Freezable::Fields.pinned_each(declined),
               verifies: Integer(verifies), rebuilds: Integer(rebuilds), verify_wall_s: Float(verify_wall_s),
               queue_wait_s: Ractor.make_shareable(queue_wait_s.to_h { |key, wait| [key.to_s, Float(wait)] }),
-              outcome:)
+              outcome:,
+              flagged: self.class.pinned_flags(flagged))
+      end
+
+      def self.pinned_flags(flagged)
+        Ractor.make_shareable(flagged.to_h { |key, flags| [key.to_s, flags.map { |flag| -flag.to_s }] })
       end
     end
   end

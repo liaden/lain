@@ -846,6 +846,15 @@ RSpec.describe Lain::Isolation::WorkerHandoff, :seam do
     it "is deeply frozen with a SHA on it" do
       expect(described_class::Report.new(kind: :merged, sha: +("a" * 40), fast_forward: true)).to be_deeply_frozen
     end
+
+    it "names no base and no flags unless told, and stays deeply frozen when it does" do
+      bare = described_class::Report.new(kind: :merged)
+      told = described_class::Report.new(kind: :merged, base: +("b" * 40), flags: [+"hooks .husky/pre-push"])
+
+      expect([bare.base, bare.flags]).to eq([nil, []])
+      expect([told.base, told.flags]).to eq(["b" * 40, ["hooks .husky/pre-push"]])
+      expect(told).to be_deeply_frozen
+    end
   end
 
   describe ".over takes the working branch" do

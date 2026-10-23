@@ -17,6 +17,14 @@ RSpec.describe Lain::Telemetry::LandingBatch do
     expect(record).to be_deeply_frozen
   end
 
+  it "journals which landed workers were flagged, none by default" do
+    expect(build.flagged).to eq({})
+    record = build(flagged: { +"w-1" => [+"hooks .husky/pre-push"] })
+
+    expect(record.to_journal["flagged"]).to eq("w-1" => ["hooks .husky/pre-push"])
+    expect(record).to be_deeply_frozen
+  end
+
   it "answers landing_batch to no other Journalable" do
     others = ObjectSpace.each_object(Class).select { |klass| klass.include?(Lain::Telemetry::Journalable) && klass.name }
                         .reject { |klass| klass == described_class }

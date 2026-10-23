@@ -114,6 +114,27 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Spool do
     expect(spool.result(entry.id)).to eq(written)
   end
 
+  it "reads a result stored before reports carried a base or flags, with neither" do
+    entry = spool.enqueue(worker("w1"))
+    stored = { id: entry.id, kind: "merged", ref: "refs/lain/worker/w", paths: [], detail: "", sha: "b" * 40,
+               fast_forward: false }
+    FileUtils.mkdir_p(@home.results)
+    File.write(File.join(@home.results, "#{entry.id}.json"),
+               JSON.generate(report: stored.except(:id), verification: nil, batch: 1))
+
+    expect(spool.result(entry.id).report).to have_attributes(kind: :merged, base: nil, flags: [])
+  end
+
+  it "keeps a report's base and flags through a write and a read" do
+    entry = spool.enqueue(worker("w1"))
+    flagged = report.with(base: "d" * 40, flags: ["ci_config .github/workflows/main.yml", "symlink docs/link"])
+    written = described_class::Result.new(id: entry.id, report: flagged, verification: nil, batch: 1)
+
+    spool.complete(entry.id, written)
+
+    expect(spool.result(entry.id).report).to have_attributes(base: "d" * 40, flags: flagged.flags)
+  end
+
   it "refuses a result whose report, verification or batch is the wrong type" do
     expect { described_class::Result.new(id: "x", report: report.to_h, verification: nil, batch: nil) }
       .to raise_error(ArgumentError, /report/)

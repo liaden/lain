@@ -227,7 +227,8 @@ module Lain
       end
 
       def landed(result, id)
-        ["#{id} landed at #{result.report.sha}", unverified(result.verification)].compact.join("\n")
+        ["#{id} landed at #{result.report.sha}", unverified(result.verification),
+         *result.report.flags.map { |flag| "flagged: #{flag}" }].compact.join("\n")
       end
 
       def unverified(verification)

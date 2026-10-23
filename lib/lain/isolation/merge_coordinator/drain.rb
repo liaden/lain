@@ -168,7 +168,8 @@ module Lain
           started = @wall_clock.call.to_f
           stopwatch = Stopwatch.new(@verify, @clock)
           outcome = Batch.new(queue_for: -> { @queue_for.call(journal:, verify: stopwatch) },
-                              rebuild_cap: @isolation.rebuild_cap).call(entries.map(&:worker))
+                              rebuild_cap: @isolation.rebuild_cap,
+                              flags: LandedFlags.new(git: @git)).call(entries.map(&:worker))
           completed(entries, outcome, number)
           journal << Tally.new(entries, outcome).record(branch: @branch, verifier: @isolation.verifier,
                                                         verify_wall_s: stopwatch.seconds, started:)
@@ -226,11 +227,15 @@ module Lain
               branch:, desk: :candidate, verifier:, worker_keys: @keys,
               landed: of(:landed), ejected: of(:ejected), declined: of(:declined),
               verifies: @outcome.verifies, rebuilds: @outcome.rebuilds, verify_wall_s:,
-              queue_wait_s: waits(started), outcome:
+              queue_wait_s: waits(started), outcome:, flagged:
             )
           end
 
           private
+
+          def flagged
+            @keys.zip(@outcome.reports).to_h { |key, report| [key, report.flags] }.reject { |_key, flags| flags.empty? }
+          end
 
           def fate(report, judged)
             return :landed if LANDED.include?(report.kind)

@@ -79,7 +79,7 @@ module Lain
       STRANDED = "the parent checkout is STILL MID-MERGE and could not be unwound -- " \
                  "run `git merge --abort` there before any further handback"
 
-      Report = Data.define(:kind, :ref, :paths, :detail, :sha, :fast_forward)
+      Report = Data.define(:kind, :ref, :paths, :detail, :sha, :fast_forward, :base, :flags)
 
       # What a worker's completion did, and -- the part its caller folds into the
       # worker's own result -- what a human has to do next.
@@ -103,6 +103,11 @@ module Lain
       # worker's commit; a fast-forward is still `:merged`, so no `case` on
       # `kind` has to learn a new value.
       #
+      # `base` is the tip a `:merged` report landed onto, so `base..sha` is
+      # exactly that worker's change, and nil on every other kind (a `:resolved`
+      # landing carries none, so it is never flagged). `flags` are
+      # the "<class> <path>" lines the landing queue raised on that change.
+      #
       # Reopened rather than declared in a `Data.define ... do` block: a
       # constant there is lexically scoped to the enclosing module, not the Data
       # class.
@@ -124,10 +129,11 @@ module Lain
               sha: outcome.sha, fast_forward: outcome.fast_forward)
         end
 
-        def initialize(kind:, ref: nil, paths: [], detail: "", sha: nil, fast_forward: false)
+        def initialize(kind:, ref: nil, paths: [], detail: "", sha: nil, fast_forward: false, base: nil, flags: [])
           super(kind: known(kind), ref: Freezable::Fields.pinned(ref), paths: Freezable::Fields.pinned_each(paths),
                 detail: -detail.to_s, sha: Freezable::Fields.pinned(sha),
-                fast_forward: Freezable::Fields.boolean!(fast_forward, "fast_forward"))
+                fast_forward: Freezable::Fields.boolean!(fast_forward, "fast_forward"),
+                base: Freezable::Fields.pinned(base), flags: Freezable::Fields.pinned_each(flags))
         end
 
         # @return [Boolean] whether this outcome moved the parent's tip

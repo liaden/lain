@@ -51,8 +51,8 @@ RSpec.describe Lain::CLI::Land, :seam do
     spool.enqueue(Lain::Isolation::LandingQueue::Worker.new(id:, ref: ref_for(id), sha: commit))
   end
 
-  def complete(entry, kind:, verification: nil)
-    report = Lain::Isolation::WorkerHandoff::Report.new(kind:, ref: entry.worker.ref, sha: entry.worker.sha)
+  def complete(entry, kind:, verification: nil, flags: [])
+    report = Lain::Isolation::WorkerHandoff::Report.new(kind:, ref: entry.worker.ref, sha: entry.worker.sha, flags:)
     result = Lain::Isolation::MergeCoordinator::Spool::Result.new(id: entry.id, report:, verification:, batch: 1)
     spool.complete(entry.id, result)
   end
@@ -223,6 +223,24 @@ RSpec.describe Lain::CLI::Land, :seam do
 
       expect(land.wait(entry.id, branch: "main")).to eq(0)
       expect(sink.string).to include("landed at #{commit}", "verification skipped: no verification is configured")
+    end
+
+    it "names each flag a landed worker's change raised" do
+      entry = queued
+      complete(entry, kind: :merged, flags: ["ci_config .github/workflows/main.yml", "symlink docs/link"])
+
+      expect(land.wait(entry.id, branch: "main")).to eq(0)
+      expect(sink.string).to include("landed at #{commit}", "flagged: ci_config .github/workflows/main.yml",
+                                     "flagged: symlink docs/link")
+    end
+
+    it "prints no flagged line for an unflagged landing" do
+      entry = queued
+      complete(entry, kind: :merged)
+
+      land.wait(entry.id, branch: "main")
+
+      expect(sink.string).not_to include("flagged")
     end
 
     it "says nothing of verification when it passed" do

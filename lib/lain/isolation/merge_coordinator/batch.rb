@@ -28,10 +28,12 @@ module Lain
         end
 
         # @param queue_for [#call] answers a fresh {LandingQueue} per run
+        # @param flags [#for] answers the flags a landed report raises
         # @param rebuild_cap [Integer] how many times, across the whole batch,
         #   a run is built again after the branch moved during its verification
-        def initialize(queue_for:, rebuild_cap:)
+        def initialize(queue_for:, rebuild_cap:, flags: LandedFlags::NONE)
           @queue_for = queue_for
+          @flags = flags
           @rebuild_cap = Integer(rebuild_cap)
         end
 
@@ -68,6 +70,7 @@ module Lain
         end
 
         def concluded(tally, reports, result)
+          reports = reports.map { |report| report.moved? ? report.with(flags: @flags.for(report)) : report }
           held = reports.map { |report| held?(report) ? result.verification : nil }
           tally.with(reports: tally.reports + reports, verifications: tally.verifications + held)
         end

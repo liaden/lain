@@ -48,6 +48,7 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Drain, :seam do
 
   def worker(id, from: tip, file: id)
     git("switch", "-q", "--detach", from)
+    FileUtils.mkdir_p(File.dirname(File.join(@repo, file)))
     File.write(File.join(@repo, file), "#{id}\n")
     git("add", file)
     git("commit", "-q", "-m", "#{id} work")
@@ -271,6 +272,57 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Drain, :seam do
     end
   end
 
+  describe "flagged landings" do
+    let(:ci) { ".github/workflows/main.yml" }
+
+    it "carries the flags in the result and the batch record for a worker that changed CI config" do
+      configure(verify: passing)
+      w1 = worker("w1", file: ci)
+      entry = spool.enqueue(w1)
+
+      drain.call
+
+      expect(spool.result(entry.id).report.flags).to eq(["ci_config #{ci}"])
+      expect(batch_records.first["flagged"]).to eq(key(w1) => ["ci_config #{ci}"])
+    end
+
+    it "flags an ordinary change with nothing" do
+      configure(verify: passing)
+      w1 = worker("w1", file: "lib/a.rb")
+      entry = spool.enqueue(w1)
+
+      drain.call
+
+      expect(spool.result(entry.id).report.flags).to eq([])
+      expect(batch_records.first["flagged"]).to eq({})
+    end
+
+    it "does not flag the second of two workers landed in one run for the first one's files" do
+      configure(verify: passing, batch_cap: 2)
+      w1 = worker("w1", file: ci)
+      w2 = worker("w2", from: tip, file: "lib/a.rb")
+      first = spool.enqueue(w1)
+      second = spool.enqueue(w2)
+
+      drain.call
+
+      expect([spool.result(first.id).report.flags, spool.result(second.id).report.flags])
+        .to eq([["ci_config #{ci}"], []])
+      expect(batch_records.first["flagged"]).to eq(key(w1) => ["ci_config #{ci}"])
+    end
+
+    it "never flags a worker the verifier ejected" do
+      configure(verify: ["sh", "-c", "test ! -e .github/workflows/main.yml"])
+      w1 = worker("w1", file: ci)
+      entry = spool.enqueue(w1)
+
+      drain.call
+
+      expect(spool.result(entry.id).report).to have_attributes(kind: :declined, flags: [])
+      expect(batch_records.first["flagged"]).to eq({})
+    end
+  end
+
   describe "an entry enqueued while the drainer finishes" do
     it "is landed by the recheck after the lock is released, not stranded" do
       configure(verify: passing)
@@ -401,7 +453,9 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Drain, :seam do
       real = Lain::Isolation::Checkout.new(@repo)
       broken = instance_double(Lain::Shell::Out, exitstatus: 128, stderr: "fatal: bad object")
       Object.new.tap do |git|
-        git.define_singleton_method(:run) { |*args| args.include?(sha) ? broken : real.run(*args) }
+        git.define_singleton_method(:run) do |*args|
+          args.first == "merge-base" && args.include?(sha) ? broken : real.run(*args)
+        end
       end
     end
 
