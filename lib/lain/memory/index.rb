@@ -84,6 +84,10 @@ module Lain
         root.nil?
       end
 
+      # The Null answer: a bare Index records no writer, which a {Recorder}
+      # over a store overrides.
+      def written_by(_id) = nil
+
       # Returns a NEW Index; the receiver is untouched (see Timeline#commit for
       # why the verb is not `append`).
       def write(item)

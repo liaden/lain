@@ -71,19 +71,29 @@ module Lain
       # The version is DERIVED from those items rather than stamped, so a reader
       # holding a recorded load can re-address it and find out whether the
       # bodies still match the version they were recorded under.
-      Loaded = Data.define(:version, :items) do
+      #
+      # `provenance` maps an item's digest to the `written_by` record its row
+      # carried. It sits beside the items, outside what the version addresses.
+      Loaded = Data.define(:version, :items, :provenance) do
         # Last write wins per id, then id order. THE fold: the store's reader,
         # its writer's dedup, the live view and the replay's seed all resolve
         # the log through this one method, and id order is what keeps two walks
         # over the same content from addressing two versions.
         #
         # @param items [Enumerable<Item>] a log, oldest first
-        def self.of(items)
+        # @param provenance [Hash{String => Hash}] digest => who wrote it
+        def self.of(items, provenance: {})
           held = items.to_a.reverse.uniq(&:id).sort_by(&:id).freeze
-          new(version: Canonical.digest(held.map(&:digest)), items: held)
+          new(version: Canonical.digest(held.map(&:digest)), items: held, provenance:)
         end
 
-        def initialize(version:, items:) = super(version: -version.to_s, items: items.freeze)
+        def initialize(version:, items:, provenance: {})
+          super(version: -version.to_s, items: items.freeze, provenance: Ractor.make_shareable(provenance.to_h))
+        end
+
+        # @return [Hash, nil] the tool call and time that wrote this item, nil
+        #   for a row written before provenance existed
+        def written_by(item) = provenance[item.digest]
 
         # The Index this load renders as: the items folded in id order.
         #
@@ -125,7 +135,7 @@ module Lain
         def self.path = nil
         def self.load = ProjectStore.empty
         def self.view = Recorder.new
-        def self.append(_item) = ProjectStore.empty
+        def self.append(_item, **) = ProjectStore.empty
         def self.newer_than(_loaded) = 0
       end
 
@@ -166,7 +176,7 @@ module Lain
       def load
         return self.class.empty unless File.exist?(path)
 
-        locked(File::LOCK_SH) { Loaded.of(held) }
+        locked(File::LOCK_SH) { loaded_from(entries) }
       end
 
       # A fresh chat's view: the store head, and every later write on this
@@ -182,7 +192,7 @@ module Lain
       #
       # @param recorder [Recorder] the replayed view
       # @return [Recorder]
-      def resumed(recorder) = rebound(Loaded.of(recorder.index.to_a))
+      def resumed(recorder) = rebound(Loaded.of(recorder.index.to_a, provenance: load.provenance))
 
       # Append one item unless this id's CURRENT head already holds exactly this
       # content. Judged against the fold rather than against the whole file, for
@@ -190,14 +200,16 @@ module Lain
       # is not the same question as the digest an id resolves to now.
       #
       # @param item [Item]
+      # @param written_by [Hash, nil] the tool call and time behind the write;
+      #   stored on the row, outside the item, so the digest is unchanged
       # @return [Loaded] the store as this write left it
       # @raise [Ownership::Refused] when the writer is a clerk and the id's current head was written by another author
-      def append(item)
+      def append(item, written_by: nil)
         locked(File::LOCK_EX) do
-          log = held
-          current = Loaded.of(log)
+          log = entries
+          current = loaded_from(log)
           Ownership.permit!(item, current.items.find { |held| held.id == item.id })
-          current.heads[item.id] == item.digest ? current : Loaded.of(written(log, item))
+          current.heads[item.id] == item.digest ? current : appended(log, item, written_by)
         end
       end
 
@@ -218,10 +230,31 @@ module Lain
 
       def rebound(loaded) = Recorder.new(index: loaded.index, store: self, loaded:)
 
-      def held
+      def entries
         return [] unless File.exist?(path)
 
-        File.readlines(path, chomp: true).each_with_index.filter_map { |line, index| item_from(line, index + 1) }
+        File.readlines(path, chomp: true).each_with_index.filter_map { |line, index| entry_from(line, index + 1) }
+      end
+
+      def appended(log, item, written_by)
+        written(item, written_by)
+        loaded_from(log + [[item, written_by]])
+      end
+
+      def loaded_from(entries)
+        provenance = entries.to_h { |item, written_by| [item.digest, written_by] }.compact
+        Loaded.of(entries.map(&:first), provenance:)
+      end
+
+      def entry_from(line, number)
+        item = item_from(line, number)
+        [item, written_by_of(JSON.parse(line))] if item
+      end
+
+      # A malformed record fails safe: the item loads and names no writer.
+      def written_by_of(record)
+        by = record["written_by"]
+        by if by.is_a?(Hash) && by.values.all?(String)
       end
 
       # TWO DIFFERENT CLAIMS, and only one of them is damage worth refusing
@@ -282,16 +315,18 @@ module Lain
       # `write`, and a short one RAISES: a caller told its item was stored, over
       # bytes that are not a record, is the one failure this ordering exists to
       # prevent.
-      def written(items, item)
-        bytes = "#{terminator}#{JSON.generate(row_for(item))}\n"
+      def written(item, written_by)
+        bytes = "#{terminator}#{JSON.generate(row_for(item, written_by))}\n"
         File.open(path, File::WRONLY | File::CREAT | File::APPEND, 0o644) do |file|
           stored!(file.write(bytes), bytes.bytesize, item)
           file.fsync
         end
-        items + [item]
       end
 
-      def row_for(item) = item.payload.merge("author" => item.author.to_h, "digest" => item.digest)
+      def row_for(item, written_by)
+        row = item.payload.merge("author" => item.author.to_h, "digest" => item.digest)
+        written_by ? row.merge("written_by" => written_by) : row
+      end
 
       def stored!(landed, owed, item)
         return if landed == owed

@@ -38,6 +38,7 @@ module Lain
         @index = index
         @store = store
         @loaded = loaded
+        @written_by = {}
       end
 
       # The current snapshot. Exposed (rather than just #root) so a caller can
@@ -52,11 +53,24 @@ module Lain
       # The store first, the view second: a store that refuses the write leaves
       # the view where it was, rather than rendering an item nothing durable
       # holds.
-      def write(item)
+      #
+      # @param item [Item]
+      # @param written_by [Hash, nil] the tool call and time behind the write
+      def write(item, written_by: nil)
         Ownership.permit!(item, index.key?(item.id) ? fetch(item.id) : nil)
-        @store.append(item)
+        @store.append(item, written_by:)
+        @written_by[item.digest] = written_by if written_by
         @index = folded(index.to_a + [item])
         root
+      end
+
+      # @return [Hash, nil] who wrote the item currently at `id`: this
+      #   session's own write, else the one the load carried
+      def written_by(id)
+        return nil unless index.key?(id)
+
+        item = fetch(id)
+        @written_by[item.digest] || loaded.written_by(item)
       end
 
       # The view follows the chain. A `/rewind` past a memory_write drops it

@@ -80,12 +80,17 @@ module Lain
         # multi-byte characters would otherwise measure short by up to 4x.
         return refusal(input.id, body.bytesize) unless BOUND.admits?(body.bytesize)
 
-        Tool::Result.ok("author: #{item.author}\n#{body}")
+        Tool::Result.ok("author: #{item.author}#{writer_of(input.id)}\n#{body}")
       rescue Memory::Index::UnknownId
         Tool::Result.error("no memory with id #{input.id.inspect}")
       end
 
       private
+
+      def writer_of(id)
+        by = index.written_by(id)
+        by ? ", written by tool call #{by.fetch("tool_use_id")} at #{by.fetch("written_at")}" : ""
+      end
 
       def refusal(id, size) = BOUND.refusal(subject: "memory item #{id.inspect}", size:, narrower: NARROWER)
 

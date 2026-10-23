@@ -206,7 +206,7 @@ module Lain
     # nested class declared inside that block scopes to the enclosing module, not
     # the Data class.
     WriteThrough = Data.define(:recorder) do
-      def append(item) = recorder.write(item)
+      def append(item, written_by: nil) = recorder.write(item, written_by:)
     end
 
     # The record one clerk reads: one lineage's child turns, rendered. Its ROLE

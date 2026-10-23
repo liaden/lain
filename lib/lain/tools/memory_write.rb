@@ -62,10 +62,12 @@ module Lain
       # @param recorder [Memory::Recorder] where the item is written
       # @param author [Memory::Author] stamped on every write; lain's to set,
       #   so the model has no field for it
-      def initialize(recorder:, author:)
+      # @param clock [#call] the time a write is recorded at
+      def initialize(recorder:, author:, clock: -> { Time.now })
         super()
         @recorder = recorder
         @author = author
+        @clock = clock
       end
 
       def name = "memory_write"
@@ -92,13 +94,19 @@ module Lain
 
         sources = staleness_for(invocation).record(Array(input.sources))
         item = Memory::Item.new(id: input.id, description: input.description, body: input.body, author:, sources:)
-        root = recorder.write(item)
+        root = recorder.write(item, written_by: written_by(invocation))
         Tool::Result.ok("wrote memory item #{item.id.inspect}; index root is now #{root}")
       rescue ArgumentError, Memory::Ownership::Refused, Memory::Staleness::Refused => e
         Tool::Result.error(e.message)
       end
 
       private
+
+      def written_by(invocation)
+        return nil unless invocation&.tool_use_id
+
+        { "tool_use_id" => invocation.tool_use_id, "written_at" => clock.call.utc.iso8601 }
+      end
 
       def staleness_for(invocation)
         session = session_of(invocation)
@@ -120,7 +128,7 @@ module Lain
         bound.refusal(subject: yield, size: text.bytesize, narrower:) unless bound.admits?(text.bytesize)
       end
 
-      attr_reader :recorder, :author
+      attr_reader :recorder, :author, :clock
     end
   end
 end

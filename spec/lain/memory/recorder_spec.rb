@@ -55,7 +55,7 @@ RSpec.describe Lain::Memory::Recorder do
 
     def double_store(collected)
       Class.new do
-        define_method(:append) { |item| collected << item }
+        define_method(:append) { |item, **| collected << item }
       end.new
     end
 
@@ -75,11 +75,37 @@ RSpec.describe Lain::Memory::Recorder do
     # The store first, the view second: a store that refuses leaves the view
     # where it was rather than rendering an item nothing durable holds.
     it "leaves the view unmoved when the store refuses the write" do
-      refusing = Class.new { def append(_item) = raise(IOError, "disk") }.new
+      refusing = Class.new { def append(_item, **) = raise(IOError, "disk") }.new
       view = described_class.new(store: refusing)
 
       expect { view.write(item("a")) }.to raise_error(IOError)
       expect(view.index).to be_empty
+    end
+
+    it "hands the store who wrote the item, and answers for it from the view" do
+      seen = []
+      store = Class.new { define_method(:append) { |item, written_by: nil| seen << [item.id, written_by] } }.new
+      view = described_class.new(store:)
+      made_by = { "tool_use_id" => "toolu_1", "written_at" => "2026-10-23T10:00:00Z" }
+      view.write(item("dosage"), written_by: made_by)
+
+      expect(seen).to eq([["dosage", made_by]])
+      expect(view.written_by("dosage")).to eq(made_by)
+    end
+
+    it "answers nil for an id nothing wrote, or one written without a writer" do
+      view = described_class.new
+      view.write(item("plain"))
+
+      expect([view.written_by("plain"), view.written_by("absent")]).to eq([nil, nil])
+    end
+
+    it "answers for an item the load carried in from the store" do
+      made_by = { "tool_use_id" => "toolu_3", "written_at" => "2026-10-23T10:00:00Z" }
+      loaded = Lain::Memory::ProjectStore::Loaded.of([item("seeded")], provenance: { item("seeded").digest => made_by })
+      view = described_class.new(index: loaded.index, loaded:)
+
+      expect(view.written_by("seeded")).to eq(made_by)
     end
 
     it "carries the load it opened on, which is what a session file records" do

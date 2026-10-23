@@ -48,6 +48,24 @@ RSpec.describe Lain::Tools::MemoryRead do
     expect(schema["required"]).to eq(["id"])
   end
 
+  describe "an item with a recorded writer" do
+    let(:recorder) { Lain::Memory::Recorder.new }
+    let(:reader) { described_class.new(index: recorder) }
+
+    it "names the writing tool call and when, on the author line" do
+      recorder.write(item, written_by: { "tool_use_id" => "toolu_9", "written_at" => "2026-10-23T10:00:00Z" })
+
+      expect(reader.call(id: "dosage").content)
+        .to eq("author: chat, written by tool call toolu_9 at 2026-10-23T10:00:00Z\n#{item.body}")
+    end
+
+    it "names no call for an item written without one" do
+      recorder.write(item)
+
+      expect(reader.call(id: "dosage").content).to eq("author: chat\n#{item.body}")
+    end
+  end
+
   describe "the clerk's read, in a lain consolidate pass" do
     let(:session) do
       RecordedSpawnSession.new(

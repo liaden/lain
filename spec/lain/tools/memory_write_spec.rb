@@ -13,6 +13,24 @@ RSpec.describe Lain::Tools::MemoryWrite do
     expect(schema["required"]).to eq(%w[id description body])
   end
 
+  describe "provenance" do
+    subject(:tool) do
+      described_class.new(recorder:, author: Lain::Memory::Author.chat, clock: -> { Time.utc(2026, 10, 23, 10) })
+    end
+
+    it "records the invoking tool call and the time against the item" do
+      tool.call({ id: "s", description: "d", body: "b" }, Lain::Tool::Invocation.new(tool_use_id: "toolu_1"))
+
+      expect(recorder.written_by("s")).to eq("tool_use_id" => "toolu_1", "written_at" => "2026-10-23T10:00:00Z")
+    end
+
+    it "records nothing when there is no invocation to name" do
+      tool.call({ id: "s", description: "d", body: "b" })
+
+      expect(recorder.written_by("s")).to be_nil
+    end
+  end
+
   describe "sources" do
     around do |example|
       Dir.mktmpdir("lain-memory-sources") do |dir|

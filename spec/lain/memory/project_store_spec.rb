@@ -366,6 +366,14 @@ RSpec.describe Lain::Memory::ProjectStore do
       expect(resumed.root).to eq(resumed.loaded.index.root)
     end
 
+    it "keeps who wrote a replayed item" do
+      made_by = { "tool_use_id" => "toolu_1", "written_at" => "2026-10-23T10:00:00Z" }
+      store.view.write(item("kept"), written_by: made_by)
+      recorded = store.view
+
+      expect(store.resumed(recorded).written_by("kept")).to eq(made_by)
+    end
+
     it "still writes through to the store" do
       resumed = store.resumed(Lain::Memory::Recorder.new)
       resumed.write(item("late"))
@@ -398,6 +406,58 @@ RSpec.describe Lain::Memory::ProjectStore do
       expect(null.load).to eq(described_class.empty)
       expect(null.path).to be_nil
       expect(null.newer_than(described_class.empty)).to be_zero
+    end
+  end
+
+  describe "provenance" do
+    let(:made_by) { { "tool_use_id" => "toolu_1", "written_at" => "2026-10-23T10:00:00Z" } }
+
+    it "rides the row beside the digest, which still addresses the item alone" do
+      store.append(item("deploy-notes"), written_by: made_by)
+
+      expect(stored_rows.first).to include("written_by" => made_by, "digest" => item("deploy-notes").digest)
+    end
+
+    it "reads back from a later load, keyed by the item it was written with" do
+      store.append(item("deploy-notes"), written_by: made_by)
+      loaded = described_class.new(project_dir:).load
+
+      expect(loaded.written_by(loaded.items.first)).to eq(made_by)
+    end
+
+    it "writes no key for a write nobody attributed" do
+      store.append(item("plain"))
+
+      expect(stored_rows.first).not_to have_key("written_by")
+    end
+
+    it "loads a row from before provenance existed, naming no writer" do
+      FileUtils.mkdir_p(File.dirname(store.path))
+      old = item("old")
+      row = old.payload.merge("author" => old.author.to_h, "digest" => old.digest)
+      File.write(store.path, "#{JSON.generate(row)}\n")
+      loaded = store.load
+
+      expect(loaded.items.map(&:id)).to eq(["old"])
+      expect(loaded.written_by(loaded.items.first)).to be_nil
+    end
+
+    it "ignores a written_by that is not a record" do
+      FileUtils.mkdir_p(File.dirname(store.path))
+      old = item("odd")
+      row = old.payload.merge("author" => old.author.to_h, "digest" => old.digest, "written_by" => "toolu_1")
+      File.write(store.path, "#{JSON.generate(row)}\n")
+      loaded = store.load
+
+      expect(loaded.written_by(loaded.items.first)).to be_nil
+    end
+
+    it "reports the writer of the head after the same id is written again" do
+      store.append(item("x", "one"), written_by: made_by)
+      later = made_by.merge("tool_use_id" => "toolu_2")
+      loaded = store.append(item("x", "two"), written_by: later)
+
+      expect(loaded.written_by(loaded.items.first)).to eq(later)
     end
   end
 

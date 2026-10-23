@@ -70,6 +70,10 @@ RSpec.describe Lain::Memory::Index do
     end
   end
 
+  it "names no writer for any id, since only a store-backed view knows one" do
+    expect(index.write(item("a")).written_by("a")).to be_nil
+  end
+
   describe "#fetch" do
     it "raises loudly on an unknown id" do
       expect { index.fetch("nope") }.to raise_error(described_class::UnknownId, /nope/)
