@@ -1281,17 +1281,9 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
 
     def issue_epic = issued(toolset_build)
 
-    def commit_all(dir)
-      system(SeedRepo::SCRUB, "git", "-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "seed",
-             exception: true, out: File::NULL)
-    end
+    def commit_all(dir) = SeedRepo.git(dir, "commit", "-qam", "seed")
 
-    def committed_repo(dir)
-      system(SeedRepo::SCRUB, "git", "init", "-q", dir, exception: true)
-      File.write(File.join(dir, "seed.rb"), "1\n")
-      system(SeedRepo::SCRUB, "git", "-C", dir, "add", ".", exception: true)
-      commit_all(dir)
-    end
+    def committed_repo(dir) = FileUtils.cp_r("#{SeedRepo.at("seed.rb" => "1\n")}/.", dir)
 
     def spawned(ordinal) = Lain::Isolation::WorkerId.spawned(role: "subagent", ordinal:).to_s
 
@@ -1448,7 +1440,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       end
 
       it "spawns a reviewer once the work is committed" do
-        system(SeedRepo::SCRUB, "git", "-C", checkout, "add", ".", exception: true)
+        SeedRepo.git(checkout, "add", ".")
         commit_all(checkout)
 
         expect(offer["reviewer_code"].call({ "prompt" => "review it" }, invocation)).to be_ok

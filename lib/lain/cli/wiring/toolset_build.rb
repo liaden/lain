@@ -79,8 +79,11 @@ module Lain
 
           # A git that cannot answer counts as uncommitted: unknown must not read as clean.
           def uncommitted?
-            shell = Lain::Isolation::Checkout.new(@isolation.repo_root).run("status", "--porcelain")
-            !Lain::Shell::Out.ok?(shell) || !shell.stdout.empty?
+            root = @isolation.repo_root
+            registry = Lain::Isolation::Worktree::Registry.new(
+              repo_root: File.expand_path(root), shell_out_factory: Lain::Shell::Out.public_method(:new)
+            )
+            registry.uncommitted?(root)
           rescue StandardError
             true
           end
@@ -521,12 +524,10 @@ module Lain
         # work out to. Which one a child takes is the orchestrator's choice per
         # call; that the set is these two is not.
         def spawning(issue, isolation)
-          offered = [IMPLEMENTER, REVIEWER].to_h { |role| [role, guarded(role, spawner(role, issue), isolation)] }
-          Lain::Tools::Subagent::Choice.new(offered)
-        end
-
-        def guarded(role, spawner, isolation)
-          role == REVIEWER ? reviewing(spawner, isolation) : spawner
+          Lain::Tools::Subagent::Choice.new(
+            IMPLEMENTER => spawner(IMPLEMENTER, issue),
+            REVIEWER => reviewing(spawner(REVIEWER, issue), isolation)
+          )
         end
 
         # A reviewer is cut from the committed tip, so work the orchestrator has
