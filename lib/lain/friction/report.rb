@@ -278,7 +278,23 @@ module Lain
         # into the main Agent alone, so a subagent's turns are outside every
         # figure here, and a reader of the output alone cannot know that.
         def context
-          [bought] + switch_notes + unpriced_notes + refusal_notes
+          [bought] + unread_notes + switch_notes + unpriced_notes + refusal_notes
+        end
+
+        def unread_notes
+          [unread_phrase, final_write_phrase].compact
+        end
+
+        def unread_phrase
+          return unless @waste.never_read_tokens.positive?
+
+          "#{@waste.never_read_tokens} tokens written to cache and never read, #{cost_phrase(@waste.never_read_cost)}"
+        end
+
+        def final_write_phrase
+          return unless @waste.final_write_tokens.positive?
+
+          "#{@waste.final_write_tokens} tokens written by each model's final call, not counted as waste"
         end
 
         # Two withholdings, and they answer different questions.

@@ -304,6 +304,7 @@ module Lain
         @model_switches = [consecutive_runs.size - 1, 0].max
         @rebills = @calls.group_by(&:model).values.flat_map { |arm| rebills_in(arm) }.freeze
         @unpriced_models = unpriceable_models.freeze
+        @unread_writes = unread_writes.freeze
         freeze
       end
 
@@ -392,6 +393,24 @@ module Lain
       # @return [Dollars] what those tokens cost, and whether all of them could be priced
       def rebilled_cost = @rebills.sum(Dollars.zero) { |rebill| rebill.cost || Dollars.unknown }
 
+      # Cache creation no later call on the same model carried and read. Each
+      # model's last call is left out because the cache is keyed per model and
+      # nothing of its own could have read it yet; see {#final_write_tokens}.
+      # Withheld when the provider has no prompt cache.
+      #
+      # @return [Integer]
+      def never_read_tokens = @unread_writes.sum { |call| call.usage.cache_creation_input_tokens }
+
+      # @return [Dollars]
+      def never_read_cost = @unread_writes.sum(Dollars.zero) { |call| rebill_cost(call) || Dollars.unknown }
+
+      # @return [Integer] cache tokens written by each model's last call, which no call had a chance to read
+      def final_write_tokens
+        return 0 if prompt_cache_degraded?
+
+        @calls.group_by(&:model).values.sum { |arm| arm.last.usage.cache_creation_input_tokens }
+      end
+
       # What the cache BOUGHT, reported beside what it wasted: a waste figure
       # alone is an anti-metric (ROADMAP.md:233), since an agent that reads
       # nothing wastes nothing.
@@ -409,6 +428,28 @@ module Lain
       # comment on why per-arm and per-run are different questions.
       def consecutive_runs
         @calls.chunk_while { |before, after| before.model == after.model }.to_a
+      end
+
+      def unread_writes
+        return [] if prompt_cache_degraded?
+
+        @calls.group_by(&:model).values.flat_map { |arm| unread_in(arm) }
+      end
+
+      def unread_in(arm)
+        arm[0...-1].each_with_index.filter_map do |call, index|
+          call if wrote?(call) && arm[(index + 1)..].none? { |later| reads?(later, call) }
+        end
+      end
+
+      def wrote?(call) = !call.chain.nil? && !call.chain.empty? && call.usage.cache_creation_input_tokens.positive?
+
+      # An approximation: any cache read on a later call that carries the
+      # digest counts, though the read may have served an earlier marker.
+      # @return [Boolean]
+      def reads?(later, written)
+        later.model == written.model && later.chain_version == written.chain_version &&
+          later.usage.cache_read_input_tokens.positive? && Array(later.chain).include?(written.chain.last)
       end
 
       def unpriceable_models

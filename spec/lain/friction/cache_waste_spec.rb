@@ -1074,4 +1074,100 @@ RSpec.describe Lain::Friction::CacheWaste do
       expect(described_class.cache_fact(turn_usage(creation: 5)).shape).to be_nil
     end
   end
+
+  describe "cache writes no later call reads" do
+    def chain(*digests) = digests.each_with_index.map { |digest, index| [index, "blake3:#{digest}"] }
+
+    def journal(*calls)
+      calls.flat_map { |(digests, usage)| [request_sent(chain(*digests)), turn_usage(**usage)] }
+    end
+
+    it "counts a write whose prefix no later call carried" do
+      waste = described_class.from_journal(journal([%w[d1], { creation: 4_000 }], [%w[x], {}], [%w[y], {}]))
+
+      expect(waste.never_read_tokens).to eq(4_000)
+    end
+
+    it "prices the unread write at cache-creation rates" do
+      waste = described_class.from_journal(journal([%w[d1], { creation: 4_000 }], [%w[x], {}], [%w[y], {}]))
+
+      expect(waste.never_read_cost.amount).to eq(BigDecimal("0.025"))
+    end
+
+    it "does not count a write a later call carried and read" do
+      waste = described_class.from_journal(journal([%w[d1], { creation: 4_000 }], [%w[d1 d2], { read: 4_000 }],
+                                                   [%w[d1 d2 d3], { read: 4_000 }]))
+
+      expect(waste.never_read_tokens).to eq(0)
+    end
+
+    it "counts a write a later call carried but did not read" do
+      waste = described_class.from_journal(journal([%w[d1], { creation: 4_000 }], [%w[d1 d2], {}], [%w[d1 d2], {}]))
+
+      expect(waste.never_read_tokens).to eq(4_000)
+    end
+
+    it "judges a write against its own model's later calls only" do
+      other = request_sent(chain("d1", "d2"), model: "claude-haiku-4-5")
+      entries = journal([%w[d1], { creation: 4_000 }]) + [other, turn_usage(model: "claude-haiku-4-5", read: 4_000)] +
+                journal([%w[z], {}])
+
+      expect(described_class.from_journal(entries).never_read_tokens).to eq(4_000)
+    end
+
+    it "reports the final call's write separately, not as waste" do
+      waste = described_class.from_journal(journal([%w[d1], { creation: 100 }],
+                                                   [%w[d1 d2], { read: 100, creation: 900 }]))
+
+      expect([waste.never_read_tokens, waste.final_write_tokens]).to eq([0, 900])
+    end
+
+    it "exempts each model's last call, not only the journal's" do
+      haiku = "claude-haiku-4-5"
+      entries = [request_sent(chain("x")), turn_usage, request_sent(chain("y"), model: haiku), turn_usage(model: haiku),
+                 request_sent(chain("z")), turn_usage(creation: 500), request_sent(chain("w"), model: haiku),
+                 turn_usage(model: haiku)]
+      waste = described_class.from_journal(entries)
+
+      expect([waste.never_read_tokens, waste.final_write_tokens]).to eq([0, 500])
+    end
+
+    it "clears a write whose deepest real marker digest a later real request carries" do
+      message = ->(text) { { "role" => "user", "content" => [{ "type" => "text", "text" => text, "cache" => true }] } }
+      build = lambda do |*texts|
+        Lain::Request.new(model: "claude-opus-4-8", max_tokens: 64, messages: texts.map(&message),
+                          system: [{ "type" => "text", "text" => "be terse", "cache" => true }]).prefix_digests
+      end
+      entries = [request_sent(build.call("hi")), turn_usage(creation: 4_000),
+                 request_sent(build.call("hi", "more")), turn_usage(read: 4_000, creation: 10),
+                 request_sent(build.call("hi", "more", "again")), turn_usage(read: 4_010)]
+
+      expect(described_class.from_journal(entries).never_read_tokens).to eq(0)
+    end
+
+    it "does not clear a write when a later real request shares only the shallower system digest" do
+      build = lambda do |text|
+        block = { "type" => "text", "text" => text, "cache" => true }
+        Lain::Request.new(model: "claude-opus-4-8", max_tokens: 64,
+                          messages: [{ "role" => "user", "content" => [block] }],
+                          system: [{ "type" => "text", "text" => "be terse", "cache" => true }]).prefix_digests
+      end
+      entries = [request_sent(build.call("hi")), turn_usage(creation: 4_000),
+                 request_sent(build.call("different")), turn_usage(read: 500)]
+
+      expect(described_class.from_journal(entries).never_read_tokens).to eq(4_000)
+    end
+
+    it "skips calls with no recorded chain" do
+      entries = [request_sent(nil), turn_usage(creation: 500), request_sent(nil), turn_usage]
+
+      expect(described_class.from_journal(entries).never_read_tokens).to eq(0)
+    end
+
+    it "withholds the figure when the journal records prompt caching degraded" do
+      entries = [capability_degraded] + journal([%w[d1], { creation: 4_000 }], [%w[x], {}])
+
+      expect(described_class.from_journal(entries).never_read_tokens).to eq(0)
+    end
+  end
 end

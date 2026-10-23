@@ -256,4 +256,31 @@ RSpec.describe Lain::Friction::Report do
       expect(rendered).to include("tools changed 1", "system changed 1")
     end
   end
+
+  describe "a session that wrote cache nobody read" do
+    subject(:rendered) { described_class.new(entries).render }
+
+    let(:model) { "claude-opus-4-8" }
+    let(:entries) do
+      [request_sent("a", model), turn_usage(model, create: 4_000),
+       request_sent("b", model), turn_usage(model),
+       request_sent("c", model), turn_usage(model, create: 700)]
+    end
+
+    it "says how much was written and never read, with a cost" do
+      expect(rendered).to include("4000 tokens written to cache and never read, costing $0.025000")
+    end
+
+    it "names the final call's write apart from the waste" do
+      expect(rendered).to include("700 tokens written by each model's final call")
+    end
+
+    it "says nothing about unread writes when every write was read" do
+      read = [request_sent("a", model), turn_usage(model, create: 4_000),
+              { **request_sent("a", model), "prefix_digests" => [[0, "a"], [1, "b"]] },
+              turn_usage(model, read: 4_000)]
+
+      expect(described_class.new(read).render).not_to include("never read")
+    end
+  end
 end
