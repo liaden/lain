@@ -230,10 +230,12 @@ RSpec.describe Lain::CLI::PaneCommand do
       let(:root) { File.expand_path("../../..", __dir__) }
 
       # Not variables a pane should carry: suite controls named in comments, the
-      # Neovim command string LAIN_START, and the pre-flight flag PaneCommand scrubs.
+      # Neovim command string LAIN_START, the pre-flight flag PaneCommand scrubs, and
+      # LAIN_SUITE_LOCK_HELD, which only a verifier sets, on its own child suite.
       # LAIN_OLLAMA_CLOUD_CONCURRENCY is retired: lain only warns about it, never forwards it to a pane.
       let(:excluded) do
-        %w[LAIN_INTEGRATION LAIN_LIVE LAIN_NVIM LAIN_START LAIN_PREFLIGHT LAIN_OLLAMA_CLOUD_CONCURRENCY]
+        %w[LAIN_INTEGRATION LAIN_LIVE LAIN_NVIM LAIN_START LAIN_PREFLIGHT LAIN_OLLAMA_CLOUD_CONCURRENCY
+           LAIN_SUITE_LOCK_HELD]
       end
 
       it "exports the stream stall remedy" do

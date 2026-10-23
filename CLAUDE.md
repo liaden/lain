@@ -62,10 +62,12 @@ Rules, with the evidence in [`docs/toolchain-traps.md`](docs/toolchain-traps.md)
   worse than the breakage. **If the suite fails in a way you did not cause, check the
   interpreter before believing it.**
 - **`TMPDIR` is shared mutable state between concurrent agents.** A red `pspec` is not evidence
-  until nothing else is running: `pgrep -cf 'mise/installs/ruby/[0-9.]*/bin/parallel_rspec'`
-  must read 0 (`ps | grep` over-counts and deadlocks two waiters), and
-  `pgrep -cf '[p]re-commit (hook-impl|run)'` too — the hook autostashes repo-wide, so another
-  worktree's `git status` lies while it runs. **That pattern is precise on purpose**: a bare
+  until nothing else is running. `rake pspec` waits on the suite lock
+  (`$XDG_STATE_HOME/lain/locks/suite.lock`); `cat` that file to see the holder. A bare `rspec`
+  takes no lock, so a red beside one is still not evidence. `LAIN_SUITE_LOCK_HELD=1` is set only
+  by the merge verifier, for the suite it runs inside the lock; exported anywhere else it skips the lock.
+  Before trusting a worktree's `git status`, `pgrep -cf '[p]re-commit (hook-impl|run)'` must read 0 —
+  the hook autostashes repo-wide, so another worktree's `git status` lies while it runs. **That pattern is precise on purpose**: a bare
   `[p]re-commit` matches any command line merely *containing* the word, your own echo label
   included, so it reads busy on a quiet box.
 - **`LAIN_SPEC_WORKERS=12`** is the measured default *on this box*; `physical - 1` is the worst

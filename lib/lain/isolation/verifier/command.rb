@@ -65,7 +65,9 @@ module Lain
           judged(candidate, shell, note)
         end
 
-        def environment(tmp) = Exec.child_env(Worktree::GIT_CONTEXT_SCRUB.merge("TMPDIR" => tmp))
+        def environment(tmp)
+          Exec.child_env(Worktree::GIT_CONTEXT_SCRUB.merge("TMPDIR" => tmp, SuiteLock::HELD_VARIABLE => "1"))
+        end
 
         def judged(candidate, shell, note)
           shell.run_command(on_spawn: ->(pgid) { note.call(@stale_group.mark(pgid)) })

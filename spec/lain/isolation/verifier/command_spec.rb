@@ -143,6 +143,14 @@ RSpec.describe Lain::Isolation::Verifier::Command, :seam do
     expect(verification.outcome).to eq(:passed)
   end
 
+  it "tells the command the suite lock is already held, so a nested suite run does not wait on it" do
+    out = File.join(@dir, "held.out")
+
+    verifier(["sh", "-c", "printf '%s' \"${LAIN_SUITE_LOCK_HELD-absent}\" > #{out}"]).call(candidate)
+
+    expect(File.read(out)).to eq("1")
+  end
+
   it "says once, through its notice, who holds the suite lock when the wait outlasts the patience" do
     release = Queue.new
     held = Queue.new

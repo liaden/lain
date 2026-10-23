@@ -57,4 +57,44 @@ RSpec.describe Lain::Isolation::SuiteLock, :seam do
 
     expect { described_class.for(paths:) }.to raise_error(Lain::Paths::Unwritable)
   end
+
+  describe ".holding" do
+    let(:env) { {} }
+
+    it "starts the block only after the first holder releases, telling the waiter who holds it" do
+      release = Queue.new
+      held = Queue.new
+      FileUtils.mkdir_p(File.dirname(path))
+      holder_lock = Lain::FileLock.new(path, label: "the suite lock")
+      holder = Thread.new { holder_lock.hold { (held << true) && release.pop } }
+      held.pop
+      told = []
+      order = []
+      waiter = Thread.new do
+        described_class.holding(paths:, env:, patience: 0.1, notice: told.method(:<<)) { order << :ran }
+      end
+
+      wait_until(timeout: 2, reason: "the waiter to say who holds the lock") { !told.empty? }
+      order << :released
+      release << true
+      holder.join
+      waiter.join
+
+      expect([order, told.size, told.first]).to match([%i[released ran], 1, /\Awaiting on pid=#{Process.pid} /])
+    end
+
+    context "when the environment says a parent already holds the lock" do
+      let(:env) { { "LAIN_SUITE_LOCK_HELD" => "1" } }
+
+      it "runs the block at once without taking the lock" do
+        ran = described_class.for(paths:).hold { described_class.holding(paths:, env:) { :ran } }
+
+        expect(ran).to eq(:ran)
+      end
+    end
+
+    it "returns the block's value" do
+      expect(described_class.holding(paths:, env:) { :value }).to eq(:value)
+    end
+  end
 end
