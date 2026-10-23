@@ -278,6 +278,15 @@ unless 3 recorded logs each name every ceilinged file, when a named file is over
 the 3, or when `LAIN_SLOW=1 rspec --dry-run` (about 30s) fails or counts fewer examples than the
 floor. Lower a ceiling when a speedup lands; raising one goes in its own commit, saying why.
 
+`bin/hot-path-bench` guards the chat-turn, bash-call, request and journal paths the way
+`bin/runtime-census` guards the suite: `--record` keeps the last 3 logs (taking the suite lock),
+`--check` exits 1 when a row sits over its in-script ceiling in 2 of the 3, and also when a row has
+no ceiling or was skipped. Run `--check` before landing a change to one of those paths. Seed or
+raise a ceiling only from 3 logs recorded at a load under 2, after `rake compile` (the reader row
+needs a built `lain-fence` and Landlock, or it is skipped); lowering one is free, raising one is
+its own commit, saying why. The request rows time the HTTP transport with a fixed payload, not an
+encoder, so an encoder regression does not show there.
+
 ## Committing
 
 Commit directly on `main`, in logical chunks, with terse high-signal messages. No trailers.

@@ -1,0 +1,129 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+ENV["BUNDLE_GEMFILE"] ||= File.expand_path("../Gemfile", __dir__)
+require "bundler/setup"
+require "lain"
+require "open3"
+require "pathname"
+require "rbconfig"
+
+# Guards the chat-turn, bash-call, request and journal paths the way `bin/runtime-census` guards the
+# suite's wall: `--record` keeps the last 3 logs, `--check` exits 1 when a row is over its ceiling in
+# 2 of them.
+#
+#   --record   measure every row and keep the log under tmp/hot-path-bench
+#   --check    exit 1 unless each ceilinged row is at or under its ceiling in 2 of the last 3 logs
+#   (none)     print the latest log beside the ceilings
+#
+# Not a spec: a record takes minutes, and a time asserted in a spec is a flake.
+#
+# A record waits for the suite lock, then measures in a child under a stripped environment, nice
+# and ionice, once per padding of the environment: padding moves memory layout, so the range of a
+# row's medians across paddings is the noise a few-percent gap has to beat.
+module HotPathBench
+  REPO_ROOT = Pathname(__dir__).join("..").expand_path
+  RECORDS = REPO_ROOT.join("tmp/hot-path-bench")
+  PADDINGS = [0, 512, 1024, 2048].freeze
+  CHILD_TIMEOUT = 1800
+  PASSED_THROUGH = %w[PATH HOME TMPDIR LD_LIBRARY_PATH LANG BUNDLE_GEMFILE GEM_HOME GEM_PATH RUBYLIB].freeze
+  NOISY = 0.10
+
+  # Milliseconds. Seed each from 3 quiet-box logs at 1.25x the largest of the 3 medians, rounded up;
+  # a nil is a row nobody has budgeted yet, and `--check` fails on it. Lowering one is free; raising one
+  # is its own commit, saying why.
+  CEILINGS = {
+    "render_chat_10k" => 18.3,
+    "render_cold_10k" => 52.1,
+    "bash_true_none" => 2.08,
+    "bash_true_traced" => 7.92,
+    "bash_true_reader" => 12.2,
+    "request_100000" => 0.821,
+    "request_1000000" => 2.98,
+    "journal_small" => 0.0052,
+    "journal_1000000" => 0.751,
+    "mask_first_output" => 0.263,
+    "wire_ready" => 17.1
+  }.freeze
+
+  HotPaths = Lain::Bench::HotPaths
+
+  module_function
+
+  def records = HotPaths::Records.new(dir: RECORDS.to_s)
+
+  def logs = records.texts.map { HotPaths::Log.parse(_1) }
+
+  def measure
+    puts JSON.generate(HotPaths.new.rows.map(&:to_h))
+  end
+
+  def record
+    Lain::Isolation::SuiteLock.holding(paths: Lain::Paths.new, notice: ->(text) { warn text }) do
+      started = Time.now
+      log = measured_log
+      records.write(log.dump)
+      show(log)
+      puts format("recorded in %.0fs", Time.now - started)
+    end
+  end
+
+  def measured_log
+    rows = HotPaths::Sweep.merge(PADDINGS.map { |padding| child_rows(padding) })
+    HotPaths::Log.new(rows:, sha:, loadavg: File.read("/proc/loadavg").split.first(3).join(" "),
+                      workers: ENV.fetch("LAIN_SPEC_WORKERS", "unset"))
+  end
+
+  def child_rows(padding)
+    env = ENV.slice(*PASSED_THROUGH).merge("AB_PAD" => "x" * padding)
+    out, err, status = Open3.capture3("timeout", CHILD_TIMEOUT.to_s, "nice", "-n", "19", "ionice", "-c3",
+                                      "env", "-i", *env.map { |name, value| "#{name}=#{value}" },
+                                      RbConfig.ruby, __FILE__, "--measure")
+    abort("hot-path-bench: a measuring child failed (#{status.exitstatus}):\n#{err}") unless status.success?
+
+    JSON.parse(out).map { |row| HotPaths::Row.new(**row.transform_keys(&:to_sym)) }
+  end
+
+  def sha
+    out, status = Open3.capture2("git", "-C", REPO_ROOT.to_s, "rev-parse", "--short", "HEAD", err: File::NULL)
+    status.success? ? out.strip : "unknown"
+  end
+
+  def show(log)
+    puts "sha #{log.sha}  loadavg #{log.loadavg}  workers #{log.workers}"
+    log.rows.each { |row| puts line(row) }
+  end
+
+  def line(row)
+    return format("%-20<name>s skipped: %<why>s", name: row.name, why: row.skipped) if row.skipped
+
+    noisy = row.spread_ms > row.median_ms * NOISY ? "  NOISY" : ""
+    ceiling = CEILINGS[row.name]
+    format("%-20<name>s %10.3<median>f ms  spread %9.3<spread>f  ceiling %<ceiling>s%<noisy>s",
+           name: row.name, median: row.median_ms, spread: row.spread_ms, ceiling: ceiling || "unseeded", noisy:)
+  end
+
+  def report
+    latest = logs.last or abort("hot-path-bench: nothing recorded; run --record first")
+    show(latest)
+  end
+
+  def verify
+    failures = HotPaths::Check.new(CEILINGS).failures(logs.map(&:rows))
+    puts(failures.empty? ? "ok" : failures.map { "FAIL #{_1}" })
+    exit 1 if failures.any?
+  end
+
+  # --measure is the child --record spawns under a stripped environment; it prints rows as JSON.
+  USAGE = "usage: bin/hot-path-bench [--record | --check | --measure]"
+  MODES = { nil => :report, "--record" => :record, "--check" => :verify, "--measure" => :measure }.freeze
+
+  def run(argv)
+    mode = MODES[argv.first] if argv.size <= 1
+    return warn(USAGE) || exit(2) unless mode
+
+    public_send(mode)
+  end
+end
+
+HotPathBench.run(ARGV) if $PROGRAM_NAME == __FILE__
