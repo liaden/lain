@@ -1941,16 +1941,6 @@ RSpec.describe Lain::CLI::Wiring do
       Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: StringIO.new), journal_path: "prefix-chain-spec.ndjson")
     end
 
-    def digests_during
-      count = 0
-      allow(Lain::Canonical).to receive(:digest).and_wrap_original do |original, value|
-        count += 1
-        original.call(value)
-      end
-      yield
-      count
-    end
-
     it "digests only the messages a later turn added" do
       wired = new_wiring(options: { grace: 5 }, chronicle: recording, status_feed:)
       recorder, session = wired.run_state(nil)

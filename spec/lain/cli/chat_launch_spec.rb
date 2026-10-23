@@ -44,7 +44,7 @@ RSpec.describe Lain::CLI::ChatLaunch do
     def launch_chat
       wiring = instance_double(Lain::CLI::Wiring, conductor: instance_spy(Lain::CLI::Conductor), exit_status: 0)
       allow(wiring).to receive(:run)
-      project = Lain::Project.new(root: @dir, cwd: @dir, kind: :project, detected_by: :flag)
+      project = throwaway_project(@dir)
       launch({ journal: false }, wiring_factory: ->(**) { wiring }, project_factory: -> { project },
                                  gc_schedule_factory: schedule_factory).call { |_notice| nil }
     end
@@ -140,13 +140,11 @@ RSpec.describe Lain::CLI::ChatLaunch do
         context = Lain::Context.new(model: "qwen3:4b", max_tokens: 64)
         header = Lain::SessionRecord.header(context:, toolset: Lain::Toolset.new, profile: { "provider" => "ollama" },
                                             writer: CoreGraph::NO_WRITER)
-        records = [header, *timeline.to_a.map { |turn| Lain::SessionRecord.turn(turn) },
-                   Lain::Telemetry::SessionClosed.new(head: timeline.head_digest, reason: :exit).to_journal]
-        File.write(File.join(dir, name), records.map { |record| "#{JSON.generate(record)}\n" }.join)
+        write_session_file(File.join(dir, name), header:, timeline:)
       end
 
       def launched_from_elsewhere(options)
-        project = Lain::Project.new(root: @root, cwd: @root, kind: :project, detected_by: :flag)
+        project = throwaway_project(@root)
         seen = {}
         wiring = instance_double(Lain::CLI::Wiring, conductor: instance_spy(Lain::CLI::Conductor), exit_status: 0)
         allow(wiring).to receive(:run) { |resumed:, **| seen[:resumed] = resumed }
@@ -780,7 +778,7 @@ RSpec.describe Lain::CLI::ChatLaunch do
                                            backend: offline_backend), session]
         raise Lain::Error, "stop here"
       end
-      project = Lain::Project.new(root: @dir, cwd: @dir, kind: :project, detected_by: :flag)
+      project = throwaway_project(@dir)
       expect do
         described_class.new({ journal: false, provider: "ollama", model: nil, max_tokens: 64, grace: 5 },
                             wiring_factory: factory, project_factory: -> { project })
@@ -1326,7 +1324,7 @@ RSpec.describe Lain::CLI::ChatLaunch, "the session a door selects" do
 
   def launched(options)
     seen = {}
-    project = Lain::Project.new(root: @dir, cwd: @dir, kind: :project, detected_by: :flag)
+    project = throwaway_project(@dir)
     wiring = instance_double(Lain::CLI::Wiring, conductor: instance_spy(Lain::CLI::Conductor), exit_status: 0)
     allow(wiring).to receive(:run) { |backend:, resumed:, **| seen.update(backend:, resumed:) }
     described_class.new({ journal: false, max_tokens: 16, **options },
@@ -1380,7 +1378,7 @@ RSpec.describe Lain::CLI::ChatLaunch, "the session a door selects" do
     end
 
     def armed_launch(options)
-      project = Lain::Project.new(root: @dir, cwd: @dir, kind: :project, detected_by: :flag)
+      project = throwaway_project(@dir)
       wiring_factory = lambda do |**kwargs|
         Lain::CLI::Wiring.new(**kwargs).tap { |wiring| allow(wiring).to receive(:run) }
       end
@@ -1508,7 +1506,7 @@ RSpec.describe Lain::CLI::ChatLaunch, "the session a door selects" do
   it "hands the backend a profile whose typed fields are only the ones the human typed" do
     write_session("20260101T000000-1.ndjson", "http://127.0.0.1:11500")
     profile = Lain::CLI::RunProfile.from_options(model: "qwen3:8b").with_defaults(provider: "anthropic")
-    project = Lain::Project.new(root: @dir, cwd: @dir, kind: :project, detected_by: :flag)
+    project = throwaway_project(@dir)
     launch = described_class.new({ resume: "", journal: false, max_tokens: 16 }, profile:, project_factory: lambda {
       project
     })
@@ -1536,7 +1534,7 @@ RSpec.describe Lain::CLI::ChatLaunch, "over a config that will not load" do
   def launch_over(line)
     root = File.join(@dir, "repo")
     write_config(root, "\n#{line}\n")
-    project = Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag)
+    project = throwaway_project(root)
     described_class.new({ journal: true, nvim: false, max_tokens: 16 },
                         profile: Lain::CLI::RunProfile.from_options({}).with_defaults(provider: "ollama"),
                         project_factory: -> { project }, gc_schedule_factory: ->(**) { -> {} })
@@ -1562,7 +1560,7 @@ RSpec.describe Lain::CLI::ChatLaunch, "over a config that will not load" do
     it "refuses a pre-flight at the file and line, given `#{line}`" do
       root = File.join(@dir, "repo")
       write_config(root, "\n#{line}\n")
-      project = Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag)
+      project = throwaway_project(root)
       launch = preflight_launch(project)
 
       expect { launch.preflight { |_notice| nil } }.to raise_error(Lain::Config::Refusal, /config\.rb:2/)
@@ -1573,7 +1571,7 @@ RSpec.describe Lain::CLI::ChatLaunch, "over a config that will not load" do
     root = File.join(@dir, "repo")
     write_config(root, "isolation retain_days: 3\n")
     File.write(config_path(root), "isolation retain_days: 4\n")
-    project = Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag)
+    project = throwaway_project(root)
     launch = preflight_launch(project)
 
     expect { launch.preflight { |_notice| nil } }.to raise_error(Lain::Project::Trust::Untrusted)
@@ -1617,7 +1615,7 @@ RSpec.describe Lain::CLI::ChatLaunch, "reading configured middleware" do
   end
 
   def launch(options = { journal: false, nvim: false, max_tokens: 16 }, **factories)
-    project = Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag)
+    project = throwaway_project(root)
     described_class.new(options, profile:, project_factory: -> { project }, gc_schedule_factory: ->(**) { -> {} },
                                  **factories)
   end
@@ -1688,7 +1686,7 @@ RSpec.describe Lain::CLI::ChatLaunch, "a refused --isolation" do
 
   let(:project) do
     root = File.join(@dir, "plain").tap { |dir| FileUtils.mkdir_p(dir) }
-    Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag)
+    throwaway_project(root)
   end
 
   def launch(**options)

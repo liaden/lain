@@ -105,18 +105,18 @@ RSpec.describe Lain::CLI::EpicSubmit do
   # directory: a fixture stamped in January and a live record stamped today land
   # in files whose NAMES sort the other way round, and reading them in filename
   # order would make the fold see a completion before its own start.
-  def journal_records
+  def session_records
     Dir.children(sessions_dir).select { |name| name.end_with?(".ndjson") }.sort
        .flat_map { |name| Lain::Journal.records(File.foreach(File.join(sessions_dir, name))).to_a }
        .sort_by { |record| record["ts"].to_s }
   end
 
-  def gate_decisions = journal_records.select { |record| record["type"] == "gate_decision" }
-  def stage_transitions = journal_records.select { |record| record["type"] == "stage_transition" }
+  def gate_decisions = session_records.select { |record| record["type"] == "gate_decision" }
+  def stage_transitions = session_records.select { |record| record["type"] == "stage_transition" }
   def stage_events = stage_transitions.map { |record| [record["stage"], record["event"]] }
 
   def progress(slug = "alpha")
-    Lain::Epic::Progress.fold(journal_records, graph: home(slug).read_epic, epic_slug: slug)
+    Lain::Epic::Progress.fold(session_records, graph: home(slug).read_epic, epic_slug: slug)
   end
 
   # Built through the real producers, so no fixture can drift from the wire
@@ -266,7 +266,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
     def deferring = command(gates: hands_off.merge("issue_plan" => "deferred"))
     def changeset = commit_sha
-    def parked_plans = Lain::Epic::SignoffQueue.from_journal(journal_records).parked("alpha", "issue_plan")
+    def parked_plans = Lain::Epic::SignoffQueue.from_journal(session_records).parked("alpha", "issue_plan")
 
     it "opens b's implementation gate while a's issue_plan is parked" do
       deferring.submit("issue_plan", issue: "a")
@@ -317,7 +317,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
       command.submit("issue_plan", issue: "a")
 
-      expect(journal_records.count { |record| record["type"] == "issue_transition" }).to eq(1)
+      expect(session_records.count { |record| record["type"] == "issue_transition" }).to eq(1)
     end
 
     # A plan the adjudicator would not call parks, and a human approves it
@@ -387,7 +387,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     it "leaves the artifact parked for sign-off" do
       command(gates: hands_off.merge("epic_plan" => "deferred")).submit("epic_plan")
 
-      expect(Lain::Epic::SignoffQueue.from_journal(journal_records).drained?("alpha", "epic_plan")).to be(false)
+      expect(Lain::Epic::SignoffQueue.from_journal(session_records).drained?("alpha", "epic_plan")).to be(false)
     end
   end
 
@@ -405,11 +405,11 @@ RSpec.describe Lain::CLI::EpicSubmit do
     end
 
     it "journals nothing" do
-      before_records = journal_records
+      before_records = session_records
 
       expect { command.submit("epic_plan") }.to raise_error(Lain::Epic::StageBlocked)
 
-      expect(journal_records).to eq(before_records)
+      expect(session_records).to eq(before_records)
     end
   end
 
@@ -670,7 +670,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       said = adjudicated("APPROVE").submit("research").text
 
       expect(said).to start_with("approved")
-      expect(journal_records.map { |record| record["type"] }).to include("gate_evidence")
+      expect(session_records.map { |record| record["type"] }).to include("gate_evidence")
       expect(gate_decisions.last).to include("policy" => "adjudicated", "approved" => true)
     end
 
@@ -678,7 +678,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       said = adjudicated("It is one sentence -- I cannot tell whether it covers the epic.").submit("research").text
 
       expect(said).to start_with("deferred")
-      expect(Lain::Epic::SignoffQueue.from_journal(journal_records).drained?("alpha", "research")).to be(false)
+      expect(Lain::Epic::SignoffQueue.from_journal(session_records).drained?("alpha", "research")).to be(false)
     end
 
     it "builds its own pair from the backend flags and decides through a real spawn" do
@@ -737,7 +737,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
         expect(read_result).not_to include("OTHER-EPIC-TEXT")
       end
 
-      def gate_evidence = journal_records.find { |record| record["type"] == "gate_evidence" }
+      def gate_evidence = session_records.find { |record| record["type"] == "gate_evidence" }
     end
 
     it "journals a failed spike's malformed_response into the decision journal" do
@@ -753,9 +753,9 @@ RSpec.describe Lain::CLI::EpicSubmit do
                                             output: StringIO.new, root:, paths:, config: config(adjudicating))
                      .submit("research")
 
-      malformed = journal_records.select { |record| record["type"] == "malformed_response" }
+      malformed = session_records.select { |record| record["type"] == "malformed_response" }
       expect(malformed.map { |record| record["kind"] }).to include("prose_tool_call")
-      note = journal_records.find { |record| record["type"] == "gate_evidence" }.fetch("reason")
+      note = session_records.find { |record| record["type"] == "gate_evidence" }.fetch("reason")
       expect(note).to include("see its malformed_response journal record")
     end
 
@@ -982,7 +982,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
       in_chat(chronicle).submit("research", "alpha")
 
-      expect(Lain::Journal.records(io.string.lines, type: "gate_decision").count).to eq(1)
+      expect(journal_records(io, "gate_decision").count).to eq(1)
       expect(gate_decisions).to be_empty
       expect(chronicle.record_journal).not_to be_closed
     end
@@ -1170,7 +1170,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
       expect(said).to start_with("denied")
       expect(said).not_to include("parked")
-      queue = Lain::Epic::SignoffQueue.from_journal(journal_records)
+      queue = Lain::Epic::SignoffQueue.from_journal(session_records)
       expect(queue.parked("alpha", "research")).to be_empty
     end
 
@@ -1251,7 +1251,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
         asking.stop
       end
 
-      decisions = Lain::Journal.records(io.string.lines, type: "gate_decision").to_a
+      decisions = journal_records(io, "gate_decision").to_a
       expect(decisions.map { |record| record.values_at("approved", "answered_by") }).to eq([[false, "interrupted"]])
     end
   end
@@ -1480,12 +1480,12 @@ RSpec.describe Lain::CLI::EpicSubmit do
     it "journals nothing when it refuses" do
       command.submit("issue_plan", issue: "a")
       home.write_epic(graph_with("it works, and says so"))
-      before_records = journal_records
+      before_records = session_records
 
       expect { command.submit("implementation", issue: "a", digest: changeset) }
         .to raise_error(described_class::PlanNotApproved)
 
-      expect(journal_records).to eq(before_records)
+      expect(session_records).to eq(before_records)
     end
 
     it "opens the implementation again once the edited plan is approved" do

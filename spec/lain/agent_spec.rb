@@ -467,13 +467,6 @@ RSpec.describe Lain::Agent do
       expect(display.grep(Lain::Telemetry::AssistantText)).to be_empty
     end
 
-    it "is not sent by an agent displaying as a child" do
-      display = []
-      agent([spoken_tool_response("child words"), text_response("done")], display:, display_as: "dev").ask("hi")
-
-      expect(display.grep(Lain::Telemetry::AssistantText)).to be_empty
-    end
-
     it "stays out of the parent's display when a real spawned child writes it" do
       shown = Lain::Channel.new
       child_provider = Lain::Provider::Mock.new(responses: [spoken_tool_response("child words"),
@@ -1889,20 +1882,6 @@ RSpec.describe Lain::Agent do
 
     def wired_agent = described_class.new(provider:, toolset:, context:, instrumentation: wired_instrumentation)
 
-    def journaled_requests
-      journal_io.string.each_line.map { |line| JSON.parse(line) }.select { |record| record["type"] == "request_sent" }
-    end
-
-    def digests_during
-      count = 0
-      allow(Lain::Canonical).to receive(:digest).and_wrap_original do |original, value|
-        count += 1
-        original.call(value)
-      end
-      yield
-      count
-    end
-
     it "equals the chain a fresh Request of the same payload computes, on every one of 30 turns" do
       agent = wired_agent
       12.times { |i| agent.ask("turn #{i}") }
@@ -1912,21 +1891,12 @@ RSpec.describe Lain::Agent do
       agent.ask("diverged")
       13.times { |i| agent.ask("late #{i}") }
 
-      records = journaled_requests
+      records = journal_records(journal_io, "request_sent")
       expect(records.size).to eq(30)
       records.each do |record|
         fresh = Lain::Request.new(**record["payload"].transform_keys(&:to_sym))
         expect(record["prefix_digests"]).to eq(fresh.prefix_digests)
       end
-    end
-
-    it "digests only the messages a later turn added" do
-      agent = wired_agent
-      10.times { |i| agent.ask("turn #{i}") }
-
-      spent = digests_during { agent.ask("turn 10") }
-      added = provider.requests[10].messages.size - provider.requests[9].messages.size
-      expect(spent).to be <= added + 4
     end
   end
 

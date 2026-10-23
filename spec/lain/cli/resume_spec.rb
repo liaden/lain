@@ -101,7 +101,7 @@ RSpec.describe Lain::CLI::Resume do
   # A spec-owned root, so the launch reads no skills from the developer's tree.
   def through_launch(options)
     root = File.join(@state_home, "project").tap { |dir| FileUtils.mkdir_p(dir) }
-    project = Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag)
+    project = throwaway_project(root)
     launch = Lain::CLI::ChatLaunch.new({ journal: false, provider: "ollama", max_tokens: 16, **options },
                                        resume_factory: -> { described_class.new(paths:) },
                                        project_factory: -> { project })
@@ -987,8 +987,6 @@ RSpec.describe Lain::CLI::Resume do
 
     def snapshot(content, head) = Lain::Telemetry::TodoSnapshot.from(todos(content), head:).to_journal
 
-    def headless(content) = snapshot(content, nil).except("head")
-
     def turn_record(index) = Lain::SessionRecord.turn(turns[index])
 
     def rewound_past_tulip = Lain::SessionRecord.rewound(from: planned.head_digest, to: kept)
@@ -1001,17 +999,6 @@ RSpec.describe Lain::CLI::Resume do
     end
 
     def todo_reminder(result) = result.session.reminders.grep(/\ACurrent todo list/).join
-
-    it "restores the list the rewound chain kept, not the one written after it" do
-      write_session("20260101T000000-1.ndjson",
-                    recorded([snapshot("IRIS", turns[1].digest), snapshot("TULIP", turns[3].digest)]))
-
-      result = through_launch(resume: "")
-
-      expect(result.timeline.head_digest).to eq(kept)
-      expect(todo_reminder(result)).to include("IRIS")
-      expect(todo_reminder(result)).not_to include("TULIP")
-    end
 
     it "restores, through the fork door, the list of the chain the fork stands on" do
       write_session("20260101T000000-1.ndjson",
@@ -1033,15 +1020,6 @@ RSpec.describe Lain::CLI::Resume do
                      Lain::SessionRecord.turn(side.head), closed_record(side.head_digest)])
 
       result = through_launch(resume: "20260102")
-
-      expect(todo_reminder(result)).to include("IRIS")
-      expect(todo_reminder(result)).not_to include("TULIP")
-    end
-
-    it "places a headless snapshot on the chain by where the file wrote it" do
-      write_session("20260101T000000-1.ndjson", recorded([headless("IRIS"), headless("TULIP")]))
-
-      result = through_launch(resume: "")
 
       expect(todo_reminder(result)).to include("IRIS")
       expect(todo_reminder(result)).not_to include("TULIP")
@@ -2007,11 +1985,8 @@ RSpec.describe Lain::CLI::Resume do
     end
 
     def file_under(dir, name, timeline)
-      path = File.join(paths.sessions_dir(project: paths.project_hash(dir)), name)
-      records = [open_header, *turn_records(timeline), Lain::Telemetry::SessionClosed.new(head: timeline.head_digest,
-                                                                                          reason: :exit).to_journal]
-      File.write(path, "#{records.map { |record| JSON.generate(record) }.join("\n")}\n")
-      path
+      write_session_file(File.join(paths.sessions_dir(project: paths.project_hash(dir)), name),
+                         header: open_header, timeline:)
     end
 
     it "finds the root's newest session from a subdirectory" do

@@ -757,7 +757,7 @@ RSpec.describe Lain::SessionRecord::Replay do
   def todo(content, status) = Struct.new(:content, :status).new(content, status)
 
   # The chain a record with no turn records resumes onto.
-  def empty_chain = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+  def empty_chain = CoreGraph.timeline
 
   def replayed_session(source = journal_io.string.each_line)
     described_class.new(source).session(on: empty_chain)

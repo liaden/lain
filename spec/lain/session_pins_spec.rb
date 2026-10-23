@@ -147,7 +147,7 @@ RSpec.describe Lain::SessionRecord::Replay do
   let(:journaled) { Lain::Session.new(journal:) }
 
   # The chain a record with no turn records resumes onto.
-  def empty_chain = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+  def empty_chain = CoreGraph.timeline
 
   def replayed = described_class.new(journal_io.string.each_line).session(on: empty_chain)
 

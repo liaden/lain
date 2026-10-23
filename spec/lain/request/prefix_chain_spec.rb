@@ -17,16 +17,6 @@ RSpec.describe Lain::Request::PrefixChain do
     end
   end
 
-  def digests_during
-    count = 0
-    allow(Lain::Canonical).to receive(:digest).and_wrap_original do |original, value|
-      count += 1
-      original.call(value)
-    end
-    yield
-    count
-  end
-
   def reachable_from(root, depth)
     (1..depth).reduce([root]) do |frontier, _|
       frontier.flat_map { |object| Array(ObjectSpace.reachable_objects_from(object)).grep_v(Module) }
