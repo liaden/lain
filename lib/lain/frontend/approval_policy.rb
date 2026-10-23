@@ -64,7 +64,7 @@ module Lain
       # a newline in a model-written command cannot break the line.
       QUEUED = "! %<call>s  -- its y/N is asked next"
       DROPPED = "! %<call>s  -- %<outcome>s"
-      CALL = "%<preamble>s%<requester>s asks to run %<tool>s(%<input>s)"
+      CALL = "%<preamble>s%<requester>s asks %<call>s"
 
       # The standalone reader's input when none is handed in: nothing is ever
       # typed there, so the answer is EOF and the call is denied.
@@ -143,8 +143,7 @@ module Lain
         def decided_elsewhere? = @pending.decided?
 
         def call
-          format(CALL, preamble: @pending.outstanding.preamble, requester: @pending.label, tool: @pending.tool,
-                       input: @pending.input.inspect)
+          format(CALL, preamble: @pending.outstanding.preamble, requester: @pending.label, call: @pending.ask_face)
         end
 
         # A call nobody answered is led by the call, since the line it ends may
@@ -290,7 +289,7 @@ module Lain
       def prompt_for(pending)
         "#{pending.outstanding.preamble}#{landing(pending)}#{pending.label} " \
           "asks (auto-denies in #{pending.window_face}#{judged(pending)}): " \
-          "approve #{pending.tool}(#{pending.input.inspect})? [y/N] "
+          "approve #{pending.call_face}? [y/N] "
       end
 
       def judged(pending)

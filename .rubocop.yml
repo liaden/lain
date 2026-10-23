@@ -222,6 +222,11 @@ Metrics/PerceivedComplexity:
 Naming/BlockForwarding:
   EnforcedStyle: explicit
 
+# `decide` resolves a parked approval and `ask_decision` blocks until a human answers;
+# both return the yes or no, but a `?` name would read as a pure query.
+Naming/PredicateMethod:
+  AllowedMethods: [call, ask_decision, decide]
+
 # Joel's `{ effect:, context: }` in tool_runner.rb is the style we want everywhere a
 # hash value merely repeats its key -- `always` is the only shorthand setting that
 # actually enforces it (`either`/`either_consistent` tolerate the old form). Vendored

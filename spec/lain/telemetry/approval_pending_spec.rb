@@ -48,6 +48,18 @@ RSpec.describe Lain::Telemetry::ApprovalPending do
     expect(described_class.from(pending).humans_only).to be(true)
   end
 
+  it "carries a kind that defaults to tool and is journaled only when it is not" do
+    decision = Lain::Approval::Parked::Queue::Decision.new(requester: "egress", kind: "egress", summary: "s",
+                                                           digest: "b3_abc")
+    pending = Lain::Approval::Parked::Queue::DecisionPending.new(
+      decision:, identity: Lain::Requester.new(name: "egress"), clock: -> { 0.0 }
+    )
+
+    expect(event.kind).to eq("tool")
+    expect(event.to_journal).not_to have_key("kind")
+    expect(described_class.from(pending).to_journal).to include("kind" => "egress", "tool_use_id" => "b3_abc")
+  end
+
   it "carries the notes of the Pending it is built from, and omits the key when there are none" do
     pending = Lain::Approval::Parked::Queue::Pending.new(
       effect: Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: {}),

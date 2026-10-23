@@ -30,7 +30,7 @@ module EscalationSpecSupport
 
   # The mistake a rule author from a total-predicate world makes.
   class TrueRule < Lain::Approval::Rule
-    def decide(_call) = true # rubocop:disable Naming/PredicateMethod
+    def decide(_call) = true
   end
 
   # Names itself once and refuses afterwards: the fault path must not ask a

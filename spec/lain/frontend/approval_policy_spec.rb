@@ -30,6 +30,23 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     expect(output.string).to include("bash").and include("rm -rf /tmp/x")
   end
 
+  it "shows a decision's kind and summary, not a tool call, and takes y and n as an approval does" do
+    decision = Lain::Approval::Parked::Queue::Decision.new(
+      requester: "egress", kind: "egress", summary: "send 12 bytes to api.example.com", digest: "b3_abc"
+    )
+    asked = lambda do |answer|
+      held = Lain::Approval::Parked::Queue::DecisionPending.new(
+        decision:, identity: Lain::Requester.new(name: "egress"), clock: -> { 0.0 }
+      )
+      policy_for(answer).decide(held)
+      held.approved?
+    end
+
+    expect([asked.call("y\n"), asked.call("n\n")]).to eq([true, false])
+    expect(output.string).to include("egress").and include("send 12 bytes to api.example.com")
+    expect(output.string).not_to include("approve egress(")
+  end
+
   # With a fleet running, tool-and-input alone cannot say whether the parent or
   # a researcher subagent is the one asking -- the editor's row already leads
   # with the requester, and in QA reading the spawn's `only`-set out of the

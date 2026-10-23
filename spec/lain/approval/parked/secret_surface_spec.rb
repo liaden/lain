@@ -480,6 +480,23 @@ RSpec.describe Lain::Approval::Parked::SecretSurface do
     end
   end
 
+  describe "a decision that is not a tool call" do
+    it "is never swept, so the oracle is never asked and the pending is left to the human" do
+      tier = oracle(verdict: "approve", confidence: 1.0)
+      queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 0.05)
+      decision = Lain::Approval::Parked::Queue::Decision.new(requester: "egress", kind: "read_file",
+                                                             summary: path, digest: "b3_abc")
+      verdict = Sync do |task|
+        asking = task.async { queue.ask_decision(decision) }
+        pending = task.with_timeout(1) { queue.dequeue }
+        surface(tier).sweep(queue)
+        [asking.wait, pending.surface]
+      end
+
+      expect([tier.asks, verdict]).to eq([[], [false, Lain::Approval::Parked::Queue::TIMEOUT_SURFACE]])
+    end
+  end
+
   it "asks about each pending once -- a deferred pending is not re-asked on the next sweep" do
     tier = oracle(verdict: "defer", confidence: 1.0)
     queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 0.05)

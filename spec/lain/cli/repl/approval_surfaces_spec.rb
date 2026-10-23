@@ -213,6 +213,21 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
       expect(notes).to contain_exactly(a_string_including("! agent asks to run bash(", "ls", "/approve"))
     end
 
+    it "announces a decision by its kind and summary, not as a tool it asks to run" do
+      decision = Lain::Approval::Parked::Queue::Decision.new(requester: "egress", kind: "egress",
+                                                             summary: "send 12 bytes", digest: "b3_abc")
+      Sync do |task|
+        watched = surfaces(attached: editor).watch(task)
+        task.with_timeout(2) { task.async { queue.ask_decision(decision) }.wait }
+        pumped_until(task, reason: "the lapse was said") { output.string.include?("denied after") }
+        watched.each(&:stop)
+      end
+
+      expect(output.string).to include('egress asks egress: "send 12 bytes"')
+      expect(output.string).not_to include("asks to run egress")
+      expect(notes.join).to include('asks egress: "send 12 bytes"')
+    end
+
     it "names a skill child by its label in the announcement" do
       child = Lain::Requester.new(name: "dev", role: "dev", skill: "gherkin-tests")
       fan_out(attached: editor, context: Lain::Approval::Parked::PolicySwitch::Requested.new(nil, child))

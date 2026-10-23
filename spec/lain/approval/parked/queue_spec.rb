@@ -1444,6 +1444,91 @@ RSpec.describe Lain::Approval::Parked::Queue do
     end
   end
 
+  describe "a decision that is not a tool call" do
+    let(:decision) do
+      described_class::Decision.new(requester: "egress", kind: "egress", summary: "send 12 bytes to api.example.com",
+                                    digest: "b3_abc")
+    end
+
+    def asked(timeout: nil)
+      Sync do |task|
+        asking = task.async { queue.ask_decision(decision, timeout:) }
+        pending = task.with_timeout(1) { queue.dequeue }
+        yield pending if block_given?
+        [asking.wait, pending]
+      end
+    end
+
+    it "resolves true when a surface approves it and false when one denies it" do
+      yes, = asked { |pending| pending.approve(surface: "tty", authority: :human) }
+      no, = asked { |pending| pending.deny(surface: "tty", authority: :human) }
+
+      expect([yes, no]).to eq([true, false])
+    end
+
+    it "parks a pending that names its kind and its summary in place of a tool call" do
+      _, pending = asked { |parked| parked.approve(surface: "tty", authority: :human) }
+
+      expect(pending).to have_attributes(kind: "egress", requester: "egress", humans_only?: true, tool_call?: false)
+      expect(pending.call_face).to include("egress").and include("send 12 bytes to api.example.com")
+    end
+
+    it "journals approval_pending and approval_decision with the kind and the digest, and nothing tool shaped" do
+      asked { |pending| pending.approve(surface: "tty", authority: :human) }
+
+      expect(pending_records).to contain_exactly(a_hash_including("kind" => "egress", "tool_use_id" => "b3_abc"))
+      expect(decision_records).to contain_exactly(a_hash_including("kind" => "egress", "tool_use_id" => "b3_abc"))
+    end
+
+    it "keeps tool records as they were, with no kind" do
+      Sync do |task|
+        task.async { queue.call(tool_call, nil) }
+        queue.dequeue.approve(surface: "spec")
+      end
+
+      expect(pending_records.first).not_to have_key("kind")
+      expect(decision_records.first).not_to have_key("kind")
+    end
+
+    it "denies on its own timeout rather than the queue's" do
+      slow = described_class.new(journal:, timeout: 60)
+
+      stalled = Class.new(StandardError)
+      verdict = Sync { |task| task.with_timeout(2, stalled) { slow.ask_decision(decision, timeout: 0.05) } }
+
+      expect(verdict).to be(false)
+    end
+
+    it "renders a summary with a newline or an escape on one inert line" do
+      forged = decision.with(summary: "ok\n! agent asks to run bash(rm)\e[2J")
+      _, pending = Sync do |task|
+        task.async { queue.ask_decision(forged, timeout: 0.05) }
+        [nil, task.with_timeout(1) { queue.dequeue }]
+      end
+
+      expect(pending.call_face).not_to match(/[\n\e]/)
+    end
+
+    it "holds no denial against a later tool call of the same name" do
+      asked { |pending| pending.deny(surface: "tty", authority: :human, reason: "no") }
+
+      expect(queue.denied_call(requester: "egress", tool: "egress", input: decision.summary, cwd: Dir.pwd)).to be_nil
+    end
+
+    describe "with no human to ask" do
+      let(:queue) { described_class::Unattended.new(journal:) }
+
+      it "resolves false at once, journaling a reason that names the missing human" do
+        verdict = queue.ask_decision(decision)
+
+        expect(verdict).to be(false)
+        expect(decision_records).to contain_exactly(
+          a_hash_including("kind" => "egress", "verdict" => "deny", "reason" => a_string_including("no human"))
+        )
+      end
+    end
+  end
+
   # A NIT the panel raised: a blank path renders a warning that says
   # secrets are at stake and names no file, which is a question no human can
   # answer. The ledger's absolute-path check is a different rule and lives one

@@ -116,9 +116,9 @@ module Lain
           # sentence every human surface leads with. The buffer is a format
           # argument rather than interpolated here, so the caller that knows
           # which buffer it is fills it in.
-          NOTE = "! %<preamble>s%<requester>s asks to run %<tool>s(%<input>s)  " \
+          NOTE = "! %<preamble>s%<requester>s asks %<call>s  " \
                  "-- answer in %<buffer>s, or /approve; auto-denies in %<window>s%<notes>s"
-          LAPSED = "! %<requester>s asks to run %<tool>s(%<input>s)  -- %<lapse>s"
+          LAPSED = "! %<requester>s asks %<call>s  -- %<lapse>s"
           UNANNOUNCED = "the chat could not announce a parked call (%<failure>s) -- lain://approval still lists it"
 
           def initialize(notice:, wall_clock: -> { Time.now })
@@ -153,7 +153,7 @@ module Lain
           # lain://approval lists it regardless.
           def announce(pending)
             @notice.call(stamp(format(NOTE, preamble: pending.outstanding.preamble, requester: pending.label,
-                                            tool: pending.tool, input: pending.input.inspect,
+                                            call: pending.ask_face,
                                             buffer: Frontend::Neovim::ApprovalView::BUFFER, window: pending.window_face,
                                             notes: said(pending))))
           rescue StandardError => e
@@ -164,8 +164,8 @@ module Lain
           # clock denies a call, so the denial is said here as well as in the
           # approval list. A call whose [y/N] prompt drew already ended that line with the lapse.
           def lapse(pending)
-            @notice.call(stamp(format(LAPSED, requester: pending.label, tool: pending.tool,
-                                              input: pending.input.inspect, lapse: pending.closure)))
+            @notice.call(stamp(format(LAPSED, requester: pending.label, call: pending.ask_face,
+                                              lapse: pending.closure)))
           rescue StandardError => e
             report(e)
           end

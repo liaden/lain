@@ -46,6 +46,16 @@ module Lain
 
         BASH = "bash"
 
+        # A yes or no wanted on something that is not a tool call, so it never
+        # passes for one: the secret oracle and the judge read tool calls.
+        # `digest` is the bytes' hash and correlates the journal records.
+        Decision = Data.define(:requester, :kind, :summary, :digest)
+
+        # Lets a {Decision} ride the same Pending machinery without being an
+        # Effect::ToolCall, which the secret oracle and the judge would read.
+        Asked = Data.define(:name, :tool_use_id, :input)
+        private_constant :Asked
+
         Outstanding = Data.define(:path, :regions)
 
         # One line of why a call was parked. `own` marks lain's words, which a
@@ -223,9 +233,6 @@ module Lain
           # machine's. Only a surface a person answers passes `:human`.
           #
           # @raise [ArgumentError] for an authority outside {AUTHORITIES}
-          # rubocop:disable Naming/PredicateMethod -- a COMMAND whose Boolean
-          # reports whether it won the race, not a query; `decide?` would misname
-          # the mutation the way `Timeline#commit`'s rename lesson warns about.
           def decide(verdict, surface:, authority: :automatic, reason: nil)
             raise ArgumentError, "unknown authority #{authority.inspect}" unless AUTHORITIES.include?(authority)
             return false if decided?
@@ -238,9 +245,19 @@ module Lain
             @promise.resolve(@decision)
             true
           end
-          # rubocop:enable Naming/PredicateMethod
 
           def humans_only? = @humans_only
+
+          # @return [String] what the journal and the surfaces call this pending's kind
+          def kind = "tool"
+
+          def tool_call? = true
+
+          # @return [String] the question a surface asks, in its own words
+          def call_face = "#{tool}(#{input.inspect})"
+
+          # @return [String] the rest of "asks ..." in a surface's sentence
+          def ask_face = "to run #{call_face}"
 
           # @return [Array<Reason>] why the ladder parked this call, in order
           attr_reader :reasons
@@ -330,12 +347,57 @@ module Lain
           def to_journal
             { "type" => "approval_decision", "tool_use_id" => tool_use_id, "requester" => requester,
               "tool" => tool, "surface" => surface, "verdict" => decision.to_s, "timed_out" => timed_out?,
-              "latency" => latency }.merge(reason ? { "reason" => reason } : {})
+              "latency" => latency }.merge(reason ? { "reason" => reason } : {}).merge(kind_entry)
           end
 
           private
 
           def flattened(words) = words.to_s.gsub(/[[:cntrl:]]/, " ").squish.presence
+
+          def kind_entry = tool_call? ? {} : { "kind" => kind }
+        end
+
+        # Reuses Pending's park, journal and surface machinery so no surface
+        # needs a second queue; `tool` is the kind and `tool_use_id` the digest
+        # so the journal pairs it as it pairs a call.
+        class DecisionPending < Pending
+          attr_reader :kind
+
+          def initialize(decision:, **)
+            super(effect: Asked.new(decision.kind, decision.digest, decision.summary), humans_only: true, **)
+            @kind = decision.kind
+            @summary = decision.summary
+          end
+
+          def tool_call? = false
+
+          # `inspect`ed because the summary can carry model-influenced text.
+          def call_face = "#{kind}: #{@summary.inspect}"
+
+          def ask_face = call_face
+        end
+
+        # The queue of a run with nobody to ask: every decision is refused at
+        # once and the refusal journaled, so the record still shows it was asked.
+        class Unattended
+          REASON = "no human is attached to answer"
+          SURFACE = "unattended"
+
+          def initialize(journal:, clock: RunClock::MONOTONIC)
+            @journal = journal
+            @clock = clock
+          end
+
+          # @return [Boolean] false
+          def ask_decision(decision, timeout: nil)
+            pending = DecisionPending.new(decision:, identity: Requester.of(decision.requester), clock: @clock,
+                                          timeout: timeout || DEFAULT_TIMEOUT)
+            pending.deny(surface: SURFACE, reason: REASON)
+            @journal.record(pending.to_journal)
+            false
+          rescue StandardError
+            false
+          end
         end
 
         # @param journal [#record] where decisions land as evidence; required,
@@ -397,6 +459,17 @@ module Lain
           pending = admit(effect, context, outstanding)
           settle(pending)
           pending
+        end
+
+        # @param decision [Decision]
+        # @param timeout [Numeric, nil] seconds before the fail-closed denial; the queue's own when nil
+        # @return [Boolean] true to proceed
+        def ask_decision(decision, timeout: nil)
+          pending = DecisionPending.new(decision:, identity: Requester.of(decision.requester), clock: @clock,
+                                        timeout: timeout || @timeout, wall: @wall)
+          park(pending)
+          settle(pending)
+          pending.approved?
         end
 
         # ONE queue serves the whole fleet, so a queue-level constant journals and
@@ -468,6 +541,10 @@ module Lain
                                 notes: context.respond_to?(:parked_because) ? context.parked_because : [],
                                 cwd: ::Lain::Session.cwd_of(context),
                                 within: ::Lain::Sensitivity::Policy.base_of(context))
+          park(pending)
+        end
+
+        def park(pending)
           record_evidence(Telemetry::ApprovalPending) { Telemetry::ApprovalPending.from(pending) }
           @parked << pending
           @arrivals.enqueue(pending)
@@ -480,7 +557,7 @@ module Lain
         # and still end up decided. The abandonment deny is a no-op on the normal
         # path, and is what makes a late surface answer harmless.
         def settle(pending)
-          await_decision(pending)
+          await_decision(pending, pending.timeout)
         ensure
           pending.deny(surface: ABANDONED_SURFACE)
           @parked.delete(pending)
@@ -540,7 +617,7 @@ module Lain
 
         # A machine's no, the clock's, or one a fault forced, is not a person's
         # judgement about a path, so none of these is held against later calls.
-        def human_denial?(pending) = pending.human? && !pending.approved?
+        def human_denial?(pending) = pending.tool_call? && pending.human? && !pending.approved?
 
         def below(path) = path.end_with?("/") ? path : "#{path}/"
 
@@ -597,7 +674,7 @@ module Lain
         def await_decision(pending, window = @timeout)
           Async::Task.current.with_timeout(window) { pending.await }
         rescue Async::TimeoutError
-          left = pending.drawn_at ? pending.drawn_at + @timeout - @clock.call : 0
+          left = pending.drawn_at ? pending.drawn_at + pending.timeout - @clock.call : 0
           left.positive? ? await_decision(pending, left) : pending.deny(surface: TIMEOUT_SURFACE)
         end
       end

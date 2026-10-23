@@ -197,6 +197,29 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     expect(described_class::HINT).to eq("-- y approve, n deny  (:LainApprove / :LainDeny [reason])")
   end
 
+  describe "a decision that is not a tool call" do
+    let(:decision) do
+      Lain::Approval::Parked::Queue::Decision.new(requester: "egress", kind: "egress",
+                                                  summary: "send 12 bytes to api.example.com", digest: "b3_abc")
+    end
+
+    it "draws its kind and summary and resolves with the verdict pressed" do
+      verdict = Sync do |task|
+        queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 5)
+        asking = task.async { queue.ask_decision(decision) }
+        spun_until { queue.one? }
+        view.sweep(queue)
+        row = rpc.last[:lines].first
+        view.decide(1, "approve", generation:)
+        [row, task.with_timeout(2) { asking.wait }]
+      end
+
+      expect(verdict.first).to include("egress").and include("send 12 bytes to api.example.com")
+      expect(verdict.first).not_to include("egress(")
+      expect(verdict.last).to be(true)
+    end
+  end
+
   describe "the round trip that was never written" do
     it "resolves the parked call with the verdict pressed in the editor" do
       result = gated(await: true) { |_queue| view.decide(1, "approve", generation:) }

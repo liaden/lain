@@ -540,7 +540,7 @@ module Lain
         # cut PREFIX of what is underneath it.
         def body_for(summary) = Fold.wrap(summary)
 
-        def call_of(pending) = "#{pending.tool}(#{pending.input.inspect})"
+        def call_of(pending) = pending.call_face
 
         # {Frontend::ApprovalPolicy#prompt_for}'s facts in the terminal's own
         # spelling, so a human who has answered one of these at the prompt reads

@@ -37,7 +37,7 @@ module Lain
     # The Pending's `input` is deliberately left off: tool arguments are
     # unbounded and may carry exactly the credential bytes {WriteRefused} exists
     # to keep out of the journal. Id in, payload out.
-    ApprovalPending = Data.define(:requester, :tool, :tool_use_id, :humans_only, :notes) do
+    ApprovalPending = Data.define(:requester, :tool, :tool_use_id, :humans_only, :notes, :kind) do
       include Journalable
 
       # Built from the parked {Approval::Parked::Queue::Pending} at admit time, so the
@@ -53,21 +53,25 @@ module Lain
       # the identical hazard and the identical note.
       def self.from(pending)
         new(requester: pending.requester, tool: pending.tool, tool_use_id: pending.tool_use_id,
-            humans_only: pending.humans_only?, notes: pending.notes)
+            humans_only: pending.humans_only?, notes: pending.notes, kind: pending.kind)
       end
 
       # Interned rather than `dup.freeze`d: these three values repeat on every
       # park of a session, so two equal records share one String rather than
       # holding two copies of the same bytes.
-      def initialize(requester:, tool:, tool_use_id:, humans_only: false, notes: [])
+      def initialize(requester:, tool:, tool_use_id:, humans_only: false, notes: [], kind: "tool")
         Carriers::ApprovalPending.check!(requester:, tool:, tool_use_id:)
 
         super(requester: -requester.to_s, tool: -tool.to_s, tool_use_id: -tool_use_id.to_s,
-              humans_only: humans_only == true, notes: notes.map { -_1.to_s }.freeze)
+              humans_only: humans_only == true, notes: notes.map { -_1.to_s }.freeze, kind: -kind.to_s)
       end
 
-      # Absent when empty, so a park nothing noted journals as it always did.
-      def to_journal = super.then { |record| record["notes"].empty? ? record.except("notes") : record }
+      # Each absent when it says nothing, so a tool call nobody noted journals as it always did.
+      def to_journal
+        super.then do |record|
+          record.except(*[("notes" if record["notes"].empty?), ("kind" if kind == "tool")].compact)
+        end
+      end
     end
   end
 end
