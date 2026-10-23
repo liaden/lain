@@ -18,6 +18,16 @@ runs:
   steps:
     # tmux comes from the base image; display-popup (>= 3.2) is detected at runtime, and the assert below catches an image that drops it.
 
+    # Ubuntu 24.04's AppArmor refuses an unprivileged user namespace, so bwrap
+    # cannot build the reader sandbox and the specs of it read a bare box.
+    - name: Let bwrap build the reader sandbox
+      shell: bash
+      run: |
+        set -euo pipefail
+        command -v bwrap >/dev/null 2>&1 || { sudo apt-get update -q && sudo apt-get install -y -q bubblewrap; }
+        sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+        bwrap --unshare-user --ro-bind / / true
+
     # NOT apt: Ubuntu 24.04's neovim is 0.9.x, several minors behind what a dev
     # box runs, and these specs talk to it over RPC. The upstream tarball keeps
     # CI and development on the same editor.
@@ -40,7 +50,7 @@ runs:
       run: |
         set -euo pipefail
         missing=()
-        for tool in nvim tmux jq; do
+        for tool in nvim tmux jq bwrap strace; do
           command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
         done
         if [ ${#missing[@]} -ne 0 ]; then
