@@ -9,7 +9,7 @@ panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron 
 
 This plan adopts most of what the October scan, the Pi and CliffCompaction audits and 5 research reports proposed (`planning/roadmap-adoption-research-2026-10.md`, items marked Adopt, Research and Bench later, plus parked items 65, 81 and 83 by the user's choice). It does 4 things, in this order:
 
-1. **Fix the instruments.** Claude 5.5 and Ollama Cloud prices with prompt-size and off-peak tiers, a human confirmation before any request (chat, subagent, summarizer, judge) crosses a price tier, intervals and paired statistics in `Compare`, a session header that names the harness, tool surface, effort, host, policy and weights, and named cache-break causes.
+1. **Fix the instruments.** Claude 5.5 and Ollama Cloud prices with prompt-size and off-peak tiers, a human confirmation before any request (chat, subagent, summarizer, judge) crosses a price tier, intervals and paired statistics in `Compare`, a session header that names the harness, tool surface, effort, host, policy and weights, named cache-break causes, and a hot-path bench (T90) that records the chat-turn, bash-call, request and journal baselines before any card touches them and holds each later card to a budget, so the recent speedups survive.
 2. **Close measured gaps.** A compaction replacement framed as an untrusted recap, approved arguments bound to the arguments that run, a deny-order law, history secrets masked by value, a reaper for every descendant of a sandboxed call, datagram, raw, SCTP and io_uring sockets refused, connects traced, and a workspace sandbox that becomes the default for judge- and rule-approved bash.
 3. **Let the secret oracle use a cloud model safely.** An in-process egress guard and a separate loopback gateway the human supervises, both able to block a request carrying a known secret; then a calibration gate on a labelled path set.
 4. **Run the experiments.** An approval replay driver, an offline compaction sweep with CliffCompaction-style and placement arms, a live stage behind a priced preflight, grader and memory additions, and a hash-chained Journal.
@@ -112,7 +112,7 @@ Transitively reduced: an edge implied by a longer path is omitted. Many edges or
 ```mermaid
 flowchart LR
   subgraph P0["Foundations"]
-    T1 T2 T3 T4 T5 T6 T7
+    T1 T90 T2 T3 T4 T5 T6 T7
   end
   subgraph P1["Instruments"]
     T8 T9 T10 T11 T12 T13 T14 T15 T16 T17 T18 T20 T21
@@ -144,6 +144,7 @@ flowchart LR
   T3 --> T7
   T6 --> T7
   T87 --> T7
+  T90 --> T7
   T8 --> T9
   T9 --> T10
   T10 --> T11
@@ -157,13 +158,17 @@ flowchart LR
   T17 --> T18
   T12 --> T20
   T20 --> T21
+  T90 --> T22
   T22 --> T23
   T23 --> T24
   T87 --> T26
+  T90 --> T26
   T25 --> T27
+  T90 --> T27
   T23 --> T28
   T27 --> T29
   T30 --> T31
+  T90 --> T31
   T30 --> T32
   T31 --> T33
   T32 --> T33
@@ -237,6 +242,7 @@ flowchart LR
   T84 --> T85
   T45 --> T88
   T42 --> T89
+  T1 --> T90
 ```
 
 ## Tasks
@@ -632,7 +638,7 @@ end
 
 ### T7: Ask before a request crosses its model's prompt-size price tier          [risk: high]
 
-**Depends on:** T3, T6, T87
+**Depends on:** T3, T6, T87, T90
 **Files:** `lib/lain/provider/http/price_tier_guard.rb` (new), `lib/lain/cli/backend.rb`,
 `lib/lain/cli/wiring.rb`, `lib/lain/telemetry/price_tier_crossed.rb` (new),
 `spec/lain/provider/http/price_tier_guard_spec.rb` (new), `spec/lain/cli/backend_spec.rb`,
@@ -719,6 +725,7 @@ The guard counts only when a cheap estimate of the body (its canonical byte size
 `Canonical.digest` of the body for the life of the provider, so a retry reuses the answer.
 
 **Stop and report if:**
+- `bin/hot-path-bench --check` (T90) shows `request_100000` or `request_1000000` (budget, all 3 guards: 2 ms per MB) over its ceiling after this card.
 - `count_tokens` (T6) needs a different body from `/v1/messages` for the same request (for example it
   rejects `stream` or `max_tokens`): then the guard strips those keys and the card says which.
 - A provider path to Anthropic exists that does not pass `Backend#anthropic_provider` (grep
@@ -1040,7 +1047,7 @@ end
 
 ### T13: Record harness, tool-surface, effort and policy provenance in the session header          [risk: high]
 
-**Depends on:** T7, T84
+**Depends on:** T7, T84, T90
 **Files:** `lib/lain/session_record/provenance.rb` (new), `lib/lain/session_record.rb`,
 `lib/lain/session_record/scribe.rb`, `lib/lain/cli/chronicle.rb`, `lib/lain/cli/wiring.rb`,
 `lib/lain/bench/cli/run_recorder.rb`, `spec/lain/session_record/provenance_spec.rb` (new),
@@ -1104,6 +1111,7 @@ end
 ```
 
 **Stop and report if:**
+- `bin/hot-path-bench --check` (T90) shows `wire_ready` over its ceiling after this card. The harness digest must not hash the working tree on every launch.
 - T84 carries effort somewhere other than the Context (read its card); take it from where T84 put it,
   and stop if no launch-time value exists.
 - `spec/lain/session_record_spec.rb` pins a fresh header as byte-identical to an older shape
@@ -1509,7 +1517,7 @@ end
 
 ### T22: Frame a compaction replacement as an untrusted recap          [risk: high]
 
-**Depends on:** none
+**Depends on:** T90
 **Files:**
 - `lib/lain/compaction/recap.rb` (new)
 - `lib/lain/compaction/derivation.rb`
@@ -1590,6 +1598,7 @@ end
 ```
 
 **Stop and report if:**
+- `bin/hot-path-bench --check` (T90) shows `render_chat_10k` or `render_cold_10k` over its ceiling after this card.
 - A render site other than `Write.replacing`, `HeldCut#replacement` and `Stretch#collapsed` builds a `REPLACEMENT_ROLE` message (grep `REPLACEMENT_ROLE` under lib/); each must go through `Recap.message`, or a held render reaches the model bare.
 - Framing at write time changes a digest that `SessionRecord::Replay#restore_cuts` (session_record/replay.rb:179-189) or `Source::HeldCut.on` checks, so an existing session file no longer resumes (the frame must apply to rendered content, never to recorded `collapses`).
 - `spec/lain/compaction/derivation_spec.rb:263-272` ("derives a valid conversation from every strategy") fails, which would mean the extra blocks break `Context::Conversation#valid?`.
@@ -1597,7 +1606,7 @@ end
 
 ### T23: Mark replacement messages and pin that the judge hears only human lines          [risk: high]
 
-**Depends on:** T22
+**Depends on:** T22, T90
 **Files:**
 - `lib/lain/compaction/recap.rb`
 - `lib/lain/provider/anthropic_encoding.rb`
@@ -1649,6 +1658,7 @@ end
 ```
 
 **Stop and report if:**
+- `bin/hot-path-bench --check` (T90) shows `render_chat_10k` or `render_cold_10k` over its ceiling after this card.
 - `Request#strip_cache_markers` (request.rb:142-150) must also strip the marker to keep `prefix_digests` stable across a resume; that changes `Request::PREFIX_CHAIN_VERSION` and every recorded `request_sent` chain (`Bench::Rewrites` raises on a version mismatch).
 - The judge's request ever comes from anything other than `Heard#remember`'s human line or a child's `task` (approval/judge.rb:99-103): the pin then needs a code change, not a spec.
 
@@ -1802,7 +1812,7 @@ end
 
 ### T26: Run only the arguments that were approved          [risk: high]
 
-**Depends on:** T87
+**Depends on:** T87, T90
 **Files:** `lib/lain/effect.rb` (`ToolCall#initialize` deep-freezes `input` with `Ractor.make_shareable`), `lib/lain/approval/parked/queue.rb` (`Pending#to_journal` gains `input_digest`), `lib/lain/telemetry/approval_pending.rb` (`input_digest` member), `lib/lain/telemetry/escalation.rb` (`input_digest` via `**extra`), `spec/lain/effect_spec.rb`, `spec/lain/approval/parked/queue_spec.rb`, `spec/lain/telemetry/approval_pending_spec.rb`, `spec/lain/telemetry/escalation_spec.rb`, `spec/journalable_surface_spec.rb` (the new key must stay after `type`)
 **Reuse:** `Canonical.digest`, `Ractor.make_shareable` (the repo rule: value objects are deeply frozen, pinned by `spec/value_object_shareability_spec.rb`), `Gate#unwrapped` (gate.rb:249)
 **Shared-file wiring:** none
@@ -1847,6 +1857,7 @@ Telemetry::ApprovalPending = Data.define(:requester, :tool, :tool_use_id, :human
 ```
 
 **Stop and report if:**
+- `bin/hot-path-bench --check` (T90) shows `render_chat_10k` (deep-freezing each tool input) over its ceiling after this card.
 - Any `lib/` code mutates a tool input after the effect is made. A grep at `3558cce3` for `input[...] =`, `input.delete`, `merge!`, `store`, `update` and `replace` on an input under `lib/lain` found none; rerun it, and name every site that raises `FrozenError` in the suite rather than thawing the input.
 - More than a handful of the spec files that build `Effect::ToolCall.new` with mutable Hashes then mutate them. Report the count; the fix is in the specs, never a thawed input.
 - `spec/lain/cli_spec.rb:269-273` (the 10-class stack pin) would need another layer. This card adds no layer.
@@ -1854,7 +1865,7 @@ Telemetry::ApprovalPending = Data.define(:requester, :tool, :tool_use_id, :human
 
 ### T27: Mask the values git history holds at sensitive paths          [risk: high]
 
-**Depends on:** T25
+**Depends on:** T25, T90
 **Files:** `lib/lain/sensitivity/history_literals.rb` (new), `lib/lain/sensitivity/secrets.rb`, `lib/lain/middleware/redact_secret_reads.rb` (`text_mask`, line 352), `lib/lain/sensitivity/display.rb`, `lib/lain/cli/tool_guard.rb` (`Inputs` gains `history:`; `read_kwargs`), `lib/lain/cli/switchboard.rb` (`.for`/`#initialize` pass `history:`; `live_display`), `lib/lain/cli/wiring/board_build.rb` (build and prime it), `spec/lain/sensitivity/history_literals_spec.rb` (new), `spec/lain/sensitivity/secrets_spec.rb`, `spec/lain/sensitivity/display_spec.rb`, `spec/lain/middleware/redact_secret_reads_spec.rb`, `spec/lain/cli/wiring/board_build_spec.rb`, `spec/lain/cli/tool_guard_spec.rb`
 **Reuse:**
 - `Sensitivity::Policy#classify` (sensitivity/policy.rb:373)
@@ -1921,6 +1932,7 @@ end
 ```
 
 **Stop and report if:**
+- `bin/hot-path-bench --check` (T90) shows `mask_first_output` and `wire_ready` over its ceiling after this card. If `mask_first_output` is over budget, add an on-disk cache keyed by the ref-set digest that holds only the sensitive paths and blob ids, never a value: the values are re-read with `git cat-file --batch` into memory. Writing a secret value to disk would create the at-rest leak T29 tests for.
 - Enumerating `git rev-list --objects --all` on this repo takes more than 5s off-thread, or more than 50ms on the first call path. The research measured 2.9s uncached.
 - `spec/lain/seams/passed_value_masking_spec.rb` changes outcome. It must stay green with history empty.
 - Any history-read value would be journaled. Only counts may reach `Telemetry::CommandRedacted`.
@@ -2100,7 +2112,7 @@ fn descendants(root: nix::unistd::Pid) -> Vec<nix::unistd::Pid>;
 
 ### T31: Run unconfined bash under the reaper   [risk: high]
 
-**Depends on:** T30
+**Depends on:** T30, T90
 
 **Files:**
 - `lib/lain/confine/bwrap.rb`
@@ -2154,6 +2166,7 @@ def prefix(profile, own, fds)      # unconfined: [*trace(profile, own), @fence, 
 ```
 
 **Stop and report if:**
+- `bin/hot-path-bench --check` (T90) shows `bash_true_none` or `bash_true_traced` (budget: 3 ms added) over its ceiling after this card.
 - `spec/lain/exec/local_spec.rb:74-97`, or the traced "keeps its background child" example at `sandboxed_spec.rb:438-441`, goes red. The reaper must reap only on a stop.
 - `Tripwire::Hit.of_exec_record` (hit.rb:79-90) starts counting the fence as a `loader_exec` or `unresolved_exec` in a traced record.
 - The probe (`confine/probe.rb`) reports the fence unstartable. A sandbox without a fence today degrades to the inner exec (sandbox.rb:48-50), and that must stay true.
@@ -2285,7 +2298,7 @@ def initialize(name:, trace:, exec_dirs: [], exec_files: [], read_dirs: [], writ
 
 ### T34: Trace connects and datagram sends   [risk: medium]
 
-**Depends on:** T33
+**Depends on:** T33, T90
 
 **Files:**
 - `lib/lain/confine/bwrap.rb`
@@ -2338,6 +2351,7 @@ def initialize(tool_use_id:, profile:, execs:, refusals:, fd_execs:, truncated:,
 ```
 
 **Stop and report if:**
+- `bin/hot-path-bench --check` (T90) shows `bash_true_traced` or `bash_true_reader` (budget: 2 ms added) over its ceiling after this card.
 - Tracing `sendto` makes a `git fetch` or `bundle install` sized call outgrow `Trace::CAP` (8 MiB). strace logs every `send()` because glibc implements it as `sendto` with a NULL address. Measure one before keeping `sendto` in the list.
 - `spec/journalable_surface_spec.rb` rejects the new field shape.
 - `Tripwire::Hit.of_exec_record` (hit.rb:79-90) reads `connects` through `fetch` without a default.
@@ -2470,7 +2484,7 @@ Spec file: `spec/lain/seams/egress_spec.rb` (tagged `:seam`). The abstract and p
 
 ### T37: Build a workspace profile with a writable project   [risk: high]
 
-**Depends on:** T34
+**Depends on:** T34, T90
 
 **Files:**
 - `lib/lain/confine/profile.rb`
@@ -2550,6 +2564,7 @@ def self.workspace(root:, home:, tmpdir:, masks: [], exec_files: [], trace: true
 ```
 
 **Stop and report if:**
+- `bin/hot-path-bench --check` (T90) shows `bash_true_workspace` (budget: reader plus 2 ms) over its ceiling after this card.
 - A judge-approved `bundle exec rspec <one file>` in this repo cannot boot under the profile because of an exec or read grant the table misses (mise ruby under `~/.local/share/mise/installs`, `target/`). Name the path; T40 measures it fully.
 - `git rev-parse` fails in R (not a git checkout). The seal set is then only `PROJECT_SEALED`; say so in the profile doc, and stop if a non-git project root is common in the QA journals.
 - An absent-path placeholder makes a tool fail that only checks for the file's existence (direnv, pre-commit). Name the tool.
@@ -2557,7 +2572,7 @@ def self.workspace(root:, home:, tmpdir:, masks: [], exec_files: [], trace: true
 
 ### T38: Route judge and rule approvals into the workspace profile   [risk: high]
 
-**Depends on:** T37
+**Depends on:** T37, T90
 
 **Files:**
 - `lib/lain/confine/profiles.rb`
@@ -2614,6 +2629,7 @@ end
 ```
 
 **Stop and report if:**
+- `bin/hot-path-bench --check` (T90) shows `bash_true_workspace` (budget: reader plus 2 ms) over its ceiling after this card.
 - `spec/lain/exec/sandboxed_spec.rb` builds `Profiles.new` positionally or without keywords that still default.
 - The secret oracle's `SecretSurface` allow (automatic authority, `approval/parked/secret_surface.rb:30`) reaches `Profiles` for a bash call. Decide whether an oracle-released read is "automatic" before routing it.
 
@@ -2919,7 +2935,7 @@ end
 
 ### T43: Refuse an outbound model request that carries a known secret          [risk: high]
 
-**Depends on:** T7, T13, T14, T27, T41, T84, T85
+**Depends on:** T7, T13, T14, T27, T41, T84, T85, T90
 **Files:** `lib/lain/provider/http/egress_guard.rb` (new), `lib/lain/cli/backend.rb` (`provider` 283-290 and `anthropic_provider` 733-737 append the guard on every provider; an `EgressLiterals` holder bound late), `lib/lain/cli/wiring.rb` (binds the holder to the board's secrets source in `#backing`), `lib/lain/telemetry/egress_refused.rb` (new), `spec/lain/provider/http/egress_guard_spec.rb` (new), `spec/lain/cli/backend_spec.rb`, `spec/lain/cli/wiring_spec.rb`, `spec/lain/provider/http/connection/middleware_stack_spec.rb` (an entry appended to `http_middleware` sees a Hash body)
 **Reuse:**
 - the board's one secrets source: `Sensitivity::Secrets.for(child_env: exec_backend.child_env, context:, history:)` over the board's `HistoryLiterals` (T27), the same objects `ToolGuard#read_kwargs` hands `RedactSecretReads`; history is never walked a second time
@@ -3004,6 +3020,7 @@ end
 ```
 
 **Stop and report if:**
+- `bin/hot-path-bench --check` (T90) shows `request_100000` or `request_1000000` (budget, all 3 guards: 2 ms per MB) over its ceiling after this card.
 - `env.body` is already a String at the guard's position, which would mean the configured entries run after `request :json` in this Faraday version. Then put the guard as its own `setup_egress` step before `request :json` in `middleware_stack.rb`, and report it.
 - A literal shorter than 8 bytes, or a lineage digest, trips the guard on ordinary chat history. Run `Regions.detect` hits as flags only; this is the false-refusal risk.
 - Locating the turn that carries the value needs more than scanning the request's messages in order. Report it; do not add an index.
@@ -3011,7 +3028,7 @@ end
 
 ### T44: Hold outbound requests for the human when egress is supervised          [risk: high]
 
-**Depends on:** T7, T26, T43, T87
+**Depends on:** T7, T26, T43, T87, T90
 **Files:** `lib/lain/provider/http/egress_guard.rb` (the `Supervised` hold), `lib/lain/cli/backend.rb` (an `EgressHold` holder, bound once), `lib/lain/cli/wiring.rb` (binds the holder to the board's queue in `#backing`), `spec/lain/provider/http/egress_guard_spec.rb`, `spec/lain/cli/wiring_spec.rb`, `spec/lain/cli/backend_spec.rb`
 **Reuse:**
 - `Approval::Parked::Queue#ask_decision` with a `Queue::Decision` of kind `"egress"` (T87); the summary names endpoint, bytes, body digest, literal hits and flags, never the body
@@ -3079,6 +3096,7 @@ end
 ```
 
 **Stop and report if:**
+- `bin/hot-path-bench --check` (T90) shows `request_100000` or `request_1000000` (budget, all 3 guards: 2 ms per MB) over its ceiling after this card.
 - The Faraday middleware runs outside a fiber the Async queue can await. `Queue#ask_decision` awaits a promise, so check `spec/lain/provider/ollama_streaming_spec.rb`'s reactor shape first.
 - The requester of a request (for oracle scope) is not visible in the Faraday env. `Provider::Journaled` knows it; pass it through `extra` or a request header the guard strips before send. Do not infer it from the model name.
 - A per-digest answer cache would outlive the logical request (for example the same prompt resent an hour later reuses an old yes). Bound it to the retry window of one `Connection#post`.
@@ -5043,7 +5061,7 @@ def initialize(k: DEFAULT_K, corpus_path: CORPUS_PATH, embeddings_path: EMBEDDIN
 
 ### T77: Chain journal records by digest          [risk: high]
 
-**Depends on:** T13, T26, T41
+**Depends on:** T13, T26, T41, T90
 **Files:**
 - `lib/lain/journal.rb`
 - `lib/lain/journal/line.rb`
@@ -5131,6 +5149,7 @@ def self.tip(path)
 ```
 
 **Stop and report if:**
+- `bin/hot-path-bench --check` (T90) shows `journal_small` or `journal_1000000` (budget: 5% fewer appends, 1 ms per MB line) over its ceiling after this card.
 - A spec compares a chat-written line's exact key set or bytes. The `prev` key would fail it. Grep `spec/lain/cli`, `spec/lain/seams` and `spec/e2e` for `.keys).to eq` and `to eq({"ts"`. Stop if more than 5 such specs exist and list them.
 - A chained session file is opened by a second live writer (`journal_spec.rb:581` shows it is possible). Each writer would keep its own tip and the chain would fork. Record it as a known break that `lain verify` reports (T78), and stop if either opted-in site (chronicle.rb:207, salvager.rb:56) can do it while the chat that owns the file is alive.
 - The encode-before-lock rule (`journal.rb:14-17`) makes splicing impossible for a `journal_error` record that `encode` builds itself. Every encoded object must end with `}`.
@@ -5446,7 +5465,7 @@ StreamAssembler::Assembled = Data.define(:id, :model, :stop_reason, :content, :u
 
 ### T84: Send effort through output_config          [risk: medium]
 
-**Depends on:** T7, T23, T83
+**Depends on:** T7, T23, T83, T90
 **Files:** `lib/lain/request.rb`, `lib/lain/context.rb`, `lib/lain/cli/backend.rb`,
 `lib/lain/provider/anthropic_encoding.rb`, `spec/lain/request_spec.rb`, `spec/lain/context_spec.rb`,
 `spec/lain/provider/anthropic_encoding_spec.rb`, `spec/lain/cli/backend_spec.rb`,
@@ -5498,6 +5517,7 @@ Lain::Context#initialize(..., effort: nil)  # carried into #render
 ```
 
 **Stop and report if:**
+- `bin/hot-path-bench --check` (T90) shows `render_chat_10k` or `render_cold_10k` over its ceiling after this card.
 - `spec/lain/request_spec.rb` pins the exact key list of `cache_payload` (the comment at request.rb
   says request_spec pins the order); adding a conditional key must keep that example green for a
   nil effort.
@@ -5841,6 +5861,99 @@ end
 - Pausing main needs a new ladder rather than a refusal or hand-down in the tool phase. That is a design change to the approval layering; report it instead of building a second ladder.
 - `spec/lain/cli_spec.rb:269-273`'s pin cannot vary by arm without restating the stack in 2 places. Report before duplicating it.
 
+### T90: Record hot-path baselines and check every later card against them          [risk: medium]
+
+**Depends on:** T1
+**Files:**
+- `bin/hot-path-bench` (new)
+- `lib/lain/bench/hot_paths.rb` (new)
+- `spec/lain/bench/hot_paths_spec.rb` (new)
+**Reuse:** the render bench in `planning/render-profiling-2026-10/bench/` (`bench.rb`, `setup.rb`, `phases.rb`: chat-path and cold render at N turns, median over reps, loadavg printed beside it), ported into tracked code because that directory is untracked; `bin/runtime-census` for the shape (`--record` keeps the last 3 logs under `tmp/`, `--check` exits 1, in-script ceilings, "lowering one is free, raising one is its own commit"); `Isolation::SuiteLock.holding` (T1) so a bench never runs beside a suite; `Confine::Sandbox`, `Confine::Profiles`, `Exec::Sandboxed`, `Exec::Local` for the bash rows; `Provider::HTTP::Connection` with a WebMock-free loopback stub for the request rows; `Journal.open` on a tmp file for the journal rows; `Sensitivity::TextMask` and `Secrets.for` for the mask row; `Provider::Mock` for the wiring row.
+**Shared-file wiring:** `CLAUDE.md` gains one line under the census tools: "`bin/hot-path-bench` guards the chat-turn, bash-call, request and journal paths the way `bin/runtime-census` guards the suite; run `--check` before landing a card that touches them". `.gitignore` already ignores `tmp/`.
+**Reachable from:** `bin/hot-path-bench`, run by hand and by the main session as an integration check; nothing in `exe/lain` constructs it, deliberately (it is a guard, like the other censuses). `Lain::Bench::HotPaths` is constructed only by that script and its spec.
+
+The rows, each a median over a stated number of repetitions, run serially under `nice -n 19 ionice -c3` inside `SuiteLock.holding`, under `env -i` with the toolchain variables CLAUDE.md lists, with the padding sweep and the unchanged-code control from the profiling ruling (a run that compares 2 trees re-runs the baseline tree in the same sitting; a gap smaller than the sweep's spread is reported as noise, not as a change):
+
+| row | what | why it is a hot path |
+|---|---|---|
+| `render_chat_10k` | chat-path render at 10,000 turns | the per-turn cost the Rust hot-paths plan cut from 168 ms to about 27 ms; the Rust switchover was accepted at about 1.2x |
+| `render_cold_10k` | cold render at 10,000 turns | the accepted 34% cold cost; must not grow further |
+| `bash_true_<profile>` | wall of `true` through `Exec::Sandboxed` for none, traced, reader (and workspace once T37 adds it) | every bash call pays it |
+| `request_<size>` | building, encoding and sending a request of 100 KB and 1 MB through the Faraday stack to a loopback stub | every model call pays it; T7, T43 and T44 add middleware here |
+| `journal_<size>` | appends per second of a small record and of a 1 MB `request_sent` line | every turn writes the latter |
+| `mask_first_output` | time from a fresh `Secrets.for` to the first masked bash output | T27's history prime sits on this path |
+| `wire_ready` | `CLI::Wiring` from construction to an agent ready to ask, over `Provider::Mock` | chat launch; T13's provenance and T27's prime run here |
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: recording writes one log with every row and the run's conditions
+  Given a quiet box
+  When bin/hot-path-bench --record runs
+  Then tmp/hot-path-bench holds a new log naming every row, its median, its spread, the git SHA, the loadavg and the worker count
+  And no more than 3 logs are kept
+
+Scenario: a check passes when every row is within its ceiling
+  Given 3 recorded logs
+  When bin/hot-path-bench --check runs
+  Then it exits 0 when each row's median sits at or under its in-script ceiling in at least 2 of the 3 logs
+
+Scenario: a check fails and names the row that grew
+  Given a recorded log whose render_chat_10k median exceeds its ceiling in 2 of 3 logs
+  When bin/hot-path-bench --check runs
+  Then it exits 1 and names render_chat_10k, the ceiling and the 3 medians
+
+Scenario: the bench refuses to measure beside a running suite
+  Given another process holds the suite lock
+  When bin/hot-path-bench --record runs
+  Then it waits for the lock and says who holds it, as the suite does
+
+Scenario: a row whose profile the kernel lacks is skipped and named
+  Given a box without bwrap
+  When bin/hot-path-bench --record runs
+  Then the bash_true_reader row reads "skipped: no bwrap" and the check does not count it as a pass
+
+Scenario: the spec drives every row at a tiny size
+  Given HotPaths built with 10 turns, 1 repetition and a 1 KB body
+  When it runs every row
+  Then each row returns a median and a spread, and the spec asserts the shape, never a time
+```
+Spec file: `spec/lain/bench/hot_paths_spec.rb`
+
+**Interface**
+
+```ruby
+module Lain
+  module Bench
+    class HotPaths
+      Row = Data.define(:name, :median_ms, :spread_ms, :reps, :skipped)
+      def initialize(turns: 10_000, reps: 50, sizes: [100_000, 1_000_000], clock: Process.method(:clock_gettime))
+      def rows # => Array<Row>, one per measured row, in the table's order
+    end
+  end
+end
+# bin/hot-path-bench --record | --check | (no flag: print the latest log beside the ceilings)
+# CEILINGS = { "render_chat_10k" => ..., ... }  # seeded from the first 3 recorded logs at 1.25x, rounded up
+```
+
+**Budgets the later cards hold** (each card's stop conditions cite its row; ceilings start at 1.25x the recorded baseline, which is above the profiling sweep's few-percent noise):
+
+| card | row | budget |
+|---|---|---|
+| T13, T27 | `wire_ready` | within ceiling; T13's harness digest must not hash the tree on every launch (a `git diff --stat` digest or a cached tree digest keyed by the index) |
+| T22, T23, T26, T84 | `render_chat_10k`, `render_cold_10k` | within ceiling |
+| T27 | `mask_first_output` | at most 300 ms over baseline on a warm cache; a cold first walk is reported, not budgeted |
+| T31 | `bash_true_none`, `bash_true_traced` | at most 3 ms median added by the reaper |
+| T34 | `bash_true_traced`, `bash_true_reader` | at most 2 ms added by tracing connects |
+| T37, T38 | `bash_true_workspace` | at most `bash_true_reader` plus 2 ms |
+| T7, T43, T44 | `request_100000`, `request_1000000` | at most 2 ms per MB added by the 3 guards together |
+| T77 | `journal_*` | at most 5% fewer small appends per second, at most 1 ms per MB line |
+
+**Stop and report if:**
+- The render bench in `planning/render-profiling-2026-10/bench/setup.rb` builds its 10,000-turn timeline through an API a card in this plan changes (`Dag::Factory`, `Context#render`); then pin the fixture's digest in the spec so a later card cannot silently change what is measured.
+- The spread of any row on a quiet box exceeds 10% of its median across 3 runs; then the row is too noisy to budget, and the card reports it instead of setting a ceiling.
+- Measuring `bash_true_reader` needs the built `target/release/lain-fence` and it is stale relative to `crates/lain-fence` (the census must not measure an old binary); `rake compile` first, and say so in the script.
+
 ## Integration checks
 
 After the last card lands, with nothing else running (`pgrep -cf 'mise/installs/ruby/[0-9.]*/bin/parallel_rspec'` and `pgrep -cf '[p]re-commit (hook-impl|run)'` both read 0; after T1, the suite lock does this):
@@ -5848,13 +5961,14 @@ After the last card lands, with nothing else running (`pgrep -cf 'mise/installs/
 1. `bundle exec rake pspec`: 0 failures, and the example count at or above the count before the plan plus every card's new examples (read the count, not only the failures).
 2. `bundle exec rubocop`, `cargo test`, `cargo clippy --all-targets -- -D warnings`, `pre-commit run --all-files` (the price-freshness hook must pass with the T3 marker).
 3. `bin/zeitwerk-census --check`, `bin/comment-census --check-tickets`, `bin/spec-census --check`.
-4. **Full suite inside the workspace profile** (Open decision 3): `bin/workspace-run bundle exec rake pspec` on a quiet box, then `cargo test` and `pre-commit run --all-files` the same way. Record wall time and any example that fails only there.
-5. **QA scenarios.** The main session updates `planning/qa/scenarios/` for every user-facing change: `bash-confinement.md` (workspace default, grants, reaper, datagram refusal, hard stops), `secret-boundary.md` (history masking, egress guard, supervised egress, gateway, cloud oracle), `ollama-cloud-arm.md` (prices, gateway path), `bench-arms.md` (new bench subcommands, effort), `session-and-window.md` (price-tier confirm, compaction placement and provenance arms, chained journal and `lain verify`).
-6. **Manual passes the user owes**, by name:
+4. **Performance held.** `bin/runtime-census --record` after 3 quiet `rake pspec` runs, then `bin/runtime-census --check`: every ceilinged file within its ceiling and the wall compared with 74 s at 12 workers (2026-10-22). Every new `:slow` spec is in `spec/support/slow_files.rb`. `bin/hot-path-bench --record` 3 times, then `--check` against the T90 ceilings; any row over its ceiling is reported with the card that moved it.
+5. **Full suite inside the workspace profile** (Open decision 3): `bin/workspace-run bundle exec rake pspec` on a quiet box, then `cargo test` and `pre-commit run --all-files` the same way. Record wall time and any example that fails only there.
+6. **QA scenarios.** The main session updates `planning/qa/scenarios/` for every user-facing change: `bash-confinement.md` (workspace default, grants, reaper, datagram refusal, hard stops), `secret-boundary.md` (history masking, egress guard, supervised egress, gateway, cloud oracle), `ollama-cloud-arm.md` (prices, gateway path), `bench-arms.md` (new bench subcommands, effort), `session-and-window.md` (price-tier confirm, compaction placement and provenance arms, chained journal and `lain verify`).
+7. **Manual passes the user owes**, by name:
    - **Supervised cloud oracle.** Start `lain gateway` in its own pane, run a chat with `--secret-oracle cloud:glm-5.3 --gateway <url> --supervise-egress oracle`, read a gated path, and check that the gateway shows the exact body, that a planted canary value is refused by both layers, and that approving forwards it. Then `lain bench oracle-calibration` against the cloud model through the gateway.
    - **Live compaction stage.** Run `lain bench compaction-sweep --live claude-haiku-5-5` after the offline sweep, read the preflight's projected cost and over-tier list, and answer y or N.
    - **Price-tier confirm.** A chat on `claude-haiku-5-5` that grows past 100,000 prompt tokens asks before the request that crosses the tier.
    - **`/manual-qa`** over the updated scenarios above.
-7. Update `ROADMAP.md` item 68 to point at this plan with its landed status, and mark the adopted items in `planning/roadmap-adoption-research-2026-10.md`.
+8. Update `ROADMAP.md` item 68 to point at this plan with its landed status, and mark the adopted items in `planning/roadmap-adoption-research-2026-10.md`.
 
 ## Execution log
