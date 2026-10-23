@@ -101,7 +101,7 @@ RSpec.describe Lain::Bench::DeciderSweep do
     end
 
     it "reports a real, non-degenerate distribution for the live-replayed arms" do
-      expect(Float(by_arm.fetch("ollama")[4])).to be < Float(by_arm.fetch("ollama")[5]) # min < max
+      expect(Float(by_arm.fetch("ollama")[5])).to be < Float(by_arm.fetch("ollama")[6]) # min < max
     end
   end
 

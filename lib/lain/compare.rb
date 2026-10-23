@@ -126,6 +126,9 @@ module Lain
       def min = values.min
       def max = values.max
 
+      # @return [Stats::Interval, nil]
+      def interval(confidence: 0.95) = Stats.mean_interval(values.map(&:to_f), confidence:)
+
       private
 
       # fdiv for Integers (true division into a Float); ordinary `/` for

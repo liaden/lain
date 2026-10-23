@@ -122,6 +122,17 @@ RSpec.describe Lain::Compare do
     end
   end
 
+  describe "Distribution#interval" do
+    it "is the 95% t interval for the mean" do
+      interval = described_class::Distribution.new([0.6, 0.7, 0.8, 0.9]).interval
+      expect([interval.low, interval.high].map { |bound| bound.round(3) }).to eq([0.545, 0.955])
+    end
+
+    it "is nil for a single value" do
+      expect(described_class::Distribution.new([0.6]).interval).to be_nil
+    end
+  end
+
   describe "value objects clear the Ractor.shareable? bar" do
     it "deeply freezes a Distribution" do
       expect(described_class::Distribution.new([1, 2, 3])).to be_deeply_frozen
@@ -146,9 +157,15 @@ RSpec.describe Lain::Compare do
     # Literal, never read off METRICS or ArmFold::HEADERS: an expectation sourced
     # from the constant it pins passes a reorder of that constant unchanged.
     # These two are the only literal pins on Compare's own rendered summary.
-    it "heads the summary table with metric, n, mean, median, min and max" do
+    it "heads the summary table with metric, n, mean, ci95, median, min and max" do
       header = report.lines.map(&:chomp).find { |line| line.start_with?("metric") }
-      expect(header.split(/\s{2,}/)).to eq(%w[metric n mean median min max])
+      expect(header.split(/\s{2,}/)).to eq(%w[metric n mean ci95 median min max])
+    end
+
+    it "states the interval of the mean beside it" do
+      steady = [1000, 1100, 1200].map { |tokens| run("r#{tokens}", usage: usage(input: tokens, output: 0), cost: 0.01) }
+      row = described_class.new(steady).report.lines.map(&:chomp).find { |line| line.start_with?("total tokens") }
+      expect(row.split(/\s{2,}/)[3]).to eq("851.6..1348.4")
     end
 
     # Four DISTINCT values, so a mean/median or min/max transposition renders
@@ -157,7 +174,7 @@ RSpec.describe Lain::Compare do
     # 1600, so mean 1550.0, median 1600.0, min 1400.0, max 1650.0.
     it "puts each stat under its own column, in the declared order" do
       row = report.lines.map(&:chomp).find { |line| line.start_with?("total tokens") }
-      expect(row.split(/\s{2,}/)).to eq(["total tokens", "3", "1550.0", "1600.0", "1400.0", "1650.0"])
+      expect(row.split(/\s{2,}/)).to eq(["total tokens", "3", "1550.0", "1221.4..1878.6", "1600.0", "1400.0", "1650.0"])
     end
 
     # Pins ORDER, not just presence: METRICS is a Hash, so a mid-hash insertion of a
@@ -311,7 +328,7 @@ RSpec.describe Lain::Compare do
 
     it "still reports total tokens" do
       row = report.lines.map(&:chomp).find { |line| line.start_with?("total tokens") }
-      expect(row.split(/\s{2,}/)).to eq(["total tokens", "2", "120.0", "120.0", "120.0", "120.0"])
+      expect(row.split(/\s{2,}/)).to eq(["total tokens", "2", "120.0", "120.0..120.0", "120.0", "120.0", "120.0"])
     end
 
     it "withholds the cost row, saying not priced with the ledger's reason, never 0.000000" do

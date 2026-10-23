@@ -154,6 +154,11 @@ RSpec.describe Lain::Arm::Driver do
       expect(report).to include("mean").and include("median")
     end
 
+    it "heads each metric table with the interval column beside the mean" do
+      header = section_for(report, "grader score").lines[1].chomp
+      expect(header.split(/\s{2,}/)).to eq(%w[arm n mean ci95 median min max])
+    end
+
     it "reports every arm, once per arm" do
       expect(report).to include("single-thread").and include("control-b")
     end
@@ -257,6 +262,8 @@ RSpec.describe Lain::Arm::Driver do
       expect(section).not_to be_nil
       expect(section).to include("not measured")
       expect(section).not_to match(/\b0\.0\b/)
+      expect(row_for(report, "cache write tokens", "single-thread").split(/\s{2,}/).drop(2))
+        .to eq(["not measured"] * 5)
     end
 
     it "renders normally once even one run's usage carries a real cache write" do
@@ -522,6 +529,13 @@ RSpec.describe Lain::Arm::Driver do
         row_for(report, metric, "looping")
       end)
         .to all(include("2 of 2", "failed: ceiling (tasks 1, 2)"))
+    end
+
+    it "fills the interval cell with the same failure marker as the other stats" do
+      report = described_class.new(arms, tasks:, spawn_seam:, grader:, journal:).report
+
+      expect(row_for(report, "grader score", "looping").split(/\s{2,}/).drop(2))
+        .to eq(["failed: ceiling (tasks 1, 2)"] * 5)
     end
 
     it "still folds the sibling arm's runs" do

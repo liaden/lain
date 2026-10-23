@@ -17,7 +17,7 @@ require "tempfile"
 RSpec.describe Lain::Bench::Sweep do
   def arms = %w[manifest bm25 vector hybrid graph]
 
-  # The data rows of the ranked table: [arm, n, mean, median, min, max, tokens].
+  # The data rows of the ranked table: [arm, n, mean, ci95, median, min, max, tokens].
   # Parsed straight from the report so the assertions read the ACTUAL rendered
   # bytes, never a private accessor.
   def arm_rows(report)
@@ -66,7 +66,7 @@ RSpec.describe Lain::Bench::Sweep do
     it "heads the shared six columns, then its own tokens column" do
       header = report.lines.find { |line| line.start_with?("arm ") }
       expect(header.chomp.split(/\s{2,}/))
-        .to eq(["arm", "n", "mean", "median", "min", "max", "recall tokens"])
+        .to eq(["arm", "n", "mean", "ci95", "median", "min", "max", "recall tokens"])
     end
 
     it "names the corpus size and k in its header" do

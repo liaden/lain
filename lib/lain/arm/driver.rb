@@ -48,8 +48,8 @@ module Lain
       }.freeze
       private_constant :METRICS
 
-      COLUMNS = %w[arm n mean median min max].freeze
-      private_constant :COLUMNS
+      STAT_FOLD = Compare::ArmFold.new
+      private_constant :STAT_FOLD
 
       # How a graded subject is addressed for its {Telemetry::GradeRecord}.
       # Every arm hands its grader a {Ext::Timeline}, which carries no `#digest` of
@@ -76,10 +76,7 @@ module Lain
         def refuses? = false
         def note(_name) = nil
 
-        def row(name, fmt)
-          [name, distribution.n.to_s,
-           *[distribution.mean, distribution.median, distribution.min, distribution.max].map(&fmt)]
-        end
+        def row(name, fmt) = STAT_FOLD.row(name, distribution, fmt:)
       end
       private_constant :Measured
 
@@ -95,7 +92,7 @@ module Lain
       Unmeasured = Data.define(:n) do
         def refuses? = false
         def note(_name) = nil
-        def row(name, _fmt) = [name, n.to_s, *([NOT_MEASURED_CELL] * 4)]
+        def row(name, _fmt) = STAT_FOLD.absent_row(name, count: n, marker: NOT_MEASURED_CELL)
       end
       private_constant :Unmeasured
 
@@ -142,7 +139,7 @@ module Lain
         def note(_name) = nil
 
         def row(name, _fmt)
-          [name, "#{failures.size} of #{total}", *(["failed: #{reasons}"] * 4)]
+          STAT_FOLD.absent_row(name, count: "#{failures.size} of #{total}", marker: "failed: #{reasons}")
         end
 
         private
@@ -377,7 +374,8 @@ module Lain
         fmt = METRICS.fetch(label).fetch(:fmt)
         rows = folds.map { |(name, cell)| cell.row(name, fmt) }
         notes = folds.filter_map { |(name, cell)| cell.note(name) }
-        ["#{label}\n#{Compare::Table.new(headers: COLUMNS, rows:)}", *notes.map { |note| "  #{note}" }].join("\n")
+        grid = Compare::Table.new(headers: Compare::ArmFold::HEADERS, rows:)
+        ["#{label}\n#{grid}", *notes.map { |note| "  #{note}" }].join("\n")
       end
 
       # Compare's wording, so the arm report and every Compare-backed report

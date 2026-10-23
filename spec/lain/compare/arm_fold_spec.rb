@@ -30,20 +30,20 @@ RSpec.describe Lain::Compare::ArmFold do
   end
 
   describe "the column contract" do
-    it "declares arm, n, mean, median, min and max, in that order" do
-      expect(described_class::HEADERS).to eq(%w[arm n mean median min max])
+    it "declares arm, n, mean, ci95, median, min and max, in that order" do
+      expect(described_class::HEADERS).to eq(%w[arm n mean ci95 median min max])
     end
 
     it "puts each stat under its declared header" do
       section = sections { |arm, _of| samples.fetch(arm) }.first
       # mean 3.0, median 2, min 1, max 6 -- four different numbers, so a
       # transposed pair would fail here rather than render plausibly.
-      expect(cells(section, "a")).to eq(%w[a 3 3.000 2.000 1.000 6.000])
+      expect(cells(section, "a")).to eq(%w[a 3 3.000 -3.572..9.572 2.000 1.000 6.000])
     end
 
     it "counts the samples, not the arms" do
       section = sections { |arm, _of| samples.fetch(arm) }.first
-      expect(cells(section, "b")).to eq(%w[b 3 30.000 20.000 10.000 60.000])
+      expect(cells(section, "b")).to eq(%w[b 3 30.000 -35.724..95.724 20.000 10.000 60.000])
     end
   end
 
@@ -69,8 +69,8 @@ RSpec.describe Lain::Compare::ArmFold do
 
     it "formats each metric with its own formatter" do
       rendered = sections(metrics: two_metrics) { |arm, _of| samples.fetch(arm) }
-      expect(cells(rendered.first, "a")).to eq(%w[a 3 3.0 2.0 1.0 6.0])
-      expect(cells(rendered.last, "a")).to eq(%w[a 3 3.00 2.00 1.00 6.00])
+      expect(cells(rendered.first, "a")).to eq(%w[a 3 3.0 -3.6..9.6 2.0 1.0 6.0])
+      expect(cells(rendered.last, "a")).to eq(%w[a 3 3.00 -3.57..9.57 2.00 1.00 6.00])
     end
 
     it "keeps the arm rows in the order given" do
@@ -87,11 +87,11 @@ RSpec.describe Lain::Compare::ArmFold do
   end
 
   describe "#absent_section — mark absent, never fabricate" do
-    it "renders the marker in all four stat columns while keeping n real" do
+    it "renders the marker in every stat column while keeping n real" do
       section = fold.absent_section("wall-clock (s)", arms: %w[a b], count: 3, marker: "ABSENT (mock)")
       expect(section.lines.first.chomp).to eq("wall-clock (s)")
       expect(cells(section, "a")).to eq(["a", "3", "ABSENT (mock)", "ABSENT (mock)", "ABSENT (mock)",
-                                         "ABSENT (mock)"])
+                                         "ABSENT (mock)", "ABSENT (mock)"])
     end
 
     it "labels absent rows the same way a measured row is labelled" do
@@ -102,14 +102,19 @@ RSpec.describe Lain::Compare::ArmFold do
   end
 
   describe "#row — for the reports that append a column of their own" do
-    it "returns the six cells, so a caller can extend them" do
+    it "returns the seven cells, so a caller can extend them" do
       row = fold.row("a", Lain::Compare::Distribution.new([1, 2, 6]), fmt: ->(value) { format("%.3f", value) })
-      expect(row).to eq(%w[a 3 3.000 2.000 1.000 6.000])
+      expect(row).to eq(%w[a 3 3.000 -3.572..9.572 2.000 1.000 6.000])
     end
 
     it "marks one arm absent without marking the section absent" do
       expect(fold.absent_row("a", count: 0, marker: "ABSENT (dry)"))
-        .to eq(["a", "0", "ABSENT (dry)", "ABSENT (dry)", "ABSENT (dry)", "ABSENT (dry)"])
+        .to eq(["a", "0", *(["ABSENT (dry)"] * 5)])
+    end
+
+    it "leaves the interval cell empty-handed for a single sample" do
+      row = fold.row("a", Lain::Compare::Distribution.new([4]), fmt: ->(value) { format("%.1f", value) })
+      expect(row).to eq(%w[a 1 4.0 - 4.0 4.0 4.0])
     end
   end
 
@@ -123,14 +128,14 @@ RSpec.describe Lain::Compare::ArmFold do
     it "hands BigDecimal cost figures to the formatter as BigDecimal" do
       section = sections(metrics: typing, arms: ["a"]) { |_arm, _of| [BigDecimal("0.001"), BigDecimal("0.002")] }
                 .first
-      expect(cells(section, "a")).to eq(%w[a 2 BigDecimal BigDecimal BigDecimal BigDecimal])
+      expect(cells(section, "a")).to eq(%w[a 2 BigDecimal Float..Float BigDecimal BigDecimal BigDecimal])
     end
 
     it "leaves an Integer metric's median, min and max as Integers" do
       section = sections(metrics: typing, arms: ["a"]) { |_arm, _of| [1, 2, 6] }.first
       # The mean of an Integer metric is a Float by design (Integer#/ floors --
-      # see Distribution#divide); the other three stay Integers.
-      expect(cells(section, "a")).to eq(%w[a 3 Float Integer Integer Integer])
+      # see Distribution#divide); the other three stay Integers. The interval's bounds are Floats.
+      expect(cells(section, "a")).to eq(%w[a 3 Float Float..Float Integer Integer Integer])
     end
   end
 end

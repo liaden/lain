@@ -22,9 +22,13 @@ module Lain
     # job, as it is for {Table}: this object converts nothing, so a BigDecimal
     # cost reaches the formatter as a BigDecimal.
     class ArmFold
-      # The shared six. A report with a column of its own extends this rather
+      # The shared seven. A report with a column of its own extends this rather
       # than restating it (see {Bench::Sweep}'s COLUMNS).
-      HEADERS = %w[arm n mean median min max].freeze
+      HEADERS = %w[arm n mean ci95 median min max].freeze
+
+      # One sample has no spread, so no interval; the cell says so rather than printing a zero-width one.
+      NO_INTERVAL = "-"
+      private_constant :NO_INTERVAL
 
       # @param label [#call] arm key => its row label, so a control or baseline
       #   mark reaches every table and not only the header. Identity by default.
@@ -63,7 +67,8 @@ module Lain
       # @param fmt [#call] formats one stat value into its cell
       # @return [Array<String>] `HEADERS.size` cells
       def row(arm, dist, fmt:)
-        [@label.call(arm), dist.n.to_s, *stats(dist).map(&fmt)]
+        mean, *rest = stats(dist).map(&fmt)
+        [@label.call(arm), dist.n.to_s, mean, interval_cell(dist, fmt), *rest]
       end
 
       # The per-arm case of what {#absent_section} does to a whole table.
@@ -82,8 +87,14 @@ module Lain
 
       def titled(title, rows) = "#{title}\n#{Table.new(headers: HEADERS, rows:)}"
 
-      # Written next to HEADERS on purpose: these four values sit under those
-      # four column names, and nothing else in the codebase may restate either.
+      def interval_cell(dist, fmt)
+        interval = dist.interval
+        interval ? "#{fmt.call(interval.low)}..#{fmt.call(interval.high)}" : NO_INTERVAL
+      end
+
+      # Written next to HEADERS on purpose: the mean, median, min and max sit
+      # under those column names (the interval cell, after the mean, is
+      # {#interval_cell}), and nothing else in the codebase may restate either.
       def stats(dist) = [dist.mean, dist.median, dist.min, dist.max]
     end
   end
