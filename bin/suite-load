@@ -122,7 +122,7 @@ module SuiteLoad
 
     def call(tree, files, env: {})
       reader, writer = IO.pipe
-      group = Group.spawn(env, "sh", "-c", %(#{@run_command} "$@"), "sh", *files, *@extra,
+      group = Group.spawn(env, "sh", "-c", %(exec #{@run_command} "$@"), "sh", *files, *@extra,
                           chdir: tree, %i[out err] => writer)
       writer.close
       text = Timeout.timeout(@timeout) { reader.read }
