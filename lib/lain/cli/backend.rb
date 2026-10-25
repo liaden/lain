@@ -44,11 +44,6 @@ module Lain
       # This class's fifth error, {InvalidEndpoint}, lives beside the
       # {Endpoint} that raises it.
 
-      # The sampler keys only an ollama arm reads. A chat on any other arm
-      # sends none of them, because {Provider::AnthropicEncoding} forwards any
-      # `extra` key it does not know onto a wire that defines none of these.
-      OLLAMA_ONLY_KEYS = %w[seed num_batch num_ctx].freeze
-
       # Of those, the two that KEY a runner rather than shape an answer: a
       # request whose value differs from the loaded runner's reloads the model.
       # This set, and not the one above, is what a secondary tier may carry --
@@ -405,7 +400,14 @@ module Lain
       def context(system_override: nil)
         ContextPipeline.named(@options[:context_pipeline])
                        .context(model:, max_tokens:, extra: sampler_extra, system: system_override || slots.render,
-                                effort: run_profile.effort)
+                                effort: sent_effort)
+      end
+
+      # Ollama never puts effort on its wire, so only a model Anthropic would 400 on loses it here.
+      def sent_effort = (run_profile.effort unless effort_rejected?)
+
+      def effort_rejected?
+        run_profile.effort && !ollama_chat? && !Provider::AnthropicEncoding.effort_accepted?(model, run_profile.effort)
       end
 
       # The ONE window book this run measures occupancy against, resolved by
@@ -436,10 +438,10 @@ module Lain
       # @return [Array<String>]
       def startup_notices
         if OllamaTier::NAMES.include?(provider_name)
-          return [*ollama_tier(provider_name).startup_notices, *unpriced_cost_notice]
+          return [*ollama_tier(provider_name).startup_notices, *unpriced_cost_notice, *effort_notice]
         end
 
-        [*stranded_base_notice, *unpriced_cost_notice]
+        [*stranded_base_notice, *unpriced_cost_notice, *sampling_notice, *effort_notice]
       end
 
       # The chat's ceilings: `--max-cost` is the root's dollar ceiling, which
@@ -814,6 +816,28 @@ module Lain
         "--max-cost cannot bind: #{model} has no price, so its turns count as free"
       end
 
+      def hosted_sampler_extra
+        given = hosted_sampling_flags
+        given.except(*Provider::AnthropicEncoding.refused_sampling(model, given))
+      end
+
+      def hosted_sampling_flags = { "temperature" => @options[:temperature], "seed" => @options[:seed] }.compact
+
+      def sampling_notice
+        dropped = hosted_sampling_flags.keys - hosted_sampler_extra.keys
+        return if ollama_chat? || dropped.empty?
+
+        flags = dropped.map { |flag| "--#{flag}" }.join(" and ")
+        "#{model} takes no #{flags} (seed is not an Anthropic parameter at all): not sent"
+      end
+
+      def effort_notice
+        return unless run_profile.effort && (ollama_chat? || effort_rejected?)
+
+        who = ollama_chat? ? "the #{provider_name} chat" : model
+        "--effort #{run_profile.effort} is ignored by #{who} and is not sent"
+      end
+
       # Only a non-ollama chat can strand the flag, so the ollama chat arm never
       # reaches this.
       def stranded_base_notice
@@ -975,15 +999,19 @@ module Lain
       # generation cap is a third case again and lives in the encoder for its
       # own reason -- every Request already declares a max_tokens, so that one
       # is on every ollama payload rather than waiting for a flag. Only an
-      # ollama chat gets {OLLAMA_ONLY_KEYS}. The runner knobs come off the
-      # {#run_profile} and the sampling pair off the flags.
+      # ollama chat gets any of it: Anthropic's sampling set is temperature,
+      # top_p and top_k, which some models refuse, and seed is no Anthropic
+      # parameter at all; {Provider::AnthropicEncoding} forwards any other
+      # unknown `extra` key onto a wire that defines none. The runner knobs
+      # come off the {#run_profile} and the sampling pair off the flags.
       #
       # `keep_alive` joins outside the loop, being no SAMPLER_KEY: it lives
       # outside `options` on the wire, follows `num_ctx`'s opt-in rule rather
       # than `num_batch`'s default, and reaches only an ollama chat.
       def sampler_extra
+        return hosted_sampler_extra unless ollama_chat?
+
         keys = Provider::Ollama::Encoding::SAMPLER_KEYS
-        keys -= OLLAMA_ONLY_KEYS unless ollama_chat?
         runner = run_profile.to_options
         extra = keys.to_h { |key| [key, runner.fetch(key.to_sym) { @options[key.to_sym] }] }
         extra["num_batch"] = DEFAULT_NUM_BATCH if ollama_chat? && extra["num_batch"].nil?

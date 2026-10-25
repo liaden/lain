@@ -480,6 +480,82 @@ RSpec.describe Lain::CLI::Backend do
     end
   end
 
+  describe "parameters the provider ignores or rejects" do
+    let(:timeline) { Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }]) }
+
+    def render(**options)
+      backend_for(max_tokens: 64, **options).context.render(timeline:, toolset: Lain::Toolset.new)
+    end
+
+    it "drops temperature and seed for a model that refuses sampling, and says so once" do
+      backend = backend_for(provider: "anthropic", model: "claude-opus-4-8", temperature: 0.2, seed: 1)
+
+      expect(render(provider: "anthropic", model: "claude-opus-4-8", temperature: 0.2, seed: 1).extra).to eq({})
+      expect(backend.startup_notices).to contain_exactly(/claude-opus-4-8.*--temperature and --seed/)
+    end
+
+    it "keeps temperature for a model that takes it and drops only seed" do
+      backend = backend_for(provider: "anthropic", model: "claude-sonnet-4-6", temperature: 0.2, seed: 1)
+
+      expect(render(provider: "anthropic", model: "claude-sonnet-4-6", temperature: 0.2, seed: 1).extra)
+        .to eq("temperature" => 0.2)
+      expect(backend.startup_notices).to contain_exactly(/--seed.*not an Anthropic parameter/)
+    end
+
+    it "keeps temperature 1 but drops another value on a non-default-only model" do
+      expect(render(provider: "anthropic", model: "claude-sonnet-5-5", temperature: 1).extra).to eq("temperature" => 1)
+      expect(render(provider: "anthropic", model: "claude-sonnet-5-5", temperature: 0.5).extra).to eq({})
+    end
+
+    it "says nothing about sampling when no sampler flag was given" do
+      expect(backend_for(provider: "anthropic", model: "claude-opus-4-8").startup_notices).to eq([])
+    end
+
+    it "keeps temperature on an ollama chat without a notice" do
+      backend = backend_for(provider: "ollama", model: "qwen3:4b", temperature: 0.2)
+
+      expect(backend.startup_notices).to eq([])
+    end
+
+    it "says --effort is ignored on ollama and puts none on its wire" do
+      backend = backend_for(provider: "ollama", model: "qwen3:4b", effort: "low")
+
+      expect(backend.startup_notices).to contain_exactly(/--effort.*ignored.*ollama/)
+      request = render(provider: "ollama", model: "qwen3:4b", effort: "low")
+      expect(JSON.generate(Lain::Provider::Ollama.new.encode(request))).not_to include("effort")
+    end
+
+    it "drops --effort for an anthropic model that rejects it, with a notice naming the model" do
+      backend = backend_for(provider: "anthropic", model: "claude-haiku-4-5", effort: "low")
+
+      expect(backend.startup_notices).to contain_exactly(/--effort low.*claude-haiku-4-5/)
+      expect(render(provider: "anthropic", model: "claude-haiku-4-5", effort: "low").effort).to be_nil
+    end
+
+    it "keeps --effort for an anthropic model that takes it" do
+      backend = backend_for(provider: "anthropic", model: "claude-opus-4-8", effort: "low")
+
+      expect(backend.startup_notices).to eq([])
+      expect(render(provider: "anthropic", model: "claude-opus-4-8", effort: "low").effort).to eq("low")
+    end
+
+    it "drops effort levels the model lacks" do
+      backend = backend_for(provider: "anthropic", model: "claude-opus-4-5", effort: "xhigh")
+
+      expect(backend.startup_notices).to contain_exactly(/--effort xhigh.*claude-opus-4-5/)
+      expect(render(provider: "anthropic", model: "claude-opus-4-5", effort: "xhigh").effort).to be_nil
+      expect(render(provider: "anthropic", model: "claude-opus-4-5", effort: "high").effort).to eq("high")
+    end
+
+    it "builds a request the real encoder accepts when the model refuses effort and some sampling" do
+      request = render(provider: "anthropic", model: "claude-opus-4-5", effort: "xhigh", temperature: 0.2, seed: 1)
+      body = Lain::Provider::Anthropic.new(api_key: "test").encode(request)
+
+      expect(body).to include(temperature: 0.2)
+      expect(body.keys).not_to include(:seed, :output_config)
+    end
+  end
+
   describe "the price tier guard on every anthropic client" do
     let(:messages_url) { "https://api.anthropic.com/v1/messages" }
     let(:count_url) { "https://api.anthropic.com/v1/messages/count_tokens" }
@@ -2651,13 +2727,13 @@ RSpec.describe Lain::CLI::Backend do
     # forwards every `extra` key it does not recognise straight onto the wire --
     # so an `.envrc` exporting LAIN_NUM_BATCH put a field on every
     # hosted request that the API does not define.
-    it "keeps seed and both runner knobs off an Anthropic chat's wire body, and temperature on it" do
+    it "keeps temperature, seed and both runner knobs off an Anthropic chat's wire body" do
       request = backend_for(max_tokens: 1024, provider: "anthropic", model: nil, temperature: 0.2, seed: 7,
                             num_batch: 2048, num_ctx: 8192)
                 .context.render(timeline:, toolset: Lain::Toolset.new)
       body = Lain::Provider::Anthropic.new(api_key: "test").encode(request)
 
-      expect(request.extra).to eq("temperature" => 0.2)
+      expect(request.extra).to eq({})
       expect(body.keys.map(&:to_s)).not_to include("seed", "num_batch", "num_ctx")
     end
   end
@@ -2777,7 +2853,7 @@ RSpec.describe Lain::CLI::Backend do
                 .context.render(timeline:, toolset: Lain::Toolset.new)
       body = Lain::Provider::Anthropic.new(api_key: "test").encode(request)
 
-      expect(request.extra).to eq("temperature" => 0.2)
+      expect(request.extra).to eq({})
       expect(JSON.generate(body)).not_to include("keep_alive")
     end
 

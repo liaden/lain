@@ -259,4 +259,184 @@ RSpec.describe Lain::Provider::AnthropicEncoding do
       expect(encoded[:output_config]).to eq(format: "x", effort: "low")
     end
   end
+
+  describe "parameters a model rejects" do
+    def encode_for(model, **overrides) = encoder.encode(request(model:, **overrides))
+
+    def expect_refused(model, pattern, **overrides)
+      expect { encode_for(model, **overrides) }.to raise_error(described_class::Rejected, pattern)
+    end
+
+    def sampling_keys = %w[temperature top_p top_k]
+    def efforts = %w[low medium high xhigh max]
+    def efforts_to_max = %w[low medium high max]
+
+    # Under anthropic-version 2023-06-01 these 400 even at the default value.
+    %w[claude-fable-5 claude-fable-5-1 claude-mythos-5-1 claude-opus-5-5 claude-opus-5 claude-opus-4-8
+       claude-opus-4-7 claude-sonnet-5].each do |model|
+      it "refuses temperature, top_p and top_k at their defaults on #{model}" do
+        sampling_keys.each { |key| expect_refused(model, /#{model}.*#{key}/, extra: { key => 1 }) }
+      end
+    end
+
+    %w[claude-sonnet-5-5 claude-haiku-5-5].each do |model|
+      it "refuses a temperature other than 1 on #{model}" do
+        expect_refused(model, /#{model}.*temperature/, extra: { "temperature" => 0.2 })
+      end
+
+      it "refuses any top_p or top_k on #{model}" do
+        expect_refused(model, /top_p/, extra: { "top_p" => 1 })
+        expect_refused(model, /top_k/, extra: { "top_k" => 1 })
+      end
+
+      it "accepts temperature 1 on #{model}" do
+        expect(encode_for(model, extra: { "temperature" => 1 })[:temperature]).to eq(1)
+      end
+    end
+
+    %w[claude-opus-4-6 claude-sonnet-4-6 claude-haiku-4-5 claude-3-5-sonnet-20241022].each do |model|
+      it "forwards temperature, top_p and top_k on #{model}" do
+        encoded = encode_for(model, extra: { "temperature" => 0.2, "top_p" => 0.9, "top_k" => 5 })
+
+        expect(encoded).to include(temperature: 0.2, top_p: 0.9, top_k: 5)
+      end
+    end
+
+    it "refuses a sampling key spelled as a symbol" do
+      expect_refused("claude-opus-4-8", /temperature/, extra: { temperature: 0.2 })
+    end
+
+    it "matches a bedrock-style or dated id by containment" do
+      expect_refused("us.anthropic.claude-opus-5-5-v1:0", /temperature/, extra: { "temperature" => 1 })
+      expect_refused("claude-opus-4-8-20260101", /temperature/, extra: { "temperature" => 1 })
+    end
+
+    it "keeps claude-sonnet-5-5 on its own row, not claude-sonnet-5's" do
+      expect(encode_for("claude-sonnet-5-5", extra: { "temperature" => 1 })[:temperature]).to eq(1)
+    end
+
+    %w[claude-opus-4-6 claude-haiku-4-5 m].each do |model|
+      it "refuses seed on #{model}, which is no Anthropic parameter" do
+        expect_refused(model, /seed.*not an Anthropic parameter/, extra: { "seed" => 1 })
+      end
+    end
+
+    describe "forced tool_choice" do
+      let(:forced) { { "tool_choice" => { "type" => "tool", "name" => "x" } } }
+
+      %w[claude-opus-5-5 claude-sonnet-5-5 claude-fable-5-1 claude-mythos-5-1].each do |model|
+        it "refuses it on #{model}, naming the model and the alternative" do
+          expect_refused(model, /#{model}.*auto.*strict tool.*structured answer/, extra: forced)
+        end
+      end
+
+      it "refuses the structured-answer tool_choice on a model that rejects forcing" do
+        expect_refused("claude-sonnet-5-5", /claude-sonnet-5-5/,
+                       extra: { "structured_output" => { "tool" => "answer" } })
+      end
+
+      it "refuses it on a bedrock-prefixed id by containment" do
+        expect_refused("us.anthropic.claude-fable-5-1-v1:0", /claude-fable-5-1/, extra: forced)
+      end
+
+      it "still encodes it for claude-opus-4-8 and claude-opus-5" do
+        %w[claude-opus-4-8 claude-opus-5].each do |model|
+          expect(encode_for(model, extra: forced)[:tool_choice]).to eq("type" => "tool", "name" => "x")
+        end
+      end
+
+      it "allows tool_choice auto on claude-opus-5-5" do
+        encoded = encode_for("claude-opus-5-5", extra: { "tool_choice" => { "type" => "auto" } })
+
+        expect(encoded[:tool_choice]).to eq("type" => "auto")
+      end
+    end
+
+    describe "disabled thinking" do
+      let(:disabled) { { "type" => "disabled" } }
+
+      %w[claude-opus-5-5 claude-sonnet-5-5 claude-fable-5 claude-fable-5-1 claude-mythos-5-1].each do |model|
+        it "is refused on #{model} at every effort" do
+          expect_refused(model, /#{model}/, reasoning: disabled)
+          expect_refused(model, /#{model}/, reasoning: disabled, effort: "low")
+        end
+      end
+
+      it "suggests between_tools for claude-sonnet-5-5" do
+        expect_refused("claude-sonnet-5-5", /between_tools/, reasoning: disabled)
+      end
+
+      %w[claude-opus-5 claude-haiku-5-5].each do |model|
+        it "is refused on #{model} at xhigh and max only" do
+          expect_refused(model, /#{model}.*xhigh/, reasoning: disabled, effort: "xhigh")
+          expect_refused(model, /max/, reasoning: disabled, effort: "max")
+          expect(encode_for(model, reasoning: disabled, effort: "high")[:thinking]).to eq(disabled)
+          expect(encode_for(model, reasoning: disabled)[:thinking]).to eq(disabled)
+        end
+      end
+
+      it "is allowed on claude-opus-4-8 and by containment refused on a bedrock claude-opus-5-5" do
+        expect(encode_for("claude-opus-4-8", reasoning: disabled)[:thinking]).to eq(disabled)
+        expect_refused("anthropic.claude-opus-5-5-v1:0", /claude-opus-5-5/, reasoning: disabled)
+      end
+    end
+
+    describe "effort" do
+      %w[claude-haiku-4-5 claude-sonnet-4-5 claude-opus-4-1 claude-opus-4 claude-sonnet-4 claude-3-haiku-20240307
+         claude-opus-4-20250514].each do |model|
+        it "is refused whole on #{model}" do
+          expect_refused(model, /#{model}.*effort/, effort: "low")
+        end
+      end
+
+      %w[claude-opus-4-0 claude-sonnet-4-0].each do |model|
+        it "refuses effort on the #{model} alias" do
+          expect_refused(model, /effort/, effort: "low")
+        end
+      end
+
+      it "gives claude-opus-4-5 low, medium and high only" do
+        %w[low medium high].each do |e|
+          expect(encode_for("claude-opus-4-5", effort: e)[:output_config]).to eq(effort: e)
+        end
+        expect_refused("claude-opus-4-5", /xhigh/, effort: "xhigh")
+        expect_refused("claude-opus-4-5", /max/, effort: "max")
+      end
+
+      %w[claude-opus-4-6 claude-sonnet-4-6].each do |model|
+        it "gives #{model} low through max but not xhigh" do
+          efforts_to_max.each { |e| expect(encode_for(model, effort: e)[:output_config]).to eq(effort: e) }
+          expect_refused(model, /#{model}.*xhigh/, effort: "xhigh")
+        end
+      end
+
+      %w[claude-opus-4-7 claude-opus-4-8 claude-opus-5 claude-opus-5-5 claude-sonnet-5 claude-sonnet-5-5
+         claude-haiku-5-5 claude-fable-5 claude-fable-5-1 claude-mythos-5-1].each do |model|
+        it "gives #{model} all 5 levels" do
+          efforts.each do |e|
+            expect(encode_for(model, effort: e)[:output_config]).to eq(effort: e)
+          end
+        end
+      end
+
+      it "matches a bedrock-style id by containment" do
+        expect_refused("us.anthropic.claude-opus-4-5-v1:0", /max/, effort: "max")
+      end
+
+      it "matches dated, vertex and bedrock ids at a version boundary" do
+        %w[claude-opus-4-5-20251101 claude-opus-4-5@20251101 anthropic.claude-opus-4-5 claude-haiku-4-5-latest]
+          .each { |id| expect_refused(id, /effort/, effort: "max") }
+      end
+
+      it "does not let a short row swallow a later version" do
+        %w[claude-opus-4-9 claude-opus-4-10 claude-sonnet-4-10 claude-haiku-4-50 claude-opus-6 claude-fable-5-2]
+          .each { |id| expect(encode_for(id, effort: "max")[:output_config]).to eq(effort: "max") }
+      end
+
+      it "gives an id that has no row no sampling or thinking rule either" do
+        expect(encode_for("claude-fable-5-2", extra: { "temperature" => 0.2 }, reasoning: { "type" => "disabled" }))
+          .to include(temperature: 0.2)
+      end
+    end
+  end
 end

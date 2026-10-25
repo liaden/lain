@@ -103,7 +103,7 @@ RSpec.describe Lain::Provider::Anthropic do
 
     let(:rich_request) do
       Lain::Request.new(
-        model: "claude-opus-4-8", max_tokens: 1024,
+        model: "claude-sonnet-4-6", max_tokens: 1024,
         system: [{ type: "text", text: "be terse", "cache" => true }],
         tools: [{ name: "read_file", description: "read", strict: true,
                   input_schema: { type: "object", properties: {}, required: [] } }],

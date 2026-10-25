@@ -53,6 +53,101 @@ module Lain
       # collide with STRUCTURED_OUTPUT_KEY; otherwise it is simply forwarded.
       TOOL_CHOICE_KEY = "tool_choice"
 
+      # A request the model's API would 400 on, refused before the wire. Ids resolve to a
+      # row through Rows.
+      class Rejected < Lain::Error; end
+
+      # Sampling parameters the model refuses at any value under anthropic-version
+      # 2023-06-01, which is what lain sends. From 2026-10-21 every model refuses them, so
+      # a version bump makes these tables universal instead of per model.
+      SAMPLING_REFUSED = %w[claude-fable-5 claude-fable-5-1 claude-mythos-5-1 claude-opus-5-5 claude-opus-5
+                            claude-opus-4-8 claude-opus-4-7 claude-sonnet-5].freeze
+
+      # Refused only off the default: a temperature other than 1, or any top_p or top_k.
+      SAMPLING_NON_DEFAULT = %w[claude-sonnet-5-5 claude-haiku-5-5].freeze
+
+      # Never an Anthropic parameter, whatever the model.
+      UNKNOWN_KEYS = %w[seed].freeze
+
+      SAMPLING_KEYS = %w[temperature top_p top_k].freeze
+
+      # Models whose API 400s on a forced tool_choice (any or tool).
+      NO_FORCED_TOOL_CHOICE = %w[claude-opus-5-5 claude-sonnet-5-5 claude-fable-5-1 claude-mythos-5-1].freeze
+
+      # Models that always think, so `thinking: {type: disabled}` is a 400.
+      ALWAYS_THINKING = %w[claude-opus-5-5 claude-sonnet-5-5 claude-fable-5 claude-fable-5-1 claude-mythos-5-1].freeze
+
+      # Models that refuse disabled thinking only at these efforts.
+      THINKING_REQUIRED_AT = %w[xhigh max].freeze
+      THINKING_REQUIRED_AT_EFFORT = %w[claude-opus-5 claude-haiku-5-5].freeze
+
+      EFFORTS = %w[low medium high xhigh max].freeze
+
+      # The efforts a model takes. Every model is listed because an id
+      # no key names has no row and passes unchecked.
+      EFFORT_LEVELS = {
+        "claude-3-haiku" => [], "claude-3-sonnet" => [], "claude-3-opus" => [], "claude-3-5-sonnet" => [],
+        "claude-3-5-haiku" => [], "claude-3-7-sonnet" => [], "claude-haiku-4-5" => [], "claude-sonnet-4-5" => [],
+        "claude-opus-4-1" => [], "claude-opus-4-0" => [], "claude-sonnet-4-0" => [],
+        "claude-opus-4" => [], "claude-sonnet-4" => [],
+        "claude-opus-4-5" => %w[low medium high],
+        "claude-opus-4-6" => %w[low medium high max], "claude-sonnet-4-6" => %w[low medium high max],
+        **%w[claude-opus-4-7 claude-opus-4-8 claude-opus-5 claude-opus-5-5 claude-sonnet-5 claude-sonnet-5-5
+             claude-haiku-5-5 claude-fable-5 claude-fable-5-1 claude-mythos-5-1].to_h { [_1, EFFORTS] }
+      }.freeze
+
+      # Resolves a model id to the longest row key it names. Plain containment would let
+      # "claude-opus-4" claim "claude-opus-4-10", so a key must end the id or be followed
+      # by a date, a vertex "@", a bedrock "-v" or ":" -- and an id no key names has no row.
+      class Rows
+        BOUNDARY = "(?=\\z|-\\d{8}|-latest|@|-v|:)"
+        private_constant :BOUNDARY
+
+        def initialize(keys)
+          @patterns = keys.to_h { |key| [key, /#{Regexp.escape(key)}#{BOUNDARY}/] }.freeze
+          freeze
+        end
+
+        # @return [String, nil]
+        def key_for(model) = @patterns.select { |_, pattern| pattern.match?(model) }.keys.max_by(&:length)
+      end
+      private_constant :Rows
+
+      SAMPLING_TABLE = Rows.new(SAMPLING_REFUSED + SAMPLING_NON_DEFAULT)
+      THINKING_TABLE = Rows.new(ALWAYS_THINKING + THINKING_REQUIRED_AT_EFFORT)
+      EFFORT_TABLE = Rows.new(EFFORT_LEVELS.keys)
+      FORCING_TABLE = Rows.new(NO_FORCED_TOOL_CHOICE)
+      private_constant :SAMPLING_TABLE, :THINKING_TABLE, :EFFORT_TABLE, :FORCING_TABLE
+
+      FORCING_CHOICES = %w[any tool].freeze
+      private_constant :FORCING_CHOICES
+
+      # The keys of `extra` this model would 400 on, for a caller to drop before it asks.
+      #
+      # @param model [String]
+      # @param extra [Hash] sampler keys, String or Symbol
+      # @return [Array<String>]
+      def self.refused_sampling(model, extra)
+        given = extra.select { |key, _| (SAMPLING_KEYS + UNKNOWN_KEYS).include?(key.to_s) }.transform_keys(&:to_s)
+        row = SAMPLING_TABLE.key_for(model)
+        given.keys.select do |key|
+          UNKNOWN_KEYS.include?(key) || sampling_refused?(row, key, given[key])
+        end
+      end
+
+      def self.sampling_refused?(row, key, value)
+        return true if SAMPLING_REFUSED.include?(row)
+
+        SAMPLING_NON_DEFAULT.include?(row) && !(key == "temperature" && value == 1)
+      end
+      private_class_method :sampling_refused?
+
+      # @return [Boolean] whether the model takes this effort level
+      def self.effort_accepted?(model, effort)
+        row = EFFORT_TABLE.key_for(model)
+        row.nil? || EFFORT_LEVELS.fetch(row).include?(effort)
+      end
+
       # The exact kwargs Hash the SDK would receive. Pure and deterministic: no
       # network, no clock, no ordering that depends on how the Request's Hashes
       # were built. `stream` is intentionally NOT a key here -- the SDK encodes
@@ -60,6 +155,7 @@ module Lain
       # payload carries it as a top-level field the caller adds later.
       def encode(request)
         check_cache_budget!(request)
+        check_rejected!(request)
         check_tool_choice_conflict!(request.extra)
         # #extra is the provider-specific escape hatch (temperature, tool_choice,
         # ...); symbol keys so it lands on the SDK param model's named fields.
@@ -73,6 +169,61 @@ module Lain
       end
 
       private
+
+      def check_rejected!(request)
+        check_sampling!(request)
+        check_forced_tool_choice!(request)
+        check_thinking!(request)
+        check_effort!(request)
+      end
+
+      def check_sampling!(request)
+        key = AnthropicEncoding.refused_sampling(request.model, request.extra).first
+        return unless key
+        raise Rejected, "seed is not an Anthropic parameter" if UNKNOWN_KEYS.include?(key)
+
+        raise Rejected, "#{request.model} answers #{key} with a 400 under this API version"
+      end
+
+      def check_forced_tool_choice!(request)
+        return unless forces_tool?(request.extra)
+
+        model = FORCING_TABLE.key_for(request.model)
+        return unless model
+
+        raise Rejected, "#{model} answers a forced tool_choice with a 400; use auto with a strict tool " \
+                        "or a structured answer"
+      end
+
+      def forces_tool?(extra)
+        choice = extra[TOOL_CHOICE_KEY]
+        structured = extra[STRUCTURED_OUTPUT_KEY]
+        return true if structured && structured["tool"]
+
+        choice.is_a?(Hash) && FORCING_CHOICES.include?(choice["type"] || choice[:type])
+      end
+
+      def check_thinking!(request)
+        reasoning = request.reasoning
+        return unless reasoning.is_a?(Hash) && (reasoning["type"] || reasoning[:type]).to_s == "disabled"
+
+        row = THINKING_TABLE.key_for(request.model)
+        return unless thinking_forced?(row, request.effort)
+
+        hint = row == "claude-sonnet-5-5" ? ' (use {"type":"between_tools"} to limit it)' : ""
+        raise Rejected, "#{row} cannot disable thinking#{" at effort #{request.effort}" if request.effort}#{hint}"
+      end
+
+      def thinking_forced?(row, effort)
+        ALWAYS_THINKING.include?(row) ||
+          (THINKING_REQUIRED_AT_EFFORT.include?(row) && THINKING_REQUIRED_AT.include?(effort))
+      end
+
+      def check_effort!(request)
+        return if request.effort.nil? || AnthropicEncoding.effort_accepted?(request.model, request.effort)
+
+        raise Rejected, "#{request.model} does not take effort #{request.effort}; it answers with a 400"
+      end
 
       # Both keys forcing tool_choice at once is not a merge order the
       # caller chose deliberately -- it is two independent features writing
