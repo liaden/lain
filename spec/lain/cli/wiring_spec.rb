@@ -433,6 +433,65 @@ RSpec.describe Lain::CLI::Wiring do
                                   "round_dedup" => "on" })
       end
 
+      describe "its provenance" do
+        def provenance_of(wiring) = header_of(wiring).fetch("provenance")
+
+        it "names what produced the run, and where" do
+          expect(provenance_of(new_wiring(options: { grace: 5 }, chronicle:, status_feed:)))
+            .to include("cwd" => project_dir, "root" => project_dir, "effort" => "unrecorded")
+            .and(satisfy { |block| block.keys.sort == %w[cwd effort harness home policy root tool_surface] })
+        end
+
+        it "records the run's own toolset digest as its tool surface" do
+          wiring = new_wiring(options: { grace: 5 }, chronicle:, status_feed:)
+          recorder, session = wiring.run_state(nil)
+          agent = wiring.wire_agent(channel:, recorder:, session:, backend:)
+          header = journal_records(journal_io).find { |r| r["type"] == "session" }
+
+          expect(header.dig("provenance", "tool_surface")).to eq(agent.toolset.digest)
+        end
+
+        it "records the running lain's harness" do
+          expect(provenance_of(new_wiring(options: { grace: 5 }, chronicle:, status_feed:)).fetch("harness"))
+            .to eq(Lain::SessionRecord::Provenance.running_harness)
+        end
+
+        it "records the effort the context was launched with" do
+          effortful = offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64, effort: "low" },
+                                                mock: mock_provider, root: backend_root)
+          wiring = new_wiring(options: { grace: 5 }, chronicle:, status_feed:)
+          recorder, session = wiring.run_state(nil)
+          wiring.wire_agent(channel:, recorder:, session:, backend: effortful)
+
+          expect(journal_records(journal_io).find { |r| r["type"] == "session" }.dig("provenance", "effort"))
+            .to eq("low")
+        end
+      end
+
+      describe "two chats in one project, the second after its config gained a line" do
+        def chat_provenance
+          io = StringIO.new
+          recording = Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io:),
+                                               journal_path: File.join(state_dir, "session.ndjson"))
+          wiring = new_wiring(options: { grace: 5 }, chronicle: recording, status_feed:)
+          recorder, session = wiring.run_state(nil)
+          own_backend = offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 },
+                                                  mock: mock_provider, root: backend_root)
+          wiring.wire_agent(channel:, recorder:, session:, backend: own_backend)
+          journal_records(io).find { |r| r["type"] == "session" }.fetch("provenance")
+        end
+
+        it "records different policies and the same tool surface" do
+          write_config(project_dir, "approval do\nend\n")
+          first = chat_provenance
+          write_config(project_dir, "approval do\nend\n# a second chat's line\n")
+          second = chat_provenance
+
+          expect(second.fetch("policy")).not_to eq(first.fetch("policy"))
+          expect(second.fetch("tool_surface")).to eq(first.fetch("tool_surface"))
+        end
+      end
+
       it "holds only round_dedup off when every arm is off" do
         off = new_wiring(options: { grace: 5, confine: "off", tripwire: "off", round_budget: "off",
                                     round_dedup: "off" },

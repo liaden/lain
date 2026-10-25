@@ -76,14 +76,18 @@ module Lain
     # ({OutputCeiling#to_header}), so a reader can tell a typed one from a
     # per-model one; a bare number writes none. A later `/model` does not
     # rewrite it.
+    #
+    # `provenance:` is {Provenance#to_header}: what produced the run, nested
+    # under its own key; an empty hash writes none.
     def header(context:, toolset:, writer:, workspace: Workspace.empty, resumed_from: nil, profile: {},
-               compaction: {}, arms: {}, middleware: {})
+               compaction: {}, arms: {}, middleware: {}, provenance: {})
       record = { "type" => HEADER_TYPE, "format" => FORMAT, "context_class" => context.class.name,
                  "model" => context.model, "max_tokens" => context.max_tokens, **context.output_ceiling.to_header,
                  "system" => context.system, "stream" => context.stream, "extra" => context.extra,
                  "tools" => toolset.to_schema, "reminders" => workspace.reminders }
       record = record.merge(context_pipeline(context), effort(context), profile, scheduled(compaction),
-                            section("arms", arms), section("middleware", middleware), writer.to_header)
+                            section("arms", arms), section("middleware", middleware), provenance,
+                            writer.to_header)
       resumed_from.nil? ? record : record.merge("resumed_from" => resumed_from)
     end
 

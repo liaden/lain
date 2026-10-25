@@ -156,6 +156,29 @@ RSpec.describe Lain::SessionRecord::Scribe do
                                       writer: CoreGraph::NO_WRITER)).not_to have_key("middleware")
   end
 
+  it "writes the provenance block it was handed under one provenance key, at format 2" do
+    block = { "provenance" => { "harness" => "unrecorded", "tool_surface" => toolset.digest } }
+    described_class.new(journal:, context:, toolset:, workspace:, provenance: block)
+
+    expect(of_type("session").first).to include("format" => 2, **block)
+  end
+
+  it "writes no provenance key when it was handed none" do
+    expect(Lain::SessionRecord.header(context:, toolset:, workspace:, provenance: {},
+                                      writer: CoreGraph::NO_WRITER)).not_to have_key("provenance")
+  end
+
+  it "loads a committed session that predates the provenance block exactly as before" do
+    fixture = File.expand_path("fixtures/sessions/variance/one.ndjson", File.join(__dir__, ".."))
+    recording = Lain::Bench::Session.load(fixture)
+
+    last_turn = File.foreach(fixture).map { |raw| JSON.parse(raw) }.reverse.find { |record| record["type"] == "turn" }
+
+    expect(File.foreach(fixture).first).not_to include("provenance")
+    expect([recording.context.model, recording.timeline.head_digest])
+      .to eq(["claude-sonnet-4-6", last_turn.fetch("digest")])
+  end
+
   it "writes the ceiling and its source when the Context resolved one" do
     resolved = Lain::Context.new(model: "claude-opus-4-6", max_tokens: Lain::OutputCeiling.typed(4_096))
 

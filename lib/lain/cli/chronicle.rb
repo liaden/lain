@@ -294,13 +294,16 @@ module Lain
       # run's compaction section, recorded to be READ BACK by a bench rather
       # than resolved from: nothing defaults a fallback to a recording. `arms`
       # and `middleware` are the run's own objects; the header records the arms
-      # that are on and whose trust admitted the middleware.
+      # that are on and whose trust admitted the middleware. `provenance` is
+      # what produced the run ({SessionRecord::Provenance}).
       # @see SessionRecord::Scribe#initialize
       def start(context:, toolset:, workspace: Workspace.empty, resumed: nil, profile: RunProfile::UNRECORDED,
-                compaction: {}, arms: Arms::OFF, middleware: Config::Middleware.empty)
+                compaction: {}, arms: Arms::OFF, middleware: Config::Middleware.empty,
+                provenance: SessionRecord::Provenance::Absent)
         @scribe = SessionRecord::Scribe.new(journal: @journal, context:, toolset:, workspace:, **resume_fields(resumed),
                                             message_journal: @tee, live: @live, profile: profile.to_header,
-                                            compaction:, arms: arms.to_header, middleware: middleware.to_header)
+                                            compaction:, arms: arms.to_header, middleware: middleware.to_header,
+                                            provenance: provenance.to_header)
         self
       end
 

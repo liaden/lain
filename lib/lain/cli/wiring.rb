@@ -345,8 +345,7 @@ module Lain
         # guarantee -- see #switchboard for what can refuse here and why a
         # refusal must land ahead of the header.
         switchboard(backend, toolset)
-        chronicle.start(context: backend.context, toolset:, profile: backend.run_profile, resumed:,
-                        compaction: backend.compaction_header, arms:, middleware: backend.middleware)
+        chronicle.start(toolset:, resumed:, arms:, **Header.new(project:, paths: @paths).fields(backend, toolset))
         @toolset_build.record_opened
         @switchboard.journal_launch
         # ASSIGNED to an ivar, not merely returned: the `parent` thunk above and

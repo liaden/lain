@@ -314,6 +314,21 @@ RSpec.describe Lain::CLI::Chronicle do
       expect(of_type("session").first).to include("middleware" => { "project" => "d1" })
     end
 
+    it "pins the run's provenance into that header" do
+      provenance = Lain::SessionRecord::Provenance.new(harness: "unrecorded", tool_surface: toolset.digest,
+                                                       effort: "unrecorded", policy: "p", cwd: "/w", root: "/w",
+                                                       home: "/h")
+      chronicle.start(context:, toolset:, provenance:)
+
+      expect(of_type("session").first).to include(provenance.to_header)
+    end
+
+    it "writes no provenance key when none is handed" do
+      chronicle.start(context:, toolset:)
+
+      expect(of_type("session").first).not_to have_key("provenance")
+    end
+
     it "writes no middleware key when none is handed" do
       chronicle.start(context:, toolset:)
 

@@ -73,10 +73,14 @@ module Lain
         # @param profile [Hash{String=>Object}] the run profile's header fields
         #   (`CLI::RunProfile#to_header`), so a chat resuming the file defaults
         #   to the backend the run used
+        # @param project [Project] the project the run is recorded in, whose root, cwd and
+        #   `.lain/*.rb` the header's provenance names
         def initialize(provider:, context:, attribution:, prompts:, tools: Harness::NO_TOOLS,
                        instrumentation: Harness::INSTRUMENTATION, current_run: CurrentRun.new,
-                       memory: Memory::ProjectStore::Null, profile: {})
+                       memory: Memory::ProjectStore::Null, profile: {},
+                       project: Project::Resolver.default_project)
           @provider = provider
+          @project = project
           @profile = profile
           @context = context
           @attribution = attribution
@@ -152,7 +156,9 @@ module Lain
         def run_and_write(journal)
           recorder = @memory.view
           toolset = @tools.call(recorder:, journal:)
-          scribe = SessionRecord::Scribe.new(journal:, context: @context, toolset:, profile: @profile)
+          provenance = SessionRecord::Provenance.launched(project: @project, toolset:, effort: @context.effort)
+          scribe = SessionRecord::Scribe.new(journal:, context: @context, toolset:, profile: @profile,
+                                             provenance: provenance.to_header)
           journal << @attribution
           Capability::Policy.for(:degrade, journal:).resolve(@context, @provider)
           agent = build_agent(journal, recorder, toolset)

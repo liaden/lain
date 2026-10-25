@@ -61,6 +61,12 @@ RSpec.describe Lain::Bench::CLI::RunRecorder do
                                       "head" => turns.last.fetch("digest"))
     end
 
+    it "carries the provenance block a chat header carries, over the run's own toolset" do
+      expect(written.first.fetch("provenance"))
+        .to include("tool_surface" => Lain::Toolset.new.digest, "effort" => "unrecorded")
+        .and(satisfy { |block| block.keys.sort == %w[cwd effort harness home policy root tool_surface] })
+    end
+
     it "writes the run profile it was handed into the header" do
       recorder = described_class.new(provider:, context:, attribution:, prompts: ["hi"],
                                      profile: { "provider" => "ollama", "num_ctx" => 8192 })

@@ -150,10 +150,12 @@ module Lain
       #   (`CLI::Arms#to_header`); empty writes none
       # @param middleware [Hash{String=>String}] whose trust digest admitted the
       #   configured middleware (`Config::Middleware#to_header`); empty writes none
+      # @param provenance [Hash{String=>Hash}] what produced the run
+      #   ({Provenance#to_header}); empty writes none
       # @param writer [Liveness::Writer] the process writing this session
       def initialize(journal:, context:, toolset:, workspace: Workspace.empty, resumed_from: nil, written: [],
                      message_journal: nil, live: Channel::Null.instance, profile: {}, compaction: {},
-                     arms: {}, middleware: {}, writer: Liveness::Writer.current)
+                     arms: {}, middleware: {}, provenance: {}, writer: Liveness::Writer.current)
         @journal = journal
         @message_journal = message_journal || journal
         @live = live
@@ -163,7 +165,7 @@ module Lain
         # ORDER is the claim.
         @spawned = Set.new
         @journal << SessionRecord.header(context:, toolset:, workspace:, resumed_from:, profile:,
-                                         compaction:, arms:, middleware:, writer:)
+                                         compaction:, arms:, middleware:, provenance:, writer:)
       end
 
       # The {EventLog::ChainWriter} observer duck: journal an off-render-chain
