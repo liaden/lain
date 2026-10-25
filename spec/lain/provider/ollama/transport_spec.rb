@@ -244,6 +244,16 @@ RSpec.describe Lain::Provider::Ollama::Transport do
       expect(stub).to have_been_requested
     end
 
+    it "carries the bearer on an /api/tags probe" do
+      stub = stub_request(:get, "https://ollama.com/api/tags")
+             .with(headers: { "Authorization" => bearer })
+             .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: '{"models":[]}')
+
+      transport.tags
+
+      expect(stub).to have_been_requested
+    end
+
     it "sends no authorization header at all when no key is configured" do
       keyless = described_class.new(config_with(ollama_api_base: "https://ollama.com"))
       stub = stub_request(:post, "https://ollama.com/api/chat")

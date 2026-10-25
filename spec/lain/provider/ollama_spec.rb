@@ -1759,7 +1759,7 @@ RSpec.describe Lain::Provider::Ollama do
     def identity_transport(show:, running:)
       Class.new do
         define_method(:model_details) { |_model| show.respond_to?(:call) ? show.call : Struct.new(:body).new(show) }
-        define_method(:process_status) { running.respond_to?(:call) ? running.call : Struct.new(:body).new(running) }
+        define_method(:tags) { running.respond_to?(:call) ? running.call : Struct.new(:body).new(running) }
       end.new
     end
 
@@ -1780,16 +1780,49 @@ RSpec.describe Lain::Provider::Ollama do
       expect(identity(running: latest, model: "qwen3").digest).to eq("sha256:abc")
     end
 
-    it "records a model that is not resident as such and still records its quant" do
+    it "records a model the server does not list as unrecorded and still records its quant" do
       expect(identity(running: { "models" => [{ "model" => "other:1b", "digest" => "sha256:zzz" }] }))
-        .to have_attributes(digest: "not resident", quant: "Q4_K_M")
+        .to have_attributes(digest: "unrecorded", quant: "Q4_K_M")
+    end
+
+    it "gives a cold server and a warm one the same weights" do
+      server = lambda do |loaded|
+        Class.new do
+          define_method(:model_details) do |_|
+            Struct.new(:body).new({ "details" => { "quantization_level" => "Q4_K_M" } })
+          end
+          define_method(:tags) do
+            Struct.new(:body).new({ "models" => [{ "model" => "qwen3:4b", "digest" => "sha256:abc" }] })
+          end
+          define_method(:process_status) { Struct.new(:body).new({ "models" => loaded }) }
+        end.new
+      end
+      identities = [[], [{ "model" => "qwen3:4b", "digest" => "sha256:abc" }]].map do |loaded|
+        described_class.new(transport: server.call(loaded)).model_identity("qwen3:4b")
+      end
+
+      expect(identities.uniq).to eq([Lain::Provider::ModelIdentity.new(digest: "sha256:abc", quant: "Q4_K_M")])
+    end
+
+    it "asks the pulled-model listing and never the loaded-runner one" do
+      transport = Class.new do
+        define_method(:model_details) { |_| Struct.new(:body).new({}) }
+        define_method(:tags) { Struct.new(:body).new({ "models" => [] }) }
+        define_method(:process_status) { raise "residency is not provenance" }
+      end.new
+
+      expect(described_class.new(transport:).model_identity("qwen3:4b")).to have_attributes(digest: "unrecorded")
+    end
+
+    it "records a timed-out listing as unrecorded" do
+      expect(identity(running: -> { raise Faraday::TimeoutError })).to have_attributes(digest: "unrecorded")
     end
 
     it "records a quant the description omits as unrecorded" do
       expect(identity(show: { "capabilities" => [] })).to have_attributes(digest: "sha256:abc", quant: "unrecorded")
     end
 
-    it "records an unanswered /api/ps as an unrecorded digest, not as not resident" do
+    it "records an unanswered /api/tags as an unrecorded digest" do
       ps = -> { raise Faraday::TimeoutError }
 
       expect(identity(running: ps)).to have_attributes(digest: "unrecorded", quant: "Q4_K_M")
@@ -1817,23 +1850,23 @@ RSpec.describe Lain::Provider::Ollama do
     end
 
     it "still raises for a transport that cannot answer /api/show at all" do
-      mute = Class.new { def process_status = Struct.new(:body).new({ "models" => [] }) }.new
+      mute = Class.new { def tags = Struct.new(:body).new({ "models" => [] }) }.new
 
       expect { described_class.new(transport: mute).model_identity("qwen3:4b") }
         .to raise_error(NoMethodError, /model_details/)
     end
 
-    it "still raises for a transport that cannot answer /api/ps at all" do
+    it "still raises for a transport that cannot answer /api/tags at all" do
       mute = Class.new { def model_details(_model) = Struct.new(:body).new({}) }.new
 
       expect { described_class.new(transport: mute).model_identity("qwen3:4b") }
-        .to raise_error(NoMethodError, /process_status/)
+        .to raise_error(NoMethodError, /tags/)
     end
 
     it "states nothing for a deployment with no model metadata, asking nothing" do
       transport = Class.new do
         define_method(:model_details) { |_| raise "cloud must not ask /api/show" }
-        define_method(:process_status) { raise "cloud must not ask /api/ps" }
+        define_method(:tags) { raise "cloud must not ask /api/tags" }
       end.new
 
       expect(described_class.cloud(api_key: "sk-test", transport:).model_identity("qwen3:4b")).to be_nil

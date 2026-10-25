@@ -254,7 +254,7 @@ RSpec.describe "the :ollama tag's offline default" do
     # No :ollama tag here, so NetworkAccess.permit never runs and VCR (the layer
     # that owns the switch once hooked into WebMock) refuses the request -- the
     # request never leaves the machine, whether or not a server is listening.
-    expect { Net::HTTP.get(URI.join(OLLAMA_API_BASE, "/api/tags")) }
+    expect { Net::HTTP.get(URI.join(OLLAMA_API_BASE, "/api/version")) }
       .to raise_error(VCR::Errors::UnhandledHTTPRequestError)
   end
 end

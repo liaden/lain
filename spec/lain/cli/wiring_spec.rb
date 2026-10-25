@@ -457,7 +457,8 @@ RSpec.describe Lain::CLI::Wiring do
             define_method(:model_details) do |_|
               Struct.new(:body).new({ "details" => { "quantization_level" => "Q4_K_M" } })
             end
-            define_method(:process_status) { Struct.new(:body).new({ "models" => models.call(model) }) }
+            define_method(:tags) { Struct.new(:body).new({ "models" => models.call(model) }) }
+            define_method(:process_status) { Struct.new(:body).new({ "models" => [] }) }
           end.new
           offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 },
                                     mock: Lain::Provider::Ollama.new(transport:), root: backend_root)
@@ -470,13 +471,13 @@ RSpec.describe Lain::CLI::Wiring do
           journal_records(journal_io).find { |r| r["type"] == "session" }.dig("provenance", "weights")
         end
 
-        it "records the weights of a local ollama run: the resident digest and the quant" do
+        it "records the weights of a local ollama run: the pulled digest and the quant" do
           expect(weights_of(->(model) { [{ "model" => model, "digest" => "sha256:abc" }] }))
             .to eq("digest" => "sha256:abc", "quant" => "Q4_K_M")
         end
 
-        it "records a local model that is not resident as such" do
-          expect(weights_of(->(_) { [] })).to eq("digest" => "not resident", "quant" => "Q4_K_M")
+        it "records a local model the server does not list as unrecorded" do
+          expect(weights_of(->(_) { [] })).to eq("digest" => "unrecorded", "quant" => "Q4_K_M")
         end
 
         it "records no weights for a provider that states none" do

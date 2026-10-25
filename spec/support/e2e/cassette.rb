@@ -239,10 +239,10 @@ module E2E
       def fail(_error) = raise(Unrecorded, "the recording failed; nothing written to #{@path}")
     end
 
-    # The status probes, one `/api/ps` and one `/api/show` per model, recorded the first time a
+    # The status probes, one `/api/ps`, one `/api/tags` and one `/api/show` per model, recorded the first time a
     # journey asks for one and answered from the file every time after.
     class Probes
-      VERBS = { "/api/ps" => "get", "/api/show" => "post" }.freeze
+      VERBS = { "/api/ps" => "get", "/api/tags" => "get", "/api/show" => "post" }.freeze
 
       def initialize(path, recording:)
         @path = path

@@ -430,15 +430,15 @@ module Lain
         @model_capabilities[model] ||= probe_capabilities(model)
       end
 
-      # Which weights THIS server holds for `model`: the manifest digest (the id
-      # `ollama ps` prints) of the resident runner and the quant its model file declares. Asked once per launch for
-      # the session header, so it is neither memoized nor on a per-turn path.
+      # Which weights THIS server holds for `model`: the manifest digest of the
+      # pulled model (`/api/tags`, which answers the same whether or not the model
+      # is loaded) and the quant its model file declares. Residency is not
+      # provenance, so `/api/ps` is never asked. Asked once per launch for the
+      # session header, so it is neither memoized nor on a per-turn path.
       #
-      # Two bounded round trips (`/api/show`, `/api/ps`), each degrading alone
-      # to {ModelIdentity::UNRECORDED}: a launch never fails on a slow server.
-      # A model the server answered about but has not loaded is
-      # {ModelIdentity::NOT_RESIDENT}, which is a different fact from a probe
-      # that got no answer.
+      # Two bounded round trips, each degrading alone to
+      # {ModelIdentity::UNRECORDED}: a launch never fails on a slow server, and
+      # a model the server does not list has no digest to state.
       #
       # @param model [String]
       # @return [ModelIdentity, nil] nil when the deployment has no model
@@ -446,7 +446,7 @@ module Lain
       def model_identity(model)
         return nil unless @deployment.model_metadata?
 
-        ModelIdentity.new(digest: resident_digest(model), quant: declared_quant(model))
+        ModelIdentity.new(digest: pulled_digest(model), quant: declared_quant(model))
       end
 
       private
@@ -472,12 +472,10 @@ module Lain
         readable(details.is_a?(Hash) ? details["quantization_level"] : nil)
       end
 
-      def resident_digest(model)
-        body = asked(nil) { wrapping_errors { @transport.process_status.body } }
-        return ModelIdentity::UNRECORDED unless body.is_a?(Hash)
-
-        runner = loaded_runners(body).find { |entry| runs?(entry, model.to_s) }
-        runner ? readable(runner["digest"]) : ModelIdentity::NOT_RESIDENT
+      def pulled_digest(model)
+        body = asked(nil) { wrapping_errors { @transport.tags.body } }
+        entry = loaded_runners(body).find { |listed| runs?(listed, model.to_s) }
+        readable(entry && entry["digest"])
       end
 
       def readable(value) = value.is_a?(String) && !value.empty? ? value : ModelIdentity::UNRECORDED

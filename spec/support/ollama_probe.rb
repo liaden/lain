@@ -83,6 +83,7 @@
 module OllamaProbeStub
   PATH = "/api/ps"
   SHOW_PATH = "/api/show"
+  TAGS_PATH = "/api/tags"
 
   def self.cassette_answers?(path = PATH)
     VcrCassetteStack.serves?(path)
@@ -148,5 +149,11 @@ RSpec.configure do |config|
           !OllamaProbeStub.held?(request.uri)
       end
       .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: "{}")
+    stub_request(:get, %r{/api/tags})
+      .with do |request|
+        OllamaProbeStub.local?(request.uri) && !OllamaProbeStub.cassette_answers?(OllamaProbeStub::TAGS_PATH) &&
+          !OllamaProbeStub.held?(request.uri)
+      end
+      .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: '{"models":[]}')
   end
 end

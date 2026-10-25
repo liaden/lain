@@ -363,6 +363,6 @@ http_interactions:
         {"model":"qwen3:4b","created_at":"<RECORDED>","message":{"role":"assistant","content":"","thinking":" here"},"done":false}
         {"model":"qwen3:4b","created_at":"<RECORDED>","message":{"role":"assistant","content":"","thinking":".\n"},"done":false}
         {"model":"qwen3:4b","created_at":"<RECORDED>","message":{"role":"assistant","content":"alpha"},"done":false}
-        {"model":"qwen3:4b","created_at":"<RECORDED>","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","total_duration":5496165364,"load_duration":1915549,"prompt_eval_count":5543,"prompt_eval_cached_count":189,"prompt_eval_duration":2426816000,"eval_count":352,"eval_duration":2737851000}
-  recorded_at: Sun, 25 Oct 2026 20:57:09 GMT
+        {"model":"qwen3:4b","created_at":"<RECORDED>","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","total_duration":4565185061,"load_duration":1978666,"prompt_eval_count":5543,"prompt_eval_cached_count":148,"prompt_eval_duration":1507475000,"eval_count":352,"eval_duration":2726006000}
+  recorded_at: Sun, 25 Oct 2026 22:33:22 GMT
 recorded_with: VCR 6.4.0

@@ -8,9 +8,8 @@ module E2E
   # itself and hands every other request to a handler, so a journey scripts only the turns.
   class Upstream
     HOST = "127.0.0.1"
-    PROBES = lambda do |request|
-      { "/api/ps" => ['{"models":[]}'], "/api/show" => ["{}"] }[request.path]&.then { |lines| Reply.new(lines:) }
-    end
+    PROBE_LINES = { "/api/ps" => ['{"models":[]}'], "/api/tags" => ['{"models":[]}'], "/api/show" => ["{}"] }.freeze
+    PROBES = ->(request) { PROBE_LINES[request.path]&.then { |lines| Reply.new(lines:) } }
 
     # The body ends cleanly after the last line, so a reply with no done line is a stream cut short.
     # hold keeps the connection open, with no body, until #release.

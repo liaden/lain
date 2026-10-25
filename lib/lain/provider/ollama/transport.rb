@@ -31,6 +31,8 @@ module Lain
         # maximum lives in. Never a served window -- see {PROCESS_PATH} and
         # references/ollama/api-show-and-context.md.
         SHOW_PATH = "api/show"
+        # Every pulled model with its manifest digest, loaded or not.
+        TAGS_PATH = "api/tags"
         DEFAULT_API_BASE = "http://localhost:11434"
 
         # What an HTTP header field value cannot carry. `[[:cntrl:]]` is the
@@ -112,6 +114,12 @@ module Lain
         # was loaded with.
         def process_status
           probe_connection.get(PROCESS_PATH)
+        end
+
+        # The models pulled to this server, each with its manifest digest. Unlike
+        # {#process_status} it answers the same on a cold server and a warm one.
+        def tags
+          probe_connection.get(TAGS_PATH)
         end
 
         # One model's metadata. A POST, because `/api/show` takes the model in a

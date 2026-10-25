@@ -54,6 +54,7 @@ RSpec.describe "capability degradation on the chat path", :seam do
       end
       # rubocop:enable Lint/UnusedBlockArgument
       define_method(:process_status) { Struct.new(:body).new({ "models" => [] }) }
+      define_method(:tags) { Struct.new(:body).new({ "models" => [] }) }
       define_method(:model_details) { |_model| Struct.new(:body).new({}) }
     end.new
   end
