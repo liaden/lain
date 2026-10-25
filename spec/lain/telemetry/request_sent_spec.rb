@@ -18,7 +18,8 @@ RSpec.describe Lain::Telemetry::RequestSent do
       max_tokens: 128,
       stream: false,
       reasoning: { "budget_tokens" => 1024 },
-      extra: { "service_tier" => "flex" }
+      extra: { "service_tier" => "flex" },
+      effort: "low"
     )
   end
 

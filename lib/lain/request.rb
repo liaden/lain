@@ -13,8 +13,9 @@ module Lain
   #
   # Frozen and content-addressed: two Contexts rendering to the same #digest hit
   # the same prompt cache, and two that do not, will not. The bench leans on this.
-  Request = Data.define(:model, :system, :tools, :messages, :max_tokens, :stream, :reasoning, :extra) do
-    def initialize(model:, messages:, max_tokens:, system: nil, tools: [], stream: true, reasoning: nil, extra: {})
+  Request = Data.define(:model, :system, :tools, :messages, :max_tokens, :stream, :reasoning, :extra, :effort) do
+    def initialize(model:, messages:, max_tokens:, system: nil, tools: [], stream: true, reasoning: nil, extra: {},
+                   effort: nil)
       ceiling = Integer(max_tokens)
       # A non-positive ceiling is not a small ceiling. Ollama reads
       # `num_predict` -1 as "generate until the model stops" and -2 as "fill
@@ -33,7 +34,8 @@ module Lain
 
       identity = { model: -model.to_s, system: system && Canonical.normalize(system),
                    tools: Canonical.normalize(tools), messages: Canonical.normalize(messages),
-                   max_tokens: ceiling, reasoning: reasoning && Canonical.normalize(reasoning) }
+                   max_tokens: ceiling, reasoning: reasoning && Canonical.normalize(reasoning),
+                   effort: effort && -effort.to_s }
       # Digested once, before `super` freezes the instance: a model call asks
       # for it five or six times (the retry guard, the stream frame, the
       # journal, the budget), and each ask was a full serialisation of the
@@ -51,12 +53,18 @@ module Lain
     # is a structural no-op and {Telemetry::RequestSent.from} can journal it
     # without a second deep walk of the full message history. The odd-looking
     # alphabetical key order is that contract, and request_spec pins it.
-    def self.cache_payload_of(model:, system:, tools:, messages:, max_tokens:, reasoning:)
-      { "max_tokens" => max_tokens, "messages" => messages, "model" => model,
-        "reasoning" => reasoning, "system" => system, "tools" => tools }.freeze
+    #
+    # `effort` is keyed only when set, so every digest recorded before it existed rebuilds unchanged.
+    def self.cache_payload_of(model:, system:, tools:, messages:, max_tokens:, reasoning:, effort: nil)
+      payload = { "max_tokens" => max_tokens, "messages" => messages, "model" => model,
+                  "reasoning" => reasoning, "system" => system, "tools" => tools }
+      payload = { "effort" => effort }.merge(payload) if effort
+      payload.freeze
     end
 
-    def cache_payload = self.class.cache_payload_of(model:, system:, tools:, messages:, max_tokens:, reasoning:)
+    def cache_payload
+      self.class.cache_payload_of(model:, system:, tools:, messages:, max_tokens:, reasoning:, effort:)
+    end
 
     attr_reader :digest
 

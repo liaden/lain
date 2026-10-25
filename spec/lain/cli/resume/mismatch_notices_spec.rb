@@ -148,4 +148,30 @@ RSpec.describe Lain::CLI::Resume::MismatchNotices do
       expect(mismatch(typed_path).ceiling_notice(nil)).to be_nil
     end
   end
+
+  describe "the effort notice" do
+    def session_with_effort(effort)
+      context = Lain::Context.new(model: "claude-opus-4-8", max_tokens: 64, effort:)
+      header = Lain::SessionRecord.header(context:, toolset: Lain::Toolset.new,
+                                          profile: { "provider" => "anthropic" }, writer: CoreGraph::NO_WRITER)
+      File.join(@dir, "session.ndjson").tap { |path| File.write(path, "#{JSON.generate(header)}\n") }
+    end
+
+    def notices_for(path, **options)
+      described_class.new(path:).call(profile: Lain::CLI::RunProfile.from_options(options), model: nil)
+    end
+
+    it "names a typed effort that differs from the recorded one" do
+      expect(notices_for(session_with_effort("high"), effort: "low"))
+        .to eq(["recorded with effort high; continuing with low (the current flags win)"])
+    end
+
+    it "says nothing when no effort was typed" do
+      expect(notices_for(session_with_effort("high"))).to be_empty
+    end
+
+    it "says nothing against an old header that recorded no effort" do
+      expect(notices_for(session_with_effort(nil), effort: "low")).to be_empty
+    end
+  end
 end

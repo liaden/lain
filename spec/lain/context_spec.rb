@@ -646,4 +646,22 @@ RSpec.describe Lain::Context do
       end
     end
   end
+
+  describe "effort" do
+    it "is carried into the rendered request" do
+      with_effort = described_class.new(model: "claude-opus-4-8", max_tokens: 1024, effort: "low")
+
+      expect(with_effort.render(timeline:, toolset:).effort).to eq("low")
+    end
+
+    it "survives a copy that swaps the model" do
+      with_effort = described_class.new(model: "claude-opus-4-8", max_tokens: 1024, effort: "low")
+
+      expect(with_effort.with_model("claude-opus-4-8").render(timeline:, toolset:).effort).to eq("low")
+    end
+
+    it "renders no effort when none was given" do
+      expect(context.render(timeline:, toolset:).effort).to be_nil
+    end
+  end
 end

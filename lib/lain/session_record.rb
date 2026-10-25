@@ -82,8 +82,8 @@ module Lain
                  "model" => context.model, "max_tokens" => context.max_tokens, **context.output_ceiling.to_header,
                  "system" => context.system, "stream" => context.stream, "extra" => context.extra,
                  "tools" => toolset.to_schema, "reminders" => workspace.reminders }
-      record = record.merge(context_pipeline(context), profile, scheduled(compaction), section("arms", arms),
-                            section("middleware", middleware), writer.to_header)
+      record = record.merge(context_pipeline(context), effort(context), profile, scheduled(compaction),
+                            section("arms", arms), section("middleware", middleware), writer.to_header)
       resumed_from.nil? ? record : record.merge("resumed_from" => resumed_from)
     end
 
@@ -121,6 +121,14 @@ module Lain
     # @return [Hash{String => String}] empty for an unnamed pipeline
     def context_pipeline(context)
       context.pipeline_name.nil? ? {} : { "context_pipeline" => context.pipeline_name }
+    end
+
+    # Written only when set, so a session without one keeps the header it always had.
+    #
+    # @param context [Context]
+    # @return [Hash{String => String}] empty for a context with no effort
+    def effort(context)
+      context.effort.nil? ? {} : { "effort" => context.effort }
     end
 
     # The body plus the render edge, which is exactly what a Loader re-commits

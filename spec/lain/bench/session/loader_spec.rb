@@ -256,6 +256,20 @@ RSpec.describe Lain::Bench::Session::Loader do
       expect(seen).to include(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse")
     end
 
+    describe "a session recorded under an effort" do
+      let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse", effort: "low") }
+
+      it "reloads with that effort, so a resume keeps sending it" do
+        expect(recording.context.effort).to eq("low")
+      end
+    end
+
+    describe "a session recorded without an effort" do
+      it "reloads with none" do
+        expect(recording.context.effort).to be_nil
+      end
+    end
+
     # A replay that rendered the default for a session recorded under another
     # pipeline would diverge from its own baseline and blame the harness.
     describe "a session recorded under a named pipeline" do

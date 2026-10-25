@@ -14,6 +14,10 @@ RSpec.describe Lain::Provider::Ollama::Encoding do
                       messages: [{ role: "user", content: "hi" }], **overrides)
   end
 
+  it "encodes a request with an effort exactly as it does one without" do
+    expect(encoder.encode(request(effort: "high"))).to eq(encoder.encode(request))
+  end
+
   # Left to its default, ollama cuts a prompt that does not fit its context and
   # evaluates the remainder: from the front when the last message alone
   # overflows, and by dropping whole older messages otherwise -- the system

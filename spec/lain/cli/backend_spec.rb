@@ -444,6 +444,42 @@ RSpec.describe Lain::CLI::Backend do
     end
   end
 
+  describe "--effort" do
+    let(:messages_url) { "https://api.anthropic.com/v1/messages" }
+    let(:reply) do
+      { status: 200, headers: { "Content-Type" => "application/json" },
+        body: JSON.generate("id" => "msg_1", "type" => "message", "role" => "assistant",
+                            "model" => "claude-opus-4-8", "content" => [{ "type" => "text", "text" => "ok" }],
+                            "stop_reason" => "end_turn", "usage" => { "input_tokens" => 1, "output_tokens" => 1 }) }
+    end
+    let(:timeline) { Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }]) }
+
+    around { |example| with_env("ANTHROPIC_API_KEY" => "sk-test") { example.run } }
+
+    def send_first_request(**options)
+      backend = backend_for(provider: "anthropic", model: "claude-opus-4-8", max_tokens: 64, **options)
+      request = backend.context.render(timeline:, toolset: Lain::Toolset.new).with(stream: false)
+      stub = stub_request(:post, messages_url).to_return(reply)
+      backend.provider.complete(request)
+      [stub, request]
+    end
+
+    it "sends it as output_config.effort and records it in the request payload" do
+      stub, request = send_first_request(effort: "low")
+
+      expect(stub.with { |sent| JSON.parse(sent.body).fetch("output_config") == { "effort" => "low" } })
+        .to have_been_requested
+      expect(request.cache_payload).to include("effort" => "low")
+    end
+
+    it "sends no output_config when unset" do
+      stub, request = send_first_request
+
+      expect(stub.with { |sent| !JSON.parse(sent.body).key?("output_config") }).to have_been_requested
+      expect(request.cache_payload).not_to have_key("effort")
+    end
+  end
+
   describe "the price tier guard on every anthropic client" do
     let(:messages_url) { "https://api.anthropic.com/v1/messages" }
     let(:count_url) { "https://api.anthropic.com/v1/messages/count_tokens" }

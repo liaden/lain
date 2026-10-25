@@ -69,6 +69,7 @@ module Lain
         base_params(request).compact
                             .merge(structured_fields(request.extra))
                             .merge(request.extra.except(STRUCTURED_OUTPUT_KEY).transform_keys(&:to_sym))
+                            .merge(effort_fields(request))
       end
 
       private
@@ -88,6 +89,20 @@ module Lain
         raise Error,
               "extra carries both a raw #{TOOL_CHOICE_KEY.inspect} and a #{STRUCTURED_OUTPUT_KEY.inspect} " \
               "marker, which also forces tool_choice -- remove one"
+      end
+
+      # Merged over any raw `output_config` in extra, so the two never replace each other.
+      def effort_fields(request)
+        return {} unless request.effort
+
+        { output_config: raw_output_config(request.extra).transform_keys(&:to_sym).merge(effort: request.effort) }
+      end
+
+      def raw_output_config(extra)
+        raw = extra.fetch("output_config", {})
+        return raw if raw.is_a?(Hash)
+
+        raise Error, "extra carries an output_config of #{raw.class}, which an effort cannot join; it must be a Hash"
       end
 
       # A Request with no structured-answer format contributes nothing, which is

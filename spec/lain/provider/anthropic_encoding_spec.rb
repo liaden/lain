@@ -238,4 +238,25 @@ RSpec.describe Lain::Provider::AnthropicEncoding do
                             "cache_control" => { "type" => "ephemeral" })
     end
   end
+
+  describe "effort" do
+    it "rides output_config" do
+      expect(encoder.encode(request(effort: "low"))[:output_config]).to eq(effort: "low")
+    end
+
+    it "sends no output_config without an effort" do
+      expect(encoder.encode(request)).not_to have_key(:output_config)
+    end
+
+    it "refuses a raw output_config that is not a Hash when an effort must join it" do
+      expect { encoder.encode(request(effort: "low", extra: { "output_config" => "json" })) }
+        .to raise_error(Lain::Error, /output_config.*Hash/)
+    end
+
+    it "keeps an output_config in extra alongside the effort" do
+      encoded = encoder.encode(request(effort: "low", extra: { "output_config" => { "format" => "x" } }))
+
+      expect(encoded[:output_config]).to eq(format: "x", effort: "low")
+    end
+  end
 end

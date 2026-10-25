@@ -136,38 +136,53 @@ RSpec.describe Lain::CLI::ChatLaunch do
                           .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
       end
 
-      def file_under(dir, name)
-        context = Lain::Context.new(model: "qwen3:4b", max_tokens: 64)
+      def file_under(dir, name, effort: nil)
+        context = Lain::Context.new(model: "qwen3:4b", max_tokens: 64, effort:)
         header = Lain::SessionRecord.header(context:, toolset: Lain::Toolset.new, profile: { "provider" => "ollama" },
                                             writer: CoreGraph::NO_WRITER)
         write_session_file(File.join(dir, name), header:, timeline:)
       end
 
-      def launched_from_elsewhere(options)
+      def launched_from_elsewhere(options, whole: false)
         project = throwaway_project(@root)
         seen = {}
         wiring = instance_double(Lain::CLI::Wiring, conductor: instance_spy(Lain::CLI::Conductor), exit_status: 0)
-        allow(wiring).to receive(:run) { |resumed:, **| seen[:resumed] = resumed }
+        allow(wiring).to receive(:run) do |resumed:, backend:, **|
+          seen[:resumed] = resumed
+          seen[:backend] = backend
+        end
         Dir.chdir(@elsewhere) do
           described_class.new({ journal: false, max_tokens: 16, **options },
                               profile: Lain::CLI::RunProfile.from_options({}).with_defaults(provider: "ollama"),
                               wiring_factory: ->(**) { wiring }, project_factory: -> { project },
                               gc_schedule_factory: ->(**) { -> {} }).call { |_notice| nil }
         end
-        seen.fetch(:resumed)
+        whole ? seen : seen.fetch(:resumed)
       end
 
       it "resumes the newest session filed under the root" do
         file_under(Lain::Paths.new.filing_dir(root: @root), "20260101T000000-1.ndjson")
 
-        expect(launched_from_elsewhere(resume: "").file).to eq("20260101T000000-1.ndjson")
+        expect(launched_from_elsewhere({ resume: "" }).file).to eq("20260101T000000-1.ndjson")
+      end
+
+      it "resumes with the effort the session was launched with, and the prefix it launched with" do
+        file_under(Lain::Paths.new.filing_dir(root: @root), "20260101T000000-1.ndjson", effort: "high")
+
+        context = launched_from_elsewhere({ resume: "" }, whole: true).fetch(:backend).context
+        request = context.render(timeline:, toolset: Lain::Toolset.new)
+        wire = Object.new.extend(Lain::Provider::AnthropicEncoding).encode(request)
+
+        expect(wire[:output_config]).to eq(effort: "high")
+        typed = launched_from_elsewhere({ resume: "", effort: "high" }, whole: true).fetch(:backend).context
+        expect(request.digest).to eq(typed.render(timeline:, toolset: Lain::Toolset.new).digest)
       end
 
       it "forks a session filed under the root" do
         file_under(Lain::Paths.new.filing_dir(root: @root), "20260101T000000-1.ndjson")
         head = timeline.head_digest.delete_prefix("blake3:")[0, 12]
 
-        expect(launched_from_elsewhere(fork: "20260101@#{head}").timeline.head_digest).to eq(timeline.head_digest)
+        expect(launched_from_elsewhere({ fork: "20260101@#{head}" }).timeline.head_digest).to eq(timeline.head_digest)
       end
     end
 

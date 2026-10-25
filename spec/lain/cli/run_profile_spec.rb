@@ -5,7 +5,7 @@ RSpec.describe Lain::CLI::RunProfile do
 
   def recorded(**fields)
     header = Lain::SessionRecord.header(context: Lain::Context.new(model: fields.fetch(:model, "qwen3:4b"),
-                                                                   max_tokens: 16),
+                                                                   max_tokens: 16, effort: fields[:effort]),
                                         toolset: Lain::Toolset.new,
                                         profile: typed(**fields.except(:model)).to_header,
                                         writer: CoreGraph::NO_WRITER)
@@ -18,7 +18,7 @@ RSpec.describe Lain::CLI::RunProfile do
 
       expect(profile.typed).to eq(%i[provider num_batch])
       expect(profile.to_options).to eq(provider: "ollama", model: nil, api_base: nil, num_ctx: nil, num_batch: 2048,
-                                       keep_alive: nil)
+                                       keep_alive: nil, effort: nil)
     end
 
     it "refuses a typed name that is not one of its fields" do
@@ -50,7 +50,7 @@ RSpec.describe Lain::CLI::RunProfile do
       profile = typed.with_defaults(provider: "anthropic", model: "env-model", api_base: nil).over(recording)
 
       expect(profile.to_options).to eq(provider: "ollama", model: "qwen3:4b", api_base: "http://127.0.0.1:11434",
-                                       num_ctx: nil, num_batch: 2048, keep_alive: nil)
+                                       num_ctx: nil, num_batch: 2048, keep_alive: nil, effort: nil)
     end
 
     # The order is per field: a field the header did not record is not a
@@ -91,7 +91,7 @@ RSpec.describe Lain::CLI::RunProfile do
       profile = typed(provider: "anthropic").with_defaults(model: nil, api_base: nil).over(recording)
 
       expect(profile.to_options).to eq(provider: "anthropic", model: nil, api_base: nil, num_ctx: nil,
-                                       num_batch: nil, keep_alive: nil)
+                                       num_batch: nil, keep_alive: nil, effort: nil)
     end
 
     it "changes nothing over a header that recorded no profile" do
@@ -99,6 +99,22 @@ RSpec.describe Lain::CLI::RunProfile do
 
       expect(profile.provider).to eq("anthropic")
       expect(profile.model).to be_nil
+    end
+  end
+
+  describe "effort, which a resume keeps" do
+    let(:recording) { recorded(provider: "anthropic", effort: "high") }
+
+    it "takes the recorded effort when none was typed" do
+      expect(typed.with_defaults(provider: "anthropic").over(recording).effort).to eq("high")
+    end
+
+    it "keeps a typed effort over the recorded one" do
+      expect(typed(effort: "low").with_defaults(provider: "anthropic").over(recording).effort).to eq("low")
+    end
+
+    it "is nil when neither the flag nor the recording has one" do
+      expect(typed.with_defaults(provider: "anthropic").over(recorded(provider: "anthropic")).effort).to be_nil
     end
   end
 

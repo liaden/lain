@@ -2,7 +2,7 @@
 
 module Lain
   module CLI
-    RunProfile = Data.define(:provider, :model, :api_base, :num_ctx, :num_batch, :keep_alive, :typed)
+    RunProfile = Data.define(:provider, :model, :api_base, :num_ctx, :num_batch, :keep_alive, :effort, :typed)
 
     # Which model server answers a run, and how it is asked: the provider, the
     # model, the endpoint, the two ollama runner knobs and how long the runner
@@ -19,13 +19,15 @@ module Lain
     # `keep_alive` is the one field a flag cannot type as a number: `-1`, `0`
     # and `"5m"` are one knob with two JSON types, which {Backend} sorts out.
     class RunProfile
-      FIELDS = %i[provider model api_base num_ctx num_batch keep_alive].freeze
+      FIELDS = %i[provider model api_base num_ctx num_batch keep_alive effort].freeze
 
       # What a run with no `--provider` and no LAIN_PROVIDER talks to.
       DEFAULT_PROVIDER = "anthropic"
 
       # The header already carries the model as the context's own field, so the
-      # profile adds the others beside it rather than a second copy.
+      # profile adds the others beside it rather than a second copy. `effort`
+      # is the same case: the Context's field is what the header records, and
+      # {.from_header} reads it from there.
       #
       # `keep_alive` is the second exclusion, for a different reason: it is the
       # only profile field whose cost OUTLIVES the process, a pin being server
@@ -37,7 +39,7 @@ module Lain
       # The header's transport `extra` does still carry the value, being a
       # verbatim copy of what was sent. That is a record, not a resolution:
       # both readers of it replay dry and neither reaches a wire.
-      HEADER_FIELDS = (FIELDS - %i[model keep_alive]).freeze
+      HEADER_FIELDS = (FIELDS - %i[model keep_alive effort]).freeze
 
       class << self
         # The fields an options hash carries a value for, each counted as typed.
@@ -49,7 +51,7 @@ module Lain
         def from_options(options)
           values = { provider: options[:provider], model: options[:model], api_base: options[:api_base],
                      num_ctx: options[:num_ctx], num_batch: options[:num_batch],
-                     keep_alive: options[:keep_alive] }
+                     keep_alive: options[:keep_alive], effort: options[:effort] }
           new(**values, typed: FIELDS.reject { |field| values[field].nil? })
         end
 
@@ -66,13 +68,14 @@ module Lain
         end
       end
 
-      def initialize(provider:, model:, api_base:, num_ctx:, num_batch:, keep_alive:, typed: [])
+      def initialize(provider:, model:, api_base:, num_ctx:, num_batch:, keep_alive:, effort: nil, typed: [])
         unknown = typed - FIELDS
         raise ArgumentError, "typed names #{unknown.inspect}, which are not profile fields #{FIELDS.inspect}" \
           unless unknown.empty?
 
         super(provider: provider&.dup&.freeze, model: model&.dup&.freeze, api_base: api_base&.dup&.freeze,
-              num_ctx:, num_batch:, keep_alive: keep_alive&.dup&.freeze, typed: typed.dup.freeze)
+              num_ctx:, num_batch:, keep_alive: keep_alive&.dup&.freeze, effort: effort&.dup&.freeze,
+              typed: typed.dup.freeze)
       end
 
       # @return [Boolean] whether this came from a header that recorded a profile
@@ -101,7 +104,7 @@ module Lain
         with(**recorded.to_options.slice(*untyped).compact)
       end
 
-      # @return [Hash{Symbol=>Object}] the six fields, keyed as {Backend} reads them
+      # @return [Hash{Symbol=>Object}] the fields, keyed as {Backend} reads them
       def to_options = FIELDS.to_h { |field| [field, public_send(field)] }
 
       # @return [Hash{String=>Object}] the header's profile fields, with no key
@@ -109,7 +112,8 @@ module Lain
       def to_header = HEADER_FIELDS.to_h { |field| [field.to_s, public_send(field)] }.compact
 
       # The header that recorded no profile: laid under typed fields, it changes nothing.
-      UNRECORDED = new(provider: nil, model: nil, api_base: nil, num_ctx: nil, num_batch: nil, keep_alive: nil)
+      UNRECORDED = new(provider: nil, model: nil, api_base: nil, num_ctx: nil, num_batch: nil, keep_alive: nil,
+                       effort: nil)
 
       private
 

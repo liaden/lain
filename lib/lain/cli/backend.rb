@@ -404,7 +404,8 @@ module Lain
       # builds the Context it always did.
       def context(system_override: nil)
         ContextPipeline.named(@options[:context_pipeline])
-                       .context(model:, max_tokens:, extra: sampler_extra, system: system_override || slots.render)
+                       .context(model:, max_tokens:, extra: sampler_extra, system: system_override || slots.render,
+                                effort: run_profile.effort)
       end
 
       # The ONE window book this run measures occupancy against, resolved by

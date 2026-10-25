@@ -448,6 +448,13 @@ class LainCLI < Thor
       throughput(thor, recorded)
       residency(thor)
       price_tier(thor)
+      effort(thor)
+    end
+
+    def self.effort(thor)
+      thor.method_option :effort, type: :string, enum: %w[low medium high xhigh max],
+                                  desc: "Effort sent as output_config.effort (Anthropic); unset sends none " \
+                                        "and the model's own default applies"
     end
 
     # Every command that builds a Backend can reach an Anthropic client, so

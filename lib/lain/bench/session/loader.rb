@@ -22,9 +22,9 @@ module Lain
         # Context whose pipeline composes a memory stage, WITHOUT this class
         # hardcoding that choice. Root-qualified: {Bench::CLI} shadows the
         # top-level one for everything inside `Bench`.
-        DEFAULT_CONTEXT_FACTORY = lambda do |model:, max_tokens:, system:, stream:, extra:, context_pipeline:|
+        DEFAULT_CONTEXT_FACTORY = lambda do |model:, max_tokens:, system:, stream:, extra:, context_pipeline:, effort:|
           ::Lain::CLI::ContextPipeline.named(context_pipeline, origin: "context_pipeline")
-                                      .context(model:, max_tokens:, system:, stream:, extra:)
+                                      .context(model:, max_tokens:, system:, stream:, extra:, effort:)
         end
 
         # Raised only when a header actually names a `resumed_from` file and no
@@ -252,7 +252,8 @@ module Lain
         def context
           @context_factory.call(model: header.fetch("model"), max_tokens: header.fetch("max_tokens"),
                                 system: header["system"], stream: header.fetch("stream"),
-                                extra: header_field("extra"), context_pipeline: header["context_pipeline"])
+                                extra: header_field("extra"), context_pipeline: header["context_pipeline"],
+                                effort: header["effort"])
         rescue ::Lain::CLI::ContextPipeline::Unknown => e
           raise Corrupt, "the session header records context_pipeline #{header["context_pipeline"].inspect}, " \
                          "which no longer resolves: #{e.message}"

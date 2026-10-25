@@ -1069,6 +1069,13 @@ RSpec.describe Lain::SessionRecord, ".header" do
     expect(header(named)).to include("context_pipeline" => "prune+cache-breakpoints")
   end
 
+  it "records the effort a context carries, and no key without one" do
+    with = Lain::Context.new(model: "m", max_tokens: 8, effort: "low")
+
+    expect(header(with)).to include("effort" => "low")
+    expect(header(Lain::Context.new(model: "m", max_tokens: 8))).not_to have_key("effort")
+  end
+
   it "writes no context_pipeline key for a context no name was given" do
     expect(header(Lain::Context.new(model: "m", max_tokens: 8))).not_to have_key("context_pipeline")
   end

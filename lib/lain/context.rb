@@ -24,7 +24,7 @@ module Lain
       Reminder.new(workspace:) >> CacheBreakpoints.new
     end
 
-    attr_reader :system, :stream, :extra, :requires
+    attr_reader :system, :stream, :extra, :requires, :effort
 
     # The catalog name the pipeline was chosen by, or nil when nobody named one
     # -- the class default, or a pipeline injected as a value. Carried by every
@@ -82,7 +82,8 @@ module Lain
     #
     # `max_tokens` is a number, or a slot answering `#ceiling_for(model)`
     # ({OutputCeiling}); a slot is stored as the slot, like `model`.
-    def initialize(model:, max_tokens:, system: nil, stream: true, extra: {}, pipeline: nil, pipeline_name: nil)
+    def initialize(model:, max_tokens:, system: nil, stream: true, extra: {}, pipeline: nil, pipeline_name: nil,
+                   effort: nil)
       # A delegating slot is stored AS the slot; flattening it to its current
       # value would fix the model at construction, which is the very seam
       # `/model` exists to escape.
@@ -93,6 +94,7 @@ module Lain
       @extra = Canonical.normalize(extra)
       @pipeline = pipeline
       @pipeline_name = pipeline_name && -pipeline_name
+      @effort = effort && -effort.to_s
       @requires = pipeline_for(Workspace.empty).requires
       freeze
     end
@@ -130,7 +132,8 @@ module Lain
         messages: pipeline.call(projected(timeline, pipeline)),
         max_tokens:,
         stream:,
-        extra:
+        extra:,
+        effort:
       )
     end
 
@@ -204,7 +207,7 @@ module Lain
     # same reason.
     def copy(**changes)
       self.class.new(model: @model, max_tokens: @ceiling, system:, stream:, extra:, pipeline: @pipeline,
-                     pipeline_name:, **changes)
+                     pipeline_name:, effort:, **changes)
     end
 
     # Hoisted, because a `[].freeze` literal allocates a fresh Array per read

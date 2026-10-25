@@ -57,7 +57,7 @@ module Lain
         # @return [Array<Hash>] the messages with every address resolved
         attr_reader :messages
 
-        delegate :model, :system, :tools, :max_tokens, :stream, :reasoning, :extra,
+        delegate :model, :system, :tools, :max_tokens, :stream, :reasoning, :extra, :effort,
                  :digest, :cache_payload, :cache_prefix, :prefix_digests, :to_s, to: :@request
 
         def initialize(request, messages)

@@ -347,4 +347,19 @@ RSpec.describe Lain::Request do
       expect(event).to be_deeply_frozen
     end
   end
+
+  describe "effort" do
+    it "is part of cache identity" do
+      expect(request(effort: "low")).not_to have_same_digest_as(request(effort: "high"))
+    end
+
+    it "leaves the digest of an effort-less request exactly as it was" do
+      expect(request(effort: nil)).to have_same_digest_as(request)
+      expect(request.cache_payload.keys).to eq(%w[max_tokens messages model reasoning system tools])
+    end
+
+    it "rides the cache payload only when set" do
+      expect(request(effort: "low").cache_payload).to include("effort" => "low")
+    end
+  end
 end

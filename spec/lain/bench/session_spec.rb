@@ -54,11 +54,12 @@ RSpec.describe Lain::Bench::Session do
     # renders different bytes -- booked as DIVERGED instead of failing here.
     # The same members-pin idiom Telemetry::RequestSent uses against Request.
     it "records every Context constructor input, so a new kwarg cannot be dropped in silence" do
-      # Written under a NAMED pipeline, because an unnamed one writes no key for
-      # its name, and the header spells `pipeline_name` as `context_pipeline`,
-      # the flag's word.
+      # Written under a NAMED pipeline and an effort, because an unnamed one
+      # writes no key for its name, an unset effort none either, and the header
+      # spells `pipeline_name` as `context_pipeline`, the flag's word.
       named_io = StringIO.new
-      named = Lain::CLI::ContextPipeline.named("default").context(model: "claude-opus-4-8", max_tokens: 1024)
+      named = Lain::CLI::ContextPipeline.named("default").context(model: "claude-opus-4-8", max_tokens: 1024,
+                                                                  effort: "low")
       write_session(into: Lain::Journal.new(io: named_io), under: named)
       header = journal_records(named_io).find { |record| record["type"] == "session" }
       # `ts` is the Journal's own stamp on every record, not part of the header,
@@ -426,6 +427,14 @@ RSpec.describe Lain::Bench::Session do
       it "clips a collection no reader could scan, rather than quoting all of it" do
         expect(described_class.shown(Array.new(2_000) { |index| index }).length).to be < 200
       end
+    end
+  end
+
+  describe "a journal recorded before requests carried an effort" do
+    it "still verifies every request_sent digest" do
+      fixture = File.expand_path("../../fixtures/sessions/variance/one.ndjson", __dir__)
+
+      expect { described_class.load(fixture) }.not_to raise_error
     end
   end
 end

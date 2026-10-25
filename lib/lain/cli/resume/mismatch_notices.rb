@@ -24,7 +24,7 @@ module Lain
         # which would leave this constant holding mutable values and quietly
         # drop the deep-freeze the literal it replaced had.
         LABELS = RunProfile::HEADER_FIELDS.to_h { |field| [field, field.name] }
-                                          .merge(api_base: "api base").freeze
+                                          .merge(api_base: "api base", effort: "effort").freeze
 
         # @param path [String] the session file's own path, whose header holds
         #   both the recorded model and the recorded profile
