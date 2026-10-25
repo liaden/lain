@@ -247,5 +247,26 @@ RSpec.describe Lain::SessionRecord::Provenance do
                                                         "policy" => current.policy, "cwd" => "/work/project/sub",
                                                         "root" => "/work/project", "home" => "/home/tester" })
     end
+
+    describe "the weights" do
+      let(:weights) { Lain::Provider::ModelIdentity.new(digest: "sha256:abc", quant: "Q4_K_M") }
+
+      def with_weights(value)
+        described_class.current(toolset:, effort: "low", policy: "blake3:policy", weights: value, **place)
+      end
+
+      it "nests the digest and quant under a weights key when the run has them" do
+        expect(with_weights(weights).to_header.fetch("provenance").fetch("weights"))
+          .to eq("digest" => "sha256:abc", "quant" => "Q4_K_M")
+      end
+
+      it "writes no weights key when the run has none" do
+        expect(with_weights(nil).to_header.fetch("provenance")).not_to have_key("weights")
+      end
+
+      it "is deeply frozen with weights" do
+        expect(Ractor.shareable?(with_weights(weights))).to be(true)
+      end
+    end
   end
 end

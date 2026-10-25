@@ -177,6 +177,14 @@ module Lain
     # @return [ModelCapabilities]
     def model_capabilities(_model) = ModelCapabilities::NOTHING_KNOWN
 
+    # The weights `model` runs on, where the provider can state them. A
+    # provider with no weights to name (a hosted API) answers nil, and the
+    # session header then carries no weights key.
+    #
+    # @param _model [String]
+    # @return [ModelIdentity, nil]
+    def model_identity(_model) = nil
+
     # Raise unless the capability is present. The message names the provider, so
     # a degraded bench run says which arm lost the tactic.
     def require!(capability)

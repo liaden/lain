@@ -156,7 +156,8 @@ module Lain
         def run_and_write(journal)
           recorder = @memory.view
           toolset = @tools.call(recorder:, journal:)
-          provenance = SessionRecord::Provenance.launched(project: @project, toolset:, effort: @context.effort)
+          provenance = SessionRecord::Provenance.launched(project: @project, toolset:, effort: @context.effort,
+                                                          weights: @provider.model_identity(@context.model))
           scribe = SessionRecord::Scribe.new(journal:, context: @context, toolset:, profile: @profile,
                                              provenance: provenance.to_header)
           journal << @attribution

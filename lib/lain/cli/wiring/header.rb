@@ -18,7 +18,8 @@ module Lain
           context = backend.context
           { context:, profile: backend.run_profile, compaction: backend.compaction_header,
             middleware: backend.middleware,
-            provenance: SessionRecord::Provenance.launched(project:, toolset:, effort: context.effort, paths:) }
+            provenance: SessionRecord::Provenance.launched(project:, toolset:, effort: context.effort, paths:,
+                                                           weights: backend.provider.model_identity(backend.model)) }
         end
       end
     end

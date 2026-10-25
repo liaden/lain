@@ -430,6 +430,25 @@ module Lain
         @model_capabilities[model] ||= probe_capabilities(model)
       end
 
+      # Which weights THIS server holds for `model`: the manifest digest (the id
+      # `ollama ps` prints) of the resident runner and the quant its model file declares. Asked once per launch for
+      # the session header, so it is neither memoized nor on a per-turn path.
+      #
+      # Two bounded round trips (`/api/show`, `/api/ps`), each degrading alone
+      # to {ModelIdentity::UNRECORDED}: a launch never fails on a slow server.
+      # A model the server answered about but has not loaded is
+      # {ModelIdentity::NOT_RESIDENT}, which is a different fact from a probe
+      # that got no answer.
+      #
+      # @param model [String]
+      # @return [ModelIdentity, nil] nil when the deployment has no model
+      #   metadata, so the header states nothing rather than "unrecorded"
+      def model_identity(model)
+        return nil unless @deployment.model_metadata?
+
+        ModelIdentity.new(digest: resident_digest(model), quant: declared_quant(model))
+      end
+
       private
 
       # Same gate, same rescue set and same reasoning as
@@ -445,6 +464,34 @@ module Lain
         raise if e.receiver.equal?(@transport)
 
         ModelCapabilities::NOTHING_KNOWN
+      end
+
+      def declared_quant(model)
+        body = asked(nil) { wrapping_errors { @transport.model_details(model).body } }
+        details = body.is_a?(Hash) ? body["details"] : nil
+        readable(details.is_a?(Hash) ? details["quantization_level"] : nil)
+      end
+
+      def resident_digest(model)
+        body = asked(nil) { wrapping_errors { @transport.process_status.body } }
+        return ModelIdentity::UNRECORDED unless body.is_a?(Hash)
+
+        runner = loaded_runners(body).find { |entry| runs?(entry, model.to_s) }
+        runner ? readable(runner["digest"]) : ModelIdentity::NOT_RESIDENT
+      end
+
+      def readable(value) = value.is_a?(String) && !value.empty? ? value : ModelIdentity::UNRECORDED
+
+      # The rescue set the sibling probes use: a refused or slow server is no
+      # answer, and a transport that cannot answer at all stays loud.
+      def asked(fallback)
+        yield
+      rescue APIError
+        fallback
+      rescue NoMethodError => e
+        raise if e.receiver.equal?(@transport)
+
+        fallback
       end
 
       # The one 400 this arm translates, and only when the body names both

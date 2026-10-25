@@ -5,15 +5,18 @@ require "digest"
 
 module Lain
   module SessionRecord
-    Provenance = Data.define(:harness, :tool_surface, :effort, :policy, :cwd, :root, :home)
+    Provenance = Data.define(:harness, :tool_surface, :effort, :policy, :cwd, :root, :home, :weights)
 
     # What produced a run, as one header block: the lain that ran it, the tools
-    # it offered, the effort it asked for, the project policy it ran under, and
-    # where it ran. Two runs that differ in any of these are not comparable, and
-    # a reader can only tell that if the header says so.
+    # it offered, the effort it asked for, the project policy it ran under, where
+    # it ran and, for a local model, which weights it ran. Two runs that differ in
+    # any of these are not comparable, and a reader can only tell that if the
+    # header says so.
     #
-    # Every field is a String, and a value nobody could read is {UNRECORDED}
-    # rather than nil, so a reader compares two headers without a nil case.
+    # Every field but the weights is a String, and a value nobody could read is
+    # {UNRECORDED} rather than nil, so a reader compares two headers without a
+    # nil case. The weights are a {Provider::ModelIdentity} or nil, and nil means
+    # the provider has no weights to name, so the header gains no key.
     #
     # The harness covers source, not builds: gitignored artifacts such as
     # `lib/lain/lain.so` and `target/release/lain-fence` are outside it, so a
@@ -52,10 +55,11 @@ module Lain
         # @param home [String, nil] whose dotfiles the run could read
         # @param effort [String, nil] what the context asks the model for
         # @param policy [String] {.policy}'s digest of the config the run is under
+        # @param weights [Provider::ModelIdentity, nil] what the provider states it ran
         # @param harness [String] which lain ran; this process's own by default
         # @return [Provenance]
-        def current(toolset:, root:, cwd:, home:, effort:, policy:, harness: running_harness)
-          new(harness:, tool_surface: toolset.digest, effort:, policy:, cwd:, root:, home:)
+        def current(toolset:, root:, cwd:, home:, effort:, policy:, weights: nil, harness: running_harness)
+          new(harness:, tool_surface: toolset.digest, effort:, policy:, cwd:, root:, home:, weights:)
         end
 
         # @return [String] {.harness} of the installed lain, computed on the first call only
@@ -85,9 +89,10 @@ module Lain
         # @param toolset [Toolset] the tools the run offers
         # @param effort [String, nil] what the context asks the model for
         # @param paths [Paths] the user's home and config.rb
+        # @param weights [Provider::ModelIdentity, nil] what the provider states it ran
         # @return [Provenance]
-        def launched(project:, toolset:, effort:, paths: Paths.new)
-          current(toolset:, root: project.root, cwd: project.cwd, home: paths.home_or_nil, effort:,
+        def launched(project:, toolset:, effort:, paths: Paths.new, weights: nil)
+          current(toolset:, root: project.root, cwd: project.cwd, home: paths.home_or_nil, effort:, weights:,
                   policy: policy(project_dir: ProjectDir.new(root: project.root, paths:), paths:))
         end
 
@@ -133,13 +138,17 @@ module Lain
         end
       end
 
-      def initialize(harness:, tool_surface:, effort:, policy:, cwd:, root:, home:)
+      def initialize(harness:, tool_surface:, effort:, policy:, cwd:, root:, home:, weights: nil)
         fields = { harness:, tool_surface:, effort:, policy:, cwd:, root:, home: }
-        super(**fields.transform_values { |value| -(value || UNRECORDED).to_s })
+        super(weights:, **fields.transform_values { |value| -(value || UNRECORDED).to_s })
       end
 
       # @return [Hash{String=>Hash{String=>String}}] every field, nested under one key
-      def to_header = { "provenance" => to_h.transform_keys(&:to_s) }
+      def to_header
+        fields = to_h.except(:weights).transform_keys(&:to_s)
+        fields["weights"] = weights.to_h.transform_keys(&:to_s) if weights
+        { "provenance" => fields }
+      end
     end
   end
 end

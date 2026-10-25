@@ -107,6 +107,13 @@ RSpec.describe Lain::Provider::Journaled do
       expect(provider.trained_context_tokens("qwen3:4b")).to eq(inner.trained_context_tokens("qwen3:4b"))
     end
 
+    it "forwards the weights its inner provider states" do
+      weights = Lain::Provider::ModelIdentity.new(digest: "sha256:abc", quant: "Q4_K_M")
+      allow(inner).to receive(:model_identity).with("qwen3:4b").and_return(weights)
+
+      expect(provider.model_identity("qwen3:4b")).to eq(weights)
+    end
+
     # THE STRUCTURAL CHECK the example above cannot be. This is a DECORATOR, not
     # a subclass, so a message added to {Lain::Provider} reaches it only by being
     # written into the `delegate` list -- and a hand-kept list checked by

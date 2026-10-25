@@ -91,6 +91,12 @@ RSpec.describe Lain::Provider do
     end
   end
 
+  describe "#model_identity" do
+    it "states no weights from the abstract surface" do
+      expect(described_class.new.model_identity("claude-opus-4-8")).to be_nil
+    end
+  end
+
   # The typed form of the same question, which a window book needs because
   # "nothing is resident" and "nobody answered" cost differently to ask again.
   # A provider with no server to ask can never be unreachable, so the base

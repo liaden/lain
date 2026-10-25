@@ -16,7 +16,7 @@ require "tmpdir"
 # and a throwaway XDG_STATE_HOME, so the run's reads and its session record land
 # somewhere the example owns.
 #
-# Recorded 2026-08-17 against ollama on this box, qwen3:4b (the arm's
+# Recorded 2026-10-25 against ollama on this box, qwen3:4b (the arm's
 # DEFAULT_MODEL, and the model the provider cassette recorded against).
 #
 # == What reds this file, what merely ROTS it, and why re-recording is the repair
@@ -85,6 +85,9 @@ require "tmpdir"
 #      the recording silently does not happen.
 #
 # == WHY EXACTLY ONE `/api/ps`, for a run of two turns
+#
+# (The cassette holds a second `/api/ps` beside an `/api/show`: the launch asks both once to record
+# which weights the run used, and that is not the window probe counted below.)
 #
 # `Provider::Ollama#context_window_tokens` is deliberately un-memoised and the
 # provider cassette's header says an N-turn cassette wants N probes. That is
@@ -345,7 +348,7 @@ RSpec.describe "a whole recorded run", :seam, records: :ollama,
     expect(run.answer.text).to eq(T14RecordedRun::REPLY)
     expect(run.answer.model).to eq(T14RecordedRun::MODEL)
     expect(run.answer).to stop_with(:end_turn)
-    expect([run.answer.usage.input_tokens, run.answer.usage.output_tokens]).to eq([3_446, 367])
+    expect([run.answer.usage.input_tokens, run.answer.usage.output_tokens]).to eq([5_408, 229])
   end
 
   # The first assertion the cassette cannot fake: a tool_result is
@@ -451,11 +454,11 @@ RSpec.describe "a whole recorded run", :seam, records: :ollama,
       .to eq([T14RecordedRun::SERVED_CONTEXT_TOKENS])
     expect(decisions.map { |record| record["provenance"] }.uniq).to eq(["probed"])
     # The NUMERATOR, pinned beside the denominator it is divided by. The leading
-    # nil is the first turn, decided before any usage exists to decide on; 3,401
+    # nil is the first turn, decided before any usage exists to decide on; 5,363
     # is what the recorded round trip reported. Without this a usage-decode
     # regression leaves the accounting wrong and this example green, since a
     # provenance and a window can both be right about a number nobody measured.
-    expect(decisions.map { |record| record["used_tokens"] }).to eq([nil, 3_401])
+    expect(decisions.map { |record| record["used_tokens"] }).to eq([nil, 5_363])
   end
 
   # The other half of "the cassette is the boundary", copied from the provider

@@ -451,6 +451,38 @@ RSpec.describe Lain::CLI::Wiring do
           expect(header.dig("provenance", "tool_surface")).to eq(agent.toolset.digest)
         end
 
+        def local_ollama_backend(models)
+          model = backend.model
+          transport = Class.new do
+            define_method(:model_details) do |_|
+              Struct.new(:body).new({ "details" => { "quantization_level" => "Q4_K_M" } })
+            end
+            define_method(:process_status) { Struct.new(:body).new({ "models" => models.call(model) }) }
+          end.new
+          offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 },
+                                    mock: Lain::Provider::Ollama.new(transport:), root: backend_root)
+        end
+
+        def weights_of(models)
+          wiring = new_wiring(options: { grace: 5 }, chronicle:, status_feed:)
+          recorder, session = wiring.run_state(nil)
+          wiring.wire_agent(channel:, recorder:, session:, backend: local_ollama_backend(models))
+          journal_records(journal_io).find { |r| r["type"] == "session" }.dig("provenance", "weights")
+        end
+
+        it "records the weights of a local ollama run: the resident digest and the quant" do
+          expect(weights_of(->(model) { [{ "model" => model, "digest" => "sha256:abc" }] }))
+            .to eq("digest" => "sha256:abc", "quant" => "Q4_K_M")
+        end
+
+        it "records a local model that is not resident as such" do
+          expect(weights_of(->(_) { [] })).to eq("digest" => "not resident", "quant" => "Q4_K_M")
+        end
+
+        it "records no weights for a provider that states none" do
+          expect(provenance_of(new_wiring(options: { grace: 5 }, chronicle:, status_feed:))).not_to have_key("weights")
+        end
+
         it "records the running lain's harness" do
           expect(provenance_of(new_wiring(options: { grace: 5 }, chronicle:, status_feed:)).fetch("harness"))
             .to eq(Lain::SessionRecord::Provenance.running_harness)

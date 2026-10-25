@@ -1754,4 +1754,89 @@ RSpec.describe Lain::Provider::Ollama do
       end
     end.new
   end
+
+  describe "#model_identity" do
+    def identity_transport(show:, running:)
+      Class.new do
+        define_method(:model_details) { |_model| show.respond_to?(:call) ? show.call : Struct.new(:body).new(show) }
+        define_method(:process_status) { running.respond_to?(:call) ? running.call : Struct.new(:body).new(running) }
+      end.new
+    end
+
+    let(:show) { { "details" => { "quantization_level" => "Q4_K_M" } } }
+    let(:resident) { { "models" => [{ "model" => "qwen3:4b", "digest" => "sha256:abc" }] } }
+
+    def identity(show: self.show, running: resident, model: "qwen3:4b")
+      described_class.new(transport: identity_transport(show:, running:)).model_identity(model)
+    end
+
+    it "reads the quant off /api/show and the digest off the resident runner" do
+      expect(identity).to eq(Lain::Provider::ModelIdentity.new(digest: "sha256:abc", quant: "Q4_K_M"))
+    end
+
+    it "matches an untagged request to the :latest runner ollama prints back" do
+      latest = { "models" => [{ "model" => "qwen3:latest", "digest" => "sha256:abc" }] }
+
+      expect(identity(running: latest, model: "qwen3").digest).to eq("sha256:abc")
+    end
+
+    it "records a model that is not resident as such and still records its quant" do
+      expect(identity(running: { "models" => [{ "model" => "other:1b", "digest" => "sha256:zzz" }] }))
+        .to have_attributes(digest: "not resident", quant: "Q4_K_M")
+    end
+
+    it "records a quant the description omits as unrecorded" do
+      expect(identity(show: { "capabilities" => [] })).to have_attributes(digest: "sha256:abc", quant: "unrecorded")
+    end
+
+    it "records an unanswered /api/ps as an unrecorded digest, not as not resident" do
+      ps = -> { raise Faraday::TimeoutError }
+
+      expect(identity(running: ps)).to have_attributes(digest: "unrecorded", quant: "Q4_K_M")
+    end
+
+    it "records an unanswered /api/show as an unrecorded quant" do
+      show = -> { raise Faraday::ConnectionFailed, "refused" }
+
+      expect(identity(show:)).to have_attributes(digest: "sha256:abc", quant: "unrecorded")
+    end
+
+    it "records a body that is not a description as unrecorded in both parts" do
+      expect(identity(show: "nope", running: "nope")).to have_attributes(digest: "unrecorded", quant: "unrecorded")
+    end
+
+    it "records an empty digest and an empty quant as unrecorded" do
+      expect(identity(show: { "details" => { "quantization_level" => "" } },
+                      running: { "models" => [{ "model" => "qwen3:4b", "digest" => "" }] }))
+        .to have_attributes(digest: "unrecorded", quant: "unrecorded")
+    end
+
+    it "reads a failure inside the HTTP stack, not in the transport, as unrecorded" do
+      expect(described_class.new(api_base: "localhost:11434").model_identity("qwen3:4b"))
+        .to have_attributes(digest: "unrecorded", quant: "unrecorded")
+    end
+
+    it "still raises for a transport that cannot answer /api/show at all" do
+      mute = Class.new { def process_status = Struct.new(:body).new({ "models" => [] }) }.new
+
+      expect { described_class.new(transport: mute).model_identity("qwen3:4b") }
+        .to raise_error(NoMethodError, /model_details/)
+    end
+
+    it "still raises for a transport that cannot answer /api/ps at all" do
+      mute = Class.new { def model_details(_model) = Struct.new(:body).new({}) }.new
+
+      expect { described_class.new(transport: mute).model_identity("qwen3:4b") }
+        .to raise_error(NoMethodError, /process_status/)
+    end
+
+    it "states nothing for a deployment with no model metadata, asking nothing" do
+      transport = Class.new do
+        define_method(:model_details) { |_| raise "cloud must not ask /api/show" }
+        define_method(:process_status) { raise "cloud must not ask /api/ps" }
+      end.new
+
+      expect(described_class.cloud(api_key: "sk-test", transport:).model_identity("qwen3:4b")).to be_nil
+    end
+  end
 end

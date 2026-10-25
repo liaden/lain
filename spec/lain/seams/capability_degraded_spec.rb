@@ -33,7 +33,7 @@ RSpec.describe "capability degradation on the chat path", :seam do
 
   def ndjson_stream = "#{stream_lines.map { |line| JSON.generate(line) }.join("\n")}\n"
 
-  # The three questions a live chat asks its ollama transport. `process_status`
+  # The questions a live chat asks its ollama transport. `process_status`
   # is the least obvious: a wired chat asks `/api/ps` which window this server
   # is SERVING before it builds the run's {Lain::ContextWindow} book, and a real ollama
   # answers it -- so a canned transport standing in for one has to as well.
@@ -54,6 +54,7 @@ RSpec.describe "capability degradation on the chat path", :seam do
       end
       # rubocop:enable Lint/UnusedBlockArgument
       define_method(:process_status) { Struct.new(:body).new({ "models" => [] }) }
+      define_method(:model_details) { |_model| Struct.new(:body).new({}) }
     end.new
   end
 

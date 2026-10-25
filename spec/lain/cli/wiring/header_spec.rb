@@ -38,4 +38,23 @@ RSpec.describe Lain::CLI::Wiring::Header do
     expect(header.fields(backend, toolset).fetch(:provenance))
       .to have_attributes(root: @root, cwd: @root, home: "/home/tester", tool_surface: toolset.digest)
   end
+
+  describe "the weights" do
+    let(:weights) { Lain::Provider::ModelIdentity.new(digest: "sha256:abc", quant: "Q4_K_M") }
+
+    def provenance_with(identity)
+      provider = Lain::Provider::Mock.new
+      allow(provider).to receive(:model_identity).with(backend.model).and_return(identity)
+      allow(backend).to receive(:provider).and_return(provider)
+      header.fields(backend, toolset).fetch(:provenance)
+    end
+
+    it "asks the backend's provider about the backend's model" do
+      expect(provenance_with(weights).weights).to eq(weights)
+    end
+
+    it "records none for a provider that states none" do
+      expect(provenance_with(nil).weights).to be_nil
+    end
+  end
 end

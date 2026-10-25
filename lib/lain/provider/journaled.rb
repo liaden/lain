@@ -81,8 +81,8 @@ module Lain
       # out as ten bodies, so the one message it does decorate (`#complete`)
       # is the only method in the class and a reader cannot miss it.
       delegate :capabilities, :supports?, :require!, :cache_profile, :context_window_tokens, :window_probe,
-               :trained_context_tokens, :serves?, :model_capabilities, :admission_endpoint, :encode, :to_s,
-               :count_tokens, to: :@inner
+               :trained_context_tokens, :serves?, :model_capabilities, :model_identity, :admission_endpoint, :encode,
+               :to_s, :count_tokens, to: :@inner
     end
   end
 end

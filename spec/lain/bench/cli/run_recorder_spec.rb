@@ -67,6 +67,13 @@ RSpec.describe Lain::Bench::CLI::RunRecorder do
         .and(satisfy { |block| block.keys.sort == %w[cwd effort harness home policy root tool_surface] })
     end
 
+    it "records the weights the provider states for the context's model" do
+      weights = Lain::Provider::ModelIdentity.new(digest: "sha256:abc", quant: "Q4_K_M")
+      allow(provider).to receive(:model_identity).with("claude-sonnet-4-6").and_return(weights)
+
+      expect(written.first.dig("provenance", "weights")).to eq("digest" => "sha256:abc", "quant" => "Q4_K_M")
+    end
+
     it "writes the run profile it was handed into the header" do
       recorder = described_class.new(provider:, context:, attribution:, prompts: ["hi"],
                                      profile: { "provider" => "ollama", "num_ctx" => 8192 })
