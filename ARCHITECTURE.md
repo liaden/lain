@@ -1095,6 +1095,14 @@ lower, upper and a digit, 3.5 bits per character, or hex at 3.0. Nothing under 8
 detector reads whole (`Password=pw;Database=x`) lists that run, so the password printed alone is not masked, and a
 passed name that is not hinted gets no relaxed bar. Only passed names are scanned, never the kept ones. A masked
 result journals `command_redacted` with a count of regions, never their bytes.
+
+What reaches the session file follows from that. A lent secret is masked in its plain and `KEY=value` spellings,
+as a placeholder. Its base64 and hex spellings are caught only because a long encoded blob looks like a
+credential, and then the whole output is withheld; a short secret (13 bytes in the spec) in base64 is not caught
+and reaches the session file. A reshaped secret (reversed, split across lines, rot13, partial) reaches it too: the
+mask catches an accidental print, not an exfiltration. `spec/lain/seams/secrets_at_rest_spec.rb` pins each
+limit, so a fix flips it on purpose.
+
 The live display gets the same mask, by the boundary (`Sensitivity::Display`): `Effect::Handler::Live` puts the
 chat's display on each invocation, and it feeds each output stream through a `Sensitivity::TextMask::Stream` over
 the same `Sensitivity::Secrets` the result masker reads, both streams drawing on 1 numbering per call (the model's
