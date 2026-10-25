@@ -95,7 +95,8 @@ module Lain
       # The analyzers this report folds, named for the "clean session" state --
       # kept as data (not re-derived from KNOBS' keys) so the two can evolve
       # independently: one knob can cover several analyzers' findings and vice
-      # versa.
+      # versa. {Friction::Claims} is left off on purpose: this sentence is
+      # replayed byte for byte inside recorded e2e cassettes.
       ANALYZERS = ["Grader::FrustrationRepair", "Grader::ToolSteering", "Bench::Rewrites",
                    "Friction::CacheWaste"].freeze
 
@@ -122,7 +123,7 @@ module Lain
       def render
         lines = signal_lines
         body = lines.empty? ? clean_render : (["#{lines.size} friction signal(s):"] + lines).join("\n")
-        ([body] + cache_waste_notes).join("\n")
+        ([body] + cache_waste_notes + claims_notes).join("\n")
       end
 
       private
@@ -132,7 +133,7 @@ module Lain
       end
 
       def signal_lines
-        rephrase_lines + steering_lines + rewrite_lines + cache_waste_lines
+        rephrase_lines + steering_lines + rewrite_lines + cache_waste_lines + claim_lines
       end
 
       # ONE projection over the entries, injected into both graders that read
@@ -183,6 +184,23 @@ module Lain
       def steering_line(flag)
         "tool_steering: #{flag.name} selected #{format("%.2f", flag.ratio)}x its declared share: " \
           "#{KNOBS.fetch(:tool_steering)}"
+      end
+
+      # A session with no claim leaves this line out because the improve cassette replays the
+      # clean render byte for byte, so silence also covers claims the phrase table missed.
+      def claims = @claims ||= Claims.new(@entries, tool_call_index: call_index)
+
+      def claims_notes
+        checked = claims.checked
+        return [] if checked.zero? || claims.unbacked.any?
+
+        ["claims: #{checked} checked, none unbacked (Friction::Claims)"]
+      end
+
+      def claim_lines
+        claims.unbacked.map do |unbacked|
+          "unbacked_claim at #{unbacked.turn_digest}: #{unbacked.claim} (#{unbacked.reason})"
+        end
       end
 
       def rewrite_lines

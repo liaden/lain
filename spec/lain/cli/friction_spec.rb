@@ -46,6 +46,13 @@ RSpec.describe Lain::CLI::Friction do
     expect(cli.report("broken")).to include("system changed 1")
   end
 
+  it "lists a claim the session's calls do not back" do
+    claims = File.join(__dir__, "..", "..", "fixtures", "friction", "claims", "false_tests.ndjson")
+    FileUtils.cp(claims, File.join(sessions_dir, "claims.ndjson"))
+
+    expect(cli.report("claims")).to include("unbacked_claim at d-claim: ran the tests")
+  end
+
   # The ONE session-resolution refusal, shared with `lain consolidate` and
   # `lain improve` ({CLI::SessionFile}) -- this class no longer owns a copy, so
   # a rescuer naming the type catches all three surfaces.

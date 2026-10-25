@@ -1,0 +1,3 @@
+{"type":"session","context_class":"Lain::Context","model":"claude-sonnet-4-6","max_tokens":1024,"system":"be terse","stream":true,"extra":{},"head":"d-claim","tools":[]}
+{"type":"turn","digest":"d-1","role":"user","content":[{"type":"text","text":"hi"}],"parent":null,"meta":{}}
+{"type":"turn","digest":"d-claim","role":"assistant","content":[{"type":"text","text":"Hello, how can I help?"}],"parent":"d-1","meta":{}}

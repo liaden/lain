@@ -1,0 +1,5 @@
+{"type":"session","context_class":"Lain::Context","model":"claude-sonnet-4-6","max_tokens":1024,"system":"be terse","stream":true,"extra":{},"head":"d-claim","tools":[]}
+{"type":"turn","digest":"d-1","role":"user","content":[{"type":"text","text":"ship it"}],"parent":null,"meta":{}}
+{"type":"turn","digest":"d-2","role":"assistant","content":[{"type":"tool_use","id":"tu1","name":"bash","input":{"command":"git commit -m fix"}}],"parent":"d-1","meta":{}}
+{"type":"turn","digest":"d-3","role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","content":"ok","is_error":false}],"parent":"d-2","meta":{}}
+{"type":"turn","digest":"d-claim","role":"assistant","content":[{"type":"text","text":"Done, I committed the change."}],"parent":"d-3","meta":{}}

@@ -93,6 +93,14 @@ RSpec.describe Lain::Friction::Report do
       expect(described_class.new(fixture("clean")).render)
         .to eq(described_class.new(fixture("clean")).render)
     end
+
+    # NullOracle::INSTANCE is frozen (deeply-frozen value object doctrine), so
+    # it cannot be a message-expectation double -- reading the ivar directly
+    # pins "never anything but Null by default" without needing a live
+    # provider or a mock that a frozen singleton would reject.
+    it "never touches a provider -- the injected oracle stays Null by default" do
+      expect(report.instance_variable_get(:@oracle)).to be(Lain::Grader::FrustrationRepair::NullOracle.instance)
+    end
   end
 
   # One report, one projection. FrustrationRepair and ToolSteering read the
@@ -282,5 +290,38 @@ RSpec.describe Lain::Friction::Report do
 
       expect(described_class.new(read).render).not_to include("never read")
     end
+  end
+
+  describe "a session whose final text claims work no call backs" do
+    subject(:report) { described_class.new(File.foreach(path)) }
+
+    let(:path) { File.join(__dir__, "..", "..", "fixtures", "friction", "claims", "false_tests.ndjson") }
+
+    it "lists the unbacked claim at the turn that made it" do
+      expect(report.render).to include(
+        "unbacked_claim at d-claim: ran the tests (no test-runner call in the session)"
+      )
+    end
+
+    it "counts it as a friction signal" do
+      expect(report.render).to start_with("1 friction signal(s):")
+    end
+  end
+
+  describe "a session whose every claim is backed" do
+    subject(:report) { described_class.new(File.foreach(path)) }
+
+    let(:path) { File.join(__dir__, "..", "..", "fixtures", "friction", "claims", "clean_tests.ndjson") }
+
+    it "keeps the analyzers sentence and adds a separate line saying Claims checked" do
+      expect(report.render.lines.map(&:chomp)).to include(
+        "no friction found -- analyzers run: #{described_class::ANALYZERS.join(", ")}",
+        "claims: 1 checked, none unbacked (Friction::Claims)"
+      )
+    end
+  end
+
+  it "says nothing about claims when the session made none" do
+    expect(described_class.new(fixture("clean")).render).not_to include("claims:")
   end
 end
