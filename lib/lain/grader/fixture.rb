@@ -36,7 +36,8 @@ module Lain
       def grade(subject)
         outcomes = @criteria.map { |criterion| [criterion, evaluate(criterion, subject)] }
         met = outcomes.count { |(_criterion, reason)| reason.nil? }
-        Grade.new(score: met.fdiv(@criteria.size), pass: met == @criteria.size, why: explain(outcomes))
+        Grade.new(score: met.fdiv(@criteria.size), pass: met == @criteria.size, why: explain(outcomes),
+                  failure_kind: (:grader if outcomes.any? { |(_criterion, reason)| raised?(reason) }))
       end
 
       private
@@ -45,8 +46,13 @@ module Lain
       # predicate that RAISES is a failed check whose reason is the exception,
       # not a crash -- a grader that dies on one bad criterion is less useful
       # than one that reports it, and the failure still lands in `#why`.
+      NOT_HELD = "did not hold"
+      private_constant :NOT_HELD
+
+      def raised?(reason) = !reason.nil? && reason != NOT_HELD
+
       def evaluate(criterion, subject)
-        criterion.predicate.call(subject) ? nil : "did not hold"
+        criterion.predicate.call(subject) ? nil : NOT_HELD
       rescue StandardError => e
         "#{e.class}: #{e.message}"
       end

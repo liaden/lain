@@ -93,6 +93,25 @@ module DriverSpecSupport
     end
   end
 
+  # Answers each task as scripted: a graded run, or a refusal from the provider.
+  class AttributedArm < Lain::Arm
+    def initialize(name:, outcomes:)
+      super(name:)
+      @outcomes = outcomes
+      @ledger = FixedLedger.new(cache_creation_input_tokens: 0)
+    end
+
+    def run(task, **)
+      outcome = @outcomes.fetch(task)
+      if outcome == :refusal
+        raise Lain::Response::Failed,
+              Lain::Response::Failure.new(stop_reason: :refusal, message: "no")
+      end
+
+      Lain::Arm::Run.new(arm: name, timeline: nil, grade: outcome, elapsed: 0.1, ledger: @ledger)
+    end
+  end
+
   class CeilingArm < Lain::Arm
     def run(_task, **)
       raise Lain::Budget::Exceeded, "loop ran 25 iterations, ceiling is 25"
@@ -1069,6 +1088,76 @@ RSpec.describe Lain::Arm::Driver do
     it "refuses a nil journal at construction rather than dying mid-suite, after the spend" do
       expect { described_class.new(arms, tasks:, spawn_seam:, grader:, journal: nil) }
         .to raise_error(ArgumentError, /journal/i)
+    end
+  end
+
+  describe "#report — failure attribution" do
+    def failing(kind = nil) = Lain::Grader::Grade.new(score: 0.0, why: "missed", failure_kind: kind)
+
+    def attribution_row(report, arm)
+      header, _rule, *rows = section_for(report, "failure attribution (failed attempts)").lines.drop(1).map(&:chomp)
+      cells = rows.find { |line| line.start_with?("#{arm} ") }.split(/\s{2,}/)
+      header.split(/\s{2,}/).zip(cells).to_h
+    end
+
+    let(:four) { %w[one two three four] }
+    let(:outcomes) do
+      { "one" => failing, "two" => :refusal, "three" => failing(:grader), "four" => failing }
+    end
+    let(:arm) { DriverSpecSupport::AttributedArm.new(name: "a", outcomes:) }
+
+    def report_with(labels: Lain::Bench::Labels::NONE)
+      described_class.new([arm], tasks: four, spawn_seam:, grader:, labels:).report
+    end
+
+    def labels_for(path_lines)
+      path = File.join(Dir.mktmpdir, "labels.jsonl")
+      File.write(path, path_lines.join("\n"))
+      Lain::Bench::Labels.load(path, allowed: Lain::Compare::Attribution::KINDS.map(&:to_s))
+    end
+
+    it "attributes each failure by what is known about it" do
+      labels = labels_for(["{\"digest\":\"#{Lain::Canonical.digest("four")}\",\"label\":\"prompt\"}"])
+
+      expect(attribution_row(report_with(labels:), "a"))
+        .to include("reasoning" => "1", "environment" => "1", "grader" => "1", "prompt" => "1", "unattributed" => "0")
+    end
+
+    it "counts a failure no one can place as reasoning when unlabelled" do
+      expect(attribution_row(report_with, "a")).to include("reasoning" => "2", "prompt" => "0")
+    end
+
+    it "lets a sidecar label override the inferred kind" do
+      labels = labels_for(["{\"digest\":\"#{Lain::Canonical.digest("one")}\",\"label\":\"grader\"}"])
+
+      expect(attribution_row(report_with(labels:), "a")).to include("reasoning" => "1", "grader" => "2")
+    end
+
+    it "overrides by the digest of the graded subject" do
+      recorder = DriverSpecSupport::RecordingGrader.new(
+        Lain::Grader::Fixture.new("never") { |f| f.check("never holds") { false } }
+      )
+      described_class.new([arms.first], tasks:, spawn_seam:, grader: recorder).report
+      labels = labels_for(["{\"digest\":\"#{recorder.subjects.first.head_digest}\",\"label\":\"grader\"}"])
+
+      report = described_class.new([arms.first], tasks:, spawn_seam:, grader: recorder, labels:).report
+
+      expect(attribution_row(report, "single-thread")).to include("reasoning" => "1", "grader" => "1")
+    end
+
+    it "counts each failed attempt, not each failed task" do
+      script = { "one" => [false, false], "two" => [true, true] }
+      two = DriverSpecSupport::ScriptedPassArm.new(name: "s", script:)
+      report = described_class.new([two], tasks: %w[one two], spawn_seam:, grader:, attempts: 2).report
+
+      expect(report).to include("failure attribution (failed attempts)")
+      expect(attribution_row(report, "s")).to include("unattributed" => "2")
+    end
+
+    it "prints no attribution table when nothing failed" do
+      report = described_class.new(arms, tasks:, spawn_seam:, grader:).report
+
+      expect(report).not_to include("failure attribution")
     end
   end
 end

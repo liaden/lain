@@ -390,6 +390,34 @@ RSpec.describe Lain::Bench::CLI do
       end
     end
 
+    describe "with a labels sidecar" do
+      let(:arms) do
+        [BenchAttemptArm.new(name: "a", script: { "t1" => [false], "t2" => [false] })]
+      end
+      let(:tasks) { %w[t1 t2] }
+
+      def sidecar(*lines)
+        path = File.join(Dir.mktmpdir, "labels.jsonl")
+        File.write(path, lines.join("\n"))
+        path
+      end
+
+      it "attributes a failed task to its sidecar label and leaves the one it cannot place unattributed" do
+        labels = sidecar("{\"digest\":\"#{Lain::Canonical.digest("t1")}\",\"label\":\"prompt\"}")
+
+        report = cli.arm_report(arms, tasks:, spawn_seam:, grader:, labels:)
+
+        expect(report).to match(/^a\s+0\s+0\s+0\s+1\s+1\s*$/)
+      end
+
+      it "refuses a sidecar with an unknown label before running anything" do
+        labels = sidecar('{"digest":"x","label":"maybe"}')
+
+        expect { cli.arm_report(arms, tasks:, spawn_seam:, grader:, labels:) }.to raise_error(ArgumentError, /maybe/)
+        expect(arms.first.instance_variable_get(:@script).values.flatten).to eq([false, false])
+      end
+    end
+
     it "returns the driver's report as a String, without printing" do
       report = nil
       expect { report = cli.arm_report(arms, tasks:, spawn_seam:, grader:) }

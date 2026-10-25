@@ -169,12 +169,13 @@ module Lain
       # @param confine [String, nil] what the arms' shell was confined by, named in the report header
       # @param attempts [Integer] fresh runs of each task per arm
       # @param subset_of [String, nil] the larger suite the tasks are a cut of; the report says its gap was not measured
+      # @param labels [String, nil] path of a {Labels} sidecar saying why failed tasks failed
       # @return [String] never printed here
       # @raise [Lain::CLI::IsolationBackend::Unknown] on a name outside the
       #   resolver's advertised set
       # @raise [ArgumentError] on backend options with no name to resolve
       def arm_report(arms, tasks:, spawn_seam:, grader:, isolation: nil, journal: nil, fixture: nil, model: nil,
-                     graded: nil, confine: nil, attempts: 1, subset_of: nil, **backend_options)
+                     graded: nil, confine: nil, attempts: 1, subset_of: nil, labels: nil, **backend_options)
         # Absent, NO keyword at all on either side, so each one's own default
         # stands -- {Arm::Driver}'s Null channel here, and {#arm_isolation}'s
         # deliberate refusal of options given with no name to resolve them for.
@@ -184,9 +185,13 @@ module Lain
         # {Isolation::Journal} decorator once `--isolation` requires a journal,
         # so a class name renders `none` and `worktree` identically.
         Arm::Driver.new(arms, tasks:, spawn_seam:, grader:, fixture:, model:, confine:, isolation_name: isolation,
-                              attempts:, subset: subset_named(subset_of),
+                              attempts:, subset: subset_named(subset_of), labels: labels_from(labels),
                               **arm_isolation(isolation, **backend_options, **journaling),
                               **graded_journal(journaling, graded)).report
+      end
+
+      def labels_from(path)
+        path.nil? ? Labels::NONE : Labels.load(path, allowed: Compare::Attribution::KINDS.map(&:to_s))
       end
 
       def subset_named(name)
@@ -248,6 +253,7 @@ module Lain
       # @param paths [Lain::Paths, nil] the state home; the process's when nil
       # @param attempts [Integer] `--attempts`: fresh runs of each task per arm
       # @param subset_of [String, nil] `--subset-of`: the larger suite this one is a cut of
+      # @param labels [String, nil] `--labels`: a {Labels} sidecar saying why failed tasks failed
       # @param spawn_options [Hash] forwarded verbatim to {SpawnSeam}; ITS
       #   signature owns those defaults, including the unset `system:` that
       #   teaches the arms the FILE/END trajectory format the gold graders
@@ -267,7 +273,8 @@ module Lain
       def arms_report(fixture_path:, backend:, isolation: nil, journal: nil,
                       decompose: LiveArms::DEFAULT_DECOMPOSE, router: nil, cheap_model: nil,
                       price_book: PriceBook.default, memory: nil, arms: Lain::CLI::Arms::OFF,
-                      probe: Harness::PROBE, project: nil, paths: nil, attempts: 1, subset_of: nil, **spawn_options)
+                      probe: Harness::PROBE, project: nil, paths: nil, attempts: 1, subset_of: nil, labels: nil,
+                      **spawn_options)
         # Declared before anything that could be interrupted, so the rescue
         # below always has an Array to report on rather than the bare local a
         # Ctrl-C before the first grade would otherwise leave nil.
@@ -287,7 +294,7 @@ module Lain
         live = LiveArms.build(price_book:, decompose:, model: spawn_seam.model, router:, cheap_model:, journal:)
         arm_report(live,
                    tasks: suite.map(&:prompt), spawn_seam:, fixture: fixture_path, model: spawn_seam.model,
-                   grader: SuiteGrader.new(suite), graded:, confine: confinement.state, attempts:, subset_of:,
+                   grader: SuiteGrader.new(suite), graded:, confine: confinement.state, attempts:, subset_of:, labels:,
                    **lease_options(isolation:, journal:))
       rescue Interrupt
         partial_arms_report(graded)

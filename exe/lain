@@ -944,6 +944,9 @@ class LainCLI < Thor
     method_option :subset_of, type: :string,
                               desc: "Name of the larger suite this one is a cut of; the report says its gap " \
                                     "was not measured"
+    method_option :labels, type: :string,
+                           desc: "JSONL sidecar, one {\"digest\",\"label\",\"by\"} object per line, saying why a " \
+                                 "failed attempt failed; label is one of environment, reasoning, grader, prompt"
     # Of the chat's exec and arm flags only this one means something to a bench; `classes` is a chat's
     # approval arm and would change nothing here.
     method_option :confine, type: :string, enum: Lain::Bench::CLI::CONFINES, banner: "ARM", desc: ExecFlags::BENCH_CONFINE
@@ -978,7 +981,8 @@ class LainCLI < Thor
 
       def arms_knobs
         { system: options[:system], isolation: options[:isolation], cheap_model: options[:cheap_model],
-          memory: options[:memory], attempts: options[:attempts], subset_of: options[:subset_of] }
+          memory: options[:memory], attempts: options[:attempts], subset_of: options[:subset_of],
+          labels: options[:labels] }
       end
 
       # The argv door in front of Bench::CLI#arm_isolation's deliberate CRASH.

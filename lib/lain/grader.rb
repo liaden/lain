@@ -11,8 +11,10 @@ module Lain
   # so its subject is a set of findings rather than a single Grade.
   module Grader
     # `score` is a 0.0..1.0 Float, `pass` a boolean, `why` the human-readable
-    # reason. Frozen, so two verdicts over the same subject are `==`.
-    Grade = Data.define(:score, :pass, :why) do
+    # reason, `failure_kind` nil or one of {Compare::Attribution::KINDS} when the
+    # grader itself knows why a failing grade failed. Frozen, so two verdicts
+    # over the same subject are `==`.
+    Grade = Data.define(:score, :pass, :why, :failure_kind) do
       include Declarative
 
       # A judgment nobody can read the reason for is unusable, so `why` is the
@@ -37,11 +39,15 @@ module Lain
       # `score.to_f` stays AHEAD of the check, where it has always been: a
       # `score` that cannot answer `#to_f` raises NoMethodError before `why` is
       # ever judged, and reordering would quietly turn that into an ArgumentError.
-      def initialize(score:, why:, pass: nil)
+      def initialize(score:, why:, pass: nil, failure_kind: nil)
         clamped = score.to_f.clamp(0.0, 1.0)
         self.class.check!(why:)
+        unless failure_kind.nil? || Compare::Attribution::KINDS.include?(failure_kind)
+          raise ArgumentError,
+                "failure_kind must be nil or one of #{Compare::Attribution::KINDS}, got #{failure_kind.inspect}"
+        end
 
-        super(score: clamped, pass: pass.nil? ? clamped >= 1.0 : pass, why: -why.to_s)
+        super(score: clamped, pass: pass.nil? ? clamped >= 1.0 : pass, why: -why.to_s, failure_kind:)
       end
 
       def pass? = pass
