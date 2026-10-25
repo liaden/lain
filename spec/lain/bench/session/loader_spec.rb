@@ -415,6 +415,67 @@ RSpec.describe Lain::Bench::Session::Loader do
     end
   end
 
+  # What produced the run rides on the Recording so Variance can refuse to pool
+  # runs that differ in it; each fact is read as the header or journal wrote it.
+  describe "the run's provenance" do
+    let(:provenance) do
+      Lain::SessionRecord::Provenance.new(harness: "abc123+blake3:d1", tool_surface: "blake3:t1", effort: "high",
+                                          policy: "blake3:p1", cwd: "/w/sub", root: "/w", home: "/h",
+                                          weights: Lain::Provider::ModelIdentity.new(digest: "sha256:w1",
+                                                                                     quant: "Q4_K_M"))
+    end
+    let(:writer) { Lain::Liveness::Writer.new(pid: 7, start: "0", host: "bench-a") }
+
+    def provenanced_entries
+      Lain::SessionRecord::Scribe.new(journal:, context:, toolset:, workspace:, writer:,
+                                      provenance: provenance.to_header)
+                                 .catch_up(agent.timeline).close(reason: :exit)
+      journal_io.string.each_line
+    end
+
+    it "carries the header's provenance block as the Scribe wrote it" do
+      expect(described_class.new(provenanced_entries).recording.provenance)
+        .to eq(JSON.parse(JSON.generate(provenance.to_header)).fetch("provenance"))
+    end
+
+    it "carries an empty provenance for a header written before the block existed" do
+      expect(recording.provenance).to eq({})
+    end
+
+    it "carries the host of the header's writer" do
+      expect(described_class.new(provenanced_entries).recording.host).to eq("bench-a")
+    end
+
+    it "carries an unrecorded host for a header naming no writer" do
+      expect(recording.host).to eq("unrecorded")
+    end
+
+    it "carries each model the agent's turn_usage records name, once, leaving a spawned child's out" do
+      lines = entries.to_a
+      usage_line = JSON.parse(lines.find { |line| line.include?('"turn_usage"') })
+      lines << "#{JSON.generate(usage_line.merge("model" => "claude-haiku-4-5"))}\n"
+      lines << "#{JSON.generate(usage_line.merge("model" => "qwen3:4b", "spawn" => "child"))}\n"
+      expect(described_class.new(lines).recording.served_models).to eq(%w[claude-haiku-4-5 claude-opus-4-8])
+    end
+
+    it "carries the time its header line was stamped, and nil for a header with no ts" do
+      records = entries.map { |line| JSON.parse(line) }
+      with_header_ts = lambda do |ts|
+        records.map { |record| record["type"] == "session" ? record.except("ts").merge(ts) : record }
+      end
+      expect(described_class.new(with_header_ts.call("ts" => "2026-10-23T10:00:00Z")).recording.started_at)
+        .to eq(Time.utc(2026, 10, 23, 10))
+      expect(described_class.new(with_header_ts.call({})).recording.started_at).to be_nil
+    end
+
+    it "keeps every new member deeply frozen" do
+      loaded = described_class.new(provenanced_entries).recording
+      %i[provenance served_models started_at host].each do |member|
+        expect(loaded.public_send(member)).to be_deeply_frozen
+      end
+    end
+  end
+
   # The live session format's open sessions and resume chains, built record
   # by record from {Lain::SessionRecord} rather than through a Scribe, so each
   # example can leave out exactly the record its shape lacks.

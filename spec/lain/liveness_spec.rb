@@ -136,6 +136,10 @@ RSpec.describe Lain::Liveness do
       end
     end
 
+    it "reads the host of a header that records no writer as unrecorded" do
+      expect(described_class.from_header({ "type" => "session" }).host).to eq("unrecorded")
+    end
+
     # A start that is not a tick count can never match a real one, so reading
     # it would call this very process dead.
     it "reads a header whose writer start is null, empty or not a tick count as unrecorded" do

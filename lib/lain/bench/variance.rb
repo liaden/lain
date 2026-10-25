@@ -131,8 +131,18 @@ module Lain
         axis = labels.first.keys.find { |name| labels.map { |entry| entry.fetch(name) }.uniq.size > 1 }
         return if axis.nil?
 
-        pair = labels.map { |entry| entry.fetch(axis) }.uniq.first(2)
-        raise ::Lain::Error, "cannot compare runs that differ in #{axis}: #{pair.join(" vs ")}"
+        raise ::Lain::Error, "cannot compare runs that differ in #{axis}: #{carriers(labels, axis)}"
+      end
+
+      # Ordinals count from 1 in recording order, the order the CLI lists the paths in.
+      def carriers(labels, axis)
+        ordinals = labels.each_with_index.group_by { |entry, _| entry.fetch(axis) }
+        ordinals.map { |value, runs| "#{value} (#{spans(runs.map { |_, index| index + 1 })})" }.join(" vs ")
+      end
+
+      def spans(ordinals)
+        ordinals.slice_when { |previous, following| following != previous + 1 }
+                .map { |run| run.size == 1 ? run.first.to_s : "#{run.first}-#{run.last}" }.join(", ")
       end
 
       # One candidate baseline held against the reference's: the first model

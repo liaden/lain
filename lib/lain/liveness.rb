@@ -107,6 +107,8 @@ module Lain
       UNRECORDED = Class.new do
         def pid = nil
 
+        def host = SessionRecord::Provenance::UNRECORDED
+
         def to_header = {}
 
         def verdict(*) = :unknown

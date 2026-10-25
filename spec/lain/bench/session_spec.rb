@@ -252,8 +252,76 @@ RSpec.describe Lain::Bench::Session do
       write_session
       expect(load_session.comparability).to eq(
         "context pipeline" => "reminder+cache-breakpoints", "compaction arm" => "eager",
-        "compaction schedule" => "turn", "bench arms" => "none", "compaction" => "on", "opaque policy" => "unrecorded"
+        "compaction schedule" => "turn", "bench arms" => "none", "compaction" => "on", "opaque policy" => "unrecorded",
+        "model" => "claude-opus-4-8", "served model" => "claude-opus-4-8", "harness" => "unrecorded",
+        "tool surface" => toolset.digest, "effort" => "unrecorded", "policy" => "unrecorded", "weights" => "unrecorded",
+        "host" => "unrecorded"
       )
+    end
+
+    # Every committed fixture predates the provenance block, so these pin what
+    # an old journal pools as.
+    describe "on a journal written before the provenance block" do
+      fixture = File.expand_path("../../fixtures/sessions/variance/one.ndjson", __dir__)
+      let(:fixture_lines) { File.readlines(fixture) }
+
+      def without_writer(lines)
+        header = JSON.parse(lines.first).except("writer")
+        ["#{JSON.generate(header)}\n", *lines.drop(1)]
+      end
+
+      it "reads every axis only the block records as unrecorded" do
+        labels = described_class.load(fixture).comparability
+        expect(labels.slice("harness", "policy", "weights").values.uniq).to eq(["unrecorded"])
+      end
+
+      it "reads the tool surface off the header's tools" do
+        tools = JSON.parse(fixture_lines.first).fetch("tools")
+        expect(described_class.load(fixture).comparability.fetch("tool surface")).to eq(Lain::Canonical.digest(tools))
+      end
+
+      it "reads the host its writer names" do
+        expect(described_class.load(fixture).comparability.fetch("host")).to eq("variance-fixture")
+      end
+
+      it "reads the host as unrecorded for a header with no writer key" do
+        expect(described_class.load(without_writer(fixture_lines)).comparability.fetch("host")).to eq("unrecorded")
+      end
+    end
+
+    describe "on a journal carrying the provenance block" do
+      def labels_under(weights:)
+        provenance = Lain::SessionRecord::Provenance.new(harness: "abc+blake3:d", tool_surface: "blake3:t",
+                                                         effort: "high", policy: "blake3:p", cwd: "/w/sub",
+                                                         root: "/w", home: "/h", weights:)
+        Lain::SessionRecord::Scribe.new(journal:, context:, toolset:, workspace:, writer: CoreGraph::NO_WRITER,
+                                        provenance: provenance.to_header)
+                                   .catch_up(agent.timeline).close(reason: :exit)
+        load_session.comparability
+      end
+
+      it "reads the harness and policy the block records" do
+        expect(labels_under(weights: nil).slice("harness", "policy"))
+          .to eq("harness" => "abc+blake3:d", "policy" => "blake3:p")
+      end
+
+      it "reads the tool surface the live toolset's digest names" do
+        expect(labels_under(weights: nil).fetch("tool surface")).to eq(toolset.digest)
+      end
+
+      # Where a run stood differs across clones by design, so it is no axis.
+      it "leaves cwd, root and home out of the comparison" do
+        expect(labels_under(weights: nil).keys).not_to include("cwd", "root", "home")
+      end
+
+      it "reads the weights a local model ran" do
+        weights = Lain::Provider::ModelIdentity.new(digest: "sha256:w", quant: "Q4_K_M")
+        expect(labels_under(weights:).fetch("weights")).to eq("digest=sha256:w,quant=Q4_K_M")
+      end
+
+      it "reads weights as none for a provider that has no weights to name" do
+        expect(labels_under(weights: nil).fetch("weights")).to eq("none")
+      end
     end
 
     it "refuses through Variance on an axis only a new entry names, with no other change" do
@@ -261,7 +329,7 @@ RSpec.describe Lain::Bench::Session do
         Struct.new(:comparability).new({ "context pipeline" => "default", "sandbox" => label })
       end
       expect { Lain::Bench::Variance.new(recordings: [one, other]) }
-        .to raise_error(Lain::Error, /differ in sandbox: a vs b/)
+        .to raise_error(Lain::Error, /differ in sandbox: a \(1\) vs b \(2\)/)
     end
   end
 
@@ -427,6 +495,17 @@ RSpec.describe Lain::Bench::Session do
       it "clips a collection no reader could scan, rather than quoting all of it" do
         expect(described_class.shown(Array.new(2_000) { |index| index }).length).to be < 200
       end
+    end
+  end
+
+  describe "#started_at" do
+    it "is the time the header line was stamped" do
+      write_session
+      lines = journal_io.string.each_line.map do |line|
+        record = JSON.parse(line)
+        record["type"] == "session" ? "#{JSON.generate(record.merge("ts" => "2026-10-23T10:00:00Z"))}\n" : line
+      end
+      expect(described_class.load(lines).started_at).to eq(Time.utc(2026, 10, 23, 10))
     end
   end
 

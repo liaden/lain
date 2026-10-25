@@ -215,21 +215,29 @@ module Lain
       # when the header names none. `opaque` is the opaque-command policy the run's `run_arms`
       # record names, nil for a run that wrote no such record.
       #
+      # `provenance` is the header's provenance block, `{}` for a header written
+      # before it existed. `served_models` is each model the agent's turn_usage
+      # records name, sorted and once each. `host` is the header writer's host,
+      # or "unrecorded". `started_at` is the header line's stamp, nil when torn.
+      # All four are required on the same no-default rule `mode` follows.
+      #
       # Frozen the same way `context_class` is when present: {Loader} hands it
       # a plain `String` straight off `JSON.parse`, unfrozen until this class
       # says otherwise, and `Ractor.shareable?(recording)` demands it does.
       Recording = Data.define(:context, :context_class, :toolset, :workspace,
                               :timeline, :baseline, :ledger_index, :degraded, :mode, :memory,
                               :open, :messages, :compaction, :schedule, :compaction_tally, :arms,
-                              :compact, :opaque) do
+                              :compact, :opaque, :provenance, :served_models, :host, :started_at) do
         def initialize(context:, context_class:, toolset:, workspace:, timeline:, baseline:, ledger_index:,
-                       degraded:, mode:, memory:, open:, messages:, compaction:, schedule:, compaction_tally:, arms: {},
-                       compact: nil, opaque: nil)
+                       degraded:, mode:, memory:, open:, messages:, compaction:, schedule:, compaction_tally:,
+                       provenance:, served_models:, host:, started_at:, arms: {}, compact: nil, opaque: nil)
           super(context:, context_class: -context_class.to_s, toolset:, workspace:,
                 timeline:, baseline: baseline.freeze, ledger_index:, degraded:, mode:, memory:,
                 open:, messages: messages.freeze, compaction: compaction && -compaction,
                 schedule: schedule && -schedule, compaction_tally:,
-                arms: Ractor.make_shareable(arms), compact:, opaque: opaque && -opaque)
+                arms: Ractor.make_shareable(arms), compact:, opaque: opaque && -opaque,
+                provenance: Ractor.make_shareable(provenance), served_models: Ractor.make_shareable(served_models),
+                host: -host.to_s, started_at: started_at&.freeze)
         end
 
         # A recording whose baseline outnumbers the DAG's assistant turns holds
@@ -243,14 +251,21 @@ module Lain
         # the first axis that differs. The pipeline label is its rendered stages,
         # not its word: an unset flag and `default` send the same bytes.
         #
+        # "unrecorded" is a value here, unlike {Compare::Mode}'s wildcard: a run
+        # that names no harness cannot vouch for matching one that does, while
+        # two that both name none still pool, as every old journal must. cwd,
+        # root and home are left out because they differ across clones by design.
+        # The host axis follows the hostname, not the hardware.
+        #
         # @return [Hash{String => String, nil}] axis => label
         def comparability
           { "context pipeline" => ::Lain::CLI::ContextPipeline.named(context.pipeline_name).stages.join("+"),
             "compaction arm" => compaction || Telemetry::Compaction::EAGER_CONTROL_ARM,
-            "compaction schedule" => schedule || "unrecorded",
-            "bench arms" => arms.empty? ? "none" : arms.sort.map { |name, value| "#{name}=#{value}" }.join(","),
+            "compaction schedule" => schedule || UNRECORDED,
+            "bench arms" => arms.empty? ? "none" : listed(arms),
             "compaction" => compact == false ? "off" : "on",
-            "opaque policy" => opaque || "unrecorded" }
+            "opaque policy" => opaque || UNRECORDED,
+            **produced_by }
         end
 
         def memory_root_at(turn_digest) = memory.root_at(turn_digest)
@@ -258,7 +273,31 @@ module Lain
         def memory_at(turn_digest) = memory.at(turn_digest)
 
         def open? = open
+
+        private
+
+        # The tool surface and effort are read off the header itself, which named
+        # both long before the block existed, so old journals still tell them apart.
+        def produced_by
+          { "model" => context.model, "served model" => served_models.empty? ? UNRECORDED : served_models.join(","),
+            "harness" => provenance.fetch("harness", UNRECORDED),
+            "tool surface" => Canonical.digest(toolset.to_schema), "effort" => context.effort || UNRECORDED,
+            "policy" => provenance.fetch("policy", UNRECORDED), "weights" => weights, "host" => host }
+        end
+
+        # The block omits weights for a provider with none to name, which is a
+        # different fact from a header that has no block at all.
+        def weights
+          return UNRECORDED if provenance.empty?
+
+          provenance.key?("weights") ? listed(provenance.fetch("weights")) : "none"
+        end
+
+        def listed(pairs) = pairs.sort.map { |name, value| "#{name}=#{value}" }.join(",")
       end
+
+      UNRECORDED = SessionRecord::Provenance::UNRECORDED
+      private_constant :UNRECORDED
 
       class << self
         # Rebuild a {Recording} from a session file's bytes.

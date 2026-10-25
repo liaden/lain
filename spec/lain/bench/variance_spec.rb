@@ -289,7 +289,7 @@ RSpec.describe Lain::Bench::Variance do
     it "raises when the recordings declared different compaction arms" do
       elided = record([tool_response("tu_1", "hi"), text_response("done")], compact_strategy: "elide")
       expect { described_class.new(recordings: [reference, elided]) }
-        .to raise_error(Lain::Error, /cannot compare runs that differ in compaction arm: eager vs elide/)
+        .to raise_error(Lain::Error, /cannot compare runs that differ in compaction arm: eager \(1\) vs elide \(2\)/)
     end
 
     # An unset flag is the run's own eager control arm, not "no arm" -- so a
@@ -306,7 +306,7 @@ RSpec.describe Lain::Bench::Variance do
 
     it "raises when the recordings ran under different schedules" do
       expect { described_class.new(recordings: [scheduled("idle"), reference]) }
-        .to raise_error(Lain::Error, /cannot compare runs that differ in compaction schedule: idle vs turn/)
+        .to raise_error(Lain::Error, /cannot compare runs that differ in compaction schedule: idle \(1\) vs turn \(2\)/)
     end
 
     it "pools recordings that ran under the same schedule" do
@@ -324,7 +324,7 @@ RSpec.describe Lain::Bench::Variance do
 
     it "raises when one recording ran without compaction and one recorded nothing" do
       expect { described_class.new(recordings: [compacting(false), reference]) }
-        .to raise_error(Lain::Error, /differ in compaction: off vs on/)
+        .to raise_error(Lain::Error, /differ in compaction: off \(1\) vs on \(2\)/)
     end
 
     it "pools recordings that both ran without compaction" do
@@ -335,7 +335,7 @@ RSpec.describe Lain::Bench::Variance do
     it "refuses a recording that named the turn schedule against one with compaction off" do
       turn = record([tool_response("tu_1", "hi"), text_response("done")], schedule: "turn")
       expect { described_class.new(recordings: [turn, compacting(false)]) }
-        .to raise_error(Lain::Error, /differ in compaction: on vs off/)
+        .to raise_error(Lain::Error, /differ in compaction: on \(1\) vs off \(2\)/)
     end
   end
 
@@ -344,12 +344,12 @@ RSpec.describe Lain::Bench::Variance do
 
     it "raises when only one recording recorded the opaque policy" do
       expect { described_class.new(recordings: [opaque({ "opaque" => "refused" }), reference]) }
-        .to raise_error(Lain::Error, /differ in opaque policy: refused vs unrecorded/)
+        .to raise_error(Lain::Error, /differ in opaque policy: refused \(1\) vs unrecorded \(2\)/)
     end
 
     it "raises when the recorded policies differ" do
       expect { described_class.new(recordings: [opaque({ "opaque" => "refused" }), opaque({ "opaque" => "open" })]) }
-        .to raise_error(Lain::Error, /differ in opaque policy: refused vs open/)
+        .to raise_error(Lain::Error, /differ in opaque policy: refused \(1\) vs open \(2\)/)
     end
 
     it "pools recordings that both refused opaque commands" do
@@ -364,7 +364,7 @@ RSpec.describe Lain::Bench::Variance do
 
     it "raises when the recordings ran under different bench arms, naming both" do
       expect { described_class.new(recordings: [armed({ "confine" => "reader" }), reference]) }
-        .to raise_error(Lain::Error, /differ in bench arms: confine=reader vs none/)
+        .to raise_error(Lain::Error, /differ in bench arms: confine=reader \(1\) vs none \(2\)/)
     end
 
     it "pools recordings that ran under the same bench arms" do
@@ -375,11 +375,91 @@ RSpec.describe Lain::Bench::Variance do
 
     it "raises when the recordings differ only in an arm's value" do
       expect { described_class.new(recordings: [armed({ "confine" => "reader" }), armed({ "confine" => "classes" })]) }
-        .to raise_error(Lain::Error, /differ in bench arms: confine=reader vs confine=classes/)
+        .to raise_error(Lain::Error, /differ in bench arms: confine=reader \(1\) vs confine=classes \(2\)/)
     end
 
     it "pools recordings that recorded no arms" do
       expect(described_class.new(recordings: [reference, reference]).report).to include("2: byte-identical")
+    end
+  end
+
+  # What produced a run is an axis like any other: a harness edit, a different
+  # served model or another host would report as the model's variance.
+  describe "provenance" do
+    def provenanced(header, responses: [tool_response("tu_1", "hi"), text_response("done")], under: context)
+      Lain::Bench::Session.load(with_header(session_bytes(responses, under:), header).each_line)
+    end
+
+    def block(harness)
+      { "provenance" => { "harness" => harness, "tool_surface" => "blake3:t", "effort" => "unrecorded",
+                          "policy" => "blake3:p", "cwd" => "/w", "root" => "/w", "home" => "/h" } }
+    end
+
+    it "refuses runs whose harness digests differ, naming both" do
+      harnesses = [provenanced(block("sha-a+blake3:1")), provenanced(block("sha-b+blake3:2"))]
+      expect { described_class.new(recordings: harnesses) }
+        .to raise_error(Lain::Error,
+                        "cannot compare runs that differ in harness: sha-a+blake3:1 (1) vs sha-b+blake3:2 (2)")
+    end
+
+    it "pools runs whose provenance differs only in where they stood" do
+      stood = block("sha-a+blake3:1").fetch("provenance").merge("cwd" => "/x/sub", "root" => "/x", "home" => "/g")
+      moved = { "provenance" => stood }
+      expect(described_class.new(recordings: [provenanced(block("sha-a+blake3:1")), provenanced(moved)]).report)
+        .to include("2: byte-identical")
+    end
+
+    # Unrecorded is a value here, not a wildcard: an old journal says nothing
+    # about its harness, so it cannot vouch for matching a new one.
+    it "refuses an old journal held against one naming a harness" do
+      expect { described_class.new(recordings: [reference, provenanced(block("sha-a+blake3:1"))]) }
+        .to raise_error(Lain::Error, /differ in harness: unrecorded \(1\) vs sha-a\+blake3:1 \(2\)/)
+    end
+
+    it "refuses runs of one requested model whose turn_usage records name different served models" do
+      opus = Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse")
+      served = %w[claude-opus-4-8 claude-opus-4-7].map do |model|
+        provenanced({}, under: opus, responses: [tool_response("tu_1", "hi", model:), text_response("done", model:)])
+      end
+      expect { described_class.new(recordings: served) }
+        .to raise_error(Lain::Error, /differ in served model: claude-opus-4-8 \(1\) vs claude-opus-4-7 \(2\)/)
+    end
+
+    def hosted(host) = provenanced({ "writer" => { "pid" => 1, "start" => "0", "host" => host } })
+
+    it "refuses runs of different requested models" do
+      opus = Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse")
+      expect { described_class.new(recordings: [reference, provenanced({}, under: opus)]) }
+        .to raise_error(Lain::Error, /differ in model: claude-sonnet-4-6 \(1\) vs claude-opus-4-8 \(2\)/)
+    end
+
+    # A header written before the provenance block still names its effort.
+    it "refuses old journals whose headers name different efforts" do
+      efforts = %w[high low].map { |effort| provenanced({ "effort" => effort }) }
+      expect { described_class.new(recordings: efforts) }
+        .to raise_error(Lain::Error, /differ in effort: high \(1\) vs low \(2\)/)
+    end
+
+    # A header written before the provenance block still names its tools.
+    it "refuses old journals whose headers name different tools" do
+      toolless = provenanced({ "tools" => [] })
+      expect { described_class.new(recordings: [reference, toolless]) }
+        .to raise_error(Lain::Error, /differ in tool surface: \S+ \(1\) vs #{Lain::Canonical.digest([])} \(2\)/)
+    end
+
+    it "names each value with the ordinals of the runs that carry it" do
+      expect { described_class.new(recordings: %w[bench-a bench-a bench-b].map { |host| hosted(host) }) }
+        .to raise_error(Lain::Error, /differ in host: bench-a \(1-2\) vs bench-b \(3\)\z/)
+      expect { described_class.new(recordings: %w[bench-a bench-b bench-a].map { |host| hosted(host) }) }
+        .to raise_error(Lain::Error, /differ in host: bench-a \(1, 3\) vs bench-b \(2\)\z/)
+    end
+
+    it "refuses runs recorded on different hosts" do
+      hosts = %w[bench-a bench-b].map do |host|
+        provenanced({ "writer" => { "pid" => 1, "start" => "0", "host" => host } })
+      end
+      expect { described_class.new(recordings: hosts) }
+        .to raise_error(Lain::Error, /differ in host: bench-a \(1\) vs bench-b \(2\)/)
     end
   end
 

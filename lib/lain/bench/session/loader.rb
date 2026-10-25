@@ -81,7 +81,7 @@ module Lain
             ledger_index: Ledger::Index.from_journal(@records),
             degraded:, mode:, memory:, open: open?,
             compaction: header["compact_strategy"], schedule: header_field("compact_schedule"),
-            **bench_facts,
+            **bench_facts, **provenance_facts,
             compaction_tally: Compare::CompactionTally.from_records(@records)
           )
         end
@@ -260,6 +260,19 @@ module Lain
         end
 
         def bench_facts = { arms:, compact: header["compact"], opaque: }
+
+        def provenance_facts
+          { provenance: header.fetch("provenance", {}), served_models:, host:,
+            started_at: Ledger::Index::Entry.stamped(header["ts"]) }
+        end
+
+        # A spawned child may run another model on purpose, so only the agent's own calls say what served the run.
+        def served_models
+          agent_usage = of_type("turn_usage").reject { |record| record.key?("spawn") }
+          agent_usage.filter_map { |record| record["model"] }.uniq.sort
+        end
+
+        def host = Liveness::Writer.from_header(header).host
 
         # Read through {CLI::Arms} so an unknown value raises, and an off dedup is dropped like
         # every other off arm, so old and new runs of one setup pool.

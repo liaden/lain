@@ -276,6 +276,31 @@ RSpec.describe Lain::Bench::CLI do
         end
       end
 
+      # The committed fixtures predate the provenance block; one rewritten to
+      # carry it no longer pools with its old siblings.
+      it "refuses an old journal held against one naming a harness, naming the sources" do
+        Dir.mktmpdir do |tmp|
+          FileUtils.cp(File.join(fixture_dir, "one.ndjson"), tmp)
+          head, *rest = File.readlines(File.join(fixture_dir, "two.ndjson"))
+          stamped = JSON.parse(head).merge("provenance" => { "harness" => "sha-a+blake3:1" })
+          File.write(File.join(tmp, "two.ndjson"), ["#{JSON.generate(stamped)}\n", *rest].join)
+          expect { cli.variance_report([tmp]) }
+            .to raise_error(described_class::Refusal,
+                            /one\.ndjson.*two\.ndjson.*harness: unrecorded \(1\) vs sha-a\+blake3:1 \(2\)/m)
+        end
+      end
+
+      it "refuses recordings from different hosts as a Refusal naming the sources" do
+        Dir.mktmpdir do |tmp|
+          FileUtils.cp(File.join(fixture_dir, "one.ndjson"), tmp)
+          head, *rest = File.readlines(File.join(fixture_dir, "two.ndjson"))
+          moved = JSON.parse(head).merge("writer" => { "pid" => 1, "start" => "0", "host" => "elsewhere" })
+          File.write(File.join(tmp, "two.ndjson"), ["#{JSON.generate(moved)}\n", *rest].join)
+          expect { cli.variance_report([tmp]) }
+            .to raise_error(described_class::Refusal, /host: variance-fixture \(1\) vs elsewhere \(2\)/)
+        end
+      end
+
       it "refuses recordings whose degraded sets differ as a Refusal naming the sources" do
         Dir.mktmpdir do |tmp|
           FileUtils.cp(File.join(fixture_dir, "one.ndjson"), tmp)
