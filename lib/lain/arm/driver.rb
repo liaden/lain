@@ -44,7 +44,11 @@ module Lain
         "cache write tokens" => {
           of: ->(run) { run.ledger.usage(run.timeline).cache_creation_input_tokens },
           fmt: ->(value) { format("%.1f", value) }, optional: true
-        }
+        },
+        "files written" => { of: ->(run) { written(run).files },
+                             fmt: ->(value) { format("%.1f", value) }, optional: true },
+        "lines written" => { of: ->(run) { written(run).lines },
+                             fmt: ->(value) { format("%.1f", value) }, optional: true }
       }.freeze
       private_constant :METRICS
 
@@ -366,7 +370,10 @@ module Lain
       # `of:` is a Symbol for every metric {Arm::Run} answers directly, and a
       # Proc for one that needs a call {Run} does not expose on its own -- see
       # METRICS' comment on `cache write tokens`.
-      def value_of(run, of) = of.respond_to?(:call) ? of.call(run) : run.public_send(of)
+      def value_of(run, of) = of.respond_to?(:call) ? instance_exec(run, &of) : run.public_send(of)
+
+      # Both written-size metrics read one parse of the run.
+      def written(run) = (@written ||= {}.compare_by_identity)[run] ||= DiffSize.of(run.timeline)
 
       def render(attempts_by_arm)
         measured_arms = measured(attempts_by_arm.transform_values(&:flatten))

@@ -708,6 +708,64 @@ RSpec.describe Lain::Arm::Driver do
     end
   end
 
+  describe "#report — the files and lines written columns" do
+    def writing_seam(*texts)
+      queue = texts.dup
+      lambda do |journal:, timeline: nil, base_timeline: nil, workspace: Lain::Workspace.empty, **|
+        Lain::Agent.new(
+          provider: Lain::Provider::Mock.new(responses: [text_response(queue.shift, model: "claude-sonnet-4")]),
+          toolset: Lain::Toolset.new([]),
+          context: Lain::Context.new(model: "claude-opus-4-8", max_tokens: 256),
+          timeline: base_timeline || timeline, workspace:, journal:
+        )
+      end
+    end
+
+    let(:arms) { [Lain::Arm::SingleThread.new(name: "a")] }
+
+    def report_for(*texts)
+      Lain::Bench::CLI.new.arm_report(arms, tasks:, spawn_seam: writing_seam(*texts), grader:)
+    end
+
+    it "reports the mean files and lines each run wrote" do
+      report = report_for("FILE a.rb
+1
+2
+3
+4
+5
+END
+FILE b.rb
+1
+2
+3
+4
+5
+END", "FILE c.rb
+1
+2
+3
+4
+END")
+
+      expect(row_for(report, "files written", "a")).to match(/\s1\.5(\s|$)/)
+      expect(row_for(report, "lines written", "a")).to match(/\s7\.0(\s|$)/)
+    end
+
+    it "marks the lines column not measured when every block written was empty" do
+      report = report_for("FILE a.rb\n\nEND", "FILE b.rb\n\nEND")
+
+      expect(row_for(report, "lines written", "a")).to include("not measured")
+    end
+
+    it "marks both columns not measured when no run wrote a FILE block" do
+      report = report_for("done", "done")
+
+      expect(["files written", "lines written"].map { |m| row_for(report, m, "a").split(/\s{2,}/).drop(2) })
+        .to all(eq(["not measured"] * 5))
+    end
+  end
+
   # A task that runs past its ceiling is a failed run of that arm, not the end
   # of the comparison: the other arm's figures and the paid-for report stand.
   describe "#report — a task that hits the ceiling" do

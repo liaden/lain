@@ -370,6 +370,21 @@ RSpec.describe Lain::Bench::CLI do
     # What every arm was handed, across every task in the suite.
     def isolations = arms.flat_map(&:isolations)
 
+    it "reports the files and lines each arm wrote" do
+      texts = ["FILE a.rb\nx\ny\nEND", "FILE b.rb\nz\nEND"]
+      writing = lambda do |journal:, **|
+        Lain::Agent.new(
+          provider: Lain::Provider::Mock.new(responses: [text_response(texts.shift, model: "claude-sonnet-4")]),
+          toolset: Lain::Toolset.new([]),
+          context: Lain::Context.new(model: "claude-opus-4-8", max_tokens: 256), journal:
+        )
+      end
+
+      report = cli.arm_report([Lain::Arm::SingleThread.new(name: "writer")], tasks:, spawn_seam: writing, grader:)
+
+      expect(report).to match(/files written\n.*\nwriter\s+2\s+1\.0/m)
+    end
+
     describe "with attempts" do
       let(:arms) do
         [BenchAttemptArm.new(name: "a", script: { "t1" => [true, true, true], "t2" => [false, false, true] })]
