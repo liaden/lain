@@ -6,6 +6,10 @@ module Lain
   # own credentials, built in its own process, so a chat that is compromised
   # can neither read the key nor talk the gateway out of its inspection.
   module Gateway
+    # The one path a client asks to tell this gateway from any other loopback
+    # listener; nothing else is served there.
+    IDENTITY_PATH = "/lain-gateway/identity"
+
     # Keyed by the exact base, so a spelling the table lacks is refused
     # rather than normalised into one it holds.
     UPSTREAMS = {

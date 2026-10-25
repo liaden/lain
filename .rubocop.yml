@@ -331,7 +331,7 @@ ThreadSafety/ClassInstanceVariable:
     - "lib/lain/tool/contracts.rb"
     - "lib/lain/tool/input.rb"
 
-# The eleven deliberate thread groups, and they have four legitimate owners.
+# The deliberate thread groups, one reason each.
 #
 # Four are the frontend's: the neovim RPC drain/resend pair and its rpc_thread, the
 # TTY reader, and prompt_breaker's watchdog -- each a supervised reader
@@ -383,6 +383,13 @@ ThreadSafety/ClassInstanceVariable:
 # stall the model's turn. The thread touches only the reader's own state, under its
 # mutex, and #to_a joins it and re-raises what it raised, so an error is never silent.
 #
+# The twelfth is Gateway::Server, one reader thread per loopback connection plus the one
+# thread that asks the human. Served one at a time, a silent client stalled every request
+# behind it for the read deadline, and the identity check could not answer while a prompt
+# was open. A reader parses, inspects, queues the ask, then forwards and replies; the
+# asking thread takes asks in the order their requests finished arriving, and #stop
+# closes the listener, then kills and joins every thread it started.
+#
 # Specs spawn threads to TEST concurrency -- channel_spec's drop-oldest races are the
 # subject, not an accident -- so spec/ is excluded wholesale.
 ThreadSafety/NewThread:
@@ -396,6 +403,7 @@ ThreadSafety/NewThread:
     - "lib/lain/frontend/neovim.rb"
     - "lib/lain/frontend/neovim/rpc_thread.rb"
     - "lib/lain/frontend/tty.rb"
+    - "lib/lain/gateway/server.rb"
     - "lib/lain/provider/http/streaming/faraday_handlers.rb"
     - "lib/lain/sensitivity/history_literals.rb"
     - "lib/lain/tool/offload.rb"

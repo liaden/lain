@@ -1382,6 +1382,18 @@ class LainCLI < Thor
   method_option :kind, type: :string, desc: "Filter to one kind: knob, bug, missing-feature, or doc"
   def improvements = render { Lain::CLI::Improvements.new.report(project: options[:project], kind: options[:kind]) }
 
+  desc "gateway", "Serve one allow-listed model upstream on loopback, asking you before each request leaves"
+  method_option :upstream, type: :string, required: true, banner: "URL",
+                           desc: "Where approved requests go: #{Lain::Gateway::UPSTREAMS.keys.join(" or ")}"
+  method_option :port, type: :numeric, default: 0, desc: "The loopback port; 0 picks a free one, printed at start"
+  method_option :root, type: :string, banner: "PATH",
+                       desc: "The project whose git history and ignored files hold secrets to refuse (default: cwd)"
+  method_option :log, type: :string, banner: "PATH", desc: "The gateway's NDJSON log (default: under the state home)"
+  def gateway
+    console = Lain::Frontend::GatewayConsole.new(input: $stdin, output: $stdout)
+    exit_status { Lain::CLI::Gateway.new(options, console:).run }
+  end
+
   # What both JOURNAL PASSES declare: the model flag band, whose profile flags
   # default to what the session under review recorded, and a `--dry-run` that
   # says what THIS pass would do instead of doing it.

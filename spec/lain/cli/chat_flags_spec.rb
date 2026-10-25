@@ -60,7 +60,10 @@ module ChatFlags
   # separately declared key `up` reads. `nvim_socket` is what replaced its
   # value form, and it is `up`'s alone -- `chat --nvim SOCKET` still spells the
   # same thing with the flag it always had.
-  ELSEWHERE = { session: %w[up watch], socket: %w[up], nvim_socket: %w[up], create: %w[up] }.freeze
+  #
+  # `upstream`, `port` and `log` are gateway's own.
+  ELSEWHERE = { session: %w[up watch], socket: %w[up], nvim_socket: %w[up], create: %w[up],
+                upstream: %w[gateway], port: %w[gateway], log: %w[gateway] }.freeze
 
   # Option reads whose key is not a literal, pinned with their reason. A
   # dynamic read is a hole in this guard -- the key cannot be resolved from the
