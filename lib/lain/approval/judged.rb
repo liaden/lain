@@ -32,6 +32,7 @@ module Lain
       BARRED = "this command is barred from automatic approval"
       TOO_MANY = "it reaches more files than the judge weighs"
       UNWEIGHABLE = "%<path>s is not a path it may weigh"
+      GIT_STORE = "it reads the repository's object store, which the judge cannot weigh"
       DEFERRED = "deferred"
       DEFERRAL_NOTE = "the judge deferred this"
       BAR = "bar"
@@ -261,7 +262,26 @@ module Lain
         reached = named.paths.map { Reach.of(_1) }
         return TOO_MANY if reached.any?(&:nil?)
 
+        return GIT_STORE if reached_store?(named.paths, reached)
+
         unweighable(effect, reached.flatten, context)
+      end
+
+      # Only what a pattern or recursive reach found counts: naming `.git/HEAD` is a file, not the store.
+      # A pointer file, as in a linked worktree, is a store only to a path a git command implies.
+      def reached_store?(paths, reached)
+        paths.zip(reached).any? do |path, found|
+          found.drop(1).any? { store_entry?(path.resolved, _1.delete_prefix(path.resolved), git: path.git) }
+        end
+      end
+
+      def store_entry?(root, relative, git:)
+        segments = relative.split(File::SEPARATOR)
+        index = segments.index(".git")
+        index && begin
+          dotgit = File.join(root, *segments.first(index + 1))
+          File.directory?(dotgit) || (git && File.file?(dotgit))
+        end
       end
 
       def unweighable(effect, reached, context)

@@ -935,6 +935,111 @@ RSpec.describe Lain::Approval::Judged do
         end
       end
 
+      describe "a git command that reads the repository's whole history" do
+        let(:ungated) do
+          rules = Lain::Sensitivity::Rules.from({ "exempt" => ["/.git/config"] })
+          Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root, root:, rules:),
+                                        home:, root:)
+        end
+        let(:store) { "the judge did not look: #{described_class::GIT_STORE}" }
+
+        before do
+          FileUtils.mkdir_p(File.join(root, ".git", "objects"))
+          File.write(File.join(root, ".git", "config"), "[core]\n")
+          File.write(File.join(root, ".git", "HEAD"), "ref: refs/heads/main\n")
+        end
+
+        it "hands git log -p down without asking, naming the object store, though .git/config is not gated" do
+          spawn = spawn_answering("approve")
+          notes = nil
+          ruled(rung(spawn, under: ungated), bash("git log -p")) do |pending|
+            notes = pending.notes
+            pending.deny(surface: "human_spec")
+          end
+
+          expect([spawn.calls.size, notes]).to eq([0, [store]])
+        end
+
+        it "still asks the judge about a short log that prints no bodies" do
+          spawn = spawn_answering("approve")
+
+          ruling = ruled(rung(spawn, under: ungated), bash("git log --oneline -5"))
+
+          expect([ruling.verdict, spawn.calls.size]).to eq([:allow, 1])
+        end
+
+        it "names the git store for git show under the default policy, not an unweighable .git/config" do
+          notes = nil
+          ruled(rung(spawn_answering("approve")), bash("git show HEAD~1")) do |pending|
+            notes = pending.notes
+            pending.deny(surface: "human_spec")
+          end
+
+          expect(notes).to eq([store])
+        end
+
+        it "names the git store for grep -r over a real .git directory" do
+          notes = nil
+          ruled(rung(spawn_answering("approve"), under: ungated), bash("grep -r x .")) do |pending|
+            notes = pending.notes
+            pending.deny(surface: "human_spec")
+          end
+
+          expect(notes).to eq([store])
+        end
+
+        def link_worktree
+          FileUtils.rm_rf(File.join(root, ".git"))
+          File.write(File.join(root, ".git"), "gitdir: #{File.join(@base, "elsewhere")}\n")
+        end
+
+        it "hands git log -p and git show down naming the store in a linked worktree, where .git is a pointer" do
+          link_worktree
+          notes = ["git log -p", "git show HEAD~1"].map do |command|
+            ruled(rung(spawn_answering("approve"), under: ungated), bash(command)) do |pending|
+              @last = pending.notes
+              pending.deny(surface: "human_spec")
+            end
+            @last
+          end
+
+          expect(notes).to eq([[store], [store]])
+        end
+
+        it "hands down a git whose program word is spelled by path or quoted, in a linked worktree" do
+          link_worktree
+          notes = ["/usr/bin/git log -p", "'git' log -p", '"git" log -p'].map do |command|
+            ruled(rung(spawn_answering("approve"), under: ungated), bash(command)) do |pending|
+              @last = pending.notes
+              pending.deny(surface: "human_spec")
+            end
+            @last
+          end
+
+          expect(notes).to eq([[store]] * 3)
+        end
+
+        it "judges a search that merely mentions git, in a linked worktree" do
+          link_worktree
+          asked = ["echo git && grep -r x .", "grep -r git ."].map do |command|
+            spawn = spawn_answering("approve")
+            ruled(rung(spawn, under: ungated), bash(command))
+            spawn.calls.size
+          end
+
+          expect(asked).to eq([1, 1])
+        end
+
+        it "still asks the judge about grep -r in a linked worktree, which finds no store there" do
+          link_worktree
+          spawn = spawn_answering("approve")
+
+          ruling = ruled(rung(spawn, under: ungated), bash("grep -r x ."))
+
+          expect([ruling.verdict, spawn.calls.size]).to eq([:allow, 1])
+        end
+      end
+
       it "counts a named directory below a checkout the cwd sits under" do
         checkout = File.join(@base, "spikes", "w1")
         FileUtils.mkdir_p([root, File.join(checkout, "sub"), File.join(checkout, "secrets")])

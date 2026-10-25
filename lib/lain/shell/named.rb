@@ -31,9 +31,11 @@ module Lain
       #   `<root>/**` for a search root such as find's
       # @!attribute guess [Boolean] one of several places an unknown program's
       #   attached value could start, so most of them name no real file
-      Path = Data.define(:word, :resolved, :written, :directory, :pattern, :guess) do
-        # Data has no per-member defaults, so the keyword is defaulted here.
-        def initialize(guess: false, **) = super
+      # @!attribute git [Boolean] the whole-tree read a git subcommand implies,
+      #   so its history is reached through `.git` even where that is a pointer file
+      Path = Data.define(:word, :resolved, :written, :directory, :pattern, :guess, :git) do
+        # Data has no per-member defaults, so the keywords are defaulted here.
+        def initialize(guess: false, git: false, **) = super
 
         # Whether the command wrote it so that the directory it runs in cannot
         # move it: a rooted path, or a `~` the home resolves.
@@ -457,6 +459,8 @@ module Lain
           @untrusted = untrusted
           @argv = Argv.new(texts.drop(1), @command)
         end
+
+        def git? = @command == "git" && !@untrusted
 
         def opaque? = runs_others? || changes_directory? || extracts_outside?
 
@@ -964,7 +968,7 @@ module Lain
         def implied_paths(program)
           program.implied.map do |kind|
             Path.new(word: "", resolved: @dir, written: kind == :written, directory: false,
-                     pattern: File.join(@dir, "**").freeze)
+                     pattern: File.join(@dir, "**").freeze, git: program.git?)
           end
         end
 
