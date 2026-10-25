@@ -54,6 +54,42 @@ RSpec.describe Lain::Confine::Bwrap do
       )
     end
 
+    it "binds a workspace's writes back writable, then each present seal read-only, then masks" do
+      seal = Lain::Confine::Profile::Seal
+      workspace = Lain::Confine::Profile.new(
+        name: :workspace, trace: false, read_dirs: ["/p"], write_dirs: %w[/p /h/t /dev/null /tmp],
+        sealed: [seal.new(path: "/p/.envrc", absent: false), seal.new(path: "/p/.lain", absent: true)],
+        masks: ["/p/.env"]
+      )
+      argv = argv_of(launcher.wrap(term, workspace, trace_fd: 3))
+      expect(argv[(argv.index("--die-with-parent") + 1)...argv.index("--")]).to eq(
+        %w[--bind-try /p /p --bind-try /h/t /h/t --ro-bind /p/.envrc /p/.envrc --ro-bind /dev/null /p/.env]
+      )
+    end
+
+    it "binds each directory between a write and a seal over itself, so none of them can be renamed away" do
+      seal = Lain::Confine::Profile::Seal
+      workspace = Lain::Confine::Profile.new(
+        name: :workspace, trace: false, read_dirs: ["/p"], write_dirs: %w[/p /dev/null /tmp],
+        sealed: [seal.new(path: "/p/.git/worktrees/w/gitdir", absent: false),
+                 seal.new(path: "/p/.git/commondir", absent: true), seal.new(path: "/elsewhere/hooks", absent: false)]
+      )
+      argv = argv_of(launcher.wrap(term, workspace, trace_fd: 3))
+      expect(argv[(argv.index("--die-with-parent") + 1)...argv.index("--")]).to eq(
+        %w[--bind-try /p /p --bind-try /p/.git /p/.git --bind-try /p/.git/worktrees /p/.git/worktrees
+           --bind-try /p/.git/worktrees/w /p/.git/worktrees/w
+           --ro-bind /p/.git/worktrees/w/gitdir /p/.git/worktrees/w/gitdir --ro-bind /elsewhere/hooks /elsewhere/hooks]
+      )
+    end
+
+    it "mounts nothing at an absent seal, so the call cannot leave a file behind there" do
+      workspace = Lain::Confine::Profile.new(
+        name: :workspace, trace: false, write_dirs: ["/p"],
+        sealed: [Lain::Confine::Profile::Seal.new(path: "/p/.lain", absent: true)]
+      )
+      expect(argv_of(launcher.wrap(term, workspace, trace_fd: 3))).not_to include("/p/.lain")
+    end
+
     it "keeps its private /tmp when the project is elsewhere" do
       expect(argv_of(launcher.wrap(term, reader, trace_fd: 3))).not_to include("--ro-bind-try")
     end
@@ -271,6 +307,233 @@ RSpec.describe Lain::Confine::Bwrap do
         expect(masked_only("cat", "lkey")).to match(["", /Permission denied/, false])
         expect(run(wrapped(%w[cat lkey]))).to match(["", /Permission denied/, false])
       end
+    end
+  end
+
+  describe "a workspace call on this box", :seam do
+    let(:fence) { described_class.fence_binary }
+
+    before do
+      skip("bwrap or strace is not installed") unless %w[/usr/bin/bwrap /usr/bin/strace].all? { File.executable?(_1) }
+      skip("lain-fence is not built at #{fence} -- run `bundle exec rake compile`") unless File.executable?(fence)
+      skip("bwrap cannot make a user namespace on this host") unless
+        system("/usr/bin/bwrap", "--ro-bind", "/", "/", "--", "true", %i[out err] => File::NULL)
+    end
+
+    # Under $HOME, so a write beside the project lands somewhere the profile does not grant.
+    around do |example|
+      Dir.mktmpdir("lain-workspace", Dir.tmpdir.start_with?("#{Dir.home}/") ? Dir.tmpdir : Dir.home) do |dir|
+        @dir = File.realpath(dir)
+        FileUtils.mkdir_p([root, tmpdir])
+        example.run
+      end
+    end
+
+    def root = File.join(@dir, "r")
+    def tmpdir = File.join(@dir, "t")
+    def in_root(*names) = names.map { File.join(root, _1) }
+    def ruby = File.realpath(RbConfig.ruby)
+
+    def profile
+      Lain::Confine::Profile.workspace(root:, home: Dir.home, tmpdir:, masks: in_root(".env"), exec_files: [ruby])
+    end
+
+    def wrapped(argv) = argv_of(described_class.new(fence:).wrap(Lain::Shell::Term.of(argv), profile, trace_fd: 3))
+
+    def run(argv, env: {})
+      reader, writer = IO.pipe
+      call_env = { "LC_ALL" => "C", "TMPDIR" => tmpdir, "GIT_CONFIG_GLOBAL" => "/dev/null", **SeedRepo::SCRUB, **env }
+      out, err, status = Open3.capture3(call_env, *argv, chdir: root, 3 => writer)
+      [out, err, status.success?]
+    ensure
+      writer&.close
+      reader&.close
+    end
+
+    def sh(script) = run(wrapped(["sh", "-c", script]))
+
+    def appends(paths) = paths.map { "echo planted >> #{_1}" }.join("; ")
+
+    def git_init(dir = root) = SeedRepo.git(dir, "init", "-q")
+
+    it "writes the project and TMPDIR, and nowhere else in home" do
+      outside = File.join(File.dirname(@dir), "lain-workspace-#{Process.pid}-#{rand(1 << 32)}")
+      sh("touch #{File.join(root, "a")} #{File.join(tmpdir, "b")} #{outside}")
+
+      expect([File.exist?(File.join(root, "a")), File.exist?(File.join(tmpdir, "b")), File.exist?(outside)])
+        .to eq([true, true, false])
+    ensure
+      FileUtils.rm_f(outside)
+    end
+
+    it "keeps the persistence files read-only inside the writable project" do
+      git_init
+      FileUtils.mkdir_p(in_root(".lain"))
+      sealed = in_root(".git/hooks/pre-commit", ".git/config", ".envrc", ".pre-commit-config.yaml", ".lain/config.rb")
+      sealed.each { File.write(_1, "kept\n") unless File.exist?(_1) }
+      before = sealed.to_h { [_1, File.read(_1)] }
+
+      expect(sh(appends(sealed))[1].scan("Read-only file system").size).to eq(sealed.size)
+      expect(sealed.to_h { [_1, File.read(_1)] }).to eq(before)
+    end
+
+    def commit(dir, message = "i")
+      SeedRepo.git(dir, "-c", "user.name=a", "-c", "user.email=a@b", "commit", "-q",
+                   "--allow-empty", "-m", message)
+    end
+
+    def inert_hook(path)
+      FileUtils.mkdir_p(File.dirname(path))
+      File.write(path, "exit 0\n")
+    end
+
+    def snapshot(paths) = paths.to_h { [_1, File.symlink?(_1) ? File.readlink(_1) : File.read(_1)] }
+
+    def linked_worktree
+      main = File.join(@dir, "main")
+      FileUtils.mkdir_p(main)
+      git_init(main)
+      commit(main)
+      FileUtils.rm_rf(root)
+      SeedRepo.git(main, "worktree", "add", "-q", root)
+      File.join(main, ".git")
+    end
+
+    it "commits in a linked worktree while the common dir's hooks and config stay sealed" do
+      common = linked_worktree
+
+      # git also tries a packed-refs.lock in the common dir, which is not granted; the commit lands without it.
+      expect(run(wrapped(%w[git -c user.name=a -c user.email=a@b commit -q --allow-empty -m x])).last).to be(true)
+      expect(SeedRepo.git(root, "log", "-1", "--format=%s").stdout).to eq("x\n")
+      expect(sh(appends([File.join(common, "hooks", "pre-commit"), File.join(common, "config")]))[1]
+        .scan("Read-only file system").size).to eq(2)
+    end
+
+    it "cannot delete a branch from a linked worktree, which needs the common dir's packed-refs" do
+      common = linked_worktree
+      SeedRepo.git(root, "branch", "doomed")
+
+      expect(run(wrapped(%w[git branch -D doomed])).last).to be(false)
+      expect(File.exist?(File.join(common, "refs", "heads", "doomed"))).to be(true)
+    end
+
+    it "keeps a linked worktree's pointers to its git dirs read-only" do
+      common = linked_worktree
+      admin = File.join(common, "worktrees", "r")
+      pointers = [File.join(root, ".git"), File.join(admin, "commondir"), File.join(admin, "gitdir")]
+      before = snapshot(pointers)
+
+      expect(sh(appends(pointers))[1].scan("Read-only file system").size).to eq(3)
+      expect(snapshot(pointers)).to eq(before)
+    end
+
+    it "keeps a checkout's .git from being renamed away, while git can still lock and commit inside it" do
+      git_init
+      before = Dir.children(File.join(root, ".git")).sort
+
+      expect(sh("mv .git .git-old")).to match(["", /busy/i, false])
+      expect(run(wrapped(%w[git -c user.name=a -c user.email=a@b commit -q --allow-empty -m x])).last).to be(true)
+      expect([File.exist?(File.join(root, ".git-old")),
+              before - Dir.children(File.join(root, ".git"))]).to eq([false, []])
+      expect(SeedRepo.git(root, "log", "-1", "--format=%s").stdout).to eq("x\n")
+    end
+
+    it "keeps a submodule's config and hooks read-only" do
+      git_init
+      modules = File.join(root, ".git", "modules", "sub")
+      FileUtils.mkdir_p(modules)
+      File.write(File.join(modules, "config"), "[core]\n")
+      inert_hook(File.join(modules, "hooks", "pre-commit"))
+      planted = [File.join(modules, "config"), File.join(modules, "hooks", "pre-commit")]
+      before = snapshot(planted)
+
+      expect(sh(appends(planted))[1].scan("Read-only file system").size).to eq(2)
+      expect(snapshot(planted)).to eq(before)
+    end
+
+    it "keeps every worktree's pointers back read-only, and their directory in place" do
+      git_init
+      commit(root)
+      SeedRepo.git(root, "worktree", "add", "-q", File.join(@dir, "w2"))
+      admin = File.join(root, ".git", "worktrees", "w2")
+      pointers = [File.join(admin, "commondir"), File.join(admin, "gitdir")]
+      before = snapshot(pointers)
+
+      expect(sh(appends(pointers))[1].scan("Read-only file system").size).to eq(2)
+      expect(sh("mv .git/worktrees .git/worktrees-old")).to match(["", /busy/i, false])
+      expect(snapshot(pointers)).to eq(before)
+    end
+
+    it "keeps another worktree's config.worktree read-only from the main checkout" do
+      git_init
+      commit(root)
+      SeedRepo.git(root, "config", "extensions.worktreeConfig", "true")
+      SeedRepo.git(root, "worktree", "add", "-q", File.join(@dir, "w2"))
+      config = File.join(root, ".git", "worktrees", "w2", "config.worktree")
+      File.write(config, "# inert\n")
+
+      expect(sh(appends([config]))).to match(["", /Read-only file system/, false])
+      expect(File.read(config)).to eq("# inert\n")
+    end
+
+    it "keeps the whole git dir read-only when git cannot answer for it" do
+      git_init
+      File.write(File.join(root, ".git", "HEAD"), "not a ref\n")
+      kept = [File.join(root, ".git", "HEAD"), File.join(root, ".git", "config")]
+      before = snapshot(kept)
+
+      expect(sh("#{appends(kept)}; mkdir .git/hooks/x")[1].scan("Read-only file system").size).to eq(3)
+      expect(snapshot(kept)).to eq(before)
+    end
+
+    it "builds no call over a seal reached through a link the call could repoint" do
+      git_init
+      FileUtils.mkdir_p(in_root("real-hooks"))
+      File.symlink(in_root("real-hooks").first, in_root(".husky").first)
+      SeedRepo.git(root, "config", "core.hooksPath", ".husky")
+
+      expect { wrapped(%w[true]) }.to raise_error(Lain::Confine::Profile::Unsealable)
+      expect(File.readlink(in_root(".husky").first)).to eq(in_root("real-hooks").first)
+    end
+
+    it "seals a core.hooksPath directory" do
+      git_init
+      SeedRepo.git(root, "config", "core.hooksPath", ".husky")
+      FileUtils.mkdir_p(in_root(".husky"))
+
+      expect(sh(appends(in_root(".husky/pre-commit")))).to match(["", /Read-only file system/, false])
+    end
+
+    it "lists absent persistence files without mounting them, so a call leaves none behind" do
+      git_init
+      absent = in_root(".envrc", ".pre-commit-config.yaml", ".lain")
+
+      expect(run(wrapped(%w[true]))).to eq(["", "", true])
+      expect(absent.select { File.exist?(_1) }).to eq([])
+    end
+
+    it "reaches no network, by TCP or by datagram" do
+      server = TCPServer.new("127.0.0.1", 0)
+      udp = %(import socket; socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b"x", ("127.0.0.1", 9)))
+
+      expect([run(wrapped(["bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/#{server.addr[1]}"])).last,
+              run(wrapped(["python3", "-c", udp])).last]).to eq([false, false])
+    ensure
+      server&.close
+    end
+
+    it "lets Ruby find its TMPDIR writable" do
+      expect(run(wrapped([ruby, "-e", 'require "tmpdir"; puts Dir.tmpdir']), env: { "RUBYOPT" => nil }))
+        .to eq(["#{tmpdir}\n", "", true])
+    end
+
+    # bwrap mounts the mask nodev, so even bwrap's layer alone refuses to open it, as for a reader.
+    it "refuses the open, so nothing of R/.env is readable" do
+      File.write(File.join(root, ".env"), "SECRET=1\n")
+      full = wrapped(%w[cat .env])
+
+      expect(run(full.take(full.index("--") + 1) + %w[cat .env])).to match(["", /Permission denied/, false])
+      expect(run(full)).to match(["", /Permission denied/, false])
     end
   end
 end

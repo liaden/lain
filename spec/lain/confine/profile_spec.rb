@@ -95,6 +95,164 @@ RSpec.describe Lain::Confine::Profile do
     end
   end
 
+  describe ".workspace" do
+    around do |example|
+      Dir.mktmpdir do |dir|
+        @dir = File.realpath(dir)
+        example.run
+      end
+    end
+
+    def root = File.join(@dir, "r")
+    def tmpdir = File.join(@dir, "t")
+    def common = File.join(@dir, "main", ".git")
+    def sealed_of(profile) = profile.sealed.to_h { [_1.path, _1.absent] }
+
+    def workspace(at = root, tmp: tmpdir, **)
+      described_class.workspace(root: at, home: "/h", tmpdir: tmp, masks: ["#{at}/.env"], **)
+    end
+
+    def linked_worktree
+      main = File.dirname(common)
+      FileUtils.mkdir_p(main)
+      SeedRepo.git(main, "init", "-q")
+      SeedRepo.git(main, "-c", "user.name=a", "-c", "user.email=a@b", "commit", "-q", "--allow-empty", "-m", "i")
+      SeedRepo.git(main, "worktree", "add", "-q", root)
+    end
+
+    context "with an ordinary checkout" do
+      before do
+        FileUtils.mkdir_p(root)
+        SeedRepo.git(root, "init", "-q")
+      end
+
+      it "writes the project, its TMPDIR, /dev/null and its private /tmp" do
+        expect(workspace.write_dirs).to eq([root, tmpdir, "/dev/null", "/tmp"])
+      end
+
+      it "reads and runs what a reader does, and masks what it was handed" do
+        reader = described_class.reader(root:, home: "/h", masks: ["#{root}/.env"])
+        expect([workspace.name, workspace.exec_dirs, workspace.read_dirs, workspace.masks])
+          .to eq([:workspace, reader.exec_dirs, reader.read_dirs, reader.masks])
+      end
+
+      it "grants no network, is traced, confined and deeply frozen" do
+        expect([workspace.connect_ports, workspace.unix_dirs, workspace.trace]).to eq([[], [], true])
+        expect(workspace).to be_confined.and be_deeply_frozen
+      end
+
+      it "seals the hooks, the configs, what redirects git and the project's persistence files" do
+        git = File.join(root, ".git")
+        expect(sealed_of(workspace)).to eq(
+          File.join(git, "hooks") => false, File.join(git, "config") => false,
+          File.join(git, "config.worktree") => true, File.join(git, "commondir") => true,
+          File.join(git, "modules") => true, File.join(git, "worktrees") => true,
+          File.join(root, ".lain") => true, File.join(root, ".envrc") => true,
+          File.join(root, ".pre-commit-config.yaml") => true
+        )
+      end
+
+      it "seals the submodules' git dirs and every worktree's admin dir, each whole" do
+        FileUtils.mkdir_p(File.join(root, ".git", "modules", "sub"))
+        SeedRepo.git(root, "-c", "user.name=a", "-c", "user.email=a@b", "commit", "-q", "--allow-empty", "-m", "i")
+        SeedRepo.git(root, "worktree", "add", "-q", File.join(@dir, "w2"))
+        expect(sealed_of(workspace)).to include(
+          File.join(root, ".git", "modules") => false, File.join(root, ".git", "worktrees") => false
+        )
+      end
+
+      it "seals the whole git dir, so a commit fails, when git cannot answer for it" do
+        File.write(File.join(root, ".git", "HEAD"), "not a ref\n")
+        expect(sealed_of(workspace)).to eq(
+          File.join(root, ".git") => false, File.join(root, ".lain") => true, File.join(root, ".envrc") => true,
+          File.join(root, ".pre-commit-config.yaml") => true
+        )
+      end
+
+      it "refuses a seal reached through a link inside the project, which the call could repoint" do
+        FileUtils.mkdir_p(File.join(root, "real-hooks"))
+        File.symlink(File.join(root, "real-hooks"), File.join(root, ".husky"))
+        SeedRepo.git(root, "config", "core.hooksPath", ".husky")
+        expect { workspace }.to raise_error(described_class::Unsealable, /#{Regexp.escape(File.join(root, ".husky"))}/)
+      end
+
+      it "refuses a persistence file that is a link" do
+        File.write(File.join(root, "kept"), "x\n")
+        File.symlink("kept", File.join(root, ".envrc"))
+        expect { workspace }.to raise_error(described_class::Unsealable, /\.envrc/)
+      end
+
+      it "seals a hooks dir once when two names resolve to it" do
+        File.symlink(File.join(root, ".git", "hooks"), link = File.join(@dir, "hooks-link"))
+        SeedRepo.git(root, "config", "core.hooksPath", link)
+        expect(workspace.sealed.count { _1.path == File.join(root, ".git", "hooks") }).to eq(1)
+      end
+
+      it "lists each absent persistence file as absent, and a present one as present" do
+        File.write(File.join(root, ".envrc"), "export X=1\n")
+        expect(sealed_of(workspace).slice(*%w[.lain .envrc .pre-commit-config.yaml].map { File.join(root, _1) }))
+          .to eq(File.join(root, ".lain") => true, File.join(root, ".envrc") => false,
+                 File.join(root, ".pre-commit-config.yaml") => true)
+      end
+
+      it "seals a core.hooksPath directory" do
+        SeedRepo.git(root, "config", "core.hooksPath", ".husky")
+        FileUtils.mkdir_p(File.join(root, ".husky"))
+        expect(sealed_of(workspace))
+          .to include(File.join(root, ".husky") => false, File.join(root, ".git", "hooks") => false)
+      end
+    end
+
+    context "with a linked worktree" do
+      before { linked_worktree }
+
+      let(:admin) { File.join(common, "worktrees", "r") }
+
+      it "writes what a commit needs in the common dir, and the worktree's own admin dir, but not the main index" do
+        expect(workspace.write_dirs).to eq(
+          [root, tmpdir, *%w[objects refs logs].map { File.join(common, _1) }, admin, "/dev/null", "/tmp"]
+        )
+      end
+
+      it "seals the common dir's hooks and config, the worktree's own config, and every pointer between them" do
+        expect(sealed_of(workspace)).to include(
+          File.join(common, "hooks") => false, File.join(common, "config") => false,
+          File.join(admin, "config.worktree") => true, File.join(root, ".git") => false,
+          File.join(admin, "commondir") => false, File.join(admin, "gitdir") => false
+        )
+      end
+    end
+
+    it "writes the common index too when the git dir is the common dir, as a separate git dir is" do
+      FileUtils.mkdir_p([root, File.dirname(common)])
+      SeedRepo.git(root, "init", "-q", "--separate-git-dir", common)
+      expect(workspace.write_dirs).to include(File.join(common, "index"), common)
+    end
+
+    it "seals only the project's persistence files outside a git checkout" do
+      FileUtils.mkdir_p(root)
+      expect(sealed_of(workspace).keys).to eq(%w[.lain .envrc .pre-commit-config.yaml].map { File.join(root, _1) })
+    end
+
+    it "refuses a relative TMPDIR" do
+      FileUtils.mkdir_p(root)
+      expect { workspace(tmp: "t") }.to raise_error(ArgumentError, /"t"/)
+    end
+
+    it "refuses a TMPDIR that is home or holds it, which would make home writable" do
+      FileUtils.mkdir_p([root, File.join(@dir, "h")])
+      [File.join(@dir, "h"), @dir].each do |tmp|
+        expect { described_class.workspace(root:, home: File.join(@dir, "h"), tmpdir: tmp) }
+          .to raise_error(ArgumentError, /home/)
+      end
+    end
+
+    it "refuses a root with a newline in it, which would split git's answer" do
+      FileUtils.mkdir_p(bent = File.join(@dir, "r\nx"))
+      expect { workspace(bent) }.to raise_error(ArgumentError, /newline/)
+    end
+  end
+
   describe "#runs?" do
     subject(:profile) { described_class.reader(root: "/p", home: "/h", exec_files: ["/h/.local/bin/grep"]) }
 

@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "pathname"
+
 module Lain
   module Confine
     # Prefixes each stage with bwrap, then strace, then lain-fence. bwrap is
@@ -56,7 +58,28 @@ module Lain
         [@bwrap, "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
          "--size", profile.tmpfs_bytes.to_s, "--tmpfs", "/tmp", "--unshare-pid", "--die-with-parent",
          *under_tmp(profile).flat_map { |dir| ["--ro-bind-try", dir, dir] },
+         *[*writable(profile), *pinned(profile)].flat_map { |dir| ["--bind-try", dir, dir] },
+         *profile.sealed.reject(&:absent).flat_map { ["--ro-bind", _1.path, _1.path] },
          *masking(profile.masks), "--"]
+      end
+
+      # The fence decides what may be written; this only lifts bwrap's
+      # read-only root from the grants that live outside its own /tmp.
+      def writable(profile) = profile.write_dirs - Profile::SYSTEM_WRITE
+
+      # A mount point cannot be renamed, so each directory between a write and
+      # a seal is bound over itself: renaming one would carry the seal away and
+      # leave its name free to plant.
+      def pinned(profile)
+        writes = writable(profile)
+        profile.sealed.flat_map { between(writes, _1.path) }.uniq - writes
+      end
+
+      def between(writes, path)
+        write = writes.select { Landing.under?(path, _1) }.max_by(&:size)
+        return [] unless write
+
+        Pathname(path).relative_path_from(write).descend.map { File.join(write, _1.to_s) }[0...-1]
       end
 
       # The kind is read here, the last moment before bwrap binds, because a
