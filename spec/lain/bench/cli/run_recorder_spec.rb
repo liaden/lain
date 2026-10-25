@@ -224,7 +224,8 @@ RSpec.describe Lain::Bench::CLI::RunRecorder do
     # A model that asks for a tool this toolless run does not have, forever:
     # the loop runs into its iteration ceiling, which is how a budget stops.
     it "records a run the budget stopped, as the recording it is" do
-      looping = Lain::Provider::Mock.new(responses: [tool_response(["tu_1", "grep", { "pattern" => "x" }], usage:)])
+      turns = Array.new(Lain::Budget::DEFAULT_ITERATIONS + 1) { |i| tool_response(["tu_#{i}", "grep#{i}", {}], usage:) }
+      looping = Lain::Provider::Mock.new(responses: turns)
       recorder = described_class.new(provider: looping, context:, attribution:, prompts: ["hi"])
       Dir.mktmpdir do |tmp|
         path = recorder.record(File.join(tmp, "1.ndjson"))

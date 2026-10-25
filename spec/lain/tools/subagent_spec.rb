@@ -302,6 +302,12 @@ RSpec.describe Lain::Tools::Subagent do
     Lain::Provider::Mock.new(responses:)
   end
 
+  # Distinct inputs, so only a ceiling can end a run that scripts them: a run
+  # repeating one call is stopped as stuck first.
+  def echo_rounds(**attrs)
+    Array.new(70) { |i| tool_response(["e#{i}", "echo", { "text" => "again #{i}" }], **attrs) }
+  end
+
   # Every child now holds an `ask_human` of its OWN, granted at the spawn
   # rather than inherited from the union it attenuates from -- so a rendered
   # tools block is the set under test PLUS that one, in {Toolset}'s sorted
@@ -556,7 +562,7 @@ RSpec.describe Lain::Tools::Subagent do
 
     # Asks for a tool it was never granted on every turn, so only the ceiling
     # ends it.
-    def looping_child = mock(tool_response(["e1", "echo", { "text" => "again" }]))
+    def looping_child = mock(*echo_rounds)
 
     def dispatched_by_parent(provider: looping_child, observer: record, **seam)
       parent_agent = nil
@@ -737,7 +743,8 @@ RSpec.describe Lain::Tools::Subagent do
     end
 
     context "when a researcher-sized ceiling nears" do
-      def reading = tool_response(["r1", "read_file", { "path" => "Gemfile" }])
+      def reading(index = 0) = tool_response(["r#{index}", "read_file", { "path" => "Gemfile#{index}" }])
+      def readings = Array.new(8) { |index| reading(index) }
 
       def warned(provider)
         parent_agent = nil
@@ -755,7 +762,7 @@ RSpec.describe Lain::Tools::Subagent do
       end
 
       it "carries one note naming the remaining iterations, on the 4th request only" do
-        provider = mock(reading)
+        provider = mock(*readings)
         warned(provider)
 
         expect(provider.requests.size).to eq(8)
@@ -764,7 +771,7 @@ RSpec.describe Lain::Tools::Subagent do
       end
 
       it "journals the note as a message to the child's spawn digest" do
-        warned(mock(reading))
+        warned(mock(*readings))
 
         note = record.messages.find { |message| message.from == "lain" }
         expect(note.to).to eq(record.spawn.digest)
@@ -773,7 +780,7 @@ RSpec.describe Lain::Tools::Subagent do
       end
 
       it "is admitted by lain watch's lineage filter for that child" do
-        warned(mock(reading))
+        warned(mock(*readings))
         filter = Lain::CLI::Watch::LineageFilter.new(selector: record.spawn.digest)
         filter.admit?({ "type" => "message", "kind" => "spawn", "digest" => record.spawn.digest })
         note = record.messages.find { |message| message.from == "lain" }
@@ -786,7 +793,7 @@ RSpec.describe Lain::Tools::Subagent do
         late = Lain::Response.new(content: [{ "type" => "text", "text" => "findings so far" },
                                             { "type" => "tool_use", "id" => "r9", "name" => "read_file",
                                               "input" => { "path" => "Gemfile" } }], stop_reason: :tool_use)
-        result = warned(mock(reading, reading, reading, late, reading))
+        result = warned(mock(reading(0), reading(1), reading(2), late, reading(3)))
 
         expect(result["content"]).to include("findings so far")
       end
@@ -1916,9 +1923,9 @@ RSpec.describe Lain::Tools::Subagent do
 
     it "gives the child its role's iteration ceiling, not what the parent has left" do
       parent_agent = nil
-      tool = build_subagent(provider: mock(tool_response(["e1", "echo", { "text" => "again" }])),
+      tool = build_subagent(provider: mock(*Array.new(30) { |i| tool_response(["e#{i}", "echo#{i}", {}]) }),
                             holder: Lain::Tools::Subagent::Holder.of(-> { parent_agent }))
-      rounds = Array.new(19) { |i| tool_response(["p#{i}", "echo", { "text" => "step" }]) }
+      rounds = Array.new(19) { |i| tool_response(["p#{i}", "echo", { "text" => "step #{i}" }]) }
       parent_agent = holding(tool, [*rounds, spawn_call, text_response("parent done")],
                              Lain::Budget.ceilings(iterations: 25).with(depth: 1))
 
@@ -2028,7 +2035,7 @@ RSpec.describe Lain::Tools::Subagent do
 
     def spending(tokens) = Lain::Usage.new(input_tokens: tokens)
 
-    def echoing(tokens) = tool_response(["e1", "echo", { "text" => "again" }], usage: spending(tokens))
+    def echoing(tokens) = echo_rounds(usage: spending(tokens))
 
     def held_by(parent_ref, provider:, **)
       build_subagent(provider:, holder: Lain::Tools::Subagent::Holder.of(parent_ref),
@@ -2053,7 +2060,7 @@ RSpec.describe Lain::Tools::Subagent do
 
     it "grants siblings fanned out together no more than the parent's room between them" do
       parent_agent = nil
-      provider = SubagentSpecYieldingProvider.new(responses: [echoing(100)])
+      provider = SubagentSpecYieldingProvider.new(responses: echoing(100))
       tool = held_by(-> { parent_agent }, provider:, budget: Lain::Budget.ceilings(tokens: 400),
                                           policy: sibling_policy)
       parent_agent = parent_over(tool, [text_response("unused")], tokens: 1000)
@@ -2068,7 +2075,7 @@ RSpec.describe Lain::Tools::Subagent do
     # grant by one call: the bound is the room plus one call per sibling.
     it "holds siblings whose replies do not divide the room to the room plus one call each" do
       parent_agent = nil
-      provider = SubagentSpecYieldingProvider.new(responses: [echoing(150)])
+      provider = SubagentSpecYieldingProvider.new(responses: echoing(150))
       tool = held_by(-> { parent_agent }, provider:, policy: sibling_policy)
       parent_agent = parent_over(tool, [text_response("unused")], tokens: 1000)
 
@@ -2102,7 +2109,7 @@ RSpec.describe Lain::Tools::Subagent do
 
     it "rolls up the spend of a child its iteration ceiling stopped" do
       parent_agent = nil
-      tool = held_by(-> { parent_agent }, provider: mock(echoing(50)), budget: Lain::Budget.ceilings(iterations: 2))
+      tool = held_by(-> { parent_agent }, provider: mock(*echoing(50)), budget: Lain::Budget.ceilings(iterations: 2))
       parent_agent = parent_over(tool, [text_response("unused")], tokens: 1000)
 
       expect { tool.run("go") }.to raise_error(Lain::Budget::Exceeded, /\Aloop ran 2 iterations/)

@@ -255,6 +255,49 @@ RSpec.describe Lain::Agent do
   # exercised with the mixed content real responses carry.
   def tool_response(*calls) = super(*calls, thinking: "considering")
 
+  describe "progress" do
+    let(:same_call) { tool_response(["tu_1", "echo", { "text" => "ls" }]) }
+
+    def repeating(count)
+      Array.new(count) { |i| tool_response(["tu_#{i}", "echo", { "text" => "ls" }]) }
+    end
+
+    it "stops a run that repeats one call 3 times, after the third result" do
+      provider = Lain::Provider::Mock.new(responses: repeating(5))
+      stuck = described_class.new(provider:, toolset:, context:)
+
+      expect { stuck.ask("go") }
+        .to raise_error(Lain::Budget::Exceeded, /echo.*3 times/) { |e| expect(e.kind).to eq(:stuck) }
+      expect(provider.requests.size).to eq(3)
+    end
+
+    it "starts counting repeats afresh on each ask" do
+      call = ->(i) { tool_response(["tu_#{i}", "echo", { "text" => "ls" }]) }
+      responses = [call.call(1), call.call(2), text_response("one"), call.call(3), call.call(4), text_response("two")]
+      fresh = described_class.new(provider: Lain::Provider::Mock.new(responses:), toolset:, context:)
+
+      fresh.ask("first")
+
+      expect(fresh.ask("second").text).to eq("two")
+    end
+
+    it "lets varied calls run to the end" do
+      calls = Array.new(20) { |i| tool_response(["tu_#{i}", "echo", { "text" => "step #{i}" }]) }
+      varied = described_class.new(provider: Lain::Provider::Mock.new(responses: [*calls, text_response("done")]),
+                                   toolset:, context:, budget: Lain::Budget.ceilings(iterations: 30))
+
+      expect(varied.ask("go").text).to eq("done")
+    end
+
+    it "does not stop a repeating run when its progress check is switched off" do
+      provider = Lain::Provider::Mock.new(responses: [*repeating(5), text_response("done")])
+      lax = described_class.new(provider:, toolset:, context:,
+                                progress: Lain::Agent::Progress.new(repeats: nil, stale_steps: nil))
+
+      expect(lax.ask("go").text).to eq("done")
+    end
+  end
+
   # ---- the loop -------------------------------------------------------------
 
   # CoreGraph has no spec of its own -- it is exercised by every spec that uses
@@ -966,8 +1009,8 @@ RSpec.describe Lain::Agent do
       # (the message {CLI::Repl#respond} renders), and the NEXT prompt reaches
       # the provider instead of dying on arrival.
       it "names the ceiling that stopped the run, then answers the next prompt" do
-        looping = tool_response(["tu_1", "echo", { "text" => "loop" }])
-        provider = CoreGraph.provider(looping, looping, looping, text_response("recovered"))
+        loops = %w[a b c].map { |text| tool_response(["tu_#{text}", "echo", { "text" => text }]) }
+        provider = CoreGraph.provider(*loops, text_response("recovered"))
         a = described_class.new(provider:, toolset:, context:,
                                 budget: Lain::Budget.ceilings(iterations: 2))
 

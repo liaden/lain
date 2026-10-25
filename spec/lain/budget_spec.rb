@@ -37,6 +37,18 @@ RSpec.describe Lain::Budget do
       expect(account(ceilings(tokens: 50), spent(tokens: 51)).exceeded?(:tokens)).to be(true)
     end
 
+    it "grants the ceilings less the iterations used, the spend and the reserve" do
+      room = account(ceilings(iterations: 10, tokens: 50), spent(tokens: 20)).room(iterations_used: 4, reserved: 5)
+
+      expect(room).to have_attributes(iterations: 6, tokens: 25, dollars: nil)
+    end
+
+    it "grants unlimited iterations and tokens as nil" do
+      room = account(Lain::Budget::Ceilings.unlimited, spent(tokens: 20)).room(iterations_used: 4, reserved: 5)
+
+      expect(room).to have_attributes(iterations: nil, tokens: nil)
+    end
+
     it "reports the room left under a dollar ceiling" do
       priced = Lain::Budget::Spent.new(usage: Lain::Usage.zero,
                                        dollars: Lain::Friction::CacheWaste::Dollars.of(BigDecimal("0.25")))

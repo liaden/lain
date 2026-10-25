@@ -715,9 +715,11 @@ RSpec.describe Lain::Bench::CLI do
     end
     let(:reader) { Lain::CLI::Arms::OFF.with(confine: :reader) }
     let(:looping) do
-      unresolved = { "type" => "tool_use", "id" => "t1", "name" => "nothing", "input" => {} }
-      turn = Lain::Response.new(content: [unresolved], stop_reason: :tool_use, usage: Lain::Usage.new(input_tokens: 1))
-      Lain::Provider::Mock.new(responses: [*[turn] * 30, text_response("FILE lib/widget.rb\nEND")])
+      loop_turns = Array.new(30) do |i|
+        unresolved = { "type" => "tool_use", "id" => "t#{i}", "name" => "nothing#{i}", "input" => {} }
+        Lain::Response.new(content: [unresolved], stop_reason: :tool_use, usage: Lain::Usage.new(input_tokens: 1))
+      end
+      Lain::Provider::Mock.new(responses: [*loop_turns, text_response("FILE lib/widget.rb\nEND")])
     end
 
     def report(arms, **)
@@ -920,10 +922,11 @@ RSpec.describe Lain::Bench::CLI do
     let(:journal) { Lain::Channel.new }
     let(:backend) { Lain::CLI::Backend.new({ provider: "anthropic", max_tokens: 64 }, root: Dir.pwd) }
     let(:looping) do
-      unresolved = { "type" => "tool_use", "id" => "t1", "name" => "nothing", "input" => {} }
-      loop_turn = Lain::Response.new(content: [unresolved], stop_reason: :tool_use,
-                                     usage: Lain::Usage.new(input_tokens: 1))
-      Lain::Provider::Mock.new(responses: [*[loop_turn] * 30, text_response("FILE lib/widget.rb\nEND")])
+      loop_turns = Array.new(30) do |i|
+        unresolved = { "type" => "tool_use", "id" => "t#{i}", "name" => "nothing#{i}", "input" => {} }
+        Lain::Response.new(content: [unresolved], stop_reason: :tool_use, usage: Lain::Usage.new(input_tokens: 1))
+      end
+      Lain::Provider::Mock.new(responses: [*loop_turns, text_response("FILE lib/widget.rb\nEND")])
     end
     let(:report) do
       allow(backend).to receive(:provider).and_return(looping)

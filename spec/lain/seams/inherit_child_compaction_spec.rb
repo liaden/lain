@@ -309,7 +309,7 @@ RSpec.describe "an :inherit child of a parent that compacted", :seam do
   # place, the cut would land in the parent's record and on the parent's chain.
   describe "a child that compacts by itself" do
     def poke_call(id)
-      Lain::Response.new(content: [{ "type" => "tool_use", "id" => id, "name" => "poke", "input" => {} }],
+      Lain::Response.new(content: [{ "type" => "tool_use", "id" => id, "name" => "poke", "input" => { "id" => id } }],
                          stop_reason: :tool_use, usage: Lain::Usage.new(input_tokens: 40, output_tokens: 2))
     end
 

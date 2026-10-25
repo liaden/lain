@@ -222,7 +222,7 @@ RSpec.describe Lain::CLI::Improve do
     it "names the ceiling and the stored count when the loop runs past it" do
       stores = [tool_response(improvement_write("k1", "first note")),
                 tool_response(improvement_write("k2", "second note", kind: "doc"))]
-      loops = Array.new(30) { |i| tool_response(improvement_write("r#{i}", "", kind: "knob")) }
+      loops = Array.new(30) { |i| tool_response(improvement_write("r#{i}", "", kind: "knob#{i}")) }
       provider = Lain::Provider::Mock.new(responses: stores + loops)
 
       expect { improve(provider).report }
@@ -232,7 +232,7 @@ RSpec.describe Lain::CLI::Improve do
     end
 
     it "keeps the notes it stored before the ceiling" do
-      loops = Array.new(30) { |i| tool_response(improvement_write("r#{i}", "", kind: "knob")) }
+      loops = Array.new(30) { |i| tool_response(improvement_write("r#{i}", "", kind: "knob#{i}")) }
       provider = Lain::Provider::Mock.new(responses: [tool_response(improvement_write("k1", "kept")), *loops])
 
       expect { improve(provider).report }.to raise_error(Lain::Error)

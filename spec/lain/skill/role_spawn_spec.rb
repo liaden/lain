@@ -199,7 +199,7 @@ RSpec.describe Lain::Skill::RoleSpawn do
     end
 
     def reads(count)
-      Array.new(count) { |i| tool_response(["r#{i}", "read_file", { "path" => "/nowhere/at/all" }]) }
+      Array.new(count) { |i| tool_response(["r#{i}", "read_file", { "path" => "/nowhere/at/all#{i}" }]) }
     end
 
     # The parent's room is stated, because a child is clamped to what its

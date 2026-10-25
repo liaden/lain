@@ -213,12 +213,12 @@ RSpec.describe Lain::CLI::Consolidate do
   describe "a clerk that loops past the ceiling" do
     def backend_for(provider) = instance_double(Lain::CLI::Backend, provider:, context:, slots:)
 
-    def looping = tool_response(["tu_loop", "memory_read", { "id" => "login-ttl" }])
+    def looping(index) = tool_response(["tu_loop#{index}", "memory_read", { "id" => "missing-#{index}" }])
 
     let(:provider) do
       ceiling = Lain::Budget::DEFAULT_ITERATIONS
       Lain::Provider::Mock.new(responses: [tool_response(memory_write("login-ttl", "the token TTL was zero")),
-                                           *Array.new(ceiling - 1) { looping }, text_response("B done")])
+                                           *Array.new(ceiling - 1) { |index| looping(index) }, text_response("B done")])
     end
 
     def report

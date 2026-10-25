@@ -55,15 +55,17 @@ module DriverSpecSupport
   end
 
   class ScoredArm < Lain::Arm
-    def initialize(name:, base:, ceiling_on: nil)
+    def initialize(name:, base:, ceiling_on: nil, stuck_on: nil)
       super(name:)
       @base = base
       @ceiling_on = ceiling_on
+      @stuck_on = stuck_on
       @ledger = FixedLedger.new(cache_creation_input_tokens: 0)
     end
 
     def run(task, **)
       raise Lain::Budget::Exceeded, "ceiling" if task == @ceiling_on
+      raise Lain::Budget::Exceeded.new("bash called 3 times", kind: :stuck) if task == @stuck_on
 
       Lain::Arm::Run.new(arm: name, timeline: nil, grade: FakeGrade.new(@base), elapsed: 0.1, ledger: @ledger)
     end
@@ -779,6 +781,13 @@ END")
         row_for(report, metric, "looping")
       end)
         .to all(include("2 of 2", "failed: ceiling (tasks 1, 2)"))
+    end
+
+    it "counts a task that stopped as stuck as a ceiling failure" do
+      spinning = DriverSpecSupport::ScoredArm.new(name: "spinning", base: 1.0, stuck_on: tasks.first)
+      report = described_class.new([spinning], tasks:, spawn_seam:, grader:, journal:).report
+
+      expect(report).to include("spinning: failed: ceiling (task 1)")
     end
 
     it "fills the interval cell with the same failure marker as the other stats" do

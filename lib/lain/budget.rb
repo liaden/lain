@@ -41,6 +41,13 @@ module Lain
 
       def exceeded?(kind) = remaining(kind)&.negative? || false
 
+      # @return [Ceilings] what is left to grant: the ceilings less this ask's
+      #   iterations, the spend, and the tokens a live child holds
+      def room(iterations_used:, reserved:)
+        ceilings.with(iterations: ceilings.iterations&.-(iterations_used),
+                      tokens: remaining(:tokens)&.-(reserved), dollars: remaining(:dollars))
+      end
+
       # Checked before the iteration runs, so the ceiling counts iterations
       # performed, not attempted.
       # @raise [Lain::Budget::Exceeded] when `count` has reached the ceiling
