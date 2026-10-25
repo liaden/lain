@@ -32,8 +32,13 @@ RSpec.describe Lain::Tripwire::Ledger do
   end
 
   def exec_record(id: "tu_1", profile: :reader, execs: [ran(fence)], refusals: [], fd_execs: [], truncated: false,
-                  incomplete: false)
-    Lain::Telemetry::ExecRecord.new(tool_use_id: id, profile:, execs:, refusals:, fd_execs:, truncated:, incomplete:)
+                  incomplete: false, connects: [])
+    Lain::Telemetry::ExecRecord.new(tool_use_id: id, profile:, execs:, refusals:, fd_execs:, truncated:, incomplete:,
+                                    connects:)
+  end
+
+  def connect(call: "connect", family: "AF_INET", address: "93.184.216.34", port: 443, status: -1, errno: "EACCES")
+    { call:, family:, address:, port:, rc: status, errno:, count: 1 }
   end
 
   def ran(path) = { path:, argv0: File.basename(path), rc: 0 }
@@ -88,6 +93,35 @@ RSpec.describe Lain::Tripwire::Ledger do
       write(exec_record(execs: [ran(fence), ran("/usr/bin/cat"), ran("/usr/bin/curl")]))
 
       expect(tripwires.sole).to include("signal" => "unresolved_exec", "weight" => "strong")
+    end
+
+    it "counts a refused connect in a confined call" do
+      approved
+      write(exec_record(connects: [connect]))
+
+      expect(tripwires.sole).to include("signal" => "refused_connect", "weight" => "strong", "stop" => "would_stop",
+                                        "requester" => "agent")
+    end
+
+    it "names each refused address, whether the errno is EACCES or EPERM" do
+      approved
+      write(exec_record(connects: [connect, connect(address: "::1", family: "AF_INET6", port: 80, errno: "EPERM")]))
+
+      expect(tripwires.sole["evidence"].sole["detail"]).to eq(["93.184.216.34:443", "[::1]:80"])
+    end
+
+    it "counts a refused TCP fast open send as a refused connect, not a datagram" do
+      approved
+      write(exec_record(connects: [connect(call: "sendto", address: "1.2.3.4", port: 80, errno: "EPERM")]))
+
+      expect(tripwires.sole).to include("signal" => "refused_connect")
+    end
+
+    it "counts a datagram send to a port other than 53 as medium" do
+      approved
+      write(exec_record(connects: [connect(call: "sendto", port: 9999, status: 4, errno: nil)]))
+
+      expect(tripwires.sole).to include("signal" => "datagram_send", "weight" => "medium")
     end
 
     it "counts a fresh program" do
@@ -362,6 +396,45 @@ RSpec.describe Lain::Tripwire::Ledger do
     it "adds nothing for a run file that was not written this lineage" do
       script = Lain::Shell::Executable::RunFiles::Entry.new(path: "/work/repo/x.rb", klass: :project, fresh: false)
       approved(program("ruby", "/usr/bin/ruby", run_files: [script]))
+
+      expect(tripwires).to be_empty
+    end
+
+    it "adds nothing for a refused connect to port 53, a resolver's TCP fallback" do
+      approved
+      write(exec_record(connects: [connect(address: "10.0.0.2", port: 53)]))
+
+      expect(tripwires).to be_empty
+    end
+
+    it "adds nothing for a datagram send to port 53 or a connect that was not refused" do
+      approved
+      write(exec_record(connects: [connect(call: "sendto", port: 53, status: 4, errno: nil),
+                                   connect(status: -1, errno: "EINPROGRESS"), connect(status: 0, errno: nil)]))
+
+      expect(tripwires).to be_empty
+    end
+
+    it "adds nothing for a refused connect to the system resolver's unix socket" do
+      approved
+      write(exec_record(connects: [connect(family: "AF_UNIX", address: "/run/systemd/resolve/io.systemd.Resolve",
+                                           port: nil)]))
+
+      expect(tripwires).to be_empty
+    end
+
+    it "adds nothing for the connects of a traced call" do
+      approved
+      write(exec_record(profile: :traced,
+                        connects: [connect,
+                                   connect(call: "sendto", port: 9999, status: 4, errno: nil)]))
+
+      expect(tripwires).to be_empty
+    end
+
+    it "adds nothing for a truncated record with a refused connect" do
+      approved
+      write(exec_record(connects: [connect], truncated: true))
 
       expect(tripwires).to be_empty
     end

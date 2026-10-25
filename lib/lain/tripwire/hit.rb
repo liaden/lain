@@ -15,6 +15,9 @@ module Lain
       LOADER = %r{\Ald(?:-linux[^/]*)?\.so(?:\.\d+)*\z}
       # A record holds every path it counted; the evidence names this many and the count.
       NAMED = 8
+      REFUSED_ERRNOS = %w[EACCES EPERM].freeze
+      INET = %w[AF_INET AF_INET6].freeze
+      DNS_PORT = 53
 
       # @param name [String]
       # @param weight [Symbol] one of {Rules::WEIGHTS}
@@ -104,7 +107,37 @@ module Lain
         expected = [execs.first&.fetch("path"), Exec::Local::SHELL, *loaders]
         ran = execs.select { _1["rc"].zero? }.map { _1["path"] } - expected
         [strong("refused_exec", record["tool_use_id"], refused),
-         strong("unresolved_exec", record["tool_use_id"], ran.reject { resolution.ran?(_1) })]
+         strong("unresolved_exec", record["tool_use_id"], ran.reject { resolution.ran?(_1) }),
+         *network_hits(record)]
+      end
+
+      # A confined call holds no network grant it did not name, so a refused
+      # connect is a probe, while a datagram send that got through is only
+      # odd: DNS on port 53 is what an honest resolver does.
+      def self.network_hits(record)
+        id = record["tool_use_id"]
+        connects = record.fetch("connects", [])
+        [strong("refused_connect", id, refused_connects(connects)),
+         hit("datagram_send", id, datagram_sends(connects), false)]
+      end
+
+      # The fence refuses a TCP fast open send with EPERM, so any refused inet call is a connect it stopped.
+      # Port 53 is exempt: Landlock refuses an honest resolver's TCP fallback there, and nothing was sent.
+      def self.refused_connects(connects)
+        inet(connects).select { REFUSED_ERRNOS.include?(_1["errno"]) && _1["port"] != DNS_PORT }.map { named(_1) }
+      end
+
+      def self.datagram_sends(connects)
+        inet(connects).select { _1["call"] != "connect" && _1["errno"].nil? && _1["port"] != DNS_PORT }
+                      .map { named(_1) }
+      end
+
+      # A unix socket has no port; the resolver's own is refused on an honest lookup.
+      def self.inet(connects) = connects.select { INET.include?(_1["family"]) }
+
+      def self.named(connect)
+        host = connect["family"] == "AF_INET6" ? "[#{connect["address"]}]" : connect["address"]
+        "#{host}:#{connect["port"]}"
       end
 
       # A bare descriptor's path is empty, and names no file.
@@ -118,7 +151,8 @@ module Lain
         new(name:, weight:, tool_use_id: id, detail: detail.uniq) unless detail.empty?
       end
 
-      private_class_method :escalation_hit, :protected?, :confined_hits, :refused, :hit, :strong, :present
+      private_class_method :escalation_hit, :protected?, :confined_hits, :network_hits, :refused_connects,
+                           :datagram_sends, :inet, :named, :refused, :hit, :strong, :present
     end
   end
 end
