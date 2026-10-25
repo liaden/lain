@@ -2,7 +2,7 @@
 
 module Lain
   module CLI
-    CompactionProfile = Data.define(:compact, :strategy, :keep, :bytes, :cap, :fallback, :schedule)
+    CompactionProfile = Data.define(:compact, :strategy, :keep, :bytes, :cap, :fallback, :schedule, :provenance)
 
     # Which compaction arm a run takes: whether it compacts at all, the strategy
     # that collapses a span, and the four knobs that decide when and how far. A field is nil until someone
@@ -13,7 +13,8 @@ module Lain
     # {Backend} owns what an unset field means.
     class CompactionProfile
       FLAGS = { compact: :compact, strategy: :compact_strategy, keep: :compact_keep, bytes: :compact_bytes,
-                cap: :compact_cap, fallback: :compact_fallback, schedule: :compact_schedule }.freeze
+                cap: :compact_cap, fallback: :compact_fallback, schedule: :compact_schedule,
+                provenance: :compact_provenance }.freeze
       SCHEDULES = %w[idle turn].freeze
       DEFAULT_SCHEDULE = "idle"
 
@@ -26,7 +27,7 @@ module Lain
         def typed(options)
           new(compact: options[:compact], strategy: options[:compact_strategy], keep: options[:compact_keep],
               bytes: options[:compact_bytes], cap: options[:compact_cap], fallback: options[:compact_fallback],
-              schedule: options[:compact_schedule])
+              schedule: options[:compact_schedule], provenance: options[:compact_provenance])
         end
 
         # An off run's `compact_schedule` is the placeholder every off header
@@ -65,12 +66,16 @@ module Lain
       # @return [String] the schedule that runs: typed, else recorded, else {DEFAULT_SCHEDULE}
       def schedule_or_default = schedule || DEFAULT_SCHEDULE
 
-      def initialize(compact:, strategy:, keep:, bytes:, cap:, fallback:, schedule:)
+      # @return [Boolean] whether a summary's claims about the user are checked against the user's turns
+      def provenance_on? = provenance == "on"
+
+      def initialize(compact:, strategy:, keep:, bytes:, cap:, fallback:, schedule:, provenance:)
         super(compact:, strategy: strategy&.dup&.freeze, keep:, bytes:, cap:, fallback: fallback&.dup&.freeze,
-              schedule: schedule&.dup&.freeze)
+              schedule: schedule&.dup&.freeze, provenance: provenance&.dup&.freeze)
       end
 
-      UNSET = new(compact: nil, strategy: nil, keep: nil, bytes: nil, cap: nil, fallback: nil, schedule: nil)
+      UNSET = new(compact: nil, strategy: nil, keep: nil, bytes: nil, cap: nil, fallback: nil, schedule: nil,
+                  provenance: nil)
     end
   end
 end

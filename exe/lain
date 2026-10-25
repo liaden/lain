@@ -1133,6 +1133,9 @@ class LainCLI < Thor
                                             desc: "How a compacted span collapses " \
                                                   "(#{Lain::CLI::CompactionStrategy::STRATEGIES.join(", ")}; " \
                                                   "unset keeps the eager tool-result tier; #{INHERITED})"
+      thor.method_option :compact_provenance, type: :string, enum: %w[on off],
+                                              desc: "Check a summary's claims about the user against the " \
+                                                    "user's own turns (needs --compact-strategy; #{INHERITED})"
     end
 
     # Beside `--compact-strategy` because it is the other render-strategy arm,

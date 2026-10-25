@@ -52,12 +52,14 @@ module Lain
         # @param options [Hash] the invoked command's parsed flags
         # @param sink [Lain::Sink] where a resolved policy reports a DOWN tier
         # @option options [String, nil] :compact_strategy the flag itself
+        # @option options [String, nil] :compact_provenance "on" checks a summary's claims about the user
         # @return [Compaction::Source::Collapse] the resolved policy and the
         #   word for the arm it makes; the eager control arm when no flag was
         #   given, never nil
         # @raise [CompactionStrategy::Unknown] on a name outside its set
         def self.resolve(backend:, options:, sink: Sink::Null.new)
-          new(backend:, name: options[:compact_strategy], sink:).collapse
+          new(backend:, name: options[:compact_strategy], provenance: options[:compact_provenance] == "on",
+              sink:).collapse
         end
 
         # @param backend [#summarizer_provider, #summarizer_model,
@@ -69,9 +71,16 @@ module Lain
         #   reports a tier that is DOWN. With the Null sink "the summarizer is
         #   unreachable" and "compaction is off" look identical to an operator,
         #   because both leave the span uncollapsed.
-        def initialize(backend:, name:, sink:)
+        # @param provenance [Boolean] wrap the resolved strategy in {Compaction::ProvenanceCheck}
+        def initialize(backend:, name:, sink:, provenance: false)
+          if provenance && name.nil?
+            raise Error,
+                  "--compact-provenance on needs --compact-strategy, which names what it checks"
+          end
+
           @backend = backend
           @name = name
+          @provenance = provenance
           @sink = sink
         end
 
@@ -79,7 +88,8 @@ module Lain
         def strategy
           return nil if @name.nil?
 
-          CompactionStrategy.resolve(@name, tier: method(:tier), sink: @sink, journal: @backend.journal)
+          CompactionStrategy.resolve(@name, tier: method(:tier), sink: @sink, journal: @backend.journal,
+                                            provenance: @provenance)
         end
 
         # The CHOICE, not merely the policy, which is how

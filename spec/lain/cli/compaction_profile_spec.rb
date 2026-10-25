@@ -25,6 +25,10 @@ RSpec.describe Lain::CLI::CompactionProfile do
       expect(described_class.typed(options)).to have_attributes(compact: nil)
     end
 
+    it "reads the provenance flag" do
+      expect(described_class.typed({ compact_provenance: "on" })).to have_attributes(provenance: "on")
+    end
+
     it "reads --compact and --no-compact as typed choices" do
       expect(described_class.typed({ compact: false })).to have_attributes(compact: false)
       expect(described_class.typed({ compact: true })).to have_attributes(compact: true)
@@ -50,6 +54,10 @@ RSpec.describe Lain::CLI::CompactionProfile do
 
     it "invents no schedule a header does not record" do
       expect(described_class.from_header({ "provider" => "ollama" })).to have_attributes(schedule: nil)
+    end
+
+    it "reads a recorded provenance switch" do
+      expect(described_class.from_header({ "compact_provenance" => "on" })).to have_attributes(provenance: "on")
     end
 
     it "reads a recorded --no-compact" do
@@ -97,8 +105,20 @@ RSpec.describe Lain::CLI::CompactionProfile do
       expect(described_class.typed({ compact: true }).to_header).to eq({})
     end
 
+    it "records the provenance switch under its flag's name" do
+      expect(described_class.typed({ compact_provenance: "on" }).to_header).to eq("compact_provenance" => "on")
+    end
+
     it "is empty when nothing is set" do
       expect(described_class::UNSET.to_header).to eq({})
+    end
+  end
+
+  describe "#provenance_on?" do
+    it "is true only for an explicit on" do
+      expect(described_class.typed({ compact_provenance: "on" }).provenance_on?).to be(true)
+      expect(described_class.typed({ compact_provenance: "off" }).provenance_on?).to be(false)
+      expect(described_class::UNSET.provenance_on?).to be(false)
     end
   end
 

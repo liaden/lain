@@ -173,11 +173,14 @@ module Lain
       # @param journal [#<<] where the wrapped oracle's `oracle_answer`
       #   records land; the Null channel (the default) means nothing is
       #   journalled
-      def initialize(name = nil, tier: nil, sink: Sink::Null.new, journal: Channel::Null.instance)
+      # @param provenance [Boolean] wrap each leaf in {Compaction::ProvenanceCheck}, which marks a
+      #   summary's unsupported claims about the user
+      def initialize(name = nil, tier: nil, sink: Sink::Null.new, journal: Channel::Null.instance, provenance: false)
         @name = string_name(name || DEFAULT)
         @tier = tier
         @sink = sink
         @journal = journal
+        @provenance = provenance
       end
 
       # One strategy for a plain name, a {Compaction::Strategy::Composed} for a
@@ -195,7 +198,7 @@ module Lain
       #   given
       # @raise [IncompleteTier] `tier:` built something that does not answer
       #   the full live-tier duck
-      def strategy = strategy_names.map { |name| built(name) }.inject(:|)
+      def strategy = strategy_names.map { |name| checked(built(name)) }.inject(:|)
 
       private
 
@@ -258,6 +261,8 @@ module Lain
         raise Unknown, "unknown part #{part.inspect} in --compact-strategy #{@name.inspect}, expected one of " \
                        "#{STRATEGIES.inspect}, or several joined by #{SEPARATOR.inspect}"
       end
+
+      def checked(leaf) = @provenance ? Compaction::ProvenanceCheck.new(inner: leaf, journal: @journal) : leaf
 
       # The leaves. Both oracle-backed branches share {#recorded_oracle}'s one
       # wrap, which is what makes "two strategies, one oracle, one journal"
