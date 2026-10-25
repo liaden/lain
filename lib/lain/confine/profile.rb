@@ -2,11 +2,14 @@
 
 module Lain
   module Confine
-    Profile = Data.define(:name, :exec_dirs, :exec_files, :read_dirs, :write_dirs, :masks, :tmpfs_bytes, :trace)
+    Profile = Data.define(:name, :exec_dirs, :exec_files, :read_dirs, :write_dirs, :masks, :tmpfs_bytes, :trace,
+                          :connect_ports, :unix_dirs)
 
     # What one call may do: run beneath `exec_dirs` and exactly `exec_files`,
     # read beneath `read_dirs`, write beneath `write_dirs`, and never see
-    # `masks`. `trace` records every exec. `:none` runs as before, `:traced`
+    # `masks`. `trace` records every exec. `connect_ports` are the TCP ports it may
+    # connect to and `unix_dirs` the directories whose Unix sockets it may
+    # reach; the reader has neither. `:none` runs as before, `:traced`
     # only watches, and `:reader` confines. Both unconfined profiles still run
     # under lain-fence as a reaper, so a stopped call leaves no descendant
     # behind; that covers a call made through a sandbox, and `--confine off`
@@ -40,15 +43,24 @@ module Lain
       HOME_READ = %w[.rustup .cargo/bin .config/git .gitconfig .local/share/mise/installs].freeze
 
       def initialize(name:, trace:, exec_dirs: [], exec_files: [], read_dirs: [], write_dirs: [], masks: [],
-                     tmpfs_bytes: TMPFS_BYTES)
-        grants = { exec_dirs:, exec_files:, read_dirs:, write_dirs:, masks: }
+                     connect_ports: [], unix_dirs: [], tmpfs_bytes: TMPFS_BYTES)
+        grants = { exec_dirs:, exec_files:, read_dirs:, write_dirs:, masks:, unix_dirs: }
         relative = grants.values.flatten.reject { _1.start_with?(File::SEPARATOR) }
         # The fence and bwrap resolve a relative path against wherever they
         # happen to run, which is not a grant anyone wrote.
         raise ArgumentError, "a profile path must be absolute, got #{relative.first.inspect}" if relative.any?
 
-        super(name:, trace:, tmpfs_bytes:, **grants.transform_values { |paths| paths.map(&:-@).freeze })
+        super(name:, trace:, tmpfs_bytes:, connect_ports: valid_ports(connect_ports).freeze,
+              **grants.transform_values { |paths| paths.map(&:-@).freeze })
       end
+
+      def valid_ports(ports)
+        bad = ports.find { !(_1.is_a?(Integer) && _1.between?(1, 65_535)) }
+        raise ArgumentError, "a connect port must be an integer from 1 to 65535, got #{bad.inspect}" if bad
+
+        ports.dup
+      end
+      private :valid_ports
 
       # @return [Boolean] whether the kernel bounds what the call may reach
       def confined? = Profile.confines?(name)

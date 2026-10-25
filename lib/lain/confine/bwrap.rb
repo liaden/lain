@@ -102,8 +102,9 @@ module Lain
 
       def fence(profile)
         grants = { "--exec-dir" => profile.exec_dirs, "--exec-file" => profile.exec_files,
-                   "--read-dir" => profile.read_dirs, "--write-dir" => profile.write_dirs }
-        [@fence, *grants.flat_map { |flag, paths| paths.flat_map { [flag, _1] } }, "--"]
+                   "--read-dir" => profile.read_dirs, "--write-dir" => profile.write_dirs,
+                   "--connect-port" => profile.connect_ports, "--unix-dir" => profile.unix_dirs }
+        [@fence, *grants.flat_map { |flag, values| values.flat_map { [flag, _1.to_s] } }, "--"]
       end
     end
   end

@@ -27,6 +27,18 @@ RSpec.describe Lain::Confine::Bwrap do
       )
     end
 
+    it "gives the reader profile no connect-port or unix-dir flag" do
+      expect(argv_of(launcher.wrap(term, reader, trace_fd: 3))).not_to include("--connect-port", "--unix-dir")
+    end
+
+    it "turns a profile's network grants into fence flags before the separator" do
+      granted = Lain::Confine::Profile.new(name: :reader, trace: false, connect_ports: [443, 80], unix_dirs: ["/run/x"])
+      argv = argv_of(launcher.wrap(term, granted, trace_fd: 3))
+      expect(argv[argv.index("/f/lain-fence")..]).to eq(
+        %w[/f/lain-fence --connect-port 443 --connect-port 80 --unix-dir /run/x -- cat README.md]
+      )
+    end
+
     it "binds back each read dir under /tmp after the private /tmp hides it, then masks" do
       under = Lain::Confine::Profile.reader(root: "/tmp/p", home: "/h", masks: ["/tmp/p/.env"])
       expect(argv_of(launcher.wrap(term, under, trace_fd: 3)).each_cons(3).to_a).to include(
@@ -168,6 +180,28 @@ RSpec.describe Lain::Confine::Bwrap do
 
     it "writes its private /tmp" do
       expect(confined("sh", "-c", "echo x > /tmp/scratch && cat /tmp/scratch")).to eq(["x\n", "", true])
+    end
+
+    describe "with a granted connect port" do
+      def connect_to(port, granted)
+        plant
+        profile = Lain::Confine::Profile.reader(root: project, home:).then do |reader|
+          Lain::Confine::Profile.new(**reader.to_h, connect_ports: granted)
+        end
+        script = "exec 3<>/dev/tcp/127.0.0.1/#{port}"
+        run(argv_of(described_class.new(fence:).wrap(Lain::Shell::Term.of(["bash", "-c", script]), profile,
+                                                     trace_fd: 3)))
+      end
+
+      it "connects to the granted port and is refused another" do
+        granted = TCPServer.new("127.0.0.1", 0)
+        other = TCPServer.new("127.0.0.1", 0)
+        ports = [granted, other].map { _1.addr[1] }
+        expect([connect_to(ports.first, [ports.first]).last, connect_to(ports.last, [ports.first]).last])
+          .to eq([true, false])
+      ensure
+        [granted, other].compact.each(&:close)
+      end
     end
 
     describe "over a repo whose listed links land on a home credential" do

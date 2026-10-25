@@ -28,6 +28,27 @@ RSpec.describe Lain::Confine::Profile do
       expect { described_class.reader(root: "p", home: "/h") }.to raise_error(ArgumentError, /"p"/)
     end
 
+    it "grants no network" do
+      expect([profile.connect_ports, profile.unix_dirs]).to eq([[], []])
+    end
+
+    it "carries the connect ports and unix dirs it was built with" do
+      granted = described_class.new(name: :reader, trace: false, connect_ports: [443, 80], unix_dirs: ["/run/x"])
+      expect([granted.connect_ports, granted.unix_dirs]).to eq([[443, 80], ["/run/x"]])
+    end
+
+    it "refuses a port outside 1 to 65535 or one that is not an integer" do
+      [0, 70_000, "443"].each do |port|
+        expect { described_class.new(name: :reader, trace: false, connect_ports: [port]) }
+          .to raise_error(ArgumentError, /port/)
+      end
+    end
+
+    it "refuses a relative unix dir" do
+      expect { described_class.new(name: :reader, trace: false, unix_dirs: ["run/x"]) }
+        .to raise_error(ArgumentError, %r{"run/x"})
+    end
+
     it "is traced and sizes its /tmp" do
       expect([profile.trace, profile.tmpfs_bytes]).to eq([true, described_class::TMPFS_BYTES])
     end
