@@ -1102,6 +1102,17 @@ RSpec.describe Lain::Agent do
       expect { a.ask("two") }.to raise_error(Lain::Budget::Exceeded, /0\.025 dollars.*unpriced/)
     end
 
+    it "journals the overshoot of the reply that crosses it before refusing" do
+      journal = []
+      a = agent([priced(400), priced(400)], journal:, budget: Lain::Budget.ceilings.with(dollars: BigDecimal("0.015")))
+      a.ask("one")
+
+      expect { a.ask("two") }.to raise_error(Lain::Budget::Exceeded)
+      expect(journal.grep(Lain::Telemetry::BudgetOvershoot).map(&:to_journal))
+        .to eq([{ "type" => "budget_overshoot", "ceiling" => "0.015", "spent" => "0.02", "overshoot" => "0.005",
+                  "model" => "claude-opus-4-8", "complete" => true }])
+    end
+
     it "grants a child the remainder" do
       a = agent(priced(400), budget: Lain::Budget.ceilings.with(dollars: BigDecimal("0.02")))
       a.ask("go")

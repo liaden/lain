@@ -728,7 +728,7 @@ module Lain
       @instrumentation.turn_middleware.settle(@timeline)
       accounting.observe(response, digest: @timeline.head_digest)
       ledger.check_tokens!
-      @budget.check_dollars!(spent)
+      Telemetry::BudgetOvershoot.check!(@budget, spent, journal: accounting.journal, model: @replied_as)
     rescue StandardError => e
       answer_errored
       raise e
