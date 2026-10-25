@@ -96,8 +96,8 @@ module Lain
       def trace(profile, own)
         return [] unless profile.trace
 
-        [@strace, "-DD", "-f", "-s", STRING_BYTES.to_s, "--seccomp-bpf", "-e", "trace=execve,execveat",
-         "-o", "/dev/fd/#{own}", "--"]
+        [@strace, "-DD", "-f", "-s", STRING_BYTES.to_s, "--seccomp-bpf", "-e",
+         "trace=execve,execveat,connect,sendto,sendmsg,sendmmsg", "-o", "/dev/fd/#{own}", "--"]
       end
 
       def fence(profile)

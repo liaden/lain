@@ -17,7 +17,8 @@ RSpec.describe Lain::Confine::Bwrap do
         %W[/usr/bin/bwrap --ro-bind / / --dev /dev --proc /proc
            --size #{Lain::Confine::Profile::TMPFS_BYTES} --tmpfs /tmp --unshare-pid --die-with-parent
            --ro-bind /dev/null /p/.env --
-           /usr/bin/strace -DD -f -s 256 --seccomp-bpf -e trace=execve,execveat -o /dev/fd/3 --
+           /usr/bin/strace -DD -f -s 256 --seccomp-bpf -e trace=execve,execveat,connect,sendto,sendmsg,sendmmsg
+           -o /dev/fd/3 --
            /f/lain-fence --exec-dir /usr --exec-dir /h/.rustup/toolchains --exec-file /h/.local/bin/grep
            --read-dir /p --read-dir /usr --read-dir /etc --read-dir /proc --read-dir /dev/null
            --read-dir /dev/urandom --read-dir /tmp --read-dir /h/.rustup --read-dir /h/.cargo/bin
@@ -66,8 +67,9 @@ RSpec.describe Lain::Confine::Bwrap do
     # the traced command cannot write its own exec lines.
     it "wraps a traced profile with strace writing to its descriptor, then the fence as a reaper only" do
       expect(argv_of(launcher.wrap(term, Lain::Confine::Profile::TRACED, trace_fd: 5))).to eq(
-        ["/usr/bin/strace", "-DD", "-f", "-s", "256", "--seccomp-bpf", "-e", "trace=execve,execveat",
-         "-o", "/dev/fd/5", "--", "/f/lain-fence", "--reap-only", "--", "cat", "README.md"]
+        ["/usr/bin/strace", "-DD", "-f", "-s", "256", "--seccomp-bpf", "-e",
+         "trace=execve,execveat,connect,sendto,sendmsg,sendmmsg", "-o", "/dev/fd/5", "--",
+         "/f/lain-fence", "--reap-only", "--", "cat", "README.md"]
       )
     end
 

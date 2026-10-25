@@ -25,15 +25,39 @@ module Lain
       def record(tool_use_id:, profile:, ended: true)
         text, truncated = drain
         parser = Parser.new
-        execs, fd_execs = parser.parse(text).partition { |call| call[:fd].nil? }
+        connects, execs, fd_execs = sorted(parser.parse(text))
+        kept, dropped = Connects.fold(connects)
         unsettled = parser.open? || cut_short?(text) || !(ended || parser.first_exited?)
         Telemetry::ExecRecord.new(tool_use_id:, profile:, truncated:, incomplete: !truncated && unsettled,
                                   execs: execs.map { |call| call.slice(:path, :argv0, :rc) },
                                   refusals: refusals(execs + fd_execs),
-                                  fd_execs: fd_execs.map { |call| call.slice(:fd, :path, :argv0, :rc, :errno) })
+                                  fd_execs: fd_execs.map { |call| call.slice(:fd, :path, :argv0, :rc, :errno) },
+                                  connects: kept, connects_dropped: dropped)
+      end
+
+      # Folds the same connect or send to one peer into one counted entry, and keeps the first
+      # MAX distinct ones: a loop of datagrams must not grow the journal record with the trace.
+      class Connects
+        MAX = 256
+        KEY = %i[call family address port rc errno].freeze
+
+        # @param entries [Array<Hash>] in trace order; an entry without :count counts once
+        # @param dropped [Integer] distinct entries already dropped upstream
+        # @return [Array(Array<Hash>, Integer)] the kept entries and how many distinct ones were dropped
+        def self.fold(entries, dropped: 0)
+          counts = Hash.new(0)
+          entries.each { |entry| counts[entry.slice(*KEY)] += entry.fetch(:count, 1) }
+          kept = counts.first(MAX).map { |key, count| key.merge(count:) }
+          [kept, dropped + counts.size - kept.size]
+        end
       end
 
       private
+
+      def sorted(calls)
+        connects, execing = calls.partition { |call| call.key?(:call) }
+        [connects, *execing.partition { |call| call[:fd].nil? }]
+      end
 
       def cut_short?(text) = !text.empty? && !text.end_with?("\n")
 
@@ -60,13 +84,24 @@ module Lain
       # Joins an "<unfinished ...>" call to its "<... resumed>" line by pid, then reads the
       # call's strings the way strace escaped them.
       class Parser
-        CALL = /\A(?:(?<pid>\d+)\s+)?(?<name>execve|execveat)\((?<args>.*)\z/
-        RESUMED = /\A(?:(?<pid>\d+)\s+)?<\.\.\. (?:execve|execveat) resumed>(?<tail>.*)\z/
+        CALL = /\A(?:(?<pid>\d+)\s+)?(?<name>execve|execveat|connect|sendto|sendmsg|sendmmsg)\((?<args>.*)\z/
+        RESUMED = /\A(?:(?<pid>\d+)\s+)?<\.\.\. \w+ resumed>(?<tail>.*)\z/
         UNFINISHED = /\s*<unfinished \.\.\.>\z/
+        SOCKET_CALLS = %w[connect sendto sendmsg sendmmsg].freeze
         PID = /\A(?<pid>\d+)\s/
         EXITED = /\A(?<pid>\d+)\s+\+\+\+ (?:exited with|killed by) /
         RESULT = /\)\s+=\s+(?<rc>-?\d+)(?:\s+(?<errno>E[A-Z0-9]+))?(?:\s+\(.*\))?\s*\z/
         ESCAPE = /\\(?:(?<octal>[0-7]{1,3})|x(?<hex>\h{1,2})|(?<char>.))/m
+        SOCKADDR_AFTER_PAYLOAD = /\A,\s*\d+,\s*[^,{]+,\s*\{(?=sa_family)/
+        SOCKADDR_AFTER_FD = /\A\d+,\s*\{(?=sa_family)/
+        SOCKADDR_AS_MSG_NAME = /\A\d+,\s*\{msg_name=\{(?=sa_family)/
+        SOCKADDR_AS_FIRST_MSG_NAME = /\A\d+,\s*\[\{msg_hdr=\{msg_name=\{(?=sa_family)/
+        FAMILIES = %w[AF_INET AF_INET6 AF_UNIX].freeze
+        FAMILY = /\Asa_family=(?<family>AF_\w+)/
+        PORT = /sin6?_port=htons\((?<port>\d+)\)/
+        INET = /sin_addr=inet_addr\("(?<address>[^"]*)"\)/
+        INET6 = /inet_pton\(AF_INET6, "(?<address>[^"]*)"/
+        SUN_PATH = /sun_path=(?<abstract>@)?(?=")/
         SIMPLE = { "n" => "\n", "t" => "\t", "r" => "\r", "v" => "\v", "f" => "\f", "a" => "\a", "b" => "\b" }.freeze
 
         # @param text [String] whole trace; a final line cut short by the cap is dropped
@@ -113,12 +148,50 @@ module Lain
 
         def shape(name, args, result)
           rc = Integer(result[:rc])
-          if name == "execveat"
+          if SOCKET_CALLS.include?(name)
+            peer = peer(name, args)
+            { call: name, **peer, rc:, errno: result[:errno] } if peer
+          elsif name == "execveat"
             fd_exec(args, rc, result[:errno])
           else
             path, rest = string(args)
             { path:, argv0: argv0(rest), rc:, errno: result[:errno] } if path
           end
+        end
+
+        # @return [Hash, nil] the address a call names, nil for a send on a connected socket
+        def peer(name, args)
+          sockaddr = sockaddr_of(name, args)
+          family = sockaddr && FAMILY.match(sockaddr)
+          return unless family && FAMILIES.include?(family[:family])
+
+          { family: family[:family], address: address(family[:family], sockaddr),
+            port: PORT.match(sockaddr)&.then { Integer(_1[:port]) } }
+        end
+
+        def sockaddr_of(name, args)
+          case name
+          when "connect" then args.match(SOCKADDR_AFTER_FD)&.post_match
+          when "sendmsg" then args.match(SOCKADDR_AS_MSG_NAME)&.post_match
+          when "sendmmsg" then args.match(SOCKADDR_AS_FIRST_MSG_NAME)&.post_match
+          else after_payload(args)&.match(SOCKADDR_AFTER_PAYLOAD)&.post_match
+          end
+        end
+
+        def after_payload(args) = string(args.sub(/\A\d+,\s*/, ""))&.last
+
+        def address(family, sockaddr)
+          case family
+          when "AF_INET" then INET.match(sockaddr)&.[](:address)
+          when "AF_INET6" then INET6.match(sockaddr)&.[](:address)
+          when "AF_UNIX" then unix_path(sockaddr)
+          end
+        end
+
+        def unix_path(sockaddr)
+          marker = SUN_PATH.match(sockaddr) or return
+          path = string(marker.post_match)&.first
+          marker[:abstract] ? "@#{path}" : path
         end
 
         def fd_exec(args, status, errno)

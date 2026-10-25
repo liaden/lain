@@ -18,6 +18,123 @@ RSpec.describe Lain::Confine::Trace do
     ]
   end
 
+  describe "connects" do
+    def connects_of(*text_lines) = record_of(text_lines).connects
+
+    def inet(port, address) = %({sa_family=AF_INET, sin_port=htons(#{port}), sin_addr=inet_addr("#{address}")})
+
+    def entry(call, family, address, port, status: 0, errno: nil, count: 1)
+      { call:, family:, address:, port:, rc: status, errno:, count: }
+    end
+
+    def msg(name) = %(sendmsg(3, {msg_name=#{name}, msg_iov=[{iov_base="x", iov_len=1}], msg_iovlen=1}, 0) = 1)
+
+    it "records a connect to an IPv4 address with its rc" do
+      expect(connects_of("5 connect(3, #{inet(8080, "127.0.0.1")}, 16) = 0"))
+        .to eq([entry("connect", "AF_INET", "127.0.0.1", 8080)])
+    end
+
+    it "records a refused connect with its errno" do
+      line = "5 connect(3, #{inet(9, "10.0.0.1")}, 16) = -1 EACCES (Permission denied)"
+      expect(connects_of(line)).to eq([entry("connect", "AF_INET", "10.0.0.1", 9, status: -1, errno: "EACCES")])
+    end
+
+    it "records an IPv6 connect" do
+      line = "5 connect(3, {sa_family=AF_INET6, sin6_port=htons(443), sin6_flowinfo=htonl(0), " \
+             'inet_pton(AF_INET6, "::1", &sin6_addr), sin6_scope_id=0}, 28) = 0'
+      expect(connects_of(line)).to eq([entry("connect", "AF_INET6", "::1", 443)])
+    end
+
+    it "records a Unix socket connect by its path, with no port" do
+      expect(connects_of('5 connect(3, {sa_family=AF_UNIX, sun_path="/run/docker.sock"}, 110) = 0'))
+        .to eq([entry("connect", "AF_UNIX", "/run/docker.sock", nil)])
+    end
+
+    it "marks an abstract Unix socket with a leading at sign" do
+      expect(connects_of('5 connect(3, {sa_family=AF_UNIX, sun_path=@"dbus"}, 8) = 0').sole)
+        .to include(address: "@dbus")
+    end
+
+    it "records a sendto that names an address" do
+      expect(connects_of(%(5 sendto(3, "ping", 4, 0, #{inet(5353, "127.0.0.1")}, 16) = 4)))
+        .to eq([entry("sendto", "AF_INET", "127.0.0.1", 5353, status: 4)])
+    end
+
+    it "records nothing for a send on a connected socket" do
+      expect(connects_of('5 sendto(3, "x", 1, MSG_NOSIGNAL, NULL, 0) = 1', msg("NULL"))).to eq([])
+    end
+
+    it "does not read an address out of a payload that spells one" do
+      payload = inet(1, "1.2.3.4").gsub('"', '\\"')
+      expect(connects_of(%(5 sendto(3, "#{payload}", 70, 0, NULL, 0) = 70))).to eq([])
+    end
+
+    it "records a sendmsg that names an address" do
+      line = "5 #{msg(inet(53, "8.8.8.8"))}"
+      expect(connects_of(line)).to eq([entry("sendmsg", "AF_INET", "8.8.8.8", 53, status: 1)])
+    end
+
+    it "joins a connect that was unfinished to its resumed line" do
+      expect(connects_of("5 connect(3, #{inet(80, "1.1.1.1")}, 16 <unfinished ...>",
+                         "5 <... connect resumed>) = -1 EINPROGRESS (Operation now in progress)"))
+        .to eq([entry("connect", "AF_INET", "1.1.1.1", 80, status: -1, errno: "EINPROGRESS")])
+    end
+
+    it "folds identical entries into one that counts them" do
+      line = %(5 sendto(3, "x", 1, 0, #{inet(53, "8.8.8.8")}, 16) = 1)
+      expect(connects_of(*[line] * 3)).to eq([entry("sendto", "AF_INET", "8.8.8.8", 53, status: 1, count: 3)])
+    end
+
+    it "keeps entries that differ in rc apart" do
+      ok = "5 connect(3, #{inet(80, "1.1.1.1")}, 16) = 0"
+      refused = "5 connect(3, #{inet(80, "1.1.1.1")}, 16) = -1 ECONNREFUSED (Connection refused)"
+      expect(connects_of(ok, refused, ok).map { _1.values_at(:rc, :count) }).to eq([[0, 2], [-1, 1]])
+    end
+
+    it "keeps the first 256 distinct entries and counts those it dropped" do
+      calls = (1..300).map { "5 connect(3, #{inet(_1, "1.1.1.1")}, 16) = 0" }
+      record = record_of(calls)
+      expect([record.connects.size, record.connects.first[:port], record.connects_dropped]).to eq([256, 1, 44])
+    end
+
+    it "folds a repeat of a kept entry even after the cap is reached" do
+      calls = (1..300).map { "5 connect(3, #{inet(_1, "1.1.1.1")}, 16) = 0" }
+      record = record_of([*calls, calls.first])
+      expect([record.connects.first[:count], record.connects_dropped]).to eq([2, 44])
+    end
+
+    it "drops no entry when none passes the cap" do
+      expect(record_of(["5 connect(3, #{inet(80, "1.1.1.1")}, 16) = 0"]).connects_dropped).to eq(0)
+    end
+
+    it "records the address of the first message of a sendmmsg" do
+      line = "5 sendmmsg(3, [{msg_hdr={msg_name=#{inet(53, "9.9.9.9")}, msg_namelen=16, msg_iov=NULL, " \
+             "msg_iovlen=0, msg_controllen=0, msg_flags=0}, msg_len=1}], 1, 0) = 1"
+      expect(connects_of(line)).to eq([entry("sendmmsg", "AF_INET", "9.9.9.9", 53, status: 1)])
+    end
+
+    it "records nothing for a sendmmsg on a connected socket" do
+      line = "5 sendmmsg(3, [{msg_hdr={msg_name=NULL, msg_namelen=0, msg_iov=NULL, msg_iovlen=0, " \
+             "msg_controllen=0, msg_flags=0}}], 1, 0) = 1"
+      expect(connects_of(line)).to eq([])
+    end
+
+    it "records only internet and Unix families" do
+      netlink = "5 connect(5, {sa_family=AF_NETLINK, nl_pid=0, nl_groups=00000000}, 12) = 0"
+      unspec = '5 connect(5, {sa_family=AF_UNSPEC, sa_data="\\0\\0"}, 16) = 0'
+      expect(connects_of(netlink, unspec)).to eq([])
+    end
+
+    it "keeps connects out of the exec lists" do
+      record = record_of([*lines, '5 connect(3, {sa_family=AF_UNIX, sun_path="/x"}, 110) = 0'])
+      expect([record.execs.size, record.fd_execs.size, record.refusals.size]).to eq([3, 1, 1])
+    end
+
+    it "reports a connect still unfinished as incomplete" do
+      expect(record_of(["5 connect(3, #{inet(80, "1.1.1.1")}, 16 <unfinished ...>"]).incomplete).to be(true)
+    end
+  end
+
   describe "#record" do
     it "lists every execve with path, argv0 and rc" do
       expect(record_of(lines).execs).to eq(

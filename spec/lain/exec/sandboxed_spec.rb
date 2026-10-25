@@ -244,6 +244,19 @@ RSpec.describe Lain::Exec::Sandboxed do
       end
     end
 
+    it "folds the same connect from 2 stages into one entry and sums the dropped" do
+      line = %(5 connect(3, {sa_family=AF_UNIX, sun_path="/x"}, 110) = 0\n)
+      inner.behaviour = lambda do |fds:, **|
+        fds.fetch(3).write(line)
+        fds.fetch(4).write(line)
+        capture
+      end
+      run(command: Lain::Shell::Term.of(%w[cat a], %w[head -1]))
+
+      expect(recorded("exec_record").sole).to have_attributes(connects: [a_hash_including(count: 2)],
+                                                              connects_dropped: 0)
+    end
+
     it "hands each stage its own descriptor and merges their records in stage order" do
       inner.behaviour = lambda do |fds:, **|
         fds.fetch(4).write(%(20 execve("/usr/bin/head", ["head"], 0x0 /* 0 vars */) = 0\n))
@@ -416,6 +429,48 @@ RSpec.describe Lain::Exec::Sandboxed do
       expect(run(term(["cat", __FILE__]), confinement: judged).exit_status).to eq(0)
       expect(recorded("sandbox").sole).to have_attributes(profile: :traced, trace: true)
       expect(recorded("exec_record").sole.execs).to include(a_hash_including(path: "/usr/bin/cat"))
+    end
+
+    describe "a call that reaches the network" do
+      let(:server) { TCPServer.new("127.0.0.1", 0) }
+      let(:port) { server.addr[1] }
+      let(:datagrams) { UDPSocket.new.tap { _1.bind("127.0.0.1", 0) } }
+      let(:udp_port) { datagrams.addr[1] }
+
+      after { [server, datagrams].each(&:close) }
+
+      def ruby_run(code) = "#{RbConfig.ruby} -rsocket -e '#{code}'"
+
+      it "records a connect with its address, port and rc" do
+        run("exec 3<>/dev/tcp/127.0.0.1/#{port}", confinement: judged)
+
+        expect(recorded("exec_record").sole.connects)
+          .to include({ call: "connect", family: "AF_INET", address: "127.0.0.1", port:, rc: 0, errno: nil, count: 1 })
+      end
+
+      it "records a refused connect under the reader profile with its errno" do
+        run("exec 3<>/dev/tcp/127.0.0.1/#{port}", confinement: composed)
+
+        expect(recorded("exec_record").sole.connects)
+          .to include(a_hash_including(call: "connect", port:, rc: -1, errno: "EACCES"))
+      end
+
+      it "folds a burst of datagrams to one address into one counted entry" do
+        run(ruby_run("s = UDPSocket.new; 2000.times { s.send(%q(x), 0, %q(127.0.0.1), #{udp_port}) }"),
+            confinement: judged)
+
+        expect(recorded("exec_record").sole.connects.sole).to include(call: "sendto", port: udp_port, count: 2000)
+      end
+
+      it "records a sendto that names an address and nothing for a send on a connected socket" do
+        code = "UDPSocket.new.send(%q(x), 0, %q(127.0.0.1), #{udp_port}); " \
+               "TCPSocket.new(%q(127.0.0.1), #{port}).send(%q(y), 0)"
+        run(ruby_run(code), confinement: judged)
+
+        expect(recorded("exec_record").sole.connects.select { _1[:call] == "sendto" })
+          .to eq([{ call: "sendto", family: "AF_INET", address: "127.0.0.1", port: udp_port, rc: 1, errno: nil,
+                    count: 1 }])
+      end
     end
 
     it "runs a piped term under the reader profile and under the trace alone" do

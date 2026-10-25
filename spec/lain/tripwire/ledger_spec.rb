@@ -55,6 +55,13 @@ RSpec.describe Lain::Tripwire::Ledger do
   describe "strong signals" do
     before { ledger }
 
+    it "folds an exec record written before connects were traced" do
+      approved
+      write(exec_record(refusals: [refused(planted)]).to_journal.except("connects"))
+
+      expect(tripwires.sole).to include("signal" => "refused_exec")
+    end
+
     it "counts a refusal outside the profile" do
       approved
       write(exec_record(execs: [ran(fence), ran("/usr/bin/cat")], refusals: [refused(planted)]))

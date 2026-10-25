@@ -251,9 +251,12 @@ module Lain
         end
 
         def merge(records, tool_use_id:, profile:)
+          connects, dropped = Confine::Trace::Connects.fold(records.flat_map(&:connects),
+                                                            dropped: records.sum(&:connects_dropped))
           Telemetry::ExecRecord.new(tool_use_id:, profile:, execs: records.flat_map(&:execs),
                                     refusals: records.flat_map(&:refusals), fd_execs: records.flat_map(&:fd_execs),
-                                    truncated: records.any?(&:truncated), incomplete: records.any?(&:incomplete))
+                                    connects:, connects_dropped: dropped, truncated: records.any?(&:truncated),
+                                    incomplete: records.any?(&:incomplete))
         end
 
         def pump
