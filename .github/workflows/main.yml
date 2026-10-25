@@ -96,8 +96,14 @@ jobs:
       - name: Size the parallel suite from the runner's own cores
         run: echo "LAIN_SPEC_WORKERS=$(nproc)" >> "$GITHUB_ENV"
       # rubocop runs in the lint job so it is off this job's critical path.
-      - name: Compile and run the parallel suite
-        run: bundle exec rake compile pspec
+      - name: Compile the extension and the fence
+        run: bundle exec rake compile
+      # Without Landlock in the LSM list every gated egress probe skips, and a
+      # green run proves only the seccomp layer.
+      - name: Report the kernel's confinement layers
+        run: uname -r; cat /sys/kernel/security/lsm; target/release/lain-fence --status
+      - name: Run the parallel suite
+        run: bundle exec rake pspec
       # Saved on a red suite too, but only once the extension linked: an entry
       # is immutable, so a half-built target/ would hold the key until evicted.
       - name: Save the cargo registry and compiled target/
