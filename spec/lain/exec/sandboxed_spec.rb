@@ -300,6 +300,196 @@ RSpec.describe Lain::Exec::Sandboxed do
       expect(recorded("exec_record").sole).to have_attributes(incomplete: false, execs: [a_hash_including(rc: 0)])
     end
 
+    describe "a workspace call that creates a sealed path it found absent" do
+      let(:scratch) { File.join(@base, "scratch").tap { FileUtils.mkdir_p(_1) } }
+      let(:profile) { Lain::Confine::Profile.workspace(root:, home:, tmpdir: scratch) }
+      let(:envrc) { File.join(root, ".envrc") }
+
+      def creating(path)
+        inner.behaviour = lambda do |**|
+          File.write(path, "")
+          capture
+        end
+      end
+
+      it "journals the created path on a sandbox record after the call, and leaves the path where it is" do
+        creating(envrc)
+        run
+
+        expect(recorded("sandbox").map(&:created_sealed)).to eq([[], [envrc]])
+        expect(recorded("sandbox").last).to have_attributes(tool_use_id: "toolu_1", profile: :workspace)
+        expect(File.exist?(envrc)).to be(true)
+      end
+
+      it "journals one sandbox record when the call created no sealed path" do
+        run
+
+        expect(recorded("sandbox").sole.created_sealed).to eq([])
+      end
+
+      it "checks after a call that timed out, and leaves the timeout to reach the caller" do
+        inner.behaviour = lambda do |**|
+          File.write(envrc, "")
+          raise Lain::Exec::Timeout, "too slow"
+        end
+
+        expect { run }.to raise_error(Lain::Exec::Timeout, "too slow")
+        expect(recorded("sandbox").last.created_sealed).to eq([envrc])
+      end
+
+      it "names a sealed path created as a dangling link" do
+        inner.behaviour = lambda do |**|
+          File.symlink(File.join(@base, "nowhere"), envrc)
+          capture
+        end
+        run
+
+        expect(recorded("sandbox").last.created_sealed).to eq([envrc])
+      end
+
+      it "never flags a sealed path that was already there as a dangling link before the call" do
+        expect(profile.sealed.find { _1.path == envrc }.absent).to be(true)
+        File.symlink(File.join(@base, "nowhere"), envrc)
+        run
+
+        expect(recorded("sandbox").map(&:created_sealed)).to eq([[]])
+      end
+
+      describe "when journalling what the call created fails" do
+        let(:journal) do
+          Class.new(Array) do
+            def <<(record)
+              raise IOError, "journal is gone" if record.journal_type == "sandbox" && record.created_sealed.any?
+
+              super
+            end
+          end.new
+        end
+
+        it "raises that failure from a call that otherwise ran clean" do
+          creating(envrc)
+          expect { run }.to raise_error(IOError, "journal is gone")
+        end
+
+        it "leaves the call's own timeout to reach the caller" do
+          inner.behaviour = lambda do |**|
+            File.write(envrc, "")
+            raise Lain::Exec::Timeout, "too slow"
+          end
+          expect { run }.to raise_error(Lain::Exec::Timeout, "too slow")
+        end
+      end
+    end
+
+    describe "a workspace call's own TMPDIR" do
+      let(:scratch) { File.join(@base, "scratch").tap { FileUtils.mkdir_p(_1) } }
+      let(:call_dir) { Dir.mktmpdir("lain-call-", scratch) }
+      let(:profile) { Lain::Confine::Profile.workspace(root:, home:, tmpdir: scratch).for_call(call_dir, granted: scratch) }
+
+      it "pins the call's TMPDIR to its own dir, and removes the dir once the call is over" do
+        run
+
+        expect(inner.calls.sole[:pinned_env]).to include("TMPDIR" => call_dir)
+        expect([File.exist?(call_dir), File.directory?(scratch)]).to eq([false, true])
+      end
+
+      it "removes the dir after a call that timed out" do
+        inner.behaviour = ->(**) { raise Lain::Exec::Timeout, "too slow" }
+
+        expect { run }.to raise_error(Lain::Exec::Timeout)
+        expect(File.exist?(call_dir)).to be(false)
+      end
+
+      it "removes the dir after a call it refused to start" do
+        run(confinement: composed(executables: [executable("cat", File.join(root, "bin/cat"), :project)]))
+
+        expect([inner.calls, File.exist?(call_dir)]).to eq([[], false])
+      end
+
+      it "removes a dir the call left unreadable, without following a link out of it" do
+        outside = File.join(@base, "outside").tap { FileUtils.mkdir_p(_1) }
+        File.chmod(0o500, outside)
+        inner.behaviour = lambda do |**|
+          FileUtils.mkdir_p(locked = File.join(call_dir, "d"))
+          File.write(File.join(locked, "f"), "")
+          File.symlink(outside, File.join(locked, "link"))
+          File.chmod(0o000, locked)
+          capture
+        end
+        run
+
+        expect([File.exist?(call_dir), File.stat(outside).mode & 0o777]).to eq([false, 0o500])
+        expect(recorded("sandbox").map(&:kept_tmpdir)).to eq([nil])
+      ensure
+        File.chmod(0o700, outside)
+      end
+
+      it "journals a dir it could not remove" do
+        allow(FileUtils).to receive(:rm_rf)
+        run
+
+        expect(recorded("sandbox").last).to have_attributes(kept_tmpdir: call_dir, created_sealed: [])
+      ensure
+        FileUtils.remove_entry(call_dir)
+      end
+
+      it "leaves TMPDIR to the child's env for a profile with no dir of its own" do
+        readers = Struct.new(:profile) { def for(_request) = profile }.new(Lain::Confine::Profile.reader(root:, home:))
+        described_class.new(inner:, launcher:, profiles: readers, journal:)
+                       .call(command: Lain::Shell::Term.of(%w[cat README.md]), cwd: root, env: {}, timeout: 5,
+                             confinement: composed)
+
+        expect(inner.calls.sole[:pinned_env]).not_to include("TMPDIR")
+      end
+    end
+
+    describe "calls through real profiles that a wrapper changes, as the egress seam's does" do
+      let(:scratch) { File.join(@base, "scratch").tap { FileUtils.mkdir_p(_1) } }
+      let(:probe) { Struct.new(:nothing) { def supports?(_layer) = true }.new }
+      let(:masks) { Struct.new(:masks) { def landed_on(_path) = [] }.new([]) }
+      let(:profiles) do
+        real = Lain::Confine::Profiles.new(masks:, probe:, home:, root:, workspace: true, tmpdir: scratch)
+        Struct.new(:profiles) { def for(request) = profiles.for(request).with(connect_ports: [8080]) }.new(real)
+      end
+
+      it "gives each call a dir of its own and removes each once" do
+        judged_call = Lain::Confine::Request.new(ruling: ruling("auto"), executables: [], cwd: root, root:,
+                                                 tool_use_id: "toolu_1")
+        2.times { run(confinement: judged_call) }
+        dirs = inner.calls.map { _1[:pinned_env].fetch("TMPDIR") }
+
+        expect(dirs.uniq.size).to eq(2)
+        expect(dirs.map { File.dirname(_1) }.uniq).to eq([scratch])
+        expect(Dir.children(scratch)).to be_empty
+      end
+    end
+
+    describe "a profile that refuses the call" do
+      let(:raising) { Struct.new(:error) { def for(_request) = raise(error) } }
+
+      def refused_by(error)
+        described_class.new(inner:, launcher:, profiles: raising.new(error), journal:).call(
+          command: Lain::Shell::Term.of(%w[cat README.md]), cwd: root, env: {}, timeout: 5, confinement: composed
+        )
+      end
+
+      it "journals an overmask under the profile that was refused" do
+        refused_by(Lain::Confine::Profiles::Overmasked.new(path: root, names: ["link"], profile: :workspace))
+
+        expect(recorded("sandbox").sole).to have_attributes(profile: :workspace, refused: [root])
+      end
+
+      it "refuses a call whose TMPDIR has gone, in words, and journals it" do
+        gone = File.join(@base, "gone")
+        capture = refused_by(Lain::Confine::Profiles::NoTmpdir.new(path: gone, profile: :workspace))
+
+        expect(inner.calls).to be_empty
+        expect(capture.exit_status).to eq(Lain::Shell::Pipeline::NOT_PERMITTED)
+        expect(capture.stderr).to start_with("lain: REFUSED").and include(gone)
+        expect(recorded("sandbox").sole).to have_attributes(profile: :workspace, refused: [gone])
+      end
+    end
+
     context "when journalling the trace fails" do
       let(:journal) do
         Class.new(Array) do

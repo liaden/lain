@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "stringio"
 
 module Lain
@@ -42,6 +43,9 @@ module Lain
                    "which this call needs to run, so hiding it would leave the call nothing to run on. Retrying " \
                    "will be refused again. Stop and ask the human to remove or rename the link, then wait for the " \
                    "answer."
+      NO_TMPDIR = "REFUSED by the sandbox, not a transient error: the TMPDIR %<path>s cannot hold this call's own " \
+                  "dir, most often because it is gone. Retrying will be refused again. Stop and tell the human, " \
+                  "then wait for the answer."
 
       # Bundler reads the user's config, which may hold gem-source credentials,
       # and the reader profile grants no home directory to find it in.
@@ -50,8 +54,8 @@ module Lain
       # @param inner [Local]
       # @param launcher [Confine::Launcher]
       # @param profiles [#for] chooses a {Confine::Profile} for a {Confine::Request}
-      # @param journal [#<<] receives a {Telemetry::Sandbox} per call and a
-      #   {Telemetry::ExecRecord} per traced call
+      # @param journal [#<<] receives a {Telemetry::Sandbox} per call, a second one after a
+      #   call that created a sealed path, and a {Telemetry::ExecRecord} per traced call
       # @param ceiling [Integer] the output ceiling a refusal is bound for, as {Local}'s is
       # @param reaps [Boolean] whether the fence can run an unconfined call as its reaper; when it
       #   cannot, such a call runs as written, untraced, since the fence would refuse it outright
@@ -85,18 +89,37 @@ module Lain
           profile = reaped(@profiles.for(confinement))
         rescue Confine::Profiles::Overmasked => e
           return overmasked(confinement, e, sinks)
+        rescue Confine::Profiles::NoTmpdir => e
+          return refused_before(confinement, e, format(NO_TMPDIR, path: printable(e.path)), sinks)
         end
+        finishing(confinement, profile) { run_under(profile, confinement, command:, cwd:, env:, timeout:, **sinks) }
+      end
+
+      private
+
+      def run_under(profile, confinement, command:, cwd:, env:, timeout:, **sinks)
         refused = unrunnable(profile, confinement.executables)
         @journal << Telemetry::Sandbox.new(tool_use_id: confinement.tool_use_id, profile: profile.name,
                                            trace: profile.trace, refused:)
         return refuse(confinement, profile, refused.first, sinks) if refused.any?
 
-        run = { command:, cwd:, env:, timeout:, launch: launch(profile),
-                pinned_env: profile.confined? ? CONFINED_ENV : {}, **sinks }
+        run = { command:, cwd:, env:, timeout:, launch: launch(profile), pinned_env: pinned_env(profile), **sinks }
         profile.trace ? traced(confinement, profile, run, stages(command)) : @inner.call(**run)
       end
 
-      private
+      def pinned_env(profile)
+        return {} unless profile.confined?
+
+        profile.call_tmpdir ? CONFINED_ENV.merge("TMPDIR" => profile.call_tmpdir) : CONFINED_ENV
+      end
+
+      def finishing(confinement, profile)
+        leftovers = Leftovers.new(profile)
+        ran = false
+        yield.tap { ran = true }
+      ensure
+        journal_leftovers(confinement, profile, leftovers&.settle, in_flight: !ran)
+      end
 
       def unreaped?(profile) = !profile.confined? && !@reaps
 
@@ -109,6 +132,15 @@ module Lain
       end
 
       def stages(command) = command.is_a?(String) ? 1 : command.stages.size
+
+      def journal_leftovers(confinement, profile, left, in_flight:)
+        return if left.nil? || left.empty?
+
+        @journal << Telemetry::Sandbox.new(tool_use_id: confinement.tool_use_id, profile: profile.name,
+                                           trace: profile.trace, refused: [], **left)
+      rescue StandardError
+        raise unless in_flight
+      end
 
       def traced(confinement, profile, run, stages)
         channels = Channels.new(stages, first_fd: TRACE_FD)
@@ -172,10 +204,15 @@ module Lain
       end
 
       def overmasked(confinement, overmask, sinks)
-        @journal << Telemetry::Sandbox.new(tool_use_id: confinement.tool_use_id, profile: :reader, trace: false,
-                                           refused: [overmask.path])
         names = overmask.names.map { printable(_1) }.join(", ")
-        refusal(format(OVERMASKED, names:, path: printable(overmask.path)), sinks)
+        refused_before(confinement, overmask, format(OVERMASKED, names:, path: printable(overmask.path)), sinks)
+      end
+
+      # The profile refused the call before it was built, so the record names the path it refused on.
+      def refused_before(confinement, error, line, sinks)
+        @journal << Telemetry::Sandbox.new(tool_use_id: confinement.tool_use_id, profile: error.profile, trace: false,
+                                           refused: [error.path])
+        refusal(line, sinks)
       end
 
       def refusal(line, sinks)
@@ -183,6 +220,62 @@ module Lain
                         .take(:stderr, "#{Shell::Pipeline::PREFIX}#{line}\n")
                         .finish(Shell::Pipeline::NOT_PERMITTED)
       end
+
+      # What a workspace call may leave behind. Each seal is looked at before
+      # the call, so only a path that was not there and then was counts: a
+      # dangling link that was already there is never one the call made. A path
+      # created between {Confine::Profiles#for} and that look counts as there
+      # before, by the call or anyone else. The
+      # call's own TMPDIR is removed, opening up any directory the call left
+      # unreadable, and named when even that fails.
+      class Leftovers
+        # @param profile [Confine::Profile]
+        def initialize(profile)
+          @profile = profile
+          @absent = profile.sealed.map(&:path).reject { present?(_1) }
+        end
+
+        # @return [Hash] the post-call record's fields, empty when nothing was left
+        def settle
+          created = @absent.select { present?(_1) }
+          kept = removed(@profile.call_tmpdir)
+          { **(created.any? ? { created_sealed: created } : {}), **(kept ? { kept_tmpdir: kept } : {}) }
+        end
+
+        private
+
+        def present?(path) = File.symlink?(path) || File.exist?(path)
+
+        # @return [String, nil] the dir when it survived
+        def removed(dir)
+          return unless dir
+
+          FileUtils.rm_rf(dir)
+          return unless present?(dir)
+
+          unlock(dir)
+          FileUtils.rm_rf(dir)
+          dir if present?(dir)
+        end
+
+        # chmod follows a link, so only what lstat calls a directory is opened, and a worklist keeps a deep tree
+        # from overflowing the stack.
+        def unlock(top)
+          pending = [top]
+          pending.concat(opened(pending.pop)) until pending.empty?
+        end
+
+        def opened(path)
+          stat = File.lstat(path)
+          return [] unless stat.directory?
+
+          File.chmod(stat.mode | 0o700, path)
+          Dir.children(path).map { File.join(path, _1) }
+        rescue SystemCallError
+          []
+        end
+      end
+      private_constant :Leftovers
 
       # One trace pipe per stage, drained on a thread while the call runs,
       # because a full pipe stalls the tracer and the stage it traces.

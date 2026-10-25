@@ -19,7 +19,7 @@ module Lain
     # so what is kept per call is bounded: past {CALLS} the oldest is dropped.
     class Ledger
       UNKNOWN = "unknown"
-      FOLDED = %w[escalation exec_resolution exec_record].freeze
+      FOLDED = %w[escalation exec_resolution exec_record sandbox].freeze
       CALLS = 256
 
       Standing = Data.define(:score, :evidence, :stop)
@@ -78,6 +78,7 @@ module Lain
         case record["type"]
         when "escalation" then escalated(record, id)
         when "exec_resolution" then attributed(id, Hit.of_resolution(record, keep(@resolutions, id, resolved(record))))
+        when "sandbox" then attributed(id, Hit.of_sandbox(record))
         else attributed(id, Hit.of_exec_record(record, @resolutions.delete(id) || Resolution.new(nil)))
         end
       end

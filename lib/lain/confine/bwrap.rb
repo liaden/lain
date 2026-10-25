@@ -30,6 +30,7 @@ module Lain
         @fence = fence
         @bwrap = bwrap
         @strace = strace
+        @seal_binds = SealBinds.new
       end
 
       # @param term [Shell::Term]
@@ -58,29 +59,14 @@ module Lain
         [@bwrap, "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
          "--size", profile.tmpfs_bytes.to_s, "--tmpfs", "/tmp", "--unshare-pid", "--die-with-parent",
          *under_tmp(profile).flat_map { |dir| ["--ro-bind-try", dir, dir] },
-         *[*writable(profile), *pinned(profile)].flat_map { |dir| ["--bind-try", dir, dir] },
-         *profile.sealed.reject(&:absent).flat_map { ["--ro-bind", _1.path, _1.path] },
+         *writable(profile).flat_map { |dir| ["--bind-try", dir, dir] },
+         *@seal_binds.for(profile.sealed, writable(profile)),
          *masking(profile.masks), "--"]
       end
 
       # The fence decides what may be written; this only lifts bwrap's
       # read-only root from the grants that live outside its own /tmp.
       def writable(profile) = profile.write_dirs - Profile::SYSTEM_WRITE
-
-      # A mount point cannot be renamed, so each directory between a write and
-      # a seal is bound over itself: renaming one would carry the seal away and
-      # leave its name free to plant.
-      def pinned(profile)
-        writes = writable(profile)
-        profile.sealed.flat_map { between(writes, _1.path) }.uniq - writes
-      end
-
-      def between(writes, path)
-        write = writes.select { Landing.under?(path, _1) }.max_by(&:size)
-        return [] unless write
-
-        Pathname(path).relative_path_from(write).descend.map { File.join(write, _1.to_s) }[0...-1]
-      end
 
       # The kind is read here, the last moment before bwrap binds, because a
       # mask list keeps a path, not what it was when judged. bwrap cannot bind
@@ -128,6 +114,54 @@ module Lain
                    "--read-dir" => profile.read_dirs, "--write-dir" => profile.write_dirs,
                    "--connect-port" => profile.connect_ports, "--unix-dir" => profile.unix_dirs }
         [@fence, *grants.flat_map { |flag, values| values.flat_map { [flag, _1.to_s] } }, "--"]
+      end
+
+      # The binds that keep a workspace's seals in place: each directory
+      # between a write and a seal bound over itself, then each present seal
+      # read-only. Walking each seal's path costs about 0.5 ms a call, so the
+      # binds are kept per seal set and the writes that hold a seal. The set
+      # is the value {Profiles} rebuilds once a seal's path changes on disk, so
+      # a changed set, root or holding write is a new key, never a stale bind.
+      class SealBinds
+        KEPT = 64
+
+        def initialize
+          @kept = {}
+          @lock = Mutex.new
+        end
+
+        # @param sealed [Array<Profile::Seal>]
+        # @param writes [Array<String>] what bwrap binds writable
+        # @return [Array<String>] the bind flags, frozen
+        def for(sealed, writes)
+          key = [sealed, holding(writes, sealed)]
+          @lock.synchronize do
+            @kept.clear if @kept.size >= KEPT
+            @kept[key] ||= Ractor.make_shareable(built(*key))
+          end
+        end
+
+        private
+
+        def built(sealed, writes)
+          [*pinned(sealed, writes).flat_map { |dir| ["--bind-try", dir, dir] },
+           *sealed.reject(&:absent).flat_map { ["--ro-bind", _1.path, _1.path] }]
+        end
+
+        # A write that holds no seal has no directory between it and one.
+        def holding(writes, sealed) = writes.select { |write| sealed.any? { Landing.under?(_1.path, write) } }
+
+        # A mount point cannot be renamed, so each directory between a write and
+        # a seal is bound over itself: renaming one would carry the seal away and
+        # leave its name free to plant.
+        def pinned(sealed, writes) = sealed.flat_map { between(writes, _1.path) }.uniq - writes
+
+        def between(writes, path)
+          write = writes.select { Landing.under?(path, _1) }.max_by(&:size)
+          return [] unless write
+
+          Pathname(path).relative_path_from(write).descend.map { File.join(write, _1.to_s) }[0...-1]
+        end
       end
     end
   end

@@ -32,6 +32,14 @@ RSpec.describe Lain::Confine::Sandbox do
         .to eq(["/home/h", "/srv/project"])
     end
 
+    it "leaves the workspace profile off unless it is asked for" do
+      ruling = Lain::Approval::Escalation::Ruling.allow(rung: "auto", because: "judged")
+      request = Lain::Confine::Request.new(ruling:, executables: [], cwd: nil, root: nil, tool_use_id: "toolu_1")
+      profiles = sandbox.wrap(inner, requirer: "Spec").instance_variable_get(:@profiles)
+
+      expect(profiles.for(request)).to eq(Lain::Confine::Profile::TRACED)
+    end
+
     context "when the fence cannot reap" do
       let(:runner) { ->(argv) { [argv.include?("--status") ? '{"abi":3}' : "", true] } }
 
@@ -107,6 +115,126 @@ RSpec.describe Lain::Confine::Sandbox do
       sandbox.prime
 
       expect(masks.instance_variable_get(:@priming)).to be_nil
+    end
+  end
+
+  describe "with the workspace switch on, on this box", :seam do
+    let(:fence) { Lain::Confine::Bwrap.fence_binary }
+
+    before do
+      skip("bwrap or strace is not installed") unless %w[/usr/bin/bwrap /usr/bin/strace].all? { File.executable?(_1) }
+      skip("lain-fence is not built at #{fence} -- run `bundle exec rake compile`") unless File.executable?(fence)
+    end
+
+    around do |example|
+      Dir.mktmpdir("lain-sandbox-workspace") do |dir|
+        @base = File.realpath(dir)
+        FileUtils.mkdir_p([repo, home, scratch])
+        system(SeedRepo::SCRUB, "git", "init", "-q", chdir: repo, exception: true)
+        example.run
+      end
+    end
+
+    def home = File.join(@base, "home")
+    def repo = File.join(@base, "repo")
+    def scratch = File.join(@base, "scratch")
+
+    def policy
+      Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: repo, root: repo), home:, root: repo)
+    end
+
+    def workspace(tmpdir)
+      judging = policy
+      masks = Lain::Confine::MaskList.new(root: repo, policy: -> { judging })
+      described_class.new(root: repo, home:, masks:, probe: Lain::Confine::Probe.new(fence:, journal:), fence:,
+                          journal:, workspace: true, tmpdir:).wrap(Lain::Exec::Local.new, requirer: "Spec")
+    end
+
+    def judged(command, tmpdir: scratch)
+      ruling = Lain::Approval::Escalation::Ruling.allow(rung: Lain::Approval::Judged::NAME, because: "judged")
+      request = Lain::Confine::Request.new(ruling:, executables: [], cwd: repo, root: repo, tool_use_id: "toolu_1")
+      workspace(tmpdir).call(command:, cwd: repo, env: {}, timeout: 10, confinement: request)
+    end
+
+    def sandbox_records = journal.events.grep(Lain::Telemetry::Sandbox)
+
+    def exec_in(root)
+      judging = policy
+      masks = Lain::Confine::MaskList.new(root:, policy: -> { judging })
+      described_class.new(root:, home:, masks:, probe: Lain::Confine::Probe.new(fence:, journal:), fence:,
+                          journal:, workspace: true, tmpdir: scratch).wrap(Lain::Exec::Local.new, requirer: "Spec")
+    end
+
+    def judged_in(exec, root, command)
+      ruling = Lain::Approval::Escalation::Ruling.allow(rung: Lain::Approval::Judged::NAME, because: "judged")
+      request = Lain::Confine::Request.new(ruling:, executables: [], cwd: root, root:, tool_use_id: "toolu_1")
+      exec.call(command:, cwd: root, env: {}, timeout: 10, confinement: request)
+    end
+
+    it "flags the new landing of a dangling hooks link the human repointed between calls" do
+      system(SeedRepo::SCRUB, "git", "-C", repo, "-c", "user.name=a", "-c", "user.email=a@b", "commit", "-q",
+             "--allow-empty", "-m", "i", exception: true)
+      system(SeedRepo::SCRUB, "git", "-C", repo, "worktree", "add", "-q", worktree = File.join(@base, "wt"),
+             exception: true)
+      hooks = File.join(repo, ".git/hooks").tap { FileUtils.rm_rf(_1) }
+      File.symlink(File.join(worktree, "landing-a"), hooks)
+      exec = exec_in(worktree)
+      judged_in(exec, worktree, "true")
+      File.unlink(hooks)
+      File.symlink(File.join(worktree, "landing-b"), hooks)
+      judged_in(exec, worktree, "mkdir landing-b")
+
+      expect(sandbox_records.map(&:created_sealed)).to eq([[], [], [File.join(worktree, "landing-b")]])
+    end
+
+    it "runs a judge's approval under the workspace profile, which writes the project" do
+      capture = judged("echo hi > out.txt")
+
+      expect(capture.exit_status).to eq(0)
+      expect(File.read(File.join(repo, "out.txt"))).to eq("hi\n")
+      expect(sandbox_records.sole).to have_attributes(profile: :workspace, created_sealed: [])
+    end
+
+    it "refuses a write to the repository's config, and leaves the config as it was" do
+      config = File.join(repo, ".git/config")
+      before = File.read(config)
+      capture = judged("echo x >> .git/config")
+
+      expect(capture.exit_status).not_to eq(0)
+      expect(capture.stderr).to match(/Read-only file system|Permission denied/)
+      expect(File.read(config)).to eq(before)
+    end
+
+    it "writes a TMPDIR of the call's own, removed after it, and refuses the TMPDIR it sits in" do
+      capture = judged('echo x > "$TMPDIR/own" && echo "$TMPDIR"; echo y > "$(dirname "$TMPDIR")/beside"')
+      own = capture.stdout.lines.first.chomp
+
+      expect(File.dirname(own)).to eq(scratch)
+      expect(capture.stderr).to match(/beside: (Read-only file system|Permission denied)/)
+      expect([File.exist?(own), Dir.children(scratch)]).to eq([false, []])
+    end
+
+    it "writes the private /tmp when TMPDIR is /tmp, and makes no call dir there" do
+      name = "lain-t38-#{Process.pid}-#{rand(1 << 32)}"
+      capture = judged(%(echo x > /tmp/#{name} && cat /tmp/#{name}), tmpdir: "/tmp")
+
+      expect(capture).to have_attributes(exit_status: 0, stdout: "x\n")
+      expect(File.exist?("/tmp/#{name}")).to be(false)
+    end
+
+    it "removes a call's TMPDIR that the call left unreadable" do
+      judged('mkdir "$TMPDIR/d" && touch "$TMPDIR/d/f" && chmod 000 "$TMPDIR/d"')
+
+      expect(Dir.children(scratch)).to be_empty
+      expect(sandbox_records.map(&:kept_tmpdir)).to eq([nil])
+    end
+
+    it "flags a sealed path the call created where it was absent, and leaves it in place" do
+      commondir = File.join(repo, ".git/commondir")
+      judged(": > .git/commondir")
+
+      expect(sandbox_records.map(&:created_sealed)).to eq([[], [commondir]])
+      expect(File.exist?(commondir)).to be(true)
     end
   end
 

@@ -82,6 +82,45 @@ RSpec.describe Lain::Confine::Bwrap do
       )
     end
 
+    describe "the seal binds, kept per seal set" do
+      let(:seal) { Lain::Confine::Profile::Seal }
+
+      def workspace(root: "/p", writes: [root, "/h/t/lain-call-1"], absent: false)
+        Lain::Confine::Profile.new(
+          name: :workspace, trace: false, read_dirs: [root], write_dirs: [*writes, "/dev/null", "/tmp"],
+          sealed: [seal.new(path: "#{root}/.git/worktrees/w/gitdir", absent: false),
+                   seal.new(path: "#{root}/.envrc", absent:)]
+        )
+      end
+
+      def binds(profile) = argv_of(launcher.wrap(term, profile, trace_fd: 3)).then { _1[0..._1.index("--")] }
+
+      def bound(profile, flag) = binds(profile).each_cons(2).select { _1.first == flag }.map(&:last)
+
+      it "binds each root's own seals, never those of a root it bound before" do
+        binds(workspace)
+        other = binds(workspace(root: "/q"))
+
+        expect(other).to include("/q/.git/worktrees/w/gitdir", "/q/.git/worktrees", "/q/.envrc")
+        expect(other.grep(%r{\A/p/})).to be_empty
+      end
+
+      it "binds a seal that has appeared since the last call, and stops binding one that has gone" do
+        absent = workspace(absent: true)
+        present = workspace(absent: false)
+
+        bound = [absent, present, absent].map { |profile| bound(profile, "--ro-bind").include?("/p/.envrc") }
+        expect(bound).to eq([false, true, false])
+      end
+
+      it "pins anew when a write that holds a seal changes" do
+        binds(workspace)
+        nearer = workspace(writes: ["/p", "/p/.git/worktrees", "/h/t/lain-call-1"])
+
+        expect(bound(nearer, "--bind-try")).to eq(%w[/p /p/.git/worktrees /h/t/lain-call-1 /p/.git/worktrees/w])
+      end
+    end
+
     it "mounts nothing at an absent seal, so the call cannot leave a file behind there" do
       workspace = Lain::Confine::Profile.new(
         name: :workspace, trace: false, write_dirs: ["/p"],
@@ -144,6 +183,36 @@ RSpec.describe Lain::Confine::Bwrap do
       wrapped = launcher.wrap(piped, Lain::Confine::Profile::TRACED, trace_fd: 3)
       expect(wrapped.pipelines.map { |pipeline| pipeline.stages.map { [_1.argv.last(2), _1.discards] } })
         .to eq([[[%w[-- ls], [:stderr]], [%w[wc -l], []]], [[%w[-- pwd], []]]])
+    end
+  end
+
+  describe Lain::Confine::Bwrap::SealBinds do
+    subject(:binds) { described_class.new }
+
+    let(:sealed) { [Lain::Confine::Profile::Seal.new(path: "/p/.git/worktrees/w/gitdir", absent: false)] }
+
+    it "answers one frozen list for a seal set, whatever the writes that hold no seal" do
+      first = binds.for(sealed, %w[/p /h/t/lain-call-1])
+
+      expect(binds.for(sealed, %w[/p /h/t/lain-call-2])).to be(first).and be_frozen
+      expect(first).to eq(%w[--bind-try /p/.git /p/.git --bind-try /p/.git/worktrees /p/.git/worktrees
+                             --bind-try /p/.git/worktrees/w /p/.git/worktrees/w
+                             --ro-bind /p/.git/worktrees/w/gitdir /p/.git/worktrees/w/gitdir])
+    end
+
+    it "keeps at most 64 seal sets, so the first of 65 is built again" do
+      first = binds.for(sealed, %w[/p])
+      64.times { |index| binds.for([Lain::Confine::Profile::Seal.new(path: "/q#{index}/.envrc", absent: false)], %w[/p]) }
+
+      expect(binds.for(sealed, %w[/p])).to eq(first).and(satisfy { !_1.equal?(first) })
+    end
+
+    it "answers anew for another seal set or another write that holds one" do
+      first = binds.for(sealed, %w[/p])
+      changed = [Lain::Confine::Profile::Seal.new(path: "/p/.git/worktrees/w/gitdir", absent: true)]
+
+      expect([binds.for(changed, %w[/p]), binds.for(sealed, %w[/p /p/.git])]).to all(satisfy { !_1.equal?(first) })
+      expect(binds.for(changed, %w[/p])).not_to include("--ro-bind")
     end
   end
 

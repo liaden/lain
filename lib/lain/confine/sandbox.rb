@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "tmpdir"
+
 module Lain
   module Confine
     # The sandbox a bash exec is built into, from what the box offers. A chat and a
@@ -31,7 +33,10 @@ module Lain
       # @param fence [String] the lain-fence binary, read once for the probe and the launcher alike
       # @param journal [#<<] receives the sandbox's own records
       # @param notes [#<<] receives the degraded record; the journal unless a run says otherwise
-      def initialize(root:, home:, masks:, probe:, fence:, journal:, notes: journal)
+      # @param workspace [Boolean] whether an automatic allow runs under the workspace profile
+      # @param tmpdir [String] absolute; where each workspace call gets a dir of its own to write
+      def initialize(root:, home:, masks:, probe:, fence:, journal:, notes: journal, workspace: false,
+                     tmpdir: Dir.tmpdir)
         @root = root
         @home = home
         @masks = masks
@@ -39,6 +44,7 @@ module Lain
         @fence = fence
         @journal = journal
         @notes = notes
+        @profiling = { workspace:, tmpdir: }
         @built = false
       end
 
@@ -50,9 +56,8 @@ module Lain
         return unsandboxed(inner, requirer, lacking) if lacking.any?
 
         @built = true
-        Exec::Sandboxed.new(inner:, launcher:, profiles: Profiles.new(masks: @masks, probe: @probe, home: @home,
-                                                                      root: @root),
-                            journal: @journal, reaps: @probe.supports?(:reap))
+        profiles = Profiles.new(masks: @masks, probe: @probe, home: @home, root: @root, **@profiling)
+        Exec::Sandboxed.new(inner:, launcher:, profiles:, journal: @journal, reaps: @probe.supports?(:reap))
       end
 
       # Starts the mask classification of a sandbox that was built.

@@ -41,6 +41,10 @@ RSpec.describe Lain::Tripwire::Ledger do
     { call:, family:, address:, port:, rc: status, errno:, count: 1 }
   end
 
+  def sandbox(id: "tu_1", profile: :workspace, created_sealed: [])
+    Lain::Telemetry::Sandbox.new(tool_use_id: id, profile:, trace: true, refused: [], created_sealed:)
+  end
+
   def ran(path) = { path:, argv0: File.basename(path), rc: 0 }
 
   def refused(path) = { path:, errno: "EACCES" }
@@ -122,6 +126,15 @@ RSpec.describe Lain::Tripwire::Ledger do
       write(exec_record(connects: [connect(call: "sendto", port: 9999, status: 4, errno: nil)]))
 
       expect(tripwires.sole).to include("signal" => "datagram_send", "weight" => "medium")
+    end
+
+    it "counts a sealed path a workspace call created" do
+      approved
+      write(sandbox(created_sealed: ["/work/repo/.git/commondir"]))
+
+      expect(tripwires.sole).to include("signal" => "created_sealed", "weight" => "strong", "stop" => "would_stop",
+                                        "requester" => "agent")
+      expect(tripwires.sole["evidence"].sole["detail"]).to eq(["/work/repo/.git/commondir"])
     end
 
     it "counts a fresh program" do
@@ -437,6 +450,28 @@ RSpec.describe Lain::Tripwire::Ledger do
       write(exec_record(connects: [connect], truncated: true))
 
       expect(tripwires).to be_empty
+    end
+
+    it "adds nothing for a sandbox record whose call created no sealed path" do
+      approved
+      write(sandbox)
+
+      expect(tripwires).to be_empty
+    end
+
+    it "adds nothing for a replayed sandbox record written before calls were checked for created seals" do
+      approved
+      ledger << { "type" => "sandbox", "tool_use_id" => "tu_1", "profile" => "reader", "trace" => true,
+                  "refused" => [] }
+
+      expect(tripwires).to be_empty
+    end
+
+    it "still counts the exec record that follows a sandbox record" do
+      approved
+      write(sandbox, exec_record(connects: [connect]))
+
+      expect(signals).to eq(["refused_connect"])
     end
 
     it "adds nothing for a truncated record" do

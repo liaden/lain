@@ -72,6 +72,18 @@ module Lain
          strong("fresh_run_file", id, resolution.fresh_run_files)].compact
       end
 
+      # A workspace call that created a persistence path the profile could not
+      # seal, because it was absent, has planted what a later shell or git runs.
+      # The check compares the path before and after the call, so it cannot
+      # tell this call from another running at once in the same root, or from
+      # the human, creating it in that window.
+      #
+      # @param record [Hash{String=>Object}] a `sandbox` record
+      # @return [Array<Hit>]
+      def self.of_sandbox(record)
+        [strong("created_sealed", record["tool_use_id"], record.fetch("created_sealed", []))].compact
+      end
+
       # A loader or descriptor exec is a bypass shape under any trace, but any
       # process of the same user can write into a trace that does not confine,
       # so there it is medium. A refusal, and a program the call never

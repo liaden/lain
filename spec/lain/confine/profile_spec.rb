@@ -195,6 +195,16 @@ RSpec.describe Lain::Confine::Profile do
                  File.join(root, ".pre-commit-config.yaml") => true)
       end
 
+      it "resolves a relative dangling link where its parent really is, not where the path spells it" do
+        FileUtils.mkdir_p([real = File.join(@dir, "b", "real"), File.join(@dir, "a")])
+        File.symlink(real, spelled = File.join(@dir, "a", "parent"))
+        File.symlink("../gone", File.join(real, "hooks"))
+        SeedRepo.git(root, "config", "core.hooksPath", File.join(spelled, "hooks"))
+
+        expect(sealed_of(workspace)).to include(File.join(@dir, "b", "gone") => true)
+        expect(sealed_of(workspace)).not_to include(File.join(@dir, "a", "gone"))
+      end
+
       it "seals a core.hooksPath directory" do
         SeedRepo.git(root, "config", "core.hooksPath", ".husky")
         FileUtils.mkdir_p(File.join(root, ".husky"))
@@ -220,6 +230,16 @@ RSpec.describe Lain::Confine::Profile do
           File.join(admin, "config.worktree") => true, File.join(root, ".git") => false,
           File.join(admin, "commondir") => false, File.join(admin, "gitdir") => false
         )
+      end
+
+      it "seals a dangling link outside the writes where it lands, absent there" do
+        hooks = File.join(common, "hooks")
+        FileUtils.rm_rf(hooks)
+        File.symlink(gone = File.join(@dir, "gone"), hooks)
+
+        expect(sealed_of(workspace)).to include(gone => true)
+        expect(sealed_of(workspace)).not_to include(hooks)
+        expect(workspace.sealed.find { _1.path == gone }.hops).to eq([hooks])
       end
     end
 
@@ -250,6 +270,44 @@ RSpec.describe Lain::Confine::Profile do
     it "refuses a root with a newline in it, which would split git's answer" do
       FileUtils.mkdir_p(bent = File.join(@dir, "r\nx"))
       expect { workspace(bent) }.to raise_error(ArgumentError, /newline/)
+    end
+
+    describe "#for_call" do
+      before { FileUtils.mkdir_p(root) }
+
+      let(:call_dir) { File.join(tmpdir, "lain-call-1") }
+
+      it "writes the call's own dir in place of the TMPDIR, and names it" do
+        moved = workspace.for_call(call_dir, granted: tmpdir)
+
+        expect([moved.write_dirs, moved.call_tmpdir]).to eq([[root, call_dir, "/dev/null", "/tmp"], call_dir])
+      end
+
+      it "keeps the call's dir through a later change to another grant" do
+        expect(workspace.for_call(call_dir, granted: tmpdir).with(connect_ports: [8080]).call_tmpdir).to eq(call_dir)
+      end
+
+      it "refuses a dir that is not beneath the TMPDIR the profile writes" do
+        [tmpdir, File.join(@dir, "elsewhere")].each do |dir|
+          expect { workspace.for_call(dir, granted: tmpdir) }.to raise_error(ArgumentError, /beneath/)
+        end
+      end
+
+      it "refuses to move the private /tmp, which is already the call's own" do
+        expect { workspace(tmp: "/tmp").for_call("/tmp/lain-call-1", granted: "/tmp") }
+          .to raise_error(ArgumentError, %r{/tmp})
+      end
+
+      it "refuses a TMPDIR the profile does not write" do
+        other = File.join(@dir, "u")
+        expect { workspace.for_call(File.join(other, "x"), granted: other) }.to raise_error(ArgumentError, /writes/)
+      end
+    end
+
+    it "names no call dir of its own, so nothing removes the TMPDIR it was built with" do
+      FileUtils.mkdir_p(root)
+      expect([workspace, described_class::TRACED, described_class.reader(root:, home: "/h")].map(&:call_tmpdir))
+        .to eq([nil, nil, nil])
     end
   end
 

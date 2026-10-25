@@ -6,7 +6,7 @@ require "pathname"
 module Lain
   module Confine
     Profile = Data.define(:name, :exec_dirs, :exec_files, :read_dirs, :write_dirs, :masks, :tmpfs_bytes, :trace,
-                          :connect_ports, :unix_dirs, :sealed)
+                          :connect_ports, :unix_dirs, :sealed, :call_tmpdir)
 
     # What one call may do: run beneath `exec_dirs` and exactly `exec_files`,
     # read beneath `read_dirs`, write beneath `write_dirs`, and never see
@@ -14,10 +14,12 @@ module Lain
     # connect to and `unix_dirs` the directories whose Unix sockets it may
     # reach; the reader has neither. `:none` runs as before, `:traced`
     # only watches, `:reader` confines, and `:workspace` confines while
-    # writing the project, which `sealed` keeps from planting what runs later. Both unconfined profiles still run
-    # under lain-fence as a reaper, so a stopped call leaves no descendant
-    # behind; that covers a call made through a sandbox, and `--confine off`
-    # or a box lacking bwrap or Landlock builds none.
+    # writing the project, which `sealed` keeps from planting what runs
+    # later. A workspace's `call_tmpdir`, once {#for_call} names one, is the
+    # dir made for a single call and removed after it. Both unconfined
+    # profiles still run under lain-fence as a reaper, so a stopped call
+    # leaves no descendant behind; that covers a call made through a sandbox,
+    # and `--confine off` or a box lacking bwrap or Landlock builds none.
     #
     # A value: a {Launcher} turns it into argv. Every path is absolute and,
     # for a mask, already resolved, because bwrap aborts on a mask that is a
@@ -46,8 +48,9 @@ module Lain
       HOME_EXEC = %w[.rustup/toolchains].freeze
       HOME_READ = %w[.rustup .cargo/bin .config/git .gitconfig .local/share/mise/installs].freeze
 
-      # Relative to the root: files a later shell, hook or lain session runs.
-      PROJECT_SEALED = %w[.lain .envrc .pre-commit-config.yaml].freeze
+      # Relative to the root: files a later shell or hook runs. The lain dir a
+      # later session reads is sealed too, at the path {ProjectDir} owns.
+      PROJECT_SEALED = %w[.envrc .pre-commit-config.yaml].freeze
 
       # What a commit in a linked worktree writes in the main checkout's git dir. git rewrites packed-refs by
       # renaming a lock beside it in that dir, which is not granted, so whatever rewrites it fails here.
@@ -63,7 +66,7 @@ module Lain
       end
 
       def initialize(name:, trace:, exec_dirs: [], exec_files: [], read_dirs: [], write_dirs: [], masks: [],
-                     connect_ports: [], unix_dirs: [], sealed: [], tmpfs_bytes: TMPFS_BYTES)
+                     connect_ports: [], unix_dirs: [], sealed: [], tmpfs_bytes: TMPFS_BYTES, call_tmpdir: nil)
         grants = { exec_dirs:, exec_files:, read_dirs:, write_dirs:, masks:, unix_dirs: }
         relative = [*grants.values.flatten, *sealed.map(&:path)].reject { _1.start_with?(File::SEPARATOR) }
         # The fence and bwrap resolve a relative path against wherever they
@@ -71,7 +74,7 @@ module Lain
         raise ArgumentError, "a profile path must be absolute, got #{relative.first.inspect}" if relative.any?
 
         super(name:, trace:, tmpfs_bytes:, connect_ports: valid_ports(connect_ports).freeze, sealed: sealed.dup.freeze,
-              **grants.transform_values { |paths| paths.map(&:-@).freeze })
+              call_tmpdir: call_tmpdir&.then(&:-@), **grants.transform_values { |paths| paths.map(&:-@).freeze })
       end
 
       def valid_ports(ports)
@@ -84,6 +87,24 @@ module Lain
 
       # @return [Boolean] whether the kernel bounds what the call may reach
       def confined? = Profile.confines?(name)
+
+      # A TMPDIR other processes share holds their scratch too, so a call
+      # writes a dir of its own beneath it instead. Only a profile that names
+      # one has a dir its call may remove.
+      #
+      # @param dir [String] absolute; made for the call, beneath `granted`
+      # @param granted [String] the TMPDIR this profile writes
+      # @return [Profile] this one, writing `dir` where it wrote `granted`
+      # @raise [ArgumentError] when `granted` is not written, is the private /tmp, or `dir` is not beneath it
+      def for_call(dir, granted:)
+        raise ArgumentError, "this profile writes no #{granted.inspect}" unless write_dirs.include?(granted)
+        raise ArgumentError, "#{granted.inspect} is already private to the call" if SYSTEM_WRITE.include?(granted)
+        unless dir != granted && Landing.under?(dir, granted)
+          raise ArgumentError, "a call's TMPDIR must be beneath #{granted.inspect}, got #{dir.inspect}"
+        end
+
+        with(write_dirs: write_dirs.map { _1 == granted ? dir : _1 }, call_tmpdir: dir)
+      end
 
       # @param name [Symbol, String] a profile's name, as a record journals it
       # @return [Boolean] whether a profile of that name bounds what the call may reach
@@ -121,7 +142,7 @@ module Lain
       # cannot be renamed away, and a seal reached through a link inside the
       # writes is refused. An absent one is not enforced: it is listed for a
       # check after the call. Where git cannot answer, `.git` is sealed whole,
-      # and with no `.git` the list is {PROJECT_SEALED} alone. A background
+      # and with no `.git` the list is the lain dir and {PROJECT_SEALED}. A background
       # child ends with the call, in bwrap's pid namespace. What
       # fails: in a linked worktree, ref deletion, gc, pack-refs and worktree
       # add; in an ordinary checkout, any .git/config write (branch -D leaves
@@ -167,7 +188,8 @@ module Lain
       private_class_method :commit_writes
 
       # bwrap binds a project back over the private /tmp where it lands, so a
-      # root reached through a link must be named by its landing.
+      # root reached through a link must be named by its landing, and so must
+      # anything keyed on a root.
       #
       # @param root [String]
       # @return [String] the resolved root, or `root` as written when it cannot be resolved
@@ -176,7 +198,6 @@ module Lain
       rescue SystemCallError
         root
       end
-      private_class_method :landing
 
       # A linked worktree's or a submodule's `.git` is a file naming a git dir
       # outside the project, and git cannot run without reading it. A worktree's
@@ -196,23 +217,38 @@ module Lain
       end
       private_class_method :linked_git_dir
 
-      Seal = Data.define(:path, :absent)
+      Seal = Data.define(:path, :absent, :hops)
 
       # A persistence path a workspace call must not change. An absent one is
-      # not enforced; it is listed for a check after the call.
+      # not enforced; it is listed for a check after the call. A dangling link
+      # cannot be mounted, so it is sealed where it lands, absent there.
+      # `hops` names each link on the way, so a repointed one is noticed.
       class Seal
+        LINK_HOPS = 40
+
+        # @param path [String] where the seal lands
+        # @param absent [Boolean]
+        # @param hops [Array<String>] the links followed to reach `path`
+        def initialize(path:, absent:, hops: [])
+          super(path:, absent:, hops: hops.map(&:-@).freeze)
+        end
+
         # The hooks dir is asked first, before the absolute format, which would resolve a link on its way.
         GIT_ASKS = %w[rev-parse --git-path hooks --path-format=absolute --git-common-dir --absolute-git-dir].freeze
 
         # @param root [String] absolute
         # @param git [Array<String>] {.git_dirs} of `root`
         # @param writable [Array<String>] what the call may write, where a link on a seal's way is refused
-        # @return [Array<Seal>] the hooks, the git configs, what redirects git, and {Profile::PROJECT_SEALED}
+        # @return [Array<Seal>] the hooks, the git configs, what redirects git, the lain dir and
+        #   {Profile::PROJECT_SEALED}
         # @raise [Unsealable]
         def self.of(root, git = git_dirs(root), writable: [root])
-          named = [*in_git(root, *git), *Profile::PROJECT_SEALED.map { File.join(root, _1) }]
+          named = [*in_git(root, *git), ProjectDir.new(root:).dir,
+                   *Profile::PROJECT_SEALED.map { File.join(root, _1) }]
           named.each { refuse_link(_1, writable) }
-          named.map { at(_1) }.uniq
+          named.map { at(_1) }.group_by(&:path).map do |path, seals|
+            new(path:, absent: seals.first.absent, hops: seals.flat_map(&:hops).uniq)
+          end
         end
 
         def self.in_git(root, common = nil, gitdir = nil, hooks = nil)
@@ -242,8 +278,12 @@ module Lain
           raise Unsealable.new(path:, link:) if link
         end
 
-        def self.at(path)
-          File.exist?(path) ? new(path: -File.realpath(path), absent: false) : new(path: -path, absent: true)
+        def self.at(path, left = LINK_HOPS, followed = [])
+          hops = File.symlink?(path) ? [*followed, path] : followed
+          return new(path: -File.realpath(path), absent: false, hops:) if File.exist?(path)
+          return new(path: -path, absent: true, hops: followed) unless File.symlink?(path) && left.positive?
+
+          at(File.expand_path(File.readlink(path), Profile.landing(File.dirname(path))), left - 1, hops)
         end
         private_class_method :in_git, :worktrees, :pointer, :refuse_link, :at
 
