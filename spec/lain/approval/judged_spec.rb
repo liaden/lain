@@ -1126,6 +1126,148 @@ RSpec.describe Lain::Approval::Judged do
     end
   end
 
+  describe "the digests of what the judge read" do
+    let(:ladder_io) { StringIO.new }
+    let(:stages) do
+      [Lain::Shell::Executable.new(name: "make", resolved: "/usr/bin/make", realpath: "/usr/bin/make", chain: [],
+                                   shadowed: [], anomalies: [], klass: :system, fresh: false, run_files: [],
+                                   wrappers: [])]
+    end
+    let(:facts) { Lain::Approval::Judge::Facts.new(stages) }
+    let(:wanted) { Lain::Approval::Judge::Request.new("list the files", false) }
+
+    def laddered(spawn, **rest)
+      ladder_journal = Lain::Journal.new(io: ladder_io)
+      Lain::Approval::Escalation.new([rung(spawn, journal: ladder_journal, **rest)], journal: ladder_journal,
+                                                                                     label: "auto")
+    end
+
+    def refusing = ->(*) { Lain::Approval::Escalation::Ruling.deny(rung: "x", because: "y") }
+
+    def judged_records = journal_records(ladder_io, "escalation").select { _1["rung"] == "auto" }
+
+    def digest(text) = Lain::Canonical.digest(text)
+
+    def read_by_judge(verdict, **rest)
+      spawn = spawn_answering(verdict)
+      Sync { laddered(spawn, facts: ->(*, **) { facts }, request: ->(_context) { wanted }, **rest).call(bash, context) }
+      spawn
+    end
+
+    it "names what the judge read on an approve, the prompt digest that of the prompt it received" do
+      spawn = read_by_judge("approve")
+
+      expect(judged_records.sole).to include("verdict" => "allow", "prompt_digest" => digest(spawn.calls.sole[:prompt]),
+                                             "facts_digest" => digest(facts.to_s),
+                                             "request_digest" => digest(wanted.to_s))
+    end
+
+    it "names what the judge read on a deny" do
+      spawn = read_by_judge("deny")
+
+      expect(judged_records.sole).to include("verdict" => "deny", "prompt_digest" => digest(spawn.calls.sole[:prompt]))
+    end
+
+    it "names it on a deferral, a fault and an approve the bar stopped" do
+      barring = Lain::Approval::Judge::Facts.new([stages.first.with(klass: :unresolved, resolved: nil, realpath: nil)])
+      deferred = read_by_judge("defer", asking: refusing)
+      faulted = read_by_judge(nil, asking: refusing)
+      stopped = JudgedSpecSupport::ScriptedRoleSpawn.new { Lain::Tool::Result.ok("approve") }
+      Sync do
+        laddered(stopped, facts: ->(*, **) { barring }, asking: refusing).call(bash, context)
+      end
+
+      expect(judged_records.map { _1["reason"] }).to eq(%w[deferred fault bar])
+      expect(judged_records.map { _1["prompt_digest"] })
+        .to eq([deferred, faulted, stopped].map { digest(_1.calls.sole[:prompt]) })
+    end
+
+    it "leaves the digests off a call the judge never looked at" do
+      barred = context.with(automatic_approval_barred: true)
+      spawn = spawn_answering("approve")
+
+      Sync { laddered(spawn, asking: refusing).call(bash, barred) }
+
+      expect(judged_records.sole.keys).not_to include("prompt_digest", "facts_digest", "request_digest")
+    end
+
+    it "leaves the facts and request digests off when the call was told neither" do
+      spawn = spawn_answering("approve")
+
+      Sync { laddered(spawn).call(bash, context) }
+
+      expect(judged_records.sole).to include("prompt_digest" => digest(spawn.calls.sole[:prompt]))
+      expect(judged_records.sole.keys).not_to include("facts_digest", "request_digest")
+    end
+
+    it "keeps the digests when the ladder rewrites the ruling, as it does over an earlier rung's fault" do
+      faulty = Struct.new(:name) { def call(*) = raise("boom") }.new("rules")
+      spawn = spawn_answering("deny")
+      ladder_journal = Lain::Journal.new(io: ladder_io)
+      ladder = Lain::Approval::Escalation.new([faulty, rung(spawn, journal: ladder_journal)],
+                                              journal: ladder_journal, label: "auto")
+
+      ruling = Sync { ladder.call(bash, context) }
+
+      expect(ruling).to be(false)
+      expect(journal_records(ladder_io, "escalation").select { _1["rung"] == "auto" })
+        .to all(include("prompt_digest" => digest(spawn.calls.sole[:prompt])))
+    end
+
+    it "stays a ruling that names the digests through #with" do
+      spawn = spawn_answering("approve")
+      ruling = Sync { rung(spawn).call(bash, context) }
+
+      rewritten = ruling.with(reason: "z", fault: true)
+
+      expect([rewritten.reason, rewritten.fault?, rewritten.record["prompt_digest"]])
+        .to eq(["z", true, digest(spawn.calls.sole[:prompt])])
+    end
+
+    it "digests the prompt the judge was sent, not a second build of it" do
+      spawn = spawn_answering("approve")
+      builds = 0
+      judge = Lain::Approval::Judge.new(role_spawn: spawn)
+      counting = judge.dup
+      counting.define_singleton_method(:prompt) { |**kw| judge.prompt(**kw).tap { builds += 1 } }
+
+      subject = described_class.new(judge: counting, policy:, asking: Lain::Approval::Escalation::Surfaces.new(queue),
+                                    journal:)
+      Sync { subject.call(bash, context) }
+
+      expect(builds).to eq(1)
+    end
+
+    it "journals the digests on an auto ladder built by Switchboard.for" do
+      spawn = spawn_answering("approve")
+      board = Lain::CLI::Switchboard.for(
+        chronicle: instance_double(Lain::CLI::Chronicle, record_journal: Lain::Journal.new(io: ladder_io)),
+        options: { approval: "auto" }, model: "claude-opus-4-8", toolset: Lain::Toolset.new([Lain::Tools::Bash.new]),
+        test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared,
+        judge: Lain::Approval::Judge.new(role_spawn: spawn)
+      )
+
+      call = Struct.new(:name, :input, :tool_use_id).new("bash", { "command" => "ls" }, "tu_1")
+      allowed = Sync { board.policy_switch.call(call, nil) }
+
+      expect(allowed).to be(true)
+      expect(judged_records.sole).to include("prompt_digest" => digest(spawn.calls.sole[:prompt]))
+      expect(judged_records.sole.keys).not_to include("facts_digest", "request_digest")
+    end
+
+    it "journals no digest for a judge that cannot show its prompt" do
+      judge = ->(**) { :approve }
+      judged = described_class.new(judge:, policy:, asking: Lain::Approval::Judged::Unattended.new,
+                                   journal: Lain::Journal.new(io: ladder_io))
+      ladder = Lain::Approval::Escalation.new([judged], journal: Lain::Journal.new(io: ladder_io), label: "auto")
+
+      Sync { ladder.call(bash, context) }
+
+      expect(judged_records.sole).to include("verdict" => "allow")
+      expect(judged_records.sole.keys).not_to include("prompt_digest")
+    end
+  end
+
   it "sends a barred call to the human without asking the judge, parked as humans-only" do
     spawn = spawn_answering("approve")
     barred = context.with(automatic_approval_barred: true)

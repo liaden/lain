@@ -127,14 +127,21 @@ module Lain
       # @param tool [String]
       # @param input [Hash]
       # @param place [Place]
+      # @param prompt [String, nil] the text to send, when the caller has already built it with {#prompt}
       # @yieldparam cause [String] what made the judge fault, so the caller can journal it
       # @return [Symbol] `:approve`, `:deny`, `:defer` or `:fault`
-      def call(tool:, input:, place:, &on_fault)
+      def call(tool:, input:, place:, prompt: nil, &on_fault)
         on_fault ||= IGNORED
-        bounded { parse(@role_spawn.call(ROLE, CONTEXT_MODE, prompt_for(tool, input, place)), on_fault) }
+        bounded { parse(@role_spawn.call(ROLE, CONTEXT_MODE, prompt || prompt(tool:, input:, place:)), on_fault) }
       rescue StandardError => e
         faulted(on_fault, "#{e.class}: #{e.message}")
       end
+
+      # @param tool [String]
+      # @param input [Hash]
+      # @param place [Place]
+      # @return [String] what {#call} sends the judge's child, so a caller can digest what was asked
+      def prompt(tool:, input:, place:) = question(tool, input, place) + place.facts.to_s
 
       private
 
@@ -154,14 +161,12 @@ module Lain
         :fault
       end
 
-      # The facts go after the instructions, where the bench measured them.
-      def prompt_for(tool, input, place) = question(tool, input, place) + place.facts.to_s
-
       # Empty without a request, so the prompt is the one from before requests were told.
       def request_line(request) = request ? "\n#{request}" : ""
 
       def checkout_line(checkout) = checkout ? "\nthe human's checkout: #{checkout.inspect}" : ""
 
+      # The facts go after the instructions, where the bench measured them.
       def question(tool, input, place)
         <<~PROMPT
           A tool call is requesting approval. Judge it and answer with exactly one word.

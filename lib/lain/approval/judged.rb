@@ -168,6 +168,20 @@ module Lain
         end
       end
 
+      # A ruling that also names, by digest, what the judge read, so the ladder's
+      # record of it carries the same fields as the records this rung writes itself.
+      class Read < Escalation::Ruling
+        def initialize(digests: {}, **rest)
+          @digests = digests.freeze
+          super(**rest)
+        end
+
+        def record = super.merge(@digests.compact.transform_keys(&:to_s)).freeze
+
+        # The ladder rewrites rulings with `with`, which would build a plain Ruling and drop the digests.
+        def with(**changes) = changes.empty? ? self : self.class.new(digests: @digests, **to_h, **changes)
+      end
+
       # @param judge [#call] answers `:approve`, `:deny`, `:defer` or `:fault` ({Judge})
       # @param policy [Sensitivity::Policy] what decides whether a call's path may be judged
       # @param asking [#call] the rung a call goes to when the judge does not
@@ -200,35 +214,57 @@ module Lain
 
         cause = nil
         place = place_for(effect, context)
-        verdict = @judge.call(tool: effect.name, input: effect.input, place:) { |why| cause = why }
-        ruled(verdict, effect, context, cause, bar: place.facts.bar)
+        prompt = prompt_of(effect, place)
+        read = digests_of(prompt, place)
+        verdict = @judge.call(tool: effect.name, input: effect.input, place:, **{ prompt: }.compact) do |why|
+          cause = why
+        end
+        ruled(verdict, effect, context, cause, bar: place.facts.bar, read:)
       end
 
       private
 
-      def ruled(verdict, effect, context, cause, bar:)
+      def ruled(verdict, effect, context, cause, bar:, read:)
         case verdict
-        when :approve then bar.empty? ? approved(effect) : overruled(effect, context, bar)
-        when :deny then denied(effect)
-        when :defer then handed_down(effect, Deferred.new(context), abstain(DEFERRED))
-        else faulted(effect, context, cause)
+        when :approve then bar.empty? ? approved(effect, read) : overruled(effect, context, bar, read)
+        when :deny then denied(effect, read)
+        when :defer then handed_down(effect, Deferred.new(context), abstain(DEFERRED), read:)
+        else faulted(effect, context, cause, read)
         end
       end
 
-      def overruled(effect, context, bar) = handed_down(effect, Overruled.new(context, bar), abstain(BAR), bar:)
-
-      # Evidence about a call must never cost the call, so a notice that fails is lost.
-      def approved(effect)
-        show(effect, "approved")
-        Escalation::Ruling.allow(rung: NAME, because: APPROVED)
+      def overruled(effect, context, bar, read)
+        handed_down(effect, Overruled.new(context, bar), abstain(BAR), bar:, read:)
       end
 
-      def denied(effect)
+      # Nil digests for what the call was not told, never the digest of an empty string; none at all
+      # for a judge that cannot show its prompt.
+      def digests_of(prompt, place)
+        return {} unless prompt
+
+        { prompt_digest: ::Lain::Canonical.digest(prompt),
+          facts_digest: digest_of(place.facts.to_s), request_digest: digest_of(place.request.to_s) }
+      end
+
+      # Built once, so the digest is of the text the judge is sent.
+      def prompt_of(effect, place)
+        @judge.prompt(tool: effect.name, input: effect.input, place:) if @judge.respond_to?(:prompt)
+      end
+
+      def digest_of(text) = (::Lain::Canonical.digest(text) unless text.empty?)
+
+      def approved(effect, read)
+        show(effect, "approved")
+        Read.allow(rung: NAME, because: APPROVED, digests: read)
+      end
+
+      def denied(effect, read)
         show(effect, "denied")
         told = @asking.respond_to?(:denied_told) ? @asking.denied_told : DENIED_TOLD
-        Escalation::Ruling.deny(rung: NAME, because: DENIED, said: told)
+        Read.deny(rung: NAME, because: DENIED, said: told, digests: read)
       end
 
+      # Evidence about a call must never cost the call, so a notice that fails is lost.
       def show(effect, verdict)
         @display << Telemetry::JudgeRuled.new(call: format(CALL, tool: effect.name, input: effect.input.inspect),
                                               verdict:)
@@ -244,9 +280,9 @@ module Lain
       # The fault travels beside the asking rung's answer, so the ladder's edge
       # suppresses an automatic allow from below, as it would had the judge
       # been a rung of its own, and a human's allow still stands.
-      def faulted(effect, context, cause)
+      def faulted(effect, context, cause, read)
         fault = Escalation::Ruling.fault(rung: NAME, because: FAULT)
-        asked = handed_down(effect, Escalation::Noted.new(context, FAULT_NOTE), fault, error: cause)
+        asked = handed_down(effect, Escalation::Noted.new(context, FAULT_NOTE), fault, error: cause, read:)
         Ladder::Outcome.new(decision: asked, by: asked.rung, faults: [fault], why_not: nil)
       end
 
@@ -374,13 +410,13 @@ module Lain
         @policy.judge(path, cwd: ::Lain::Session.cwd_of(context), within: ::Lain::Sensitivity::Policy.base_of(context))
       end
 
-      def handed_down(effect, context, why, error: nil, bar: nil)
-        record(why, effect, context, error, bar)
+      def handed_down(effect, context, why, error: nil, bar: nil, read: {})
+        record(why, effect, context, { error:, bar: }.merge(read))
         @asking.call(effect, context)
       end
 
-      def record(ruling, effect, context, error, bar)
-        ::Lain::Telemetry::Escalation.write(@journal, ruling, effect, context, error:, bar:)
+      def record(ruling, effect, context, extra)
+        ::Lain::Telemetry::Escalation.write(@journal, ruling, effect, context, **extra)
       end
     end
   end

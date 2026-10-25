@@ -282,4 +282,35 @@ RSpec.describe Lain::Approval::Judge do
       end
     end
   end
+
+  describe "#prompt" do
+    let(:input) { { "command" => "ls" } }
+
+    it "is the text the judge's child is sent" do
+      spawn = answering("approve")
+      judge = described_class.new(role_spawn: spawn)
+
+      judge.call(tool: "bash", input:, place:)
+
+      expect(judge.prompt(tool: "bash", input:, place:)).to eq(spawn.calls.sole[:prompt])
+    end
+
+    it "digests the same in another process, facts included" do
+      stage = <<~RUBY.strip
+        Lain::Shell::Executable.new(name: "make", resolved: "/usr/bin/make", realpath: "/usr/bin/make", chain: [],
+                                    shadowed: [], anomalies: [], klass: :system, fresh: false, run_files: [], wrappers: [])
+      RUBY
+      script = <<~RUBY
+        require "lain"
+        facts = Lain::Approval::Judge::Facts.new([#{stage}])
+        place = Lain::Approval::Judge::Place.new(root: "/p", cwd: "/p", requester: "main", outside: [], facts:)
+        idle = Object.new.tap { |spawn| spawn.define_singleton_method(:never_parking) { self } }
+        judge = Lain::Approval::Judge.new(role_spawn: idle)
+        print Lain::Canonical.digest(judge.prompt(tool: "bash", input: { "command" => "ls" }, place:))
+      RUBY
+      run = -> { IO.popen([RbConfig.ruby, "-Ilib", "-e", script], err: File::NULL, &:read) }
+
+      expect(run.call).to start_with("blake3:").and eq(run.call)
+    end
+  end
 end
