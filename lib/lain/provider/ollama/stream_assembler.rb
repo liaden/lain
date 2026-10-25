@@ -213,7 +213,8 @@ module Lain
 
         def accumulate_message(message)
           @content << message["content"].to_s if message["content"]
-          @thinking << message["thinking"].to_s if message["thinking"]
+          fragment = Decoding.reasoning_in(message) { |text| !text.to_s.empty? }
+          @thinking << fragment.to_s if fragment
           Array(message["tool_calls"]).each { |call| @tool_calls << call }
         end
 

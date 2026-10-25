@@ -125,6 +125,18 @@ module Lain
         # answer `"end_turn"` where ollama itself says `"stop"`.
         SETTLES_AS_ANSWER = [StopReason::END_TURN, StopReason::STOP_SEQUENCE].freeze
 
+        # Servers behind the ollama wire name the trace differently; the first
+        # non-blank one is the reasoning.
+        REASONING_FIELDS = %w[thinking reasoning reasoning_content].freeze
+
+        # The one precedence rule, shared with the stream assembler. `usable`
+        # differs because a whole body must carry words but a stream fragment
+        # may be spacing that belongs in the trace.
+        # @return [String, nil] the first reasoning field `usable` accepts
+        def self.reasoning_in(message, &usable)
+          REASONING_FIELDS.map { |field| message[field] }.find(&usable)
+        end
+
         private
 
         # `ceiling` is the generation cap the request sent, which is what tells
@@ -214,7 +226,7 @@ module Lain
         # Every field a model can speak through, blank at once.
         def said_nothing?(message)
           Array(message["tool_calls"]).empty? &&
-            Blankness.blank?(message["content"]) && Blankness.blank?(message["thinking"])
+            Blankness.blank?(message["content"]) && reasoning_of(message).nil?
         end
 
         # nil unless the message asked for nothing AND ends in a closed
@@ -228,13 +240,17 @@ module Lain
           PROSE_TOOL_CALL.match(message["content"].to_s)
         end
 
+        def reasoning_of(message)
+          Decoding.reasoning_in(message) { |text| !Blankness.blank?(text) }
+        end
+
         # Order mirrors what a mixed assistant turn carries: reasoning first, then
         # visible text, then the calls -- thinking and text ride their own message
         # fields, tool_calls its own array.
         def decode_content(message)
           blocks = []
-          blocks << { "type" => "thinking", "thinking" => message["thinking"] } unless
-            Blankness.blank?(message["thinking"])
+          reasoning = reasoning_of(message)
+          blocks << { "type" => "thinking", "thinking" => reasoning } if reasoning
           blocks << { "type" => "text", "text" => message["content"] } unless Blankness.blank?(message["content"])
           Array(message["tool_calls"]).each_with_index { |call, index| blocks << tool_use_block(call, index) }
           blocks

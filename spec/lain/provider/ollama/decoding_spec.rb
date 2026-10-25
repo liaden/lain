@@ -367,4 +367,56 @@ RSpec.describe Lain::Provider::Ollama::Decoding do
         .to stop_with(Lain::StopReason::END_TURN)
     end
   end
+
+  describe "reasoning under another field name, through the provider" do
+    def fixture(name) = File.read(File.join(__dir__, "../../../fixtures/ollama/reasoning", name))
+
+    def complete(name, journal: [])
+      stub_request(:post, %r{/api/chat})
+        .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: fixture(name))
+      request = Lain::Request.new(model: "qwen3:4b", max_tokens: 64, stream: false,
+                                  messages: [{ role: "user", content: "hi" }])
+      Lain::Provider::Ollama.new(config: zero_retry_config, journal:).complete(request)
+    end
+
+    it "decodes reasoning_content as a thinking block before the text" do
+      expect(complete("reasoning_content.json").content).to eq(
+        [{ "type" => "thinking", "thinking" => "let me think" }, { "type" => "text", "text" => "42" }]
+      )
+    end
+
+    it "skips a blank thinking field for a real reasoning_content" do
+      response = decode(body(content: "", thinking: "", reasoning_content: "real"))
+
+      expect(response.content).to eq([{ "type" => "thinking", "thinking" => "real" }])
+    end
+
+    it "treats a whitespace-only field as absent" do
+      response = decode(body(content: "ok", thinking: " \n ", reasoning: "real"))
+
+      expect(response.content.first).to eq({ "type" => "thinking", "thinking" => "real" })
+    end
+
+    it "prefers thinking when 2 fields are set" do
+      response = decode(body(content: "ok", thinking: "first", reasoning: "second"))
+
+      expect(response.content.first).to eq({ "type" => "thinking", "thinking" => "first" })
+    end
+
+    it "does not call a turn whose only speech is reasoning an empty answer" do
+      journal = []
+      response = complete("reasoning_only.json", journal:)
+
+      expect(journal.grep(Lain::Telemetry::MalformedResponse)).to be_empty
+      expect(response.content).to eq([{ "type" => "thinking", "thinking" => "x" }])
+      expect(response).to stop_with(Lain::StopReason::END_TURN)
+    end
+
+    it "fails reasoning that spent max_tokens as max_tokens and keeps the thinking" do
+      response = complete("spent_on_thinking.json")
+
+      expect(response).to stop_with(Lain::StopReason::MAX_TOKENS)
+      expect(response.content).to eq([{ "type" => "thinking", "thinking" => "still weighing the options" }])
+    end
+  end
 end

@@ -276,4 +276,33 @@ RSpec.describe Lain::Provider::Ollama::StreamAssembler do
       expect(response.content).to eq([{ "type" => "text", "text" => "Hello, café" }])
     end
   end
+
+  describe "reasoning under the name reasoning" do
+    it "accumulates fragments like thinking into one block" do
+      path = File.join(__dir__, "../../../fixtures/ollama/reasoning/stream_reasoning.ndjson")
+      assembler = described_class.new
+      assembler.feed(File.read(path))
+
+      body = assembler.result
+      expect(body.dig("message", "thinking")).to eq("ab")
+    end
+
+    it "reads a frame with an empty thinking beside a real reasoning" do
+      frame = { "message" => { "role" => "assistant", "thinking" => "", "reasoning" => "x" }, "done" => false }
+      assembler = described_class.new
+      assembler.feed(ndjson([frame]))
+
+      expect(assembler.result.dig("message", "thinking")).to eq("x")
+    end
+
+    it "keeps a whitespace-only fragment, which is real spacing inside a trace" do
+      frames = %W[a \n b].map do |text|
+        { "message" => { "role" => "assistant", "thinking" => text }, "done" => false }
+      end
+      assembler = described_class.new
+      assembler.feed(ndjson(frames))
+
+      expect(assembler.result.dig("message", "thinking")).to eq("a\nb")
+    end
+  end
 end

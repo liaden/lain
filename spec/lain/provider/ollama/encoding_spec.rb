@@ -351,4 +351,13 @@ RSpec.describe Lain::Provider::Ollama::Encoding do
       expect(encoded[:messages].first[:content]).to start_with(Lain::Compaction::Recap::PREAMBLE)
     end
   end
+
+  describe "replaying a thinking-only assistant turn" do
+    it "sends an empty assistant message and no thinking text" do
+      history = [{ role: "user", content: "hi" },
+                 { role: "assistant", content: [{ "type" => "thinking", "thinking" => "private" }] }]
+
+      expect(encoder.encode(request(messages: history))[:messages].last).to eq(role: "assistant", content: "")
+    end
+  end
 end
