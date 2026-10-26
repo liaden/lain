@@ -352,6 +352,11 @@ module ToolBoundsRegistry
               "into it; never wired into a shipped toolset"
     ),
     ToolExemption.new(
+      tool: "Lain::Bench::PlantedClaims::Lookup", grounds: ToolExemption::FIXED_RESULT,
+      reason: "a bench fixture answering the topic it was sent and one synthetic sentence; " \
+              "never wired into a shipped toolset"
+    ),
+    ToolExemption.new(
       tool: "Lain::Tools::RequestReview", grounds: ToolExemption::AWAITING_RULING,
       reason: "quotes every human annotation verbatim into its result with no ceiling. Its INPUTS " \
               "are bounded by Review::Bounds, but that bounds the changeset a reviewer is shown " \
