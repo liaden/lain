@@ -36,6 +36,16 @@ module DerivationFixtures
     end
   end
 
+  # Two tool rounds back to back, so a cut after index 2 lands between the
+  # first round's result and the second round's call.
+  def two_round_history(store: Lain::Dag::Factory.store)
+    blocks = [[text("ask")], [tool_use(0)], [tool_result(0)], [tool_use(1)], [tool_result(1)],
+              [text("done")], [text("next")], [text("ok")]]
+    blocks.each_with_index.inject(Lain::Dag::Factory.timeline(store:)) do |timeline, (content, index)|
+      timeline.commit(role: index.even? ? "user" : "assistant", content:)
+    end
+  end
+
   # The declining shape: the message at index 2 carries a `tool_result` for the
   # `tool_use` before it AND a `tool_use` answered by the one after it, so the
   # naive cut and the single move off it both split a pair. Nothing in `lib/`
@@ -372,8 +382,33 @@ RSpec.describe Lain::Compaction::Derivation do
       expect(journal.last.to_journal).to eq(
         "type" => "context_derived", "source_head" => source.head_digest, "derived_head" => derived.head_digest,
         "strategy" => "(anonymous strategy)", "spans" => [[source.to_a.first.digest, source.to_a[5].digest]],
-        "cut" => :offered, "moved" => 0, "keep_last" => 3, "compaction_cut" => nil
+        "cut" => :offered, "moved" => 0, "keep_last" => 3, "compaction_cut" => nil,
+        "mid_task" => false
       )
+    end
+
+    describe "whether the cut lands mid-task" do
+      def edge_for(source, range)
+        journal = []
+        described_class.new(strategy: fixtures.collapsing([range]), keep_last: 2, journal:).derive(source)
+        journal.last
+      end
+
+      it "marks a cut between two tool rounds" do
+        expect(edge_for(fixtures.two_round_history, 0..2).mid_task).to be(true)
+      end
+
+      it "a cut right after a tool_result, before the assistant's answer, is mid_task true" do
+        expect(edge_for(fixtures.tool_history, 0..2).mid_task).to be(true)
+      end
+
+      it "does not mark a cut after a finished exchange" do
+        expect(edge_for(fixtures.two_round_history, 0..5).mid_task).to be(false)
+      end
+
+      it "records nothing when the cut collapsed nothing" do
+        expect(edge_for(fixtures.history(2), 0..0).mid_task).to be_nil
+      end
     end
 
     it "journals a named strategy by its constant name, which is what a re-derivation resolves" do

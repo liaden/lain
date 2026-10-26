@@ -113,3 +113,26 @@ RSpec.describe Lain::Telemetry::Compaction do
     end
   end
 end
+
+RSpec.describe Lain::Telemetry::ContextDerived do
+  def derived(**options)
+    described_class.new(source_head: "a", derived_head: "b", strategy: "S", spans: [], cut: :empty, **options)
+  end
+
+  it "leaves mid_task unrecorded unless told" do
+    expect(derived.mid_task).to be_nil
+    expect(derived.to_journal).to include("mid_task" => nil)
+  end
+
+  it "keeps a recorded false distinct from unrecorded" do
+    expect(derived(mid_task: false).mid_task).to be(false)
+  end
+
+  it "refuses a mid_task that is not a boolean" do
+    expect { derived(mid_task: "yes") }.to raise_error(ArgumentError, /mid_task/)
+  end
+
+  it "stays deeply frozen" do
+    expect(derived(mid_task: true)).to be_deeply_frozen
+  end
+end

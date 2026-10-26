@@ -2,7 +2,11 @@
 
 module Lain
   class Compare
-    CompactionTally = Data.define(:summary_misses, :prepared, :applied, :cost_delta)
+    CompactionTally = Data.define(:summary_misses, :prepared, :applied, :cost_delta, :mid_task_cuts, :mid_task_n) do
+      def initialize(summary_misses:, prepared:, applied:, cost_delta:, mid_task_cuts: 0, mid_task_n: 0)
+        super
+      end
+    end
 
     # What one run's journal says about compaction, in the 3 figures {Compare} folds across runs.
     # summary_misses is the sum of compaction_decision.summary_misses: every range the strategy was
@@ -21,8 +25,15 @@ module Lain
         new(summary_misses: by_type.fetch("compaction_decision", []).sum { |r| r["summary_misses"].to_i },
             prepared: by_type.fetch("compaction_prepared", []).size,
             applied: by_type.fetch("compaction_applied", []).size,
-            cost_delta: cost_delta_of(by_type.fetch("compaction", [])))
+            cost_delta: cost_delta_of(by_type.fetch("compaction", [])),
+            **mid_task_of(by_type.fetch("context_derived", [])))
       end
+
+      def self.mid_task_of(derivations)
+        recorded = derivations.reject { |r| r["mid_task"].nil? }
+        { mid_task_cuts: recorded.count { |r| r["mid_task"] }, mid_task_n: recorded.size }
+      end
+      private_class_method :mid_task_of
 
       def self.cost_delta_of(compactions)
         Cost.sum(compactions.map { |r| delta_of(r) })
@@ -35,6 +46,11 @@ module Lain
         Cost::Priced.new(amount: BigDecimal(record["cost_saved"]) - BigDecimal(record["cost_spent"]))
       end
       private_class_method :delta_of
+
+      # Share of cuts that landed mid-task, over the records that say; nil when none do, so a journal
+      # from before the field is unrecorded rather than a measured 0.
+      # @return [Rational, nil]
+      def mid_task_rate = mid_task_n.zero? ? nil : Rational(mid_task_cuts, mid_task_n)
 
       # Over-counts by 1 when a restart precedes the first render through a prepared cut.
       def unapplied = prepared - applied

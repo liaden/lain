@@ -286,7 +286,7 @@ module Lain
         Telemetry::ContextDerived.new(source_head: source.head_digest, derived_head: derived.head_digest,
                                       strategy: @strategy.name, spans: plan.spans, cut: plan.cut,
                                       moved: plan.boundary.moved, keep_last: @keep_last,
-                                      compaction_cut: plan.held.digest)
+                                      compaction_cut: plan.held.digest, mid_task: plan.mid_task)
       end
 
       # One event the derived chain will carry, and the only place a role is
@@ -436,6 +436,13 @@ module Lain
         # strategy may answer either kind of Range, so the naive spelling names
         # a turn the range does not cover (or runs off the end of the chain).
         def spans = ranges.map { |range| endpoints(range) }
+
+        # nil, not false, when nothing collapsed: there is no cut to be inside a task.
+        def mid_task
+          return if ranges.empty?
+
+          ToolMessages.tool?(messages.fetch(ranges.last.max))
+        end
 
         # The seam this derivation froze. The held one when nothing after it
         # collapsed -- the SAME object, so a caller can tell no advance by

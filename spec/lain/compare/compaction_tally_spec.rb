@@ -5,6 +5,8 @@ RSpec.describe Lain::Compare::CompactionTally do
   def prepared = { "type" => "compaction_prepared" }
   def applied = { "type" => "compaction_applied" }
 
+  def derived(mid_task) = { "type" => "context_derived", "mid_task" => mid_task }
+
   def priced(amount) = Lain::Compare::Cost::Priced.new(amount: BigDecimal(amount))
 
   def compaction(saved:, spent:)
@@ -42,6 +44,31 @@ RSpec.describe Lain::Compare::CompactionTally do
 
     it "reads a lazy enumerator of records" do
       expect(described_class.from_records([decision(2)].lazy).summary_misses).to eq(2)
+    end
+  end
+
+  describe "#mid_task_rate" do
+    it "is the share of recorded cuts that landed mid-task" do
+      records = [derived(true), derived(false), derived(false), derived(false)]
+
+      expect(described_class.from_records(records)).to have_attributes(mid_task_rate: Rational(1, 4), mid_task_n: 4)
+    end
+
+    it "is unrecorded, never 0, for records that carry no field" do
+      tally = described_class.from_records([{ "type" => "context_derived" }, derived(nil)])
+
+      expect(tally.mid_task_rate).to be_nil
+      expect(tally.mid_task_n).to eq(0)
+    end
+
+    it "counts only the recorded cuts when old and new records mix" do
+      tally = described_class.from_records([{ "type" => "context_derived" }, derived(true), derived(false)])
+
+      expect(tally).to have_attributes(mid_task_rate: Rational(1, 2), mid_task_n: 2)
+    end
+
+    it "is unrecorded for a run with no journal" do
+      expect(described_class::NONE.mid_task_rate).to be_nil
     end
   end
 

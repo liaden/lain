@@ -13,9 +13,12 @@ module Lain
         attribute :strategy
         attribute :spans
         attribute :cut
+        attribute :mid_task
         validates :strategy, presence: { message: "must name the strategy that derived the chain, got nil" }
         validates :cut, inclusion: { in: %i[empty declined offered],
                                      message: "must be one of empty/declined/offered, got %<value>s" }
+        validates :mid_task, inclusion: { in: [true, false, nil],
+                                          message: "must be true, false or nil, got %<value>s" }
         validate :spans_name_their_endpoints
 
         private
@@ -95,24 +98,30 @@ module Lain
     # needs, and the half an audit reads to see a cut hold: while one holds,
     # every edge names the same cut and carries its spans first.
     #
+    # `mid_task` is true when the last collapsed message carries a tool block, so the
+    # exchange is unfinished until an assistant text follows. It is nil
+    # when nothing collapsed, and a record written before the field existed reads
+    # nil too -- unrecorded, which a reader must not fold into false.
+    #
     # Emitted by {Compaction::Derivation}. Nothing re-derives against it today
     # -- this subsystem's own drift-checking reader was unreachable and has
     # been deleted -- which makes the record write-only in practice, exactly
     # the default failure mode a field nobody consumes drifts into silently.
     ContextDerived = Data.define(:source_head, :derived_head, :strategy, :spans, :cut, :moved, :keep_last,
-                                 :compaction_cut) do
+                                 :compaction_cut, :mid_task) do
       include Journalable
 
       def initialize(source_head:, derived_head:, strategy:, spans:, cut:, moved: 0, keep_last: nil,
-                     compaction_cut: nil)
+                     compaction_cut: nil, mid_task: nil)
         strategy = named(strategy)
         spans = Canonical.normalize(spans)
         cut = cut.to_sym
-        Carriers::ContextDerived.check!(strategy:, spans:, cut:)
+        Carriers::ContextDerived.check!(strategy:, spans:, cut:, mid_task:)
 
         super(source_head: source_head&.dup&.freeze, derived_head: derived_head&.dup&.freeze,
               strategy:, spans:, cut:, moved: Integer(moved), keep_last: keep_last&.then { |n| Integer(n) },
-              compaction_cut: compaction_cut&.then { |digest| -digest.to_s })
+              compaction_cut: compaction_cut&.then { |digest| -digest.to_s },
+              mid_task:)
       end
 
       private
