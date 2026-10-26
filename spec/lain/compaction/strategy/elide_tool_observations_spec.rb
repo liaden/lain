@@ -220,4 +220,8 @@ RSpec.describe Lain::Compaction::Strategy::ElideToolObservations do
                      operation: :blocks,
                      population: spans
   end
+
+  describe "held to the continuation-set law" do
+    it_behaves_like "a continuation-preserving strategy"
+  end
 end

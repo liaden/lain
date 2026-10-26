@@ -82,6 +82,12 @@ module ComposedFixtures
   end
 
   def texts(turn) = RecapText.unframed(turn.content)
+
+  # The ask-only duck a strategy reads, answering one fixed summary.
+  def answering(body = "summarized")
+    answer = Struct.new(:summary).new(body)
+    Class.new { define_method(:ask) { |_inputs| Lain::Promise.new.tap { |promise| promise.resolve(answer) } } }.new
+  end
 end
 
 RSpec.describe Lain::Compaction::Strategy::Composed do
@@ -356,5 +362,16 @@ RSpec.describe Lain::Compaction::Strategy::Composed do
 
       expect(journal.first.strategy).to eq("ElideOnTools | SummarizeConversation")
     end
+  end
+
+  describe "held to the continuation-set law" do
+    # The shipped partitioning pair, over a scripted tier: no model call.
+    let(:strategy) do
+      Lain::Compaction::Strategy::ElideToolObservations.new |
+        Lain::Compaction::Strategy::SummarizeConversation.new(oracle: ComposedFixtures.answering,
+                                                              sink: Lain::Sink::Null.new)
+    end
+
+    it_behaves_like "a continuation-preserving strategy"
   end
 end

@@ -160,4 +160,10 @@ RSpec.describe Lain::Compaction::ProvenanceCheck do
 
     expect(summary_of(strategy, [user("ship it on friday today")])).to start_with(tag)
   end
+
+  describe "held to the continuation-set law" do
+    let(:strategy) { described_class.new(inner: Lain::Compaction::Strategy::Elide.new) }
+
+    it_behaves_like "a continuation-preserving strategy"
+  end
 end

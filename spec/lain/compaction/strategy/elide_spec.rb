@@ -221,4 +221,10 @@ RSpec.describe Lain::Compaction::Strategy::Elide do
                      unit: Lain::Compaction::Strategy::DROP,
                      spans: -> { drawn }
   end
+
+  describe "held to the continuation-set law" do
+    let(:strategy) { elide }
+
+    it_behaves_like "a continuation-preserving strategy"
+  end
 end

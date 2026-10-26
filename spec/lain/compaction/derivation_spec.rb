@@ -910,4 +910,10 @@ RSpec.describe Lain::Compaction::Derivation do
       expect(derivation.derive(earlier).to_a.first.digest).not_to eq(derivation.derive(later).to_a.first.digest)
     end
   end
+
+  describe "held to the continuation-set law under the identity strategy" do
+    let(:strategy) { Lain::Compaction::Strategy::Identity.new }
+
+    it_behaves_like "a continuation-preserving strategy", collapses: false
+  end
 end

@@ -391,4 +391,16 @@ RSpec.describe Lain::Compaction::Strategy::Summarizing do
                      unit: Lain::Compaction::Strategy::DROP,
                      spans: -> { drawn }
   end
+
+  describe "held to the continuation-set law" do
+    it_behaves_like "a continuation-preserving strategy"
+
+    # The serializer changes only what the oracle is shown; it is its own
+    # shipped strategy name, so it is held to the law on its own.
+    context "with the flat transcript serializer" do
+      let(:strategy) { described_class.new(oracle:, serializer: :flat) }
+
+      it_behaves_like "a continuation-preserving strategy"
+    end
+  end
 end

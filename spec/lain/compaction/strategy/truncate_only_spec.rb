@@ -189,4 +189,8 @@ RSpec.describe Lain::Compaction::Strategy::TruncateOnly do
                      operation: :blocks,
                      population: -> { TruncateOnlyFixtures.spans }
   end
+
+  describe "held to the continuation-set law" do
+    it_behaves_like "a continuation-preserving strategy"
+  end
 end
