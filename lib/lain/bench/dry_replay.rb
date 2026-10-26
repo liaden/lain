@@ -21,24 +21,60 @@ module Lain
     # `#render` purity: re-rendered under the recording's own Context, the bytes
     # must match to the digest -- which they cannot if `#render` leaked a clock
     # or a pwd.
+    #
+    # A compacted run did not send its prefixes as they stand: each request
+    # rendered through the compaction cuts held when it was sent. Handed the
+    # run's recorded cuts and keep, each step renders through them again, from
+    # the record and with no model call -- writing the derived chains it
+    # renders into the recording's Store, as the live run did into its own.
     class DryReplay
       # A recorded model call: the reconstructed Timeline prefix that was
-      # rendered, paired with the recorded Request the render produced.
-      Step = Data.define(:index, :timeline, :recorded)
+      # rendered, paired with the recorded Request the render produced, and
+      # the recorded cut it was sent under -- nil before any held.
+      Step = Data.define(:index, :timeline, :recorded, :cut)
+
+      # A step before anyone has asked which cut it holds.
+      Call = Data.define(:index, :timeline, :recorded)
+      private_constant :Call
+
+      # The {Compaction::Source::HeldCut} duck for a run that committed no cut.
+      module Unheld
+        module_function
+
+        def in_force = nil
+
+        def render(context) = context
+      end
+      private_constant :Unheld
 
       # @param timeline [Lain::Ext::Timeline] the recorded final DAG
       # @param baseline [Array<Lain::Request>] requests actually sent, in order
       # @param toolset [#to_schema] the toolset in effect at record time
       # @param workspace [Lain::Workspace] the workspace in effect at record time
-      def initialize(timeline:, baseline:, toolset:, workspace: Workspace.empty)
+      # @param cuts [Session, nil] the recording's restored compaction cuts, or
+      #   nil for a run that committed none
+      # @param keep_last [Integer] the keep the run compacted under, which
+      #   decides whether a cut still holds
+      def initialize(timeline:, baseline:, toolset:, workspace: Workspace.empty, cuts: nil,
+                     keep_last: ::Lain::CLI::Backend::DEFAULT_KEEP_LAST)
         @toolset = toolset
         @workspace = workspace
-        @steps = reconstruct(timeline, Array(baseline))
+        @calls = reconstruct(timeline, Array(baseline))
+        @holding = holding(cuts, keep_last)
+        @held = {}
       end
 
       # @return [Integer] one per recorded model call
       def steps
-        @steps.size
+        @calls.size
+      end
+
+      # @yieldparam step [Step] each recorded model call, in order
+      # @return [Enumerator<Step>] without a block
+      def each_step
+        return enum_for(:each_step) { steps } unless block_given?
+
+        @calls.each { |call| yield Step.new(**call.to_h, cut: held(call).in_force) }
       end
 
       # Re-render every recorded step's prefix under `context`.
@@ -46,7 +82,7 @@ module Lain
       # @param context [Lain::Context]
       # @return [Array<Lain::Request>] one per step, in order
       def replay(context)
-        @steps.map { |step| render(context, step.timeline) }
+        @calls.map { |call| render(held(call).render(context), call.timeline) }
       end
 
       # Byte-diff the recorded baseline against a re-render under `context`.
@@ -54,10 +90,26 @@ module Lain
       # @param context [Lain::Context]
       # @return [Diff] deterministic for identical inputs
       def diff(context)
-        Diff.new(@steps.map { |step| StepDiff.build(step.index, step.recorded, render(context, step.timeline)) })
+        replayed = replay(context)
+        Diff.new(@calls.zip(replayed).map { |call, request| StepDiff.build(call.index, call.recorded, request) })
       end
 
       private
+
+      # One derivation shared by every step, for speed: a held render resumes
+      # the derived chain the step before it built rather than deriving from
+      # the root again. The arm is the one the cuts were recorded under, which
+      # is the name a cut must match to hold.
+      def holding(cuts, keep_last)
+        return ->(_timeline) { Unheld } if cuts.nil?
+
+        derived = Compaction::Source::Derived.new(keep_last: Compaction.validate_keep_last(keep_last))
+        arm = cuts.compaction_cuts.last&.strategy
+        ->(timeline) { Compaction::Source::HeldCut.on(session: cuts, timeline:, derived:, arm:) }
+      end
+
+      # Found on first ask, so a caller counting steps walks no chain per step.
+      def held(call) = @held[call.index] ||= @holding.call(call.timeline)
 
       def render(context, timeline)
         context.render(timeline:, toolset: @toolset, workspace: @workspace)
@@ -79,7 +131,7 @@ module Lain
         end
 
         assistant_turns.each_with_index.map do |turn, index|
-          Step.new(index:, timeline: timeline.checkout(turn.parent), recorded: baseline.fetch(index))
+          Call.new(index:, timeline: timeline.checkout(turn.parent), recorded: baseline.fetch(index))
         end
       end
     end

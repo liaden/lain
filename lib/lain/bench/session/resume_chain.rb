@@ -119,6 +119,12 @@ module Lain
           present? ? prior_loader.messages : []
         end
 
+        # @return [Array<Hash>] every prior file's `compaction_cut` records,
+        #   the oldest file's first, or none when this file did not resume one
+        def prior_cut_records
+          present? ? prior_loader.cut_records : []
+        end
+
         private
 
         # Memoized: {#store}, {#prior_timeline} and {#prior_messages} all reach

@@ -929,7 +929,7 @@ module Lain
       def defer(base:, held_cut:, need:, head:, occupancy:, provenance:, cold:, outcome: Derived::Outcome::NOTHING,
                 would_not_shrink: false)
         record(need:, head:, compacted: false, outcome:, occupancy:, provenance:, cold:, would_not_shrink:)
-        holding(base, held_cut)
+        held_cut.render(base)
       end
 
       # `head.bytesize` to {Need} and to the hard-cap comparison -- the count
@@ -966,20 +966,10 @@ module Lain
                                       collapse_strategy: @collapse_strategy)
         compacted = !pipeline.equal?(provider)
         record(need:, head:, compacted:, outcome:, occupancy:, provenance:, cold:)
-        return holding(base, held_cut) unless compacted
+        return held_cut.render(base) unless compacted
 
         held_cut.advance(outcome)
         base.with_pipeline(pipeline)
-      end
-
-      # The held render onto the live base, over the same provider a
-      # compacting turn composes over, and WITHOUT a {Scheduler}: nothing was
-      # decided this turn, so there is no compaction for one to journal.
-      def holding(base, held_cut)
-        held = held_cut.outcome
-        return base if held.refused?
-
-        base.with_pipeline(HOLD.call(held.replay, base.pipeline_provider))
       end
 
       # Built here, judged by {Diagnosis} and routed by {Reporting} -- the

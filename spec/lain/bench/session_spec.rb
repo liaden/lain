@@ -165,6 +165,117 @@ RSpec.describe Lain::Bench::Session do
     end
   end
 
+  describe "replaying a session with no compaction cuts" do
+    before { write_session }
+
+    it "holds no cuts" do
+      expect(load_session.cuts).to be_nil
+    end
+
+    it "re-renders every step to its recorded request_sent digest" do
+      recording = load_session
+      expect(recording.dry_replay.diff(recording.context)).to be_identical
+      expect(recording.dry_replay.replay(recording.context).map(&:digest))
+        .to eq(parsed_records.select { |record| record["type"] == "request_sent" }.map { |record| record["digest"] })
+    end
+  end
+
+  describe "a session compacted by an elide arm" do
+    let(:session) { Lain::Session.new(journal:) }
+    let(:backend) { compacting_backend }
+    let(:run) { record_compacted_run(journal:, session:, backend:, toolset:, context:, workspace:) }
+    let(:sent) { parsed_records.select { |record| record["type"] == "request_sent" }.map { |record| record["digest"] } }
+
+    before { write_session(compaction: backend.compaction_header) }
+
+    it "re-renders every step to its recorded request_sent digest" do
+      recording = load_session
+      expect(recording.cuts.compaction_cuts.size).to eq(2)
+      expect(recording.dry_replay.replay(recording.context).map(&:digest)).to eq(sent)
+    end
+
+    it "is identical to its baseline under its own context" do
+      recording = load_session
+      expect(recording.dry_replay.diff(recording.context)).to be_identical
+    end
+
+    it "restores the cuts the run committed" do
+      expect(load_session.cuts.compaction_cuts).to eq(session.compaction_cuts)
+    end
+
+    it "names, on each step, the recorded cut its request was sent under" do
+      steps = load_session.dry_replay.each_step
+      expect(steps.map { |step| step.cut&.address }).to eq(cuts_in_force(parsed_records))
+      expect(cuts_in_force(parsed_records).uniq.size).to eq(3)
+    end
+  end
+
+  describe "a chat compacted under keep_last 1" do
+    let(:session) { Lain::Session.new(journal:) }
+    let(:backend) { compacting_backend(keep: 1) }
+    let(:run) { record_compacted_chat(journal:, session:, backend:, toolset:, context:, workspace:) }
+
+    before { write_session(compaction: backend.compaction_header) }
+
+    it "replays identically under the keep its header records" do
+      recording = load_session
+      expect(recording.cuts.compaction_cuts).not_to be_empty
+      expect(recording.dry_replay.diff(recording.context)).to be_identical
+    end
+
+    it "replays under the default keep when the header names none, which diverges here" do
+      unkept = parsed_records.map { |record| record["type"] == "session" ? record.except("compact_keep") : record }
+      recording = described_class.load(unkept)
+      expect(recording.dry_replay.diff(recording.context)).not_to be_identical
+    end
+  end
+
+  # A cut committed while the human is away collapses the held cuts into one, and the
+  # next request is sent holding that collapse.
+  describe "a session whose idle prepare committed a collapse" do
+    let(:clock_at) { [Time.at(1_700_000_000).utc] }
+    let(:session) { Lain::Session.new(journal:) }
+    let(:source) do
+      Lain::Compaction::Source.new(
+        need: Lain::Compaction::Need.new(byte_threshold: 3_000), hard_cap: 3_000, keep_last: 2, journal:,
+        cold: Lain::Compaction::Cold.new(cache_profile: { ttl: nil }, journal:), clock: -> { clock_at.first },
+        context_window: Lain::ContextWindow.new(windows: { "claude" => 10_000 }),
+        strategy: Lain::Compaction::Source::Collapse.new(policy: Lain::Compaction::Strategy::Elide.new, name: "elide")
+      )
+    end
+    let(:run) do
+      full = Lain::Usage.new(input_tokens: 9_500)
+      calls = Array.new(7) do |index|
+        tool_response(["tu_#{index}", "echo", { "text" => "hi #{index} " * 120 }], usage: full)
+      end
+      provider = Lain::Provider::Mock.new(responses: calls + [text_response("done", usage: full),
+                                                              text_response("welcome back", usage: full)])
+      stack = Lain::Middleware::Stack.new([Lain::Middleware::JournalRequests.new(journal:)])
+      agent = Lain::Agent.new(provider:, toolset:, context:, workspace:, session:, pipeline_source: source,
+                              journal: Lain::CLI::JournalTee.new(journal, source), model_middleware: stack)
+      agent.ask("please echo a lot " * 20)
+      clock_at[0] += Lain::Compaction::Source::IdleGate::FLOOR
+      Lain::CLI::Repl::IdleCompaction.new(agent:, sink: StringIO.new, sleeper: ->(_seconds) {}).tick
+      agent.ask("the human is back " * 10)
+      [agent, provider]
+    end
+
+    before do
+      write_session(compaction: { "compact_strategy" => "elide", "compact_keep" => 2, "compact_schedule" => "turn" })
+    end
+
+    it "sends its last request holding the collapse" do
+      expect(session.compaction_cuts.map(&:kind).last).to eq("collapse")
+      expect(cuts_in_force(parsed_records).last).to eq(session.compaction_cuts.last.address)
+    end
+
+    it "re-renders every step to its recorded request and names the collapse on the last" do
+      recording = load_session
+      expect(recording.dry_replay.diff(recording.context)).to be_identical
+      expect(recording.dry_replay.each_step.map { |step| step.cut&.address }).to eq(cuts_in_force(parsed_records))
+    end
+  end
+
   describe "tampering" do
     it "raises Session::Corrupt naming the recorded digest when a turn's content was edited under it" do
       write_session

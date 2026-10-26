@@ -126,4 +126,34 @@ RSpec.describe Lain::Bench::Session::ResumeChain do
         end
     end
   end
+
+  # Unverified here, as every record is until something folds it: what the
+  # prior files carry, oldest first, for a reader that restores cuts across them.
+  describe "#prior_cut_records" do
+    def cut(name) = { "type" => "compaction_cut", "digest" => name }
+
+    def chained(file, *records)
+      roundtrip([open_header(resumed_from: { "file" => file, "head" => "unused" }), *records])
+    end
+
+    let(:files) do
+      { "a.ndjson" => roundtrip([open_header, cut("a's cut")]),
+        "b.ndjson" => chained("a.ndjson", cut("b's cut")) }
+    end
+    let(:resolver) { ->(basename) { files.fetch(basename) } }
+
+    def chain_from(file)
+      described_class.new(resumed_from: { "file" => file, "head" => "unused" }, context_factory: nil,
+                          resolve: resolver)
+    end
+
+    it "answers every prior file's cut records, the oldest file's first" do
+      expect(chain_from("b.ndjson").prior_cut_records).to eq([cut("a's cut"), cut("b's cut")])
+    end
+
+    it "answers none for a file that resumes nothing" do
+      expect(described_class.new(resumed_from: nil, context_factory: nil, resolve: resolver).prior_cut_records)
+        .to eq([])
+    end
+  end
 end

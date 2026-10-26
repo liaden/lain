@@ -145,6 +145,9 @@ module Lain
         # @return [Derivation::Seam] what holds, or {Derivation::UNCUT}
         attr_reader :seam
 
+        # @return [Telemetry::CompactionCut, nil] the newest recorded cut holding on this chain
+        def in_force = @lineage.last
+
         # What a compaction may still collapse: the messages past the cut.
         # Measured by {Head}, so a threshold fires on history the cut has not
         # already dealt with rather than forever on the history it has.
@@ -240,6 +243,19 @@ module Lain
         # one, an uncut derivation, so the retreat is on the record.
         def outcome
           @outcome ||= derives? ? @derived.held(@timeline, walk: @walk, cut: @seam) : Derived::Outcome::NOTHING
+        end
+
+        # `base` rendering this chain with the cut held and nothing new
+        # collapsed, over the same provider a compacting turn composes over,
+        # and WITHOUT a {Scheduler}: nothing was decided, so there is no
+        # compaction for one to journal.
+        #
+        # @param base [Context]
+        # @return [Context] `base` itself while nothing derives
+        def render(base)
+          return base if outcome.refused?
+
+          base.with_pipeline(HOLD.call(outcome.replay, base.pipeline_provider))
         end
 
         # What a turn sends if it compacts no further -- the `before` a new
@@ -513,7 +529,6 @@ module Lain
         end
         private_constant :Stretch
       end
-      private_constant :HeldCut
     end
   end
 end

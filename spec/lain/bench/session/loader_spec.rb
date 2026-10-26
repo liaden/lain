@@ -386,6 +386,85 @@ RSpec.describe Lain::Bench::Session::Loader do
     end
   end
 
+  describe "the compaction_cut chain" do
+    let(:session) { Lain::Session.new(journal:) }
+    let(:run) { record_compacted_run(journal:, session:, toolset:, context:, workspace:) }
+    let(:records) { entries(compact_strategy: "elide").map { |line| JSON.parse(line) } }
+    let(:cut_records) { records.select { |record| record["type"] == "compaction_cut" } }
+
+    it "loads both cuts the run recorded, in recorded order, the second naming the first" do
+      cuts = described_class.new(records).recording.cuts.compaction_cuts
+      expect(cuts.map(&:digest)).to eq(cut_records.map { |record| record["digest"] })
+      expect(cuts.last.parent).to eq(cuts.first.address)
+    end
+
+    # Resume and restart rebuild through this same door and never replay, so a cut they
+    # cannot restore must not refuse the session they can.
+    describe "a cut whose parent record is missing" do
+      before { records.delete(cut_records.first) }
+
+      it "still loads the recording" do
+        expect(described_class.new(records).recording.timeline.head_digest).to eq(agent.timeline.head_digest)
+      end
+
+      it "raises Corrupt naming the compaction_cut chain when the cuts are read" do
+        expect { described_class.new(records).recording.cuts }
+          .to raise_error(Lain::Bench::Session::Corrupt, /compaction_cut record chain is incomplete/)
+      end
+
+      it "raises the same Corrupt from a dry replay" do
+        expect { described_class.new(records).recording.dry_replay }
+          .to raise_error(Lain::Bench::Session::Corrupt, /compaction_cut record chain is incomplete/)
+      end
+    end
+
+    it "raises Corrupt naming the compaction_cut record when one has lost a field it is rebuilt from" do
+      cut_records.last.delete("collapses")
+      expect { described_class.new(records).recording.cuts }
+        .to raise_error(Lain::Bench::Session::Corrupt, /compaction_cut record.*collapses/)
+    end
+
+    # Resumed the way `lain resume` resumes: the prior file's cuts restored into the new
+    # session, which journals into the new file only what it commits from there on.
+    describe "a resumed file whose new cut's parent lives in the prior file" do
+      let(:prior) { records.map { |record| "#{JSON.generate(record)}\n" } }
+      let(:resumed_io) { StringIO.new }
+      let(:resumed_lines) do
+        resumed_journal = Lain::Journal.new(io: resumed_io)
+        resumed = Lain::SessionRecord::Replay.new(prior).session(on: agent.timeline)
+        resumed.journals_into(resumed_journal)
+        scribe = Lain::SessionRecord::Scribe.new(
+          journal: resumed_journal, context:, toolset:, workspace:, writer: CoreGraph::NO_WRITER,
+          compaction: compacting_backend.compaction_header, written: agent.timeline.to_a.map(&:digest),
+          resumed_from: { "file" => "a.ndjson", "head" => agent.timeline.head_digest }
+        )
+        later, = record_compacted_run(journal: resumed_journal, session: resumed, toolset:, context:, workspace:,
+                                      timeline: agent.timeline, rounds: 6)
+        scribe.catch_up(later.timeline).close(reason: :exit)
+        resumed_io.string.lines
+      end
+      let(:resolve) { ->(basename) { basename == "a.ndjson" ? prior : raise(basename) } }
+
+      it "cuts against a parent the resumed file does not carry" do
+        cuts = resumed_lines.map { |line| JSON.parse(line) }.select { |record| record["type"] == "compaction_cut" }
+        expect(cuts.map { |cut| cut["parent"] }).to include(session.compaction_cuts.last.address)
+      end
+
+      it "loads through the door resume and restart rebuild from" do
+        expect(described_class.new(resumed_lines, resolve:).recording.timeline.to_a.size)
+          .to be > agent.timeline.to_a.size
+      end
+
+      it "restores the cuts of both files, the prior file's first" do
+        recording = described_class.new(resumed_lines, resolve:).recording
+        resumed_cuts = resumed_lines.map { |line| JSON.parse(line) }.select { |r| r["type"] == "compaction_cut" }
+        expect(resumed_cuts).not_to be_empty
+        expect(recording.cuts.compaction_cuts.map(&:digest))
+          .to eq((cut_records + resumed_cuts).map { |record| record["digest"] })
+      end
+    end
+  end
+
   # Seven collaborators each ask this Loader for their own record type, so
   # the discrimination is a partition built once at initialize, not a linear
   # re-scan of the whole record array per caller.

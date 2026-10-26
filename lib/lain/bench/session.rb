@@ -176,6 +176,42 @@ module Lain
         end
       end
 
+      RecordedCuts = Data.define(:records, :keep_last)
+
+      # A file's `compaction_cut` records, restored only when a replay asks:
+      # resume and restart rebuild through the same {Loader} and never replay,
+      # so a cut they cannot restore must not refuse a session they can.
+      # `keep_last` is the run's, which decides whether each cut still holds.
+      # Holds the parsed records themselves, so like `timeline` it is frozen
+      # but not shareable.
+      class RecordedCuts
+        FIELDS = Telemetry::CompactionCut.members
+        private_constant :FIELDS
+
+        def initialize(records:, keep_last:) = super(records: records.freeze, keep_last:)
+
+        # A run that committed no cut.
+        NONE = new(records: [], keep_last: nil)
+
+        # @param on [Ext::Timeline] the chain the restored session stands on
+        # @return [Lain::Session, nil] holding every cut, nil for a run that committed none
+        # @raise [Corrupt] for a record that cannot be rebuilt, or a cut whose parent is missing
+        def restore(on:)
+          return if records.empty?
+
+          records.each { |record| rebuilt(record) }
+          SessionRecord::Replay.new(records).session(on:)
+        end
+
+        private
+
+        def rebuilt(record)
+          Telemetry::CompactionCut.new(**FIELDS.to_h { |field| [field, record.fetch(field.to_s)] })
+        rescue KeyError, ArgumentError => e
+          raise Corrupt, "a compaction_cut record cannot be rebuilt (#{e.message})"
+        end
+      end
+
       # Everything {Session.load} rebuilds, as one frozen value. Holds Stores
       # (via its Timeline and its memory surface), so like Timeline itself it
       # cannot be `Ractor.shareable?` whole; every other member is.
@@ -190,7 +226,8 @@ module Lain
       # `open` names whether {Loader} verified a full anchor or only the
       # unverified-prefix shape; `messages` is the session's re-put
       # :message/:spawn events, root-first like `baseline`, holding the SAME
-      # Store {timeline} does.
+      # Store {timeline} does. `recorded_cuts` is the file's
+      # {RecordedCuts}, and like `timeline` not shareable.
       #
       # `mode` is the mode trajectory this run walked, folded off the same journal
       # `degraded` comes from and carried for the same reason: each is a fact
@@ -227,25 +264,34 @@ module Lain
       Recording = Data.define(:context, :context_class, :toolset, :workspace,
                               :timeline, :baseline, :ledger_index, :degraded, :mode, :memory,
                               :open, :messages, :compaction, :schedule, :compaction_tally, :arms,
-                              :compact, :opaque, :provenance, :served_models, :host, :started_at) do
+                              :compact, :opaque, :provenance, :served_models, :host, :started_at, :recorded_cuts) do
         def initialize(context:, context_class:, toolset:, workspace:, timeline:, baseline:, ledger_index:,
                        degraded:, mode:, memory:, open:, messages:, compaction:, schedule:, compaction_tally:,
-                       provenance:, served_models:, host:, started_at:, arms: {}, compact: nil, opaque: nil)
+                       provenance:, served_models:, host:, started_at:, arms: {}, compact: nil, opaque: nil,
+                       recorded_cuts: RecordedCuts::NONE)
           super(context:, context_class: -context_class.to_s, toolset:, workspace:,
                 timeline:, baseline: baseline.freeze, ledger_index:, degraded:, mode:, memory:,
                 open:, messages: messages.freeze, compaction: compaction && -compaction,
                 schedule: schedule && -schedule, compaction_tally:,
                 arms: Ractor.make_shareable(arms), compact:, opaque: opaque && -opaque,
                 provenance: Ractor.make_shareable(provenance), served_models: Ractor.make_shareable(served_models),
-                host: -host.to_s, started_at: started_at&.freeze)
+                host: -host.to_s, started_at: started_at&.freeze, recorded_cuts:)
         end
 
         # A recording whose baseline outnumbers the DAG's assistant turns holds
         # a failed attempt (a request_sent with no following turn_usage), and
-        # DryReplay's 1:1 guard raises on it -- loudly, by design.
+        # DryReplay's 1:1 guard raises on it -- loudly, by design. A compacted
+        # run's steps render through the cuts it recorded, under its keep.
         def dry_replay
-          DryReplay.new(timeline:, baseline:, toolset:, workspace:)
+          DryReplay.new(timeline:, baseline:, toolset:, workspace:, cuts:, keep_last: recorded_cuts.keep_last)
         end
+
+        # Restored afresh on each call, onto this recording's own Store; it
+        # journals nowhere, so do not record into it.
+        #
+        # @return [Lain::Session, nil] holding the recorded cuts, nil when the file has none
+        # @raise [Corrupt] when a cut cannot be restored
+        def cuts = recorded_cuts.restore(on: timeline)
 
         # What two runs must agree on before their numbers pool; {Variance} refuses
         # the first axis that differs. The pipeline label is its rendered stages,

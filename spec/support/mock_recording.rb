@@ -54,6 +54,47 @@ module MockRecording
     stack = Lain::Middleware::Stack.new([Lain::Middleware::JournalRequests.new(journal:)])
     record_run(responses, journal:, model_middleware: stack, **)
   end
+
+  # What `lain chat --compact-strategy <strategy> --compact-keep <keep>` builds its compaction
+  # from, at thresholds low enough that seven long tool rounds commit two elide cuts.
+  def compacting_backend(strategy: "elide", keep: 2)
+    Lain::CLI::Backend.new({ provider: "anthropic", model: "claude-opus-4-8", max_tokens: 1024, compact_bytes: 3_000,
+                             compact_cap: 3_000, compact_strategy: strategy, compact_keep: keep }, root: Dir.pwd)
+  end
+
+  # A journaled run through `backend`'s own pipeline source. Its cuts land wherever `session`
+  # journals, which is `journal` for a session built on it.
+  def record_compacted_run(journal:, session:, backend: compacting_backend, rounds: 7, **)
+    calls = Array.new(rounds) { |index| tool_response(["tu_#{index}", "echo", { "text" => "hi #{index} " * 120 }]) }
+    pipeline_source = backend.pipeline_source(cache_profile: { ttl: nil }, journal:)
+    record_journaled_run(calls + [text_response("done")], journal:, session:, pipeline_source:,
+                                                          prompt: "please echo a lot " * 20, **)
+  end
+
+  # Six asks answered in long text, so no tool pair pulls the cut back from the
+  # keep_last boundary: a replay under a larger keep than the run's then refuses
+  # a cut the run held.
+  def record_compacted_chat(journal:, session:, toolset:, context:, backend: compacting_backend, **)
+    provider = Lain::Provider::Mock.new(responses: Array.new(6) { |index| text_response("an answer #{index} " * 40) })
+    stack = Lain::Middleware::Stack.new([Lain::Middleware::JournalRequests.new(journal:)])
+    agent = Lain::Agent.new(provider:, toolset:, context:, journal:, session:, model_middleware: stack,
+                            pipeline_source: backend.pipeline_source(cache_profile: { ttl: nil }, journal:), **)
+    6.times { |index| agent.ask("turn #{index} " * 40) }
+    [agent, provider]
+  end
+
+  # Read off the record rather than any replay: the cut each request_sent rendered through is
+  # the newest compaction_cut written ahead of it, named by address because a collapse
+  # shares its digest with the advance it rewrites.
+  def cuts_in_force(records)
+    records.each_index.select { |index| records[index]["type"] == "request_sent" }.map do |index|
+      ahead = records.take(index).reverse.find { |record| record["type"] == "compaction_cut" }
+      ahead && Lain::Telemetry::CompactionCut.new(**ahead.slice(*CUT_FIELDS).transform_keys(&:to_sym)).address
+    end
+  end
+
+  CUT_FIELDS = Lain::Telemetry::CompactionCut.members.map(&:to_s).freeze
+  private_constant :CUT_FIELDS
 end
 
 RSpec.configure { |config| config.include MockRecording }

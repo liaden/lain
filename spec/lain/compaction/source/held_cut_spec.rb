@@ -3,10 +3,9 @@
 require "stringio"
 
 # Which recorded cut holds on a chain, and the head a new advance is committed
-# at. Private to {Lain::Compaction::Source}, so it is reached by name; the
-# Source's own spec drives the same rules through whole renders.
+# at. The Source's own spec drives the same rules through whole renders.
 RSpec.describe "Lain::Compaction::Source::HeldCut" do
-  let(:held_cut) { Lain::Compaction::Source.const_get(:HeldCut) }
+  let(:held_cut) { Lain::Compaction::Source::HeldCut }
   let(:session) { Lain::Session.new(journal: Lain::Journal.new(io: StringIO.new)) }
   let(:arm) { "eager" }
   let(:derived) { Lain::Compaction::Source::Derived.new(keep_last: 2) }
@@ -104,6 +103,44 @@ RSpec.describe "Lain::Compaction::Source::HeldCut" do
 
       advance(prompt(at(line, 4), "the next prompt, in place of the withdrawn one"))
 
+      expect(session.compaction_cuts.size).to eq(1)
+    end
+  end
+
+  # What a replay of a recorded run asks of it: the cut a chain holds, and the
+  # render that holding it sends, with nothing new committed.
+  describe "the held render" do
+    let(:base) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse") }
+
+    def sent(context, line)
+      context.render(timeline: line, toolset: Lain::Toolset.new([]),
+                     workspace: Lain::Workspace.empty).messages
+    end
+
+    it "names no cut and renders the base itself while none holds" do
+      line = timeline(6)
+
+      expect(on(line).in_force).to be_nil
+      expect(on(line).render(base)).to equal(base)
+    end
+
+    it "names the newest cut holding on the chain" do
+      line = timeline(6)
+      first = advance(line)
+      second = advance(timeline(10))
+
+      expect(on(line).in_force).to eq(first)
+      expect(on(timeline(10)).in_force).to eq(second)
+    end
+
+    it "renders the held seam onto the base, and commits nothing" do
+      line = timeline(10)
+      advance(line)
+
+      # Equal up to the cache marks the base's own pipeline lays over it.
+      expect(sent(on(line).render(base), line).first).to eq(on(line).messages.first)
+      expect(sent(on(line).render(base), line).size).to eq(on(line).messages.size)
+      expect(sent(on(line).render(base), line)).not_to eq(sent(base, line))
       expect(session.compaction_cuts.size).to eq(1)
     end
   end

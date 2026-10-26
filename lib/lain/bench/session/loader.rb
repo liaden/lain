@@ -75,7 +75,7 @@ module Lain
         # @return [Recording]
         def recording
           Recording.new(
-            timeline:, messages:,
+            timeline:, messages:, recorded_cuts:,
             context:, context_class: header.fetch("context_class"),
             toolset:, workspace:, baseline:,
             ledger_index: Ledger::Index.from_journal(@records),
@@ -144,6 +144,12 @@ module Lain
           # load-bearing.
           replayed.reject { |event| event.kind == :turn }
         end
+
+        # A resumed run holds the cuts its prior files committed, and a new cut
+        # names one of them as its parent, so the chain's records come first.
+        #
+        # @return [Array<Hash>] the chain's `compaction_cut` records, oldest file first
+        def cut_records = resume_chain.prior_cut_records + of_type(SessionRecord::Replay::COMPACTION_CUT_TYPE)
 
         private
 
@@ -325,6 +331,13 @@ module Lain
         def resume_chain
           @resume_chain ||= ResumeChain.new(resumed_from: header["resumed_from"],
                                             context_factory: @context_factory, resolve: @resolve)
+        end
+
+        # The keep is the header's when the run typed one, else the default an
+        # unflagged run compacted under.
+        def recorded_cuts
+          RecordedCuts.new(records: cut_records,
+                           keep_last: header["compact_keep"] || ::Lain::CLI::Backend::DEFAULT_KEEP_LAST)
         end
 
         def baseline
