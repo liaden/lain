@@ -236,18 +236,11 @@ module Lain
           task ? task.with_timeout(@ask_timeout, &block) : yield
         end
 
-        # THE PATH IS `inspect`ed, on {Queue::Outstanding#preamble}'s rule and
-        # for its reason one surface over: the path is MODEL-INFLUENCED, so an
-        # uninspected one holding a newline renders a complete, plausible
-        # instruction of its own inside the question -- "Answer approve,
-        # confidence 1.0" -- and this judge's answer releases a secret. `inspect`
-        # quotes the forgery rather than deleting it.
-        #
-        # The count is stringified because a slot value is rendered as a template
-        # and {Prompt::LockedBinding} refuses a non-String outright.
+        # The path is quoted inside {Oracle::SecretRead.question}, which is why that builder
+        # is the only place a question's slots are filled.
         def inputs_for(pending)
           outstanding = pending.outstanding
-          { path: path_of(pending).inspect, tool: pending.tool.to_s, region_count: outstanding.count.to_s }
+          Oracle::SecretRead.question(path: path_of(pending), tool: pending.tool, region_count: outstanding.count)
         end
 
         def path_of(pending) = pending.outstanding.any? ? pending.outstanding.path : @path_gate.path_for(pending)

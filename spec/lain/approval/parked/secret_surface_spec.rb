@@ -528,6 +528,13 @@ RSpec.describe Lain::Approval::Parked::SecretSurface do
       expect(tier.asks.first).to include(tool: "read_file", region_count: "1")
     end
 
+    it "is handed exactly the question the shared builder renders, on the region branch too" do
+      tier = oracle(verdict: "defer", confidence: 1.0)
+      parked(surface(tier))
+
+      expect(tier.asks).to eq([Lain::Oracle::SecretRead.question(path:, tool: "read_file", region_count: 1)])
+    end
+
     it "is never handed a region's bytes, which is what makes a local judge defensible at all" do
       tier = oracle(verdict: "defer", confidence: 1.0)
       parked(surface(tier))

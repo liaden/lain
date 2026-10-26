@@ -912,6 +912,25 @@ class LainCLI < Thor
     method_option :split, type: :string, default: "dev", desc: "dev or test"
     def sweep = render { Lain::Bench::CLI.new.sweep_report(k: options[:k], split: options[:split]) }
 
+    desc "oracle-calibration", "Score the secret oracle on a labelled path set -- offline from --recorded"
+    method_option :oracle, type: :string, enum: Lain::Bench::CLI::ORACLES, default: "local", desc: "which tier"
+    method_option :model, type: :string, banner: "NAME", desc: "the judge's model; required with --oracle cloud"
+    method_option :gateway, type: :string, banner: "URL",
+                            desc: "http://127.0.0.1:<port> of a lain gateway, no token; required with --oracle cloud"
+    method_option :recorded, type: :string, banner: "PATH", desc: "a journal of oracle_answer records to score offline"
+    method_option :journal, type: :string, banner: "PATH",
+                            desc: "where a live run writes its answers, so --recorded can re-score it " \
+                                  "(default: a timestamped file under the state home's lain/bench)"
+    method_option :paths, type: :string, default: Lain::Bench::OracleCalibration::DEFAULT_PATHS,
+                          desc: "the labelled path set (YAML)"
+    def oracle_calibration
+      render do
+        Lain::Bench::CLI.new.oracle_calibration_report(oracle: options[:oracle], model: options[:model],
+                                                       gateway: options[:gateway], recorded: options[:recorded],
+                                                       journal: options[:journal], paths: options[:paths])
+      end
+    end
+
     desc "arms FIXTURE", "Compare the four orchestration arms live over an ArmTasks fixture " \
                          "-- spends real API money"
     ModelFlags.declare(self, max_tokens: Lain::Bench::SpawnSeam::DEFAULT_MAX_TOKENS,

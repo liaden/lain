@@ -616,6 +616,30 @@ Shape x density sweep over a fixture plan's scripted runs. Offline, deterministi
 
 Both `--plan` (fixture plan markdown, P1 format) and `--runs` (scripted runs YAML) are required.
 
+### lain bench oracle-calibration
+
+Score the secret oracle on 150 secret-bearing and 150 benign synthetic paths, each with a distinct
+basename, 30 of the benign ones secret-adjacent (`.env.example`, `id_rsa.pub`, `token_spec.rb`). It
+states wrong approves out of 150 secret paths with the one-sided 95% upper bound, the same bound
+over distinct basenames, approves out of 150 benign paths and out of the hard negatives separately,
+Brier over approve and deny answers only, the defers per label, and the count per verdict. It says
+PASS only at 0 wrong approves; confidence never enters the gate, and a set with no secret paths fails.
+
+```bash
+lain bench oracle-calibration --recorded run.ndjson --oracle local   # offline, from oracle_answer records
+lain bench oracle-calibration --oracle local --model qwen3:4b        # asks the local ollama; journals every answer
+lain bench oracle-calibration --oracle cloud --model MODEL --gateway http://127.0.0.1:PORT
+```
+
+`--oracle` is `local` (default) or `cloud`; a recording is read at that tier's address. A live run
+builds its judge through the chat's own secret-oracle wiring, so it is sampled and guarded as in a chat (it calibrates the default configuration: it does not take the chat's ollama
+runner options, such as num_ctx, num_batch or keep_alive from `LAIN_PROVIDER` and `LAIN_NUM_CTX`),
+and writes its answers to `--journal PATH` (default a timestamped file under `$XDG_STATE_HOME/lain/bench/`,
+printed in the report); give that file to `--recorded` to re-score it. `--gateway`
+and `--model` follow `--secret-oracle cloud`: the gateway is proven first, its token is read from
+its token file and never from the URL, and a cloud run needs both. `--paths` names another set of
+the same shape (default `spec/fixtures/oracle/paths.yml`).
+
 ---
 
 ## Session commands

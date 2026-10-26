@@ -1661,4 +1661,139 @@ RSpec.describe Lain::Bench::CLI do
       end
     end
   end
+
+  describe "#oracle_calibration_report" do
+    let(:fixture) { File.expand_path("../../fixtures/oracle/paths.yml", __dir__) }
+    let(:definition) { Lain::Oracle::SecretRead.definition }
+    let(:entries) { Lain::Bench::OracleCalibration.load(fixture) }
+
+    def recording(tmp, definition)
+      File.join(tmp, "answers.ndjson").tap do |file|
+        lines = entries.map do |entry|
+          verdict = entry.fetch("label") == "secret" ? "deny" : "approve"
+          Lain::Telemetry::OracleAnswer.new(
+            oracle_digest: definition.digest,
+            question: definition.render(Lain::Oracle::SecretRead.question(path: entry.fetch("path"), tool: "read_file",
+                                                                          region_count: 0)),
+            answer: { "verdict" => verdict, "confidence" => 0.9 }, model: nil, usage: {}, wall_clock: 0.0
+          ).to_journal.to_json
+        end
+        File.write(file, lines.join("\n"))
+      end
+    end
+
+    it "scores a recorded local run offline and states PASS" do
+      Dir.mktmpdir do |tmp|
+        out = cli.oracle_calibration_report(oracle: "local", recorded: recording(tmp, definition))
+
+        expect(out).to include("wrong approves: 0 of 150", "PASS")
+      end
+    end
+
+    it "reads a cloud recording at the cloud tier's address" do
+      cloud = Lain::Oracle::SecretRead.definition(tier: :cloud)
+      Dir.mktmpdir do |tmp|
+        file = recording(tmp, cloud)
+
+        expect(cli.oracle_calibration_report(oracle: "cloud", recorded: file)).to include("PASS")
+        expect { cli.oracle_calibration_report(oracle: "local", recorded: file) }
+          .to raise_error(Lain::Oracle::Recorded::Unrecorded)
+      end
+    end
+
+    it "refuses a missing recording naming its path" do
+      expect { cli.oracle_calibration_report(oracle: "local", recorded: "/nonexistent/answers.ndjson") }
+        .to raise_error(described_class::Refusal, %r{/nonexistent/answers.ndjson})
+    end
+
+    it "refuses an oracle other than local or cloud" do
+      expect { cli.oracle_calibration_report(oracle: "remote", recorded: "x") }
+        .to raise_error(described_class::Refusal, /local or cloud/)
+    end
+
+    it "refuses a live cloud run without a gateway or without a model" do
+      expect { cli.oracle_calibration_report(oracle: "cloud", model: "glm-5.3:cloud") }
+        .to raise_error(described_class::Refusal, /--gateway/)
+      expect { cli.oracle_calibration_report(oracle: "cloud", gateway: "http://127.0.0.1:4000") }
+        .to raise_error(described_class::Refusal, /--model/)
+    end
+
+    it "refuses a gateway on a local run" do
+      expect { cli.oracle_calibration_report(oracle: "local", gateway: "http://127.0.0.1:4000") }
+        .to raise_error(described_class::Refusal, /--gateway/)
+    end
+
+    describe "a live run" do
+      let(:paths) { Lain::Paths.new(env: { "HOME" => tmp, "XDG_STATE_HOME" => File.join(tmp, "state") }) }
+      let(:tmp) { Dir.mktmpdir }
+      let(:reply) { '{"verdict":"defer","confidence":0.3,"reason":"unsure"}' }
+      let(:response) do
+        Lain::Response.new(model: "qwen3:4b", stop_reason: :end_turn,
+                           content: [{ "type" => "text", "text" => reply }],
+                           usage: Lain::Usage.new(input_tokens: 4, output_tokens: 2))
+      end
+      let(:provider) do
+        Lain::Provider::Mock.new(responses: [response], capabilities: Lain::Provider::Ollama::CAPABILITIES)
+      end
+
+      before { allow(Lain::Provider::Ollama).to receive(:new).and_return(provider) }
+
+      after { FileUtils.remove_entry(tmp) }
+
+      it "writes a journal that --recorded re-scores to the identical report", :seam do
+        journal = File.join(tmp, "run.ndjson")
+        live = cli.oracle_calibration_report(oracle: "local", model: "qwen3:4b", journal:, paths: fixture)
+        offline = cli.oracle_calibration_report(oracle: "local", recorded: journal, paths: fixture)
+
+        expect(live).to include("journal: #{journal}")
+        expect(live.lines.grep_v(/\Ajournal:/).join.chomp).to eq(offline)
+        expect(provider.requests.size).to eq(300)
+      end
+
+      it "files a timestamped journal under the state home's bench directory and prints it" do
+        out = cli.oracle_calibration_report(oracle: "local", paths: fixture, journal: nil, state: paths)
+
+        file = out[/^journal: (.+)$/, 1]
+        expect(file).to start_with(File.join(tmp, "state", "lain", "bench", "oracle-calibration-"))
+        expect(File.size(file)).to be_positive
+      end
+
+      it "carries the same egress guard on the provider as the chat's secret oracle" do
+        cli.oracle_calibration_report(oracle: "local", journal: File.join(tmp, "g.ndjson"), paths: fixture)
+
+        expect(Lain::Provider::Ollama).to have_received(:new)
+          .with(hash_including(http_middleware: [array_including(Lain::Provider::HTTP::EgressGuard)])).at_least(:once)
+      end
+
+      it "closes the journal when the run raises" do
+        journal = File.join(tmp, "raises.ndjson")
+        allow(provider).to receive(:complete).and_raise(Lain::Error, "boom")
+
+        expect { cli.oracle_calibration_report(oracle: "local", journal:, paths: fixture) }
+          .to raise_error(Lain::Error, /boom/)
+        expect(File.open(journal, File::WRONLY | File::APPEND) { _1.flock(File::LOCK_EX | File::LOCK_NB) }).to eq(0)
+      end
+
+      it "proves the gateway before a live cloud run, and journals through the cloud tier" do
+        link = instance_double(Lain::Oracle::SecretRead::GatewayLink)
+        tier = instance_double(Lain::Oracle::Recorded::Journaling)
+        allow(tier).to receive(:ask) { |_| definition.answer("verdict" => "deny", "confidence" => 0.3) }
+        allow(Lain::Oracle::SecretRead::GatewayLink).to receive(:from_url).with("http://127.0.0.1:4000").and_return(link)
+        allow(link).to receive(:prove!)
+        allow(Lain::Oracle::SecretRead).to receive(:cloud_tier)
+          .with(hash_including(model: "glm-5.3:cloud", gateway: link, journal: anything)).and_return(tier)
+
+        out = cli.oracle_calibration_report(oracle: "cloud", model: "glm-5.3:cloud", gateway: "http://127.0.0.1:4000",
+                                            journal: File.join(tmp, "c.ndjson"), paths: fixture)
+
+        expect(out).to include("wrong approves: 0 of 150")
+        expect(link).to have_received(:prove!).with("/api/chat")
+      end
+    end
+
+    it "refuses a gateway URL that carries a token" do
+      expect { cli.oracle_calibration_report(oracle: "cloud", model: "glm-5.3:cloud", gateway: "http://127.0.0.1:4000?token=x") }
+        .to raise_error(Lain::Oracle::SecretRead::NotAGateway)
+    end
+  end
 end

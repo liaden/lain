@@ -103,6 +103,39 @@ module Lain
       # rubocop:disable-next Naming/MethodParameterName -- `k` is the pinned recall@k name.
       def sweep_report(k: Sweep::DEFAULT_K, split: "dev") = Sweep.new(k: check_k(k), split: check_split(split)).report
 
+      ORACLES = %w[local cloud].freeze
+
+      # The secret oracle scored over the labelled path set: from a journal of its
+      # `oracle_answer` records (offline), or asked live through the chat's own
+      # {Lain::CLI::Wiring::SecretOracle}, so the judge is sampled, guarded and
+      # gateway-proven exactly as in a chat. A live run journals every answer, so
+      # `--recorded` can re-score it.
+      #
+      # @param oracle [String] "local" or "cloud"; a recording is read at that tier's address
+      # @param model [String, nil] the judge's model; required live under cloud
+      # @param gateway [String, nil] `http://127.0.0.1:<port>`, the URL `lain gateway` printed; no token
+      # @param recorded [String, nil] a journal file; given, nothing is asked of a model
+      # @param paths [String] the labelled path set
+      # @param journal [String, nil] where a live run writes its answers; a timestamped file under
+      #   the state home's `bench` directory by default
+      # @param state [Lain::Paths] the state home the default journal lives under
+      # @return [String] the report; a live run's ends with its journal's path
+      # @raise [Refusal] on an unknown oracle, a missing file, or a live run missing its flags
+      def oracle_calibration_report(oracle: "local", model: nil, gateway: nil, recorded: nil, journal: nil,
+                                    paths: OracleCalibration::DEFAULT_PATHS, state: Paths.new)
+        raise Refusal, "--oracle is local or cloud, not #{oracle.inspect}" unless ORACLES.include?(oracle)
+
+        entries = OracleCalibration.load(checked_file(paths, "path set"))
+        if recorded
+          return scored(entries, OracleCalibration::Source.recorded(oracle, checked_file(recorded, "recording")))
+        end
+
+        journal ||= OracleCalibration::Source.default_journal(state)
+        OracleCalibration::Source.live(oracle:, model:, gateway:, journal:, state:) do |tier|
+          "#{scored(entries, tier)}\njournal: #{journal}"
+        end
+      end
+
       # The three orchestration arms (single-thread control, orchestrator-worker,
       # dual-ledger) over the ArmTasks suite, replayed offline through committed
       # recordings -- no provider, no money, no network, byte-identical across
@@ -630,6 +663,14 @@ module Lain
         raise Refusal, "no *.ndjson session files under #{dir}" if names.empty?
 
         names.map { |name| File.join(dir, name) }
+      end
+
+      def scored(entries, tier) = OracleCalibration.new(paths: entries, oracle: tier).report.to_s
+
+      def checked_file(path, what)
+        return path if File.file?(path)
+
+        raise Refusal, "no #{what} at #{path}"
       end
 
       def checked_path(source)

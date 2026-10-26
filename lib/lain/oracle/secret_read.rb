@@ -185,6 +185,20 @@ module Lain
       ERB
                  .freeze
 
+      # The three slots {TEMPLATE} renders, for the surface that asks live and for anything that
+      # must key a recording the same way. The path is `inspect`ed because it is model-influenced:
+      # an uninspected one holding a newline would render an instruction of its own into the
+      # question. The count is a String because a slot value is rendered as a template and
+      # {Prompt::LockedBinding} refuses anything else.
+      #
+      # @param path [String]
+      # @param tool [#to_s]
+      # @param region_count [#to_s]
+      # @return [Hash{Symbol=>String}]
+      def self.question(path:, tool:, region_count:)
+        { path: path.inspect, tool: tool.to_s, region_count: region_count.to_s }
+      end
+
       # @param tier [Symbol] folded into the Definition's digest, so the same
       #   question answered by two tiers is two oracles at two addresses (see
       #   {PruneScoring.definition} for the same reasoning).
