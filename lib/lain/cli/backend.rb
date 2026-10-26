@@ -897,7 +897,7 @@ module Lain
       # session from a quiet one.
       def compaction_source(cache_profile:, journal:, sink:)
         Compaction::Source.new(
-          need: Compaction::Need.new(byte_threshold: @compaction.bytes || DEFAULT_BYTE_THRESHOLD),
+          need: @compaction.need(DEFAULT_BYTE_THRESHOLD),
           cold: Compaction::Cold.new(cache_profile:, journal:),
           hard_cap: @compaction.cap || DEFAULT_HARD_CAP, keep_last: @compaction.keep || DEFAULT_KEEP_LAST,
           eager:, journal:, model:, price_book: COMPACTION_PRICES, context_window:, sink:, fallback:,

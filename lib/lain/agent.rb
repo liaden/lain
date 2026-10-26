@@ -55,22 +55,6 @@ module Lain
     RefusedRender = Data.define(:error, :digest)
     private_constant :RefusedRender
 
-    # The messages of the last head rendered, so the next render materialises
-    # only the turns after it. A head that no longer descends from it (a rewind,
-    # a checkout, a fold) is walked whole: a prefix is extended, never spliced.
-    RenderedPrefix = Data.define(:head_digest, :messages) do
-      def self.none = new(head_digest: nil, messages: [].freeze)
-
-      # @param timeline [#head_digest, #messages]
-      # @return [RenderedPrefix] the prefix for the timeline's head
-      def over(timeline)
-        head = timeline.head_digest
-        return self if head == head_digest
-
-        with(head_digest: head, messages: timeline.messages(after: head_digest, onto: messages))
-      end
-    end
-
     # What a Context reads off a Timeline, which is only its messages, served
     # through the Agent's prefix. Read lazily, because a pipeline that
     # substitutes its own messages never asks.
@@ -877,8 +861,11 @@ module Lain
     # cumulative input tokens only ever grow, so a window detector fed them
     # latches on and never clears.
     def render_inputs
-      { base: @context, timeline: @timeline, usage: accounting.last_turn_usage(on: @timeline), session: @session }
+      { base: @context, timeline: @timeline, usage: accounting.last_turn_usage(on: @timeline), session: @session,
+        fixed_bytes: fixed_size.bytes(system: @context.system, toolset: @toolset) }
     end
+
+    def fixed_size = @fixed_size ||= FixedSize.new
 
     def preparable? = QUIESCENT.include?(state) && !budget_spent?
 

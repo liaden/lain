@@ -1097,6 +1097,9 @@ class LainCLI < Thor
       thor.method_option :compact_bytes, type: :numeric,
                                          desc: "Droppable-head bytes above which a compaction is warranted " \
                                                "(default #{Backend::DEFAULT_BYTE_THRESHOLD}; #{INHERITED})"
+      thor.method_option :compact_trigger, type: :string, enum: Lain::CLI::CompactionProfile::TRIGGERS,
+                                           desc: "Count only the droppable head (default) or the whole request " \
+                                                 "against --compact-bytes (#{INHERITED})"
       thor.method_option :compact_cap, type: :numeric,
                                        desc: "History bytes that force a compaction even while the cache is warm " \
                                              "(default #{Backend::DEFAULT_HARD_CAP}; #{INHERITED})"

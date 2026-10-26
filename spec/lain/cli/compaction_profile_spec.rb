@@ -29,6 +29,10 @@ RSpec.describe Lain::CLI::CompactionProfile do
       expect(described_class.typed({ compact_provenance: "on" })).to have_attributes(provenance: "on")
     end
 
+    it "reads the trigger flag" do
+      expect(described_class.typed({ compact_trigger: "request" })).to have_attributes(trigger: "request")
+    end
+
     it "reads --compact and --no-compact as typed choices" do
       expect(described_class.typed({ compact: false })).to have_attributes(compact: false)
       expect(described_class.typed({ compact: true })).to have_attributes(compact: true)
@@ -58,6 +62,33 @@ RSpec.describe Lain::CLI::CompactionProfile do
 
     it "reads a recorded provenance switch" do
       expect(described_class.from_header({ "compact_provenance" => "on" })).to have_attributes(provenance: "on")
+    end
+
+    it "reads a recorded trigger, so a resume keeps it" do
+      expect(described_class.from_header({ "compact_trigger" => "request" })).to have_attributes(trigger: "request")
+    end
+
+    it "refuses a recorded trigger it does not know, naming the choices" do
+      expect { described_class.from_header({ "compact_trigger" => "everything" }) }
+        .to raise_error(described_class::UnknownTrigger, /"everything".*head, request/)
+    end
+
+    it "records a typed trigger in the header" do
+      expect(described_class.typed({ compact_trigger: "request" }).to_header).to include("compact_trigger" => "request")
+    end
+
+    it "whole_request? is true only for the request trigger" do
+      expect(described_class.typed({ compact_trigger: "request" }).whole_request?).to be(true)
+      expect(described_class.typed({ compact_trigger: "head" }).whole_request?).to be(false)
+      expect(described_class::UNSET.whole_request?).to be(false)
+    end
+
+    it "builds a Need whose threshold is the typed bytes, else the default" do
+      typed = described_class.typed({ compact_bytes: 5_000, compact_trigger: "request" })
+
+      expect(typed.need(10).check(window_tokens: 1000, head_bytes: 4_000, fixed_bytes: 1_000).needed?).to be(true)
+      expect(described_class::UNSET.need(10).check(window_tokens: 1000, head_bytes: 4, fixed_bytes: 1_000).needed?)
+        .to be(false)
     end
 
     it "reads a recorded --no-compact" do

@@ -2077,6 +2077,32 @@ RSpec.describe Lain::Agent do
       expect(recorder.calls.last[:timeline].head_digest).to eq(a.timeline.rewind(1).head_digest)
     end
 
+    it "hands the source the byte size of the system text and tool schemas" do
+      recorder = A1PipelineSources::Recording.new
+      described_class.new(provider: CoreGraph.provider(text_response), toolset:, context:,
+                          pipeline_source: recorder).ask("hi")
+
+      expect(recorder.calls.map { |call| call[:fixed_bytes] })
+        .to eq([Lain::Canonical.dump([context.system, toolset.to_schema]).bytesize])
+    end
+
+    it "measures the fixed part once across turns that share a toolset and system" do
+      recorder = A1PipelineSources::Recording.new
+      a = described_class.new(provider: CoreGraph.provider(text_response, text_response, text_response),
+                              toolset:, context:, pipeline_source: recorder)
+      fixed = [context.system, toolset.to_schema]
+      measured = 0
+      allow(Lain::Canonical).to receive(:dump).and_wrap_original do |original, value, *rest|
+        measured += 1 if value == fixed
+        original.call(value, *rest)
+      end
+
+      3.times { |turn| a.ask("hi #{turn}") }
+
+      expect(measured).to eq(1)
+      expect(recorder.calls.size).to eq(3)
+    end
+
     # `Scheduler::COMPOSE` calls `Ractor.make_shareable` on a lambda closing
     # over the pipeline, so a per-turn Context that is not shareable is not a
     # style failure -- it is an IsolationError on the compacting turn.
@@ -2139,7 +2165,7 @@ RSpec.describe Lain::Agent do
       a.prepare_idle
       a.run
 
-      expect(source.prepares.last.keys).to contain_exactly(:base, :timeline, :usage, :session)
+      expect(source.prepares.last.keys).to contain_exactly(:base, :timeline, :usage, :session, :fixed_bytes)
       expect(source.prepares.last).to eq(source.renders.last)
     end
 

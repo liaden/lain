@@ -499,6 +499,39 @@ RSpec.describe Lain::Compaction::Source do
     end
   end
 
+  describe "the whole-request trigger" do
+    let(:head_bytes) do
+      measuring = source(need: build_need(byte_threshold: 1_000_000))
+      context_for(measuring, timeline)
+      decisions.first["head_bytes"]
+    end
+
+    def decide_with(need, fixed_bytes)
+      built = source(need:)
+      built.context_for(base:, timeline:, usage: nil, session:, fixed_bytes:)
+      decisions.last["signals"]
+    end
+
+    it "fires once system text and tool schemas lift the request over the threshold" do
+      need = Lain::Compaction::Need.new(byte_threshold: head_bytes + 5_000, whole_request: true)
+
+      expect(decide_with(need, 5_000)).to eq(%w[token_threshold])
+    end
+
+    it "does not fire on the same head and fixed part under the default trigger" do
+      need = Lain::Compaction::Need.new(byte_threshold: head_bytes + 5_000)
+
+      expect(decide_with(need, 5_000)).to be_empty
+    end
+
+    it "takes the fixed part on an idle prepare as well" do
+      need = Lain::Compaction::Need.new(byte_threshold: head_bytes + 5_000, whole_request: true)
+
+      expect { source(need:).prepare(base:, timeline:, usage: nil, session:, fixed_bytes: 5_000) }
+        .not_to raise_error
+    end
+  end
+
   describe "a resumed session does not force-compact on its first turn" do
     it "does not fire the approaching-window signal when usage is nil" do
       built = source(need: build_need(byte_threshold: 100), context_window: window_book(1_000))

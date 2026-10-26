@@ -22,7 +22,7 @@ module Lain
       # `/model` rewrites that mid-session, so a window fixed when the Need was
       # built would keep measuring occupancy against the model the run began
       # with. Per-turn state travels here; it does not make Need mutable.
-      State = Data.define(:head_bytes, :used_tokens, :window_tokens, :manual, :plan_step_completed,
+      State = Data.define(:head_bytes, :fixed_bytes, :used_tokens, :window_tokens, :manual, :plan_step_completed,
                           :reply_ceiling)
       private_constant :State
 
@@ -64,12 +64,21 @@ module Lain
       class TokenThreshold
         KIND = :token_threshold
 
-        def initialize(byte_threshold:)
+        # @param byte_threshold [Integer] the size at or above which the signal fires
+        # @param whole_request [Boolean] count the request's fixed part (system
+        #   text and tool schemas) with the head, for a threshold meant as a
+        #   bound on what is sent rather than on what could be dropped
+        def initialize(byte_threshold:, whole_request: false)
           @byte_threshold = Integer(byte_threshold)
+          @whole_request = whole_request
           freeze
         end
 
-        def fired?(state) = state.head_bytes >= @byte_threshold
+        def fired?(state) = counted(state) >= @byte_threshold
+
+        private
+
+        def counted(state) = @whole_request ? state.head_bytes + state.fixed_bytes : state.head_bytes
       end
 
       # Fires once usage crosses a configurable fraction of the model's
@@ -140,9 +149,10 @@ module Lain
 
       # @param byte_threshold [Integer] see {TokenThreshold}
       # @param approaching_ratio [Float] see {ApproachingWindow}
-      def initialize(byte_threshold:, approaching_ratio: 0.9)
+      # @param whole_request [Boolean] see {TokenThreshold}
+      def initialize(byte_threshold:, approaching_ratio: 0.9, whole_request: false)
         @detectors = [
-          TokenThreshold.new(byte_threshold:),
+          TokenThreshold.new(byte_threshold:, whole_request:),
           ApproachingWindow.new(ratio: approaching_ratio),
           Manual.new.freeze,
           PlanStepCompletion.new.freeze
@@ -158,6 +168,8 @@ module Lain
       #   {Context::Compact}'s byte proxy, ALREADY MEASURED ({Head#bytesize}).
       #   Defaults to nothing droppable, the honest reading for a caller naming
       #   no head at all, which no configurable threshold can cross.
+      # @param fixed_bytes [Integer] the request's system text and tool schemas
+      #   in the same byte proxy; only a whole-request {TokenThreshold} reads it
       # @param used_tokens [Integer, nil] current usage against the context window
       # @param manual [Boolean] an explicit, on-demand trigger
       # @param plan_step_completed [Boolean] whether a plan step completed since
@@ -166,9 +178,9 @@ module Lain
       #   {ApproachingWindow} also fire at window minus {ReplyReserve}. Nil keeps
       #   the ratio alone, which a guessed window must.
       # @return [Result]
-      def check(window_tokens:, head_bytes: 0, used_tokens: nil, manual: false, plan_step_completed: false,
-                reply_ceiling: nil)
-        state = State.new(head_bytes:, used_tokens:, window_tokens: window!(window_tokens),
+      def check(window_tokens:, head_bytes: 0, fixed_bytes: 0, used_tokens: nil, manual: false,
+                plan_step_completed: false, reply_ceiling: nil)
+        state = State.new(head_bytes:, fixed_bytes:, used_tokens:, window_tokens: window!(window_tokens),
                           manual:, plan_step_completed:, reply_ceiling:)
         fired = @detectors.select { |detector| detector.fired?(state) }.map { |detector| detector.class::KIND }
         Result.new(signals: fired)

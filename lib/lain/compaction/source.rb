@@ -653,16 +653,18 @@ module Lain
       #   {Need::ApproachingWindow} distinguishes from zero. A cumulative total
       #   here would latch the signal on permanently, and a zero would read as
       #   an empty context on a resumed session.
+      # @param fixed_bytes [Integer] the request's system text and tool schemas, which only a
+      #   whole-request {Need} counts
       # @param session [Session] the run's Session, for its plan-step signal
       #   and the compaction cuts it has recorded -- and records a new one
       # @return [Context] `base` itself, or a copy carrying this turn's pipeline
-      def context_for(base:, timeline:, usage:, session:)
+      def context_for(base:, timeline:, usage:, session:, fixed_bytes: 0)
         observe_idle
         @reporting.rendering(timeline.head_digest)
         held_cut = HeldCut.on(session:, timeline:, derived: @derived, arm: @collapse_strategy)
         @preparation.rendering(held_cut, session, timeline.head_digest)
         decide(base:, held_cut:, usage: @preparation.usage(usage), session:, pins: pinned(held_cut.walk, session),
-               cold: @cold.cold?)
+               cold: @cold.cold?, fixed_bytes:)
       end
 
       # Commits the cut while the human is away, so the next line renders through it with no
@@ -676,12 +678,13 @@ module Lain
       # @param timeline [Ext::Timeline] the history as of this tick
       # @param usage [Integer, nil] the LAST-TURN input tokens, as {#context_for} takes them
       # @param session [Session] the run's, which records the cut
+      # @param fixed_bytes [Integer] as {#context_for} takes it
       # @return [Boolean] whether a cut was committed
-      def prepare(base:, timeline:, usage:, session:) # rubocop:disable Naming/PredicateMethod
+      def prepare(base:, timeline:, usage:, session:, fixed_bytes: 0) # rubocop:disable Naming/PredicateMethod
         observe_idle
         elapsed = @idle.elapsed
         reading = @preparation.judge(timeline.head_digest, elapsed:, ttl: @cold.ttl, cold: @cold.cold?)
-        cut = reading && prepared_cut(base:, timeline:, usage:, session:)
+        cut = reading && prepared_cut(base:, timeline:, usage:, session:, fixed_bytes:)
         @preparation.prepared(cut, head_digest: timeline.head_digest, elapsed:, reading:, used_tokens: usage) if cut
         !cut.nil?
       end
@@ -708,10 +711,10 @@ module Lain
                                nothing_droppable: head.empty?, handoff: HANDOFF_DECLINED, kept_tokens:)
       end
 
-      def prepared_cut(base:, timeline:, usage:, session:)
+      def prepared_cut(base:, timeline:, usage:, session:, fixed_bytes:)
         before = session.compaction_cuts.last
         held_cut = HeldCut.on(session:, timeline:, derived: @derived, arm: @collapse_strategy)
-        decide(base:, held_cut:, usage:, session:, pins: pinned(held_cut.walk, session), cold: true)
+        decide(base:, held_cut:, usage:, session:, pins: pinned(held_cut.walk, session), cold: true, fixed_bytes:)
         cut = session.compaction_cuts.last
         cut unless cut.equal?(before)
       end
@@ -778,11 +781,11 @@ module Lain
       #
       # The head is taken past the held cut: what a cut already collapsed is
       # not droppable again, so a threshold measures only what it has not.
-      def decide(base:, held_cut:, usage:, session:, pins:, cold:)
+      def decide(base:, held_cut:, usage:, session:, pins:, cold:, fixed_bytes:)
         head = Head.new(messages: held_cut.remaining, keep_last: @derived.keep_last, pins:,
                         claimant: @derived.claimant(pins:), widening: @derived.widening(pins:))
         resolution = window_for(base)
-        need = need_for(head:, usage:, session:, resolution:, ceiling: base.max_tokens)
+        need = need_for(head:, fixed_bytes:, usage:, session:, resolution:, ceiling: base.max_tokens)
         occupancy = ContextWindow::Occupancy.of(used_tokens: usage, window_tokens: resolution.window_tokens)
         provenance = resolution.provenance
         turn = { base:, held_cut:, need:, head:, occupancy:, provenance:, cold: }
@@ -825,8 +828,8 @@ module Lain
       # The chat's ceiling goes in so the trigger also leaves the reply its
       # {ReplyReserve}. On a guessed window that changes nothing: the signal is
       # withdrawn whichever comparison fired it.
-      def need_for(head:, usage:, session:, resolution:, ceiling:)
-        need = @need.check(head_bytes: head.bytesize, used_tokens: usage,
+      def need_for(head:, fixed_bytes:, usage:, session:, resolution:, ceiling:)
+        need = @need.check(head_bytes: head.bytesize, fixed_bytes:, used_tokens: usage,
                            window_tokens: resolution.window_tokens,
                            plan_step_completed: PlanSteps.pending?(session), reply_ceiling: ceiling)
         resolution.authoritative? ? need : need.without(Need::ApproachingWindow::KIND)

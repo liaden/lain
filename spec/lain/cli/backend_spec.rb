@@ -2134,6 +2134,11 @@ RSpec.describe Lain::CLI::Backend do
           .to eq("compact_fallback" => "none", "compact_schedule" => "idle")
       end
 
+      it "names a typed --compact-trigger in the header's compaction section" do
+        expect(compacting_backend(compact_trigger: "request").compaction_header)
+          .to include("compact_trigger" => "request")
+      end
+
       describe "--compact-schedule" do
         it "runs the default schedule when nothing was typed, and the header says so" do
           backend = compacting_backend

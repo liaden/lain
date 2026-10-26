@@ -18,6 +18,24 @@ RSpec.describe Lain::Compaction::Need do
   # {Lain::Compaction::Head#bytesize} answers on the shipped path.
   def bytes_of(messages) = Lain::Canonical.dump(messages).bytesize
 
+  describe "the whole-request trigger" do
+    subject(:need) { described_class.new(byte_threshold: 100, whole_request: true) }
+
+    it "counts the fixed part of the request beside the droppable head" do
+      expect(check(head_bytes: 60, fixed_bytes: 50).signals).to include(:token_threshold)
+    end
+
+    it "stays quiet while head and fixed part together are under the threshold" do
+      expect(check(head_bytes: 40, fixed_bytes: 50).signals).not_to include(:token_threshold)
+    end
+
+    it "ignores the fixed part when the trigger counts the head alone" do
+      head_only = described_class.new(byte_threshold: 100)
+
+      expect(head_only.check(window_tokens: 1000, head_bytes: 60, fixed_bytes: 50).signals).to be_empty
+    end
+  end
+
   # Scenario: Each need-signal raises the flag without compacting
   describe "the token-threshold signal" do
     it "raises the need flag once the candidate messages cross the byte-length proxy" do
