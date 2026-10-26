@@ -111,6 +111,132 @@ RSpec.describe Lain::Tools::Subagent::Actor do
     end
   end
 
+  describe "the messages ceiling" do
+    let(:tool) do
+      CoreGraph.subagent(provider: CoreGraph.provider(text_response("first"), text_response("second")), parent:,
+                         journal: session_file, observer: scribe, mode: :actor,
+                         budget: Lain::Budget.ceilings(messages:),
+                         holder: Lain::Budget::Ceilings::UNLIMITED.with(depth: 1))
+    end
+
+    def lifecycles = journal_records(session_io).filter_map { |record| record.dig("payload", "lifecycle") }
+
+    def with_actor
+      Sync do |task|
+        supervisor = Lain::Supervisor.new(journal: session_file).run(task)
+        actor = supervisor.adopt(role: "researcher") { |worker_env| tool.launch_actor("go", worker_env:) }
+        yield actor
+      ensure
+        supervisor&.stop
+      end
+    end
+
+    def exceeded_messages = raise_error(Lain::Budget::Exceeded) { |error| expect(error.kind).to eq(:messages) }
+
+    context "when the parent tells an actor launched under 2, before its first reply" do
+      let(:messages) { 2 }
+      let(:gate) { Lain::Promise.new }
+      let(:tool) do
+        gate = self.gate
+        parked = Class.new(Lain::Provider::Mock) do
+          define_method(:complete) do |request, **opts|
+            gate.await
+            super(request, **opts)
+          end
+        end.new(responses: [text_response("first")])
+        CoreGraph.subagent(provider: parked, parent:, journal: session_file, observer: scribe, mode: :actor,
+                           budget: Lain::Budget.ceilings(messages:),
+                           holder: Lain::Budget::Ceilings::UNLIMITED.with(depth: 1))
+      end
+
+      it "refuses the third tell as messages and notes nothing for it" do
+        with_actor do |actor|
+          2.times { |n| actor.tell("note #{n}") }
+          before = journal_records(session_io).size
+
+          expect { actor.tell("one too many") }.to exceeded_messages
+          expect(journal_records(session_io).size).to eq(before)
+          gate.resolve(true)
+        end
+      end
+    end
+
+    context "when a tell and the first reply have used up 2" do
+      let(:messages) { 2 }
+      let(:tool) do
+        CoreGraph.subagent(provider: CoreGraph.provider(text_response("first")), parent:, journal: session_file,
+                           observer: scribe, mode: :actor, budget: Lain::Budget.ceilings(messages:),
+                           holder: Lain::Budget::Ceilings::UNLIMITED.with(depth: 1))
+      end
+
+      it "refuses the next tell, since tells and replies share one count" do
+        with_actor do |actor|
+          actor.tell("one")
+          actor.settle
+
+          expect { actor.tell("two") }.to exceeded_messages
+        end
+      end
+    end
+
+    context "when an actor under 1 has already replied once" do
+      let(:messages) { 1 }
+
+      it "refuses the next reply as messages and tells the parent it failed" do
+        with_actor do |actor|
+          actor.settle
+          expect { actor.process("again") }.to exceeded_messages
+        end
+
+        expect(lifecycles).to eq(%w[launched settled failed])
+      end
+    end
+
+    context "when an actor under 0 is asked for its first reply" do
+      let(:messages) { 0 }
+
+      it "fails as messages, tells the parent so, and is never read as stopped" do
+        with_actor do |actor|
+          expect { actor.settle }.to exceeded_messages
+          expect(actor).to be_dead
+          expect { actor.stop }.not_to raise_error
+        end
+
+        expect(lifecycles).to eq(%w[launched failed])
+      end
+    end
+
+    context "when an actor under 1 is stopped after its reply" do
+      let(:messages) { 1 }
+
+      it "still lands the farewell, outside the count" do
+        with_actor do |actor|
+          actor.settle
+          actor.stop
+        end
+
+        expect(lifecycles).to eq(%w[launched settled stopped])
+      end
+    end
+
+    context "when an actor under 0 fails its turn" do
+      let(:messages) { 0 }
+      let(:tool) do
+        prose = Lain::Response.new(content: [{ "type" => "text", "text" => "<tool_call>\n<function=bash>" }],
+                                   stop_reason: :malformed)
+        CoreGraph.subagent(provider: CoreGraph.provider(prose), parent:, journal: session_file, observer: scribe,
+                           mode: :actor, budget: Lain::Budget.ceilings(messages:),
+                           holder: Lain::Budget::Ceilings::UNLIMITED.with(depth: 1))
+      end
+
+      it "still tells the parent why, since a failure is a lifecycle note outside the count" do
+        with_actor { |actor| expect { actor.settle }.to raise_error(Lain::Response::Failed) }
+
+        expect(lifecycles).to eq(%w[launched failed])
+      end
+    end
+  end
+
   describe "#settle" do
     let(:gate) { Lain::Promise.new }
     let(:blocked_provider) do

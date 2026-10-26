@@ -3,13 +3,14 @@
 module CeilingsPopulations
   module_function
 
-  # Every nil-or-finite mix across the 5 fields, plus 2 whose finite values differ,
+  # Every nil-or-finite mix across the 6 fields, plus 2 whose finite values differ,
   # so a per-field min is read against unequal numbers as well as equal ones.
   def population
-    mixes = [[nil, 2], [nil, 100], [nil, BigDecimal("0.5")], [nil, 3], [nil, 1]].reduce([[]]) do |rows, choices|
+    mixes = [[nil, 2], [nil, 100], [nil, BigDecimal("0.5")], [nil, 3], [nil, 1],
+             [nil, 6]].reduce([[]]) do |rows, choices|
       rows.product(choices).map { |row, choice| row + [choice] }
     end
-    (mixes + [[5, 200, BigDecimal("1.5"), 7, 4], [1, 50, BigDecimal("0.25"), 1, 9]])
+    (mixes + [[5, 200, BigDecimal("1.5"), 7, 4, 10], [1, 50, BigDecimal("0.25"), 1, 9, 3]])
       .map { |fields| Lain::Budget::Ceilings.new(*fields) }
   end
 
@@ -85,6 +86,16 @@ RSpec.describe Lain::Budget::Ceilings do
       child = ceilings(iterations: 5).attenuate(ceilings(iterations: 3))
 
       expect(child.iterations).to eq(3)
+    end
+
+    it "clamps a requested message ceiling to the holder's, and lets a nil request inherit it" do
+      holder = ceilings(messages: 10)
+
+      expect([holder.attenuate(ceilings(messages: 50)).messages, holder.attenuate(ceilings).messages]).to eq([10, 10])
+    end
+
+    it "grants a message request below the holder's" do
+      expect(ceilings(messages: 10).attenuate(ceilings(messages: 4)).messages).to eq(4)
     end
 
     it "decrements a finite depth" do

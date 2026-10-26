@@ -15,7 +15,15 @@ RSpec.describe Lain::Budget do
     end
 
     it "leaves every other kind unlimited" do
-      expect(described_class.ceilings.to_h.except(:iterations).values).to all(be_nil)
+      expect(described_class.ceilings.to_h.except(:iterations, :messages).values).to all(be_nil)
+    end
+
+    it "bounds messages by default so an actor's chatter is finite" do
+      expect(described_class.ceilings.messages).to eq(64)
+    end
+
+    it "takes a message ceiling" do
+      expect(described_class.ceilings(messages: 2).messages).to eq(2)
     end
   end
 

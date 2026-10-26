@@ -123,6 +123,7 @@ module Lain
           raise NotLaunched, "actor was never launched; nothing to tell" unless launched?
           raise Stopped, "actor #{@address} is dead (stopped or failed); a message to it would never be folded" if dead?
 
+          @reservation.note_message!
           @lineage.note(@parent, from: @parent_correlation, to: @address, text:,
                                  causal_parents: [@address])
         end
@@ -205,8 +206,10 @@ module Lain
         # stopped, and the fleet would read a failed child as a stopped one.
         def process(prompt)
           answer = Response::Failed.refusing(@agent.ask(prompt))
+          # Failure and farewell notes are lifecycle notes outside the count, so they always reach the parent.
+          @reservation.note_message!
           reply(@answer.bounded(@agent, answer, journal: @journal).text, lifecycle: StatusFeed::SpawnLifecycle::SETTLED)
-        rescue Response::Failed => e
+        rescue Response::Failed, Budget::Exceeded => e
           @farewell = reply(e.message, lifecycle: StatusFeed::SpawnLifecycle::FAILED)
           raise
         end

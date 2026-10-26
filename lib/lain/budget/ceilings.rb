@@ -4,8 +4,10 @@ module Lain
   module Budget
     # Per-kind limits, each an Integer, BigDecimal or nil (unlimited). A meet
     # semilattice under "at least as tight", with the all-nil value as the top.
-    Ceilings = Data.define(:iterations, :tokens, :dollars, :width, :depth) do
-      def self.unlimited = new(iterations: nil, tokens: nil, dollars: nil, width: nil, depth: nil)
+    Ceilings = Data.define(:iterations, :tokens, :dollars, :width, :depth, :messages) do
+      def self.unlimited
+        new(iterations: nil, tokens: nil, dollars: nil, width: nil, depth: nil, messages: nil)
+      end
 
       def meet(other)
         self.class.new(**to_h.merge(other.to_h) { |_kind, mine, theirs| [mine, theirs].compact.min })
@@ -30,9 +32,9 @@ module Lain
 
       # A nil in the request inherits this holder's room and a finite one is
       # clamped to it, so a child never outranks its spawner in tokens, dollars,
-      # width or depth. Iterations are the exception: a role's own ceiling is its
-      # shape (a researcher walks many files), so the request stands whatever the
-      # spawning ask has left, and only a nil request inherits. Depth is what the
+      # width, depth or messages. Iterations are the exception: a role's own
+      # ceiling is its shape (a researcher walks many files), so the request
+      # stands whatever the spawning ask has left, and only a nil request inherits. Depth is what the
       # holder may still spawn below itself, so a child at 0 runs as a leaf, and
       # depth alone bounds recursion now that iterations do not shrink.
       # @raise [Lain::Budget::Ceilings::Unrunnable] when the holder has no depth or the child no iterations or dollars

@@ -61,6 +61,22 @@ module Lain
           @tokens = tokens
           @open = true
           @monitor = Monitor.new
+          @messages = 0
+        end
+
+        # Tells in and replies out count against one ceiling, so a chatty pair
+        # is bounded by the sum of what they say to each other.
+        # @raise [Lain::Budget::Exceeded] when the ceiling's worth has already been sent
+        def note_message!
+          @monitor.synchronize do
+            limit = ceilings.messages
+            if limit && @messages >= limit
+              raise Exceeded.new("#{@messages} messages sent, ceiling is #{limit}",
+                                 kind: :messages)
+            end
+
+            @messages += 1
+          end
         end
 
         # @param spent [Spent] what the child spent, its own children included
@@ -90,6 +106,7 @@ module Lain
       module Unreserved
         def self.settle(_spent) = self
         def self.release = self
+        def self.note_message! = self
       end
     end
   end

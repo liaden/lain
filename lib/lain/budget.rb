@@ -11,6 +11,9 @@ module Lain
   module Budget
     DEFAULT_ITERATIONS = 25
 
+    # Finite so an actor pair cannot chatter forever; a role that needs more asks for it.
+    DEFAULT_MESSAGES = 64
+
     # A ceiling was passed; `kind` names which one.
     class Exceeded < Error
       attr_reader :kind
@@ -21,9 +24,9 @@ module Lain
       end
     end
 
-    # The ceilings for a run that bounds iterations and, optionally, tokens.
-    def self.ceilings(iterations: DEFAULT_ITERATIONS, tokens: nil)
-      Ceilings.new(iterations:, tokens:, dollars: nil, width: nil, depth: nil)
+    # The ceilings for a run that bounds iterations and messages and, optionally, tokens.
+    def self.ceilings(iterations: DEFAULT_ITERATIONS, tokens: nil, messages: DEFAULT_MESSAGES)
+      Ceilings.new(iterations:, tokens:, dollars: nil, width: nil, depth: nil, messages:)
     end
 
     # What a run may spend against what it has. Iterations are not in {Spent},

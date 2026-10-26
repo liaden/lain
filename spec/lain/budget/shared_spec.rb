@@ -65,6 +65,29 @@ RSpec.describe Lain::Budget::Shared do
     expect([granted.sum, shared.reserved]).to eq([1000, 1000])
   end
 
+  describe Lain::Budget::Shared::Reservation do
+    def reservation(messages) = Lain::Budget::Shared.new.reserve { Lain::Budget::Ceilings::UNLIMITED.with(messages:) }
+
+    it "counts messages up to its ceiling and refuses the next, naming messages" do
+      held = reservation(2)
+      2.times { held.note_message! }
+
+      expect { held.note_message! }.to raise_error(Lain::Budget::Exceeded) { |error| expect(error.kind).to eq(:messages) }
+    end
+
+    it "never refuses a message under an unlimited ceiling" do
+      held = reservation(nil)
+
+      expect { 100.times { held.note_message! } }.not_to raise_error
+    end
+  end
+
+  describe "the Unreserved" do
+    it "counts nothing" do
+      expect { 100.times { described_class::Unreserved.note_message! } }.not_to raise_error
+    end
+  end
+
   describe "the Null" do
     subject(:null) { described_class::Null }
 
