@@ -52,9 +52,17 @@ module ForkedChild
   # them. Each worker IO gives up its fd first, or its finalizer would later
   # close a number the child reused. IO.for_fd refuses the VM's own.
   def close_inherited
-    ObjectSpace.each_object(IO).reject { |io| io.closed? || [$stdin, $stdout, $stderr].include?(io) }
+    ObjectSpace.each_object(IO).select { |io| open?(io) && ![$stdin, $stdout, $stderr].include?(io) }
                .each { |io| io.autoclose = false }
     Dir.children("/proc/self/fd").map(&:to_i).select { |fd| fd > 2 }.each { |number| close_fd(number) }
+  end
+
+  # The heap walk can meet an IO another thread has allocated but not yet
+  # initialized, and #closed? raises on one; it holds no descriptor to give up.
+  def open?(io)
+    !io.closed?
+  rescue IOError
+    false
   end
 
   def close_fd(number)
