@@ -229,7 +229,8 @@ module Lain
         # @param arms [Lain::CLI::Arms] the bench arms the run was started with
         # @param notes [Lain::Journal::Held] what the box lacks, held for {#record_opened}
         # @param fence [String] the lain-fence binary, read once for the probe and the launcher alike
-        # @param probe [Lain::Confine::Probe] what the box offers; runs nothing unless confine is reader (the default)
+        # @param probe [Lain::Confine::Probe] what the box offers; runs nothing unless confine is reader or
+        #   workspace (the default)
         # @param fresh [#any_under?] the lineage's freshness, which a build tool's port grant reads; by
         #   default every root counts as fresh, so nothing is granted
         # @option options [String] :exec the transport the `exec:` default
@@ -363,7 +364,7 @@ module Lain
                                                       search: Lain::Config.search(root: @root)))
         end
 
-        def bash_exec = @arms.confine == :reader ? confined(@exec) : @exec
+        def bash_exec = Lain::CLI::Arms::SANDBOXED.include?(@arms.confine) ? confined(@exec) : @exec
 
         def confined(exec)
           case exec
@@ -383,7 +384,8 @@ module Lain
           home = @in_chat.fetch(:paths).home
           masks = Lain::Confine::MaskList.new(root: @root, policy: -> { @switchboard.call.sensitivity })
           @sandbox = Lain::Confine::Sandbox.new(root: @root, home:, masks:, probe: @probe, fence: @fence,
-                                                journal: seam.journal, notes: @notes, fresh: @fresh)
+                                                journal: seam.journal, notes: @notes, fresh: @fresh,
+                                                workspace: @arms.confine == :workspace)
           @sandbox.wrap(inner, requirer: self.class.name)
         end
 

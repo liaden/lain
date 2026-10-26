@@ -46,6 +46,15 @@ module Lain
       NO_TMPDIR = "REFUSED by the sandbox, not a transient error: the TMPDIR %<path>s cannot hold this call's own " \
                   "dir, most often because it is gone. Retrying will be refused again. Stop and tell the human, " \
                   "then wait for the answer."
+      PATH_WITHHELD = "[path withheld]"
+      WITHHELD = { path: PATH_WITHHELD, names: "[name withheld]" }.freeze
+      UNSEALABLE = "REFUSED by the sandbox, not a transient error: %<link>s is a link inside the project, so the " \
+                   "file it leads to could be repointed and run later. Retrying, or running the same effect another " \
+                   "way, will be refused again. Stop and ask the human to replace the link with the file, or to " \
+                   "restart with --confine reader, then wait for the answer."
+      HOME_TMPDIR = "REFUSED by the sandbox, not a transient error: the TMPDIR %<path>s is home or holds it, so a " \
+                    "write there would reach home. Retrying will be refused again. Stop and ask the human to set " \
+                    "TMPDIR elsewhere and restart, then wait for the answer."
 
       # Bundler reads the user's config, which may hold gem-source credentials,
       # and the reader profile grants no home directory to find it in.
@@ -90,7 +99,11 @@ module Lain
         rescue Confine::Profiles::Overmasked => e
           return overmasked(confinement, e, sinks)
         rescue Confine::Profiles::NoTmpdir => e
-          return refused_before(confinement, e, format(NO_TMPDIR, path: printable(e.path)), sinks)
+          return refused_before(confinement, e, phrased(NO_TMPDIR, path: printable(e.path)), sinks)
+        rescue Confine::Profile::Unsealable => e
+          return unsealable(confinement, e, sinks)
+        rescue Confine::Profile::HomeTmpdir => e
+          return refused_before(confinement, e, phrased(HOME_TMPDIR, path: printable(e.path)), sinks)
         end
         finishing(confinement, profile) { run_under(profile, confinement, command:, cwd:, env:, timeout:, **sinks) }
       end
@@ -167,7 +180,7 @@ module Lain
       # The tool refuses an over-ceiling result whole, so the line replaces the
       # output rather than being cut with it.
       def worded(capture, record)
-        line = refused_paths(record).map { "#{format(REFUSED, path: printable(_1))}\n" }.join
+        line = refused_paths(record).map { "#{phrased(REFUSED, path: printable(_1))}\n" }.join
         return capture if line.empty?
         return Capture.new(**capture.to_h, stderr: capture.stderr + line, size: capture.size + line.bytesize) if
           capture.size + line.bytesize <= @ceiling
@@ -200,18 +213,43 @@ module Lain
           @journal << Telemetry::ExecRecord.new(tool_use_id: confinement.tool_use_id, profile: profile.name,
                                                 execs: [], refusals: [], fd_execs: [], truncated: false)
         end
-        refusal(format(REFUSED, path:), sinks)
+        refusal(phrased(REFUSED, path:), sinks)
       end
 
       def overmasked(confinement, overmask, sinks)
         names = overmask.names.map { printable(_1) }.join(", ")
-        refused_before(confinement, overmask, format(OVERMASKED, names:, path: printable(overmask.path)), sinks)
+        refused_before(confinement, overmask, phrased(OVERMASKED, names:, path: printable(overmask.path)), sinks)
       end
 
+      # Named from the root the model works in: a long absolute path reads as high-entropy to the output
+      # detector, which would withhold the refusal instead of saying why.
+      def unsealable(confinement, error, sinks)
+        link = within(error.root || confinement.root, error.link)
+        refused_before(confinement, error, format(UNSEALABLE, link: printable(link)), sinks, on: error.link)
+      end
+
+      def within(root, path)
+        landed = root && Confine::Profile.landing(root)
+        return path unless landed && path != landed && Landing.under?(path, landed)
+
+        path.delete_prefix("#{landed.chomp(File::SEPARATOR)}#{File::SEPARATOR}")
+      end
+
+      # The result is scanned whole on its way to the model, and a path or a link's name can read as a
+      # credential, which would withhold the sentence saying why the call failed. So such a value is left out,
+      # each on its own first and then every one, and the sentence kept; the sandbox record still names it.
+      def phrased(template, **values)
+        lines = [values, values.to_h { |key, value| [key, token?(value) ? WITHHELD.fetch(key, value) : value] },
+                 values.to_h { |key, value| [key, WITHHELD.fetch(key, value)] }].map { format(template, **_1) }
+        lines.find { !token?(_1) } || lines.last
+      end
+
+      def token?(text) = Sensitivity::Regions.detect(text).any?
+
       # The profile refused the call before it was built, so the record names the path it refused on.
-      def refused_before(confinement, error, line, sinks)
+      def refused_before(confinement, error, line, sinks, on: error.path)
         @journal << Telemetry::Sandbox.new(tool_use_id: confinement.tool_use_id, profile: error.profile, trace: false,
-                                           refused: [error.path])
+                                           refused: [on])
         refusal(line, sinks)
       end
 

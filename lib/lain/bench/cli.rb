@@ -45,15 +45,15 @@ module Lain
       CONTAINING_BACKENDS = %w[worktree].freeze
 
       # The `--confine` values a bench arm takes; a chat's `classes` would change nothing here.
-      CONFINES = %w[off reader].freeze
+      CONFINES = %w[off reader workspace].freeze
 
       # {Variance} compares it, so runs under different opaque policies are refused rather than pooled.
       OPAQUE_REFUSED = { "opaque" => "refused" }.freeze
 
       WORKTREE_REACH = "--isolation worktree holds the paths the tools name inside each arm's worktree; a shell " \
-                       "command's reads, and an opaque command's writes, stay open; --confine reader confines a " \
-                       "read-only command to the checkout, but an opaque command runs traced and unconfined " \
-                       "either way"
+                       "command's reads stay open, and so do an opaque command's writes unless --confine workspace " \
+                       "confines them to the worktree; --confine reader confines only a read-only command to the " \
+                       "checkout and runs the rest traced and unconfined"
 
       # What `--memory` may name. `empty` is the default and the comparable
       # one: a run that started from whatever the operator's project happened
@@ -246,8 +246,8 @@ module Lain
       #   given.
       # @param price_book [Lain::PriceBook] prices every arm's journal
       # @param memory [String, nil] `--memory`: what each arm's view starts from
-      # @param arms [Lain::CLI::Arms] the bench arms; `confine: :reader` runs every arm's bash in the
-      #   sandbox a chat's is, and the report says so
+      # @param arms [Lain::CLI::Arms] the bench arms; `confine: :reader` or `:workspace` runs every arm's
+      #   bash in the sandbox a chat's is, and the report says so
       # @param probe [#call] `call(journal:, fence:) -> Confine::Probe`, what the box offers
       # @param project [Lain::Project, nil] the checkout the sandbox and its approvals are anchored on;
       #   the one the process runs in when nil
@@ -545,19 +545,20 @@ module Lain
                        "this command was run from#{remedy(flag)}"
       end
 
-      # Only `reader` changes what the tools can do, so only it builds a sandbox. `classes` is a chat's
-      # approval arm and would change nothing here, so it is refused rather than reported as applied.
+      # Only the sandboxed arms change what the tools can do, so only they build a sandbox. `classes` is a
+      # chat's approval arm and would change nothing here, so it is refused rather than reported as applied.
       def confinement_for(arms, journal:, probe:, project:, paths:)
         return Harness::Confinement::Off if arms.confine == :off
 
-        unless arms.confine == :reader
-          raise Refusal,
-                "--confine #{arms.confine} is a chat arm: bench arms take --confine #{CONFINES.join(" or ")}"
+        unless Lain::CLI::Arms::SANDBOXED.include?(arms.confine)
+          raise Refusal, "--confine #{arms.confine} is a chat arm: bench arms take --confine " \
+                         "#{CONFINES[..-2].join(", ")} or #{CONFINES.last}"
         end
 
         run = journal || Channel::Null.instance
         Harness::Confinement.new(project: project || Lain::Project::Resolver.default_project,
-                                 paths: paths || Lain::Paths.new, journal: run, probe:)
+                                 paths: paths || Lain::Paths.new, journal: run, probe:,
+                                 workspace: arms.confine == :workspace)
                             .tap { run << Telemetry::RunArms.new(arms: arms.to_header.merge(OPAQUE_REFUSED)) }
       end
 

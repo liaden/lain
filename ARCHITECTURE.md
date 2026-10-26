@@ -982,7 +982,7 @@ three places, and each answers a different question. All three read one `Shell::
    an anomaly (the escalation record says `bar`, and carries the reasons); `--judge-facts request` also puts
    the human's last line in the judge's prompt. The bar never turns a deny into anything else. Under the default arms (`--judge-facts off`) the class table stops only machine approval: a judge or human approval of a project, fresh or shadowing program runs `traced` and unconfined, and only `--judge-facts facts` or a human refusal closes it.
 3. **The sandbox** answers *what can the call reach if it runs anyway*, and is the only place that holds
-   against a string the parser read wrongly. Under `--confine reader`, a call that `ComposedTerm` approved
+   against a string the parser read wrongly. Under `--confine reader` or `workspace`, a call that `ComposedTerm` approved
    (and no other) runs as `Exec::Sandboxed` over `Exec::Local` in the `reader` profile (`Confine::Profiles`).
    `Confine::Bwrap` prefixes each stage with `bwrap` (read-only root, a private sized `/tmp`, the session's
    secret paths masked from `Sensitivity::Policy` by `Confine::MaskList`, a fresh pid namespace), then `strace`
@@ -990,8 +990,13 @@ three places, and each answers a different question. All three read one `Shell::
    (`crates/lain-fence`, its own binary crate since confinement is isolation, not pure work) applies Landlock:
    exec beneath `/usr` and the rustup toolchains plus exactly the unchanged `user` files the call resolved, read beneath the project and a
    short system list, write only `/dev/null` and the private `/tmp`, no TCP, no abstract sockets, and a
-   seccomp filter refusing a `memfd_create` without `MFD_NOEXEC_SEAL`. Any other allow (a human's, a config
-   rule's, the judge's) runs `traced`: watched and journaled, not confined. A traced or untraced unconfined call
+   seccomp filter refusing a `memfd_create` without `MFD_NOEXEC_SEAL`. Under `--confine workspace`, the default
+   for a chat, a call the judge, a config rule or bypass approved runs in the `workspace` profile instead: the
+   reader's reach plus writes to the project and a per-call TMPDIR, with the persistence files (`.envrc`, git's
+   hooks and config, the toolchain files) bound read-only, a private loopback, and a project whose seal sits
+   behind a link refused whole. Each confined profile also reads every git config file git names for the
+   project, unless the mask list hides it. Any other allow (a human's, a surface's, and under `reader` the judge's
+   and a config rule's too) runs `traced`: watched and journaled, not confined. A traced or untraced unconfined call
    runs under the fence as a reaper only, so stopping it kills every descendant, a re-setsid one included,
    while a normal exit leaves background children running; that covers sandboxed calls only, and
    `--confine off` or a box lacking bwrap or Landlock builds no sandbox. `--exec docker` is not wrapped; the

@@ -394,11 +394,16 @@ RSpec.describe LainCLI do
         .and raise_error(SystemExit) { |error| expect(error.status).not_to eq(0) }
     end
 
+    it "says in --confine's help that workspace is the default and a call the human approves runs unconfined" do
+      expect(described_class.commands.fetch("chat").options.fetch(:confine).description)
+        .to include("default workspace", "a call you approve yourself still runs traced and unconfined")
+    end
+
     it "refuses a bad bench arm at launch, naming the allowed values, and exits nonzero" do
       expect(Lain::CLI::ChatLaunch).not_to receive(:new)
 
       expect { described_class.start(%w[chat --confine sideways]) }
-        .to output(/--confine.*sideways.*off, classes, reader/).to_stderr
+        .to output(/--confine.*sideways.*off, classes, reader, workspace/).to_stderr
         .and raise_error(SystemExit) { |error| expect(error.status).not_to eq(0) }
     end
 

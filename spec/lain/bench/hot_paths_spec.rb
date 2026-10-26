@@ -3,7 +3,8 @@
 RSpec.describe Lain::Bench::HotPaths do
   let(:row_names) do
     %w[
-      render_chat_10 render_cold_10 bash_true_none bash_true_traced bash_true_reader request_1000
+      render_chat_10 render_cold_10 bash_true_none bash_true_traced bash_true_reader bash_true_workspace
+      request_1000
       journal_small journal_1000 mask_first_output wire_ready
     ]
   end
@@ -40,11 +41,12 @@ RSpec.describe Lain::Bench::HotPaths do
       end
     end
 
-    it "skips the reader row by name and measures none of its time", :seam do
+    it "skips the reader and workspace rows by name and measures none of their time", :seam do
       rows = NetworkAccess.permit { described_class.new(turns: 10, reps: 1, sizes: [1_000], probe:).rows }
-      reader = rows.find { _1.name == "bash_true_reader" }
+      confined = rows.select { %w[bash_true_reader bash_true_workspace].include?(_1.name) }
 
-      expect(reader).to have_attributes(skipped: "no bwrap", median_ms: nil)
+      expect(confined).to all(have_attributes(skipped: "no bwrap", median_ms: nil))
+      expect(confined.size).to eq(2)
     end
   end
 
@@ -72,7 +74,7 @@ RSpec.describe Lain::Bench::HotPaths do
     # Without the fence every bash row would time an exit of 127, which reads as fast.
     it "skips every bash row when the fence is missing", :seam do
       expect(bash_rows).to all(have_attributes(skipped: /no lain-fence/, median_ms: nil))
-      expect(bash_rows.size).to eq(3)
+      expect(bash_rows.size).to eq(4)
     end
 
     # An older fence rejects a flag the launcher passes and exits 125, which reads as fast too.
@@ -84,7 +86,49 @@ RSpec.describe Lain::Bench::HotPaths do
       File.utime(Time.at(0), Time.at(0), fence)
 
       expect(bash_rows).to all(have_attributes(skipped: /stale lain-fence/, median_ms: nil))
-      expect(bash_rows.size).to eq(3)
+      expect(bash_rows.size).to eq(4)
+    end
+  end
+
+  describe "the workspace row's call", :seam do
+    around do |example|
+      Dir.mktmpdir("hot-path-scratch") do |dir|
+        @scratch = File.realpath(dir)
+        system(SeedRepo::SCRUB, "git", "init", "-q", @scratch, exception: true)
+        example.run
+      end
+    end
+
+    let(:journal) { RecordingChannel.new }
+    let(:bash) do
+      described_class.const_get(:Bash).new(probe: described_class::Corpus.probe, scratch: @scratch, journal:)
+    end
+
+    it "runs under the workspace profile, as its sandbox record says" do
+      bash.caller_for("workspace").call
+
+      expect(journal.events.grep(Lain::Telemetry::Sandbox).map(&:profile)).to eq([:workspace])
+    end
+
+    it "gives the row bash_rows builds a git repository to run in" do
+      roots = []
+      real = described_class.const_get(:Bash)
+      spy = lambda { |probe:, scratch:|
+        roots << File.directory?(File.join(scratch, ".git"))
+        real.new(probe:, scratch:)
+      }
+      NetworkAccess.permit { described_class.new(turns: 10, reps: 1, sizes: [1_000], bash: spy).send(:bash_rows) }
+
+      expect(roots).to eq([true])
+    end
+
+    # What the profile grants is not visible from a run that writes nothing, so it is read off the profile.
+    it "writes the scratch repository, never the checkout it ran from, and pays its git seals" do
+      profile = bash.send(:profile_for, "workspace")
+
+      expect(profile.write_dirs).to include(@scratch)
+      expect(profile.write_dirs.none? { Lain::Landing.under?(Dir.pwd, _1) }).to be(true)
+      expect(profile.sealed.map(&:path)).to include(File.join(@scratch, ".git", "config"))
     end
   end
 

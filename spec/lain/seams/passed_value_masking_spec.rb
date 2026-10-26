@@ -28,9 +28,11 @@ RSpec.describe "a passed value's secret masked in bash output", :seam do
       @root = File.join(base, "repo")
       homes = { "XDG_STATE_HOME" => File.join(base, "s"), "HOME" => File.join(base, "h") }
       @paths = Lain::Paths.new(env: homes)
-      FileUtils.mkdir_p([@root, *homes.values])
+      tmp = File.join(base, "t")
+      FileUtils.mkdir_p([@root, tmp, *homes.values])
       # Every Config reader that defaults paths: builds its own Paths over ENV, so trust has to land there too.
-      with_env(homes.merge("DATABASE_URL" => dsn)) do
+      # The TMPDIR sits beside home because the workspace profile a bypassed call runs in refuses one holding it.
+      with_env(homes.merge("DATABASE_URL" => dsn, "TMPDIR" => tmp)) do
         write_config(@root, "env pass: %w[DATABASE_URL]\n", paths: @paths)
         example.run
       end

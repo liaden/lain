@@ -35,7 +35,7 @@ module E2E
       @dir = Pathname.new(File.realpath(root))
       @owner = owner
       @pids = []
-      FileUtils.mkdir_p(%w[state config cache home].map { |name| @dir.join(name) })
+      FileUtils.mkdir_p(%w[state config cache home tmp].map { |name| @dir.join(name) })
       FileUtils.mkdir_p(@dir.join("run"), mode: 0o700)
       @project = @dir.join(project)
       build_project(files) unless @project.exist?
@@ -45,7 +45,7 @@ module E2E
       inherited = ENV.to_h.slice(*BUNDLER_VARIABLES)
       inherited.merge(
         "PATH" => ENV.fetch("PATH"), "LANG" => "C.UTF-8", "TERM" => "xterm", "HOME" => home,
-        "TMPDIR" => dir.to_s, "XDG_STATE_HOME" => dir.join("state").to_s, "XDG_CONFIG_HOME" => dir.join("config").to_s,
+        "TMPDIR" => tmp, "XDG_STATE_HOME" => dir.join("state").to_s, "XDG_CONFIG_HOME" => dir.join("config").to_s,
         "XDG_CACHE_HOME" => dir.join("cache").to_s, "XDG_RUNTIME_DIR" => dir.join("run").to_s
       )
     end
@@ -65,6 +65,10 @@ module E2E
     private
 
     def home = dir.join("home").to_s
+
+    # Beside home rather than above it: a workspace call refuses a TMPDIR that holds home. Short, because a
+    # tmux socket path inside it must fit sockaddr_un.
+    def tmp = dir.join("tmp").to_s
 
     def build_project(files)
       FileUtils.cp_r("#{SeedRepo.at(SeedRepo::SEED)}/.", project.tap(&:mkpath))

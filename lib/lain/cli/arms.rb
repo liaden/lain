@@ -5,7 +5,7 @@ module Lain
     Arms = Data.define(:confine, :judge_facts, :tripwire, :round_budget, :round_dedup)
 
     # The bench arms a run is started with, parsed from the chat flags once so
-    # every consumer reads one answer. The reader sandbox and the observe-only
+    # every consumer reads one answer. The workspace sandbox and the observe-only
     # tripwire are on unless a flag turns them off: neither refuses a call the
     # ladder would allow, and the sandbox degrades loudly where the kernel lacks
     # a layer. Judge facts stay off because they change what the judge decides.
@@ -17,7 +17,9 @@ module Lain
       # subclasses {Lain::Error} so the exe maps it to a clean Thor::Error.
       class Unknown < Error; end
 
-      CONFINE = %i[off classes reader].freeze
+      CONFINE = %i[off classes reader workspace].freeze
+      # The confine arms that put bash in a sandbox; the others leave it to the approval ladder.
+      SANDBOXED = %i[reader workspace].freeze
       JUDGE_FACTS = %i[off facts request].freeze
       TRIPWIRE = %i[off observe].freeze
       ROUND_BUDGET = %i[off static window].freeze
@@ -100,7 +102,7 @@ module Lain
       private :with_dedup
 
       OFF = new(confine: :off, judge_facts: :off, tripwire: :off, round_budget: :off, round_dedup: :off)
-      DEFAULT = new(confine: :reader, judge_facts: :off, tripwire: :observe, round_budget: :window, round_dedup: :on)
+      DEFAULT = new(confine: :workspace, judge_facts: :off, tripwire: :observe, round_budget: :window, round_dedup: :on)
       # No arm typed: laid under the flags, it keeps only what the human typed.
       UNSET = new(confine: nil, judge_facts: nil, tripwire: nil, round_budget: nil, round_dedup: nil)
     end

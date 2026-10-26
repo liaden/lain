@@ -3,8 +3,9 @@
 module Lain
   module Bench
     module Harness
-      # What `--confine reader` gives a bench run: the sandbox under each agent's bash, and the read-only
-      # rung ahead of the guard's approve-all gate that makes a read-only command earn the reader profile.
+      # What `--confine reader` or `workspace` gives a bench run: the sandbox under each agent's bash, and the
+      # read-only rung ahead of the guard's approve-all gate that makes a read-only command earn the reader
+      # profile. Under workspace, a call that gate approves runs in the workspace profile instead of traced.
       # Both are built as a chat builds them, from the same classes, and the parts that do not depend on
       # the agent (the probe, the mask list, the classifiers) are built once for the whole run.
       class Confinement
@@ -18,6 +19,8 @@ module Lain
           end
 
           def masks = @lock.synchronize { @masks.masks }
+
+          def classify(path) = @masks.classify(path)
 
           def prime
             @masks.prime
@@ -52,10 +55,12 @@ module Lain
         # @param paths [Lain::Paths] the state home
         # @param journal [#<<] the run's journal, where the box's own degraded records land
         # @param probe [#call] `call(journal:, fence:) -> Confine::Probe`
+        # @param workspace [Boolean] whether a call the gate approves runs in the workspace profile
         # @raise [Lain::Config::Refusal] when the project's sensitivity table is malformed
-        def initialize(project:, paths:, journal:, probe: PROBE)
+        def initialize(project:, paths:, journal:, probe: PROBE, workspace: false)
           @project = project
           @paths = paths
+          @workspace = workspace
           @fence = Confine::Bwrap.fence_binary
           @notes = Once.new(journal)
           @probe = probe.call(journal:, fence: @fence)
@@ -96,14 +101,16 @@ module Lain
 
         # @return [String] what the report says the arm is, naming what the box lacks when it lacks anything
         def state
-          return "reader" if @lacking.empty?
+          return arm if @lacking.empty?
 
-          "reader (degraded: #{format(LACKING, layers: @lacking.join(" and "))})"
+          "#{arm} (degraded: #{format(LACKING, layers: @lacking.join(" and "))})"
         end
 
         private
 
         def board = ::Lain::CLI::Wiring::BoardBuild
+
+        def arm = @workspace ? "workspace" : "reader"
 
         def policy
           @policy ||= board.policy(project: @project, paths: @paths,
@@ -112,7 +119,7 @@ module Lain
 
         def sandbox(journal)
           Confine::Sandbox.new(root: @project.root, home: @paths.home, masks: @masks, probe: @probe, fence: @fence,
-                               journal:, notes: @notes)
+                               journal:, notes: @notes, workspace: @workspace)
         end
 
         # `bypass` approves what the read-only rung and the rules leave open, as the guard's own gate did.

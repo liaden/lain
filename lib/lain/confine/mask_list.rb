@@ -52,6 +52,12 @@ module Lain
         @state.masks.values.uniq(&:path).select { File.exist?(_1.path) }.map { _1.with(path: outward(_1.path)) }
       end
 
+      # The session's own policy on one path, which a grant outside the project asks before it reads one.
+      #
+      # @param path [String] absolute
+      # @return [Sensitivity::Verdict]
+      def classify(path) = @policy.call.classify(path)
+
       # @param path [String] a resolved path from {#masks}
       # @return [Array<String>] the listed names that landed on it
       def landed_on(path) = @state.masks.filter_map { |name, mask| outward(name) if mask.path.b == path.b }

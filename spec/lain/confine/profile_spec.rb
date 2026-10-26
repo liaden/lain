@@ -194,10 +194,29 @@ RSpec.describe Lain::Confine::Profile do
         expect { workspace }.to raise_error(described_class::Unsealable, /#{Regexp.escape(File.join(root, ".husky"))}/)
       end
 
+      it "lists, for a start-up check, the seals a workspace call holds, and refuses the same links" do
+        expect(described_class.seals(root:, tmpdir:)).to eq(workspace.sealed)
+
+        File.write(File.join(root, "kept"), "x\n")
+        File.symlink("kept", File.join(root, ".envrc"))
+        expect { described_class.seals(root:, tmpdir:) }.to raise_error(described_class::Unsealable, /\.envrc/)
+      end
+
+      it "seals a config file git reads that the call could rewrite, but not one in the TMPDIR" do
+        shared = File.join(root, ".gitconfig").tap { File.write(_1, "[user]\n\tname = P\n") }
+        loose = File.join(tmpdir, "gitconfig")
+
+        sealed = workspace(configs: [shared, loose]).sealed.map(&:path)
+
+        expect([sealed.include?(shared), sealed.include?(loose)]).to eq([true, false])
+      end
+
       it "refuses a persistence file that is a link" do
         File.write(File.join(root, "kept"), "x\n")
         File.symlink("kept", File.join(root, ".envrc"))
-        expect { workspace }.to raise_error(described_class::Unsealable, /\.envrc/)
+        expect { workspace }.to raise_error(described_class::Unsealable, /\.envrc/) { |error|
+          expect(error).to have_attributes(link: File.join(root, ".envrc"), profile: :workspace)
+        }
       end
 
       it "seals a hooks dir once when two names resolve to it" do
@@ -281,7 +300,7 @@ RSpec.describe Lain::Confine::Profile do
       FileUtils.mkdir_p([root, File.join(@dir, "h")])
       [File.join(@dir, "h"), @dir].each do |tmp|
         expect { described_class.workspace(root:, home: File.join(@dir, "h"), tmpdir: tmp) }
-          .to raise_error(ArgumentError, /home/)
+          .to raise_error(described_class::HomeTmpdir, /home/) { expect(_1).to have_attributes(path: tmp) }
       end
     end
 

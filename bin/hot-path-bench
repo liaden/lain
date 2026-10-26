@@ -38,6 +38,7 @@ module HotPathBench
     "bash_true_none" => 3.09,
     "bash_true_traced" => 7.92,
     "bash_true_reader" => 12.2,
+    "bash_true_workspace" => 17.8,
     "request_100000" => 0.821,
     "request_1000000" => 2.98,
     "journal_small" => 0.0052,

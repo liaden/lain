@@ -10,7 +10,7 @@ module Lain
                           "session and goes to the judge or to you; resume from an intact session to restore it"
 
         # Remembers why the bash sandbox could not be built, or that docker holds bash instead: the header
-        # still says `confine: reader`, so the human must hear what bash really runs in.
+        # still names the confine arm, so the human must hear what bash really runs in.
         class Unconfined
           def initialize
             @because = nil
@@ -28,13 +28,43 @@ module Lain
           # @return [Array<String>]
           def notices
             [("the bash sandbox could not be built (#{@because}), so bash runs unconfined" if @because),
-             ("bash runs in the docker container, not in the reader sandbox" if @contained)].compact
+             ("bash runs in the docker container, not in the bash sandbox" if @contained)].compact
           end
 
           private
 
           def degraded?(event, capability)
             event.is_a?(Telemetry::CapabilityDegraded) && event.capability == capability
+          end
+        end
+
+        # A project with a link on the way to a persistence file cannot run a workspace call at all, so under
+        # that arm the human hears it once at start rather than from each refused call.
+        class Unsealed
+          NOTICE = "%<link>s is a link inside the project, so the workspace sandbox refuses every bash call the " \
+                   "judge, a rule or bypass approves; replace the link with its file, or restart with --confine reader"
+
+          # Asks nothing of a chat whose arm writes no project.
+          module Unasked
+            def self.notices = []
+          end
+
+          # @param arms [Arms]
+          # @param project [#root]
+          # @return [Unsealed, Unasked]
+          def self.for(arms:, project:) = arms.confine == :workspace ? new(project.root) : Unasked
+
+          # @param root [String]
+          def initialize(root)
+            @root = root
+          end
+
+          # @return [Array<String>]
+          def notices
+            Confine::Profile.seals(root: @root, tmpdir: Dir.tmpdir)
+            []
+          rescue Confine::Profile::Unsealable => e
+            [format(NOTICE, link: e.link)]
           end
         end
 
@@ -46,7 +76,8 @@ module Lain
         # @param arms [Arms] under `tripwire: :observe` a {Tripwire::Ledger} folds the journal too
         # @return [Observers]
         def self.register(chronicle:, paths:, project:, resumed:, arms:)
-          new(fresh: lineage_fresh(paths, project, resumed, chronicle.durable_journal)).tap do |observers|
+          new(fresh: lineage_fresh(paths, project, resumed, chronicle.durable_journal),
+              unsealed: Unsealed.for(arms:, project:)).tap do |observers|
             observers.register(chronicle)
             chronicle.observe(Tripwire::Ledger.new(journal: chronicle.durable_journal)) if arms.tripwire == :observe
           end
@@ -70,15 +101,21 @@ module Lain
 
         # @param fresh [Shell::Executable::Fresh]
         # @param unconfined [Unconfined] hears the sandbox degrade while the toolset is built
-        def initialize(fresh:, unconfined: Unconfined.new)
+        # @param unsealed [#notices] whether the project can run a workspace call
+        def initialize(fresh:, unconfined: Unconfined.new, unsealed: Unsealed::Unasked)
           @fresh = fresh
           @unconfined = unconfined
+          @unsealed = unsealed
         end
 
-        # What the human should be told about the lineage and the sandbox, said once at startup.
+        # What the human should be told about the lineage and the sandbox, said once at startup. A sandbox
+        # that was never built refuses nothing, so the seal is asked about only when bash is confined.
         #
         # @return [Array<String>]
-        def notices = [*(DEGRADED_NOTICE if @fresh.degraded?), *@unconfined.notices]
+        def notices
+          unconfined = @unconfined.notices
+          [*(DEGRADED_NOTICE if @fresh.degraded?), *unconfined, *(@unsealed.notices if unconfined.empty?)]
+        end
 
         # @param chronicle [#observe]
         # @return [self]

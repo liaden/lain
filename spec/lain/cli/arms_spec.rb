@@ -11,7 +11,13 @@ RSpec.describe Lain::CLI::Arms do
     it "runs the safe arms when no flag was typed, and keeps judge facts off" do
       arms = described_class.from({})
 
-      expect([arms.confine, arms.tripwire, arms.judge_facts]).to eq(%i[reader observe off])
+      expect([arms.confine, arms.tripwire, arms.judge_facts]).to eq(%i[workspace observe off])
+    end
+
+    it "takes reader and workspace as the arms that build a sandbox, workspace the stronger" do
+      expect(described_class.from({ confine: "workspace" }).confine).to eq(:workspace)
+      expect(described_class::SANDBOXED).to eq(%i[reader workspace])
+      expect(described_class::CONFINE.last).to eq(:workspace)
     end
 
     it "turns each default-on arm off when its flag says off" do
@@ -31,7 +37,7 @@ RSpec.describe Lain::CLI::Arms do
 
     it "refuses a confine value outside the set, naming the allowed values" do
       expect { described_class.from({ confine: "sideways" }) }
-        .to raise_error(described_class::Unknown, /sideways.*off, classes, reader/)
+        .to raise_error(described_class::Unknown, /sideways.*off, classes, reader, workspace/)
     end
 
     it "refuses an unknown judge_facts and an unknown tripwire" do
@@ -94,6 +100,10 @@ RSpec.describe Lain::CLI::Arms do
         .to contain_exactly(:round_dedup, :round_budget)
       expect(described_class::DEFAULT.differs_from_default).to be_empty
     end
+
+    it "names a reader confine as weaker than the workspace default" do
+      expect(described_class.from({ confine: "reader" }).differs_from_default).to eq([:confine])
+    end
   end
 
   describe ".from_header" do
@@ -130,7 +140,7 @@ RSpec.describe Lain::CLI::Arms do
 
     it "records the 4 default-on arms a plain launch runs" do
       expect(described_class.from({}).to_header)
-        .to eq("confine" => "reader", "tripwire" => "observe", "round_budget" => "window", "round_dedup" => "on")
+        .to eq("confine" => "workspace", "tripwire" => "observe", "round_budget" => "window", "round_dedup" => "on")
     end
 
     it "names only the arms that are on, as strings" do

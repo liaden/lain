@@ -48,6 +48,11 @@ RSpec.describe Lain::Confine::Sandbox do
                                     wrappers: [])
       end
 
+      let(:masks) do
+        policy = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home: "/home/h", cwd: @repo))
+        Lain::Confine::MaskList.new(root: @repo, policy: -> { policy })
+      end
+
       around do |example|
         Dir.mktmpdir("lain-sandbox-fresh") do |dir|
           @repo, @scratch = %w[repo scratch].map { File.join(File.realpath(dir), _1).tap { |d| FileUtils.mkdir_p(d) } }
@@ -73,6 +78,27 @@ RSpec.describe Lain::Confine::Sandbox do
 
       it "grants nothing when it was given no freshness" do
         expect(fetch_profile.name).to eq(:workspace)
+      end
+    end
+
+    # The read grant on git's config files asks the session's own policy, through the mask list built over it.
+    it "grants no git config file the session's policy denies" do
+      Dir.mktmpdir("lain-sandbox-policy") do |dir|
+        base = File.realpath(dir)
+        repo, home = %w[repo h].map { File.join(base, _1).tap { |d| FileUtils.mkdir_p(d) } }
+        system(SeedRepo::SCRUB, "git", "init", "-q", repo, exception: true)
+        netrc = File.join(base, ".netrc").tap { File.write(_1, "[user]\n\tname = P\n") }
+        policy = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: repo))
+        listed = Lain::Confine::MaskList.new(root: repo, policy: -> { policy })
+        ruling = Lain::Approval::Escalation::Ruling.allow(rung: "rules", because: "read", rule: "composed_term")
+        request = Lain::Confine::Request.new(ruling:, executables: [], cwd: repo, root: repo, tool_use_id: "toolu_1")
+
+        read = with_env("GIT_CONFIG_GLOBAL" => netrc) do
+          described_class.new(root: repo, home:, masks: listed, probe:, fence:, journal:).wrap(inner, requirer: "Spec")
+                         .instance_variable_get(:@profiles).for(request).read_dirs
+        end
+
+        expect(read).not_to include(netrc)
       end
     end
 
@@ -317,6 +343,12 @@ RSpec.describe Lain::Confine::Sandbox do
       exec.call(command:, cwd: repo, env: {}, timeout: 10, confinement: request)
     end
 
+    # This spec's paths sit under its TMPDIR, which can read as a token; the refusal then names no path.
+    def shown(name, path)
+      line = format(Lain::Exec::Sandboxed::OVERMASKED, names: name, path:)
+      Lain::Sensitivity::Regions.detect(line).empty? ? path : Lain::Exec::Sandboxed::PATH_WITHHELD
+    end
+
     def user_program(path)
       FileUtils.mkdir_p(File.dirname(path))
       File.write(path, "#!/bin/sh\necho ran\n")
@@ -335,7 +367,7 @@ RSpec.describe Lain::Confine::Sandbox do
         capture = cat_plain(sandboxed_over(name, instance_exec(&target)))
 
         expect(capture).to have_attributes(exit_status: Lain::Shell::Pipeline::NOT_PERMITTED, stdout: "")
-        expect(capture.stderr).to include(name, instance_exec(&landed)).and start_with("lain: REFUSED")
+        expect(capture.stderr).to include(name, shown(name, instance_exec(&landed))).and start_with("lain: REFUSED")
       end
     end
 
@@ -345,7 +377,7 @@ RSpec.describe Lain::Confine::Sandbox do
       capture = cat_plain(sandboxed_over("id_rsa", program), command: program, executables: [executable])
 
       expect(capture).to have_attributes(exit_status: Lain::Shell::Pipeline::NOT_PERMITTED, stdout: "")
-      expect(capture.stderr).to include("id_rsa", program).and start_with("lain: REFUSED")
+      expect(capture.stderr).to include("id_rsa", shown("id_rsa", program)).and start_with("lain: REFUSED")
     end
 
     it "runs when a masked directory's name only starts like a grant's" do

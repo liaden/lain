@@ -28,7 +28,8 @@ module Lain
 
       # @param root [String] absolute; the project, for a call whose request names no root of its own
       # @param home [String] absolute; where the toolchain grants are looked for
-      # @param masks [#masks] the {MaskList}, which may be one other sandboxes share
+      # @param masks [#masks, #classify] the {MaskList}, which may be one other sandboxes share; it also
+      #   answers for the session's policy on a path
       # @param probe [Probe] what the box offers
       # @param fence [String] the lain-fence binary, read once for the probe and the launcher alike
       # @param journal [#<<] receives the sandbox's own records
@@ -57,7 +58,8 @@ module Lain
         return unsandboxed(inner, requirer, lacking) if lacking.any?
 
         @built = true
-        profiles = Profiles.new(masks: @masks, probe: @probe, home: @home, root: @root, **@profiling)
+        profiles = Profiles.new(masks: @masks, probe: @probe, home: @home, root: @root, classifier: @masks,
+                                **@profiling)
         Exec::Sandboxed.new(inner:, launcher:, profiles:, journal: @journal, reaps: @probe.supports?(:reap))
       end
 

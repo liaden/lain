@@ -1161,6 +1161,23 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       end
     end
 
+    # The profile the sandbox journals for one judge-approved call, read off its own record.
+    def judged_profile(exec, journal)
+      Dir.mktmpdir("judged-profile") do |dir|
+        root = File.realpath(dir)
+        ruling = Lain::Approval::Escalation::Ruling.allow(rung: Lain::Approval::Judged::NAME, because: "spec")
+        request = Lain::Confine::Request.new(ruling:, executables: [], cwd: root, root:, tool_use_id: "tu_judged")
+        exec.call(command: Lain::Shell::Term.of(%w[true]), cwd: root, env: {}, timeout: 10, confinement: request)
+      end
+      journal.events.grep(Lain::Telemetry::Sandbox).select { _1.tool_use_id == "tu_judged" }.last.profile
+    end
+
+    it "runs a judge-approved call in the workspace profile under --confine workspace, and traced under reader" do
+      expect(judged_profile(bash_exec(built(Lain::CLI::Arms::OFF.with(confine: :workspace))),
+                            journal)).to eq(:workspace)
+      expect(judged_profile(bash_exec(built(reader)), journal)).to eq(:traced)
+    end
+
     %i[off classes].each do |arm|
       it "builds no sandbox under --confine #{arm}" do
         exec = bash_exec(built(Lain::CLI::Arms::OFF.with(confine: arm)))
@@ -1208,6 +1225,96 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       sandbox = io.string.lines.map { JSON.parse(_1) }.find { _1["type"] == "sandbox" }
       expect(result.content).to include("2")
       expect(sandbox).to include("tool_use_id" => "tu_seam", "profile" => "reader")
+    end
+  end
+
+  # Only the provider is canned: the judge's APPROVE is a child's reply, and the call runs on this box's sandbox.
+  describe "a judge-approved write in a chat built by the real Wiring", :seam do
+    let(:base) { File.realpath(Dir.mktmpdir("workspace-seam")) }
+    let(:project_root) { File.join(base, "repo") }
+    let(:io) { StringIO.new }
+    let(:recording) { Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io:), journal_path: "seam.ndjson") }
+    let(:provider) do
+      Lain::Provider::Mock.new(responses: [tool_response(["tu_touch", "bash", { "command" => "touch x" }]),
+                                           text_response("APPROVE"), text_response("settled")])
+    end
+    let(:judged_backend) do
+      Class.new(Lain::CLI::Backend) do
+        def initialize(options, mock:, **)
+          super(options, **)
+          @mock = mock
+        end
+
+        def provider(**) = @mock
+      end.new({ provider: "ollama", model: nil, max_tokens: 64 }, mock: provider, root: project_root)
+    end
+
+    before do
+      FileUtils.mkdir_p([project_root, File.join(base, "s"), File.join(base, "h"), File.join(base, "t")])
+    end
+
+    after { FileUtils.rm_rf(base) }
+
+    # The workspace profile refuses a TMPDIR that holds home, and the spec's TMPDIR holds this chat's.
+    def chat(**flags)
+      with_env("TMPDIR" => File.join(base, "t")) do
+        recorder, session = wiring(flags).run_state(nil)
+        agent = wiring(flags).wire_agent(channel: Lain::Channel.new, recorder:, session:, backend: judged_backend)
+        Sync { |task| task.with_timeout(20) { agent.ask("make x") } }
+      end
+    end
+
+    def wiring(flags)
+      @wiring ||= Lain::CLI::Wiring.new(
+        options: { grace: 5, approval: "auto", **flags }, chronicle: recording,
+        status_feed: instance_double(Lain::StatusFeed, bind_store: nil),
+        paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(base, "s"), "HOME" => File.join(base, "h") }),
+        project: Lain::Project.new(root: project_root, cwd: project_root, kind: :project, detected_by: :flag)
+      )
+    end
+
+    def ran
+      [journal_records(io, "session").first.fetch("arms").fetch("confine"),
+       journal_records(io, "sandbox").map { _1.slice("tool_use_id", "profile") },
+       File.exist?(File.join(project_root, "x"))]
+    end
+
+    it "runs it in the workspace profile when no --confine was typed, and records the arm" do
+      chat
+
+      expect(ran).to eq(["workspace", [{ "tool_use_id" => "tu_touch", "profile" => "workspace" }], true])
+    end
+
+    it "runs it traced and unconfined under --confine reader" do
+      chat(confine: "reader")
+
+      expect(ran).to eq(["reader", [{ "tool_use_id" => "tu_touch", "profile" => "traced" }], true])
+    end
+
+    context "when the project's .envrc is a link" do
+      let(:envrc) { File.join(project_root, ".envrc") }
+
+      before do
+        File.write(File.join(project_root, "shared-envrc"), "export X=1\n")
+        File.symlink("shared-envrc", envrc)
+      end
+
+      def told = journal_records(io, "turn").map(&:to_s).grep(/tool_result/).join
+
+      it "refuses the call in words that send the model to the human, and records the refusal" do
+        chat
+
+        expect(told).to include("REFUSED", ".envrc is a link", "Stop and ask the human", "--confine reader")
+        expect(ran).to eq(["workspace", [{ "tool_use_id" => "tu_touch", "profile" => "workspace" }], false])
+        expect(journal_records(io, "sandbox").sole).to include("refused" => [envrc])
+      end
+
+      it "tells the human once at start which link it is and that --confine reader runs" do
+        chat
+
+        expect(@wiring.instance_variable_get(:@observers).notices)
+          .to contain_exactly(include(envrc, "--confine reader"))
+      end
     end
   end
 

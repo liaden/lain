@@ -2,6 +2,7 @@
 
 require "fileutils"
 require "json"
+require "open3"
 require "socket"
 require "tmpdir"
 
@@ -24,13 +25,15 @@ module Lain
       # @param sizes [Array<Integer>] request body sizes in bytes; the largest also sizes the journal line
       # @param clock [#call] returns monotonic seconds
       # @param probe [Confine::Probe, nil] what the box offers the sandbox; nil asks this box
+      # @param bash [#call] `call(probe:, scratch:)`, building what the bash rows run through
       def initialize(turns: 10_000, reps: 50, sizes: [100_000, 1_000_000], clock: RunClock::MONOTONIC,
-                     probe: nil)
+                     probe: nil, bash: ->(**options) { Bash.new(**options) })
         @turns = turns
         @reps = reps
         @sizes = sizes
         @clock = clock
         @probe = probe
+        @bash = bash
       end
 
       # @return [Array<Row>] one per measured row, in the table's order
@@ -63,16 +66,25 @@ module Lain
       end
 
       def bash_rows
-        bash = Bash.new(probe: @probe || Corpus.probe)
-        %w[none traced reader].map do |profile|
-          reason = bash.unavailable(profile)
-          if reason
-            skipped("bash_true_#{profile}", reason)
-          else
-            call = bash.caller_for(profile)
-            measure(@reps, name: "bash_true_#{profile}") { call.call }
+        Dir.mktmpdir("hot-path-workspace") do |scratch|
+          git_init(scratch)
+          bash = @bash.call(probe: @probe || Corpus.probe, scratch: File.realpath(scratch))
+          %w[none traced reader workspace].map do |profile|
+            reason = bash.unavailable(profile)
+            if reason
+              skipped("bash_true_#{profile}", reason)
+            else
+              call = bash.caller_for(profile)
+              measure(@reps, name: "bash_true_#{profile}") { call.call }
+            end
           end
         end
+      end
+
+      # The workspace row's root is a repository, so its call pays the git seals a chat's call in one pays.
+      def git_init(dir)
+        _, status = Open3.capture2e(Isolation::Worktree::GIT_CONTEXT_SCRUB, "git", "init", "-q", dir)
+        raise Error, "git init failed in #{dir}" unless status.success?
       end
 
       def request_rows
@@ -184,6 +196,7 @@ module Lain
         STALE_FENCE = "stale lain-fence: run bundle exec rake compile"
         ALLOWED = Approval::Escalation::Ruling.allow(rung: "rules", because: "bench",
                                                      rule: Approval::ComposedTerm.rule_name)
+        JUDGED = Approval::Escalation::Ruling.allow(rung: Approval::Judged::NAME, because: "bench")
         NoMasks = Struct.new(:nothing) do
           def masks = []
           def landed_on(_path) = []
@@ -191,8 +204,13 @@ module Lain
         NoTrace = Struct.new(:nothing) { def supports?(_layer) = false }
 
         # @param probe [#supports?, #fence_gap]
-        def initialize(probe:)
+        # @param scratch [String] absolute; the repository the workspace row may write, so its writable
+        #   profile never covers the checkout
+        # @param journal [#<<] where each call's sandbox record lands
+        def initialize(probe:, scratch:, journal: Channel::Null.instance)
           @probe = probe
+          @scratch = scratch
+          @journal = journal
         end
 
         # Every profile runs under the fence, and a missing or stale one exits 127 or 125 at once,
@@ -202,7 +220,7 @@ module Lain
         def unavailable(profile)
           gap = case profile
                 when "traced" then ("no strace" unless @probe.supports?(:trace))
-                when "reader" then reader_gap
+                when "reader", "workspace" then reader_gap
                 end
           gap || fence_gap
         end
@@ -210,9 +228,10 @@ module Lain
         # @return [#call] one `true` through the profile
         def caller_for(profile)
           sandboxed = Exec::Sandboxed.new(inner: Exec::Local.new, launcher: Confine::Bwrap.new(fence: Confine::Bwrap.fence_binary),
-                                          profiles: profiles(profile), journal: Channel::Null.instance)
-          request = profile == "reader" ? reader_request : Confine::Request::NONE
-          -> { sandboxed.call(command: "true", cwd: Dir.pwd, env: {}, timeout: 10, confinement: request) }
+                                          profiles: profiles(profile), journal: @journal)
+          request = request_for(profile)
+          cwd = root_for(profile)
+          -> { sandboxed.call(command: "true", cwd:, env: {}, timeout: 10, confinement: request) }
         end
 
         private
@@ -231,11 +250,20 @@ module Lain
 
         def profiles(profile)
           probe = profile == "none" ? NoTrace.new : @probe
-          Confine::Profiles.new(masks: NoMasks.new, probe:, home: Dir.home, root: Dir.pwd)
+          Confine::Profiles.new(masks: NoMasks.new, probe:, home: Dir.home, root: root_for(profile),
+                                workspace: profile == "workspace")
         end
 
-        def reader_request
-          Confine::Request.new(ruling: ALLOWED, executables: [], cwd: Dir.pwd, root: Dir.pwd, tool_use_id: "bench")
+        def root_for(profile) = profile == "workspace" ? @scratch : Dir.pwd
+
+        def profile_for(profile) = profiles(profile).for(request_for(profile))
+
+        def request_for(profile)
+          ruling = { "reader" => ALLOWED, "workspace" => JUDGED }[profile]
+          return Confine::Request::NONE unless ruling
+
+          root = root_for(profile)
+          Confine::Request.new(ruling:, executables: [], cwd: root, root:, tool_use_id: "bench")
         end
 
         def fence_stale?(fence)

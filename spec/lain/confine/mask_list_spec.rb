@@ -33,11 +33,18 @@ RSpec.describe Lain::Confine::MaskList do
 
   def write(name, body = "x\n") = File.write(File.join(root, name), body)
 
+  before { git("init", "-q") }
+
+  it "answers the session's policy on a path outside the project, as its masks do inside it" do
+    home = File.join(@base, "home")
+
+    expect([list.classify(File.join(home, ".ssh", "id_ed25519")).level, list.classify(File.join(home, "notes")).level])
+      .to eq(%i[denied ordinary])
+  end
+
   def git(*args) = SeedRepo.git(root, *args)
 
   def paths = list.masks.map(&:path)
-
-  before { git("init", "-q") }
 
   it "masks an untracked secret at its resolved path" do
     write(".env", "A=1\n")

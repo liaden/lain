@@ -58,6 +58,25 @@ RSpec.describe Lain::Bench::Harness::Confinement do
       expect(masks.first.instance_variable_get(:@priming)).to be_nil
     end
 
+    # The profile the sandbox journals for one judge-approved call, read off its own record.
+    def judged_profile(exec, journal)
+      Dir.mktmpdir("judged-profile") do |dir|
+        root = File.realpath(dir)
+        ruling = Lain::Approval::Escalation::Ruling.allow(rung: Lain::Approval::Judged::NAME, because: "spec")
+        request = Lain::Confine::Request.new(ruling:, executables: [], cwd: root, root:, tool_use_id: "tu_judged")
+        exec.call(command: Lain::Shell::Term.of(%w[true]), cwd: root, env: {}, timeout: 10, confinement: request)
+      end
+      journal.events.grep(Lain::Telemetry::Sandbox).select { _1.tool_use_id == "tu_judged" }.last.profile
+    end
+
+    it "runs a judge-approved call in the workspace profile only when the arm is workspace" do
+      workspace = described_class.new(project:, paths:, journal: run_journal, probe:, workspace: true)
+      confined = workspace.tools(Lain::Bench::Harness::TOOLS).call(recorder:, journal: agent_journal)
+
+      expect(judged_profile(exec_of(confined), agent_journal)).to eq(:workspace)
+      expect(judged_profile(exec_of(tools), agent_journal)).to eq(:traced)
+    end
+
     context "when the box lacks the layers" do
       let(:box) { ->(_argv) { ["", false] } }
 
@@ -108,6 +127,11 @@ RSpec.describe Lain::Bench::Harness::Confinement do
       it "says the arm is degraded and what the box lacks" do
         expect(confinement.state).to eq("reader (degraded: the box lacks bwrap and landlock)")
       end
+    end
+
+    it "names the workspace arm when the switch is on" do
+      expect(described_class.new(project:, paths:, journal: run_journal, probe:, workspace: true).state)
+        .to eq("workspace")
     end
   end
 
@@ -194,6 +218,19 @@ RSpec.describe Lain::Bench::Harness::Confinement do
 
       expect(result.error?).to be(false)
       expect(sandbox_record.profile).not_to eq(:reader)
+    end
+
+    context "when the arm is workspace" do
+      let(:confinement) { described_class.new(project:, paths:, journal: run_journal, probe:, workspace: true) }
+
+      # The workspace profile refuses a TMPDIR that holds home, and the spec's TMPDIR holds this run's.
+      it "runs a command the gate approves in the workspace profile, where it may write the checkout" do
+        tmp = FileUtils.mkdir_p(File.join(@base, "tmp")).first
+        result = with_env("TMPDIR" => tmp) { Sync { |task| task.with_timeout(20) { run_bash("touch made.txt") } } }
+
+        expect([result.error?, sandbox_record.profile]).to eq([false, :workspace])
+        expect(File).to exist(File.join(root, "made.txt"))
+      end
     end
 
     context "with a real channel under the arm" do

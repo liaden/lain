@@ -1410,19 +1410,30 @@ RSpec.describe Lain::CLI::ChatLaunch, "the session a door selects" do
     end
 
     it "keeps the recorded arms when no arm flag is typed, and notices nothing at or above the defaults" do
-      write_armed("confine" => "reader", "judge_facts" => "facts", "tripwire" => "observe", "round_budget" => "window",
-                  "round_dedup" => "on")
+      write_armed("confine" => "workspace", "judge_facts" => "facts", "tripwire" => "observe",
+                  "round_budget" => "window", "round_dedup" => "on")
 
       chat = armed_launch(resume: "")
 
       expect(chat.wiring.arms)
-        .to eq(Lain::CLI::Arms.new(confine: :reader, judge_facts: :facts, tripwire: :observe, round_budget: :window,
-                                   round_dedup: :on))
+        .to eq(Lain::CLI::Arms.new(confine: :workspace, judge_facts: :facts, tripwire: :observe,
+                                   round_budget: :window, round_dedup: :on))
       expect(resumed_notices(chat)).to be_empty
     end
 
+    it "keeps a session recorded under reader in reader, and says what a fresh chat runs" do
+      write_armed("confine" => "reader", "tripwire" => "observe", "round_budget" => "window", "round_dedup" => "on")
+
+      chat = armed_launch(resume: "")
+
+      expect(chat.wiring.arms.confine).to eq(:reader)
+      expect(resumed_notices(chat)).to eq(["running with --confine reader, as recorded; a fresh chat runs " \
+                                           "workspace (pass --confine workspace to run it)"])
+    end
+
     it "keeps a recorded static round budget when no flag is typed, and says what a fresh chat runs" do
-      write_armed("confine" => "reader", "tripwire" => "observe", "round_budget" => "static", "round_dedup" => "on")
+      write_armed("confine" => "workspace", "tripwire" => "observe", "round_budget" => "static",
+                  "round_dedup" => "on")
 
       chat = armed_launch(resume: "")
 
@@ -1438,8 +1449,8 @@ RSpec.describe Lain::CLI::ChatLaunch, "the session a door selects" do
 
       expect(chat.wiring.arms).to eq(Lain::CLI::Arms::OFF)
       expect(resumed_notices(chat))
-        .to eq(["running without --confine (off), as recorded; a fresh chat runs reader " \
-                "(pass --confine reader to run it)",
+        .to eq(["running without --confine (off), as recorded; a fresh chat runs workspace " \
+                "(pass --confine workspace to run it)",
                 "running without --tripwire (off), as recorded; a fresh chat runs observe " \
                 "(pass --tripwire observe to run it)",
                 "running without --round-budget (off), as recorded; a fresh chat runs window " \
@@ -1453,8 +1464,8 @@ RSpec.describe Lain::CLI::ChatLaunch, "the session a door selects" do
 
       notices = resumed_notices(armed_launch(resume: "", tripwire: "off"))
 
-      expect(notices).to eq(["running with --confine classes, as recorded; a fresh chat runs reader " \
-                             "(pass --confine reader to run it)"])
+      expect(notices).to eq(["running with --confine classes, as recorded; a fresh chat runs workspace " \
+                             "(pass --confine workspace to run it)"])
     end
 
     it "runs a typed arm over the recording and names it in a notice" do

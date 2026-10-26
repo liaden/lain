@@ -94,11 +94,34 @@ module Lain
 
       # A workspace seal the call could replace, through a link it can repoint.
       class Unsealable < Error
+        attr_reader :path, :link, :root
+
         # @param path [String] the sealed path as written
         # @param link [String] the link inside the writes on its way
-        def initialize(path:, link:)
+        # @param root [String, nil] the project being sealed
+        def initialize(path:, link:, root: nil)
+          @path = path
+          @link = link
+          @root = root
           super("cannot seal #{path}: #{link} is a link inside the writable project")
         end
+
+        # @return [Symbol] the profile the call would have run under
+        def profile = :workspace
+      end
+
+      # A TMPDIR at or above home would make home writable.
+      class HomeTmpdir < Error
+        attr_reader :path
+
+        # @param path [String] the TMPDIR
+        def initialize(path:)
+          @path = path
+          super("a workspace TMPDIR must not be home or hold it, got #{path.inspect}")
+        end
+
+        # @return [Symbol] the profile the call would have run under
+        def profile = :workspace
       end
 
       def initialize(name:, trace:, exec_dirs: [], exec_files: [], read_dirs: [], write_dirs: [], masks: [],
@@ -239,20 +262,43 @@ module Lain
       # @param masks [Array<String>] resolved paths hidden from the call
       # @param exec_files [Array<String>] programs outside /usr the call may run
       # @param trace [Boolean] false where this kernel cannot trace
+      # @param configs [Array<String>] git config files git reads for the root; each one the call could
+      #   rewrite is sealed, as `.git/config` is, so no include, hook path or fsmonitor can be planted there
       # @return [Profile]
       # @raise [Unsealable] when a seal is reached through a link inside the writes
-      def self.workspace(root:, home:, tmpdir:, masks: [], exec_files: [], trace: true)
+      # @raise [HomeTmpdir] when the TMPDIR is home or holds it
+      def self.workspace(root:, home:, tmpdir:, masks: [], exec_files: [], trace: true, configs: [])
         refuse_workspace(root, home, tmpdir)
         reader = reader(root:, home:, masks:, exec_files:, trace:)
         project = reader.read_dirs.first
         git = Seal.git_dirs(project)
         writes = [project, tmpdir, *commit_writes(project, git)]
         homes = PrivateHome.of(home)
-        new(**reader.to_h, name: :workspace, sealed: Seal.of(project, git, writable: writes), homes:,
+        new(**reader.to_h, name: :workspace, sealed: sealing(project, git, tmpdir, configs), homes:,
                            write_dirs: [*writes, *homes.map(&:path), *SYSTEM_WRITE],
                            exec_dirs: [*reader.exec_dirs, *target(project)],
                            read_dirs: [*reader.read_dirs, *system_files], hidden: hidden(home))
       end
+
+      # The seals a workspace call in `root` would hold, refused as {.workspace} refuses them.
+      #
+      # @param root [String] absolute
+      # @param tmpdir [String] absolute; the caller's TMPDIR
+      # @return [Array<Seal>]
+      # @raise [Unsealable] when a seal is reached through a link inside the writes
+      def self.seals(root:, tmpdir:)
+        project = landing(root)
+        sealing(project, Seal.git_dirs(project), tmpdir, [])
+      end
+
+      # A config file the call could rewrite is sealed; one in the TMPDIR is not, since a call writes only its
+      # own dir beneath it.
+      def self.sealing(project, git, tmpdir, configs)
+        lasting = [project, *commit_writes(project, git)]
+        rewritable = configs.select { |file| lasting.any? { Landing.under?(file, _1) } }
+        Seal.of(project, git, writable: [*lasting, tmpdir], also: rewritable)
+      end
+      private_class_method :sealing
 
       # What a workspace build depends on beyond its seals: a path that comes or goes changes the profile.
       #
@@ -355,7 +401,7 @@ module Lain
         raise ArgumentError, "a workspace root must not contain a newline, got #{root.inspect}" if root.include?("\n")
         return unless tmpdir.start_with?(File::SEPARATOR) && Landing.under?(landing(home), landing(tmpdir))
 
-        raise ArgumentError, "a workspace TMPDIR must not be home or hold it, got #{tmpdir.inspect}"
+        raise HomeTmpdir.new(path: tmpdir)
       end
       private_class_method :refuse_workspace
 
@@ -559,13 +605,14 @@ module Lain
         # @param root [String] absolute
         # @param git [Array<String>] {.git_dirs} of `root`
         # @param writable [Array<String>] what the call may write, where a link on a seal's way is refused
+        # @param also [Array<String>] further absolute paths to seal, such as a config file git includes
         # @return [Array<Seal>] the hooks, the git configs, what redirects git, the lain dir and
         #   {Profile::PROJECT_SEALED}
         # @raise [Unsealable]
-        def self.of(root, git = git_dirs(root), writable: [root])
+        def self.of(root, git = git_dirs(root), writable: [root], also: [])
           named = [*in_git(root, *git), ProjectDir.new(root:).dir,
-                   *Profile::PROJECT_SEALED.map { File.join(root, _1) }]
-          named.each { refuse_link(_1, writable) }
+                   *Profile::PROJECT_SEALED.map { File.join(root, _1) }, *also]
+          named.each { refuse_link(_1, writable, root) }
           named.map { at(_1) }.group_by(&:path).map do |path, seals|
             new(path:, absent: seals.first.absent, hops: seals.flat_map(&:hops).uniq)
           end
@@ -591,11 +638,11 @@ module Lain
         # A `.git` file redirects git, and a `.git` link is refused on the way to the seals under it.
         def self.pointer(dot_git) = File.file?(dot_git) || File.symlink?(dot_git) ? [dot_git] : []
 
-        def self.refuse_link(path, writable)
+        def self.refuse_link(path, writable, root)
           link = Pathname(path).descend.map(&:to_s).find do |step|
             File.symlink?(step) && writable.any? { step != _1 && Landing.under?(step, _1) }
           end
-          raise Unsealable.new(path:, link:) if link
+          raise Unsealable.new(path:, link:, root:) if link
         end
 
         def self.at(path, left = LINK_HOPS, followed = [])

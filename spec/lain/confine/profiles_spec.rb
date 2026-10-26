@@ -694,6 +694,200 @@ RSpec.describe Lain::Confine::Profiles do
       end
     end
 
+    # git exits 128 when it cannot read a config file it was told of, so each file git reads config from is
+    # granted to both confined profiles, wherever it lives: the standard globals and every file git reports
+    # as an origin. What the session's policy denies is never granted, nor a credential-shaped file an
+    # include names; inside the project nothing needs a grant.
+    describe "git's config files" do
+      let(:scratch) { File.join(@base, "scratch").tap { FileUtils.mkdir_p(_1) } }
+      let(:elsewhere) { File.join(@base, "elsewhere").tap { FileUtils.mkdir_p(_1) } }
+      let(:classifier) { Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root)) }
+      let(:profiles) { described_class.new(masks:, probe:, home:, root:, classifier:) }
+      let(:workspace) do
+        described_class.new(masks:, probe:, home:, root:, workspace: true, tmpdir: scratch, classifier:)
+      end
+
+      around do |example|
+        FileUtils.mkdir_p(home)
+        system(SeedRepo::SCRUB, "git", "init", "-q", root, exception: true)
+        with_env("HOME" => home, "GIT_CONFIG_GLOBAL" => nil, "XDG_CONFIG_HOME" => nil) { example.run }
+      end
+
+      def named(user = "P") = "[user]\n\tname = #{user}\n"
+
+      def granted = [profiles.for(composed), workspace.for(request(ruling("auto")))].map(&:read_dirs)
+
+      def write(path, text) = path.tap { FileUtils.mkdir_p(File.dirname(_1)) && File.write(_1, text) }
+      public :write, :named
+
+      layouts = {
+        "an [include] of ~/.gitconfig.local" => lambda { |spec|
+          File.write(File.join(spec.home, ".gitconfig"), "[include]\n\tpath = ~/.gitconfig.local\n")
+          File.join(spec.home, ".gitconfig.local").tap { File.write(_1, spec.named) }
+        },
+        "an includeIf gitdir: naming the project" => lambda { |spec|
+          target = File.join(spec.elsewhere, "work.gitconfig").tap { File.write(_1, spec.named) }
+          File.write(File.join(spec.home, ".gitconfig"), "[includeIf \"gitdir:#{spec.root}/\"]\n\tpath = #{target}\n")
+          target
+        },
+        "GIT_CONFIG_GLOBAL outside home" => lambda { |spec|
+          File.join(spec.elsewhere, "gc").tap { File.write(_1, spec.named) && (ENV["GIT_CONFIG_GLOBAL"] = _1) }
+        },
+        "XDG_CONFIG_HOME outside home" => lambda { |spec|
+          FileUtils.mkdir_p(File.join(spec.elsewhere, "git"))
+          ENV["XDG_CONFIG_HOME"] = spec.elsewhere
+          File.join(spec.elsewhere, "git", "config").tap { File.write(_1, spec.named) }
+        },
+        # Gated by its name, and reached only from the user's own config, so it is the user's to read.
+        "an [include] of ~/dotfiles/.gitconfig" => lambda { |spec|
+          File.write(File.join(spec.home, ".gitconfig"), "[include]\n\tpath = ~/dotfiles/.gitconfig\n")
+          spec.write(File.join(spec.home, "dotfiles", ".gitconfig"), spec.named)
+        }
+      }
+
+      layouts.each do |layout, write|
+        it "grants the reader and workspace profiles read on the file #{layout} names" do
+          file = write.call(self)
+
+          expect(granted).to all(include(file))
+        end
+      end
+
+      # The user's ruling: a project config git itself reads is shown to the call, sealed rather than masked,
+      # so git works; every other masked file stays masked.
+      describe "a tracked project config git includes from .git/config" do
+        let(:shared) { File.join(root, ".gitconfig") }
+        let(:env_file) { write(File.join(root, ".env"), "TOKEN=x\n") }
+
+        before do
+          File.write(File.join(home, ".gitconfig"), named)
+          SeedRepo.git(root, "config", "include.path", "../.gitconfig")
+          write(shared, "[alias]\n\tst = status\n")
+          masked << mask(shared) << mask(env_file)
+        end
+
+        def both = [profiles.for(composed), workspace.for(request(ruling("auto")))]
+
+        it "masks it in neither profile, while the other masked file stays masked" do
+          expect(both.map(&:masks)).to all(eq([env_file]))
+        end
+
+        it "grants it no read of its own, since the project is read whole" do
+          expect(both.map(&:read_dirs)).to all(satisfy { !_1.include?(shared) })
+        end
+
+        it "seals it in the workspace profile" do
+          expect(workspace.for(request(ruling("auto"))).sealed.map(&:path)).to include(shared)
+        end
+
+        it "grants no read of its own to an ordinary-named project config either, and does not mask it" do
+          plain = write(File.join(root, "tools", "git.inc"), "[alias]\n\tco = checkout\n")
+          SeedRepo.git(root, "config", "--add", "include.path", "../tools/git.inc")
+          masked << mask(plain)
+
+          expect(both.map { [_1.read_dirs.include?(plain), _1.masks.include?(plain)] }).to all(eq([false, false]))
+        end
+
+        it "lets a workspace call on this box read the config with git, and refuses it a write", :seam do
+          real = Lain::Confine::Probe.new(fence: Lain::Confine::Bwrap.fence_binary, journal:)
+          confined = described_class.new(masks:, probe: real, home:, root:, workspace: true, tmpdir: scratch,
+                                         classifier:)
+          local = Lain::Exec::Local.new(child_env: Lain::Exec::ChildEnv.new(env: ENV.to_h))
+          exec = Lain::Exec::Sandboxed.new(inner: local, journal:, profiles: confined,
+                                           launcher: Lain::Confine::Bwrap.new(fence: Lain::Confine::Bwrap.fence_binary))
+          run = lambda { |command|
+            exec.call(command:, cwd: root, env: {}, timeout: 20, confinement: request(ruling("auto")))
+          }
+
+          expect(run.call("git config alias.st")).to have_attributes(exit_status: 0, stdout: "status\n")
+          expect(run.call("echo planted >> .gitconfig").exit_status).not_to eq(0)
+          expect(File.read(shared)).to eq("[alias]\n\tst = status\n")
+        end
+      end
+
+      describe "a project config that includes home's secrets" do
+        let(:key) { write(File.join(home, ".ssh", "id_ed25519"), "FAKE KEY\n") }
+        let(:pypirc) { write(File.join(home, ".pypirc"), "[pypi]\n\tusername = __token__\n\tpassword = pypi-FAKE\n") }
+        let(:shared) { File.join(root, ".gitconfig") }
+
+        before do
+          File.write(File.join(home, ".gitconfig"), named)
+          SeedRepo.git(root, "config", "include.path", "../.gitconfig")
+          write(shared, "[includeIf \"gitdir:/nowhere/\"]\n\tpath = #{key}\n[include]\n\tpath = #{pypirc}\n")
+        end
+
+        it "grants neither the key an inactive includeIf names nor the credential an active include names" do
+          expect(granted.flatten).not_to include(key, pypirc)
+        end
+
+        it "seals the included project file, so a call cannot plant an include there" do
+          expect(workspace.for(request(ruling("auto"))).sealed.map(&:path)).to include(shared)
+        end
+      end
+
+      it "grants nothing an inactive includeIf names, though the file is ordinary" do
+        target = write(File.join(elsewhere, "other.gitconfig"), named)
+        File.write(File.join(home, ".gitconfig"), "[includeIf \"gitdir:/nowhere/\"]\n\tpath = #{target}\n")
+
+        expect(granted.flatten).not_to include(target)
+      end
+
+      it "grants no global the policy denies" do
+        ENV["GIT_CONFIG_GLOBAL"] = write(File.join(elsewhere, ".netrc"), named)
+
+        expect(granted.flatten).not_to include(ENV.fetch("GIT_CONFIG_GLOBAL"))
+      end
+
+      it "grants nothing for a config file that is not there, nor for a directory" do
+        ENV["GIT_CONFIG_GLOBAL"] = File.join(elsewhere, "absent")
+        absent = granted.flatten
+        ENV["GIT_CONFIG_GLOBAL"] = elsewhere
+
+        expect(absent).not_to include(File.join(elsewhere, "absent"))
+        expect(granted.flatten).not_to include(elsewhere)
+      end
+
+      it "grants a file an include gains between calls" do
+        File.write(File.join(home, ".gitconfig"), named)
+        granted
+        added = write(File.join(elsewhere, "late.gitconfig"), named("Q"))
+        File.write(File.join(home, ".gitconfig"), "#{named}[include]\n\tpath = #{added}\n")
+
+        expect(granted).to all(include(added))
+      end
+
+      it "follows GIT_CONFIG_GLOBAL when it changes between calls in one root" do
+        ENV["GIT_CONFIG_GLOBAL"] = first = write(File.join(elsewhere, "first"), named)
+        granted
+        ENV["GIT_CONFIG_GLOBAL"] = second = write(File.join(elsewhere, "second"), named)
+
+        expect(granted).to all(include(second).and(satisfy { !_1.include?(first) }))
+      end
+
+      context "when git runs under each profile on this box", :seam do
+        let(:probe) { Lain::Confine::Probe.new(fence: Lain::Confine::Bwrap.fence_binary, journal:) }
+
+        let(:launcher) { Lain::Confine::Bwrap.new(fence: Lain::Confine::Bwrap.fence_binary) }
+
+        def user_name(arm)
+          local = Lain::Exec::Local.new(child_env: Lain::Exec::ChildEnv.new(env: ENV.to_h))
+          chosen, approval = arm == :reader ? [profiles, composed] : [workspace, request(ruling("auto"))]
+          Lain::Exec::Sandboxed.new(inner: local, journal:, profiles: chosen, launcher:)
+                               .call(command: "git config user.name", cwd: root, env: {}, timeout: 20,
+                                     confinement: approval)
+        end
+
+        layouts.each do |layout, write|
+          it "reads the user name from #{layout}" do
+            write.call(self)
+
+            expect([user_name(:reader), user_name(:workspace)])
+              .to all(have_attributes(exit_status: 0, stdout: "P\n", stderr: ""))
+          end
+        end
+      end
+    end
+
     context "when this kernel cannot trace" do
       before { answers["strace"] = ["", false] }
 

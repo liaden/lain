@@ -23,6 +23,12 @@ RSpec.describe Lain::Exec::Sandboxed do
                                 klass:, fresh: false, run_files: [], wrappers: [])
   end
 
+  # A spec's paths sit under its TMPDIR, which can read as a token; the refusal then names no path.
+  def as_shown(path)
+    line = format(described_class::REFUSED, path:)
+    Lain::Sensitivity::Regions.detect(line).empty? ? path : described_class::PATH_WITHHELD
+  end
+
   def composed(executables: [executable("cat", "/usr/bin/cat", :system)])
     Lain::Confine::Request.new(ruling: ruling("rules", rule: "composed_term"), executables:, cwd: root, root:,
                                tool_use_id: "toolu_1")
@@ -76,7 +82,7 @@ RSpec.describe Lain::Exec::Sandboxed do
 
       expect(inner.calls).to be_empty
       expect(capture).to have_attributes(exit_status: 126, stdout: "")
-      expect(capture.stderr).to include(planted)
+      expect(capture.stderr).to include(format(described_class::REFUSED, path: as_shown(planted)))
       expect(recorded("exec_record").sole).to have_attributes(execs: [], refusals: [], fd_execs: [])
       expect(recorded("sandbox").sole).to have_attributes(profile: :reader, refused: [planted])
     end
@@ -153,7 +159,7 @@ RSpec.describe Lain::Exec::Sandboxed do
     end
 
     describe "wording a refusal the trace recorded" do
-      let(:planted) { File.join(root, "bin/x") }
+      let(:planted) { "/srv/project/bin/x" }
       let(:wording) { format(described_class::REFUSED, path: planted) }
 
       def refused_exec(path) = %(10 execve("#{path}", ["x"], 0x0 /* 0 vars */) = -1 EACCES (Permission denied))
@@ -191,6 +197,22 @@ RSpec.describe Lain::Exec::Sandboxed do
         end
 
         expect(run(command: Lain::Shell::Term.of(%w[x a], %w[x b])).stderr).to end_with("#{wording}\n")
+      end
+
+      # The output detector scans the whole result, so a path that reads as a token would withhold the
+      # sentence that says why the call failed. The sentence stays; only the path goes.
+      {
+        "a mktemp-style dir" => "/home/alice/tmp/lain/wt-T41/t41-unseal20261026-3334363-2ovwkj/bin/tool",
+        "the Nix store" => "/nix/store/9w2l1vc5kq8x3m4p0z7r6y5t4s3a2b1c-git-2.44.0/bin/git"
+      }.each do |where, path|
+        it "words a refused exec in #{where} with the path withheld, keeping the sentence" do
+          writing(refused_exec(path))
+
+          stderr = run.stderr
+          expect(stderr).to end_with("#{format(described_class::REFUSED, path: "[path withheld]")}\n")
+          expect(stderr).not_to include(path)
+          expect(Lain::Sensitivity::Regions.detect(stderr)).to be_empty
+        end
       end
 
       it "shows a path holding a newline on one line, so it cannot forge another" do
@@ -482,14 +504,68 @@ RSpec.describe Lain::Exec::Sandboxed do
         expect(recorded("sandbox").sole).to have_attributes(profile: :workspace, refused: [root])
       end
 
+      it "withholds an overmasked path that reads as a token, keeping the sentence and the record" do
+        store = "/nix/store/9w2l1vc5kq8x3m4p0z7r6y5t4s3a2b1c-app-1.0/config"
+        capture = refused_by(Lain::Confine::Profiles::Overmasked.new(path: store, names: ["link"], profile: :workspace))
+
+        expect(capture.stderr).to include("lands on [path withheld]", "Stop and ask the human")
+        expect(capture.stderr).not_to include(store)
+        expect(recorded("sandbox").sole).to have_attributes(refused: [store])
+      end
+
+      it "withholds a listed link's name that reads as a token, keeping the sentence" do
+        name = "keys/ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"
+        capture = refused_by(Lain::Confine::Profiles::Overmasked.new(path: "/srv/app/config", names: [name],
+                                                                     profile: :workspace))
+
+        expect(capture.stderr).to include("the listed link [name withheld] lands on /srv/app/config",
+                                          "Stop and ask the human")
+        expect(capture.stderr).not_to include(name)
+      end
+
+      {
+        "has gone" => ->(path) { Lain::Confine::Profiles::NoTmpdir.new(path:, profile: :workspace) },
+        "is home or holds it" => ->(path) { Lain::Confine::Profile::HomeTmpdir.new(path:) }
+      }.each do |why, error|
+        it "withholds a mktemp-shaped TMPDIR that #{why}, keeping the sentence and the record" do
+          tmp = "/home/tara/tmp/lain/wt-T41/t41-unseal20261026-3334363-2ovwkj/t"
+          capture = refused_by(error.call(tmp))
+
+          expect(capture.stderr).to include("the TMPDIR [path withheld]", "Retrying will be refused again")
+          expect(capture.stderr).not_to include(tmp)
+          expect(Lain::Sensitivity::Regions.detect(capture.stderr)).to be_empty
+          expect(recorded("sandbox").sole).to have_attributes(refused: [tmp])
+        end
+      end
+
       it "refuses a call whose TMPDIR has gone, in words, and journals it" do
-        gone = File.join(@base, "gone")
+        gone = "/srv/scratch/gone"
         capture = refused_by(Lain::Confine::Profiles::NoTmpdir.new(path: gone, profile: :workspace))
 
         expect(inner.calls).to be_empty
         expect(capture.exit_status).to eq(Lain::Shell::Pipeline::NOT_PERMITTED)
         expect(capture.stderr).to start_with("lain: REFUSED").and include(gone)
         expect(recorded("sandbox").sole).to have_attributes(profile: :workspace, refused: [gone])
+      end
+
+      it "refuses a call whose seal is reached through a link, naming the link and the reader arm" do
+        link = File.join(root, ".envrc")
+        capture = refused_by(Lain::Confine::Profile::Unsealable.new(path: link, link:))
+
+        expect(inner.calls).to be_empty
+        expect(capture.exit_status).to eq(Lain::Shell::Pipeline::NOT_PERMITTED)
+        expect(capture.stderr).to start_with("lain: REFUSED").and include(" .envrc is a link", "Stop and ask the human",
+                                                                          "--confine reader")
+        expect(capture.stderr).not_to include(root)
+        expect(recorded("sandbox").sole).to have_attributes(profile: :workspace, refused: [link])
+      end
+
+      it "refuses a call whose TMPDIR is home or holds it, naming it" do
+        capture = refused_by(Lain::Confine::Profile::HomeTmpdir.new(path: "/home/alice"))
+
+        expect(inner.calls).to be_empty
+        expect(capture.stderr).to start_with("lain: REFUSED").and include("/home/alice", "Stop and ask the human")
+        expect(recorded("sandbox").sole).to have_attributes(profile: :workspace, refused: ["/home/alice"])
       end
     end
 
@@ -609,7 +685,7 @@ RSpec.describe Lain::Exec::Sandboxed do
 
       it "tells the model the refusal is final when the program had no other copy to fall through to" do
         expect(run("cat README.md", env: { "PATH" => File.dirname(planted) }).stderr)
-          .to end_with("#{format(described_class::REFUSED, path: planted)}\n")
+          .to end_with("#{format(described_class::REFUSED, path: as_shown(planted))}\n")
       end
 
       it "is refused when a term's stage execs it, which then falls through to the next PATH entry" do

@@ -184,7 +184,48 @@ RSpec.describe Lain::CLI::Wiring::Observers do
         chronicle.durable_journal << Lain::Telemetry::CapabilityDegraded.new(capability: :container,
                                                                              requirer: "spec", provider: "docker")
 
-        expect(observers.notices).to eq(["bash runs in the docker container, not in the reader sandbox"])
+        expect(observers.notices).to eq(["bash runs in the docker container, not in the bash sandbox"])
+      end
+
+      describe "a project the workspace profile cannot seal" do
+        let(:linked) do
+          File.join(@state, "repo").tap do |root|
+            FileUtils.mkdir_p(root)
+            File.write(File.join(root, "shared-envrc"), "export X=1\n")
+            File.symlink("shared-envrc", File.join(root, ".envrc"))
+          end
+        end
+        let(:place) { Lain::Paths::Place.new(root: linked, cwd: linked) }
+
+        def notices_under(confine)
+          described_class.register(chronicle:, paths:, project: place, resumed: nil,
+                                   arms: Lain::CLI::Arms::OFF.with(confine:)).notices
+        end
+
+        it "says once, under workspace, which link refuses every automatically approved call" do
+          expect(notices_under(:workspace)).to contain_exactly(
+            include(File.join(linked, ".envrc"), "--confine reader")
+          )
+        end
+
+        it "says only that bash runs unconfined when the sandbox could not be built" do
+          observers = described_class.register(chronicle:, paths:, project: place, resumed: nil,
+                                               arms: Lain::CLI::Arms::OFF.with(confine: :workspace))
+          sandbox_on(->(_argv) { ["", false] })
+
+          expect(observers.notices).to contain_exactly(include("bash runs unconfined"))
+        end
+
+        it "says nothing under reader, which writes nothing there" do
+          expect(notices_under(:reader)).to be_empty
+        end
+
+        it "says nothing under workspace once the link is a file" do
+          File.unlink(File.join(linked, ".envrc"))
+          File.write(File.join(linked, ".envrc"), "export X=1\n")
+
+          expect(notices_under(:workspace)).to be_empty
+        end
       end
 
       it "says nothing when the box offers every layer" do

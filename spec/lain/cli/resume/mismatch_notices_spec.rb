@@ -21,14 +21,14 @@ RSpec.describe Lain::CLI::Resume::MismatchNotices do
   def typed(**values) = Lain::CLI::Arms::UNSET.with(**values)
 
   def at_defaults(**arms)
-    { "confine" => "reader", "tripwire" => "observe", "round_budget" => "window", "round_dedup" => "on" }.merge(arms)
+    { "confine" => "workspace", "tripwire" => "observe", "round_budget" => "window", "round_dedup" => "on" }.merge(arms)
   end
 
   it "names a typed arm that differs from the recording" do
     path = session_with(arms: at_defaults)
 
     expect(notices(path, typed(confine: :off)))
-      .to eq(["recorded with --confine reader; continuing with off (the current flags win)"])
+      .to eq(["recorded with --confine workspace; continuing with off (the current flags win)"])
   end
 
   it "says an arm the header did not record was recorded without it" do
@@ -42,14 +42,24 @@ RSpec.describe Lain::CLI::Resume::MismatchNotices do
     path = session_with(arms: { "confine" => "classes" })
 
     expect(notices(path, typed))
-      .to eq(["running with --confine classes, as recorded; a fresh chat runs reader " \
-              "(pass --confine reader to run it)",
+      .to eq(["running with --confine classes, as recorded; a fresh chat runs workspace " \
+              "(pass --confine workspace to run it)",
               "running without --tripwire (off), as recorded; a fresh chat runs observe " \
               "(pass --tripwire observe to run it)",
               "running without --round-budget (off), as recorded; a fresh chat runs window " \
               "(pass --round-budget window to run it)",
               "running without --round-dedup (off), as recorded; a fresh chat runs on " \
               "(pass --round-dedup on to run it)"])
+  end
+
+  it "keeps a recorded reader confine on resume and says what a fresh chat runs" do
+    expect(notices(session_with(arms: at_defaults("confine" => "reader")), typed))
+      .to eq(["running with --confine reader, as recorded; a fresh chat runs workspace " \
+              "(pass --confine workspace to run it)"])
+  end
+
+  it "names no confine when the session was recorded under workspace" do
+    expect(notices(session_with(arms: at_defaults), typed)).to be_empty
   end
 
   it "reads a header from before the dedup arm as dedup on, and notices nothing" do

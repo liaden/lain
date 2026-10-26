@@ -429,7 +429,7 @@ RSpec.describe Lain::CLI::Wiring do
         plain = new_wiring(options: { grace: 5 }, chronicle:, status_feed:)
 
         expect(header_of(plain))
-          .to include("arms" => { "confine" => "reader", "tripwire" => "observe", "round_budget" => "window",
+          .to include("arms" => { "confine" => "workspace", "tripwire" => "observe", "round_budget" => "window",
                                   "round_dedup" => "on" })
       end
 
@@ -1761,10 +1761,12 @@ RSpec.describe Lain::CLI::Wiring do
     end
     let(:backend_root) { @state }
 
+    # A bypass-approved call runs in the workspace profile, which refuses a TMPDIR holding home, as the
+    # spec's TMPDIR holds this chat's.
     around do |example|
       Dir.mktmpdir("lain-wiring-state") do |state|
         @state = state
-        example.run
+        Dir.mktmpdir("lain-wiring-tmp") { |tmp| with_env("TMPDIR" => tmp) { example.run } }
       end
     end
 
@@ -5357,7 +5359,8 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
           @project = File.realpath(project)
           @state = state
           FileUtils.mkdir_p(File.join(@project, "sub"))
-          example.run
+          # The workspace profile refuses a TMPDIR holding home, as the spec's TMPDIR holds this chat's.
+          Dir.mktmpdir("lain-agent-build-tmp") { |tmp| with_env("TMPDIR" => tmp) { example.run } }
         end
       end
     end

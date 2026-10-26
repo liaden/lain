@@ -867,10 +867,45 @@ RSpec.describe Lain::Bench::CLI do
       expect(journal.events.grep(Lain::Telemetry::Sandbox)).to be_empty
     end
 
-    it "refuses an arm that is on but is not reader, before anything is paid for" do
+    it "refuses classes, a chat's approval arm, before anything is paid for" do
       expect { report(Lain::CLI::Arms::OFF.with(confine: :classes)) }
-        .to raise_error(described_class::Refusal, /--confine classes.*off.*reader/)
+        .to raise_error(described_class::Refusal, /--confine classes.*off, reader or workspace/)
       expect(journal.events).to be_empty
+    end
+
+    context "with --confine workspace" do
+      let(:workspace) { Lain::CLI::Arms::OFF.with(confine: :workspace) }
+
+      # The profile each arm's sandbox journals for one judge-approved call, read off the stamped copy the
+      # run journal holds.
+      def switches
+        Dir.mktmpdir("judged-profile") do |dir|
+          root = File.realpath(dir)
+          ruling = Lain::Approval::Escalation::Ruling.allow(rung: Lain::Approval::Judged::NAME, because: "spec")
+          execs.compact.each_with_index.map do |exec, i|
+            request = Lain::Confine::Request.new(ruling:, executables: [], cwd: root, root:, tool_use_id: "tu_#{i}")
+            exec.call(command: Lain::Shell::Term.of(%w[true]), cwd: root, env: {}, timeout: 10, confinement: request)
+            sandboxes.find { _1.tool_use_id == "tu_#{i}" }&.profile
+          end
+        end
+      end
+
+      def sandboxes = journal.events.grep(Lain::Telemetry::Stamped).map(&:record).grep(Lain::Telemetry::Sandbox)
+
+      it "hands every arm's tools a sandbox with the workspace switch on, and says so in the report" do
+        text = report(workspace)
+
+        expect(switches.uniq).to eq([:workspace])
+        expect(text).to match(/^  confine:\s+workspace$/)
+        expect(journal.events.grep(Lain::Telemetry::RunArms).map(&:arms))
+          .to eq([{ "confine" => "workspace", "round_dedup" => "off", "opaque" => "refused" }])
+      end
+
+      it "leaves the switch off under --confine reader" do
+        report(reader)
+
+        expect(switches.uniq).to eq([:traced])
+      end
     end
   end
 
@@ -919,7 +954,9 @@ RSpec.describe Lain::Bench::CLI do
 
       expect(refused.message).to include("--isolation worktree", "paths the tools name", "a shell command's reads",
                                          "an opaque command's writes", "--confine reader", "read-only command",
-                                         "unconfined either way")
+                                         "--confine workspace confines them to the worktree",
+                                         "the rest traced and unconfined")
+      expect(refused.message).not_to include("either way")
     end
 
     it "for an unknown isolation name, without resolving any backend" do

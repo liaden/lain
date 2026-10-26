@@ -56,6 +56,13 @@ module Lain
 
       CALL_DIR = "lain-call-"
 
+      # What a caller with no policy hands over: every path is ordinary.
+      module Unclassified
+        # @param _path [String]
+        # @return [Sensitivity::Verdict]
+        def self.classify(_path) = Sensitivity::ORDINARY.verdict
+      end
+
       # The freshness a caller that read no lineage hands over: every root
       # counts as fresh, so nothing is granted its ports.
       module Unread
@@ -73,7 +80,10 @@ module Lain
       # @param tmpdir [String] absolute; where each workspace call gets a dir of its own to write
       # @param fresh [#any_under?] the lineage's freshness, which a build tool's grant needs to be quiet
       # @param env [#[]] where a grant reads where bundler installs
-      def initialize(masks:, probe:, home:, root:, workspace: false, tmpdir: Dir.tmpdir, fresh: Unread, env: ENV)
+      # @param classifier [#classify] the session's policy on a path, asked before a git config file outside the
+      #   project is granted; by default every path is ordinary
+      def initialize(masks:, probe:, home:, root:, workspace: false, tmpdir: Dir.tmpdir, fresh: Unread, env: ENV,
+                     classifier: Unclassified)
         @masks = masks
         @probe = probe
         @home = home
@@ -82,6 +92,7 @@ module Lain
         @tmpdir = tmpdir
         @fresh = fresh
         @env = env
+        @classifier = classifier
         @sealed = Sealed.new(home:, tmpdir:)
         @build = BuildGrant.new(fresh:)
       end
@@ -91,6 +102,7 @@ module Lain
       # @raise [Overmasked] when a mask would empty a directory the reader or workspace profile grants
       # @raise [Profile::Unsealable] when a workspace seal is reached through a link inside the writes
       # @raise [NoTmpdir] when the TMPDIR cannot hold the workspace call's own dir
+      # @raise [Profile::HomeTmpdir] when the TMPDIR a workspace call would write is home or holds it
       def for(request)
         ruling = request.ruling
         return reader(request) if read_only?(ruling)
@@ -108,8 +120,10 @@ module Lain
       def traceable? = @probe.supports?(:trace)
 
       def reader(request)
-        granted(Profile.reader(root: root_of(request), home: @home, masks: mask_paths,
-                               exec_files: exec_files(request.executables), trace: traceable?))
+        root = root_of(request)
+        profile = Profile.reader(root:, home: @home, masks: mask_paths(root),
+                                 exec_files: exec_files(request.executables), trace: traceable?)
+        granted(profile.with(read_dirs: [*profile.read_dirs, *git_configs(root)]))
       end
 
       # The call's dir is made last, so a call refused on the way leaves none
@@ -117,8 +131,9 @@ module Lain
       def workspace(request)
         executables = request.executables
         profile = granted(networked(ported(request)).then do |ported|
-          ported.with(masks: mask_paths, exec_files: exec_files(executables),
-                      exec_dirs: [*ported.exec_dirs, *install_bins(executables)].uniq)
+          ported.with(masks: mask_paths(root_of(request)), exec_files: exec_files(executables),
+                      exec_dirs: [*ported.exec_dirs, *install_bins(executables)].uniq,
+                      read_dirs: [*ported.read_dirs, *git_configs(root_of(request))].uniq)
         end)
         Profile::SYSTEM_WRITE.include?(@tmpdir) ? profile : housed(profile.for_call(call_dir, granted: @tmpdir))
       end
@@ -159,7 +174,35 @@ module Lain
 
       def root_of(request) = request.root || @root
 
-      def mask_paths = @masks.masks.map(&:path)
+      # A project config file git reads is shown to the call, sealed in a workspace call, since git cannot run
+      # without it; every other mask stands.
+      def mask_paths(root) = @masks.masks.map(&:path) - project_configs(root)
+
+      def project_configs(root)
+        project = Profile.landing(root)
+        @sealed.configs(root).origins.filter_map { landed_file(_1) }.select { Landing.under?(_1, project) }
+      end
+
+      # git exits 128 on a config file it cannot read, wherever the user keeps it, so each file it read config
+      # from is granted on its own, at its landing. Never what the policy denies, and never a credential-shaped
+      # file reached by an include chain that starts in the project, whose config a repository ships. The
+      # project is read whole already.
+      def git_configs(root)
+        project = Profile.landing(root)
+        configs = @sealed.configs(root)
+        origins = configs.origins.reject { configs.reached_from?(_1, project) && level(_1) == :gated }
+        [*configs.globals, *origins].filter_map { landed_file(_1) }
+                                    .reject { level(_1) == :denied || Landing.under?(_1, project) }.uniq
+      end
+
+      def level(path) = @classifier.classify(path).level
+
+      def landed_file(path)
+        landed = File.realpath(path)
+        landed if File.file?(landed)
+      rescue SystemCallError
+        nil
+      end
 
       def granted(profile)
         overmask = profile.overmask
@@ -267,6 +310,24 @@ module Lain
         CONFIG_ASKS = %w[config --list --show-origin -z].freeze
         INCLUDE = /\Ainclude(?:if\..*)?\.path\z/i
         Kept = Data.define(:profile, :configs, :stamp)
+        # `globals` are where git looks for its global and system files; `origins` every file it read config
+        # from. `named` adds each path an include names, active or not, which only a seal or a stamp needs.
+        Configs = Data.define(:globals, :origins, :named, :includes) do
+          def all = [*globals, *origins, *named].uniq
+
+          # @param file [String] an origin
+          # @param dir [String] absolute
+          # @return [Boolean] whether an include chain that reaches `file` starts in a config file under `dir`
+          def reached_from?(file, dir) = starts(file, []).any? { Landing.under?(_1, dir) }
+
+          # The files no other one includes, from which `file` is reached; a file met again around a cycle
+          # counts as one.
+          def starts(file, seen)
+            parents = includes.filter_map { |from, to| from if to == file && !seen.include?(from) }
+            parents.empty? ? [file] : parents.flat_map { starts(_1, [*seen, file]) }
+          end
+        end
+        Read = Data.define(:configs, :watched, :stamp)
 
         # @param home [String]
         # @param tmpdir [String]
@@ -274,7 +335,24 @@ module Lain
           @home = home
           @tmpdir = tmpdir
           @kept = {}
+          @configs = {}
           @lock = Mutex.new
+        end
+
+        # The config files git reads for `root`, kept until one it reads or an include names changes, or the
+        # env that names the global ones does.
+        #
+        # @param root [String]
+        # @return [Configs]
+        def configs(root)
+          key = [Profile.landing(root), standard_configs(git_env)]
+          @lock.synchronize do
+            kept = @configs[key]
+            return kept.configs if kept && kept.stamp == kept.watched.map { identity(_1) }
+
+            @configs.clear if @configs.size >= KEPT
+            (@configs[key] = read(*key)).configs
+          end
         end
 
         # @param root [String]
@@ -296,9 +374,16 @@ module Lain
         private
 
         def build(root, trace)
-          profile = Profile.workspace(root:, home: @home, tmpdir: @tmpdir, trace:)
-          configs = [*config_files(root), *Profile.watched(root, @home)]
+          files = config_files(root).all
+          profile = Profile.workspace(root:, home: @home, tmpdir: @tmpdir, trace:, configs: files)
+          configs = [*files, *Profile.watched(root, @home)]
           Kept.new(profile:, configs:, stamp: stamp(profile, configs))
+        end
+
+        def read(root, globals)
+          configs = config_files(root, globals)
+          watched = configs.all
+          Read.new(configs:, watched:, stamp: watched.map { identity(_1) })
         end
 
         def keep(key, built)
@@ -325,16 +410,18 @@ module Lain
         # Every file git read config from, every file an include names, and
         # git's own global and system files, since one that is missing or empty
         # contributes no entry of its own.
-        def config_files(root)
-          [*standard_configs(ENV.to_h.merge(Isolation::Worktree::GIT_CONTEXT_SCRUB)), *read_configs(root)].uniq
+        def config_files(root, globals = standard_configs(git_env))
+          entries = read_configs(root).filter_map { |origin, entry| origin_entry(root, origin.to_s, entry.to_s) }
+          Configs.new(globals:, origins: entries.map(&:first).uniq, named: entries.filter_map(&:last).uniq,
+                      includes: entries.select(&:last).uniq)
         end
+
+        def git_env = ENV.to_h.merge(Isolation::Worktree::GIT_CONTEXT_SCRUB)
 
         def read_configs(root)
           out, status = Open3.capture2(Isolation::Worktree::GIT_CONTEXT_SCRUB, "git", "-C", root, *CONFIG_ASKS,
                                        err: File::NULL)
-          return [] unless status.success?
-
-          out.split("\0").each_slice(2).flat_map { |origin, entry| named(root, origin.to_s, entry.to_s) }
+          status.success? ? out.split("\0").each_slice(2).to_a : []
         rescue SystemCallError
           []
         end
@@ -354,12 +441,13 @@ module Lain
           [File.join(home, ".gitconfig"), File.join(xdg, "git", "config")]
         end
 
-        def named(root, origin, entry)
-          return [] unless origin.start_with?("file:")
+        # @return [Array(String, String), nil] the file an entry came from, and the path it includes, if any
+        def origin_entry(root, origin, entry)
+          return unless origin.start_with?("file:")
 
           file = File.expand_path(origin.delete_prefix("file:"), root)
           key, value = entry.split("\n", 2)
-          [file, *(File.expand_path(value, File.dirname(file)) if key.match?(INCLUDE) && value)]
+          [file, (File.expand_path(value, File.dirname(file)) if key.match?(INCLUDE) && value)]
         end
       end
       private_constant :Sealed
