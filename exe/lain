@@ -1384,6 +1384,11 @@ class LainCLI < Thor
   desc "friction SESSION", "Knob guidance from a session's friction signals (offline, deterministic)"
   def friction(selector) = render { Lain::CLI::Friction.new.report(selector) }
 
+  desc "verify SESSION",
+       "Check a session file's record chain: names the first edited, inserted or removed line (offline)"
+  method_option :tip, type: :string, desc: "A tip a previous verify printed; checks the last line against it"
+  def verify(selector) = exit_status { Lain::CLI::JournalVerify.new(sink: $stdout).run(selector, tip: options[:tip]) }
+
   desc "improvements", "Cross-project dogfood notes accumulated via the improvement_write tool"
   method_option :project, type: :string,
                           desc: "Filter to one project: a 12-hex-char hash, or a path resolved the same way"
