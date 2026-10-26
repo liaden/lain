@@ -449,7 +449,10 @@ RSpec.describe Lain::Exec::Sandboxed do
       let(:masks) { Struct.new(:masks) { def landed_on(_path) = [] }.new([]) }
       let(:profiles) do
         real = Lain::Confine::Profiles.new(masks:, probe:, home:, root:, workspace: true, tmpdir: scratch)
-        Struct.new(:profiles) { def for(request) = profiles.for(request).with(connect_ports: [8080]) }.new(real)
+        # A port is the host's, so the wrapper takes the call back onto the host's network.
+        Struct.new(:profiles) do
+          def for(request) = profiles.for(request).with(connect_ports: [8080], private_net: false)
+        end.new(real)
       end
 
       it "gives each call a dir of its own and removes each once" do
@@ -729,8 +732,10 @@ RSpec.describe Lain::Exec::Sandboxed do
                                                         path: File.join(root, "README.md"), tool_use_id: "tu_0")
         run("exec 3<>/dev/tcp/127.0.0.1/#{port}", confinement: granted(%w[git fetch origin], "/usr/bin/git"))
 
+        # The plain workspace call has a loopback of its own, where nothing listens on the host's port.
         expect(recorded("sandbox").map(&:profile)).to include(:workspace)
-        expect(connects).to contain_exactly(a_hash_including(port:, rc: -1, errno: "EACCES"))
+        expect(connects).to contain_exactly(a_hash_including(port:, rc: -1,
+                                                             errno: a_string_matching(/EACCES|ECONNREFUSED/)))
       end
     end
 

@@ -10,7 +10,7 @@ module Lain
     class Probe
       PTRACE_SCOPE = "/proc/sys/kernel/yama/ptrace_scope"
       START_FAILED = "\0start-failed:"
-      FenceReport = Data.define(:abi, :gap, :unstartable, :reaps)
+      FenceReport = Data.define(:abi, :gap, :unstartable, :reaps, :private_net)
       private_constant :FenceReport
 
       # @param fence [String] path to the lain-fence binary
@@ -39,12 +39,16 @@ module Lain
         fence_report.unstartable
       end
 
-      # `:reap` is asked apart from the layers, because a fence that cannot reap still confines a reader.
+      # `:reap` and `:private_net` are asked apart from the layers, because a fence lacking either still confines.
       #
-      # @param layer [Symbol] one of :bwrap, :landlock, :trace, :reap
+      # @param layer [Symbol] one of :bwrap, :landlock, :trace, :reap, :private_net
       # @return [Boolean]
       def supports?(layer)
-        layer == :reap ? reaps? : layers.fetch(layer)
+        case layer
+        when :reap then reaps?
+        when :private_net then private_net?
+        else layers.fetch(layer)
+        end
       end
 
       private
@@ -64,6 +68,25 @@ module Lain
         @reaps = fence_report.reaps
         degrade(:reap, "#{@fence} cannot reap: rebuild it with bundle exec rake compile") unless @reaps
         @reaps
+      end
+
+      # A fence built before the flag rejects it and exits 125. Its status names the key whenever the build knows
+      # the flag, false outside a private network, so the key's presence is the answer. bwrap must make the
+      # namespace too, or every workspace call would abort.
+      def private_net?
+        return @private_net unless @private_net.nil?
+
+        reason = private_net_gap
+        degrade(:private_net, reason) if reason
+        @private_net = reason.nil?
+      end
+
+      def private_net_gap
+        return "#{@fence} cannot give a call a private network: rebuild it with bundle exec rake compile" unless
+          fence_report.private_net
+
+        _, ok = attempt(%w[bwrap --unshare-user --unshare-net --ro-bind / / true])
+        "bwrap cannot unshare a network namespace" unless ok
       end
 
       def verdicts
@@ -97,7 +120,7 @@ module Lain
           report = ok ? parse(out) : {}
           level = report["abi"].is_a?(Integer) ? report["abi"] : 0
           FenceReport.new(abi: level, gap: gap_for(out, ok, level), unstartable: out.start_with?(START_FAILED),
-                          reaps: report["reap"] == true)
+                          reaps: report["reap"] == true, private_net: report.key?("private_net"))
         end
       end
 

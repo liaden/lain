@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "open3"
 require "tmpdir"
 
@@ -114,8 +115,33 @@ module Lain
       # The call's dir is made last, so a call refused on the way leaves none
       # behind, and never beneath the private /tmp, which is the call's own already.
       def workspace(request)
-        profile = granted(ported(request).with(masks: mask_paths, exec_files: exec_files(request.executables)))
-        Profile::SYSTEM_WRITE.include?(@tmpdir) ? profile : profile.for_call(call_dir, granted: @tmpdir)
+        executables = request.executables
+        profile = granted(networked(ported(request)).then do |ported|
+          ported.with(masks: mask_paths, exec_files: exec_files(executables),
+                      exec_dirs: [*ported.exec_dirs, *install_bins(executables)].uniq)
+        end)
+        Profile::SYSTEM_WRITE.include?(@tmpdir) ? profile : housed(profile.for_call(call_dir, granted: @tmpdir))
+      end
+
+      # A grant fetches from the host's network; a plain workspace call gets
+      # a loopback of its own, where the box can make one. bwrap wraps each
+      # stage, so the loopback is per stage: stages of one pipeline cannot
+      # reach each other over it.
+      def networked(profile)
+        profile.name == :workspace && @probe.supports?(:private_net) ? profile.with(private_net: true) : profile
+      end
+
+      def housed(profile)
+        profile.homes.each { _1.make(profile.call_tmpdir) }
+        profile
+      rescue SystemCallError
+        FileUtils.rm_rf(profile.call_tmpdir)
+        raise NoTmpdir.new(path: @tmpdir)
+      end
+
+      def install_bins(executables)
+        executables.flat_map(&:programs).select { grantable?(_1) }
+                   .filter_map { Profile.install_bin(_1.realpath, home: @home) }
       end
 
       def ported(request)
@@ -234,7 +260,8 @@ module Lain
       # files it read, about 4 ms. It is rebuilt once any seal's path or config
       # file has appeared, gone, or changed, so a path made absent or present
       # between calls is never served stale, and nor is a hooks dir an
-      # included file names. At most {KEPT} roots are kept.
+      # included file names; so is each path {Profile.watched} names, such as
+      # a `target/` the last call made. At most {KEPT} roots are kept.
       class Sealed
         KEPT = 64
         CONFIG_ASKS = %w[config --list --show-origin -z].freeze
@@ -270,7 +297,7 @@ module Lain
 
         def build(root, trace)
           profile = Profile.workspace(root:, home: @home, tmpdir: @tmpdir, trace:)
-          configs = config_files(root)
+          configs = [*config_files(root), *Profile.watched(root, @home)]
           Kept.new(profile:, configs:, stamp: stamp(profile, configs))
         end
 

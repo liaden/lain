@@ -44,6 +44,7 @@ module SlowFiles
     spec/lain/seams/stop_ask_spec.rb
     spec/lain/seams/terminal_gone_spec.rb
     spec/lain/seams/typed_during_ask_spec.rb
+    spec/lain/seams/workspace_profile_spec.rb
     spec/lain/suite_load_spec.rb
     spec/lain/tools/bash_spec.rb
     spec/repo_as_fixture_spec.rb

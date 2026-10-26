@@ -18,6 +18,7 @@ pub struct Status {
     abi: i64,
     rights: Map<String, Value>,
     skipped: Vec<String>,
+    private_net: bool,
 }
 
 impl Status {
@@ -31,7 +32,15 @@ impl Status {
             abi: kernel_abi(landlock),
             rights,
             skipped: skipped.to_vec(),
+            private_net: false,
         }
+    }
+
+    /// Always written, so a build that takes `--private-net` says so even
+    /// when the flag is off.
+    pub fn private_net(mut self, in_force: bool) -> Self {
+        self.private_net = in_force;
+        self
     }
 
     /// A seccomp filter is reported among the Landlock rights, so a caller
@@ -49,6 +58,7 @@ impl Status {
             "rights": self.rights,
             "skipped": self.skipped,
             "reap": true,
+            "private_net": self.private_net,
         });
         format!("{object}\n")
     }

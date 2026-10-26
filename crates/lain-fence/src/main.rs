@@ -9,9 +9,14 @@
 //! - `--write-dir D`: read and write beneath D
 //! - `--unix-dir D`: connect to Unix sockets beneath D
 //! - `--connect-port P`: TCP connect to port P
+//! - `--private-net`: any TCP bind and connect, inside a netns with only lo
 //!
-//! TCP connect and bind are always handled, so with no `--connect-port` the
-//! command has no TCP at all, and it can never bind. Abstract Unix sockets and
+//! Without `--private-net`, TCP connect and bind are handled, so with no
+//! `--connect-port` the command has no TCP at all, and it can never bind.
+//! With it, the fence first refuses (exit 125) unless `/proc/self/net/dev`
+//! lists only `lo`, then leaves Landlock's net rights unhandled, since no rule
+//! can grant every port; the netns is the boundary, and nothing routes out of
+//! it. It takes no `--connect-port`. The socket filter below still applies. Abstract Unix sockets and
 //! signals are always scoped to the domain. A seccomp filter refuses
 //! memfd_create(2) without `MFD_NOEXEC_SEAL`, since a memfd is executable
 //! code no path grant can name; the status line reports it as `memfd_noexec`.
@@ -33,7 +38,8 @@
 //! JSON line on stdout, and runs nothing. `--status-fd N` (3 or above) writes
 //! the same line to fd N just before the exec. `skipped` in that line lists the
 //! granted paths that could not be opened, which therefore granted nothing, and
-//! `"reap": true` says this build takes `--reap-only`.
+//! `"reap": true` says this build takes `--reap-only`. `private_net` says
+//! whether `--private-net` is in force; its presence says the build takes it.
 //!
 //! `--reap-only -- cmd args...` takes no other flag, applies no domain and no
 //! filter, and runs `cmd` as a child rather than exec'ing it, falling back to
@@ -51,6 +57,7 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
+mod netns;
 mod reap;
 mod rules;
 mod seccomp;
@@ -114,11 +121,15 @@ fn parse(mut args: impl Iterator<Item = String>) -> Result<Invocation, String> {
             "--read-dir" => grants.read_dirs.push(value(&flag, args.next())?),
             "--write-dir" => grants.write_dirs.push(value(&flag, args.next())?),
             "--unix-dir" => grants.unix_dirs.push(value(&flag, args.next())?),
+            "--private-net" => grants.private_net = true,
             _ => return Err(format!("unknown argument {flag}")),
         }
     }
     if reap {
         return reap_only(flags, argv).map(|mode| Invocation { grants, mode });
+    }
+    if grants.private_net && !grants.connect_ports.is_empty() {
+        return Err("--private-net grants every port and takes no --connect-port".into());
     }
     let mode = match (status, status_fd, argv.is_empty()) {
         (true, None, true) => Mode::Status,
@@ -174,6 +185,9 @@ fn run(invocation: Invocation) -> ExitCode {
 }
 
 fn report(grants: &Grants) -> ExitCode {
+    if let Err(message) = private_net_holds(grants) {
+        return fail(USAGE_ERROR, &message);
+    }
     match enforce(grants) {
         Ok(enforcement) => {
             match std::io::stdout().write_all(enforcement.status.line().as_bytes()) {
@@ -190,6 +204,9 @@ fn fence(grants: &Grants, argv: &[String], status_fd: Option<RawFd>) -> ExitCode
         Ok(sink) => sink,
         Err(message) => return fail(USAGE_ERROR, &message),
     };
+    if let Err(message) = private_net_holds(grants) {
+        return fail(USAGE_ERROR, &message);
+    }
     if let Err(message) = close_inherited(sink.as_ref().map(AsRawFd::as_raw_fd)) {
         return fail(NOT_ENFORCED, &message);
     }
@@ -207,6 +224,13 @@ fn fence(grants: &Grants, argv: &[String], status_fd: Option<RawFd>) -> ExitCode
     }
     let error = Command::new(&argv[0]).args(&argv[1..]).exec();
     fail(EXEC_FAILED, &format!("exec {}: {error}", argv[0]))
+}
+
+fn private_net_holds(grants: &Grants) -> Result<(), String> {
+    if grants.private_net {
+        netns::ensure_only_loopback()?;
+    }
+    Ok(())
 }
 
 fn enforce(grants: &Grants) -> Result<rules::Enforcement, rules::Error> {

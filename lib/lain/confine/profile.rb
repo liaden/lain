@@ -1,12 +1,13 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "open3"
 require "pathname"
 
 module Lain
   module Confine
     Profile = Data.define(:name, :exec_dirs, :exec_files, :read_dirs, :write_dirs, :masks, :tmpfs_bytes, :trace,
-                          :connect_ports, :unix_dirs, :sealed, :call_tmpdir)
+                          :connect_ports, :unix_dirs, :sealed, :call_tmpdir, :homes, :hidden, :private_net)
 
     # What one call may do: run beneath `exec_dirs` and exactly `exec_files`,
     # read beneath `read_dirs`, write beneath `write_dirs`, and never see
@@ -17,7 +18,11 @@ module Lain
     # writing the project, which `sealed` keeps from planting what runs
     # later, and `:grant` is a workspace with one build tool's ports, from
     # {.grant}. A workspace's `call_tmpdir`, once {#for_call} names one, is the
-    # dir made for a single call and removed after it. Both unconfined
+    # dir made for a single call and removed after it. `homes` are the
+    # {PrivateHome}s mounted over a home dir, `hidden` the toolchain files a
+    # workspace shows empty and never runs, and `private_net` says each stage
+    # of the call has a network namespace of its own, holding only loopback,
+    # so the stages of one pipeline cannot reach each other over it. Both unconfined
     # profiles still run under lain-fence as a reaper, so a stopped call
     # leaves no descendant behind; that covers a call made through a sandbox,
     # and `--confine off` or a box lacking bwrap or Landlock builds none.
@@ -47,11 +52,28 @@ module Lain
       # config, and a mise ruby reads its own install tree. A path that does
       # not exist grants nothing.
       HOME_EXEC = %w[.rustup/toolchains].freeze
-      HOME_READ = %w[.rustup .cargo/bin .config/git .gitconfig .local/share/mise/installs].freeze
+      INSTALLS = ".local/share/mise/installs"
+      HOME_READ = [".rustup", ".cargo/bin", ".config/git", ".gitconfig", INSTALLS].freeze
 
-      # Relative to the root: files a later shell or hook runs. The lain dir a
-      # later session reads is sealed too, at the path {ProjectDir} owns.
-      PROJECT_SEALED = %w[.envrc .pre-commit-config.yaml].freeze
+      # A shim is a link to mise, which reads the project's config and goes online, so a workspace never runs it.
+      MISE_SHIMS = ".local/share/mise/shims"
+      MISE = %w[/usr/bin/mise /usr/local/bin/mise].freeze
+      HOME_MISE = ".local/bin/mise"
+      # It can hold gem server credentials; shown empty, bundler reads no config at all.
+      BUNDLE_CONFIG = ".bundle/config"
+
+      # `require "resolv"` opens it at load time. Its landing is read, never the dir that also holds the upstream
+      # servers and the resolver's sockets.
+      RESOLV_CONF = "/etc/resolv.conf"
+      # A test suite that asks whether Landlock is active reads this, and skips itself in silence when it cannot.
+      LSM_LIST = "/sys/kernel/security/lsm"
+
+      # Relative to the root: files a later shell, hook or toolchain run reads
+      # and acts on. The lain dir a later session reads is sealed too, at the
+      # path {ProjectDir} owns.
+      PROJECT_SEALED = %w[.envrc .pre-commit-config.yaml rust-toolchain.toml rust-toolchain .cargo/config.toml
+                          .cargo/config .tool-versions mise.toml .mise.toml mise.local.toml .mise.local.toml
+                          .mise/config.toml .config/mise.toml .config/mise/config.toml mise/config.toml].freeze
 
       # The TCP ports each build tool fetches on. Landlock bounds a port, never
       # a host, so a granted port is open to whatever code the build runs, and
@@ -80,16 +102,24 @@ module Lain
       end
 
       def initialize(name:, trace:, exec_dirs: [], exec_files: [], read_dirs: [], write_dirs: [], masks: [],
-                     connect_ports: [], unix_dirs: [], sealed: [], tmpfs_bytes: TMPFS_BYTES, call_tmpdir: nil)
-        grants = { exec_dirs:, exec_files:, read_dirs:, write_dirs:, masks:, unix_dirs: }
-        relative = [*grants.values.flatten, *sealed.map(&:path)].reject { _1.start_with?(File::SEPARATOR) }
-        # The fence and bwrap resolve a relative path against wherever they
-        # happen to run, which is not a grant anyone wrote.
-        raise ArgumentError, "a profile path must be absolute, got #{relative.first.inspect}" if relative.any?
+                     connect_ports: [], unix_dirs: [], sealed: [], tmpfs_bytes: TMPFS_BYTES, call_tmpdir: nil,
+                     homes: [], hidden: [], private_net: false)
+        grants = { exec_dirs:, exec_files:, read_dirs:, write_dirs:, masks:, unix_dirs:, hidden: }
+        absolute([*grants.values.flatten, *sealed.map(&:path), *homes.map(&:path)])
+        raise ArgumentError, "a private network has no host port to connect to" if private_net && connect_ports.any?
 
         super(name:, trace:, tmpfs_bytes:, connect_ports: valid_ports(connect_ports).freeze, sealed: sealed.dup.freeze,
-              call_tmpdir: call_tmpdir&.then(&:-@), **grants.transform_values { |paths| paths.map(&:-@).freeze })
+              call_tmpdir: call_tmpdir&.then(&:-@), homes: homes.dup.freeze, private_net: private_net == true,
+              **grants.transform_values { |paths| paths.map(&:-@).freeze })
       end
+
+      # The fence and bwrap resolve a relative path against wherever they
+      # happen to run, which is not a grant anyone wrote.
+      def absolute(paths)
+        relative = paths.reject { _1.start_with?(File::SEPARATOR) }
+        raise ArgumentError, "a profile path must be absolute, got #{relative.first.inspect}" if relative.any?
+      end
+      private :absolute
 
       def valid_ports(ports)
         bad = ports.find { !(_1.is_a?(Integer) && _1.between?(1, 65_535)) }
@@ -103,8 +133,9 @@ module Lain
       def confined? = Profile.confines?(name)
 
       # A TMPDIR other processes share holds their scratch too, so a call
-      # writes a dir of its own beneath it instead. Only a profile that names
-      # one has a dir its call may remove.
+      # writes a dir of its own beneath it instead, and may run what it writes
+      # there, as a test suite runs the scripts it makes. Only a profile that
+      # names one has a dir its call may remove.
       #
       # @param dir [String] absolute; made for the call, beneath `granted`
       # @param granted [String] the TMPDIR this profile writes
@@ -117,7 +148,7 @@ module Lain
           raise ArgumentError, "a call's TMPDIR must be beneath #{granted.inspect}, got #{dir.inspect}"
         end
 
-        with(write_dirs: write_dirs.map { _1 == granted ? dir : _1 }, call_tmpdir: dir)
+        with(write_dirs: write_dirs.map { _1 == granted ? dir : _1 }, exec_dirs: [*exec_dirs, dir], call_tmpdir: dir)
       end
 
       # @param name [Symbol, String] a profile's name, as a record journals it
@@ -125,8 +156,27 @@ module Lain
       def self.confines?(name) = !UNCONFINED.include?(name.to_sym)
 
       # @param path [String] a resolved program
-      # @return [Boolean] whether the fence lets the call exec it
-      def runs?(path) = exec_files.include?(path) || exec_dirs.any? { path.start_with?("#{_1}/") }
+      # @return [Boolean] whether the fence lets the call exec it, and nothing hides it
+      def runs?(path)
+        return false if hidden.any? { Landing.under?(path, _1) }
+
+        exec_files.include?(path) || exec_dirs.any? { path.start_with?("#{_1}/") }
+      end
+
+      # A mise install's own bin holds the interpreter its scripts name by
+      # `env`, by their binstub's own dir, or through `bundle exec`, and the
+      # install is read already, so running it reaches nothing new.
+      #
+      # @param realpath [String] a resolved program
+      # @param home [String] absolute
+      # @return [String, nil] the bin dir of the one install `realpath` sits directly in
+      def self.install_bin(realpath, home:)
+        installs = File.join(landing(home), INSTALLS)
+        return unless realpath.start_with?("#{installs}/")
+
+        tool, version, bin, name, *rest = realpath.delete_prefix("#{installs}/").split(File::SEPARATOR)
+        File.join(installs, tool, version, bin) if bin == "bin" && name && rest.empty?
+      end
 
       # @return [String, nil] the first mask that is or holds a grant, which masking would empty
       def overmask
@@ -163,6 +213,26 @@ module Lain
       # its section, branch -m exits 128 with the ref renamed), git inside a
       # submodule, and worktree add, prune and remove.
       #
+      # {PROJECT_SEALED} is a fixed list at the root, so it cannot seal what
+      # rustup, cargo and mise also read from every dir between the cwd and
+      # the root (`crates/x/.cargo/config.toml`, `sub/.tool-versions`), nor
+      # mise's globs, `.config/mise/conf.d/*.toml` and `mise.<env>.toml`. Its
+      # nested names pin `.cargo`, `.config`, `.mise` and `mise` in place,
+      # so a project where one of them is a link is refused whole. For a name
+      # that is absent, sealing is only a report after the call, and the pairs
+      # matter: cargo reads `.cargo/config` over `.cargo/config.toml`, and
+      # rustup `rust-toolchain` over `rust-toolchain.toml`, so a call that
+      # creates the absent one of a pair overrides the present, sealed one.
+      #
+      # So a project's own tests run: `<root>/target` runs when it is a real
+      # directory, as the build scripts and test binaries cargo puts there
+      # do, and a `CARGO_TARGET_DIR` anywhere else runs nothing; a `target/`
+      # the call makes runs from the next call on. The exact file
+      # {RESOLV_CONF} lands on and {LSM_LIST} are read; cargo's home is a
+      # {PrivateHome}; bundler's user config and every mise binary are
+      # hidden. {Profiles} gives a plain workspace call a private loopback,
+      # one per stage, since bwrap wraps each stage on its own.
+      #
       # @param root [String] absolute; the project, read and written whole
       # @param home [String] absolute; where the toolchain grants are looked for
       # @param tmpdir [String] absolute; the caller's TMPDIR, never home or above it
@@ -177,9 +247,63 @@ module Lain
         project = reader.read_dirs.first
         git = Seal.git_dirs(project)
         writes = [project, tmpdir, *commit_writes(project, git)]
-        new(**reader.to_h, name: :workspace, sealed: Seal.of(project, git, writable: writes),
-                           write_dirs: [*writes, *SYSTEM_WRITE])
+        homes = PrivateHome.of(home)
+        new(**reader.to_h, name: :workspace, sealed: Seal.of(project, git, writable: writes), homes:,
+                           write_dirs: [*writes, *homes.map(&:path), *SYSTEM_WRITE],
+                           exec_dirs: [*reader.exec_dirs, *target(project)],
+                           read_dirs: [*reader.read_dirs, *system_files], hidden: hidden(home))
       end
+
+      # What a workspace build depends on beyond its seals: a path that comes or goes changes the profile.
+      #
+      # @param root [String]
+      # @param home [String]
+      # @return [Array<String>]
+      def self.watched(root, home)
+        [File.join(root, "target"), File.join(home, PrivateHome::CARGO),
+         File.join(home, BUNDLE_CONFIG), File.join(home, MISE_SHIMS), RESOLV_CONF]
+      end
+
+      # cargo runs its build scripts out of `target/`, so only a real directory
+      # is run; a link or a file runs nothing.
+      #
+      # @param project [String]
+      # @return [Array<String>, nil] the target dir, none when absent, nil when it is not a real directory
+      def self.target(project)
+        path = File.join(project, "target")
+        File.lstat(path).directory? ? [path] : nil
+      rescue Errno::ENOENT
+        []
+      rescue SystemCallError
+        nil
+      end
+
+      def self.system_files
+        [*landing_file(RESOLV_CONF), LSM_LIST]
+      end
+      private_class_method :system_files
+
+      def self.landing_file(path)
+        landed = File.realpath(path)
+        File.file?(landed) ? [landed] : []
+      rescue SystemCallError
+        []
+      end
+      private_class_method :landing_file
+
+      def self.hidden(home)
+        [*landing_file(File.join(home, BUNDLE_CONFIG)),
+         *[*MISE, File.join(home, HOME_MISE), *shim_target(File.join(home, MISE_SHIMS))].flat_map { landing_file(_1) }]
+          .uniq
+      end
+      private_class_method :hidden
+
+      def self.shim_target(shims)
+        Dir.each_child(shims).lazy.map { File.join(shims, _1) }.select { File.symlink?(_1) }.first(1)
+      rescue SystemCallError
+        []
+      end
+      private_class_method :shim_target
 
       # The workspace profile with a build tool's ports, the resolver's socket
       # dir, and what the tool writes outside the project: bundle its gem home
@@ -222,8 +346,8 @@ module Lain
         return self unless tool
 
         with(name: :grant, connect_ports: ports, unix_dirs: [RESOLVER], read_dirs: [*read_dirs, RESOLVER],
-             write_dirs: [*write_dirs, *tool.writes], exec_dirs: [*exec_dirs, *tool.execs],
-             sealed: [*sealed, *tool.seals])
+             write_dirs: [*write_dirs, *tool.writes], exec_dirs: [*exec_dirs, *tool.execs].uniq,
+             sealed: [*sealed, *tool.seals], homes: homes.map { _1.opening(tool.writes) }, private_net: false)
       end
 
       # git's answer is read a line per path, and a TMPDIR at or above home grants home.
@@ -314,8 +438,8 @@ module Lain
 
         # cargo's own bin is where its home is meant to hold a reader's grant.
         def self.cargo(project, home, env)
-          cargo_home = named(env, "CARGO_HOME") || File.join(home, ".cargo")
-          execs = built_in(project)
+          cargo_home = named(env, "CARGO_HOME") || File.join(home, PrivateHome::CARGO)
+          execs = Profile.target(project)
           return unless execs && bounded?(cargo_home, home) &&
                         holds_nothing?(cargo_home, project, home, own: File.join(cargo_home, "bin"))
 
@@ -340,18 +464,6 @@ module Lain
           [project, *read].none? { Landing.under?(_1, dir) }
         end
 
-        # cargo runs its build scripts out of `target/`, so only a real directory
-        # is granted exec; one not made yet grants none, and a link or a file
-        # grants cargo nothing.
-        def self.built_in(project)
-          target = File.join(project, "target")
-          File.lstat(target).directory? ? [target] : nil
-        rescue Errno::ENOENT
-          []
-        rescue SystemCallError
-          nil
-        end
-
         # @return [Array<Seal>, nil] nil when the dir would sit in a write and is absent
         def self.installs_in(bindir, writes)
           return [] unless writes.any? { Landing.under?(bindir, _1) }
@@ -359,7 +471,70 @@ module Lain
 
           [Seal.new(path: -Profile.landing(bindir), absent: false)]
         end
-        private_class_method :bundle, :cargo, :named, :bounded?, :holds_nothing?, :built_in, :installs_in
+        private_class_method :bundle, :cargo, :named, :bounded?, :holds_nothing?, :installs_in
+      end
+
+      PrivateHome = Data.define(:path, :reads, :writes, :files)
+
+      # A home dir the call sees as its own: a dir made for the call mounted
+      # at `path`, the user's `reads` bound back read-only and `writes`
+      # writable over it, and `files` lain writes. Nothing else of the user's
+      # dir shows, so a secret put there later, under any name, stays out,
+      # and every other write lands in the call's dir and goes with it.
+      class PrivateHome
+        CARGO = ".cargo"
+        # git checkouts are public sources, like the registry, and a lock naming one may change between calls.
+        CARGO_READS = %w[registry bin git].freeze
+        # The last-use database starts empty in a private home, and a gc reading it would delete crates from a
+        # registry the call cannot write.
+        CARGO_FILES = { "config.toml" => %([cache]\nauto-clean-frequency = "never"\n) }.freeze
+        HOMES = ".lain-homes"
+
+        # @param path [String] absolute; the home dir the call sees
+        # @param reads [Array<String>] names beneath it bound back read-only
+        # @param writes [Array<String>] names beneath it bound back writable
+        # @param files [Hash{String => String}] what lain writes at the top, by name
+        def initialize(path:, reads:, writes: [], files: {})
+          super(path: -path, reads: reads.map(&:-@).freeze, writes: writes.map(&:-@).freeze,
+                files: files.to_h { |name, body| [-name, -body] }.freeze)
+        end
+
+        # @param path [String]
+        # @param reads [Array<String>]
+        # @param writes [Array<String>]
+        # @return [PrivateHome] cargo's, with a config that never cleans
+        def self.cargo(path, reads:, writes: []) = new(path:, reads:, writes:, files: CARGO_FILES)
+
+        # Only a real directory is mounted over: bwrap cannot mount at a path that is not there, and would mount
+        # through a link to wherever it lands.
+        #
+        # @param home [String]
+        # @return [Array<PrivateHome>] cargo's, or none where home has no real ~/.cargo
+        def self.of(home)
+          path = File.join(Profile.landing(home), CARGO)
+          File.lstat(path).directory? ? [cargo(path, reads: CARGO_READS)] : []
+        rescue SystemCallError
+          []
+        end
+
+        # @param paths [Array<String>] what a grant writes
+        # @return [PrivateHome] with each of `paths` beneath it bound back writable
+        def opening(paths)
+          opened = paths.select { Landing.under?(_1, path) && _1 != path }
+                        .map { Pathname(_1).relative_path_from(path).to_s }
+          opened.empty? ? self : with(reads: reads - opened, writes: [*writes, *opened].uniq)
+        end
+
+        # @param call_dir [String] the call's own TMPDIR, removed after it
+        # @return [String] where this home's writes land
+        def source(call_dir) = File.join(call_dir, HOMES, File.basename(path))
+
+        # @param call_dir [String]
+        # @return [void]
+        def make(call_dir)
+          dir = FileUtils.mkdir_p(source(call_dir)).first
+          files.each { |name, body| File.write(File.join(dir, name), body) }
+        end
       end
 
       Seal = Data.define(:path, :absent, :hops)

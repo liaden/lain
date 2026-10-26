@@ -82,6 +82,102 @@ RSpec.describe Lain::Confine::Bwrap do
       )
     end
 
+    describe "a workspace with a private network" do
+      def workspace(private_net) = Lain::Confine::Profile.new(name: :workspace, trace: false, private_net:)
+
+      it "unshares bwrap's network and tells the fence the loopback is the call's own" do
+        argv = argv_of(launcher.wrap(term, workspace(true), trace_fd: 3))
+
+        expect(argv[0...argv.index("--")]).to include("--unshare-net")
+        expect(argv[argv.index("/f/lain-fence"), 2]).to eq(%w[/f/lain-fence --private-net])
+      end
+
+      it "shares the host's network otherwise, as the reader and a grant do" do
+        [workspace(false), reader].each do |profile|
+          expect(argv_of(launcher.wrap(term, profile, trace_fd: 3))).not_to include("--unshare-net", "--private-net")
+        end
+      end
+    end
+
+    describe "a private home" do
+      def home(writes = []) = Lain::Confine::Profile::PrivateHome.cargo("/h/.cargo", reads: %w[registry bin], writes:)
+
+      def workspace(call_tmpdir: "/h/t/c", writes: [], **)
+        Lain::Confine::Profile.new(name: :workspace, trace: false, read_dirs: ["/p"], homes: [home(writes)],
+                                   write_dirs: ["/p", *call_tmpdir, "/h/.cargo", *writes.map { "/h/.cargo/#{_1}" },
+                                                "/dev/null", "/tmp"], call_tmpdir:, **)
+      end
+
+      def mounts(profile)
+        argv_of(launcher.wrap(term, profile, trace_fd: 3)).then do |argv|
+          argv[(argv.index("--die-with-parent") + 1)...argv.index("--")]
+        end
+      end
+
+      it "mounts the call's own dir over the home, then binds back only what it names, read-only" do
+        expect(mounts(workspace)).to eq(
+          %w[--bind-try /p /p --bind-try /h/t/c /h/t/c --bind /h/t/c/.lain-homes/.cargo /h/.cargo
+             --ro-bind-try /h/.cargo/registry /h/.cargo/registry --ro-bind-try /h/.cargo/bin /h/.cargo/bin]
+        )
+      end
+
+      it "never binds the user's own home writable, though the fence lets the call write the private one" do
+        argv = argv_of(launcher.wrap(term, workspace(writes: %w[registry]), trace_fd: 3))
+
+        expect(argv.each_cons(3).to_a).not_to include(%w[--bind-try /h/.cargo /h/.cargo])
+        expect(argv[argv.index("/f/lain-fence")..]).to include("/h/.cargo")
+      end
+
+      it "binds back writable what a grant writes, after the private home is mounted" do
+        mounted = mounts(workspace(writes: %w[registry .package-cache]))
+
+        expect(mounted.each_slice(3).to_a.last(3)).to eq(
+          [%w[--ro-bind-try /h/.cargo/bin /h/.cargo/bin], %w[--bind-try /h/.cargo/registry /h/.cargo/registry],
+           %w[--bind-try /h/.cargo/.package-cache /h/.cargo/.package-cache]]
+        )
+        expect(mounted.index("/h/.cargo/registry")).to be > mounted.index("--bind")
+      end
+
+      it "mounts an empty tmpfs where the call has no dir of its own, its TMPDIR being the private /tmp" do
+        expect(mounts(workspace(call_tmpdir: nil)).first(5))
+          .to eq(["--bind-try", "/p", "/p", "--size", Lain::Confine::Profile::TMPFS_BYTES.to_s])
+        expect(mounts(workspace(call_tmpdir: nil))[5, 2]).to eq(%w[--tmpfs /h/.cargo])
+      end
+    end
+
+    describe "what a workspace hides" do
+      around do |example|
+        Dir.mktmpdir do |dir|
+          @dir = File.realpath(dir)
+          example.run
+        end
+      end
+
+      def hiding(*paths)
+        profile = Lain::Confine::Profile.new(name: :workspace, trace: false, hidden: paths)
+        argv = argv_of(launcher.wrap(term, profile, trace_fd: 3))
+        argv[(argv.index("--die-with-parent") + 1)...argv.index("--")]
+      end
+
+      it "leaves out a hidden file inside a masked dir, which bwrap cannot bind into the read-only tmpfs" do
+        FileUtils.mkdir_p(dir = File.join(@dir, "masked"))
+        File.write(file = File.join(dir, "config"), "x")
+        profile = Lain::Confine::Profile.new(name: :workspace, trace: false, masks: [dir], hidden: [file])
+        argv = argv_of(launcher.wrap(term, profile, trace_fd: 3))
+
+        expect(argv[(argv.index("--die-with-parent") + 1)...argv.index("--")])
+          .to eq(["--tmpfs", dir, "--remount-ro", dir])
+      end
+
+      it "shows a file as /dev/null and a dir empty and read-only, and skips one that has gone since it was built" do
+        File.write(file = File.join(@dir, "config"), "x")
+        FileUtils.mkdir_p(dir = File.join(@dir, "shims"))
+
+        expect(hiding(file, dir, File.join(@dir, "gone")))
+          .to eq(["--ro-bind", "/dev/null", file, "--tmpfs", dir, "--remount-ro", dir])
+      end
+    end
+
     describe "the seal binds, kept per seal set" do
       let(:seal) { Lain::Confine::Profile::Seal }
 
@@ -594,6 +690,175 @@ RSpec.describe Lain::Confine::Bwrap do
     it "lets Ruby find its TMPDIR writable" do
       expect(run(wrapped([ruby, "-e", 'require "tmpdir"; puts Dir.tmpdir']), env: { "RUBYOPT" => nil }))
         .to eq(["#{tmpdir}\n", "", true])
+    end
+
+    describe "with a fixture home and toolchain" do
+      def fixture_home = File.join(@dir, "home")
+      def cargo_home = File.join(fixture_home, ".cargo")
+      def call_dir = File.join(tmpdir, "lain-call-1")
+      def install(*parts) = File.join(fixture_home, ".local/share/mise/installs", *parts)
+      def ruby_prefix = File.dirname(ruby, 2)
+
+      def inert(path, body = "exit 0\n")
+        FileUtils.mkdir_p(File.dirname(path))
+        File.write(path, body)
+        File.chmod(0o755, path)
+      end
+
+      def tool(*parts) = inert(install(*parts), "#!/bin/sh\necho #{parts.join("-")} ran\n")
+
+      before do
+        FileUtils.mkdir_p([File.join(cargo_home, "registry/src/x"), File.join(cargo_home, "bin"), call_dir])
+        File.write(File.join(cargo_home, "registry/src/x/lib.rs"), "crate source\n")
+        File.write(File.join(cargo_home, "credentials.toml"), "token = \"SECRET-MARK\"\n")
+        File.write(File.join(cargo_home, ".global-cache"), "db\n")
+        inert(File.join(fixture_home, ".bundle/config"), "BUNDLE_GEMS__EXAMPLE__COM: \"SECRET-MARK\"\n")
+        [%w[t 1 bin tool], %w[t 1 bin other], %w[t 2 bin other], %w[u 1 bin x]].each { tool(*_1) }
+        # The fixture mise sits where the profile runs programs, so only hiding it keeps it from running.
+        inert(install("t", "1", "bin", "mise"))
+        FileUtils.mkdir_p(File.join(fixture_home, ".local/share/mise/shims"))
+        File.symlink(install("t", "1", "bin", "mise"), File.join(fixture_home, ".local/share/mise/shims/t"))
+      end
+
+      def home_profile(**changes)
+        workspace = Lain::Confine::Profile.workspace(root:, home: fixture_home, tmpdir:, exec_files: [ruby])
+                                          .for_call(call_dir, granted: tmpdir)
+        bin = Lain::Confine::Profile.install_bin(install("t", "1", "bin", "tool"), home: fixture_home)
+        workspace.with(exec_dirs: [*workspace.exec_dirs, bin], read_dirs: [*workspace.read_dirs, ruby_prefix],
+                       **changes)
+                 .tap do |profile|
+          profile.homes.each { _1.make(profile.call_tmpdir) }
+        end
+      end
+
+      def home_sh(script, **)
+        term = Lain::Shell::Term.of(["sh", "-c", script])
+        run(argv_of(described_class.new(fence:).wrap(term, home_profile(**), trace_fd: 3)),
+            env: { "TMPDIR" => call_dir, "RUBYOPT" => nil })
+      end
+
+      def stamp(path) = File.stat(path).then { [_1.mtime, _1.size, File.read(path)] }
+
+      it "shows cargo's home private: the registry read-only, no credentials, and a write that misses the host" do
+        kept = %w[registry/src/x/lib.rs credentials.toml .global-cache].map { File.join(cargo_home, _1) }
+        before = kept.to_h { [_1, stamp(_1)] }
+        out, err, = home_sh(<<~SH)
+          cat #{cargo_home}/registry/src/x/lib.rs; ls -A #{cargo_home}; cat #{cargo_home}/credentials.toml
+          echo planted >> #{cargo_home}/registry/src/x/lib.rs; echo made > #{cargo_home}/made && cat #{cargo_home}/made
+          cat #{cargo_home}/config.toml
+        SH
+
+        expect(out.lines(chomp: true).first(5)).to eq(["crate source", "bin", "config.toml", "registry", "made"])
+        expect(out).to include(%(auto-clean-frequency = "never")).and(satisfy { !_1.include?("SECRET-MARK") })
+        expect(err).to match(/credentials.toml: No such file/).and match(/lib.rs: Read-only file system/)
+        expect([kept.to_h { [_1, stamp(_1)] }, File.exist?(File.join(cargo_home, "made"))]).to eq([before, false])
+      end
+
+      # Bundler reads a global config only when its size is not zero, so the size is all it is shown; the fence
+      # refuses the open as well, since the bound /dev/null is the host's, not the one it grants.
+      it "shows bundler's user config as zero bytes, refuses its content and a write, and leaves the host's alone" do
+        config = File.join(fixture_home, ".bundle/config")
+        before = stamp(config)
+
+        out, err, = home_sh("stat -L -c %s #{config}; cat #{config}; echo x >> #{config}")
+
+        expect([out, err.scan("Permission denied").size]).to eq(["0\n", 2])
+        expect(stamp(config)).to eq(before)
+      end
+
+      it "runs the resolved program's own install bin, and no sibling version, other tool or project file" do
+        inert(planted = File.join(root, "bin/x"))
+        out, err, = home_sh([install("t", "1", "bin", "other"), install("t", "2", "bin", "other"),
+                             install("u", "1", "bin", "x"), planted].join("; "))
+
+        expect(out).to eq("t-1-bin-other ran\n")
+        expect(err.scan("Permission denied").size).to eq(3)
+      end
+
+      it "never runs mise, through a shim or by name" do
+        mises = [File.join(fixture_home, ".local/share/mise/shims/t"),
+                 *("/usr/bin/mise" if File.exist?("/usr/bin/mise"))]
+
+        out, err, = home_sh(mises.map { "#{_1} --version" }.join("; "))
+
+        expect([out, err.scan("Permission denied").size]).to eq(["", mises.size])
+      end
+
+      it "loads Ruby's resolver and reads the LSM list, but not the resolver's own dir" do
+        landing = File.realpath("/etc/resolv.conf")
+        upstream = Dir.glob(File.join(File.dirname(landing), "*")).find { File.file?(_1) && _1 != landing }
+        script = %(#{ruby} -e 'require "resolv"; puts :resolv'; cat /sys/kernel/security/lsm)
+
+        out, err, = home_sh(upstream ? "#{script}; cat #{upstream}" : script)
+
+        expect(out).to start_with("resolv\n").and include("landlock")
+        expect(err).to include("Permission denied") if upstream && File.dirname(landing) != "/etc"
+      end
+
+      it "runs a real target/ and the call's own TMPDIR, never a target/ that is a link out of the root" do
+        inert(File.join(root, "target/debug/build-script"), "#!/bin/sh\necho built\n")
+        inert(File.join(call_dir, "test-script"), "#!/bin/sh\necho tested\n")
+        out, = home_sh("#{root}/target/debug/build-script; #{call_dir}/test-script")
+        FileUtils.mv(File.join(root, "target"), outside = File.join(@dir, "outside-target"))
+        File.symlink(outside, File.join(root, "target"))
+        linked, err, = home_sh("#{root}/target/debug/build-script")
+
+        expect([out, linked]).to eq(["built\ntested\n", ""])
+        expect(err).to include("Permission denied")
+      end
+
+      describe "on a private network" do
+        before do
+          skip("this lain-fence cannot give a call a private network") unless
+            Lain::Confine::Probe.new(fence:, journal: []).supports?(:private_net)
+        end
+
+        let(:net_probe) do
+          <<~PY
+            import socket, sys
+            what = sys.argv[1]
+            try:
+                if what == "tcp":
+                    server = socket.socket(); server.bind(("127.0.0.1", 0)); server.listen()
+                    client = socket.create_connection(server.getsockname()); print("tcp ok")
+                elif what == "udp":
+                    socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b"x", ("127.0.0.1", 9)); print("udp ok")
+                else:
+                    socket.create_connection(("127.0.0.1", int(what)), timeout=2); print("host ok")
+            except OSError as error:
+                print(what, error.strerror)
+          PY
+        end
+
+        def net(what, private_net) = home_sh(%(python3 -c '#{net_probe}' #{what}), private_net:).first
+
+        it "binds and connects on its own loopback, still refuses a datagram, and never reaches the host's" do
+          host = TCPServer.new("127.0.0.1", 0)
+
+          expect(net("tcp", true)).to eq("tcp ok\n")
+          expect(net("udp", true)).to eq("udp Operation not permitted\n")
+          expect(net(host.addr[1].to_s, true)).not_to include("host ok")
+        ensure
+          host&.close
+        end
+
+        it "refuses a bind on the host's network, where the fence still handles TCP" do
+          expect(net("tcp", false)).to eq("tcp Permission denied\n")
+        end
+      end
+
+      it "keeps the toolchain and mise configs at the root read-only, and their dirs in place" do
+        sealed = %w[.cargo/config.toml rust-toolchain.toml rust-toolchain .tool-versions mise.toml .mise.toml
+                    .config/mise/config.toml].map { File.join(root, _1) }
+        sealed.each { |path| FileUtils.mkdir_p(File.dirname(path)).then { File.write(path, "# kept\n") } }
+        before = sealed.to_h { [_1, stamp(_1)] }
+
+        _out, err, = home_sh("#{appends(sealed)}; rm #{root}/.cargo/config.toml; mv #{root}/.cargo #{root}/.cargo-old")
+
+        expect(err.scan("Read-only file system").size).to eq(sealed.size)
+        expect(err.scan(/busy/i).size).to eq(2)
+        expect(sealed.to_h { [_1, stamp(_1)] }).to eq(before)
+      end
     end
 
     # bwrap mounts the mask nodev, so even bwrap's layer alone refuses to open it, as for a reader.

@@ -26,6 +26,7 @@ pub struct Grants {
     pub write_dirs: Vec<String>,
     pub unix_dirs: Vec<String>,
     pub connect_ports: Vec<u16>,
+    pub private_net: bool,
 }
 
 pub struct Enforcement {
@@ -59,7 +60,11 @@ impl Grants {
     pub fn requested(&self) -> Requested {
         Requested {
             fs: AccessFs::from_all(TARGET),
-            net: AccessNet::ConnectTcp | AccessNet::BindTcp,
+            net: if self.private_net {
+                BitFlags::empty()
+            } else {
+                AccessNet::ConnectTcp | AccessNet::BindTcp
+            },
             scope: Scope::AbstractUnixSocket | Scope::Signal,
         }
     }
@@ -67,10 +72,12 @@ impl Grants {
     /// Irreversible: this process and everything it execs stay inside the domain.
     pub fn restrict_self(&self) -> Result<Enforcement, Error> {
         let requested = self.requested();
-        let ruleset = Ruleset::default()
-            .handle_access(requested.fs)?
-            .handle_access(requested.net)?
-            .scope(requested.scope)?;
+        let mut ruleset = Ruleset::default().handle_access(requested.fs)?;
+        // The landlock crate rejects an empty access set as an error.
+        if !requested.net.is_empty() {
+            ruleset = ruleset.handle_access(requested.net)?;
+        }
+        let ruleset = ruleset.scope(requested.scope)?;
         let mut created = ruleset.create()?;
         for port in &self.connect_ports {
             created = created.add_rule(NetPort::new(*port, AccessNet::ConnectTcp))?;
@@ -99,7 +106,8 @@ impl Grants {
         )?;
         let restriction = created.restrict_self()?;
         Ok(Enforcement {
-            status: Status::new(&requested, restriction.landlock, &skipped),
+            status: Status::new(&requested, restriction.landlock, &skipped)
+                .private_net(self.private_net),
             ruleset: restriction.ruleset,
         })
     }

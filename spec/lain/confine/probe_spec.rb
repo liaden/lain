@@ -176,6 +176,36 @@ RSpec.describe Lain::Confine::Probe do
       expect(journal.first.provider).to include("/x/lain-fence cannot reap")
     end
 
+    it "offers a private network when the fence's status names private_net, whatever its value outside one" do
+      answers["lain-fence"] = ['{"abi":9,"private_net":false,"reap":true,"rights":{},"skipped":[]}', true]
+
+      expect(probe.supports?(:private_net)).to be(true)
+      expect(journal).to be_empty
+    end
+
+    # A box whose bwrap makes a user namespace but not a network one would abort every workspace call.
+    it "journals a bwrap that cannot unshare a network as giving no private network, naming bwrap" do
+      answers["lain-fence"] = ['{"abi":9,"private_net":false,"reap":true,"rights":{},"skipped":[]}', true]
+      netless = lambda do |argv|
+        argv.include?("--unshare-net") ? ["bwrap: No permissions to create new namespace", false] : runner.call(argv)
+      end
+      subject = described_class.new(fence: "/x/lain-fence", runner: netless, ptrace_scope: scope, journal:)
+
+      expect([subject.supports?(:private_net), subject.supports?(:bwrap)]).to eq([false, true])
+      expect(journal.map(&:capability)).to eq([:private_net])
+      expect(journal.first.provider).to include("bwrap cannot unshare a network namespace")
+    end
+
+    # A fence built before the flag rejects it and exits 125, which would fail every workspace call.
+    it "journals a fence whose status says nothing of a private network as unable to give one, once" do
+      subject = probe
+
+      expect([subject.supports?(:private_net), subject.supports?(:private_net), subject.supports?(:landlock)])
+        .to eq([false, false, true])
+      expect(journal.map(&:capability)).to eq([:private_net])
+      expect(journal.first.provider).to include("/x/lain-fence cannot give a call a private network")
+    end
+
     it "exposes the ABI the fence reported" do
       expect(probe.abi).to eq(9)
     end

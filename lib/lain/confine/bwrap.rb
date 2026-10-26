@@ -58,20 +58,41 @@ module Lain
       def namespace(profile)
         [@bwrap, "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
          "--size", profile.tmpfs_bytes.to_s, "--tmpfs", "/tmp", "--unshare-pid", "--die-with-parent",
+         *("--unshare-net" if profile.private_net),
          *under_tmp(profile).flat_map { |dir| ["--ro-bind-try", dir, dir] },
          *writable(profile).flat_map { |dir| ["--bind-try", dir, dir] },
+         *profile.homes.flat_map { housing(_1, profile) },
          *@seal_binds.for(profile.sealed, writable(profile)),
-         *masking(profile.masks), "--"]
+         *masking([*profile.masks, *profile.hidden.select { File.exist?(_1) }]), "--"]
       end
 
       # The fence decides what may be written; this only lifts bwrap's
-      # read-only root from the grants that live outside its own /tmp.
-      def writable(profile) = profile.write_dirs - Profile::SYSTEM_WRITE
+      # read-only root from the grants that live outside its own /tmp. A
+      # private home is written only through its own mount, never the user's.
+      def writable(profile)
+        homes = profile.homes.map(&:path)
+        (profile.write_dirs - Profile::SYSTEM_WRITE).reject { |dir| homes.any? { Landing.under?(dir, _1) } }
+      end
+
+      # A call whose TMPDIR is the private /tmp has no dir of its own on the
+      # host, so its home is a tmpfs, and lain's files go unwritten.
+      def housing(home, profile)
+        mount = if profile.call_tmpdir
+                  ["--bind", home.source(profile.call_tmpdir), home.path]
+                else
+                  ["--size", profile.tmpfs_bytes.to_s, "--tmpfs", home.path]
+                end
+        [*mount, *home.reads.flat_map { back("--ro-bind-try", home, _1) },
+         *home.writes.flat_map { back("--bind-try", home, _1) }]
+      end
+
+      def back(flag, home, name) = File.join(home.path, name).then { [flag, _1, _1] }
 
       # The kind is read here, the last moment before bwrap binds, because a
-      # mask list keeps a path, not what it was when judged. bwrap cannot bind
-      # /dev/null over a directory, so a directory gets an empty read-only
-      # tmpfs. A mask inside a masked directory is left out: bwrap cannot bind
+      # mask list keeps a path, not what it was when judged; a hidden path is
+      # kept only while it is there, since bwrap aborts on a mount at nothing.
+      # bwrap cannot bind /dev/null over a directory, so a directory gets an
+      # empty read-only tmpfs. A mask inside a masked directory is left out: bwrap cannot bind
       # into the read-only tmpfs, and on a writable one the bind would put the
       # name back.
       def masking(masks)
@@ -113,7 +134,8 @@ module Lain
         grants = { "--exec-dir" => profile.exec_dirs, "--exec-file" => profile.exec_files,
                    "--read-dir" => profile.read_dirs, "--write-dir" => profile.write_dirs,
                    "--connect-port" => profile.connect_ports, "--unix-dir" => profile.unix_dirs }
-        [@fence, *grants.flat_map { |flag, values| values.flat_map { [flag, _1.to_s] } }, "--"]
+        [@fence, *("--private-net" if profile.private_net),
+         *grants.flat_map { |flag, values| values.flat_map { [flag, _1.to_s] } }, "--"]
       end
 
       # The binds that keep a workspace's seals in place: each directory

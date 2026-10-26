@@ -1,0 +1,142 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+ENV["BUNDLE_GEMFILE"] ||= File.expand_path("../Gemfile", __dir__)
+require "bundler/setup"
+require "lain"
+require "optparse"
+
+# Runs one command under the workspace profile, the way the bash tool runs a call a judge or a rule
+# approved, and says what the profile refused. The sandbox is built by the constructor production
+# uses, so what passes here is what a confined chat call would get.
+#
+#   bin/workspace-run [--root DIR] [--grant PROGRAM] -- command args...
+#
+#   --root DIR        the project the call may write (default: the current directory)
+#   --grant PROGRAM   hand the call's argv to the profile, so a bundle, cargo or git fetch earns its
+#                     ports; the operator vouches that nothing under the root is fresh
+#
+# A variable the command needs beyond the child-env allowlist, such as CARGO_TARGET_DIR, goes in
+# LAIN_ENV_PASS. Exits with the command's status; 64 for a bad call, 69 where the box cannot sandbox.
+module WorkspaceRun
+  USAGE = "usage: bin/workspace-run [--root DIR] [--grant PROGRAM] -- command args..."
+  TIMEOUT = 1800
+  REFUSING = %w[EACCES EPERM].freeze
+
+  # The lineage a lease has is empty, so nothing is fresh.
+  module Quiet
+    def self.any_under?(_root) = false
+  end
+
+  Options = Data.define(:root, :grant, :argv)
+
+  module_function
+
+  def main(args)
+    options = parse(args)
+    refused = refusal(options)
+    return refused if refused
+
+    journal = []
+    exec = sandboxed(options.root, journal)
+    return unavailable if exec.nil?
+
+    capture = run(exec, options)
+    report(journal)
+    $stdout.print(capture.stdout)
+    $stderr.print(capture.stderr)
+    capture.exit_status
+  end
+
+  def parse(args)
+    head, tail = args.slice_before("--").to_a.then { |before, after| [before || [], after.to_a.drop(1)] }
+    found = { root: Dir.pwd, grant: nil }
+    OptionParser.new do |opts|
+      opts.on("--root DIR") { found[:root] = File.expand_path(_1) }
+      opts.on("--grant PROGRAM") { found[:grant] = _1 }
+    end.parse!(head)
+    Options.new(**found, argv: tail)
+  rescue OptionParser::ParseError
+    nil
+  end
+
+  def usage
+    warn(USAGE)
+    64
+  end
+
+  # @return [Integer, nil] the exit status of a call refused before it runs
+  def refusal(options)
+    return usage if options.nil? || options.argv.empty?
+
+    mismatched(options) if options.grant && options.grant != options.argv.first
+  end
+
+  # The grant is earned by the call's own program, so naming another would only read as a grant that never applied.
+  def mismatched(options)
+    warn("workspace-run: --grant #{options.grant} names a program the command does not run (#{options.argv.first})")
+    64
+  end
+
+  def unavailable
+    warn("workspace-run: this box cannot sandbox a call")
+    69
+  end
+
+  def sandboxed(root, journal)
+    # CARGO_TARGET_DIR names where the command builds, which is not where this checkout's fence was.
+    fence = Lain::Confine::Bwrap.fence_binary(env: ENV.to_h.except("CARGO_TARGET_DIR"))
+    probe = Lain::Confine::Probe.new(fence:, journal:)
+    return if Lain::Confine::Sandbox.lacking(probe).any?
+
+    home = Dir.home
+    policy = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root))
+    masks = Lain::Confine::MaskList.new(root:, policy: -> { policy })
+    Lain::Confine::Sandbox.new(root:, home:, masks:, probe:, fence:, journal:, workspace: true, fresh: Quiet)
+                          .tap(&:prime).wrap(Lain::Exec::Local.new, requirer: "bin/workspace-run")
+  end
+
+  def run(exec, options)
+    term = Lain::Shell::Term.of(options.argv)
+    exec.call(command: term, cwd: options.root, env: {}, timeout: TIMEOUT, confinement: request(term, options))
+  end
+
+  def request(term, options)
+    worker = Lain::WorkerEnv.new(cwd: options.root, env: ENV.to_h, checkout: options.root)
+    resolver = Lain::Shell::Executable::Resolver.new(root: options.root,
+                                                     fresh: Lain::Shell::Executable::Resolver::NeverFresh)
+    ruling = Lain::Approval::Escalation::Ruling.allow(rung: Lain::Approval::Escalation::Rules::NAME,
+                                                      because: "run by bin/workspace-run", rule: "workspace-run")
+    Lain::Confine::Request.new(ruling:, executables: resolver.for(worker).call(term), cwd: options.root,
+                               root: options.root, tool_use_id: "workspace-run",
+                               argv: options.grant ? [options.argv] : [])
+  end
+
+  def report(journal)
+    journal.each do |record|
+      case record.journal_type
+      when "sandbox" then sandbox_lines(record)
+      when "exec_record" then exec_lines(record)
+      end
+    end
+  end
+
+  def sandbox_lines(record)
+    note("profile #{record.profile}") if record.refused.empty? && record.created_sealed.empty?
+    record.refused.each { note("refused #{_1}") }
+    record.created_sealed.each { note("created sealed #{_1}") }
+  end
+
+  def exec_lines(record)
+    record.refusals.map { _1[:path] }.uniq.each { note("refused #{_1}") }
+    record.connects.each do |connect|
+      address = "#{connect[:address]}:#{connect[:port]}"
+      note("#{connect[:call]} #{address} rc=#{connect[:rc]}")
+      note("refused #{connect[:call]} #{address} #{connect[:errno]}") if REFUSING.include?(connect[:errno])
+    end
+  end
+
+  def note(line) = warn("workspace-run: #{line}")
+end
+
+exit(WorkspaceRun.main(ARGV)) if $PROGRAM_NAME == __FILE__

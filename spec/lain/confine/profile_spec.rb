@@ -107,6 +107,7 @@ RSpec.describe Lain::Confine::Profile do
     def tmpdir = File.join(@dir, "t")
     def common = File.join(@dir, "main", ".git")
     def sealed_of(profile) = profile.sealed.to_h { [_1.path, _1.absent] }
+    def in_root(*names) = names.map { File.join(root, _1) }
 
     def workspace(at = root, tmp: tmpdir, **)
       described_class.workspace(root: at, home: "/h", tmpdir: tmp, masks: ["#{at}/.env"], **)
@@ -132,7 +133,7 @@ RSpec.describe Lain::Confine::Profile do
 
       it "reads and runs what a reader does, and masks what it was handed" do
         reader = described_class.reader(root:, home: "/h", masks: ["#{root}/.env"])
-        expect([workspace.name, workspace.exec_dirs, workspace.read_dirs, workspace.masks])
+        expect([workspace.name, workspace.exec_dirs, workspace.read_dirs.first(reader.read_dirs.size), workspace.masks])
           .to eq([:workspace, reader.exec_dirs, reader.read_dirs, reader.masks])
       end
 
@@ -147,9 +148,26 @@ RSpec.describe Lain::Confine::Profile do
           File.join(git, "hooks") => false, File.join(git, "config") => false,
           File.join(git, "config.worktree") => true, File.join(git, "commondir") => true,
           File.join(git, "modules") => true, File.join(git, "worktrees") => true,
-          File.join(root, ".lain") => true, File.join(root, ".envrc") => true,
-          File.join(root, ".pre-commit-config.yaml") => true
+          File.join(root, ".lain") => true, **in_root(*described_class::PROJECT_SEALED).to_h { [_1, true] }
         )
+      end
+
+      it "seals what rustup, cargo and mise read from the root on the next unconfined run, as .envrc is sealed" do
+        expect(described_class::PROJECT_SEALED).to eq(
+          %w[.envrc .pre-commit-config.yaml rust-toolchain.toml rust-toolchain .cargo/config.toml .cargo/config
+             .tool-versions mise.toml .mise.toml mise.local.toml .mise.local.toml .mise/config.toml
+             .config/mise.toml .config/mise/config.toml mise/config.toml]
+        )
+      end
+
+      it "refuses a project whose .cargo or .config is a link, since a seal beneath could be repointed" do
+        %w[.cargo .config].each do |name|
+          FileUtils.mkdir_p(elsewhere = File.join(@dir, "elsewhere-#{name}"))
+          File.symlink(elsewhere, File.join(root, name))
+
+          expect { workspace }.to raise_error(described_class::Unsealable, /#{Regexp.escape(File.join(root, name))}/)
+          File.unlink(File.join(root, name))
+        end
       end
 
       it "seals the submodules' git dirs and every worktree's admin dir, each whole" do
@@ -164,8 +182,8 @@ RSpec.describe Lain::Confine::Profile do
       it "seals the whole git dir, so a commit fails, when git cannot answer for it" do
         File.write(File.join(root, ".git", "HEAD"), "not a ref\n")
         expect(sealed_of(workspace)).to eq(
-          File.join(root, ".git") => false, File.join(root, ".lain") => true, File.join(root, ".envrc") => true,
-          File.join(root, ".pre-commit-config.yaml") => true
+          File.join(root, ".git") => false, File.join(root, ".lain") => true,
+          **in_root(*described_class::PROJECT_SEALED).to_h { [_1, true] }
         )
       end
 
@@ -251,7 +269,7 @@ RSpec.describe Lain::Confine::Profile do
 
     it "seals only the project's persistence files outside a git checkout" do
       FileUtils.mkdir_p(root)
-      expect(sealed_of(workspace).keys).to eq(%w[.lain .envrc .pre-commit-config.yaml].map { File.join(root, _1) })
+      expect(sealed_of(workspace).keys).to eq([".lain", *described_class::PROJECT_SEALED].map { File.join(root, _1) })
     end
 
     it "refuses a relative TMPDIR" do
@@ -308,6 +326,124 @@ RSpec.describe Lain::Confine::Profile do
       FileUtils.mkdir_p(root)
       expect([workspace, described_class::TRACED, described_class.reader(root:, home: "/h")].map(&:call_tmpdir))
         .to eq([nil, nil, nil])
+    end
+  end
+
+  describe "a workspace's toolchain" do
+    around do |example|
+      Dir.mktmpdir do |dir|
+        @dir = File.realpath(dir)
+        FileUtils.mkdir_p([root, home])
+        example.run
+      end
+    end
+
+    def root = File.join(@dir, "r")
+    def home = File.join(@dir, "h")
+    def tmpdir = File.join(@dir, "t")
+    def cargo = File.join(home, ".cargo")
+    def workspace = described_class.workspace(root:, home:, tmpdir:)
+    def private_home(reads, writes = []) = described_class::PrivateHome.cargo(cargo, reads:, writes:)
+
+    def plant_cargo_home
+      FileUtils.mkdir_p(%w[registry/src bin git].map { File.join(cargo, _1) })
+      File.write(File.join(cargo, "credentials.toml"), "token = \"x\"\n")
+    end
+
+    it "keeps cargo's home private: registry, bin and git checkouts bound back read-only, a config that never cleans" do
+      plant_cargo_home
+
+      expect(workspace.homes).to eq([private_home(%w[registry bin git])])
+      expect(workspace.homes.sole.files).to eq("config.toml" => %([cache]\nauto-clean-frequency = "never"\n))
+      expect(workspace.write_dirs).to include(cargo)
+    end
+
+    it "keeps no private home over a ~/.cargo that is a link, which bwrap would mount through to its landing" do
+      FileUtils.mkdir_p(File.join(elsewhere = File.join(@dir, "cargo-elsewhere"), "registry"))
+      File.symlink(elsewhere, cargo)
+
+      expect(workspace.homes).to eq([])
+    end
+
+    it "keeps no private cargo home where home has none, since nothing can be mounted at a path that is not there" do
+      expect([workspace.homes, workspace.write_dirs]).to eq([[], [root, tmpdir, "/dev/null", "/tmp"]])
+    end
+
+    it "opens a cargo grant's registry, git checkouts and package lock in the private home, and nothing else" do
+      plant_cargo_home
+      FileUtils.mkdir_p(File.join(root, "target"))
+      granted = described_class.grant(program: "cargo", root:, home:, tmpdir:, env: {})
+
+      expect(granted.homes).to eq([private_home(%w[bin], %w[registry git .package-cache])])
+    end
+
+    it "hides bundler's user config, where its file lands, and every mise binary, the one its shims reach first" do
+      FileUtils.mkdir_p([File.join(home, ".bundle"), shims = File.join(home, ".local/share/mise/shims")])
+      File.write(config = File.join(@dir, "bundle-config"), "BUNDLE_JOBS: \"4\"\n")
+      File.symlink(config, File.join(home, ".bundle", "config"))
+      File.write(mise = File.join(@dir, "mise"), "exit 0\n")
+      File.symlink(mise, File.join(shims, "ruby"))
+
+      expect(workspace.hidden).to include(config, mise)
+      expect([workspace.runs?(mise), workspace.hidden]).to match([false, all(satisfy { !_1.start_with?(home) })])
+    end
+
+    it "hides nothing in a home that has neither" do
+      expect(workspace.hidden.grep(/\A#{Regexp.escape(@dir)}/)).to eq([])
+    end
+
+    it "runs a real target/ inside the root, and nothing for a target/ that is a link or absent" do
+      absent = workspace.exec_dirs
+      FileUtils.mkdir_p(target = File.join(root, "target"))
+      real = workspace.exec_dirs
+      FileUtils.rm_rf(target)
+      File.symlink(FileUtils.mkdir_p(File.join(@dir, "outside")).first, target)
+
+      expect([absent, real, workspace.exec_dirs].map { _1.include?(target) }).to eq([false, true, false])
+    end
+
+    it "runs the call's own TMPDIR, which is removed after it, and never the TMPDIR beneath which it is made" do
+      call_dir = File.join(tmpdir, "lain-call-1")
+
+      moved = workspace.for_call(call_dir, granted: tmpdir)
+
+      expect([moved.exec_dirs.include?(call_dir), moved.exec_dirs.include?(tmpdir)]).to eq([true, false])
+      expect(workspace.exec_dirs).not_to include(tmpdir)
+    end
+
+    it "reads exactly the file /etc/resolv.conf lands on and the kernel's LSM list, never the resolver's dir" do
+      landing = File.realpath(described_class::RESOLV_CONF)
+
+      expect(workspace.read_dirs).to include(landing, "/sys/kernel/security/lsm")
+      expect(workspace.read_dirs).not_to include(File.dirname(landing)) unless File.dirname(landing) == "/etc"
+    end
+
+    it "shares the host's network unless told the call has a private one, and is deeply frozen" do
+      plant_cargo_home
+
+      expect([workspace.private_net, workspace.with(private_net: true).private_net]).to eq([false, true])
+      expect(workspace).to be_deeply_frozen
+    end
+
+    it "refuses a private network beside connect ports, which the fence takes as a usage error" do
+      expect { described_class.new(name: :workspace, trace: false, private_net: true, connect_ports: [443]) }
+        .to raise_error(ArgumentError, /private/)
+    end
+  end
+
+  describe ".install_bin" do
+    def installs = "/h/.local/share/mise/installs"
+
+    it "names the bin dir of the one install a program lands in" do
+      expect(described_class.install_bin("#{installs}/ruby/4.0.6/bin/bundle", home: "/h"))
+        .to eq("#{installs}/ruby/4.0.6/bin")
+    end
+
+    it "names nothing for a path outside an install's own bin dir" do
+      paths = ["#{installs}/ruby/4.0.6/lib/x", "#{installs}/ruby/bin/x", "#{installs}/ruby/4.0.6/bin/sub/x",
+               "/usr/bin/ruby", "/h/.cargo/bin/cargo", "#{installs}x/ruby/4.0.6/bin/x"]
+
+      expect(paths.map { described_class.install_bin(_1, home: "/h") }).to all(be_nil)
     end
   end
 

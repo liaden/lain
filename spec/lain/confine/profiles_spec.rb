@@ -206,6 +206,75 @@ RSpec.describe Lain::Confine::Profiles do
         expect(profiles.for(request(ruling("auto"), executables:)).exec_files).to eq([grep])
       end
 
+      it "runs the whole bin dir of a mise install a program resolved into, never a sibling version's" do
+        bin = File.join(home, ".local/share/mise/installs/ruby/4.0.6/bin")
+        planted = File.join(root, "bin/bundle")
+        executables = [executable("bundle", File.join(bin, "bundle"), :user), executable("x", planted, :project)]
+        profile = profiles.for(request(ruling("auto"), executables:))
+
+        expect(profile.exec_dirs).to include(bin)
+        expect([profile.runs?(File.join(bin, "ruby")), profile.runs?("#{bin.sub("4.0.6", "4.0.5")}/ruby"),
+                profile.runs?(planted)]).to eq([true, false, false])
+        expect(profiles.for(composed(executables:)).exec_dirs).not_to include(bin)
+      end
+
+      it "runs no mise install for a program a project could have planted there" do
+        bin = File.join(home, ".local/share/mise/installs/ruby/4.0.6/bin")
+        executables = [executable("bundle", File.join(bin, "bundle"), :project)]
+
+        expect(profiles.for(request(ruling("auto"), executables:)).exec_dirs).not_to include(bin)
+      end
+
+      it "makes the call's private cargo home in its own dir, holding only the config lain writes" do
+        FileUtils.mkdir_p(File.join(home, ".cargo/registry"))
+        profile = profiles.for(request(ruling("auto")))
+        made = profile.homes.sole.source(profile.call_tmpdir)
+
+        expect(Dir.children(made)).to eq(["config.toml"])
+        expect(File.read(File.join(made, "config.toml"))).to include(%(auto-clean-frequency = "never"))
+      end
+
+      it "stops running target/ from the call after it is replaced by a link out of the root" do
+        FileUtils.mkdir_p(target = File.join(root, "target"))
+        real = profiles.for(request(ruling("auto"))).exec_dirs
+        FileUtils.rm_rf(target)
+        File.symlink(FileUtils.mkdir_p(File.join(@base, "outside")).first, target)
+
+        expect([real.include?(target), profiles.for(request(ruling("auto"))).exec_dirs.include?(target)])
+          .to eq([true, false])
+      end
+
+      it "runs a target/ from the call after the one that made it" do
+        before = profiles.for(request(ruling("auto"))).exec_dirs
+        FileUtils.mkdir_p(target = File.join(root, "target"))
+
+        expect([before.include?(target), profiles.for(request(ruling("auto"))).exec_dirs.include?(target)])
+          .to eq([false, true])
+      end
+
+      it "removes the call's dir and refuses the call when its private home cannot be made" do
+        FileUtils.mkdir_p(File.join(home, ".cargo/registry"))
+        allow(FileUtils).to receive(:mkdir_p).and_call_original
+        allow(FileUtils).to receive(:mkdir_p).with(%r{/\.lain-homes/}).and_raise(Errno::ENOSPC)
+
+        expect { profiles.for(request(ruling("auto"))) }.to raise_error(described_class::NoTmpdir)
+        expect(Dir.children(scratch)).to be_empty
+      end
+
+      describe "a private network" do
+        def status(fields) = ["#{JSON.generate({ abi: 6, rights: {}, skipped: [], **fields })}\n", true]
+
+        it "is the call's own where the fence says it can make one" do
+          answers["lain-fence"] = status(private_net: false)
+
+          expect(profiles.for(request(ruling("auto"))).private_net).to be(true)
+        end
+
+        it "is the host's, so the fence still refuses every bind, where the fence names no private_net" do
+          expect(profiles.for(request(ruling("auto"))).private_net).to be(false)
+        end
+      end
+
       it "refuses a mask that would empty the project it writes, naming the profile, and makes no dir" do
         listed = Struct.new(:masks) { def landed_on(_path) = ["link"] }.new([mask(root)])
         workspace = described_class.new(masks: listed, probe:, home:, root:, workspace: true, tmpdir: scratch)
@@ -265,6 +334,13 @@ RSpec.describe Lain::Confine::Profiles do
                                              unix_dirs: ["/run/systemd/resolve"], confined?: true)
           expect(profile.exec_files).to eq([File.join(mise, "bundle")])
           expect(profile.write_dirs).to include(File.join(@base, "gems"), profile.call_tmpdir)
+        end
+
+        it "keeps a grant on the host's network, which its fetch needs, though the fence could make a private one" do
+          answers["lain-fence"] = ["{\"abi\":6,\"private_net\":false,\"rights\":{},\"skipped\":[]}\n", true]
+
+          expect([profile_of(%w[git fetch origin], git), profile_of(%w[git status], git)].map(&:private_net))
+            .to eq([false, true])
         end
 
         it "grants a rule's or bypass's approval too, the rungs that earn the workspace profile" do
@@ -451,7 +527,7 @@ RSpec.describe Lain::Confine::Profiles do
         it "seals each root's own git dir, never another root's" do
           other = File.join(@base, "other").tap { git_init(_1) }
 
-          expect([sealed_paths, sealed_paths(other)].map { |seals| seals.map(&:path).grep(/config\z/) })
+          expect([sealed_paths, sealed_paths(other)].map { |seals| seals.map(&:path).grep(%r{/\.git/config\z}) })
             .to eq([[File.join(root, ".git/config")], [File.join(other, ".git/config")]])
         end
 
