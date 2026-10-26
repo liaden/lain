@@ -239,6 +239,26 @@ RSpec.describe Lain::CLI::CompactionStrategy do
     end
   end
 
+  describe "the truncating strategy" do
+    it "resolves truncate-cumulative with no tier, and never builds one" do
+      calls = []
+
+      strategy = resolve("truncate-cumulative", tier: tier_factory(calls:))
+
+      expect(strategy).to be_a(Lain::Compaction::Strategy::TruncateOnly)
+      expect(calls).to be_empty
+    end
+
+    it "resolves with no tier: at all, since it asks no model" do
+      expect(resolve("truncate-cumulative")).to be_a(Lain::Compaction::Strategy::TruncateOnly)
+    end
+
+    it "refuses to compose with a strategy claiming the same messages" do
+      expect { resolve("truncate-cumulative+elide") }
+        .to raise_error(Lain::CLI::CompactionStrategy::Unknown, /would overlap/)
+    end
+  end
+
   describe "a composition spelled with the separator" do
     it "builds a Composed strategy whose operands are the two named leaves" do
       strategy = resolve("elide-tools+summarize-conversation", tier: tier_factory, journal: [])

@@ -99,11 +99,12 @@ module Lain
 
       # The strategies `--compact-strategy` selects between, in the order help
       # text lists them: the two whole-span policies first, then the two
-      # narrowed ones, the pair a reader is meant to see as complements.
+      # narrowed ones, the pair a reader is meant to see as complements, then
+      # the model-free truncating arm.
       #
       # The set of LEAVES only -- a name may also be several of these joined by
       # {SEPARATOR}, and the compositions over it are not enumerable.
-      STRATEGIES = %w[summarizing elide summarize-conversation elide-tools].freeze
+      STRATEGIES = %w[summarizing elide summarize-conversation elide-tools truncate-cumulative].freeze
 
       # The only composition that partitions a span instead of overlapping it.
       PARTITIONING_PAIR = %w[elide-tools summarize-conversation].freeze
@@ -274,6 +275,7 @@ module Lain
         when "summarize-conversation"
           Compaction::Strategy::SummarizeConversation.new(oracle: recorded_oracle(name), sink: @sink)
         when "elide-tools" then Compaction::Strategy::ElideToolObservations.new
+        when "truncate-cumulative" then Compaction::Strategy::TruncateOnly.new
         # {STRATEGIES} names a strategy that {#strategy}'s `case` has no branch
         # for -- an internal inconsistency in THIS class, never an operator's
         # flag typo, so deliberately not {Unknown}: that would present a bug in
