@@ -31,23 +31,30 @@ module Lain
     # that guard refuse an `ask` run held against a `bypass` one: absent it,
     # every run reads as "not recorded" and the guard agrees with everything.
     class Variance
+      # How far apart recordings may have started before they stop being samples of one thing.
+      DEFAULT_WINDOW_HOURS = 24
+
       # @param recordings [Array<Session::Recording>] n >= 2 recordings of one task
       # @param price_book [Lain::PriceBook] how each recording's usage becomes dollars
       # @param set_aside [Array<String>] runs of the task that measured nothing,
       #   each named with why; listed, never counted
+      # @param window [Numeric] seconds the recordings' start times may span
       # @raise [ArgumentError] on fewer than two recordings, or on a recording
       #   whose baseline cannot line up 1:1 with its model calls
       # @raise [Capability::Guard::Mismatch] when the recordings degraded different sets
       # @raise [Lain::Error] when the recordings walked different modes
-      # @raise [Lain::Error] when the recordings differ on a comparability axis
-      def initialize(recordings:, price_book: PriceBook.default, set_aside: [])
+      # @raise [Lain::Error] when the recordings differ on a comparability axis, or
+      #   started farther apart than the window, or one has no start time
+      def initialize(recordings:, price_book: PriceBook.default, set_aside: [], window: DEFAULT_WINDOW_HOURS * 3600)
         @recordings = Array(recordings).freeze
         raise ArgumentError, "variance needs at least two recordings; one run is not an experiment" if
           @recordings.size < 2
 
         @price_book = price_book
         @set_aside = set_aside.dup.freeze
+        @window = Window.new(window)
         guard_comparable!
+        @window.checked!(@recordings.map(&:started_at))
         @compare = build_compare
         @diffs = @recordings.map { |recording| recording.dry_replay.diff(recording.context) }.freeze
       end
@@ -62,7 +69,7 @@ module Lain
       private
 
       def header
-        "Variance — #{@recordings.size} recordings"
+        "Variance — #{@recordings.size} recordings, #{@window.describe}"
       end
 
       def named
@@ -134,16 +141,75 @@ module Lain
         raise ::Lain::Error, "cannot compare runs that differ in #{axis}: #{carriers(labels, axis)}"
       end
 
-      # Ordinals count from 1 in recording order, the order the CLI lists the paths in.
       def carriers(labels, axis)
         ordinals = labels.each_with_index.group_by { |entry, _| entry.fetch(axis) }
-        ordinals.map { |value, runs| "#{value} (#{spans(runs.map { |_, index| index + 1 })})" }.join(" vs ")
+        ordinals.map { |value, runs| "#{value} (#{Ordinals.spans(runs.map { |_, index| index + 1 })})" }.join(" vs ")
       end
 
-      def spans(ordinals)
-        ordinals.slice_when { |previous, following| following != previous + 1 }
-                .map { |run| run.size == 1 ? run.first.to_s : "#{run.first}-#{run.last}" }.join(", ")
+      # Runs days apart are not repeated samples: a provider can change a model
+      # under one name, so a wider span is the operator's explicit choice.
+      class Window
+        def initialize(limit)
+          unless limit.is_a?(Numeric) && limit.finite? && limit.positive?
+            raise ::Lain::Error, "the window must be a positive, finite number of seconds, got #{limit}"
+          end
+
+          @limit = limit
+        end
+
+        def checked!(starts)
+          @starts = starts
+          missing = @starts.index(nil)
+          unless missing.nil?
+            raise ::Lain::Error,
+                  "run #{missing + 1} has a missing or unreadable start time in its header, " \
+                  "so --window cannot be checked"
+          end
+          raise ::Lain::Error, refusal if spread > @limit
+
+          self
+        end
+
+        def describe = "started within #{hours(spread)} (window #{hours(@limit)})"
+
+        private
+
+        def spread = @starts.max - @starts.min
+
+        def refusal
+          "runs started #{span(spread)} (#{hours(spread)}) apart, wider than the window of #{hours(@limit)}; " \
+            "runs outside the window: #{outside}; " \
+            "a provider can change a model under one name, so each window needs its own baseline. " \
+            "Widen it with --window HOURS only if you accept that"
+        end
+
+        def outside
+          cutoff = @starts.min + @limit
+          late = @starts.each_index.select { |index| @starts.fetch(index) > cutoff }
+          Ordinals.spans(late.map { |index| index + 1 })
+        end
+
+        def hours(seconds) = unit(seconds / 3600.0, "hour")
+
+        def span(seconds)
+          return unit((seconds / 86_400).floor, "day") if seconds >= 86_400
+          return unit((seconds / 3600).floor, "hour") if seconds >= 3600
+
+          unit((seconds / 60).floor, "minute")
+        end
+
+        def unit(count, word) = "#{format("%g", count)} #{word}#{"s" unless count == 1}"
       end
+      private_constant :Window
+
+      # Run numbers count from 1 in recording order, the order the CLI lists the paths in.
+      module Ordinals
+        def self.spans(ordinals)
+          ordinals.slice_when { |previous, following| following != previous + 1 }
+                  .map { |run| run.size == 1 ? run.first.to_s : "#{run.first}-#{run.last}" }.join(", ")
+        end
+      end
+      private_constant :Ordinals
 
       # One candidate baseline held against the reference's: the first model
       # call whose request digest differs, the fields that changed there, and

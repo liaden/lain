@@ -463,6 +463,95 @@ RSpec.describe Lain::Bench::Variance do
     end
   end
 
+  # A provider can change a model under one name, so runs days apart are not
+  # samples of one thing unless the operator says they are.
+  describe "start window" do
+    def started(stamp)
+      bytes = session_bytes([tool_response("tu_1", "hi"), text_response("done")])
+      stamped = bytes.each_line.map do |line|
+        record = JSON.parse(line)
+        next line unless record.key?("context_class")
+
+        "#{JSON.generate(stamp.nil? ? record.except("ts") : record.merge("ts" => stamp))}\n"
+      end
+      Lain::Bench::Session.load(stamped.join.each_line)
+    end
+
+    let(:days) { %w[2026-10-01T09:00:00Z 2026-10-01T10:00:00Z 2026-10-20T09:00:00Z].map { |ts| started(ts) } }
+
+    it "refuses runs started farther apart than the window, naming the spread and the flag" do
+      expect { described_class.new(recordings: days) }
+        .to raise_error(Lain::Error, /19 days \(456 hours\).*24 hours.*--window/m)
+    end
+
+    it "says why a baseline is needed in each window" do
+      expect { described_class.new(recordings: days) }
+        .to raise_error(Lain::Error, /changes? a model under one name.*baseline/mi)
+    end
+
+    it "renders under a wider window and names the window and the spread in the header" do
+      report = described_class.new(recordings: days, window: 720 * 3600).report
+
+      expect(report).to start_with("Variance — 3 recordings, started within 456 hours (window 720 hours)")
+    end
+
+    it "pools runs started inside the window" do
+      same_day = %w[2026-10-01T09:00:00Z 2026-10-01T20:00:00Z].map { |ts| started(ts) }
+
+      report = described_class.new(recordings: same_day).report
+
+      expect(report).to start_with("Variance — 2 recordings, started within 11 hours (window 24 hours)")
+    end
+
+    it "measures the spread across all runs, whatever order they were listed in" do
+      shuffled = %w[2026-10-20T09:00:00Z 2026-10-01T09:00:00Z 2026-10-01T10:00:00Z].map { |stamp| started(stamp) }
+      expect { described_class.new(recordings: shuffled) }.to raise_error(Lain::Error, /19 days/)
+
+      inside = %w[2026-10-02T08:00:00Z 2026-10-01T10:00:00Z 2026-10-01T12:00:00Z].map { |stamp| started(stamp) }
+      expect(described_class.new(recordings: inside).report).to start_with("Variance — 3 recordings")
+    end
+
+    it "pools runs started exactly one window apart" do
+      edge = %w[2026-10-01T09:00:00Z 2026-10-02T09:00:00Z].map { |stamp| started(stamp) }
+
+      expect(described_class.new(recordings: edge).report).to include("started within 24 hours (window 24 hours)")
+    end
+
+    it "names the runs that fall outside the earliest start plus the window" do
+      expect { described_class.new(recordings: days) }.to raise_error(Lain::Error, /outside the window: 3\b/)
+      late = %w[2026-10-01T09:00:00Z 2026-10-20T09:00:00Z 2026-10-20T10:00:00Z].map { |stamp| started(stamp) }
+      expect { described_class.new(recordings: late) }.to raise_error(Lain::Error, /outside the window: 2-3\b/)
+    end
+
+    it "says 1 day, not 1 days" do
+      pair = %w[2026-10-01T09:00:00Z 2026-10-02T09:00:00Z].map { |stamp| started(stamp) }
+      expect { described_class.new(recordings: pair, window: 3600) }
+        .to raise_error(Lain::Error, /started 1 day \(24 hours\) apart.*window of 1 hour;/)
+    end
+
+    it "keeps a fractional window readable" do
+      pair = %w[2026-10-01T09:00:00Z 2026-10-01T09:10:00Z].map { |stamp| started(stamp) }
+
+      expect(described_class.new(recordings: pair, window: 1800).report).to include("(window 0.5 hours)")
+    end
+
+    [0, -3600, Float::NAN, Float::INFINITY].each do |window|
+      it "refuses a window of #{window} before comparing anything" do
+        expect { described_class.new(recordings: days, window:) }
+          .to raise_error(Lain::Error, /window must be a positive, finite number of seconds/)
+      end
+    end
+
+    it "defaults to 24 hours" do
+      expect(described_class::DEFAULT_WINDOW_HOURS).to eq(24)
+    end
+
+    it "refuses a recording whose header carries no start time, naming its run number" do
+      expect { described_class.new(recordings: [started("2026-10-01T09:00:00Z"), started(nil)]) }
+        .to raise_error(Lain::Error, /run 2 .*missing or unreadable start time/)
+    end
+  end
+
   describe "n >= 2" do
     it "raises ArgumentError on a single recording" do
       expect { described_class.new(recordings: [reference]) }

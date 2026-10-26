@@ -78,15 +78,16 @@ module Lain
       # @param sources [Array<String>] paths; a directory means every
       #   `*.ndjson` under it, in sorted filename order
       # @param price_book [Lain::PriceBook]
+      # @param window_hours [Numeric] how far apart the recordings may have started
       # @return [String] never printed here
       # @raise [Refusal] on a missing or empty source, a recording that cannot
-      #   replay, or fewer than two recordings
-      def variance_report(sources, price_book: PriceBook.default)
+      #   replay, fewer than two recordings, or starts spread wider than the window
+      def variance_report(sources, price_book: PriceBook.default, window_hours: Variance::DEFAULT_WINDOW_HOURS)
         read = session_paths(sources).map { |path| [path, Journal.records(File.foreach(path)).to_a] }
         aside, measured = read.partition { |path, records| set_aside_reason(path, records) }
         set_aside = aside.map { |path, records| "#{path}: #{set_aside_reason(path, records)}" }
         recordings = measured.map { |path, records| load_session(path, records) }
-        build_variance(recordings, measured.map(&:first), price_book, set_aside).report
+        build_variance(recordings, measured.map(&:first), price_book, set_aside, window_hours * 3600).report
       end
 
       # The five-arm retrieval sweep: a deterministic, offline recall@k eval
@@ -710,8 +711,8 @@ module Lain
       # The comparability refusal names the runs it refused ("prune vs reminder+cache-breakpoints") and
       # no file, so the paths are restored here; it is a Lain::Error, not an
       # ArgumentError, hence the wider rescue.
-      def build_variance(recordings, paths, price_book, set_aside)
-        Variance.new(recordings:, price_book:, set_aside:)
+      def build_variance(recordings, paths, price_book, set_aside, window)
+        Variance.new(recordings:, price_book:, set_aside:, window:)
       rescue ArgumentError, Error => e
         refused = paths.empty? ? e.message : "#{paths.join(", ")}: #{e.message}"
         raise Refusal, [*set_aside, refused].join("\n")

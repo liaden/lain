@@ -871,7 +871,9 @@ class LainCLI < Thor
     def self.exit_on_failure? = true
 
     desc "variance DIR_OR_FILES...", "Report determinism/divergence/distribution across recorded sessions"
-    def variance(*sources) = render { Lain::Bench::CLI.new.variance_report(sources) }
+    method_option :window, type: :numeric, default: Lain::Bench::Variance::DEFAULT_WINDOW_HOURS,
+                           desc: "hours the recordings' start times may span; wider is refused"
+    def variance(*sources) = render { Lain::Bench::CLI.new.variance_report(sources, window_hours: options[:window]) }
 
     desc "record TASKFILE", "Record N live runs of a task file (one prompt per line) -- spends real API money"
     method_option :n, type: :numeric, default: Lain::Bench::CLI::RECORD_DEFAULTS.fetch(:runs),

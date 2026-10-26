@@ -290,6 +290,47 @@ RSpec.describe Lain::Bench::CLI do
         end
       end
 
+      def restamp(tmp, stamps)
+        stamps.each do |name, ts|
+          head, *rest = File.readlines(File.expand_path("../../fixtures/sessions/variance/#{name}", __dir__))
+          header = JSON.parse(head)
+          header = ts.nil? ? header.except("ts") : header.merge("ts" => ts)
+          File.write(File.join(tmp, name), ["#{JSON.generate(header)}\n", *rest].join)
+        end
+      end
+
+      it "refuses recordings started days apart as a Refusal naming the spread and the flag" do
+        Dir.mktmpdir do |tmp|
+          restamp(tmp, "one.ndjson" => "2026-10-01T09:00:00Z", "two.ndjson" => "2026-10-01T10:00:00Z",
+                       "three.ndjson" => "2026-10-20T09:00:00Z")
+          expect { cli.variance_report([tmp]) }
+            .to raise_error(described_class::Refusal, /one\.ndjson.*19 days.*--window/m)
+        end
+      end
+
+      it "renders the same recordings under a wider window, naming it in the header" do
+        Dir.mktmpdir do |tmp|
+          restamp(tmp, "one.ndjson" => "2026-10-01T09:00:00Z", "two.ndjson" => "2026-10-01T10:00:00Z",
+                       "three.ndjson" => "2026-10-20T09:00:00Z")
+          expect(cli.variance_report([tmp], window_hours: 720))
+            .to start_with("Variance — 3 recordings, started within 456 hours (window 720 hours)")
+        end
+      end
+
+      it "refuses a window of zero hours as a Refusal" do
+        expect { cli.variance_report([fixture_dir], window_hours: 0) }
+          .to raise_error(described_class::Refusal, /window must be a positive, finite number/)
+      end
+
+      it "refuses a recording with no start time, naming the file" do
+        Dir.mktmpdir do |tmp|
+          restamp(tmp, "one.ndjson" => "2026-10-01T09:00:00Z", "two.ndjson" => nil,
+                       "three.ndjson" => "2026-10-01T09:30:00Z")
+          expect { cli.variance_report([tmp]) }
+            .to raise_error(described_class::Refusal, /two\.ndjson.*missing or unreadable start time/m)
+        end
+      end
+
       it "refuses recordings from different hosts as a Refusal naming the sources" do
         Dir.mktmpdir do |tmp|
           FileUtils.cp(File.join(fixture_dir, "one.ndjson"), tmp)

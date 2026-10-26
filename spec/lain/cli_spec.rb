@@ -654,6 +654,22 @@ RSpec.describe LainCLI do
       end
     end
 
+    it "sends the default window of 24 hours when --window is omitted" do
+      report = instance_double(Lain::Bench::CLI, variance_report: "report")
+      allow(Lain::Bench::CLI).to receive(:new).and_return(report)
+      expect { described_class.start(%w[bench variance /tmp], debug: true) }.to output("report\n").to_stdout
+      expect(report).to have_received(:variance_report).with(["/tmp"], window_hours: 24)
+    end
+
+    it "hands `bench variance --window` to the report as hours" do
+      report = instance_double(Lain::Bench::CLI, variance_report: "report")
+      allow(Lain::Bench::CLI).to receive(:new).and_return(report)
+      expect do
+        described_class.start(%w[bench variance /tmp --window 720], debug: true)
+      end.to output("report\n").to_stdout
+      expect(report).to have_received(:variance_report).with(["/tmp"], window_hours: 720)
+    end
+
     # The other direction, and the one a refusal can silently break: every
     # switch any command DECLARES must still survive the check that was added.
     # Driven at `Thor::Options` because `Thor::Base#initialize` is what calls
