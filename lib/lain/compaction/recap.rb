@@ -57,6 +57,29 @@ module Lain
         { "role" => Derivation::REPLACEMENT_ROLE, "content" => frame(content), **extra }
       end
 
+      # The placement that renders a replacement as the strategy's own blocks, with no frame:
+      # the arm a sweep compares the frame against. The blocks keep the recap marker, which is
+      # not wire-visible, so a recap claim is still recognised under bare.
+      module Bare
+        # @return [Hash] the same message {Recap.message} builds, without the frame
+        def self.message(content, **extra)
+          { "role" => Derivation::REPLACEMENT_ROLE, "content" => Recap.marked(content), **extra }
+        end
+      end
+
+      PLACEMENTS = %w[framed bare].freeze
+
+      # @param placement [String] one of {PLACEMENTS}
+      # @return [#message] answers `message(content, **extra)` like {.message}. There is no
+      #   `system` placement: a system message cannot be `messages[0]`, and the roles are closed.
+      def self.for(placement)
+        case placement
+        when "framed" then self
+        when "bare" then Bare
+        else raise ArgumentError, "unknown placement #{placement.inspect}, expected one of #{PLACEMENTS.join(", ")}"
+        end
+      end
+
       # Copied only when a caller's blocks are still mutable, so theirs are not frozen underneath them.
       def self.shareable(blocks) = Ractor.shareable?(blocks) ? blocks : Ractor.make_shareable(blocks, copy: true)
 

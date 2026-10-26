@@ -123,7 +123,10 @@ module Lain
         # @param journal [#<<] where the derivation edge and any refusal land
         # @param widening [Strategy::Base, nil] a wider arm, asked only what it
         #   could claim; nil when the run has none
-        def initialize(keep_last:, strategy: nil, journal: Channel::Null.instance, widening: nil)
+        # @param placement [#message] how a replacement reaches the model, as {Derivation}'s
+        def initialize(keep_last:, strategy: nil, journal: Channel::Null.instance, widening: nil,
+                       placement: Recap.for("framed"))
+          @placement = placement
           @keep_last = keep_last
           @strategy = strategy
           @widening = widening
@@ -261,7 +264,9 @@ module Lain
         # A fresh {Derivation} per turn, because the policy it is frozen around
         # is this turn's -- {PinCuts} closes over a pin set that moves. Both
         # are cheap frozen values.
-        def derivation(policy) = Derivation.new(strategy: policy, keep_last: @keep_last, journal: @journal)
+        def derivation(policy)
+          Derivation.new(strategy: policy, keep_last: @keep_last, journal: @journal, placement: @placement)
+        end
 
         # {Derivation::Invalid} and NOTHING wider. `NotAPartition`, `NotBlocks`,
         # `Blank`, a sealed-method refusal and `Canonical::UnsupportedType` all mean the

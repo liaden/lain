@@ -540,13 +540,15 @@ module Lain
       #   rather than staying with the collapse policy because {Head}
       #   disclaims the judgement and {Boundary} refuses to raise: this is the
       #   only object holding the head, the need and the occupancy at once.
+      # @param placement [#message] how a replacement reaches the model; the framed default is
+      #   what chat runs, {Recap.for} names the bare arm a bench compares it against
       # @param fallback [#call] what happens when no cut can make room --
       #   {Fallback}, or {Fallback::None} for `--compact-fallback none`. Asked
       #   only after a provider has refused a prompt, never on the render path.
       def initialize(need:, cold:, hard_cap:, keep_last:, eager: NoSummaries, strategy: nil,
                      journal: Channel::Null.instance, model: nil, price_book: PriceBook.default,
                      clock: -> { Time.now }, context_window: ContextWindow.default, sink: Sink::Null.new,
-                     fallback: Fallback::None)
+                     fallback: Fallback::None, placement: Recap.for("framed"))
         arm = Collapse.of(strategy)
         @need = need
         @context_window = context_window
@@ -559,7 +561,7 @@ module Lain
         @idle = IdleGap.new(clock:)
         @scheduling = Scheduling.new(hard_cap:, journal:, model:, price_book:)
         @derived = Derived.new(keep_last: Compaction.validate_keep_last(keep_last), strategy: arm.policy,
-                               widening: arm.widening, journal:)
+                               widening: arm.widening, journal:, placement:)
         @fallback = fallback
         @handed_off = false
       end

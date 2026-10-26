@@ -132,10 +132,12 @@ module Lain
       #   rather than here -- one rule, one place.
       # @param journal [#<<] where the derivation edge lands; the Null channel
       #   by default, so no caller guards `if journal`.
-      def initialize(strategy:, keep_last:, journal: Channel::Null.instance)
+      # @param placement [#message] how a replacement reaches the model; {Recap.for} names the arms
+      def initialize(strategy:, keep_last:, journal: Channel::Null.instance, placement: Recap.for("framed"))
         @strategy = strategy
         @keep_last = keep_last
         @journal = journal
+        @placement = placement
         freeze
       end
 
@@ -171,7 +173,7 @@ module Lain
         refuse_foreign(source, into)
         plan = Plan.over(strategy: @strategy, walk: walk || Walk.of(source), keep_last: @keep_last, cut:)
         collapsed = plan.collapsed
-        derived = resume&.covers?(plan, into) ? extended(plan, resume) : committed(plan.writes(collapsed), into)
+        derived = resume&.covers?(plan, into) ? extended(plan, resume) : committed(plan, collapsed, into)
         @journal << edge(plan, source, derived)
         block_given? ? yield(derived, plan.seam(collapsed), plan.resume(derived)) : derived
       end
@@ -249,7 +251,8 @@ module Lain
         writes.inject(resume.derived) { |chain, write| write.onto(chain) }
       end
 
-      def committed(writes, into)
+      def committed(plan, collapsed, into)
+        writes = plan.writes(collapsed, @placement)
         refuse_invalid(writes)
         writes.inject(Dag::Factory.timeline(store: into)) { |chain, write| write.onto(chain) }
       end
@@ -293,8 +296,8 @@ module Lain
       Write = Data.define(:role, :content, :causal_parents) do
         def self.retaining(turn) = new(role: turn.role, content: turn.content, causal_parents: [])
 
-        def self.replacing(content, subsumed)
-          message = Recap.message(content)
+        def self.replacing(content, subsumed, placement)
+          message = placement.message(content)
           new(role: message.fetch("role"), content: message.fetch("content"), causal_parents: subsumed)
         end
 
@@ -417,9 +420,9 @@ module Lain
         # A range whose collapse answers DROP contributes no write at all --
         # the unit of the monoid {Strategy::Base#collapse} maps into, and how a
         # range vanishes leaving no replacement event.
-        def writes(collapsed)
+        def writes(collapsed, placement)
           folded, cursor = collapsed.inject([[], 0]) do |(events, from), (range, replacement)|
-            [events + retained(from...range.first) + replacing(range, replacement), range.max + 1]
+            [events + retained(from...range.first) + replacing(range, replacement, placement), range.max + 1]
           end
           folded + retained(cursor...turns.size)
         end
@@ -461,8 +464,8 @@ module Lain
 
         def retained(indices) = turns[indices].map { |turn| Write.retaining(turn) }
 
-        def replacing(range, replacement)
-          replacement.drop? ? NO_RANGES : [Write.replacing(replacement.content, subsumed(range))]
+        def replacing(range, replacement, placement)
+          replacement.drop? ? NO_RANGES : [Write.replacing(replacement.content, subsumed(range), placement)]
         end
 
         def endpoints(range) = [digest(range.first), digest(range.max)]

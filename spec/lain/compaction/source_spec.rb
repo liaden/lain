@@ -1795,6 +1795,42 @@ RSpec.describe Lain::Compaction::Source do
         .to eq([rendered.first["content"]])
     end
 
+    describe "the placement" do
+      def collapse_under(placement)
+        io = StringIO.new
+        own = Lain::Journal.new(io:)
+        line = timeline(6)
+        built = described_class.new(need: build_need(byte_threshold: 100), cold: build_cold, hard_cap: 100, keep_last:,
+                                    eager:, journal: own, clock:, placement:)
+        ctx = built.context_for(base:, timeline: line, usage: nil, session: Lain::Session.new(journal: own))
+        [render(ctx, line).messages, journal_records(io).select { |record| record["type"] == "compaction_cut" }]
+      end
+
+      it "renders no recap frame under the bare placement" do
+        messages, = collapse_under(Lain::Compaction::Recap.for("bare"))
+
+        texts = messages.flat_map { _1["content"] }.filter_map { _1["text"] if _1.is_a?(Hash) }
+        expect(texts).not_to include(Lain::Compaction::Recap::PREAMBLE)
+        expect(texts).to include(a_string_including("elided"))
+      end
+
+      it "records the same collapse content under framed and bare" do
+        framed = collapse_under(Lain::Compaction::Recap.for("framed")).last
+        bare = collapse_under(Lain::Compaction::Recap.for("bare")).last
+
+        expect(framed.size).to eq(1)
+        expect(Lain::Canonical.dump(bare.first["collapses"].map { _1["content"] }))
+          .to eq(Lain::Canonical.dump(framed.first["collapses"].map { _1["content"] }))
+      end
+
+      it "defaults to the framed placement for Source and Derived" do
+        expect(described_class.new(need: build_need, cold: build_cold, hard_cap: 1, keep_last:)
+                 .instance_variable_get(:@derived).instance_variable_get(:@placement)).to be(Lain::Compaction::Recap)
+        expect(described_class::Derived.new(keep_last:).instance_variable_get(:@placement))
+          .to be(Lain::Compaction::Recap)
+      end
+    end
+
     # The commit head is the turn below the asked prompt, because an ask
     # refused before any model saw it withdraws exactly that prompt. Holding
     # the cut through the withdrawal is what keeps a stuck ask from retreating

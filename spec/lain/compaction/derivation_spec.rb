@@ -98,6 +98,18 @@ RSpec.describe Lain::Compaction::Derivation do
   let(:fixtures) { DerivationFixtures }
 
   describe "#derive" do
+    it "renders a replacement as the strategy's blocks only under the bare placement" do
+      source = fixtures.history(9)
+      derivation = described_class.new(strategy: fixtures.summarizing, keep_last: 3,
+                                       placement: Lain::Compaction::Recap.for("bare"))
+
+      replacement = derivation.derive(source).to_a.first
+
+      expect(replacement.role).to eq("user")
+      expect(replacement.content)
+        .to eq(Lain::Compaction::Recap.marked([fixtures.text("[6 messages summarized]")]))
+    end
+
     it "replaces a collapsed span with one event whose causal parents are exactly that range's source digests" do
       source = fixtures.history(9)
       derived = described_class.new(strategy: fixtures.summarizing, keep_last: 3).derive(source)

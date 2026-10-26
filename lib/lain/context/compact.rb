@@ -90,6 +90,7 @@ module Lain
       # requires that to be `user`; the boundary is what then guarantees the
       # tail can follow it.
       def summary(summarizable)
+        # Framed by design: the placement arms run through Compaction::Source::Derived, not this legacy rewrite.
         Compaction::Recap.message([{ "type" => "text", "text" => @summarizer.call(summarizable) }])
       end
 

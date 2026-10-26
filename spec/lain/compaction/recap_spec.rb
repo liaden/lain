@@ -99,4 +99,26 @@ RSpec.describe Lain::Compaction::Recap do
       expect(described_class.message(blocks, "summary" => true)).to include("summary" => true)
     end
   end
+
+  describe ".for" do
+    it "answers the framed placement with the frame Recap.message applies" do
+      expect(described_class.for("framed").message(blocks, "summary" => true))
+        .to eq(described_class.message(blocks, "summary" => true))
+    end
+
+    it "answers the bare placement with one user message of the strategy's marked blocks and no frame" do
+      message = described_class.for("bare").message(blocks, "summary" => true)
+
+      expect(message).to eq("role" => "user", "content" => described_class.marked(blocks), "summary" => true)
+      expect(Ractor.shareable?(message.fetch("content"))).to be(true)
+    end
+
+    it "names exactly the placements it answers" do
+      expect(described_class::PLACEMENTS).to eq(%w[framed bare])
+    end
+
+    it "refuses a name outside the list, and so a system placement" do
+      expect { described_class.for("system") }.to raise_error(ArgumentError, /framed, bare/)
+    end
+  end
 end

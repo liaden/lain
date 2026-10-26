@@ -182,6 +182,15 @@ RSpec.describe "Lain::Compaction::Source::HeldCut" do
                 { "role" => "user", "content" => [block(6)] }])
     end
 
+    it "renders the document as one unframed user message under the bare placement" do
+      line = timeline(6)
+      hand_off(line)
+      bare = Lain::Compaction::Source::Derived.new(keep_last: 2, placement: Lain::Compaction::Recap.for("bare"))
+
+      expect(on(line, derived: bare).messages.first)
+        .to eq(Lain::Compaction::Recap.for("bare").message([{ "type" => "text", "text" => "the state document" }]))
+    end
+
     it "reads the recorded document back for the next handoff without the recap frame" do
       line = timeline(6)
       hand_off(line)

@@ -67,6 +67,15 @@ RSpec.describe Lain::Compaction::Source::Derived do
       expect(resumes.map(&:class)).to eq([NilClass, Lain::Compaction::Derivation::Resume, NilClass, NilClass])
     end
 
+    it "renders the held replacement under the placement it was built with" do
+      bare = described_class.new(keep_last: 2, strategy: summarizing, placement: Lain::Compaction::Recap.for("bare"))
+
+      first = held(bare, earlier, cut).messages.first
+
+      expect(first.fetch("content")).to all(satisfy { Lain::Compaction::Recap.block?(_1) })
+      expect(Lain::Canonical.dump(first)).not_to include(Lain::Compaction::Recap::PREAMBLE)
+    end
+
     it "forgets its resume once another policy derives" do
       resumes = resumes_handed
 
