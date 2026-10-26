@@ -150,15 +150,16 @@ RSpec.describe Lain::Frontend::GatewayConsole do
   end
 
   it "announces each caveat beside the URL" do
-    described_class.new(input: StringIO.new, output:).announce(url: "u", log: "l", caveats: ["only env secrets"])
+    described_class.new(input: StringIO.new, output:).announce(url: "u", token_file: "t", log: "l",
+                                                               caveats: ["only env secrets"])
 
     expect(output.string).to include("only env secrets")
   end
 
-  it "announces the URL and the log" do
+  it "announces the URL, where its token is, and the log" do
     described_class.new(input: StringIO.new, output:)
-                   .announce(url: "http://127.0.0.1:1/?token=ab", log: "/tmp/g.ndjson")
+                   .announce(url: "http://127.0.0.1:1", token_file: "/state/lain/gateway/1.token", log: "/tmp/g.ndjson")
 
-    expect(output.string).to include("http://127.0.0.1:1/?token=ab", "/tmp/g.ndjson")
+    expect(output.string).to include("http://127.0.0.1:1", "token: /state/lain/gateway/1.token", "/tmp/g.ndjson")
   end
 end

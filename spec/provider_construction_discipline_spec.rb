@@ -141,7 +141,7 @@ module ProviderConstruction
   # both how a construction is deduplicated across the nested Ripper nodes that
   # describe it and how a wrapped provider is matched to the decorator wrapping
   # it.
-  Site = Struct.new(:path, :constant, :position, :journal_keyword, :wrapped, keyword_init: true) do
+  Site = Struct.new(:path, :constant, :position, :journal_keyword, :wrapped, :enclosing, keyword_init: true) do
     def line = position.first
     def provider? = constant.start_with?("Provider::")
     def decorator? = constant == "Provider::#{JOURNALING_DECORATOR}"
@@ -186,8 +186,21 @@ module ProviderConstruction
     def walk(node)
       return unless node.is_a?(Array)
 
+      outer = @method
+      @method = defined_method(node) || outer
       inspect_node(node)
       node.each { |child| walk(child) }
+      @method = outer
+    end
+
+    # The name a `def` or `def self.` node defines, so a construction knows
+    # which method it sits in.
+    def defined_method(node)
+      name = case node[0]
+             when :def then node[1]
+             when :defs then node[3]
+             end
+      name[1] if name.is_a?(Array)
     end
 
     # Pre-order matters here. A parenthesised call is `[:method_add_arg, [:call,
@@ -211,7 +224,7 @@ module ProviderConstruction
       constant = tracked_constant(call[1])
       return if constant.nil?
 
-      @sites << Site.new(path: @path, constant:, position:, wrapped: false,
+      @sites << Site.new(path: @path, constant:, position:, wrapped: false, enclosing: @method,
                          journal_keyword: keyword?(args, JOURNAL_KEYWORD))
       note_wrapped_provider(args) if constant == "Provider::#{JOURNALING_DECORATOR}"
     end
@@ -385,9 +398,24 @@ module ProviderConstructionDiscipline
     }.freeze,
     "lain/oracle/secret_read.rb" => {
       "Provider::Ollama" =>
-        "the secret-read judge is a LOCAL model and must never be anything else. Naming the class " \
-        "is the point of this entry: it is what refuses a hosted provider at the one site in lib/ " \
-        "that could introduce one, at any decorator depth, without running anything."
+        "the secret-read judge is a LOCAL model, or a model reached only through a verified lain " \
+        "gateway. Naming the class is the point of this entry: it is what refuses any other provider " \
+        "at the one site in lib/ that could introduce one, at any decorator depth, without running anything.",
+      "Provider::Anthropic" =>
+        "the cloud judge's hosted arm, built only behind a verified lain gateway; CONFINED holds it " \
+        "to the one method that puts it there."
+    }.freeze
+  }.freeze
+
+  # Approved constructions that may sit only in the named methods of their
+  # file. The allowlist above is per file and per class, so it cannot say
+  # "only behind the gateway"; this pins WHERE the hosted provider is built.
+  # That the method really wraps it in the gateway's proof is held by the
+  # behaviour specs in spec/lain/oracle/secret_read_spec.rb, not by this scan.
+  CONFINED = {
+    "lain/oracle/secret_read.rb" => {
+      "Provider::Ollama" => %w[tier gateway_provider].freeze,
+      "Provider::Anthropic" => %w[gateway_provider].freeze
     }.freeze
   }.freeze
 
@@ -418,8 +446,33 @@ module ProviderConstructionDiscipline
 
   def violations(sources = ProviderConstruction.lib_sources)
     found = ProviderConstruction.sites(sources)
-    construction_violations(found) + decorator_violations(found) +
-      tier_violations(found) + stale_entry_violations(found)
+    construction_violations(found) + confinement_violations(found) + decorator_violations(found) +
+      tier_violations(found) + stale_entry_violations(found) + stale_confinement_violations(found)
+  end
+
+  def confinement_violations(found)
+    found.select(&:endpoint?).reject { |site| within?(site) }.map do |site|
+      Violation.new(site.path, site.line,
+                    "constructs #{site.constant} in #{site.enclosing || "the file body"}, but this file may " \
+                    "construct it only in #{confined_to(site).join(" or ")}")
+    end
+  end
+
+  def confined_to(site) = CONFINED.dig(site.path, site.constant)
+
+  def within?(site) = confined_to(site).nil? || confined_to(site).include?(site.enclosing)
+
+  # A confining method that no longer constructs its class has outlived the
+  # decision, for {stale_entry_violations}' reason.
+  def stale_confinement_violations(found)
+    live = found.map { |site| [site.path, site.constant, site.enclosing] }
+    CONFINED.flat_map do |path, constants|
+      constants.flat_map do |constant, methods|
+        methods.reject { |method| live.include?([path, constant, method]) }.map do |method|
+          Violation.new(path, nil, "CONFINED names #{constant} in #{method}, which constructs none")
+        end
+      end
+    end
   end
 
   def construction_violations(found)
@@ -631,7 +684,8 @@ RSpec.describe "provider construction discipline" do
       expect(live).to include(
         %w[lain/cli/backend.rb Provider::Anthropic],
         %w[lain/cli/backend/ollama_tier.rb Provider::Ollama],
-        %w[lain/oracle/secret_read.rb Provider::Ollama]
+        %w[lain/oracle/secret_read.rb Provider::Ollama],
+        %w[lain/oracle/secret_read.rb Provider::Anthropic]
       )
 
       # BOTH ollama doors, not one. The tier picks between `.local` and
@@ -779,18 +833,55 @@ RSpec.describe "provider construction discipline" do
       )
     end
 
-    it "reports a hosted provider introduced into the secret-read arm, quoting what IS approved" do
-      # The security half of the class-level allowlist: this file may name
-      # Provider::Ollama and nothing else, at any decorator depth, and a journal
-      # keyword does not buy its way past that. The refusal has to read
-      # differently from the one above -- the FILE is approved here, the class is
-      # not -- and it carries the written reason to whoever tripped it.
+    it "reports a class an approved file does not name, quoting what IS approved" do
+      # The refusal has to read differently from the one above -- the FILE is
+      # approved here, the class is not -- and it carries the written reason to
+      # whoever tripped it.
       found = construction_violations_for("Provider::Anthropic.new(journal:)\n",
-                                          path: "lain/oracle/secret_read.rb")
+                                          path: "lain/cli/backend/ollama_tier.rb")
 
       expect(found.map(&:to_s).first).to start_with(
-        "lain/oracle/secret_read.rb:1 -> constructs Provider::Anthropic, which is not approved " \
-        "in this file (approved here: Provider::Ollama -- the secret-read judge is a LOCAL model"
+        "lain/cli/backend/ollama_tier.rb:1 -> constructs Provider::Anthropic, which is not approved " \
+        "in this file (approved here: Provider::Ollama -- BOTH ollama arms"
+      )
+    end
+
+    it "reads the method a construction sits in, for def and def self. alike" do
+      source = "def self.tier = Provider::Ollama.new\ndef gateway_provider\n  Provider::Anthropic.new\nend\n" \
+               "Provider::Ollama.new\n"
+
+      expect(scan(source).map(&:enclosing)).to eq(["tier", "gateway_provider", nil])
+    end
+
+    it "reports a hosted provider introduced into the local secret-read tier, naming the one method allowed it" do
+      # The security half: the local judge's method may build only the local
+      # provider, and a journal keyword does not buy its way past that.
+      found = ProviderConstructionDiscipline.confinement_violations(
+        sites_for("def self.tier(journal:) = Provider::Anthropic.new(journal:)\n", "lain/oracle/secret_read.rb")
+      )
+
+      expect(found.map(&:to_s)).to eq(
+        ["lain/oracle/secret_read.rb:1 -> constructs Provider::Anthropic in tier, but this file may " \
+         "construct it only in gateway_provider"]
+      )
+    end
+
+    it "reports a confined construction at the file body, outside any method" do
+      found = ProviderConstructionDiscipline.confinement_violations(
+        sites_for("Provider::Ollama.new(journal:)\n", "lain/oracle/secret_read.rb")
+      )
+
+      expect(found.map(&:to_s)).to eq(
+        ["lain/oracle/secret_read.rb:1 -> constructs Provider::Ollama in the file body, but this file may " \
+         "construct it only in tier or gateway_provider"]
+      )
+    end
+
+    it "reports a confining method that constructs nothing" do
+      found = ProviderConstructionDiscipline.stale_confinement_violations([])
+
+      expect(found.map(&:to_s)).to include(
+        "lain/oracle/secret_read.rb -> CONFINED names Provider::Anthropic in gateway_provider, which constructs none"
       )
     end
 

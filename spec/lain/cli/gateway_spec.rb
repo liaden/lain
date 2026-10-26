@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
-require "digest"
 require "json"
+require "openssl"
 require "socket"
 require "tmpdir"
 
@@ -24,7 +24,7 @@ RSpec.describe Lain::CLI::Gateway do
         @asked = []
       end
 
-      def announce(url:, log:, caveats: []) = @announced << { url:, log:, caveats: }
+      def announce(url:, token_file:, log:, caveats: []) = @announced << { url:, token_file:, log:, caveats: }
 
       def approve?(request)
         @asked << request
@@ -69,16 +69,21 @@ RSpec.describe Lain::CLI::Gateway do
 
   after { FileUtils.rm_rf(dir) }
 
-  it "listens on 127.0.0.1 and announces its URL with a one-time token and its log" do
+  def token_file(port) = Lain::Gateway::TokenFile.for(port, paths:).path
+
+  it "listens on 127.0.0.1 and announces a token-free URL, the token's file, and its log" do
     serving do |announced|
-      expect(announced[:url]).to match(%r{\Ahttp://127\.0\.0\.1:\d+/\?token=\h{32}\z})
-      expect(announced[:log]).to eq(log)
-      token = announced[:url][/token=(\h+)/, 1]
       port = port_of(announced[:url])
-      reply = exchange(port, "GET #{Lain::Gateway::IDENTITY_PATH}?token=#{token} HTTP/1.1\r\n" \
+      expect(announced[:url]).to eq("http://127.0.0.1:#{port}")
+      expect([announced[:token_file], announced[:log]]).to eq([token_file(port), log])
+      expect(File.lstat(token_file(port)).mode & 0o777).to eq(0o600)
+      token = File.read(token_file(port))
+      expect(token).to match(/\A\h{32}\z/)
+      nonce = "ab" * 32
+      reply = exchange(port, "GET #{Lain::Gateway::IDENTITY_PATH}?nonce=#{nonce} HTTP/1.1\r\n" \
                              "Host: 127.0.0.1:#{port}\r\n\r\n")
 
-      expect(reply).to include(JSON.generate({ digest: Digest::SHA256.hexdigest(token) }))
+      expect(reply).to include(OpenSSL::HMAC.hexdigest("SHA256", token, nonce))
     end
   end
 
@@ -88,9 +93,27 @@ RSpec.describe Lain::CLI::Gateway do
   end
 
   it "mints a fresh token on every start" do
-    tokens = Array.new(2) { serving { |announced| announced[:url][/token=(\h+)/, 1] } }
+    tokens = Array.new(2) { serving { |announced| File.read(announced[:token_file]) } }
 
     expect(tokens.uniq.size).to eq(2)
+  end
+
+  it "removes its token file when it stops" do
+    file = serving { |announced| announced[:token_file] }
+
+    expect(File.exist?(file)).to be(false)
+  end
+
+  it "refuses to start over a symlink at its token file's path, naming the path" do
+    port = TCPServer.open("127.0.0.1", 0) { _1.local_address.ip_port }
+    FileUtils.mkdir_p(File.dirname(token_file(port)))
+    File.symlink(File.join(dir, "elsewhere"), token_file(port))
+
+    expect do
+      gateway(options.merge("port" => port)).run
+    end.to raise_error(Lain::Error, /#{Regexp.escape(token_file(port))}/)
+    expect(console.announced).to be_empty
+    expect { TCPSocket.new("127.0.0.1", port).close }.to raise_error(Errno::ECONNREFUSED)
   end
 
   [99_999, -1, 1.5, "80"].each do |port|

@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require "digest"
+require "json"
+require "openssl"
 require "timeout"
 
 # The oracle a parked SECRET read is judged by. Half of this file looks
@@ -104,7 +107,33 @@ RSpec.describe Lain::Oracle::SecretRead do
     it "takes no provider, backend or router seam: there is nothing to move it with" do
       keys = described_class.method(:tier).parameters.map(&:last)
 
-      expect(keys).to contain_exactly(:model, :journal, :options)
+      expect(keys).to contain_exactly(:model, :journal, :options, :http_middleware)
+    end
+
+    # `http_middleware:` is admitted for the egress guard alone. Any other
+    # Faraday entry could rewrite the request's URL, which is the seam the
+    # pin above exists to refuse.
+    it "refuses an http middleware entry that is not the egress guard" do
+      foreign = [Class.new(Faraday::Middleware), {}.freeze].freeze
+
+      expect { described_class.tier(http_middleware: [foreign]) }.to raise_error(ArgumentError, /egress guard/)
+    end
+
+    # A loopback ollama forwards a `:cloud` or `-cloud` tag to ollama.com with
+    # no human asked, so the local tier cannot take one.
+    ["glm-5.3:cloud", "gpt-oss-120b-cloud", "GLM-5.3:CLOUD", "glm-5.3:Cloud", "glm-5.3:cloud ",
+     "registry.ollama.ai/library/glm-5.3:cloud"].each do |model|
+      it "refuses the cloud model name #{model}, naming the flags that reach it" do
+        expect { described_class.tier(model:) }
+          .to raise_error(described_class::NotAGateway, /--secret-oracle cloud.*--gateway/)
+      end
+    end
+
+    it "asks the local model with a streaming request body" do
+      asked = stub_request(:post, "http://localhost:11434/api/chat").to_return(status: 400, body: "{}")
+
+      expect { described_class.tier.ask(**inputs) }.to raise_error(Lain::Provider::Ollama::APIError)
+      expect(asked.with { |request| JSON.parse(request.body)["stream"] == true }).to have_been_requested.once
     end
 
     it "stays on loopback when it is handed sampler options" do
@@ -131,17 +160,17 @@ RSpec.describe Lain::Oracle::SecretRead do
 
       described_class.tier
 
-      expect(Lain::Provider::Ollama).to have_received(:new).with(no_args)
+      expect(Lain::Provider::Ollama).to have_received(:new).with(http_middleware: [])
     end
 
-    # WHAT `no_args` NOW BUYS, which is no longer the same sentence. The pin
-    # above says the CALL states nothing; it used to follow that no `api_base`
+    # WHAT that pin NOW BUYS, which is no longer the same sentence. The pin
+    # above says the CALL states no endpoint; it used to follow that no `api_base`
     # could have been passed and the arm was therefore loopback. Since
     # `Provider::Ollama.new` gained a `deployment:` keyword, what it means is
     # "the default decides" -- so the guarantee moved to the default, and a
     # default is exactly the kind of thing that is edited later without anyone
     # noticing. These are the two ends of one keyword and neither implies the
-    # other: `no_args` would stay green with a cloud default, and this would
+    # other: the pin would stay green with a cloud default, and this would
     # stay green if `.tier` started passing `deployment: Local.new` explicitly.
     #
     # THE LITERAL, NOT `Transport::DEFAULT_API_BASE`, and that is not a style
@@ -417,6 +446,337 @@ RSpec.describe Lain::Oracle::SecretRead do
       described_class.tier(journal:, options: { "num_batch" => 2048 }).ask(**inputs).await
 
       expect(journal.grep(Lain::Telemetry::RequestSent).last.extra).to include("num_batch" => 2048)
+    end
+  end
+
+  # The cloud tier reaches a model only through a lain gateway the human runs:
+  # a listener on 127.0.0.1 that answers a fresh nonce with its HMAC under the
+  # token the human saw printed, and then shows the human every request before
+  # it leaves. The token itself never crosses the wire.
+  describe ".cloud_tier", :seam do
+    let(:token) { "0123456789abcdef0123456789abcdef" }
+    let(:verdict) { '{"verdict":"deny","confidence":0.97,"reason":"an env file"}' }
+    let(:ollama_reply) do
+      { status: 200, headers: { "Content-Type" => "application/json" },
+        body: JSON.generate("model" => "glm-5.3:cloud", "message" => { "role" => "assistant", "content" => verdict },
+                            "done" => true, "done_reason" => "stop", "prompt_eval_count" => 40,
+                            "eval_count" => 12) }
+    end
+    let(:journal) { [] }
+    let(:state) { Dir.mktmpdir("secret-read-state") }
+
+    around do |example|
+      with_env("XDG_STATE_HOME" => state) { example.run }
+    ensure
+      FileUtils.rm_rf(state)
+    end
+
+    # As a running gateway leaves it: the token in a file named for its port.
+    def link(url = "http://127.0.0.1:4000", token: self.token)
+      Lain::Gateway::TokenFile.for(URI(url).port).write(token)
+      described_class::GatewayLink.from_url(url)
+    end
+
+    def identity(port) = %r{\Ahttp://127\.0\.0\.1:#{port}#{Regexp.escape(Lain::Gateway::IDENTITY_PATH)}\?nonce=\h{64}\z}
+
+    def proof_for(request, key: token)
+      nonce = URI.decode_www_form(URI(request.uri.to_s).query).assoc("nonce").last
+      OpenSSL::HMAC.hexdigest("SHA256", key, nonce)
+    end
+
+    def proves(port, paths: ["/api/chat"], key: token)
+      stub_request(:get, identity(port)).to_return do |request|
+        { status: 200, headers: { "Content-Type" => "application/json" },
+          body: JSON.generate("proof" => proof_for(request, key:), "paths" => paths) }
+      end
+    end
+
+    def refusal_of
+      yield
+      nil
+    rescue described_class::NotAGateway => e
+      e
+    end
+
+    it "takes the model, a gateway link, a journal and the guard's middleware, and nothing else" do
+      keys = described_class.method(:cloud_tier).parameters.map(&:last)
+
+      expect(keys).to contain_exactly(:model, :gateway, :journal, :http_middleware)
+    end
+
+    describe "the --gateway URL" do
+      it "refuses an endpoint that is not loopback, though a token file waits for its port" do
+        refusal = refusal_of { link("https://ollama.com:4000") }
+
+        expect(refusal.message).to eq("the cloud oracle reaches a model only through a loopback lain gateway; " \
+                                      "https://ollama.com is not one")
+      end
+
+      # The gateway binds 127.0.0.1 and nothing else, so no other spelling of
+      # loopback can be it.
+      ["http://localhost:4000", "http://[::1]:4000", "http://127.0.0.2:4000", "http://0.0.0.0:4000"].each do |base|
+        it "refuses #{base}, which is not the address the gateway binds" do
+          expect(refusal_of { link(base) }.message).to end_with("is not one")
+        end
+      end
+
+      # The token stays off argv: the chat reads it from the gateway's file.
+      it "refuses a URL that still carries its token, naming the token file instead" do
+        message = refusal_of { link("http://127.0.0.1:4000/?token=#{token}") }.message
+
+        expect(message).to include("?token=", Lain::Gateway::TokenFile.for(4000).path)
+        expect(message).not_to include(token)
+      end
+
+      ["http://127.0.0.1:4000/#frag", "http://me@127.0.0.1:4000"].each do |url|
+        it "refuses #{url}, which carries more than the address, naming the token file" do
+          expect(refusal_of { link(url) }.message).to include("--gateway", Lain::Gateway::TokenFile.for(4000).path)
+        end
+      end
+
+      it "refuses at once when no gateway left a token file for the port" do
+        expect(refusal_of { described_class::GatewayLink.from_url("http://127.0.0.1:4001") }.message)
+          .to eq("no gateway token at #{Lain::Gateway::TokenFile.for(4001).path}; " \
+                 "is `lain gateway` running on that port?")
+      end
+
+      it "refuses a token file other users may read, never quoting the token" do
+        Lain::Gateway::TokenFile.for(4000).write(token)
+        File.chmod(0o640, Lain::Gateway::TokenFile.for(4000).path)
+
+        message = refusal_of { described_class::GatewayLink.from_url("http://127.0.0.1:4000") }.message
+        expect(message).to include(Lain::Gateway::TokenFile.for(4000).path)
+        expect(message).not_to include(token)
+      end
+
+      it "keeps the token out of what it shows" do
+        expect([link.base, link.inspect, link.to_s].join).not_to include(token)
+      end
+    end
+
+    it "refuses an http middleware entry that is not the egress guard" do
+      foreign = [Class.new(Faraday::Middleware), {}.freeze].freeze
+
+      expect { described_class.cloud_tier(model: "glm-5.3:cloud", gateway: link, http_middleware: [foreign]) }
+        .to raise_error(ArgumentError, /egress guard/)
+    end
+
+    it "asks a cloud tag at /api/chat and any other model at /v1/messages" do
+      expect(%w[glm-5.3:cloud GLM-5.3:CLOUD claude-haiku-5-5].map { described_class.gateway_path(_1) })
+        .to eq(%w[/api/chat /api/chat /v1/messages])
+    end
+
+    describe "the proof" do
+      # A local ollama on 127.0.0.1:11434 forwards a `:cloud` tag with no human
+      # asked; loopback alone proves nothing.
+      it "refuses a loopback listener that answers 404, before any question is sent" do
+        unproven = stub_request(:get, identity(4000)).to_return(status: 404, body: "404 page not found")
+        asked = stub_request(:post, "http://127.0.0.1:4000/api/chat")
+        tier = described_class.cloud_tier(model: "glm-5.3:cloud", gateway: link, journal:)
+
+        refusal = refusal_of { tier.ask(**inputs) }
+
+        expect(refusal.message).to include("did not prove", "answered 404", Lain::Gateway::TokenFile.for(4000).path)
+        expect(unproven).to have_been_requested.once
+        expect(asked).not_to have_been_requested
+      end
+
+      it "refuses a listener that answers 200 with a proof made under another key" do
+        proves(4000, key: "f" * 32)
+        asked = stub_request(:post, "http://127.0.0.1:4000/api/chat")
+
+        refusal = refusal_of { link.prove!("/api/chat") }
+
+        expect(refusal.message).to include("did not prove")
+        expect(asked).not_to have_been_requested
+      end
+
+      it "refuses a gateway whose upstream does not serve the model's path, naming both" do
+        proves(4000, paths: ["/v1/messages"])
+
+        expect(refusal_of { link.prove!("/api/chat") }.message).to include("/v1/messages", "/api/chat")
+      end
+
+      it "sends a fresh nonce each time, and never the token" do
+        nonces = []
+        stub_request(:get, identity(4000)).to_return do |request|
+          nonces << request.uri.to_s
+          { status: 200, body: JSON.generate("proof" => proof_for(request), "paths" => ["/api/chat"]) }
+        end
+
+        2.times { link.prove!("/api/chat") }
+
+        expect(nonces.uniq.size).to eq(2)
+        expect(nonces.join).not_to include(token)
+      end
+    end
+
+    it "proves the gateway before every question, and asks non-streaming at its /api/chat" do
+      proved = proves(4000)
+      asked = stub_request(:post, "http://127.0.0.1:4000/api/chat").to_return(ollama_reply)
+      tier = described_class.cloud_tier(model: "glm-5.3:cloud", gateway: link, journal:)
+
+      2.times { expect(tier.ask(**inputs).await.verdict).to eq("deny") }
+
+      expect(proved).to have_been_requested.twice
+      expect(asked.with { |request| JSON.parse(request.body)["stream"] == false }).to have_been_requested.twice
+    end
+
+    # The proof's wrapper forwards what Oracle::Model asks of a provider, so the
+    # answer is still constrained to the schema.
+    it "asks for the answer's schema through the proof's wrapper" do
+      proves(4000)
+      asked = stub_request(:post, "http://127.0.0.1:4000/api/chat").to_return(ollama_reply)
+
+      described_class.cloud_tier(model: "glm-5.3:cloud", gateway: link, journal:).ask(**inputs).await
+
+      expect(asked.with { |request| JSON.parse(request.body).dig("format", "properties").key?("verdict") })
+        .to have_been_requested.once
+    end
+
+    it "refuses a question once the listener stops proving itself, sending nothing" do
+      stub_request(:get, identity(4000)).to_return(
+        ->(request) { { status: 200, body: JSON.generate("proof" => proof_for(request), "paths" => ["/api/chat"]) } },
+        { status: 404 }
+      )
+      asked = stub_request(:post, "http://127.0.0.1:4000/api/chat").to_return(ollama_reply)
+      tier = described_class.cloud_tier(model: "glm-5.3:cloud", gateway: link, journal:)
+      tier.ask(**inputs).await
+
+      expect(refusal_of { tier.ask(**inputs) }).to be_a(described_class::NotAGateway)
+      expect(asked).to have_been_requested.once
+    end
+
+    describe "a gateway restarted on the same port" do
+      let(:renewed) { "fedcba9876543210fedcba9876543210" }
+
+      it "reads the token file again and asks, when the new token proves the gateway" do
+        tier = described_class.cloud_tier(model: "glm-5.3:cloud", gateway: link, journal:)
+        Lain::Gateway::TokenFile.for(4000).write(renewed)
+        proves(4000, key: renewed)
+        asked = stub_request(:post, "http://127.0.0.1:4000/api/chat").to_return(ollama_reply)
+
+        expect(tier.ask(**inputs).await.verdict).to eq("deny")
+        expect(asked).to have_been_requested.once
+      end
+
+      it "says the gateway changed and to restart, when the file no longer proves it either" do
+        tier = described_class.cloud_tier(model: "glm-5.3:cloud", gateway: link, journal:)
+        Lain::Gateway::TokenFile.for(4000).write(renewed)
+        proves(4000, key: "0" * 32)
+        asked = stub_request(:post, "http://127.0.0.1:4000/api/chat")
+
+        message = refusal_of { tier.ask(**inputs) }.message
+        expect(message).to include("port 4000 changed", "restart the chat or the gateway")
+        expect(message).not_to include(token, renewed)
+        expect(asked).not_to have_been_requested
+      end
+
+      it "says the gateway changed when its token file is gone" do
+        tier = described_class.cloud_tier(model: "glm-5.3:cloud", gateway: link, journal:)
+        File.delete(Lain::Gateway::TokenFile.for(4000).path)
+        stub_request(:get, identity(4000)).to_return(status: 404)
+
+        expect(refusal_of { tier.ask(**inputs) }.message).to include("port 4000 changed", "no gateway token at")
+      end
+
+      it "does not read the file again when proving at launch" do
+        built = link
+        Lain::Gateway::TokenFile.for(4000).write(renewed)
+        proves(4000, key: renewed)
+
+        expect(refusal_of { built.prove!("/api/chat") }.message).to include("did not prove")
+      end
+    end
+
+    # The gateway puts its own credential on the forward, so the chat's key
+    # has no reason to reach even a loopback listener.
+    it "asks an anthropic model at /v1/messages with a placeholder key, never the chat's own" do
+      proves(4000, paths: ["/v1/messages"])
+      asked = stub_request(:post, "http://127.0.0.1:4000/v1/messages").to_return(
+        status: 200, headers: { "Content-Type" => "application/json" },
+        body: JSON.generate("id" => "m", "type" => "message", "role" => "assistant", "model" => "claude-haiku-5-5",
+                            "content" => [{ "type" => "text", "text" => verdict }], "stop_reason" => "end_turn",
+                            "usage" => { "input_tokens" => 1, "output_tokens" => 1 })
+      )
+
+      with_env("ANTHROPIC_API_KEY" => "sk-ant-the-chat-s-own-key") do
+        tier = described_class.cloud_tier(model: "claude-haiku-5-5", gateway: link)
+        expect(tier.ask(**inputs).await.verdict).to eq("deny")
+      end
+
+      expect(asked.with(headers: { "x-api-key" => described_class::GATEWAY_KEY })).to have_been_requested.once
+    end
+
+    it "lets the egress guard refuse a path that is a lent secret before it reaches the gateway" do
+      lent = "lent-secret-value-0123456789"
+      proves(4000)
+      asked = stub_request(:post, "http://127.0.0.1:4000/api/chat")
+      literals = Class.new do
+        define_method(:egress) { Lain::Sensitivity::Secrets::Egress.new(refused: [lent], flagged: []) }
+      end.new
+      guard = Lain::Provider::HTTP::EgressGuard.entry(literals:, journal:)
+      tier = described_class.cloud_tier(model: "glm-5.3:cloud", gateway: link, journal:, http_middleware: [guard])
+
+      expect { tier.ask(**inputs(path: "/home/user/#{lent}")) }
+        .to raise_error(Lain::Provider::HTTP::EgressGuard::Refused)
+      expect(asked).not_to have_been_requested
+    end
+
+    describe "through a real gateway" do
+      let(:upstream_chat) { "https://ollama.com/api/chat" }
+      let(:shown) { [] }
+      let(:console) do
+        seen = shown
+        Class.new { define_method(:approve?) { |request| (seen << request) && true } }.new
+      end
+      let(:server) do
+        Lain::Gateway::Server.new(bind: "127.0.0.1", port: 0, upstream: Lain::Gateway::Upstream.for("https://ollama.com"),
+                                  inspection: Lain::Gateway::Inspection.new(literals: []), console:,
+                                  journal: Class.new { define_method(:record) { |_| nil } }.new, token:)
+      end
+
+      around do |example|
+        with_env("OLLAMA_API_KEY" => "gateway-key") do
+          serving = Thread.new { server.run }
+          NetworkAccess.permit_loopback(server.port) { example.run }
+        ensure
+          server.stop
+          serving&.join(5)
+        end
+      end
+
+      it "crosses it to the upstream, showing the human one non-streaming body of path, tool and count" do
+        forwarded = stub_request(:post, upstream_chat).to_return(ollama_reply)
+        tier = described_class.cloud_tier(model: "glm-5.3:cloud", gateway: link(server.url), journal:)
+
+        expect(tier.ask(**inputs).await.verdict).to eq("deny")
+
+        expect(forwarded).to have_been_requested.once
+        expect(shown.size).to eq(1)
+        body = JSON.parse(shown.first.body)
+        expect(body["stream"]).to be(false)
+        expect(body.dig("messages", 0, "content")).to include("/repo/Gemfile.lock", "tool: read", "2 sensitive")
+      end
+
+      it "journals nothing that carries the token" do
+        stub_request(:post, upstream_chat).to_return(ollama_reply)
+
+        described_class.cloud_tier(model: "glm-5.3:cloud", gateway: link(server.url), journal:).ask(**inputs).await
+
+        expect(journal).not_to be_empty
+        expect(journal.map { _1.respond_to?(:to_journal) ? JSON.generate(_1.to_journal) : _1.to_s })
+          .to all(satisfy { !_1.include?(token) })
+      end
+
+      it "refuses the gateway when the URL carries a wrong token, asking nobody" do
+        forwarded = stub_request(:post, upstream_chat)
+        tier = described_class.cloud_tier(model: "glm-5.3:cloud", gateway: link(server.url, token: "f" * 32))
+
+        expect(refusal_of { tier.ask(**inputs) }).to be_a(described_class::NotAGateway)
+        expect(shown).to be_empty
+        expect(forwarded).not_to have_been_requested
+      end
     end
   end
 end

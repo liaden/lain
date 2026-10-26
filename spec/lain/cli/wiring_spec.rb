@@ -2,6 +2,7 @@
 
 require "async"
 require "json"
+require "openssl"
 require "rubygems/package"
 require "stringio"
 require "tmpdir"
@@ -1326,8 +1327,43 @@ RSpec.describe Lain::CLI::Wiring do
       expect(wiring.secret_surface(backend)).to be_nil
     end
 
+    it "wires no secret surface under --secret-oracle off" do
+      off = new_wiring(options: { grace: 5, secret_oracle: "off" }, chronicle:, status_feed:)
+      recorder, session = off.run_state(nil)
+      off.wire_agent(channel:, recorder:, session:, backend:)
+
+      expect(off.secret_surface(backend)).to be_nil
+    end
+
+    it "refuses to start a chat under --secret-oracle cloud with no --gateway, naming it" do
+      cloud = { grace: 5, secret_oracle: "cloud", secret_oracle_model: "glm-5.3:cloud" }
+
+      expect { new_wiring(options: cloud, chronicle:, status_feed:) }.to raise_error(Lain::Error, /--gateway/)
+    end
+
+    # The surface turns any fault at ask time into a journaled no-op, so a
+    # listener that is not the gateway has to be refused while the human is
+    # still watching the launch.
+    it "refuses at launch a --gateway that cannot prove it is a lain gateway" do
+      token = "0123456789abcdef0123456789abcdef"
+      stub_request(:get, %r{\Ahttp://127\.0\.0\.1:11434#{Lain::Gateway::IDENTITY_PATH}\?nonce=}o).to_return(status: 404)
+      refusal = with_env("XDG_STATE_HOME" => File.join(project_dir, "state")) do
+        Lain::Gateway::TokenFile.for(11_434).write(token)
+        cloud = new_wiring(options: { grace: 5, secret_oracle: "cloud", secret_oracle_model: "glm-5.3:cloud",
+                                      gateway: "http://127.0.0.1:11434" }, chronicle:, status_feed:)
+        recorder, session = cloud.run_state(nil)
+        cloud.wire_agent(channel:, recorder:, session:, backend:)
+        cloud.secret_surface(backend)
+      rescue Lain::Oracle::SecretRead::NotAGateway => e
+        e
+      end
+
+      expect(refusal.message).to include("did not prove")
+      expect(refusal.message).not_to include(token)
+    end
+
     describe "--secret-oracle" do
-      let(:wiring) { new_wiring(options: { grace: 5, secret_oracle: true }, chronicle:, status_feed:) }
+      let(:wiring) { new_wiring(options: { grace: 5, secret_oracle: "local" }, chronicle:, status_feed:) }
 
       before do
         recorder, session = wiring.run_state(nil)
@@ -1363,7 +1399,7 @@ RSpec.describe Lain::CLI::Wiring do
       # a remote arm judges its parked secrets locally. Captured off the tier
       # the surface actually holds, not off a `.new` count.
       it "builds it against the LOCAL ollama provider, whatever --provider and --summarizer-provider say" do
-        remote = { grace: 5, secret_oracle: true, provider: "anthropic", summarizer_provider: "anthropic" }
+        remote = { grace: 5, secret_oracle: "local", provider: "anthropic", summarizer_provider: "anthropic" }
         built = new_wiring(options: remote, chronicle:, status_feed:)
         recorder, session = built.run_state(nil)
         other = fresh_backend
@@ -1389,6 +1425,68 @@ RSpec.describe Lain::CLI::Wiring do
         tier = wiring.secret_surface(tuned).instance_variable_get(:@oracle).instance_variable_get(:@inner)
         expect(tier.instance_variable_get(:@extra)).to eq("num_batch" => 2048)
       end
+    end
+  end
+
+  describe "--secret-oracle cloud through a real gateway", :seam do
+    let(:token) { "0123456789abcdef0123456789abcdef" }
+    let(:shown) { [] }
+    let(:console) do
+      seen = shown
+      Class.new { define_method(:approve?) { |request| (seen << request) && true } }.new
+    end
+    let(:server) do
+      Lain::Gateway::Server.new(bind: "127.0.0.1", port: 0, upstream: Lain::Gateway::Upstream.for("https://ollama.com"),
+                                inspection: Lain::Gateway::Inspection.new(literals: []), console:,
+                                journal: Class.new { define_method(:record) { |_| nil } }.new, token:)
+    end
+    let(:wiring) do
+      new_wiring(options: { grace: 5, secret_oracle: "cloud", secret_oracle_model: "glm-5.3:cloud",
+                            gateway: server.url }, chronicle:, status_feed:)
+    end
+    let(:verdict) { '{"verdict":"deny","confidence":0.97,"reason":"a config file holding a token"}' }
+    let(:secret) { "QZ9vK2mR7xT4wL8nB3jH6yD1sA5fG0pEu7Wq" }
+    let(:outstanding) do
+      Lain::Approval::Parked::Queue::Outstanding.new(path: "/repo/config/app.yml",
+                                                     regions: Lain::Sensitivity::Regions.detect("see #{secret}\n"))
+    end
+
+    around do |example|
+      with_env("OLLAMA_API_KEY" => "gateway-key", "XDG_STATE_HOME" => File.join(project_dir, "state")) do
+        Lain::Gateway::TokenFile.for(server.port).write(token)
+        serving = Thread.new { server.run }
+        NetworkAccess.permit_loopback(server.port) { example.run }
+      ensure
+        server.stop
+        serving&.join(5)
+      end
+    end
+
+    it "sweeps a parked read across the gateway to the upstream and applies the verdict" do
+      upstream = stub_request(:post, "https://ollama.com/api/chat").to_return(
+        status: 200, headers: { "Content-Type" => "application/json" },
+        body: JSON.generate("model" => "glm-5.3:cloud", "message" => { "role" => "assistant", "content" => verdict },
+                            "done" => true, "done_reason" => "stop")
+      )
+      wire_agent
+      surface = wiring.secret_surface(backend)
+      read = Struct.new(:name, :input, :tool_use_id).new("read_file", { "path" => "/repo/config/app.yml" }, "tu_1")
+
+      settled = Sync do |task|
+        gated = task.async { wiring.approvals.adjudicate(read, nil, outstanding:) }
+        pending = task.with_timeout(5) { wiring.approvals.dequeue }
+        task.with_timeout(20) { surface.sweep(wiring.approvals) }
+        task.with_timeout(5) { gated.wait }
+        pending
+      end
+
+      expect([settled.approved?, settled.surface]).to eq([false, Lain::Approval::Parked::SecretSurface::SURFACE])
+      expect(upstream).to have_been_requested.once
+      expect(shown.size).to eq(1)
+      body = JSON.parse(shown.first.body)
+      expect(body["stream"]).to be(false)
+      expect(body.dig("messages", 0, "content")).to include('"/repo/config/app.yml"', "tool: read_file", "1 sensitive")
+      expect(body.dig("messages", 0, "content")).not_to include(secret)
     end
   end
 
@@ -1632,6 +1730,86 @@ RSpec.describe Lain::CLI::Wiring do
       { "id" => "m", "type" => "message", "role" => "assistant", "model" => "claude-haiku-5-5",
         "content" => [{ "type" => "text", "text" => "ok" }], "stop_reason" => "end_turn",
         "usage" => { "input_tokens" => 1, "output_tokens" => 1 } }
+    end
+
+    describe "the secret oracle's provider" do
+      let(:wiring) { new_wiring(options: { grace: 5, secret_oracle: "local" }, chronicle:, status_feed:) }
+      let(:token) { "0123456789abcdef0123456789abcdef" }
+
+      it "refuses a lent value in the cloud tier's question before it reaches the gateway" do
+        lent = "db-password-24-bytes-xyz"
+        stub_request(:get,
+                     %r{\Ahttp://127\.0\.0\.1:4000#{Lain::Gateway::IDENTITY_PATH}\?nonce=}o).to_return do |request|
+          nonce = URI.decode_www_form(URI(request.uri.to_s).query).assoc("nonce").last
+          { status: 200, body: JSON.generate("proof" => OpenSSL::HMAC.hexdigest("SHA256", token, nonce),
+                                             "paths" => ["/api/chat"]) }
+        end
+        asked = stub_request(:post, "http://127.0.0.1:4000/api/chat")
+        with_env("DB_PASSWORD" => lent, "XDG_STATE_HOME" => File.join(project_dir, "state")) do
+          Lain::Gateway::TokenFile.for(4000).write(token)
+          cloud = new_wiring(options: { grace: 5, secret_oracle: "cloud", secret_oracle_model: "glm-5.3:cloud",
+                                        gateway: "http://127.0.0.1:4000" }, chronicle:, status_feed:)
+          recorder, session = cloud.run_state(nil)
+          cloud.wire_agent(channel:, recorder:, session:, backend:)
+          oracle = cloud.secret_surface(backend).instance_variable_get(:@oracle)
+
+          expect { oracle.ask(path: "\"/home/user/#{lent}\"", tool: "read_file", region_count: "0") }
+            .to raise_error(Lain::Provider::HTTP::EgressGuard::Refused, /known secret/)
+        end
+        expect(asked).not_to have_been_requested
+      end
+    end
+
+    %w[oracle all].each do |scope|
+      describe "under --supervise-egress #{scope}" do
+        let(:wiring) { new_wiring(options: { grace: 5, secret_oracle: "local" }, chronicle:, status_feed:) }
+        let(:hosted) do
+          with_env("ANTHROPIC_API_KEY" => "sk-wiring-spec") do
+            Lain::CLI::Backend.new({ provider: "anthropic", model: "claude-haiku-5-5", max_tokens: 64,
+                                     supervise_egress: scope }, root: backend_root)
+          end
+        end
+
+        def egress_pendings = journal.events.grep(Lain::Telemetry::ApprovalPending).select { _1.kind == "egress" }
+
+        it "parks the secret oracle's request for the human, and sends nothing it denies" do
+          judged = stub_request(:post, "http://localhost:11434/api/chat")
+          wire_hosted
+          oracle = wiring.secret_surface(hosted).instance_variable_get(:@oracle)
+
+          Sync do |task|
+            task.with_timeout(20) do
+              asking = task.async do
+                oracle.ask(path: '"/repo/.env"', tool: "read_file", region_count: "1")
+              rescue Lain::Provider::HTTP::EgressGuard::Refused => e
+                e
+              end
+              parked = wiring.approvals.dequeue
+              expect(parked.ask_face).to include("secret_oracle sends")
+              parked.deny(surface: "spec", authority: :human)
+              expect(asking.wait.message).to include("egress denied")
+            end
+          end
+
+          expect(egress_pendings.map(&:requester)).to eq(["secret_oracle"])
+          expect(judged).not_to have_been_requested
+        end
+
+        # Under all the chat's request parks too, which the examples below pin.
+        if scope == "oracle"
+          it "sends the chat's own request without asking" do
+            sent = stub_request(:post, messages_url)
+                   .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                              body: JSON.generate(reply))
+
+            wire_hosted
+            chat_provider.complete(ask("what is 2 + 2?"))
+
+            expect(sent).to have_been_requested.once
+            expect(egress_pendings).to be_empty
+          end
+        end
+      end
     end
 
     describe "under --supervise-egress all" do

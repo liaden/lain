@@ -36,23 +36,33 @@ module Lain
       # @return [Integer] 0, the exit status
       # @raise [Lain::Gateway::Upstream::NotAllowed] for an upstream off the allow-list
       # @raise [Lain::Gateway::Upstream::MissingKey] when the environment lacks the upstream's key
-      # @raise [Lain::Error] naming the port, for one outside {PORTS} or one taken or not ours to take
+      # @raise [Lain::Error] naming the port, for one outside {PORTS} or one taken or not ours to take,
+      #   and naming the token file's path when something other than this user's file holds it
       def run
         port = port!
         upstream = checked(Lain::Gateway::Upstream.for(@options.fetch(:upstream)))
+        token = SecureRandom.hex(16)
         Journal.open(log) do |journal|
-          server = server(upstream, journal, port)
-          begin
-            @console.announce(url: server.url, log:, caveats:)
-            server.run
-          ensure
-            server.stop
-          end
+          server = server(upstream, journal, port, token)
+          serve(server, Lain::Gateway::TokenFile.for(server.port, paths: @paths), token)
         end
         0
       end
 
       private
+
+      # The token file is written before the human is told the URL, and
+      # removed however serving ends.
+      def serve(server, file, token)
+        file.write(token)
+        @console.announce(url: server.url, token_file: file.path, log:, caveats:)
+        server.run
+      rescue Lain::Gateway::TokenFile::Unusable => e
+        raise Lain::Error, "the gateway cannot leave its token for the chat: #{e.message}"
+      ensure
+        server.stop
+        file.remove(token)
+      end
 
       def checked(upstream)
         return upstream unless @env.fetch(upstream.key_env, "").to_s.empty?
@@ -72,10 +82,10 @@ module Lain
 
       def git_checkout? = Shell::Out.ok?(Isolation::Checkout.new(root).run("rev-parse", "--show-toplevel"))
 
-      def server(upstream, journal, port)
+      def server(upstream, journal, port, token)
         Lain::Gateway::Server.new(bind: LOOPBACK, port:, upstream:,
                                   inspection: Lain::Gateway::Inspection.new(literals:), console: @console,
-                                  journal:, token: SecureRandom.hex(16))
+                                  journal:, token:)
       end
 
       def literals

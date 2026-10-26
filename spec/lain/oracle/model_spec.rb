@@ -45,6 +45,23 @@ RSpec.describe Lain::Oracle::Model do
     expect(provider.last_request.messages.first["content"]).to eq("Is aspirin relevant?")
   end
 
+  it "streams its request by default" do
+    model, provider = oracle(response_with(%({"label":"no"})))
+
+    Sync { model.ask(subject: "aspirin").await }
+
+    expect(provider.last_request.stream).to be(true)
+  end
+
+  it "sends a non-streaming request when built with stream: false" do
+    provider = Lain::Provider::Mock.new(responses: [response_with(%({"label":"no"}))])
+    model = described_class.new(definition:, provider:, model: "test-model", stream: false)
+
+    Sync { model.ask(subject: "aspirin").await }
+
+    expect(provider.last_request.stream).to be(false)
+  end
+
   # ---- Scenario: an invalid answer raises rather than defaulting ------------
 
   it "raises loudly when the reply fails the schema" do

@@ -199,7 +199,7 @@ module Lain
       # @option options [String] :summarizer_model model id for the summarizer tier
       # @option options [Integer] :summarizer_max_tokens ceiling on a summarizer answer
       # @option options [String] :confirm_price_tier ask, allow or refuse before a request crosses its price tier
-      # @option options [String] :supervise_egress off or all: whose model requests wait for the human
+      # @option options [String] :supervise_egress off, oracle or all: whose model requests wait for the human
       def initialize(options, root:, profile: RunProfile.from_options(options),
                      compaction: CompactionProfile.typed(options), middleware: Config::Middleware.empty,
                      paths: Paths.new, environment: Prompt::Environment.none, ceiling_default: nil)

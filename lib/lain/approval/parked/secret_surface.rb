@@ -90,6 +90,13 @@ module Lain
         # the sweep claimed it: the pre-ask half of the relink check {#settle} makes.
         Judged = Data.define(:answer, :claimed)
 
+        # Told nothing, for a surface built without a screen.
+        UNTOLD = ->(_text) {}
+
+        # A cloud oracle whose gateway stopped proving itself judges nothing
+        # until it proves itself again, so that is said on screen, not only journaled.
+        UNPROVEN = "secret oracle: %<reason>s; %<path>s is left for you"
+
         # @param oracle [#ask] a tier answering {Oracle::SecretRead.definition} --
         #   injected, so the surface depends on the message rather than on how the
         #   local model is assembled, and so a spec never needs an ollama.
@@ -104,9 +111,13 @@ module Lain
         #   the path gate, before any region exists, and what the classifier says
         #   of each path; none by default, so a surface built without one judges
         #   regions only and never approves.
+        # @param notice [#call] puts a line on the human's screen; told only of a
+        #   gateway that stopped proving itself
         def initialize(oracle:, threshold: DEFAULT_THRESHOLD, ask_timeout: DEFAULT_ASK_TIMEOUT,
-                       path_gate: PathGate::NONE, audit_rate: DEFAULT_AUDIT_RATE, random: Random.new, **)
+                       path_gate: PathGate::NONE, audit_rate: DEFAULT_AUDIT_RATE, random: Random.new,
+                       notice: UNTOLD, **)
           super(**)
+          @notice = notice
           @audit_rate = Float(audit_rate)
           @random = random
           @path_gate = path_gate
@@ -207,7 +218,14 @@ module Lain
           bounded { @oracle.ask(**inputs_for(pending)).await }
         rescue StandardError => e
           journal_declined(pending, e)
+          tell_unproven(pending, e) if e.is_a?(Oracle::SecretRead::NotAGateway)
           DECLINED
+        end
+
+        def tell_unproven(pending, error)
+          @notice.call(format(UNPROVEN, reason: error.message, path: path_of(pending).inspect))
+        rescue StandardError
+          nil
         end
 
         # Outside a reactor there is no timer to arm and no fiber to starve -- a

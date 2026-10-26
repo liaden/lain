@@ -18,7 +18,7 @@ module Lain
       HEADER = "\n--- POST %<endpoint>s, %<bytes>d bytes\n"
       FLAGGED = "flagged: %<reasons>s\n"
       QUESTION = "\nForward POST %<endpoint>s, %<bytes>d bytes? [y/N] "
-      ANNOUNCE = "lain gateway: %<url>s\nlog: %<log>s\n"
+      ANNOUNCE = "lain gateway: %<url>s\ntoken: %<token_file>s\nlog: %<log>s\n"
       CAVEAT = "note: %<caveat>s\n"
       # A string with its escapes, or the rest of an unterminated one.
       STRING = /"(?:[^"\\]|\\.)*"?/m
@@ -41,12 +41,15 @@ module Lain
         @lock = Mutex.new
       end
 
-      # @param url [String] the gateway's URL, token included
+      # @param url [String] the gateway's URL, which carries no token
+      # @param token_file [String] where the chat reads the token; the token itself is never shown
       # @param log [String] the gateway's own log
       # @param caveats [Array<String>] what this gateway does not check, said once at start
       # @return [void]
-      def announce(url:, log:, caveats: [])
-        @lock.synchronize { show(format(ANNOUNCE, url:, log:) + caveats.map { format(CAVEAT, caveat: _1) }.join) }
+      def announce(url:, token_file:, log:, caveats: [])
+        @lock.synchronize do
+          show(format(ANNOUNCE, url:, token_file:, log:) + caveats.map { format(CAVEAT, caveat: _1) }.join)
+        end
       end
 
       # @param request [Gateway::Server::Request]

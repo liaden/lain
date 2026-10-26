@@ -2,12 +2,14 @@
 
 require "digest"
 require "json"
+require "openssl"
 require "socket"
 require "tmpdir"
 
 RSpec.describe Lain::Gateway::Server, :seam do
   let(:secret) { "s3cr3t-value-0123456789" }
   let(:token) { "0123456789abcdef0123456789abcdef" }
+  let(:nonce) { "fedcba9876543210" * 4 }
   let(:dir) { Dir.mktmpdir("gateway-server") }
   let(:log) { File.join(dir, "gateway.ndjson") }
   let(:journal) { Lain::Journal.open(log) }
@@ -93,8 +95,13 @@ RSpec.describe Lain::Gateway::Server, :seam do
   end
 
   describe "binding" do
-    it "listens on loopback and prints its URL with the token" do
-      expect(server.url).to eq("http://127.0.0.1:#{server.port}/?token=#{token}")
+    it "shows its token-free URL when inspected, never the token" do
+      expect(server.inspect).to include(server.url)
+      expect(server.inspect).not_to include(token)
+    end
+
+    it "listens on loopback, its URL carrying no token" do
+      expect(server.url).to eq("http://127.0.0.1:#{server.port}")
       expect(server.port).to be_positive
       expect { connect.close }.not_to raise_error
     end
@@ -136,8 +143,8 @@ RSpec.describe Lain::Gateway::Server, :seam do
       end
     end
 
-    it "refuses the identity path to a foreign Host even with the token" do
-      reply = raw("GET #{Lain::Gateway::IDENTITY_PATH}?token=#{token} HTTP/1.1\r\nHost: rebound.example\r\n\r\n")
+    it "refuses the identity path to a foreign Host" do
+      reply = raw("GET #{Lain::Gateway::IDENTITY_PATH}?nonce=#{nonce} HTTP/1.1\r\nHost: rebound.example\r\n\r\n")
 
       expect(reply[:status]).to eq(403)
     end
@@ -149,7 +156,7 @@ RSpec.describe Lain::Gateway::Server, :seam do
     end
 
     it "answers 400 to a header line too long, rather than reading its tail as another header" do
-      reply = raw("GET #{Lain::Gateway::IDENTITY_PATH}?token=#{token} HTTP/1.1\r\nHost: #{host}\r\n" \
+      reply = raw("GET #{Lain::Gateway::IDENTITY_PATH}?nonce=#{nonce} HTTP/1.1\r\nHost: #{host}\r\n" \
                   "X-A: #{"a" * 9000}\r\n\r\n")
 
       expect(reply[:status]).to eq(400)
@@ -202,26 +209,43 @@ RSpec.describe Lain::Gateway::Server, :seam do
   describe "the identity endpoint" do
     let(:path) { Lain::Gateway::IDENTITY_PATH }
 
-    it "answers the token's digest to a caller presenting the token" do
-      reply = get("#{path}?token=#{token}")
+    # The token never crosses the wire: a client proves the gateway by the
+    # HMAC of a nonce it chose, keyed by the token it already holds.
+    it "answers the HMAC of the caller's nonce under its token, and the paths it serves" do
+      reply = get("#{path}?nonce=#{nonce}")
 
       expect(reply[:status]).to eq(200)
-      expect(JSON.parse(reply[:body])).to eq("digest" => Digest::SHA256.hexdigest(token))
+      expect(JSON.parse(reply[:body]))
+        .to eq("proof" => OpenSSL::HMAC.hexdigest("SHA256", token, nonce), "paths" => ["/api/chat"])
     end
 
-    it "answers 403 to a wrong token" do
-      expect(get("#{path}?token=#{"0" * 32}")[:status]).to eq(403)
+    it "names the anthropic path for an anthropic upstream" do
+      anthropic = described_class.new(bind: "127.0.0.1", port: 0, upstream: Lain::Gateway::Upstream.for(
+        "https://api.anthropic.com"
+      ), inspection:, console:, journal:, token:)
+      serving = Thread.new { anthropic.run }
+      reply = answer(TCPSocket.new("127.0.0.1", anthropic.port).tap do |socket|
+        socket.write("GET #{path}?nonce=#{nonce} HTTP/1.1\r\nHost: 127.0.0.1:#{anthropic.port}\r\n\r\n")
+      end)
+
+      expect(JSON.parse(reply[:body])["paths"]).to eq(["/v1/messages"])
+    ensure
+      anthropic&.stop
+      serving&.join(5)
     end
 
-    it "answers 403 to a missing token" do
-      expect(get(path)[:status]).to eq(403)
+    ["", "?nonce=", "?nonce=#{"a" * 31}", "?nonce=#{"g" * 32}", "?nonce=#{"a" * 129}", "?token=#{"0" * 32}"]
+      .each do |query|
+      it "answers 400 to the query #{query[0, 24].inspect}, which carries no usable nonce" do
+        expect(get("#{path}#{query}")[:status]).to eq(400)
+      end
     end
 
     it "answers while a prompt is open" do
       waiting = send_post(connect, body)
       wait_until(reason: "the prompt") { console.shown.size == 1 }
 
-      expect(get("#{path}?token=#{token}")[:status]).to eq(200)
+      expect(get("#{path}?nonce=#{nonce}")[:status]).to eq(200)
     ensure
       console.answers << false
       answer(waiting)
@@ -356,7 +380,7 @@ RSpec.describe Lain::Gateway::Server, :seam do
       open = Array.new(2) { connect }
       wait_until(reason: "2 connections read") { gateway_threads >= 3 }
 
-      expect(get("#{Lain::Gateway::IDENTITY_PATH}?token=#{token}")[:status]).to eq(503)
+      expect(get("#{Lain::Gateway::IDENTITY_PATH}?nonce=#{nonce}")[:status]).to eq(503)
       expect(records).to contain_exactly(a_hash_including("outcome" => "busy"))
       expect(records.first.keys).not_to include("body")
     ensure

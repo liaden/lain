@@ -52,14 +52,17 @@ module Lain
       #   a shared runner loaded from one that reloads it. The answer's format
       #   and, on the native arm, `think` are merged OVER it and cannot be set
       #   from here
+      # @param stream [Boolean] whether the Request asks to stream; a relay that
+      #   answers only whole JSON bodies needs false
       def initialize(definition:, provider:, model:, max_tokens: DEFAULT_MAX_TOKENS, decoder: JsonDecoder.new,
-                     extra: {})
+                     extra: {}, stream: true)
         @definition = definition
         @provider = provider
         @model = model
         @max_tokens = max_tokens
         @decoder = decoder
         @extra = extra
+        @stream = stream
         @usage = Usage.zero
       end
 
@@ -97,7 +100,7 @@ module Lain
       def said_nothing?(reply) = Blankness.blank?(reply.text)
 
       def request_for(inputs)
-        Request.new(model: @model, max_tokens: @max_tokens,
+        Request.new(model: @model, max_tokens: @max_tokens, stream: @stream,
                     extra: @extra.merge(structured_answer_format, thinking_off),
                     messages: [{ "role" => "user", "content" => @definition.render(inputs) }])
       end

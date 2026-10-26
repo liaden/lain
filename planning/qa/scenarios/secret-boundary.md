@@ -5,8 +5,9 @@
 **What it exercises:** `Sensitivity::Policy` (the pre-read path gate), `Middleware::WithholdSecretPaths`
 (the listing filter), `Middleware::RedactSecretReads` and `Sensitivity::Regions` (the post-read
 content mask), `Middleware::RefuseSecretWrites`, `Escalation::Triage`'s unliftable rung, the
-`sensitivity` verb of `.lain/config.rb`, and, the one act that needs a model, `--secret-oracle`, which is a
-**local** ollama model by construction and can never be a remote one whatever `--provider` says.
+`sensitivity` verb of `.lain/config.rb`, and, the one act that needs a model, `--secret-oracle`: `local` is a
+**local** ollama model by construction and can never be a remote one whatever `--provider` says; `cloud` reaches a
+hosted model only through a `lain gateway` that proves itself before every question (§9b).
 
 **The question it answers:** CLAUDE.md calls the three-place split *forced* — a path classifier
 answers before a file is opened, a region detector cannot until it has the bytes. Does that hold
@@ -988,7 +989,7 @@ Opt-in, never wired by default, and **it is shown the path and the region count,
 contents**.
 
 ```bash
-lain chat --provider ollama --model qwen3-coder:30b --secret-oracle
+lain chat --provider ollama --model qwen3-coder:30b --secret-oracle local
 ```
 
 Drive four reads of increasing ambiguity — a lockfile, a vendored JS bundle, `.env`, and
@@ -1130,13 +1131,14 @@ first result means anything. A masked file that still prints is the defect. Whet
 
 A confined child's `bash cat /etc/passwd` used to park for a human while its `read_file /etc/passwd` was refused with the home advice (`sensitivity/policy.rb:239-240`); a human-approved call runs `traced`, so `reader` would not hide the file (round 26, k26-9/g26-3). Fixed for the paths the shell parse names (T33): the policy now refuses a confined child's `bash` call that names such a path, as it does for `read_file`. An opaque parse names no path and is not refused here.
 
-## 9: Outbound model requests: refused on a known secret, held under `--supervise-egress all` *(a chat with a model; a hosted one shows the endpoint best)*
+## 9: Outbound model requests: refused on a known secret, held under `--supervise-egress oracle` or `all` *(a chat with a model; a hosted one shows the endpoint best)*
 
 `Provider::HTTP::EgressGuard` sits on every provider the chat's Backend builds, the chat's and the summarizer and handoff tiers'.
 It refuses a request whose body carries a known secret value, and under `--supervise-egress all` it parks every
 other request as an `egress` decision before a byte leaves. The default, `off`, parks nothing. The local ollama
-server's model metadata probe at launch (`/api/show`) is not held. The `oracle` scope, which holds only the
-`--secret-oracle` judge's requests, arrives with a later change and is not on the flag yet.
+server's model metadata probe at launch (`/api/show`) is not held, nor is the cloud oracle's gateway identity
+probe, which carries only a nonce. The `--secret-oracle` judge's provider carries
+the same guard, local or cloud: `oracle` holds only its requests, and `all` holds them with everyone else's.
 
 ```bash
 export DB_PASSWORD=qa-lent-password-24bytes     # a secret-named variable, 8 bytes or more
@@ -1155,6 +1157,57 @@ lain chat --supervise-egress all --non-interactive --prompt "what is 2 + 2?"
 | `--non-interactive` with the flag | the turn is refused at once, without waiting, and the error names `--supervise-egress` |
 | ask the model to repeat `qa-lent-password-24bytes` back to you (flag on or off) | refused before anything parks or is sent: `the request to <host> was not sent: it carries 1 known secret value(s)`, naming the message and the `/rewind` count. The session file holds an `egress_refused` record with the host and a count, never the value |
 
+| `--secret-oracle local --supervise-egress oracle`, then read a file holding a credential | the oracle's request parks first, as `secret_oracle sends N canonical bytes to localhost/api/chat ...`; the chat's own turns send without parking. Deny it and the oracle asks nothing; the read stays parked for you |
+| `--secret-oracle local --supervise-egress all`, the same read | the chat's turns and the oracle's request both park, each naming its requester |
+| `--secret-oracle local`, with `DB_PASSWORD` set and a file named `qa-lent-password-24bytes` read | the oracle's question is refused before it is sent (`egress_refused` in the session file), and the read stays parked for you |
+
 *Wrong looks like:* a request sent before its line was answered; prompt text, a token or the lent value in the parked
 line or the journal; 2 parked lines for one retried request; a headless run that waits; an `egress` decision parked
-with the flag off.
+with the flag off; under `oracle`, a chat turn that parks.
+
+### 9b: `--secret-oracle cloud` asks a hosted model only through a lain gateway *(a gateway in a second pane, a cloud key in that pane only)*
+
+The cloud judge talks only to a listener on 127.0.0.1 that, before every question, answers a fresh nonce with its
+HMAC under the gateway's token, and names the API paths its upstream serves. The gateway leaves its token in
+`$XDG_STATE_HOME/lain/gateway/<port>.token` (mode 0600, removed when it stops), the chat reads it from there, and
+the token is never printed, never on a command line, and never crosses the wire. That shows the listener holds the token or can reach something that does; it does not show nothing sits
+between the two. The gateway then shows you every request before it leaves. A local ollama on 127.0.0.1:11434 is not
+one, even though it is loopback and forwards `:cloud` tags.
+
+```bash
+# pane 1: the gateway, holding the key
+OLLAMA_API_KEY=... lain gateway --upstream https://ollama.com      # prints http://127.0.0.1:<port> and its token file
+# pane 2: the chat, which never sees the key
+lain chat --secret-oracle cloud --secret-oracle-model glm-5.3:cloud --gateway http://127.0.0.1:<port>
+```
+
+| act | expected |
+|---|---|
+| `--secret-oracle cloud` with no `--gateway` | the chat refuses to start, naming `--gateway` and `lain gateway --upstream URL` |
+| `--secret-oracle cloud --gateway <url>` with no `--secret-oracle-model` | the chat refuses to start, naming `--secret-oracle-model`; there is no default cloud model |
+| `--gateway https://ollama.com` | refused at launch: `the cloud oracle reaches a model only through a loopback lain gateway; https://ollama.com is not one` |
+| the gateway's URL spelled with `localhost` or `[::1]` instead of `127.0.0.1` | refused at launch the same way: only 127.0.0.1, the address the gateway binds, is accepted |
+| `--gateway http://127.0.0.1:11434` with a `11434.token` file you wrote yourself (a local ollama, or nothing listening) | refused at launch: the listener `did not prove it is one holding the token`, with its status or error. The token is not in the message |
+| change one hex digit in the gateway's token file after the gateway started | refused at launch: `its proof did not match`; the gateway pane asks nothing |
+| `--gateway 'http://127.0.0.1:<port>/?token=<hex>'`, or the URL with a `#fragment` or a `user@` | refused at launch, naming the token file to use instead; the message does not repeat the token |
+| `--gateway <url>` with `--secret-oracle local` or `off`, or `--secret-oracle-model` with `--secret-oracle off` | refused at launch, naming the flag the mode does not read |
+| `--gateway http://127.0.0.1:<a port no gateway runs on>` | refused at launch: `no gateway token at <path>; is `lain gateway` running on that port?` |
+| `chmod 644` the token file, then start the chat | refused at launch, naming the path and mode 0600 |
+| replace the token file with a symlink to a file holding the right token | refused at launch, naming the path: it is not a regular file |
+| `chmod 777` the gateway directory, or make it a symlink, then start the chat or the gateway | refused, naming the token file's path: its directory is writable by others, or a symlink |
+| start `lain gateway --port <p>` while `<p>.token` is a symlink | the gateway refuses to start, naming the path, and nothing listens on `<p>` |
+| the gateway pane's start-up lines | the token-free URL, `token: <path>`, and the log; the token itself appears nowhere on screen |
+| stop the gateway with Ctrl-C | its token file is gone |
+| `ps -o args` for the chat, and any lock holder line under the state home | no token anywhere: the command line holds only `http://127.0.0.1:<port>` |
+| `--secret-oracle-model claude-haiku-5-5` against a gateway started with `--upstream https://ollama.com` | refused at launch: the gateway serves `/api/chat`, not `/v1/messages` |
+| `--secret-oracle local --secret-oracle-model glm-5.3:cloud` (also `GLM-5.3:CLOUD`, `gpt-oss:120b-cloud`) | refused at launch, naming `--secret-oracle cloud` and `--gateway` |
+| with the right URL, read a file holding a credential | the gateway pane shows 1 request to `/api/chat`: a non-streaming body (`"stream":false`) naming only the path, the tool and the region count, never a region's bytes. Answer `y` and the verdict is applied, signed `secret_oracle`; answer `n` and the read stays parked for you |
+| `--secret-oracle-model claude-haiku-5-5` against `lain gateway --upstream https://api.anthropic.com` | the same crossing at `/v1/messages`; the chat's `ANTHROPIC_API_KEY` is not sent to the gateway (it sends `via-lain-gateway`, which the gateway replaces) |
+| add `--supervise-egress oracle`, then read a file holding a credential | you are asked twice for the one question: first the chat parks `secret_oracle sends N canonical bytes to 127.0.0.1/api/chat ...`, then, once you approve that, the gateway pane shows the body. A deny at either stops it, and the read stays parked for you |
+| the session file after the crossing | `oracle_answer` and `request_sent` records for `secret_oracle`; the token appears nowhere in it |
+| stop the gateway mid-session, then read another file | a notice on the chat screen: `secret oracle: the cloud oracle reaches a model only through a loopback lain gateway; the listener at http://127.0.0.1:<port> did not prove it ...; "<path>" is left for you`. The session file holds an `approval_surface_fault`; nothing is approved. The notice says `the gateway on port <port> changed since the chat started` and to restart the chat or the gateway |
+| restart the gateway on the same port (`--port <port>`), then read another file | the chat reads the new token file once, the proof passes, and the question goes to the gateway pane as before; no notice |
+
+*Wrong looks like:* any question sent before the identity exchange, or without one; the token in a request, a
+message, a parked line or the session file; the chat's own cloud key reaching the gateway; a streaming body at the
+gateway; a cloud model asked through the local tier; a stopped gateway that only shows up in the session file.

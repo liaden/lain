@@ -344,6 +344,44 @@ RSpec.describe Lain::Approval::Parked::SecretSurface do
     expect(settled.surface).to eq(described_class::SURFACE)
   end
 
+  # A fault the surface would otherwise only journal: the human has to see
+  # it, or the cloud oracle stops judging with nobody told.
+  describe "a gateway that no longer proves itself" do
+    let(:tier) do
+      SecretSurfaceSpecSupport::UnreachableOracle.new(
+        Lain::Oracle::SecretRead::NotAGateway.new("the listener at http://127.0.0.1:4000 did not prove it")
+      )
+    end
+    let(:told) { [] }
+
+    def telling
+      described_class.new(oracle: tier, threshold: 0.8, journal: journaled, path_gate:, audit_rate: 0.0,
+                          notice: told.method(:<<))
+    end
+
+    it "tells the human on screen, naming the gateway and that the read is theirs" do
+      settled = parked(telling)
+
+      expect(settled.surface).to eq(Lain::Approval::Parked::Queue::TIMEOUT_SURFACE)
+      expect(told.size).to eq(1)
+      expect(told.first).to include("secret oracle", "http://127.0.0.1:4000 did not prove it", "left for you")
+    end
+
+    it "still journals the fault" do
+      parked(telling)
+
+      expect(journaled.last).to include("type" => described_class::FAULT_TYPE)
+    end
+
+    it "tells nobody about an ordinary fault" do
+      ordinary = SecretSurfaceSpecSupport::UnreachableOracle.new(Lain::Provider::Ollama::APIError.new("closed"))
+      parked(described_class.new(oracle: ordinary, journal: journaled, path_gate:, audit_rate: 0.0,
+                                 notice: told.method(:<<)))
+
+      expect(told).to be_empty
+    end
+  end
+
   # AC: "an unreachable local model leaves it for the human."
   describe "an ollama that is not running" do
     let(:tier) { SecretSurfaceSpecSupport::UnreachableOracle.new(Lain::Provider::Ollama::APIError.new("closed")) }

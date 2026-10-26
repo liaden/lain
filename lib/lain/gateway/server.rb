@@ -58,7 +58,8 @@ module Lain
       NOT_SERVED = "the gateway serves only POST %<paths>s and GET #{IDENTITY_PATH}".freeze
       NO_LENGTH = "the gateway reads only a body sent with a Content-Length"
       TIMED_OUT = "the request did not arrive whole within #{READ_DEADLINE}s".freeze
-      WRONG_TOKEN = "the token is missing or wrong"
+      NO_NONCE = "the identity path needs a nonce of 32 to 128 hex digits"
+      NONCE = /\A\h{32,128}\z/
       DECLINED = "the human declined to forward this request"
       UNASKED = "the human could not be asked: %<reason>s"
       TOO_MANY_CONNECTIONS = "the gateway holds #{MAX_CONNECTIONS} connections already".freeze
@@ -99,7 +100,7 @@ module Lain
       # @param inspection [#call] `(body) -> Inspection::Verdict`
       # @param console [#approve?] the human, asked with a {Request}
       # @param journal [#record] the gateway's own log
-      # @param token [String] proves this gateway to a client through {IDENTITY_PATH}
+      # @param token [String] keys the HMAC that proves this gateway to a client through {IDENTITY_PATH}
       # @raise [ArgumentError] for a bind address off loopback
       # @raise [Lain::Error] naming the port, when it is taken or not ours to take
       def initialize(bind:, port:, upstream:, inspection:, console:, journal:, token:)
@@ -123,8 +124,12 @@ module Lain
       # @return [Integer] the port the listener holds
       def port = @listener.local_address.ip_port
 
-      # @return [String] where a client reaches this gateway, carrying the token
-      def url = "http://#{LOOPBACK}:#{port}/?token=#{@token}"
+      # @return [String] where a client reaches this gateway; the token travels in a {TokenFile}, never here
+      def url = "http://#{LOOPBACK}:#{port}"
+
+      # @return [String] the URL, never the token
+      def inspect = "#<#{self.class} #{url}>"
+      alias to_s inspect
 
       # Serves until {#stop} closes the listener, or the caller is interrupted.
       #
@@ -244,20 +249,20 @@ module Lain
 
       def hosts = ["#{LOOPBACK}:#{port}", "localhost:#{port}"]
 
+      # The client's own nonce under the token, so the token never crosses the
+      # wire and an answer cannot be replayed to another nonce.
       def identity(query)
-        raise Refusal.new(403, WRONG_TOKEN) unless token?(given_token(query))
+        nonce = given_nonce(query)
+        raise Refusal.new(400, NO_NONCE) unless nonce.match?(NONCE)
 
-        Reply.new(status: 200, body: JSON.generate({ digest: Digest::SHA256.hexdigest(@token) }))
+        Reply.new(status: 200, body: JSON.generate({ proof: OpenSSL::HMAC.hexdigest("SHA256", @token, nonce),
+                                                     paths: @paths }))
       end
 
-      def given_token(query)
-        URI.decode_www_form(query.to_s).assoc("token")&.last.to_s
+      def given_nonce(query)
+        URI.decode_www_form(query.to_s).assoc("nonce")&.last.to_s
       rescue ArgumentError
         ""
-      end
-
-      def token?(given)
-        OpenSSL.fixed_length_secure_compare(Digest::SHA256.digest(given), Digest::SHA256.digest(@token))
       end
 
       def relay(socket, path, body)

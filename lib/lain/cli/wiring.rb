@@ -194,28 +194,21 @@ module Lain
       # the raise, not through this.
       def exit_status = @repl ? @repl.exit_status : Repl::Outcome::COMPLETED
 
-      # The opt-in local-model triage surface for parked reads carrying
-      # sensitive regions -- nil without `--secret-oracle`, so the default run
-      # spawns no extra fiber.
-      #
-      # Nothing in this class may choose the oracle's provider:
-      # {Oracle::SecretRead.tier} constructs the local ollama arm itself, and the
-      # `--provider` / `--summarizer-provider` knobs held here are exactly what
-      # must not reach it -- that module's header has what
-      # `--summarizer-provider anthropic` would do to a candidate secret's path.
-      # The journal is resolved ONCE and shared by the oracle and the surface.
-      # What the backend IS asked is the judge's sampler options, which name
-      # no endpoint -- see {Backend#tier_options} for why they are not empty
-      # whenever the chat runs the judge's own model.
+      # The opt-in triage surface for parked reads carrying sensitive regions --
+      # nil under `--secret-oracle off`, so the default run spawns no extra
+      # fiber. {SecretOracle} has why nothing here chooses the oracle's
+      # provider. The journal is resolved ONCE and shared by the oracle and the
+      # surface.
       #
       # @param backend [Backend] the run's flag resolution
       # @return [Approval::Parked::SecretSurface, nil]
+      # @raise [Oracle::SecretRead::NotAGateway] when the cloud judge's gateway does not prove itself
       def secret_surface(backend)
-        return nil unless options[:secret_oracle]
+        return nil unless @secret_oracle.on?
 
         @secret_surface ||= begin
           journal = goal_journal
-          Approval::Parked::SecretSurface.new(oracle: secret_read(backend, journal), journal:,
+          Approval::Parked::SecretSurface.new(oracle: @secret_oracle.tier(backend, journal), journal:, notice: told,
                                               path_gate: Approval::Parked::PathGate.new(@switchboard.sensitivity))
         end
       end
@@ -258,6 +251,7 @@ module Lain
                      conductor_opener: Lain::CLI::Conductor.public_method(:open),
                      stdin: Lain::Frontend::StdinPump.process_input, arms: CLI::Arms.from(options))
         @options = options
+        @secret_oracle = SecretOracle.new(options)
         @arms = arms
         @chronicle = chronicle
         @status_feed = status_feed
@@ -1039,14 +1033,6 @@ module Lain
       def goal_driver
         @goal_driver ||= GoalDriver.new(journal: goal_journal, quiescent: -> { quiescent? },
                                         layer: GoalDriver::Layer.new(-> { @switchboard.mode_switch }))
-      end
-
-      # The judge's model is named once here, so the options asked for and the
-      # model they ride to cannot come to disagree.
-      def secret_read(backend, journal)
-        model = Provider::Ollama::DEFAULT_MODEL
-        options = backend.tier_options(provider: Backend::OllamaTier::LOCAL, model:)
-        Oracle::SecretRead.tier(model:, journal:, options:)
       end
 
       # A record a live view may fold, so the tee-following reader. Under
