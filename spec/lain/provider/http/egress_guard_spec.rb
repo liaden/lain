@@ -36,6 +36,14 @@ RSpec.describe Lain::Provider::HTTP::EgressGuard do
       messages: texts.each_with_index.map { |text, at| { role: at.even? ? "user" : "assistant", content: text } } }
   end
 
+  # A hold that supervises, answering each summary in turn from `answers`.
+  def supervising(*answers, asked: [])
+    Class.new do
+      define_method(:supervises?) { true }
+      define_method(:call) { |summary| (asked << summary) && answers.shift }
+    end.new
+  end
+
   def refusal_of(payload, connection: build_connection)
     connection.post("/v1/messages", payload)
   rescue described_class::Refused => e
@@ -141,17 +149,14 @@ RSpec.describe Lain::Provider::HTTP::EgressGuard do
                                                  "regions" => 1, "values" => 0 }])
     end
 
-    it "is refused when the hold declines it" do
-      sent = stub_request(:post, url).to_return(ok)
+    it "is counted in a supervising hold's summary, which never carries the body" do
+      stub_request(:post, url).to_return(ok)
       asked = []
-      hold = ->(summary) { (asked << summary) && false }
 
-      refusal = refusal_of(body("a token nobody listed: #{token}"), connection: build_connection(hold:))
+      build_connection(hold: supervising(true, asked:)).post("/v1/messages", body("a token nobody listed: #{token}"))
 
-      expect(refusal).to be_a(described_class::Refused)
-      expect(asked.first).to include("api.anthropic.com", "1")
-      expect(asked.first).not_to include(token)
-      expect(sent).not_to have_been_requested
+      expect(asked.first).to include(endpoint: "api.anthropic.com/v1/messages", literal_hits: 0, flagged: 1)
+      expect(asked.first.values.join(" ")).not_to include(token, "nobody listed")
     end
 
     describe "in a follow-up request" do
@@ -188,13 +193,132 @@ RSpec.describe Lain::Provider::HTTP::EgressGuard do
       it "asks again about a message the hold declined, since it was never sent" do
         stub_request(:post, url).to_return(ok)
         asked = []
-        connection = build_connection(hold: ->(summary) { (asked << summary) && false })
+        connection = build_connection(hold: supervising(false, false, asked:))
 
         2.times { refusal_of(body(*first), connection:) }
 
         expect(asked.size).to eq(2)
       end
     end
+  end
+
+  describe "under a supervising hold" do
+    let(:sent) { stub_request(:post, url).to_return(ok) }
+
+    it "asks before any byte leaves, naming the endpoint, the size and the body's digest" do
+      asked = []
+      sent_before = []
+      registry = WebMock::RequestRegistry.instance
+      pattern = sent.request_pattern
+      hold = supervising(true, asked:)
+      hold.define_singleton_method(:call) do |summary|
+        (sent_before << registry.times_executed(pattern)) && super(summary)
+      end
+
+      build_connection(hold:).post("/v1/messages", body("what is 2 + 2?"))
+
+      summary = asked.first
+      expect(sent_before).to eq([0])
+      expect(summary.keys).to contain_exactly(:endpoint, :bytes, :body_digest, :literal_hits, :flagged)
+      expect(summary).to include(endpoint: "api.anthropic.com/v1/messages", literal_hits: 0, flagged: 0)
+      expect(summary[:body_digest]).to match(/\Ablake3:\h{64}\z/)
+      expect(summary[:bytes]).to be > "what is 2 + 2?".bytesize
+      expect(sent).to have_been_requested.once
+    end
+
+    it "does not send a request the human denies, and says egress was denied" do
+      sent
+
+      refusal = refusal_of(body("what is 2 + 2?"), connection: build_connection(hold: supervising(false)))
+
+      expect(refusal.message).to include("egress denied", "api.anthropic.com")
+      expect(sent).not_to have_been_requested
+    end
+
+    it "asks once for a request its retry resends" do
+      retried = stub_request(:post, url).to_timeout.then.to_return(ok)
+      asked = []
+
+      build_connection(hold: supervising(true, asked:), max_retries: 1).post("/v1/messages", body("hello"))
+
+      expect(asked.size).to eq(1)
+      expect(retried).to have_been_requested.twice
+    end
+
+    it "asks again for a different body, and for the same body sent again as a new request" do
+      sent
+      asked = []
+      connection = build_connection(hold: supervising(true, true, true, asked:))
+
+      connection.post("/v1/messages", body("hello"))
+      connection.post("/v1/messages", body("hello", "hi", "again"))
+      connection.post("/v1/messages", body("hello"))
+
+      expect(asked.map { _1[:body_digest] }.uniq.size).to eq(2)
+      expect(asked.size).to eq(3)
+      expect(sent).to have_been_requested.times(3)
+    end
+
+    it "counts a credential shape in every request that carries it, not only the first" do
+      sent
+      asked = []
+      token = "ghp_Ab9xQ7zK2mN4pR8sT1vW3yZ6cE5fH0jL"
+      connection = build_connection(hold: supervising(true, true, asked:))
+
+      connection.post("/v1/messages", body("here #{token}"))
+      connection.post("/v1/messages", body("here #{token}", "ok", "again"))
+
+      expect(asked.map { _1[:flagged] }).to eq([1, 1])
+    end
+
+    describe "over a value the masker knows but does not refuse on" do
+      let(:literals) { source_of([secret], %w[supervised-flagged-value-0123]) }
+
+      it "counts it as a known value, and never echoes it" do
+        sent
+        asked = []
+
+        build_connection(hold: supervising(true, true, asked:)).tap do |connection|
+          2.times { connection.post("/v1/messages", body("x supervised-flagged-value-0123")) }
+        end
+
+        expect(asked.map { _1[:literal_hits] }).to eq([1, 1])
+        expect(asked.first.values.join(" ")).not_to include("supervised-flagged-value-0123")
+      end
+    end
+
+    it "sends a bodiless GET without asking, under a supervising hold or an unbound one" do
+      models = stub_request(:get, "https://api.anthropic.com/v1/models").to_return(ok)
+      asked = []
+      unbound = Lain::CLI::Backend::EgressHold.new("all").for(:agent)
+
+      build_connection(hold: supervising(asked:)).get("/v1/models")
+      build_connection(hold: unbound).get("/v1/models")
+
+      expect(asked).to be_empty
+      expect(models).to have_been_requested.twice
+    end
+
+    it "is not asked about a request the literals refuse" do
+      sent
+      asked = []
+
+      refusal_of(body("the password is #{secret}"), connection: build_connection(hold: supervising(true, asked:)))
+
+      expect(asked).to be_empty
+      expect(sent).not_to have_been_requested
+    end
+  end
+
+  it "neither asks the default hold nor digests the body for it" do
+    sent = stub_request(:post, url).to_return(ok)
+    allow(Lain::Canonical).to receive(:dump).and_call_original
+
+    build_connection.post("/v1/messages", body("what is 2 + 2?"))
+
+    expect(described_class::Unsupervised.supervises?).to be(false)
+    expect(Lain::Canonical).not_to have_received(:dump)
+    expect(sent).to have_been_requested.once
   end
 
   describe "among many known values" do

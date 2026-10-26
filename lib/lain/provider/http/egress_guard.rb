@@ -43,19 +43,26 @@ module Lain
                   "until /rewind %<back>d moves the chat to before that message"
         OUTSIDE_TURNS = "%<refused>s in %<part>s, which every request repeats. Remove the value from memory or the " \
                         "instructions file, or unset the variable that holds it, then restart the chat"
-        FLAGGED = "the request to %<host>s holds %<regions>d region(s) shaped like a credential and " \
-                  "%<values>d value(s) the masker knows but does not refuse on"
+        DENIED = "egress denied: the request to %<host>s was not sent, because the human did not approve it"
 
-        # Sends whatever only the region detector flagged; the default hold.
+        # Where the digest a human approved rides the request, so a retry of
+        # the same request is not asked again and a new request always is:
+        # faraday-retry resends the one env it was handed.
+        APPROVED = :lain_egress_approved
+
+        # The default hold: it supervises nothing, so a request pays no digest.
         module Unsupervised
-          # @param _summary [String]
+          # @return [Boolean] false
+          def self.supervises? = false
+
+          # @param _summary [Hash]
           # @return [Boolean] true
           def self.call(_summary) = true
         end
 
         # @param literals [#egress] answers a {Sensitivity::Secrets::Egress}; read per request
         # @param journal [#<<] takes each {Telemetry::EgressRefused} and its Flagged sibling
-        # @param hold [#call] a flagged request's summary -> true to send it
+        # @param hold [#supervises?, #call] asked with a summary, never the body, when it supervises
         # @return [Array] frozen, the entry the configured-middleware seat takes
         def self.entry(literals:, journal:, hold: Unsupervised) = [self, { literals:, journal:, hold: }.freeze].freeze
 
@@ -63,7 +70,7 @@ module Lain
         # @param options [Hash] the guard's collaborators, as {.entry} builds them
         # @option options [#egress] :literals answers a {Sensitivity::Secrets::Egress}; read per request
         # @option options [#<<] :journal takes each refusal and flag record
-        # @option options [#call] :hold a flagged request's summary -> true to send it
+        # @option options [#supervises?, #call] :hold asked with a summary, never the body, when it supervises
         def initialize(app, options = {})
           super
           @literals = options.fetch(:literals)
@@ -75,22 +82,33 @@ module Lain
         end
 
         def call(env)
-          inspect_body(env.url.host.to_s, env.body) unless env.body.nil?
+          inspect_body(env) unless env.body.nil?
           @app.call(env)
         end
 
         private
 
-        def inspect_body(host, body)
+        def inspect_body(env)
+          host = env.url.host.to_s
           egress = known
           raise Refused, format(NOT_READY, host:) if egress.nil?
 
-          scan = Scan.of(body)
+          scan = Scan.of(env.body)
+          refuse_known(host, scan, egress)
+          admit(env, host, scan, egress)
+        end
+
+        def admit(env, host, scan, egress)
+          unsent = @sent.unsent(scan.texts)
+          flagged = @flagged.over(floored(egress.flagged))
+          flag(host, unsent.values.join("\0"), flagged)
+          hold(env, scan, flagged) if @hold.supervises?
+          @sent.remember(unsent.keys)
+        end
+
+        def refuse_known(host, scan, egress)
           refused = @refused.over(floored(egress.refused))
           refuse(host, scan, refused) if scan.matches?(refused)
-          unsent = @sent.unsent(scan.texts)
-          flag(host, unsent.values.join("\0"), @flagged.over(floored(egress.flagged)))
-          @sent.remember(unsent.keys)
         end
 
         def known
@@ -118,12 +136,31 @@ module Lain
         # is told once rather than on every request that resends it.
         def flag(host, fresh, pattern)
           regions = Sensitivity::Regions.detect(fresh).size
-          values = pattern.match?(fresh) ? pattern.values.count { fresh.include?(_1) } : 0
+          values = carried(fresh, pattern)
           return if (regions + values).zero?
 
           @journal << Telemetry::EgressRefused::Flagged.new(host:, regions:, values:)
-          summary = format(FLAGGED, host:, regions:, values:)
-          raise Refused, "#{summary}, and it was not approved" unless @hold.call(summary)
+        end
+
+        def carried(text, pattern) = pattern.match?(text) ? pattern.values.count { text.include?(_1) } : 0
+
+        def hold(env, scan, flagged)
+          dumped = Canonical.dump(env.body)
+          digest = -"#{Canonical::DIGEST_ALGORITHM}:#{Ext.blake3_hex(dumped)}"
+          return if env[APPROVED] == digest
+
+          host = env.url.host.to_s
+          raise Refused, format(DENIED, host:) unless @hold.call(summary(env, dumped, digest, scan, flagged))
+
+          env[APPROVED] = digest
+        end
+
+        # Counted over the whole body rather than what is new, unlike {#flag}:
+        # a human asked again about a resent credential must still see it.
+        def summary(env, dumped, digest, scan, flagged)
+          whole = scan.texts.join("\0")
+          { endpoint: "#{env.url.host}#{env.url.path}", bytes: dumped.bytesize, body_digest: digest,
+            literal_hits: carried(whole, flagged), flagged: Sensitivity::Regions.detect(whole).size }
         end
 
         # How a set of values is looked for in a text. One `include?` per value

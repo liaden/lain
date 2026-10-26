@@ -1614,6 +1614,89 @@ RSpec.describe Lain::CLI::Wiring do
       expect(source.history).to be(board.guard_inputs.history)
       expect(source.child_env).to be(board.guard_inputs.child_env)
     end
+
+    it "parks no egress decision when supervision was not asked for" do
+      sent = stub_request(:post, messages_url).to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                                                         body: JSON.generate(reply))
+
+      with_env("ANTHROPIC_API_KEY" => "sk-wiring-spec") do
+        wire_hosted
+        hosted.provider.complete(ask("what is 2 + 2?"))
+      end
+
+      expect(sent).to have_been_requested.once
+      expect(journal.events.grep(Lain::Telemetry::ApprovalPending)).to be_empty
+    end
+
+    def reply
+      { "id" => "m", "type" => "message", "role" => "assistant", "model" => "claude-haiku-5-5",
+        "content" => [{ "type" => "text", "text" => "ok" }], "stop_reason" => "end_turn",
+        "usage" => { "input_tokens" => 1, "output_tokens" => 1 } }
+    end
+
+    describe "under --supervise-egress all" do
+      let(:hosted) do
+        with_env("ANTHROPIC_API_KEY" => "sk-wiring-spec") do
+          Lain::CLI::Backend.new({ provider: "anthropic", model: "claude-haiku-5-5", max_tokens: 64,
+                                   supervise_egress: "all" }, root: backend_root)
+        end
+      end
+
+      def egress_pendings = journal.events.grep(Lain::Telemetry::ApprovalPending).select { _1.kind == "egress" }
+
+      it "journals the egress decision before any request, and sends exactly one once the human approves" do
+        sent = stub_request(:post, messages_url)
+               .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: JSON.generate(reply))
+        wire_hosted
+        provider = chat_provider
+
+        Sync do |task|
+          task.with_timeout(20) do
+            sending = task.async { provider.complete(ask("what is 2 + 2?")) }
+            pending = wiring.approvals.dequeue
+            expect(egress_pendings.size).to eq(1)
+            expect(sent).not_to have_been_requested
+            pending.approve(surface: "spec", authority: :human)
+            sending.wait
+          end
+        end
+
+        expect(sent).to have_been_requested.once
+      end
+
+      it "sends nothing the human denies, and the call fails naming the denial" do
+        sent = stub_request(:post, messages_url)
+        wire_hosted
+        provider = chat_provider
+
+        Sync do |task|
+          task.with_timeout(20) do
+            sending = task.async do
+              provider.complete(ask("what is 2 + 2?"))
+            rescue Lain::Provider::HTTP::EgressGuard::Refused => e
+              e
+            end
+            wiring.approvals.dequeue.deny(surface: "spec", authority: :human)
+            expect(sending.wait.message).to include("egress denied")
+          end
+        end
+
+        expect(sent).not_to have_been_requested
+      end
+
+      it "refuses without waiting when no human is attached, naming the flag" do
+        sent = stub_request(:post, messages_url)
+        headless = new_wiring(options: { grace: 5, non_interactive: true }, chronicle:, status_feed:)
+        recorder, session = headless.run_state(nil)
+        with_env("ANTHROPIC_API_KEY" => "sk-wiring-spec") do
+          headless.wire_agent(channel:, recorder:, session:, backend: hosted)
+        end
+
+        expect { chat_provider.complete(ask("what is 2 + 2?")) }
+          .to raise_error(Lain::Provider::HTTP::EgressGuard::Refused, /--supervise-egress/)
+        expect(sent).not_to have_been_requested
+      end
+    end
   end
 
   # The flip a real Wiring's board journals, onto the run's own record.

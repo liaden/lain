@@ -194,6 +194,7 @@ module Lain
       # @option options [String] :summarizer_model model id for the summarizer tier
       # @option options [Integer] :summarizer_max_tokens ceiling on a summarizer answer
       # @option options [String] :confirm_price_tier ask, allow or refuse before a request crosses its price tier
+      # @option options [String] :supervise_egress off or all: whose model requests wait for the human
       def initialize(options, root:, profile: RunProfile.from_options(options),
                      compaction: CompactionProfile.typed(options), middleware: Config::Middleware.empty,
                      paths: Paths.new, environment: Prompt::Environment.none, ceiling_default: nil)
@@ -276,12 +277,16 @@ module Lain
       #   a truncated stream. This run's {#journal} by default, resolved per
       #   event; a command that records each run into its own file hands in a
       #   destination that follows the run instead.
+      # @param requester [Symbol] whom the egress hold asks for: the chat's
+      #   `:agent` unless a tier names its own
       def provider(name: provider_name, spool: Provider::Spool::Null.new, channel: Channel::Null.instance, queue: true,
-                   journal: run_journal)
+                   journal: run_journal, requester: :agent)
+        egress = egress_entries(journal, requester)
         case name
-        when *OllamaTier::NAMES then ollama_tier(name).provider(channel:, queue:, journal:, spool:,
-                                                                http_middleware: egress_literals.entries(journal))
-        else anthropic_provider(spool, channel, journal, queue:, flag: OllamaTier.flag_for(chat: chat_name?(name)))
+        when *OllamaTier::NAMES
+          ollama_tier(name).provider(channel:, queue:, journal:, spool:, http_middleware: egress)
+        else
+          anthropic_provider(spool, channel, journal, egress, queue:, flag: OllamaTier.flag_for(chat: chat_name?(name)))
         end
       end
 
@@ -292,7 +297,7 @@ module Lain
       # `queue:` is passed THROUGH rather than decided here, because
       # {Backend::Summarizer} and {Backend::SpanSummarizer} need opposite
       # answers; each says why at its own `#tier`.
-      def summarizer_provider(queue: true) = provider(name: summarizer_name, queue:)
+      def summarizer_provider(queue: true, requester: :summarizer) = provider(name: summarizer_name, queue:, requester:)
 
       # `--summarizer-model`, defaulting to the CHAT's model when both tiers
       # name one provider and to the summarizer provider's own default when they
@@ -392,6 +397,22 @@ module Lain
       #
       # @return [EgressLiterals]
       def egress_literals = @egress_literals ||= EgressLiterals.new(middleware)
+
+      # Where every provider built here asks the human before a request leaves,
+      # under `--supervise-egress`; {Wiring} binds it to the board's queue.
+      #
+      # @return [EgressHold]
+      def egress_hold = @egress_hold ||= EgressHold.new(@options[:supervise_egress])
+
+      # Before the first model request, so no provider sends unchecked or
+      # unasked: the board's secrets for the guard, its queue for the hold.
+      #
+      # @param board [#guard_inputs, #approvals] a chat's {Switchboard}
+      # @return [void]
+      def bind_egress(board)
+        egress_literals.bind_board(board.guard_inputs)
+        egress_hold.bind(board.approvals)
+      end
 
       # `--model` defaults to the SELECTED provider's own default (resolved here,
       # not in the Thor flag, whose default is fixed at load before `--provider`
@@ -748,14 +769,20 @@ module Lain
       # `flag` is whichever one SELECTED this arm, resolved by the caller that
       # knows. `--summarizer-provider anthropic` used to be refused in
       # `--provider`'s name -- a flag the operator never typed.
-      def anthropic_provider(spool, channel, journal, queue: true, flag: OllamaTier::CHAT_FLAG)
+      def anthropic_provider(spool, channel, journal, egress, queue: true, flag: OllamaTier::CHAT_FLAG)
         raise MissingAPIKey, "ANTHROPIC_API_KEY is not set; #{flag} anthropic needs it to build a client" \
           if ENV["ANTHROPIC_API_KEY"].to_s.empty?
 
         counter = Provider::HTTP::PriceTierGuard::LateCounter.new
         # Egress first, so a body it refuses is never sent to be counted.
-        entries = [*egress_literals.entries(journal), price_tier_entry(journal, counter)]
+        entries = [*egress, price_tier_entry(journal, counter)]
         counter.bind(Provider::Anthropic.new(spool:, channel:, queue:, journal:, http_middleware: entries))
+      end
+
+      # `requester` is the name {Provider::Journaled} records the provider's
+      # requests under, so the human is asked as the journal reads.
+      def egress_entries(journal, requester)
+        egress_literals.entries(journal, hold: egress_hold.for(requester))
       end
 
       # The compaction book, because it degrades to zero: an unpriced model has
@@ -902,7 +929,8 @@ module Lain
       def handoff_oracle = @handoff_oracle ||= journaling(Oracle::Handoff.definition)
 
       def journaling(definition)
-        provider = Provider::Journaled.new(provider: summarizer_provider, journal: run_journal, requester: :handoff)
+        provider = Provider::Journaled.new(provider: summarizer_provider(requester: :handoff), journal: run_journal,
+                                           requester: :handoff)
         tier = Oracle::Model.new(definition:, provider:, model: summarizer_model,
                                  max_tokens: summarizer_max_tokens, extra: summarizer_options)
         Oracle::Recorded::Journaling.new(inner: tier, definition:, journal: run_journal)

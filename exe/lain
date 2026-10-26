@@ -1268,6 +1268,12 @@ class LainCLI < Thor
                                                "that WOULD release sensitive regions, racing the human's own " \
                                                "surfaces. It is shown the path and the region count, never the " \
                                                "file's contents"
+      thor.method_option :supervise_egress, type: :string, enum: %w[off all], default: "off",
+                                            desc: "Hold outbound model requests for the human: all parks each " \
+                                                  "one, showing who sends it, its endpoint, size and digest, " \
+                                                  "never its body. Not held: the local ollama server's model " \
+                                                  "metadata probe at launch. With nobody attached, a held " \
+                                                  "request is refused"
     end
   end
 

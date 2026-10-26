@@ -510,6 +510,59 @@ RSpec.describe Lain::CLI::Backend do
     end
   end
 
+  describe "the egress hold under --supervise-egress" do
+    let(:denying) do
+      Class.new do
+        define_method(:asked) { @asked ||= [] }
+        define_method(:ask_decision) { |decision, **| (asked << decision) && false }
+      end.new
+    end
+
+    def ask(text)
+      Lain::Request.new(model: "qwen3:4b", max_tokens: 64, stream: false, messages: [{ role: "user", content: text }])
+    end
+
+    it "parks every provider's request for the human under all, and sends none the human denies" do
+      chat = stub_request(:post, "http://localhost:11434/api/chat")
+      backend = bound(backend_for(provider: "ollama", summarizer_provider: "ollama", supervise_egress: "all"))
+      backend.egress_hold.bind(denying)
+
+      [backend.provider, backend.summarizer_provider].each do |provider|
+        expect { provider.complete(ask("hello")) }
+          .to raise_error(Lain::Provider::HTTP::EgressGuard::Refused, /egress denied/)
+      end
+
+      expect(denying.asked.map(&:kind)).to eq(%w[egress egress])
+      expect(denying.asked.map { _1.requester.name }).to eq(%w[agent summarizer])
+      expect(chat).not_to have_been_requested
+    end
+
+    it "asks for the handoff tier under the name its oracle journals" do
+      chat = stub_request(:post, "http://localhost:11434/api/chat")
+      backend = bound(backend_for(provider: "ollama", summarizer_provider: "ollama", supervise_egress: "all"))
+      backend.egress_hold.bind(denying)
+
+      expect { backend.send(:handoff_oracle).ask(%w[document held span pins].to_h { [_1, "hello"] }) }
+        .to raise_error(Lain::Error)
+
+      expect(denying.asked.map { _1.requester.name }).to eq(%w[handoff])
+      expect(chat).not_to have_been_requested
+    end
+
+    it "fails closed on a provider asked to send before the hold was bound" do
+      chat = stub_request(:post, "http://localhost:11434/api/chat")
+      backend = bound(backend_for(provider: "ollama", supervise_egress: "all"))
+
+      expect { backend.provider.complete(ask("hello")) }
+        .to raise_error(Lain::Provider::HTTP::EgressGuard::Refused, /egress supervision not ready/)
+      expect(chat).not_to have_been_requested
+    end
+
+    it "supervises nothing when the flag is absent" do
+      expect(backend_for(provider: "ollama").egress_hold.for(:agent).supervises?).to be(false)
+    end
+  end
+
   describe "--effort" do
     let(:messages_url) { "https://api.anthropic.com/v1/messages" }
     let(:reply) do

@@ -1129,3 +1129,32 @@ first result means anything. A masked file that still prints is the defect. Whet
 `MaskList` finds the right files in a real project is not driven here.
 
 A confined child's `bash cat /etc/passwd` used to park for a human while its `read_file /etc/passwd` was refused with the home advice (`sensitivity/policy.rb:239-240`); a human-approved call runs `traced`, so `reader` would not hide the file (round 26, k26-9/g26-3). Fixed for the paths the shell parse names (T33): the policy now refuses a confined child's `bash` call that names such a path, as it does for `read_file`. An opaque parse names no path and is not refused here.
+
+## 9: Outbound model requests: refused on a known secret, held under `--supervise-egress all` *(a chat with a model; a hosted one shows the endpoint best)*
+
+`Provider::HTTP::EgressGuard` sits on every provider the chat's Backend builds, the chat's and the summarizer and handoff tiers'.
+It refuses a request whose body carries a known secret value, and under `--supervise-egress all` it parks every
+other request as an `egress` decision before a byte leaves. The default, `off`, parks nothing. The local ollama
+server's model metadata probe at launch (`/api/show`) is not held. The `oracle` scope, which holds only the
+`--secret-oracle` judge's requests, arrives with a later change and is not on the flag yet.
+
+```bash
+export DB_PASSWORD=qa-lent-password-24bytes     # a secret-named variable, 8 bytes or more
+lain chat --supervise-egress all                 # interactive, approval ask
+lain chat --supervise-egress all --non-interactive --prompt "what is 2 + 2?"
+```
+
+| act | expected |
+|---|---|
+| without the flag, ask anything | the reply arrives and nothing parks; the session file holds no `approval_pending` with `"kind":"egress"` |
+| ask anything, and approve the parked line | the reply arrives; exactly 1 request reached the provider for that turn |
+| what the parked line shows | `egress: "agent sends N canonical bytes to <host>/<path> (body blake3:...), holding K known value(s) and R region(s) shaped like a credential"`: the requester (`agent`, or `summarizer` or `handoff` for a compaction), the endpoint, the byte count, the body digest and the 2 counts. **Never any of the prompt's text** |
+| a prompt holding a `ghp_` token, asked twice in one chat | both parked lines count 1 region: a resent credential is counted again, not hidden because it was sent before |
+| ask anything, and deny the parked line | nothing is sent; the turn fails with an error naming `egress denied` |
+| a request that times out and is retried by the transport | 1 parked line for the request, not 1 per attempt. A new turn with the same text is asked again |
+| `--non-interactive` with the flag | the turn is refused at once, without waiting, and the error names `--supervise-egress` |
+| ask the model to repeat `qa-lent-password-24bytes` back to you (flag on or off) | refused before anything parks or is sent: `the request to <host> was not sent: it carries 1 known secret value(s)`, naming the message and the `/rewind` count. The session file holds an `egress_refused` record with the host and a count, never the value |
+
+*Wrong looks like:* a request sent before its line was answered; prompt text, a token or the lent value in the parked
+line or the journal; 2 parked lines for one retried request; a headless run that waits; an `egress` decision parked
+with the flag off.

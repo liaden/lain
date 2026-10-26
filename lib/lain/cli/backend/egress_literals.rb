@@ -53,8 +53,11 @@ module Lain
         # After the configured entries, so the guard checks the body they hand on.
         #
         # @param journal [#<<] where the guard's records land
+        # @param hold [#supervises?, #call] what the guard asks before a request leaves
         # @return [Array<Array>] a provider's http middleware entries
-        def entries(journal) = [*@configured.http_entries, Provider::HTTP::EgressGuard.entry(literals: self, journal:)]
+        def entries(journal, hold: Provider::HTTP::EgressGuard::Unsupervised)
+          [*@configured.http_entries, Provider::HTTP::EgressGuard.entry(literals: self, journal:, hold:)]
+        end
 
         private
 
