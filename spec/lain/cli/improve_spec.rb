@@ -524,6 +524,22 @@ RSpec.describe Lain::CLI::Improve do
         .with(anything, profile: have_attributes(provider: "ollama", model: "qwen3:4b"), root: @project)
     end
 
+    # The model id stands in for a value the environment names as a secret,
+    # because it is the one string every request certainly carries.
+    it "refuses an improver request that carries a secret from the command's environment" do
+      recorded_on("provider" => "ollama", "model" => "qwen3:4b")
+      chat = stub_request(:post, "http://localhost:11434/api/chat")
+
+      outcome = with_env("SPEC_SERVICE_TOKEN" => "qwen3:4b") do
+        from_options({}, profile: untyped).report
+      rescue Lain::Error => e
+        e.message
+      end
+
+      expect(outcome).to include("known secret")
+      expect(chat).not_to have_been_requested
+    end
+
     it "lets a typed provider win, and says so ahead of the report" do
       recorded_on("provider" => "ollama", "model" => "qwen3:4b")
 

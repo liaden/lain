@@ -709,6 +709,23 @@ RSpec.describe Lain::CLI::EpicSubmit do
                .with { |req| JSON.parse(req.body).dig("options", "num_batch") != 2048 }).not_to have_been_made
     end
 
+    # The model id stands in for a value the environment names as a secret,
+    # because it is the one string every adjudication request certainly carries.
+    it "refuses an adjudication request that carries a secret from the command's environment" do
+      load File.expand_path("../../../exe/lain", __dir__) unless defined?(LainCLI)
+      chat = stub_request(:post, "http://localhost:11434/api/chat")
+      options = Thor::Options.new(LainCLI::Epic.commands.fetch("submit").options).parse(%w[--provider ollama])
+
+      with_env("SPEC_SERVICE_TOKEN" => "qwen3:4b") do
+        described_class.from_options(options, profile: LainCLI::ModelFlags.profile(options), input: tty,
+                                              output: StringIO.new, root:, paths:, config: config(adjudicating))
+                       .submit("research")
+      end
+
+      expect(chat).not_to have_been_requested
+      expect(session_records.find { |record| record["type"] == "gate_evidence" }.to_json).to include("known secret")
+    end
+
     describe "the evidence researcher's reach" do
       def reading(path)
         @wire = Lain::Provider::Mock.new(responses: [tool_response(["t1", "read_file", { "path" => path }]),

@@ -508,14 +508,15 @@ module Lain
       # @param config [Config] as for {#initialize}, and what decides whether
       #   a pair is built at all
       # @param backend [#call] answers the {Backend} the pair spawns over;
-      #   called only when some stage is adjudicated
+      #   called only when some stage is adjudicated. The default checks its
+      #   requests against the environment's secrets only, as no board exists here
       # @option options [String] :provider the model flag band's provider, which
       #   the profile was resolved from
       # @option options [String] :model the model flag band's model id
       # @return [EpicSubmit]
       def self.from_options(options, input:, output:, profile: RunProfile.from_options(options),
                             root: Project::Resolver.default_project.root, paths: Paths.new, config: Config.load(root:),
-                            backend: -> { Backend.new(options, profile:, root:) })
+                            backend: -> { Backend.new(options, profile:, root:).tap { _1.egress_literals.bind_env } })
         spike_journal = Adjudication::Destination.new
         tool_guard = HomedGuard.new(root:)
         pair = Adjudication.pair(config:, paths:, root:, backend:, tool_middleware: tool_guard, journal: spike_journal)

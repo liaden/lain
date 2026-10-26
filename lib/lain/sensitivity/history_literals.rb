@@ -21,12 +21,24 @@ module Lain
       TIMEOUT = 10
       # A sensitive directory can hold a dump; a credential file is small.
       LARGEST = 64 * 1024
-      ASSIGNED = /^[ \t]*(?:export[ \t]+)?["']?[\w.-]+["']?[ \t]*[=:][ \t]*(.*?)[ \t]*,?[ \t\r]*$/
+      ASSIGNED = /^[ \t]*(?:export[ \t]+)?["']?([\w.-]+)["']?[ \t]*[=:][ \t]*(.*?)[ \t]*,?[ \t\r]*$/
       QUOTED = /\A(["'])(.*)\1\z/m
       # The patterns arrive on stdin, so no value is written to disk. `-w`
       # frees a value only where it stands whole, never inside a longer token.
       # `-I` skips binary files and `:/` searches the whole tree from any root.
       PUBLIC = %w[grep -F -w -I -z -o --full-name -f -].freeze
+
+      # Both sets from one read, for a caller that needs the two together.
+      #
+      # @!attribute [r] known
+      #   @return [Array<String>] as {HistoryLiterals#to_a}
+      # @!attribute [r] refusable
+      #   @return [Array<String>] as {HistoryLiterals#refusable}
+      Split = Data.define(:known, :refusable) do
+        def initialize(known:, refusable:)
+          super(known: Ractor.make_shareable(known.map(&:-@)), refusable: Ractor.make_shareable(refusable.map(&:-@)))
+        end
+      end
 
       # The history of a run with no project behind it.
       module Null
@@ -35,6 +47,12 @@ module Lain
 
         # @return [Array<String>] none
         def self.to_a = [].freeze
+
+        # @return [Array<String>] none
+        def self.refusable = [].freeze
+
+        # @return [Split] empty
+        def self.split = Split.new(known: [], refusable: [])
       end
 
       # @param root [String] the project root
@@ -51,7 +69,7 @@ module Lain
         @sensitive = {}
         @blobs = {}
         @start = UNREAD
-        @state = State.new(history: [].freeze, on_disk: [].freeze, public: Set[].freeze)
+        @state = State.new(history: {}.freeze, on_disk: [].freeze, public: Set[].freeze)
         @priming = nil
       end
 
@@ -64,10 +82,19 @@ module Lain
       end
 
       # @return [Array<String>] frozen, each at least {Literals::FLOOR} bytes
-      def to_a
-        join_priming
-        state = @lock.synchronize { refresh }
-        (state.history + Values.in_files(state.on_disk)).uniq.reject { state.public.include?(_1) }.freeze
+      def to_a = split.known
+
+      # The narrower set a value is refused from leaving the machine on: one
+      # assigned to a secret-named key, or one the region detector or the
+      # entropy test accepts. The rest is ordinary config as often as not.
+      #
+      # @return [Array<String>] frozen, a subset of {#to_a}
+      def refusable = split.refusable
+
+      # @return [Split] {#to_a} and {#refusable} from one read
+      def split
+        values = known
+        Split.new(known: values.keys, refusable: values.select { |_, refusable| refusable }.keys)
       end
 
       private
@@ -77,6 +104,12 @@ module Lain
 
       UNREAD = Object.new.freeze
       private_constant :UNREAD
+
+      def known
+        join_priming
+        state = @lock.synchronize { refresh }
+        Values.merged(state.history, Values.in_files(state.on_disk)).except(*state.public)
+      end
 
       def join_priming
         priming = @priming
@@ -94,7 +127,7 @@ module Lain
 
         held = history(repository) || @state.history
         disk = on_disk || @state.on_disk
-        public = tracked_publicly(repository, held + Values.in_files(disk), start)
+        public = tracked_publicly(repository, held.keys + Values.in_files(disk).keys, start)
         @state = State.new(history: held, on_disk: disk, public:)
         # Last, so a read that raised is retried rather than answered from a stale state.
         @fingerprint = fingerprint
@@ -145,7 +178,7 @@ module Lain
           sha if path && sensitive?(File.join(repository.top, path))
         end
         read(shas.uniq.reject { @blobs.key?(_1) })
-        shas.flat_map { @blobs.fetch(_1, []) }.uniq
+        Values.merged(*shas.map { @blobs.fetch(_1, {}) })
       end
 
       def sensitive?(path)
@@ -183,23 +216,36 @@ module Lain
         module_function
 
         # @param paths [Array<String>] absolute
-        # @return [Array<String>]
-        def in_files(paths) = paths.flat_map { of(contents(_1)) }
+        # @return [Hash{String=>Boolean}] as {.of}
+        def in_files(paths) = merged(*paths.map { of(contents(_1)) })
 
         # Each assignment's value, or a file's lone line when it assigns
-        # nothing, and every region the detector finds.
+        # nothing, and every region the detector finds, each with whether it
+        # is refusable (see {HistoryLiterals#refusable}).
         #
         # @param bytes [String]
-        # @return [Array<String>] binary, each at least {Literals::FLOOR} bytes
+        # @return [Hash{String=>Boolean}] binary keys, each at least {Literals::FLOOR} bytes
         def of(bytes)
           bytes = bytes.b
-          found = assigned(bytes).then { _1.empty? ? lone(bytes) : _1 } + Regions.detect(bytes).map(&:bytes)
-          found.select { _1.bytesize >= Literals::FLOOR }.uniq
+          pairs = assigned(bytes).then { _1.empty? ? lone(bytes).map { |line| [nil, line] } : _1 }
+          found = pairs.map { |name, value| [value, refusable?(name, value)] }
+          found += Regions.detect(bytes).map { [_1.bytes, true] }
+          merged(*found.select { |value, _| value.bytesize >= Literals::FLOOR }.map { |value, flag| { value => flag } })
+        end
+
+        # A value seen twice is refusable if either sighting is.
+        #
+        # @param sets [Array<Hash{String=>Boolean}>]
+        # @return [Hash{String=>Boolean}]
+        def merged(*sets) = sets.each_with_object({}) { |set, all| all.merge!(set) { |_, was, now| was || now } }
+
+        def refusable?(name, value)
+          (!name.nil? && Regions::SECRET_NAMING.match?(name)) || Regions.detect(value).any? || Entropy.high?(value)
         end
 
         def lone(bytes) = bytes.lines.map(&:strip).reject(&:empty?).then { _1.one? ? _1 : [] }
 
-        def assigned(bytes) = bytes.scan(ASSIGNED).map { |(value)| value.sub(QUOTED, '\2') }
+        def assigned(bytes) = bytes.scan(ASSIGNED).map { |name, value| [name, value.sub(QUOTED, '\2')] }
 
         def contents(path)
           File.size(path) <= LARGEST ? File.binread(path) : ""

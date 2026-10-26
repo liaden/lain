@@ -280,7 +280,7 @@ module Lain
                    journal: run_journal)
         case name
         when *OllamaTier::NAMES then ollama_tier(name).provider(channel:, queue:, journal:, spool:,
-                                                                http_middleware: middleware.http_entries)
+                                                                http_middleware: egress_literals.entries(journal))
         else anthropic_provider(spool, channel, journal, queue:, flag: OllamaTier.flag_for(chat: chat_name?(name)))
         end
       end
@@ -388,6 +388,11 @@ module Lain
       # @return [Provider::HTTP::PriceTierGuard::Hold]
       def price_tier_hold = @price_tier_hold ||= Provider::HTTP::PriceTierGuard::Hold.new
 
+      # What every provider built here refuses to send; {Wiring} binds it.
+      #
+      # @return [EgressLiterals]
+      def egress_literals = @egress_literals ||= EgressLiterals.new(middleware)
+
       # `--model` defaults to the SELECTED provider's own default (resolved here,
       # not in the Thor flag, whose default is fixed at load before `--provider`
       # is known). Sampler params ride Request#extra via the Context. The system
@@ -437,11 +442,12 @@ module Lain
       #
       # @return [Array<String>]
       def startup_notices
-        if OllamaTier::NAMES.include?(provider_name)
-          return [*ollama_tier(provider_name).startup_notices, *unpriced_cost_notice, *effort_notice]
-        end
+        notices = StartupNotices.new(provider: provider_name, model:, profile: run_profile,
+                                     max_cost: @options[:max_cost], effort_rejected: effort_rejected?,
+                                     compacting: compaction?, summarizer: summarizer_name)
+        return notices.ollama(ollama_tier(provider_name).startup_notices) if ollama_chat?
 
-        [*stranded_base_notice, *unpriced_cost_notice, *sampling_notice, *effort_notice]
+        notices.hosted(hosted_sampling_flags.keys - hosted_sampler_extra.keys)
       end
 
       # The chat's ceilings: `--max-cost` is the root's dollar ceiling, which
@@ -747,7 +753,8 @@ module Lain
           if ENV["ANTHROPIC_API_KEY"].to_s.empty?
 
         counter = Provider::HTTP::PriceTierGuard::LateCounter.new
-        entries = [*middleware.http_entries, price_tier_entry(journal, counter)]
+        # Egress first, so a body it refuses is never sent to be counted.
+        entries = [*egress_literals.entries(journal), price_tier_entry(journal, counter)]
         counter.bind(Provider::Anthropic.new(spool:, channel:, queue:, journal:, http_middleware: entries))
       end
 
@@ -807,48 +814,12 @@ module Lain
         BigDecimal(cost.to_s)
       end
 
-      def unpriced_cost_notice
-        return if @options[:max_cost].nil?
-
-        PriceBook.default.price(model)
-        nil
-      rescue PriceBook::UnknownModel
-        "--max-cost cannot bind: #{model} has no price, so its turns count as free"
-      end
-
       def hosted_sampler_extra
         given = hosted_sampling_flags
         given.except(*Provider::AnthropicEncoding.refused_sampling(model, given))
       end
 
       def hosted_sampling_flags = { "temperature" => @options[:temperature], "seed" => @options[:seed] }.compact
-
-      def sampling_notice
-        dropped = hosted_sampling_flags.keys - hosted_sampler_extra.keys
-        return if ollama_chat? || dropped.empty?
-
-        flags = dropped.map { |flag| "--#{flag}" }.join(" and ")
-        "#{model} takes no #{flags} (seed is not an Anthropic parameter at all): not sent"
-      end
-
-      def effort_notice
-        return unless run_profile.effort && (ollama_chat? || effort_rejected?)
-
-        who = ollama_chat? ? "the #{provider_name} chat" : model
-        "--effort #{run_profile.effort} is ignored by #{who} and is not sent"
-      end
-
-      # Only a non-ollama chat can strand the flag, so the ollama chat arm never
-      # reaches this.
-      def stranded_base_notice
-        return unless run_profile.api_base
-
-        if compaction? && OllamaTier::NAMES.include?(summarizer_name)
-          "--api-base reaches the #{summarizer_name} summarizer only, not the #{provider_name} chat"
-        else
-          "--api-base reaches nothing: the #{provider_name} chat does not use it and no summarizer runs on ollama"
-        end
-      end
 
       # The ollama arms answer from {OllamaTier}'s CLASS rather than an
       # instance: this must not build a tier, read ENV, or be able to raise

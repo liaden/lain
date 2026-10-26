@@ -45,9 +45,9 @@ module Lain
       # @param name [String, nil]
       # @return [Row]
       def measure(reps, name: nil)
-        samples = Array.new(reps) do
+        samples = Array.new(reps) do |rep|
           started = @clock.call
-          yield
+          yield rep
           (@clock.call - started) * 1000.0
         end
         Row.new(name:, median_ms: Stats.quantile(samples, 0.5), spread_ms: Stats.iqr(samples), reps:, skipped: nil)
@@ -94,7 +94,22 @@ module Lain
           @sizes.map do |size|
             body = "x" * size
             measure(@reps, name: "request_#{size}") { connection.post("/api/chat", Corpus.payload(body)) }
-          end
+          end + [guarded_row(url)]
+        end
+      end
+
+      # The steady state of a chat: the egress guard, bound to this process's environment, over a body
+      # of the largest size whose history it has already sent, so each request adds one small message.
+      def guarded_row(url)
+        source = Sensitivity::Secrets::Source.new(child_env: Exec::ChildEnv::DEFAULT,
+                                                  history: Sensitivity::HistoryLiterals::Null)
+        config = Provider::HTTP::Configuration.new
+        config.http_middleware = [Provider::HTTP::EgressGuard.entry(literals: source, journal: Channel::Null.instance)]
+        connection = Provider::HTTP::Connection.new(Loopback::Endpoint.new(url, true, {}), config)
+        history = Corpus.history(@sizes.max)
+        connection.post("/api/chat", Corpus.chat(history))
+        measure(@reps, name: "request_guarded_#{@sizes.max}") do |rep|
+          connection.post("/api/chat", Corpus.chat([*history, { role: "user", content: "and then #{rep}?" }]))
         end
       end
 
@@ -172,6 +187,18 @@ module Lain
         end
 
         def cold_request(turns:) = render(turns:).cold
+
+        # @param bytes [Integer]
+        # @return [Array<Hash>] alternating turns of about 2,000 bytes each, filling `bytes`
+        def history(bytes)
+          Array.new([bytes / 2000, 1].max) do |turn|
+            { role: turn.even? ? "user" : "assistant", content: ("lorem ipsum dolor #{turn} " * 100)[0, 2000] }
+          end
+        end
+
+        # @param messages [Array<Hash>]
+        # @return [Hash] a chat body as the caller hands it, before `request :json`
+        def chat(messages) = { model: "bench", stream: false, messages: }
 
         def payload(body)
           request = Lain::Request.new(model: "bench", max_tokens: 64, stream: false,

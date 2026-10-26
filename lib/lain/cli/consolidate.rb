@@ -81,6 +81,8 @@ module Lain
         new(path:, profile: resolved, project_dir:, notices:,
             consolidation: lambda { |journal|
               backend = Backend.new(options, profile: resolved, root: project_dir.root)
+              # No board here, so the clerk's requests are checked against the environment's secrets only.
+              backend.egress_literals.bind_env
               clerk_over(backend, journal, project_dir, notices)
             })
       end

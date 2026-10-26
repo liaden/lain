@@ -558,9 +558,7 @@ module Lain
       # model phase needs it too, and a phase that reached through the toolset
       # build for it could only be assembled after one, which is an ordering the
       # assembly seams do not otherwise have.
-      def attachments
-        @attachments ||= Lain::Attachment::Store.for(root:, paths: @paths)
-      end
+      def attachments = @attachments ||= Lain::Attachment::Store.for(root:, paths: @paths)
 
       # Assembled HERE because this is the only object holding the live Agent,
       # the run's RunClock and the StatusFeed at once -- the three things a
@@ -662,6 +660,7 @@ module Lain
       # than a second nobody reads. The stack's order is a security posture,
       # and {ToolGuard} is where it is stated.
       def backing(backend, channel, timeline, board:)
+        backend.egress_literals.bind_board(board.guard_inputs)
         provider = spooled_provider(backend, channel:)
         journal_degradation(backend.context, provider, journal: chronicle.record_journal)
         mount = CompactionMount.new(backend:, provider:, chronicle:, channel:)

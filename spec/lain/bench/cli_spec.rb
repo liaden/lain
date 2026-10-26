@@ -1084,11 +1084,12 @@ RSpec.describe Lain::Bench::CLI do
     # `max_tokens` is spelled out because Context requires it (`Integer(nil)`
     # raises) and RECORD_DEFAULTS is where the exe's flag reads its own default
     # from, so this is the same number a run gets.
+    # Bound as the exe's model_backend binds every bench backend; no secret rides these bodies.
     def backend(**options)
       Lain::CLI::Backend.new(
         { provider: "anthropic", max_tokens: described_class::RECORD_DEFAULTS.fetch(:max_tokens), **options },
         root: Dir.pwd
-      )
+      ).tap { _1.egress_literals.bind_env }
     end
 
     def write_taskfile(dir)

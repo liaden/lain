@@ -211,7 +211,10 @@ RSpec.describe Lain::CLI::Consolidate do
   end
 
   describe "a clerk that loops past the ceiling" do
-    def backend_for(provider) = instance_double(Lain::CLI::Backend, provider:, context:, slots:)
+    def backend_for(provider)
+      instance_double(Lain::CLI::Backend, provider:, context:, slots:,
+                                          egress_literals: Lain::CLI::Backend::EgressLiterals.new)
+    end
 
     def looping(index) = tool_response(["tu_loop#{index}", "memory_read", { "id" => "missing-#{index}" }])
 
@@ -303,7 +306,10 @@ RSpec.describe Lain::CLI::Consolidate do
   # that outlives nothing is not a memory. It lands in the ONE project memory
   # store, which is what the NEXT chat in this project opens its view on.
   describe "what the clerk writes is durable" do
-    def backend_for(provider) = instance_double(Lain::CLI::Backend, provider:, context:, slots:)
+    def backend_for(provider)
+      instance_double(Lain::CLI::Backend, provider:, context:, slots:,
+                                          egress_literals: Lain::CLI::Backend::EgressLiterals.new)
+    end
 
     def from_options(options = {}, provider:)
       allow(Lain::CLI::Backend).to receive(:new).and_return(backend_for(provider))
@@ -382,7 +388,10 @@ RSpec.describe Lain::CLI::Consolidate do
   # so "own spawn" is "own digest", and a later pass over the same lineage is
   # the same owner.
   describe "a clerk owns only its own spawn's items" do
-    def backend_for(provider) = instance_double(Lain::CLI::Backend, provider:, context:, slots:)
+    def backend_for(provider)
+      instance_double(Lain::CLI::Backend, provider:, context:, slots:,
+                                          egress_literals: Lain::CLI::Backend::EgressLiterals.new)
+    end
 
     def from_options(provider:)
       allow(Lain::CLI::Backend).to receive(:new).and_return(backend_for(provider))
@@ -553,6 +562,20 @@ RSpec.describe Lain::CLI::Consolidate do
 
       expect(Lain::CLI::Backend).to have_received(:new)
         .with(anything, profile: have_attributes(provider: "ollama", model: "qwen3:4b"), root: @project)
+    end
+
+    it "refuses a clerk request that carries a secret from the command's environment" do
+      recorded_on("provider" => "ollama", "model" => "qwen3:4b")
+      chat = stub_request(:post, "http://localhost:11434/api/chat")
+
+      outcome = with_env("SPEC_SERVICE_TOKEN" => "the token TTL was zero") do
+        from_options({}, profile: untyped).report
+      rescue Lain::Provider::HTTP::EgressGuard::Refused => e
+        e.message
+      end
+
+      expect(outcome).to include("known secret")
+      expect(chat).not_to have_been_requested
     end
 
     it "lets a typed provider win, and says so ahead of the report" do

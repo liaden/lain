@@ -37,19 +37,27 @@ module Lain
 
       # @return [Array<String>] the unique secret-named values, and regions of
       #   passed values, of at least {FLOOR} bytes
-      def to_a
-        variables = [@child_env.environment, @lent].flat_map(&:to_a)
-        (named(variables) + detected(variables)).select { _1.bytesize >= FLOOR }.uniq.freeze
-      end
+      def to_a = floored(named(variables) + detected_values + hinted_tokens)
+
+      # The regions the detector finds in passed values, which a request
+      # leaving the machine is refused on. A hinted token is not among them:
+      # the hinted bar is lowered for a connection-string name, and it admits
+      # a bucket or host name as readily as a password.
+      #
+      # @return [Array<String>] frozen
+      def detected_values = @detected_values ||= passed.flat_map { |_, value| regions(value.to_s) }.freeze
 
       private
 
+      def variables = [@child_env.environment, @lent].flat_map(&:to_a)
+
+      def floored(values) = values.select { _1.bytesize >= FLOOR }.uniq.freeze
+
       def named(variables) = variables.filter_map { |name, value| value.to_s if Exec::ChildEnv::SECRET.match?(name) }
 
-      def detected(variables)
-        variables.select { |name, _| @child_env.passes?(name) }
-                 .flat_map { |name, value| regions(value.to_s) + hinted(name, value.to_s) }
-      end
+      def passed = variables.select { |name, _| @child_env.passes?(name) }
+
+      def hinted_tokens = passed.flat_map { |name, value| hinted(name, value.to_s) }
 
       def regions(value) = Regions.detect(value).map(&:bytes)
 

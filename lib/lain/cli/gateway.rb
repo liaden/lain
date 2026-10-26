@@ -14,13 +14,6 @@ module Lain
       NOT_GIT = "%<root>s is not a git checkout, so only the gateway's environment secrets are checked, " \
                 "not the project's history or ignored files"
 
-      # Read per request rather than once, so a value committed or written to an
-      # ignored file after the gateway started is still refused.
-      Literals = Data.define(:child_env, :history) do
-        # @return [Array<String>] the gateway process's own secret values
-        def to_a = Sensitivity::Secrets.for(child_env:, context: nil, history:)
-      end
-
       # @param options [Hash] the command's flags, string or symbol keys
       # @param console [#announce, #approve?] the human, a {Frontend::GatewayConsole} on the terminal
       # @param env [Hash] the gateway process's environment, read for its secrets and
@@ -86,7 +79,7 @@ module Lain
       end
 
       def literals
-        Literals.new(child_env: Exec::ChildEnv.from(@env), history:)
+        Sensitivity::Secrets::Source.new(child_env: Exec::ChildEnv.from(@env), history:)
       end
 
       def history = Sensitivity::HistoryLiterals.new(root:, policy:).prime

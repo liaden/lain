@@ -172,9 +172,13 @@ module Lain
         resolved = profile.over(mismatches.recorded_profile)
         Backend.validated(resolved.provider)
         new(path:, profile: resolved, paths:, project_dir:,
-            backend: -> { Backend.new(options, profile: resolved, root: project_dir.root) },
+            backend: -> { Backend.new(options, profile: resolved, root: project_dir.root).tap { bind_egress(_1) } },
             notices: mismatches.call(profile: resolved, model: resolved.model))
       end
+
+      # No board here, so the improver's requests are checked against the environment's secrets only.
+      def self.bind_egress(backend) = backend.egress_literals.bind_env
+      private_class_method :bind_egress
 
       # The spawn collaborators are REQUIRED: a forgotten one is a loud
       # ArgumentError here rather than a nil checked at the spawn.

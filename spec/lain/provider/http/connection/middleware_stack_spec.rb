@@ -38,6 +38,15 @@ RSpec.describe Lain::Provider::HTTP::Connection::MiddlewareStack do
     expect(seen).to eq([Hash])
   end
 
+  it "shows an entry appended after another the body before JSON encoding too" do
+    stub_request(:post, url).to_return(status: 200, body: "{}", headers: { "Content-Type" => "application/json" })
+    ahead = Class.new(Faraday::Middleware)
+
+    build_connection(http_middleware: [[ahead, {}], [recorder, {}]]).post("/v1/messages", { a: 1 })
+
+    expect(seen).to eq([Hash])
+  end
+
   it "builds the stack from today's handlers when there are no entries" do
     handlers = build_connection(http_middleware: []).connection.builder.handlers.map(&:name)
 

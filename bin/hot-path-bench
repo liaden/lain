@@ -41,6 +41,7 @@ module HotPathBench
     "bash_true_workspace" => 17.8,
     "request_100000" => 0.821,
     "request_1000000" => 2.98,
+    "request_guarded_1000000" => 5.49,
     "journal_small" => 0.0052,
     "journal_1000000" => 0.751,
     "journal_chained_small" => 0.00738,

@@ -1,0 +1,36 @@
+# frozen_string_literal: true
+
+module Lain
+  module Telemetry
+    EgressRefused = Data.define(:host, :count, :turn) do
+      include Journalable
+
+      def initialize(host:, count:, turn:)
+        super(host: -host.to_s, count: Integer(count), turn: turn&.then { Integer(_1) })
+      end
+    end
+
+    # A model request refused before it left because its body carried a known
+    # secret. It names where the request was going and how many distinct values
+    # it carried, never a value: the session file's `request_sent` record
+    # already holds the whole payload, so a reader finds the value there, and a
+    # second copy here would only add a place it is written. `turn` is the
+    # position of the first message carrying one, nil when only another part did.
+    class EgressRefused
+      # One model request sent although what it adds held shapes the region
+      # detector names, or values the masker knows but does not refuse on.
+      # Either is triage, not a verdict, so it is journaled rather than refused.
+      # Counts only, never a value.
+      Flagged = Data.define(:host, :regions, :values) do
+        include Journalable
+
+        def initialize(host:, regions:, values:)
+          super(host: -host.to_s, regions: Integer(regions), values: Integer(values))
+        end
+
+        # Its own discriminator, since the short name would read `flagged`.
+        def journal_type = "egress_flagged"
+      end
+    end
+  end
+end

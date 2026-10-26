@@ -390,6 +390,13 @@ RSpec.describe Lain::CLI::Wiring do
     wiring.wire_agent(channel:, recorder:, session:, backend:)
   end
 
+  # A second Wiring in one example needs its own Backend: a Backend's egress
+  # literals bind once, to the first board's secrets source.
+  def fresh_backend
+    offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 }, mock: mock_provider,
+                                                                                  root: backend_root)
+  end
+
   describe "the bench arms" do
     let(:arm_options) { { grace: 5, confine: "reader", judge_facts: "facts", tripwire: "observe" } }
     let(:armed) { new_wiring(options: arm_options, chronicle:, status_feed:) }
@@ -1359,9 +1366,10 @@ RSpec.describe Lain::CLI::Wiring do
         remote = { grace: 5, secret_oracle: true, provider: "anthropic", summarizer_provider: "anthropic" }
         built = new_wiring(options: remote, chronicle:, status_feed:)
         recorder, session = built.run_state(nil)
-        built.wire_agent(channel:, recorder:, session:, backend:)
+        other = fresh_backend
+        built.wire_agent(channel:, recorder:, session:, backend: other)
 
-        tier = built.secret_surface(backend).instance_variable_get(:@oracle)
+        tier = built.secret_surface(other).instance_variable_get(:@oracle)
         # `.inner` peels {Lain::Provider::Journaled}, which wraps this provider
         # so the judge's own round trip reaches the Journal too. A
         # decorator cannot move the endpoint -- what it wraps is still the bare
@@ -1506,6 +1514,105 @@ RSpec.describe Lain::CLI::Wiring do
       wiring.wire_agent(channel:, recorder:, session:, backend:)
 
       expect(backend.price_tier_hold.decide(decision)).to eq(:refuse)
+    end
+  end
+
+  # The literals are the board's own secrets source, bound by #backing, so the
+  # history the board primed is the history the guard reads.
+  describe "the egress guard the backend's providers carry" do
+    let(:journal) { RecordingChannel.new }
+    let(:chronicle) { Lain::CLI::Chronicle.new(journal:, journal_path: "egress-guard-spec-fake-session.ndjson") }
+    let(:messages_url) { "https://api.anthropic.com/v1/messages" }
+    let(:hosted) do
+      with_env("ANTHROPIC_API_KEY" => "sk-wiring-spec") do
+        Lain::CLI::Backend.new({ provider: "anthropic", model: "claude-haiku-5-5", max_tokens: 64 },
+                               root: backend_root)
+      end
+    end
+
+    def ask(text)
+      Lain::Request.new(model: "claude-haiku-5-5", max_tokens: 64, stream: false,
+                        messages: [{ role: "user", content: text }])
+    end
+
+    def wire_hosted
+      recorder, session = wiring.run_state(nil)
+      with_env("ANTHROPIC_API_KEY" => "sk-wiring-spec") do
+        wiring.wire_agent(channel:, recorder:, session:, backend: hosted)
+      end
+    end
+
+    def chat_provider = with_env("ANTHROPIC_API_KEY" => "sk-wiring-spec") { hosted.provider }
+
+    it "never sends a request carrying a host secret, and journals the host and a count" do
+      password = "db-password-24-bytes-xyz"
+      sent = stub_request(:post, messages_url)
+
+      with_env("ANTHROPIC_API_KEY" => "sk-wiring-spec", "DB_PASSWORD" => password) do
+        wire_hosted
+        expect { hosted.provider.complete(ask("connect with #{password}")) }
+          .to raise_error(Lain::Provider::HTTP::EgressGuard::Refused, /known secret/)
+      end
+
+      expect(sent).not_to have_been_requested
+      refused = journal.events.grep(Lain::Telemetry::EgressRefused)
+      expect(refused.map(&:to_journal)).to eq([{ "type" => "egress_refused", "host" => "api.anthropic.com",
+                                                 "count" => 1, "turn" => 1 }])
+    end
+
+    it "sends a clean request with the API key in its headers" do
+      sent = stub_request(:post, messages_url)
+             .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                        body: JSON.generate("id" => "m", "type" => "message", "role" => "assistant",
+                                            "model" => "claude-haiku-5-5",
+                                            "content" => [{ "type" => "text", "text" => "ok" }],
+                                            "stop_reason" => "end_turn",
+                                            "usage" => { "input_tokens" => 1, "output_tokens" => 1 }))
+
+      with_env("ANTHROPIC_API_KEY" => "sk-wiring-spec") do
+        wire_hosted
+        hosted.provider.complete(ask("what is 2 + 2?"))
+      end
+
+      expect(sent).to have_been_requested.once
+    end
+
+    it "refuses a value only the repository's history holds, enumerating that history once for the chat",
+       :seam do
+      leaked = "history-only-secret-value-31"
+      SeedRepo.git(project_dir, "init", "-q")
+      SeedRepo.git(project_dir, "config", "user.email", "test@example.com")
+      SeedRepo.git(project_dir, "config", "user.name", "Test")
+      File.write(File.join(project_dir, ".env"), "SERVICE_TOKEN=#{leaked}\n")
+      SeedRepo.git(project_dir, "add", ".env")
+      SeedRepo.git(project_dir, "commit", "-q", "-m", "leak")
+      SeedRepo.git(project_dir, "rm", "-q", ".env")
+      SeedRepo.git(project_dir, "commit", "-q", "-m", "unleak")
+      enumerations = []
+      allow(Lain::Shell::Out).to receive(:new).and_wrap_original do |original, *argv, **opts|
+        enumerations << argv if argv.include?("rev-list")
+        original.call(*argv, **opts)
+      end
+      sent = stub_request(:post, messages_url)
+
+      wire_hosted
+      provider = chat_provider
+      2.times do
+        expect { provider.complete(ask("the old token was #{leaked}")) }
+          .to raise_error(Lain::Provider::HTTP::EgressGuard::Refused, /known secret/)
+      end
+
+      expect(sent).not_to have_been_requested
+      expect(enumerations.size).to eq(1)
+    end
+
+    it "binds the backend's literals to the board's own history" do
+      wire_hosted
+
+      board = wiring.instance_variable_get(:@switchboard)
+      source = hosted.egress_literals.instance_variable_get(:@source)
+      expect(source.history).to be(board.guard_inputs.history)
+      expect(source.child_env).to be(board.guard_inputs.child_env)
     end
   end
 
@@ -2995,7 +3102,7 @@ RSpec.describe Lain::CLI::Wiring do
         pane.join
         plain = new_wiring(options: { grace: 5 }, chronicle:, status_feed:, stdin: StringIO.new("quit\n"),
                            tty_factory: factory, conductor_opener:)
-        plain.run(backend:, resumed: nil, nvim: nil)
+        plain.run(backend: fresh_backend, resumed: nil, nvim: nil)
         plain.conductor.close(reason: :exit)
         outputs.map { |io| io.string.include?("you> quit") }
       end
@@ -3946,7 +4053,7 @@ RSpec.describe Lain::CLI::Wiring do
       def run_in(dir, options: { grace: 5 }, &notice)
         wiring = described_class.new(options:, chronicle:, status_feed:,
                                      tty_factory: tty_factory(dir), stdin: StringIO.new("quit\n"), conductor_opener:)
-        wiring.run(backend:, resumed: nil, nvim: nil, &notice)
+        wiring.run(backend: fresh_backend, resumed: nil, nvim: nil, &notice)
         wiring.conductor.close(reason: :exit)
         wiring
       end
@@ -4460,8 +4567,8 @@ RSpec.describe Lain::CLI::Wiring do
       wiring.wire_agent(channel:, recorder:, session:, backend: configured_backend(root, **areas))
     end
 
-    def configured_instrumentation(root, wiring, backend)
-      wiring.send(:backing, backend, channel, -> {}, board: board_for(root:))[:instrumentation]
+    def configured_instrumentation(root, wiring, backend, board: board_for(root:))
+      wiring.send(:backing, backend, channel, -> {}, board:)[:instrumentation]
     end
 
     it "starts the agent's model stack with the configured model middleware" do
@@ -4541,7 +4648,8 @@ RSpec.describe Lain::CLI::Wiring do
       in_tree do |root|
         wiring = configured_wiring(root)
         backend = configured_backend(root, model: WiringSpecModelStamp, turn: WiringSpecTurnStamp)
-        first, second = Array.new(2) { configured_instrumentation(root, wiring, backend) }
+        board = board_for(root:)
+        first, second = Array.new(2) { configured_instrumentation(root, wiring, backend, board:) }
 
         expect(first.model_middleware.to_a.first).not_to eql(second.model_middleware.to_a.first)
         expect(first.turn_middleware.to_a.first).not_to eql(second.turn_middleware.to_a.first)

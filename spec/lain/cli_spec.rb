@@ -914,6 +914,22 @@ RSpec.describe LainCLI do
     end
   end
 
+  # The bench's backend is built with no board, so it binds the environment's
+  # secrets itself. The model id stands in for a value the environment names
+  # as a secret, because every request certainly carries it.
+  describe "the bench's model backend" do
+    it "refuses a request that carries a secret from the command's environment" do
+      chat = stub_request(:post, "http://localhost:11434/api/chat")
+      backend = described_class::Bench.new([], { provider: "ollama", model: "qwen3:4b" }).send(:model_backend)
+      request = Lain::Request.new(model: "qwen3:4b", max_tokens: 64, stream: false,
+                                  messages: [{ role: "user", content: "hi" }])
+
+      expect { with_env("SPEC_SERVICE_TOKEN" => "qwen3:4b") { backend.provider.complete(request) } }
+        .to raise_error(Lain::Provider::HTTP::EgressGuard::Refused, /known secret/)
+      expect(chat).not_to have_been_requested
+    end
+  end
+
   # A dry run builds no backend, and still refuses a provider name that is not one.
   describe "consolidate --dry-run --provider olama" do
     around { |example| Dir.mktmpdir("lain-consolidate-typo") { |dir| (@dir = dir) && example.run } }
@@ -944,7 +960,8 @@ RSpec.describe LainCLI do
       session.write(path)
       provider = Lain::Provider::Mock.new(responses: [text_response("<function=x>", stop_reason: :malformed)])
       context = Lain::Context.new(model: "m", max_tokens: 64)
-      backend = instance_double(Lain::CLI::Backend, provider:, context:, slots: Lain::Prompt::Slots.load(root: @dir))
+      backend = instance_double(Lain::CLI::Backend, provider:, context:, slots: Lain::Prompt::Slots.load(root: @dir),
+                                                    egress_literals: Lain::CLI::Backend::EgressLiterals.new)
       allow(Lain::CLI::Backend).to receive(:new).and_return(backend)
 
       expect { described_class.start(["consolidate", path, "--provider", "anthropic"], debug: true) }

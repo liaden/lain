@@ -62,6 +62,8 @@ RSpec.describe Lain::Provider::Anthropic do
                                          headers: { "Content-Type" => "application/json" })
       backend = Lain::CLI::Backend.new({ provider: "anthropic", model: "claude-opus-4-8", max_tokens: 64 },
                                        root: Dir.pwd)
+      # Bound as every command that builds a Backend binds it; no secret rides this body.
+      backend.egress_literals.bind_env
 
       allow(ENV).to receive(:[]).and_call_original
       allow(ENV).to receive(:[]).with("ANTHROPIC_API_KEY").and_return("test")

@@ -34,6 +34,16 @@ RSpec.describe Lain::CLI::Backend do
   # would be exercising an unread Hash key.
   def backend_for(root: Dir.pwd, **options) = described_class.new(options, root:)
 
+  # A backend whose egress literals are bound as Wiring binds them, over a
+  # source holding no secret, for an example that sends a request.
+  def bound(backend) = backend.tap { _1.egress_literals.bind(literals_of) }
+
+  # A secrets source refusing `values`, as the board's answers it.
+  def literals_of(*values)
+    egress = Lain::Sensitivity::Secrets::Egress.new(refused: values, flagged: [])
+    Class.new { define_method(:egress) { egress } }.new
+  end
+
   describe "#provider" do
     it "constructs a Provider::Ollama honoring --api-base" do
       provider = backend_for(provider: "ollama", api_base: "http://localhost:11434").provider
@@ -405,6 +415,8 @@ RSpec.describe Lain::CLI::Backend do
 
     def entries_of(provider) = provider.instance_variable_get(:@config).http_middleware
 
+    def classes_of(provider) = entries_of(provider).map(&:first)
+
     def backend_with(middleware, **options) = described_class.new(options, root: Dir.pwd, middleware:)
 
     it "hands the entries to the anthropic provider" do
@@ -413,13 +425,14 @@ RSpec.describe Lain::CLI::Backend do
       end
 
       expect(entries_of(provider).first).to eq([counter, {}])
-      expect(entries_of(provider).last.first).to be(Lain::Provider::HTTP::PriceTierGuard)
+      expect(classes_of(provider).drop(1))
+        .to eq([Lain::Provider::HTTP::EgressGuard, Lain::Provider::HTTP::PriceTierGuard])
     end
 
     it "hands the entries to the local ollama arm" do
       provider = backend_with(configured_with(counter), provider: "ollama").provider
 
-      expect(entries_of(provider)).to eq([[counter, {}]])
+      expect(classes_of(provider)).to eq([counter, Lain::Provider::HTTP::EgressGuard])
     end
 
     it "hands the entries to the cloud ollama arm" do
@@ -427,20 +440,73 @@ RSpec.describe Lain::CLI::Backend do
         backend_with(configured_with(counter), provider: "ollama-cloud").provider
       end
 
-      expect(entries_of(provider)).to eq([[counter, {}]])
+      expect(classes_of(provider)).to eq([counter, Lain::Provider::HTTP::EgressGuard])
     end
 
     it "hands the entries to the summarizer provider" do
       provider = backend_with(configured_with(counter), provider: "ollama", summarizer_provider: "ollama")
                  .summarizer_provider
 
-      expect(entries_of(provider)).to eq([[counter, {}]])
+      expect(classes_of(provider)).to eq([counter, Lain::Provider::HTTP::EgressGuard])
     end
 
-    it "adds nothing when the backend was built without middleware" do
+    it "adds only the egress guard when the backend was built without middleware" do
       provider = backend_for(provider: "ollama").provider
 
-      expect(entries_of(provider)).to eq([])
+      expect(classes_of(provider)).to eq([Lain::Provider::HTTP::EgressGuard])
+    end
+  end
+
+  describe "the egress guard on every provider" do
+    let(:secret) { "spec-lent-secret-value-24" }
+    let(:source) { literals_of(secret) }
+    let(:records) { [] }
+
+    def ask(text)
+      Lain::Request.new(model: "glm-5.3:cloud", max_tokens: 64, stream: false,
+                        messages: [{ role: "user", content: text }])
+    end
+
+    it "keeps a lent secret from a local ollama serving a cloud model" do
+      chat = stub_request(:post, "http://localhost:11434/api/chat")
+      backend = backend_for(provider: "ollama", model: "glm-5.3:cloud")
+      backend.egress_literals.bind(source)
+
+      expect { backend.provider(journal: records).complete(ask("here: #{secret}")) }
+        .to raise_error(Lain::Provider::HTTP::EgressGuard::Refused)
+      expect(chat).not_to have_been_requested
+      expect(records.map(&:to_journal)).to eq([{ "type" => "egress_refused", "host" => "localhost", "count" => 1,
+                                                 "turn" => 1 }])
+    end
+
+    it "keeps it from an anthropic client, ahead of the price tier guard" do
+      sent = stub_request(:post, "https://api.anthropic.com/v1/messages")
+      backend = with_env("ANTHROPIC_API_KEY" => "sk-test") { backend_for(provider: "anthropic") }
+      backend.egress_literals.bind(source)
+      provider = with_env("ANTHROPIC_API_KEY" => "sk-test") { backend.provider }
+
+      expect { provider.complete(ask(secret)) }.to raise_error(Lain::Provider::HTTP::EgressGuard::Refused)
+      expect(sent).not_to have_been_requested
+      expect(provider.instance_variable_get(:@config).http_middleware.map(&:first))
+        .to eq([Lain::Provider::HTTP::EgressGuard, Lain::Provider::HTTP::PriceTierGuard])
+    end
+
+    it "guards the summarizer tier with the same literals" do
+      chat = stub_request(:post, "http://localhost:11434/api/chat")
+      backend = backend_for(provider: "ollama", summarizer_provider: "ollama")
+      backend.egress_literals.bind(source)
+
+      expect { backend.summarizer_provider.complete(ask(secret)) }
+        .to raise_error(Lain::Provider::HTTP::EgressGuard::Refused)
+      expect(chat).not_to have_been_requested
+    end
+
+    it "fails closed on a provider asked to send before the literals were bound" do
+      chat = stub_request(:post, "http://localhost:11434/api/chat")
+
+      expect { backend_for(provider: "ollama").provider.complete(ask("hello")) }
+        .to raise_error(Lain::Provider::HTTP::EgressGuard::Refused, /egress guard not ready/)
+      expect(chat).not_to have_been_requested
     end
   end
 
@@ -457,7 +523,7 @@ RSpec.describe Lain::CLI::Backend do
     around { |example| with_env("ANTHROPIC_API_KEY" => "sk-test") { example.run } }
 
     def send_first_request(**options)
-      backend = backend_for(provider: "anthropic", model: "claude-opus-4-8", max_tokens: 64, **options)
+      backend = bound(backend_for(provider: "anthropic", model: "claude-opus-4-8", max_tokens: 64, **options))
       request = backend.context.render(timeline:, toolset: Lain::Toolset.new).with(stream: false)
       stub = stub_request(:post, messages_url).to_return(reply)
       backend.provider.complete(request)
@@ -574,7 +640,7 @@ RSpec.describe Lain::CLI::Backend do
 
     around { |example| with_env("ANTHROPIC_API_KEY" => "sk-test") { example.run } }
 
-    def anthropic(**options) = backend_for(**options)
+    def anthropic(**options) = bound(backend_for(**options))
 
     def haiku(**options) = anthropic(provider: "anthropic", model: "claude-haiku-5-5", **options)
 
@@ -766,7 +832,7 @@ RSpec.describe Lain::CLI::Backend do
       # this example is about the wiring Backend performs, and shaping the
       # envelope would mean handing in a config, which is exactly the bypass
       # that would stop it proving anything.
-      provider = backend_for(provider: "ollama").provider(channel:)
+      provider = bound(backend_for(provider: "ollama")).provider(channel:)
 
       response = provider.complete(Lain::Request.new(model: "qwen3:4b", max_tokens: 64, stream: false,
                                                      messages: [{ role: "user", content: "hi" }]))

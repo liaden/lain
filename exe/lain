@@ -985,10 +985,12 @@ class LainCLI < Thor
     no_commands do
       # The backend the model flag band resolves: what was typed, then the
       # environment, then the built-in provider.
+      # Bound to the environment's secrets here, since no board exists out of chat.
       # @param ceiling_default [Integer, nil] the `--max-tokens` default this command declares
       def model_backend(ceiling_default = nil)
         Lain::CLI::Backend.new(options, profile: ModelFlags.profile(options), ceiling_default:,
                                         root: Lain::Project::Resolver.default_project.root)
+                          .tap { _1.egress_literals.bind_env }
       end
 
       def arms_knobs

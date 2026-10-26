@@ -4,7 +4,7 @@ RSpec.describe Lain::Bench::HotPaths do
   let(:row_names) do
     %w[
       render_chat_10 render_cold_10 bash_true_none bash_true_traced bash_true_reader bash_true_workspace
-      request_1000
+      request_1000 request_guarded_1000
       journal_small journal_1000 journal_chained_small journal_chained_1000 mask_first_output wire_ready
     ]
   end
@@ -31,6 +31,20 @@ RSpec.describe Lain::Bench::HotPaths do
 
     it "reports the repetitions it was asked for", :seam do
       expect(rows.reject(&:skipped).map(&:reps)).to all(eq(1))
+    end
+  end
+
+  describe "the guarded request row" do
+    it "posts through an egress guard bound to this process's secrets source", :seam do
+      built = []
+      allow(Lain::Provider::HTTP::EgressGuard).to receive(:new).and_wrap_original do |original, app, options|
+        original.call(app, options).tap { built << options.fetch(:literals) }
+      end
+
+      NetworkAccess.permit { described_class.new(turns: 10, reps: 1, sizes: [1_000]).rows }
+
+      expect(built).not_to be_empty
+      expect(built).to all(be_a(Lain::Sensitivity::Secrets::Source))
     end
   end
 

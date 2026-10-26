@@ -140,6 +140,87 @@ RSpec.describe Lain::Sensitivity::HistoryLiterals, :seam do
     expect(described_class.new(root:, policy:).to_a).to include(token)
   end
 
+  describe "#refusable" do
+    let(:high) { "Zq8xV2nL4tR7yW1kP9mB3cJ6hD0sF5gA" }
+
+    it "answers a value under a secret-named key and a high-entropy one, not ordinary config" do
+      seed_deleted("APP_ENV=staging-eu\nAPP_HOST=myapp.internal:8080\nLOG_LEVEL=verbose-debug\n" \
+                   "SECRET_KEY_BASE=fake-probe-secret-0123456789\nDB_PASSWORD=plainword99\nBUILD_SALT=#{high}\n")
+      literals = described_class.new(root:, policy:)
+
+      expect(literals.refusable).to contain_exactly("fake-probe-secret-0123456789", "plainword99", high)
+      expect(literals.to_a).to include("staging-eu", "myapp.internal:8080", "verbose-debug")
+    end
+
+    it "answers a region the detector finds, and not a lone ordinary line" do
+      seed_deleted("APP_ENV=staging-eu\n")
+      token = "ghp_aB3dE5gH7jK9mN1pQ3sT5vX7zA9cE1gI3kM5"
+      commit("secrets/notes", "the deploy token\n#{token}\n")
+      commit("secrets/token", "lone-line-value-1\n")
+
+      expect(described_class.new(root:, policy:).refusable).to include(token).and(not_include("lone-line-value-1"))
+    end
+
+    it "answers frozen" do
+      seed_deleted("DB_PASSWORD=plainword99\n")
+
+      expect(described_class.new(root:, policy:).refusable).to be_frozen
+    end
+
+    # One example per arm, each with a value no other arm accepts. A YAML line
+    # and a JSON line are the shapes the file-wide region pass does not read
+    # as an assignment, so only the arm under test can answer them.
+    it "answers a low-entropy value under a secret-named key" do
+      seed_deleted("deploy_key: plainword99\n")
+
+      expect(described_class.new(root:, policy:).refusable).to eq(["plainword99"])
+    end
+
+    it "answers a whole value the detector shapes, under a plain key" do
+      url = "postgres://app:fakeS3cretPw@db.internal:5432/app"
+      seed_deleted("DB_URL=#{url}\n")
+
+      expect(described_class.new(root:, policy:).refusable).to include(url)
+    end
+
+    it "answers a high-entropy value the detector does not shape, under a plain key" do
+      seed_deleted("\"salt\": \"Zq8xV2nL4tR7yW1=kP9mB3cJ6hD0sF5\",\n")
+
+      expect(described_class.new(root:, policy:).refusable).to eq(["Zq8xV2nL4tR7yW1=kP9mB3cJ6hD0sF5"])
+    end
+
+    it "keeps refusable a value one commit holds under a secret-named key and a later one under a plain key" do
+      seed_deleted("APP_ENV=staging-eu\n")
+      commit("secrets/first", "deploy_key: laterplain88\n")
+      commit("secrets/later", "app_label: laterplain88\n")
+
+      expect(described_class.new(root:, policy:).refusable).to eq(["laterplain88"])
+    end
+
+    it "keeps refusable a value seen under a secret-named key and then a plain one" do
+      seed_deleted("deploy_key: sharedvalue77\napp_label: sharedvalue77\n")
+
+      expect(described_class.new(root:, policy:).refusable).to eq(["sharedvalue77"])
+    end
+  end
+
+  describe "#split" do
+    it "answers both sets from one read, the same as the two readers" do
+      seed_deleted("APP_ENV=staging-eu\nDB_PASSWORD=plainword99\n")
+      literals = described_class.new(root:, policy:)
+
+      split = literals.split
+
+      expect([split.known, split.refusable]).to eq([literals.to_a, literals.refusable])
+      expect(split.known).to include("staging-eu", "plainword99")
+      expect(Ractor.shareable?(split)).to be(true)
+    end
+
+    it "answers empty for a run with no project" do
+      expect(described_class::Null.split).to have_attributes(known: [], refusable: [])
+    end
+  end
+
   describe "a value a non-sensitive file tracked at the starting commit also holds" do
     let(:dotenv) do
       "ADMIN_PIN=48291377\nNODE_ENV=development\nDB_HOST=localhost\nAPP_URL=http://127.0.0.1:3000\n"
