@@ -1,6 +1,10 @@
 # frozen_string_literal: true
 
 require "bigdecimal"
+# ActiveSupport::NumberHelper loads this on its first call and it rewrites
+# BigDecimal#to_s for the whole process; loaded at boot, every process reads one format.
+require "active_support"
+require "active_support/core_ext/big_decimal/conversions"
 
 module Lain
   Price = Data.define(:input, :output, :cache_creation, :cache_read, :tiers, :off_peak) do

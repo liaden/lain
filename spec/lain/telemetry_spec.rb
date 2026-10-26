@@ -179,7 +179,10 @@ RSpec.describe Lain::Telemetry do
   # used to blow up inside BigDecimal is named at the boundary instead.
   describe ".fixed_point" do
     it "formats fixed-point, never the scientific notation BigDecimal#to_s reaches for" do
-      expect(BigDecimal("0.00012345").to_s).to eq("0.12345e-3")
+      # Lain loads ActiveSupport's BigDecimal#to_s at boot, so every process reads
+      # one format whichever spec first formats a price.
+      expect(BigDecimal("0.00012345").to_s).to eq("0.00012345")
+      expect(BigDecimal("0.00012345").to_s("E")).to eq("0.12345e-3")
       expect(described_class.fixed_point(BigDecimal("0.00012345"))).to eq("0.00012345")
     end
 
