@@ -15,7 +15,9 @@ module Lain
   # included -- in a single `write` under a monitor, with the fd in sync mode.
   # Building the bytes before taking the lock keeps the critical section short,
   # apart from the observers {#observe} runs inside it; writing them as one
-  # buffer means a line is never torn. The fd is the Journal's own -- a file
+  # buffer means a line is never torn. A chained Journal finishes each line
+  # under the monitor instead, because its link names the line written just
+  # before it, and only the lock knows which line that is. The fd is the Journal's own -- a file
   # under {Paths#sessions_dir} by default, a StringIO in specs -- and NEVER stderr.
   #
   # A value that cannot be encoded would otherwise tear a line or swallow an
@@ -27,6 +29,10 @@ module Lain
   # {Journal.open} owns the file it opened and closes it on {#close}.
   class Journal
     class Closed < Error; end
+
+    # Another writer holds a chained file. Two appenders would each keep their
+    # own tip and fork the chain, so the second is refused rather than let in.
+    class Locked < Error; end
 
     # Open a Journal on a freshly created session file, owning and later closing
     # it. The default path is a timestamped NDJSON file under {Paths#sessions_dir}
@@ -47,9 +53,17 @@ module Lain
     # @param fsync [Boolean] fsync the fd after every {#record} -- see {#initialize}
     # @param paths [Paths] resolves the default location; injectable so a spec
     #   never touches the real XDG env
+    # @param chain [Boolean] end each line with the link to the line before it,
+    #   continuing from the file's last line, sealing it first when a crash
+    #   left it without its newline. A chained Journal holds an exclusive flock
+    #   for its life and an unchained one a shared flock, so unchained logs
+    #   still share a file while nothing else can append to a chained one. A
+    #   forked child must not write a chained Journal: the lock and the tip
+    #   survive fork (not exec), and its lines would fork the chain.
     # @yieldparam journal [Journal] closed when the block returns or raises
     # @return [Journal, Object] the Journal, or what the block answered
-    def self.open(path = nil, clock: DEFAULT_CLOCK, fsync: false, paths: Paths.new)
+    # @raise [Locked] when a chained writer holds the file, or, chained, when any writer does
+    def self.open(path = nil, clock: DEFAULT_CLOCK, fsync: false, paths: Paths.new, chain: false)
       path ||= default_path(paths:)
       FileUtils.mkdir_p(File.dirname(path))
       # File.new, not the block form: the Journal owns this handle for its whole
@@ -57,7 +71,8 @@ module Lain
       # thing licensing #close to unlink, and a file that already existed is
       # somebody else's.
       created = create(path)
-      journal = new(io: created || File.new(path, "ab"), clock:, owns_io: true, fsync:, path: created && path)
+      io = created || File.new(path, "ab")
+      journal = new(io:, clock:, owns_io: true, fsync:, path: created && path, chain: claimed(io, path, chain:))
       return journal unless block_given?
 
       begin
@@ -79,6 +94,31 @@ module Lain
       nil
     end
     private_class_method :create
+
+    # Closes the fd on any refusal or raise: the caller never receives it to close.
+    def self.claimed(io, path, chain:)
+      claim(io, path, chain:)
+      continued_tip(io, path) if chain
+    rescue StandardError
+      io.close
+      raise
+    end
+    private_class_method :claimed
+
+    def self.claim(io, path, chain:)
+      return if io.flock((chain ? File::LOCK_EX : File::LOCK_SH) | File::LOCK_NB)
+
+      raise Locked, "#{path} is held by #{chain ? "another writer" : "a chained writer"}"
+    end
+    private_class_method :claim
+
+    # The torn line is sealed rather than skipped, so the next link covers every byte on disk.
+    def self.continued_tip(io, path)
+      tip = Line.tip(path)
+      io.write("\n") if Line.torn?(path)
+      tip
+    end
+    private_class_method :continued_tip
 
     # The ONE predicate for "this file holds no records at all", shared by the
     # readers that pick a session off a directory listing. An absent path answers
@@ -115,6 +155,8 @@ module Lain
     def self.stem = "#{Time.now.utc.strftime("%Y%m%dT%H%M%S")}-#{Process.pid}.ndjson"
 
     DEFAULT_CLOCK = -> { Time.now.utc.iso8601(6) }
+    LINK = "prev"
+    ENTRY_LINK = "entry_prev"
 
     # The ONE duck every Journal reader speaks (see {.records}): an entry is either
     # an already-parsed Hash -- passed through with only its TOP-LEVEL keys
@@ -168,11 +210,19 @@ module Lain
     # @param path [String, nil] the file this Journal opened and may therefore
     #   remove when it closes still empty (see {#close}); nil for an injected
     #   IO, whose file is the caller's and never ours to unlink
-    def initialize(io:, clock: DEFAULT_CLOCK, owns_io: false, fsync: false, path: nil)
+    # @param chain [String, nil] the tip to continue the chain from
+    #   ({Line::ORIGIN} for a new file); nil writes no links
+    # @raise [ArgumentError] when the tip is neither the origin nor a link
+    def initialize(io:, clock: DEFAULT_CLOCK, owns_io: false, fsync: false, path: nil, chain: nil)
+      raise ArgumentError, "chain tip must be #{Line::ORIGIN} or a link, got #{chain.inspect}" \
+        unless chain.nil? || Line.tip?(chain)
+
       @io = io
       @clock = clock
       @owns_io = owns_io
       @fsync = fsync
+      @tip = chain
+      @chained = !chain.nil?
       # `path:` is public, so "a file we did not open is never ours to unlink" is
       # enforced HERE rather than trusted to {.open} being its only caller.
       @unwritten = Unwritten.new(owns_io ? path : nil)
@@ -193,7 +243,7 @@ module Lain
     # @return [self]
     # @raise [Closed] if the Journal has been closed
     def record(entry)
-      write_whole("#{encode(entry)}\n", [entry])
+      write_whole([encode(entry)], [entry])
     end
     alias << record
 
@@ -205,7 +255,7 @@ module Lain
     # @return [self]
     # @raise [Closed] if the Journal has been closed
     def record_all(entries)
-      write_whole(entries.map { |entry| "#{encode(entry)}\n" }.join, entries)
+      write_whole(entries.map { |entry| encode(entry) }, entries)
     end
 
     # Observers are told under the monitor, after the bytes land, so they fold
@@ -258,15 +308,31 @@ module Lain
 
     private
 
-    def write_whole(bytes, entries)
+    def write_whole(lines, entries)
+      lines.each { |line| line << "\n" } unless @chained
       @monitor.synchronize do
         raise Closed, "journal is closed" if @closed
 
-        @io.write(bytes)
+        tip = @chained ? linked!(lines) : @tip
+        @io.write(whole(lines))
+        @tip = tip
         @io.fsync if @fsync && @io.respond_to?(:fsync)
         entries.each { |entry| notify(entry) }
       end
       self
+    end
+
+    # A lone line goes as it is: joining it would copy a megabyte line once more.
+    def whole(lines) = lines.one? ? lines.first : lines.join
+
+    # Splices each line in place and answers the tip after them, which becomes the
+    # Journal's only once the bytes have landed.
+    def linked!(lines)
+      lines.inject(@tip) do |prev, line|
+        tip = Line.link(Line.splice!(line, prev))
+        line << "\n"
+        tip
+      end
     end
 
     def notify(entry)
@@ -308,7 +374,17 @@ module Lain
       )
     end
 
-    def record_hash(entry) = { "ts" => timestamp }.merge(self.class.hash_of(entry).transform_keys(&:to_s))
+    def record_hash(entry)
+      hash = { "ts" => timestamp }.merge(self.class.hash_of(entry).transform_keys(&:to_s))
+      @chained && hash.key?(LINK) ? unforged(hash) : hash
+    end
+
+    # Renamed so no entry can supply its own link, and refused when the new name is taken too.
+    def unforged(hash)
+      raise ArgumentError, "an entry carrying both #{LINK} and #{ENTRY_LINK} cannot be chained" if hash.key?(ENTRY_LINK)
+
+      hash.transform_keys(LINK => ENTRY_LINK)
+    end
 
     def timestamp
       @clock.call

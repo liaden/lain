@@ -233,6 +233,17 @@ RSpec.describe Lain::Bench::Session::Loader do
     end
   end
 
+  # Committed before records were chained, so its lines carry no link and must load as they always did.
+  describe "a chainless session fixture" do
+    let(:fixture) { File.expand_path("../../../fixtures/sessions/variance/one.ndjson", __dir__) }
+    let(:head) { "blake3:43dc5b323e09e9fb7f4c506177dbc22a828f73e2933cdb2d47fd8cedc1c65c41" }
+
+    it "loads through Bench::Session.load with the head it always had" do
+      expect(File.foreach(fixture).map { |line| JSON.parse(line) }).to all(satisfy { |record| !record.key?("prev") })
+      expect(Lain::Bench::Session.load(fixture).timeline.head_digest).to eq(head)
+    end
+  end
+
   describe "the injectable context factory" do
     it "defaults to rebuilding a plain Context with the recorded transport fields (byte-identical)" do
       ctx = recording.context

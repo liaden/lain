@@ -723,6 +723,238 @@ RSpec.describe Lain::Journal do
     end
   end
 
+  # Each line names the line before it, so an edit, insertion or removal anywhere in a session file
+  # breaks the link of the line after it.
+  describe "a chained journal" do
+    around { |example| Dir.mktmpdir { |dir| @path = File.join(dir, "s.ndjson") and example.run } }
+
+    def file_lines = File.read(@path).lines
+    def parsed = file_lines.map { |line| JSON.parse(line) }
+    def link(line) = Lain::Journal::Line.link(line)
+
+    it "links every line of a new file to the one before it, the first to the origin" do
+      described_class.open(@path, chain: true) do |opened|
+        3.times { |n| opened.record("type" => "turn", "n" => n) }
+      end
+
+      expect(parsed.map { |record| record["prev"] })
+        .to eq([Lain::Journal::Line::ORIGIN, link(file_lines[0]), link(file_lines[1])])
+    end
+
+    it "keeps ts and type leading the line and puts prev last" do
+      described_class.open(@path, chain: true) { |opened| opened.record("type" => "turn", "n" => 1) }
+
+      expect(parsed.first.keys).to eq(%w[ts type n prev])
+    end
+
+    it "chains the entries of one record_all in file order" do
+      described_class.open(@path, chain: true) do |opened|
+        opened.record_all([{ "type" => "rewound" }, { "type" => "turn" }])
+      end
+
+      expect(parsed.last["prev"]).to eq(link(file_lines.first))
+    end
+
+    it "continues a reopened file's chain from its last complete line" do
+      described_class.open(@path, chain: true) { |opened| opened.record("type" => "session") }
+      before = file_lines.last
+
+      described_class.open(@path, chain: true) { |opened| opened.record("type" => "session_closed") }
+
+      expect(parsed.last["prev"]).to eq(link(before))
+    end
+
+    it "links a record written back by an observer after the batch that caused it" do
+      described_class.open(@path, chain: true) do |opened|
+        echo = Class.new { define_method(:<<) { |entry| opened.record("type" => "echo") if entry["type"] == "turn" } }
+        opened.observe(echo.new)
+        opened.record_all([{ "type" => "turn" }, { "type" => "usage" }])
+      end
+
+      expect(parsed.map { |record| record["type"] }).to eq(%w[turn usage echo])
+      expect(parsed.last["prev"]).to eq(link(file_lines[1]))
+    end
+
+    it "links a journal_error that stands in for an entry JSON cannot encode" do
+      described_class.open(@path, chain: true) do |opened|
+        opened.record("type" => "turn")
+        opened.record("type" => "bad", "blob" => BasicObject.new)
+        opened.record("type" => "turn")
+      end
+
+      expect(parsed.map { |record| record["type"] }).to eq(%w[turn journal_error turn])
+      expect(parsed.drop(1).map { |record| record["prev"] }).to eq(file_lines.first(2).map { |line| link(line) })
+    end
+
+    it "renames an entry's own prev, so no entry can forge its link" do
+      forger = Object.new
+      def forger.to_journal = { "type" => "turn", "prev" => "x" }
+
+      described_class.open(@path, chain: true) { |opened| opened.record(forger) }
+
+      expect(parsed.first).to include("prev" => Lain::Journal::Line::ORIGIN, "entry_prev" => "x")
+      expect(file_lines.first.scan('"prev":').size).to eq(1)
+    end
+
+    def batch(thread, seq)
+      blob = "x" * ((seq % 5).zero? ? 50_000 : 10)
+      seq.even? ? [{ "type" => "t#{thread}", "b" => blob }] : [{ "type" => "a" }, { "type" => "b", "b" => blob }]
+    end
+
+    def links_intact?
+      file_lines.each_cons(2).all? { |before, line| JSON.parse(line)["prev"] == link(before) }
+    end
+
+    # A crash can leave a line without its newline. Sealing it makes it a line of its own that the
+    # next record vouches for, rather than bytes glued onto the front of that record.
+    it "seals a torn tail on reopen and links the next record to the torn bytes" do
+      described_class.open(@path, chain: true) { |opened| opened.record("type" => "turn") }
+      File.open(@path, "ab") { |file| file.write(%({"ts":"x","type":"tu)) }
+
+      described_class.open(@path, chain: true) { |opened| opened.record("type" => "session_closed") }
+
+      expect(file_lines.size).to eq(3)
+      expect(JSON.parse(file_lines.last)).to include("type" => "session_closed", "prev" => link(file_lines[1]))
+      expect(file_lines[1]).to eq(%({"ts":"x","type":"tu\n))
+    end
+
+    it "keeps the tip at the last line that landed when a write raises" do
+      flaky = Class.new(StringIO) do
+        attr_accessor :refuse
+
+        def write(*)
+          raise Errno::ENOSPC if refuse
+
+          super
+        end
+      end.new
+      chained = described_class.new(io: flaky, chain: Lain::Journal::Line::ORIGIN)
+      chained.record("type" => "landed")
+      flaky.refuse = true
+      expect { chained.record("type" => "lost") }.to raise_error(Errno::ENOSPC)
+      flaky.refuse = false
+
+      chained.record("type" => "after")
+
+      landed, after = flaky.string.lines
+      expect(JSON.parse(after)["prev"]).to eq(link(landed))
+    end
+
+    it "keeps every link intact under threads writing records and batches at once" do
+      described_class.open(@path, chain: true) do |opened|
+        Array.new(6) do |thread|
+          Thread.new do
+            40.times do |n|
+              entries = batch(thread, n)
+              entries.one? ? opened.record(entries.first) : opened.record_all(entries)
+            end
+          end
+        end.each(&:join)
+      end
+
+      expect(file_lines.size).to eq(6 * 60)
+      expect(links_intact?).to be(true)
+    end
+
+    # Two appenders would each keep their own tip and fork the chain.
+    it "refuses a second chained writer on the same file while the first is open" do
+      first = described_class.open(@path, chain: true)
+
+      expect { described_class.open(@path, chain: true) }.to raise_error(described_class::Locked, /#{@path}/)
+      first.close
+      expect { described_class.open(@path, chain: true).close }.not_to raise_error
+    end
+
+    def open_fds = Dir.children("/proc/self/fd").size
+
+    it "closes its fd when a chained open is refused" do
+      holder = described_class.open(@path, chain: true)
+      before = open_fds
+
+      expect { described_class.open(@path, chain: true) }.to raise_error(described_class::Locked)
+      expect(open_fds).to eq(before)
+    ensure
+      holder&.close
+    end
+
+    it "closes its fd and lets the lock go when reading the tip raises" do
+      File.write(@path, %({"type":"turn"}\n))
+      allow(Lain::Journal::Line).to receive(:tip).and_raise(Errno::EIO)
+      before = open_fds
+
+      expect { described_class.open(@path, chain: true) }.to raise_error(Errno::EIO)
+      expect(open_fds).to eq(before)
+      allow(Lain::Journal::Line).to receive(:tip).and_call_original
+      expect { described_class.open(@path, chain: true).close }.not_to raise_error
+    end
+
+    # A shared log opened without the chain must not slip lines into a chat's file, and a chat must
+    # not start chaining a file shared writers still append to.
+    it "refuses an unchained writer while a chained one holds the file" do
+      holder = described_class.open(@path, chain: true)
+      before = open_fds
+
+      expect { described_class.open(@path) }.to raise_error(described_class::Locked, /#{@path}/)
+      expect(open_fds).to eq(before)
+    ensure
+      holder&.close
+    end
+
+    it "refuses a chained writer while an unchained one holds the file" do
+      holder = described_class.open(@path)
+
+      expect { described_class.open(@path, chain: true) }.to raise_error(described_class::Locked, /#{@path}/)
+    ensure
+      holder&.close
+    end
+
+    it "lets unchained writers share a file, as the drain and worktree logs do" do
+      first = described_class.open(@path)
+      second = described_class.open(@path)
+      first.record("type" => "a")
+      second.record("type" => "b")
+      [first, second].each(&:close)
+
+      expect(parsed.map { |record| record["type"] }).to eq(%w[a b])
+    end
+
+    it "journals an entry carrying both prev and entry_prev as an error, keeping the chain" do
+      described_class.open(@path, chain: true) do |opened|
+        opened.record("type" => "turn")
+        opened.record("type" => "turn", "prev" => "x", "entry_prev" => "y")
+      end
+
+      expect(JSON.parse(file_lines.last)).to include("type" => "journal_error", "error" => /entry_prev/)
+      expect(links_intact?).to be(true)
+    end
+
+    it "refuses a tip that is neither the origin nor a blake3 link" do
+      ["x", "blake3:abc", "blake3:#{"a" * 64}x", "blake3:#{"a" * 63}"].each do |tip|
+        expect { described_class.new(io: StringIO.new, chain: tip) }
+          .to raise_error(ArgumentError, /#{Regexp.escape(tip.inspect)}/)
+      end
+      expect { described_class.new(io: StringIO.new, chain: "blake3:#{"a" * 64}") }.not_to raise_error
+    end
+
+    it "does not chain a file opened without the keyword, as a shared log opens it" do
+      described_class.open(@path) { |opened| 2.times { opened.record("type" => "drain") } }
+
+      expect(parsed).to all(satisfy { |record| !record.key?("prev") })
+    end
+
+    it "does not chain a journal over an injected IO" do
+      journal.record("type" => "turn")
+
+      expect(JSON.parse(lines.first)).not_to have_key("prev")
+    end
+
+    it "leaves an unchained entry's own prev as it was" do
+      journal.record("type" => "turn", "prev" => "x")
+
+      expect(JSON.parse(lines.first)).to include("prev" => "x").and(satisfy { |record| !record.key?("entry_prev") })
+    end
+  end
+
   describe "its descriptor" do
     it "does not respond to fileno or share_fd" do
       expect(journal).not_to respond_to(:fileno, :share_fd)

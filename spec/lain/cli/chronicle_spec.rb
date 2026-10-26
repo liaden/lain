@@ -41,6 +41,22 @@ RSpec.describe Lain::CLI::Chronicle do
       end
     end
 
+    it "chains every line of the session file to the line before it" do
+      Dir.mktmpdir do |dir|
+        opened = described_class.for(enabled: true, paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => dir }),
+                                     root: Dir.pwd)
+        opened.start(context:, toolset:)
+        opened.durable_journal << { "type" => "note" }
+        opened.close
+
+        lines = File.read(opened.journal_path).lines
+        links = [Lain::Journal::Line::ORIGIN, *lines[0...-1].map { |line| Lain::Journal::Line.link(line) }]
+        expect(lines.size).to eq(3)
+        expect(lines.map { |line| JSON.parse(line)["prev"] }).to eq(links)
+        expect(lines).to all(start_with('{"ts":')).and(all(match(/\A\{"ts":"[^"]*","type":/)))
+      end
+    end
+
     it "files the journal under the given project root rather than the working directory" do
       Dir.mktmpdir do |dir|
         paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => dir })

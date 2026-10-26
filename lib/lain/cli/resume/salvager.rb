@@ -51,10 +51,16 @@ module Lain
         # it already had: the loss is reported on this resume and the file no
         # longer reads as open on the next.
         #
+        # A second resume of the same dead session is refused, because two
+        # writers would each continue the chain from their own tip.
+        #
         # @param head_before [String, nil] the Timeline head before recovery
+        # @raise [Refusal] when another process holds the file
         def close!(head_before:)
-          journal = Journal.open(@path, fsync: true)
+          journal = Journal.open(@path, fsync: true, chain: true)
           closing_records(head_before).each { |record| journal << record }
+        rescue Journal::Locked
+          raise Door.new(verb: "resume", path: @path).refuse("another process is already writing it")
         ensure
           journal&.close
         end

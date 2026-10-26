@@ -43,6 +43,8 @@ module HotPathBench
     "request_1000000" => 2.98,
     "journal_small" => 0.0052,
     "journal_1000000" => 0.751,
+    "journal_chained_small" => 0.00738,
+    "journal_chained_1000000" => 1.08,
     "mask_first_output" => 0.263,
     "wire_ready" => 17.1
   }.freeze

@@ -98,13 +98,20 @@ module Lain
         end
       end
 
+      # The chained rows open the file as a chat session does but without its fsync, which would
+      # swamp the cost of linking that these rows exist to hold.
       def journal_rows
         Dir.mktmpdir("hot-path-journal") do |dir|
-          Journal.open(File.join(dir, "bench.ndjson")) do |journal|
-            line = { "type" => "request_sent", "body" => "x" * @sizes.max }
-            [measure(@reps, name: "journal_small") { journal.record({ "type" => "turn", "n" => 1 }) },
-             measure(@reps, name: "journal_#{@sizes.max}") { journal.record(line) }]
-          end
+          [*journal_pair(File.join(dir, "bench.ndjson"), "journal"),
+           *journal_pair(File.join(dir, "chained.ndjson"), "journal_chained", chain: true)]
+        end
+      end
+
+      def journal_pair(path, prefix, chain: false)
+        Journal.open(path, chain:) do |journal|
+          line = { "type" => "request_sent", "body" => "x" * @sizes.max }
+          [measure(@reps, name: "#{prefix}_small") { journal.record({ "type" => "turn", "n" => 1 }) },
+           measure(@reps, name: "#{prefix}_#{@sizes.max}") { journal.record(line) }]
         end
       end
 

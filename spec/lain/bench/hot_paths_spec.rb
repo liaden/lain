@@ -5,7 +5,7 @@ RSpec.describe Lain::Bench::HotPaths do
     %w[
       render_chat_10 render_cold_10 bash_true_none bash_true_traced bash_true_reader bash_true_workspace
       request_1000
-      journal_small journal_1000 mask_first_output wire_ready
+      journal_small journal_1000 journal_chained_small journal_chained_1000 mask_first_output wire_ready
     ]
   end
 

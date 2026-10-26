@@ -204,7 +204,7 @@ module Lain
           # the spool must never be able to name different sessions.
           path = File.join(paths.filing_dir(root:), Journal.stem)
           path = Paths.ephemeral_for(path) if btw
-          new(journal: Journal.open(path, fsync: true), journal_path: path)
+          new(journal: Journal.open(path, fsync: true, chain: true), journal_path: path)
         end
 
         # Where TurnUsage and RequestSent land: the given journal, or nowhere.
