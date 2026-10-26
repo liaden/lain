@@ -138,12 +138,24 @@ module Lain
           Oracle::Definition.new(template: TEMPLATE, schema: Oracle::Summarize::SCHEMA, tier:)
         end
 
+        # How {#question} writes the span: the canonical JSON, or labelled
+        # lines. The answer key is the span's digest under both, so the arm
+        # changes the question a model reads and never where its answer is held.
+        SERIALIZERS = %i[json flat].freeze
+
         # @param oracle [#ask] a tier over {.definition} -- {Oracle::Recorded}
         #   or {Oracle::Recorded::Journaling}, never a bare {Oracle::Model}
         # @param sink [Lain::Sink] where a tier's failure is reported; the Null
         #   sink by default, so no caller writes `if sink`
-        def initialize(oracle:, sink: Sink::Null.new)
+        # @param serializer [Symbol] one of {SERIALIZERS}
+        # @raise [Error] a serializer outside {SERIALIZERS}
+        def initialize(oracle:, sink: Sink::Null.new, serializer: :json)
           super()
+          unless SERIALIZERS.include?(serializer)
+            raise Error, "unknown serializer #{serializer.inspect}, expected one of #{SERIALIZERS.inspect}"
+          end
+
+          @serializer = serializer
           # NOT frozen, and it never can be: holding an oracle is the point, and
           # it is what the purity refutation below rests on.
           @oracle = oracle
@@ -183,10 +195,12 @@ module Lain
         # the class doc on why it is of the range's own bytes.
         def whole_span(messages) = Canonical.digest(messages)
 
-        # The question's variable half. Canonical rather than pretty:
-        # deterministic, injective, and the same bytes {#whole_span} addresses,
-        # so the question and the key cannot drift.
-        def question(messages) = Canonical.dump(messages)
+        # The question's variable half. The JSON arm is canonical rather than
+        # pretty: deterministic, injective, and the same bytes {#whole_span}
+        # addresses. The flat arm trades that injectivity for text a model
+        # reads without escapes; it is a different question under the same
+        # oracle, and the key stays the digest.
+        def question(messages) = @serializer == :flat ? Transcript.flat(messages) : Canonical.dump(messages)
 
         private
 
@@ -207,6 +221,59 @@ module Lain
           @sink.puts("#{name} leaves #{whole_span(messages)} uncollapsed: #{e.class}: #{e.message}")
           nil
         end
+
+        # Labelled lines in Pi's shape: a tool's output is written as it was
+        # returned, because JSON escaping is noise to a reader of prose. A turn
+        # label inside a message's own text, such as untrusted tool output,
+        # reads the same as a real boundary; the JSON arm is the one that keeps
+        # them apart.
+        module Transcript
+          LABELS = { "user" => "[User]", "assistant" => "[Assistant]" }.freeze
+          # The summarizer cannot use the payload and it would balloon the question.
+          IMAGE = "[Image omitted]"
+
+          module_function
+
+          def flat(messages) = messages.flat_map { |message| lines(message) }.join("\n\n")
+
+          def lines(message)
+            label = LABELS.fetch(message["role"], "[#{message["role"]}]")
+            content = message["content"]
+            return [labelled(label, content)] if content.is_a?(String)
+
+            content.empty? ? [labelled(label, "")] : content.map { |block| line(label, block) }
+          end
+
+          def line(label, block)
+            case block["type"]
+            when "text" then labelled(label, block["text"])
+            when "tool_use" then call_line(block)
+            when "tool_result" then result_line(block)
+            when "thinking" then labelled("[Assistant thinking]", block["thinking"])
+            when "redacted_thinking" then "[Assistant thinking omitted]"
+            when "image" then IMAGE
+            else labelled(label, Canonical.dump(block))
+            end
+          end
+
+          def call_line(block)
+            labelled("[Assistant tool call #{block["id"]}]", "#{block["name"]}(#{Canonical.dump(block["input"])})")
+          end
+
+          def result_line(block)
+            kind = block["is_error"] ? "Tool error" : "Tool result"
+            labelled("[#{kind} #{block["tool_use_id"]}]", result_text(block["content"]))
+          end
+
+          def result_text(content)
+            return content.to_s unless content.is_a?(Array)
+
+            content.map { |part| part["type"] == "image" ? IMAGE : part["text"] || Canonical.dump(part) }.join("\n")
+          end
+
+          def labelled(label, body) = body.to_s.empty? ? "#{label}:" : "#{label}: #{body}"
+        end
+        private_constant :Transcript
 
         # Answers held by content address, with the two counts that say whether
         # holding them is working at all.

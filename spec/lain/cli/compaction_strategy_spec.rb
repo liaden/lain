@@ -239,6 +239,31 @@ RSpec.describe Lain::CLI::CompactionStrategy do
     end
   end
 
+  describe "the flat summarizing arm" do
+    it "resolves summarizing-flat to a Summarizing over the one shared definition" do
+      calls = []
+
+      strategy = resolve("summarizing-flat", tier: tier_factory(calls:))
+
+      expect(strategy).to be_a(Lain::Compaction::Strategy::Summarizing)
+      expect(strategy.question(mixed)).to start_with("[User]: lone opening")
+      expect(calls).to eq([Lain::Compaction::Strategy::Summarizing.definition])
+    end
+
+    it "leaves summarizing on the JSON question" do
+      expect(resolve("summarizing", tier: tier_factory).question(mixed)).to eq(Lain::Canonical.dump(mixed))
+    end
+
+    it "refuses summarizing-flat with no tier:, naming it" do
+      expect { resolve("summarizing-flat") }.to raise_error(Lain::Error, /needs tier: to build "summarizing-flat"/)
+    end
+
+    it "refuses to compose with summarizing, which claims the same span" do
+      expect { resolve("summarizing-flat+summarizing", tier: tier_factory) }
+        .to raise_error(Lain::CLI::CompactionStrategy::Unknown, /would overlap/)
+    end
+  end
+
   describe "the truncating strategy" do
     it "resolves truncate-cumulative with no tier, and never builds one" do
       calls = []

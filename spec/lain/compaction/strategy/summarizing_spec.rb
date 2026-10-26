@@ -142,6 +142,107 @@ RSpec.describe Lain::Compaction::Strategy::Summarizing do
     end
   end
 
+  describe "the flat serializer arm" do
+    let(:flat) { described_class.new(oracle:, serializer: :flat) }
+    let(:conversation) do
+      [{ "role" => "user", "content" => [fixtures.text("fix the bug")] },
+       { "role" => "assistant",
+         "content" => [fixtures.text("looking"),
+                       { "type" => "tool_use", "id" => "t1", "name" => "read", "input" => { "path" => "a.rb" } }] },
+       { "role" => "user",
+         "content" => [{ "type" => "tool_result", "tool_use_id" => "t1", "content" => "say \"hi\"\nline 2" }] }]
+    end
+
+    it "puts labelled lines in the source slot, in order, with tool output unescaped" do
+      expect(flat.question(conversation)).to eq(
+        "[User]: fix the bug\n\n[Assistant]: looking\n\n" \
+        "[Assistant tool call t1]: read({\"path\":\"a.rb\"})\n\n[Tool result t1]: say \"hi\"\nline 2"
+      )
+    end
+
+    it "reads a string content and a list of text blocks in a tool result" do
+      messages = [{ "role" => "user", "content" => "plain" },
+                  { "role" => "user", "content" => [{ "type" => "tool_result", "tool_use_id" => "t",
+                                                      "content" => [fixtures.text("a"), fixtures.text("b")] }] }]
+
+      expect(flat.question(messages)).to eq("[User]: plain\n\n[Tool result t]: a\nb")
+    end
+
+    def flat_of(*blocks, role: "user") = flat.question([{ "role" => role, "content" => blocks }])
+
+    def result(content = nil, **extra)
+      { "type" => "tool_result", "tool_use_id" => "x", "content" => content }.merge(extra)
+    end
+
+    it "labels an error result as an error, paired by id" do
+      expect(flat_of(result("boom", "is_error" => true))).to eq("[Tool error x]: boom")
+    end
+
+    it "keeps the label line of a message with no content" do
+      empty = [{ "role" => "user", "content" => [] }, { "role" => "assistant", "content" => "" }]
+
+      expect(flat.question(empty)).to eq("[User]:\n\n[Assistant]:")
+    end
+
+    it "renders a result with no content as its label alone" do
+      expect(flat_of(result)).to eq("[Tool result x]:")
+    end
+
+    it "renders thinking as text and redacted thinking as an omission" do
+      thinking = { "type" => "thinking", "thinking" => "hmm", "signature" => "sig" }
+
+      expect(flat_of(thinking, { "type" => "redacted_thinking", "data" => "abc" }, role: "assistant"))
+        .to eq("[Assistant thinking]: hmm\n\n[Assistant thinking omitted]")
+    end
+
+    it "elides an image, top level or inside a result, never writing its payload" do
+      image = { "type" => "image", "source" => { "type" => "base64", "data" => "AAAA" } }
+
+      out = flat_of(image, result([fixtures.text("seen"), image]))
+
+      expect(out).to eq("[Image omitted]\n\n[Tool result x]: seen\n[Image omitted]")
+      expect(out).not_to include("AAAA")
+    end
+
+    it "falls back to canonical JSON for a block type it does not know" do
+      odd = { "type" => "mystery", "n" => 1 }
+
+      expect(flat_of(odd)).to eq("[User]: #{Lain::Canonical.dump(odd)}")
+    end
+
+    it "keeps the JSON arm byte for byte Canonical.dump, by default" do
+      expect(strategy.question(conversation)).to eq(Lain::Canonical.dump(conversation))
+      explicit = described_class.new(oracle:, serializer: :json)
+      expect(explicit.question(conversation)).to eq(strategy.question(conversation))
+    end
+
+    it "keeps the answer key the same under both arms" do
+      expect(flat.whole_span(conversation)).to eq(strategy.whole_span(conversation))
+    end
+
+    it "refuses a serializer it does not know" do
+      expect { described_class.new(oracle:, serializer: :xml) }.to raise_error(Lain::Error, /serializer/)
+    end
+
+    it "journals a different question under the same oracle digest" do
+      strategy.collapse(conversation)
+      flat.collapse(conversation)
+
+      records = Lain::Journal.records(journal_io.string.each_line, type: "oracle_answer").to_a
+      expect(records.map { |record| record["oracle_digest"] }.uniq.size).to eq(1)
+      expect(records.map { |record| record["question"] }.uniq.size).to eq(2)
+    end
+
+    it "replays only under the arm that recorded it" do
+      flat.collapse(conversation)
+      replay = Lain::Oracle::Recorded.from_journal(journal_io.string.each_line, definition: fixtures.definition)
+
+      expect(described_class.new(oracle: replay, serializer: :flat).collapse(conversation).content)
+        .to eq([fixtures.text("the span, summarized")])
+      expect(described_class.new(oracle: replay).blocks(conversation)).to eq([])
+    end
+  end
+
   describe "re-deriving from the journalled answer" do
     it "produces the same derived head digest, with no further model call" do
       source = fixtures.history(9)
