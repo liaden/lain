@@ -120,6 +120,159 @@ RSpec.describe Lain::Shell::Executable::Fresh do
     end
   end
 
+  describe "#any_under?" do
+    let(:project) { File.join(root, "project").tap { FileUtils.mkdir_p(_1) } }
+    let(:journal) { Lain::Journal.new(io: StringIO.new) }
+
+    def lineage(start)
+      described_class.for_lineage([session_file("s1.ndjson", start:)]).tap { journal.observe(_1) }
+    end
+
+    def made(relative)
+      path = File.join(project, relative)
+      FileUtils.mkdir_p(File.dirname(path))
+      File.write(path, "x\n")
+      path
+    end
+
+    # The filesystem stamps a ctime from a coarse clock, so a gap either side keeps the order unambiguous.
+    def started_after_setup
+      sleep 0.05
+      start = Time.now
+      sleep 0.05
+      described_class.new(start:, written: [], stat: Lain::Shell::Executable::Stat.new)
+    end
+
+    it "is false when nothing under the root was written or changed in this lineage" do
+      made("Gemfile")
+
+      expect(lineage(after_every_file).any_under?(project)).to be(false)
+    end
+
+    it "is true once a write record names a file anywhere under the root, a workspace member's included" do
+      file = made("crates/lain-fence/build.rs")
+      fresh = lineage(after_every_file)
+      journal << written(file)
+
+      expect(fresh.any_under?(project)).to be(true)
+    end
+
+    it "is true when a file under the root has a ctime after the lineage started, with no write record" do
+      made("lib/lain/version.rb")
+
+      expect(lineage(before_every_file).any_under?(project)).to be(true)
+    end
+
+    it "matches a write record that names the root by its realpath when asked through a link" do
+      file = made("Gemfile")
+      File.symlink(project, link = File.join(root, "link"))
+      fresh = lineage(after_every_file)
+      journal << written(file)
+
+      expect(fresh.any_under?(link)).to be(true)
+    end
+
+    it "ignores a write outside the root, and one in a directory whose name only starts like it" do
+      fresh = lineage(after_every_file)
+      journal << written(plant("elsewhere/Gemfile"))
+      journal << written(plant("project-two/Gemfile"))
+
+      expect(fresh.any_under?(project)).to be(false)
+    end
+
+    it "counts a write record in target/ or .git/objects, which only the ctime check leaves out" do
+      %w[target/debug/build/x/build-script-build .git/objects/ab/cdef].each do |relative|
+        fresh = lineage(after_every_file)
+        journal << written(made(relative))
+
+        expect(fresh.any_under?(project)).to be(true), relative
+      end
+    end
+
+    it "ignores a changed ctime in target/ or .git/objects at the root" do
+      made("Gemfile")
+      FileUtils.mkdir_p([File.join(project, "target"), File.join(project, ".git/objects")])
+      fresh = started_after_setup
+      made("target/debug/out")
+      made(".git/objects/ab/cdef")
+
+      expect(fresh.any_under?(project)).to be(false)
+    end
+
+    it "still counts a changed ctime beside the 2 skipped dirs" do
+      FileUtils.mkdir_p([File.join(project, "target"), File.join(project, ".git/objects")])
+      fresh = started_after_setup
+      made("src/new.rb")
+
+      expect(fresh.any_under?(project)).to be(true)
+    end
+
+    it "still counts a write elsewhere under .git, or in a dir only named like a skipped one" do
+      %w[.git/FETCH_HEAD .git/objects-x targets/x src/target/x crates/a/target/x].each do |relative|
+        fresh = lineage(after_every_file)
+        journal << written(made(relative))
+
+        expect(fresh.any_under?(project)).to be(true), relative
+      end
+    end
+
+    it "is true when it has degraded, though nothing was written and the lineage starts after every file" do
+      degraded = described_class.new(start: Time.now + 3600, written: [], stat: Lain::Shell::Executable::Stat.new,
+                                     degraded: true)
+
+      expect(degraded.any_under?(project)).to be(true)
+    end
+
+    it "counts a fetch's FETCH_HEAD and a rewrite of .git/config by rename, so a grant withdraws the next" do
+      FileUtils.mkdir_p(File.join(project, ".git"))
+      config = made(".git/config")
+      %w[FETCH_HEAD config].each do |name|
+        fresh = started_after_setup
+        name == "config" ? File.rename(made(".git/config.lock"), config) : made(".git/#{name}")
+
+        expect(fresh.any_under?(project)).to be(true), name
+      end
+    end
+
+    it "is true when the root cannot be read" do
+      made("Gemfile")
+      fresh = lineage(after_every_file)
+      FileUtils.chmod(0o000, project)
+
+      expect(fresh.any_under?(project)).to be(true)
+    ensure
+      FileUtils.chmod(0o755, project)
+    end
+
+    it "is true when an entry appears in a cargo workspace member, by the member's ctime" do
+      made("crates/lain-fence/Cargo.toml")
+      fresh = started_after_setup
+      made("crates/lain-fence/build.rs")
+
+      expect(fresh.any_under?(project)).to be(true)
+    end
+
+    it "is true when a top-level file is rewritten in place, with no write record" do
+      gemfile = made("Gemfile")
+      fresh = started_after_setup
+      File.write(gemfile, "changed\n")
+
+      expect(fresh.any_under?(project)).to be(true)
+    end
+
+    # The stated bound of a check that does not walk the tree: only a write record shows a deep in-place edit.
+    it "misses an in-place edit 2 levels down that no write record names, and catches it once one does" do
+      version = made("lib/lain/version.rb")
+      fresh = lineage(after_every_file)
+      before = fresh.any_under?(project)
+      File.write(version, "changed\n")
+      journal << written(version)
+
+      expect([before, fresh.any_under?(project)]).to eq([false, true])
+      expect(started_after_setup.tap { File.write(version, "again\n") }.any_under?(project)).to be(false)
+    end
+  end
+
   describe "its own fault" do
     it "answers every path fresh once a record it cannot fold arrives, and the journal records why" do
       io = StringIO.new

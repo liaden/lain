@@ -5425,6 +5425,13 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
       expect(resolver.instance_variable_get(:@fresh)).to be(wiring.instance_variable_get(:@observers).fresh)
     end
 
+    it "hands the toolset build the Fresh the observers registered, which a sandbox's port grant reads" do
+      wire
+
+      expect(wiring.instance_variable_get(:@toolset_build).instance_variable_get(:@fresh))
+        .to be(wiring.instance_variable_get(:@observers).fresh)
+    end
+
     # Assigned as a SIDE EFFECT of building the agent: #switchboard is memoized
     # at its one call site, and three readers depend on that having happened.
     # Moving the memo into this module is the failure the card is written to

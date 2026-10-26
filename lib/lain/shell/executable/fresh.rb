@@ -36,6 +36,11 @@ module Lain
         end
         private_constant :PATH_OF
 
+        # Relative to the root: what a build writes, left out of the ctime check only.
+        UNWATCHED = %w[target .git/objects].freeze
+        # Where a cargo workspace keeps its members, each watched by its own ctime.
+        MEMBERS = "crates"
+
         # @param paths [Array<String>] the lineage's session files, oldest first
         # @param stat [Stat] the filesystem port
         # @param clock [#call] the lineage's start when it has no file yet
@@ -117,7 +122,55 @@ module Lain
           true
         end
 
+        # Whether anything a build could load changed under `root`, each
+        # workspace member included: a write record anywhere beneath it, or a
+        # ctime after the lineage began on the root, an entry at its top, or a
+        # member under `crates/`. A full walk cost 98 ms on lain's own checkout,
+        # so a change no record names shows only where it adds, removes or
+        # renames an entry at those levels, or rewrites one of them in place: an
+        # in-place edit deeper down, by a command whose write was not recorded,
+        # is missed. The ctime check leaves out `target/` and `.git/objects`; a
+        # write into `target/` that the journal cannot see, from the string arm
+        # or a script, stays a residual that cargo's exec grant there can run.
+        #
+        # It fails closed on what a granted call leaves: in a main checkout a
+        # fetch writes `.git`, a first cargo build makes `target/` and a git add
+        # rewrites the index, each withdrawing the next grant, so a lineage gets
+        # about 1 grant.
+        #
+        # @param root [String] absolute; the checkout
+        # @return [Boolean] true when degraded or when the root cannot be read
+        def any_under?(root)
+          return true if @degraded
+
+          real = @stat.real(root)
+          roots = [root, real].uniq
+          @lock.synchronize { @written.any? { |path| roots.any? { Landing.under?(path, _1) } } } ||
+            watched_entries(real).any? { changed?(_1) }
+        rescue StandardError
+          true
+        end
+
         private
+
+        def watched?(path, root)
+          return false unless Landing.under?(path, root)
+
+          relative = path.delete_prefix(root).delete_prefix(File::SEPARATOR)
+          UNWATCHED.none? { relative == _1 || relative.start_with?("#{_1}#{File::SEPARATOR}") }
+        end
+
+        def watched_entries(root)
+          [root, *entries(root).select { watched?(_1, root) }, *members(File.join(root, MEMBERS))]
+        end
+
+        def members(directory)
+          @stat.lstat(directory).directory? ? entries(directory) : []
+        rescue Errno::ENOENT
+          []
+        end
+
+        def entries(directory) = @stat.children(directory).map { File.join(directory, _1) }
 
         def written_path(event)
           return event.path if event.is_a?(Telemetry::FileWritten)

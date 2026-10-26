@@ -1302,6 +1302,26 @@ RSpec.describe Lain::Tools::Bash do
         expect(requests.first.executables.map(&:to_journal)).to eq(resolutions.fetch(0).stages)
       end
 
+      def argv_of(command, exec: backend)
+        described_class.new(exec:, journal:, resolver:)
+                       .call({ command: }, Lain::Tool::Invocation.new(tool_use_id: "tu_c", context: ruled.ruled(ruling),
+                                                                      channel:))
+        requests.sole.argv
+      end
+
+      it "carries each stage's argv on the term arm, one per stage" do
+        expect(argv_of("cargo fetch --locked | head -1")).to eq([%w[cargo fetch --locked], %w[head -1]])
+      end
+
+      it "carries no argv on the string arm, where the shell decides what runs" do
+        expect(argv_of("cargo fetch", exec: Class.new(backend.class) { define_method(:takes_term?) { |_| false } }.new))
+          .to eq([])
+      end
+
+      it "carries no argv for a program the verdict sends to the string arm, as it does git and bundle" do
+        expect(%w[git bundle].map { argv_of("#{_1} fetch").tap { requests.clear } }).to eq([[], []])
+      end
+
       it "carries no root for the main agent, which has no checkout" do
         call_with(ruled.ruled(ruling))
 

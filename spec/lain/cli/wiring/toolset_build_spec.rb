@@ -1051,6 +1051,40 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       expect(profiles.instance_variable_get(:@home)).to eq(Lain::Paths.new.home)
     end
 
+    describe "the build tool grant its profiles were built with" do
+      let(:git) do
+        Lain::Shell::Executable.new(name: "git", resolved: "/usr/bin/git", realpath: "/usr/bin/git", chain: [],
+                                    shadowed: [], anomalies: [], klass: :system, fresh: false, run_files: [],
+                                    wrappers: [])
+      end
+
+      around do |example|
+        Dir.mktmpdir("toolset-grant") do |dir|
+          @checkout = File.realpath(dir)
+          example.run
+        end
+      end
+
+      def program_for(**over)
+        ruling = Lain::Approval::Escalation::Ruling.allow(rung: "auto", because: "judged")
+        request = Lain::Confine::Request.new(ruling:, executables: [git], argv: [%w[git fetch]], cwd: @checkout,
+                                             root: @checkout, tool_use_id: "toolu_1")
+        profiles = bash_exec(built(reader, **over)).instance_variable_get(:@profiles)
+        profiles.instance_variable_get(:@build).program(request, @checkout)
+      end
+
+      it "grants a quiet lineage's fetch, reading the freshness it was given" do
+        quiet = Lain::Shell::Executable::Fresh.new(start: Time.now + 3600, written: [],
+                                                   stat: Lain::Shell::Executable::Stat.new)
+
+        expect(program_for(fresh: quiet)).to eq("git")
+      end
+
+      it "grants nothing when it was given no freshness" do
+        expect(program_for).to be_nil
+      end
+    end
+
     # The board does not exist while the toolset is built, and a classification started before it does
     # would hand the session's first bash call the NoMethodError. The Wiring primes once it does.
     it "starts no classification and asks nothing of the board while the toolset is built" do

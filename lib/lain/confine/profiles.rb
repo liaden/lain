@@ -13,6 +13,10 @@ module Lain
     # traced and not confined: a human's, and a surface's, whose machine
     # answers stand beside a person's in the same queue.
     #
+    # A workspace call earns its build tool's ports, the grant profile, only
+    # through {BuildGrant}: one fetching stage of a trusted program, while
+    # nothing in the project is fresh.
+    #
     # What this kernel lacks narrows the profile: no trace leaves a reader
     # confined and untraced, and every other call unwatched.
     class Profiles
@@ -51,6 +55,14 @@ module Lain
 
       CALL_DIR = "lain-call-"
 
+      # The freshness a caller that read no lineage hands over: every root
+      # counts as fresh, so nothing is granted its ports.
+      module Unread
+        # @param _root [String]
+        # @return [true]
+        def self.any_under?(_root) = true
+      end
+
       # @param masks [#masks] the session's {MaskList}, asked on every call so a
       #   mask whose file has gone never reaches bwrap, which fails on one
       # @param probe [#supports?] which sandbox layers this kernel offers
@@ -58,14 +70,19 @@ module Lain
       # @param root [String] absolute; the session's project, for a request that names no root of its own
       # @param workspace [Boolean] whether an automatic allow runs under the workspace profile
       # @param tmpdir [String] absolute; where each workspace call gets a dir of its own to write
-      def initialize(masks:, probe:, home:, root:, workspace: false, tmpdir: Dir.tmpdir)
+      # @param fresh [#any_under?] the lineage's freshness, which a build tool's grant needs to be quiet
+      # @param env [#[]] where a grant reads where bundler installs
+      def initialize(masks:, probe:, home:, root:, workspace: false, tmpdir: Dir.tmpdir, fresh: Unread, env: ENV)
         @masks = masks
         @probe = probe
         @home = home
         @root = root
         @workspace = workspace
         @tmpdir = tmpdir
+        @fresh = fresh
+        @env = env
         @sealed = Sealed.new(home:, tmpdir:)
+        @build = BuildGrant.new(fresh:)
       end
 
       # @param request [Request]
@@ -97,9 +114,15 @@ module Lain
       # The call's dir is made last, so a call refused on the way leaves none
       # behind, and never beneath the private /tmp, which is the call's own already.
       def workspace(request)
-        sealed = @sealed.for(root_of(request), trace: traceable?)
-        profile = granted(sealed.with(masks: mask_paths, exec_files: exec_files(request.executables)))
+        profile = granted(ported(request).with(masks: mask_paths, exec_files: exec_files(request.executables)))
         Profile::SYSTEM_WRITE.include?(@tmpdir) ? profile : profile.for_call(call_dir, granted: @tmpdir)
+      end
+
+      def ported(request)
+        root = root_of(request)
+        sealed = @sealed.for(root, trace: traceable?)
+        program = @build.program(request, root)
+        program ? sealed.granting(program, home: @home, env: @env) : sealed
       end
 
       def call_dir
@@ -129,6 +152,82 @@ module Lain
         Profile::GRANTED_CLASSES.include?(executable.klass) && !executable.realpath.nil? &&
           Profile::SYSTEM_EXEC.none? { executable.realpath.start_with?("#{_1}/") }
       end
+
+      # Names the build tool a workspace call may give its ports, or nil. The
+      # call must be one stage, the program word bare and resolved to a trusted
+      # file, the subcommand one that fetches, every option one its list names,
+      # and the cwd inside the root. Then nothing under the root may be fresh,
+      # whether or not a run file names it: a gemspec loads code no run file
+      # lists. A run file outside the root, such as git's config in a worktree's
+      # common dir, must be quiet on its own.
+      #
+      # Options are an allowlist matched whole, because git and cargo take
+      # abbreviations and bundled short options a denylist never sees:
+      # `--upload=x` is git's `--upload-pack=x`, and `-qu x` its `-q -u x`. A
+      # value rides on its option as `=N`, digits only, since a value in a word
+      # of its own reads as an operand.
+      class BuildGrant
+        COUNT = /=\d+\z/
+
+        # Per tool, per subcommand: the options it may carry; one ending in `=` takes a count.
+        OPTIONS = {
+          "bundle" => { "install" => %w[--frozen --local --prefer-local --quiet --verbose --jobs= --retry=] },
+          "cargo" => { "build" => %w[--locked --frozen --offline --quiet --verbose --release --jobs=],
+                       "fetch" => %w[--locked --frozen --offline --quiet --verbose] },
+          "git" => { "fetch" => %w[--quiet --verbose --prune --tags --all --depth=],
+                     "clone" => %w[--quiet --verbose --single-branch --no-tags --depth=],
+                     "pull" => %w[--quiet --verbose --ff-only],
+                     "ls-remote" => %w[--quiet --heads --tags --refs] }
+        }.then { |table| Profile::GRANTS.keys.to_h { [_1, table.fetch(_1).freeze] } }.freeze
+
+        # @param fresh [#any_under?]
+        def initialize(fresh:)
+          @fresh = fresh
+        end
+
+        # @param request [Request]
+        # @param root [String]
+        # @return [String, nil] a key of {Profile::GRANTS}
+        def program(request, root)
+          stage, argv = sole(request)
+          name = argv&.first
+          return unless OPTIONS.key?(name) && trusted?(stage, name) && asked?(OPTIONS.fetch(name), argv.drop(1))
+          return unless inside?(request.cwd, root)
+
+          name unless @fresh.any_under?(root)
+        end
+
+        private
+
+        def sole(request)
+          stages = [request.executables, request.argv]
+          stages.all? { _1.size == 1 } ? stages.map(&:first) : []
+        end
+
+        def trusted?(stage, name)
+          stage.name == name && stage.wrappers.empty? && stage.anomalies.empty? && placed?(stage) &&
+            stage.run_files.none? { _1.fresh || _1.klass == :unresolved }
+        end
+
+        # ComposedTerm's test: a user program that shadows another of its name is how an old plant shows.
+        def placed?(stage)
+          Profile::GRANTED_CLASSES.include?(stage.klass) && !stage.realpath.nil? && !stage.fresh &&
+            !(stage.klass == :user && stage.shadowed.any?)
+        end
+
+        def asked?(subcommands, args)
+          listed = subcommands.fetch(args.first, nil)
+          listed && args.drop(1).select { _1.start_with?("-") }.all? { listed?(listed, _1) }
+        end
+
+        def listed?(listed, option)
+          counted = option.sub(COUNT, "=")
+          listed.include?(option) ? !option.end_with?("=") : listed.include?(counted)
+        end
+
+        def inside?(cwd, root) = cwd.nil? || Landing.under?(Profile.landing(cwd), Profile.landing(root))
+      end
+      private_constant :BuildGrant
 
       # A workspace profile with no masks and no programs, kept per landed root
       # and trace: building one asks git where its dirs are and which config

@@ -285,7 +285,7 @@ module Lain
         journal_arm(decision, arm, invocation)
         options = runtime(input, invocation)
         stages = journal_resolution(input.command, decision, invocation, options[:cwd], arm)
-        confinement = confinement_for(stages, invocation, options[:cwd])
+        confinement = confinement_for(stages, invocation, options[:cwd], argv_on(arm, decision))
         capture = run_journalling_writes(input.command, options, invocation) do
           executed(on_arm(arm, input.command, decision), confinement, options)
         end
@@ -355,12 +355,15 @@ module Lain
       end
 
       # A context no ladder ruled through gets the ruling that allowed nothing.
-      def confinement_for(stages, invocation, cwd)
+      def confinement_for(stages, invocation, cwd, argv)
         context = session_of(invocation)
         ruling = context.respond_to?(:ruling) ? context.ruling : Confine::Request::UNRULED
-        Confine::Request.new(ruling:, executables: stages, cwd:, root: context.worker_env.checkout,
+        Confine::Request.new(ruling:, executables: stages, argv:, cwd:, root: context.worker_env.checkout,
                              tool_use_id: invocation.tool_use_id)
       end
+
+      # On the string arm a shell reads the words, so none are vouched for.
+      def argv_on(arm, decision) = arm == :term ? decision.term.stages.map(&:argv) : []
 
       def resolve(command, decision, worker_env)
         return [Shell::Executable.unresolved(command)] unless decision.allow?

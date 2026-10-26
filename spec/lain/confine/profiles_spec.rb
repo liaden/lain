@@ -215,6 +215,227 @@ RSpec.describe Lain::Confine::Profiles do
         expect(Dir.children(scratch)).to be_empty
       end
 
+      describe "a build tool's ports" do
+        let(:fresh_paths) { [] }
+        let(:fresh) do
+          paths = fresh_paths
+          Struct.new(:paths) do
+            def any_under?(root) = paths.any? { Lain::Landing.under?(_1, root) }
+          end.new(paths)
+        end
+        let(:profiles) do
+          described_class.new(masks:, probe:, home:, root:, workspace: true, tmpdir: scratch, fresh:,
+                              env: { "GEM_HOME" => File.join(@base, "gems") })
+        end
+        let(:mise) { File.join(home, ".local/share/mise/installs/ruby/4.0.6/bin") }
+
+        before do
+          git_init(root)
+          FileUtils.mkdir_p([File.join(@base, "gems/bin"), File.join(@base, "gems/specifications"),
+                             File.join(root, "target")])
+        end
+
+        def run_file(name, fresh: false, klass: :project)
+          Lain::Shell::Executable::RunFiles::Entry.new(path: File.join(root, name), klass:, fresh:)
+        end
+
+        def tool(name, realpath: File.join(mise, name), klass: :user, run_files: [], **changes)
+          executable(name, realpath, klass).with(run_files:, **changes)
+        end
+
+        def bundle(**) = tool("bundle", run_files: [run_file("Gemfile"), run_file("Gemfile.lock")], **)
+
+        def cargo(**)
+          tool("cargo", realpath: File.join(home, ".cargo/bin/rustup"), run_files: [run_file("Cargo.toml")], **)
+        end
+
+        def git(**) = tool("git", realpath: "/usr/bin/git", klass: :system, **)
+
+        def called(argv, executable, rung: "auto", cwd: root)
+          Lain::Confine::Request.new(ruling: ruling(rung), executables: [executable], argv: [argv], cwd:, root:,
+                                     tool_use_id: "toolu_1")
+        end
+
+        def profile_of(...) = profiles.for(called(...))
+
+        it "grants a judge-approved bundle install its ports while nothing in the project is fresh" do
+          profile = profile_of(%w[bundle install], bundle)
+
+          expect(profile).to have_attributes(name: :grant, connect_ports: [443, 80],
+                                             unix_dirs: ["/run/systemd/resolve"], confined?: true)
+          expect(profile.exec_files).to eq([File.join(mise, "bundle")])
+          expect(profile.write_dirs).to include(File.join(@base, "gems"), profile.call_tmpdir)
+        end
+
+        it "grants a rule's or bypass's approval too, the rungs that earn the workspace profile" do
+          expect(%w[rules bypass].map { profile_of(%w[git fetch origin], git, rung: _1).name }).to eq(%i[grant grant])
+        end
+
+        it "withdraws the grant once a build input was written this lineage" do
+          fresh_paths << File.join(root, "Gemfile")
+
+          expect(profile_of(%w[bundle install], bundle(run_files: [run_file("Gemfile", fresh: true)])))
+            .to have_attributes(name: :workspace, connect_ports: [], unix_dirs: [])
+        end
+
+        it "withdraws the grant once code the build loads was written, though no run file names it" do
+          fresh_paths << File.join(root, "lib/lain/version.rb")
+
+          expect(profile_of(%w[bundle install], bundle)).to have_attributes(name: :workspace, connect_ports: [])
+        end
+
+        it "withdraws the grant once any file in a cargo workspace member was written" do
+          fresh_paths << File.join(root, "crates/lain-fence/build.rs")
+
+          expect(profile_of(%w[cargo build], cargo)).to have_attributes(name: :workspace, connect_ports: [])
+        end
+
+        it "withdraws cargo's grant once the lineage records a write into target/, where the grant may exec" do
+          planted = File.join(root, "target/debug/build/x/build-script-build")
+          recorded = Lain::Shell::Executable::Fresh.new(start: Time.now + 3600, written: [planted],
+                                                        stat: Lain::Shell::Executable::Stat.new)
+          quiet = Lain::Shell::Executable::Fresh.new(start: Time.now + 3600, written: [],
+                                                     stat: Lain::Shell::Executable::Stat.new)
+          names = [recorded, quiet].map do |answer|
+            described_class.new(masks:, probe:, home:, root:, workspace: true, tmpdir: scratch, fresh: answer)
+                           .for(called(%w[cargo build], cargo)).name
+          end
+
+          expect(names).to eq(%i[workspace grant])
+        end
+
+        it "grants a first cargo fetch in a fresh checkout its port, with no exec dir" do
+          FileUtils.rm_rf(File.join(root, "target"))
+          fetch = profile_of(%w[cargo fetch], cargo)
+
+          expect([fetch.name, fetch.connect_ports, fetch.exec_dirs.grep(/target/)]).to eq([:grant, [443], []])
+        end
+
+        it "withdraws the grant when a run file outside the root is fresh or did not resolve" do
+          outside = Lain::Shell::Executable::RunFiles::Entry.new(path: "/elsewhere/config", klass: :user, fresh: true)
+          unresolved = run_file("Gemfile", klass: :unresolved)
+
+          expect([git(run_files: [outside]), bundle(run_files: [unresolved])].zip([%w[git fetch], %w[bundle install]])
+            .map { |stage, argv| profile_of(argv, stage).name }).to eq(%i[workspace workspace])
+        end
+
+        it "grants git fetch and refuses git push" do
+          expect([profile_of(%w[git fetch origin], git).connect_ports, profile_of(%w[git push origin main], git).name])
+            .to eq([[443], :workspace])
+        end
+
+        it "grants each fetching git subcommand, and cargo fetch" do
+          names = [*%w[fetch clone pull ls-remote].map { profile_of(["git", _1, "x"], git).name },
+                   profile_of(%w[cargo fetch], cargo).name]
+          expect(names).to all(eq(:grant))
+        end
+
+        it "refuses a program resolved in the project, a fresh one, or one that did not resolve" do
+          planted = tool("bundle", realpath: File.join(root, "bin/bundle"), klass: :project)
+          unresolved = Lain::Shell::Executable.unresolved("bundle")
+
+          expect([planted, bundle(fresh: true), unresolved].map { profile_of(%w[bundle install], _1).name })
+            .to all(eq(:workspace))
+        end
+
+        it "refuses a user program that shadows another of its name, or one resolved with an anomaly" do
+          shadowing = bundle(shadowed: ["/usr/bin/bundle"])
+          odd = bundle(anomalies: [:relative_path_entry])
+
+          expect([shadowing, odd].map { profile_of(%w[bundle install], _1).name }).to all(eq(:workspace))
+        end
+
+        it "refuses a subcommand the card does not name, a leading option, a path word or a wrapper" do
+          wrapped = bundle(wrappers: [executable("nice", "/usr/bin/nice", :system)])
+          calls = [[%w[bundle exec rake], bundle], [%w[bundle update], bundle], [%w[cargo test], cargo],
+                   [%w[cargo run], cargo], [%w[git --no-pager fetch], git], [%w[cargo +nightly build], cargo],
+                   [["/usr/bin/git", "fetch"], git], [%w[nice bundle install], wrapped], [%w[git], git]]
+
+          expect(calls.map { |argv, stage| profile_of(argv, stage).name }).to all(eq(:workspace))
+        end
+
+        it "grants the options each subcommand lists" do
+          calls = [[%w[bundle install --frozen --jobs=4], bundle],
+                   [%w[cargo build --locked --offline --release], cargo], [%w[cargo fetch --locked], cargo],
+                   [%w[git fetch --prune --quiet origin], git],
+                   [%w[git clone --depth=1 url dir], git], [%w[git pull --ff-only], git],
+                   [%w[git ls-remote --heads origin], git]]
+
+          expect(calls.map { |argv, stage| profile_of(argv, stage).name }).to all(eq(:grant))
+        end
+
+        it "refuses any option no list names: an abbreviation, a bundled short option, a value split off" do
+          calls = [[%w[git fetch --upload=x origin], git], [%w[git ls-remote --exec=x origin], git],
+                   [%w[git clone --templ=x url], git], [%w[git clone --conf=a=b url], git],
+                   [%w[git fetch -qc origin], git], [%w[git clone -qu x url], git], [%w[git fetch -q origin], git],
+                   [%w[bundle install --jobs 4], bundle], [%w[bundle install --jobs=x], bundle],
+                   [%w[bundle install --jobs=], bundle],
+                   [%w[cargo build --locked=x], cargo], [%w[cargo -C sub build], cargo],
+                   [%w[cargo build -C sub], cargo]]
+
+          expect(calls.map { |argv, stage| profile_of(argv, stage).name }).to all(eq(:workspace))
+        end
+
+        it "refuses a request whose stage is not the program its words name, or carries a wrapper the words do not" do
+          wrapped = bundle(wrappers: [executable("nice", "/usr/bin/nice", :system)])
+          unplaced = git.with(realpath: nil)
+
+          expect([[%w[git fetch], cargo], [%w[bundle install], wrapped], [%w[git fetch], unplaced]]
+            .map { |argv, stage| profile_of(argv, stage).name }).to all(eq(:workspace))
+        end
+
+        it "refuses an option that moves the build's inputs or runs a command of the caller's choosing" do
+          calls = [[%w[bundle install --gemfile=/x/Gemfile], bundle],
+                   [%w[cargo build --manifest-path /x/Cargo.toml], cargo], [%w[cargo build --config x=1], cargo],
+                   [%w[cargo build -Zunstable-options], cargo], [%w[git fetch --upload-pack=x origin], git],
+                   [%w[git clone -u x url], git], [%w[git clone --template=/x url], git],
+                   [%w[git clone -c core.hooksPath=x url], git], [%w[git clone --config a=b url], git]]
+
+          expect(calls.map { |argv, stage| profile_of(argv, stage).name }).to all(eq(:workspace))
+        end
+
+        it "refuses more than one stage" do
+          request = Lain::Confine::Request.new(ruling: ruling("auto"), executables: [git, git],
+                                               argv: [%w[git fetch], %w[git pull]], cwd: root, root:,
+                                               tool_use_id: "toolu_1")
+
+          expect(profiles.for(request).name).to eq(:workspace)
+        end
+
+        it "refuses a call whose cwd is outside the root, where its inputs are not watched" do
+          expect(profile_of(%w[cargo build], cargo, cwd: @base).name).to eq(:workspace)
+        end
+
+        it "refuses a call that carries no argv, as one on the string arm does" do
+          request = Lain::Confine::Request.new(ruling: ruling("auto"), executables: [git], cwd: root, root:,
+                                               tool_use_id: "toolu_1")
+
+          expect(profiles.for(request).name).to eq(:workspace)
+        end
+
+        it "never grants a human's approval or a ComposedTerm one" do
+          human = Lain::Confine::Request.new(ruling: ruling("auto", authority: :human), executables: [git],
+                                             argv: [%w[git fetch]], cwd: root, root:, tool_use_id: "toolu_1")
+          composed_call = Lain::Confine::Request.new(ruling: ruling("rules", rule: "composed_term"),
+                                                     executables: [git], argv: [%w[git fetch]], cwd: root, root:,
+                                                     tool_use_id: "toolu_1")
+
+          expect([profiles.for(human).name, profiles.for(composed_call).name]).to eq(%i[traced reader])
+        end
+
+        it "grants nothing when the profiles were given no lineage, which counts every root fresh" do
+          unread = described_class.new(masks:, probe:, home:, root:, workspace: true, tmpdir: scratch)
+
+          expect(unread.for(called(%w[git fetch], git)).name).to eq(:workspace)
+        end
+
+        it "grants nothing with the workspace switch off" do
+          off = described_class.new(masks:, probe:, home:, root:, fresh:)
+
+          expect(off.for(called(%w[git fetch], git))).to eq(Lain::Confine::Profile::TRACED)
+        end
+      end
+
       describe "the seal set" do
         before { git_init(root) }
 

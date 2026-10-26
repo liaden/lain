@@ -663,6 +663,77 @@ RSpec.describe Lain::Exec::Sandboxed do
       end
     end
 
+    describe "a call granted its build tool's ports" do
+      let(:server) { TCPServer.new("127.0.0.1", 0) }
+      let(:port) { server.addr[1] }
+      let(:other) { TCPServer.new("127.0.0.1", 0) }
+      let(:datagrams) { UDPSocket.new.tap { _1.bind("127.0.0.1", 0) } }
+      let(:fixture_home) { File.join(@base, "fixture-home").tap { FileUtils.mkdir_p(File.join(_1, ".cargo/bin")) } }
+      let(:scratch) { File.join(@base, "scratch").tap { FileUtils.mkdir_p(_1) } }
+      # Nothing in this lineage was written, and its start is after every file the spec made.
+      let(:fresh) { Lain::Shell::Executable::Fresh.new(start: Time.now + 3600, written: [], stat: Lain::Shell::Executable::Stat.new) }
+      let(:sandboxed) do
+        described_class.new(
+          inner: Lain::Exec::Local.new, launcher:, journal:,
+          profiles: Lain::Confine::Profiles.new(
+            masks: Lain::Confine::MaskList.new(root:, policy: -> { policy }), probe:, home: fixture_home, root:,
+            workspace: true, tmpdir: scratch, fresh:, env: { "GEM_HOME" => File.join(@base, "gems") }
+          )
+        )
+      end
+
+      # The test grants the listener's port in place of 443, so nothing leaves loopback.
+      before { stub_const("Lain::Confine::Profile::GRANTS", { "git" => [port], "cargo" => [port] }) }
+
+      after { [server, other, datagrams].each(&:close) }
+
+      def granted(argv, realpath)
+        stage = Lain::Shell::Executable.new(name: argv.first, resolved: realpath, realpath:, chain: [], shadowed: [],
+                                            anomalies: [], klass: :system, fresh: false, run_files: [], wrappers: [])
+        Lain::Confine::Request.new(ruling: ruling("auto"), executables: [stage], argv: [argv], cwd: root, root:,
+                                   tool_use_id: "toolu_1")
+      end
+
+      def connects = recorded("exec_record").sole.connects.select { _1[:call] == "connect" && _1[:family] == "AF_INET" }
+
+      it "connects on the granted port, and is refused and recorded on another" do
+        run("exec 3<>/dev/tcp/127.0.0.1/#{port}; exec 4<>/dev/tcp/127.0.0.1/#{other.addr[1]}",
+            confinement: granted(%w[git fetch origin], "/usr/bin/git"))
+
+        expect(recorded("sandbox").map(&:profile)).to include(:grant)
+        expect(connects).to contain_exactly(a_hash_including(port:, rc: 0),
+                                            a_hash_including(port: other.addr[1], rc: -1, errno: "EACCES"))
+      end
+
+      it "opens no datagram socket" do
+        capture = run("echo x > /dev/udp/127.0.0.1/#{datagrams.addr[1]}",
+                      confinement: granted(%w[git fetch origin], "/usr/bin/git"))
+
+        expect(capture.exit_status).not_to eq(0)
+        expect(datagrams.recv_nonblock(1, exception: false)).to eq(:wait_readable)
+      end
+
+      it "writes cargo's registry and is refused a write to ~/.cargo/bin" do
+        registry = File.join(fixture_home, ".cargo/registry").tap { FileUtils.mkdir_p(_1) }
+        FileUtils.mkdir_p(File.join(root, "target"))
+        capture = run("echo x > #{registry}/ok && echo x > #{fixture_home}/.cargo/bin/cargo",
+                      confinement: granted(%w[cargo build], "/usr/bin/true"))
+
+        expect(File.exist?(File.join(registry, "ok"))).to be(true)
+        expect(capture.stderr).to match(/cargo: (Permission denied|Read-only file system)/)
+        expect(File.exist?(File.join(fixture_home, ".cargo/bin/cargo"))).to be(false)
+      end
+
+      it "runs under the workspace profile, with no ports, once a file in the project was written" do
+        fresh << Lain::Telemetry::FileWritten.from_stat(File.stat(File.join(root, "README.md")),
+                                                        path: File.join(root, "README.md"), tool_use_id: "tu_0")
+        run("exec 3<>/dev/tcp/127.0.0.1/#{port}", confinement: granted(%w[git fetch origin], "/usr/bin/git"))
+
+        expect(recorded("sandbox").map(&:profile)).to include(:workspace)
+        expect(connects).to contain_exactly(a_hash_including(port:, rc: -1, errno: "EACCES"))
+      end
+    end
+
     it "runs a piped term under the reader profile and under the trace alone" do
       [composed, judged].each do |confinement|
         expect(run(term(%w[cat README.md], %w[head -1]), confinement:))

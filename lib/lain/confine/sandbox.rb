@@ -35,8 +35,9 @@ module Lain
       # @param notes [#<<] receives the degraded record; the journal unless a run says otherwise
       # @param workspace [Boolean] whether an automatic allow runs under the workspace profile
       # @param tmpdir [String] absolute; where each workspace call gets a dir of its own to write
+      # @param fresh [#any_under?] the lineage's freshness; by default every root is fresh and no port is granted
       def initialize(root:, home:, masks:, probe:, fence:, journal:, notes: journal, workspace: false,
-                     tmpdir: Dir.tmpdir)
+                     tmpdir: Dir.tmpdir, fresh: Profiles::Unread)
         @root = root
         @home = home
         @masks = masks
@@ -44,7 +45,7 @@ module Lain
         @fence = fence
         @journal = journal
         @notes = notes
-        @profiling = { workspace:, tmpdir: }
+        @profiling = { workspace:, tmpdir:, fresh: }
         @built = false
       end
 

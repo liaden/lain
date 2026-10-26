@@ -34,7 +34,7 @@ module Lain
         BUILD_FILES = {
           "rake" => %w[Rakefile rakefile Rakefile.rb rakefile.rb], "bundle" => %w[Gemfile Gemfile.lock],
           "npm" => %w[package.json], "yarn" => %w[package.json], "pnpm" => %w[package.json],
-          "cargo" => %w[Cargo.toml build.rs], "direnv" => %w[.envrc]
+          "cargo" => %w[Cargo.toml build.rs Cargo.lock .cargo/config.toml], "direnv" => %w[.envrc]
         }.freeze
 
         # GNU make's own search order.

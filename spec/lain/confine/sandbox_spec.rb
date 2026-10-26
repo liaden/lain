@@ -40,6 +40,42 @@ RSpec.describe Lain::Confine::Sandbox do
       expect(profiles.for(request)).to eq(Lain::Confine::Profile::TRACED)
     end
 
+    describe "the lineage's freshness" do
+      let(:ruling) { Lain::Approval::Escalation::Ruling.allow(rung: "auto", because: "judged") }
+      let(:git) do
+        Lain::Shell::Executable.new(name: "git", resolved: "/usr/bin/git", realpath: "/usr/bin/git", chain: [],
+                                    shadowed: [], anomalies: [], klass: :system, fresh: false, run_files: [],
+                                    wrappers: [])
+      end
+
+      around do |example|
+        Dir.mktmpdir("lain-sandbox-fresh") do |dir|
+          @repo, @scratch = %w[repo scratch].map { File.join(File.realpath(dir), _1).tap { |d| FileUtils.mkdir_p(d) } }
+          system(SeedRepo::SCRUB, "git", "init", "-q", chdir: @repo, exception: true)
+          example.run
+        end
+      end
+
+      def fetch_profile(**)
+        request = Lain::Confine::Request.new(ruling:, executables: [git], argv: [%w[git fetch]], cwd: @repo,
+                                             root: @repo, tool_use_id: "toolu_1")
+        described_class.new(root: @repo, home: "/home/h", masks:, probe:, fence:, journal:, workspace: true,
+                            tmpdir: @scratch, **).wrap(inner, requirer: "Spec")
+                       .instance_variable_get(:@profiles).for(request)
+      end
+
+      it "hands the profiles the freshness it was given, which a grant reads" do
+        quiet = Lain::Shell::Executable::Fresh.new(start: Time.now + 3600, written: [],
+                                                   stat: Lain::Shell::Executable::Stat.new)
+
+        expect(fetch_profile(fresh: quiet).name).to eq(:grant)
+      end
+
+      it "grants nothing when it was given no freshness" do
+        expect(fetch_profile.name).to eq(:workspace)
+      end
+    end
+
     context "when the fence cannot reap" do
       let(:runner) { ->(argv) { [argv.include?("--status") ? '{"abi":3}' : "", true] } }
 

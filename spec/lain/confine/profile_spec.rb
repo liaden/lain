@@ -311,6 +311,207 @@ RSpec.describe Lain::Confine::Profile do
     end
   end
 
+  describe ".grant" do
+    around do |example|
+      Dir.mktmpdir do |dir|
+        @dir = File.realpath(dir)
+        FileUtils.mkdir_p([root, home, *%w[bin specifications].map { File.join(gem_home, _1) },
+                           File.join(root, "target")])
+        SeedRepo.git(root, "init", "-q")
+        example.run
+      end
+    end
+
+    def root = File.join(@dir, "r")
+    def home = File.join(@dir, "h")
+    def tmpdir = File.join(@dir, "t")
+    def gem_home = File.join(@dir, "gems")
+    def env = { "GEM_HOME" => gem_home }
+
+    def grant(program, env: self.env, **)
+      described_class.grant(program:, root:, home:, tmpdir:, env:, masks: ["#{root}/.env"], **)
+    end
+
+    def workspace = described_class.workspace(root:, home:, tmpdir:, masks: ["#{root}/.env"])
+
+    def refused?(profile) = profile.name == :workspace && profile.connect_ports.empty? && profile == workspace
+
+    it "is confined and named :grant" do
+      expect([described_class.confines?(:grant), grant("git").name, grant("git").confined?]).to eq([true, :grant, true])
+    end
+
+    it "keeps everything the workspace profile seals, reads, runs, writes and masks" do
+      %w[bundle cargo git].each do |program|
+        granted = grant(program)
+
+        expect(granted.sealed).to include(*workspace.sealed)
+        given = [granted.exec_dirs, granted.read_dirs, granted.write_dirs]
+        kept = [workspace.exec_dirs, workspace.read_dirs, workspace.write_dirs]
+        expect(given.zip(kept)).to all(satisfy { |grants, workspaces| (workspaces - grants).empty? })
+        expect([granted.masks, granted.trace, granted.read_dirs.first]).to eq([workspace.masks, true, root])
+      end
+    end
+
+    it "gives bundle ports 443 and 80, cargo and git 443, each the resolver's socket dir" do
+      expect(%w[bundle cargo git].map { [grant(_1).connect_ports, grant(_1).unix_dirs] })
+        .to eq([[[443, 80], [described_class::RESOLVER]], [[443], [described_class::RESOLVER]],
+                [[443], [described_class::RESOLVER]]])
+      expect(described_class::RESOLVER).to eq("/run/systemd/resolve")
+    end
+
+    it "reads the resolver's dir, so nss-resolve can find its socket" do
+      expect(grant("git").read_dirs).to include(described_class::RESOLVER)
+    end
+
+    it "writes the gem home the env names and bundler's user cache under home, only for bundle" do
+      bundled = [gem_home, File.join(home, ".bundle", "cache")]
+
+      expect(grant("bundle").write_dirs).to include(*bundled)
+      expect([grant("cargo").write_dirs, grant("git").write_dirs, workspace.write_dirs])
+        .to all(satisfy { !_1.intersect?(bundled) })
+    end
+
+    it "reads GEM_HOME and CARGO_HOME, which a child keeps, and no BUNDLE_USER_ name, which it does not" do
+      kept = %w[GEM_HOME CARGO_HOME BUNDLE_USER_CACHE BUNDLE_USER_HOME].map { Lain::Exec::ChildEnv::KEEP.match?(_1) }
+      cache = File.join(@dir, "cache")
+
+      expect(kept).to eq([true, true, false, false])
+      expect(grant("bundle", env: env.merge("BUNDLE_USER_CACHE" => cache, "BUNDLE_USER_HOME" => cache)).write_dirs)
+        .to include(File.join(home, ".bundle", "cache")).and(satisfy { _1.none? { |dir| dir.start_with?(cache) } })
+    end
+
+    it "takes the gem home a child's bundler finds with no GEM_HOME: RubyGems' default dir" do
+      expect(grant("bundle", env: {}).write_dirs).to include(Gem.default_dir)
+    end
+
+    it "never writes the dir RubyGems installs executables to, and seals it when it sits in the gem home" do
+      bindir = File.join(gem_home, "bin")
+      [{}, env].each do |given|
+        granted = grant("bundle", env: given)
+        installs = Gem.bindir(given.fetch("GEM_HOME", Gem.default_dir))
+        writable = granted.write_dirs.any? { Lain::Landing.under?(installs, _1) }
+
+        expect(!writable || granted.sealed.any? { _1.path == installs && !_1.absent }).to be(true), installs
+      end
+      expect(grant("bundle").sealed.map(&:path)).to include(bindir)
+    end
+
+    it "grants bundle nothing when the executables dir would sit in the gem home and is absent" do
+      FileUtils.rm_rf(File.join(gem_home, "bin"))
+
+      expect(refused?(grant("bundle"))).to be(true)
+    end
+
+    { "home" => -> { home }, "/" => -> { "/" }, "above home" => -> { "#{home}/.." },
+      "a relative path" => -> { "gems" } }.each do |what, dir|
+      it "grants bundle nothing for a GEM_HOME that is #{what}" do
+        expect(refused?(grant("bundle", env: { "GEM_HOME" => instance_exec(&dir) }))).to be(true)
+      end
+
+      it "grants cargo nothing for a CARGO_HOME that is #{what}" do
+        expect(refused?(grant("cargo", env: { "CARGO_HOME" => instance_exec(&dir) }))).to be(true)
+      end
+    end
+
+    it "grants nothing for a gem home or cargo home that lands somewhere other than it claims" do
+      File.symlink(gem_home, linked = File.join(@dir, "linked"))
+
+      expect([grant("bundle", env: { "GEM_HOME" => linked }), grant("cargo", env: { "CARGO_HOME" => linked })])
+        .to all(satisfy { refused?(_1) })
+    end
+
+    it "writes cargo's registry, git checkouts and package lock, never the rest of ~/.cargo, and runs target/" do
+      cargo = grant("cargo")
+
+      expect(cargo.write_dirs).to include(*%w[registry git .package-cache].map { File.join(home, ".cargo", _1) })
+      expect(cargo.write_dirs).not_to include(File.join(home, ".cargo"), File.join(home, ".cargo", "bin"))
+      expect(cargo.exec_dirs).to include(File.join(root, "target"))
+      expect([grant("bundle").exec_dirs, grant("git").exec_dirs]).to all(eq(workspace.exec_dirs))
+    end
+
+    it "writes beneath the CARGO_HOME the env names" do
+      cargo_home = File.join(@dir, "cargo-home").tap { FileUtils.mkdir_p(_1) }
+
+      expect(grant("cargo", env: { "CARGO_HOME" => cargo_home }).write_dirs)
+        .to include(*%w[registry git .package-cache].map { File.join(cargo_home, _1) })
+    end
+
+    it "grants cargo nothing when target/ is a link out of the project, or is not a directory" do
+      FileUtils.rm_rf(target = File.join(root, "target"))
+      File.symlink(FileUtils.mkdir_p(File.join(@dir, "outside")).first, target)
+      linked = grant("cargo")
+      File.unlink(target)
+      File.write(target, "")
+
+      expect([linked, grant("cargo")]).to all(satisfy { refused?(_1) })
+    end
+
+    it "grants a first cargo fetch in a checkout with no target/ yet, with no exec dir" do
+      FileUtils.rm_rf(File.join(root, "target"))
+      fetch = grant("cargo")
+
+      expect([fetch.name, fetch.connect_ports, fetch.exec_dirs]).to eq([:grant, [443], workspace.exec_dirs])
+    end
+
+    it "grants bundle nothing for a GEM_HOME without RubyGems' layout, a specifications dir" do
+      FileUtils.rm_rf(File.join(gem_home, "specifications"))
+
+      expect(refused?(grant("bundle"))).to be(true)
+    end
+
+    describe "a gem home or cargo home under home that holds more than its own" do
+      def project = File.join(home, "dev", "r")
+
+      before do
+        FileUtils.mkdir_p(project)
+        SeedRepo.git(project, "init", "-q")
+      end
+
+      def grant_in_home(program, key, dir)
+        FileUtils.mkdir_p(%w[bin specifications].map { File.join(dir, _1) })
+        described_class.grant(program:, root: project, home:, tmpdir:, env: { key => dir })
+      end
+
+      { "~/.local, which holds the mise installs" => ".local", "~/dev, which holds the project" => "dev",
+        "~/.config, which holds git's config" => ".config" }.each do |what, name|
+        it "grants nothing for a GEM_HOME or CARGO_HOME of #{what}" do
+          if name == ".local"
+            FileUtils.mkdir_p(File.join(home, ".local/share/mise/installs"))
+          elsif name == ".config"
+            FileUtils.mkdir_p(File.join(home, ".config/git"))
+          end
+          dir = File.join(home, name)
+          refused = [grant_in_home("bundle", "GEM_HOME", dir), grant_in_home("cargo", "CARGO_HOME", dir)]
+
+          expect(refused.map { [_1.name, _1.connect_ports] }).to eq([[:workspace, []], [:workspace, []]])
+        end
+      end
+
+      it "still grants cargo the default ~/.cargo, though it holds the bin a reader may run" do
+        FileUtils.mkdir_p(File.join(home, ".cargo/bin"))
+        FileUtils.mkdir_p(File.join(project, "target"))
+
+        expect(described_class.grant(program: "cargo", root: project, home:, tmpdir:, env: {}).name).to eq(:grant)
+      end
+    end
+
+    it "is deeply frozen" do
+      expect(grant("bundle")).to be_deeply_frozen
+    end
+
+    it "refuses a program it holds no grant for" do
+      expect { grant("npm") }.to raise_error(ArgumentError, /npm/)
+    end
+
+    it "keeps the grant through the call's own TMPDIR" do
+      call_dir = File.join(tmpdir, "lain-call-1")
+      moved = grant("bundle").for_call(call_dir, granted: tmpdir)
+
+      expect([moved.name, moved.call_tmpdir, moved.connect_ports]).to eq([:grant, call_dir, [443, 80]])
+      expect(moved.write_dirs).to include(gem_home)
+    end
+  end
+
   describe "#runs?" do
     subject(:profile) { described_class.reader(root: "/p", home: "/h", exec_files: ["/h/.local/bin/grep"]) }
 

@@ -15,7 +15,8 @@ module Lain
     # reach; the reader has neither. `:none` runs as before, `:traced`
     # only watches, `:reader` confines, and `:workspace` confines while
     # writing the project, which `sealed` keeps from planting what runs
-    # later. A workspace's `call_tmpdir`, once {#for_call} names one, is the
+    # later, and `:grant` is a workspace with one build tool's ports, from
+    # {.grant}. A workspace's `call_tmpdir`, once {#for_call} names one, is the
     # dir made for a single call and removed after it. Both unconfined
     # profiles still run under lain-fence as a reaper, so a stopped call
     # leaves no descendant behind; that covers a call made through a sandbox,
@@ -51,6 +52,19 @@ module Lain
       # Relative to the root: files a later shell or hook runs. The lain dir a
       # later session reads is sealed too, at the path {ProjectDir} owns.
       PROJECT_SEALED = %w[.envrc .pre-commit-config.yaml].freeze
+
+      # The TCP ports each build tool fetches on. Landlock bounds a port, never
+      # a host, so a granted port is open to whatever code the build runs, and
+      # {Profiles} grants one only while nothing the build could load is fresh.
+      GRANTS = { "bundle" => [443, 80], "cargo" => [443], "git" => [443] }.freeze
+
+      # nss-resolve's socket dir: a name resolves through it, so no grant needs a
+      # datagram socket, which the fence refuses whatever the profile says.
+      RESOLVER = "/run/systemd/resolve"
+
+      # Relative to cargo's home: what it fetches into. The rest holds its bin
+      # and its credentials.
+      CARGO_WRITES = %w[registry git .package-cache].freeze
 
       # What a commit in a linked worktree writes in the main checkout's git dir. git rewrites packed-refs by
       # renaming a lock beside it in that dir, which is not granted, so whatever rewrites it fails here.
@@ -167,6 +181,51 @@ module Lain
                            write_dirs: [*writes, *SYSTEM_WRITE])
       end
 
+      # The workspace profile with a build tool's ports, the resolver's socket
+      # dir, and what the tool writes outside the project: bundle its gem home
+      # and its user cache, cargo its fetched sources, with exec on `target/`
+      # for its build scripts. Every seal the workspace holds is kept. Where a
+      # write cannot be bounded, the workspace profile comes back unchanged,
+      # with no ports.
+      #
+      # A granted bundle install writes the gem home, which holds the gems lain
+      # itself loads, so the install can change code lain runs later. That was
+      # accepted. The dir RubyGems installs executables to is never granted:
+      # where it sits inside the gem home it is sealed, and where it would sit
+      # there but is absent, bundle gets no grant, since an absent seal is only
+      # checked after the call.
+      #
+      # @param program [String] a key of {GRANTS}
+      # @param root [String] absolute; the project, read and written whole
+      # @param home [String] absolute; where the toolchain grants are looked for
+      # @param tmpdir [String] absolute; the caller's TMPDIR, never home or above it
+      # @param masks [Array<String>] resolved paths hidden from the call
+      # @param exec_files [Array<String>] programs outside /usr the call may run
+      # @param trace [Boolean] false where this kernel cannot trace
+      # @param env [#[]] where bundler's GEM_HOME and BUNDLE_USER_* are read from
+      # @return [Profile] named :grant, or the workspace profile when a write cannot be bounded
+      # @raise [ArgumentError] for a program with no grant
+      # @raise [Unsealable] when a seal is reached through a link inside the writes
+      def self.grant(program:, root:, home:, tmpdir:, masks: [], exec_files: [], trace: true, env: ENV)
+        workspace(root:, home:, tmpdir:, masks:, exec_files:, trace:).granting(program, home:, env:)
+      end
+
+      # @param program [String] a key of {GRANTS}
+      # @param home [String] absolute
+      # @param env [#[]]
+      # @return [Profile] this workspace profile granted `program`'s ports, named :grant; itself when a
+      #   write cannot be bounded
+      # @raise [ArgumentError] for a program with no grant
+      def granting(program, home:, env: ENV)
+        ports = GRANTS.fetch(program) { raise ArgumentError, "no build tool is granted as #{program.inspect}" }
+        tool = BuildTool.of(program, project: read_dirs.first, home:, env:)
+        return self unless tool
+
+        with(name: :grant, connect_ports: ports, unix_dirs: [RESOLVER], read_dirs: [*read_dirs, RESOLVER],
+             write_dirs: [*write_dirs, *tool.writes], exec_dirs: [*exec_dirs, *tool.execs],
+             sealed: [*sealed, *tool.seals])
+      end
+
       # git's answer is read a line per path, and a TMPDIR at or above home grants home.
       def self.refuse_workspace(root, home, tmpdir)
         raise ArgumentError, "a workspace root must not contain a newline, got #{root.inspect}" if root.include?("\n")
@@ -216,6 +275,92 @@ module Lain
         []
       end
       private_class_method :linked_git_dir
+
+      BuildTool = Data.define(:writes, :execs, :seals)
+
+      # What one build tool needs beyond the workspace, or nil where a write
+      # cannot be bounded. GEM_HOME and CARGO_HOME are read from the host env,
+      # names {Exec::ChildEnv} keeps; a GEM_HOME the worker env lends to one
+      # call is not seen here, so that call's install is denied its writes and
+      # fails closed. No BUNDLE_USER_ name reaches the child, so bundler's cache
+      # is the one beneath ~/.bundle.
+      class BuildTool
+        # @param program [String]
+        # @param project [String]
+        # @param home [String]
+        # @param env [#[]]
+        # @return [BuildTool, nil]
+        def self.of(program, project:, home:, env:)
+          case program
+          when "bundle" then bundle(project, home, env)
+          when "cargo" then cargo(project, home, env)
+          else new(writes: [], execs: [], seals: [])
+          end
+        end
+
+        # With no GEM_HOME, a child's bundler installs to RubyGems' default dir,
+        # which is this ruby's: a bundle on another ruby is not granted its own,
+        # so its install fails rather than writing somewhere unbounded. A gem
+        # home must look like one, with a specifications dir.
+        def self.bundle(project, home, env)
+          gem_home = named(env, "GEM_HOME") || Gem.default_dir
+          writes = [gem_home, File.join(home, ".bundle", "cache")]
+          return unless writes.all? { bounded?(_1, home) } && File.directory?(File.join(gem_home, "specifications")) &&
+                        holds_nothing?(gem_home, project, home)
+
+          seals = installs_in(Gem.bindir(gem_home), writes)
+          seals && new(writes:, execs: [], seals:)
+        end
+
+        # cargo's own bin is where its home is meant to hold a reader's grant.
+        def self.cargo(project, home, env)
+          cargo_home = named(env, "CARGO_HOME") || File.join(home, ".cargo")
+          execs = built_in(project)
+          return unless execs && bounded?(cargo_home, home) &&
+                        holds_nothing?(cargo_home, project, home, own: File.join(cargo_home, "bin"))
+
+          new(writes: CARGO_WRITES.map { File.join(cargo_home, _1) }, execs:, seals: [])
+        end
+
+        def self.named(env, key) = env[key].to_s.empty? ? nil : env[key]
+
+        # TMPDIR's rule: never /, home or a dir above it, and only where it says
+        # it is, so a link on the way grants nothing. An absent dir is read
+        # through its longest existing prefix.
+        def self.bounded?(path, home)
+          landed = Landing.eventual(path, cwd: File::SEPARATOR).first
+          landed == File.expand_path(path) && !Landing.under?(Profile.landing(home), landed)
+        rescue Landing::Dangling, SystemCallError
+          false
+        end
+
+        # A write over the project or a home dir the reader grants would let the call rewrite what it reads as trusted.
+        def self.holds_nothing?(dir, project, home, own: nil)
+          read = HOME_READ.map { File.join(home, _1) }.reject { own && Landing.under?(_1, own) }
+          [project, *read].none? { Landing.under?(_1, dir) }
+        end
+
+        # cargo runs its build scripts out of `target/`, so only a real directory
+        # is granted exec; one not made yet grants none, and a link or a file
+        # grants cargo nothing.
+        def self.built_in(project)
+          target = File.join(project, "target")
+          File.lstat(target).directory? ? [target] : nil
+        rescue Errno::ENOENT
+          []
+        rescue SystemCallError
+          nil
+        end
+
+        # @return [Array<Seal>, nil] nil when the dir would sit in a write and is absent
+        def self.installs_in(bindir, writes)
+          return [] unless writes.any? { Landing.under?(bindir, _1) }
+          return unless File.directory?(bindir)
+
+          [Seal.new(path: -Profile.landing(bindir), absent: false)]
+        end
+        private_class_method :bundle, :cargo, :named, :bounded?, :holds_nothing?, :built_in, :installs_in
+      end
 
       Seal = Data.define(:path, :absent, :hops)
 

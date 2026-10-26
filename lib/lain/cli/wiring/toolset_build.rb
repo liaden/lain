@@ -230,6 +230,8 @@ module Lain
         # @param notes [Lain::Journal::Held] what the box lacks, held for {#record_opened}
         # @param fence [String] the lain-fence binary, read once for the probe and the launcher alike
         # @param probe [Lain::Confine::Probe] what the box offers; runs nothing unless confine is reader (the default)
+        # @param fresh [#any_under?] the lineage's freshness, which a build tool's port grant reads; by
+        #   default every root counts as fresh, so nothing is granted
         # @option options [String] :exec the transport the `exec:` default
         #   resolves, with `:exec_image` the only other keys this class reads.
         #   `--auto-approve` is not among them: it seeds the mode's layer on
@@ -246,13 +248,13 @@ module Lain
                                                  child_env: Lain::Exec::ChildEnv.from(ENV, pass: config.env_pass)),
                        arms: Lain::CLI::Arms::OFF, resolver: Lain::Shell::Executable::Resolver::NULL,
                        notes: Lain::Journal::Held.new, fence: Lain::Confine::Bwrap.fence_binary,
-                       probe: Lain::Confine::Probe.new(fence:, journal: notes))
+                       probe: Lain::Confine::Probe.new(fence:, journal: notes), fresh: Lain::Confine::Profiles::Unread)
           @arms = arms
           @library = library
           @backend = backend
           @attachments = attachments
           @root = root
-          bash_inputs(exec:, verdict:, resolver:, fence:, probe:, notes:)
+          bash_inputs(exec:, verdict:, resolver:, fence:, probe:, notes:, fresh:)
           @epic = epic
           @in_chat = { chronicle:, root:, paths:, config: }.freeze
           @askers = askers
@@ -339,7 +341,8 @@ module Lain
 
         attr_reader :backend, :library, :seam, :epic, :askers
 
-        def bash_inputs(exec:, verdict:, resolver:, fence:, probe:, notes:)
+        def bash_inputs(exec:, verdict:, resolver:, fence:, probe:, notes:, fresh:)
+          @fresh = fresh
           @fence = fence
           @probe = probe
           @notes = notes
@@ -380,7 +383,7 @@ module Lain
           home = @in_chat.fetch(:paths).home
           masks = Lain::Confine::MaskList.new(root: @root, policy: -> { @switchboard.call.sensitivity })
           @sandbox = Lain::Confine::Sandbox.new(root: @root, home:, masks:, probe: @probe, fence: @fence,
-                                                journal: seam.journal, notes: @notes)
+                                                journal: seam.journal, notes: @notes, fresh: @fresh)
           @sandbox.wrap(inner, requirer: self.class.name)
         end
 

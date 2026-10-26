@@ -151,6 +151,12 @@ RSpec.describe Lain::Shell::Executable::RunFiles do
       expect(run_paths("cargo", "build")).to contain_exactly(toml, build)
     end
 
+    it "names cargo's lockfile and its project config as build inputs when they exist" do
+      files = %w[Cargo.toml build.rs Cargo.lock .cargo/config.toml].map { touch(_1) }
+
+      expect(run_paths("cargo", "build")).to match_array(files)
+    end
+
     it "classes a config file the project owns as :project and notes its freshness" do
       makefile = touch("Makefile")
       fresh_paths << makefile

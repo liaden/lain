@@ -798,9 +798,11 @@ module Lain
                                           verdict:, isolation: fleet_isolation, exec: exec_backend.backend,
                                           handback:, epic: epic_mount(notice),
                                           attachments:, middleware: backend.middleware, paths: @paths,
-                                          display: @channel, resolver: exec_resolver, config:, arms:)
+                                          display: @channel, config:, arms:, **lineage_reads)
         @toolset_build.build(recorder, ask_human:)
       end
+
+      def lineage_reads = { resolver: exec_resolver, fresh: observers.fresh }
 
       # Memoized: the toolset's exec and the resolver must come from one build.
       def exec_backend
