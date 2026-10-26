@@ -591,21 +591,21 @@ regression; a refusal for the second is too.
 
 ### 9c: the bench arm flags
 
-Five flags select bench arms: `--confine off|classes|reader`, `--judge-facts off|facts|request`,
-`--tripwire off|observe`, `--round-budget off|static|window` and `--round-dedup off|on`. The defaults are `reader`, `off`, `observe`, `window` and `on`: a plain launch runs the sandbox, the
+Five flags select bench arms: `--confine off|classes|reader|workspace`, `--judge-facts off|facts|request`,
+`--tripwire off|observe`, `--round-budget off|static|window` and `--round-dedup off|on`. The defaults are `workspace`, `off`, `observe`, `window` and `on`: a plain launch runs the workspace sandbox, the
 observe-only tripwire, the window-sized round budget and the round dedup. An unknown value refuses at launch, exit 1, with no session file and no tmux session
-(`unknown --confine value "bogus", expected one of off, classes, reader`). The header (the `session` record)
-records only the arms that are on, as `"arms":{"confine":"reader","tripwire":"observe","round_budget":"window","round_dedup":"on"}` for a plain launch, and
+(`unknown --confine value "bogus", expected one of off, classes, reader, workspace`). The header (the `session` record)
+records only the arms that are on, as `"arms":{"confine":"workspace","tripwire":"observe","round_budget":"window","round_dedup":"on"}` for a plain launch, and
 `round_dedup` is written whether on or off (a header with a budget and no `round_dedup` key ran with it on). A launch with `--confine off --tripwire off --round-budget off` writes only `round_dedup`; a header older than the arms has no `arms` key at all. The arms act: `--confine` and `--tripwire` change what
 a bash call runs under and what the journal holds, so a header that names an arm is evidence the arm was built,
-but not that it ran. A box that cannot build the sandbox still records `confine: reader` in the header, with a
-`capability_degraded` record and a startup notice that bash runs unconfined. `bench variance` refuses recordings made under different arms (`cannot compare runs that differ in bench arms: none vs confine=reader,round_budget=window,...`, the arms listed sorted as `name=value`), and under different opaque policies (`cannot compare runs that differ in opaque policy: refused vs unrecorded`; a leased arm records `"opaque": "refused"`, T20, T59). **A `--resume` or
+but not that it ran. A box that cannot build the sandbox still records `confine: workspace` in the header, with a
+`capability_degraded` record and a startup notice that bash runs unconfined. `bench variance` refuses recordings made under different arms (`cannot compare runs that differ in bench arms: none vs confine=workspace,round_budget=window,...`, the arms listed sorted as `name=value`), and under different opaque policies (`cannot compare runs that differ in opaque policy: refused vs unrecorded`; a leased arm records `"opaque": "refused"`, T20, T59). **A `--resume` or
 `--fork` keeps the recorded arms** (round 25, a25-2, fixed), with a flag typed on the resume winning over the record: an arm the old header
 did not record is off, and a header with no `arms` key at all (every session on disk before the arms existed) resumes with every arm off,
 not with today's defaults (except that a recorded budget with no `round_dedup` key resumes with dedup on). An arm that resumes weaker than a fresh chat's default and was not typed gets one notice, for example
-`running without --confine (off), as recorded; a fresh chat runs reader (pass --confine reader to run it)` (and the tripwire's
-equivalent); a typed flag that differs from the record gets `recorded with --confine reader; continuing with off (the current flags win)`.
-The safe arms are on by default since 2026-10-17 (`06375702`): a `composed_term`-approved `cat` journals `sandbox profile:"reader"` and an `exec_record` through `lain-fence`, and a human-approved call runs `traced` (driven round 26). `--api-base` under `--provider anthropic` is no longer silent: the startup notice reads `--api-base reaches nothing: the anthropic chat does not use it and no summarizer runs on ollama`, or names the one summarizer it does reach (a26-1 fixed, T63).
+`running without --confine (off), as recorded; a fresh chat runs workspace (pass --confine workspace to run it)` (and the tripwire's
+equivalent); a resumed reader session keeps reader and says `running with --confine reader, as recorded; a fresh chat runs workspace (pass --confine workspace to run it)`, and a resumed workspace session prints no confine notice (undriven since the workspace default landed); a typed flag that differs from the record gets `recorded with --confine reader; continuing with off (the current flags win)`.
+The safe arms are on by default since 2026-10-17 (`06375702`), and `--confine` defaults to `workspace` since `b3fc2f67`: a `composed_term`-approved `cat` journals `sandbox profile:"reader"` and an `exec_record` through `lain-fence`, and a human-approved call runs `traced` (driven round 26). A judge-approved or rule-approved call is predicted to journal `sandbox profile:"workspace"`; undriven, so read the profile before believing it. `--api-base` under `--provider anthropic` is no longer silent: the startup notice reads `--api-base reaches nothing: the anthropic chat does not use it and no summarizer runs on ollama`, or names the one summarizer it does reach (a26-1 fixed, T63).
 Driving every arm is
 [`bash-confinement.md`](bash-confinement.md); this section only reads the header.
 
