@@ -1117,7 +1117,9 @@ class LainCLI < Thor
                                             desc: "What happens when no cut can make room " \
                                                   "(#{Backend::COMPACT_FALLBACKS.join(", ")}): handoff replaces " \
                                                   "the history before the current ask with one state document " \
-                                                  "and answers the ask; none lets the refusal stand " \
+                                                  "and answers the ask, after a refusal; early-handoff does the " \
+                                                  "same at a clean break past half the window, before one; " \
+                                                  "none lets the refusal stand " \
                                                   "(default #{Backend::DEFAULT_COMPACT_FALLBACK}; #{INHERITED})"
     end
 

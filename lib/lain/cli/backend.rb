@@ -100,7 +100,12 @@ module Lain
       # answer the ask, or let the refusal stand. ON by default, because the
       # alternative is a session that can no longer be spoken to.
       HANDOFF_FALLBACK = "handoff"
-      COMPACT_FALLBACKS = [HANDOFF_FALLBACK, "none"].freeze
+      EARLY_HANDOFF_FALLBACK = "early-handoff"
+      COMPACT_FALLBACKS = [HANDOFF_FALLBACK, EARLY_HANDOFF_FALLBACK, "none"].freeze
+
+      # The share of the window the last turn must reach before `early-handoff` writes its document
+      # at a clean break. Half, so the summarizer still reads the whole history it replaces.
+      EARLY_HANDOFF_RATIO = 0.5
       DEFAULT_COMPACT_FALLBACK = HANDOFF_FALLBACK
 
       # A `--compact-fallback` outside {COMPACT_FALLBACKS}. Refused at
@@ -908,9 +913,10 @@ module Lain
       # `queue: false`, because the ask is already refused and a document worth
       # waiting for is the only thing between it and failing.
       def fallback
-        return Compaction::Source::Fallback::None unless compact_fallback == HANDOFF_FALLBACK
+        return Compaction::Source::Fallback::None if compact_fallback == "none"
 
-        Compaction::Source::Fallback.new(tier: method(:handoff_oracle), window: method(:handoff_window))
+        Compaction::Source::Fallback.new(tier: method(:handoff_oracle), window: method(:handoff_window),
+                                         early: (EARLY_HANDOFF_RATIO if compact_fallback == EARLY_HANDOFF_FALLBACK))
       end
 
       # The window the HANDOFF tier will be asked in -- the summarizer's model

@@ -3804,4 +3804,173 @@ RSpec.describe Lain::Compaction::Source do
       expect(of_type("compaction_applied")).to be_empty
     end
   end
+
+  # A handoff taken before the provider refuses: at a clean break past a share of the window, so the
+  # state document is written while the model can still read the whole history it replaces.
+  describe "handing off early at a clean break" do
+    let(:session) { recording_session }
+    let(:keep_last) { 8 }
+    let(:oracle) { SourceSpecHandoffOracle.new }
+    let(:ratio) { 0.5 }
+    let(:surface) { RecordingChannel.new }
+
+    def cuts = records.select { |record| record["type"] == "compaction_cut" }
+
+    def sink = Lain::Sink::IOAdapter.new(surface, tool_use_id: "spec:compaction", stream: :stderr)
+
+    def told = surface.events.grep(Lain::Telemetry::ToolOutput).map(&:bytes)
+
+    def early(early: ratio, window: window_book(200_000))
+      source(fallback: Lain::Compaction::Source::Fallback.new(tier: -> { oracle }, early:), context_window: window,
+             sink:)
+    end
+
+    def grown(line) = line.commit(role: "assistant", content: [block(7)]).commit(role: "user", content: [block(8)])
+
+    def ending_on_tool_round
+      [["user", [block(1)]],
+       ["assistant", [{ "type" => "tool_use", "id" => "call-2", "name" => "read", "input" => { "n" => 2 } }]],
+       ["user", [{ "type" => "tool_result", "tool_use_id" => "call-2", "content" => tool_body(2) }]]]
+        .inject(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)) do |line, (role, content)|
+          line.commit(role:, content:)
+        end
+    end
+
+    it "commits a handoff cut before any refusal, once the last turn passed the ratio" do
+      built = early
+      line = timeline
+
+      context_for(built, line, usage: 110_000)
+
+      expect(cuts.map { |record| record["kind"] }).to eq(["handoff"])
+      expect(oracle.asks.size).to eq(1)
+      expect(built).to be_handed_off
+    end
+
+    it "sends the document in place of the history on that same render" do
+      line = timeline
+
+      sent = render(context_for(early, line, usage: 110_000), line).messages
+
+      expect(Lain::Canonical.dump(sent)).to include("finish the parser")
+      expect(Lain::Canonical.dump(sent)).not_to include("result number 1.")
+    end
+
+    it "commits no second cut on the render it handed off on" do
+      context_for(early, timeline, usage: 110_000)
+
+      expect(session.compaction_cuts.size).to eq(1)
+    end
+
+    it "does not hand off again when the next render is handed the same stale reading" do
+      built = early
+      line = timeline
+      context_for(built, line, usage: 110_000)
+
+      context_for(built, grown(line), usage: 110_000)
+
+      expect(cuts.size).to eq(1)
+      expect(oracle.asks.size).to eq(1)
+    end
+
+    it "hands off again once a fresh reading passes the ratio" do
+      built = early
+      line = timeline
+      context_for(built, line, usage: 110_000)
+
+      context_for(built, grown(line), usage: 120_000)
+
+      expect(cuts.size).to eq(2)
+    end
+
+    it "journals a decision naming the early handoff and the occupancy that fired it" do
+      context_for(early, timeline, usage: 110_000)
+
+      expect(decisions.last).to include("handoff" => "early", "used_tokens" => 110_000, "window_tokens" => 200_000,
+                                        "compacted" => true, "summary_hits" => 0, "summary_misses" => 0)
+    end
+
+    it "says once that it is off while the window is only a guess" do
+      built = early(window: guessed_window_book(200_000))
+      line = timeline
+
+      2.times { context_for(built, line, usage: 110_000) }
+
+      expect(told.size).to eq(1)
+      expect(told.first).to include("early handoff is off until the model's window is known")
+    end
+
+    it "says nothing about a guessed window when the arm is refusal-only" do
+      context_for(early(early: nil, window: guessed_window_book(200_000)), timeline, usage: 110_000)
+
+      expect(told).to be_empty
+    end
+
+    it "waits below the ratio" do
+      context_for(early, timeline, usage: 90_000)
+
+      expect(cuts).to be_empty
+    end
+
+    it "waits in the middle of a tool run" do
+      context_for(early, ending_on_tool_round, usage: 110_000)
+
+      expect(cuts).to be_empty
+    end
+
+    it "does nothing when the arm is refusal-only" do
+      context_for(early(early: nil), timeline, usage: 190_000)
+
+      expect(cuts).to be_empty
+    end
+
+    it "does not trust a window it guessed" do
+      context_for(early(window: guessed_window_book(200_000)), timeline, usage: 110_000)
+
+      expect(cuts).to be_empty
+    end
+
+    it "does not fire from an idle prepare" do
+      built = early
+      clock.advance(Lain::Compaction::Source::IdleGate::FLOOR)
+
+      built.prepare(base:, timeline:, usage: 110_000, session:)
+
+      expect(cuts).to be_empty
+    end
+  end
+
+  describe Lain::Compaction::Source::Fallback, "#early?" do
+    def user(*blocks) = { "role" => "user", "content" => blocks }
+
+    def text = { "type" => "text", "text" => "hello" }
+
+    def tool_use = { "type" => "tool_use", "id" => "c", "name" => "read", "input" => {} }
+
+    def fallback(early: 0.5) = described_class.new(tier: -> {}, early:)
+
+    def early?(fallback, usage: 110_000, messages: [user(text)])
+      fallback.early?(usage:, window_tokens: 200_000, messages:)
+    end
+
+    it "is true at the ratio on a clean tail" do
+      expect(early?(fallback, usage: 100_000)).to be(true)
+    end
+
+    it "is false just under the ratio" do
+      expect(early?(fallback, usage: 99_999)).to be(false)
+    end
+
+    it "is false when the tail holds a tool call" do
+      expect(early?(fallback, messages: [user(text), { "role" => "assistant", "content" => [tool_use] }])).to be(false)
+    end
+
+    it "is false with no usage reading yet" do
+      expect(early?(fallback, usage: nil)).to be(false)
+    end
+
+    it "is false with no ratio, and for the none arm" do
+      expect([early?(fallback(early: nil)), early?(described_class::None)]).to eq([false, false])
+    end
+  end
 end

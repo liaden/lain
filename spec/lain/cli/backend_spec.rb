@@ -2180,6 +2180,18 @@ RSpec.describe Lain::CLI::Backend do
         expect(fallback_of(compacting_backend)).to be_a(Lain::Compaction::Source::Fallback)
       end
 
+      it "wires the handoff to fire early at half the window under early-handoff" do
+        fallback = fallback_of(compacting_backend(compact_fallback: "early-handoff"))
+
+        expect(fallback.early?(usage: 100_000, window_tokens: 200_000, messages: [{ "content" => [] }])).to be(true)
+        expect(fallback.early?(usage: 99_999, window_tokens: 200_000, messages: [{ "content" => [] }])).to be(false)
+      end
+
+      it "keeps the plain handoff refusal-only" do
+        expect(fallback_of(compacting_backend(compact_fallback: "handoff"))
+          .early?(usage: 190_000, window_tokens: 200_000, messages: [{ "content" => [] }])).to be(false)
+      end
+
       it "wires the Null fallback under none, so a refusal stands" do
         expect(fallback_of(compacting_backend(compact_fallback: "none")))
           .to be(Lain::Compaction::Source::Fallback::None)
@@ -2190,7 +2202,7 @@ RSpec.describe Lain::CLI::Backend do
       # where it should have been kept.
       it "refuses an unknown arm as a Lain::Error, naming the flag and the valid set" do
         expect { compacting_backend(compact_fallback: "vibes") }
-          .to raise_error(Lain::CLI::Backend::UnknownFallback, /--compact-fallback.*handoff, none/m)
+          .to raise_error(Lain::CLI::Backend::UnknownFallback, /--compact-fallback.*handoff, early-handoff, none/m)
       end
 
       describe "#refuse_compaction_flags!" do

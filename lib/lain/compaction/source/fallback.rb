@@ -34,6 +34,12 @@ module Lain
 
           # @return [false] no room made, on every chain
           def call(_held_cut, **) = false
+
+          # @return [false] it never hands off ahead of a refusal either
+          def early?(**) = false
+
+          # @return [false]
+          def early_armed? = false
         end
 
         # @param tier [#call] answers a `#ask` oracle over
@@ -52,9 +58,29 @@ module Lain
         #   a probe on the wire, and a compacting run must not pay that at
         #   wiring time. The conservative fallback by default -- the window a
         #   run whose book cannot identify the model is asked in anyway.
-        def initialize(tier:, window: CONSERVATIVE)
+        #
+        # @param early [Float, nil] the share of the window the last turn's input
+        #   must reach for a clean break to hand off before any refusal; nil
+        #   keeps this refusal-only
+        def initialize(tier:, window: CONSERVATIVE, early: nil)
           @tier = tier
           @window = window
+          @early = early
+        end
+
+        # @return [Boolean] whether this arm is configured to hand off ahead of a refusal
+        def early_armed? = !@early.nil?
+
+        # Whether to hand off now, ahead of a refusal. Only at a clean break: a
+        # tail holding a tool call is mid-task, and a document written there
+        # would describe a round whose result it cannot yet contain.
+        #
+        # @param usage [Integer, nil] the last turn's input tokens
+        # @param window_tokens [Integer] the chat model's window
+        # @param messages [Array<Hash>] the chain this render stands on
+        # @return [Boolean]
+        def early?(usage:, window_tokens:, messages:)
+          early_armed? && !usage.nil? && usage >= window_tokens * @early && clean_break?(messages)
         end
 
         # Write the state document and commit the cut that holds it.
@@ -72,6 +98,8 @@ module Lain
         end
 
         private
+
+        def clean_break?(messages) = messages.any? && !ToolMessages.tool?(messages.last)
 
         # ONLY the tier call is contained, and the narrowness is the point.
         # {Oracle::Eager#fire}'s task boundary wraps `ask(...).await` and

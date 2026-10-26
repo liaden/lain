@@ -370,6 +370,7 @@ module Lain
           @droppable = false
           @made_room_for = nil
           @rendering = nil
+          @withheld_told = false
         end
 
         # Journaled and nothing else: a decline after a refusal says nothing
@@ -379,6 +380,23 @@ module Lain
         # @return [self]
         def handoff_declined(decision)
           @journal << decision
+          self
+        end
+
+        # Journaled like a declined handoff, and nothing else: the render that follows says what
+        # it sends, and an early handoff is not a stall.
+        #
+        # @param decision [CompactionDecision] the early handoff's
+        # @return [self]
+        def handed_off_early(decision) = handoff_declined(decision)
+
+        # Told once per Source: the arm is configured and cannot fire, and saying so every turn
+        # would bury the line.
+        #
+        # @return [self]
+        def early_handoff_withheld
+          @sink.puts("early handoff is off until the model's window is known") unless @withheld_told
+          @withheld_told = true
           self
         end
 
@@ -447,9 +465,18 @@ module Lain
         # @return [self]
         def prepared(cut, head_digest:, elapsed:, reading:, used_tokens:)
           @prepared = cut.address
-          @consumed = used_tokens
+          consume(used_tokens)
           @journal << CompactionPrepared.new(head_digest:, cut_digest: @prepared, idle_seconds: elapsed.floor,
                                              cache_state: reading.to_s)
+          self
+        end
+
+        # Marks a reading as spent by a cut, so a render handed the same value does not decide on it.
+        #
+        # @param used_tokens [Integer, nil]
+        # @return [self]
+        def consume(used_tokens)
+          @consumed = used_tokens
           self
         end
 
@@ -665,7 +692,10 @@ module Lain
         @reporting.rendering(timeline.head_digest)
         held_cut = HeldCut.on(session:, timeline:, derived: @derived, arm: @collapse_strategy)
         @preparation.rendering(held_cut, session, timeline.head_digest)
-        decide(base:, held_cut:, usage: @preparation.usage(usage), session:, pins: pinned(held_cut.walk, session),
+        usage = @preparation.usage(usage)
+        return handed_off_render(base, timeline, session) if early_handoff(base, held_cut, usage, session)
+
+        decide(base:, held_cut:, usage:, session:, pins: pinned(held_cut.walk, session),
                cold: @cold.cold?, fixed_bytes:)
       end
 
@@ -695,6 +725,44 @@ module Lain
 
       HANDOFF_DECLINED = "declined"
       private_constant :HANDOFF_DECLINED
+
+      # The window must be a measured or published one: a handoff is an irreversible rewrite, and
+      # a guessed denominator is how a small local runner got its history rewritten at 75% full.
+      def early_handoff(base, held_cut, usage, session)
+        resolution = window_for(base)
+        unless resolution.authoritative?
+          @reporting.early_handoff_withheld if @fallback.early_armed?
+          return false
+        end
+        return false unless @fallback.early?(usage:, window_tokens: resolution.window_tokens,
+                                             messages: held_cut.walk.messages)
+
+        committed = @fallback.call(held_cut, pins: session_pinned(held_cut.walk, session))
+        @handed_off ||= committed
+        settle_early_handoff(usage, resolution) if committed
+        committed
+      end
+
+      # The reading is spent: a reply that reports no input tokens leaves it in place, and the
+      # next render would otherwise hand off again on a window the cut just emptied.
+      def settle_early_handoff(usage, resolution)
+        @preparation.consume(usage)
+        @reporting.handed_off_early(early_decision(usage, resolution))
+      end
+
+      def early_decision(usage, resolution)
+        CompactionDecision.new(compacted: true, signals: [], head_bytes: 0, summary_hits: 0, summary_misses: 0,
+                               misses_all_size_declined: false, cold: @cold.cold?, would_not_shrink: false,
+                               window_tokens: resolution.window_tokens, used_tokens: usage,
+                               provenance: resolution.provenance, nothing_droppable: false, handoff: "early")
+      end
+
+      # The turn that handed off sends the new cut and decides nothing further, so one render
+      # cannot also advance or collapse a second cut on top of the document it just wrote.
+      def handed_off_render(base, timeline, session)
+        @reporting.room_made!(timeline.head_digest)
+        HeldCut.on(session:, timeline:, derived: @derived, arm: @collapse_strategy).render(base)
+      end
 
       # The kept messages' byte share of what the refused render sent, applied
       # to the provider's exact count: proportional and so approximate, which

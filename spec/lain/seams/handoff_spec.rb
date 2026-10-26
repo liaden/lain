@@ -135,6 +135,19 @@ module HandoffSeam
     end
   end
 
+  # Never refuses, but reports a last turn that filled most of the 8192 window.
+  class Heavy < Recorded
+    def initialize = super(refusing: false)
+
+    def complete(request)
+      response = super
+      return response if Lain::Canonical.dump(request.messages).include?("no longer fits its context window")
+
+      Lain::Response.new(content: response.content, stop_reason: :end_turn,
+                         usage: Lain::Usage.new(input_tokens: 5000, output_tokens: 2))
+    end
+  end
+
   # A tier whose reply no decoder can read: the local endpoint answering prose
   # where the schema was asked for, which is the failure the `oracle_failed`
   # record exists to name.
@@ -313,6 +326,33 @@ RSpec.describe "a handoff when no cut can make room", :seam do
     it "fires only after a prompt has been refused" do
       chat = agent(handing_off)
       chat.ask("#{HandoffSeam::MARKER} first")
+
+      expect(of_type("compaction_cut")).to be_empty
+    end
+  end
+
+  describe "an early handoff, before any refusal" do
+    let(:provider) { HandoffSeam::Heavy.new }
+
+    def early_source
+      source(fallback: Lain::Compaction::Source::Fallback.new(tier: method(:handoff_tier), early: 0.5))
+    end
+
+    it "commits a handoff cut at the clean break after a turn past half the window, with no refusal" do
+      chat = agent(early_source)
+      chat.ask("#{HandoffSeam::MARKER} first question")
+
+      chat.ask("and the second?")
+
+      expect(of_type("compaction_cut").map { |cut| cut["kind"] }).to eq(["handoff"])
+      expect(rendered_text(provider.requests.last)).not_to include(HandoffSeam::MARKER)
+    end
+
+    it "does nothing under the refusal-only handoff" do
+      chat = agent(handing_off)
+      chat.ask("#{HandoffSeam::MARKER} first question")
+
+      chat.ask("and the second?")
 
       expect(of_type("compaction_cut")).to be_empty
     end
