@@ -40,6 +40,13 @@ module Lain
                   failure_kind: (:grader if outcomes.any? { |(_criterion, reason)| raised?(reason) }))
       end
 
+      # @return [Hash{String=>Object}] deeply frozen; each predicate is addressed by a digest of its source
+      def identity
+        { "class" => self.class.name, "name" => @name,
+          "descriptions" => @criteria.map(&:description).freeze,
+          "predicates" => @criteria.map { |criterion| Address.of(criterion.predicate) }.freeze }.freeze
+      end
+
       private
 
       # nil when the criterion held; otherwise the reason it did not. A
@@ -62,6 +69,40 @@ module Lain
           reason.nil? ? "PASS #{criterion.description}" : "FAIL #{criterion.description} (#{reason})"
         end
         "#{@name}: #{lines.join("; ")}"
+      end
+
+      # Addresses a predicate by what it says. Values it closed over are invisible: a closure over
+      # `limit` digests the same for any limit, because the proc keeps no record a reader can hash.
+      module Address
+        # @return [String] a source digest; else a repo-relative `path:line`; else "unlocated"
+        def self.of(predicate)
+          path, line = predicate.source_location
+          return "unlocated" if path.nil?
+
+          source_digest(path, line) || located(path, line)
+        end
+
+        # A location, not a source digest, is the fallback so an unreadable file still tells two apart.
+        def self.located(path, line)
+          root = "#{Paths::Shipped::GEM_ROOT}/"
+          shown = path.start_with?(root) ? path.delete_prefix(root) : File.basename(path)
+          "#{shown}:#{line}".freeze
+        end
+
+        def self.source_digest(path, line)
+          return unless File.file?(path)
+
+          block = blocks_at(Prism.parse_file(path).value, line).min_by { |node| node.location.length }
+          Canonical.digest(block.location.slice) if block
+        end
+
+        def self.blocks_at(node, line)
+          own = [Prism::BlockNode, Prism::LambdaNode].any? do |type|
+            node.is_a?(type)
+          end && node.location.start_line == line
+          [*(node if own), *node.compact_child_nodes.flat_map { |child| blocks_at(child, line) }]
+        end
+        private_class_method :located, :source_digest, :blocks_at
       end
 
       # Collects `check` declarations from the block into Criteria. A separate

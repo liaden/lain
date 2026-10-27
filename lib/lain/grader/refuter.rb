@@ -31,6 +31,11 @@ module Lain
         @threshold = threshold || Rubric::Scale.fetch(scale).survives_at
       end
 
+      # @return [Hash{String=>Object}] the judge's identity under this class, plus the threshold
+      def identity
+        @rubric.identity.merge("class" => self.class.name, "threshold" => @threshold).freeze
+      end
+
       # @param finding [#to_s] one raw finding from a finding-producing grader
       # @return [Grade] `#pass?` is the survival verdict; `#score`/`#why` come
       #   straight from the underlying Rubric judgment

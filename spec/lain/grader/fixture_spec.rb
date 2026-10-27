@@ -71,4 +71,91 @@ RSpec.describe Lain::Grader::Fixture do
       expect(grade).to be_pass
     end
   end
+
+  describe "#identity" do
+    def fixture
+      described_class.new("byte-stable replay") do |f|
+        f.check("reconstructs two model calls") { |s| s.steps == 2 }
+        f.check("replays byte-identically") { |s| s.identical == true }
+      end
+    end
+
+    it "names the fixture and each criterion description" do
+      expect(fixture.identity).to include("class" => "Lain::Grader::Fixture", "name" => "byte-stable replay",
+                                          "descriptions" => ["reconstructs two model calls",
+                                                             "replays byte-identically"])
+    end
+
+    it "holds a digest of each predicate's source, not an absolute path" do
+      predicates = fixture.identity.fetch("predicates")
+
+      expect(predicates.size).to eq(2)
+      expect(predicates).to all(start_with("blake3:"))
+    end
+
+    # A proc whose file cannot be read: it has a location but no source to digest.
+    def unreadable(path, line)
+      predicate = proc { true }
+      predicate.define_singleton_method(:source_location) { [path, line] }
+      described_class.new("u") { |f| f.check("c", &predicate) }
+    end
+
+    it "falls back to the location relative to the repo root when the source cannot be read" do
+      root = Lain::Paths::Shipped::GEM_ROOT
+
+      expect(unreadable(File.join(root, "lib/nowhere.rb"), 7).identity.fetch("predicates")).to eq(["lib/nowhere.rb:7"])
+    end
+
+    it "falls back to the basename outside the repo root" do
+      expect(unreadable("/elsewhere/deep/nowhere.rb", 3).identity.fetch("predicates")).to eq(["nowhere.rb:3"])
+    end
+
+    def built_from(dir, name, source)
+      path = File.join(dir, name)
+      File.write(path, source)
+      eval(File.read(path), TOPLEVEL_BINDING, path, 1) # rubocop:disable Security/Eval
+    end
+
+    def one_check(body) = %(Lain::Grader::Fixture.new("f") { |f| f.check("c") { |s| #{body} } }\n)
+
+    it "digests predicates with different bodies differently" do
+      Dir.mktmpdir do |dir|
+        one = built_from(dir, "a.rb", one_check("s > 1"))
+        two = built_from(dir, "b.rb", one_check("s > 100"))
+
+        expect(one.identity.fetch("predicates")).not_to eq(two.identity.fetch("predicates"))
+      end
+    end
+
+    it "keeps a predicate's digest when only code above it moves it" do
+      Dir.mktmpdir do |dir|
+        before = built_from(dir, "a.rb", one_check("s > 1"))
+        after = built_from(dir, "b.rb", "# a new header\n\n#{one_check("s > 1")}")
+
+        expect(after.identity.fetch("predicates")).to eq(before.identity.fetch("predicates"))
+      end
+    end
+
+    it "cannot see a value a predicate closed over" do
+      make = ->(limit) { described_class.new("f") { |f| f.check("c") { |s| s > limit } } }
+
+      expect(make.call(1).identity).to eq(make.call(100).identity)
+    end
+
+    it "changes when a description changes" do
+      other = described_class.new("byte-stable replay") { |f| f.check("something else") { true } }
+
+      expect(other.identity).not_to eq(fixture.identity)
+    end
+
+    it "marks a predicate with no source location rather than failing" do
+      symbol = described_class.new("sym") { |f| f.check("symbol proc", &:itself) }
+
+      expect(symbol.identity.fetch("predicates")).to eq(["unlocated"])
+    end
+
+    it "is deeply frozen" do
+      expect(fixture.identity).to be_deeply_frozen
+    end
+  end
 end

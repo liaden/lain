@@ -18,4 +18,21 @@ RSpec.describe Lain::Telemetry::GradeRecord do
   it "stays deeply frozen with an arm" do
     expect(described_class.new(**fields, arm: +"single-thread")).to be_deeply_frozen
   end
+
+  it "journals the grader digest" do
+    record = described_class.new(**fields, grader_digest: "blake3:def")
+
+    expect(JSON.parse(JSON.generate(record.to_journal))).to include("grader_digest" => "blake3:def")
+  end
+
+  it "builds from an old grade line with no grader_digest" do
+    old = { "grader" => "G", "score" => 1.0, "pass" => true, "why" => "ok", "subject_digest" => "d" }
+    record = described_class.new(**old.transform_keys(&:to_sym))
+
+    expect(record.grader_digest).to be_nil
+  end
+
+  it "stays deeply frozen with a grader digest" do
+    expect(described_class.new(**fields, grader_digest: +"blake3:def")).to be_deeply_frozen
+  end
 end

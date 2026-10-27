@@ -181,4 +181,17 @@ RSpec.describe Lain::Grader::LeaseHarness do
         .to raise_error(described_class::NothingGraded, /no issue/i)
     end
   end
+
+  describe "#identity" do
+    it "names the class and the level" do
+      leased do |lease, checkout|
+        level = level_in(checkout, "unit")
+
+        expect(described_class.new(lease:,
+                                   level:).identity).to eq(
+                                     "class" => described_class.name, "level" => level.name.to_s
+                                   )
+      end
+    end
+  end
 end

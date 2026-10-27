@@ -163,4 +163,43 @@ RSpec.describe Lain::Grader::Journaling do
       expect(records.first.fetch("type")).to eq("grade_record")
     end
   end
+
+  describe "grader identity" do
+    let(:verdict) { '{"score": 1, "why": "ok"}' }
+
+    def rubric(criteria)
+      provider = Lain::Provider::Mock.new(responses: [
+                                            Lain::Response.new(content: [{ "type" => "text", "text" => verdict }],
+                                                               stop_reason: :end_turn)
+                                          ])
+      Lain::Grader::Rubric.new(criteria:, provider:, model: "claude-opus-4-8")
+    end
+
+    def record_for(inner)
+      journal = []
+      described_class.new(inner:, journal:).grade("an answer")
+      journal.first
+    end
+
+    it "journals different grader digests for rubrics whose criteria differ by one word" do
+      one = record_for(rubric("name the capital of France"))
+      two = record_for(rubric("name the capital of Spain"))
+
+      expect(one.grader).to eq(two.grader)
+      expect(one.grader_digest).to be_a(String)
+      expect(one.grader_digest).not_to eq(two.grader_digest)
+    end
+
+    it "journals the digest of the grader's identity" do
+      inner = rubric("name the capital of France")
+
+      expect(record_for(inner).grader_digest).to eq(Lain::Canonical.digest(inner.identity))
+    end
+
+    it "journals only the class for a grader that answers no identity" do
+      record = record_for(stub_grader(Lain::Grader::Grade.new(score: 1.0, why: "ok")))
+
+      expect(record.grader_digest).to be_nil
+    end
+  end
 end

@@ -36,17 +36,22 @@ module Lain
     # "which criteria was this run graded against" from the record alone.
     # `arm` names the {Arm} a bench run was graded under; nil for a grade made
     # outside a comparison, and for journals written before the field existed.
-    GradeRecord = Data.define(:grader, :score, :pass, :why, :subject_digest, :criteria_digest, :arm) do
+    # `grader_digest` addresses the grader's `#identity` -- what changes its
+    # verdict, which a class name alone cannot say; nil where the grader gives none.
+    GradeRecord = Data.define(:grader, :score, :pass, :why, :subject_digest, :criteria_digest, :arm,
+                              :grader_digest) do
       include Journalable
 
       # Built from a live {Grader::Grade} plus the attribution
       # {Grader::Journaling} supplies -- the grade's own fields ride straight
       # through unchanged.
-      def self.from(grade, grader:, subject_digest:, criteria_digest: nil)
-        new(grader:, score: grade.score, pass: grade.pass?, why: grade.why, subject_digest:, criteria_digest:)
+      def self.from(grade, grader:, subject_digest:, criteria_digest: nil, grader_digest: nil)
+        new(grader:, score: grade.score, pass: grade.pass?, why: grade.why, subject_digest:, criteria_digest:,
+            grader_digest:)
       end
 
-      def initialize(grader:, score:, pass:, why:, subject_digest:, criteria_digest: nil, arm: nil)
+      def initialize(grader:, score:, pass:, why:, subject_digest:, criteria_digest: nil, arm: nil,
+                     grader_digest: nil)
         grader = grader.to_s
         Carriers::GradeRecord.check!(grader:, subject_digest:, pass:, why:)
 
@@ -57,7 +62,8 @@ module Lain
           why: -why.to_s,
           subject_digest: subject_digest.dup.freeze,
           criteria_digest: criteria_digest&.dup&.freeze,
-          arm: arm && -arm.to_s
+          arm: arm && -arm.to_s,
+          grader_digest: grader_digest&.dup&.freeze
         )
       end
     end

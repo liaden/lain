@@ -44,6 +44,16 @@ module Lain
         @model = model
         @max_tokens = max_tokens
         @scale = Scale.fetch(scale)
+        @scale_name = scale.to_s.freeze
+      end
+
+      # What changes this judge's verdict, for {Journaling} to digest. The criteria ride as a digest so
+      # the identity stays small however long they are.
+      # @return [Hash{String=>Object}] deeply frozen
+      def identity
+        { "class" => self.class.name, "criteria_digest" => Canonical.digest(@criteria), "scale" => @scale_name,
+          "model" => @model.to_s.freeze, "max_tokens" => @max_tokens,
+          "instruction" => @scale.instruction.freeze }.freeze
       end
 
       # Score `subject` against the criteria.

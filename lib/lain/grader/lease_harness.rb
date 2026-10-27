@@ -79,6 +79,11 @@ module Lain
         @harness.call(worker_env.cwd).grade(worker_env, paths: [@level.root])
       end
 
+      # @return [Hash{String=>Object}] deeply frozen
+      def identity
+        { "class" => self.class.name, "level" => @level.name.to_s.freeze }.freeze
+      end
+
       private
 
       # Checked before a harness is built, let alone a runner spawned: what is

@@ -128,4 +128,52 @@ RSpec.describe Lain::Grader::Rubric do
       expect(grade.why).to include("no evidence", "wrong file")
     end
   end
+
+  describe "#identity" do
+    def with(**overrides)
+      described_class.new(criteria: "be right", provider: judge("{}"), model: "claude-opus-4-8", **overrides)
+    end
+
+    it "names class, criteria digest, scale, model and max tokens" do
+      expect(with(scale: :binary, max_tokens: 99).identity).to eq(
+        "class" => "Lain::Grader::Rubric", "criteria_digest" => Lain::Canonical.digest("be right"),
+        "scale" => "binary", "model" => "claude-opus-4-8", "max_tokens" => 99,
+        "instruction" => Lain::Grader::Rubric::Scale.fetch(:binary).instruction
+      )
+    end
+
+    it "changes when the prompt text sent to the judge changes" do
+      edited = Class.new(Lain::Grader::Rubric::Scale::Unit) { def instruction = "Be lenient." }
+      allow(Lain::Grader::Rubric::Scale).to receive(:fetch).with(:unit).and_return(edited.new)
+
+      expect(with.identity.fetch("instruction")).to eq("Be lenient.")
+    end
+
+    it "is deeply frozen" do
+      expect(with.identity).to be_deeply_frozen
+    end
+
+    it "changes with the scale" do
+      expect(with(scale: :binary).identity).not_to eq(with(scale: :unit).identity)
+    end
+  end
+
+  describe Lain::Grader::Refuter do
+    def refuter(**overrides)
+      described_class.new(provider: judge("{}"), model: "claude-opus-4-8", **overrides)
+    end
+
+    it "names class, criteria digest, scale, threshold and model" do
+      expect(refuter(threshold: 0.7).identity).to include(
+        "class" => "Lain::Grader::Refuter", "criteria_digest" => Lain::Canonical.digest(described_class::DEFAULT_CRITERIA),
+        "scale" => "unit", "threshold" => 0.7, "model" => "claude-opus-4-8"
+      )
+    end
+
+    it "changes the grader digest when the threshold changes" do
+      digests = [0.5, 0.9].map { |threshold| Lain::Canonical.digest(refuter(threshold:).identity) }
+
+      expect(digests.uniq.size).to eq(2)
+    end
+  end
 end

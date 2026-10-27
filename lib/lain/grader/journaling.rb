@@ -37,11 +37,17 @@ module Lain
         grade = @inner.grade(subject)
         @journal << Telemetry::GradeRecord.from(grade, grader: @inner.class.name,
                                                        subject_digest: digest_for(subject),
-                                                       criteria_digest: @criteria_digest)
+                                                       criteria_digest: @criteria_digest,
+                                                       grader_digest:)
         grade
       end
 
       private
+
+      # A grader that answers no `#identity` journals its class alone; nothing is invented for it.
+      def grader_digest
+        Canonical.digest(@inner.identity) if @inner.respond_to?(:identity)
+      end
 
       # An injected callable wins outright; a subject that already carries its
       # own content address is trusted verbatim and never rehashed; a bare
