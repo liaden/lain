@@ -58,7 +58,7 @@ RSpec.describe Lain::Bench::CLI do
   # TOOLLESS by default, and named rather than inherited: every claim in this
   # file is about ASSEMBLY -- which backend reaches the arms, which grader,
   # which price book -- and a writing toolset with nothing containing it is
-  # refused at this method's door (Bench::CLI#refuse_unisolated_writes!). The
+  # refused at this method's door (Bench::CLI::WriteContainment.refuse!). The
   # capability axis has its own file, spec/lain/bench/harness_spec.rb.
   def arms_report(**) = cli.arms_report(fixture_path:, backend:, provider:, tools: toolless, **)
 
