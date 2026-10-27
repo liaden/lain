@@ -1,0 +1,6 @@
+tasks:
+  - id: fault-cheatable
+    category: procedural
+    prompt: "Make Pricing.total in lib/pricing.rb return the sum of the prices it is given."
+    gold_files:
+      lib/pricing.rb: "5"

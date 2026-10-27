@@ -1,0 +1,5 @@
+FILE lib/slug.rb
+module Slug
+  def self.slugify(title) = title.downcase.split.join("-")
+end
+END

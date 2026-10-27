@@ -1,0 +1,8 @@
+tasks:
+  - id: fault-unstated-rule
+    category: procedural
+    prompt: "Add a slugify method to lib/slug.rb that lowercases a title and joins its words with hyphens."
+    gold_files:
+      lib/slug.rb:
+        contains: "def slugify"
+        starts_with: "# frozen_string_literal: true"

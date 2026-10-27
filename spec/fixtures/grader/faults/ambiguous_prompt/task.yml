@@ -1,0 +1,6 @@
+tasks:
+  - id: fault-ambiguous-prompt
+    category: procedural
+    prompt: "Make the greeting in lib/greet.rb friendly."
+    gold_files:
+      lib/greet.rb: "Hello, friend!"

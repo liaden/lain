@@ -2203,4 +2203,13 @@ RSpec.describe Lain::Bench::CLI do
       def table(report) = report.lines(chomp: true).grep_v(/\A(Compaction sweep|journal):/)
     end
   end
+
+  describe "#fault_report" do
+    it "grades the planted faults with the shipped grader and reports the disagreements" do
+      dir = File.expand_path("../../fixtures/grader/faults", __dir__)
+
+      expect(cli.fault_report(fixture_dir: dir))
+        .to include("cheat passed").and include("3 faults: 1 grader fooled, 2 gold too strict")
+    end
+  end
 end

@@ -1,0 +1,5 @@
+FILE lib/greet.rb
+module Greet
+  def self.message = "Hi there, pal!"
+end
+END

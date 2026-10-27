@@ -1064,6 +1064,10 @@ class LainCLI < Thor
       render { Lain::Bench::CLI.new.plan_sweep_report(plan_path: options[:plan], runs_path: options[:runs]) }
     end
 
+    desc "faults", "Grade planted fault trajectories with the arms grader and report where it disagrees"
+    method_option :fixture_dir, type: :string, required: true, desc: "a directory of fault classes"
+    def faults = render { Lain::Bench::CLI.new.fault_report(fixture_dir: options[:fixture_dir]) }
+
     desc "sweep", "Deterministic five-arm retrieval eval (recall@k over the gold corpus) -- offline, no API"
     method_option :k, type: :numeric, default: Lain::Bench::Sweep::DEFAULT_K,
                       aliases: "-k", desc: "retrieval depth (recall@k)"

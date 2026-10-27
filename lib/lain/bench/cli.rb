@@ -225,6 +225,17 @@ module Lain
         ArmSweep.new(tasks_path:, recordings_path:).report
       end
 
+      # Grades the planted fault trajectories with the grader `bench arms` uses
+      # and reports where its verdict departs from the expected one.
+      #
+      # @param fixture_dir [String] a {FaultCorpus} directory
+      # @return [String] the report; never printed here
+      # @raise [FaultCorpus::MalformedFault] naming a fault directory that cannot be read
+      def fault_report(fixture_dir:)
+        corpus = FaultCorpus.load(fixture_dir)
+        corpus.report(grader: SuiteGrader.new(corpus.tasks))
+      end
+
       # The shape x density plan sweep: six arms (linear/fork x
       # every/thinned/none) over one fixed plan and its scripted runs, replayed
       # offline like {#arm_sweep_report}.
