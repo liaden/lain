@@ -58,12 +58,13 @@ module Lain
         WALKED = File::FNM_PATHNAME | File::FNM_DOTMATCH
 
         # @param path [Shell::Named::Path]
+        # @param facts [FileFacts::Live, FileFacts::Recorded] what a match or an entry is read off
         # @return [Array<String>, nil] absolute; nil when there are too many
-        def self.of(path)
+        def self.of(path, facts: FileFacts::LIVE)
           pattern = path.pattern
           found = if pattern.nil? then []
-                  elsif pattern.include?(RECURSIVE) then below(pattern)
-                  else matches(path.resolved, pattern)
+                  elsif pattern.include?(RECURSIVE) then below(pattern, facts)
+                  else matches(path.resolved, pattern, facts)
                   end
           found && [path.resolved, *found]
         rescue SystemCallError
@@ -72,19 +73,19 @@ module Lain
 
         # Globbed from the fixed directory rather than from `/`, so a directory
         # named `w[1]` is a name and not a pattern.
-        def self.matches(directory, pattern)
+        def self.matches(directory, pattern, facts)
           return unless pattern.start_with?(directory)
 
           relative = pattern.delete_prefix(directory).delete_prefix("/")
-          bounded(Dir.glob(relative, base: directory).map { File.join(directory, _1) }, MATCHES)
+          bounded(facts.glob(relative, base: directory).map { File.join(directory, _1) }, MATCHES)
         end
 
         # Dot entries included, because a recursive reader opens them; and
         # only what fits the bound is walked, because `find /` is a pattern too.
-        def self.below(pattern)
+        def self.below(pattern, facts)
           root, rest = pattern.split(RECURSIVE, 2)
           root = "/" if root.empty?
-          entries = bounded(walk(root).first(ENTRIES + 1), ENTRIES)
+          entries = bounded(walk(root, facts).first(ENTRIES + 1), ENTRIES)
           return entries if entries.nil? || rest.empty?
 
           inside = "**#{rest}"
@@ -96,15 +97,15 @@ module Lain
         # Through links too, because `grep -R`, `cp -L` and `tar h` follow them;
         # a directory already walked by its real path is not walked again, so a
         # link back up the tree ends.
-        def self.walk(root) = Enumerator.new { |entries| descend(root, entries, Set.new) }
+        def self.walk(root, facts) = Enumerator.new { |entries| descend(root, entries, Set.new, facts) }
 
-        def self.descend(directory, entries, walked)
-          return unless File.directory?(directory) && walked.add?(File.realpath(directory))
+        def self.descend(directory, entries, walked, facts)
+          return unless facts.directory?(directory) && walked.add?(facts.realpath(directory))
 
-          Dir.each_child(directory) do |name|
+          facts.each_child(directory) do |name|
             entry = File.join(directory, name)
             entries << entry
-            descend(entry, entries, walked)
+            descend(entry, entries, walked, facts)
           end
         end
         private_class_method :matches, :below, :bounded, :walk, :descend
@@ -295,7 +296,7 @@ module Lain
         named = named_in(effect, context)
         return OPAQUE if named.opaque?
 
-        reached = named.paths.map { Reach.of(_1) }
+        reached = named.paths.map { Reach.of(_1, facts: @policy.file_facts) }
         return TOO_MANY if reached.any?(&:nil?)
 
         return GIT_STORE if reached_store?(named.paths, reached)
@@ -316,7 +317,7 @@ module Lain
         index = segments.index(".git")
         index && begin
           dotgit = File.join(root, *segments.first(index + 1))
-          File.directory?(dotgit) || (git && File.file?(dotgit))
+          @policy.file_facts.directory?(dotgit) || (git && @policy.file_facts.file?(dotgit))
         end
       end
 

@@ -203,18 +203,24 @@ module Lain
       # filter rather than a second one over a fresh classifier.
       attr_reader :filter
 
+      # @return [FileFacts::Live, FileFacts::Recorded] what tells a searched file from a directory
+      attr_reader :file_facts
+
       # @param filter [Sensitivity::Filter] which rows a listing may show.
       #   REQUIRED, with no default: a default is how a run ends up filtering
       #   against a classifier nobody chose. {Sensitivity::Filter::Null} is how
       #   a run that withholds nothing says so on purpose.
+      # @param file_facts [FileFacts::Live, FileFacts::Recorded] the gate's own, from
+      #   {Sensitivity::Policy#file_facts}
       # @raise [ArgumentError] on a nil filter
-      def initialize(filter:)
+      def initialize(filter:, file_facts: FileFacts::LIVE)
         unless filter
           raise ArgumentError,
                 "a filter is required: pass #{::Lain::Sensitivity::Filter::Null.name} to withhold nothing"
         end
 
         @filter = filter
+        @file_facts = file_facts
         super()
         freeze
       end
@@ -245,7 +251,7 @@ module Lain
 
         context = env.fetch(:context)
         target = base(effect, ::Lain::Session.cwd_of(context))
-        File.file?(target) &&
+        @file_facts.file?(target) &&
           @filter.sift([target], within: ::Lain::Sensitivity::Policy.base_of(context)) { [_1] }.any?
       end
 
@@ -296,7 +302,7 @@ module Lain
         return carried if shape.no_rows?(effect, content, target)
 
         sifted = sift(shape, content, target, ::Lain::Sensitivity::Policy.base_of(context),
-                      File.file?(target) ? spelled : nil)
+                      @file_facts.file?(target) ? spelled : nil)
         return carried unless sifted.any?
 
         carried.merge(result: Tool::Result.ok([*sifted.kept, line(sifted, shape)].join(ROW)))
@@ -332,7 +338,7 @@ module Lain
         path = ::Lain::Sensitivity::Policy.path_in(effect)
         return nil unless SPELLED_LABELS.include?(effect.name) && path && ::Lain::Sensitivity.readable?(path)
 
-        path if File.file?(base(effect, ::Lain::Session.cwd_of(env.fetch(:context))))
+        path if @file_facts.file?(base(effect, ::Lain::Session.cwd_of(env.fetch(:context))))
       end
 
       # Split as BYTES and read back as UTF-8, because a text split raises on

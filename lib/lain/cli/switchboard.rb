@@ -250,9 +250,7 @@ module Lain
         hold_ladder_parts(rules:, approving:, classifiers:, verdict:, judge:, sensitivity:, arms:, request:)
         # A parked call has to be answered by somebody, and a queue with no
         # drain is a wait, not a decision.
-        if @attended
-          @approvals = Approval::Parked::Queue.new(journal:, timeout: approval_timeout, home: sensitivity.home)
-        end
+        @approvals = queue_over(sensitivity, approval_timeout) if @attended
         @toolset = toolset
         @model_switch = Context::ModelSwitch.new(model, journal:)
         seed(Mode.new(approval:, layers:))
@@ -479,6 +477,12 @@ module Lain
       end
 
       def faults = Approval::Escalation::Faults.new(@journal)
+
+      # Over the path policy's own file facts, so a remembered denial lands where the gate's paths do.
+      def queue_over(sensitivity, timeout)
+        Approval::Parked::Queue.new(journal: @journal, timeout:, home: sensitivity.home,
+                                    file_facts: sensitivity.file_facts)
+      end
 
       # Every launch journals the mode it started in: the session header
       # carries no flags, and the status line and a bench reader fold the mode

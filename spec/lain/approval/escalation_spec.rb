@@ -1216,6 +1216,20 @@ RSpec.describe Lain::Approval::Escalation do
 
     def shadow_link(name = "shadowlink") = File.symlink("/etc/shadow", File.join(@project, name))
 
+    it "reads where a word lands through the policy's file facts, with nothing on disk" do
+      root = "/home/tester/project"
+      facts = Lain::FileFacts::Recorded.new(places: [root, "/home/tester"],
+                                            landings: { "#{root}/shadowlink" => "/etc/shadow" })
+      policy = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home: "/home/tester", cwd: root, root:),
+                                             home: "/home/tester", root:, file_facts: facts)
+      rung = described_class::Triage.new(sensitivity: EscalationSpecSupport::Classifiers.new(home: "/home/tester",
+                                                                                             base: root), policy:)
+      session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: root, env: {}))
+      call = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => "cat shadowlink" })
+
+      expect(ladder(rung).rule(call, session)).to be_deny.and be_final
+    end
+
     # Scenario: a link to /etc/shadow is refused on the bash route under every level
     it "refuses a bare word linked to the shadow file finally, naming the file it lands on" do
       File.symlink("/etc/shadow", File.join(@project, "shadowlink"))

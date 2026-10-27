@@ -40,7 +40,7 @@ module Lain
         # costs at most a re-index.
         CHECKOUTS = 16
 
-        attr_reader :layout, :root
+        attr_reader :layout, :root, :file_facts
 
         # For a board built with no project behind it: no layout, held at the
         # filesystem root, so every check is unguarded.
@@ -48,9 +48,11 @@ module Lain
 
         # @param layout [TestLayout] the project's, read once for the session
         # @param root [String] the project root the layout is relative to
-        def initialize(layout:, root:)
+        # @param file_facts [FileFacts::Live, FileFacts::Recorded] what a root is resolved through
+        def initialize(layout:, root:, file_facts: FileFacts::LIVE)
           @layout = layout
           @root = root
+          @file_facts = file_facts
           @guards = {}
           @absence_noted = false
           @declarations = Hash.new(EMPTY)
@@ -80,7 +82,9 @@ module Lain
         # oldest checkout is let go first; nothing yields between the lookup
         # and the store, so two fibers cannot interleave here.
         def guard_for(checkout)
-          @guards.fetch(checkout) { remember(checkout, TestLayout::Guard.new(layout:, root: checkout)) }
+          @guards.fetch(checkout) do
+            remember(checkout, TestLayout::Guard.new(layout:, root: checkout, file_facts:))
+          end
         end
 
         # The roots a child's writes are held at: the project's, and the
@@ -104,7 +108,9 @@ module Lain
         EMPTY = [].freeze
         private_constant :EMPTY
 
-        def resolved(checkout) = File.exist?(checkout) ? File.realpath(checkout) : File.expand_path(checkout)
+        def resolved(checkout)
+          @file_facts.exist?(checkout) ? @file_facts.realpath(checkout) : File.expand_path(checkout)
+        end
 
         def remember(checkout, guard)
           kept = @guards.keys - [root]
@@ -124,7 +130,8 @@ module Lain
         @roots = roots.dup.freeze
         # Both spellings, as {TestLayout::Guard} takes both: a tool may hand
         # over the path it was given or the one the filesystem resolved.
-        @spelled = @roots.to_h { |root| [root, [File.expand_path(root), File.realpath(root)].uniq.freeze] }.freeze
+        @spelled = @roots.to_h { |root| [root, [File.expand_path(root), run.file_facts.realpath(root)].uniq.freeze] }
+                         .freeze
         @journal = journal
         super()
         freeze

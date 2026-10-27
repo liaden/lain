@@ -167,6 +167,23 @@ module Lain
         end
       end
 
+      # Gated calls out of session files, re-decided through the production approval stack under
+      # every approval level and rule set asked for: nothing runs, no model is asked, and no file is
+      # read but the sessions and the rule sets.
+      #
+      # @param sessions [Array<String>] session files
+      # @param project [ApprovalReplay::Place] where a session that recorded no place is replayed
+      # @param approvals [Array<String>] approval levels, each replayed under every rule set
+      # @param rules [Array<String>] files whose `approval` table is a rule set; none by default
+      # @param approver [String] "recorded" or "perfect"
+      # @return [String] the report; never printed here
+      # @raise [Refusal] on an unknown level or approver, a missing file, or a rule set that will not load
+      def approval_replay_report(sessions:, project: ApprovalReplay::Place.current, approvals: %w[ask], rules: [],
+                                 approver: "recorded")
+        ApprovalReplay.asked(sessions: sessions.map { checked_file(_1, "session file") }, approvals:, approver:,
+                             rules: rules.map { checked_file(_1, "rule set") }, project:).report
+      end
+
       # The three orchestration arms (single-thread control, orchestrator-worker,
       # dual-ledger) over the ArmTasks suite, replayed offline through committed
       # recordings -- no provider, no money, no network, byte-identical across

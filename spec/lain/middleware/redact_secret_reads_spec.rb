@@ -1068,6 +1068,49 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
 
     def searches = journal.grep(Lain::Telemetry::SearchRedacted)
 
+    describe "the file facts it tells a searched directory from a file by" do
+      def masked_under(facts)
+        masking = described_class.new(ledger:, queue:, journal:, file_facts: facts)
+        context = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: "/p", env: {}))
+        effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_grep", name: "grep",
+                                            input: { "pattern" => "ghp_", "path" => "config" })
+        Sync do
+          Lain::Middleware::Stack.new([masking]).call(effect:, context:) do |inner|
+            inner.merge(result: Lain::Tool::Result.ok("settings.yml:2:  token: #{token}"))
+          end
+        end
+        searches.map(&:path)
+      end
+
+      it "asks the live disk by default" do
+        expect(middleware.file_facts).to be(Lain::FileFacts::LIVE)
+      end
+
+      it "keys a row by the label the facts say is a file, with nothing on disk" do
+        allow(File).to receive(:file?).and_raise("live File.file?")
+        facts = Lain::FileFacts::Recorded.new(places: ["/p", "/p/config"],
+                                              landings: { "/p/config/odd:1/x.yml" => "/p/config/odd:1/x.yml" })
+        masking = described_class.new(ledger:, queue:, journal:, file_facts: facts)
+        context = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: "/p", env: {}))
+        effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_grep", name: "grep",
+                                            input: { "pattern" => "ghp_", "path" => "config" })
+        Sync do
+          Lain::Middleware::Stack.new([masking]).call(effect:, context:) do |inner|
+            inner.merge(result: Lain::Tool::Result.ok("odd:1/x.yml:3:  token: #{token}"))
+          end
+        end
+
+        expect(searches.map(&:path)).to eq(["/p/config/odd:1/x.yml"])
+      end
+
+      it "reads a row under the searched directory only when the facts say it is one, with nothing on disk" do
+        allow(File).to receive(:directory?).and_raise("live File.directory?")
+
+        expect(masked_under(Lain::FileFacts::Recorded.new(places: ["/p", "/p/config"])))
+          .to eq(["/p/config/settings.yml"])
+      end
+    end
+
     it "masks a token in an ordinary file in its row" do
       content = grep("config")
 

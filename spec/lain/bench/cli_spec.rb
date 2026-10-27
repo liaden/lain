@@ -1797,6 +1797,49 @@ RSpec.describe Lain::Bench::CLI do
     end
   end
 
+  describe "#approval_replay_report" do
+    let(:fixtures) { ApprovalReplayFixtures::DIR }
+    let(:project) do
+      Lain::Bench::ApprovalReplay::Place.new(cwd: "/home/user/project", root: "/home/user/project", home: "/home/user")
+    end
+
+    def report(**rest)
+      cli.approval_replay_report(sessions: [File.join(fixtures, "ask.ndjson")], project:, **rest)
+    end
+
+    it "replays the sessions under every approval level and rule set asked for" do
+      out = report(approvals: %w[ask bypass], rules: [File.join(fixtures, "rules_a.rb")])
+
+      expect(out).to include("ask rules_a.rb recorded", "bypass rules_a.rb recorded")
+      expect(out).to include("6 gated calls in 1 session: 5 replayed")
+    end
+
+    it "replays under ask with no rules and the recorded approver by default" do
+      expect(report).to include("ask no rules recorded")
+    end
+
+    it "reads a session or a rule set spelled two ways as one" do
+      twice = File.join(fixtures, "..", "approval_replay", "ask.ndjson")
+      rules = [File.join(fixtures, "rules_a.rb"), File.join(fixtures, ".", "rules_a.rb")]
+      out = cli.approval_replay_report(sessions: [File.join(fixtures, "ask.ndjson"), twice], project:, rules:)
+
+      expect(out).to include("in 1 session:")
+      expect(out.lines.grep(/\Aask /).size).to eq(1)
+    end
+
+    it "refuses an arm asked for twice, naming it" do
+      expect { report(approvals: %w[auto auto]) }.to raise_error(described_class::Refusal, /auto no rules recorded/)
+    end
+
+    it "refuses an unknown approval level, an unknown approver and a missing file by name" do
+      expect { report(approvals: %w[sometimes]) }.to raise_error(described_class::Refusal, /sometimes/)
+      expect { report(approver: "optimist") }.to raise_error(described_class::Refusal, /optimist/)
+      expect { report(rules: ["/nonexistent/rules.rb"]) }.to raise_error(described_class::Refusal, %r{/nonexistent})
+      expect { cli.approval_replay_report(sessions: ["/nonexistent/s.ndjson"], project:) }
+        .to raise_error(described_class::Refusal, %r{/nonexistent/s.ndjson})
+    end
+  end
+
   describe "#judge_scale_report" do
     let(:fixture) { File.expand_path("../../fixtures/grader/findings/labelled.jsonl", __dir__) }
     let(:findings) { Lain::Bench::JudgeScale.load(fixture) }

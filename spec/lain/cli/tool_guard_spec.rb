@@ -1945,4 +1945,17 @@ RSpec.describe Lain::CLI::ToolGuard do
       end
     end
   end
+
+  describe "the file facts the result-side secret layers read" do
+    it "are the board policy's own" do
+      facts = Lain::FileFacts::Recorded.new(places: ["/home/tester/project"])
+      sensitivity = Lain::Sensitivity::Policy.new(
+        sensitivity: Lain::Sensitivity.new(home: "/home/tester", cwd: "/home/tester/project"), file_facts: facts
+      )
+      layers = described_class.stack(chronicle, ToolGuardSpecBoard.new(sensitivity:)).to_a
+
+      expect(layers.grep(Lain::Middleware::RedactSecretReads).map(&:file_facts)).to eq([facts])
+      expect(layers.grep(Lain::Middleware::WithholdSecretPaths).map(&:file_facts)).to eq([facts])
+    end
+  end
 end

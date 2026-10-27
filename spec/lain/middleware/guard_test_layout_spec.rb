@@ -27,6 +27,29 @@ RSpec.describe Lain::Middleware::GuardTestLayout do
 
   def describing(constant) = "RSpec.describe #{constant} do\n  it { expect(1).to eq(1) }\nend\n"
 
+  describe "the file facts a run resolves its roots by" do
+    let(:facts) { Lain::FileFacts::Recorded.new(places: ["/home/user/project"]) }
+
+    it "asks the live disk by default" do
+      expect(Lain::Middleware::GuardTestLayout::Run.undeclared.file_facts).to be(Lain::FileFacts::LIVE)
+    end
+
+    it "holds a write with no layout without reading the disk for its roots" do
+      run = Lain::Middleware::GuardTestLayout::Run.new(layout: Lain::TestLayout::None, root: "/home/user/project",
+                                                       file_facts: facts)
+      allow(File).to receive(:realpath).and_raise("live File.realpath")
+      allow(File).to receive(:exist?).and_raise("live File.exist?")
+      context = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: "/home/user/project", env: {}))
+
+      carried = described_class.new(run:, journal:).call(effect: write_call("a_spec.rb", "x"), context:) do |env|
+        env.merge(result: Lain::Tool::Result.ok("written"))
+      end
+
+      expect(carried.fetch(:result).content).to eq("written")
+      expect(run.declared("/home/user/project")).to eq([])
+    end
+  end
+
   def session = Lain::Session.new(worker_env: Lain::WorkerEnv.default.with(cwd: root))
 
   def write_call(path, content, id: "tu_w")

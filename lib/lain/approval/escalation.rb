@@ -760,7 +760,7 @@ module Lain
         # The landing first: a link named `.netrc` that opens `/etc/shadow` is
         # refused for the file it opens, not left as a bare protected name.
         def refusal(path, resolved, dir, judges)
-          redirect = Landing.redirect(resolved, cwd: dir)
+          redirect = Landing.redirect(resolved, cwd: dir, facts: @policy.file_facts)
           return by_name(path, [resolved, *redirect], *judges) if redirect.nil? || moved_with?(resolved, redirect, dir)
 
           verdict = @policy.judge(redirect, cwd: dir)
@@ -784,12 +784,14 @@ module Lain
         # is judged by name; nor has the same file under a home reached
         # through a link.
         def moved_with?(resolved, redirect, dir)
-          beside?(redirect, resolved) || Landing.of(redirect, cwd: dir, home: @policy.home).include?(resolved)
+          beside?(redirect, resolved) ||
+            Landing.of(redirect, cwd: dir, home: @policy.home, facts: @policy.file_facts).include?(resolved)
         end
 
         def beside?(redirect, resolved)
           parent = File.dirname(resolved)
-          redirect == File.join(Landing.of(parent, cwd: parent).first, File.basename(resolved))
+          landed = Landing.of(parent, cwd: parent, facts: @policy.file_facts).first
+          redirect == File.join(landed, File.basename(resolved))
         rescue Error, SystemCallError
           false
         end

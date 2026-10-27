@@ -949,6 +949,23 @@ class LainCLI < Thor
       end
     end
 
+    desc "approval-replay SESSIONS...", "Re-decide journaled gated calls through the real approval stack " \
+                                        "-- offline: runs nothing, asks no model, reads only the sessions"
+    method_option :approval, type: :string, repeatable: true, banner: "ask|auto|bypass",
+                             desc: "an approval level to replay under; repeat for more (default: ask)"
+    method_option :rules, type: :string, repeatable: true, banner: "CONFIG_RB",
+                          desc: "a config.rb whose approval table is the rule set; it is run as Ruby, as a " \
+                                "trusted .lain/config.rb is, so name only a file you trust. Repeat to diff rule sets"
+    method_option :approver, type: :string, enum: Lain::Bench::ApprovalReplay::APPROVERS.map(&:to_s),
+                             default: "recorded",
+                             desc: "who answers a parked call: the session's own human, or one approving everything"
+    def approval_replay(*sessions)
+      render do
+        Lain::Bench::CLI.new.approval_replay_report(sessions:, approvals: options[:approval] || %w[ask],
+                                                    rules: options[:rules] || [], approver: options[:approver])
+      end
+    end
+
     desc "arms FIXTURE", "Compare the four orchestration arms live over an ArmTasks fixture " \
                          "-- spends real API money"
     ModelFlags.declare(self, max_tokens: Lain::Bench::SpawnSeam::DEFAULT_MAX_TOKENS,

@@ -8,8 +8,8 @@ module Lain
   # resolution matters -- `link/..` is the link target's parent to the kernel,
   # and lexical cleaning would call it the cwd.
   #
-  # The filesystem is asked here and nowhere in {Sensitivity}, whose
-  # classifier stays lexical by contract.
+  # The filesystem is asked here, through {FileFacts}, and nowhere in
+  # {Sensitivity}, whose classifier stays lexical by contract.
   module Landing
     # A link whose target does not exist is not a missing file: the target can
     # be created later, outside the root, and the next read would follow it.
@@ -24,14 +24,15 @@ module Lain
     # @param cwd [String] absolute; what a relative path is joined to
     # @param home [String, nil] the lexical home, spelled as configured
     # @param root [String, nil] the lexical project root, spelled as configured
+    # @param facts [FileFacts::Live, FileFacts::Recorded] what the disk is asked through
     # @return [Array<String>] the real path first, then the same path re-spelled
     #   under the lexical home and root when their real paths differ, so a rule
     #   anchored on either spelling still matches
     # @raise [Dangling] when the path or a prefix is a link to nothing
     # @raise [SystemCallError] when no prefix resolves
-    def of(path, cwd:, home: nil, root: nil)
-      real = resolve(path.start_with?(File::SEPARATOR) ? path : File.join(cwd, path))
-      [real, *[home, root].compact.filter_map { |lexical| respell(real, lexical) }]
+    def of(path, cwd:, home: nil, root: nil, facts: FileFacts::LIVE)
+      real = resolve(path.start_with?(File::SEPARATOR) ? path : File.join(cwd, path), facts)
+      [real, *[home, root].compact.filter_map { |lexical| respell(real, lexical, facts) }]
     end
 
     # Where a path would land once written: {.of}, except that a dangling link
@@ -44,16 +45,17 @@ module Lain
     # @param root [String, nil] the lexical project root, spelled as configured
     # @param hops [Integer] how many dangling links to follow, the kernel's
     #   own symlink limit by default
+    # @param facts [FileFacts::Live, FileFacts::Recorded] as on {.of}
     # @return (see .of)
     # @raise [Dangling] past `hops` links
     # @raise [SystemCallError] when no prefix resolves
-    def eventual(path, cwd:, home: nil, root: nil, hops: HOPS)
+    def eventual(path, cwd:, home: nil, root: nil, hops: HOPS, facts: FileFacts::LIVE)
       absolute = path.start_with?(File::SEPARATOR) ? path : File.join(cwd, path)
-      of(absolute, cwd:, home:, root:)
+      of(absolute, cwd:, home:, root:, facts:)
     rescue Dangling
       raise if hops.zero?
 
-      eventual(through(absolute), cwd:, home:, root:, hops: hops - 1)
+      eventual(through(absolute, facts), cwd:, home:, root:, hops: hops - 1, facts:)
     end
 
     # Where a path lands, when that is somewhere other than its own name --
@@ -61,39 +63,40 @@ module Lain
     #
     # @param path [String] as the call wrote it
     # @param cwd [String] absolute; what a relative path is joined to
+    # @param facts [FileFacts::Live, FileFacts::Recorded] as on {.of}
     # @return [String, nil] nil when it lands on itself or cannot be resolved
-    def redirect(path, cwd:)
+    def redirect(path, cwd:, facts: FileFacts::LIVE)
       named = File.expand_path(path, cwd)
-      landing = eventual(named, cwd:).first
+      landing = eventual(named, cwd:, facts:).first
       landing unless landing == named
     rescue Error, SystemCallError, ArgumentError, EncodingError
       nil
     end
 
-    def resolve(path)
-      File.realpath(path)
+    def resolve(path, facts)
+      facts.realpath(path)
     rescue Errno::ENOENT
       parent = File.dirname(path)
       raise if parent == path
-      raise Dangling, "#{path} is a link to nothing" if File.symlink?(path)
+      raise Dangling, "#{path} is a link to nothing" if facts.symlink?(path)
 
-      Pathname.new(File.join(resolve(parent), File.basename(path))).cleanpath.to_s
+      Pathname.new(File.join(resolve(parent, facts), File.basename(path))).cleanpath.to_s
     end
 
     # The deepest prefix that is a link to nothing, swapped for its target.
     # Joined, never expanded: a `..` in the target is left for {.of} to resolve
     # through the filesystem, where it may climb out of another link.
-    def through(path)
-      link = Pathname.new(path).ascend.map(&:to_s).find { File.symlink?(_1) && !File.exist?(_1) }
+    def through(path, facts)
+      link = Pathname.new(path).ascend.map(&:to_s).find { facts.symlink?(_1) && !facts.exist?(_1) }
       raise Dangling, "#{path} is a link to nothing" unless link
 
-      target = File.readlink(link)
-      joined = target.start_with?(File::SEPARATOR) ? target : File.join(File.realpath(File.dirname(link)), target)
+      target = facts.readlink(link)
+      joined = target.start_with?(File::SEPARATOR) ? target : File.join(facts.realpath(File.dirname(link)), target)
       joined + path.delete_prefix(link)
     end
 
-    def respell(real, lexical)
-      respelled(real, lexical, File.realpath(lexical))
+    def respell(real, lexical, facts)
+      respelled(real, lexical, facts.realpath(lexical))
     rescue SystemCallError
       nil
     end

@@ -15,6 +15,36 @@ RSpec.describe Lain::Landing do
 
   def real(*parts) = File.join(@base, *parts)
 
+  describe "the file facts it asks" do
+    let(:recorded) do
+      Lain::FileFacts::Recorded.new(places: ["/p"], landings: { "/p/plain.txt" => "/home/u/.netrc" })
+    end
+
+    it "asks the live disk by default" do
+      File.write(File.join(@root, ".netrc"), "machine x\n")
+      File.symlink(".netrc", File.join(@root, "plain.txt"))
+
+      expect(described_class.of("plain.txt", cwd: @root, facts: Lain::FileFacts::LIVE))
+        .to eq(described_class.of("plain.txt", cwd: @root))
+    end
+
+    it "follows a dangling link through the injected facts' own reading of it" do
+      facts = Object.new
+      def facts.realpath(path) = path == "/p/gone" ? raise(Errno::ENOENT, path) : path
+      def facts.symlink?(path) = path == "/p/gone"
+      def facts.exist?(path) = path != "/p/gone"
+      def facts.readlink(_path) = "/q/target"
+
+      expect(described_class.eventual("/p/gone", cwd: "/p", facts:)).to eq(["/q/target"])
+    end
+
+    it "lands a path where the injected facts say, with nothing on disk" do
+      expect(described_class.of("plain.txt", cwd: "/p", facts: recorded).first).to eq("/home/u/.netrc")
+      expect(described_class.eventual("/p/plain.txt", cwd: "/p", facts: recorded).first).to eq("/home/u/.netrc")
+      expect(described_class.redirect("plain.txt", cwd: "/p", facts: recorded)).to eq("/home/u/.netrc")
+    end
+  end
+
   it "answers the real path a link points at" do
     File.write(File.join(@root, ".netrc"), "machine x\n")
     File.symlink(".netrc", File.join(@root, "plain.txt"))

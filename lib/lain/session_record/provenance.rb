@@ -103,8 +103,15 @@ module Lain
         # @param paths [Paths] where the user's config.rb lives
         # @return [String]
         def policy(project_dir:, paths: Paths.new)
-          Canonical.digest([Project::Trust.for(project_dir:, paths:).digest, Project::Trust.for_user(paths:).digest])
+          policy_of(Project::Trust.for(project_dir:, paths:), Project::Trust.for_user(paths:))
         end
+
+        # The policy digest over two trusts already read, and the one formula for it.
+        #
+        # @param project [Project::Trust] the project's `.lain/*.rb`
+        # @param user [Project::Trust] the user's config
+        # @return [String]
+        def policy_of(project, user) = Canonical.digest([project.digest, user.digest])
 
         private
 

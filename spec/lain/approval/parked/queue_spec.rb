@@ -808,6 +808,40 @@ RSpec.describe Lain::Approval::Parked::Queue do
       end
     end
 
+    describe "a denied call through the file facts it was built over" do
+      let(:queue) do
+        described_class.new(journal:, file_facts: Lain::FileFacts::Recorded.new(
+          places: ["/srv/p"], landings: { "/srv/p/cfglink" => "/srv/p/.env.local" }
+        ))
+      end
+
+      it "is remembered by where the facts land it, with nothing on disk" do
+        denied_by_human(tool_call("read_file", { "path" => "cfglink" }), in_dir("/srv/p"))
+
+        expect(queue.denied(requester: "agent", path: "/srv/p/.env.local")).to eq("not your business")
+      end
+
+      it "asks the live disk by default" do
+        expect(described_class.new(journal:).file_facts).to be(Lain::FileFacts::LIVE)
+      end
+
+      it "holds a command's word by its own name, not by the directory the facts land it in" do
+        queue = described_class.new(journal:, file_facts: Lain::FileFacts::Recorded.new(
+          places: ["/srv/p", "/srv/p/dir"], landings: { "/srv/p/link" => "/srv/p/dir" }
+        ))
+        settled = lambda do |effect, context|
+          Sync do |task|
+            task.async { queue.dequeue.deny(surface: "spec", authority: :human, reason: "not your business") }
+            queue.call(effect, context)
+          end
+        end
+        settled.call(tool_call("bash", { "command" => "cat link" }), in_dir("/srv/p"))
+
+        expect(%w[/srv/p/link /srv/p/dir].map { queue.denied(requester: "agent", path: _1) })
+          .to eq(["not your business", nil])
+      end
+    end
+
     describe "a denied call through a link" do
       def runs(command) = tool_call("bash", { "command" => command })
 

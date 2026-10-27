@@ -177,7 +177,7 @@ module Lain
       # ledger and the board's one queue, not a second of either. Asserting on
       # behaviour instead cannot tell a fresh ledger from the board's, which is
       # exactly the mutation that survived review.
-      attr_reader :ledger, :queue, :journal, :related, :child_env, :history
+      attr_reader :ledger, :queue, :journal, :related, :child_env, :history, :file_facts
 
       # @param ledger [Sensitivity::Ledger] the run's ONE region ledger.
       #   REQUIRED, with no default and no Null Object: a default is how a
@@ -198,9 +198,12 @@ module Lain
       #   the calling worker's own
       # @param history [#to_a] the values the project's sensitive paths hold in
       #   git history and untracked files, masked in every command result
+      # @param file_facts [FileFacts::Live, FileFacts::Recorded] what tells a searched directory from a
+      #   file, from {Sensitivity::Policy#file_facts}
       # @raise [ArgumentError] on a nil ledger or queue
       def initialize(ledger:, queue:, journal: Channel::Null.instance, requester: nil, related: Unrelated,
-                     child_env: Exec::ChildEnv::DEFAULT, history: ::Lain::Sensitivity::HistoryLiterals::Null)
+                     child_env: Exec::ChildEnv::DEFAULT, history: ::Lain::Sensitivity::HistoryLiterals::Null,
+                     file_facts: FileFacts::LIVE)
         # A missing KEYWORD is Ruby's error; a nil VALUE is not, and nil is
         # exactly what `Switchboard#approvals` carries in an unattended run -- so
         # without this the argument that "no default means no silent approval"
@@ -215,6 +218,7 @@ module Lain
         @related = related
         @child_env = child_env
         @history = history
+        @file_facts = file_facts
         # Mutable, on a frozen object, deliberately: `freeze` seals the ivars,
         # not the Set they point at, and this is the run's accumulating
         # answer-memory -- {Sensitivity::Ledger}'s own posture, for its reason.
@@ -494,7 +498,7 @@ module Lain
 
       def rows_in(carried, effect, content)
         cwd = (carried.fetch(:context) || Session::Null.instance).worker_env.cwd
-        Rows.new(content, base: Session.normalize_path(effect.input[PATH_INPUT], cwd:), cwd:)
+        Rows.new(content, base: Session.normalize_path(effect.input[PATH_INPUT], cwd:), cwd:, facts: @file_facts)
       end
 
       # {#mask}'s state-transition rule, over a set of its own so that nothing
@@ -733,8 +737,10 @@ module Lain
         # @param content [String] the tool's rows, newline-joined
         # @param base [String] the search target, resolved
         # @param cwd [String] the worker's cwd, against which a file target's label resolves
-        def initialize(content, base:, cwd:)
-          @directory = File.directory?(base)
+        # @param facts [FileFacts::Live, FileFacts::Recorded] what says whether a path is a directory or a file
+        def initialize(content, base:, cwd:, facts: FileFacts::LIVE)
+          @facts = facts
+          @directory = facts.directory?(base)
           @anchor = @directory ? base : cwd
           @base = base
           @text = content
@@ -779,7 +785,7 @@ module Lain
 
         def resolved(label) = Session.normalize_path(label, cwd: @anchor)
 
-        def file?(path) = @directory ? File.file?(path) : path == @base
+        def file?(path) = @directory ? @facts.file?(path) : path == @base
       end
     end
   end

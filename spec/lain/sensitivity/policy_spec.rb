@@ -644,6 +644,35 @@ RSpec.describe Lain::Sensitivity::Policy do
 
   # A link's name says nothing about what it opens, so the path is judged twice:
   # as written and where it lands, and the stricter verdict wins.
+  describe "the file facts it judges a landing by" do
+    let(:project) { "/home/tester/project" }
+    let(:recorded) do
+      Lain::FileFacts::Recorded.new(places: [project, home],
+                                    landings: { "#{project}/notes.txt" => "#{home}/.ssh/id_qa" })
+    end
+    let(:policy) do
+      described_class.new(sensitivity: Lain::Sensitivity.new(home:, cwd: project, root: project), home:,
+                          root: project, file_facts: recorded)
+    end
+
+    it "is the live disk by default, and for the Null" do
+      expect(described_class.new(sensitivity:).file_facts).to be(Lain::FileFacts::LIVE)
+      expect(described_class::Null.instance.file_facts).to be(Lain::FileFacts::LIVE)
+    end
+
+    it "refuses a path the facts land on a key, with nothing on disk" do
+      expect(policy.denial(call("read_file", { "path" => "notes.txt" }), cwd: project))
+        .to have_attributes(path: "notes.txt", reason: :protected)
+    end
+
+    it "holds a confined policy to the same facts" do
+      confined = policy.confined(roots: [project])
+
+      expect(confined.file_facts).to be(recorded)
+      expect(confined.gates?(call("read_file", { "path" => "notes.txt" }), cwd: project)).to be(true)
+    end
+  end
+
   describe "judging a path where it lands" do
     around do |example|
       Dir.mktmpdir("lain-policy-landing") do |dir|

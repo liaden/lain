@@ -141,6 +141,9 @@ module Lain
         # @return [nil] no root was configured
         def root = nil
 
+        # @return [FileFacts::Live] the live disk, which a policy confined over this one reads
+        def file_facts = FileFacts::LIVE
+
         # Nothing is related, so a flagged region still asks.
         def related?(_path) = false
 
@@ -208,6 +211,9 @@ module Lain
 
         # @return [String, nil] the policy's project root as configured
         def root = @anchors[:root]
+
+        # @return [FileFacts::Live, FileFacts::Recorded] the policy's own
+        def file_facts = @policy.file_facts
 
         # @param effect [Lain::Effect]
         # @param cwd [String] absolute
@@ -289,7 +295,7 @@ module Lain
         end
 
         def landings(named)
-          Landing.of(named, cwd: File::SEPARATOR, **@anchors)
+          Landing.of(named, cwd: File::SEPARATOR, **@anchors, facts: file_facts)
         rescue Landing::Dangling, SystemCallError, ArgumentError, EncodingError
           []
         end
@@ -309,7 +315,7 @@ module Lain
 
         def spellings(root)
           expanded = File.expand_path(root)
-          [expanded, File.realpath(expanded)]
+          [expanded, file_facts.realpath(expanded)]
         rescue SystemCallError
           [expanded]
         end
@@ -332,8 +338,10 @@ module Lain
       # @param home [String, nil] the classifier's home as configured, so a
       #   landing under its real path is judged under this spelling too
       # @param root [String, nil] the project root as configured, likewise
-      def initialize(sensitivity:, home: nil, root: nil)
+      # @param file_facts [FileFacts::Live, FileFacts::Recorded] what a landing is judged by
+      def initialize(sensitivity:, home: nil, root: nil, file_facts: FileFacts::LIVE)
         @sensitivity = sensitivity
+        @file_facts = file_facts
         @anchors = { home:, root: }.freeze
         @landing_anchors = @anchors.transform_values { self.class.text_of(_1) }.freeze
         # Built HERE, not memoized in the reader: this object freezes itself, so
@@ -348,6 +356,12 @@ module Lain
 
       # @return [String, nil] the project root as configured, nil when none was
       def root = @anchors[:root]
+
+      # What every landing this boundary judges is read through: the live disk, or a session's
+      # record of it in a replay. Triage, the judge's rung and the queue read the same one.
+      #
+      # @return [FileFacts::Live, FileFacts::Recorded]
+      attr_reader :file_facts
 
       # What {#filter} classifies a listing row by. A readable row reaching the
       # filter is already absolute ({Middleware::WithholdSecretPaths#judged}
@@ -629,7 +643,8 @@ module Lain
       def landed(path, cwd, within)
         named = File.expand_path(path, cwd)
         judged = path.start_with?(File::SEPARATOR) ? named : nil
-        Landing.of(named, cwd:, **@landing_anchors).reject { _1 == judged }.map { @sensitivity.classify(_1, within:) }
+        Landing.of(named, cwd:, **@landing_anchors, facts: @file_facts).reject { _1 == judged }
+               .map { @sensitivity.classify(_1, within:) }
       rescue Landing::Dangling
         [MALFORMED, *eventually(named, cwd, within)]
       rescue SystemCallError, ArgumentError, EncodingError
@@ -637,7 +652,7 @@ module Lain
       end
 
       def eventually(named, cwd, within)
-        Landing.eventual(named, cwd:, **@landing_anchors).map { @sensitivity.classify(_1, within:) }
+        Landing.eventual(named, cwd:, **@landing_anchors, facts: @file_facts).map { @sensitivity.classify(_1, within:) }
       rescue Landing::Dangling, SystemCallError, ArgumentError, EncodingError
         []
       end

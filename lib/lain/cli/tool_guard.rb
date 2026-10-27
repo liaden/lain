@@ -591,11 +591,15 @@ module Lain
                                  Middleware::ConfineToScope.new(scope: inputs.scope), *held,
                                  Middleware::RefuseSecretWrites.new(**kwargs(chronicle)),
                                  Middleware::RedactSecretReads.new(**read_kwargs(chronicle, inputs), requester:),
-                                 Middleware::WithholdSecretPaths.new(filter: path_filter(inputs)),
+                                 withheld(inputs),
                                  Middleware::GuardTestLayout.new(run: inputs.test_layout, roots:, journal:),
                                  Middleware::WithholdAutomaticOutput.new(bar: inputs.bar, journal:),
                                  remembered(inputs, requester, journal), *gating(inputs, policy, journal, requester)])
         )
+      end
+
+      def withheld(inputs)
+        Middleware::WithholdSecretPaths.new(filter: path_filter(inputs), file_facts: inputs.sensitivity.file_facts)
       end
 
       # Over the board's one queue, so a deny given through any stack is held
@@ -702,7 +706,7 @@ module Lain
         { ledger: inputs.ledger,
           queue: inputs.approvals || Middleware::RedactSecretReads::Unqueued.instance,
           journal: chronicle.instrumentation.journal, related: inputs.sensitivity,
-          child_env: inputs.child_env, history: inputs.history }
+          child_env: inputs.child_env, history: inputs.history, file_facts: inputs.sensitivity.file_facts }
       end
 
       # The journal is READ off the chronicle's {Agent::Instrumentation}, whose

@@ -421,10 +421,13 @@ module Lain
         # @param home [String, nil] what `~` means in a denied command, from
         #   {Sensitivity::Policy#home}; with none, a command spelling a path
         #   with `~` is not remembered
+        # @param file_facts [FileFacts::Live, FileFacts::Recorded] where a denied path lands, from
+        #   {Sensitivity::Policy#file_facts}
         def initialize(journal:, requester: REQUESTER, timeout: DEFAULT_TIMEOUT, clock: RunClock::MONOTONIC,
-                       wall: -> { Time.now }, home: nil)
+                       wall: -> { Time.now }, home: nil, file_facts: FileFacts::LIVE)
           @journal = journal
           @home = home
+          @file_facts = file_facts
           @requester = Requester.of(requester)
           @timeout = timeout
           @clock = clock
@@ -535,6 +538,9 @@ module Lain
         # draining the arrival queue.
         def each(&block) = @parked.each(&block)
 
+        # @return [FileFacts::Live, FileFacts::Recorded] what a remembered denial's landing is read off
+        attr_reader :file_facts
+
         private
 
         # Journaled BEFORE the pending is parked, never between the two mutations
@@ -590,7 +596,7 @@ module Lain
         # the human, so the tree it lands on is not held against later calls.
         def denied_paths(pending)
           if pending.tool == BASH
-            named_files(pending).flat_map { |path| [path, *landings(path).reject { File.directory?(_1) }] }
+            named_files(pending).flat_map { |path| [path, *landings(path).reject { @file_facts.directory?(_1) }] }
           else
             lexical = pending.path && ::Lain::Shell::Named.resolved(pending.path, pending.cwd, home: @home)
             lexical ? [lexical, *landings(lexical)] : []
@@ -600,7 +606,7 @@ module Lain
         # A link to nothing keeps only its own name: its target could be
         # created anywhere later, and a guess at it would refuse the wrong file.
         def landings(path)
-          Landing.of(path, cwd: File::SEPARATOR, home: @home) - [path]
+          Landing.of(path, cwd: File::SEPARATOR, home: @home, facts: @file_facts) - [path]
         rescue ::Lain::Error, SystemCallError, ArgumentError, EncodingError
           []
         end

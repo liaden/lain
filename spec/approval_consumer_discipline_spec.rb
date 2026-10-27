@@ -62,6 +62,10 @@ module ApprovalConsumerDiscipline
     "lain/cli/human_replies.rb" => {
       "@questions" => "ask_human's own queue, not an approval queue",
       "queue" => "ask_human's own queue, drained non-blockingly by Pending#gather"
+    },
+    "lain/bench/approval_replay/stack.rb" => {
+      "@replay_queue" => "an approval replay's own queue, built per session inside the replay with no human " \
+                         "surface on it, so the replay's approver is its one consumer"
     }
   }.freeze
 

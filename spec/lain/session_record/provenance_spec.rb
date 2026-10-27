@@ -269,4 +269,17 @@ RSpec.describe Lain::SessionRecord::Provenance do
       end
     end
   end
+
+  describe ".policy_of" do
+    it "is the digest .policy writes, over trusts already read" do
+      Dir.mktmpdir("lain-provenance-policy") do |dir|
+        paths = Lain::Paths.new(env: { "HOME" => File.join(dir, "h") })
+        FileUtils.mkdir_p([File.join(dir, "p"), File.join(dir, "h")])
+        project_dir = Lain::ProjectDir.new(root: File.join(dir, "p"), paths:)
+        trusts = [Lain::Project::Trust.for(project_dir:, paths:), Lain::Project::Trust.for_user(paths:)]
+
+        expect(described_class.policy_of(*trusts)).to eq(described_class.policy(project_dir:, paths:))
+      end
+    end
+  end
 end

@@ -19,6 +19,17 @@ RSpec.describe Lain::CLI::Switchboard do
 
   def mode(approval) = Lain::Mode.new(approval:)
 
+  describe "the file facts its queue remembers a denial by" do
+    it "are the path policy's own, so a replay's queue never reads the disk either" do
+      facts = Lain::FileFacts::Recorded.new(places: ["/p"])
+      sensitivity = Lain::Sensitivity.new(home: "/home/tester", cwd: "/p", root: "/p")
+      policy = Lain::Sensitivity::Policy.new(sensitivity:, home: "/home/tester", root: "/p", file_facts: facts)
+
+      expect(switchboard(sensitivity: policy).approvals.file_facts).to be(facts)
+      expect(switchboard.approvals.file_facts).to be(Lain::FileFacts::LIVE)
+    end
+  end
+
   def layout_run = Lain::Middleware::GuardTestLayout::Run.undeclared
 
   def gated_call = Struct.new(:name, :input, :tool_use_id).new("bash", { "command" => "ls" }, "tu_1")

@@ -13,6 +13,21 @@ RSpec.describe Lain::TestLayout::Guard do
 
   def guard_over(root) = described_class.new(layout: Lain::Config.test_layout(root:), root:)
 
+  describe "the file facts it resolves its root by" do
+    it "resolves the root through the injected facts, with nothing on disk" do
+      facts = Lain::FileFacts::Recorded.new(places: ["/home/user/project"],
+                                            landings: { "/home/user/link" => "/home/user/project" })
+
+      guard = described_class.new(layout: Lain::TestLayout::None, root: "/home/user/link", file_facts: facts)
+
+      expect(guard.root).to eq("/home/user/project")
+    end
+
+    it "resolves it on the live disk by default" do
+      expect(guard.root).to eq(File.realpath(layout_mini))
+    end
+  end
+
   # Callers set policy per rule, and a record names the rule it refused under,
   # so the guard publishes the list rather than leave each reader a copy.
   describe "the rules it refuses under" do

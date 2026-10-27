@@ -278,13 +278,14 @@ module Lain
       #
       # @param layout [TestLayout]
       # @param root [String] the project root test and source paths are relative to
+      # @param file_facts [FileFacts::Live, FileFacts::Recorded] what the root is resolved through
       # @param index [ConstantIndex] injected so one index serves a whole session
-      def initialize(layout:, root:, index: ConstantIndex.new(root: File.realpath(root),
-                                                              source_roots: layout.source_roots,
-                                                              extension: layout.preset.extension))
+      def initialize(layout:, root:, file_facts: FileFacts::LIVE,
+                     index: ConstantIndex.new(root: file_facts.realpath(root), source_roots: layout.source_roots,
+                                              extension: layout.preset.extension))
         @layout = layout
         @mapping = layout.mapping
-        @root = File.realpath(root)
+        @root = file_facts.realpath(root)
         @roots = [@root, File.expand_path(root)].uniq.freeze
         @reader = Reader.new(@mapping.levels.map(&:name))
         @placer = Placer.new(mapping: @mapping, index:, source_roots: layout.source_roots)

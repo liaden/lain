@@ -798,6 +798,34 @@ RSpec.describe Lain::Approval::Judged do
       expect([ruling.verdict, spawn.calls.size]).to eq([:allow, 1])
     end
 
+    describe "through the policy's file facts" do
+      let(:facts) { Lain::FileFacts::Recorded.new(places: [root, home]) }
+      let(:policy) do
+        Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root, root:), home:, root:,
+                                      file_facts: facts)
+      end
+
+      it "weighs a glob's matches as the facts list them, with nothing on disk" do
+        allow(facts).to receive(:glob).and_return([".env"])
+        spawn = spawn_answering("approve")
+
+        settled(rung(spawn), bash("cat *env"), within: context)
+
+        expect(spawn.calls).to be_empty
+      end
+
+      it "names the git store where the facts say a walked .git is a directory, with nothing on disk" do
+        allow(facts).to receive(:directory?).and_call_original
+        allow(facts).to receive(:directory?).with("#{root}/.git").and_return(true)
+        allow(facts).to receive(:each_child) { |directory, &each| each.call(".git") if directory == root }
+        spawn = spawn_answering("approve")
+
+        settled(rung(spawn), bash("grep -r needle ."), within: context)
+
+        expect(spawn.calls).to be_empty
+      end
+    end
+
     describe "on disk" do
       around do |example|
         Dir.mktmpdir("lain-judged") do |dir|

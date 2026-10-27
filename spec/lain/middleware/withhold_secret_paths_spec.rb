@@ -105,6 +105,42 @@ RSpec.describe Lain::Middleware::WithholdSecretPaths, :seam do
   # "untouched" is asserted against the real output rather than a literal.
   def unguarded = Lain::Middleware::Stack.new([])
 
+  describe "the file facts it tells a searched file from a directory by" do
+    it "asks the live disk by default" do
+      expect(middleware.file_facts).to be(Lain::FileFacts::LIVE)
+    end
+
+    it "refuses a search of a gated file the facts say is there, with nothing on disk" do
+      facts = Lain::FileFacts::Recorded.new(places: ["/p"], landings: { "/p/.env" => "/p/.env" })
+      guard = described_class.new(filter: Lain::Sensitivity::Filter.new(sensitivity: Lain::Sensitivity.new(
+        home: "/home/u", cwd: "/p"
+      )), file_facts: facts)
+      context = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: "/p", env: {}))
+      allow(File).to receive(:file?).and_raise("live File.file?")
+
+      env = Lain::Middleware::Stack.new([guard]).call(effect: effect("grep", { "pattern" => "x", "path" => ".env" }),
+                                                      context:) { _1.merge(result: Lain::Tool::Result.ok("")) }
+
+      expect(content(env)).to eq(described_class::GATED_FILE_SEARCH)
+    end
+
+    it "reads a searched file's rows as that file's alone when the facts say it is one, with nothing on disk" do
+      facts = Lain::FileFacts::Recorded.new(places: ["/p"], landings: { "/p/logs" => "/p/logs" })
+      guard = described_class.new(filter: Lain::Sensitivity::Filter.new(sensitivity: Lain::Sensitivity.new(
+        home: "/home/u", cwd: "/p"
+      )), file_facts: facts)
+      context = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: "/p", env: {}))
+      allow(File).to receive(:file?).and_raise("live File.file?")
+
+      env = Lain::Middleware::Stack.new([guard]).call(effect: effect("grep", { "pattern" => "x", "path" => "logs" }),
+                                                      context:) do |inner|
+        inner.merge(result: Lain::Tool::Result.ok("logs:1:.env:9:token"))
+      end
+
+      expect(content(env)).to eq("logs:1:.env:9:token")
+    end
+  end
+
   describe "a grep whose matches include a gated file" do
     it "prints no line out of it, and says one match was withheld" do
       shown = content(grep("API_KEY"))

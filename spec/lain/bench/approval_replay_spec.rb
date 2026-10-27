@@ -1,0 +1,340 @@
+# frozen_string_literal: true
+
+require "digest"
+require "find"
+require "json"
+require "tmpdir"
+
+RSpec.describe Lain::Bench::ApprovalReplay do
+  let(:fixtures) { ApprovalReplayFixtures::DIR }
+  let(:ask) { File.join(fixtures, "ask.ndjson") }
+  let(:auto) { File.join(fixtures, "auto.ndjson") }
+  let(:rules_a) { File.join(fixtures, "rules_a.rb") }
+  let(:rules_b) { File.join(fixtures, "rules_b.rb") }
+  let(:project) { ApprovalReplayFixtures.place }
+
+  def arm(approval, rules: nil, approver: :recorded) = described_class::Arm.new(approval:, rules_path: rules, approver:)
+
+  def replay(paths, *arms) = described_class.from_journals(Array(paths), arms:, project:)
+
+  def rows_of(paths, *arms) = replay(paths, *arms).rows.to_a
+
+  def ruled(rows) = rows.to_h { [_1.tool_use_id, [_1.rung, _1.verdict]] }
+
+  def calls(path) = described_class::Call.joined(Lain::Journal.records(File.foreach(path)).to_a, session: path)
+
+  # A decision's latency is read off the monotonic clock as the fixture was written, the one field
+  # that differs between two writes of the same session.
+  def unclocked(path) = File.foreach(path).map { JSON.parse(_1).except("latency") }
+
+  def tree_digest(dir)
+    files = Find.find(dir).select { File.file?(_1) }.sort
+    Digest::SHA256.hexdigest(files.map { "#{_1.delete_prefix(dir)}\0#{File.binread(_1)}" }.join("\0"))
+  end
+
+  # Every class-level question File and Dir answer about the disk raises from here on.
+  def forbid_the_disk
+    %i[realpath symlink? exist? file? directory? readlink lstat stat read binread write foreach].each do |name|
+      allow(File).to receive(name).and_raise("live File.#{name}")
+    end
+    %i[glob each_child children pwd entries].each { allow(Dir).to receive(_1).and_raise("live Dir.#{_1}") }
+  end
+
+  def call(id, tool, input, **rest)
+    described_class::Call.new(session: "/s/probe.ndjson", tool:, input:, tool_use_id: id, place: project, **rest)
+  end
+
+  describe "the committed fixtures" do
+    it "are what the record writers produce today" do
+      Dir.mktmpdir("lain-approval-replay-fixtures") do |dir|
+        FileUtils.cp(rules_a, dir)
+        ApprovalReplayFixtures.write(dir)
+
+        %w[ask.ndjson auto.ndjson].each do |name|
+          expect(unclocked(File.join(dir, name))).to eq(unclocked(File.join(fixtures, name))),
+                                                     "#{name} is stale; regenerate it as the builder's header says"
+        end
+      end
+    end
+  end
+
+  describe "a session recorded under ask, replayed under ask with the recorded approver" do
+    let(:rows) { rows_of(ask, arm(:ask, rules: rules_a)) }
+
+    it "yields one row per joined gated call, naming its session" do
+      expect(rows.map(&:tool_use_id)).to eq(%w[tu_1 tu_2 tu_3 tu_4 tu_5])
+      expect(rows.map(&:session).uniq).to eq([ask])
+    end
+
+    it "lands every call on the rung and verdict that ruled it live" do
+      expect(ruled(rows)).to eq("tu_1" => %w[rules allow], "tu_2" => %w[surfaces allow],
+                                "tu_3" => %w[surfaces deny], "tu_4" => %w[triage deny], "tu_5" => %w[surfaces allow])
+      expect(replay(ask, arm(:ask, rules: rules_a)).report).to include("agrees with the live record: 5 of 5")
+    end
+
+    it "answers a call that parked twice live with its answers in the order given" do
+      expect(calls(ask).find { _1.tool_use_id == "tu_2" }.decisions).to eq(%w[approve deny])
+      expect(rows.find { _1.tool_use_id == "tu_2" }).to have_attributes(rung: "surfaces", verdict: "allow",
+                                                                        prompted: true)
+    end
+
+    it "asks the recorded human only about the calls that parked live" do
+      expect(rows.select(&:prompted).map(&:tool_use_id)).to eq(%w[tu_2 tu_3 tu_5])
+    end
+
+    it "replays a child's call as that child" do
+      expect(rows.find { _1.tool_use_id == "tu_5" }).to have_attributes(requester: "researcher", verdict: "allow")
+    end
+  end
+
+  describe "the disk" do
+    it "is never asked while a call of any tool the replay holds is re-decided at any level" do
+      inputs = { "bash" => { "command" => "grep -R token ." }, "read_file" => { "path" => "../other/.env" },
+                 "write_file" => { "path" => "spec/a_spec.rb", "content" => "x" },
+                 "edit_file" => { "path" => "lib/a.rb", "old_string" => "a", "new_string" => "b" },
+                 "list_files" => { "path" => "src" }, "glob" => { "pattern" => "**/*.rb" },
+                 "grep" => { "pattern" => "secret", "path" => "config/app.yml" },
+                 "ast_search" => { "pattern" => "def $X", "path" => "lib" },
+                 "file_symbols" => { "path" => "lib/a.rb" } }
+      expect(inputs.keys).to match_array(described_class::Stack::TOOLS.keys)
+      built = described_class.new(calls: inputs.each_with_index.map { |(tool, input), i| call("tu_#{i}", tool, input) },
+                                  arms: %i[ask auto bypass].map { arm(_1, approver: :perfect) }, project:)
+      expect(Lain::Effect::Handler::Live).not_to receive(:new)
+      expect(Lain::CLI::Backend).not_to receive(:new)
+      forbid_the_disk
+
+      expect(built.rows.count).to eq(27)
+    end
+
+    it "is left byte-identical in a project a live session ruled over" do
+      Dir.mktmpdir("lain-approval-replay-project") do |dir|
+        root = File.join(File.realpath(dir), "project")
+        FileUtils.mkdir_p([File.join(root, "src"), File.join(dir, "home")])
+        File.write(File.join(root, ".env"), ApprovalReplayFixtures::SECRET)
+        at = described_class::Place.new(cwd: root, root:, home: File.join(File.realpath(dir), "home"))
+        session = ApprovalReplayFixtures.record(File.join(dir, "live.ndjson"), ApprovalReplayFixtures::ASK,
+                                                approval: :ask, rules: rules_a, policy: "blake3:#{"0" * 64}", at:,
+                                                facts: Lain::FileFacts::LIVE)
+        before = tree_digest(root)
+        built = described_class.from_journals([session], arms: [arm(:ask, rules: rules_a)], project:)
+        forbid_the_disk
+
+        report = built.report
+        RSpec::Mocks.space.reset_all
+
+        expect(report).to include("agrees with the live record: 5 of 5")
+        expect(tree_digest(root)).to eq(before)
+      end
+    end
+  end
+
+  describe "the report" do
+    let(:report) { replay(ask, arm(:ask, rules: rules_a)).report }
+
+    it "lists an unjoined call by session rather than dropping it" do
+      expect(report).to include("unjoined: ask.ndjson tu_6 (bash)")
+    end
+
+    it "names the session on every call's line" do
+      expect(report.lines.grep(/ tu_\d /)).to all(include("ask.ndjson"))
+    end
+
+    it "marks a call whose files the session never recorded as state unknown, and counts them" do
+      replayed = replay(ask, arm(:ask, rules: rules_a))
+
+      expect(replayed.rows.find { _1.tool_use_id == "tu_1" }.state).to eq("recorded")
+      expect(replayed.rows.find { _1.tool_use_id == "tu_2" }.state).to eq("unknown")
+      expect(report).to match(/state unknown: \d+ of 5/)
+    end
+
+    it "says what it never replays, once, at its head" do
+      expect(report.lines.grep(/\Anot replayed: /).size).to eq(1)
+      expect(report).to include("sensitivity and tests tables", "BoardBuild.approving", "judge-facts",
+                                "non-interactive")
+    end
+
+    it "says the place a pre-provenance session was replayed under" do
+      expect(replay(auto, arm(:auto)).report)
+        .to include("auto.ndjson: cwd, root and policy unrecorded: replayed under the current project")
+      expect(report).not_to include("unrecorded: replayed")
+    end
+
+    it "says when a session ran under a project config the replay does not read" do
+      expect(report).to include("ask.ndjson: recorded under project config #{"blake3:#{"0" * 64}"}")
+    end
+
+    it "says nothing of a config for a session recorded with none" do
+      Dir.mktmpdir("lain-approval-replay-unconfigured") do |dir|
+        paths = Lain::Paths.new(env: { "HOME" => File.join(dir, "h") })
+        FileUtils.mkdir_p([File.join(dir, "p"), File.join(dir, "h")])
+        project_dir = Lain::ProjectDir.new(root: File.join(dir, "p"), paths:)
+        none = Lain::SessionRecord::Provenance.policy(project_dir:, paths:)
+        session = ApprovalReplayFixtures.record(File.join(dir, "bare.ndjson"), ApprovalReplayFixtures::ASK,
+                                                approval: :ask, rules: rules_a, policy: none)
+
+        expect(replay(session, arm(:ask, rules: rules_a)).report).not_to include("recorded under project config")
+      end
+    end
+
+    it "counts the session files read, gated calls or not" do
+      Dir.mktmpdir("lain-approval-replay-quiet") do |dir|
+        quiet = File.join(dir, "quiet.ndjson")
+        File.write(quiet, File.foreach(ask).first)
+
+        expect(replay([ask, quiet], arm(:ask, rules: rules_a)).report).to include("in 2 sessions")
+      end
+    end
+  end
+
+  describe "two rule sets over the same session" do
+    let(:replayed) { replay(ask, arm(:ask, rules: rules_a), arm(:ask, rules: rules_b)) }
+
+    it "pairs each call whose verdict changed" do
+      changed = replayed.diff(*replayed.arms)
+
+      expect(changed.map { |a, b| [a.tool_use_id, a.verdict, b.verdict] }).to eq([%w[tu_1 allow deny]])
+    end
+
+    it "says when a parked call had no recorded answer, so a refusal nobody gave is not read as a human's" do
+      expect(replayed.rows.select { _1.tool_use_id == "tu_1" }.map(&:unanswered).to_a).to eq([false, true])
+      expect(replayed.report).to include("tu_1 bash agent: deny by surfaces [prompted] [no recorded answer, refused]")
+    end
+
+    it "reports both rule sets by name beside each change, and counts the unchanged calls" do
+      expect(replayed.report).to include("rules_a.rb", "rules_b.rb").and match(/tu_1 bash: allow .* -> deny/)
+      expect(replayed.report).to include("unchanged: 4")
+    end
+
+    it "keeps two rule sets sharing a file name apart" do
+      Dir.mktmpdir("lain-approval-replay-rules") do |dir|
+        paths = %w[a b].map { File.join(dir, _1, "rules.rb") }
+        paths.each { FileUtils.mkdir_p(File.dirname(_1)) }
+        FileUtils.cp(rules_a, paths[0])
+        FileUtils.cp(rules_b, paths[1])
+        both = replay(ask, arm(:ask, rules: paths[0]), arm(:ask, rules: paths[1]))
+
+        expect(both.rows.count { _1.arm == both.arms.first }).to eq(5)
+        expect(both.diff(*both.arms).map { _1.first.tool_use_id }).to eq(%w[tu_1])
+        expect(both.report).to include(*paths)
+        expect(both.report.lines.grep(/tu_1 bash: /).first).to include("[#{paths[0]}]", "[#{paths[1]}]")
+      end
+    end
+
+    it "refuses the same arm twice, naming it, however it is built" do
+      expect do
+        described_class.asked(sessions: [ask], approvals: %w[ask ask], rules: [], approver: "recorded", project:)
+      end.to raise_error(Lain::Bench::CLI::Refusal, /ask no rules recorded/)
+      expect { described_class.new(calls: [], arms: [arm(:ask), arm(:ask)], project:) }
+        .to raise_error(ArgumentError, /ask no rules recorded/)
+    end
+
+    it "refuses a replay of no session at all" do
+      expect { described_class.asked(sessions: [], approvals: %w[ask], rules: [], approver: "recorded", project:) }
+        .to raise_error(Lain::Bench::CLI::Refusal, /session file/)
+    end
+
+    it "sets beside each other only arms that differ in one thing, so each change has one cause" do
+      three = replay(ask, arm(:ask, rules: rules_a), arm(:auto, rules: rules_b), arm(:ask, rules: rules_b)).report
+
+      expect(three.lines.grep(/ -> /).grep_v(/\A  /).map(&:chomp))
+        .to eq(["ask rules_a.rb recorded -> ask rules_b.rb recorded",
+                "auto rules_b.rb recorded -> ask rules_b.rb recorded"])
+    end
+  end
+
+  describe "a decision nobody gave" do
+    let(:env) { { "path" => ".env" } }
+
+    it "is not read off a decision the clock or a stop made" do
+      records = [{ "type" => "turn", "role" => "assistant",
+                   "content" => [{ "type" => "tool_use", "id" => "tu_1", "name" => "read_file", "input" => env }] },
+                 { "type" => "escalation", "tool_use_id" => "tu_1", "rung" => "surfaces", "verdict" => "deny" },
+                 { "type" => "approval_decision", "tool_use_id" => "tu_1", "verdict" => "deny", "timed_out" => true,
+                   "surface" => "timeout" },
+                 { "type" => "approval_decision", "tool_use_id" => "tu_1", "verdict" => "deny", "timed_out" => false,
+                   "surface" => "abandoned" }]
+
+      expect(described_class::Call.joined(records, session: "s").first.decisions).to eq([])
+    end
+
+    it "is refused without being remembered as a person's no about the path" do
+      both = [call("tu_1", "read_file", env), call("tu_2", "read_file", env, decisions: ["approve"])]
+      rows = described_class.new(calls: both, arms: [arm(:ask)], project:).rows.to_a
+
+      expect(rows.map { [_1.tool_use_id, _1.rung, _1.verdict, _1.unanswered] })
+        .to eq([["tu_1", "surfaces", "deny", true], ["tu_2", "surfaces", "allow", false]])
+    end
+  end
+
+  describe "an approver that never answers" do
+    it "fails the replay once the window closes, naming the call" do
+      silent = Object.new
+      def silent.answer(_pending) = nil
+      stack = described_class::Stack.new(place: project, arm: arm(:ask), judge: described_class::RecordedJudge.new,
+                                         window: 0.2)
+
+      expect do
+        stack.session(approver: silent) do |dispatch|
+          dispatch.call(call("tu_9", "read_file", { "path" => ".env" }))
+        end
+      end
+        .to raise_error(described_class::Failed, /tu_9: a parked call went unanswered/)
+    end
+
+    it "is given the replay's window, not a chat's" do
+      windows = []
+      timing = Object.new
+      timing.define_singleton_method(:answer) do |pending|
+        (windows << pending.timeout) && pending.approve(surface: "s")
+      end
+      stack = described_class::Stack.new(place: project, arm: arm(:ask), judge: described_class::RecordedJudge.new)
+
+      stack.session(approver: timing) { |dispatch| dispatch.call(call("tu_9", "read_file", { "path" => ".env" })) }
+
+      expect(windows).to eq([described_class::Stack::ANSWER_WINDOW])
+    end
+  end
+
+  describe "an approver that raises" do
+    it "fails the replay at once, naming the session and the call" do
+      broken = Object.new
+      def broken.answer(_pending) = raise("approver broke")
+      stack = described_class::Stack.new(place: project, arm: arm(:ask), judge: described_class::RecordedJudge.new)
+      started = Lain::RunClock::MONOTONIC.call
+
+      expect do
+        stack.session(approver: broken) do |dispatch|
+          dispatch.call(call("tu_9", "read_file", { "path" => ".env" }))
+        end
+      end
+        .to raise_error(described_class::Failed, %r{/s/probe.ndjson.*tu_9.*approver broke})
+      expect(Lain::RunClock::MONOTONIC.call - started).to be < described_class::Stack::ANSWER_WINDOW
+    end
+  end
+
+  describe "a session recorded under auto, replayed under auto" do
+    let(:rows) { rows_of(auto, arm(:auto)) }
+
+    it "answers each call with the judge's recorded verdict, asking no model" do
+      expect(described_class::RecordedJudge::NoModel).not_to receive(:call)
+
+      expect(ruled(rows)).to eq("tu_1" => %w[auto allow], "tu_2" => %w[auto deny], "tu_3" => %w[surfaces allow],
+                                "tu_4" => %w[auto allow])
+    end
+
+    it "reports a call whose recorded prompt digest differs from today's prompt as drifted" do
+      expect(rows.to_h { [_1.tool_use_id, _1.judge] })
+        .to eq("tu_1" => "replayed", "tu_2" => "replayed", "tu_3" => "replayed", "tu_4" => "drifted")
+      expect(replay(auto, arm(:auto)).report).to include("judge input drifted: auto.ndjson tu_4")
+    end
+  end
+
+  describe "the perfect approver" do
+    it "approves every call that parks" do
+      rows = rows_of(ask, arm(:ask, rules: rules_a, approver: :perfect))
+
+      expect(rows.select(&:prompted).map { [_1.tool_use_id, _1.verdict] })
+        .to eq([%w[tu_2 allow], %w[tu_3 allow], %w[tu_5 allow]])
+    end
+  end
+end
