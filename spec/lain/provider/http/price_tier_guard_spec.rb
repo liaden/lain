@@ -242,6 +242,34 @@ RSpec.describe Lain::Provider::HTTP::PriceTierGuard do
     expect(shown.map(&:decision)).to eq([:carried])
   end
 
+  describe "over a hold bound to approve one request at a time" do
+    let(:answer) { %i[approve deny] }
+
+    it "asks about every crossing, and refuses a later one on the approved model that is not approved itself" do
+      sent = stub_messages
+      hold.bind(nil, channel, carry: false)
+      connection = build_connection(counter: counter(104_000))
+
+      connection.post("/v1/messages", near_tier)
+      expect { connection.post("/v1/messages", near_tier.merge(system: "a later turn")) }
+        .to raise_error(described_class::Refused, /100,000-token price tier/)
+
+      expect(asked.size).to eq(2)
+      expect(sent).to have_been_requested.once
+      expect(journal.map(&:decision)).to eq(%i[approve deny])
+    end
+
+    it "says an approval sends this request alone" do
+      stub_messages
+      hold.bind(nil, channel, carry: false)
+
+      build_connection(counter: counter(104_000)).post("/v1/messages", near_tier)
+
+      expect(asked.first.summary).to include("Approving sends this request alone")
+      expect(asked.first.summary).not_to include("every later request")
+    end
+  end
+
   it "lets a defect in counting propagate rather than reading it as an uncountable prompt" do
     stub_messages
     broken = ->(_body) { raise NoMethodError, "undefined method 'fetch' for nil" }
@@ -375,6 +403,13 @@ RSpec.describe Lain::Provider::HTTP::PriceTierGuard do
 
     it "refuses again once bound to nobody, as an unattended run is" do
       expect(described_class.new.tap { _1.bind(nil) }.decide(decision)).to eq(:refuse)
+    end
+
+    it "carries nothing when bound to approve one request at a time" do
+      hold = described_class.new.tap { _1.bind(nil, carry: false) }
+      hold.approve("claude-haiku-5-5")
+
+      expect(hold.carries?("claude-haiku-5-5")).to be(false)
     end
 
     it "carries an approved model and no other" do

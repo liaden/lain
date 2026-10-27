@@ -36,23 +36,31 @@ module Lain
           def initialize
             @approved = Set.new
             @notices = Channel::Null.instance
+            @carry = true
           end
 
           # @param queue [#ask_decision, nil] nil when no human is attached
           # @param notices [#push] where a crossing sent under an earlier approval is shown
+          # @param carry [Boolean] whether an approval covers later crossings on its model, as a
+          #   chat's does; false asks the queue about every crossing, for a caller whose human
+          #   approved a list of requests rather than a model
           # @return [void]
-          def bind(queue, notices = Channel::Null.instance)
+          def bind(queue, notices = Channel::Null.instance, carry: true)
             @queue = queue
             @notices = notices
+            @carry = carry
           end
 
           # @param model [String]
           # @return [void]
-          def approve(model) = @approved << model
+          def approve(model) = (@approved << model if @carry)
 
           # @param model [String]
           # @return [Boolean] whether an earlier approval covers this model
-          def carries?(model) = @approved.include?(model)
+          def carries?(model) = @carry && @approved.include?(model)
+
+          # @return [Boolean] whether an approval will cover later crossings on its model
+          def carrying? = @carry
 
           # @param record [Telemetry::PriceTierCrossed]
           # @return [void]
@@ -80,7 +88,7 @@ module Lain
           def call(body) = @provider.count_wire(body)
         end
 
-        Crossing = Data.define(:model, :tokens, :standard, :tier, :digest, :decision) do
+        Crossing = Data.define(:model, :tokens, :standard, :tier, :digest, :decision, :carry) do
           def sends? = %i[approve carried allow].include?(decision)
 
           def carried? = decision == :carried
@@ -95,8 +103,7 @@ module Lain
 
           def summary
             "#{crosses}, $#{Telemetry.fixed_point(standard_cost)} at the standard rate and " \
-              "$#{Telemetry.fixed_point(tier_cost)} at the tier rate. Approving sends this and every later " \
-              "request in this chat, its subagents included, on #{model} at the tier rate"
+              "$#{Telemetry.fixed_point(tier_cost)} at the tier rate. #{reach}"
           end
 
           def refusal = "#{crosses}; not sent without approval (--confirm-price-tier allow sends it)"
@@ -112,6 +119,13 @@ module Lain
           end
 
           private
+
+          def reach
+            return "Approving sends this request alone; a later crossing is asked about again" unless carry
+
+            "Approving sends this and every later request in this chat, its subagents included, on #{model} " \
+              "at the tier rate"
+          end
 
           def crosses
             "#{model}: #{delimited(tokens)} prompt tokens cross the #{delimited(boundary)}-token price tier"
@@ -205,7 +219,8 @@ module Lain
           tier = price.tiers.reverse.find { |candidate| tokens > candidate.above_prompt_tokens }
           return Under if tier.nil?
 
-          asked = Crossing.new(model: body[:model].to_s, tokens:, standard: price, tier:, digest:, decision: nil)
+          asked = Crossing.new(model: body[:model].to_s, tokens:, standard: price, tier:, digest:, decision: nil,
+                               carry: @hold.carrying?)
           asked.with(decision: decide(asked)).tap { |crossing| told(crossing) }
         end
 
