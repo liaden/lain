@@ -33,6 +33,45 @@ RSpec.describe Lain::Grader::Verified do
     Lain::Grader::Refuter.new(provider:, model: "claude-opus-4-8")
   end
 
+  describe "#grade with several refuters" do
+    def scripted(score)
+      Struct.new(:score) do
+        def refute(_finding) = Lain::Grader::Grade.new(score:, why: "scripted", pass: score >= 0.5)
+      end.new(score)
+    end
+
+    it "keeps a finding when a majority of its refuters keep it, journaling every verdict" do
+      journal = []
+      refuters = [scripted(0.9), scripted(0.1), scripted(0.9)]
+
+      survivors = described_class.new(inner: finding_grader(["f"]), refuter: refuters, journal:).grade("s")
+
+      expect(survivors.map(&:finding)).to eq(["f"])
+      expect(journal.map(&:survived)).to eq([true, false, true])
+      expect(journal.map(&:refuter)).to eq([1, 2, 3])
+    end
+
+    it "treats a lone refuter that is itself enumerable as one refuter, not a list" do
+      journal = []
+
+      survivors = described_class.new(inner: finding_grader(["f"]), refuter: scripted(0.9), journal:).grade("s")
+
+      expect(survivors.size).to eq(1)
+      expect(journal.map(&:refuter)).to eq([nil])
+    end
+
+    it "refuses an empty refuter list at construction" do
+      expect { described_class.new(inner: finding_grader(["f"]), refuter: []) }
+        .to raise_error(ArgumentError, /refuter/)
+    end
+
+    it "drops a finding a majority refutes, and a tie does not keep it" do
+      refuters = [scripted(0.9), scripted(0.1)]
+
+      expect(described_class.new(inner: finding_grader(["f"]), refuter: refuters).grade("s")).to be_empty
+    end
+  end
+
   describe "#grade" do
     it "filters false positives: fewer than N findings come back, each carrying its verdict" do
       inner = finding_grader(["genuinely missing the allergy warning",

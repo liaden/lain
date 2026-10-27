@@ -1,5 +1,5 @@
 ---
-description: Review what the user has put forward — research, a plan, a PR/MR, staged code, or the changes after finishing a plan — as a persona panel, ranked findings, without touching the tree. Use when asked to critique or review, not to implement.
+description: Review what the user has put forward — research, a plan, a PR/MR, staged code, or the changes after finishing a plan — as a persona panel, ranked findings, without touching the tree. Use when asked to critique or review, not to implement. With a changeset review held, options come first and the rest is the focus, as in `/critique critics=3 model=NAME the focus`.
 slots:
   - focus
 ---

@@ -25,14 +25,16 @@ module Lain
     # confidence alongside.
     # `scale` names the {Grader::Rubric::Scale} the judge answered on; nil in a record made before
     # scales existed, which {Bench::JudgeScale::Source} reads as unattributed rather than as unit.
-    Verdict = Data.define(:digest, :survived, :score, :why, :scale) do
+    # `refuter` is the 1-based index of the refuter that judged, set when several judge one finding; nil
+    # in a record made by a lone refuter or before indexes existed.
+    Verdict = Data.define(:digest, :survived, :score, :why, :scale, :refuter) do
       include Journalable
 
-      def initialize(digest:, survived:, score:, why:, scale: nil)
+      def initialize(digest:, survived:, score:, why:, scale: nil, refuter: nil)
         Carriers::Verdict.check!(digest:, survived:, why:)
 
         super(digest: digest.dup.freeze, survived:, score: score.to_f.clamp(0.0, 1.0), why: -why.to_s,
-              scale: scale&.to_s&.freeze)
+              scale: scale&.to_s&.freeze, refuter:)
       end
     end
   end

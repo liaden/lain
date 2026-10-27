@@ -43,6 +43,42 @@ module Lain
       # chose. A {Lain::Error}, so the dispatch boundary renders it.
       class ModelWithoutSpawn < Error; end
 
+      # The leading `key=value` words of a `/critique` line, which choose how it
+      # runs; whatever follows is the focus the critic is told. Keys are
+      # case-sensitive and only read up front, so a focus may mention one freely.
+      module CritiqueOptions
+        WORD = /\A(?<key>critics|model)=(?<value>\S*)\s*/
+
+        REPEATED = "/critique refused before spawning anything: %<key>s= was given twice"
+
+        BLANK_MODEL = "/critique refused before spawning anything: model= names no model"
+
+        # @param args [String] the text after `/critique`
+        # @return [Array(Hash, String)] the options, and the focus left over
+        # @raise [Review::Critique::Refused] for a repeated key or a blank model
+        def self.split(args)
+          options = {}
+          rest = args.to_s
+          while (match = WORD.match(rest))
+            key = match[:key].to_sym
+            raise Review::Critique::Refused, format(REPEATED, key:) if options.key?(key)
+
+            options[key] = key == :critics ? count(match[:value]) : model(match[:value])
+            rest = match.post_match
+          end
+          [options, rest]
+        end
+
+        # A word that is not a count is kept as itself, so {Review::Critique} refuses it by name.
+        def self.count(value) = value.match?(/\A\d+\z/) ? value.to_i : value
+
+        def self.model(value)
+          raise Review::Critique::Refused, BLANK_MODEL if value.empty?
+
+          value
+        end
+      end
+
       # The skill a held review round answers itself.
       CRITIQUE = :critique
 
@@ -96,8 +132,9 @@ module Lain
       # A refusal raises {Review::Critique::Refused}, a {Lain::Error}, so it
       # reaches the dispatch boundary exactly as an unknown role does.
       def report_critique(env, invocation)
-        critique = Review::Critique.new(changeset: @outbox.held_changeset, instructions: expand(invocation),
-                                        **@critique)
+        options, focus = CritiqueOptions.split(invocation.args)
+        critique = Review::Critique.new(changeset: @outbox.held_changeset,
+                                        instructions: expand(invocation.with(args: focus)), **@critique, **options)
         short_circuit(env, critique.call)
       end
 

@@ -32,7 +32,7 @@ module Lain
       end
 
       # @param inner [#grade] a finding-producing grader
-      # @param refuter [#refute] judges ONE finding, in a separate context. No
+      # @param refuter [#refute, Array<#refute>] judges ONE finding, in a separate context. No
       #   default -- {Refuter} needs a provider and model to construct, so the
       #   caller always names one explicitly (a live {Refuter} to judge for
       #   real, a {Refuter::Recorded} to replay journaled verdicts). Injectable
@@ -41,7 +41,9 @@ module Lain
       #   channel by default, so no caller guards `if journal`
       def initialize(inner:, refuter:, journal: Channel::Null::INSTANCE)
         @inner = inner
-        @refuter = refuter
+        @refuters = refuter.is_a?(Array) ? refuter : [refuter]
+        raise ArgumentError, "refuter: needs at least one refuter, got none" if @refuters.empty?
+
         @journal = journal
       end
 
@@ -56,10 +58,17 @@ module Lain
       # Judge, journal, THEN filter -- in that order, so a refuted finding
       # still leaves a Verdict record behind.
       def verify(finding)
-        grade = @refuter.refute(finding)
+        grades = @refuters.each_with_index.map { |refuter, index| judged(refuter, finding, index) }
+        kept = grades.select(&:pass?)
+        Finding.new(finding:, grade: kept.first) if kept.size * 2 > grades.size
+      end
+
+      def judged(refuter, finding, index)
+        grade = refuter.refute(finding)
         @journal << Telemetry::Verdict.new(digest: Canonical.digest(finding.to_s), survived: grade.pass?,
-                                           score: grade.score, why: grade.why)
-        Finding.new(finding:, grade:) if grade.pass?
+                                           score: grade.score, why: grade.why,
+                                           refuter: (index + 1 if @refuters.size > 1))
+        grade
       end
     end
   end

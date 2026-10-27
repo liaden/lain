@@ -18,4 +18,18 @@ RSpec.describe Lain::Telemetry::Verdict do
   it "stays deeply frozen with a scale" do
     expect(described_class.new(**fields, scale: +"three")).to be_deeply_frozen
   end
+
+  it "journals the index of the refuter that judged it" do
+    record = described_class.new(**fields, refuter: 2)
+
+    expect(JSON.parse(JSON.generate(record.to_journal))).to include("refuter" => 2)
+  end
+
+  it "reads an old record with no refuter as unindexed, and stays shareable" do
+    record = described_class.new(**fields)
+
+    expect(record.refuter).to be_nil
+    expect(Ractor.shareable?(record)).to be(true)
+    expect(Ractor.shareable?(described_class.new(**fields, refuter: 1))).to be(true)
+  end
 end

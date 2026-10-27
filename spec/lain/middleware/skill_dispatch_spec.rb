@@ -34,19 +34,19 @@ end
 # was lent and the prompt it was handed. `seam` answers the child's context,
 # which is where a critique reads the model it sizes against.
 class SkillDispatchCritiqueSpawn
-  Seam = Struct.new(:context_factory)
+  Seam = Struct.new(:context_factory, :provider)
 
   def initialize = @calls = []
 
   attr_reader :calls
 
-  def seam = Seam.new(-> { Lain::Context.new(model: "critic-model", max_tokens: 256) })
+  def seam = Seam.new(-> { Lain::Context.new(model: "critic-model", max_tokens: 256) }, Lain::Provider::Mock.new)
 
   def within(worker_env)
     lambda_spawn = self
     Class.new do
-      define_method(:call) do |role, mode, prompt|
-        lambda_spawn.calls << { cwd: worker_env.cwd, role:, mode:, prompt: }
+      define_method(:call) do |role, mode, prompt, model: Lain::Tools::Subagent::ModelChoice::Null|
+        lambda_spawn.calls << { cwd: worker_env.cwd, role:, mode:, prompt:, model: }
         Lain::Tool::Result.ok("critic findings")
       end
     end.new
@@ -387,6 +387,73 @@ RSpec.describe Lain::Middleware::SkillDispatch do
         run(dispatch, "/critique")
 
         expect(journal.map { |record| record.to_journal["type"] }).to eq(["critique_chunk"])
+      end
+    end
+
+    it "reads critics= from the invocation and keeps the rest as the focus" do
+      spawn = SkillDispatchCritiqueSpawn.new
+      with_dispatch(shipped: critique_skill, role_spawn: spawn, outbox: held_outbox) do |dispatch|
+        result, = run(dispatch, "/critique critics=3 the error paths")
+
+        expect(spawn.calls.size).to eq(3)
+        expect(spawn.calls.first[:prompt]).to include("the error paths")
+        expect(spawn.calls.first[:prompt]).not_to include("critics=3")
+        expect(journal.map(&:critic)).to eq([1, 2, 3])
+        expect(result.fetch(:response).text).to include("3 critics read this chunk")
+      end
+    end
+
+    it "refuses a critics value that is not a positive integer, before any spawn" do
+      spawn = SkillDispatchCritiqueSpawn.new
+      with_dispatch(shipped: critique_skill, role_spawn: spawn, outbox: held_outbox) do |dispatch|
+        expect { run(dispatch, "/critique critics=many") }
+          .to raise_error(Lain::Review::Critique::Refused, /critics/)
+        expect(spawn.calls).to be_empty
+      end
+    end
+
+    it "binds the named reviewer model for every critic and never asks the chat's model to summarise" do
+      spawn = SkillDispatchCritiqueSpawn.new
+      with_dispatch(shipped: critique_skill, role_spawn: spawn, outbox: held_outbox) do |dispatch|
+        result, seen = run(dispatch, "/critique model=glm-5.3:cloud")
+
+        expect(seen).to be_nil
+        expect(spawn.calls.map { |call| call[:model].model }).to eq(["glm-5.3:cloud"])
+        expect(result.fetch(:response).text).to include("read on glm-5.3:cloud", "critic findings")
+      end
+    end
+
+    it "refuses a present but blank model=, by name, before any spawn" do
+      spawn = SkillDispatchCritiqueSpawn.new
+      with_dispatch(shipped: critique_skill, role_spawn: spawn, outbox: held_outbox) do |dispatch|
+        expect { run(dispatch, "/critique model= the error paths") }
+          .to raise_error(Lain::Review::Critique::Refused, /model/)
+        expect(spawn.calls).to be_empty
+      end
+    end
+
+    it "refuses a repeated key, by name, before any spawn" do
+      spawn = SkillDispatchCritiqueSpawn.new
+      with_dispatch(shipped: critique_skill, role_spawn: spawn, outbox: held_outbox) do |dispatch|
+        expect { run(dispatch, "/critique critics=2 critics=3") }
+          .to raise_error(Lain::Review::Critique::Refused, /critics.*twice|twice.*critics/)
+        expect { run(dispatch, "/critique model=a model=b") }
+          .to raise_error(Lain::Review::Critique::Refused, /model.*twice|twice.*model/)
+        expect(spawn.calls).to be_empty
+      end
+    end
+
+    it "reads options only up front: a focus that opens with a key word, or carries one later, stays focus" do
+      spawn = SkillDispatchCritiqueSpawn.new
+      with_dispatch(shipped: critique_skill, role_spawn: spawn, outbox: held_outbox) do |dispatch|
+        run(dispatch, "/critique critics are slow here")
+        run(dispatch, "/critique Critics=3 model=x")
+        run(dispatch, "/critique watch the model=x flag")
+
+        expect(spawn.calls.size).to eq(3)
+        expect(spawn.calls.map { |call| call[:model].model }).to eq([""] * 3)
+        expect(spawn.calls.map { |call| call[:prompt][/critics are slow here|Critics=3 model=x|model=x flag/] })
+          .to eq(["critics are slow here", "Critics=3 model=x", "model=x flag"])
       end
     end
 

@@ -106,6 +106,20 @@ module Lain
 
       EMPTY = "no file of this commit survives in the changeset, so nothing was sent"
 
+      # Each critic is a full child per chunk, so the count is a spend the caller names and
+      # must not typo into a bill.
+      MAX_CRITICS = 5
+
+      BAD_CRITICS = "/critique refused before spawning anything: critics must be a whole number from 1 to " \
+                    "%<max>d, got %<critics>s"
+
+      NO_WINDOW = "/critique refused before spawning anything: no window is known for %<model>s, so a chunk " \
+                  "cannot be sized to it -- name a model the run's provider reports a window for"
+
+      # Said only when the chunk had several readers, so one critic renders
+      # exactly as it always has.
+      READERS = "%<critics>d critics read this chunk"
+
       HEADLINE = "critique of %<base>s..%<head>s in %<count>d chunk%<plural>s, each read by the %<role>s role " \
                  "from a checkout of %<head>s"
 
@@ -125,13 +139,18 @@ module Lain
       # @param spawn [#within, #seam] {Skill::RoleSpawn}: `within(worker_env)`
       #   lends a checkout and answers `call(role, mode, prompt)`; `seam` names
       #   the child's context, for its model and its response ceiling
-      # @param window [#resolve] the run's window book
+      # @param window [#resolve] the run's window book, asked about the reviewer's model when one is named
       # @param checkouts [#hold] cuts the checkout of the reviewed head; {Checkouts}
       # @param journal [#<<] where each chunk's record lands
       # @param slots [Prompt::Slots] renders the role's prelude, which is measured
       # @param instructions [String] the rendered critique skill, with any focus
       # @param role [Symbol] a {Role::Catalog} name
-      def initialize(changeset:, spawn:, window:, checkouts:, journal:, slots:, instructions:, role: ROLE)
+      # @param critics [Integer] how many independent children read each chunk,
+      #   one after another
+      # @param model [String, nil] a model to read the diff on in place of the
+      #   run's own; chunks are then sized to ITS window
+      def initialize(changeset:, spawn:, window:, checkouts:, journal:, slots:, instructions:, role: ROLE,
+                     critics: 1, model: nil)
         @changeset = changeset
         @spawn = spawn
         @window = window
@@ -140,6 +159,8 @@ module Lain
         @slots = slots
         @instructions = instructions
         @role = role
+        @critics = critics
+        @model = Tools::Subagent::ModelChoice.of(model, declared_by: "/critique")
       end
 
       # @return [String] the merged findings
@@ -147,7 +168,9 @@ module Lain
       def call
         raise Refused, NO_REVISION unless @changeset.sides == Source::BOTH_SIDES
         raise Refused, NOTHING_CHANGED if @changeset.files.empty?
+        raise Refused, format(BAD_CRITICS, max: MAX_CRITICS, critics: @critics.inspect) unless critics?
 
+        refuse_unserved_model!
         chunks = Packing.new(changeset: @changeset, budget:, brief: method(:brief)).chunks
         answers = @checkouts.hold(@changeset.head_ref) { |worker_env| answered(chunks, @spawn.within(worker_env)) }
         rendered(answers)
@@ -157,9 +180,19 @@ module Lain
 
       def budget
         context = @spawn.seam.context_factory.call
-        Budget.for(window: @window, model: context.model, max_tokens: context.max_tokens,
+        Budget.for(window: @window, model: reviewer(context), max_tokens: context.max_tokens,
                    prelude: Role::Catalog.fetch(@role).prelude(slots: @slots))
       end
+
+      # Asked of the run's own provider, once, so an unserved model is one refusal
+      # rather than a refused record for every critic of every chunk.
+      def refuse_unserved_model!
+        @model.bind(@spawn.seam.context_factory.call, provider: @spawn.seam.provider)
+      end
+
+      def critics? = @critics.is_a?(Integer) && (1..MAX_CRITICS).cover?(@critics)
+
+      def reviewer(context) = @model.model.empty? ? context.model : @model.model
 
       def brief(chunk, ordinal, count)
         Brief.new(instructions: @instructions, chunk:, ordinal:, count:, base_ref: @changeset.base_ref,
@@ -172,10 +205,15 @@ module Lain
         count = chunks.size
         chunks.each_with_index.map do |chunk, index|
           brief = brief(chunk, index + 1, count)
-          outcome, text = answer(lent, brief)
-          @journal << record(brief, outcome, text)
-          [brief, outcome, text]
+          readings = Array.new(@critics) { |critic| read(lent, brief, critic + 1) }
+          [brief, readings]
         end
+      end
+
+      def read(lent, brief, critic)
+        outcome, text = answer(lent, brief)
+        @journal << record(brief, outcome, text, critic)
+        text
       end
 
       # A child that fails costs its own chunk and never the others, for
@@ -191,7 +229,7 @@ module Lain
       def answer(lent, brief)
         return ["empty", EMPTY] if brief.paths.empty?
 
-        result = lent.call(@role, MODE, brief.to_s)
+        result = lent.call(@role, MODE, brief.to_s, model: @model)
         outcome(result.error? ? "refused" : "answered", result.text)
       rescue StandardError => e
         outcome("refused", e.message)
@@ -201,10 +239,10 @@ module Lain
 
       def said?(words) = !words.to_s.strip.empty?
 
-      def record(brief, outcome, text)
-        CritiqueChunk.new(head_ref: brief.head_ref, ordinal: brief.ordinal, count: brief.count,
-                          label: brief.label, paths: brief.paths, role: @role, brief_key: brief.key,
-                          outcome:, text: outcome == "answered" ? text : chunked(brief, text))
+      def record(brief, outcome, text, critic)
+        CritiqueChunk.new(head_ref: brief.head_ref, ordinal: brief.ordinal, count: brief.count, critic:,
+                          model: recorded_model, label: brief.label, paths: brief.paths, role: @role,
+                          brief_key: brief.key, outcome:, text: outcome == "answered" ? text : chunked(brief, text))
       end
 
       def chunked(brief, reason)
@@ -215,8 +253,21 @@ module Lain
         head = @changeset.head_ref[0, 12]
         count = answers.size
         headline = format(HEADLINE, base: @changeset.base_ref[0, 12], head:, count:, plural: count == 1 ? "" : "s",
-                                    role: @role)
-        [headline, *answers.map { |brief, _outcome, text| "#{brief.heading}\n\n#{text}" }].join("\n\n")
+                                    role: @role) + on_model
+        [headline, *answers.map { |brief, readings| "#{brief.heading}\n\n#{findings(readings)}" }].join("\n\n")
+      end
+
+      def recorded_model = @model.model.empty? ? nil : @model.model
+
+      def on_model = @model.model.empty? ? "" : ", read on #{@model.model}"
+
+      # Each critic's words verbatim under a heading of its own: agreement is
+      # for the reader to see, and nothing here summarises one critic into another.
+      def findings(readings)
+        return readings.first if readings.one?
+
+        sections = readings.each_with_index.map { |text, index| "### critic #{index + 1}\n\n#{text}" }
+        [format(READERS, critics: readings.size), *sections].join("\n\n")
       end
     end
 
@@ -225,14 +276,14 @@ module Lain
 
       # What a chunk may spend, in tokens of the child's served window.
       class Budget
-        # @param window [#resolve] the run's window book
-        # @param model [String] the child's model
+        # @param window [#resolve] asked for the reviewer's model, which is not always the chat's
+        # @param model [String] the model that reads the chunks, whose window sizes them
         # @param max_tokens [Integer] the child's output cap, of which only a {ReplyReserve} is held back
         # @param prelude [String] the role's rendered system prompt
         # @return [Budget]
         # @raise [Refused] for a window only a guess stands behind
         def self.for(window:, model:, max_tokens:, prelude:)
-          resolution = window.resolve(model)
+          resolution = resolved(window, model)
           unless resolution.authoritative?
             raise Refused, format(UNVOUCHED, model:, provenance: resolution.provenance,
                                              window: resolution.window_tokens)
@@ -242,6 +293,13 @@ module Lain
           new(model: -model.to_s, window_tokens: resolution.window_tokens, response_tokens:,
               reserved_tokens: response_tokens + Critique.tokens(prelude) + SCHEMA_RESERVE_TOKENS)
         end
+
+        def self.resolved(window, model)
+          window.resolve(model)
+        rescue ContextWindow::UnknownModel
+          raise Refused, format(NO_WINDOW, model:)
+        end
+        private_class_method :resolved
 
         # What a chunk's CONTENT may estimate, once the brief's fixed text is
         # paid for: its {READ_SHARE} of what is left.
@@ -445,7 +503,8 @@ module Lain
     end
 
     class Critique
-      CritiqueChunk = Data.define(:head_ref, :ordinal, :count, :label, :paths, :role, :brief_key, :outcome, :text) do
+      CritiqueChunk = Data.define(:head_ref, :ordinal, :count, :critic, :model, :label, :paths, :role, :brief_key,
+                                  :outcome, :text) do
         include Telemetry::Journalable
         include Declarative
 
@@ -453,6 +512,8 @@ module Lain
           attribute :head_ref
           attribute :ordinal
           attribute :count
+          attribute :critic
+          attribute :model
           attribute :label
           attribute :role
           attribute :brief_key
@@ -465,9 +526,14 @@ module Lain
           validates :text, presence: { message: Wire.refusal("must carry what came back for the chunk") }
         end
 
-        def initialize(head_ref:, ordinal:, count:, label:, paths:, role:, brief_key:, outcome:, text:)
+        def initialize(head_ref:, ordinal:, count:, label:, paths:, role:, brief_key:, outcome:, text:, critic: 1,
+                       model: nil)
           values = { head_ref: Wire.token(head_ref), ordinal: Epic::WireInteger.read(ordinal, field: "ordinal"),
-                     count: Epic::WireInteger.read(count, field: "count"), label: Wire.text(label),
+                     count: Epic::WireInteger.read(count, field: "count"),
+                     critic: Epic::WireInteger.read(critic, field: "critic"), model: (unless model.nil?
+                                                                                        Wire.token(model)
+                                                                                      end),
+                     label: Wire.text(label),
                      role: Wire.token(role), brief_key: Wire.token(brief_key), outcome: Wire.token(outcome),
                      text: Wire.text(text) }
           self.class.check!(**values)

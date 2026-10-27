@@ -8,22 +8,24 @@ require "tmpdir"
 # `seam` answers the one member a critique reads -- the child's context, for
 # the model whose window it sizes against and the response it reserves.
 class CritiqueSpecSpawn
-  Seam = Struct.new(:context_factory)
+  Seam = Struct.new(:context_factory, :provider)
 
-  def initialize(context: Lain::Context.new(model: "critic-model", max_tokens: 512), fails: {})
+  def initialize(context: Lain::Context.new(model: "critic-model", max_tokens: 512), fails: {},
+                 provider: Lain::Provider::Mock.new)
     @context = context
+    @provider = provider
     @fails = fails
     @calls = []
   end
 
   attr_reader :calls
 
-  def seam = Seam.new(-> { @context })
+  def seam = Seam.new(-> { @context }, @provider)
 
   def within(worker_env) = Lent.new(self, worker_env)
 
-  def spawned(worker_env, role, mode, prompt)
-    @calls << { worker_env:, role:, mode:, prompt: }
+  def spawned(worker_env, role, mode, prompt, model)
+    @calls << { worker_env:, role:, mode:, prompt:, model: }
     ordinal = @calls.size
     raise @fails.fetch(ordinal) if @fails.key?(ordinal)
 
@@ -37,7 +39,9 @@ class CritiqueSpecSpawn
       @worker_env = worker_env
     end
 
-    def call(role, mode, prompt) = @spawn.spawned(@worker_env, role, mode, prompt)
+    def call(role, mode, prompt, model: Lain::Tools::Subagent::ModelChoice::Null)
+      @spawn.spawned(@worker_env, role, mode, prompt, model)
+    end
   end
 end
 
@@ -397,6 +401,166 @@ RSpec.describe Lain::Review::Critique do
         .to raise_error(described_class::Refused, /critic-model is guessed.*--num-ctx.*published table/)
       expect(spawn.calls).to be_empty
       expect(checkouts.held).to be_empty
+    end
+  end
+
+  describe "several critics reading each chunk" do
+    let(:changeset) { changeset_of({ "lib/a.rb" => 4, "lib/b.rb" => 4 }, commits: 2) }
+
+    def critics(count, **)
+      described_class.new(changeset:, spawn:, window: window(32_768), checkouts:, journal:,
+                          slots: @slots, instructions: "# critique", critics: count, **)
+    end
+
+    it "spawns each chunk's critics one at a time, chunk by chunk" do
+      critics(3).call
+
+      expect(spawn.calls.size).to eq(6)
+      expect(spawn.calls.map do |call|
+        call[:prompt][/chunk \d of 2/]
+      end).to eq((["chunk 1 of 2"] * 3) + (["chunk 2 of 2"] * 3))
+    end
+
+    it "journals a record per critic, numbered 1 to 3 within the chunk" do
+      critics(3).call
+
+      expect(journal.map { |record| [record.ordinal, record.critic] })
+        .to eq([[1, 1], [1, 2], [1, 3], [2, 1], [2, 2], [2, 3]])
+    end
+
+    it "lists each critic's findings under its own heading and says how many read the chunk" do
+      findings = critics(3).call
+
+      expect(findings.scan("3 critics read this chunk").size).to eq(2)
+      expect(findings)
+        .to match(/critic 1.*findings from child 1.*critic 2.*findings from child 2.*critic 3.*findings from child 3/m)
+    end
+
+    it "renders one critic exactly as before" do
+      findings = critics(1).call
+
+      expect(findings).to include("findings from child 1", "findings from child 2")
+      expect(findings).not_to include("critics read this chunk", "### critic")
+    end
+
+    it "records the model that read each chunk, nil when none was named" do
+      critique(changeset).call
+      expect(journal.map(&:model)).to eq([nil, nil])
+    end
+
+    it "journals the default critic as number 1" do
+      critique(changeset).call
+
+      expect(journal.map(&:critic)).to eq([1, 1])
+    end
+
+    it "refuses a count below 1 before spawning" do
+      expect { critics(0).call }.to raise_error(described_class::Refused, /critics/)
+      expect(spawn.calls).to be_empty
+    end
+
+    it "refuses a count above the cap before spawning or cutting a checkout" do
+      expect { critics(described_class::MAX_CRITICS + 1).call }
+        .to raise_error(described_class::Refused, /critics.*#{described_class::MAX_CRITICS}/o)
+      expect(spawn.calls).to be_empty
+      expect(checkouts.held).to be_empty
+    end
+
+    it "accepts the cap itself" do
+      critics(described_class::MAX_CRITICS).call
+
+      expect(spawn.calls.size).to eq(described_class::MAX_CRITICS * 2)
+    end
+  end
+
+  describe "a named reviewer model" do
+    let(:changeset) { changeset_of({ "lib/a.rb" => 4 }) }
+    let(:cross_lab_window) do
+      Lain::CLI::Backend::WindowBook::Served.new(model: "glm-5.3:cloud", window_tokens: 16_384,
+                                                 provenance: Lain::ContextWindow::PROBED)
+    end
+
+    def cross_lab(**)
+      described_class.new(changeset:, spawn:, window: cross_lab_window, checkouts:, journal:,
+                          slots: @slots, instructions: "# critique", model: "glm-5.3:cloud", **)
+    end
+
+    it "binds every spawned critic to that model" do
+      cross_lab.call
+
+      expect(spawn.calls.map { |call| call[:model].model }).to eq(["glm-5.3:cloud"])
+    end
+
+    it "records the named model on every chunk's record" do
+      cross_lab(critics: 2).call
+
+      expect(journal.map(&:model)).to eq(["glm-5.3:cloud"] * 2)
+    end
+
+    it "names the model that read the diff in the headline" do
+      expect(cross_lab.call).to include("read on glm-5.3:cloud")
+    end
+
+    it "sizes chunks to the reviewer's window rather than the chat model's" do
+      small = changeset_of(many_files(70, 100))
+      reviewer = described_class.new(changeset: small, spawn:, window: cross_lab_window, checkouts:, journal:,
+                                     slots: @slots, instructions: "# critique", model: "glm-5.3:cloud")
+      chat = described_class.new(changeset: small, spawn:, window: window(131_072), checkouts:, journal:,
+                                 slots: @slots, instructions: "# critique")
+
+      reviewer.call
+      reviewer_chunks = spawn.calls.size
+      spawn.calls.clear
+      chat.call
+
+      expect(reviewer_chunks).to be > spawn.calls.size
+    end
+
+    it "refuses once, by name, before any checkout or spawn, a model the run's provider does not serve" do
+      unserved = Struct.new(:serving) { def serves?(_model) = serving }
+                       .new(Lain::Provider::Serving::NOT_SERVED)
+      refusing = CritiqueSpecSpawn.new(provider: unserved)
+
+      expect do
+        described_class.new(changeset:, spawn: refusing, window: cross_lab_window, checkouts:, journal:,
+                            slots: @slots, instructions: "# critique", critics: 3, model: "glm-5.3:cloud").call
+      end.to raise_error(Lain::Tools::Subagent::ModelChoice::Unserved, /glm-5\.3:cloud/)
+      expect(refusing.calls).to be_empty
+      expect(checkouts.held).to be_empty
+      expect(journal).to be_empty
+    end
+
+    it "refuses by name a model the window book has never heard of" do
+      blind = Struct.new(:x) { def resolve(model) = raise(Lain::ContextWindow::UnknownModel, "no #{model}") }.new(0)
+
+      expect do
+        described_class.new(changeset:, spawn:, window: blind, checkouts:, journal:, slots: @slots,
+                            instructions: "# critique", model: "glm-5.3:cloud").call
+      end.to raise_error(described_class::Refused, /glm-5\.3:cloud/)
+      expect(spawn.calls).to be_empty
+    end
+
+    it "renders the reviewer's text exactly, markdown and odd whitespace included" do
+      odd = "## Finding\n\n  * **bold**  and `code`\t\ttabbed\n\n\n    indented   \n"
+      verbatim = Class.new(CritiqueSpecSpawn) do
+        define_method(:spawned) { |*args| super(*args) && Lain::Tool::Result.ok(odd) }
+      end.new
+
+      findings = described_class.new(changeset:, spawn: verbatim, window: cross_lab_window, checkouts:, journal:,
+                                     slots: @slots, instructions: "# critique", model: "glm-5.3:cloud").call
+
+      expect(findings).to include(odd)
+      expect(journal.first.text).to eq(odd)
+    end
+
+    it "refuses by name, before any spawn, a reviewer window nobody vouches for" do
+      guessed = Lain::CLI::Backend::WindowBook::Served.new(model: "glm-5.3:cloud", window_tokens: 16_384,
+                                                           provenance: Lain::ContextWindow::GUESSED)
+      expect do
+        described_class.new(changeset:, spawn:, window: guessed, checkouts:, journal:, slots: @slots,
+                            instructions: "# critique", model: "glm-5.3:cloud").call
+      end.to raise_error(described_class::Refused, /glm-5\.3:cloud/)
+      expect(spawn.calls).to be_empty
     end
   end
 
