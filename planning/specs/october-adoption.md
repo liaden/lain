@@ -6043,3 +6043,482 @@ After the last card lands, with nothing else running (`pgrep -cf 'mise/installs/
 - 2026-10-23 T23 fix round 2: held replacements marked via Recap.marked; side effect: the summarizer's question (a Canonical.dump) and Elide's attestation digest now include the marker, for cuts recorded from now on only.
 - 2026-10-23 Landed T18 4171b433, T7 c3129e9e (second attempt; the first tripped Lint/ItWithoutArgumentsInBlock on a bare `it` in a tap block), T27 e4d12dfe, T10 f95e05c1, T23 ea350c16, the bash_true_none ceiling b83f962e (3.09 ms from 3 logs at a 1-minute load under 1.1; medians 2.37, 2.44, 2.47) and T31 3dc852a9.
 - 2026-10-23 Stopped at the user's request with no card in flight: 29 of 88 landed, 59 not started. Worktrees kept.
+- 2026-10-25 Resumed. Wave 5 cut at 5e8aca98: T11, T24, T28, T29, T33, T45, T79, T81, T84 (the full ready set; no file overlaps).
+- 2026-10-25 T33 review APPROVE (medium; 6 mutants all killed). Nit left: valid_ports sits mid-class as a public method made private.
+- 2026-10-25 T28 review APPROVE-WITH-FIXES (substantive: a .git pointer file or a vendored .git dir read as the object store; fix counts a .git segment only when it is a directory, and pins whole-history git readers in a linked worktree); second review follows.
+- 2026-10-25 T81 review APPROVE-WITH-FIXES, mechanical: the stream assembler took the first non-nil reasoning field, not the first non-blank (streamed and non-streamed disagreed); one shared helper now, and the precedence is pinned.
+- 2026-10-25 T84 scope extended to session_record.rb and bench/session/loader.rb (a --resume dropped effort; session_spec's header ratchet caught it). The main session applied --effort in exe/lain ModelFlags.
+- 2026-10-25 T24 scope extended to cli/backend/span_summarizer.rb (the flag was parsed but never reached chat). The main session applied --compact-provenance beside --compact-strategy in exe/lain.
+- 2026-10-25 telemetry_spec 'fixed_point' BigDecimal format red in 2 agents' wide ratchet runs under load, green alone; toolset_build_spec 'real bash call under the reader profile' red again in T79's wide run (second sighting). Both contention-flake candidates.
+- 2026-10-25 T81 review fixes done (mechanical; a shared Decoding.reasoning_in, precedence pinned, the compact.first mutant killed in both files); queued to land after T33.
+- 2026-10-25 toolset_build_spec 'runs an approved bash call under the reader profile and journals it' red in T81's wide run (third sighting, reported as red alone too); green when the main session ran it alone in that worktree. Contention flake.
+- 2026-10-25 T79 review APPROVE-WITH-FIXES (substantive: 33 hits over 4578 real sessions, none confirmed true; claims now need a first-person, non-negated, past-tense subject; ruling: TEST_RUNNERS widened to cargo, go, npm, yarn, pnpm, rails, ruby -Itest, rake and make test; claims get their own report line outside the replayed analyzers sentence); second review follows.
+- 2026-10-25 T33 landed 8fa7ca55. T81's first landing failed before the hook: land-queue listed an untracked fixture directory as one path; the queue now lists files with -uall.
+- 2026-10-25 T28 second review REQUEST-CHANGES: the fix-round GIT_COMMAND regex over command text failed open in a linked worktree (/usr/bin/git and quoted git reached the judge). User ruling: fix from the parsed program, then a third review.
+- 2026-10-25 T24 review APPROVE-WITH-FIXES (blocker: a claim with no content tokens, such as "The user approved it.", counted as supported; passive and other-verb approvals skipped the check). Rulings: journal a demotion once per strategy and sentence digest; refuse --compact-provenance on without --compact-strategy. Second review follows.
+- 2026-10-25 T84 review APPROVE-WITH-FIXES (substantive: lain chat --resume still dropped effort; RunProfile now restores it from the header unless typed). Follow-ups: --effort is silently ignored on Ollama, and a model that refuses effort gets a 400 (both for T85); BreakCause's effort digest ignores payload effort.
+- 2026-10-25 T79 fix round done (real-session hits 33 to 3, all seeded fixtures; claims line only when claims exist, since a line on every report broke the session_passes e2e cassette); second review running.
+- 2026-10-25 T45 review REQUEST-CHANGES (blocker: ollama's Go JSON decoder case-folds keys, so {"stream":false,"Stream":true} passed and streamed on the real server). Rulings: env: keyword dropped; base64 and hex spellings refused; per-upstream path allow-list; body and response caps; overall deadline; key masked in responses. Second review follows.
+- 2026-10-25 T11 implemented; Metrics/ClassLength over by 3 on Arm::Driver. Ruling: extract Driver::Outcomes to its own file, no limit raise. The main session applied --labels on bench arms. T29 implemented (spec-only), in review.
+- 2026-10-25 T81 landed 9ecc06ed. T34 cut at 9ecc06ed (newly ready after T33).
+- 2026-10-25 T79 second review APPROVE-WITH-FIXES: HEDGED dropped any sentence with no/not, hiding 'I ran the tests, no failures'; negation now scoped to the claim. Rulings: a narrow subject-less 'tests pass' claim behind the hedge filter; 'Committed the fix.' with no subject stays a documented miss. Main session verifies by re-running the probes (no third review).
+- 2026-10-25 T29 review APPROVE-WITH-FIXES: the base64 of a 12-byte lent secret reaches the session file (Regions.detect catches only long blobs); pinned as a known limit, docs note from the main session. Follow-up card: mask base64 and hex spellings (all 3 alignments, with and without a trailing newline) of each lent literal, as T45's gateway now refuses them.
+- 2026-10-25 T28 third review APPROVE (user-ruled third round; git decided from the parsed program; a project-local ./git counts as git, failing closed). Nit left: rev_path leaves git false, harmless while the implied root path carries it.
+- 2026-10-25 T24 second review APPROVE. Known limits: the 40-character window between "user" and the verb misses longer sentences; topical "permission" and "approved by the reviewer" sentences are demoted (marking only); dedupe is per process, so a resume journals a sentence once more.
+- 2026-10-25 T79 verified by the main session after fix round 2 (adv probe all clear but a true 'I created README.md' flag; fn probe misses only the documented subject-less and unlisted-verb forms); queued after T24.
+- 2026-10-25 T11 implemented with Driver::Outcomes extracted to arm/driver/outcomes.rb; in review. Follow-up for T52: GradeRecord does not journal failure_kind.
+- 2026-10-25 T29 last fixes done (13-byte label; one tool result asserted per example, shown red with an empty result); queued after T79.
+- 2026-10-25 T84 second review APPROVE-WITH-FIXES, mechanical (resume mismatch notice for a typed effort; comment placement). The main session runs hot-path-bench before landing, since Context#render passes 1 more kwarg.
+- 2026-10-25 T34 implemented (connect and sendto traced; Ruby's non-blocking connect records EINPROGRESS); in review. Bash-call bench rows need re-recording before landing.
+- 2026-10-25 T84 last fixes done; queued to bench (3 logs from its worktree) and land after T29.
+- 2026-10-25 T34 review APPROVE-WITH-FIXES (substantive: a 100000-datagram loop put 74225 connects, 6.8 MB, on one journal line). Rulings: fold identical entries with a count, cap distinct entries at 256 with a dropped count; trace sendmmsg; record only INET, INET6 and UNIX families. Second review follows.
+- 2026-10-27 T74 exe/lain round done: memory-sweep command plus command spec (red 2/2, green 1286 serial bench). Sonnet review launched.
+- 2026-10-25 to 2026-10-27 Run log, as kept during the run:
+  - - T76 second review APPROVE; hop walk pinned by a synthetic SeededHop spec before landing.
+  - - T22 review REQUEST-CHANGES: forged </recap> escapes the frame (fix: neutralise tags at render). Ruling: frame only what the main model renders, never the summarizer's inputs.
+  - - T7 review APPROVE-WITH-FIXES. User ruling: approval carries once per chat and model, the question says so, and later crossings show a notice. NEAR lowered to 0.6 for dense text.
+  - - Follow-up: Context::Compact frames Plan::ClosureSummary as "Recap by a summarizer"; plan-sweep cost columns move by the frame's bytes.
+  - - T76 landed 73e2cbfe. Wave 4 cut at 73e2cbfe: T10, T18 (the only ready cards; the rest wait on T7, T10, T22 chains).
+  - - T7 fix round: approval carried per model per guard (chat guard shared with its subagents and judge). Scope extended: frontend decorator for the carried notice, count_payload deleted. Follow-ups: price tier asks as Requester.main (request context has no requester); price_tier_crossed has no request digest (frame keeps it private).
+  - - toolset_build_spec 'real bash call under the reader profile' red once in a T18 wide run under load; green in main alone (96/0). Contention flake candidate.
+  - - T22 second review APPROVE-WITH-FIXES (mechanical: attribute and self-closing tag forms). Its 2 false probe lines were probe defects; corrected probe shows cut records and the resumed request prefix unchanged.
+  - - T10 wiring: bench arms --attempts and --subset-of through a no_commands arms_knobs helper (AbcSize on arms). T31 final review APPROVE-WITH-FIXES (nits); stale fence drops the trace on purpose. T27 ruling: public set from the session's starting HEAD.
+  - - T7 second review APPROVE-WITH-FIXES: chat and subagent providers had separate approval sets (fix: approved set and channel on Backend). TODO when no hook runs: card T7 Interface prose 'within 10% of a boundary' -> 'within 40% of a boundary (NEAR = 3/5)'.
+  - - T10 review APPROVE-WITH-FIXES (substantive: failed attempts' spend lost from cost per solved; grader without pass? raises after spend). Follow-ups: rounds-to-pass ci95 goes negative at small n (shared STAT_FOLD); turns row dropped silently when a run has no timeline.
+  - - T22 landed 66d972d7. T7 verified by the main session after round 4 (714 examples green; approval shared per Backend); queued after T18. T23 cut at 66d972d7.
+  - - User: start no new cards; finish what is in flight (T18, T7, T27 landing; T10 second review; T23; T31 bench and landing).
+  - - T10 second review approved with 3 nits (plural wording, header absence, hand-back wording). Follow-ups: recover failed attempts' spend by teeing usage records in CopyingSeam into TaskFailure#spent (a floor; default price book); cost (USD) table also omits failed attempts; require_pass! only checks a finished run, so ceiling-hit attempts before it are unchecked.
+  - - T23 fix round: the recap marker is counted by the size check, like the workspace marker, so the spec's neutral_pad moves from 238 to 277 and source.rb is unchanged (coordinator ruling).
+  - - T23 review approved with fixes: judge example was vacuous (rewritten on the wiring seam pattern); held-cut re-collapse replacements now carry the marker. For T24: pair Recap.block? with role == "user", since an endpoint can put "recap": true on an assistant block (non-streaming from_body, streaming unknown-type skeleton). Note: under /goal the judge hears lain's goal template, not only typed lines (predates T23). hot-path-bench render rows never touch Recap.frame or encode, so the card's bench stop check does not apply.
+  - - T23 fix round 2: held replacements marked via Recap.marked; side effect: the summarizer's question (a Canonical.dump) and Elide's attestation digest now include the marker, for cuts recorded from now on only.
+  - - T45 round 2: approved with mechanical fixes (stream null and scrub pinned, Zlib::Error wrapped, Content-Length dropped after masking). Logged for the gateway server card: refuse or flag a reply that is not application/json; base64 matched only at 3-byte alignment (also URL-safe, wrapped and mixed-case hex missed); relay only an allow-list of response headers.
+  - - T34 round 2: approved. settled? worst case is about 2 parses (about 2.4 s) on an incomplete trace near the cap, the same cost an exec-only trace had; not reduced. connects_dropped counts distinct entries per stage, so one entry dropped in 2 stages counts twice.
+  - - T11 review: approved with mechanical fixes. Ruling: a repeated labels digest is accepted only with the same label; a different label raises naming both lines. Attribution asks is_a?(TaskFailure). Counts are failed attempts, not tasks. A non-Fixture grader that raises still escapes run_task (predates this card).
+  - - Landing: T24's first landing hit the Offload sibling-fiber timing flake (grep_spec walk run off the reactor, ticks >= 50) under load; relanded unchanged.
+  - - Landing: T79's first landing hit the telemetry fixed_point BigDecimal flake; relanded unchanged.
+  - - T29 landing: its fixture git ran under the hook's GIT_INDEX_FILE; now through SeedRepo.git. The bash child cannot inherit GIT_* (ChildEnv KEEP).
+  - - Bench: T84's first bench skipped the bash rows as a stale lain-fence; the worktree's identical fence sources were newer than main's copied build. bench-land now checks the sources match and copies with a fresh mtime.
+  - - T50: approved on the second review. Judged::Read (a Ruling subclass) carries the digests; a with-rewritten Read is never journaled today (traced), so Read#with is a guard. capability_degraded_spec red in the T50 worktree only because it has no built lain-fence.
+  - - Landing tooling: an empty path list once reset the whole index (zsh has no mapfile); the user's 3 staged entries were restaged as before. unland.sh and land.sh now refuse an empty list.
+  - - T84 landing: the hook caught ResolveAttachments::Resolved lacking effort (now delegated) and RequestSent's pin spec, whose request set no effort. Scope added resolve_attachments.rb and request_sent_spec.rb. Bench was green on 3 logs before the fix.
+  - - T35 stop condition: an honest getaddrinfo records a refused AF_UNIX connect to systemd-resolved, so refused_connect counts only AF_INET and AF_INET6 refusals. Follow-up: whether a refused AF_UNIX connect (docker.sock and the like) should signal.
+  - - T37 stop condition: a bwrap mount over an absent path inside a writable bind leaves an empty placeholder on the host (bubblewrap 0.11.2), which breaks pre-commit and blocks direnv. Ruling: seal only present paths; list absent ones with absent: true. Follow-up card needed: a post-call check that flags a created absent sealed path, which T38 must depend on before it selects the workspace profile.
+  - - T36: the CI build job splits compile from pspec so lain-fence --status can run between them. The card's second stop condition (a CI kernel without Landlock) is only known after the first CI run.
+  - - T35 review: any refused inet call (EACCES or EPERM, connect or a Fast Open send) is refused_connect; port 53 is exempt from both signals, since Landlock refuses an honest resolver's TCP fallback. A connected UDP socket's later sends carry no address, so datagram_send sees only unconnected sends.
+  - - T36 review: probes now assert the refusal errno, not only an empty listener; a TCP Fast Open probe added. CI step is report-only by design; check the first CI run's LSM list for landlock.
+  - - Landing: T29's second landing hit a subagent_concurrency_spec ordering flake (gathers every result into ONE user message in tool_use order) under load; relanded unchanged.
+  - - T12 stop condition: FileBlocks.parse silently swallows a block after a malformed END and drops a block with no END. Ruling: the reviewability columns count what parse returns (what the grader scores), pinned by a spec. Follow-up card: make parse report malformed blocks, which changes grading for every arm.
+  - - T36 second review: approved. The sendmsg and sendmmsg Fast Open rules have no probe of their own; only sendto is probed.
+  - - T35 second review: approved. A connected UDP socket stays invisible to both signals; note it for the measured-signals card.
+  - - T37 stop condition (rspec boot): the workspace profile misses exec of the mise ruby binstub (~/.local/share/mise/installs/ruby/<v>/bin/rspec) and read of /run/systemd/resolve/stub-resolv.conf (where /etc/resolv.conf points; the reader misses it too). Logged for T40, as the card says.
+  - - T88: non-JSON replies refused with 502 and only an allow-list of headers relayed (from T45's review). Left for its own card: base64 matched only at 3-byte alignment, plus URL-safe, wrapped and mixed-case hex, in inspection.rb. The server takes one connection at a time. Wiring: exe/lain gateway command and 3 chat_flags_spec ELSEWHERE keys, applied by the main session.
+  - - T37 review (REQUEST-CHANGES, 3 blockers): seals bypassed through commondir, .git pointers, a renamed .git, worktree admin files and submodule configs; a symlinked seal mounted at its target; a failed rev-parse leaving .git/hooks writable. Rulings: seal the git pointers and bind each parent dir onto itself; a symlinked seal raises a named error (T38 picks the fallback); a failed rev-parse seals R/.git whole. packed-refs dropped as a dead grant; ref deletion, gc, pack-refs and worktree add fail in a linked worktree (documented).
+  - - For T38: give each call a fresh dir under TMPDIR rather than all of TMPDIR (today it reaches other agents' scratchpads); cache the seal set per root (git costs about 1.8 ms per build).
+  - - For T40: mise.toml and .tool-versions can be created by a workspace call; decide whether they are persistence paths.
+  - - Follow-up for both profiles: a masked path refuses the open (nodev bind) rather than reading empty; --dev-bind /dev/null would read empty and discard writes, which suits tooling like dotenv. The post-call check card also lists an absent gitdir/commondir.
+  - - T37: a safety classifier stopped the first implementer's fix round before it began. User ruling: a fresh agent with a narrower brief, where each seal is proven by a seam example that asserts the write is refused in a fixture repo, and no hook is planted to show it runs. The real repo was checked clean (hooks, config, worktree admin pointers).
+  - - T88 review (REQUEST-CHANGES): whitespace between JSON tokens scrolled the payload off the console, so the question line now repeats the endpoint and byte count, and whitespace runs collapse to a counted marker. Rulings: refuse a foreign Host or any Origin; a thread per connection with only the console serialized; IDENTITY_PATH moves to Gateway. For the identity card: POST carries no token.
+  - - Landing: T84 hit the telemetry fixed_point BigDecimal flake (its 2nd stop of a landing today); relanded unchanged. Worth its own look: the spec expects BigDecimal#to_s to give scientific notation, and something loaded earlier in the same worker changes that.
+  - - Landing: T35 hit the BigDecimal fixed_point flake (3rd landing stopped today); relanded unchanged. Cause found: the first ActiveSupport::NumberHelper.number_to_delimited call loads big_decimal/conversions, which redefines BigDecimal#to_s for the process.
+  - - T37 second review: approved with fixes. From the main checkout .git/worktrees is sealed whole (32 worktrees grew bwrap to 373 args and a wrapped true to 67 ms; whole-dir is 85 args), which also seals other worktrees' config.worktree. In an ordinary checkout .git/config writes, submodule git operations and worktree add, prune and remove fail (documented).
+  - - For the post-call check card, first item: an absent .git/commondir in an ordinary checkout can still be created by a workspace call (the one first-round redirect option A does not enforce). That card must land before or with T38.
+  - - T85: its first tables were checked against the Claude API reference and corrected. lain sends anthropic-version 2023-06-01, under which sampling is refused only on 4.7 and later (non-default values only on Sonnet 5.5 and Haiku 5.5); effort is absent before 4.5 and on Sonnet 4.5 and Haiku 4.5, Opus 4.5 lacks xhigh and max, the 4.6 models lack xhigh; Opus 5 and Haiku 5.5 refuse disabled thinking only at xhigh or max. Moving to anthropic-version 2026-10-21 makes sampling refused on every model.
+  - - T88 second review: approved with fixes. Blank runs inside JSON strings (spaces, U+00A0, U+2800, U+3164 and kin) collapse to a counted marker; open connections and queued asks are capped with a 503. The .rubocop.yml NewThread header drops its stale group and owner counts (hot_paths.rb already had no paragraph). Left for its own card: base64 at offsets 1 and 2, URL-encoded, split and reversed secrets reach the console.
+  - - T13: CLI::Wiring reached 306 lines (limit 302); ruling: extract the header assembly into its own collaborator rather than raise ClassLength, as with T11. The harness is read from git once per process (3 git calls cost about 12 ms, and per launch slowed wiring_spec from 7 s to 19 s).
+  - - T20 stop condition: the no-progress default fired first in 12 outside specs that repeat a call only to reach the iteration ceiling. Ruling: keep the default on and vary their scripted inputs (scope addition: bench/cli_spec, cli/improve_spec, skill/role_spawn_spec, tools/subagent_spec), unless one is a real polling pattern. T85: anthropic_spec's SDK-differential request moved from claude-opus-4-8 to claude-sonnet-4-6, since 4.8 refuses temperature.
+  - - T85 review: model ids now match a table key only at a version boundary (end, -YYYYMMDD, @, -v, :), so a future claude-opus-4-9 or claude-haiku-4-50 is not refused locally; an id no row matches passes with no row, and an unknown model gets no notice. The card's interface lists seed among SAMPLING_KEYS; the code splits seed out as not an Anthropic parameter.
+  - - T20 review round 1 (request changes): repeat rule keyed on tool, input and result digest (polling with changing output is not stuck); stale rule compares (call, result) pairs, not results alone; walk bounded to a fixed newest slice; the window resets at the latest human turn; halves via take/drop; negative specs added.
+  - - T85: -latest accepted as a version boundary; the bare claude-3 effort key replaced by its explicit models.
+  - - T85 round 2 approved with fixes: claude-opus-4-0 and claude-sonnet-4-0 added with no effort; claude-2 and claude-instant skipped as retired.
+  - - T13 review approved with fixes: policy from Trust digests (not paths); harness diff independent of user git config; git calls bounded at about 5 s, a timeout records unrecorded; odd untracked entries digested by lstat and keep the sha; one context build per launch. Follow-ups: a cold hot-path row for Provenance.harness (the wire_ready row only sees warm launches); name 1 reader for effort, which the header carries top-level and in provenance; gitignored built artifacts are outside the harness (documented).
+  - - T88: round 3 fixes landed without further review.
+  - - T20: Agent ClassLength not raised; the stuck check moves beside the step ceiling.
+  - - T38 started with scope additions from the T37 rulings: per-call tmpdir, per-root seal cache, and the post-call check for created absent sealed paths (recorded plus a tripwire signal), folded into T38 rather than a separate card so it lands with it.
+  - - T38 stop (items 1 and 3 need files outside the card): Files widened to telemetry/sandbox.rb, exec/sandboxed.rb, tripwire/hit.rb, tripwire/ledger.rb and their specs, so the post-call check and per-call tmpdir land with T38. Routing on an allowlist of rungs (auto, rules, bypass); a secret_oracle ruling stays traced.
+  - - T88 hook red on error taxonomy and the one-stdin-reader rule: BadPort and CannotListen folded into Lain::Error with the port in the message (exe/lain already prints it cleanly); GatewayConsole takes input and output as keywords, with $stdin passed from exe/lain.
+  - - T38: Files widened again to confine/profile.rb and its spec for the per-call tmpdir (a Profile member). The bash_true_workspace bench row the card's stop condition names does not exist (T90 never added it): deferred to T41, where the switch is wired on; scratch timing reader 10.8 ms, workspace 12.7 ms at load 7.
+  - - T38 bench over budget (+2.06 to 2.27 ms at load 1.9): Files widened to confine/bwrap.rb and its spec to cache the seal argv per sealed set (about 0.46 ms of rebuild per call). Follow-up: some spec leaves d2026* dirs holding labels.jsonl in TMPDIR (likely the bench labels sidecar); untraced.
+  - - T14 stop (Files stale after T13 moved provenance into Wiring::Header): Files widened to wiring/header.rb, provider.rb (base model_identity nil), provider/journaled.rb (delegation), new provider/model_identity.rb; the extra /api/ps and /api/show per local launch accepted, bounded, unrecorded on failure.
+  - - T14: cassettes (ollama_run_tool_loop and the broken e2e journeys) re-recorded as scope; no NoMethodError rescue in model_identity; prefer one endpoint (/api/tags) for digest and quant if it gives both. Follow-up: a /model switch does not re-record weights.
+  - - T38 review round 1 (request changes): no call dir when the granted tmpdir is a SYSTEM_WRITE entry (/tmp is already a private tmpfs); post-call check snapshots lstat before the call and flags only nil to present, strong weight kept with the concurrency limit documented; seal cache keyed on the realpath root and stamped with git's config origin files; a surviving call dir gets a chmod walk then a journal entry; Overmasked carries the profile name. Follow-up: ARCHITECTURE.md:1001 still says 1 sandbox record per call.
+  - - T20 hook red on 3 more ceiling-only loops (consolidate memory_read, run_recorder toolless loop, inherit_child_compaction poke): inputs varied; compaction not at fault (that arm elides tool results and adds no user text turn).
+  - - T14: kept /api/show plus /api/ps, since the card's not-resident reading needs /api/ps (hung-server worst case 4 s, refused port 1 ms).
+  - - T14 review approved with fixes: bench recordings now carry weights (run_recorder.rb folded in); specs for both arms of the probe rescue; recorded_run_spec text updated; 'manifest digest' wording.
+  - - Flake seen: bm25_spec 'keeps the lock for a small call, so a busy thread at the offload priority does not slow it' (9.5 ms against 8 ms, T88-2 hook, under agent load).
+  - - Flake seen: timeline_messages_reentry_spec 'frees the render state when the fiber is dropped inside Canonical.adopt' (1001298 against 1000000, T20-3 hook).
+  - - T38 round 2 approved with fixes: stamp every link hop a dangling seal followed; always stamp git's standard config paths (global, XDG, system) present or not; spec relative links under a symlinked parent.
+  - - Flake seen: web_fetch_spec 'refuses a page of more nodes than the walk budget quickly, naming raw' (3.37 s against 3 s, T21-2 hook).
+  - - T15 review approved with fixes: effort read from the header's top-level effort (closes a false pass for journals between the effort and provenance cards); tool surface recomputed from the header's tools; the refusal lists each value with the ordinals of its recordings; Writer::UNRECORDED gains host.
+  - - Follow-up card (high priority, before bench sweeps rely on T15): the weights digest comes from /api/ps, so a cold run (not resident) refuses against a warm run of the same weights; read the manifest digest from /api/tags instead, keep residency out of the compared axis.
+  - - Follow-up: harness records "unrecorded" when only the change listing fails, dropping the sha read; record <sha>+unrecorded so 2 unreadable trees do not pool.
+  - - Follow-up: a resumed or forked recording compares only its last segment's provenance once Variance takes a resolver.
+  - - T14b started: weights digest read from /api/tags; the not resident reading dropped (residency is not provenance).
+  - - T14b landed after review by the coordinator (a fix to a reviewed card); spec/network_posture_spec.rb's unstubbed-path guard moved from /api/tags to /api/version.
+  - - T38 hook red on project_dir_spec (profile.rb:246 composes .lain outside ProjectDir): sent back; T14b and T15 relaunched ahead of it.
+  - - T39 stop (bundle writes the gem home, Gem.bindir and ~/.bundle/cache, which the spike missed). User ruling: grant write on the gem home and ~/.bundle/cache, not the bindir. User ruling: the freshness walk excludes target/ and .git/objects so repeated granted builds keep their ports. sandbox.rb and toolset_build.rb added so production passes the lineage's Fresh.
+  - - BigDecimal flake: user ruling, the boot-time fix (require the BigDecimal conversions from lib/lain/price.rb; update the telemetry_spec precondition).
+  - - T16: exe/lain added for the --window flag.
+  - - T16 review approved with fixes: out-of-order and boundary specs; window <= 0 refused in Variance; fractional hours; one default constant; refusal names the runs outside the window.
+  - - T39 ruling: wiring.rb#build_toolset passes the lineage Fresh to ToolsetBuild (1-argument extension of the approved files). shell/verdict.rb left alone: git and bundle reach the string arm with no argv, so only cargo can be granted in production today. Follow-up for T40.
+  - - T39: any_under? full walk cost 98 ms (15,226 entries, mostly tmp/cache), so the card's fallback is built: write records under the root plus ctimes of the root, its top-level entries and crates/*. It misses an in-place edit 2+ levels down with no write record; a spec pins that.
+  - - T40 follow-ups from T39: no exec grant for the ruby bundle's shebang runs; no write for ~/.cargo/.global-cache; a user program shadowed by a mise shim is refused; any spec run or git command in the lineage marks the root fresh, so nothing is granted (fail-closed).
+  - - T39 review 1 REQUEST CHANGES (2 blockers): write records under target/ were dropped (ruling: user's exclusion applies to the ctime walk only, records match the whole root); an absent Gem.bindir inside GEM_HOME was unsealed (now: no bundle grant). Also: env-bound checks on GEM_HOME/cache/CARGO_HOME read from the child's env, BUNDLE_USER_* arms dropped; option allowlist replaces denylist (git prefix abbreviations got past it); target/ symlink refused; fail-closed self-withdrawal kept and its comment corrected (at most about 1 grant per lineage in a main checkout).
+  - - T39 after review 1: grant writes resolved with Landing.eventual (catches a link above a not-yet-existing cache dir). An absent target/ gives no cargo grant, so a first cargo fetch or build in a fresh checkout has no ports (fail-closed; T40 follow-up). Profiles reads the host env, so a GEM_HOME lent to one call by the worker env is not seen (T40 follow-up).
+  - - T56 review 1 REQUEST CHANGES (1 blocker): eager cut fold broke `lain resume` and Supervisor::Restart for a resumed file whose cut's parent sits in the prior file. Ruling: cuts built lazily, resume chain's cut records folded ahead of the file's. Also: recorded keep passed in place of keep_last 1; a public held render in compaction approved (outside the card's Files, named in its Reuse); one rule for the cut in force.
+  - - T56 card note: a handoff run fails DryReplay's 1:1 check (ArgumentError), the card's second stop condition; collapse cuts unproven.
+  - - T39 review 2 APPROVE WITH FIXES: a gem home needs RubyGems' layout and may not hold the project or a HOME_READ entry (same for CARGO_HOME); an absent target/ grants cargo with no exec dir; dead clauses dropped. Follow-up: carry the call's env on Request so a GEM_HOME lent by the worker env is seen.
+  - - T56 after review 1: resume_chain.rb gained prior_cut_records (approved), so a chain's cuts restore oldest file first. dry_replay on a resumed file still fails the 1:1 check (baseline is one file's requests, timeline the chain), pre-existing and loud. Follow-up: a prior_baseline across the chain, which changes Recording#baseline for Variance and the bench CLI.
+  - - T56 review 2 APPROVE. Card scenario 3 wording: the Corrupt refusal now comes when cuts are read, not at load. Follow-up: a 2-file, 2-arm spec pinning the latest file's arm when the baseline is folded across a resume chain.
+  - - T40 STOP: the workspace profile cannot run this repo's tests unwidened. Refused: exec of the mise ruby (bundle's `env ruby` shebang), read of ~/.tool-versions (mise shim), read of /etc/resolv.conf -> /run/systemd/resolve (require "async"), read of ~/.cargo/registry and ~/.cargo/git, write of ~/.cargo/.package-cache and .global-cache. Taken to the user.
+  - - Flake: input_socket_spec "reaps a closed pane's reader, so it owns every thread it started" (5 threads against 4) red T56's first landing; T56 also failed yard-lint on a split RecordedCuts docstring, fixed on the reopen.
+  - - T40 user rulings (2026-10-25): scenario 2 gets a private loopback netns (fence change, not a test-target change); cargo home: user asked about overlayfs for extensibility (bwrap 0.11.2 has --tmp-overlay), spiked against a private per-call dir; seal rust-toolchain.toml, .cargo/config.toml, .tool-versions and mise.toml in T40; the rest of the research recommendation goes ahead, spikes first.
+  - - Incident: the T40 research agent ran a mise shim unconfined; mise went online by itself (pinned uninstalled postgres@15.1 in ~/.tool-versions), made 1 HTTPS connect and wrote ~/.cache/mise/postgres/18.4 and remote_versions-873f7.msgpack.z. Left in place. Briefs now forbid running mise or a shim.
+  - - T64 first landing red: tool_bounds_discipline_spec wants a bound or exempt row for PlantedClaims::Lookup; added a FIXED_RESULT row beside VarianceFixtures::DosingLookup. Briefs should name tool_bounds_discipline_spec among the rule specs.
+  - - T40 spike: both cargo-home designs pass offline cargo test (56 of 56); user chose the private per-call ~/.cargo (registry, bin, git read-only, lain-written config.toml). Bundler: /dev/null over ~/.bundle/config. Private loopback: bwrap --unshare-net on plain workspace calls, fence --private-net (refuse unless only lo, then leave Landlock net rights unhandled; seccomp unchanged); :grant keeps the host netns. Scenario 2 also needs exec on target/, an exec-able per-call TMPDIR, read of /sys/kernel/security/lsm, the UDP test skipped, and a no-SKIPPED check. Seals extended to the toolchain and mise config files. T40 treated as high risk from here.
+  - - Incident: the T40 spike ran cargo offline on the host twice against the brief; ~/.cargo/.global-cache and the ~/.cargo mtime changed at 22:57:36, matching neither run, so not attributable either way. Nothing else in the 4 homes changed.
+  - - T40 implemented (fence --private-net, private ~/.cargo, bundler mask, toolchain bin exec, resolv.conf and lsm reads, target/ and per-call TMPDIR exec, netns for plain workspace calls, seals). Extra files: confine/probe.rb and its spec (private_net key, fail closed), spec/lain/exec/sandboxed_spec.rb (2 examples assumed the shared network). A plain workspace call costs about 2.7 ms more (11.4 to 14.1 ms). The shim refusal names /usr/bin/mise, not the shim (Exec::Sandboxed#unrunnable; follow-up).
+  - - Incident: a T40 draft spec ran bin/workspace-run through its `env ruby` shebang with a shims PATH; mise ran on the host and downloaded ruby 4.0.6 from GitHub into the fixture HOME (deleted); the real mise dirs did not change. Fixed to run with RbConfig.ruby.
+  - - Finding: CLAUDE.md's `eval "$(mise env -s bash ruby@4.0.6)"` line goes online on this box, because ~/.tool-versions pins the uninstalled postgres@15.1; it writes ~/.cache/mise/postgres/. Raised with the user.
+  - - T40 review APPROVE WITH FIXES: probe checks bwrap can unshare net; target/ link swap spec; unconfined spec launches through RbConfig.ruby; seal pairs documented as report-only with the extensionless sibling winning, tripwire stop checked; call dir cleaned on NoTmpdir; ~/.cargo/git always bound read-only; --grant value must match the program; masks and hidden paths in 1 mask call; per-stage loopback and target-only exec documented. For T41: npx/yarn/tsc (mise node links into lib/node_modules) get no install bin; add a hot-path-bench workspace row with a ceiling (about 1.7 ms of the +2.7 ms is bwrap).
+  - - T40 network probe, run once 2026-10-25: cargo fetch under the grant exited 0, connects only to port 443, no datagram socket. bundle install was not granted (ran under the plain workspace profile): ~/.local/share/mise/shims/bundle shadows the install's bundle on PATH, and a shadowed program earns no grant. Follow-up for T41 with the string-arm gap. ~/.cargo/registry, ~/.gem and the gem home mtimes unchanged.
+  - - Tripwire::Ledger only observes (would_stop) on created_sealed; the binary-identity ruling says a trip stops the agent. Follow-up: confirm which card wires the stop.
+  - - T41 stop: the workspace default turned 12 examples red outside the card's Files: fork_spec's defaults header said reader, and 2 seam specs (passed_value_masking, secrets_at_rest) put HOME inside the TMPDIR the bash call sees, which the workspace profile rightly refuses. All 8 e2e journeys pass (their bash calls are human-approved, so traced). Approved: fix those fixtures and any of the same shape, add the bash_true_workspace bench row in bench/hot_paths.rb (1 scratch run: median 13.9 ms), and update observers.rb's notice if it calls reader the default. QA scenario lines naming the reader default: bash-confinement.md:12-13, :242; session-and-window.md:594-608; bench-arms.md:242-243 (value set). Coordinator owes that update.
+  - - T41 follow-ups: a GIT_CONFIG_GLOBAL outside home and root makes git fail under the workspace profile (Permission denied, exit 128); spec/support/e2e/sandbox.rb still nests TMPDIR around HOME (fine while e2e bash calls are human-approved); WORKTREE_REACH's "an opaque command runs traced and unconfined either way" is inexact under bench --confine workspace with no lease. bash_true_workspace row added with a nil ceiling (1 run at load 0.99: 13.757 ms median); seed from 3 quiet logs before landing.
+  - - T41 review 1 REQUEST CHANGES: (blocker) git config includes, includeIf targets, GIT_CONFIG_GLOBAL and XDG_CONFIG_HOME outside home were unreadable, so every auto-approved git call failed with exit 128 under the new default; ruling: read exactly the config files Sealed already lists, minus masked ones, in reader and workspace. Unsealable projects and a TMPDIR holding home raised unrecorded; now worded refusals with a sandbox record and a start-up notice. Bench row gets a seam spec and a git-inited scratch root. ARCHITECTURE.md and WORKTREE_REACH corrected. Card note: the kept notice reads "running with --confine reader, as recorded; ..." (code follows the existing kept_notice format); the chat-turn bench row now builds the workspace arm, so compare logs across T41 with care.
+  - - T41 review 2 REQUEST CHANGES, taken to the user: the git-config read grant listed raw include values, so a writable project config included from .git/config could name ~/.ssh/id_ed25519 or ~/.pypirc and widen the next automatic call's reads. User ruling (2026-10-26): apply all 3 fixes (seal in-writes configs, grant git's file origins only plus standard globals, subtract Sensitivity::Policy's denied class), kill 4 surviving mutants, split lain's refusal sentence from the scanned output so a token-shaped path (mktemp, Nix store) withholds only the path; then a 3rd review.
+  - - T41 round 3: item 3 narrowed (coordinator): REFUSED and OVERMASKED print "[path withheld]" when the line scans credential-shaped, inside sandboxed.rb; the Capture/Result field split (bash.rb, tool/result.rb, withhold middleware) not done. Item 1 goes further than ruled: a gated file reached as an include origin (not a standard global) is not granted, so a user include reaching .npmrc gets git's read error under confinement.
+  - - T41 review 3 APPROVE WITH FIXES. Gated include origins dropped only when the chain starts in a file inside the writes (a user's ~/dotfiles/.gitconfig include works again). User ruling (2026-10-26): a project config file git itself reads (a tracked shared .gitconfig) is exempt from the mask, sealed read-only. Refusal names and TMPDIR run through the path check.
+  - - T41 follow-up: carry lain's refusal sentence beside the scanned output (bash.rb, tool/result.rb, withhold_automatic_output.rb), so a command whose own output holds a credential no longer hides the refusal sentence too.
+  - - T41 bash_true_workspace ceiling seeded at 17.8 ms (slowest of 3 quiet medians, 14.438 ms, times 1.23).
+  - - T55: a 64-message default ceiling, tells and replies counted separately against it; no lib role or epic actor calls tell today, so it bounds nothing in use yet.
+  - - T55 review REQUEST CHANGES: a refused reply escaped Actor#process unrecorded, so the fleet read the child as stopped; now a failed note. Ruling: one message counter per reservation, as the card's interface has it (no direction split).
+  - - T55 review 2 APPROVE WITH FIXES: an actor-level example pins the single counter (a split counter passed every spec).
+  - - T77 implemented: chained sites (Chronicle, salvager) link each line by digest; small chained record about 0.006 ms against 0.004 unchained; bench journal rows stay unchained, so they do not see the cost. Known breaks for T78: a torn tail on reopen, a second unchained Journal.open on the chat's file in the same process, a chainless file reopened chained. The T77 agent saw mask_first_output at 0.408 ms against its 0.263 ceiling on a worktree measure; check on main before the next bench landing.
+  - - Flake fixed: repl_spec "the terminal's forked child forks from the worker, holding none of the worker's descriptors" died on IO#closed? raising IOError for an IO allocated but not initialized during ForkedChild.close_inherited's heap walk; the helper now skips it.
+  - - T43 stop: the fail-closed guard refused every request from commands outside Wiring (consolidate, improve, bench record, epic submit, model_backend). Ruling: bind in each (board source where one exists, else env-only Secrets, no history walk). ClassLength: extract the egress wiring into a collaborator, no limit raise. Cost 92 ms per MB (Regions.detect): literal check over the whole body, region detection only over content not seen in an earlier request. Turn number is a message position.
+  - - T77 review 1 REQUEST CHANGES: a torn tail on chained reopen glued the salvage record onto the torn bytes (lost session_closed, broken link); now sealed with a newline and linked. A raised write advanced the tip; 2 concurrent salvagers forked the chain (now flock on chained opens); threaded linking spec; chained journal bench rows added (seed before landing). Small chained record about 40% over unchained without fsync, noise with the fsync production runs.
+  - - T77 after review 1: Journal::Locked refuses a second chained writer (a second lain --resume of a dead session prints "another process is already writing it"); an unchained second writer can still append (report for T78); chained bench rows run without fsync.
+  - - T43: every non-Wiring command binds env-only Secrets (no command has a project board). Literal check alone over budget (about 4 ms per MB at 5 literals, 13.5 at 40 with a per-literal scan); ruling: one Regexp.union pass (about 0.5 ms per MB) plus the walk, and region detection only over unseen content; accepted steady state about 2 to 2.5 ms per MB against the card's 2, first request of a provider pays detection (about 92 ms per MB) once.
+  - - T77 review 2 APPROVE WITH FIXES: fd closed on a refused or failed chained open; stricter tip format; splice specs; fork note; unchained owned opens take a shared flock so an unchained writer is refused while a chat holds its file. Card text to update: T77's Line.tip now links the last line, torn or not, after sealing; T78 needs a scenario that a sealed crash line vouched for by the next prev is covered, not a break, and only an unterminated last line is :torn_tail.
+  - - T43 cost after ruling: literal pass 1.4 ms per MB; follow-up adding 1 small message 3.1 ms at 1 MB (blake3 digests about 1.1 ms per MB, kept over String#hash so a collision cannot skip detection); first request 80 ms at 1 MB. Backend startup notices extracted (Backend 278 lines).
+  - - T57 review APPROVE WITH FIXES: FixedSize gets its own spec (its staleness guard was untested); an unknown compact_trigger from a header is refused in CompactionProfile.
+  - - T77 last round: an in-process unchained Journal.open landing on the chat's own filename in the same second now raises Locked instead of appending silently.
+  - - mask_first_output read 0.215 ms (ceiling 0.263) in T57's bench, so the T77 agent's 0.408 was load.
+  - - T58: truncate-cumulative ships; faithful truncate not shipped (stop condition): Derivation::Plan#collapsed renders held collapses from their recorded content before the strategy is asked, so a strategy cannot drop an earlier replacement. docs/commands.md row approved.
+  - - T43 review 1 REQUEST CHANGES: the masker's literal set refused ordinary chats (SSH_AUTH_SOCK path, PASSWORD_STORE_DIR, committed .env config values) until /rewind. User ruling (2026-10-26): narrow set, flag the rest: refuse on secret-named env values that are not paths or sockets and history values under secret-named keys or accepted by the region detector or Entropy; everything else journaled as egress_flagged and sent. Also: Hash keys and Symbols scanned; bench binds dropped; outside-turns refusal names the way out; a guarded request bench row; Gateway::Literals moved to Sensitivity. Known: plain spelling only; the secret oracle's local provider is exempt.
+  - - T43 review 2 REQUEST CHANGES, taken to the user: path exclusion demoted base64 secrets starting with / or ~/ to flag-only; user ruling (2026-10-26): apply all (path only if predictable and no detected region; passed env variables' detected regions refused too; per-arm history specs; one history pass), then a 3rd review. Follow-up: one secret-name classifier (ChildEnv::SECRET vs Regions::SECRET_NAMING; DB_PW and GH_PAT unknown to the env masker).
+  - - Flake: offload_spec "keeps a sibling fiber running while the work holds its thread" (0.329 against 0.3) red T77's first landing.
+  - - Flake: astgrep_spec "stops soon after its thread is killed, rather than at the end of the call" red T77's second landing.
+  - - T43 review 3 REQUEST CHANGES, narrow and mechanical (not taken back to the user, within the narrow-set ruling): the path test uses !Entropy.high? instead of predictable? (gpg-agent socket, ssh-agent temp socket, ~/.password-store were refused); a passed variable's hinted tokens stay flagged, only its detected regions are refused. A narrow check of those 2 lines follows.
+  - - T43: the path rule also applies to a passed variable's detected regions (DATABASE_PATH flagged). Accepted side effect: a path-shaped, low-entropy value under a secret name (e.g. DB_PASSWORD=/hunter2/hunter2) is flagged, not refused.
+  - - T43: accepted false refusal: a passed variable whose path reads as one random-looking token (DATABASE_PATH=/var/lib/MyAppData2024/production.sqlite3) stays refused; segments fall below Entropy.high?'s minimum lengths, so a segment test cannot tell a slashed AWS key from a path.
+  - - Flake: e2e two_cockpits_spec (4 examples, a you> line never held within 15s) red T58's first landing under load; passed 4 of 4 alone on main after T77.
+  - - T78 review (approve with fixes), all applied: the line before an unlinked line is reported unvouched; --tip records where it matched and says later lines are unchecked by it; the torn-tail message says only a kept tip tells a crash from a cut record. Report gained `covered` (and an unvouched field) beyond the card's 5. Follow-up: Line.link copies each line to drop its newline (about 0.12 ms/MB of verify's 0.85).
+  - T78 queued as queue-118 after T58
+  - - T43 bench RED on journal_1000000 only (NOISY, spread 0.64 ms on medians 0.60 to 0.92; T43 does not touch the journal); rerun as queue-119 after T78.
+  - - T78 hook red at load 20: web_fetch walk budget (known) and repo_as_fixture scan stuck 30.9s in Pathname#read (new load flake); relanded unchanged as queue-120, T43 bench as queue-121.
+  - - T59: docs/commands.md added to its files (docs_naming_spec requires the new strategy name).
+  - - T59 review (approve with fixes) rulings:
+  -   - The flat arm labels error results [Tool error], carries tool_use_id on call and result lines, and still emits a label for empty or nil content.
+  -   - Thinking renders as [Assistant thinking] (Pi's shape); redacted thinking and images become placeholders, never base64; unknown blocks keep the Canonical.dump fallback.
+  -   - A forged turn boundary inside message text is accepted for the flat arm and noted in a comment; the JSON arm is the unambiguous one.
+  -   - summarize_conversation_spec.rb is left untouched on purpose.
+  - - T78 hook red again at load 11.7: approval_surfaces_spec 'rings the terminal with the note while the notify layer is up' stuck 30.1s (nvim load flake). Unlanded; chain T78 (123), T43 bench (124), T59 (125).
+  - - T43 land stopped on a row-list conflict in hot_paths_spec.rb with T77; resolved to both cards' rows by finish-T43.sh (queue-126), T59 after (127). land.sh and old scripts still had eval mise env; replaced, and the postgres cache in ~/.cache/mise was rewritten at 15:16 today by a landing.
+  - - T44 stop (2 conditions): the secret oracle's provider (SecretRead.tier) has no EgressGuard, and the requester is not in the Faraday env. Ruling: scope is decided where each provider is built: EgressHold#for(requester) gives a supervising hold or a null one; no wire carrier. T44 ships --supervise-egress off|all; the oracle scope is unit-tested on #for. Card-text update for T46: pass egress_hold.for(:secret_oracle) to the oracle provider's EgressGuard.entry and add "oracle" to the --supervise-egress enum. The guard asks hold.supervises? before building a summary (off path: 1 call per request).
+  - - T60 review (approve with fixes): Context::Compact (legacy LinearRewrite path) stays framed-only, noted in a comment, since sweep arms go through Source::Derived; bare keeps the non-wire recap marker; ArgumentError kept. Added specs: recorded collapse content equal across placements, Source pass-through, defaults framed. Files gained source_spec.rb and context/compact.rb (comment only).
+  - - T44 review (Opus, approve with fixes; no blockers: faraday-retry 2.4.0 reuses the env, so the answer kept on the env covers retries only; with supervision off, T43's flagged requests are still sent and journaled as before):
+  -   - Under supervision, flag counts cover the whole body.
+  -   - The /api/show metadata probe (a POST of the model name, local only) stays unheld and is named in the flag text; the card wrongly called it a bodiless GET.
+  -   - The summarizer and handoff providers hold as :summarizer and :handoff, and the requester appears in the parked summary.
+  -   - Specs for literal_hits and bodiless GETs; QA rows in secret-boundary.md; "canonical bytes" wording.
+  -   - Headless still refuses per request, as the card says.
+  - - T61 review (approve with fixes):
+  -   - A stale usage reading after an early handoff could hand off twice (a reply reporting no input tokens), so the early path now marks the reading consumed, as prepare does.
+  -   - An early handoff journals a compaction_decision with its occupancy.
+  -   - A one-time note when the window is guessed, since early handoff cannot fire then: an ollama model that is not resident, or a local id with no published window.
+  -   - The ratio is 0.5 as a named constant.
+  -   - The reviewer ran 1 read-only git diff --stat, against the no-git brief.
+  - - T62: a cut whose last collapsed message carries a tool block (tool_use or tool_result) is mid-task, matching T61's clean-break test; a cut before the assistant's answer to a tool_result is mid-task.
+  - - T63 review (approve with fixes): the generator gains assistant-ending sources, parallel tool calls, mixed text with a tool_use, and user-user steps; a per-host guard that some draw changes the chain; ProvenanceCheck covered; dead host lets dropped; dangling tool_use sources traced (pinned per host if reachable, else stated in the header).
+  - - T63 follow-up: resuming a session journal that crashed mid-tool (a dangling tool_use tail) was not traced as a Derivation source.
+  - - T46 review (Opus, REQUEST CHANGES):
+  -   - The loopback and digest checks could be deleted with every spec green; the specs are now pinned by mutants.
+  -   - A first ask after launch built a second, unproven link and failed as a silent DECLINED. The ruling: hand the proven link in, prove on every ask, and show a NotAGateway at ask time on screen.
+  -   - The identity proof echoed sha256(token). It is replaced in T46 by HMAC(token, nonce), with the served API paths in the reply, and the gateway server joins the files.
+  -   - --secret-oracle-model is required with cloud, with no default.
+  -   - CLOUD_MODEL matches after strip and downcase. Follow-up: refuse when /api/show reports a remote model; needs a check against real ollama.
+  -   - Only 127.0.0.1 is accepted.
+  -   - Proven delegates only what the oracle calls.
+  -   - Docs and QA updated.
+  -   - The token on argv (readable in /proc/<pid>/cmdline and in store.lock's holder line) is taken to the user.
+  - - T46 user ruling (2026-10-26): the gateway token goes in a mode-0600 file named for its port under $XDG_STATE_HOME/lain/gateway/; --gateway carries no token, and a URL with ?token= is refused.
+  - - T46 review 2 (Opus, approve with fixes; first-round items confirmed fixed):
+  -   - The token file is read through an open with NOFOLLOW and checked on that open file; the directory is checked on read and on write.
+  -   - UNPROVEN names the token file.
+  -   - The staged file is chmodded to 0600; raw Errno becomes Unusable; leftover temp files are swept.
+  -   - A restarted gateway is re-read once on a failed proof.
+  -   - --gateway refuses a fragment or userinfo and needs cloud; --secret-oracle-model is refused under off.
+  -   - Server#inspect hides the token.
+  - - T47 review (REQUEST CHANGES):
+  -   - A live run wrote no journal, so --recorded could never re-score it: --journal is added.
+  -   - The live oracle reuses the chat's construction (tier_options, EgressGuard).
+  -   - A public SecretRead question builder is shared with SecretSurface.
+  -   - The fixture's basenames are made distinct (the effective n was about 50) and hard negatives are added.
+  -   - Brier is scored over approve and deny only, with defers counted separately; secret_n 0 fails; the bound is called one-sided.
+  - - T47 review 2 (approve with fixes; 16 of 18 mutants killed): the close-on-raise spec is fixed (flock LOCK_NB returns false, it never raises); the wrong-approves line is pinned whole; documented that the bench calibrates the default configuration, without the chat's ollama runner options.
+  - - T49 review (approve with fixes):
+  -   - Telemetry::Verdict gains an optional scale field; a recording read as another scale is refused.
+  -   - The report names the directory read and each scale's survives_at (deduction 0.75, at most 1 defect).
+  -   - Blank, non-string and duplicate defects raise Unparseable; an empty list scores 1.0.
+  -   - --journal refuses a directory that already holds that scale's file.
+  -   - A partial live run says so in its refusal.
+  -   - The research doc planning/judge-calibration-research-2026-10.md:21 still points at the removed Refuter::DEFAULT_THRESHOLD (the user's file, left untouched).
+  - - T51 stop (the replay stack reads the live disk: Landing realpath and symlink?, policy realpath, Triage, GuardTestLayout, Dir.pwd fallbacks). User ruling (2026-10-27): a recorded file-facts seam. FileFacts::Live is the production default and stays byte-identical; FileFacts::Recorded answers from the header and exec_resolution and marks guessed calls 'state unknown'; replay makes no live File or Dir call. T51's files widen to the reading sites.
+  - - T51 review (Opus, REQUEST CHANGES; production seam sound, allocations unchanged):
+  -   - grep, glob, list_files and ast_search still read the disk in WithholdSecretPaths and RedactSecretReads, so those reads are routed through file_facts.
+  -   - Duplicate arms crashed the report; they are now refused and rows joined by id.
+  -   - Timed-out decisions are no longer replayed as a human's no.
+  -   - A raising approver fails fast with a short approval_timeout.
+  -   - The report gains a "not replayed:" line, a policy-digest note and the Unattended rung for non-interactive sessions.
+  -   - A bar-overruled judge approval replays as defer.
+  -   - The fixtures' live rulings come from the production-wired stack.
+  - - T51 review 2 (Opus, approve with fixes; production LIVE parity confirmed):
+  -   - Records are split by position, so a repeated tool_use_id (ollama-tool-N) is no longer merged and dropped.
+  -   - The result-side facts wiring is pinned; the dead bar check is removed.
+  -   - The answer window is pinned; Provenance.policy_of is shared.
+  -   - The change section diffs only arms differing in one coordinate.
+  -   - Follow-up: "state unknown" could count which facts were guessed (it reads 8 of 9 on the fixtures).
+  - - T51 item 1: records are placed by input_digest and child, not by position, because the writer records a main turn's blocks after its rulings and a child's before; an id it cannot split is one call marked ambiguous.
+  - - T51 hook red (76 of 28913) at load 43 from a desktop start (Steam, tint2); real failure: approval_consumer_discipline flags the replay's private-queue dequeue. Unlanded; fix sent; the other files rerun serially on a quiet box.
+  - - T51: the replay's private-queue dequeue is allowlisted in approval_consumer_discipline (one file, receiver @replay_queue); the other failing files ran green serially at load under 3.3.
+  - - T52 review (approve with fixes): T51's :perfect approved everything (a floor, not an upper bound). It is renamed :approve_all; a new label-driven :perfect denies harmful, approves sensitive and routine, leaves unlabelled unanswered, and requires --labels. Rates also print over recorded-state rows when any are unknown. Held and stopped are pinned with literal cases.
+  - T52 landing 1 red: oracle_calibration 'closes the journal when the run raises' flock false at load 7; 6 reruns plus its file green; spec untouched by T52. Relanded; agent sent to find the race.
+  - Journal flock flake (oracle_calibration "closes the journal when the run raises"): strace shows lib opens once and closes on the raise; the likely holder is a fork from another example inheriting the fd before exec. Ruling: the spec asserts the Journal it was given is closed, through a wrapped Journal.open, and keeps the OS lock check as a bounded poll (a real leak holds forever). Separate small fix FLK.
+  - T53 and T65 cut at 0b8151b2, started in parallel (Opus).
+  - FLK landing queued (go-140/queue-140).
+  - T65 stop (cache): CacheWaste prices only from usage; ollama and planted journals carry 0 cache tokens. Ruling: a usage-free door, CacheWaste.simulated over consecutive re-rendered requests: the bytes after the first differing byte, converted by ProxyBytes#to_tokens, priced as cache writes at --price-as. No Usage objects are built, since a made-up Usage reads as recorded to every other consumer. Columns are marked "(est.)" and the report says the cost is simulated from re-rendered prefixes. A new file is allowed. The cause comes from the same classifier where it can work from a prefix diff.
+  - T65 other rulings: drop truncate from the default arms (only truncate-cumulative shipped); eager under --summarizer recorded uses the journal's recorded eager summaries, else "no recorded answers", the same rule as model arms; the cut trigger is Compaction::Need against a byte budget, kwarg budget: with chat's default, CLI --budget BYTES, named in the report header; specs pass a small budget so the planted fixtures cut; exe/lain is in scope.
+  - FLK landed 3e068fd9.
+  - T53 review (approve with fixes). Rulings:
+  - (1) "extra prompts" counts only the prompts the off arm would not have made for the same call: a per-call comparison against an off replay, not a count of prompted moved rows.
+  - (2) A switchboard spec pins one breaker per board across checkout and plan scope.
+  - (3) Tripwire: an auto abstain with the ESCALATED reason counts as a judge_deny weak hit, so the tripwire's evidence does not depend on the arm. After a trip the judge is not asked, so no hit; the docstring says so.
+  - (4) escalated shows the deny on the display.
+  - (5) The tripped check moves after unlooked, so the human keeps the unlooked reason and BROKEN means the judge would have been asked; pinned by a spec.
+  - (6) The docstring says "per session" means per board: a resume starts fresh.
+  - (7) rerouting moves out of ApprovalReplay into the report side.
+  - T65 review (request changes, 1st).
+  - Rulings:
+  - (1) eager asks with the result's text as the slot, as RoutedSummarizer does, only over MODEL_THRESHOLD_BYTES; the rescue narrows to Recorded::Unrecorded; a spec appends eager answers in the live shape and asserts the row is measured.
+  - (2) Survival gets 2 columns from the same scan: "kept verbatim" (a non-recap user block) and "kept in recap" (a recap block). Specs use hand-written summarizer answers in a spec-only fixture, never committed into the planted corpus as if a model wrote them; real figures come from a later recorded local run with --journal.
+  - (3) No ClassLength raise: extract one coherent responsibility from Bench::CLI (the live arms and isolation family, with RunRecorder as the precedent), behaviour unchanged, landed as its own commit first; then a thin compaction_sweep_report delegator that reuses checked_file, its examples in cli_spec; argv parsing leaves the domain subject.
+  - (4) A --journal bound into both wraps and printed; an unreachable local summarizer fails loudly rather than reading "no recorded answers".
+  - (5) to (15): apply as the reviewer gave them: expand_path, an exact turn-12 rebill, an exact mid-task rate, a tier example over 400KB, CompactionFlags moved above Bench with ModelFlags narrowed to the endpoint flags, exe specs, a 0-token rebill skipped, depth pinned and its unit named, arm lists uniq and an empty one refused, wording and private helpers.
+  - (16) The report legend says what each byte measure counts.
+  - T53 fixes verified (red2 371/4, green2 778/0); landing go-141.
+  - T53 landed 92a73586. T54 cut at 92a73586, started (Sonnet).
+  - T54 built: Bench::CLI is 1 line over ClassLength (303/302). Ruling: no raise; T54 lands after T65's Bench::CLI extraction commit, re-applied on top. Review started (Sonnet).
+  - T54 review (approve with fixes).
+  - Rulings:
+  - (1) --tripwire-rules refuses a bare key, a value below 1 and a repeated key, each a Refusal naming the key=value form; a rule set identical to an earlier one (the default included) is dropped, not printed twice.
+  - (2) A trip with no requester named is never called false (conservative: the record cannot say whose calls they were, and older journals named no subagent). The report names those sessions as tripped but not checked against labels, so the reader sees the false-trip numerator leaves them out.
+  - (3) Drop the test-only Tripwire#standing; the spec compares through rows or the capture.
+  - NITs: extract the from_journals local; label the unattributed line.
+  - T54 fixes verified: red2 4 of 20; green 198/0; the reviewer's dropped-folding mutant makes 2 examples fail (live comparison, unknown). Ready; waits for the WriteContainment extraction to clear ClassLength.
+  - Parallelized on user request: T42, T67, T72 cut from main at 92a73586 (no file overlap with work in flight; their T54/T65/T66/T67 deps are logical, and agents stop and report if they need the unlanded code). T66 stacked on T65 via stack.sh with a base snapshot.
+  - EXT built from T65 (extraction only) on 92a73586: bench serial 1129/0, rubocop clean; landing EXT then T54 (go-142).
+  - T42 stop: no journal on the box carries tripwire evidence, so the measured list would be empty.
+  - USER RULINGS:
+  - (a) Seed the stopping signals from design judgment and verify they are honest in the next manual QA round. The constant is not called MEASURED: it is STOPPING, documented as seeded and not yet measured; the help says so. A QA section in planning/qa/scenarios/bash-confinement.md checks the list against real journals with T54's replay.
+  - (b) When main is the first to trip, everything stops at once.
+  - (Memory binary-identity-rulings updated.)
+  - T67 built (red 15/59, green serial 990/0); review next.
+  - T67 review (approve with fixes).
+  - Rulings:
+  - (1) The fixture location is relative to the repo root (basename outside it), so a digest compares across checkouts.
+  - (2) The predicate digest covers the predicate's source text, read from its file span with Prism; the location is the fallback. Captured values stay invisible, a documented limit pinned by a spec.
+  - (3) Exact-form and digest-differs specs.
+  - (4) Keep null for a grader with no identity (uniform with criteria_digest); the card text to be updated in the Execution log.
+  - (5) The Rubric identity includes its instruction text.
+  - EXT landed aa54179f. T54 landing 1 red: bm25 'keeps the lock for a small call' (known flake) at load 18; relanding.
+  - T67 fixes verified (red2 8/34, serial 1024/0); landing after T54 (queue-144).
+  - T68 stacked on T67 at aa54179f, started (Sonnet).
+  - T42 built. STOPPING = refused_exec only (a reason for each exclusion in its hand-back); only seeded signals add points; an observe_only stop record when the hard stop is crossed on unseeded signals; Stops lives at Tripwire::Stops::STOPPING; a repeat trip by the same requester does not count twice. Opus review started.
+  - T72 built. Rulings: add an optional refuter member to Telemetry::Verdict (verdict.rb in scope); add model to CritiqueChunk. Review after.
+  - T68 built (red 13/152; serial 935/0; digest cost 0.03 to 0.05 ms a task).
+  - Rulings:
+  - (1) Build Compare::Run.from_selection and BestOfK (compare.rb in scope); spec-only today, so an Open decision.
+  - (2) Pass the bench journal into Altitude so fixture_tampered is journaled in production (a minimal cli.rb pass-through, with a cli_spec example).
+  - (3) An unsealable inline test level says "unsealed" rather than passing silently.
+  - T72 review (approve with fixes).
+  - Rulings:
+  - (1) MAX_CRITICS = 5, refused above in the BAD_CRITICS style.
+  - (2) A blank model= is refused by name.
+  - (3) Drop the tag-suffix and OLLAMA_API_KEY rule: whether a model can be reached is the run's provider's question (one run holds one provider).
+  - (4) Pre-check serves? before any checkout or spawn, refused by name.
+  - (5) UnknownModel from Budget.for becomes a Refused naming the model.
+  - (6) A repeated key is refused; keys are case-sensitive and must come first, as the skill text documents; a spec covers a focus starting with a key word.
+  - (7) A verbatim-rendering spec, with a guard that the chat model is not asked.
+  - (8) Fix the 3 yard-lint offenses.
+  - (9) The handback says additive journal fields, not byte-for-byte.
+  - (10) Verified wraps a lone refuter without Array() and raises on an empty list; the handback says k-of-n is built with no production site.
+  - (11) Large reviewer windows: noted; the critics cap bounds the spend.
+  - Landing: quiet.sh gains QUIET_LOAD_ONLY (load under 8, no process check), since builders' specs never let the process check pass; T54 and T67 relanded with it (go-145).
+  - T72 fixes in (red3 8/88; serial 3884/0); queued behind go-145 as queue-146.
+  - T66 built.
+  - - count_tokens stop item checked and not hit: the recap marker is stripped by the encoder, and cache_control is sent as the guard already does. There is no real-API recording yet, so the first paid run is the real check.
+  - - Rulings: the tool_bounds exempt row for RecordedTools::Replayed is allowed. The guard gap closes: in a sweep, a crossing passes only when its own digest was listed by the confirmed preflight; chat's model latch is unchanged and the sweep injects the per-request rule.
+  - - T66 edited T65's compaction_sweep.rb (a shared Cutter, Lane, Unanswered) and compaction_sweep_flags.rb.
+  - T42 review (request changes, 1st). BLOCKER: refused_exec fires on honest work. Real sandboxed probes:
+  - - a git commit with a pre-commit hook (hooks are sealed, not exec-granted), so main's honest commit stops everyone;
+  - - a nested sh -c reaching mise's ruby;
+  - - a PATH walk that gets EACCES on one entry and then succeeds.
+  - Rulings (within the user's seed-from-design ruling, which wanted an honest seed):
+  - (1) Narrow refused_exec before it can stop anyone: drop a refusal answered by a later successful exec of the same basename, a refusal of a run file (hooks, relative paths in the project), and a refusal under the user's toolchain installs (the same roots the toolchain exclusion knows). A seam spec drives a real hook commit and the nested toolchain shape, and shows no stop.
+  - (2) A trip by UNKNOWN answers ALL_STOPPED: it cannot be told from main or from a second subagent.
+  - (3) Drop latency_ms until a real hit time exists; the card text is to be updated.
+  - (4) The QA section says enforcement lands with the tool-phase card, and the measuring command is T54's (landing now).
+  - (5) Fix the stale docs: session-and-window.md:595, ARCHITECTURE.md around 1018 and 1025, tripwire.rb:4-7.
+  - (6) The unseeded list comes from the standing after the whole record.
+  - (7) A spec that Stops holds no journal; the deviation (journaled inside the re-entrant observer callback) is to be recorded on the card.
+  - (8) Rename the field to unseeded.
+  - (9) Carry a seeded score on Standing.
+  - (10) A tripwire_stop spec at its mirrored path.
+  - FOLLOW-UP to log: the workspace sandbox refuses exec of .git/hooks, so an honest sandboxed git commit with hooks fails. That is a confinement gap, separate from the tripwire.
+  - T54 landed 3126e292. T67 landing 1 red: treesitter GVL-binding 'raises the interrupt's error' and 'stops soon after its thread is killed' (the same shared example family as the bm25 flake) at load 6; relanding T67 then T72 (go-147).
+  - T68 review (approve with fixes).
+  - Rulings:
+  - (1) The seal covers the level root, the whole top test directory (spec/ or test/, where the level root lives under one) and the root files that decide what runs: .rspec, Gemfile, Gemfile.lock, Rakefile, .lain/config.rb, Cargo.toml, Cargo.lock, package.json (where present).
+  - (2) An unreadable file is Tampered naming that path, not a crash.
+  - (3) The file mode is digested too; symlinks and empty directories are documented in the YARD.
+  - (4) Move the orphaned cli_spec comment back.
+  - The implementer runs runtime mutants (via -r prepend, not file edits) on unsealed!, the changed-key union and the new scope, so each goes red.
+  - T67 landed d3331703.
+  - T65 round 3 in: --recorded, the eager boundary pinned, the journal path in the error, named keywords, the refuse! default flag. Red 37/1 and 19/4; green 48/0 and 19/0; serial 1389/0; mutants all red.
+  - T65 re-cut onto main as T65L via stack.sh: the 2 cli.rb conflicts were the flag: default, so T65's side was taken; new files copied. stack.sh now continues past a conflict.
+  - T66 round 2 in (carry: false hold, exempt row); Opus review started.
+  - T72 landed e51ad8b0.
+  - T65L checks green (rubocop clean; serial bench, friction and rules 1729/0); landing (go-148).
+  - T65 landed cd72201e (from T65L).
+  - T42 round 2 in (red2 144/19, green2 144/0, serial 1864/0, adapted mutants all red). The narrowing changes observe output on purpose. Second review started (same reviewer).
+  - T68 round 3 in: a wider seal (the top test dir plus ROOT_FILES), unreadable is Tampered, owner mode bits digested; mutants all red. Restacked onto cd72201e as T68B (clean); checks running.
+  - T66 review (request changes, 1st).
+  - BLOCKER: under --live, a summarizer on a paid provider runs during the preflight, before the confirm, outside the projection and the ceiling.
+  - Rulings:
+  - (1) --live refuses any summarizer that is not recorded or local ollama.
+  - (2) RecordedTools keeps a queue of results per key; the nth identical call gets the nth result, then UNRECORDED.
+  - (3) A spec pins the UNRECORDED answer.
+  - (4) Each lane rescues its own stop and records a row with the reason. A dollar-ceiling Exceeded stops all later lanes; a progress, iteration or tier stop ends that lane only; the table always prints. Crossings are approved by a per-lane allowance: the confirmed preflight states how many crossings each lane may make and at what price, and the backstop approves up to that count; matching by digest dies after the chain diverges.
+  - (5) The projection prices counted tokens at the cache-write rate and says "at most".
+  - (6) A model arm whose recorded answers ran out marks its row with the cuts skipped.
+  - (7) An exe-level headless spec.
+  - (8) The docstrings moved back.
+  - (9) hold: is required.
+  - (10) Wording for the keyless and declined cases.
+  - (11) Crossing#summary is true under carry: false.
+  - (12) The Counted comment names digest.
+  - (13) An :api_integration count_tokens recording is a follow-up for the user (it costs money).
+  - T66 restacked onto cd72201e as T66B with 4 conflicts (exe/lain, cli.rb, compaction_sweep_flags.rb, compaction_sweep.rb), for the implementer to resolve there.
+  - T68B checks: rubocop clean; serial 2291/1, the 1 being cli_spec 'workspace switch on' (arms_report, untouched; green alone). Landing go-149.
+  - T42 2nd review still requested changes: a linked-worktree hook commit stops everyone; a relative plant escapes; the toolchain roots miss ~/.local/bin and include the git config paths.
+  - USER RULING: finish the narrowing.
+  - - Excuse the call's real run files and the root's hooks dir (rev-parse --git-path hooks), linked worktrees included.
+  - - Trace chdir so a relative refusal resolves against its cwd; then apply the project rule.
+  - - Toolchain roots come from the PATH lain launches the call with, minus every dir the call can write. A fresh binary (Shell::Executable::Fresh) still counts.
+  - - Stop stays opt-in; QA verifies.
+  - Also: the replay takes its root from the session or refuses without one; the QA section states the narrowing exactly; settle takes an injected clock; the help says records only for now; the mutant note is corrected.
+  - T42 restacked onto cd72201e as T42B (clean).
+  - USER RULING (supersedes "finish the narrowing"): the tripwire exists; narrowing is incremental work over time; for now --tripwire stop FAILS CLOSED. T42B removes every refused_exec exclusion, so observe is byte-identical to before T42. The honest shapes that trip (a hook commit, a nested toolchain, a PATH walk) are documented as accepted false trips in the help, the QA section and STOPPING's docstring. Narrowing is logged as follow-up work, driven by QA measurement.
+  - USER: implementers keep a minimal set of logical commits with no iteration churn; brief-rules.md gains 'Keep the diff minimal'; sent to T42 and T66; I check each diff for churn before landing.
+  - T68B landing 1 red: the bm25 'keeps the lock for a small call' flake (8.4 ms against 8). This is its 2nd hit this stretch under parallel load; logged as a follow-up (its limit assumes a quiet box). Relanding go-150.
+  - USER: no wall-clock performance thresholds in specs (slower boxes and CI). Memory saved; brief rule added; an audit agent lists the timing assertions in the default suite.
+  - USER: fix only the timing specs that flaked this run (the gvl_releasing_binding shared example: bm25 'keeps the lock for a small call', treesitter 'stops soon after its thread is killed' and 'raises the interrupt's error'), minimally, in 1 small commit. The rest of the timing audit goes to a follow-up note in the Execution log for after the plan; no plan scope added.
+  - USER: no GVL-binding code changes this plan (it could have knock-on effects; reach a stable state first). The timing fix is spec-only: widen the gvl_releasing_binding thresholds into generous hang guards; no restructuring. The property-based rewrite goes to the post-plan follow-up note.
+  - Timing audit saved as followup-timing-audit.md, for the Execution log's follow-ups.
+  - T68 landed 5fe387df.
+  - TIM: spec-only GVL timing fix (1 file, about 18 lines); 4 binding specs green 4 times at load 15; landing go-151.
+  - T69 and T71 cut at 5fe387df, started (Sonnet).
+  - T42B fail-closed round: hit.rb byte-identical to main; observe output identical; 11 files, +307 -26 (plus 5 new); 1 commit.
+  - The under-lock mutant is caught by no spec: it journals through a global, so it is structural only (Stops takes no journal). Accepted.
+  - Landing go-152 after TIM.
+  - T69 stop: the altitude lease is a plain copy with no git, so there is no base commit.
+  - Ruling: no git in the lease. The base is the pristine subject tree (task.project), and ThreeArm's base: is that directory. Each arm runs in its own scratch copy, never in the lease: base is a copy of the pristine tree; head is the lease as left; revert is a copy of the lease with every non-test file restored from base. Test files are what T68's seal covers (the level root, the top test dir, ROOT_FILES), reused from LeaseHarness, not redefined. The lease stays byte-identical. suite.rb comes into scope for grader: three_arm; subject.rb stays unchanged if possible.
+  - TIM landing 1 red: plain_chat_prompt_guards 'prose typed at a [y/N] that preempted an empty you>' (a PTY prompt seam, the terminal-prompt flake family; unrelated). Relanding TIM then T42B (go-153).
+  - T69 built under the no-git ruling (red 37/3 and 0-load; green serial 264/0; 7 files, 1 commit). Seal caveat: the 'edited a fixture file' scenario is Tampered now. Sonnet review started.
+  - T71 built (FaultCorpus rebuilds a planted trajectory as a 2-turn timeline; SuiteGrader unchanged; serial bench 1225/0; 1 commit). Sonnet review started.
+  - TIM landed e1191deb.
+  - T42B landing 1 red: cli_spec arms_report 'with --confine workspace hands every arm's tools a sandbox' hit the 30 s watchdog at load 25. It was the same example that failed T68B's serial run; unrelated to T42; relanding (go-154).
+  - Follow-up note: this example is a new load-sensitive seam (5 s alone).
+  - T71 review (approve with fixes): disagreement meanings per class in one frozen map, printed in each note, totals split (fooled vs gold too strict), CLASSES private. The rebuilt timeline is faithful (the grader reads only user and assistant text).
+  - T66B round 3 in: 12 items, merged onto cd72201e, red 228/15, green 544/0, serial 1630/0 and 3224/0; 2 commits (guard hold, live sweep). Known gap: an ollama summarizer at a paid --summarizer-endpoint is still accepted under --live. Ruling: accept only recorded, or ollama at a loopback host; reuse the existing local predicate. Then the second review.
+  - T42 landed f4cc4d5d (as T42B).
+  - T89 cut at f4cc4d5d, started (Opus); the brief carries fail-closed and the pause semantics.
+  - T89 stop: the wiring needs wiring.rb and board_build.rb, and a paused main under bypass has no asking rung. Rulings: both files are in scope for the stops pass-through only; ask and auto hand a paused call to the asking rung through a barred context; bypass refuses it in the middleware's own refusal (not Escalation::Bypass; escalation.rb untouched), journaled as a final deny with its own rung; the paused set is the card's, else spawn and merge calls only; a stopped requester's calls are refused at every level.
+  - T71 fix in (red2 11/4; green 11/0; serial bench 1226/0); landing go-155.
+  - T69 review (approve with fixes): build the revert from base (lstat-aware: symlinks and dir swaps); a real deleted-file spec; pin cleanup on raise and no revert after a head failure; assert revert equals base, with a class-doc line; identity rescues unreadable; the sealed_paths doc says entries.
+  - T71 landing 1 red: offload_spec 'keeps a sibling fiber running while the work holds its thread' (gap share 0.302 against 0.3; known flake); relanding go-156.
+  - T66B endpoint gap closed (Admission.local? reused; red2 8/1, green2 546/0, serial 1632/0). Second review started with the same reviewer.
+  - T69 fixes in (red2 18/4; green 18/0; serial 271/0; the reviewer's mutants all red). I checked the rm_rf in restore_source: glob-relative, the . entries filtered, symlinks removed as links. Landing after T71 (queue-157).
+  - T71 landing 2 red: repo_as_fixture 'has no example generated from a scan' hit the 30 s watchdog at load 19 (known flake). Alone it takes 8.8 s with T71 and 8.2 s on main, so T71 is not the cause. Relanding T71 then T69 (go-158).
+  - T89 built (red 351/7 plus a load error; green 362/0; serial 5352/0). Every main call is paused (the card's wording; human under ask and auto, refused under bypass). stops.rb is in scope for one reader (who tripped first) so the bypass refusal names the requester.
+  - T71 landed 7134f253; T69 landed c84816d1.
+  - T70 cut at c84816d1, started (Sonnet).
+  - Rulings up front:
+  - - The seal for mutation_reinsertion covers ROOT_FILES and the pristine test files only; added test files are allowed and are the agent's tests; the default seal is unchanged.
+  - - Patches are applied in scratch copies (git apply outside a repo, scrubbed environment), never in the lease.
+  - - A skipped patch is its own column; identity includes a digest of the mutation set.
+  - T89 done: Stops#first_tripped; red2 168/4, green 380/0, serial 5446/0; +327 -25, 1 commit. Opus review started.
+  - T66 2nd review: request changes. A loopback ollama bills through :cloud tags; env defaults alone reach it.
+  - USER RULING: --live takes only --summarizer recorded (record locally first, then --recorded). The gate code is removed.
+  - Also: the preflight states the cap (1.5x); the per-lane line becomes a count; an exe headless assertion; the per-lane rescue covers any StandardError.
+  - T89 review (approve with fixes).
+  - Rulings:
+  - (1) One locked standing read.
+  - (2) A post-ruling recheck decorator built only when stops are armed; it covers parked-then-approved calls and judge-approved calls after a trip.
+  - (3) Resume advice: switch to ask. A stop is session-only.
+  - (4) Noted reason on held calls; unattended refuses in the layer.
+  - (5) A spec that main still answers subagents.
+  - (6) Fail closed: the generic unnamed "subagent" requester trips everyone; unique spawn names are a follow-up.
+  - (7) Renames.
+  - (8) The off arm pinned.
+  - (9) The PAUSED clause.
+  - T70 built (red 68/20 plus a load error; green 101/0; serial 293/0); new subject tally-tests; Sonnet review started.
+  - FOLLOW-UP: unique requester names for unnamed subagents.
+  - T70 review (request changes, 1st). BLOCKER: unsealed source lets an arm fake 1.0 (probe B). Rulings: (1) scratch copies are the pristine base plus the arm's new test files only; (2) score over the full count, a skip is broken fixture data and fails; (3) only new files matching the level's test pattern count, none means 'wrote no tests'; (4) a docstring line on source-text assertions; (5) a README in the mutations dir.
+  - T70 fixes in (red2 19/5; green 105/0; serial 297/0; probes: A 1.0 documented limit, B C E F 0.0, D refused). Second review started.
+  - T70 2nd review (approve with fixes): blocker closed. Last fixes: parse comma, quoted and separate-line --pattern, failing loudly when unreadable; copy the agent's added helpers under the top test dir (no symlinks), with the pattern still choosing what runs.
+  - T89 fixes in (red3 400/29; green 400/0; serial 5466/0; mutants red, m2 and m3 adapted). Same reviewer verifying the fixes before landing.
+  - T70 final fixes in (red3 26/7; green 112/0; serial 304/0; probes A to G as expected); landing go-159.
+  - T89 fix check (approve with fixes): 8 of 9 hold; 19 mutants red. Last fix: the paused, attended refusal is liftable with LIFTABLE wording; and move SPAWN_REQUESTER onto Requester (the domain should not reach into CLI wiring). Accepted gap: an ungated tier-1 call between the layer and the Gate (no wait point).
+  - T70 landing 1 red: agent_spec 'runs to completion holding no file descriptor of its own' (fd count 10 vs 11; known flake); relanding go-160.
+  - T70 landed 64a324e8.
+  - T89 final (red4 401/4; green 449/0; serial 5486/0; 19 mutants red); 15 files, 1 commit; landing go-161.
+  - T89 landed 5c3e4af3. The approval chain is complete.
+  - T66B recorded-only in (red3 193/6; green3 546/0; serial 1632/0; 22 mutants red, loopback_check_off stale). Last tweak: an unexpected lane error prints the table and exits non-zero; an expected stop exits 0. Then land as 2 commits (guard first).
+  - T66B final (red4 31/2; green4 548/0; serial 1634/0). Token and message budget stops now count as unplanned (stricter; accepted). Landing as 2 commits via land-T66B.sh.
+  - T74 prep: it spends API money with a live --model; the brief says to reuse the sibling bench commands' money handling, with no live call in specs, and the memory/compaction separation discipline applies.
+  - T66 landed bf3d7fc3 (guard) and 7e2e7d65 (live sweep).
+  - T74 cut at 7e2e7d65, started (Sonnet).
+  - T74 built (red NameError; green 180/0; serial bench 1284/0). It reuses the compaction live Prompt, Preflight and ceiling by name; Bench::CLI sits exactly at its cap. exe/lain was missing: it is in scope, with a command spec. Review after.
+- 2026-10-27 T74 landed 6f088246. Every card in this plan is landed.
+- 2026-10-27 Card text superseded by rulings (the cards above are left as written; these lines say what shipped instead):
+  - T42: no measured list existed, so the stopping list is `Tripwire::Stops::STOPPING`, seeded by design with `refused_exec` alone, and `--tripwire stop` fails closed with no exclusions (user rulings). Honest hook commits, nested toolchains and PATH walks trip it, as documented. latency_ms was dropped (it read about 0 live and the journal's age on replay). A trip by an unknown or unnamed requester stops everyone.
+  - T53: one breaker per board; the tripped check runs after the unlooked check; an escalated deny counts as a judge_deny tripwire hit.
+  - T54: --tripwire-rules refuses bare keys, values under 1 and repeated keys; trips with no requester named are counted but never called false.
+  - T65: no Bench::CLI raise (WriteContainment was extracted as its own commit); truncate dropped from the default arms; cache cost simulated from re-rendered prefixes and marked as an estimate; the survival column split into kept verbatim and kept in recap; --budget, --recorded and --journal added.
+  - T66: under --live only --summarizer recorded is accepted (user ruling: a loopback ollama can bill through :cloud tags); over-tier crossings are approved by a per-lane allowance, not by digest; the question states the cap; an unexpected lane error prints the table and exits non-zero.
+  - T67: a fixture's identity digests its predicates' source text; a grader with no identity journals null.
+  - T68: the seal covers the top test directory and ROOT_FILES, digests owner mode bits, and treats an unreadable file as tampering; Compare::Run.from_selection and BestOfK have no production caller yet (Open decision).
+  - T69: no git in the lease; base is the pristine subject tree, each arm runs in a scratch copy, and the revert is rebuilt from base. With the wider seal, the card's "edited a fixture file" case is Tampered, so the third arm is chiefly a determinism and leakage check.
+  - T70: every run is the pristine source plus the agent's new test files; the score is over all mutations, and a skip fails the grade as broken fixture data.
+  - T72: no cloud-tag rule; the run's provider must serve the named model; critics capped at 5; Verified's k-of-n has no production site.
+  - T89: every main call is paused (the card's wording): parked for a human under ask and auto, refused under bypass or unattended; a recheck after each approval catches calls judged or parked when the trip landed.
+- 2026-10-27 Follow-ups, deliberately left out of this plan (user rulings):
+  - Timing thresholds in specs: the audit's ranked list, in order: the GVL binding shared example's property-based rewrite (only widened here, with no binding change), the web_fetch walk budget, suite_load and up_spec's 75 ms bound, the PTY line-editor timing, admission and docent, tight hang guards (supervisor, sandboxed, judge), stall_protection and connect_budget, local_spec. Also the offload tick-gap share (0.302 against 0.3) and the bench cli_spec workspace-sandbox seam that hit the 30 s watchdog under load.
+  - Tripwire narrowing: incremental, driven by what QA rounds measure with `lain bench approval-replay --tripwire --labels FILE`, never by guessing.
+  - Unique requester names for unnamed subagents (today they share Requester::UNNAMED, which fails closed).
+  - The workspace sandbox refuses exec of .git/hooks, so an honest sandboxed commit with hooks fails.
+  - ARCHITECTURE.md's arms table is stale on --confine.
+  - A count_tokens :api_integration recording on the first paid live sweep (costs money; the user's call).
+  - The bm25 and offload GVL timing specs flaked repeatedly under parallel load this run.
