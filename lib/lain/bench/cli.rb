@@ -218,6 +218,19 @@ module Lain
                             .report(journals.map { checked_file(_1, "session file") })
       end
 
+      # The memory arms (on, off, eager write) over a staleness fixture. A confirmed run spends money.
+      #
+      # @param fixture_path [String]
+      # @param provider [Lain::Provider, nil] answers every arm
+      # @param model [String, nil] the model sent to and priced as
+      # @param confirm [#call, nil] asked with the priced preflight before any paid request
+      # @return [String] the report; never printed here
+      # @raise [MemorySweep::Fixture::Invalid] on a missing fixture or one with no probes
+      # @raise [MemorySweep::Unsendable] when there is no provider and model to send to
+      def memory_sweep_report(fixture_path:, provider: nil, model: nil, confirm: nil)
+        MemorySweep.new(fixture: MemorySweep::Fixture.load(fixture_path), provider:, model:, confirm:).report
+      end
+
       # The three orchestration arms (single-thread control, orchestrator-worker,
       # dual-ledger) over the ArmTasks suite, replayed offline through committed
       # recordings -- no provider, no money, no network, byte-identical across

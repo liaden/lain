@@ -2301,6 +2301,45 @@ RSpec.describe Lain::Bench::CLI do
     end
   end
 
+  describe "#memory_sweep_report" do
+    let(:fixture_path) { File.expand_path("../../fixtures/bench/memory_sweep/fixture.yml", __dir__) }
+    let(:provider) do
+      Lain::Provider::Mock.new(responses: [text_response("about 4096 bytes", usage: Lain::Usage.new(input_tokens: 10))])
+    end
+
+    it "reports the three arms over the fixture" do
+      report = cli.memory_sweep_report(fixture_path:, provider:, model: "claude-haiku-5-5")
+
+      expect(report.lines.map(&:split).filter_map(&:first)).to include(*Lain::Bench::MemorySweep::ARMS)
+    end
+
+    it "refuses a fixture with no probes, naming its path" do
+      Dir.mktmpdir("memory-sweep-cli") do |dir|
+        path = File.join(dir, "empty.yml")
+        File.write(path, YAML.load_file(fixture_path).merge("probes" => []).to_yaml)
+
+        expect { cli.memory_sweep_report(fixture_path: path, provider:, model: "claude-haiku-5-5") }
+          .to raise_error(Lain::Error, /#{Regexp.escape(path)}/)
+      end
+    end
+
+    it "refuses a run with no model to send to" do
+      expect do
+        cli.memory_sweep_report(fixture_path:, provider:)
+      end.to raise_error(Lain::Bench::MemorySweep::Unsendable, /--model/)
+    end
+
+    it "sends nothing when headless without --yes" do
+      allow(provider).to receive(:count_tokens).and_return(1000)
+      confirm = Lain::Bench::CompactionSweep::Live::Prompt.new(yes: false, terminal: false, say: ->(_) {},
+                                                               ask: ->(_) { true })
+
+      expect { cli.memory_sweep_report(fixture_path:, provider:, model: "claude-haiku-5-5", confirm:) }
+        .to raise_error(Lain::Bench::CompactionSweep::Live::Declined)
+      expect(provider.requests).to be_empty
+    end
+  end
+
   describe "#fault_report" do
     it "grades the planted faults with the shipped grader and reports the disagreements" do
       dir = File.expand_path("../../fixtures/grader/faults", __dir__)

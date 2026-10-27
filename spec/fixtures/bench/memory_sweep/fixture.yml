@@ -1,0 +1,29 @@
+# Synthetic. Each source is written at `before` when its memory item was made,
+# and holds `after` when the arms run.
+sources:
+  - path: config/service.txt
+    before: "listen port 8080"
+    after: "listen port 9090"
+  - path: docs/owner.txt
+    before: "owner: platform team"
+    after: "owner: platform team"
+items:
+  - id: service-port
+    description: "Port the example service listens on"
+    body: "The service listens on port 8080."
+    sources: [config/service.txt]
+  - id: service-owner
+    description: "Team that owns the example service"
+    body: "The platform team owns the service."
+    sources: [docs/owner.txt]
+instruction:
+  id: size-units
+  description: "Standing instruction: answer sizes in bytes"
+  body: "Always give sizes in bytes, never in megabytes."
+probes:
+  - question: "Which port does the example service listen on?"
+    old: "8080"
+    new: "9090"
+drift:
+  - question: "How large is the example cache?"
+    violation: "megabytes"

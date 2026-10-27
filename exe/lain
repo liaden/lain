@@ -1199,6 +1199,21 @@ class LainCLI < Thor
       end
     end
 
+    desc "memory-sweep FIXTURE", "Memory arms (on, off, eager-write) over a staleness fixture " \
+                                 "-- spends API money with a live model"
+    method_option :yes, type: :boolean, default: false,
+                        desc: "accept the priced preflight without asking, as a run with no terminal must"
+    ModelFlags.endpoint(self, nil)
+    def memory_sweep(fixture)
+      render do
+        backend = model_backend(nil, options.merge("provider" => "anthropic"))
+        confirm = Lain::Bench::CompactionSweep::Live::Prompt.new(yes: options[:yes], terminal: $stdin.tty?,
+                                                                 say: method(:say), ask: method(:yes?))
+        Lain::Bench::CLI.new.memory_sweep_report(fixture_path: fixture, provider: backend.provider,
+                                                 model: backend.model, confirm:)
+      end
+    end
+
     desc "arms FIXTURE", "Compare the four orchestration arms live over an ArmTasks fixture " \
                          "-- spends real API money"
     ModelFlags.declare(self, max_tokens: Lain::Bench::SpawnSeam::DEFAULT_MAX_TOKENS,
