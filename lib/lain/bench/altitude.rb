@@ -37,7 +37,12 @@ module Lain
       # answers none of the metric readers, so every cell in its row reads "not
       # measured" -- which is the whole point: a 0.000 from an arm that never ran
       # is indistinguishable from one that ran and failed everything.
-      Unrun = Data.define(:reason)
+      #
+      # `marker` is what its cells read: "not measured" for a refusal, and a
+      # sharper word for a run that was invalid rather than merely absent.
+      Unrun = Data.define(:reason, :marker) do
+        def initialize(reason:, marker: NOT_MEASURED) = super
+      end
 
       # A distribution needs at least two samples; one run is a point, and
       # reporting it as a distribution invites a comparison the sample cannot
@@ -63,6 +68,9 @@ module Lain
       # absent, never fabricate: a 0 here would read as "measured, and it was
       # none", which for rework is a claim no linear arm ever made.
       NOT_MEASURED = "not measured"
+
+      FIXTURE_TAMPERED = "fixture tampered"
+      private_constant :FIXTURE_TAMPERED
 
       # Metric label => how to pull one value off a run, how to render it, and
       # (where the metric belongs to one topology) the reader a run must answer
@@ -115,13 +123,16 @@ module Lain
       #   {Arm::NoIsolation}, which leases nothing
       # @param sink [#puts] where the cost warning is said; only the frontend
       #   may touch a real stream, so this is injected and defaults to the Null
-      def initialize(fixture_path:, arms:, spawn_seam:, grader:, isolation: nil, sink: Sink::Null.new)
+      # @param journal [#<<] where a {Telemetry::FixtureTampered} record lands
+      def initialize(fixture_path:, arms:, spawn_seam:, grader:, isolation: nil, sink: Sink::Null.new,
+                     journal: Channel::Null.instance)
         @fixture_path = fixture_path
         @arms = Array(arms).freeze
         @spawn_seam = spawn_seam
         @grader = grader
         @isolation = isolation
         @sink = sink
+        @journal = journal
       end
 
       # Memoized, so reporting twice is byte-identical for free -- and so a suite
@@ -144,7 +155,18 @@ module Lain
         grouped = by_size
         layouts_load(grouped.values.flatten)
         warn_of_cost(grouped.values.sum(&:size))
-        [header(grouped), *grouped.map { |size, tasks| block(size, tasks) }].join("\n\n")
+        [header(grouped), *grouped.map { |size, tasks| block(size, tasks) }, *unsealed_note(grouped)].join("\n\n")
+      end
+
+      # A level whose tests live in the source has no test tree to seal, so an
+      # arm could edit them unseen; saying so keeps its row from reading as
+      # protected as the rest.
+      def unsealed_note(grouped)
+        unsealed = grouped.values.flatten.select { |task| pristine_level(task).shape == :inline }
+        return if unsealed.empty?
+
+        named = unsealed.map { |task| "#{task.id} (level #{task.level.inspect} keeps its tests inline in the source)" }
+        "unsealed: #{named.join("; ")}"
       end
 
       # Asked of the committed subject rather than at grading: a lease's copy is
@@ -193,6 +215,9 @@ module Lain
       def run(arm, task)
         arm.run(task.prompt, spawn_seam: @spawn_seam, grader: @grader,
                              isolation: isolation_for(task), grading: grading_for(task))
+      rescue Grader::LeaseHarness::Tampered => e
+        @journal << Telemetry::FixtureTampered.new(arm: arm.name, paths: e.paths)
+        Unrun.new(reason: e.message, marker: FIXTURE_TAMPERED)
       rescue *UNMEASURABLE => e
         Unrun.new(reason: e.message)
       end
@@ -207,8 +232,21 @@ module Lain
       # The judge for THIS task: the subject's own suite, narrowed to the level
       # root the task names, bound to whatever checkout the arm just leased.
       def grading_for(task)
-        ->(lease:, **) { Grader::LeaseHarness.new(lease:, level: level_in(lease, task)) }
+        pristine = pristine_tests(task)
+        ->(lease:, **) { Grader::LeaseHarness.new(lease:, level: level_in(lease, task), pristine:) }
       end
+
+      # Taken from the committed subject, which no arm ever holds, and once per
+      # task however many arms are graded against it.
+      def pristine_tests(task)
+        level = pristine_level(task)
+        return if level.shape == :inline
+
+        @pristine ||= {}
+        @pristine[task.id] ||= Grader::LeaseHarness.manifest(task.project, level:)
+      end
+
+      def pristine_level(task) = Config.test_layout(root: task.project).mapping.level(task.level)
 
       def level_in(lease, task)
         worker_env = lease.worker_env
@@ -233,7 +271,7 @@ module Lain
       end
 
       def row(name, runs, spec)
-        return fold.absent_row(name, count: runs.size, marker: NOT_MEASURED) unless measurable?(runs, spec)
+        return fold.absent_row(name, count: runs.size, marker: marker_of(runs)) unless measurable?(runs, spec)
 
         fold.row(name, Compare::Distribution.new(runs.map(&spec.fetch(:of))), fmt: spec.fetch(:fmt))
       end
@@ -242,6 +280,10 @@ module Lain
       # arm never had the number, which is a different claim from zero. One
       # message, asked of every metric, so an {Unrun} arm needs no special case.
       def measurable?(runs, spec) = runs.all? { |run| run.respond_to?(spec.fetch(:needs)) }
+
+      def marker_of(runs)
+        (runs.grep(Unrun).map(&:marker) - [NOT_MEASURED]).first || NOT_MEASURED
+      end
 
       def fold = @fold ||= Compare::ArmFold.new
 

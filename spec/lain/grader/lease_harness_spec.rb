@@ -193,5 +193,140 @@ RSpec.describe Lain::Grader::LeaseHarness do
                                    )
       end
     end
+
+    it "differs between harnesses sealed over different test trees" do
+      leased do |lease, checkout|
+        level = level_in(checkout, "unit")
+        plain = described_class.new(lease:, level:).identity
+        sealed = described_class.new(lease:, level:, sealed: "a" * 64).identity
+        other = described_class.new(lease:, level:, sealed: "b" * 64).identity
+
+        expect([plain, other]).to all(satisfy { |identity| identity != sealed })
+        expect(sealed).to include("sealed" => "a" * 64)
+        expect(Ractor.shareable?(sealed)).to be(true)
+      end
+    end
+  end
+
+  describe "sealing the level's test tree" do
+    def edit_test(checkout)
+      File.write(File.join(checkout, "spec/unit/order_total_spec.rb"), "# an arm made its own tests easier\n")
+    end
+
+    def sealed_harness(lease, checkout, pristine:)
+      level = level_in(checkout, "unit")
+      described_class.new(lease:, level:, pristine: described_class.manifest(pristine, level:))
+    end
+
+    it "seals the same tree to the same digest, and a different tree to a different one" do
+      leased do |_lease, checkout|
+        level = level_in(checkout, "unit")
+        before = described_class.seal(checkout, level:)
+
+        expect(before).to match(/\Ablake3:\h{64}\z/).and eq(described_class.seal(subject_project, level:))
+        edit_test(checkout)
+        expect(described_class.seal(checkout, level:)).not_to eq(before)
+      end
+    end
+
+    it "does not seal source files, so an arm may change them" do
+      leased do |_lease, checkout|
+        level = level_in(checkout, "unit")
+        before = described_class.seal(checkout, level:)
+        File.write(File.join(checkout, "lib/order_total.rb"), "# the arm's real work\n", mode: "a")
+
+        expect(described_class.seal(checkout, level:)).to eq(before)
+      end
+    end
+
+    # The helper and the runner config decide what the level's tests do and
+    # which of them run, so editing them is editing the tests.
+    it "seals the whole test directory, so a spec_helper or a sibling level is covered" do
+      leased do |lease, checkout|
+        harness = sealed_harness(lease, checkout, pristine: subject_project)
+        File.write(File.join(checkout, "spec/spec_helper.rb"), "exit 0\n")
+
+        expect { harness.grade(trajectory) }
+          .to raise_error(described_class::Tampered) { |error| expect(error.paths).to eq(["spec/spec_helper.rb"]) }
+      end
+    end
+
+    it "seals the root files that decide what runs, such as .rspec" do
+      leased do |lease, checkout|
+        harness = sealed_harness(lease, checkout, pristine: subject_project)
+        File.write(File.join(checkout, ".rspec"), "--pattern nothing_matches\n")
+
+        expect { harness.grade(trajectory) }
+          .to raise_error(described_class::Tampered) { |error| expect(error.paths).to eq([".rspec"]) }
+      end
+    end
+
+    it "names a file that was deleted" do
+      leased do |lease, checkout|
+        harness = sealed_harness(lease, checkout, pristine: subject_project)
+        FileUtils.rm(File.join(checkout, "spec/unit/order_check.rb"))
+
+        expect { harness.grade(trajectory) }
+          .to raise_error(described_class::Tampered) { |error| expect(error.paths).to eq(["spec/unit/order_check.rb"]) }
+      end
+    end
+
+    it "names a file that was made unreadable, rather than dying of EACCES" do
+      leased do |lease, checkout|
+        harness = sealed_harness(lease, checkout, pristine: subject_project)
+        path = File.join(checkout, "spec/unit/order_check.rb")
+        File.chmod(0o000, path)
+
+        expect { harness.grade(trajectory) }
+          .to raise_error(described_class::Tampered) { |error| expect(error.paths).to eq(["spec/unit/order_check.rb"]) }
+      ensure
+        File.chmod(0o644, path) if path && File.exist?(path)
+      end
+    end
+
+    it "catches a changed mode with unchanged content" do
+      leased do |lease, checkout|
+        harness = sealed_harness(lease, checkout, pristine: subject_project)
+        File.chmod(0o755, File.join(checkout, "spec/unit/order_check.rb"))
+
+        expect { harness.grade(trajectory) }
+          .to raise_error(described_class::Tampered) { |error| expect(error.paths).to eq(["spec/unit/order_check.rb"]) }
+      end
+    end
+
+    it "raises Tampered naming the changed test paths, before any suite runs" do
+      leased do |lease, checkout|
+        harness = sealed_harness(lease, checkout, pristine: subject_project)
+        edit_test(checkout)
+        FileUtils.touch(File.join(checkout, "spec/unit/added_spec.rb"))
+
+        expect { harness.grade(trajectory) }
+          .to raise_error(described_class::Tampered) { |error|
+            expect(error.paths).to contain_exactly("spec/unit/added_spec.rb", "spec/unit/order_total_spec.rb")
+            expect(error.message).to include("spec/unit/order_total_spec.rb")
+          }
+      end
+    end
+
+    it "grades an untouched test tree as the suite's own verdict" do
+      leased do |lease, checkout|
+        File.write(File.join(checkout, "lib/order_total.rb"), "\n", mode: "a")
+        grade = sealed_harness(lease, checkout, pristine: subject_project).grade(trajectory)
+
+        expect(grade.score).to eq(2.0 / 3)
+      end
+    end
+
+    it "still refuses on a bare digest, with no paths to name" do
+      leased do |lease, checkout|
+        level = level_in(checkout, "unit")
+        harness = described_class.new(lease:, level:, sealed: described_class.seal(checkout, level:))
+        edit_test(checkout)
+
+        expect { harness.grade(trajectory) }.to raise_error(described_class::Tampered) { |error|
+          expect(error.paths).to eq([])
+        }
+      end
+    end
   end
 end

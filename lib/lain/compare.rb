@@ -32,6 +32,10 @@ module Lain
   class Compare
     include Declarative
 
+    # Selections compared across different k. A best of 4 is a maximum over 4
+    # draws, so setting it beside a single run measures the draws, not the tactic.
+    class BestOfK < Lain::Error; end
+
     # Why a cache hit ratio over these runs would be a zero nobody measured.
     NO_PROMPT_CACHE = "not measured — every run records prompt_caching degraded, so there was no cache to hit"
     private_constant :NO_PROMPT_CACHE
@@ -71,6 +75,23 @@ module Lain
                              degraded: Capability::DegradedSet.new([]), mode: nil, compaction: CompactionTally::NONE)
         new(name:, usage: ledger.usage(timeline), price: price_of(ledger, timeline),
             score: grade&.score, degraded:, mode:, compaction:, turns: turns_of(timeline))
+      end
+
+      # Nothing in production builds a {Bench::Speculative} yet, so a spec is this method's only caller; it
+      # exists so the best-of-k refusal is in place before a search arm is.
+      #
+      # @param name [String] this run's label in the comparison table
+      # @param selection [Bench::Speculative::Selection] the search's outcome
+      # @param ledger [Lain::Ledger] prices the winning trajectory
+      # @param options [Hash] passed to {.from_timeline}
+      # @param among [Array<Bench::Speculative::Selection>] every selection in the comparison
+      # @option options [Lain::Mode, String] :mode the mode the run walked
+      # @raise [BestOfK] unless every selection in the comparison has the same k
+      def self.from_selection(name:, selection:, ledger:, among: [selection], **options)
+        ks = among.map(&:k).uniq
+        raise BestOfK, "selections with different k are not comparable (k: #{ks.sort.join(", ")})" unless ks.one?
+
+        from_timeline(name:, timeline: selection.best, ledger:, grade: selection.grade, **options)
       end
 
       # A run whose arm handed back no Timeline has no count to give, and 0 would read as a run that never answered.

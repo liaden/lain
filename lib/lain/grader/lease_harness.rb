@@ -32,6 +32,20 @@ module Lain
       # `NoMethodError` on nil three frames from the fact.
       class NoCheckout < Lain::Error; end
 
+      # The arm rewrote the tests that judge it. The run is invalid, not low:
+      # a score earned against edited tests says nothing about the source.
+      class Tampered < Lain::Error
+        # @return [Array<String>] changed test paths, relative to the project root; empty when
+        #   the harness was sealed by a bare digest and cannot say which
+        attr_reader :paths
+
+        def initialize(paths, level:)
+          @paths = paths.freeze
+          named = paths.empty? ? "(the sealed digest cannot say which)" : paths.join(", ")
+          super("the #{level.name.inspect} level's test tree changed since it was sealed: #{named}")
+        end
+      end
+
       # An arm that settles issue by issue holds one Grade per issue, and the
       # {Arm::Run} it hands back carries ONE. This is that fold, and it is pure.
       #
@@ -56,6 +70,45 @@ module Lain
                           "an unrun arm, not one that failed every issue it was given"
       private_constant :ROLLED_UP_NOTHING
 
+      # Files at a project root that decide which tests run and how, so editing one is editing the tests.
+      ROOT_FILES = [".rspec", "Gemfile", "Gemfile.lock", "Rakefile", ProjectDir.config,
+                    "Cargo.toml", "Cargo.lock", "package.json"].freeze
+
+      # Every file the arm could change to change what the level's tests do: the level root, the whole top
+      # test directory it lives under (helpers and support code), and the {ROOT_FILES} that are present.
+      #
+      # A file's entry is its owner permission bits and content, so a chmod shows. A file that cannot be read
+      # gets a fixed entry rather than an error, which differs from any readable pristine one and so is named
+      # as tampered. A symlink with the same content as a regular file, and an empty directory, are not
+      # told apart: the suite reads content at grade time, so neither changes what it runs.
+      #
+      # @param root [String] a project checkout
+      # @param level [#root] the level whose test tree is listed
+      # @return [Hash{String=>String}] entry of every sealed file, by path relative to the project root
+      def self.manifest(root, level:)
+        sealed_paths(root, level).sort.each_with_object({}) do |path, files|
+          full = File.join(root, path)
+          files[path] = entry(full) if File.file?(full)
+        end
+      end
+
+      def self.sealed_paths(root, level)
+        tree = level.root.split("/").first
+        tests = Dir.glob("#{tree}/**/*", File::FNM_DOTMATCH, base: root)
+        (tests + ROOT_FILES).uniq
+      end
+      private_class_method :sealed_paths
+
+      def self.entry(full)
+        "#{File.stat(full).mode & 0o700}:#{Digest::SHA256.file(full).hexdigest}"
+      rescue SystemCallError
+        "unreadable"
+      end
+      private_class_method :entry
+
+      # @return [String] digest of {.manifest}
+      def self.seal(root, level:) = Canonical.digest(manifest(root, level:))
+
       # @param lease [#worker_env] the lease still holding the checkout under
       #   test; never released here
       # @param level [#name, #root] the level root whose tests judge this work,
@@ -63,28 +116,51 @@ module Lain
       # @param harness [#call] `root -> #grade(worker_env, paths:)`, a factory so
       #   a subject with no detectable framework can be graded by an explicit
       #   adapter
-      def initialize(lease:, level:, harness: TestHarness.public_method(:new))
+      # @param sealed [String, nil] {.seal} of the pristine subject; nil leaves the tests unchecked
+      # @param pristine [Hash, nil] {.manifest} of the pristine subject, which names the changed paths
+      #   and stands in for `sealed` when that is omitted
+      def initialize(lease:, level:, harness: TestHarness.public_method(:new), sealed: nil, pristine: nil)
         @lease = lease
         @level = level
         @harness = harness
+        @pristine = pristine
+        @sealed = sealed || (Canonical.digest(pristine) if pristine)
       end
 
       # @param _trajectory [Object] what the arm produced, deliberately unread
       # @return [Grade] the subject's own suite at this level root
       # @raise [NoCheckout] when the lease holds no checkout to run in
+      # @raise [Tampered] when the level's test tree no longer matches its seal
       # @raise [TestHarness::MissingPaths] when the level root is not in the
       #   checkout, named before anything spawns
       def grade(_trajectory = nil)
         worker_env = checked_out!
+        unsealed!(worker_env)
         @harness.call(worker_env.cwd).grade(worker_env, paths: [@level.root])
       end
 
       # @return [Hash{String=>Object}] deeply frozen
       def identity
-        { "class" => self.class.name, "level" => @level.name.to_s.freeze }.freeze
+        base = { "class" => self.class.name, "level" => @level.name.to_s.freeze }
+        (@sealed ? base.merge("sealed" => @sealed.dup.freeze) : base).freeze
       end
 
       private
+
+      def unsealed!(worker_env)
+        return if @sealed.nil?
+
+        current = self.class.manifest(worker_env.cwd, level: @level)
+        return if Canonical.digest(current) == @sealed
+
+        raise Tampered.new(changed(current), level: @level)
+      end
+
+      def changed(current)
+        return [] if @pristine.nil?
+
+        (@pristine.keys | current.keys).reject { |path| @pristine[path] == current[path] }.sort
+      end
 
       # Checked before a harness is built, let alone a runner spawned: what is
       # missing is the LEASE, and detecting a framework in a directory that was

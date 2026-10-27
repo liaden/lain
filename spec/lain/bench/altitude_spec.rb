@@ -171,7 +171,9 @@ RSpec.describe Lain::Bench::Altitude do
 
   def fixture_path = File.expand_path("../../fixtures/altitude/tasks.yml", __dir__)
 
-  def altitude(**) = described_class.new(fixture_path:, arms:, spawn_seam:, grader:, sink:, **)
+  def altitude(fixture_path: self.fixture_path, **)
+    described_class.new(fixture_path:, arms:, spawn_seam:, grader:, sink:, **)
+  end
 
   # One titled, blank-line-separated block of the rendered report.
   def section_for(report, title) = report.split("\n\n").find { |block| block.start_with?("#{title}\n") }
@@ -354,6 +356,77 @@ RSpec.describe Lain::Bench::Altitude do
       report = with_subjects { |path| bench_over(path).report }
 
       expect(report).to match(/^one-shot\s+2\s+0\.667/)
+    end
+  end
+
+  describe "an arm that edits the subject's tests", :seam do
+    def committed(name) = File.expand_path("../../fixtures/altitude/subjects/#{name}", __dir__)
+
+    def with_task
+      Dir.mktmpdir("lain-altitude-tamper") do |dir|
+        path = File.join(dir, "tasks.yml")
+        tasks = [{ "id" => "a", "size" => "small", "subject" => committed("order-total"),
+                   "level" => "unit", "prompt" => "add a refund" },
+                 { "id" => "b", "size" => "small", "subject" => committed("order-total"),
+                   "level" => "unit", "prompt" => "add another refund" }]
+        File.write(path, YAML.dump("tasks" => tasks))
+        yield path
+      end
+    end
+
+    let(:journal) { [] }
+    let(:arms) { [AltitudeTamperingArm.new("cheat"), AltitudeTamperingArm.new("honest", edit: false)] }
+
+    def bench_over(path) = described_class.new(fixture_path: path, arms:, spawn_seam:, grader:, sink:, journal:)
+
+    it "reports the row as fixture tampered with no score, not a low one" do
+      report = with_task { |path| bench_over(path).report }
+
+      expect(report).to match(/^cheat\s+2\s+fixture tampered/)
+      expect(report).not_to match(/^cheat\s+2\s+\d/)
+    end
+
+    it "journals a fixture_tampered record naming the arm and the paths, once per task" do
+      with_task { |path| bench_over(path).report }
+
+      expect(journal.map { |record| [record.arm, record.paths] })
+        .to eq([["cheat", ["spec/unit/order_total_spec.rb"]]] * 2)
+    end
+
+    it "grades an arm that changed only source as the subject's suite does" do
+      report = with_task { |path| bench_over(path).report }
+
+      expect(report).to match(/^honest\s+2\s+0\.667/)
+    end
+  end
+
+  # A level whose tests live inside the source cannot have a test tree to seal,
+  # and a row graded over one must not look as protected as the others.
+  describe "a level that keeps its tests in the source", :seam do
+    def with_cargo_task
+      Dir.mktmpdir("lain-altitude-inline") do |dir|
+        subject_dir = File.join(dir, "crate")
+        FileUtils.mkdir_p(File.join(subject_dir, "src"))
+        FileUtils.mkdir_p(File.join(subject_dir, "tests"))
+        write_config(subject_dir, "tests preset: :cargo\n")
+        tasks = %w[a b].map do |id|
+          { "id" => id, "size" => "small", "subject" => subject_dir, "level" => "unit", "prompt" => "go" }
+        end
+        File.write(File.join(dir, "tasks.yml"), YAML.dump("tasks" => tasks))
+        yield File.join(dir, "tasks.yml")
+      end
+    end
+
+    let(:arms) { [AltitudeSpecArm.new("one-shot", log)] }
+
+    it "says in the report that the level's tests were not sealed" do
+      report = with_cargo_task { |path| altitude(fixture_path: path).report }
+
+      expect(report).to match(/unsealed: .*"unit".*inline/i)
+    end
+
+    it "says nothing of the kind for a level that can be sealed" do
+      expect(altitude.report).not_to include("unsealed")
     end
   end
 

@@ -1044,6 +1044,22 @@ END")
       expect(grade_records(journal).map(&:subject_digest)).to eq(spy.subjects.map(&:head_digest))
     end
 
+    # Scenario: no grader is told which arm it is grading.
+    it "hands neither the subjects nor the grader's constructor an arm name" do
+      spy = DriverSpecSupport::RecordingGrader.new(grader)
+      handed = []
+      allow(Lain::Grader::Journaling).to receive(:new).and_wrap_original do |original, **args|
+        handed << args.except(:journal, :inner)
+        original.call(**args)
+      end
+      described_class.new(arms, tasks:, spawn_seam:, grader: spy, journal:).report
+      names = arms.map(&:name)
+
+      expect(spy.subjects.size).to eq(4)
+      expect(spy.subjects.map { |subject| subject.to_a.to_s }.join).not_to include(*names)
+      expect(handed.join).not_to include(*names)
+    end
+
     # Scenario: an ungraded run writes no grade record.
     #
     # An arm that never consults the grader it was handed must leave no

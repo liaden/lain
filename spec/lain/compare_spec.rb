@@ -278,6 +278,41 @@ RSpec.describe Lain::Compare do
       expect(run.score).to eq(1.0)
     end
 
+    def selection(timeline, branches)
+      grade = Lain::Grader::Grade.new(score: 1.0, why: "ok")
+      candidates = Array.new(branches) { Lain::Bench::Speculative::Candidate.new(index: 0, trajectory: timeline, grade:) }
+      Lain::Bench::Speculative::Selection.new(best: timeline, grade:, candidates:)
+    end
+
+    describe ".from_selection" do
+      it "builds the run from the winning trajectory and its grade" do
+        timeline, ledger = recorded("yo", input: 1000, output: 200)
+        run = described_class::Run.from_selection(name: "beam", selection: selection(timeline, 4), ledger:)
+
+        expect([run.total_tokens, run.score]).to eq([1200, 1.0])
+      end
+
+      it "raises BestOfK when the comparison mixes different k" do
+        timeline, ledger = recorded("yo", input: 10, output: 1)
+        mine = selection(timeline, 4)
+
+        expect do
+          described_class::Run.from_selection(name: "beam", selection: mine, ledger:,
+                                              among: [mine, selection(timeline, 1)])
+        end
+          .to raise_error(described_class::BestOfK, /4.*1|1.*4/)
+      end
+
+      it "accepts a comparison where every run has the same k" do
+        timeline, ledger = recorded("yo", input: 10, output: 1)
+        mine = selection(timeline, 4)
+        run = described_class::Run.from_selection(name: "beam", selection: mine, ledger:,
+                                                  among: [mine, selection(timeline, 4)])
+
+        expect(run.name).to eq("beam")
+      end
+    end
+
     it "has no default ledger: a Run must name its usage source" do
       expect { described_class::Run.from_timeline(name: "x", timeline: nil) }
         .to raise_error(ArgumentError, /ledger/)

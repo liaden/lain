@@ -455,7 +455,7 @@ module Lain
                           isolation: nil, journal: nil, price_book: PriceBook.default, **spawn_options)
         WriteContainment.refuse!(spawn_options.fetch(:tools, Harness::TOOLS), isolation:)
         Altitude.new(fixture_path:, spawn_seam: SpawnSeam.new(backend:, **spawn_options), grader:, sink:,
-                     arms: LiveArms.altitude(seams:, price_book:),
+                     arms: LiveArms.altitude(seams:, price_book:), journal: journal || Channel::Null.instance,
                      **altitude_isolation(isolation, journal)).report
       end
 

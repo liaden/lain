@@ -714,6 +714,21 @@ RSpec.describe Lain::Bench::CLI do
       end
     end
 
+    # The real command path with the real arms stubbed out for one that rewrites
+    # the tests it is graded by: isolation is the only thing that lets a journal
+    # in at all, so the lease is a copy of the committed subject.
+    it "journals fixture_tampered into the journal the command was given" do
+      journal = []
+      copies = Lain::Bench::Altitude::Subject.new(project: "#{ALTITUDE_CLI_SUBJECTS}/order-total")
+      allow(Lain::CLI::IsolationBackend).to receive(:resolve).and_return(copies)
+      allow(Lain::Bench::LiveArms).to receive(:altitude).and_return([AltitudeTamperingArm.new("cheat")])
+
+      with_fixture { |path| altitude_report(path, isolation: "worktree", journal:) }
+
+      expect(journal).to all(be_a(Lain::Telemetry::FixtureTampered))
+      expect(journal.map(&:arm).uniq).to eq(["cheat"])
+    end
+
     # The same pair `bench arms` refuses, refused by the same two guards rather
     # than by a second copy of them.
     it "refuses a set isolation with no journal to record its leases in" do

@@ -22,6 +22,11 @@ module Lain
       # candidate ranked, so a caller can inspect the road not taken.
       Selection = Data.define(:best, :grade, :candidates) do
         def score = grade.score
+
+        # How many trajectories the winner was picked from. A best of k is a
+        # maximum over k draws, so it is not comparable with a single run.
+        def k = candidates.size
+        def best_of_k? = k > 1
       end
 
       # @param grader [#grade] scores a trajectory into a Grade

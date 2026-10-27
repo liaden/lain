@@ -41,6 +41,24 @@ RSpec.describe Lain::Bench::Speculative do
     expect(answer_text(selection.best)).to include("Paris")
   end
 
+  it "says it is a best-of-k selection, with k the number of branches" do
+    selection = speculative.search(base, branches:)
+
+    expect([selection.k, selection.best_of_k?]).to eq([3, true])
+  end
+
+  it "reports k: 4 over 4 branches" do
+    four = branches + [answering("Nice.")]
+
+    expect(speculative.search(base, branches: four).k).to eq(4)
+  end
+
+  it "is not best-of-k when there was one branch" do
+    selection = speculative.search(base, branches: branches.first(1))
+
+    expect([selection.k, selection.best_of_k?]).to eq([1, false])
+  end
+
   it "ranks every candidate with a grade, not just the winner" do
     selection = speculative.search(base, branches:)
 
