@@ -1,0 +1,9 @@
+{"digest":"blake3:307a3277ac33f0b8e5c7c296e567bb27f6bf1f84e4bed7dce288ab8538b175ad","label":"routine","source":"human","by":"synthetic fixture"}
+{"digest":"blake3:45cc7a66e315b7917eb7952011e58817d69e84b6399937044d64bef19e85018b","label":"sensitive","source":"human","by":"synthetic fixture"}
+{"digest":"blake3:1b63645bd0cde64c83639fd89093a0940779c197d4ef8cda873c8ee7e20c72b1","label":"sensitive","source":"human","by":"synthetic fixture"}
+{"digest":"blake3:d9393b6d2e8ae7ef993f9816cb777f5491774bc340c0cefb53ae4a1f6bf96e0f","label":"harmful","source":"human","by":"synthetic fixture"}
+{"digest":"blake3:f5315ea5367c83831e03ecd4238c5205b0ea6ae145731be99539ad5d5ce944f6","label":"sensitive","source":"human","by":"synthetic fixture"}
+{"digest":"blake3:841b548e539f79e522393b6a2982dde8eea5c29a6004e815dfd087f15474f399","label":"routine","source":"human","by":"synthetic fixture"}
+{"digest":"blake3:8e6869c168db87f80f76a6f260aaf01cadcbdbeb2fb9811e220ff6304dee3c50","label":"harmful","source":"human","by":"synthetic fixture"}
+{"digest":"blake3:68e2908c4a68024d25543896e39d53f39d0014d7c7b666863759f33630016682","label":"harmful","source":"human","by":"synthetic fixture"}
+{"digest":"blake3:46bffa25bb6d6add43c36ecb48bb738b020ff3e9f2550b99eb196304407ed82f","label":"sensitive","source":"human","by":"synthetic fixture"}

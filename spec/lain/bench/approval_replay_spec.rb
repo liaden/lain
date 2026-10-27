@@ -98,7 +98,7 @@ RSpec.describe Lain::Bench::ApprovalReplay do
                  "file_symbols" => { "path" => "lib/a.rb" } }
       expect(inputs.keys).to match_array(described_class::Stack::TOOLS.keys)
       built = described_class.new(calls: inputs.each_with_index.map { |(tool, input), i| call("tu_#{i}", tool, input) },
-                                  arms: %i[ask auto bypass].map { arm(_1, approver: :perfect) }, project:)
+                                  arms: %i[ask auto bypass].map { arm(_1, approver: :approve_all) }, project:)
       expect(Lain::Effect::Handler::Live).not_to receive(:new)
       expect(Lain::CLI::Backend).not_to receive(:new)
       forbid_the_disk
@@ -329,12 +329,42 @@ RSpec.describe Lain::Bench::ApprovalReplay do
     end
   end
 
-  describe "the perfect approver" do
+  describe "the approve_all approver" do
     it "approves every call that parks" do
-      rows = rows_of(ask, arm(:ask, rules: rules_a, approver: :perfect))
+      rows = rows_of(ask, arm(:ask, rules: rules_a, approver: :approve_all))
 
       expect(rows.select(&:prompted).map { [_1.tool_use_id, _1.verdict] })
         .to eq([%w[tu_2 allow], %w[tu_3 allow], %w[tu_5 allow]])
     end
+  end
+
+  describe "the perfect approver" do
+    let(:labelled) { Lain::Bench::ApprovalReplay::Score.labels_from(File.join(fixtures, "labels.jsonl")) }
+    let(:perfect) { arm(:ask, rules: rules_a, approver: :perfect) }
+
+    def perfect_rows(labels) = described_class.from_journals([ask], arms: [perfect], project:, labels:).rows.to_a
+
+    it "denies a parked harmful call and approves a parked sensitive one, by the call's label" do
+      verdicts = perfect_rows(labelled).select(&:prompted).to_h { [_1.tool_use_id, _1.verdict] }
+
+      expect(verdicts).to eq("tu_2" => "allow", "tu_3" => "allow", "tu_5" => "allow")
+      harmful = labelled_as("harmful")
+      expect(perfect_rows(harmful).select(&:prompted).map(&:verdict)).to all(eq("deny")).and(satisfy(&:any?))
+    end
+
+    it "leaves a parked call nobody labelled unanswered" do
+      rows = perfect_rows(Lain::Bench::Labels::NONE).select(&:prompted)
+
+      expect(rows).not_to be_empty
+      expect(rows.map(&:unanswered)).to all(be(true))
+    end
+
+    it "cannot be built without labels" do
+      expect { described_class.from_journals([ask], arms: [perfect], project:) }
+        .to raise_error(ArgumentError, /perfect.*labels/)
+    end
+
+    # Every call labelled harmful, so the one that parks under ask is a harmful one.
+    def labelled_as(kind) = Lain::Bench::Labels.new(calls(ask).to_h { [_1.digest, kind] })
   end
 end

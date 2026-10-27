@@ -18,7 +18,7 @@ module Lain
       Place = Data.define(:cwd, :root, :home)
 
       LEVELS = %i[ask auto bypass].freeze
-      APPROVERS = %i[recorded perfect].freeze
+      APPROVERS = %i[recorded perfect approve_all].freeze
 
       # What a row says of a call no rung decided.
       UNRULED = { "verdict" => "none" }.freeze
@@ -66,10 +66,11 @@ module Lain
       # @param paths [Array<String>] session files
       # @param arms [Array<Arm>]
       # @param project [Place] where a session that recorded no place is replayed
+      # @param labels [Labels, nil] when given, {#report} scores the arms against it
       # @return [ApprovalReplay]
-      def self.from_journals(paths, arms:, project:)
+      def self.from_journals(paths, arms:, project:, labels: nil)
         read = paths.to_h { [_1, Journal.records(File.foreach(_1)).to_a] }
-        new(calls: read.flat_map { |path, records| Call.joined(records, session: path) }, arms:, project:,
+        new(calls: read.flat_map { |path, records| Call.joined(records, session: path) }, arms:, project:, labels:,
             sessions: read.transform_values { |records| records.find { _1["type"] == SessionRecord::HEADER_TYPE } })
       end
 
@@ -80,19 +81,16 @@ module Lain
       # @param rules [Array<String>] rule set files; none means one arm per level with no rules
       # @param approver [String, Symbol] out of {APPROVERS}
       # @param project [Place]
+      # @param labels [String, nil] a call-label sidecar; the report then scores each arm against it
       # @return [ApprovalReplay]
-      # @raise [CLI::Refusal] on an unknown level or approver, an arm asked for twice, or a rule set that
-      #   will not load
-      def self.asked(sessions:, approvals:, rules:, approver:, project:)
+      # @raise [CLI::Refusal] on an unknown level or approver, an arm asked for twice, a rule set that
+      #   will not load, or a labels file that will not
+      def self.asked(sessions:, approvals:, rules:, approver:, project:, labels: nil)
         raise CLI::Refusal, "approval-replay needs at least one session file" if sessions.empty?
 
-        unknown = approvals.map(&:to_s) - LEVELS.map(&:to_s)
-        raise CLI::Refusal, "--approval is #{LEVELS.join(", ")}, not #{unknown.join(", ")}" if unknown.any?
-        unless APPROVERS.include?(approver.to_sym)
-          raise CLI::Refusal, "--approver is #{APPROVERS.join(" or ")}, not #{approver}"
-        end
-
-        from_journals(spelled_once(sessions), arms: once(arms_of(approvals, spelled_once(rules), approver)), project:)
+        checked(approvals, approver, labels)
+        from_journals(spelled_once(sessions), arms: once(arms_of(approvals, spelled_once(rules), approver)), project:,
+                                              labels: sidecar(labels))
       rescue Config::Refusal => e
         raise CLI::Refusal, e.message
       end
@@ -106,22 +104,36 @@ module Lain
         end
       end
 
+      def self.checked(approvals, approver, labels)
+        unknown = approvals.map(&:to_s) - LEVELS.map(&:to_s)
+        raise CLI::Refusal, "--approval is #{LEVELS.join(", ")}, not #{unknown.join(", ")}" if unknown.any?
+        unless APPROVERS.include?(approver.to_sym)
+          raise CLI::Refusal, "--approver is #{APPROVERS.join(", ")}, not #{approver}"
+        end
+        return unless approver.to_sym == :perfect && !labels
+
+        raise CLI::Refusal, "--approver perfect answers by label: pass --labels"
+      end
+
+      def self.sidecar(path) = (Score.labels_from(path) if path)
+
       def self.once(arms)
         twice = arms.tally.find { |_, count| count > 1 }&.first
         raise CLI::Refusal, "#{twice.name} is asked for twice; each arm is replayed once" if twice
 
         arms
       end
-      private_class_method :spelled_once, :arms_of, :once
+      private_class_method :spelled_once, :arms_of, :once, :sidecar, :checked
 
-      attr_reader :calls, :arms, :project, :sessions
+      attr_reader :calls, :arms, :project, :sessions, :labels
 
       # @param calls [Array<Call>] in journal order, sessions one after another
       # @param arms [Array<Arm>] each once
       # @param project [Place]
       # @param sessions [Hash{String=>Hash, nil}] each session file read, by path, to its header
+      # @param labels [Labels, nil]
       # @raise [ArgumentError] on an arm given twice, whose rows no report could tell apart
-      def initialize(calls:, arms:, project:, sessions: calls.to_h { [_1.session, nil] })
+      def initialize(calls:, arms:, project:, sessions: calls.to_h { [_1.session, nil] }, labels: nil)
         twice = arms.tally.select { _2 > 1 }.keys.map(&:name)
         raise ArgumentError, "an arm is given twice: #{twice.join(", ")}" if twice.any?
 
@@ -129,6 +141,9 @@ module Lain
         @arms = arms.freeze
         @project = project
         @sessions = sessions.freeze
+        @labels = labels
+        raise ArgumentError, "a perfect arm answers by label and needs labels" if unlabelled_perfect?(arms, labels)
+
         @rules = arms.to_h { [_1, _1.rules] }
       end
 
@@ -155,10 +170,12 @@ module Lain
       # @return [Array(String, String)] what a row is joined to its call, and to another arm's row, by
       def key(row) = [row.session, row.tool_use_id]
 
-      # @return [String]
-      def report = Report.new(self).to_s
+      # @return [String] the replay, then each arm's score when labels were given
+      def report = "#{Report.new(self)}#{Score.new(rows:, labels:).table if labels}"
 
       private
+
+      def unlabelled_perfect?(arms, labels) = labels.nil? && arms.any? { _1.approver == :perfect }
 
       def by_session = replayable.group_by(&:session).values
 
@@ -166,9 +183,9 @@ module Lain
         place = calls.first.place || project
         rules, denied_tools = @rules.fetch(arm)
         judge = RecordedJudge.new
-        approver = Approver.for(arm.approver, calls)
+        approver = Approver.for(arm.approver, calls, labels:)
         Stack.new(place:, arm:, judge:, rules:, denied_tools:).session(approver:) do |dispatch|
-          calls.map { |call| row(arm, call.with(place:), judge, approver, dispatch) }
+          calls.map { |call| row(arm, call.with(place:), judge, approver, dispatch).with(call_digest: call.digest) }
         end
       end
 

@@ -1834,6 +1834,7 @@ RSpec.describe Lain::Bench::CLI do
     it "refuses an unknown approval level, an unknown approver and a missing file by name" do
       expect { report(approvals: %w[sometimes]) }.to raise_error(described_class::Refusal, /sometimes/)
       expect { report(approver: "optimist") }.to raise_error(described_class::Refusal, /optimist/)
+      expect { report(approver: "perfect") }.to raise_error(described_class::Refusal, /perfect.*--labels/)
       expect { report(rules: ["/nonexistent/rules.rb"]) }.to raise_error(described_class::Refusal, %r{/nonexistent})
       expect { cli.approval_replay_report(sessions: ["/nonexistent/s.ndjson"], project:) }
         .to raise_error(described_class::Refusal, %r{/nonexistent/s.ndjson})

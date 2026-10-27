@@ -958,11 +958,16 @@ class LainCLI < Thor
                                 "trusted .lain/config.rb is, so name only a file you trust. Repeat to diff rule sets"
     method_option :approver, type: :string, enum: Lain::Bench::ApprovalReplay::APPROVERS.map(&:to_s),
                              default: "recorded",
-                             desc: "who answers a parked call: the session's own human, or one approving everything"
+                             desc: "who answers a parked call: the session's own human, one approving everything " \
+                                   "(approve_all), or one answering by label (perfect, needs --labels)"
+    method_option :labels, type: :string, banner: "LABELS_JSONL",
+                           desc: "a call-label sidecar (digest, label harmful|sensitive|routine, source); " \
+                                 "scores each arm against it"
     def approval_replay(*sessions)
       render do
         Lain::Bench::CLI.new.approval_replay_report(sessions:, approvals: options[:approval] || %w[ask],
-                                                    rules: options[:rules] || [], approver: options[:approver])
+                                                    rules: options[:rules] || [], approver: options[:approver],
+                                                    labels: options[:labels])
       end
     end
 
