@@ -970,12 +970,20 @@ class LainCLI < Thor
                                  "scores each arm against it"
     method_option :judge_denials, type: :string, repeatable: true, banner: "off|escalate_only|breaker",
                                   desc: "what a judge's refusal does under auto; repeat for more (default: off)"
+    method_option :tripwire, type: :boolean, default: false,
+                             desc: "end the report with what the tripwire would have done to the sessions, " \
+                                   "and its false-trip rate when --labels is given"
+    method_option :tripwire_rules, type: :string, repeatable: true, banner: "KEY=VALUE,...",
+                                   desc: "rules for the tripwire replay as overrides of the default " \
+                                         "(hard_stop, strong, medium, weak); repeat for a row each. Implies --tripwire"
     def approval_replay(*sessions)
       render do
         Lain::Bench::CLI.new.approval_replay_report(sessions:, approvals: options[:approval] || %w[ask],
                                                     rules: options[:rules] || [], approver: options[:approver],
                                                     labels: options[:labels],
-                                                    denials: options[:judge_denials] || %w[off])
+                                                    denials: options[:judge_denials] || %w[off],
+                                                    tripwire: options[:tripwire],
+                                                    tripwire_rules: options[:tripwire_rules] || [])
       end
     end
 

@@ -1845,6 +1845,12 @@ RSpec.describe Lain::Bench::CLI do
       expect(out.lines.grep(/\Aask /).size).to eq(1)
     end
 
+    it "ends with the tripwire replay when asked, and refuses a tripwire rule it cannot read" do
+      expect(report(tripwire: true)).to include("tripwire replay", "hard_stop=10 (default)")
+      expect(report(tripwire_rules: ["hard_stop=13"])).to include("hard_stop=13")
+      expect { report(tripwire_rules: ["nope=1"]) }.to raise_error(described_class::Refusal, /nope.*hard_stop/)
+    end
+
     it "refuses an arm asked for twice, naming it" do
       expect { report(approvals: %w[auto auto]) }.to raise_error(described_class::Refusal, /auto no rules recorded/)
     end

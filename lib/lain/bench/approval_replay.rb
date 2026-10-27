@@ -85,10 +85,13 @@ module Lain
       # @param arms [Array<Arm>]
       # @param project [Place] where a session that recorded no place is replayed
       # @param labels [Labels, nil] when given, {#report} scores the arms against it
+      # @param tripwire [Array<Lain::Tripwire::Rules>, nil] when given, {#report} ends with the tripwire
+      #   replay under each
       # @return [ApprovalReplay]
-      def self.from_journals(paths, arms:, project:, labels: nil)
+      def self.from_journals(paths, arms:, project:, labels: nil, tripwire: nil)
         read = paths.to_h { [_1, Journal.records(File.foreach(_1)).to_a] }
-        new(calls: read.flat_map { |path, records| Call.joined(records, session: path) }, arms:, project:, labels:,
+        calls = read.flat_map { |path, records| Call.joined(records, session: path) }
+        new(calls:, arms:, project:, labels:, tripwire:,
             sessions: read.transform_values { |records| records.find { _1["type"] == SessionRecord::HEADER_TYPE } })
       end
 
@@ -102,19 +105,26 @@ module Lain
       # @param labels [String, nil] a call-label sidecar; the report then scores each arm against it
       # @param denials [Array<String, Symbol>] judge-denial arms out of {CLI::Arms::JUDGE_DENIALS}, each
       #   replayed under every level and rule set; off by default
+      # @param tripwire [Boolean] end the report with what the tripwire would have done to the sessions
+      # @param tripwire_rules [Array<String>] `key=value` overrides of the default tripwire rules, one
+      #   extra row each; naming any asks for the tripwire section
       # @return [ApprovalReplay]
       # @raise [CLI::Refusal] on an unknown level, approver or judge-denial arm, an arm asked for twice, a
-      #   rule set that will not load, or a labels file that will not
-      def self.asked(sessions:, approvals:, rules:, approver:, project:, labels: nil, denials: %i[off])
+      #   rule set that will not load, a labels file that will not, or a tripwire rule that does not parse
+      def self.asked(sessions:, approvals:, rules:, approver:, project:, labels: nil, denials: %i[off],
+                     tripwire: false, tripwire_rules: [])
         raise CLI::Refusal, "approval-replay needs at least one session file" if sessions.empty?
 
         checked(approvals, approver, labels)
         refuse_unknown(denials, ::Lain::CLI::Arms::JUDGE_DENIALS, "--judge-denials")
         from_journals(spelled_once(sessions), arms: once(arms_of(approvals, spelled_once(rules), approver, denials)),
-                                              project:, labels: sidecar(labels))
+                                              project:, labels: sidecar(labels),
+                                              tripwire: armed(tripwire, tripwire_rules))
       rescue Config::Refusal => e
         raise CLI::Refusal, e.message
       end
+
+      def self.armed(asked, specs) = (Tripwire.rules_from(specs) if asked || specs.any?)
 
       # One file named two ways is the same file once.
       def self.spelled_once(paths) = paths.map { File.expand_path(_1) }.uniq
@@ -148,7 +158,7 @@ module Lain
 
         arms
       end
-      private_class_method :spelled_once, :arms_of, :once, :sidecar, :checked, :refuse_unknown
+      private_class_method :armed, :spelled_once, :arms_of, :once, :sidecar, :checked, :refuse_unknown
 
       attr_reader :calls, :arms, :project, :sessions, :labels
 
@@ -157,8 +167,9 @@ module Lain
       # @param project [Place]
       # @param sessions [Hash{String=>Hash, nil}] each session file read, by path, to its header
       # @param labels [Labels, nil]
+      # @param tripwire [Array<Lain::Tripwire::Rules>, nil]
       # @raise [ArgumentError] on an arm given twice, whose rows no report could tell apart
-      def initialize(calls:, arms:, project:, sessions: calls.to_h { [_1.session, nil] }, labels: nil)
+      def initialize(calls:, arms:, project:, sessions: calls.to_h { [_1.session, nil] }, labels: nil, tripwire: nil)
         twice = arms.tally.select { _2 > 1 }.keys.map(&:name)
         raise ArgumentError, "an arm is given twice: #{twice.join(", ")}" if twice.any?
 
@@ -167,6 +178,7 @@ module Lain
         @project = project
         @sessions = sessions.freeze
         @labels = labels
+        @tripwire = tripwire
         raise ArgumentError, "a perfect arm answers by label and needs labels" if unlabelled_perfect?(arms, labels)
 
         @rules = arms.uniq(&:rules_path).to_h { [_1.rules_path, _1.rules] }
@@ -195,8 +207,12 @@ module Lain
       # @return [Array(String, String)] what a row is joined to its call, and to another arm's row, by
       def key(row) = [row.session, row.tool_use_id]
 
-      # @return [String] the replay, then each arm's score when labels were given
-      def report = "#{Report.new(self)}#{Score.new(rows:, labels:).table if labels}"
+      # @return [String] the replay, then each arm's score when labels were given, then the tripwire's
+      #   when it was asked for
+      def report
+        "#{Report.new(self)}#{Score.new(rows:, labels:).table if labels}" \
+          "#{Tripwire.new(journals: sessions.keys, labels:, rules: @tripwire).report if @tripwire}"
+      end
 
       private
 

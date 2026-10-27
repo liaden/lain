@@ -178,13 +178,17 @@ module Lain
       # @param approver [String] "recorded", "perfect" (needs labels) or "approve_all"
       # @param labels [String, nil] a call-label sidecar; each arm is then scored against it
       # @param denials [Array<String>] judge-denial arms, each replayed under every level and rule set
+      # @param tripwire [Hash] passed to {ApprovalReplay.asked}
+      # @option tripwire [Boolean] :tripwire end the report with the tripwire's replay
+      # @option tripwire [Array<String>] :tripwire_rules `key=value` overrides of the default tripwire rules, a row each
       # @return [String] the report; never printed here
       # @raise [Refusal] on an unknown level, approver or judge-denial arm, a missing file, or a rule set or labels
-      #   file that will not load
+      #   file that will not load, or a tripwire rule that does not parse
       def approval_replay_report(sessions:, project: ApprovalReplay::Place.current, approvals: %w[ask], rules: [],
-                                 approver: "recorded", labels: nil, denials: %w[off])
+                                 approver: "recorded", labels: nil, denials: %w[off], **tripwire)
         ApprovalReplay.asked(sessions: sessions.map { checked_file(_1, "session file") }, approvals:, approver:,
-                             rules: rules.map { checked_file(_1, "rule set") }, project:, labels:, denials:).report
+                             rules: rules.map { checked_file(_1, "rule set") }, project:, labels:, denials:,
+                             **tripwire).report
       end
 
       # The three orchestration arms (single-thread control, orchestrator-worker,
