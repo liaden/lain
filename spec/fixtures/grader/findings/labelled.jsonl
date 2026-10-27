@@ -1,0 +1,20 @@
+{"finding": "Function parse_header returns nil on an empty string but its caller dereferences the result without a check.", "label": true, "synthetic": true}
+{"finding": "The retry loop in fetch_page sleeps with no upper bound, so a persistent 503 never terminates.", "label": true, "synthetic": true}
+{"finding": "The cache key omits the locale, so two users in different locales share one rendered page.", "label": true, "synthetic": true}
+{"finding": "write_report opens the output file and never closes it on the error path.", "label": true, "synthetic": true}
+{"finding": "The migration adds a NOT NULL column without a default to a table that already holds rows.", "label": true, "synthetic": true}
+{"finding": "Token comparison uses == on secrets, which leaks length and prefix through timing.", "label": true, "synthetic": true}
+{"finding": "The pagination offset is computed from page * size, so page 1 skips the first size rows.", "label": true, "synthetic": true}
+{"finding": "The scheduler reads the shared counter without the lock the writer holds.", "label": true, "synthetic": true}
+{"finding": "The CSV exporter does not quote fields containing commas, which corrupts those rows.", "label": true, "synthetic": true}
+{"finding": "The default timeout is documented as 30 seconds but the constant is 3.", "label": true, "synthetic": true}
+{"finding": "The variable total is unused, so the function should be deleted entirely.", "label": false, "synthetic": true}
+{"finding": "The loop runs n times, which is slow, so it is a performance bug.", "label": false, "synthetic": true}
+{"finding": "The class has 12 methods; classes should have at most 10, so it is wrong.", "label": false, "synthetic": true}
+{"finding": "The public method name is longer than 30 characters, which proves a defect.", "label": false, "synthetic": true}
+{"finding": "The test file does not mention the word timeout, so timeouts are untested.", "label": false, "synthetic": true}
+{"finding": "The function returns early, and early returns are always a bug.", "label": false, "synthetic": true}
+{"finding": "The log line uses single quotes where the style guide elsewhere prefers double quotes, so it breaks at runtime.", "label": false, "synthetic": true}
+{"finding": "The README was edited in the same commit, so the code change must be unreviewed.", "label": false, "synthetic": true}
+{"finding": "The constant MAX_ROWS is defined twice, though both definitions are in separate modules and never meet.", "label": false, "synthetic": true}
+{"finding": "A comment says TODO, therefore the feature is incomplete and the build is broken.", "label": false, "synthetic": true}

@@ -63,6 +63,31 @@ RSpec.describe Lain::Grader::Refuter do
     end
   end
 
+  describe "scale" do
+    it "passes a finding scored 0.5 and refutes one scored 0.49 when built with no scale" do
+      expect(refuter(judge('{"score": 0.5, "why": "edge"}')).refute("x")).to be_pass
+      expect(refuter(judge('{"score": 0.49, "why": "edge"}')).refute("x")).not_to be_pass
+    end
+
+    it "refutes an unsure three-level verdict, since survival needs holds" do
+      unsure = refuter(judge('{"verdict": "unsure", "why": "hm"}'), scale: :three).refute("x")
+      holds = refuter(judge('{"verdict": "holds", "why": "ok"}'), scale: :three).refute("x")
+
+      expect([unsure.score, unsure.pass?, holds.pass?]).to eq([0.5, false, true])
+    end
+
+    it "survives a binary holds and refutes a fails" do
+      expect(refuter(judge('{"verdict": "holds", "why": "ok"}'), scale: :binary).refute("x")).to be_pass
+      expect(refuter(judge('{"verdict": "fails", "why": "no"}'), scale: :binary).refute("x")).not_to be_pass
+    end
+
+    it "lets an explicit threshold override the scale's own" do
+      grade = refuter(judge('{"verdict": "unsure", "why": "hm"}'), scale: :three, threshold: 0.5).refute("x")
+
+      expect(grade).to be_pass
+    end
+  end
+
   describe Lain::Grader::Refuter::Recorded do
     let(:journal_lines) do
       [

@@ -23,13 +23,16 @@ module Lain
     # `survived` is the refuter's thresholded pass/fail, since a continuous
     # Rubric score alone is not a verdict; `score` keeps the raw 0..1
     # confidence alongside.
-    Verdict = Data.define(:digest, :survived, :score, :why) do
+    # `scale` names the {Grader::Rubric::Scale} the judge answered on; nil in a record made before
+    # scales existed, which {Bench::JudgeScale::Source} reads as unattributed rather than as unit.
+    Verdict = Data.define(:digest, :survived, :score, :why, :scale) do
       include Journalable
 
-      def initialize(digest:, survived:, score:, why:)
+      def initialize(digest:, survived:, score:, why:, scale: nil)
         Carriers::Verdict.check!(digest:, survived:, why:)
 
-        super(digest: digest.dup.freeze, survived:, score: score.to_f.clamp(0.0, 1.0), why: -why.to_s)
+        super(digest: digest.dup.freeze, survived:, score: score.to_f.clamp(0.0, 1.0), why: -why.to_s,
+              scale: scale&.to_s&.freeze)
       end
     end
   end

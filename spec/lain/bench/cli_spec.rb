@@ -1796,4 +1796,174 @@ RSpec.describe Lain::Bench::CLI do
         .to raise_error(Lain::Oracle::SecretRead::NotAGateway)
     end
   end
+
+  describe "#judge_scale_report" do
+    let(:fixture) { File.expand_path("../../fixtures/grader/findings/labelled.jsonl", __dir__) }
+    let(:findings) { Lain::Bench::JudgeScale.load(fixture) }
+    let(:tmp) { Dir.mktmpdir }
+
+    after { FileUtils.remove_entry(tmp) }
+
+    # One journal per scale of verdict records: every true finding survives, every false one is refuted,
+    # except that the binary scale lets one false finding through.
+    def recordings(dir, leak: nil)
+      Lain::Bench::JudgeScale::DEFAULT_SCALES.each do |scale|
+        lines = findings.map do |entry|
+          survived = entry.fetch("label") || (scale == :binary && entry.fetch("finding") == leak)
+          Lain::Telemetry::Verdict.new(digest: Lain::Canonical.digest(entry.fetch("finding")), survived:,
+                                       score: survived ? 0.9 : 0.1, why: "recorded").to_journal.to_json
+        end
+        File.write(File.join(dir, "#{scale}.ndjson"), lines.join("\n"))
+      end
+    end
+
+    it "reports one row per scale from recorded verdicts, with no model call" do
+      recordings(tmp, leak: findings.find { !_1.fetch("label") }.fetch("finding"))
+      out = cli.judge_scale_report(findings: fixture, recorded: tmp)
+
+      expect(out.lines.grep(/\A(unit|binary|three|deduction) /).size).to eq(4)
+      expect(out).to include("wrong survived 1 of 10")
+      expect(out).to include("Brier withheld: scores are not probabilities")
+    end
+
+    it "takes the scales asked for, in order" do
+      recordings(tmp)
+      out = cli.judge_scale_report(findings: fixture, recorded: tmp, scales: "three,unit")
+
+      expect(out.lines.grep(/\A(unit|binary|three|deduction) /).map { _1.split.first }).to eq(%w[three unit])
+    end
+
+    it "refuses an unlabelled row naming the line, before any recording is read" do
+      bad = File.join(tmp, "bad.jsonl")
+      File.write(bad, %({"finding":"a","label":true}\n{"finding":"b"}\n))
+
+      expect { cli.judge_scale_report(findings: bad, recorded: tmp) }
+        .to raise_error(described_class::Refusal, /line 2/)
+    end
+
+    it "refuses a missing findings file, a missing recording and a run with neither recording nor backend" do
+      expect { cli.judge_scale_report(findings: "/nonexistent/f.jsonl", recorded: tmp) }
+        .to raise_error(described_class::Refusal, %r{/nonexistent/f.jsonl})
+      expect { cli.judge_scale_report(findings: fixture, recorded: tmp) }
+        .to raise_error(described_class::Refusal, /unit.ndjson/)
+      expect { cli.judge_scale_report(findings: fixture) }
+        .to raise_error(described_class::Refusal, /--recorded/)
+    end
+
+    it "refuses an unknown scale by name" do
+      recordings(tmp)
+
+      expect { cli.judge_scale_report(findings: fixture, recorded: tmp, scales: "unit,likert") }
+        .to raise_error(described_class::Refusal, /likert/)
+    end
+
+    describe "a recording that names its scale" do
+      def verdict_line(entry, scale:)
+        Lain::Telemetry::Verdict.new(digest: Lain::Canonical.digest(entry.fetch("finding")), survived: true,
+                                     score: 1.0, why: "r", scale:).to_journal.to_json
+      end
+
+      it "refuses a file whose records name another scale, naming the file and both scales" do
+        recordings(tmp)
+        File.write(File.join(tmp, "binary.ndjson"), findings.map { verdict_line(_1, scale: :three) }.join("\n"))
+
+        expect { cli.judge_scale_report(findings: fixture, recorded: tmp, scales: "binary") }
+          .to raise_error(described_class::Refusal, /binary\.ndjson.*three.*binary|binary\.ndjson.*binary.*three/)
+      end
+
+      it "accepts records with no scale and records naming the file's own scale" do
+        recordings(tmp)
+        File.write(File.join(tmp, "binary.ndjson"), findings.map { verdict_line(_1, scale: :binary) }.join("\n"))
+
+        expect(cli.judge_scale_report(findings: fixture, recorded: tmp, scales: "binary,three")).to include("binary")
+      end
+
+      it "states the directory it read and each scale's survival threshold" do
+        recordings(tmp)
+        out = cli.judge_scale_report(findings: fixture, recorded: tmp)
+
+        expect(out).to include("recorded from #{tmp}")
+        expect(out.lines.find { _1.start_with?("unit") }).to include("survives at 0.5")
+        expect(out.lines.find { _1.start_with?("deduction") }).to include("survives at 0.75")
+      end
+    end
+
+    describe "a live run's journal directory" do
+      def reply(text)
+        Lain::Response.new(model: "m", stop_reason: :end_turn, content: [{ "type" => "text", "text" => text }],
+                           usage: Lain::Usage.new(input_tokens: 4, output_tokens: 2))
+      end
+
+      let(:backend) { instance_double(Lain::CLI::Backend, provider:, model: "m") }
+      let(:provider) { Lain::Provider::Mock.new(responses: [reply('{"verdict": "holds", "why": "fine"}')]) }
+
+      it "tags each verdict with its scale" do
+        cli.judge_scale_report(findings: fixture, backend:, scales: "binary", journal: tmp)
+        record = File.foreach(File.join(tmp, "binary.ndjson")).map { JSON.parse(_1) }.first
+
+        expect(record).to include("type" => "verdict", "scale" => "binary")
+      end
+
+      it "refuses a directory that already holds a requested scale's file, naming it, and asks nothing" do
+        File.write(File.join(tmp, "three.ndjson"), "")
+
+        expect { cli.judge_scale_report(findings: fixture, backend:, scales: "binary,three", journal: tmp) }
+          .to raise_error(described_class::Refusal, /three\.ndjson/)
+        expect(provider.requests).to be_empty
+        expect(File).not_to exist(File.join(tmp, "binary.ndjson"))
+      end
+
+      it "says the journal is partial, and where it stopped, when the judge cannot be parsed" do
+        bad = Lain::Provider::Mock.new(responses: [reply('{"verdict": "holds", "why": "ok"}'),
+                                                   reply('{"verdict": 7, "why": "no"}')])
+        backend = instance_double(Lain::CLI::Backend, provider: bad, model: "m")
+
+        expect { cli.judge_scale_report(findings: fixture, backend:, scales: "binary", journal: tmp) }
+          .to raise_error(described_class::Refusal) { |error|
+            expect(error.message).to include("partial", tmp, "binary", findings[1].fetch("finding")[0, 80])
+          }
+      end
+
+      it "says the same when the provider fails" do
+        failing = Lain::Provider::Mock.new(responses: [])
+        backend = instance_double(Lain::CLI::Backend, provider: failing, model: "m")
+
+        expect { cli.judge_scale_report(findings: fixture, backend:, scales: "unit", journal: tmp) }
+          .to raise_error(described_class::Refusal, /partial.*unit/m)
+      end
+    end
+
+    describe "a live run", :seam do
+      def reply(text)
+        Lain::Response.new(model: "m", stop_reason: :end_turn, content: [{ "type" => "text", "text" => text }],
+                           usage: Lain::Usage.new(input_tokens: 4, output_tokens: 2))
+      end
+
+      let(:provider) do
+        replies = Array.new(findings.size) { reply('{"verdict": "holds", "why": "fine"}') } +
+                  Array.new(findings.size) { reply('{"verdict": "unsure", "why": "hm"}') }
+        Lain::Provider::Mock.new(responses: replies)
+      end
+      let(:backend) { instance_double(Lain::CLI::Backend, provider:, model: "judge-m") }
+
+      it "journals each scale's verdicts so --recorded re-scores to the identical report" do
+        live = cli.judge_scale_report(findings: fixture, backend:, scales: "binary,three", journal: tmp)
+        offline = cli.judge_scale_report(findings: fixture, recorded: tmp, scales: "binary,three")
+
+        expect(live.lines.grep_v(/\Ajournal:/).join.chomp).to eq(offline.lines.drop(1).join.chomp)
+        expect(live).to include("journal: #{tmp}")
+        expect(live.lines.find { _1.start_with?("binary") }).to include("wrong survived 10 of 10")
+        expect(live.lines.find { _1.start_with?("three") }).to include("wrong survived 0 of 10")
+        expect(provider.requests.size).to eq(findings.size * 2)
+      end
+
+      it "sends each scale's own instruction to the model" do
+        cli.judge_scale_report(findings: fixture, backend:, scales: "binary", journal: tmp)
+
+        sent = Array(provider.requests.first.system).map { _1.is_a?(Hash) ? _1["text"] : _1 }.join
+        expect(sent).to start_with(Lain::Grader::Rubric::Scale.fetch(:binary).instruction)
+        expect(provider.requests.first.model).to eq("judge-m")
+      end
+    end
+  end
 end

@@ -20,17 +20,15 @@ module Lain
         important, just whether it actually holds.
       CRITERIA
 
-      # Score at or above this and the finding survives.
-      DEFAULT_THRESHOLD = 0.5
-
       # @param provider [Lain::Provider] the judge model's provider
       # @param model [String] the judge model
       # @param criteria [String] what makes a finding genuine, vs. a false positive
       # @param max_tokens [Integer] the judge's reply budget
-      # @param threshold [Float] score at/above which a finding survives
-      def initialize(provider:, model:, criteria: DEFAULT_CRITERIA, max_tokens: 512, threshold: DEFAULT_THRESHOLD)
-        @rubric = Rubric.new(criteria:, provider:, model:, max_tokens:)
-        @threshold = threshold
+      # @param threshold [Float, nil] score at/above which a finding survives; nil takes the scale's own
+      # @param scale [Symbol] the answer shape asked of the judge, one of {Rubric::Scale::NAMES}
+      def initialize(provider:, model:, criteria: DEFAULT_CRITERIA, max_tokens: 512, threshold: nil, scale: :unit)
+        @rubric = Rubric.new(criteria:, provider:, model:, max_tokens:, scale:)
+        @threshold = threshold || Rubric::Scale.fetch(scale).survives_at
       end
 
       # @param finding [#to_s] one raw finding from a finding-producing grader

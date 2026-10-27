@@ -616,6 +616,23 @@ Shape x density sweep over a fixture plan's scripted runs. Offline, deterministi
 
 Both `--plan` (fixture plan markdown, P1 format) and `--runs` (scripted runs YAML) are required.
 
+### lain bench judge-scale
+
+Compare the judge's answer shapes (`unit`, `binary`, `three`, `deduction`) on findings with known
+labels. Per scale it prints n, accuracy, false findings that survived with the one-sided 95% upper
+bound, and Brier. Brier is printed for `unit` only; the other scales' scores are not probabilities,
+and the report says so. The fixture is synthetic.
+
+```bash
+lain bench judge-scale --findings spec/fixtures/grader/findings/labelled.jsonl --recorded runs/  # offline
+lain bench judge-scale --findings labelled.jsonl --model qwen3:4b --scales unit,binary           # asks the model
+```
+
+`--recorded` is a directory holding one `<scale>.ndjson` of verdict records per scale. A live run
+writes that directory (`--journal DIR`, default a timestamped one under `$XDG_STATE_HOME/lain/bench/`,
+printed in the report), so it can be re-scored offline. A row whose label is not true or false is
+refused naming its line. Also takes the model flags (`--model`, `--provider`, `--api-base`).
+
 ### lain bench oracle-calibration
 
 Score the secret oracle on 150 secret-bearing and 150 benign synthetic paths, each with a distinct

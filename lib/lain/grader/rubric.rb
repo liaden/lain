@@ -37,11 +37,13 @@ module Lain
       # @param provider [Lain::Provider] the judge model's provider
       # @param model [String] the judge model
       # @param max_tokens [Integer] the judge's reply budget
-      def initialize(criteria:, provider:, model:, max_tokens: 512)
+      # @param scale [Symbol] the answer shape asked of the judge, one of {Scale::NAMES}
+      def initialize(criteria:, provider:, model:, max_tokens: 512, scale: :unit)
         @criteria = criteria.to_s
         @provider = provider
         @model = model
         @max_tokens = max_tokens
+        @scale = Scale.fetch(scale)
       end
 
       # Score `subject` against the criteria.
@@ -59,7 +61,7 @@ module Lain
       def grade(subject)
         response = @provider.complete(request_for(subject))
         verdict = parse(response.text)
-        Grade.new(score: verdict.fetch("score", 0), why: verdict["why"].to_s)
+        Grade.new(score: @scale.score(verdict), why: @scale.why(verdict))
       end
 
       private
@@ -67,7 +69,7 @@ module Lain
       def request_for(subject)
         Request.new(
           model: @model,
-          system: "#{INSTRUCTION}\n\nCriteria:\n#{@criteria}",
+          system: "#{@scale.instruction}\n\nCriteria:\n#{@criteria}",
           messages: [{ "role" => "user", "content" => [{ "type" => "text", "text" => subject.to_s }] }],
           max_tokens: @max_tokens,
           stream: false

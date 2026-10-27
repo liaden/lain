@@ -84,4 +84,48 @@ RSpec.describe Lain::Grader::Rubric do
       expect(grade.why).not_to be_empty
     end
   end
+
+  describe "scale" do
+    def system_text(provider) = Array(provider.last_request.system).map { |b| b.is_a?(Hash) ? b["text"] : b }.join
+
+    def scaled(text, scale) = described_class.new(criteria: "c", provider: judge(text), model: "m", scale:)
+
+    it "sends today's prompt byte for byte when built with no scale" do
+      provider = judge('{"score": 1, "why": "ok"}')
+      described_class.new(criteria: "c", provider:, model: "m").grade("x")
+
+      expect(system_text(provider)).to eq(
+        "You are a strict grader. Score how well the answer below satisfies the criteria.\n" \
+        "Reply with ONE JSON object and nothing else:\n" \
+        "{\"score\": <number between 0 and 1>, \"why\": \"<one sentence explaining the score>\"}\n" \
+        "\n\nCriteria:\nc"
+      )
+    end
+
+    it "sends the scale's own instruction when one is named" do
+      provider = judge('{"verdict": "holds", "why": "ok"}')
+      described_class.new(criteria: "c", provider:, model: "m", scale: :binary).grade("x")
+
+      expect(system_text(provider)).to start_with(Lain::Grader::Rubric::Scale.fetch(:binary).instruction)
+    end
+
+    it "scores a binary holds 1.0 and fails 0.0, and refuses a number" do
+      expect(scaled('{"verdict": "holds", "why": "ok"}', :binary).grade("x").score).to eq(1.0)
+      expect(scaled('{"verdict": "fails", "why": "no"}', :binary).grade("x").score).to eq(0.0)
+      expect do
+        scaled('{"verdict": 0.8, "why": "no"}', :binary).grade("x")
+      end.to raise_error(described_class::Unparseable)
+    end
+
+    it "scores a three-level unsure 0.5" do
+      expect(scaled('{"verdict": "unsure", "why": "hm"}', :three).grade("x").score).to eq(0.5)
+    end
+
+    it "scores two defects 0.5 and names both" do
+      grade = scaled('{"defects": ["no evidence", "wrong file"]}', :deduction).grade("x")
+
+      expect(grade.score).to eq(0.5)
+      expect(grade.why).to include("no evidence", "wrong file")
+    end
+  end
 end

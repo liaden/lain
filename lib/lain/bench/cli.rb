@@ -136,6 +136,37 @@ module Lain
         end
       end
 
+      # The judge scale shapes compared on findings with known labels: from a directory of verdict
+      # journals (offline), or asked live of the backend's model, with every verdict journaled under
+      # `journal` so `recorded` can re-score the run.
+      #
+      # @param findings [String] a JSONL file of labelled findings
+      # @param scales [String] comma-separated scale names
+      # @param recorded [String, nil] a directory of `<scale>.ndjson` journals; given, no model is asked
+      # @param backend [Lain::CLI::Backend, nil] the judge's provider, for a live run
+      # @param model [String, nil] the judge model; the backend's own by default
+      # @param journal [String, nil] the directory a live run writes; a timestamped one under the state home
+      # @param state [Lain::Paths]
+      # @return [String] the report; a live run's ends with its journal directory
+      # @raise [Refusal] on an unlabelled row, an unknown scale, a missing file, or neither recording nor backend
+      def judge_scale_report(findings:, scales: JudgeScale::DEFAULT_SCALES.join(","), recorded: nil, backend: nil,
+                             model: nil, journal: nil, state: Paths.new)
+        labelled = JudgeScale.load(checked_file(findings, "findings file"))
+        names = scales.to_s.split(",").map(&:strip)
+        if recorded
+          return "recorded from #{recorded}\n#{judge_scale(labelled, names, JudgeScale::Source.recorded(recorded))}"
+        end
+
+        raise Refusal, "judge-scale needs --recorded DIR or a model backend to ask" if backend.nil?
+
+        dir = journal || JudgeScale::Source.default_dir(state)
+        scales = names.map(&:to_sym)
+        JudgeScale::Source.live(provider: backend.provider, model: model || backend.model, dir:, scales:,
+                                state:) do |factory|
+          "#{judge_scale(labelled, names, factory)}\njournal: #{dir}"
+        end
+      end
+
       # The three orchestration arms (single-thread control, orchestrator-worker,
       # dual-ledger) over the ArmTasks suite, replayed offline through committed
       # recordings -- no provider, no money, no network, byte-identical across
@@ -664,6 +695,8 @@ module Lain
 
         names.map { |name| File.join(dir, name) }
       end
+
+      def judge_scale(findings, names, refuter_for) = JudgeScale.new(findings:, scales: names, refuter_for:).report
 
       def scored(entries, tier) = OracleCalibration.new(paths: entries, oracle: tier).report.to_s
 

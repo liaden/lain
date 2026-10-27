@@ -931,6 +931,24 @@ class LainCLI < Thor
       end
     end
 
+    desc "judge-scale", "Compare judge scale shapes on labelled findings -- offline from --recorded"
+    method_option :findings, type: :string, required: true, banner: "PATH",
+                             desc: "JSONL of finding, label (true or false) and synthetic rows"
+    method_option :scales, type: :string, default: Lain::Bench::JudgeScale::DEFAULT_SCALES.join(","),
+                           desc: "comma-separated, from #{Lain::Bench::JudgeScale::DEFAULT_SCALES.join(", ")}"
+    method_option :recorded, type: :string, banner: "DIR", desc: "a directory of <scale>.ndjson verdict journals"
+    method_option :journal, type: :string, banner: "DIR",
+                            desc: "where a live run writes <scale>.ndjson (default: a timestamped directory " \
+                                  "under the state home's lain/bench)"
+    ModelFlags.declare(self, max_tokens: 512)
+    def judge_scale
+      render do
+        backend = model_backend(512) unless options[:recorded]
+        Lain::Bench::CLI.new.judge_scale_report(findings: options[:findings], scales: options[:scales],
+                                                recorded: options[:recorded], backend:, journal: options[:journal])
+      end
+    end
+
     desc "arms FIXTURE", "Compare the four orchestration arms live over an ArmTasks fixture " \
                          "-- spends real API money"
     ModelFlags.declare(self, max_tokens: Lain::Bench::SpawnSeam::DEFAULT_MAX_TOKENS,
