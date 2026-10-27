@@ -92,12 +92,12 @@ module Lain
         end
       end
 
+      # @return [Array<String>] every entry {.manifest} covers, files and directories, present or not
       def self.sealed_paths(root, level)
         tree = level.root.split("/").first
         tests = Dir.glob("#{tree}/**/*", File::FNM_DOTMATCH, base: root)
         (tests + ROOT_FILES).uniq
       end
-      private_class_method :sealed_paths
 
       def self.entry(full)
         "#{File.stat(full).mode & 0o700}:#{Digest::SHA256.file(full).hexdigest}"

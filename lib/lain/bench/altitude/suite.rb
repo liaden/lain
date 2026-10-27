@@ -82,9 +82,17 @@ module Lain
         def build_task(raw, index)
           mapping!(raw, index)
           declared = FIELDS.to_h { |field| [field.to_sym, -raw.fetch(field).to_s] }
-          Task.new(**declared, project: project_for(declared))
+          Task.new(**declared, grader: grader_for(raw), project: project_for(declared))
         rescue KeyError => e
           raise MalformedTask, "altitude task #{raw["id"].inspect} at #{@path} is missing #{e.key.inspect}"
+        end
+
+        def grader_for(raw)
+          named = raw.fetch("grader", GRADERS.first).to_s
+          return -named if GRADERS.include?(named)
+
+          raise MalformedTask, "altitude task #{raw["id"].inspect} at #{@path} names the grader #{named.inspect}, " \
+                               "and the known ones are #{GRADERS.join(", ")}"
         end
 
         # RESOLVED IN THE PRE-FLIGHT, not inside the run. It is pure path work,

@@ -113,6 +113,26 @@ class AltitudeJudgeFirstArm
   end
 end
 
+# An arm that really fixes the source in its lease, then asks for the judge the bench built.
+class AltitudeFixingArm
+  def initialize(name, fix: true)
+    @name = name
+    @fix = fix
+  end
+
+  attr_reader :name
+
+  def run(_task, grading:, isolation:, **)
+    lease = isolation.acquire(@name)
+    path = File.join(lease.worker_env.cwd, "lib/order.rb")
+    File.write(path, File.read(path).sub("def refunded = nil", "def refunded = 0")) if @fix
+    grade = grading.call(lease:, grader: nil).grade(:ignored_trajectory)
+    AltitudeSpecRun.new(arm: @name, score: grade.score, tokens: 100, elapsed: 1.0)
+  ensure
+    lease&.release
+  end
+end
+
 # A sink that records what was said to it, so the cost warning is observable
 # without anything reaching $stdout -- only the frontend may touch that.
 class AltitudeSpecSink
@@ -400,6 +420,60 @@ RSpec.describe Lain::Bench::Altitude do
     end
   end
 
+  describe "a task graded by base, head and revert", :seam do
+    def order_total = File.expand_path("../../fixtures/altitude/subjects/order-total", __dir__)
+
+    def with_three_arm_tasks
+      Dir.mktmpdir("lain-altitude-three-arm") do |dir|
+        path = File.join(dir, "tasks.yml")
+        tasks = %w[a b].map do |id|
+          { "id" => id, "size" => "small", "subject" => order_total, "level" => "unit",
+            "prompt" => "add a refund", "grader" => "three_arm" }
+        end
+        File.write(path, YAML.dump("tasks" => tasks))
+        yield path
+      end
+    end
+
+    let(:arms) do
+      [AltitudeFixingArm.new("fixer"), AltitudeFixingArm.new("idle", fix: false), AltitudeTamperingArm.new("cheat")]
+    end
+    let(:journal) { [] }
+
+    def bench_over(path) = described_class.new(fixture_path: path, arms:, spawn_seam:, grader:, sink:, journal:)
+
+    it "scores an arm whose fix survives all three runs in full" do
+      report = with_three_arm_tasks { |path| bench_over(path).report }
+
+      expect(report).to match(/^fixer\s+2\s+1\.000/)
+    end
+
+    it "scores an arm that changed nothing zero, where the subject's own suite would give 0.667" do
+      report = with_three_arm_tasks { |path| bench_over(path).report }
+
+      expect(report).to match(/^idle\s+2\s+0\.000/)
+    end
+
+    it "still reports an arm that edited the tests as fixture tampered" do
+      report = with_three_arm_tasks { |path| bench_over(path).report }
+
+      expect(report).to match(/^cheat\s+2\s+fixture tampered/)
+      expect(journal.map(&:arm)).to eq(%w[cheat cheat])
+    end
+
+    it "refuses a grader it does not know, before any arm runs" do
+      Dir.mktmpdir("lain-altitude-grader") do |dir|
+        path = File.join(dir, "tasks.yml")
+        entry = { "id" => "a", "size" => "small", "level" => "unit", "prompt" => "go", "grader" => "vibes",
+                  "subject" => order_total }
+        File.write(path, YAML.dump("tasks" => [entry, entry.merge("id" => "b")]))
+
+        expect { bench_over(path).report }.to raise_error(described_class::MalformedTask, /"vibes"/)
+        expect(log).to be_empty
+      end
+    end
+  end
+
   # A level whose tests live inside the source cannot have a test tree to seal,
   # and a row graded over one must not look as protected as the others.
   describe "a level that keeps its tests in the source", :seam do
@@ -441,6 +515,10 @@ RSpec.describe Lain::Bench::Altitude do
 
     def demo_epic
       Lain::Epic::Document.parse_markdown(File.read(File.join(fixtures, "epic/demo/epic.md")))
+    end
+
+    it "has a task graded by base, head and revert" do
+      expect(committed_tasks.map { |task| task["grader"] }).to include("three_arm")
     end
 
     # The task suite and the subject projects are coupled by path and by level

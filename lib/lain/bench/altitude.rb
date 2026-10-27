@@ -69,6 +69,11 @@ module Lain
       # none", which for rework is a claim no linear arm ever made.
       NOT_MEASURED = "not measured"
 
+      # The grader names a task may declare; the first is what an undeclared one gets.
+      GRADERS = %w[lease three_arm].freeze
+      THREE_ARM = GRADERS.last
+      private_constant :THREE_ARM
+
       FIXTURE_TAMPERED = "fixture tampered"
       private_constant :FIXTURE_TAMPERED
 
@@ -113,7 +118,7 @@ module Lain
       # and the level root whose tests judge it. `project` is `subject` RESOLVED
       # -- absolute, and proven to exist, by the pre-flight rather than by the
       # run.
-      Task = Data.define(:id, :size, :subject, :level, :prompt, :project)
+      Task = Data.define(:id, :size, :subject, :level, :prompt, :grader, :project)
 
       # @param fixture_path [String] the committed suite (see spec/fixtures/altitude/tasks.yml)
       # @param arms [Array<Arm>] the topologies under comparison, lowest rung first
@@ -232,8 +237,14 @@ module Lain
       # The judge for THIS task: the subject's own suite, narrowed to the level
       # root the task names, bound to whatever checkout the arm just leased.
       def grading_for(task)
+        return three_arm_for(task) if task.grader == THREE_ARM
+
         pristine = pristine_tests(task)
         ->(lease:, **) { Grader::LeaseHarness.new(lease:, level: level_in(lease, task), pristine:) }
+      end
+
+      def three_arm_for(task)
+        ->(lease:, **) { Grader::ThreeArm.new(lease:, level: level_in(lease, task), base: task.project) }
       end
 
       # Taken from the committed subject, which no arm ever holds, and once per

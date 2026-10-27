@@ -14,6 +14,8 @@
 #             the arms here write real code, so real tests judge it
 #   level     the level root whose tests judge the work, and the one the grade
 #             is narrowed to
+#   grader    optional; `three_arm` runs those tests at the pristine subject, at
+#             the arm's work, and at the work with its source change taken back out
 #
 # The acceptance criteria an epic arm's issues are written from live with the
 # EPIC fixture, under `epic/<slug>/epic.md`, beside the plans that declare each
@@ -28,6 +30,7 @@ tasks:
     size: small
     subject: subjects/order-total
     level: unit
+    grader: three_arm
     prompt: |
       In this project, `Order#refunded` returns nil and its unit test fails.
       Make `Order#refunded` answer the refunded total of the order's lines,
