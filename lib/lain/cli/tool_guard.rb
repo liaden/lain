@@ -118,12 +118,15 @@ module Lain
       # reads no config, which is its default. `denied_tools` are the tools its
       # config refuses outright, which the gate refuses whatever their tier.
       # `history` is what the project's sensitive paths hold in git history; a
-      # run with no project reads none.
+      # run with no project reads none. `stops` is who the tripwire stopped, and
+      # `mode` the approval level a paused main is held under; a run with no
+      # tripwire stop stops no one.
       Inputs = Data.define(:ledger, :approvals, :sensitivity, :test_layout, :policy, :policy_for, :denial, :bar,
-                           :scope, :middleware, :child_env, :denied_tools, :history) do
+                           :scope, :middleware, :child_env, :denied_tools, :history, :stops, :mode) do
         def initialize(scope: UNSCOPED, middleware: Config::Middleware.empty,
                        child_env: Exec::ChildEnv::DEFAULT, denied_tools: Set[].freeze,
-                       history: Lain::Sensitivity::HistoryLiterals::Null, **)
+                       history: Lain::Sensitivity::HistoryLiterals::Null, stops: Tripwire::Stops::None,
+                       mode: Middleware::TripwireStop::NoMode, **)
           super
         end
       end
@@ -594,8 +597,22 @@ module Lain
                                  withheld(inputs),
                                  Middleware::GuardTestLayout.new(run: inputs.test_layout, roots:, journal:),
                                  Middleware::WithholdAutomaticOutput.new(bar: inputs.bar, journal:),
-                                 remembered(inputs, requester, journal), *gating(inputs, policy, journal, requester)])
+                                 *closing(inputs, policy, journal, requester)])
         )
+      end
+
+      # The tripwire stop when it is armed, which also reads the gate's ruling again.
+      def closing(inputs, policy, journal, requester)
+        stopping = stopping(inputs, requester, journal)
+        [*stopping, remembered(inputs, requester, journal),
+         *gating(inputs, stopping.inject(policy) { |inner, layer| layer.over(inner) }, journal, requester)]
+      end
+
+      def stopping(inputs, requester, journal)
+        return [] if inputs.stops.equal?(Tripwire::Stops::None)
+
+        [Middleware::TripwireStop.new(stops: inputs.stops, journal:, mode: inputs.mode,
+                                      attended: !inputs.approvals.nil?, requester:)]
       end
 
       def withheld(inputs)

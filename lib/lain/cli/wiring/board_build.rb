@@ -58,6 +58,7 @@ module Lain
         #   terms: the session's ONE resolver, the instance the bash tool holds,
         #   and the session's own env, whose PATH the main agent's stages resolve through
         # @param child_env [Lain::Exec::ChildEnv] the launch's, which the result masker and live display read
+        # @param stops [Lain::Tripwire::Stops, Lain::Tripwire::Stops::None] who the tripwire stopped
         # @option options [Boolean] :non_interactive no human is at this
         #   session's terminal -- read by {Switchboard.for}, never here
         # @return [Switchboard]
@@ -65,7 +66,7 @@ module Lain
                 verdict: Lain::Shell::Verdict.new, middleware: Config::Middleware.empty,
                 config: Config.load(root: project.root), display: Channel::Null.instance,
                 arms: Lain::CLI::Arms::OFF, request: Lain::Approval::Judge::Unrequested,
-                child_env: Lain::Exec::ChildEnv::DEFAULT, **identity)
+                child_env: Lain::Exec::ChildEnv::DEFAULT, stops: Lain::Tripwire::Stops::None, **identity)
           # Compiled once: the exemption check stats the disk.
           table = rules(project:, paths:)
           # The SAME factory reaches both the triage rung and the approving
@@ -81,7 +82,7 @@ module Lain
                           sensitivity:, spike: PlanSpike.new(project:, paths:),
                           classifiers: factory, test_layout: test_layout(project:), middleware:,
                           approval_timeout: Config.approval_timeout(root: project.root), judge:, display:, arms:,
-                          request:, child_env:, denied_tools: config.approval.deny_tools, history:)
+                          request:, child_env:, denied_tools: config.approval.deny_tools, history:, stops:)
         end
 
         # Where `/mode plan` confines this project's session: a spike worktree

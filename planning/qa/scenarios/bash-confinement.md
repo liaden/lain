@@ -155,8 +155,18 @@ Undriven. `--tripwire stop` stops a requester only on the signals in `Tripwire::
 design and not measured: today `refused_exec` alone. A subagent's first trip stops it and pauses main; main's
 own trip, a second one, or one no escalation attributes (`"requester":"unknown"`) stops every requester. Each
 trip writes a `tripwire_stop` record, and a hard stop crossed only on unseeded signals writes one with
-`"outcome":"observe_only"` and the signals under `unseeded`. Today the arm records and journals only:
-refusing a stopped requester's calls lands with a later change, so a stopped requester's calls still run.
+`"outcome":"observe_only"` and the signals under `unseeded`.
+
+From the next tool call on, a stopped requester's calls are refused at every approval level, each journaled
+as an `escalation` with `"rung":"tripwire"`, `"verdict":"deny"` and `"final":true`, its reason saying a call
+already running when it tripped was left to finish. A paused main's calls are held for a human under `ask`
+and `auto`, even ones a rule or the judge would approve, and the parked row says who tripped. Under `bypass`,
+or in a session nobody attends, no human can be asked, so they are refused on the same rung, naming who
+tripped. Under `bypass` the refusal says to switch approval to ask, after which a human is asked about each of
+main's calls. A call judged or parked when its requester trips is refused once its approval lands. Only a call
+already running when the tripwire trips is left to finish.
+
+A stop lives only in the running session: a relaunch or a resume starts with nobody stopped.
 
 It fails closed: every refused exec counts, and these honest shapes trip it:
 

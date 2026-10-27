@@ -264,12 +264,38 @@ RSpec.describe LainCLI do
       expect(instrumentation.turn_middleware.to_a.map(&:class)).to eq([Lain::Middleware::ResolveWindow])
       # The tool phase over the SAME chronicle is NOT empty, so "empty" above is
       # a reading of the Null chronicle and not of an unwired instrumentation.
-      expect(instrumentation.tool_middleware.to_a.map(&:class))
-        .to eq([Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
-                Lain::Middleware::RedactSecretReads,
-                Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
-                Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::RememberedDenials,
-                Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
+      expect(instrumentation.tool_middleware.to_a.map(&:class)).to eq(guarded)
+    end
+
+    def guarded
+      [Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
+       Lain::Middleware::RedactSecretReads,
+       Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
+       Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::RememberedDenials,
+       Lain::Middleware::Sensitivity, Lain::Middleware::Gate]
+    end
+
+    def wired_tool_stack(tripwire)
+      Dir.mktmpdir("cli-tripwire") do |state|
+        paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => state, "HOME" => state })
+        armed = Lain::CLI::Wiring.new(options: { grace: 5, tripwire: }, chronicle: Lain::CLI::Chronicle::Null.new,
+                                      status_feed: instance_double(Lain::StatusFeed, bind_store: nil), paths:)
+        recorder, session = armed.run_state(nil)
+        agent = armed.wire_agent(channel:, recorder:, session:,
+                                 backend: backend(provider: "ollama", model: nil, max_tokens: 4096))
+        agent.instance_variable_get(:@instrumentation).tool_middleware.to_a
+      end
+    end
+
+    %w[off observe].each do |arm|
+      it "keeps the guarded tool stack under --tripwire #{arm}" do
+        expect(wired_tool_stack(arm).map(&:class)).to eq(guarded)
+      end
+    end
+
+    it "puts the tripwire stop ahead of the remembered denials under --tripwire stop" do
+      expect(wired_tool_stack("stop").map(&:class))
+        .to eq(guarded.dup.insert(guarded.index(Lain::Middleware::RememberedDenials), Lain::Middleware::TripwireStop))
     end
   end
 

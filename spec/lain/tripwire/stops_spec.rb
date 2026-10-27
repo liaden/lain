@@ -30,6 +30,13 @@ RSpec.describe Lain::Tripwire::Stops do
       expect([stops.tripped_at("researcher"), stops.tripped_at("writer")]).to eq([at, nil])
     end
 
+    it "names it as the first to trip, after others trip too" do
+      stops.trip("researcher", at:)
+      stops.trip("writer", at: at + 60)
+
+      expect(stops.first_tripped).to eq("researcher")
+    end
+
     it "is not a second trip when the same subagent trips again" do
       stops.trip("researcher", at:)
 
@@ -83,6 +90,34 @@ RSpec.describe Lain::Tripwire::Stops do
     end
   end
 
+  # Every unnamed spawn shares this name, so a second unnamed trip would read as the first one again.
+  it "stops every requester when an unnamed subagent trips, since the name is not one agent's" do
+    unnamed = Lain::Requester::UNNAMED
+
+    expect(stops.trip(unnamed, at:)).to eq(:all_stopped)
+    expect(everyone.map { stops.stopped?(_1) }).to all(be(true))
+  end
+
+  describe "#standing, one read of where a requester stands" do
+    it "answers free for everyone before a trip" do
+      expect(everyone.map { stops.standing(_1) }).to all(eq(:free))
+    end
+
+    it "answers stopped for the subagent that tripped, paused for main and free for the rest" do
+      stops.trip("researcher", at:)
+
+      expect(everyone.to_h { [_1, stops.standing(_1)] })
+        .to eq(main => :paused, "researcher" => :stopped, "writer" => :free, "never_tripped" => :free)
+    end
+
+    it "answers stopped for everyone after a second trip" do
+      stops.trip("researcher", at:)
+      stops.trip("writer", at:)
+
+      expect(everyone.map { stops.standing(_1) }).to all(eq(:stopped))
+    end
+  end
+
   it "takes no journal, so it can never write one under its own lock" do
     expect(described_class.instance_method(:initialize).parameters.map(&:last)).to eq([:main])
   end
@@ -96,6 +131,14 @@ RSpec.describe Lain::Tripwire::Stops do
     it "stops and pauses nobody" do
       expect(everyone.map { [described_class::None.stopped?(_1), described_class::None.paused?(_1)] })
         .to all(eq([false, false]))
+    end
+
+    it "stands everyone free" do
+      expect(everyone.map { described_class::None.standing(_1) }).to all(eq(:free))
+    end
+
+    it "names nobody as the first to trip" do
+      expect(described_class::None.first_tripped).to be_nil
     end
   end
 

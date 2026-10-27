@@ -930,7 +930,7 @@ module Lain
                                         verdict:, middleware: backend.middleware, config:, paths: @paths,
                                         judge: JudgeSource.new(method(:role_spawn)), display: @channel, arms:,
                                         request: heard, resolver: exec_resolver, worker_env: chat_env,
-                                        child_env: exec_backend.child_env)
+                                        child_env: exec_backend.child_env, stops: observers.stops)
       end
 
       # What the judge is told the human asked for under `--judge-facts request`. One for the run,

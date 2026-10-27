@@ -161,6 +161,14 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       end
     end
 
+    it "hands the board's guard stack the tripwire stops it is given" do
+      in_tree do |root, home|
+        stops = Lain::Tripwire::Stops.new
+
+        expect(board_for(root, home, stops:).guard_inputs.stops).to be(stops)
+      end
+    end
+
     it "hands the board's guard stack a history over the project, already priming" do
       in_tree do |root, home|
         primed = []

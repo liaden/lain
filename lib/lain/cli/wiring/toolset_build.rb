@@ -30,7 +30,7 @@ module Lain
         # park is at least separable from the human's own agent
         # ({Approval::Parked::Queue}'s `requester:`) without claiming an identity the
         # spawn never took.
-        SPAWN_REQUESTER = Requester.new(name: "subagent")
+        SPAWN_REQUESTER = Requester::UNNAMED
 
         # The role the chat's own subagent spawns, named ONCE: what it may do
         # (its `only`-set, through {Backend#spawn_policy}) and what a human is

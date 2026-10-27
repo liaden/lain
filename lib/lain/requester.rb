@@ -67,5 +67,8 @@ module Lain
 
     MAIN = new(name: "agent")
     private_constant :MAIN
+
+    # What a spawned child is named when its spawn bound no more specific name, so it names no single agent.
+    UNNAMED = new(name: "subagent")
   end
 end

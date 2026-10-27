@@ -5,8 +5,9 @@ module Lain
     # Who the tripwire has stopped, shared by the {Ledger} that trips it and
     # whatever later refuses a stopped requester's calls. A subagent's first
     # trip stops it and pauses main; a second trip by anyone, or main's own
-    # first, stops every requester. So does a trip no record attributes, since
-    # it cannot be told from main's or a second subagent's. A paused main
+    # first, stops every requester. So does a trip no record attributes, or one
+    # under the name every unnamed subagent shares, since neither can be told
+    # from main's or a second subagent's. A paused main
     # merges nothing and starts no new agent, but may still answer the other
     # subagents' questions.
     #
@@ -21,6 +22,8 @@ module Lain
 
       STOPPED = :stopped
       ALL_STOPPED = :all_stopped
+      PAUSED = :paused
+      FREE = :free
 
       # What a chat holds when the stop arm is off: no one is ever stopped.
       module None
@@ -28,7 +31,11 @@ module Lain
 
         def self.paused?(_requester) = false
 
+        def self.standing(_requester) = FREE
+
         def self.tripped_at(_requester) = nil
+
+        def self.first_tripped = nil
       end
 
       # @param main [Requester, String] the chat's own agent
@@ -46,7 +53,7 @@ module Lain
         name = name_of(requester)
         @lock.synchronize do
           @tripped[name] ||= at
-          @all ||= [@main, Ledger::UNKNOWN].include?(name) || @tripped.size > 1
+          @all ||= [@main, *anonymous].include?(name) || @tripped.size > 1
           @all ? ALL_STOPPED : STOPPED
         end
       end
@@ -65,6 +72,20 @@ module Lain
         @lock.synchronize { !@all && name == @main && @tripped.any? }
       end
 
+      # One read, so a trip landing between two separate reads cannot answer a mix of before and after.
+      #
+      # @param requester [Requester, String]
+      # @return [Symbol] {STOPPED}, {PAUSED} or {FREE}
+      def standing(requester)
+        name = name_of(requester)
+        @lock.synchronize do
+          if @all || @tripped.key?(name) then STOPPED
+          elsif name == @main && @tripped.any? then PAUSED
+          else FREE
+          end
+        end
+      end
+
       # @param requester [Requester, String]
       # @return [Time, nil] when it first tripped, nil for one that never did
       def tripped_at(requester)
@@ -72,7 +93,13 @@ module Lain
         @lock.synchronize { @tripped[name] }
       end
 
+      # @return [String, nil] the requester that tripped first, nil before any trip
+      def first_tripped = @lock.synchronize { @tripped.each_key.first }
+
       private
+
+      # Names no single agent answers to: a trip under one could be any agent, main included.
+      def anonymous = [Ledger::UNKNOWN, Requester::UNNAMED.name]
 
       def name_of(requester) = requester.is_a?(Requester) ? requester.name : requester.to_s
     end

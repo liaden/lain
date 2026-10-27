@@ -1958,4 +1958,122 @@ RSpec.describe Lain::CLI::ToolGuard do
       expect(layers.grep(Lain::Middleware::WithholdSecretPaths).map(&:file_facts)).to eq([facts])
     end
   end
+
+  describe "a tripwire stop, on a real board" do
+    let(:stops) { Lain::Tripwire::Stops.new }
+    let(:toolset) { Lain::Toolset.new([Lain::Tools::ReadFile.new, Lain::Tools::Bash.new]) }
+
+    def board(approval, judge: ->(**) { :approve }, attended: true)
+      Lain::CLI::Switchboard.new(journal:, model: "m", toolset:, stops:, approval:, judge:, attended:)
+    end
+
+    def read_through(stack)
+      dispatch_call("read_file", { "path" => __FILE__, "limit" => 1 }, toolset:, layers: stack.to_a,
+                                                                       context: Lain::Session.new)
+    end
+
+    def run_through(stack)
+      dispatch_call("bash", { "command" => "true" }, toolset:, layers: stack.to_a,
+                                                     context: Lain::Session.new)
+    end
+
+    def researcher(held)
+      described_class.child_stack(chronicle, held, Lain::WorkerEnv.default,
+                                  requester: "researcher")
+    end
+
+    def tripwire_denials = journal_records(journal_io, "escalation").select { _1["rung"] == "tripwire" }
+
+    def answered_by_human(held, &call)
+      Sync do |task|
+        ran = task.async(&call)
+        parked = task.with_timeout(5) { held.approvals.dequeue }
+        yield_to_trip(parked)
+        parked.decide(true, surface: Lain::Frontend::ApprovalPolicy::SURFACE, authority: :human)
+        [parked, task.with_timeout(30) { ran.wait }]
+      end
+    end
+
+    def yield_to_trip(_parked) = nil
+
+    describe "once a subagent tripped" do
+      before { stops.trip("researcher", at: Time.at(0)) }
+
+      it "refuses a stopped child's next call with a final deny on the tripwire rung" do
+        told = read_through(researcher(board(:auto)))
+
+        expect(told.content).to include("the tripwire stopped researcher")
+        expect(tripwire_denials.sole).to include("requester" => "researcher", "verdict" => "deny", "final" => true)
+      end
+
+      %i[ask auto].each do |approval|
+        it "parks a paused main's next call for a human under #{approval}, though the judge would approve it" do
+          held = board(approval)
+          pending, told = answered_by_human(held) { read_through(described_class.stack(chronicle, held)) }
+
+          expect([pending.tool, pending.requester]).to eq(%w[read_file agent])
+          expect(told.content).to include("frozen_string_literal")
+        end
+
+        it "refuses a paused main's call in the tripwire's words under unattended #{approval}" do
+          told = read_through(described_class.stack(chronicle, board(approval, attended: false)))
+
+          expect(told.content).to include("the tripwire paused the main agent after researcher tripped it")
+          expect(tripwire_denials.sole).to include("requester" => "agent", "verdict" => "deny", "final" => true)
+        end
+      end
+
+      it "refuses a paused main's call under bypass, where nobody can be asked" do
+        told = read_through(described_class.stack(chronicle, board(:bypass)))
+
+        expect(told.content).to include("the tripwire paused the main agent after researcher tripped it",
+                                        "switch approval to ask")
+        expect(told.content).not_to include("no approval will lift this")
+      end
+
+      it "still delivers a human's inbox answer to another subagent's question while main is paused" do
+        asker = Lain::Tools::AskHuman.new(parent: Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                                                                    .commit(role: :user, content: []))
+        child = described_class.child_stack(chronicle, board(:bypass), Lain::WorkerEnv.default, requester: "writer")
+        told = Sync do |task|
+          ran = task.async do
+            dispatch_call("ask_human", { "question" => "which file?" }, toolset: Lain::Toolset.new([asker]),
+                                                                        layers: child.to_a, context: Lain::Session.new)
+          end
+          task.with_timeout(5) { task.yield until asker.pending? }
+          asker.reply("config.rb", asker.last_question.digest)
+          task.with_timeout(30) { ran.wait }
+        end
+
+        expect(told.content).to include("config.rb")
+      end
+    end
+
+    it "refuses a child's call parked before its trip, though a human approves it after" do
+      held = board(:ask)
+      define_singleton_method(:yield_to_trip) { |_parked| stops.trip("researcher", at: Time.at(0)) }
+
+      _, told = answered_by_human(held) { run_through(researcher(held)) }
+
+      expect(told.content).to include("the tripwire stopped researcher")
+      expect(tripwire_denials.sole).to include("requester" => "researcher", "verdict" => "deny")
+    end
+
+    it "refuses the very call that tripped while the judge ruled on it, though the judge approves it" do
+      judge = lambda do |**|
+        stops.trip("researcher", at: Time.at(0))
+        :approve
+      end
+
+      told = Sync { run_through(researcher(board(:auto, judge:))) }
+
+      expect(told.content).to include("the tripwire stopped researcher")
+    end
+
+    it "builds no tripwire layer for a board whose stops stop no one" do
+      plain = Lain::CLI::Switchboard.new(journal:, model: "m", toolset:)
+
+      expect(guards(plain).grep(Lain::Middleware::TripwireStop)).to be_empty
+    end
+  end
 end
