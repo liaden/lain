@@ -317,6 +317,43 @@ RSpec.describe Lain::Grader::LeaseHarness do
       end
     end
 
+    describe "when new tests are allowed" do
+      def lenient(lease, checkout)
+        level = level_in(checkout, "unit")
+        described_class.new(lease:, level:, pristine: described_class.manifest(subject_project, level:),
+                            new_tests: true)
+      end
+
+      it "grades a checkout that gained a test file" do
+        leased do |lease, checkout|
+          FileUtils.touch(File.join(checkout, "spec/unit/added_spec.rb"))
+
+          expect { lenient(lease, checkout).grade(trajectory) }.not_to raise_error
+        end
+      end
+
+      it "still names an edited pristine test file" do
+        leased do |lease, checkout|
+          File.write(File.join(checkout, "spec/unit/order_check.rb"), "# edited\n")
+          FileUtils.touch(File.join(checkout, "spec/unit/added_spec.rb"))
+
+          expect { lenient(lease, checkout).grade(trajectory) }
+            .to raise_error(described_class::Tampered) { |error|
+                  expect(error.paths).to eq(["spec/unit/order_check.rb"])
+                }
+        end
+      end
+
+      it "still names a root file the arm added" do
+        leased do |lease, checkout|
+          File.write(File.join(checkout, "Rakefile"), "\n")
+
+          expect { lenient(lease, checkout).grade(trajectory) }
+            .to raise_error(described_class::Tampered) { |error| expect(error.paths).to eq(["Rakefile"]) }
+        end
+      end
+    end
+
     it "still refuses on a bare digest, with no paths to name" do
       leased do |lease, checkout|
         level = level_in(checkout, "unit")

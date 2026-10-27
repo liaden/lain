@@ -15,7 +15,11 @@
 #   level     the level root whose tests judge the work, and the one the grade
 #             is narrowed to
 #   grader    optional; `three_arm` runs those tests at the pristine subject, at
-#             the arm's work, and at the work with its source change taken back out
+#             the arm's work, and at the work with its source change taken back out;
+#             `mutation_reinsertion` grades tests the arm WROTE, by putting each
+#             of the task's `mutations:` patches back into the source and counting
+#             how many the tests notice. The patches sit beside the subject, never
+#             in it, so the arm cannot read them from its checkout.
 #
 # The acceptance criteria an epic arm's issues are written from live with the
 # EPIC fixture, under `epic/<slug>/epic.md`, beside the plans that declare each
@@ -44,6 +48,22 @@ tasks:
       In this project, `Invoice#net` returns nil and its unit test fails.
       Make `Invoice#net` answer the invoice's total less its discount.
       Change lib/invoice.rb only.
+
+  - id: tally-tests
+    size: small
+    subject: subjects/tally-tests
+    level: unit
+    grader: mutation_reinsertion
+    mutations:
+      - { name: add-accepts-zero, patch: subjects/tally-tests.mutations/add-accepts-zero.patch }
+      - { name: add-ignores-amount, patch: subjects/tally-tests.mutations/add-ignores-amount.patch }
+      - { name: top-picks-least, patch: subjects/tally-tests.mutations/top-picks-least.patch }
+      - { name: total-counts-keys, patch: subjects/tally-tests.mutations/total-counts-keys.patch }
+    prompt: |
+      In this project, `Tally` is correct but has almost no tests. Add new
+      test files under spec/unit that would fail if `Tally` were broken: how it
+      adds, what it refuses, its total and its most counted key. Do not change
+      lib/ or any existing file.
 
   - id: ledger-report
     size: large

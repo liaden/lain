@@ -84,18 +84,21 @@ module Lain
       #
       # @param root [String] a project checkout
       # @param level [#root] the level whose test tree is listed
+      # @param known [Array<String>, nil] when given, only test files named here are sealed, so a file
+      #   the pristine subject lacked is outside the seal; {ROOT_FILES} stay sealed either way
       # @return [Hash{String=>String}] entry of every sealed file, by path relative to the project root
-      def self.manifest(root, level:)
-        sealed_paths(root, level).sort.each_with_object({}) do |path, files|
+      def self.manifest(root, level:, known: nil)
+        sealed_paths(root, level, known:).sort.each_with_object({}) do |path, files|
           full = File.join(root, path)
           files[path] = entry(full) if File.file?(full)
         end
       end
 
       # @return [Array<String>] every entry {.manifest} covers, files and directories, present or not
-      def self.sealed_paths(root, level)
+      def self.sealed_paths(root, level, known: nil)
         tree = level.root.split("/").first
         tests = Dir.glob("#{tree}/**/*", File::FNM_DOTMATCH, base: root)
+        tests &= known unless known.nil?
         (tests + ROOT_FILES).uniq
       end
 
@@ -119,8 +122,12 @@ module Lain
       # @param sealed [String, nil] {.seal} of the pristine subject; nil leaves the tests unchecked
       # @param pristine [Hash, nil] {.manifest} of the pristine subject, which names the changed paths
       #   and stands in for `sealed` when that is omitted
-      def initialize(lease:, level:, harness: TestHarness.public_method(:new), sealed: nil, pristine: nil)
+      # @param new_tests [Boolean] true lets the arm ADD test files the pristine subject lacked, for a grader
+      #   whose subject is tests the arm writes; editing or deleting a pristine one is still tampering
+      def initialize(lease:, level:, harness: TestHarness.public_method(:new), sealed: nil, pristine: nil,
+                     new_tests: false)
         @lease = lease
+        @new_tests = new_tests
         @level = level
         @harness = harness
         @pristine = pristine
@@ -150,7 +157,7 @@ module Lain
       def unsealed!(worker_env)
         return if @sealed.nil?
 
-        current = self.class.manifest(worker_env.cwd, level: @level)
+        current = self.class.manifest(worker_env.cwd, level: @level, known: (@pristine.keys if @new_tests))
         return if Canonical.digest(current) == @sealed
 
         raise Tampered.new(changed(current), level: @level)

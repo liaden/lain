@@ -1,0 +1,9 @@
+--- a/lib/tally.rb
++++ b/lib/tally.rb
+@@ -16,5 +16,5 @@
+ 
+   def total = @counts.values.sum
+ 
+-  def top = @counts.max_by { |_key, count| count }&.first
++  def top = @counts.min_by { |_key, count| count }&.first
+ end

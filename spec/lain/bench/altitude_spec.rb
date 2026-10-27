@@ -133,6 +133,25 @@ class AltitudeFixingArm
   end
 end
 
+# An arm that writes tests into its lease, then asks for the judge the bench built.
+class AltitudeTestWritingArm
+  def initialize(name, body)
+    @name = name
+    @body = body
+  end
+
+  attr_reader :name
+
+  def run(_task, grading:, isolation:, **)
+    lease = isolation.acquire(@name)
+    File.write(File.join(lease.worker_env.cwd, "spec/unit/agent_check.rb"), @body)
+    grade = grading.call(lease:, grader: nil).grade(:ignored_trajectory)
+    AltitudeSpecRun.new(arm: @name, score: grade.score, tokens: 100, elapsed: 1.0)
+  ensure
+    lease&.release
+  end
+end
+
 # A sink that records what was said to it, so the cost warning is observable
 # without anything reaching $stdout -- only the frontend may touch that.
 class AltitudeSpecSink
@@ -230,8 +249,8 @@ RSpec.describe Lain::Bench::Altitude do
       altitude.report
 
       small = log.select { |entry| entry.first == :ran }.map(&:last).uniq
-      expect(small.size).to eq(4)
-      expect(log.count { |entry| entry.first == :ran }).to eq(arms.size * 4)
+      expect(small.size).to eq(5)
+      expect(log.count { |entry| entry.first == :ran }).to eq(arms.size * 5)
     end
 
     it "reports every metric the card names, as its own titled table" do
@@ -272,7 +291,7 @@ RSpec.describe Lain::Bench::Altitude do
       report = altitude.report
       rework = under_size(report, "small").find { |block| block.start_with?("rework\n") }
 
-      expect(row_in(rework, "one-shot")).to match(/one-shot\s+2\s/)
+      expect(row_in(rework, "one-shot")).to match(/one-shot\s+3\s/)
     end
   end
 
@@ -474,6 +493,60 @@ RSpec.describe Lain::Bench::Altitude do
     end
   end
 
+  describe "a task graded by reinserting mutations", :seam do
+    def tally = File.expand_path("../../fixtures/altitude/subjects/tally-tests", __dir__)
+
+    def patches = Dir.glob("#{tally}.mutations/*.patch")
+
+    def with_mutation_tasks(mutations: patches.map do |patch|
+      { "name" => File.basename(patch, ".patch"), "patch" => patch }
+    end)
+      Dir.mktmpdir("lain-altitude-mutation") do |dir|
+        path = File.join(dir, "tasks.yml")
+        tasks = %w[a b].map do |id|
+          { "id" => id, "size" => "small", "subject" => tally, "level" => "unit", "prompt" => "write tests",
+            "grader" => "mutation_reinsertion", "mutations" => mutations.map(&:dup) }
+        end
+        File.write(path, YAML.dump("tasks" => tasks))
+        yield path
+      end
+    end
+
+    let(:tests) do
+      <<~RUBY
+        require_relative "../../lib/tally"
+        RSpec.describe Tally do
+          it("adds an amount") { expect(described_class.new.add(:a, 3).count(:a)).to eq(3) }
+          it("refuses zero") { expect { described_class.new.add(:a, 0) }.to raise_error(ArgumentError) }
+          it("totals") { expect(described_class.new.add(:a, 2).add(:b, 3).total).to eq(5) }
+          it("names the top key") { expect(described_class.new.add(:a).add(:b, 4).top).to eq(:b) }
+        end
+      RUBY
+    end
+    let(:arms) { [AltitudeTestWritingArm.new("writer", tests)] }
+
+    def bench_over(path) = described_class.new(fixture_path: path, arms:, spawn_seam:, grader:, sink:)
+
+    it "scores an arm whose tests kill every mutation in full" do
+      report = with_mutation_tasks { |path| bench_over(path).report }
+
+      expect(report).to match(/^writer\s+2\s+1\.000/)
+    end
+
+    it "refuses a mutation_reinsertion task naming no mutations, before any arm runs" do
+      expect { with_mutation_tasks(mutations: []) { |path| bench_over(path).report } }
+        .to raise_error(described_class::MalformedTask, /mutations/)
+      expect(log).to be_empty
+    end
+
+    it "refuses a mutation whose patch is not on disk, by name" do
+      missing = [{ "name" => "ghost", "patch" => "/nonexistent/ghost.patch" }]
+
+      expect { with_mutation_tasks(mutations: missing) { |path| bench_over(path).report } }
+        .to raise_error(described_class::MalformedTask, /"ghost"/)
+    end
+  end
+
   # A level whose tests live inside the source cannot have a test tree to seal,
   # and a row graded over one must not look as protected as the others.
   describe "a level that keeps its tests in the source", :seam do
@@ -515,6 +588,15 @@ RSpec.describe Lain::Bench::Altitude do
 
     def demo_epic
       Lain::Epic::Document.parse_markdown(File.read(File.join(fixtures, "epic/demo/epic.md")))
+    end
+
+    it "has a task graded by reinserting mutations, each with a patch on disk" do
+      task = committed_tasks.find { |entry| entry["grader"] == "mutation_reinsertion" }
+
+      expect(task.fetch("mutations").size).to eq(4)
+      expect(task.fetch("mutations").map do |mutation|
+        File.file?(File.expand_path(mutation.fetch("patch"), fixtures))
+      end).to all(be(true))
     end
 
     it "has a task graded by base, head and revert" do
@@ -686,7 +768,7 @@ RSpec.describe Lain::Bench::Altitude do
 
       expect(one_size).to include("2 tasks over 1 size,")
       expect(one_size).not_to include("1 sizes")
-      expect(altitude.report).to include("4 tasks over 2 sizes,")
+      expect(altitude.report).to include("5 tasks over 2 sizes,")
     end
 
     def with_one_size(&block)

@@ -1,0 +1,11 @@
+--- a/lib/tally.rb
++++ b/lib/tally.rb
+@@ -6,7 +6,7 @@
+   def initialize = @counts = Hash.new(0)
+ 
+   def add(key, amount = 1)
+-    raise ArgumentError, "amount must be positive" unless amount.positive?
++    raise ArgumentError, "amount must be positive" unless amount >= 0
+ 
+     @counts[key] += amount
+     self

@@ -82,7 +82,8 @@ module Lain
         def build_task(raw, index)
           mapping!(raw, index)
           declared = FIELDS.to_h { |field| [field.to_sym, -raw.fetch(field).to_s] }
-          Task.new(**declared, grader: grader_for(raw), project: project_for(declared))
+          grader = grader_for(raw)
+          Task.new(**declared, grader:, project: project_for(declared), mutations: mutations_for(raw, grader))
         rescue KeyError => e
           raise MalformedTask, "altitude task #{raw["id"].inspect} at #{@path} is missing #{e.key.inspect}"
         end
@@ -93,6 +94,26 @@ module Lain
 
           raise MalformedTask, "altitude task #{raw["id"].inspect} at #{@path} names the grader #{named.inspect}, " \
                                "and the known ones are #{GRADERS.join(", ")}"
+        end
+
+        # Patches are resolved against the fixture's directory like a subject, and a missing one is refused
+        # here: a mutant that cannot be read is an unrun one, and would otherwise surface mid-grade.
+        def mutations_for(raw, grader)
+          listed = Array(raw["mutations"]).map do |entry|
+            Grader::MutationReinsertion::Mutation.new(name: -entry.fetch("name").to_s, patch_path: patch_for(entry))
+          end
+          return listed.freeze unless listed.empty? && grader == MUTATION_REINSERTION
+
+          raise MalformedTask, "altitude task #{raw["id"].inspect} at #{@path} grades by mutation_reinsertion " \
+                               "and declares no `mutations:`"
+        end
+
+        def patch_for(entry)
+          path = File.expand_path(entry.fetch("patch").to_s, File.dirname(@path))
+          return path if File.file?(path)
+
+          raise MalformedTask, "altitude mutation #{entry["name"].inspect} at #{@path} names a patch that is not " \
+                               "on disk: #{path}"
         end
 
         # RESOLVED IN THE PRE-FLIGHT, not inside the run. It is pure path work,
