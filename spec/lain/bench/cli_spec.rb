@@ -2034,4 +2034,158 @@ RSpec.describe Lain::Bench::CLI do
       end
     end
   end
+
+  describe "#compaction_sweep_report" do
+    planted = File.expand_path("../../fixtures/compaction/planted", __dir__)
+    let(:journals) { %w[one two].map { |name| File.join(planted, "#{name}.ndjson") } }
+    let(:tmp) { Dir.mktmpdir("compaction-sweep-cli") }
+
+    after { FileUtils.rm_rf(tmp) }
+
+    it "sweeps the named arms offline and names the budget in its header" do
+      report = cli.compaction_sweep_report(journals:, arms: "elide,truncate-cumulative", budget: 1_000)
+
+      expect(report).to include("budget 1000 bytes", "claude-haiku-5-5", "rebilled tokens (est.)")
+      expect(report.lines.map(&:split).filter_map(&:first)).to include("elide", "truncate-cumulative")
+    end
+
+    it "sweeps every default arm, which leaves out the faithful truncate" do
+      report = cli.compaction_sweep_report(journals:)
+
+      expect(report.lines.map(&:split).filter_map(&:first)).to include(*Lain::Bench::CompactionSweep::DEFAULT_ARMS)
+      expect(Lain::Bench::CompactionSweep::DEFAULT_ARMS).not_to include("truncate")
+    end
+
+    it "adds a planted corpus and counts its claims" do
+      report = cli.compaction_sweep_report(journals: [], planted:, arms: "elide", budget: 1_000)
+
+      expect(report).to include("6 journals")
+      expect(report.lines.last).to include("6/6")
+    end
+
+    it "refuses an unknown arm, listing the valid names" do
+      expect { cli.compaction_sweep_report(journals:, arms: "truncate") }
+        .to raise_error(described_class::Refusal, /unknown arm "truncate".*truncate-cumulative/)
+    end
+
+    it "refuses an empty arm list" do
+      expect { cli.compaction_sweep_report(journals:, arms: " , ") }
+        .to raise_error(described_class::Refusal, /no arm named/)
+    end
+
+    it "refuses an unknown placement" do
+      expect { cli.compaction_sweep_report(journals:, placements: "system") }
+        .to raise_error(described_class::Refusal, /placement "system".*framed, bare/)
+    end
+
+    it "refuses an unknown summarizer" do
+      expect { cli.compaction_sweep_report(journals:, summarizer: "cloud") }
+        .to raise_error(described_class::Refusal, /--summarizer is recorded or local/)
+    end
+
+    it "refuses a local summarizer with no model backend to ask" do
+      expect { cli.compaction_sweep_report(journals:, summarizer: "local") }
+        .to raise_error(described_class::Refusal, /local needs a model backend/)
+    end
+
+    it "refuses a missing journal" do
+      expect { cli.compaction_sweep_report(journals: ["/nonexistent/x.ndjson"]) }
+        .to raise_error(described_class::Refusal, %r{no session file at /nonexistent/x.ndjson})
+    end
+
+    it "refuses a missing recording" do
+      expect { cli.compaction_sweep_report(journals:, recorded: "/nonexistent/answers.ndjson") }
+        .to raise_error(described_class::Refusal, %r{no recording at /nonexistent/answers.ndjson})
+    end
+
+    it "refuses a recording under the local summarizer, which asks rather than replays" do
+      expect { cli.compaction_sweep_report(journals:, summarizer: "local", recorded: journals.first) }
+        .to raise_error(described_class::Refusal, /--recorded replays answers; drop it or use --summarizer recorded/)
+    end
+
+    it "refuses a missing planted corpus" do
+      expect { cli.compaction_sweep_report(journals:, planted: "/nonexistent/corpus") }
+        .to raise_error(described_class::Refusal, %r{no planted corpus at /nonexistent/corpus})
+    end
+
+    it "refuses a run with nothing to sweep" do
+      expect { cli.compaction_sweep_report(journals: []) }.to raise_error(described_class::Refusal, /no journals/)
+    end
+
+    it "refuses a budget that is not a positive whole number" do
+      expect { cli.compaction_sweep_report(journals:, budget: 0) }.to raise_error(described_class::Refusal, /--budget/)
+    end
+
+    describe "under a local summarizer" do
+      let(:replies) do
+        Array.new(40) do
+          Lain::Response.new(model: "local-m", stop_reason: :end_turn,
+                             content: [{ "type" => "text", "text" => '{"summary": "a short recap"}' }],
+                             usage: Lain::Usage.new(input_tokens: 4, output_tokens: 2))
+        end
+      end
+      let(:provider) { Lain::Provider::Mock.new(responses: replies) }
+      let(:backend) do
+        instance_double(Lain::CLI::Backend, summarizer_provider: provider, summarizer_model: "local-m",
+                                            summarizer_max_tokens: 256, summarizer_options: {})
+      end
+      let(:journal) { File.join(tmp, "answers.ndjson") }
+
+      def swept(**)
+        cli.compaction_sweep_report(journals:, arms: "summarizing", summarizer: "local", backend:,
+                                    budget: 1_000, journal:, **)
+      end
+
+      it "asks the backend's summarizer model for each span" do
+        report = swept
+
+        expect(provider.requests.map(&:model).uniq).to eq(["local-m"])
+        expect(report).not_to include("no recorded answers")
+      end
+
+      it "journals every answer and round trip into the file it names, so recorded replays it" do
+        report = swept
+        records = Lain::Journal.records(File.foreach(journal)).to_a
+
+        expect(report.lines.last).to eq("journal: #{journal}")
+        expect(records.count { _1["type"] == "oracle_answer" }).to eq(provider.requests.size)
+        expect(records.map { _1["type"] }).to include("request_sent")
+      end
+
+      it "writes a timestamped journal under the state home when none is named" do
+        state = Lain::Paths.new(env: { "HOME" => tmp, "XDG_STATE_HOME" => tmp })
+        report = cli.compaction_sweep_report(journals:, arms: "summarizing", summarizer: "local", backend:,
+                                             budget: 1_000, state:)
+
+        stamped = %r{\Ajournal: #{Regexp.escape(tmp)}/lain/bench/compaction-sweep-\d{8}T\d{6}-\d+\.ndjson\z}
+        expect(report.lines.last).to match(stamped)
+      end
+
+      it "fails loudly with the provider's error, naming where the partial journal is" do
+        failing = Lain::Provider::Mock.new(responses: [])
+        allow(backend).to receive(:summarizer_provider).and_return(failing)
+
+        expect { swept }.to raise_error(Lain::Error) do |error|
+          expect(error.message).to include("ran out of responses", "journal: #{journal}")
+          expect(error.message).not_to include("no recorded")
+        end
+        expect(File).to exist(journal)
+      end
+
+      it "re-scores offline from its journal with --recorded, to the same figures and with no model call" do
+        local = swept(arms: "summarizing,eager,truncate-cumulative")
+        asked = provider.requests.size
+        expect(Lain::Oracle::Model).not_to receive(:new)
+
+        recorded = cli.compaction_sweep_report(journals:, arms: "summarizing,eager,truncate-cumulative",
+                                               budget: 1_000, recorded: journal)
+
+        expect(table(recorded)).to eq(table(local))
+        expect(recorded).not_to include("no recorded answers")
+        expect(provider.requests.size).to eq(asked)
+      end
+
+      def table(report) = report.lines(chomp: true).grep_v(/\A(Compaction sweep|journal):/)
+    end
+  end
 end

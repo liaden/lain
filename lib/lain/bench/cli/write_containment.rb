@@ -38,7 +38,7 @@ module Lain
         # @param flag [String, nil] what the operator can type to fix it, or nil
         #   where the command offers no isolation at all
         # @raise [Refusal] on the unsafe pair
-        def refuse!(tools, isolation:, flag:)
+        def refuse!(tools, isolation:, flag: WriteContainment.flag)
           return unless uncontained?(isolation)
           # Asked of a BUILT set rather than of the factory: what a run may do is
           # a property of the tools, and a caller may inject a factory of its own.

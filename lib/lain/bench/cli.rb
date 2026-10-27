@@ -191,6 +191,30 @@ module Lain
                              **tripwire).report
       end
 
+      # Recorded sessions replayed under each compaction arm with no model call, unless a local
+      # summarizer is asked for.
+      #
+      # @param journals [Array<String>] session files
+      # @param arms [String, nil] comma-separated arms; every arm when nil
+      # @param placements [String] comma-separated, framed or bare
+      # @param price_as [String] the model each simulated cache write is priced as
+      # @param summarizer [String] "recorded" or "local"
+      # @param budget [Integer] head bytes that fire a cut
+      # @param planted [String, nil] a planted-claim corpus to sweep too
+      # @param recorded [String, nil] comma-separated journals whose answers are replayed
+      # @param journal [String, nil] where a local run writes its answers
+      # @param backend [Lain::CLI::Backend, nil] the local summarizer's provider
+      # @param state [Lain::Paths] the state home a default journal lives under
+      # @return [String] the report; never printed here
+      # @raise [Refusal] on a missing file or a flag {CompactionSweepFlags} turns away
+      def compaction_sweep_report(journals:, arms: nil, placements: "framed", price_as: CompactionSweep::DEFAULT_PRICE_AS,
+                                  summarizer: "recorded", budget: CompactionSweep::DEFAULT_BUDGET, planted: nil,
+                                  recorded: nil, journal: nil, backend: nil, state: Paths.new)
+        CompactionSweepFlags.new(arms: arms || CompactionSweep::DEFAULT_ARMS.join(","), placements:, price_as:,
+                                 summarizer:, budget:, planted:, recorded:, journal:, backend:, state:)
+                            .report(journals.map { checked_file(_1, "session file") })
+      end
+
       # The three orchestration arms (single-thread control, orchestrator-worker,
       # dual-ledger) over the ArmTasks suite, replayed offline through committed
       # recordings -- no provider, no money, no network, byte-identical across
@@ -368,7 +392,7 @@ module Lain
         # below always has an Array to report on rather than the bare local a
         # Ctrl-C before the first grade would otherwise leave nil.
         graded = []
-        WriteContainment.refuse!(spawn_options.fetch(:tools, Harness::TOOLS), isolation:, flag: WriteContainment.flag)
+        WriteContainment.refuse!(spawn_options.fetch(:tools, Harness::TOOLS), isolation:)
         suite = preflighted_suite(fixture_path, isolation:, journal:)
         # Named rather than inlined, because the header's `model:` has to be THE
         # seam's own answer -- a second resolution off `backend` could disagree
@@ -429,7 +453,7 @@ module Lain
       # @raise [Altitude::MalformedTask, Error] on a suite it cannot fold
       def altitude_report(fixture_path:, backend:, seams:, grader:, sink: Sink::Null.new,
                           isolation: nil, journal: nil, price_book: PriceBook.default, **spawn_options)
-        WriteContainment.refuse!(spawn_options.fetch(:tools, Harness::TOOLS), isolation:, flag: WriteContainment.flag)
+        WriteContainment.refuse!(spawn_options.fetch(:tools, Harness::TOOLS), isolation:)
         Altitude.new(fixture_path:, spawn_seam: SpawnSeam.new(backend:, **spawn_options), grader:, sink:,
                      arms: LiveArms.altitude(seams:, price_book:),
                      **altitude_isolation(isolation, journal)).report
