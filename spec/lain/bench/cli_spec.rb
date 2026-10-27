@@ -1740,6 +1740,19 @@ RSpec.describe Lain::Bench::CLI do
 
       after { FileUtils.remove_entry(tmp) }
 
+      # A child forked by another example in the same worker can hold the open file
+      # description for milliseconds before it execs; a real leak holds it forever.
+      def lock_released_within(path, seconds)
+        deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + seconds
+        loop do
+          free = File.open(path, File::WRONLY | File::APPEND) { _1.flock(File::LOCK_EX | File::LOCK_NB) } == 0
+          return true if free
+          return false if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+
+          sleep 0.01
+        end
+      end
+
       it "writes a journal that --recorded re-scores to the identical report", :seam do
         journal = File.join(tmp, "run.ndjson")
         live = cli.oracle_calibration_report(oracle: "local", model: "qwen3:4b", journal:, paths: fixture)
@@ -1768,10 +1781,15 @@ RSpec.describe Lain::Bench::CLI do
       it "closes the journal when the run raises" do
         journal = File.join(tmp, "raises.ndjson")
         allow(provider).to receive(:complete).and_raise(Lain::Error, "boom")
+        opened = []
+        allow(Lain::Journal).to receive(:open).and_wrap_original do |original, *args, **kwargs, &block|
+          original.call(*args, **kwargs) { |j| opened << j and block.call(j) }
+        end
 
         expect { cli.oracle_calibration_report(oracle: "local", journal:, paths: fixture) }
           .to raise_error(Lain::Error, /boom/)
-        expect(File.open(journal, File::WRONLY | File::APPEND) { _1.flock(File::LOCK_EX | File::LOCK_NB) }).to eq(0)
+        expect(opened.map(&:closed?)).to eq([true])
+        expect(lock_released_within(journal, 1.0)).to be(true)
       end
 
       it "proves the gateway before a live cloud run, and journals through the cloud tier" do
