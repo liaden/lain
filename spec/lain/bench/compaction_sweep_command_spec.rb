@@ -1,6 +1,9 @@
 # frozen_string_literal: true
 
+require "fileutils"
+require "json"
 require "stringio"
+require "tmpdir"
 
 # The `bench compaction-sweep` door onto Bench::CLI#compaction_sweep_report. The command is a flag
 # parser, so what is under test is which flags it declares and what each one hands the entry point.
@@ -29,12 +32,13 @@ RSpec.describe "lain bench compaction-sweep" do
     original = [$stdout, $stderr]
     $stdout = out
     $stderr = err
-    begin
+    exited = begin
       LainCLI::Bench.start(["compaction-sweep", *argv])
+      nil
     rescue SystemExit => e
       e
     end
-    [out.string, err.string]
+    [out.string, err.string, exited]
   ensure
     $stdout, $stderr = original
   end
@@ -65,6 +69,74 @@ RSpec.describe "lain bench compaction-sweep" do
     backend = kwargs.fetch(:backend)
     expect(backend).to be_a(Lain::CLI::Backend)
     expect(backend).to have_attributes(summarizer_model: "qwen3:4b", summarizer_max_tokens: 300)
+  end
+
+  # The real entry point and the real Anthropic provider, behind WebMock: nothing leaves.
+  describe "under --live" do
+    let(:tmp) { Dir.mktmpdir("live-command") }
+    let(:journal) { File.join(tmp, "live.ndjson") }
+    let(:planted) { File.expand_path("../../fixtures/compaction/planted/one.ndjson", __dir__) }
+
+    before do
+      allow(Lain::Bench::CLI).to receive(:new).and_call_original
+      stub_request(:post, "https://api.anthropic.com/v1/messages/count_tokens")
+        .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                   body: JSON.generate("input_tokens" => 500))
+    end
+
+    after { FileUtils.rm_rf(tmp) }
+
+    def replies(usage: Lain::Usage.new(input_tokens: 10, output_tokens: 5))
+      done = Lain::Response.new(content: [{ "type" => "text", "text" => "done" }], stop_reason: :end_turn,
+                                model: "claude-haiku-5-5", usage:)
+      stub_request(:post, "https://api.anthropic.com/v1/messages")
+        .to_return(status: 200, headers: { "Content-Type" => "text/event-stream" }, body: AnthropicSSE.body(done))
+    end
+
+    def live_run(*flags)
+      original = $stdin
+      $stdin = StringIO.new
+      with_env("ANTHROPIC_API_KEY" => "sk-command-spec") do
+        run(planted, "--arms", "elide", "--live", "claude-haiku-5-5", "--journal", journal, *flags)
+      end
+    ensure
+      $stdin = original
+    end
+
+    it "prints the preflight and, with no terminal and no --yes, exits non-zero having sent no paid request" do
+      sent = replies
+
+      out, err, exited = live_run
+
+      expect(out).to include("Live preflight", "total: $")
+      expect(out).not_to include("spend about")
+      expect(err).to include("no paid request was sent")
+      expect(exited&.status).to be_positive
+      expect(sent).not_to have_been_requested
+    end
+
+    it "prints the table and exits non-zero, naming the lane and the error, when a lane raises a defect" do
+      replies
+      broken = instance_double(Lain::Bench::LiveReplay)
+      allow(broken).to receive(:replay).and_raise(NoMethodError, "undefined method 'fetch' for nil")
+      allow(Lain::Bench::LiveReplay).to receive(:new).and_return(broken)
+
+      out, err, exited = live_run("--yes")
+
+      expect(out + err).to include("requests sent", "stopped: NoMethodError")
+      expect(err.lines.grep(/\S/).last).to match(/elide.*one\.ndjson.*NoMethodError.*fetch/)
+      expect(exited&.status).to be_positive
+    end
+
+    it "prints the table and exits 0 when a lane stops at its dollar ceiling" do
+      replies(usage: Lain::Usage.new(input_tokens: 2_000_000, output_tokens: 0))
+
+      out, err, exited = live_run("--yes")
+
+      expect(out).to include("requests sent", "ceiling is")
+      expect(err).to be_empty
+      expect(exited).to be_nil
+    end
   end
 
   it "declares the summarizer endpoint, its budget, and only the model flags that reach a summarizer" do

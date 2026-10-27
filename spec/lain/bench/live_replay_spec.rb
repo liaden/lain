@@ -71,6 +71,25 @@ RSpec.describe Lain::Bench::LiveReplay do
       expect(journal_io).to include_journal_record("turn_usage", model: "claude-opus-4-8")
       expect(turn_usage.first.dig("usage", "output_tokens")).to eq(30)
     end
+
+    it "renders each ask through the pipeline source it is handed" do
+      source = Module.new do
+        extend Lain::Agent::PipelineSource::Null
+
+        def self.context_for(base:, **) = base.with_system("rendered by the source")
+      end
+      described_class.new(provider: live_provider, toolset:, context:, journal:, pipeline_source: source)
+                     .replay(["say pong"])
+
+      expect(live_provider.last_request.system.map { _1["text"] }).to eq(["rendered by the source"])
+    end
+
+    it "stops under the dollar ceiling it is handed" do
+      budget = Lain::Budget.ceilings.with(dollars: BigDecimal("0.000001"))
+      capped = described_class.new(provider: live_provider, toolset:, context:, journal:, budget:)
+
+      expect { capped.replay(["say pong"]) }.to raise_error(Lain::Budget::Exceeded, /ceiling is 0.000001/)
+    end
   end
 
   # The one network-touching example: real money, opt-in (LAIN_LIVE=1 + a key),

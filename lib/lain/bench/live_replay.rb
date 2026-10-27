@@ -45,9 +45,15 @@ module Lain
       # @param workspace [Lain::Workspace] sent into the fresh Agent's Request,
       #   not stored; empty unless the recorded run needed files
       # @param price_book [Lain::PriceBook] prices the fresh total usage
+      # @param pipeline_source [#context_for] decides each ask's Context, as a
+      #   compacting chat's source does; the Null renders the context as given
+      # @param budget [Budget::Ceilings] the ceilings the fresh Agent runs under
       def initialize(provider:, toolset:, context:, journal: Channel::Null.instance,
-                     workspace: Workspace.empty, price_book: PriceBook.default)
+                     workspace: Workspace.empty, price_book: PriceBook.default,
+                     pipeline_source: Agent::PipelineSource::Null, budget: Budget.ceilings)
         @provider = provider
+        @pipeline_source = pipeline_source
+        @budget = budget
         @toolset = toolset
         @context = context
         @journal = journal
@@ -80,6 +86,7 @@ module Lain
         recorder = Memory::Recorder.new
         Agent.new(provider: @provider, toolset: @toolset, context: @context,
                   timeline: Dag::Factory.timeline(store: Dag::Factory.store), workspace: @workspace,
+                  pipeline_source: @pipeline_source, budget: @budget,
                   journal: Memory::JournalMemoryRoot.new(journal: @journal, recorder:),
                   tool_middleware: Middleware::Stack.new([Middleware::RefuseSecretWrites.new(journal: @journal)]))
       end

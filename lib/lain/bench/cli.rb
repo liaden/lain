@@ -205,13 +205,16 @@ module Lain
       # @param journal [String, nil] where a local run writes its answers
       # @param backend [Lain::CLI::Backend, nil] the local summarizer's provider
       # @param state [Lain::Paths] the state home a default journal lives under
+      # @param live [Hash] under --live, the `live:` model, the `live_backend:` it sends through and
+      #   the `confirm:` asked before it spends
       # @return [String] the report; never printed here
       # @raise [Refusal] on a missing file or a flag {CompactionSweepFlags} turns away
       def compaction_sweep_report(journals:, arms: nil, placements: "framed", price_as: CompactionSweep::DEFAULT_PRICE_AS,
                                   summarizer: "recorded", budget: CompactionSweep::DEFAULT_BUDGET, planted: nil,
-                                  recorded: nil, journal: nil, backend: nil, state: Paths.new)
+                                  recorded: nil, journal: nil, backend: nil, state: Paths.new, **live)
         CompactionSweepFlags.new(arms: arms || CompactionSweep::DEFAULT_ARMS.join(","), placements:, price_as:,
-                                 summarizer:, budget:, planted:, recorded:, journal:, backend:, state:)
+                                 summarizer:, budget:, planted:, recorded:, journal:, backend:, state:,
+                                 provider: method(:recording_provider), **live)
                             .report(journals.map { checked_file(_1, "session file") })
       end
 

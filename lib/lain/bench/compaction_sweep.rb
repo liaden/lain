@@ -33,6 +33,9 @@ module Lain
                  "rebilled cost (est.)", "cause", "kept verbatim", "kept in recap", "note"].freeze
       private_constant :COLUMNS
 
+      # A model arm asked to send a request it has no recorded summary for.
+      class Unanswered < Error; end
+
       # No used tokens are passed, so the byte budget is the only signal that can fire and the
       # window decides nothing.
       UNREAD_WINDOW = ContextWindow::CONSERVATIVE_FALLBACK
@@ -89,6 +92,13 @@ module Lain
         @need = Compaction::Need.new(byte_threshold: budget)
         @claims = planted.to_h { |fixture| [File.expand_path(fixture.path), fixture.claim] }
         @keep_last = keep_last
+      end
+
+      # @return [Array<Lane>] one per arm, placement and journal, arm first, in the order asked
+      def lanes
+        @arms.product(@placements, @journals).map do |arm, placement, journal|
+          Lane.new(arm:, placement:, journal:, cutter: -> { cutter(journal, arm, placement) })
+        end
       end
 
       # @return [Array<Row>] one per arm and placement, in the order asked
@@ -150,54 +160,19 @@ module Lain
 
       # @return [Measure, nil] nil when a model arm lacked an answer it needed
       def measured(journal, arm, placement)
+        cutter = cutter(journal, arm, placement)
+        requests = cutter.render(journal, journal.recording.context)
+        cutter.answered? ? measure(journal, requests, cutter) : nil
+      end
+
+      def cutter(journal, arm, placement)
         policy = Policy.for(arm, journal, @summarizer, @journal)
-        derived = Compaction::Source::Derived.new(keep_last: @keep_last, strategy: policy.strategy,
-                                                  placement: Compaction::Recap.for(placement),
-                                                  journal: edges = Edges.new)
-        walked = walk(journal, derived, policy, edges)
-        policy.answered? ? measure(journal, walked) : nil
+        Cutter.new(policy:, need: @need, keep_last: @keep_last, placement: Compaction::Recap.for(placement))
       end
 
-      # The cut that holds, carried from one recorded call to the next as a live chat holds it.
-      def walk(journal, derived, policy, edges)
-        journal.timelines.each_with_object(Walked.new) do |timeline, state|
-          walked = Compaction::Derivation::Walk.of(timeline)
-          held = derived.held(timeline, walk: walked, cut: state.seam)
-          advanced = advance(derived, timeline, walked, held, policy)
-          state.cut(advanced.seam, mid_task: edges.last.mid_task) if advanced
-          state.requests << render(journal.recording, advanced || held, timeline)
-        end
-      end
-
-      def advance(derived, timeline, walked, held, policy)
-        seam = held.seam
-        head = Compaction::Head.new(messages: walked.messages.drop(floor(walked, seam)), keep_last: @keep_last)
-        return if head.empty? || !@need.check(head_bytes: head.bytesize, window_tokens: UNREAD_WINDOW).needed?
-
-        outcome = derived.over(timeline, walk: walked, pins: Context::PinnedMessages::NONE, cut: seam,
-                                         snapshot: policy.snapshot(head.messages))
-        outcome unless outcome.refused? || outcome.seam.equal?(seam) || !shrinks?(outcome, held, walked)
-      end
-
-      def floor(walked, seam)
-        seam.digest.nil? ? 0 : walked.turns.index { |turn| turn.digest == seam.digest } + 1
-      end
-
-      def shrinks?(outcome, held, walked)
-        before = held.refused? ? walked.messages : held.messages
-        Canonical.dump(outcome.messages).bytesize < Canonical.dump(before).bytesize
-      end
-
-      def render(recording, outcome, timeline)
-        base = recording.context
-        context = outcome.refused? ? base : base.with_pipeline(HOLD.call(outcome.replay, base.pipeline_provider))
-        context.render(timeline:, toolset: recording.toolset, workspace: recording.workspace)
-      end
-
-      def measure(journal, walked)
-        requests = walked.requests
+      def measure(journal, requests, cutter)
         Measure.new(request_bytes: requests.sum { Canonical.dump(_1.cache_payload).bytesize },
-                    cuts: walked.cuts, mid_task_cuts: walked.mid_task_cuts,
+                    cuts: cutter.cuts, mid_task_cuts: cutter.mid_task_cuts,
                     waste: Friction::CacheWaste::Simulated.new(requests, price_as: @price_as,
                                                                          price_book: @price_book),
                     survived: survived(@claims[journal.path], requests.last),
@@ -259,6 +234,61 @@ module Lain
               .join(", ")
       end
 
+      # One arm under one placement over one journal, for a caller that sends what the sweep renders.
+      class Lane
+        attr_reader :arm, :placement
+
+        def initialize(arm:, placement:, journal:, cutter:)
+          @arm = arm
+          @placement = placement
+          @journal = journal
+          @cutter = cutter
+        end
+
+        # @return [String] the arm, with its placement when that is not the framed default
+        def label = placement == "framed" ? arm : "#{arm} (#{placement})"
+
+        def path = @journal.path
+
+        def recording = @journal.recording
+
+        # @param model [String] the model the requests are sent as
+        # @return [Array<Request>] each recorded model call, rendered through this arm
+        # @raise [Unanswered] when a model arm has no recorded summary for a span it would cut
+        def requests(model)
+          cutter = @cutter.call
+          rendered = cutter.render(@journal, recording.context.with_model(model))
+          return rendered if cutter.answered?
+
+          raise Unanswered, "#{label} has #{NO_ANSWERS} for #{File.basename(path)}; record them with --summarizer local"
+        end
+
+        # @return [Source] a fresh source that cuts a live chain as {#requests} cut the recorded one
+        def source = Source.new(@cutter.call)
+      end
+
+      # {Agent::PipelineSource} over a {Cutter}: it decides each render and nothing else, so it
+      # never prepares a cut while idle and has nothing to hand off.
+      class Source
+        def initialize(cutter)
+          @cutter = cutter
+        end
+
+        # @return [Context]
+        def context_for(base:, timeline:, **) = @cutter.context(base, timeline)
+
+        # @return [Integer] cuts skipped so far for want of a recorded answer
+        def missed = @cutter.missed
+
+        def droppable? = Agent::PipelineSource::Null.droppable?
+
+        def handed_off? = Agent::PipelineSource::Null.handed_off?
+
+        def handoff(**) = Agent::PipelineSource::Null.handoff
+
+        def prepare(**) = Agent::PipelineSource::Null.prepare
+      end
+
       # One session file, loaded once for every arm that replays it, with the answers recorded
       # beside it in other journals.
       class Journaled
@@ -278,24 +308,82 @@ module Lain
       end
       private_constant :Journaled
 
-      # One replay's running state: the seam that holds, what each call sent, and the cuts taken.
-      class Walked
-        attr_reader :seam, :requests, :cuts, :mid_task_cuts
+      # One arm over one journal, carrying the cut that holds from one model call to the next as a
+      # live chat holds it. A cut fires when the droppable head past the held cut passes the byte
+      # budget, and is kept only when it shrinks what the call would otherwise send.
+      class Cutter
+        attr_reader :cuts, :mid_task_cuts
 
-        def initialize
+        def initialize(policy:, need:, keep_last:, placement:)
+          @policy = policy
+          @need = need
+          @keep_last = keep_last
+          @edges = Edges.new
+          @derived = Compaction::Source::Derived.new(keep_last:, strategy: policy.strategy, placement:,
+                                                     journal: @edges)
           @seam = Compaction::Derivation::UNCUT
-          @requests = []
           @cuts = 0
           @mid_task_cuts = 0
         end
 
-        def cut(seam, mid_task:)
+        # @param base [Context] the context this call renders through when nothing is cut
+        # @param timeline [Ext::Timeline] the chain as of this model call
+        # @return [Context] base, or base carrying the held cut's derived chain
+        def context(base, timeline)
+          walked = Compaction::Derivation::Walk.of(timeline)
+          held = @derived.held(timeline, walk: walked, cut: @seam)
+          advanced = advance(timeline, walked, held)
+          cut(advanced.seam) if advanced
+          through(base, advanced || held)
+        end
+
+        # @param journal [Journaled]
+        # @param base [Context]
+        # @return [Array<Request>] each recorded model call, rendered through this arm in order
+        def render(journal, base)
+          recording = journal.recording
+          journal.timelines.map do |timeline|
+            context(base, timeline).render(timeline:, toolset: recording.toolset, workspace: recording.workspace)
+          end
+        end
+
+        def answered? = @policy.answered?
+
+        # @return [Integer] cuts this arm skipped for want of a recorded answer
+        def missed = @policy.missed
+
+        private
+
+        def cut(seam)
           @seam = seam
           @cuts += 1
-          @mid_task_cuts += 1 if mid_task
+          @mid_task_cuts += 1 if @edges.last.mid_task
+        end
+
+        def advance(timeline, walked, held)
+          seam = held.seam
+          head = Compaction::Head.new(messages: walked.messages.drop(floor(walked, seam)), keep_last: @keep_last)
+          return if head.empty? || !@need.check(head_bytes: head.bytesize, window_tokens: UNREAD_WINDOW).needed?
+
+          outcome = @derived.over(timeline, walk: walked, pins: Context::PinnedMessages::NONE, cut: seam,
+                                            snapshot: @policy.snapshot(head.messages))
+          outcome unless outcome.refused? || outcome.seam.equal?(seam) || !shrinks?(outcome, held, walked)
+        end
+
+        def floor(walked, seam)
+          seam.digest.nil? ? 0 : walked.turns.index { |turn| turn.digest == seam.digest } + 1
+        end
+
+        def shrinks?(outcome, held, walked)
+          before = held.refused? ? walked.messages : held.messages
+          Canonical.dump(outcome.messages).bytesize < Canonical.dump(before).bytesize
+        end
+
+        def through(base, outcome)
+          outcome.refused? ? base : base.with_pipeline(HOLD.call(outcome.replay, base.pipeline_provider))
         end
       end
-      private_constant :Walked
+      private_constant :Cutter
 
       # How one arm collapses a span over one journal, and whether it had every answer it needed.
       # `snapshot` is read only by the eager arm, whose strategy is the run's own tool-result tier.
@@ -328,7 +416,7 @@ module Lain
           misses = Misses.new(loud: summarizer != :recorded)
           answering = ->(definition) { tier(definition, journal, summarizer) }
           strategy = ::Lain::CLI::CompactionStrategy.resolve(arm, sink: misses, tier: answering, journal: answers_to)
-          new(strategy:, answered: -> { misses.none? })
+          new(strategy:, answered: -> { misses.none? }, missed: -> { misses.count })
         end
 
         # A recorded tier answers `#ask` alone; the strategy resolver reads the full live duck.
@@ -339,15 +427,19 @@ module Lain
         end
         private_class_method :eager, :modelled, :tier
 
-        def initialize(strategy:, eager: Compaction::Source::NoSummaries, answered: -> { true })
+        def initialize(strategy:, eager: Compaction::Source::NoSummaries, answered: -> { true }, missed: -> { 0 })
           @strategy = strategy
           @eager = eager
           @answered = answered
+          @missed = missed
         end
 
         def snapshot(messages) = Compaction::SummarySnapshot.take(messages:, eager: @eager)
 
         def answered? = @answered.call
+
+        # @return [Integer] spans a model arm could not collapse for want of an answer
+        def missed = @missed.call
       end
       private_constant :Policy
 
@@ -369,6 +461,8 @@ module Lain
       # summarizer that is a span with no recorded answer; a summarizer handed in that cannot answer
       # is a failure, raised with its own error rather than read as an unanswered arm.
       class Misses
+        attr_reader :count
+
         def initialize(loud:)
           @loud = loud
           @count = 0

@@ -1009,6 +1009,22 @@ class LainCLI < Thor
     end
   end
 
+  # `bench compaction-sweep --live`'s options. The terminal is the exe's to read, so the prompt
+  # is built here, over the command's own `say` and `yes?`.
+  module LiveSweep
+    # @param thor [Bench] the running command
+    # @return [Hash] empty without --live, so an offline sweep hands over exactly what it always did
+    def self.options(thor)
+      options = thor.options
+      return {} unless options[:live]
+
+      confirm = Lain::Bench::CompactionSweep::Live::Prompt.new(yes: options[:yes], terminal: $stdin.tty?,
+                                                               say: thor.method(:say), ask: thor.method(:yes?))
+      backend = thor.model_backend(nil, options.merge("provider" => "anthropic", "model" => options[:live]))
+      { live: options[:live], confirm:, live_backend: backend }
+    end
+  end
+
   # The bench subcommands, on the same thin-wiring rule as chat: Bench::CLI
   # assembles everything and returns Strings; this class parses flags, `say`s
   # what comes back, and presents the lib's own errors -- all Lain::Error:
@@ -1166,6 +1182,11 @@ class LainCLI < Thor
     method_option :recorded, type: :string, banner: "PATH",
                              desc: "comma-separated journals of oracle_answer records to answer from, such as " \
                                    "a local run's --journal"
+    method_option :live, type: :string, banner: "MODEL",
+                         desc: "send every arm to this Anthropic model, which spends money; a priced preflight " \
+                               "is shown and confirmed first"
+    method_option :yes, type: :boolean, default: false,
+                        desc: "accept the --live preflight without asking, as a run with no terminal must"
     # Only the model flags that reach a summarizer: its endpoint and runner knobs, then its own band.
     ModelFlags.endpoint(self, nil)
     ModelFlags.throughput(self, nil)
@@ -1173,7 +1194,8 @@ class LainCLI < Thor
     def compaction_sweep(*journals)
       render do
         backend = model_backend if options[:summarizer] == "local"
-        Lain::Bench::CLI.new.compaction_sweep_report(journals:, **compaction_sweep_knobs, backend:)
+        Lain::Bench::CLI.new.compaction_sweep_report(journals:, **compaction_sweep_knobs, backend:,
+                                                     **LiveSweep.options(self))
       end
     end
 
@@ -1252,7 +1274,8 @@ class LainCLI < Thor
       # environment, then the built-in provider.
       # Bound to the environment's secrets here, since no board exists out of chat.
       # @param ceiling_default [Integer, nil] the `--max-tokens` default this command declares
-      def model_backend(ceiling_default = nil)
+      # @param options [Hash] the options it resolves; the command's own unless a caller overrides some
+      def model_backend(ceiling_default = nil, options = self.options)
         Lain::CLI::Backend.new(options, profile: ModelFlags.profile(options), ceiling_default:,
                                         root: Lain::Project::Resolver.default_project.root)
                           .tap { _1.egress_literals.bind_env }

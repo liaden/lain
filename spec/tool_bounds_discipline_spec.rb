@@ -293,6 +293,12 @@ module ToolBoundsRegistry
   # below names any tool that has two of them.
   EXEMPT = [
     ToolExemption.new(
+      tool: "Lain::Bench::CompactionSweep::Live::RecordedTools::Replayed", grounds: ToolExemption::FIXED_RESULT,
+      reason: "replays a recorded result verbatim; the tool that produced it applied its bound when it was " \
+              "recorded, so the recording sets its size, and a second ceiling would change the bytes a live " \
+              "sweep compares against the offline one"
+    ),
+    ToolExemption.new(
       tool: "Lain::Tools::EditFile", grounds: ToolExemption::FIXED_RESULT,
       reason: "answers with one sentence naming the path and the count of replacements it made; " \
               "the file's own content never comes back through the result"

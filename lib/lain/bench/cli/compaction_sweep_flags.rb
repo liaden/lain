@@ -21,10 +21,14 @@ module Lain
         # @param recorded [String, nil] comma-separated journals whose answers the recorded summarizer
         #   also replays, such as a local run's `journal`
         # @param state [Lain::Paths] the state home the default journal lives under
+        # @param live [String, nil] the model to send every arm to, which spends money
+        # @param sending [Hash] under `live`, the `live_backend:` it sends through, the `confirm:` asked
+        #   before it does, and the `provider:` that builds its provider over a journal
         def initialize(arms: CompactionSweep::DEFAULT_ARMS.join(","), placements: "framed",
                        price_as: CompactionSweep::DEFAULT_PRICE_AS, summarizer: "recorded",
                        budget: CompactionSweep::DEFAULT_BUDGET, planted: nil, backend: nil, journal: nil,
-                       recorded: nil, state: Paths.new)
+                       recorded: nil, state: Paths.new, live: nil, **sending)
+          @live = live && Sending.new(model: live, summarizer:, **sending)
           @options = { arms: listed(arms, "arm", CompactionSweep::DEFAULT_ARMS),
                        placements: listed(placements, "placement", Compaction::Recap::PLACEMENTS),
                        price_as:, budget: whole_bytes(budget), recorded: recordings(recorded) }
@@ -42,11 +46,10 @@ module Lain
           fixtures = @planted || []
           paths = journals + fixtures.map(&:path)
           raise Refusal, "no journals to sweep; name session files or a --planted DIR" if paths.empty?
-          return sweep(paths, fixtures).report unless @local
+          return sweep(paths, fixtures).report unless @local || @live
 
           file = @journal || default_journal
-          "#{asked(file) { |sink| sweep(paths, fixtures, summarizer: tier(sink), journal: sink).report }}\n" \
-            "journal: #{file}"
+          "#{asked(file) { |sink| journaled(paths, fixtures, sink) }}\njournal: #{file}"
         end
 
         private
@@ -60,6 +63,11 @@ module Lain
         end
 
         def sweep(paths, fixtures, **) = CompactionSweep.new(journals: paths, planted: fixtures, **@options, **)
+
+        def journaled(paths, fixtures, sink)
+          sweep = @local ? sweep(paths, fixtures, summarizer: tier(sink), journal: sink) : sweep(paths, fixtures)
+          @live ? @live.run(sweep, sink) : sweep.report
+        end
 
         def listed(names, what, valid)
           listed = names.to_s.split(",").map(&:strip).reject(&:empty?).uniq
@@ -114,6 +122,46 @@ module Lain
           stamp = Time.now.utc.strftime("%Y%m%dT%H%M%S")
           File.join(@state.state_home, "bench", "compaction-sweep-#{stamp}-#{Process.pid}.ndjson")
         end
+
+        # `--live`: the backend whose provider, price-tier guard included, sends every arm. The
+        # preflight renders every lane before anyone confirms a price, and a summarizer is asked while
+        # it does, so only recorded answers are taken: even a loopback ollama bills through a cloud tag.
+        class Sending
+          KEYLESS = "bench compaction-sweep --live sends every arm to the real API and spends money; " \
+                    "set ANTHROPIC_API_KEY to run it"
+          SUMMARIZED = "--live takes only --summarizer recorded, since a summarizer is asked before the price is " \
+                       "confirmed: record its answers offline with --summarizer local --journal FILE, then replay " \
+                       "them live with --recorded FILE"
+
+          def initialize(model:, summarizer:, live_backend: nil, confirm: nil, provider: nil)
+            refuse_billing_summarizer!(summarizer)
+            raise Refusal, "--live needs an Anthropic backend to send through" if live_backend.nil? || provider.nil?
+            raise Refusal, "--live needs a confirmation to ask before it spends" if confirm.nil?
+
+            @model = model
+            @backend = live_backend
+            @confirm = confirm
+            @provider = provider
+          end
+
+          def run(sweep, sink)
+            CompactionSweep::Live.new(sweep:, provider: sent_through(sink), confirm: @confirm, model: @model,
+                                      hold: @backend.price_tier_hold, journal: sink).run
+          end
+
+          private
+
+          def refuse_billing_summarizer!(summarizer)
+            raise Refusal, SUMMARIZED unless summarizer == "recorded"
+          end
+
+          def sent_through(sink)
+            @provider.call(@backend, sink)
+          rescue CLI::MissingAPIKey
+            raise CLI::MissingAPIKey, KEYLESS
+          end
+        end
+        private_constant :Sending
       end
     end
   end

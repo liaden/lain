@@ -2202,6 +2202,103 @@ RSpec.describe Lain::Bench::CLI do
 
       def table(report) = report.lines(chomp: true).grep_v(/\A(Compaction sweep|journal):/)
     end
+
+    # The backend's own Anthropic provider, guard included, behind WebMock: nothing leaves.
+    describe "run live" do
+      let(:count_url) { "https://api.anthropic.com/v1/messages/count_tokens" }
+      let(:messages_url) { "https://api.anthropic.com/v1/messages" }
+      let(:journal) { File.join(tmp, "live.ndjson") }
+      let(:backend) do
+        Lain::CLI::Backend.new({ provider: "anthropic", model: "claude-haiku-5-5", max_tokens: 64 }, root: tmp)
+                          .tap { _1.egress_literals.bind_env }
+      end
+      let(:done) do
+        Lain::Response.new(content: [{ "type" => "text", "text" => "done" }], stop_reason: :end_turn,
+                           model: "claude-haiku-5-5", usage: Lain::Usage.new(input_tokens: 10, output_tokens: 5))
+      end
+      let!(:counted) do
+        stub_request(:post, count_url).to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                                                 body: JSON.generate("input_tokens" => 500))
+      end
+      let!(:sent) do
+        stub_request(:post, messages_url).to_return(status: 200, headers: { "Content-Type" => "text/event-stream" },
+                                                    body: AnthropicSSE.body(done))
+      end
+
+      def live(confirm)
+        with_env("ANTHROPIC_API_KEY" => "sk-bench-cli-spec") do
+          cli.compaction_sweep_report(journals:, arms: "elide", budget: 1_000, journal:, live: "claude-haiku-5-5",
+                                      live_backend: backend, confirm:)
+        end
+      end
+
+      it "counts every request, asks before any messages call, then runs each journal's asks" do
+        asked = []
+        report = live(lambda { |preflight|
+          asked << preflight.question
+          expect(sent).not_to have_been_requested
+          true
+        })
+
+        expect(counted).to have_been_requested.times(36)
+        expect(asked).to contain_exactly(%r{\Aspend about \$\d+\.\d{4}, capped at \$\d+\.\d{4}\? \[y/N\]\z})
+        asks = journals.sum { Lain::Bench::LiveReplay.prompts_from(Lain::Bench::Session.load(_1).timeline).size }
+        expect(sent).to have_been_requested.times(asks)
+        expect(report).to include("elide", "projected", "spent")
+        expect(report.lines.last).to eq("journal: #{journal}")
+      end
+
+      it "sends no paid request when the preflight is declined" do
+        expect { live(->(_preflight) { false }) }
+          .to raise_error(Lain::Bench::CompactionSweep::Live::Declined, /no paid request was sent/)
+        expect(sent).not_to have_been_requested
+      end
+
+      # A local summarizer is asked while the preflight renders, before anyone confirms a price.
+      # A summarizer is asked while the preflight renders, before anyone confirms a price, and even a
+      # loopback ollama can bill through a cloud tag, so --live replays recorded answers only.
+      describe "beside a summarizer" do
+        {
+          "an anthropic one" => { provider: "ollama", summarizer_provider: "anthropic",
+                                  summarizer_model: "claude-haiku-5-5" },
+          "a loopback ollama" => { provider: "anthropic", api_base: "http://127.0.0.1:11434",
+                                   summarizer_provider: "ollama" },
+          "a loopback ollama on a cloud tag" => { provider: "ollama", summarizer_provider: "ollama",
+                                                  summarizer_model: "glm-5.3:cloud" }
+        }.each do |label, options|
+          it "refuses #{label} under --summarizer local, naming the recorded path, and posts nothing" do
+            summarizer = Lain::CLI::Backend.new(options, root: tmp)
+
+            expect do
+              with_env("ANTHROPIC_API_KEY" => "sk-bench-cli-spec") do
+                cli.compaction_sweep_report(journals:, arms: "summarizing", budget: 1_000, journal:,
+                                            summarizer: "local", backend: summarizer, live: "claude-haiku-5-5",
+                                            live_backend: backend, confirm: ->(_) { true })
+              end
+            end.to raise_error(described_class::Refusal, /--summarizer local --journal .*--recorded/)
+            expect(counted).not_to have_been_requested
+            expect(sent).not_to have_been_requested
+          end
+        end
+
+        it "goes on to the confirm under --summarizer recorded with --recorded answers" do
+          expect do
+            with_env("ANTHROPIC_API_KEY" => "sk-bench-cli-spec") do
+              cli.compaction_sweep_report(journals:, arms: "elide", budget: 1_000, journal:, summarizer: "recorded",
+                                          recorded: journals.first, live: "claude-haiku-5-5", live_backend: backend,
+                                          confirm: ->(_) { false })
+            end
+          end.to raise_error(Lain::Bench::CompactionSweep::Live::Declined)
+          expect(counted).to have_been_requested.at_least_once
+          expect(sent).not_to have_been_requested
+        end
+      end
+
+      it "refuses --live with no backend to send through" do
+        expect { cli.compaction_sweep_report(journals:, live: "claude-haiku-5-5", confirm: ->(_) { true }) }
+          .to raise_error(described_class::Refusal, /--live needs/)
+      end
+    end
   end
 
   describe "#fault_report" do
