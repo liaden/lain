@@ -18,10 +18,22 @@ RSpec.shared_examples "a GVL-releasing binding" do
   let(:crowd_work) { work }
   let(:crowd_complete) { complete }
   let(:settle) { 0.05 }
-  let(:stop_bound) { 0.1 }
+  # Relative to one whole call, so a slower machine scales the bound with the work, and a
+  # stop that waited out the call still cannot fit it.
+  let(:stop_bound) do
+    started = clock.call
+    work.call
+    0.4 * (clock.call - started)
+  end
   let(:max_gap_share) { 0.3 }
 
   def clock = Lain::RunClock::MONOTONIC
+
+  def per_call(&)
+    started = clock.call
+    20.times(&)
+    (clock.call - started) / 20
+  end
 
   # `work` is read before the thread starts, so building its input never lands inside the timed call.
   def working
@@ -111,18 +123,18 @@ RSpec.shared_examples "a GVL-releasing binding" do
   end
 
   # Releasing hands the lock to a busy thread, and getting it back waits out that thread's time
-  # slice, about 20 ms; the bound is loose for a loaded suite and well under a slice.
+  # slice, about 20 ms. Measured against the same calls with no busy thread, so a slower machine's
+  # own cost cancels out; half a slice of excess per call still catches a release.
   it "keeps the lock for a small call, so a busy thread at the offload priority does not slow it" do
+    small_work.call
+    alone = per_call { small_work.call }
     busy = Thread.new do
       Thread.current.priority = Lain::Tool::Offload::PRIORITY
       loop { nil }
     end
     sleep 0.05
-    small_work.call
-    started = clock.call
-    20.times { small_work.call }
 
-    expect((clock.call - started) / 20).to be < 0.008
+    expect(per_call { small_work.call } - alone).to be < 0.01
   ensure
     busy&.kill&.join
   end
