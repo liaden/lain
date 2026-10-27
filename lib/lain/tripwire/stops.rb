@@ -1,0 +1,80 @@
+# frozen_string_literal: true
+
+module Lain
+  module Tripwire
+    # Who the tripwire has stopped, shared by the {Ledger} that trips it and
+    # whatever later refuses a stopped requester's calls. A subagent's first
+    # trip stops it and pauses main; a second trip by anyone, or main's own
+    # first, stops every requester. So does a trip no record attributes, since
+    # it cannot be told from main's or a second subagent's. A paused main
+    # merges nothing and starts no new agent, but may still answer the other
+    # subagents' questions.
+    #
+    # The Ledger trips this inside the Journal's monitor, and a reader asks it
+    # before journaling a refusal, so it holds no journal at all: {#trip}
+    # answers the outcome and the Ledger writes it.
+    class Stops
+      # The signals that may trip a stop, seeded by design and not yet measured;
+      # every other signal stays observe-only. The stop fails closed: an honest
+      # hook, nested toolchain or PATH search refused an exec trips it too.
+      STOPPING = %w[refused_exec].freeze
+
+      STOPPED = :stopped
+      ALL_STOPPED = :all_stopped
+
+      # What a chat holds when the stop arm is off: no one is ever stopped.
+      module None
+        def self.stopped?(_requester) = false
+
+        def self.paused?(_requester) = false
+
+        def self.tripped_at(_requester) = nil
+      end
+
+      # @param main [Requester, String] the chat's own agent
+      def initialize(main: Requester.main)
+        @main = name_of(main)
+        @lock = Mutex.new
+        @tripped = {}
+        @all = false
+      end
+
+      # @param requester [Requester, String]
+      # @param at [Time] when it tripped; a requester keeps its first
+      # @return [Symbol] {STOPPED} for a subagent's first trip, else {ALL_STOPPED}
+      def trip(requester, at:)
+        name = name_of(requester)
+        @lock.synchronize do
+          @tripped[name] ||= at
+          @all ||= [@main, Ledger::UNKNOWN].include?(name) || @tripped.size > 1
+          @all ? ALL_STOPPED : STOPPED
+        end
+      end
+
+      # @param requester [Requester, String]
+      # @return [Boolean]
+      def stopped?(requester)
+        name = name_of(requester)
+        @lock.synchronize { @all || @tripped.key?(name) }
+      end
+
+      # @param requester [Requester, String]
+      # @return [Boolean] whether it is main, held while a subagent alone is stopped
+      def paused?(requester)
+        name = name_of(requester)
+        @lock.synchronize { !@all && name == @main && @tripped.any? }
+      end
+
+      # @param requester [Requester, String]
+      # @return [Time, nil] when it first tripped, nil for one that never did
+      def tripped_at(requester)
+        name = name_of(requester)
+        @lock.synchronize { @tripped[name] }
+      end
+
+      private
+
+      def name_of(requester) = requester.is_a?(Requester) ? requester.name : requester.to_s
+    end
+  end
+end

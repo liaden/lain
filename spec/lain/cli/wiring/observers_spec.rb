@@ -112,6 +112,40 @@ RSpec.describe Lain::CLI::Wiring::Observers do
       expect(tripwires_after_a_remembered_deny(Lain::CLI::Arms::OFF)).to be_empty
     end
 
+    describe "under --tripwire stop" do
+      def refused_exec_by(requester)
+        chronicle.durable_journal << { "type" => "escalation", "tool" => "bash", "tool_use_id" => "tu_1",
+                                       "requester" => requester, "verdict" => "allow", "rung" => "rules",
+                                       "reason" => "", "final" => false }
+        chronicle.durable_journal << {
+          "type" => "exec_record", "tool_use_id" => "tu_1", "profile" => "reader",
+          "execs" => [{ "path" => "/elsewhere/lain-fence", "argv0" => "lain-fence", "rc" => 0 }],
+          "refusals" => [{ "path" => "/work/planted", "errno" => "EACCES" }], "fd_execs" => [],
+          "truncated" => false, "incomplete" => false, "connects" => []
+        }
+      end
+
+      it "stops a subagent that crosses the hard stop on a seeded signal, and pauses main" do
+        observers = described_class.register(chronicle:, paths:, project:, resumed: nil,
+                                             arms: Lain::CLI::Arms::OFF.with(tripwire: :stop))
+        refused_exec_by("researcher")
+
+        expect([observers.stops.stopped?("researcher"), observers.stops.paused?("agent")]).to eq([true, true])
+        expect(journal_records(io).select { _1["type"] == "tripwire_stop" }.sole)
+          .to include("requester" => "researcher", "signal" => "refused_exec", "outcome" => "stopped")
+      end
+
+      it "holds stops that stop no one under --tripwire observe, and journals no stop" do
+        observers = described_class.register(chronicle:, paths:, project:, resumed: nil,
+                                             arms: Lain::CLI::Arms::OFF.with(tripwire: :observe))
+        refused_exec_by("researcher")
+
+        expect(observers.stops.stopped?("researcher")).to be(false)
+        types = journal_records(io).map { _1["type"] }
+        expect([types.include?("tripwire"), types.include?("tripwire_stop")]).to eq([true, false])
+      end
+    end
+
     # Under --no-journal --nvim the teed records land in a journal the tee opens, not in the durable one.
     it "folds the teed journal as well as the durable one" do
       tee = Lain::Journal.new(io: StringIO.new)

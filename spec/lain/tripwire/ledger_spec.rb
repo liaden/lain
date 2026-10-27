@@ -519,6 +519,141 @@ RSpec.describe Lain::Tripwire::Ledger do
     end
   end
 
+  describe "with stops" do
+    let(:stops) { Lain::Tripwire::Stops.new }
+    let(:rules) { Lain::Tripwire::Rules::DEFAULT }
+    let(:tripped_at) { Time.utc(2026, 10, 27, 12) }
+    let(:ledger) { described_class.new(journal:, rules:, stops:, clock: -> { tripped_at }).tap { journal.observe(_1) } }
+
+    def stop_records = journal_records(io).select { _1["type"] == "tripwire_stop" }
+
+    def refused_exec_by(requester, id: "tu_1")
+      approved(id:, requester:)
+      write(exec_record(id:, refusals: [refused(planted)]))
+    end
+
+    before { ledger }
+
+    it "stops a subagent that crosses the hard stop on a seeded signal, and pauses main" do
+      refused_exec_by("researcher")
+
+      expect([stops.stopped?("researcher"), stops.paused?("agent"), stops.stopped?("agent")]).to eq([true, true, false])
+      expect(stop_records.sole).to include("requester" => "researcher", "signal" => "refused_exec",
+                                           "outcome" => "stopped")
+    end
+
+    it "stamps the trip with its clock" do
+      refused_exec_by("researcher")
+
+      expect(stops.tripped_at("researcher")).to eq(tripped_at)
+    end
+
+    it "journals the stop after the tripwire record that crossed it" do
+      refused_exec_by("researcher")
+
+      expect(journal_records(io).map { _1["type"] }.last(2)).to eq(%w[tripwire tripwire_stop])
+    end
+
+    it "never trips on the network signals, and names them as observe-only" do
+      approved(requester: "researcher")
+      write(exec_record(connects: [connect, connect(call: "sendto", port: 9999, status: 4, errno: nil)]))
+
+      expect(tripwires.last).to include("stop" => "would_stop")
+      expect([stops.stopped?("researcher"), stops.paused?("agent")]).to eq([false, false])
+      expect(stop_records.sole).to include("requester" => "researcher", "signal" => "refused_connect",
+                                           "outcome" => "observe_only",
+                                           "unseeded" => %w[refused_connect datagram_send])
+    end
+
+    context "when only unseeded points carry the score past the hard stop" do
+      let(:rules) { Lain::Tripwire::Rules.new(points: { strong: 10, medium: 3, weak: 1 }, hard_stop: 13) }
+
+      it "counts only seeded signals toward a stop" do
+        write(escalation(rung: "remembered", id: "tu_0", requester: "researcher"))
+        refused_exec_by("researcher")
+
+        expect(tripwires.last).to include("stop" => "would_stop", "score" => 13)
+        expect(ledger.standing("researcher")).to have_attributes(score: 13, seeded: 10)
+        expect(stops.stopped?("researcher")).to be(false)
+        expect(stop_records.sole).to include("outcome" => "observe_only", "unseeded" => ["remembered_reask"])
+      end
+    end
+
+    it "still trips on a seeded signal after an observe-only crossing" do
+      approved(requester: "researcher")
+      write(exec_record(connects: [connect]))
+      refused_exec_by("researcher", id: "tu_2")
+
+      expect(stop_records.map { _1["outcome"] }).to eq(%w[observe_only stopped])
+      expect(stops.stopped?("researcher")).to be(true)
+    end
+
+    it "trips a requester once, however many seeded signals follow" do
+      refused_exec_by("researcher")
+      refused_exec_by("researcher", id: "tu_2")
+
+      expect(stop_records.size).to eq(1)
+      expect(stops.stopped?("agent")).to be(false)
+    end
+
+    it "stops every requester when a second one trips" do
+      refused_exec_by("researcher")
+      refused_exec_by("writer", id: "tu_2")
+
+      expect(stop_records.map { _1.values_at("requester", "outcome") })
+        .to eq([%w[researcher stopped], %w[writer all_stopped]])
+      expect(%w[agent researcher writer anyone].map { stops.stopped?(_1) }).to all(be(true))
+    end
+
+    it "stops every requester when main trips first" do
+      refused_exec_by("agent")
+
+      expect(stop_records.sole).to include("requester" => "agent", "outcome" => "all_stopped")
+      expect(stops.stopped?("researcher")).to be(true)
+    end
+
+    describe "a trip no escalation names" do
+      it "stops every requester, since it could be main or a second subagent" do
+        write(exec_record(id: "tu_9", refusals: [refused(planted)]))
+
+        expect(stop_records.sole).to include("requester" => "unknown", "outcome" => "all_stopped")
+        expect(%w[agent researcher].map { stops.stopped?(_1) }).to all(be(true))
+      end
+
+      it "stops every requester at the first of 2 subagents' unattributed trips" do
+        write(exec_record(id: "from_researcher", refusals: [refused(planted)]),
+              exec_record(id: "from_writer", refusals: [refused("/work/repo/bin/ls")]))
+
+        expect(stop_records.map { _1.values_at("requester", "outcome") }).to eq([%w[unknown all_stopped]])
+        expect(stops.paused?("agent")).to be(false)
+        expect(stops.stopped?("agent")).to be(true)
+      end
+
+      it "stops every requester when the call's escalation was evicted before its exec record" do
+        approved(id: "long", requester: "researcher")
+        (1..described_class::CALLS).each { write(escalation(rung: "rules", verdict: "allow", id: "r#{_1}")) }
+        write(exec_record(id: "long", refusals: [refused(planted)]))
+
+        expect(stop_records.sole).to include("requester" => "unknown", "outcome" => "all_stopped")
+      end
+    end
+
+    it "folds and scores exactly as it does without stops" do
+      refused_exec_by("researcher")
+
+      expect(tripwires.sole).to include("requester" => "researcher", "signal" => "refused_exec", "score" => 10,
+                                        "stop" => "would_stop")
+    end
+  end
+
+  it "journals no stop record without stops" do
+    ledger
+    approved(requester: "researcher")
+    write(exec_record(refusals: [refused(planted)]), exec_record(id: "tu_2", connects: [connect]))
+
+    expect(journal_records(io).map { _1["type"] }.uniq).to eq(%w[escalation exec_resolution exec_record tripwire])
+  end
+
   it "counts nothing for a tripwire record that reaches it" do
     ledger << { "type" => "tripwire", "requester" => "agent", "signal" => "refused_exec", "weight" => "strong",
                 "score" => 10, "stop" => "would_stop", "evidence" => [] }

@@ -592,7 +592,7 @@ regression; a refusal for the second is too.
 ### 9c: the bench arm flags
 
 Five flags select bench arms: `--confine off|classes|reader|workspace`, `--judge-facts off|facts|request`,
-`--tripwire off|observe`, `--round-budget off|static|window` and `--round-dedup off|on`. The defaults are `workspace`, `off`, `observe`, `window` and `on`: a plain launch runs the workspace sandbox, the
+`--tripwire off|observe|stop`, `--round-budget off|static|window` and `--round-dedup off|on`. The defaults are `workspace`, `off`, `observe`, `window` and `on`: a plain launch runs the workspace sandbox, the
 observe-only tripwire, the window-sized round budget and the round dedup. An unknown value refuses at launch, exit 1, with no session file and no tmux session
 (`unknown --confine value "bogus", expected one of off, classes, reader, workspace`). The header (the `session` record)
 records only the arms that are on, as `"arms":{"confine":"workspace","tripwire":"observe","round_budget":"window","round_dedup":"on"}` for a plain launch, and

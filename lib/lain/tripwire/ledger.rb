@@ -5,8 +5,9 @@ require "json"
 module Lain
   module Tripwire
     # Folds a session's journal into a standing per requester and journals a
-    # `tripwire` record for every signal it counts. It stops nothing: past the
-    # hard stop the record says `would_stop`, and the run goes on.
+    # `tripwire` record for every signal it counts. Past the hard stop the
+    # record says `would_stop`; only with {Stops} does a seeded signal stop
+    # anyone, and the score and records are the same either way.
     #
     # A bash call's own records name no requester, so the escalation that ruled
     # the call is what names it, joined on `tool_use_id`.
@@ -22,27 +23,79 @@ module Lain
       FOLDED = %w[escalation exec_resolution exec_record sandbox].freeze
       CALLS = 256
 
-      Standing = Data.define(:score, :evidence, :stop)
+      CLOCK = -> { Time.now }
 
-      # What a requester has earned so far.
+      Standing = Data.define(:score, :evidence, :stop, :seeded)
+
+      # What a requester has earned so far. `seeded` is the part of the score
+      # the signals in {Stops::STOPPING} earned, the only part a stop reads.
       class Standing
         # @param hit [Hit]
         # @param rules [Rules]
         # @return [Standing] this one with the hit counted
         def add(hit, rules)
-          score = self.score + rules.points_for(hit.weight)
+          points = rules.points_for(hit.weight)
+          score = self.score + points
           Standing.new(score:, stop: rules.stop_for(score),
+                       seeded: seeded + (Stops::STOPPING.include?(hit.name) ? points : 0),
                        evidence: Ractor.make_shareable([*evidence, hit.to_evidence]))
         end
 
-        EMPTY = new(score: 0, evidence: [].freeze, stop: Rules::NONE)
+        # @return [Array<String>] each signal counted so far that can never trip a stop
+        def unseeded = evidence.map { _1["signal"] }.uniq - Stops::STOPPING
+
+        EMPTY = new(score: 0, evidence: [].freeze, stop: Rules::NONE, seeded: 0)
+      end
+
+      # Whether a hit carried a requester past the hard stop, and if it did,
+      # what the stop arm makes of it.
+      class Stopping
+        Crossing = Data.define(:requester, :signal, :trips, :unseeded)
+
+        # Without stops nothing crosses, so the ledger journals what it always has.
+        module Off
+          def self.crossed(*) = []
+        end
+
+        # @param stops [Stops]
+        # @param rules [Rules]
+        # @param clock [#call] stamps each trip
+        def initialize(stops:, rules:, clock:)
+          @stops = stops
+          @rules = rules
+          @clock = clock
+        end
+
+        # Only seeded signals count toward a trip; a hard stop crossed on the
+        # rest is journaled as observe-only and stops no one.
+        #
+        # @return [Array<Crossing>] none, or the one this hit made
+        def crossed(requester, hit, before, after)
+          hard = @rules.hard_stop
+          trips = before.seeded < hard && after.seeded >= hard
+          return [] unless trips || (before.stop == Rules::NONE && after.stop == Rules::WOULD_STOP)
+
+          [Crossing.new(requester:, signal: hit.name, trips:, unseeded: [])]
+        end
+
+        # Trips the stops, outside every lock but the stops' own, and answers what to journal.
+        #
+        # @param crossing [Crossing]
+        # @return [Telemetry::TripwireStop]
+        def settle(crossing)
+          outcome = crossing.trips ? @stops.trip(crossing.requester, at: @clock.call) : Telemetry::TripwireStop::OBSERVE_ONLY
+          Telemetry::TripwireStop.new(**crossing.to_h.slice(:requester, :signal, :unseeded), outcome:)
+        end
       end
 
       # @param journal [#<<] where each `tripwire` record is written
       # @param rules [Rules]
-      def initialize(journal:, rules: Rules::DEFAULT)
+      # @param stops [Stops, nil] without them a hard stop crossed stops no one
+      # @param clock [#call] stamps each trip
+      def initialize(journal:, rules: Rules::DEFAULT, stops: nil, clock: CLOCK)
         @journal = journal
         @rules = rules
+        @stopping = stops ? Stopping.new(stops:, rules:, clock:) : Stopping::Off
         @lock = Mutex.new
         @requesters = {}
         @resolutions = {}
@@ -55,8 +108,8 @@ module Lain
       # @return [self]
       def <<(event)
         record = folded(event)
-        tallied = record ? @lock.synchronize { hits(record).map { tally(*_1) } } : []
-        tallied.each { @journal << _1 }
+        tallied = record ? @lock.synchronize { tallied(record) } : []
+        tallied.each { |tripwire, crossings| journal(tripwire, crossings) }
         self
       end
 
@@ -65,6 +118,18 @@ module Lain
       def standing(requester) = @lock.synchronize { @standings.fetch(requester, Standing::EMPTY) }
 
       private
+
+      def journal(tripwire, crossings)
+        @journal << tripwire
+        crossings.each { @journal << @stopping.settle(_1) }
+      end
+
+      # A crossing names what its requester had earned once the whole record is counted.
+      def tallied(record)
+        hits(record).map { tally(*_1) }.map do |tripwire, crossings|
+          [tripwire, crossings.map { _1.with(unseeded: @standings.fetch(_1.requester).unseeded) }]
+        end
+      end
 
       # Live records carry symbol keys and values deeper down, replayed ones
       # strings; one JSON round trip reads both the same.
@@ -103,10 +168,12 @@ module Lain
       def requester_of(id) = @requesters.fetch(id, UNKNOWN)
 
       def tally(requester, hit)
-        standing = @standings.fetch(requester, Standing::EMPTY).add(hit, @rules)
+        before = @standings.fetch(requester, Standing::EMPTY)
+        standing = before.add(hit, @rules)
         @standings[requester] = standing
-        Telemetry::Tripwire.new(requester:, signal: hit.name, weight: hit.weight, score: standing.score,
-                                stop: standing.stop, evidence: standing.evidence)
+        [Telemetry::Tripwire.new(requester:, signal: hit.name, weight: hit.weight, score: standing.score,
+                                 stop: standing.stop, evidence: standing.evidence),
+         @stopping.crossed(requester, hit, before, standing)]
       end
     end
   end

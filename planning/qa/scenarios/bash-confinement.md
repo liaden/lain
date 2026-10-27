@@ -10,7 +10,7 @@
 `Shell::Executable.bar`, `Exec::Sandboxed` over `Exec::Local` with `Confine::Bwrap`, `strace` and
 `crates/lain-fence` (Landlock plus a seccomp filter against executable memfds), `Confine::Probe`
 and its `capability_degraded` records, and `Tripwire::Ledger`. The flags are `--confine off|classes|reader|workspace`
-(default `workspace`), `--tripwire off|observe` (default `observe`) and `--judge-facts off|facts|request`
+(default `workspace`), `--tripwire off|observe|stop` (default `observe`) and `--judge-facts off|facts|request`
 (default `off`).
 
 **What it deliberately does NOT own:** the header's `arms` key and the launch refusal for an unknown value,
@@ -148,6 +148,28 @@ Driven 2026-10-17 on the three separate calls:
 
 `"requester":"agent"` for the main agent; a child names its role. With `--tripwire off` the same run writes
 no `tripwire` record (check it: `jr tripwire` prints nothing).
+
+## 3b: The stop arm fails closed
+
+Undriven. `--tripwire stop` stops a requester only on the signals in `Tripwire::Stops::STOPPING`, seeded by
+design and not measured: today `refused_exec` alone. A subagent's first trip stops it and pauses main; main's
+own trip, a second one, or one no escalation attributes (`"requester":"unknown"`) stops every requester. Each
+trip writes a `tripwire_stop` record, and a hard stop crossed only on unseeded signals writes one with
+`"outcome":"observe_only"` and the signals under `unseeded`. Today the arm records and journals only:
+refusing a stopped requester's calls lands with a later change, so a stopped requester's calls still run.
+
+It fails closed: every refused exec counts, and these honest shapes trip it:
+
+- a `git commit` whose hooks run, in the main checkout or a linked worktree;
+- a toolchain outside `/usr`, such as a mise ruby or a tool in `~/.local/bin`, reached from a nested shell;
+- a PATH search that meets a refusal on one entry before it finds the program on a later one.
+
+Narrowing them is incremental work, driven by what the QA rounds measure:
+
+- collect session journals under `--tripwire observe`, the default, across ordinary work;
+- label their calls in a labels file;
+- run `lain bench approval-replay --tripwire --labels FILE SESSIONS...` over them;
+- report the false-trip rate per shape, and any `STOPPING` signal above 1 in 100 sessions.
 
 ## 4: A refused exec ends with the wording, and is journaled as a refusal
 

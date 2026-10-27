@@ -40,6 +40,11 @@ RSpec.describe Lain::CLI::Arms do
         .to raise_error(described_class::Unknown, /sideways.*off, classes, reader, workspace/)
     end
 
+    it "takes stop as the tripwire arm stronger than observe" do
+      expect(described_class.from({ tripwire: "stop" }).tripwire).to eq(:stop)
+      expect(described_class::TRIPWIRE).to eq(%i[off observe stop])
+    end
+
     it "refuses an unknown judge_facts and an unknown tripwire" do
       expect { described_class.from({ judge_facts: "all" }) }.to raise_error(described_class::Unknown, /judge.facts/)
       expect { described_class.from({ tripwire: "kill" }) }.to raise_error(described_class::Unknown, /tripwire/)

@@ -22,7 +22,7 @@ module Lain
       # The confine arms that put bash in a sandbox; the others leave it to the approval ladder.
       SANDBOXED = %i[reader workspace].freeze
       JUDGE_FACTS = %i[off facts request].freeze
-      TRIPWIRE = %i[off observe].freeze
+      TRIPWIRE = %i[off observe stop].freeze
       ROUND_BUDGET = %i[off static window].freeze
       ROUND_DEDUP = %i[off on].freeze
       JUDGE_DENIALS = %i[off escalate_only breaker].freeze

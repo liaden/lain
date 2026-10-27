@@ -1,10 +1,13 @@
 # frozen_string_literal: true
 
 module Lain
-  # What would stop an agent that keeps probing the boundary, observed and never
-  # enforced. A {Ledger} folds the session's journal into a score per requester
-  # and journals a `tripwire` record for each signal it counts, so a bench run
-  # can price the false trips before any stop is switched on.
+  # What would stop an agent that keeps probing the boundary. A {Ledger} folds
+  # the session's journal into a score per requester and journals a `tripwire`
+  # record for each signal it counts, so a bench run can price the false trips.
+  # Under the stop arm a seeded signal past the hard stop also trips {Stops}:
+  # it records who is stopped or paused, journals a `tripwire_stop` record, and
+  # holds that state for a later consumer to refuse calls by. Nothing refuses
+  # one yet.
   module Tripwire
     Rules = Data.define(:points, :hard_stop)
 

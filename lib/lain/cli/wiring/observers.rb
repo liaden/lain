@@ -73,13 +73,16 @@ module Lain
         # @param paths [Paths] resolves the sessions directory a resume chains through
         # @param project [Project] the chat's own, whose directories hold the sessions
         # @param resumed [Resume::Result, nil] nil for a fresh chat
-        # @param arms [Arms] under `tripwire: :observe` a {Tripwire::Ledger} folds the journal too
+        # @param arms [Arms] under `tripwire: :observe` or `:stop` a {Tripwire::Ledger} folds the journal too,
+        #   and under `:stop` it trips the {Tripwire::Stops} the observers hold
         # @return [Observers]
         def self.register(chronicle:, paths:, project:, resumed:, arms:)
+          stops = Tripwire::Stops.new if arms.tripwire == :stop
           new(fresh: lineage_fresh(paths, project, resumed, chronicle.durable_journal),
-              unsealed: Unsealed.for(arms:, project:)).tap do |observers|
+              unsealed: Unsealed.for(arms:, project:), stops: stops || Tripwire::Stops::None).tap do |observers|
             observers.register(chronicle)
-            chronicle.observe(Tripwire::Ledger.new(journal: chronicle.durable_journal)) if arms.tripwire == :observe
+            chronicle.observe(Tripwire::Ledger.new(journal: chronicle.durable_journal, stops:)) unless
+              arms.tripwire == :off
           end
         end
 
@@ -99,13 +102,18 @@ module Lain
         # @return [Shell::Executable::Fresh] which files changed during this lineage
         attr_reader :fresh
 
+        # @return [Tripwire::Stops, Tripwire::Stops::None] who the tripwire has stopped
+        attr_reader :stops
+
         # @param fresh [Shell::Executable::Fresh]
         # @param unconfined [Unconfined] hears the sandbox degrade while the toolset is built
         # @param unsealed [#notices] whether the project can run a workspace call
-        def initialize(fresh:, unconfined: Unconfined.new, unsealed: Unsealed::Unasked)
+        # @param stops [Tripwire::Stops, Tripwire::Stops::None]
+        def initialize(fresh:, unconfined: Unconfined.new, unsealed: Unsealed::Unasked, stops: Tripwire::Stops::None)
           @fresh = fresh
           @unconfined = unconfined
           @unsealed = unsealed
+          @stops = stops
         end
 
         # What the human should be told about the lineage and the sandbox, said once at startup. A sandbox

@@ -1015,14 +1015,19 @@ signals per requester (strong: a `fresh` program or run file, read from `exec_re
 under a confining (`reader`) profile only, a refused exec, an exec the call did not resolve, and a descriptor or
 loader exec; under `traced` the descriptor and loader exec count at medium and the other two not at all; medium: a final deny on a protected path, a re-ask after a human's deny; weak:
 the judge's own deny) and writes a `tripwire` record per signal. At a score of 10 the record says
-`would_stop`. It is observe-only: nothing is stopped or paused.
+`would_stop`. Under `observe` nothing is stopped or paused. Under `stop` a requester whose score from the
+seeded signals (`Tripwire::Stops::STOPPING`, today `refused_exec` alone, seeded by design and not yet measured)
+reaches the hard stop is tripped in `Tripwire::Stops`: a subagent's first trip stops it and pauses main, and
+main's trip, a second trip or a trip no record attributes stops every requester. Each trip journals a
+`tripwire_stop` record. The stop fails closed: an honest refused exec trips it as surely as a plant. It
+records and journals only: nothing refuses a stopped requester's calls yet.
 
 The arms, recorded in the session header's `arms` key when on (`CLI::Arms`):
 
 | Flag | Values | Default | Switches |
 |---|---|---|---|
 | `--confine` | `off`, `classes`, `reader` | `reader` | `classes`: the class table. `reader`: the table plus the sandbox |
-| `--tripwire` | `off`, `observe` | `observe` | the ledger |
+| `--tripwire` | `off`, `observe`, `stop` | `observe` | the ledger; `stop` adds the stops |
 | `--judge-facts` | `off`, `facts`, `request` | `off` | facts and the bar; `request` adds the human's last line |
 
 `lain bench arms` defaults `--confine` to `off` (it takes `off` or `reader`) and always runs `--tripwire off`.
