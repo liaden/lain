@@ -364,6 +364,20 @@ RSpec.describe Lain::Tripwire::Ledger do
       expect(tripwires.sole).to include("signal" => "judge_deny", "weight" => "weak")
     end
 
+    it "counts a judge deny handed to a human under escalate_only as the same judge deny" do
+      write(escalation(rung: "auto", verdict: "abstain", reason: Lain::Approval::Judged::ESCALATED))
+
+      expect(tripwires.sole).to include("signal" => "judge_deny", "weight" => "weak")
+    end
+
+    it "does not count a judged rung's other abstentions" do
+      [Lain::Approval::Judged::DEFERRED, Lain::Approval::Judged::BROKEN].each do |reason|
+        write(escalation(rung: "auto", verdict: "abstain", reason:))
+      end
+
+      expect(tripwires).to be_empty
+    end
+
     it "does not count an unattended session's refusal, which no judge made" do
       write(escalation(rung: "auto", reason: Lain::Approval::Judged::Unattended::BECAUSE))
 

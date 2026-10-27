@@ -104,7 +104,8 @@ module Lain
       #   REQUIRED here, as `test_layout:` is: defaulted, a real chat's `auto`
       #   would quietly hand every call to a human
       # @param display [#<<] told each call the judge approves; the run's display channel
-      # @param arms [Arms] the bench arms; `judge_facts` decides whether the judge is told the facts
+      # @param arms [Arms] the bench arms; `judge_facts` decides whether the judge is told the facts, and
+      #   `judge_denials` what a judge's deny does
       # @param request [#call] `context -> Approval::Judge::Request or nil`, what a judged call was made
       #   for; read only under `--judge-facts request`
       # @param child_env [Exec::ChildEnv] the launch's, which the result masker and the live display read;
@@ -412,9 +413,11 @@ module Lain
       # What every ladder is built from, held before the seed builds them. The
       # judge and the policy among them are why: every judged rung, the leased
       # workers' included, is built over these two, so `auto` judges alike
-      # wherever a call is asked.
+      # wherever a call is asked. One breaker for them all, so a requester's
+      # count does not restart when its call is asked through another ladder.
       def hold_ladder_parts(rules:, approving:, classifiers:, verdict:, judge:, sensitivity:, arms:, request:)
         @judge_facts = arms.judge_facts != :off
+        @denials = Approval::DenialBreaker.for(arms.judge_denials, journal: @journal)
         @request = arms.judge_facts == :request ? request : Approval::Judge::Unrequested
         @rules = rules.to_a.freeze
         @approving = approving
@@ -544,7 +547,7 @@ module Lain
       def judged(classifiers)
         asking = @approvals ? Approval::Escalation::Surfaces.new(@approvals) : Approval::Judged::Unattended.new
         Approval::Judged.new(judge: @judge, policy: @sensitivity, asking:, journal: @journal, display: @display,
-                             facts: facts_over(classifiers), request: @request)
+                             facts: facts_over(classifiers), request: @request, denials: @denials)
       end
 
       # Over the ladder's own factory, so a leased worker's stages resolve

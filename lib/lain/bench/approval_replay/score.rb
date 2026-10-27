@@ -111,6 +111,7 @@ module Lain
           unlabelled = rows.count { !_1.unanswered && @labels.fetch(_1.call_digest).nil? }
           ["", "  #{arm.name}#{" (#{BOUNDS[arm.approver]})" if BOUNDS.key?(arm.approver)}",
            *RATES.flat_map { |key, heading, show| rate_lines(arm, key, heading, show, rows.any? { unknown?(_1) }) },
+           *Rerouting.lines(arm, rows, indent: "    "),
            "    unlabelled #{unlabelled}, unanswered #{rows.count(&:unanswered)}, " \
            "state unknown #{rows.count { unknown?(_1) }}"]
         end

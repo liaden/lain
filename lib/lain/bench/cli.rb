@@ -177,13 +177,14 @@ module Lain
       # @param rules [Array<String>] files whose `approval` table is a rule set; none by default
       # @param approver [String] "recorded", "perfect" (needs labels) or "approve_all"
       # @param labels [String, nil] a call-label sidecar; each arm is then scored against it
+      # @param denials [Array<String>] judge-denial arms, each replayed under every level and rule set
       # @return [String] the report; never printed here
-      # @raise [Refusal] on an unknown level or approver, a missing file, or a rule set or labels file that will not
-      #   load
+      # @raise [Refusal] on an unknown level, approver or judge-denial arm, a missing file, or a rule set or labels
+      #   file that will not load
       def approval_replay_report(sessions:, project: ApprovalReplay::Place.current, approvals: %w[ask], rules: [],
-                                 approver: "recorded", labels: nil)
+                                 approver: "recorded", labels: nil, denials: %w[off])
         ApprovalReplay.asked(sessions: sessions.map { checked_file(_1, "session file") }, approvals:, approver:,
-                             rules: rules.map { checked_file(_1, "rule set") }, project:, labels:).report
+                             rules: rules.map { checked_file(_1, "rule set") }, project:, labels:, denials:).report
       end
 
       # The three orchestration arms (single-thread control, orchestrator-worker,

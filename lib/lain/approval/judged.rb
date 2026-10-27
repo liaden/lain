@@ -19,6 +19,10 @@ module Lain
     # Whatever this rung hands down, it first journals one `escalation` record
     # of its own saying why, so a reader can tell a call the judge deferred
     # from one it never saw or one it faulted on.
+    #
+    # Its {DenialBreaker} decides what a judge's deny does: applied, handed to
+    # the asking rung (`escalate_only`), or counted until the judge is no
+    # longer asked about that requester's calls (`breaker`).
     class Judged
       NAME = "auto"
       APPROVED = "the judge approved this call"
@@ -35,6 +39,10 @@ module Lain
       GIT_STORE = "it reads the repository's object store, which the judge cannot weigh"
       DEFERRED = "deferred"
       DEFERRAL_NOTE = "the judge deferred this"
+      ESCALATED = "the judge refused this call, and a judge's refusal goes to a human"
+      WOULD_DENY_NOTE = "the judge would have refused this"
+      BROKEN = "the judge refused too many of this requester's calls to be asked again"
+      BROKEN_NOTE = "the judge is no longer asked about this requester: it refused too many of its calls"
       BAR = "bar"
       OVERRULED = "the judge approved this, but what lain resolved the command to bars an automatic approval"
       FAULT = "fault"
@@ -191,9 +199,11 @@ module Lain
       # @param display [#<<] told a {Telemetry::JudgeRuled} for each call the judge approves or denies
       # @param facts [#call] `(command, cwd, tool_use_id:) -> Judge::Facts` for a bash call; none by default
       # @param request [#call] `context -> Judge::Request or nil`, what the call was made for; none by default
+      # @param denials [DenialBreaker, DenialBreaker::Unbroken] what a judge's deny does; applied by default
       def initialize(judge:, policy:, asking:, journal:, display: ::Lain::Channel::Null.instance,
-                     facts: Judge::Facts::Off, request: Judge::Unrequested)
+                     facts: Judge::Facts::Off, request: Judge::Unrequested, denials: DenialBreaker::Off)
         @judge = judge
+        @denials = denials
         @facts = facts
         @request = request
         @display = display
@@ -212,6 +222,7 @@ module Lain
       def call(effect, context)
         unlooked = unlooked(effect, context)
         return unjudged(effect, context, format(UNLOOKED, why: unlooked)) if unlooked
+        return noted(effect, context, BROKEN, BROKEN_NOTE) if @denials.tripped?(requester_of(context))
 
         cause = nil
         place = place_for(effect, context)
@@ -226,12 +237,30 @@ module Lain
       private
 
       def ruled(verdict, effect, context, cause, bar:, read:)
+        counted(verdict, context)
         case verdict
         when :approve then bar.empty? ? approved(effect, read) : overruled(effect, context, bar, read)
-        when :deny then denied(effect, read)
+        when :deny then @denials.maps_deny? ? escalated(effect, context, read) : denied(effect, read)
         when :defer then handed_down(effect, Deferred.new(context), abstain(DEFERRED), read:)
         else faulted(effect, context, cause, read)
         end
+      end
+
+      def counted(verdict, context)
+        @denials.approved(requester_of(context)) if verdict == :approve
+        @denials.denied(requester_of(context)) if verdict == :deny
+      end
+
+      def requester_of(context) = Parked::Queue.identity_for(context).name
+
+      def escalated(effect, context, read)
+        show(effect, "denied")
+        noted(effect, context, ESCALATED, WOULD_DENY_NOTE, read)
+      end
+
+      # Lain's own words on the parked row, as a deferral's are.
+      def noted(effect, context, reason, note, read = {})
+        handed_down(effect, Escalation::Noted.new(context, Parked::Queue::Reason.own(note)), abstain(reason), read:)
       end
 
       def overruled(effect, context, bar, read)
@@ -330,7 +359,7 @@ module Lain
       def place_for(effect, context)
         root = own_tree(context) || @policy.root || ::Lain::Sensitivity::Policy.base_of(context)
         cwd = ::Lain::Session.cwd_of(context)
-        Judge::Place.new(root:, cwd:, requester: Parked::Queue.identity_for(context).name,
+        Judge::Place.new(root:, cwd:, requester: requester_of(context),
                          outside: outside(effect, context, cwd, [root, ::Lain::Sensitivity::Policy.base_of(context)]),
                          facts: facts_for(effect, context), request: @request.call(context),
                          human_checkout: (@policy.root unless root == @policy.root))

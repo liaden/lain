@@ -67,7 +67,7 @@ module Lain
            "  agrees with the live record: #{rows.count { agrees?(_1) }} of #{rows.size}",
            "  prompted: #{rows.count(&:prompted)}, #{rows.count(&:unanswered)} with no recorded answer",
            "  state unknown: #{rows.count { _1.state == "unknown" }} of #{rows.size}",
-           *drifted(rows)]
+           *Rerouting.lines(arm, rows, indent: "  "), *drifted(rows)]
         end
 
         def line(row)
@@ -105,7 +105,7 @@ module Lain
 
         def one_apart?(one, other) = one.to_h.one? { |field, value| other.to_h.fetch(field) != value }
 
-        def label(arm) = [arm.approval, rules(arm), arm.approver].join(" ")
+        def label(arm) = [arm.approval, rules(arm), arm.approver, *arm.denied].join(" ")
 
         def rules(arm) = arm.rules_path ? spelled(arm.rules_path, @replay.arms.filter_map(&:rules_path)) : "no rules"
 

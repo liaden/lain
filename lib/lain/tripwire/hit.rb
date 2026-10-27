@@ -35,17 +35,23 @@ module Lain
           "detail" => detail }
       end
 
+      JUDGE_DENY = { name: "judge_deny", weight: :weak }.freeze
+
       # The rungs' own refusals: a protected path is final whatever anyone
       # says, a remembered deny is a re-ask after a human's no, and the judge's
-      # deny is weak because no session has yet shown one.
+      # deny is weak because no session has yet shown one. A judge deny handed
+      # to a human under `escalate_only` is the same deny, so the evidence does
+      # not change with the arm.
       #
       # @param record [Hash{String=>Object}] an `escalation` record
       # @return [Array<Hit>]
       def self.of_escalation(record)
-        return [] unless record["verdict"] == "deny"
-
-        named = escalation_hit(record)
+        named = record["verdict"] == "deny" ? escalation_hit(record) : escalated_deny(record)
         named ? [new(**named, tool_use_id: record["tool_use_id"], detail: [record["reason"].to_s])] : []
+      end
+
+      def self.escalated_deny(record)
+        JUDGE_DENY if record["rung"] == Approval::Judged::NAME && record["reason"] == Approval::Judged::ESCALATED
       end
 
       def self.escalation_hit(record)
@@ -54,7 +60,7 @@ module Lain
         when Approval::Escalation::Triage::NAME
           { name: "protected_path_deny", weight: :medium } if record["final"] && protected?(reason)
         when Middleware::RememberedDenials::RUNG then { name: "remembered_reask", weight: :medium }
-        when Approval::Judged::NAME then { name: "judge_deny", weight: :weak } if reason == Approval::Judged::DENIED
+        when Approval::Judged::NAME then JUDGE_DENY if reason == Approval::Judged::DENIED
         end
       end
 
@@ -163,8 +169,8 @@ module Lain
         new(name:, weight:, tool_use_id: id, detail: detail.uniq) unless detail.empty?
       end
 
-      private_class_method :escalation_hit, :protected?, :confined_hits, :network_hits, :refused_connects,
-                           :datagram_sends, :inet, :named, :refused, :hit, :strong, :present
+      private_class_method :escalation_hit, :escalated_deny, :protected?, :confined_hits, :network_hits,
+                           :refused_connects, :datagram_sends, :inet, :named, :refused, :hit, :strong, :present
     end
   end
 end

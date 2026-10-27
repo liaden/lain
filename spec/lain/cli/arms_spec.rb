@@ -45,14 +45,22 @@ RSpec.describe Lain::CLI::Arms do
       expect { described_class.from({ tripwire: "kill" }) }.to raise_error(described_class::Unknown, /tripwire/)
     end
 
+    it "parses the judge-denial arm, off unless typed, and refuses a value outside its set" do
+      expect(described_class::JUDGE_DENIALS).to eq(%i[off escalate_only breaker])
+      expect(described_class.from({}).judge_denials).to eq(:off)
+      expect(described_class.from({ judge_denials: "breaker" }).judge_denials).to eq(:breaker)
+      expect { described_class.from({ judge_denials: "always" }) }
+        .to raise_error(described_class::Unknown, /--judge-denials.*off, escalate_only, breaker/)
+    end
+
     it "takes an unset arm from the arms it is laid over, and a typed one wins" do
       recorded = described_class.new(confine: :classes, judge_facts: :facts, tripwire: :off, round_budget: :static,
-                                     round_dedup: :on)
+                                     round_dedup: :on, judge_denials: :breaker)
 
       expect(described_class.from({}, recorded)).to eq(recorded)
       expect(described_class.from({ confine: "off" }, recorded))
         .to eq(described_class.new(confine: :off, judge_facts: :facts, tripwire: :off, round_budget: :static,
-                                   round_dedup: :on))
+                                   round_dedup: :on, judge_denials: :breaker))
     end
   end
 
@@ -112,7 +120,7 @@ RSpec.describe Lain::CLI::Arms do
 
       expect(described_class.from_header(header))
         .to eq(described_class.new(confine: :reader, judge_facts: :off, tripwire: :observe, round_budget: :off,
-                                   round_dedup: :off))
+                                   round_dedup: :off, judge_denials: :off))
     end
 
     it "reads a recorded round budget back" do
@@ -122,7 +130,7 @@ RSpec.describe Lain::CLI::Arms do
     it "reads an arm the header left out as off, and a header with no arms as every arm off" do
       expect(described_class.from_header({ "arms" => { "confine" => "classes" } }))
         .to eq(described_class.new(confine: :classes, judge_facts: :off, tripwire: :off, round_budget: :off,
-                                   round_dedup: :off))
+                                   round_dedup: :off, judge_denials: :off))
       expect(described_class.from_header({ "model" => "qwen3:4b" })).to eq(described_class::OFF)
     end
 

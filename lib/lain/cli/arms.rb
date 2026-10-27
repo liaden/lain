@@ -2,7 +2,7 @@
 
 module Lain
   module CLI
-    Arms = Data.define(:confine, :judge_facts, :tripwire, :round_budget, :round_dedup)
+    Arms = Data.define(:confine, :judge_facts, :tripwire, :round_budget, :round_dedup, :judge_denials)
 
     # The bench arms a run is started with, parsed from the chat flags once so
     # every consumer reads one answer. The workspace sandbox and the observe-only
@@ -11,7 +11,8 @@ module Lain
     # a layer. Judge facts stay off because they change what the judge decides.
     # The round budget is on: it withholds only what a round's results could not
     # fit in the window anyway. Dedup is on too, and is its own arm so that a
-    # budget of off is only the absence of a limit.
+    # budget of off is only the absence of a limit. Judge denials stay off: both
+    # other values change who answers a call the judge refused.
     class Arms
       # A flag value outside an arm's set, loud and naming the allowed values. It
       # subclasses {Lain::Error} so the exe maps it to a clean Thor::Error.
@@ -24,10 +25,11 @@ module Lain
       TRIPWIRE = %i[off observe].freeze
       ROUND_BUDGET = %i[off static window].freeze
       ROUND_DEDUP = %i[off on].freeze
+      JUDGE_DENIALS = %i[off escalate_only breaker].freeze
       # Each arm's values, weakest first. round_budget is really a partial order (off is above both
       # static and window, which are incomparable), but its list only has to rank each below window.
       SETS = { confine: CONFINE, judge_facts: JUDGE_FACTS, tripwire: TRIPWIRE, round_budget: ROUND_BUDGET,
-               round_dedup: ROUND_DEDUP }.freeze
+               round_dedup: ROUND_DEDUP, judge_denials: JUDGE_DENIALS }.freeze
 
       # @param options [Hash] the parsed chat flags; an unset arm takes its value from `over`
       # @param over [Arms] what an unset arm runs: the launch defaults, a
@@ -39,6 +41,7 @@ module Lain
       # @option options [String, nil] :tripwire one of {TRIPWIRE}
       # @option options [String, nil] :round_budget one of {ROUND_BUDGET}
       # @option options [String, nil] :round_dedup one of {ROUND_DEDUP}
+      # @option options [String, nil] :judge_denials one of {JUDGE_DENIALS}
       # @return [Arms]
       # @raise [Unknown] on a value outside an arm's set
       def self.from(options, over = DEFAULT) = resolve(options, over) { |arm| "unknown #{flag(arm)} value" }
@@ -101,10 +104,13 @@ module Lain
       def with_dedup(policy) = round_dedup == :on ? policy : policy.without_dedup
       private :with_dedup
 
-      OFF = new(confine: :off, judge_facts: :off, tripwire: :off, round_budget: :off, round_dedup: :off)
-      DEFAULT = new(confine: :workspace, judge_facts: :off, tripwire: :observe, round_budget: :window, round_dedup: :on)
+      OFF = new(confine: :off, judge_facts: :off, tripwire: :off, round_budget: :off, round_dedup: :off,
+                judge_denials: :off)
+      DEFAULT = new(confine: :workspace, judge_facts: :off, tripwire: :observe, round_budget: :window, round_dedup: :on,
+                    judge_denials: :off)
       # No arm typed: laid under the flags, it keeps only what the human typed.
-      UNSET = new(confine: nil, judge_facts: nil, tripwire: nil, round_budget: nil, round_dedup: nil)
+      UNSET = new(confine: nil, judge_facts: nil, tripwire: nil, round_budget: nil, round_dedup: nil,
+                  judge_denials: nil)
     end
   end
 end

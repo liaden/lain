@@ -68,7 +68,7 @@ module Lain
         def self.tool?(name) = TOOLS.key?(name)
 
         # @param place [Place] where the session ran
-        # @param arm [Arm] the approval level it is replayed at
+        # @param arm [Arm] the approval level it is replayed at, and what a judge's deny does there
         # @param judge [#call, #prompt] what `auto` asks
         # @param rules [Array<Approval::Rule>] the remembered answers in force
         # @param denied_tools [Set<String>] the tools refused outright
@@ -82,7 +82,8 @@ module Lain
           @board = ::Lain::CLI::Switchboard.for(chronicle: @chronicle, options: { approval: arm.approval },
                                                 model: MODEL, toolset: @toolset, test_layout:, judge:, rules:,
                                                 sensitivity: policy, classifiers:, denied_tools:,
-                                                approval_timeout: window)
+                                                approval_timeout: window,
+                                                arms: ::Lain::CLI::Arms::OFF.with(judge_denials: arm.denials))
           @window = window
           # Built here for this session alone, so the replay's approver is its only consumer.
           @replay_queue = @board.approvals

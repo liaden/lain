@@ -809,6 +809,10 @@ class LainCLI < Thor
                     "workspace. A command whose paths cannot be read is refused in a lease".freeze
     ARM_JUDGE_FACTS = "Bench arm: what the auto judge is told about a command " \
                       "(#{Lain::CLI::Arms::JUDGE_FACTS.join(", ")}; default off)".freeze
+    ARM_JUDGE_DENIALS = "Bench arm: what a judge's refusal does under auto approval: applied, handed to a human " \
+                        "(escalate_only), or counted until 3 in a row or 20 in a session stop the judge being asked " \
+                        "about that requester (breaker) " \
+                        "(#{Lain::CLI::Arms::JUDGE_DENIALS.join(", ")}; default off)".freeze
     ARM_TRIPWIRE = "Binary identity tripwire (#{Lain::CLI::Arms::TRIPWIRE.join(", ")}; default observe)".freeze
     ARM_ROUND_BUDGET = "What one tool round's results may cost together " \
                        "(#{Lain::CLI::Arms::ROUND_BUDGET.join(", ")}; default window)".freeze
@@ -823,6 +827,7 @@ class LainCLI < Thor
       thor.method_option :exec_image, type: :string, banner: "IMAGE", desc: IMAGE
       thor.method_option :confine, type: :string, banner: "ARM", desc: ARM_CONFINE
       thor.method_option :judge_facts, type: :string, banner: "ARM", desc: ARM_JUDGE_FACTS
+      thor.method_option :judge_denials, type: :string, banner: "ARM", desc: ARM_JUDGE_DENIALS
       thor.method_option :tripwire, type: :string, banner: "ARM", desc: ARM_TRIPWIRE
       thor.method_option :round_budget, type: :string, banner: "ARM", desc: ARM_ROUND_BUDGET
       thor.method_option :round_dedup, type: :string, banner: "ARM", desc: ARM_ROUND_DEDUP
@@ -963,11 +968,14 @@ class LainCLI < Thor
     method_option :labels, type: :string, banner: "LABELS_JSONL",
                            desc: "a call-label sidecar (digest, label harmful|sensitive|routine, source); " \
                                  "scores each arm against it"
+    method_option :judge_denials, type: :string, repeatable: true, banner: "off|escalate_only|breaker",
+                                  desc: "what a judge's refusal does under auto; repeat for more (default: off)"
     def approval_replay(*sessions)
       render do
         Lain::Bench::CLI.new.approval_replay_report(sessions:, approvals: options[:approval] || %w[ask],
                                                     rules: options[:rules] || [], approver: options[:approver],
-                                                    labels: options[:labels])
+                                                    labels: options[:labels],
+                                                    denials: options[:judge_denials] || %w[off])
       end
     end
 

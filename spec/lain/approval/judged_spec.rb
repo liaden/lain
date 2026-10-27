@@ -1080,6 +1080,105 @@ RSpec.describe Lain::Approval::Judged do
     end
   end
 
+  describe "the judge-denial arms" do
+    def under(arm) = Lain::Approval::DenialBreaker.for(arm, journal:)
+
+    def as(requester) = context.with(requester:)
+
+    it "applies a judge deny under off, exactly as with no arm given" do
+      ruling = ruled(rung(spawn_answering("deny"), denials: under(:off)), bash)
+
+      expect([ruling.verdict, ruling.rung, ruling.reason]).to eq([:deny, "auto", described_class::DENIED])
+      expect(queue.to_a).to be_empty
+    end
+
+    describe "escalate_only" do
+      it "parks a judge deny for a human, telling them the judge would have refused it" do
+        ruling = ruled(rung(spawn_answering("deny"), denials: under(:escalate_only)), bash) do |pending|
+          expect(pending.reasons.map(&:to_s)).to eq([described_class::WOULD_DENY_NOTE])
+          pending.approve(surface: "human_spec", authority: :human)
+        end
+
+        expect([ruling.verdict, ruling.authority, ruling.rung]).to eq([:allow, :human, "surfaces"])
+        expect(described_class::WOULD_DENY_NOTE).to eq("the judge would have refused this")
+      end
+
+      it "journals its own ruling as an abstention whose reason names the judge's deny" do
+        ruled(rung(spawn_answering("deny"), denials: under(:escalate_only)), bash) do |pending|
+          pending.deny(surface: "human_spec")
+        end
+
+        expect(escalations.sole).to include("rung" => "auto", "verdict" => "abstain",
+                                            "reason" => described_class::ESCALATED)
+        expect(described_class::ESCALATED).to include("the judge refused")
+      end
+
+      it "still tells the display the judge denied the call" do
+        told = []
+        escalating = rung(spawn_answering("deny"), denials: under(:escalate_only), display: told)
+        ruled(escalating, bash("ls -la /home/u")) { |pending| pending.deny(surface: "human_spec") }
+
+        expect(told).to eq([Lain::Telemetry::JudgeRuled.new(call: 'bash({"command" => "ls -la /home/u"})',
+                                                            verdict: "denied")])
+      end
+
+      it "refuses it through the unattended rung as a plain deny when nobody is attached" do
+        ruling = ruled(rung(spawn_answering("deny"), denials: under(:escalate_only),
+                                                     asking: described_class::Unattended.new), bash)
+
+        expect([ruling.verdict, ruling.reason]).to eq([:deny, described_class::Unattended::BECAUSE])
+      end
+    end
+
+    describe "breaker" do
+      let(:breaker) { under(:breaker) }
+
+      it "stops asking the judge for a requester it denied 3 times in a row, and parks the 4th call" do
+        spawn = spawn_answering("deny")
+        3.times { ruled(rung(spawn, denials: breaker), bash) }
+
+        ruling = ruled(rung(spawn, denials: breaker), bash) do |pending|
+          expect(pending.reasons.map(&:to_s)).to eq([described_class::BROKEN_NOTE])
+          pending.deny(surface: "human_spec", authority: :human)
+        end
+
+        expect([spawn.calls.size, ruling.rung]).to eq([3, "surfaces"])
+        expect(escalations.last).to include("rung" => "auto", "verdict" => "abstain",
+                                            "reason" => described_class::BROKEN)
+        expect(journal_records(journal_io, "judge_breaker_tripped").sole)
+          .to include("requester" => "main", "count" => 3, "because" => "3 in a row")
+      end
+
+      it "keeps the reason the judge did not look on a tripped requester's call it would never have judged" do
+        3.times { ruled(rung(spawn_answering("deny"), denials: breaker), bash) }
+
+        ruled(rung(spawn_answering("deny"), denials: breaker), call("read_file", { "path" => ".env" })) do |pending|
+          expect(pending.reasons.map(&:to_s)).not_to include(described_class::BROKEN_NOTE)
+          pending.deny(surface: "human_spec")
+        end
+
+        expect(escalations.last).to include("rung" => "auto", "verdict" => "abstain", "reason" => "unjudgeable")
+      end
+
+      it "still asks the judge for another requester" do
+        spawn = spawn_answering("deny")
+        3.times { ruled(rung(spawn, denials: breaker), bash) }
+
+        ruling = ruled(rung(spawn, denials: breaker), bash, within: as("researcher"))
+
+        expect([spawn.calls.size, ruling.rung]).to eq([4, "auto"])
+      end
+
+      it "counts a judge approve as breaking the run" do
+        verdicts = %w[deny deny approve deny deny approve].each
+        spawn = spawn_answering { Lain::Tool::Result.ok(verdicts.next) }
+        6.times { ruled(rung(spawn, denials: breaker), bash) }
+
+        expect(breaker.tripped?("main")).to be(false)
+      end
+    end
+  end
+
   describe "unattended" do
     let(:unattended) { described_class::Unattended.new }
 

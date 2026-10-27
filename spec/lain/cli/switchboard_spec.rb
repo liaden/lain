@@ -447,6 +447,61 @@ RSpec.describe Lain::CLI::Switchboard do
       expect(asked).to eq([])
     end
 
+    describe "under --judge-denials" do
+      let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
+
+      def board_with(denials, judge)
+        described_class.for(chronicle:, judge:, options: { approval: "auto" }, model: "claude-opus-4-8",
+                            toolset: base, test_layout: layout_run,
+                            arms: Lain::CLI::Arms.from({ judge_denials: denials }, Lain::CLI::Arms::OFF))
+      end
+
+      def scripted(*verdicts, asked)
+        script = verdicts.each
+        ->(tool:, **) { asked.push(tool).then { script.next } }
+      end
+
+      # A parked call a human refuses, so its verdict is a person's and never the judge's.
+      def human_denied(board)
+        Sync do |task|
+          call = task.async { board.policy_switch.call(gated_call, nil) }
+          task.with_timeout(1) { board.approvals.dequeue }.deny(surface: "tty", authority: :human)
+          call.wait
+        end
+      end
+
+      it "applies a judge deny under off, parking nothing" do
+        expect(board_with("off", judge_answering(:deny)).policy_switch.call(gated_call, nil)).to be(false)
+        expect(journal_records(journal_io, "escalation").last).to include("rung" => "auto", "verdict" => "deny")
+      end
+
+      it "parks a judge deny under escalate_only" do
+        expect(parked_under(board_with("escalate_only", judge_answering(:deny))).notes)
+          .to eq([Lain::Approval::Judged::WOULD_DENY_NOTE])
+      end
+
+      it "stops asking the judge after 3 denies in a row under breaker, and journals the trip" do
+        asked = []
+        board = board_with("breaker", judge_answering(:deny, asked))
+        3.times { board.policy_switch.call(gated_call, nil) }
+
+        expect(parked_under(board).notes).to eq([Lain::Approval::Judged::BROKEN_NOTE])
+        expect(asked.size).to eq(3)
+        expect(journal_records(journal_io, "judge_breaker_tripped").sole)
+          .to include("requester" => "agent", "count" => 3, "because" => "3 in a row")
+      end
+
+      it "never counts a human's deny toward the breaker" do
+        asked = []
+        board = board_with("breaker", scripted(*Array.new(5, :defer), :approve, asked))
+        5.times { human_denied(board) }
+
+        expect(board.policy_switch.call(gated_call, nil)).to be(true)
+        expect(asked.size).to eq(6)
+        expect(journal_records(journal_io, "judge_breaker_tripped")).to be_empty
+      end
+    end
+
     it "lets the judge decide the same path on a board whose policy gates nothing" do
       asked = []
       board = switchboard(approval: :auto, judge: judge_answering(:approve, asked))
@@ -1654,6 +1709,26 @@ RSpec.describe Lain::CLI::Switchboard do
         end
 
         expect(seen).to eq([["plan ask", true], ["plan auto", true], ["plan bypass", true]])
+      end
+
+      it "keeps a requester the breaker tripped in the checkout from the judge under plan auto" do
+        asked = []
+        board(judge: judge_answering(:deny, asked), arms: Lain::CLI::Arms::OFF.with(judge_denials: :breaker))
+        board.mode_switch.switch(Lain::Mode.new(approval: :auto), surface: "tty")
+        write = Struct.new(:name, :input, :tool_use_id).new("write_file", { "path" => "a.rb", "content" => "" },
+                                                            "tu_2")
+        3.times { board.policy_switch.call(write, session) }
+        plan!(:auto)
+
+        pending_call = Sync do |task|
+          call = task.async { board.policy_switch.call(write, session) }
+          task.with_timeout(1) { board.approvals.dequeue }
+        ensure
+          call&.stop
+        end
+
+        expect(pending_call.notes).to eq([Lain::Approval::Judged::BROKEN_NOTE])
+        expect(asked.size).to eq(3)
       end
 
       it "hands a call that is no command under plan auto to the judge" do

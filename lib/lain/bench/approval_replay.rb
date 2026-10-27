@@ -8,17 +8,23 @@ module Lain
     # against {FileFacts::Recorded}, and the judge is {RecordedJudge}, which answers what the
     # session's judge answered.
     #
+    # An arm may also re-route the judge's denials ({Approval::DenialBreaker}): its row then says
+    # the call was re-routed, and whether it cost a prompt the same arm with the judge's denials
+    # applied would not have made, for which that arm is replayed beside it.
+    #
     # A call whose answer rested on a file fact the session never recorded is marked
     # "state unknown" rather than dropped: the rung that ruled it is still the one that would
     # have, for a tree where that path is plain.
     class ApprovalReplay
-      Arm = Data.define(:approval, :rules_path, :approver)
+      Arm = Data.define(:approval, :rules_path, :approver, :denials)
       Row = Data.define(:session, :call_digest, :tool, :tool_use_id, :requester, :arm, :rung, :rule, :verdict,
-                        :prompted, :unanswered, :state, :judge)
+                        :prompted, :unanswered, :state, :judge, :rerouted, :extra_prompt)
       Place = Data.define(:cwd, :root, :home)
 
       LEVELS = %i[ask auto bypass].freeze
       APPROVERS = %i[recorded perfect approve_all].freeze
+      # The judged rung's reasons for handing down a call the judge refused, or would have been asked about.
+      REROUTED = [Approval::Judged::ESCALATED, Approval::Judged::BROKEN].freeze
 
       # What a row says of a call no rung decided.
       UNRULED = { "verdict" => "none" }.freeze
@@ -28,8 +34,20 @@ module Lain
 
       # One way a call is re-decided.
       class Arm
-        # @return [String] the level, the rule set's file name and the approver, as a report heads it
-        def name = [approval, rules_path ? File.basename(rules_path) : "no rules", approver].join(" ")
+        # @param approval [Symbol] one of {LEVELS}
+        # @param rules_path [String, nil] a rule set's file; none when nil
+        # @param approver [Symbol] one of {APPROVERS}
+        # @param denials [Symbol, String] one of {CLI::Arms::JUDGE_DENIALS}; off by default
+        def initialize(approval:, rules_path:, approver:, denials: :off)
+          super(approval:, rules_path:, approver:, denials: denials.to_sym)
+        end
+
+        # @return [String] the level, the rule set's file name, the approver and any judge-denial arm, as a
+        #   report heads it
+        def name = [approval, rules_path ? File.basename(rules_path) : "no rules", approver, *denied].join(" ")
+
+        # @return [Array<Symbol>] the judge-denial arm, when it is not off
+        def denied = denials == :off ? [] : [denials]
 
         # The remembered answers and refused tools in the rule set, read once, before any call is
         # replayed. Evaluated as a project's `.lain/config.rb` is; naming the file is the trust.
@@ -82,15 +100,18 @@ module Lain
       # @param approver [String, Symbol] out of {APPROVERS}
       # @param project [Place]
       # @param labels [String, nil] a call-label sidecar; the report then scores each arm against it
+      # @param denials [Array<String, Symbol>] judge-denial arms out of {CLI::Arms::JUDGE_DENIALS}, each
+      #   replayed under every level and rule set; off by default
       # @return [ApprovalReplay]
-      # @raise [CLI::Refusal] on an unknown level or approver, an arm asked for twice, a rule set that
-      #   will not load, or a labels file that will not
-      def self.asked(sessions:, approvals:, rules:, approver:, project:, labels: nil)
+      # @raise [CLI::Refusal] on an unknown level, approver or judge-denial arm, an arm asked for twice, a
+      #   rule set that will not load, or a labels file that will not
+      def self.asked(sessions:, approvals:, rules:, approver:, project:, labels: nil, denials: %i[off])
         raise CLI::Refusal, "approval-replay needs at least one session file" if sessions.empty?
 
         checked(approvals, approver, labels)
-        from_journals(spelled_once(sessions), arms: once(arms_of(approvals, spelled_once(rules), approver)), project:,
-                                              labels: sidecar(labels))
+        refuse_unknown(denials, ::Lain::CLI::Arms::JUDGE_DENIALS, "--judge-denials")
+        from_journals(spelled_once(sessions), arms: once(arms_of(approvals, spelled_once(rules), approver, denials)),
+                                              project:, labels: sidecar(labels))
       rescue Config::Refusal => e
         raise CLI::Refusal, e.message
       end
@@ -98,21 +119,25 @@ module Lain
       # One file named two ways is the same file once.
       def self.spelled_once(paths) = paths.map { File.expand_path(_1) }.uniq
 
-      def self.arms_of(approvals, rules, approver)
-        approvals.product(rules.empty? ? [nil] : rules).map do |level, path|
-          Arm.new(approval: level.to_sym, rules_path: path, approver: approver.to_sym)
+      def self.arms_of(approvals, rules, approver, denials)
+        approvals.product(rules.empty? ? [nil] : rules, denials).map do |level, path, denied|
+          Arm.new(approval: level.to_sym, rules_path: path, approver: approver.to_sym, denials: denied)
         end
       end
 
       def self.checked(approvals, approver, labels)
-        unknown = approvals.map(&:to_s) - LEVELS.map(&:to_s)
-        raise CLI::Refusal, "--approval is #{LEVELS.join(", ")}, not #{unknown.join(", ")}" if unknown.any?
+        refuse_unknown(approvals, LEVELS, "--approval")
         unless APPROVERS.include?(approver.to_sym)
           raise CLI::Refusal, "--approver is #{APPROVERS.join(", ")}, not #{approver}"
         end
         return unless approver.to_sym == :perfect && !labels
 
         raise CLI::Refusal, "--approver perfect answers by label: pass --labels"
+      end
+
+      def self.refuse_unknown(given, allowed, flag)
+        unknown = given.map(&:to_s) - allowed.map(&:to_s)
+        raise CLI::Refusal, "#{flag} is #{allowed.join(", ")}, not #{unknown.join(", ")}" if unknown.any?
       end
 
       def self.sidecar(path) = (Score.labels_from(path) if path)
@@ -123,7 +148,7 @@ module Lain
 
         arms
       end
-      private_class_method :spelled_once, :arms_of, :once, :sidecar, :checked
+      private_class_method :spelled_once, :arms_of, :once, :sidecar, :checked, :refuse_unknown
 
       attr_reader :calls, :arms, :project, :sessions, :labels
 
@@ -144,14 +169,14 @@ module Lain
         @labels = labels
         raise ArgumentError, "a perfect arm answers by label and needs labels" if unlabelled_perfect?(arms, labels)
 
-        @rules = arms.to_h { [_1, _1.rules] }
+        @rules = arms.uniq(&:rules_path).to_h { [_1.rules_path, _1.rules] }
       end
 
       # @return [Array<Call>] the ruled calls that can be replayed: joined, and of a tool the stack holds
       def replayable = calls.select { _1.joined? && Stack.tool?(_1.tool) }
 
       # @return [Enumerator::Lazy<Row>] one per replayable call per arm, arm by arm
-      def rows = (@rows ||= arms.flat_map { |arm| by_session.flat_map { replayed(arm, _1) } }.freeze).lazy
+      def rows = (@rows ||= arms.flat_map { |arm| by_session.flat_map { rows_for(arm, _1) } }.freeze).lazy
 
       # @param arm [Arm]
       # @return [Array<Row>] that arm's, in journal order
@@ -179,9 +204,22 @@ module Lain
 
       def by_session = replayable.group_by(&:session).values
 
+      def rows_for(arm, calls)
+        own = replayed(arm, calls)
+        return own if arm.denied.empty?
+
+        applied = replayed(arm.with(denials: :off), calls).to_h { [_1.tool_use_id, _1.prompted] }
+        own.map { _1.with(extra_prompt: _1.prompted && !applied.fetch(_1.tool_use_id)) }
+      end
+
+      # Once per arm and session, since a judge-denial arm's rows are read against its off twin's.
       def replayed(arm, calls)
+        (@replayed ||= {})[[arm, calls.first.session]] ||= replay(arm, calls)
+      end
+
+      def replay(arm, calls)
         place = calls.first.place || project
-        rules, denied_tools = @rules.fetch(arm)
+        rules, denied_tools = @rules.fetch(arm.rules_path)
         judge = RecordedJudge.new
         approver = Approver.for(arm.approver, calls, labels:)
         Stack.new(place:, arm:, judge:, rules:, denied_tools:).session(approver:) do |dispatch|
@@ -191,11 +229,17 @@ module Lain
 
       def row(arm, call, judge, approver, dispatch)
         dispatched = judge.answering(call) { dispatch.call(call) }
-        ruled = Call.ruling_of(dispatched.records.select { _1["tool_use_id"] == call.tool_use_id }) || UNRULED
+        own = dispatched.records.select { _1["tool_use_id"] == call.tool_use_id }
+        ruled = Call.ruling_of(own) || UNRULED
         Row.new(session: call.session, call_digest: call.digest, tool: call.tool, tool_use_id: call.tool_use_id,
                 requester: call.requester, arm:, rung: ruled["rung"], rule: ruled["rule"],
                 verdict: ruled.fetch("verdict"), **asked(approver, call.tool_use_id),
-                state: dispatched.guessed ? "unknown" : "recorded", judge: judge.state)
+                state: dispatched.guessed ? "unknown" : "recorded", judge: judge.state, rerouted: rerouted?(own),
+                extra_prompt: false)
+      end
+
+      def rerouted?(records)
+        records.any? { _1["type"] == "escalation" && _1["rung"] == Approval::Judged::NAME && REROUTED.include?(_1["reason"]) }
       end
 
       def asked(approver, id) = { prompted: approver.prompted?(id), unanswered: approver.unanswered?(id) }
