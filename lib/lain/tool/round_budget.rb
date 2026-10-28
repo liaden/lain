@@ -50,6 +50,22 @@ module Lain
       # A budget no round reaches, as a number so the record's budget stays an Integer.
       UNLIMITED = Limit.new(bytes: 2**62, scope: "unlimited")
 
+      # Bytes a round must be able to deliver before compaction is asked to make room.
+      STARVED_BELOW = 8_192
+
+      # A window under twice the floor never counts: compaction could not free that much.
+      #
+      # @param left_tokens [Integer] the window less the turn, its reply and the reply reserve
+      # @param window_tokens [Integer] the context window
+      # @return [Boolean] whether a round could deliver under {STARVED_BELOW} on a window compaction can help
+      def self.starved?(left_tokens, window_tokens)
+        bytes_for(left_tokens) < STARVED_BELOW && bytes_for(window_tokens) >= 2 * STARVED_BELOW
+      end
+
+      # @return [Integer] what the tokens left can carry, never below nothing
+      def self.bytes_for(tokens) = [(tokens * Oracle::Handoff::BYTES_PER_TOKEN).floor, 0].max
+      private_class_method :bytes_for
+
       # The window less the turn that made the calls, its reply and the
       # reserve for the next reply, in bytes.
       #
@@ -58,7 +74,7 @@ module Lain
         new(:window) do |room|
           left = room.window - room.usage.total_input_tokens - room.usage.output_tokens -
                  ReplyReserve.tokens(window: room.window, ceiling: room.ceiling)
-          Limit.new(bytes: [(left * Oracle::Handoff::BYTES_PER_TOKEN).floor, 0].max,
+          Limit.new(bytes: bytes_for(left),
                     scope: "window #{room.window} tokens")
         end
       end

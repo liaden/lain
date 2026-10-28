@@ -201,6 +201,37 @@ RSpec.describe Lain::Compaction::Need do
     end
   end
 
+  describe "the read-starved signal" do
+    def signals(used, ceiling: 4_096, window: 32_768)
+      need.check(window_tokens: window, used_tokens: used, reply_ceiling: ceiling).signals
+    end
+
+    it "fires when the round budget would deliver under the starved floor, ahead of the ratio" do
+      expect(signals(26_211)).to include(:read_starved)
+      expect(signals(26_211)).not_to include(:approaching_window)
+    end
+
+    it "is absent on a roomy window, leaving the ratio to decide alone" do
+      expect(signals(12_000)).to eq([])
+    end
+
+    it "never fires on a small window, where the ratio decides alone" do
+      expect(signals(7_000, window: 8_192)).not_to include(:read_starved)
+    end
+
+    it "does not fire without a reply ceiling, which a guessed window must keep" do
+      expect(signals(26_211, ceiling: nil)).not_to include(:read_starved)
+    end
+
+    it "does not fire before any turn has reported usage" do
+      expect(need.check(window_tokens: 32_768, reply_ceiling: 4_096).signals).to eq([])
+    end
+
+    it "fires from the first token that leaves under 8,192 bytes of room" do
+      expect([22_418, 22_419].map { |used| signals(used).include?(:read_starved) }).to eq([false, true])
+    end
+  end
+
   describe "the manual signal" do
     it "raises the need flag on an explicit manual trigger" do
       result = check(manual: true)

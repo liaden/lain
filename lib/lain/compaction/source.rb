@@ -198,6 +198,17 @@ module Lain
         include Telemetry::Journalable
       end
 
+      # The tokens a round may still use this turn, and the window they sit in.
+      Room = Data.define(:left_tokens, :window_tokens) do
+        # @param rewrite [Scheduler::Rewrite]
+        # @return [Boolean] whether the bytes the rewrite frees leave a round budget that is not starved
+        def cured_by?(rewrite)
+          freed = rewrite.dropped.count / Oracle::Handoff::BYTES_PER_TOKEN
+          !Tool::RoundBudget.starved?(left_tokens + freed, window_tokens)
+        end
+      end
+      private_constant :Room
+
       # How long since the cache was last touched, extracted so the Source
       # holds a measurement rather than a raw `Time` and an ivar it has to keep
       # in step by hand.
@@ -861,7 +872,8 @@ module Lain
         turn = { base:, held_cut:, need:, head:, occupancy:, provenance:, cold: }
         return defer(**turn) unless movable?(need, head, held_cut)
 
-        weigh(**turn, pins:)
+        weigh(**turn, pins:, room: Room.new(left_tokens: room_left(usage, resolution, base.max_tokens),
+                                            window_tokens: resolution.window_tokens))
       end
 
       # Is there a move at all: something droppable past the cuts that hold,
@@ -902,7 +914,7 @@ module Lain
         need = @need.check(head_bytes: head.bytesize, fixed_bytes:, used_tokens: usage,
                            window_tokens: resolution.window_tokens,
                            plan_step_completed: PlanSteps.pending?(session), reply_ceiling: ceiling)
-        resolution.authoritative? ? need : need.without(Need::ApproachingWindow::KIND)
+        resolution.authoritative? ? need : need.without(Need::ApproachingWindow::KIND).without(Need::ReadStarved::KIND)
       end
 
       # Off the LIVE Context, every turn, never captured at construction:
@@ -951,7 +963,7 @@ module Lain
       # shrink what the turn would otherwise send. The held render is taken
       # FIRST, so on a turn that advances, the last edge journaled is the chain
       # the turn actually sends.
-      def weigh(base:, held_cut:, head:, need:, pins:, occupancy:, provenance:, cold:)
+      def weigh(base:, held_cut:, head:, need:, pins:, occupancy:, provenance:, cold:, room:)
         turn = { base:, held_cut:, need:, head:, occupancy:, provenance:, cold: }
         return defer(**turn) unless timely?(need, head, cold)
 
@@ -962,8 +974,20 @@ module Lain
         scheduler = scheduler_for(outcome.replay)
         rewrite = scheduler.measure(unadvanced)
         return defer(**turn, outcome:, would_not_shrink: true) unless rewrite.shrinks?
+        return defer(**turn, outcome:) unless worth_forcing?(need, head, cold, room, rewrite)
 
         commit(**turn, outcome:, scheduler:, rewrite:)
+      end
+
+      # A warm cache is broken only for a rewrite that ends the starvation; one that leaves reads
+      # starved would repeat every turn.
+      def worth_forcing?(need, head, cold, room, rewrite)
+        cold || timely?(need.without(Need::ReadStarved::KIND), head, cold) || room.cured_by?(rewrite)
+      end
+
+      def room_left(usage, resolution, ceiling)
+        window = resolution.window_tokens
+        window - usage.to_i - ReplyReserve.tokens(window:, ceiling: ceiling.to_i)
       end
 
       # An advance collapses what is droppable past the cut. With nothing there

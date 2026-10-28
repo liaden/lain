@@ -76,6 +76,13 @@ RSpec.describe Lain::Compaction::Scheduler do
       expect(decision.tier).to eq(:message)
     end
 
+    it "forces (message-tier) a needed compaction whose reads are starved while warm" do
+      decision = scheduler.evaluate(need: need(:read_starved), cold: false, history_size: 10)
+
+      expect(decision.compact?).to be(true)
+      expect(decision.tier).to eq(:message)
+    end
+
     it "runs a needed compaction for free once the cache is cold, regardless of cap" do
       decision = scheduler.evaluate(need: need(:token_threshold), cold: true, history_size: 10)
 

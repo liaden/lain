@@ -8,7 +8,7 @@ module Lain
     # caller to accidentally apply. WHEN a warranted compaction runs is
     # {Scheduler}'s; performing it is {Context::Compact}'s.
     #
-    # Four independent signals, each its OWN small object rather than four
+    # Five independent signals, each its OWN small object rather than five
     # branches inside one method.
     class Need
       # What {#check} hands each detector. A Data type so the argument list
@@ -23,7 +23,14 @@ module Lain
       # built would keep measuring occupancy against the model the run began
       # with. Per-turn state travels here; it does not make Need mutable.
       State = Data.define(:head_bytes, :fixed_bytes, :used_tokens, :window_tokens, :manual, :plan_step_completed,
-                          :reply_ceiling)
+                          :reply_ceiling) do
+        # @return [Integer, nil] tokens held back for the next reply; nil while usage or the ceiling is unknown
+        def reserve
+          return unless reply_ceiling && used_tokens
+
+          ReplyReserve.tokens(window: window_tokens, ceiling: reply_ceiling)
+        end
+      end
       private_constant :State
 
       # Which signals fired, as a frozen list of Symbols; empty means "not
@@ -113,10 +120,22 @@ module Lain
         # The earlier of the ratio and window minus the reply reserve, so the
         # next reply is guaranteed room however large the ratio's share is.
         def reserve_eaten?(state)
-          return false unless state.reply_ceiling && state.used_tokens
+          reserve = state.reserve
+          reserve && state.used_tokens >= state.window_tokens - reserve
+        end
+      end
 
-          reserve = ReplyReserve.tokens(window: state.window_tokens, ceiling: state.reply_ceiling)
-          state.used_tokens >= state.window_tokens - reserve
+      # Fires once the room left after the reply reserve could not carry a
+      # useful tool round, which on a small window comes before the ratio.
+      # Silent without a reply ceiling, as {ApproachingWindow}'s reserve is.
+      class ReadStarved
+        KIND = :read_starved
+
+        def fired?(state)
+          reserve = state.reserve
+          return false unless reserve
+
+          Tool::RoundBudget.starved?(state.window_tokens - state.used_tokens - reserve, state.window_tokens)
         end
       end
 
@@ -144,7 +163,7 @@ module Lain
         def fired?(state) = state.plan_step_completed
       end
 
-      DETECTORS = [TokenThreshold, ApproachingWindow, Manual, PlanStepCompletion].freeze
+      DETECTORS = [TokenThreshold, ApproachingWindow, ReadStarved, Manual, PlanStepCompletion].freeze
       private_constant :DETECTORS
 
       # @param byte_threshold [Integer] see {TokenThreshold}
@@ -154,6 +173,7 @@ module Lain
         @detectors = [
           TokenThreshold.new(byte_threshold:, whole_request:),
           ApproachingWindow.new(ratio: approaching_ratio),
+          ReadStarved.new.freeze,
           Manual.new.freeze,
           PlanStepCompletion.new.freeze
         ].freeze

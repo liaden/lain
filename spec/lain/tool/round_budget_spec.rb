@@ -357,4 +357,30 @@ RSpec.describe Lain::Tool::RoundBudget do
       end
     end
   end
+
+  describe ".starved?" do
+    it "is true when the tokens left deliver under the floor on a window compaction could help" do
+      expect(described_class.starved?(6_253, 32_768)).to be(true)
+    end
+
+    it "is false once the tokens left deliver the floor" do
+      expect(described_class.starved?(6_254, 32_768)).to be(false)
+    end
+
+    it "is true when nothing is left on a large window" do
+      expect(described_class.starved?(-100, 200_000)).to be(true)
+    end
+
+    it "never fires on a small window, where compaction could not free that much" do
+      expect(described_class.starved?(0, 8_192)).to be(false)
+    end
+
+    it "fires from the smallest window whose full budget delivers twice the floor" do
+      expect([12_506, 12_507].map { |window| described_class.starved?(0, window) }).to eq([false, true])
+    end
+
+    it "names the floor in bytes" do
+      expect(described_class::STARVED_BELOW).to eq(8_192)
+    end
+  end
 end

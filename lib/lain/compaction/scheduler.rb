@@ -242,7 +242,7 @@ module Lain
       private
 
       def forced?(need, history_size)
-        history_size >= @hard_cap || need.signals.include?(Need::ApproachingWindow::KIND)
+        history_size >= @hard_cap || need.signals.intersect?([Need::ApproachingWindow::KIND, Need::ReadStarved::KIND])
       end
 
       def pipeline_for(decision, base)

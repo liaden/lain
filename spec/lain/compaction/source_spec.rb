@@ -779,6 +779,45 @@ RSpec.describe Lain::Compaction::Source do
       end
     end
 
+    describe "the read-starved signal" do
+      def starved_signals(book)
+        context_for(source(need: build_need(approaching_ratio: 0.9), context_window: book), timeline, usage: 26_000)
+        decisions.first["signals"]
+      end
+
+      it "fires on a published window whose reads are starved" do
+        expect(starved_signals(window_book(32_768))).to include("read_starved")
+      end
+
+      def starved_decision(line, usage: 28_500, need: build_need(approaching_ratio: 0.9), **overrides)
+        context_for(source(need:, context_window: window_book(32_768), **overrides), line, usage:)
+        decisions.first
+      end
+
+      it "refuses a warm rewrite that frees too little to end the starvation" do
+        expect(starved_decision(timeline(6))).to include("signals" => ["read_starved"], "compacted" => false)
+      end
+
+      it "compacts warm when the rewrite frees enough to end it" do
+        expect(starved_decision(timeline(12))).to include("signals" => ["read_starved"], "compacted" => true)
+      end
+
+      it "still compacts warm on approaching_window when the rewrite cannot cure the starvation" do
+        expect(starved_decision(timeline(6), usage: 30_000))
+          .to include("signals" => %w[approaching_window read_starved], "compacted" => true)
+      end
+
+      it "still compacts warm on the hard cap when the rewrite cannot cure the starvation" do
+        decision = starved_decision(timeline(6), hard_cap: 100, need: build_need(byte_threshold: 100))
+
+        expect(decision).to include("signals" => %w[token_threshold read_starved], "compacted" => true)
+      end
+
+      it "is withdrawn under a guessed window, as the approaching-window signal is" do
+        expect(starved_signals(guessed_window_book(32_768))).not_to include("read_starved")
+      end
+    end
+
     # Provenance suppresses ONE trigger. The hard cap is a history-size
     # question with no window in it at all, and a guess must not buy it a
     # reprieve either.

@@ -148,4 +148,83 @@ RSpec.describe "a guessed context window never authorises a rewrite", :seam do
       expect(decisions.map { |record| record["compacted"] }).to include(true)
     end
   end
+
+  # The window is MEASURED here (the runner is resident at 32,768), so the
+  # signals are authoritative and a read-starved round is a real one.
+  describe "a measured 32,768-token window whose round budget starves reads" do
+    before do
+      stub_request(:get, %r{/api/ps}).to_return(
+        status: 200, headers: { "Content-Type" => "application/json" },
+        body: JSON.generate("models" => [{ "name" => "qwen3:4b", "model" => "qwen3:4b", "context_length" => 32_768 }])
+      )
+    end
+
+    def backend
+      Lain::CLI::Backend.new({ provider: "ollama", model: "qwen3:4b", max_tokens: 4_096, compact_keep: 2 },
+                             root: Dir.pwd)
+    end
+
+    def compactions = decisions.count { |record| record["compacted"] }
+
+    # A provider that reports what the request it was sent costs, as a real one does, on top of a
+    # fixed 17,000-token system and tool prefix; a rewrite that shrinks the request shows in the next usage.
+    let(:sized_provider) do
+      Class.new(Lain::Provider::Mock) do
+        def complete(request, **)
+          tokens = 17_000 + (Lain::Canonical.dump(request.messages).bytesize / Lain::Oracle::Handoff::BYTES_PER_TOKEN)
+          super.with(usage: Lain::Usage.new(input_tokens: tokens.to_i))
+        end
+      end.new(responses: [text_response("a considered answer " * 300)])
+    end
+
+    it "journals read_starved at 26,211 tokens used, before the 90% ratio" do
+      account(backend, input_tokens: 26_211)
+
+      expect(signals).to include("read_starved")
+      expect(signals).not_to include("approaching_window")
+    end
+
+    it "compacts on it even with the cache warm" do
+      account(backend, input_tokens: 26_211)
+
+      expect(decisions.map { |record| record["compacted"] }).to include(true)
+    end
+
+    def converse(turns)
+      chat = backend
+      agent = Lain::Agent.new(
+        provider: sized_provider, toolset: Lain::Toolset.new([]),
+        context: chat.context(system_override: "a system prompt"), journal:,
+        pipeline_source: chat.pipeline_source(cache_profile: chat.provider.cache_profile, journal:)
+      )
+      turns.times { |index| agent.ask("t#{index}") }
+    end
+
+    it "compacts when reads starve, then forces nothing while the request stays cured" do
+      converse(5)
+
+      expect(decisions.map { |record| record["compacted"] }).to eq([false, false, false, true, false])
+      expect(decisions[3]["signals"]).to include("read_starved")
+      expect(decisions.last).to include("signals" => [])
+      expect(decisions.last["used_tokens"]).to be < decisions[3]["used_tokens"]
+    end
+
+    it "does not force a warm compaction a short history cannot cure" do
+      responses = Array.new(6) { text_response("ok", usage: Lain::Usage.new(input_tokens: 26_211)) }
+      agent = Lain::Agent.new(
+        provider: Lain::Provider::Mock.new(responses:), toolset: Lain::Toolset.new([]),
+        context: backend.context(system_override: "a system prompt"), journal:,
+        pipeline_source: backend.pipeline_source(cache_profile: backend.provider.cache_profile, journal:)
+      )
+      6.times { |index| agent.ask("t#{index}") }
+
+      expect(compactions).to eq(0)
+    end
+
+    it "journals no read_starved at 12,000 tokens used" do
+      account(backend, input_tokens: 12_000)
+
+      expect(signals).not_to include("read_starved")
+    end
+  end
 end
