@@ -21,6 +21,33 @@ RSpec.describe Lain::Telemetry::BudgetOvershoot do
     expect(Ractor.shareable?(record)).to be(true)
   end
 
+  it "journals byte for byte" do
+    record = described_class.new(ceiling: BigDecimal("0.10"), spent: BigDecimal("0.13"),
+                                 overshoot: BigDecimal("0.03"), model: "claude-opus-4-8", complete: false)
+
+    expect(JSON.generate(record.to_journal)).to eq(
+      '{"type":"budget_overshoot","ceiling":"0.1","spent":"0.13","overshoot":"0.03",' \
+      '"model":"claude-opus-4-8","complete":false}'
+    )
+  end
+
+  it "shares the model String across equal records" do
+    build = -> { described_class.new(ceiling: 1, spent: 2, overshoot: 1, model: +"claude-opus-4-8", complete: true) }
+
+    expect(build.call.model).to equal(build.call.model)
+  end
+
+  it "reads a truthy complete as true" do
+    record = described_class.new(ceiling: 1, spent: 2, overshoot: 1, model: "m", complete: "yes")
+
+    expect(record.complete).to be(true)
+  end
+
+  it "refuses an unknown keyword" do
+    expect { described_class.new(ceiling: 1, spent: 2, overshoot: 1, model: "m", complete: true, extra: 1) }
+      .to raise_error(ArgumentError, /extra/)
+  end
+
   it "records the overshoot, then raises Exceeded" do
     expect { check(spent_of("0.13")) }.to raise_error(Lain::Budget::Exceeded)
     expect(journal.map(&:to_journal)).to eq([{ "type" => "budget_overshoot", "ceiling" => "0.1", "spent" => "0.13",

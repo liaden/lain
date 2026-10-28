@@ -11,15 +11,18 @@ module Lain
       #
       # BOTH cost figures are required, which is where this differs from the
       # sibling {Compaction}: a seam decision has no refusal to express, and
-      # {#net} does `BigDecimal(payback)` unconditionally. The shared
-      # {Telemetry.fixed_point} is nil-tolerant for {Compaction}'s sake, so
-      # without this an unquoted side would journal `null` into a money field
-      # and surface only later, in a reader.
+      # {#net} does `BigDecimal(payback)` unconditionally. The fixed-point type
+      # tolerates nil for {Compaction}'s sake, so the 2 presence validations are
+      # what keep a `null` out of a money field.
       class SeamDecision < Declarative::Carrier
-        attribute :size
+        attribute :size, :lain_interned
+        attribute :estimated_turns
+        attribute :calibrated
+        attribute :bytes_removed
+        attribute :bytes_after
         attribute :verdict
-        attribute :rewrite_cost
-        attribute :payback
+        attribute :rewrite_cost, :lain_fixed_point
+        attribute :payback, :lain_fixed_point
         validates :size, inclusion: { in: %w[S M L], message: "must be one of S/M/L, got %<value>s" }
         validates :verdict, inclusion: { in: %i[rewrite_now defer],
                                          message: "must be rewrite_now or defer, got %<value>s" }
@@ -54,17 +57,11 @@ module Lain
 
       def initialize(size:, estimated_turns:, calibrated:, bytes_removed:, bytes_after:,
                      rewrite_cost:, payback:, verdict:)
-        size = size.to_s
-        verdict = verdict.to_sym
-        rewrite_cost = Telemetry.fixed_point(rewrite_cost)
-        payback = Telemetry.fixed_point(payback)
-        Carriers::SeamDecision.check!(size:, verdict:, rewrite_cost:, payback:)
-
-        super(
-          size: -size, estimated_turns:, calibrated: calibrated ? true : false,
+        super(**Carriers::SeamDecision.settle!(
+          size: size.to_s, estimated_turns:, calibrated: calibrated ? true : false,
           bytes_removed: Integer(bytes_removed), bytes_after: Integer(bytes_after),
-          rewrite_cost:, payback:, verdict:
-        )
+          rewrite_cost:, payback:, verdict: verdict.to_sym
+        ))
       end
 
       # @return [Boolean] whether the decision rewrites the seam now.

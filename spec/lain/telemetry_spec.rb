@@ -197,7 +197,7 @@ RSpec.describe Lain::Telemetry do
     # or a JSON boolean lands in a money field and answers #priced? about itself.
     it "passes nil through as the refusal, and still refuses a value that is not a number" do
       expect(described_class.fixed_point(nil)).to be_nil
-      expect { described_class.fixed_point(false) }.to raise_error(ArgumentError)
+      expect { described_class.fixed_point(false) }.to raise_error(Lain::Declarative::Types::CoercionError)
     end
 
     it "is what an unpriced Compaction formats through, so its refusal stays nil in the record" do

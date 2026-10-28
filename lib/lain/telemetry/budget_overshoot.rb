@@ -2,10 +2,21 @@
 
 module Lain
   module Telemetry
+    module Carriers
+      # A figure the caller cannot quote journals null, as it always has.
+      class BudgetOvershoot < Declarative::Carrier
+        attribute :ceiling, :lain_fixed_point
+        attribute :spent, :lain_fixed_point
+        attribute :overshoot, :lain_fixed_point
+        attribute :model, :lain_interned
+        attribute :complete
+      end
+    end
+
     # The reply that carried a run past its dollar ceiling, and by how much.
     # The ceiling is checked only once a reply's price is known, so spend always
     # lands past it; this is the measure of how far. Figures are fixed-point
-    # dollar Strings ({Telemetry.fixed_point}).
+    # dollar Strings.
     #
     # @!attribute [r] ceiling
     #   @return [String] the dollar ceiling
@@ -40,8 +51,8 @@ module Lain
       end
 
       def initialize(ceiling:, spent:, overshoot:, model:, complete:)
-        super(ceiling: Telemetry.fixed_point(ceiling), spent: Telemetry.fixed_point(spent),
-              overshoot: Telemetry.fixed_point(overshoot), model: -model.to_s, complete: complete ? true : false)
+        super(**Carriers::BudgetOvershoot.settle!(ceiling:, spent:, overshoot:, model:,
+                                                  complete: complete ? true : false))
       end
     end
   end

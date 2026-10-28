@@ -76,10 +76,6 @@ module Lain
     #
     # @param value [BigDecimal, Numeric, String, nil]
     # @return [String, nil] frozen fixed-point decimal, or nil
-    def self.fixed_point(value)
-      return nil if value.nil?
-
-      (value.is_a?(BigDecimal) ? value : BigDecimal(value.to_s)).to_s("F").freeze
-    end
+    def self.fixed_point(value) = Declarative::Types::FixedPoint.new.cast(value)
   end
 end

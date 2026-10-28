@@ -15,8 +15,12 @@ module Lain
       class Compaction < Declarative::Carrier
         attribute :trigger
         attribute :cache_state
-        attribute :cost_saved
-        attribute :cost_spent
+        attribute :bytes_before
+        attribute :bytes_after
+        attribute :cost_saved, :lain_fixed_point
+        attribute :cost_spent, :lain_fixed_point
+        attribute :model, default: nil
+        attribute :collapse_strategy
         validates :trigger, presence: { message: "must name the Need signal(s) that fired, got none" }
         validates :cache_state, inclusion: { in: %i[warm cold forced],
                                              message: "must be one of warm/cold/forced, got %<value>s" }
@@ -93,7 +97,7 @@ module Lain
     # `Canonical.normalize` deliberately does not support `BigDecimal` (it has
     # no canonical wire form), and every field here must already be an
     # immutable, JSON-safe value to keep the record `Ractor.shareable?`.
-    # {Telemetry.fixed_point} is the one formatter this record and
+    # The `:lain_fixed_point` type is the one formatter this record and
     # {SeamDecision} both quote through, and where the nil-as-refusal is
     # honoured.
     #
@@ -115,14 +119,10 @@ module Lain
                      collapse_strategy:, model: nil)
         raise ArgumentError, "collapse_strategy must not be nil" if collapse_strategy.nil?
 
-        trigger = Array(trigger).map(&:to_sym).freeze
-        cache_state = cache_state.to_sym
-        cost_saved = Telemetry.fixed_point(cost_saved)
-        cost_spent = Telemetry.fixed_point(cost_spent)
-        Carriers::Compaction.check!(trigger:, cache_state:, cost_saved:, cost_spent:)
-        super(trigger:, cache_state:, bytes_before: Integer(bytes_before), bytes_after: Integer(bytes_after),
-              cost_saved:, cost_spent:, model: model&.to_s&.freeze,
-              collapse_strategy: collapse_strategy.to_s.freeze)
+        super(**Carriers::Compaction.settle!(trigger: Array(trigger).map(&:to_sym), cache_state: cache_state.to_sym,
+                                             bytes_before: Integer(bytes_before), bytes_after: Integer(bytes_after),
+                                             cost_saved:, cost_spent:, model: model&.to_s,
+                                             collapse_strategy: collapse_strategy.to_s))
       end
 
       # Does this record CARRY figures at all? False for exactly one cause: the

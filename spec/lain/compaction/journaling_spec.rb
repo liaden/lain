@@ -377,7 +377,7 @@ RSpec.describe "Compaction journaling" do
         expect do
           described_class.new(trigger: %i[manual], cache_state: :cold, bytes_before: 1, bytes_after: 1,
                               collapse_strategy: "eager", cost_saved: false, cost_spent: false)
-        end.to raise_error(ArgumentError, /BigDecimal/)
+        end.to raise_error(Lain::Declarative::Types::CoercionError, /BigDecimal/)
       end
 
       it "refuses to quote one figure without the other -- absence is a property of the record" do

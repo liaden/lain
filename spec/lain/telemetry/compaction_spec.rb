@@ -61,6 +61,37 @@ RSpec.describe Lain::Telemetry::Compaction do
     expect(record).to be_deeply_frozen
   end
 
+  describe "the journal line" do
+    it "is the same bytes for a priced record" do
+      expect(JSON.generate(record.to_journal)).to eq(
+        '{"type":"compaction","trigger":["token_threshold"],"cache_state":"forced","bytes_before":26174,' \
+        '"bytes_after":21867,"cost_saved":"0.002","cost_spent":"0.0005","model":"claude-sonnet-4-6",' \
+        '"collapse_strategy":"eager"}'
+      )
+    end
+
+    it "is the same bytes when nothing is quoted and no model is named" do
+      bare = record(cost_saved: nil, cost_spent: nil, model: nil)
+
+      expect(JSON.generate(bare.to_journal)).to eq(
+        '{"type":"compaction","trigger":["token_threshold"],"cache_state":"forced","bytes_before":26174,' \
+        '"bytes_after":21867,"cost_saved":null,"cost_spent":null,"model":null,"collapse_strategy":"eager"}'
+      )
+    end
+  end
+
+  it "reads a single trigger and String spellings as the Symbols a reader compares against" do
+    expect(record(trigger: "token_threshold", cache_state: "cold").trigger).to eq(%i[token_threshold])
+  end
+
+  it "refuses a cache_state outside warm, cold and forced" do
+    expect { record(cache_state: :tepid) }.to raise_error(ArgumentError, /cache_state/)
+  end
+
+  it "refuses an empty trigger" do
+    expect { record(trigger: []) }.to raise_error(ArgumentError, /trigger/)
+  end
+
   # Unchanged by the rename, and pinned here because this file is now the
   # record's mirrored spec: the two dollar figures are absent TOGETHER or not
   # at all, and absence is nil rather than zero.
