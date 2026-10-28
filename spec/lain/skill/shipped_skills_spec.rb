@@ -161,6 +161,43 @@ RSpec.describe "shipped skills" do
     end
   end
 
+  describe "create-plan's scaffold carries the phases a plan needs" do
+    def empty_hole_scaffold
+      with_empty_project { |renderer, _root| renderer.render("create-plan") }
+    end
+
+    it "settles backwards compatibility, lints before the panel, spikes, and commits" do
+      scaffold = empty_hole_scaffold
+
+      expect(scaffold).to match(/backwards.compatib/i)
+      expect(scaffold).to include("must keep").and include("free to break")
+      expect(scaffold.index("Lint the draft")).to be < scaffold.index("run the panel review")
+      expect(scaffold).to match(/[Ss]pike/)
+      expect(scaffold).to match(/commit/i)
+    end
+
+    it "lists the task-card fields including risk, Reachable from and Stop and report if" do
+      scaffold = empty_hole_scaffold
+
+      ["Depends on", "Files", "Reuse", "Shared-file wiring", "Reachable from", "Stop and report if",
+       "risk"].each do |field|
+        expect(scaffold).to include(field)
+      end
+    end
+
+    it "stays under run_skill's result ceiling" do
+      expect(empty_hole_scaffold.bytesize).to be < Lain::Tool::Bounds::RESULT_BYTES
+    end
+  end
+
+  describe "the skill catalog header" do
+    it "does not claim the shipped tree is empty" do
+      source = File.read(File.expand_path("../../../lib/lain/skill/catalog.rb", __dir__))
+
+      expect(source).not_to include("Empty today")
+    end
+  end
+
   describe "execute-plan's scaffold orchestrates TDD sub-agents" do
     it "instructs the red-first TDD loop, worktree isolation, and orchestrator-owned commits" do
       with_empty_project do |renderer|

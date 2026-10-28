@@ -20,8 +20,8 @@ module Lain
       # so a scaffold never vanishes in silence.
       class Malformed < Error; end
 
-      # The shipped skills tree, a sibling of the prompt templates. Empty today
-      # (just a `.keep`); skills land here as `<name>/skill.md` directories.
+      # The shipped skills tree, a sibling of the prompt templates. Each skill
+      # is a `<name>/skill.md` directory.
       SHIPPED_DIR = Paths::Shipped::SKILL_SHIPPED_DIR
       private_constant :SHIPPED_DIR
 
