@@ -285,3 +285,33 @@ RSpec.describe "stock vs. strict coercion, pinned rather than assumed" do
       .to raise_error(Lain::Declarative::Types::CoercionError)
   end
 end
+
+RSpec.describe Lain::Declarative::Types::FixedPoint do
+  let(:type) { described_class.new }
+
+  it "is registered under :lain_fixed_point, for declaration by symbol" do
+    expect(ActiveModel::Type.lookup(:lain_fixed_point)).to be_a(described_class)
+  end
+
+  it "casts a BigDecimal, an Integer and a Float to what Telemetry.fixed_point returns, frozen" do
+    figures = [BigDecimal("1.50"), 3, 0.25]
+    casts = figures.map { |value| type.cast(value) }
+
+    expect(casts).to eq(figures.map { |value| Lain::Telemetry.fixed_point(value) })
+    expect(casts).to eq(%w[1.5 3.0 0.25]).and(all(be_frozen))
+  end
+
+  it "keeps nil as nil" do
+    expect(type.cast(nil)).to be_nil
+  end
+
+  it "refuses text that is not a number rather than returning 0.0" do
+    expect { type.cast("abc") }.to raise_error(Lain::Declarative::Types::CoercionError)
+  end
+
+  it "survives a settle! as a shareable fixed-point string" do
+    carrier = Class.new(Lain::Declarative::Carrier) { attribute :cost, :lain_fixed_point }
+
+    expect(carrier.settle!(cost: 2)[:cost]).to eq("2.0").and(be_frozen)
+  end
+end

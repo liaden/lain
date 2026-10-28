@@ -148,6 +148,21 @@ module Lain
 
         def cast(value) = -value.to_s
       end
+
+      # Same output as `Telemetry.fixed_point`, but text that is no number raises `CoercionError`
+      # where `BigDecimal(...)` would leak a bare `ArgumentError`. `#cast`, not `#cast_value`,
+      # so nil stays nil without leaning on `Value#cast`'s skip.
+      class FixedPoint < ActiveModel::Type::Value
+        def type = :lain_fixed_point
+
+        def cast(value)
+          return nil if value.nil?
+
+          (value.is_a?(BigDecimal) ? value : BigDecimal(value.to_s)).to_s("F").freeze
+        rescue ArgumentError => e
+          raise CoercionError, e.message
+        end
+      end
     end
   end
 end
