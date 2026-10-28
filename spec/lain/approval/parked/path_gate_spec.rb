@@ -32,6 +32,30 @@ RSpec.describe Lain::Approval::Parked::PathGate do
     Lain::Approval::Parked::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 })
   end
 
+  describe "#path_for over recorded facts" do
+    let(:facts) do
+      Lain::FileFacts::Recorded.new(places: ["/srv/p"], landings: { "/srv/p/cfglink" => "/srv/p/.env.local" })
+    end
+    let(:gate) { described_class.new(Lain::Sensitivity::Policy.new(sensitivity:, file_facts: facts)) }
+    let(:parked) do
+      effect = Struct.new(:name, :input, :tool_use_id).new("read_file", { "path" => "cfglink" }, "tu_1")
+      Lain::Approval::Parked::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 },
+                                                 cwd: "/srv/p")
+    end
+
+    it "asks Landing.redirect under the policy's facts" do
+      allow(Lain::Landing).to receive(:redirect).and_call_original
+
+      gate.path_for(parked)
+
+      expect(Lain::Landing).to have_received(:redirect).with("cfglink", cwd: "/srv/p", facts:)
+    end
+
+    it "shows where the recorded facts land the path, with nothing on disk" do
+      expect(gate.path_for(parked)).to eq("cfglink -> /srv/p/.env.local")
+    end
+  end
+
   describe "#path_for" do
     it "names the path of a gated read" do
       expect(gate.path_for(pending("read_file", { "path" => ".env.local" }))).to eq(".env.local")

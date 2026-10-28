@@ -71,7 +71,7 @@ module Lain
         end
 
         def shown(path, cwd)
-          landing = Landing.redirect(path, cwd:)
+          landing = Landing.redirect(path, cwd:, facts: @policy.file_facts)
           landing ? "#{path} -> #{landing}" : path
         end
       end

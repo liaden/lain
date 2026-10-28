@@ -180,9 +180,10 @@ module Lain
           # judging that path lands it where the gate did; absent, it is the
           # process's, as for a call made with no session. `within` is where the
           # gate counted directory names from, see {Sensitivity::Policy.base_of}.
+          # `file_facts` is what the path's landing is read off at construction.
           def initialize(effect:, identity:, clock:, timeout: DEFAULT_TIMEOUT,
                          outstanding: Outstanding::NONE, humans_only: false, cwd: ::Lain::Session.cwd_of(nil),
-                         within: cwd, wall: -> { Time.now }, notes: [])
+                         within: cwd, wall: -> { Time.now }, notes: [], file_facts: ::Lain::FileFacts::LIVE)
             @timeout = timeout
             @reasons = notes.map { Reason.of(_1) }.freeze
             @notes = @reasons.map(&:text).freeze
@@ -191,12 +192,17 @@ module Lain
             @cwd = cwd
             @within = within
             take(effect)
+            @landing = path && ::Lain::Landing.redirect(path, cwd:, facts: file_facts)
             @outstanding = outstanding || Outstanding::NONE
             @identity = identity
             @clock = clock
             @asked_at = clock.call
             @promise = Promise.new
           end
+
+          # @return [String, nil] where the path this call names lands when that
+          #   differs, read off the facts the queue was built over at park time
+          attr_reader :landing
 
           # @return [String] the asking identity's name
           def requester = identity.name
@@ -554,7 +560,8 @@ module Lain
                                              context.automatic_approval_barred?,
                                 notes: context.respond_to?(:parked_because) ? context.parked_because : [],
                                 cwd: ::Lain::Session.cwd_of(context),
-                                within: ::Lain::Sensitivity::Policy.base_of(context))
+                                within: ::Lain::Sensitivity::Policy.base_of(context),
+                                file_facts: @file_facts)
           park(pending)
         end
 

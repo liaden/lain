@@ -985,6 +985,23 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
       end
     end
 
+    it "shows the landing the queue computed under its recorded facts, with no live stat" do
+      facts = Lain::FileFacts::Recorded.new(places: ["/srv/p"], landings: { "/srv/p/cfglink" => "/srv/p/.env.local" })
+      queue = Lain::Approval::Parked::Queue.new(journal: Lain::Journal.new(io: StringIO.new), file_facts: facts)
+      read = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file", input: { "path" => "cfglink" })
+      session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: "/srv/p", env: {}))
+      prompt = nil
+      asked = live_asks do
+        prompt = Sync do |task|
+          task.async { queue.adjudicate(read, session) }
+          rendered(queue.dequeue)
+        end
+      end
+
+      expect(prompt).to start_with(%("cfglink" -> "/srv/p/.env.local": agent asks))
+      expect(asked).to eq([])
+    end
+
     it "still asks the ordinary y/N question, so the verdict path is untouched" do
       approval = disclosing
       policy_for("y\n").decide(approval)

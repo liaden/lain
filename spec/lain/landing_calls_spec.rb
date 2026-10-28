@@ -17,10 +17,7 @@ module LandingCalls
     "lib/lain/session.rb" => [1, "the checkout scope is built from the live project; the replay bench runs UNSCOPED"]
   }.freeze
 
-  NOT_YET = {
-    "lib/lain/approval/parked/path_gate.rb" => [1, "waits for the queue's file facts to reach the gate"],
-    "lib/lain/frontend/approval_policy.rb" => [1, "waits for the queue's file facts to reach the display path"]
-  }.freeze
+  NOT_YET = {}.freeze
 
   # path => [omitting call count, reason]; a count that moves either way fails
   ALLOWED = LIVE_BY_DESIGN.merge(NOT_YET).freeze

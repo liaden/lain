@@ -276,37 +276,6 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
                                      toolset:, project:, paths: paths_at(home))]
     end
 
-    # Project refuses a root that is not on disk, so the live disk is real here and every ask of it is recorded instead.
-    def live_asks
-      asked = []
-      stub_const("Lain::FileFacts::LIVE", recording_live(asked))
-      { File => %i[realpath symlink? exist? file? directory? readlink stat lstat open new],
-        Dir => %i[glob children each_child entries exist?] }.each do |owner, names|
-        names.each { |name| record_class_call(owner, name, asked) }
-      end
-      yield
-      asked
-    end
-
-    def recording_live(asked)
-      live = Lain::FileFacts::LIVE
-      Object.new.tap do |recorder|
-        Lain::FileFacts::Live.instance_methods(false).each do |name|
-          recorder.define_singleton_method(name) do |*args, **kw, &block|
-            asked << "FileFacts::Live##{name}"
-            live.public_send(name, *args, **kw, &block)
-          end
-        end
-      end
-    end
-
-    def record_class_call(owner, name, asked)
-      allow(owner).to receive(name).and_wrap_original do |original, *args, **kw|
-        asked << "#{owner}.#{name}"
-        original.call(*args, **kw)
-      end
-    end
-
     it "classifies a write under its root without asking the live disk" do
       in_tree do |root, home|
         _recorded, board = board_over_recorded(root, home)

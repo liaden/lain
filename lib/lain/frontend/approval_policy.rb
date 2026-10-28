@@ -300,9 +300,8 @@ module Lain
       # opens. Both ends `inspect`ed, on the preamble's rule: both are
       # model-influenced.
       def landing(pending)
-        path = pending.path
-        target = path && ::Lain::Landing.redirect(path, cwd: pending.cwd)
-        target ? "#{path.inspect} -> #{target.inspect}: " : ""
+        target = pending.landing
+        target ? "#{pending.path.inspect} -> #{target.inspect}: " : ""
       end
 
       def prompt_and_read(prompt)

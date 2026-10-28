@@ -821,6 +821,28 @@ RSpec.describe Lain::Approval::Parked::Queue do
         expect(queue.denied(requester: "agent", path: "/srv/p/.env.local")).to eq("not your business")
       end
 
+      it "parks the call with where the facts land its path, never asking the live disk" do
+        parked = nil
+        asked = live_asks do
+          parked = Sync do |task|
+            task.async { queue.adjudicate(tool_call("read_file", { "path" => "cfglink" }), in_dir("/srv/p")) }
+            queue.dequeue.tap { _1.deny(surface: "spec", authority: :human) }
+          end
+        end
+
+        expect(parked.landing).to eq("/srv/p/.env.local")
+        expect(asked).to eq([])
+      end
+
+      it "parks a call that names no path with no landing" do
+        parked = Sync do |task|
+          task.async { queue.adjudicate(tool_call("bash", { "command" => "ls" }), in_dir("/srv/p")) }
+          queue.dequeue.tap { _1.deny(surface: "spec", authority: :human) }
+        end
+
+        expect(parked.landing).to be_nil
+      end
+
       it "asks the live disk by default" do
         expect(described_class.new(journal:).file_facts).to be(Lain::FileFacts::LIVE)
       end
@@ -1433,7 +1455,7 @@ RSpec.describe Lain::Approval::Parked::Queue do
       expect(described_class::Pending.instance_method(:initialize).parameters)
         .to eq([%i[keyreq effect], %i[keyreq identity], %i[keyreq clock], %i[key timeout],
                 %i[key outstanding], %i[key humans_only], %i[key cwd], %i[key within], %i[key wall],
-                %i[key notes]])
+                %i[key notes], %i[key file_facts]])
     end
 
     # The other half of the same ruling, one level up: a queue that constructed
