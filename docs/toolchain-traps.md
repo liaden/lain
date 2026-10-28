@@ -417,6 +417,20 @@ Unproven; counting only the example's own thread would settle it.
   grace it states` (0.43s against a 0.3s wall-clock bound, a threshold the 2026-10-27 ruling bans). The
   CoreGraph descriptor count above went red again the same day (10 against 8).
 
+  Added later on 2026-10-28, from landing suites beside 2 reviewers running specs (load 26) and later
+  ones beside working agents, each green alone and with its failing seed 3 of 3 on the base and on the
+  card: `the review records' journal discriminators answers for every includer, including the ones no
+  generic dummy constructs` (136 unique against 138 includers); `Lain::Bench::CLI#arms_report under
+  --confine reader with --confine workspace hands every arm's tools a sandbox with the workspace
+  switch on, and says so in the report` (watchdog STUCK inside `Confine::MaskList`'s walk); all 4
+  examples of `two cockpits on one machine` (a `you>` line never held in the input pane within 15s,
+  and once STUCK at 30s awaiting the prompt: a launch is 5 boots in a row that outrun the waits under
+  load); `Lain::CredentialPatterns the credential assignment shape scans a 100 KB line in linear time
+  on both sides` (a timing ratio over 30, the shape the 2026-10-27 ruling bans).
+  The CoreGraph descriptor count went red a third time (22 against 23: the count fell, so another
+  thread closed an fd mid-ask) and is fixed: it now compares (fd, readlink target) pairs, so only a
+  descriptor the ask left open fails it.
+
   Added 2026-10-18, a wall-clock count red once in a pre-commit suite (6 ticks against 15) and green
   alone and in a full suite on the base and on the change: `Lain::Tool::Offload keeps a sibling fiber
   running while the work never gives up the lock between threads`. Red again on 2026-10-19, 6 against
