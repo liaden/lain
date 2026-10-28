@@ -69,10 +69,11 @@ module Lain
       NOT_MEASURED = "not measured"
 
       # The grader names a task may declare; the first is what an undeclared one gets.
-      GRADERS = %w[lease three_arm mutation_reinsertion].freeze
-      THREE_ARM = GRADERS[1]
-      MUTATION_REINSERTION = GRADERS.last
-      private_constant :THREE_ARM, :MUTATION_REINSERTION
+      BUILDERS = { "lease" => :lease_harness_for, "three_arm" => :three_arm_for,
+                   "mutation_reinsertion" => :mutation_reinsertion_for }.freeze
+      GRADERS = BUILDERS.keys.freeze
+      MUTATION_REINSERTION = "mutation_reinsertion"
+      private_constant :BUILDERS, :MUTATION_REINSERTION
 
       FIXTURE_TAMPERED = "fixture tampered"
       private_constant :FIXTURE_TAMPERED
@@ -237,9 +238,10 @@ module Lain
       # The judge for THIS task: the subject's own suite, narrowed to the level
       # root the task names, bound to whatever checkout the arm just leased.
       def grading_for(task)
-        return three_arm_for(task) if task.grader == THREE_ARM
-        return mutation_reinsertion_for(task) if task.grader == MUTATION_REINSERTION
+        send(BUILDERS.fetch(task.grader), task)
+      end
 
+      def lease_harness_for(task)
         pristine = pristine_tests(task)
         ->(lease:, **) { Grader::LeaseHarness.new(lease:, level: level_in(lease, task), pristine:) }
       end
