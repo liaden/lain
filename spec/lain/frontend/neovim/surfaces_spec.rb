@@ -19,18 +19,20 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
 
   let(:rpc) do
     Class.new do
-      attr_reader :views, :renders, :approvals, :epic_docs
+      attr_reader :views, :renders, :approvals, :epic_docs, :notices
 
       def initialize
         @views = []
         @renders = []
         @approvals = []
         @epic_docs = []
+        @notices = []
       end
 
       def post_view(name, lines, editable: false, generation: nil) = @views << [name, lines, editable, generation]
       def post_render(lines) = @renders << lines
       def set_epic_doc(name, lines) = @epic_docs << [name, lines]
+      def notice(text) = @notices << text
 
       # lain://approval's own inlet, and the reason it is a SEPARATE method
       # rather than a fourth `post_view`: the runtime writes b:lain_approval_rows
@@ -293,6 +295,30 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
       surfaces.post(tool_output("x"))
 
       expect(rpc.epic_docs).to be_empty
+    end
+  end
+
+  describe "a settled ask" do
+    def settled(turns:, seconds:)
+      Lain::Telemetry::AskSettled.new(head: "blake3:x", stop_reason: :end_turn, turns:, seconds:)
+    end
+
+    it "posts one notice naming the wall time and the turns" do
+      surfaces.post(settled(turns: 3, seconds: 12.4))
+
+      expect(rpc.notices).to eq(["done in 12s, 3 turns"])
+    end
+
+    it "says turn in the singular for one round trip" do
+      surfaces.post(settled(turns: 1, seconds: 0.5))
+
+      expect(rpc.notices).to eq(["done in 1s, 1 turn"])
+    end
+
+    it "posts no notice for an ordinary event" do
+      surfaces.post(tool_output("x"))
+
+      expect(rpc.notices).to be_empty
     end
   end
 

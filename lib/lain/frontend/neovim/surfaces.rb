@@ -18,7 +18,7 @@ module Lain
       # Like every view under it, this touches nvim through the injected inlet
       # only, and {RpcThread} remains the sole owner of every nvim call.
       class Surfaces
-        # @param rpc [#post_view, #post_render] the editor's render inlet
+        # @param rpc [#post_view, #post_render, #notice] the editor's render inlet
         #   ({RpcThread}), the ONE way out of here
         # @param store [Lain::Ext::Store] backs the live Timeline (see {Buffers})
         # @param session [Lain::Session] the run's live reminders source
@@ -106,6 +106,7 @@ module Lain
           @rpc.post_render(lines) unless lines.empty?
           post_views(@buffers.updates(event))
           post_epic_doc(event)
+          post_notice(event)
           # The editable view is posted with editable: true, so the runtime leaves
           # the buffer modifiable for the human -- a read-only post would flip it
           # nomodifiable and lock out the edit :LainResend depends on.
@@ -120,6 +121,14 @@ module Lain
         def resend(lines) = @request_buffer.resend(lines)
 
         private
+
+        def post_notice(event)
+          @rpc.notice(settled_sentence(event)) if event.is_a?(Telemetry::AskSettled)
+        end
+
+        def settled_sentence(settled)
+          "done in #{settled.seconds.round}s, #{settled.turns} #{settled.turns == 1 ? "turn" : "turns"}"
+        end
 
         def post_epic_doc(event)
           doc = @epic_doc_view.update(event)

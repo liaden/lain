@@ -159,6 +159,20 @@ RSpec.describe Lain::Frontend::Neovim::RenderInlet do
     expect(wakes.size).to eq(13)
   end
 
+  it "queues a notice without parking, answering nil when it landed" do
+    inlet = described_class.new(waker:, capacity: 16)
+
+    expect(inlet.notice("done in 12s, 3 turns")).to be_nil
+    expect(wakes.size).to eq(1)
+  end
+
+  it "answers its own words for a notice when the queue is full" do
+    inlet = described_class.new(waker:, capacity: 1)
+    inlet.post_render(["fills the one slot"])
+
+    expect(inlet.notice("done")).to eq(described_class::UNREPORTED)
+  end
+
   # An editor that stopped draining and an editor that died are ONE fact from a
   # caller's side: nobody is taking this. What each open ANSWERS is not one
   # sentence, though -- a human trying to answer a question was being told
@@ -507,6 +521,19 @@ RSpec.describe Lain::Frontend::Neovim::RenderQueue do
 
     expect(session).to have_received(:notify).with("nvim_exec_lua", described_class::DISPATCH,
                                                    ["set_thread", ["anchor-1", ["why this way?"]]])
+  end
+
+  it "sends a notice as the sentence alone" do
+    queue = described_class.new
+    session = instance_double(Neovim::Session)
+    client = instance_double(Neovim::Client, session:)
+    allow(session).to receive(:notify)
+
+    queue.post(:notice, "done in 12s, 3 turns")
+    queue.drain(client)
+
+    expect(session).to have_received(:notify).with("nvim_exec_lua", described_class::DISPATCH,
+                                                   ["notice", ["done in 12s, 3 turns"]])
   end
 
   it "sends an epic document keyed by its lain://epic name" do

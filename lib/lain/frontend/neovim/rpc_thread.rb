@@ -175,6 +175,11 @@ module Lain
 
           review_refusal: Rail.new(lua: "review_refused", params: "message", blocking: false),
 
+          # News the human did not ask for, echoed at the width of the message
+          # area. Not blocking: it is posted from the display fiber's render of
+          # an event, and a parked push there would stall every view behind it.
+          notice: Rail.new(lua: "notice", params: "text", blocking: false),
+
           # A question the editor answers on the wire: the token comes back with
           # the count, so a late answer to an earlier ask is never read as this one's.
           review_notes_ask: Rail.new(lua: "review_notes_ask", params: "token", blocking: false),
@@ -509,6 +514,8 @@ module Lain
         def set_epic_doc(name, lines) = post(:epic_doc, name, lines, refusal: EPIC_DOC_DETACHED)
 
         def review_focus = post(:review_focus, refusal: FOCUS_DETACHED)
+
+        def notice(text) = post(:notice, text, refusal: UNREPORTED)
 
         # Answers {SETTLE_UNREPORTED} rather than raising, like every other leg:
         # a detached editor is also an editor with no review tabpage to tear
@@ -1154,7 +1161,7 @@ module Lain
         # never nvim.
         def_delegators :@inlet, :post_render, :post_view, :open_compose, :open_question, :question_settled,
                        :open_review, :review_refused, :set_review, :review_focus, :review_settled, :open_changeset,
-                       :set_thread, :set_approval, :set_epic_doc, :ask_review_notes
+                       :set_thread, :set_approval, :set_epic_doc, :ask_review_notes, :notice
 
         # Stop the loop, wake it out of its select, join, and close the fds this
         # thread owns. Idempotent enough for a defensive double call.
