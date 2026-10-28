@@ -18,8 +18,16 @@ module Lain
 
         attribute :worker_key
         attribute :outcome
-        attribute :sync
-        attribute :checks
+        attribute :ref, default: nil
+        attribute :strategy, default: nil
+        attribute :fast_forward, default: false
+        attribute :sha, default: nil
+        attribute :sync, default: nil
+        attribute :attempts, default: -> { [] }
+        attribute :dirty, default: false
+        attribute :path, default: nil
+        attribute :detail, :lain_interned, default: ""
+        attribute :checks, default: nil
         validates :worker_key, presence: { message: "must name the worker handed back, got nil" }
         validates :outcome, inclusion: { in: %i[nothing_to_do merged conflicted queued declined failed],
                                          message: "must be one of nothing_to_do/merged/conflicted/queued/" \
@@ -28,8 +36,13 @@ module Lain
                                       message: "must be one of current/synced/conflicted/lost/dirty/disabled/" \
                                                "failed, got %<value>s" }
         validate :checks_reached
+        validate :attempts_listed
 
         private
+
+        def attempts_listed
+          errors.add(:attempts, "must be an Array, got #{attempts.inspect}") unless attempts.is_a?(Array)
+        end
 
         def checks_reached
           return if checks.nil? || (checks.is_a?(Hash) && CHECKS.include?(checks["outcome"]))
@@ -77,23 +90,23 @@ module Lain
 
       def initialize(worker_key:, outcome:, ref: nil, strategy: nil, fast_forward: false, sha: nil,
                      sync: nil, attempts: [], dirty: false, path: nil, detail: "", checks: nil)
-        outcome = outcome.to_sym
-        sync = sync&.to_sym
-        checks = stringified(checks)
-        Carriers::Handback.check!(worker_key:, outcome:, sync:, checks:)
-
-        super(worker_key: worker_key.to_s.dup.freeze, outcome:, ref: Freezable::Fields.pinned(ref),
-              strategy: Freezable::Fields.pinned(strategy),
-              fast_forward: Freezable::Fields.boolean!(fast_forward, "fast_forward"),
-              sha: Freezable::Fields.pinned(sha), sync:, attempts: Ractor.make_shareable(attempts.map(&:dup)),
-              dirty: Freezable::Fields.boolean!(dirty, "dirty"), path: Freezable::Fields.pinned(path),
-              detail: -detail.to_s, checks: Ractor.make_shareable(checks))
+        super(**Carriers::Handback.settle!(
+          worker_key: named(worker_key), outcome: outcome.to_sym, ref: Freezable::Fields.pinned(ref),
+          strategy: Freezable::Fields.pinned(strategy),
+          fast_forward: Freezable::Fields.boolean!(fast_forward, "fast_forward"),
+          sha: Freezable::Fields.pinned(sha), sync: sync&.to_sym, attempts:,
+          dirty: Freezable::Fields.boolean!(dirty, "dirty"), path: Freezable::Fields.pinned(path), detail:,
+          checks: stringified(checks)
+        ))
       end
 
       # With no checks the line is byte-identical to the pre-checks line, so old pins and readers see no change.
       def to_journal = checks.nil? ? super.except("checks") : super
 
       private
+
+      # nil and false stay as given so the carrier's presence check refuses them; `to_s` would make "false".
+      def named(key) = (key.to_s unless [nil, false].include?(key))
 
       # Through JSON, so a fresh record holds exactly what its journal line
       # reads back as, and holds a copy rather than the caller's Hash.

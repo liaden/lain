@@ -7,12 +7,26 @@ module Lain
       # field is coerced with `to_s`, so a nil would journal `""` -- a record
       # that looks like evidence and names nothing.
       class ApprovalPending < Declarative::Carrier
-        attribute :requester
-        attribute :tool
-        attribute :tool_use_id
+        attribute :requester, :lain_interned
+        attribute :tool, :lain_interned
+        attribute :tool_use_id, :lain_interned
+        attribute :humans_only, default: false
+        attribute :notes, default: -> { [] }
+        attribute :kind, :lain_interned, default: "tool"
+        attribute :input_digest, default: nil
         validates :requester, presence: { message: "must name who the call was asked for, got nil" }
         validates :tool, presence: { message: "must name the gated tool, got nil" }
         validates :tool_use_id, presence: { message: "must name the gated call, got nil" }
+        validate :identifiers_not_false
+
+        private
+
+        # The interning cast writes "false" for false, which presence would then accept.
+        def identifiers_not_false
+          %i[requester tool tool_use_id].each do |name|
+            errors.add(name, "must not be false") if @attributes[name.to_s].value_before_type_cast == false
+          end
+        end
       end
     end
 
@@ -58,24 +72,17 @@ module Lain
             input_digest: pending.input_digest)
       end
 
-      # Interned rather than `dup.freeze`d: these three values repeat on every
-      # park of a session, so two equal records share one String rather than
-      # holding two copies of the same bytes.
+      # The three identifiers are interned by the carrier: they repeat on every
+      # park of a session, so two equal records share one String.
       def initialize(requester:, tool:, tool_use_id:, humans_only: false, notes: [], kind: "tool", input_digest: nil)
-        Carriers::ApprovalPending.check!(requester:, tool:, tool_use_id:)
-
-        super(requester: -requester.to_s, tool: -tool.to_s, tool_use_id: -tool_use_id.to_s,
-              humans_only: humans_only == true, notes: notes.map { -_1.to_s }.freeze, kind: -kind.to_s,
-              input_digest: input_digest&.then { -_1.to_s })
+        super(**Carriers::ApprovalPending.settle!(
+          requester:, tool:, tool_use_id:, humans_only: humans_only == true, kind:,
+          notes: notes.map { -_1.to_s }, input_digest: input_digest&.then { -_1.to_s }
+        ))
       end
 
       # Each absent when it says nothing, so a tool call nobody noted journals as it always did.
-      def to_journal
-        super.then do |record|
-          record.except(*[("notes" if record["notes"].empty?), ("kind" if kind == "tool"),
-                          ("input_digest" if input_digest.nil?)].compact)
-        end
-      end
+      def to_journal = omitting_defaults(super, Carriers::ApprovalPending, :notes, :kind, :input_digest)
     end
   end
 end

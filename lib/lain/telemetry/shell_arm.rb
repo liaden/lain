@@ -18,10 +18,10 @@ module Lain
       # a third arm added at the tool and not here refuses the record loudly
       # rather than journalling a name nothing runs.
       class ShellArm < Declarative::Carrier
-        attribute :tool_use_id
+        attribute :tool_use_id, :lain_interned
         attribute :verdict
         attribute :arm
-        attribute :reason
+        attribute :reason, :lain_interned
         attribute :term
         validates :tool_use_id,
                   presence: { message: "must name the call this record is about, got nil" }
@@ -32,11 +32,19 @@ module Lain
                         inclusion: { in: %i[term string],
                                      message: "must be term or string, got %<value>s" }
         validates :reason, presence: { message: "must carry the verdict's reason, got nil" }
+        validate :identifiers_not_false
         validate :term_is_a_term
         validate :term_absent_unless_allowed
         validate :term_arm_needs_an_authorised_term
 
         private
+
+        # The interning cast writes "false" for false, which presence would then accept.
+        def identifiers_not_false
+          %i[tool_use_id reason].each do |name|
+            errors.add(name, "must not be false") if @attributes[name.to_s].value_before_type_cast == false
+          end
+        end
 
         # nil is refused here rather than coerced, because the empty term is
         # already a Null Object ({Shell::Verdict::NO_TERM}) and a record that
@@ -127,12 +135,9 @@ module Lain
       # @param reason [String] the decision's own reason, verbatim
       # @param term [Shell::Term] the argv stages an allow authorised
       def initialize(tool_use_id:, verdict:, arm:, reason:, term: Shell::Verdict::NO_TERM)
-        verdict = verdict.to_s.to_sym
-        arm = arm.to_s.to_sym
-        Carriers::ShellArm.check!(tool_use_id:, verdict:, arm:, reason:, term:)
-
-        super(tool_use_id: -tool_use_id.to_s, verdict:, arm:, reason: -reason.to_s,
-              term: interned_term(term), claim: Shell::Verdict::CLAIM)
+        super(**Carriers::ShellArm.settle!(tool_use_id:, verdict: verdict.to_s.to_sym, arm: arm.to_s.to_sym,
+                                           reason:, term: interned_term(term)),
+              claim: Shell::Verdict::CLAIM)
       end
 
       # THE TWO PREDICATES, and the difference between them is the whole reason
@@ -164,7 +169,7 @@ module Lain
       # than as another empty term, so every abstention and denial in a run
       # shares the one object a Null Object is meant to be. A rebuilt one would
       # still compare equal, which is why the identity is asserted in the spec.
-      def interned_term(term) = term.empty? ? Shell::Verdict::NO_TERM : term
+      def interned_term(term) = term.is_a?(Shell::Term) && term.empty? ? Shell::Verdict::NO_TERM : term
     end
   end
 end

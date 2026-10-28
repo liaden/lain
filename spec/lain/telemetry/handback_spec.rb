@@ -125,4 +125,76 @@ RSpec.describe Lain::Telemetry::Handback do
         .to raise_error(ArgumentError, /checks/)
     end
   end
+
+  describe "journal lines, byte for byte" do
+    it "prints every field with checks set" do
+      checks = { "outcome" => "passed", "attempts" => [{ "by" => "lain", "outcome" => "passed", "command" => "" }],
+                 "detail" => "" }
+      record = described_class.new(worker_key: "w-1", outcome: :merged, ref: "refs/lain/worker/w-1", strategy: "s",
+                                   fast_forward: true, sha: "b" * 40, sync: :synced,
+                                   attempts: [{ "by" => "lain", "conflicts" => 1 }], dirty: true, path: "/p",
+                                   detail: "d", checks:)
+
+      expect(JSON.generate(record.to_journal)).to eq(
+        '{"type":"handback","worker_key":"w-1","outcome":"merged","ref":"refs/lain/worker/w-1","strategy":"s",' \
+        '"fast_forward":true,"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sync":"synced",' \
+        '"attempts":[{"by":"lain","conflicts":1}],"dirty":true,"path":"/p","detail":"d",' \
+        '"checks":{"outcome":"passed","attempts":[{"by":"lain","outcome":"passed","command":""}],"detail":""}}'
+      )
+    end
+
+    it "omits checks when nil and prints the other nils" do
+      expect(JSON.generate(described_class.new(worker_key: "w-1", outcome: :declined).to_journal)).to eq(
+        '{"type":"handback","worker_key":"w-1","outcome":"declined","ref":null,"strategy":null,' \
+        '"fast_forward":false,"sha":null,"sync":null,"attempts":[],"dirty":false,"path":null,"detail":""}'
+      )
+    end
+
+    it "round-trips symbol-keyed checks to String keys" do
+      record = described_class.new(worker_key: "w-1", outcome: :merged, checks: { outcome: "skipped", n: 1 })
+
+      expect(JSON.generate(record.to_journal)).to end_with('"detail":"","checks":{"outcome":"skipped","n":1}}')
+    end
+  end
+
+  it "interns ref, strategy, sha, path and detail across equal records" do
+    build = lambda {
+      described_class.new(worker_key: "w", outcome: :merged, ref: +"r", strategy: +"s", sha: +"h", path: +"/p",
+                          detail: +"d")
+    }
+    one = build.call
+    two = build.call
+
+    %i[ref strategy sha path detail].each { |field| expect(one.public_send(field)).to equal(two.public_send(field)) }
+  end
+
+  it "refuses a false worker_key, as it refuses nil" do
+    expect { described_class.new(worker_key: false, outcome: :merged) }.to raise_error(ArgumentError, /worker_key/)
+  end
+
+  it "journals a Symbol worker_key as a String" do
+    record = described_class.new(worker_key: :"w-1", outcome: :merged)
+
+    expect(record.worker_key).to eq("w-1")
+    expect(record.to_journal["worker_key"]).to be_a(String)
+  end
+
+  it "copies attempts rather than keeping the caller's Hashes" do
+    attempts = [{ "by" => "lain" }]
+    record = described_class.new(worker_key: "w", outcome: :merged, attempts:)
+
+    expect(record.attempts.first).not_to equal(attempts.first)
+    expect(record.attempts).to be_frozen
+  end
+
+  it "refuses attempts that are not an Array" do
+    [nil, false, :sym, "str", 1].each do |bad|
+      expect { described_class.new(worker_key: "w", outcome: :merged, attempts: bad) }
+        .to raise_error(ArgumentError, /attempts/)
+    end
+  end
+
+  it "still refuses an unknown keyword" do
+    expect { described_class.new(worker_key: "w", outcome: :merged, extra: 1) }.to raise_error(ArgumentError)
+  end
 end

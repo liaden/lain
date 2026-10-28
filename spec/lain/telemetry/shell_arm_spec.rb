@@ -349,4 +349,45 @@ RSpec.describe Lain::Telemetry::ShellArm do
       expect(GenericBuild.build(described_class)).to be_nil
     end
   end
+
+  describe "journal lines, byte for byte" do
+    let(:claim) { Lain::Shell::Verdict::CLAIM }
+
+    it "journals a nested term" do
+      expect(JSON.generate(event.to_journal)).to eq(
+        '{"type":"shell_arm","tool_use_id":"tu_1","verdict":"allow","arm":"term",' \
+        '"reason":"every stage is literal and fully understood","term":{"pipelines":[[{"argv":["cat","README.md"],' \
+        "\"discards\":[]},{\"argv\":[\"head\",\"-20\"],\"discards\":[]}]]},\"claim\":#{claim.to_json}}"
+      )
+    end
+
+    it "journals the empty term" do
+      record = described_class.new(tool_use_id: "tu_1", verdict: :deny, arm: :string, reason: "r")
+
+      expect(JSON.generate(record.to_journal)).to eq(
+        '{"type":"shell_arm","tool_use_id":"tu_1","verdict":"deny","arm":"string","reason":"r",' \
+        "\"term\":{\"pipelines\":[]},\"claim\":#{claim.to_json}}"
+      )
+    end
+  end
+
+  it "interns tool_use_id and reason across equal records" do
+    one = described_class.new(tool_use_id: +"tu_1", verdict: :deny, arm: :string, reason: +"r")
+    two = described_class.new(tool_use_id: +"tu_1", verdict: :deny, arm: :string, reason: +"r")
+
+    expect(one.tool_use_id).to equal(two.tool_use_id)
+    expect(one.reason).to equal(two.reason)
+  end
+
+  it "refuses false for tool_use_id and reason, as it refuses nil" do
+    expect { described_class.new(tool_use_id: false, verdict: :deny, arm: :string, reason: "r") }
+      .to raise_error(ArgumentError, /tool_use_id/)
+    expect { described_class.new(tool_use_id: "t", verdict: :deny, arm: :string, reason: false) }
+      .to raise_error(ArgumentError, /reason/)
+  end
+
+  it "still refuses an unknown keyword, claim included" do
+    expect { described_class.new(tool_use_id: "t", verdict: :deny, arm: :string, reason: "r", extra: 1) }
+      .to raise_error(ArgumentError)
+  end
 end

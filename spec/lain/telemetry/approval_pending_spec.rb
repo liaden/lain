@@ -82,6 +82,62 @@ RSpec.describe Lain::Telemetry::ApprovalPending do
     expect(event.to_journal).not_to have_key("notes")
   end
 
+  describe "journal lines, byte for byte" do
+    def line(**fields)
+      JSON.generate(described_class.new(requester: "agent", tool: "bash", tool_use_id: "tu_1", **fields).to_journal)
+    end
+
+    it "prints every field when none equals its default" do
+      expect(line(humans_only: true, notes: ["cat is /bin/cat"], kind: "egress", input_digest: "blake3:abc")).to eq(
+        '{"type":"approval_pending","requester":"agent","tool":"bash","tool_use_id":"tu_1","humans_only":true,' \
+        '"notes":["cat is /bin/cat"],"kind":"egress","input_digest":"blake3:abc"}'
+      )
+    end
+
+    it "omits notes, kind and input_digest while they are at their defaults" do
+      expect(line).to eq(
+        '{"type":"approval_pending","requester":"agent","tool":"bash","tool_use_id":"tu_1","humans_only":false}'
+      )
+    end
+
+    it "omits each default on its own" do
+      expect(line(notes: ["n"])).to end_with('"humans_only":false,"notes":["n"]}')
+      expect(line(kind: "egress")).to end_with('"humans_only":false,"kind":"egress"}')
+      expect(line(input_digest: "blake3:abc")).to end_with('"humans_only":false,"input_digest":"blake3:abc"}')
+    end
+  end
+
+  it "interns the notes, the kind and the input digest too" do
+    one = described_class.new(requester: "a", tool: "b", tool_use_id: "c", notes: [+"n"], kind: +"egress",
+                              input_digest: +"d")
+    two = described_class.new(requester: "a", tool: "b", tool_use_id: "c", notes: [+"n"], kind: +"egress",
+                              input_digest: +"d")
+
+    expect([one.notes.first, one.kind, one.input_digest]).to eq(%w[n egress d])
+    expect(one.notes.first).to equal(two.notes.first)
+    expect(one.kind).to equal(two.kind)
+    expect(one.input_digest).to equal(two.input_digest)
+  end
+
+  it "refuses false for each identifier, as it refuses nil" do
+    expect do
+      described_class.new(requester: false, tool: "b", tool_use_id: "c")
+    end.to raise_error(ArgumentError, /requester/)
+    expect { described_class.new(requester: "a", tool: false, tool_use_id: "c") }.to raise_error(ArgumentError, /tool /)
+    expect { described_class.new(requester: "a", tool: "b", tool_use_id: false) }
+      .to raise_error(ArgumentError, /tool_use_id/)
+  end
+
+  it "journals humans_only as true only for exactly true" do
+    record = described_class.new(requester: "a", tool: "b", tool_use_id: "c", humans_only: "yes")
+
+    expect(record.humans_only).to be(false)
+  end
+
+  it "still refuses an unknown keyword" do
+    expect { described_class.new(requester: "a", tool: "b", tool_use_id: "c", extra: 1) }.to raise_error(ArgumentError)
+  end
+
   # Loud failure, the same validate-then-freeze contract every sibling record
   # has: a nameless park would journal `{"tool":""}` and read as evidence.
   it "refuses a record that names no tool, no call, or no requester" do
