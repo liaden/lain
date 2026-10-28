@@ -8,7 +8,7 @@ module Lain
 
       # @param relevance [Hash{String=>Integer}] id => grade 0..3
       def initialize(relevance:)
-        @relevance = relevance.to_h { |id, grade| [-id.to_s, check_grade(grade)] }.freeze
+        @relevance = relevance.to_h { |id, grade| [Hits.id_of(id), check_grade(grade)] }.freeze
         raise ArgumentError, "relevance needs at least one positive grade" unless @relevance.values.any?(&:positive?)
 
         @ideal_gains = @relevance.values.sort.reverse.map { |grade| gain(grade) }.freeze
@@ -17,13 +17,12 @@ module Lain
       end
 
       # @param hits [Enumerable] ranked results, most relevant first; bare ids or anything with #id
-      # @param k [Integer] how many ranked hits count
-      # @return [Grade] score = DCG of the hits / DCG of the ideal ordering, both cut at k
-      # rubocop:disable-next Naming/MethodParameterName -- `k` is the pinned name, as in Recall.
-      def grade(hits, k: 10)
-        gains = Array(hits).first(k).map { |hit| gain(@relevance.fetch(id_of(hit), 0)) }
-        score = dcg(gains) / dcg(@ideal_gains.first(k))
-        Grade.new(score:, why: "ndcg@#{k} #{format("%.3f", score)}")
+      # @param depth [Integer] how many ranked hits count
+      # @return [Grade] score = DCG of the hits / DCG of the ideal ordering, both cut at depth
+      def grade(hits, depth: 10)
+        gains = Array(hits).first(depth).map { |hit| gain(@relevance.fetch(Hits.id_of(hit), 0)) }
+        score = dcg(gains) / dcg(@ideal_gains.first(depth))
+        Grade.new(score:, why: "ndcg@#{depth} #{format("%.3f", score)}")
       end
 
       private
@@ -37,8 +36,6 @@ module Lain
       def gain(grade) = (2**grade) - 1
 
       def dcg(gains) = gains.each_with_index.sum(0.0) { |gain, rank| gain / Math.log2(rank + 2) }
-
-      def id_of(hit) = hit.respond_to?(:id) ? hit.id.to_s : hit.to_s
     end
   end
 end

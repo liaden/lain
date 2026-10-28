@@ -12,7 +12,7 @@ RSpec.describe Lain::Grader::Recall do
     it "computes recall@k exactly, with a why naming the missed id" do
       recall = described_class.new(gold_ids: %w[a b c])
 
-      grade = recall.grade(%w[a x b], k: 3)
+      grade = recall.grade(%w[a x b], depth: 3)
 
       expect(grade.score).to eq(2.0.fdiv(3))
       expect(grade.why).to include("c")
@@ -21,7 +21,7 @@ RSpec.describe Lain::Grader::Recall do
     it "scores 1.0 and passes when every gold id is found within k" do
       recall = described_class.new(gold_ids: %w[a b])
 
-      grade = recall.grade(%w[a b x], k: 3)
+      grade = recall.grade(%w[a b x], depth: 3)
 
       expect(grade.score).to eq(1.0)
       expect(grade).to be_pass
@@ -30,7 +30,7 @@ RSpec.describe Lain::Grader::Recall do
     it "scores 0.0 when no gold id appears in the top k" do
       recall = described_class.new(gold_ids: %w[a b])
 
-      grade = recall.grade(%w[x y z], k: 3)
+      grade = recall.grade(%w[x y z], depth: 3)
 
       expect(grade.score).to eq(0.0)
       expect(grade).not_to be_pass
@@ -40,7 +40,7 @@ RSpec.describe Lain::Grader::Recall do
     it "truncates ranked hits to k before scoring -- a gold id past k does not count" do
       recall = described_class.new(gold_ids: %w[a b])
 
-      grade = recall.grade(%w[x a b], k: 1)
+      grade = recall.grade(%w[x a b], depth: 1)
 
       expect(grade.score).to eq(0.0)
     end
@@ -49,7 +49,7 @@ RSpec.describe Lain::Grader::Recall do
       hit = Struct.new(:id).new("a")
       recall = described_class.new(gold_ids: %w[a])
 
-      grade = recall.grade([hit], k: 1)
+      grade = recall.grade([hit], depth: 1)
 
       expect(grade.score).to eq(1.0)
     end
@@ -65,7 +65,7 @@ RSpec.describe Lain::Grader::Recall do
     it "is deterministic: the same hits score the same Grade twice" do
       recall = described_class.new(gold_ids: %w[a b c])
 
-      expect(recall.grade(%w[a x b], k: 3)).to eq(recall.grade(%w[a x b], k: 3))
+      expect(recall.grade(%w[a x b], depth: 3)).to eq(recall.grade(%w[a x b], depth: 3))
     end
   end
 

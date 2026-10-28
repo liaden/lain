@@ -197,7 +197,7 @@ module Lain
       # @param model [String] the embedding model the fixture must match.
       # @param split [String] "dev" or "test"; the splits are never mixed in one report.
       # rubocop:disable Naming/MethodParameterName -- `k` is the pinned recall@k
-      # name, matching Grader::Recall and Context::Recall's own k:.
+      # name, matching Context::Recall's own k:.
       def initialize(k: DEFAULT_K, corpus_path: CORPUS_PATH, embeddings_path: EMBEDDINGS_PATH, model: DEFAULT_MODEL,
                      split: "dev")
         @k = Integer(k)
@@ -241,7 +241,7 @@ module Lain
       end
 
       def ndcg_at_k(arm, query)
-        Grader::Ndcg.new(relevance: query.relevance).grade(arm.search(query.text), k: NDCG_K).score
+        Grader::Ndcg.new(relevance: query.relevance).grade(arm.search(query.text), depth: NDCG_K).score
       end
 
       def abstains?(arm, query) = arm.search(query.text).first(@k).empty?
@@ -252,7 +252,7 @@ module Lain
       end
 
       def recall_at_k(arm, query)
-        Grader::Recall.new(gold_ids: query.gold_ids).grade(arm.search(query.text), k: @k).score
+        Grader::Recall.new(gold_ids: query.gold_ids).grade(arm.search(query.text), depth: @k).score
       end
 
       def control_recall

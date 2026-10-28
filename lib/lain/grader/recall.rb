@@ -7,12 +7,12 @@ module Lain
     # because folding many queries' scores into a distribution is {Compare}'s
     # job.
     #
-    #   Recall.new(gold_ids: %w[a b c]).grade(%w[a x b], k: 3)
+    #   Recall.new(gold_ids: %w[a b c]).grade(%w[a x b], depth: 3)
     #   #=> Grade(score: 0.666..., why: "recall@k 2/3: missed b, c" ...)
     class Recall
       # @param gold_ids [Enumerable<#to_s>] the ids that count as a correct hit
       def initialize(gold_ids:)
-        @gold_ids = gold_ids.map { |id| -id.to_s }.uniq.freeze
+        @gold_ids = gold_ids.map { |id| Hits.id_of(id) }.uniq.freeze
         raise ArgumentError, "gold_ids must not be empty -- recall over no gold answers is meaningless" if
           @gold_ids.empty?
 
@@ -21,23 +21,16 @@ module Lain
 
       # @param hits [Enumerable] ranked results, most relevant first -- either bare
       #   ids or anything duck-typed with #id (a Memory::Manifest::Hit, a BM25 hit)
-      # @param k [Integer, nil] how many ranked hits count; nil considers all of them
-      # @return [Grade] score = |gold ids found in the top k| / |gold ids|
-      # rubocop:disable Naming/MethodParameterName -- `k` is the pinned name (recall@k),
-      # matching Memory::Bm25#search and Context::Recall's own `k:`.
-      def grade(hits, k: nil)
+      # @param depth [Integer, nil] how many ranked hits count; nil considers all of them
+      # @return [Grade] score = |gold ids found in the top depth| / |gold ids|
+      def grade(hits, depth: nil)
         ranked = Array(hits)
-        top = k ? ranked.first(k) : ranked
-        found = @gold_ids & top.map { |hit| id_of(hit) }
+        top = depth ? ranked.first(depth) : ranked
+        found = @gold_ids & top.map { |hit| Hits.id_of(hit) }
         Grade.new(score: found.size.fdiv(@gold_ids.size), why: explain(found))
       end
-      # rubocop:enable Naming/MethodParameterName
 
       private
-
-      def id_of(hit)
-        hit.respond_to?(:id) ? hit.id.to_s : hit.to_s
-      end
 
       def explain(found)
         return "recall@k #{found.size}/#{@gold_ids.size}: all gold ids found" if found.size == @gold_ids.size
