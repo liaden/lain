@@ -108,7 +108,7 @@ module Lain
         end
 
         def <<(record)
-          @copy << record if record.is_a?(Telemetry::Sandbox)
+          @copy << record if record.is_a?(Telemetry::Sandbox) || record.is_a?(Telemetry::ExecRecord)
           __getobj__ << record
           self
         end

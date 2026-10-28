@@ -990,6 +990,23 @@ END")
       expect(seen).to all(be_a(Lain::Telemetry::Sandbox)).and(satisfy(&:any?))
     end
 
+    it "copies each exec record there too, naming the refused program, beside the sandbox record" do
+      refusing = lambda do |journal:, **opts|
+        journal << Lain::Telemetry::Sandbox.new(tool_use_id: "tu_1", profile: :workspace, trace: true, refused: [])
+        journal << Lain::Telemetry::ExecRecord.new(
+          tool_use_id: "tu_1", profile: :workspace, execs: [], fd_execs: [], truncated: false,
+          refusals: [{ path: "/work/bin/cat", errno: "EACCES" }]
+        )
+        spawn_seam.call(journal:, **opts)
+      end
+      described_class.new(arms, tasks:, spawn_seam: refusing, grader:, journal:).report
+      records = journal.drain.grep(Lain::Telemetry::Stamped).map(&:record)
+
+      expect(records.grep(Lain::Telemetry::ExecRecord).flat_map(&:refusals).map { _1[:path] }.uniq)
+        .to eq(["/work/bin/cat"])
+      expect(records.grep(Lain::Telemetry::Sandbox).map(&:profile).uniq).to eq([:workspace])
+    end
+
     it "journals nothing extra for a seam that records no sandbox use" do
       described_class.new(arms, tasks:, spawn_seam:, grader:, journal:).report
 
