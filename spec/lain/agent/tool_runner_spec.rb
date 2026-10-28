@@ -184,12 +184,137 @@ RSpec.describe Lain::Agent::ToolRunner do
     end.new
     stack = Lain::Middleware::Stack.new.use(probe)
     response = tool_response(["tu_1", "echo", { "text" => "a" }])
+    session = Lain::Session.new
 
-    described_class.new(handler: echoing_handler, middleware: stack).run(response, context: :ctx)
+    described_class.new(handler: echoing_handler, middleware: stack).run(response, context: session)
 
     expect(seen).to be_a(Lain::Middleware::Env)
     expect(seen.effect).to be_a(Lain::Effect::ToolCall)
-    expect(seen[:context]).to eq(:ctx)
+    expect(seen[:context]).to be(session)
+  end
+
+  describe "the tool-call line" do
+    let(:display) { [] }
+
+    def run_with(handler, *calls, **runner)
+      described_class.new(handler:, display:, **runner).run(tool_response(*calls), context: nil)
+    end
+
+    def ok_handler = Lain::Effect::Handler::Mock.new { |_effect, _context| Lain::Tool::Result.ok("done") }
+
+    it "announces a call before it runs and again once its result is committed" do
+      run_with(ok_handler, ["tu_1", "edit_file", { "path" => "lib/a.rb" }])
+
+      expect(display.map { |event| [event.phase, event.tool, event.summary, event.outcome] })
+        .to eq([[:start, "edit_file", "lib/a.rb", nil], [:end, "edit_file", "lib/a.rb", "ok"]])
+      expect(display.last.seconds).to be >= 0
+    end
+
+    it "names a failure with the first line of its error" do
+      handler = Lain::Effect::Handler::Mock.new { |_effect, _context| Lain::Tool::Result.error("boom\nmore") }
+
+      run_with(handler, ["tu_1", "edit_file", { "path" => "lib/a.rb" }])
+
+      expect(display.last.outcome).to eq("failed boom")
+    end
+
+    it "summarises a long command by its first 80 columns" do
+      run_with(ok_handler, ["tu_1", "bash", { "command" => "echo #{"x" * 2048}" }])
+
+      expect(display.first.summary).to eq("echo #{"x" * 74}…")
+    end
+
+    it "keeps to the first line of a multi-line command" do
+      run_with(ok_handler, ["tu_1", "bash", { "command" => "ls\nrm -rf /" }])
+
+      expect(display.first.summary).to eq("ls")
+    end
+
+    it "masks a credential in the summary" do
+      secret = "ghp_aB3dE5gH7jK9mN1pQ3sT5vX7zA9cE1gI3kM5"
+
+      run_with(ok_handler, ["tu_1", "bash", { "command" => "curl -H 'Authorization: token #{secret}' x" }])
+
+      expect(display.first.summary).not_to include(secret)
+    end
+
+    it "masks a secret literal the session knows, even one no detector would flag" do
+      known = double("secrets", for: ["hunter2-plain"]) # rubocop:disable RSpec/VerifiedDoubles
+
+      run_with(ok_handler, ["tu_1", "bash", { "command" => "login --pass hunter2-plain" }], secrets: known)
+
+      expect(display.first.summary).not_to include("hunter2-plain")
+    end
+
+    it "masks a credential in an error's first line" do
+      token = "ghp_aB3dE5gH7jK9mN1pQ3sT5vX7zA9cE1gI3kM5"
+      handler = Lain::Effect::Handler::Mock.new { |_effect, _context| Lain::Tool::Result.error("401 bad #{token}") }
+
+      run_with(handler, ["tu_1", "web_fetch", { "url" => "https://x.io" }])
+
+      expect(display.last.outcome).not_to include(token)
+    end
+
+    it "never cuts a placeholder in two" do
+      token = "ghp_aB3dE5gH7jK9mN1pQ3sT5vX7zA9cE1gI3kM5"
+
+      run_with(ok_handler, ["tu_1", "bash", { "command" => "#{"a" * 70} #{token}" }])
+
+      expect(display.first.summary).to eq("#{"a" * 70} <redacted:1>…")
+    end
+
+    it "builds no summary when nothing is shown" do
+      secrets = double("secrets") # rubocop:disable RSpec/VerifiedDoubles
+      expect(secrets).not_to receive(:for)
+
+      described_class.new(handler: ok_handler, secrets:).run(tool_response(["tu_1", "bash", { "command" => "ls" }]),
+                                                             context: nil)
+    end
+
+    it "commits the result when the display raises at either edge" do
+      broken = Class.new { def <<(_event) = raise("display down") }.new
+
+      block = described_class.new(handler: ok_handler, display: broken).run(tool_response(["tu_1", "echo", {}]),
+                                                                            context: nil).first
+
+      expect(block["content"]).to eq("done")
+    end
+
+    it "commits the result when the context cannot name its worker environment" do
+      context = Class.new { def worker_env = raise("no env") }.new
+      runner = described_class.new(handler: ok_handler, display:, secrets: Lain::Sensitivity::Secrets::Source::DEFAULT)
+
+      block = runner.run(tool_response(["tu_1", "bash", { "command" => "ls" }]), context:).first
+
+      expect(block["content"]).to eq("done")
+    end
+
+    it "ends the line as interrupted when the call is torn down" do
+      torn = Class.new(Exception) # rubocop:disable Lint/InheritException
+      handler = Lain::Effect::Handler::Mock.new { |_effect, _context| raise torn }
+
+      expect { run_with(handler, ["tu_1", "bash", { "command" => "sleep 9" }]) }.to raise_error(torn)
+      expect(display.map(&:phase)).to eq(%i[start end])
+      expect(display.last.outcome).to eq("interrupted")
+    end
+
+    it "reads a call's duration from the injected clock" do
+      readings = [10.0, 12.5].each
+      run_with(ok_handler, ["tu_1", "echo", {}], clock: -> { readings.next })
+
+      expect(display.last.seconds).to eq(2.5)
+    end
+
+    it "gives a call with no input an empty summary" do
+      run_with(ok_handler, ["tu_1", "list_files", {}])
+
+      expect(display.first.summary).to eq("")
+    end
+
+    it "says nothing when no display was wired" do
+      expect { described_class.new(handler: ok_handler).run(tool_response(["tu_1", "echo", {}]), context: nil) }
+        .not_to raise_error
+    end
   end
 
   # The digest gate, asked of a runner an {Lain::Agent} was HANDED rather than

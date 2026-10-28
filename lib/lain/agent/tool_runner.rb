@@ -185,19 +185,128 @@ module Lain
       # handed to it errs toward withholding.
       ROOMLESS = ->(usage) { Tool::Room.new(window: 0, usage:, ceiling: 0) }
 
+      # Draws the tool-call line a call's two edges show. It is display only: nothing
+      # here is journalled, and nothing here may fail a tool run.
+      class Announcer
+        TARGET_KEYS = %w[path file_path command pattern query url].freeze
+        COLUMNS = 80
+        ELLIPSIS = "…"
+
+        # One call in flight; {#finish} or, failing that, {#abandon} closes it.
+        class Call
+          def initialize(announcer, tool_use, context)
+            @announcer = announcer
+            @tool_use = tool_use
+            @context = context
+            @started = announcer.clock.call
+            @open = true
+            announcer.emit(tool_use, context, :start)
+          end
+
+          def finish(block) = close { ended(@announcer.outcome(block, @context)) }
+
+          def abandon = close { ended("interrupted") }
+
+          private
+
+          def ended(outcome)
+            seconds = @announcer.clock.call - @started
+            @announcer.emit(@tool_use, @context, :end, outcome:, seconds:)
+          end
+
+          def close
+            return unless @open
+
+            @open = false
+            yield
+          end
+        end
+
+        # Shows nothing and builds nothing: a Null display never pays for masking.
+        class Silent
+          def begin(*) = self
+          def finish(_block) = nil
+          def abandon = nil
+        end
+
+        def self.for(display:, secrets:, clock:)
+          display.is_a?(Channel::Null) ? Silent.new : new(display:, secrets:, clock:)
+        end
+
+        # @return [#call] the monotonic clock a call's duration is read from
+        attr_reader :clock
+
+        def initialize(display:, secrets:, clock:)
+          @clock = clock
+          @display = display
+          @secrets = secrets
+        end
+
+        def begin(tool_use, context) = Call.new(self, tool_use, context)
+
+        # @api private
+        def emit(tool_use, context, phase, outcome: nil, seconds: nil)
+          @display << Telemetry::ToolCalled.new(tool_use_id: tool_use.id, tool: tool_use.name,
+                                                summary: summary(tool_use, context), phase:, outcome:, seconds:)
+        # A display line is best effort: losing one must never fail the tool it describes.
+        rescue StandardError
+          nil
+        end
+
+        # @api private
+        def outcome(block, context)
+          return "ok" unless block["is_error"]
+
+          "failed #{masked(block["content"].to_s.lines.first.to_s.chomp, context)}".strip
+        end
+
+        private
+
+        def summary(tool_use, context)
+          input = tool_use.input
+          text = input.is_a?(Hash) ? target(input).to_s.lines.first.to_s.chomp : ""
+          clipped(masked(text, context))
+        end
+
+        def target(input)
+          key = TARGET_KEYS.find { |name| input[name].is_a?(String) }
+          key ? input[key] : input.values.find { |value| value.is_a?(String) }
+        end
+
+        def masked(text, context) = Sensitivity::TextMask.new(secrets: @secrets.for(context)).call(text).text
+
+        # Cut after masking, so a secret is never left half-cut and unrecognisable, and
+        # past the end of any placeholder the cut lands in.
+        def clipped(text)
+          return text if Ext::Prompt.width(text) <= COLUMNS
+
+          used = 0
+          kept = text.each_grapheme_cluster.take_while { |glyph| (used += Ext::Prompt.width(glyph)) < COLUMNS }.join
+          "#{text[0, whole_placeholder_end(text, kept.size)]}#{ELLIPSIS}"
+        end
+
+        def whole_placeholder_end(text, cut)
+          inside = text.to_enum(:scan, Sensitivity::Regions::PLACEHOLDER_SHAPE).map { Regexp.last_match }
+                       .find { |found| found.begin(0) < cut && cut < found.end(0) }
+          inside ? inside.end(0) : cut
+        end
+      end
+
       # A runner with no timeline has no turn to name.
       HEADLESS = -> {}
 
       # `toolset:` is what a call's name resolves against -- ONCE per call, in
       # {#dispatch} -- and what {#answered_questions} harvests from. `handler`
       # interprets the tool that resolution found; it holds no toolset itself.
+      # `secrets:` supplies the literals a call's summary line is masked with.
       # `round_budget:` is asked for one budget per round, with what `room:`
       # answers for the usage of the turn that made the calls; `journal:` is
       # where a round it shortened is recorded, naming the turn `head:` answers
       # for, because call ids can repeat across turns.
       def initialize(handler:, middleware: Middleware::Stack.new, toolset: Toolset.new,
                      observer: Observer::Null.new, round_budget: Tool::RoundBudget::NONE, room: ROOMLESS,
-                     head: HEADLESS, journal: Channel::Null.instance)
+                     head: HEADLESS, journal: Channel::Null.instance, display: Channel::Null.instance,
+                     secrets: Sensitivity::Secrets::Source::DEFAULT, clock: RunClock::MONOTONIC)
         @handler = handler
         @middleware = middleware
         @toolset = toolset
@@ -206,6 +315,7 @@ module Lain
         @room = room
         @head = head
         @journal = journal
+        @announcer = Announcer.for(display:, secrets:, clock:)
       end
 
       # Barrier semantics: the turn splits into maximal CONTIGUOUS runs of
@@ -433,10 +543,14 @@ module Lain
       # state {Answers#notice} reads to tell "was running" from "waiting for
       # approval" from "never dispatched".
       def answer(tool_use, context, answers)
+        call = @announcer.begin(tool_use, context)
         answers.awaiting(tool_use)
         block = Tool::ResultBlock.of(dispatch(tool_use, context, answers), tool_use_id: tool_use.id,
                                                                            tool: tool_use.name)
         answers.answered(tool_use, block.to_h)
+        call.finish(block)
+      ensure
+        call&.abandon
       end
 
       # The tool is resolved HERE and rides the env as `tool:`, so every layer

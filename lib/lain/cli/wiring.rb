@@ -604,16 +604,25 @@ module Lain
       # reads, so left as a bare return expression the local stays nil forever
       # and the first turn raises NoMethodError on it.
       def agent_over(board:, channel:, session:, backend:, timeline: nil, views: nil)
-        live = Effect::Handler::Live.new(channel: LiveViews.tool_output(channel, views), display: board.live_display)
         agent = nil
-        Lain::Agent.new(toolset: board.toolset, context: board.graft(backend.context), handler: live, session:,
+        Lain::Agent.new(toolset: board.toolset, context: board.graft(backend.context),
+                        handler: live_handler(board, channel, views), session:,
                         timeline:, request_override: Lain::Agent::RequestOverride.new, # ResendBridge's slot
                         round_budget: arms.round_budget_policy,
                         budget: backend.ceilings.with(depth: 1), # one level of children below the chat
-                        display: channel, mailbox: notes.mailbox,
+                        **shown(board, channel), mailbox: notes.mailbox,
                         snapshot_slot: snapshot_slot(board, session:, journal: chronicle.record_journal, channel:),
-                        **backing(backend, channel, -> { agent.timeline }, board:)).tap { |built| agent = built }
+                        **backing(backend, channel, -> { agent.timeline }, board:)).tap do |built|
+          agent = built
+        end
       end
+
+      def live_handler(board, channel, views)
+        Effect::Handler::Live.new(channel: LiveViews.tool_output(channel, views), display: board.live_display)
+      end
+
+      # What the Agent tells the human, and the literals it masks that with.
+      def shown(board, channel) = { display: channel, secrets: board.secrets }
 
       # Built while the agent is, so the agent is read at each line.
       def notes

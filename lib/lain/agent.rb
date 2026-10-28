@@ -193,6 +193,7 @@ module Lain
     #   change the writer under a delivery built once.
     # @param display [#<<] where the human is told which files a tool round wrote
     # @param display_as [String] the role that report names
+    # @param secrets [Sensitivity::Secrets::Source] the literals a tool-call line is masked with
     # @param instrumented [Hash{Symbol => Object}] the seven keywords a run
     #   REPORTS through (`turn_middleware:`, `transition_listener:`, etc.),
     #   accepted directly so every call site that predates `instrumentation:`
@@ -204,7 +205,8 @@ module Lain
                    session: Session.new, mailbox: Context::Mailbox::Null,
                    budget: Budget.ceilings, progress: Progress::DEFAULT, request_override: RequestOverride::None,
                    snapshot_slot: SnapshotSlot.new, context_window: ContextWindow.default,
-                   display: Channel::Null.instance, display_as: "lain", **instrumented)
+                   display: Channel::Null.instance, display_as: "lain",
+                   secrets: Sensitivity::Secrets::Source::DEFAULT, **instrumented)
       super() # state_machines sets the initial state through the super chain.
       @toolset = toolset
       @context = context
@@ -212,6 +214,8 @@ module Lain
       @workspace = workspace
       @mailbox = mailbox
       @context_window = context_window
+      @display = display
+      @secrets = secrets
       wire_callers(request_override:, instrumentation:, instrumented:,
                    model_caller:, tool_runner:, accounting:, spend:, provider:, handler:, round_budget:)
       seed_run_state(session, snapshot_slot, budget, progress, display:, display_as:)
@@ -578,7 +582,8 @@ module Lain
                      toolset: @toolset,
                      observer: given.fetch(:tool_observer) { @instrumentation.tool_observer },
                      round_budget: given.fetch(:round_budget) { Tool::RoundBudget::NONE },
-                     room: method(:round_room), head: -> { @timeline.head_digest }, journal: @instrumentation.journal)
+                     room: method(:round_room), head: -> { @timeline.head_digest }, journal: @instrumentation.journal,
+                     display: @display, secrets: @secrets)
     end
 
     # The input reading is Accounting's, which survives a provider that

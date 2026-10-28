@@ -62,6 +62,7 @@ module Lain
         prompt: %i[bold],                # TTY#compose
         heading: %i[bold],               # a section header in a listing (/help)
         command_name: %i[cyan],          # a name in a listing's first column (/help)
+        tool_header: %i[bold],           # Decorators::ToolCalled's line
         label: %i[dim],                  # Decorators::ToolOutput's attribution
         tool_error: %i[red],             # a tool subprocess's stderr bytes
         tool_output: [],                 # a tool subprocess's stdout bytes

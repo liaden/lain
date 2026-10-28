@@ -464,8 +464,22 @@ RSpec.describe Lain::Agent do
                   session: Lain::Session.new(worker_env:), display:, display_as: "sage")
         a.ask("write it")
 
-        expect(display).to eq([Lain::Telemetry::FilesWritten.new(role: "sage", paths: ["notes.md"])])
+        expect(display.grep(Lain::Telemetry::FilesWritten))
+          .to eq([Lain::Telemetry::FilesWritten.new(role: "sage", paths: ["notes.md"])])
       end
+    end
+  end
+
+  describe "the tool-call line" do
+    it "shows each call's start and end on the display channel, with a known secret masked" do
+      display = []
+      secrets = double("secrets", for: ["hunter2-plain"]) # rubocop:disable RSpec/VerifiedDoubles
+      agent([tool_response(["tu_1", "echo", { "text" => "login hunter2-plain" }]), text_response],
+            display:, secrets:).ask("go")
+
+      called = display.grep(Lain::Telemetry::ToolCalled)
+      expect(called.map(&:phase)).to eq(%i[start end])
+      expect(called.map(&:summary).join).not_to include("hunter2-plain")
     end
   end
 

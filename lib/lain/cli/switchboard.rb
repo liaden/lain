@@ -156,7 +156,7 @@ module Lain
       #   environment its result masker is built from
       def live_display = Sensitivity::Display.new(secrets: guard_inputs.secrets)
 
-      delegate :ledger, :sensitivity, :test_layout, to: :guard_inputs
+      delegate :ledger, :sensitivity, :test_layout, :secrets, to: :guard_inputs
 
       # @param journal [#record] where flips and approval decisions land
       # @param model [String] the model in force until the first /model

@@ -273,6 +273,8 @@ class WiringAgentSpecBoard
   # answers the write-set scope so building an Agent over it shells no git.
   def snapshot_scope = :write_set
 
+  def secrets = Lain::Sensitivity::Secrets::Source::DEFAULT
+
   def bind_snapshots(slot)
     @snapshots = slot
   end

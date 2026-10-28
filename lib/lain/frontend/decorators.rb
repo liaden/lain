@@ -29,18 +29,27 @@ module Lain
       #   -- answering ALL three messages above, not just the first -- or nil if the
       #   frontend does not render this event type (it is silently skipped)
       def self.for(event)
-        return ToolOutput.new(event) if event.is_a?(Telemetry::ToolOutput)
-        return ProviderRetry.new(event) if event.is_a?(Telemetry::ProviderRetry)
-        return SnapshotDegraded.new(event) if event.is_a?(::Lain::Agent::SnapshotSlot::SnapshotDegraded)
-        return SnapshotNarrowed.new(event) if event.is_a?(::Lain::Agent::SnapshotSlot::SnapshotNarrowed)
-        return PromptUnclosed.new(event) if event.is_a?(TTY::PromptUnclosed)
-        return FilesWritten.new(event) if event.is_a?(Telemetry::FilesWritten)
-        return AssistantText.new(event) if event.is_a?(Telemetry::AssistantText)
-        return JudgeRuled.new(event) if event.is_a?(Telemetry::JudgeRuled)
         return PriceTierCarried.new(event) if event.is_a?(Telemetry::PriceTierCrossed) && event.decision == :carried
 
-        nil
+        _, decorator = by_type.find { |type, _| event.is_a?(type) }
+        decorator&.new(event)
       end
+
+      # A method rather than a constant: the decorator classes are defined below {.for}.
+      def self.by_type
+        {
+          Telemetry::ToolOutput => ToolOutput,
+          Telemetry::ProviderRetry => ProviderRetry,
+          ::Lain::Agent::SnapshotSlot::SnapshotDegraded => SnapshotDegraded,
+          ::Lain::Agent::SnapshotSlot::SnapshotNarrowed => SnapshotNarrowed,
+          TTY::PromptUnclosed => PromptUnclosed,
+          Telemetry::FilesWritten => FilesWritten,
+          Telemetry::ToolCalled => ToolCalled,
+          Telemetry::AssistantText => AssistantText,
+          Telemetry::JudgeRuled => JudgeRuled
+        }
+      end
+      private_class_method :by_type
 
       # A dim attribution label (`[tool_use_id stream]`) followed by the bytes,
       # with stderr in red so a failing command reads at a glance.
