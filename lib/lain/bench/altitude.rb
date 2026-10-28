@@ -27,7 +27,6 @@ module Lain
     # {ArmSweep::Recordings} and its Report.
     class Altitude
       # A checkout or packaging mistake, never user input to refuse.
-      class MissingFixture < Lain::Error; end
 
       # A malformed fixture is a bug in the fixture to surface loudly, never a
       # task to silently skip, miscategorize or duplicate.
@@ -145,7 +144,7 @@ module Lain
       # that costs real money is never run a second time by a second read.
       #
       # @return [String] never printed here (output discipline)
-      # @raise [MissingFixture, MalformedTask, Error] before any arm runs
+      # @raise [Fixture::Missing, Fixture::Malformed, MalformedTask, Error] before any arm runs
       # @raise [Project::Trust::Untrusted] before any arm runs, naming the
       #   committed subject whose config nobody has trusted
       def report = @report ||= render

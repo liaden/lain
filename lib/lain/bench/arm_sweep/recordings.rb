@@ -103,7 +103,7 @@ module Lain
         end
 
         def raw
-          @raw ||= YAML.safe_load_file(existing!).fetch("recordings")
+          @raw ||= Bench::Fixture.yaml(@path, kind: "arm-sweep recordings fixture").fetch("recordings")
         rescue KeyError
           raise MalformedRecording, "recordings fixture at #{@path} is missing the top-level `recordings:` key"
         end
@@ -132,13 +132,6 @@ module Lain
           usage = spec.fetch("usage")
           Entry.new(text: -spec.fetch("text").to_s,
                     usage: Usage.new(input_tokens: usage.fetch("input"), output_tokens: usage.fetch("output")))
-        end
-
-        def existing!
-          # A checkout or packaging mistake, never user input to refuse.
-          raise Error, "no arm-sweep recordings fixture at #{@path}" unless File.file?(@path)
-
-          @path
         end
       end
 

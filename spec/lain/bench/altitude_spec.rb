@@ -683,7 +683,7 @@ RSpec.describe Lain::Bench::Altitude do
     it "refuses a fixture that is not there, naming the path" do
       bench = described_class.new(fixture_path: "/nowhere/tasks.yml", arms:, spawn_seam:, grader:, sink:)
 
-      expect { bench.report }.to raise_error(described_class::MissingFixture, %r{/nowhere/tasks\.yml})
+      expect { bench.report }.to raise_error(Lain::Bench::Fixture::Missing, %r{/nowhere/tasks\.yml})
     end
 
     # Ids are how a run is matched back to the task it was given, so a duplicate

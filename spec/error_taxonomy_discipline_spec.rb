@@ -96,7 +96,7 @@ module ErrorTaxonomyDiscipline
     end
 
     # Ruby's own lookup, innermost namespace outward. A short-name sweep is wrong
-    # here and quietly so: `Unknown`, `Refused` and `MissingFixture` each name
+    # here and quietly so: `Unknown`, `Refused` and `Missing` each name
     # several unrelated classes, and the wrong one answers.
     def lexical(token, namespace)
       parts = namespace.to_s.split("::")

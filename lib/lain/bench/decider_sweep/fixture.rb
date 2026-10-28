@@ -38,7 +38,7 @@ module Lain
         private
 
         def raw
-          @raw ||= YAML.safe_load_file(existing!)
+          @raw ||= Bench::Fixture.yaml(@path, kind: "decider sweep fixture")
         end
 
         # Every `#fetch` a malformed case could trip -- its own top-level
@@ -70,15 +70,6 @@ module Lain
           spec = raw_case.fetch(arm)
           spec.fetch("answer")
           spec
-        end
-
-        def existing!
-          # A missing fixture path -- a checkout or packaging mistake, never user
-          # input to refuse. Path-bearing, for the reason {Sweep::MissingCorpus}
-          # states: the path IS the diagnosis.
-          raise Error, "no decider sweep fixture at #{@path}" unless File.file?(@path)
-
-          @path
         end
       end
       private_constant :Fixture

@@ -22,13 +22,9 @@ module Lain
 
         # @param path [String]
         # @return [Fixture]
-        # @raise [Invalid] when the file is missing, malformed, or has no probes
+        # @raise [Bench::Fixture::Missing, Bench::Fixture::Malformed, Invalid] when missing, not YAML, or no probes
         def self.load(path)
-          raise Invalid, "memory sweep fixture #{path} does not exist" unless File.file?(path)
-
-          new(path:, data: YAML.safe_load_file(path))
-        rescue Psych::SyntaxError => e
-          raise Invalid, "memory sweep fixture #{path} is not YAML: #{e.message}"
+          new(path:, data: Bench::Fixture.yaml(path, kind: "memory sweep fixture"))
         end
 
         attr_reader :sources, :entries, :probes, :drifts

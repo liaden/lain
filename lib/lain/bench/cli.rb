@@ -225,7 +225,7 @@ module Lain
       # @param model [String, nil] the model sent to and priced as
       # @param confirm [#call, nil] asked with the priced preflight before any paid request
       # @return [String] the report; never printed here
-      # @raise [MemorySweep::Fixture::Invalid] on a missing fixture or one with no probes
+      # @raise [Fixture::Missing, Fixture::Malformed, MemorySweep::Fixture::Invalid] on a missing or probeless fixture
       # @raise [MemorySweep::Unsendable] when there is no provider and model to send to
       def memory_sweep_report(fixture_path:, provider: nil, model: nil, confirm: nil)
         MemorySweep.new(fixture: MemorySweep::Fixture.load(fixture_path), provider:, model:, confirm:).report
@@ -407,7 +407,7 @@ module Lain
       # @raise [LiveArms::UnroutableBackend] when the resolved model has no
       #   cheaper sibling named, or the server says it has not got the one
       #   named, and no `router` was given
-      # @raise [ArmTasks::MissingFixture] when the suite path is not there
+      # @raise [Fixture::Missing] when the suite path is not there
       # @raise [Lain::CLI::UnknownProvider] on a provider name outside the set
       # @raise [Lain::CLI::IsolationBackend::Unknown] on an isolation name outside it
       def arms_report(fixture_path:, backend:, isolation: nil, journal: nil,
@@ -476,7 +476,7 @@ module Lain
       # @param spawn_options [Hash] forwarded verbatim to {SpawnSeam}
       # @return [String] the report; never printed here
       # @raise [Refusal] on an `isolation` with no journal
-      # @raise [Altitude::MissingFixture] when the suite path is not there
+      # @raise [Fixture::Missing] when the suite path is not there
       # @raise [Altitude::MalformedTask, Error] on a suite it cannot fold
       def altitude_report(fixture_path:, backend:, seams:, grader:, sink: Sink::Null.new,
                           isolation: nil, journal: nil, price_book: PriceBook.default, **spawn_options)

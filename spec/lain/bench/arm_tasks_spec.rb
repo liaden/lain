@@ -102,7 +102,7 @@ RSpec.describe Lain::Bench::ArmTasks do
       missing = fixture_path("does-not-exist")
 
       expect { described_class.new(fixture_path: missing).to_a }
-        .to raise_error(described_class::MissingFixture, /#{Regexp.escape(missing)}/)
+        .to raise_error(Lain::Bench::Fixture::Missing, /#{Regexp.escape(missing)}/)
     end
   end
 
@@ -138,10 +138,10 @@ RSpec.describe Lain::Bench::ArmTasks do
       end
     end
 
-    it "raises MalformedTask on a YAML syntax error rather than leaking Psych" do
+    it "raises Fixture::Malformed on a YAML syntax error rather than leaking Psych" do
       write_fixture("tasks: [unclosed\n") do |path|
         expect { described_class.new(fixture_path: path).load! }
-          .to raise_error(described_class::MalformedTask, /#{Regexp.escape(path)}/)
+          .to raise_error(Lain::Bench::Fixture::Malformed, /#{Regexp.escape(path)}/)
       end
     end
 
@@ -152,9 +152,9 @@ RSpec.describe Lain::Bench::ArmTasks do
       end
     end
 
-    it "raises MissingFixture for a path with no file" do
+    it "raises Fixture::Missing for a path with no file" do
       expect { described_class.new(fixture_path: fixture_path("does-not-exist")).load! }
-        .to raise_error(described_class::MissingFixture)
+        .to raise_error(Lain::Bench::Fixture::Missing)
     end
 
     it "returns itself once the committed fixture reads" do

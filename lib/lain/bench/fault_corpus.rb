@@ -47,7 +47,7 @@ module Lain
         raise MalformedFault, "fault #{path} must hold exactly 1 task, got #{tasks.size}" unless tasks.one?
 
         tasks.first
-      rescue ArmTasks::MissingFixture, ArmTasks::MalformedTask => e
+      rescue Fixture::Missing, Fixture::Malformed, ArmTasks::MalformedTask => e
         raise MalformedFault, "fault #{path}: #{e.message}"
       end
       private_class_method :task_in

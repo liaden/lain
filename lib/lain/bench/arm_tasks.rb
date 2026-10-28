@@ -24,9 +24,6 @@ module Lain
     class ArmTasks
       include Enumerable
 
-      # A checkout or packaging mistake, never user input to refuse.
-      class MissingFixture < Lain::Error; end
-
       # A malformed fixture is a bug in the fixture to surface loudly, never a
       # task to silently skip, miscategorize or duplicate.
       class MalformedTask < Lain::Error; end
@@ -98,7 +95,7 @@ module Lain
 
       # Forces the read, so a bad fixture refuses at the door instead of at the first task.
       # @return [self]
-      # @raise [MissingFixture, MalformedTask]
+      # @raise [Fixture::Missing, Fixture::Malformed, MalformedTask]
       def load!
         tasks
         self
@@ -115,7 +112,7 @@ module Lain
       # located {MalformedTask} rather than this one leaking a bare,
       # path-less `KeyError`.
       def raw_tasks
-        document = YAML.safe_load_file(existing!(@fixture_path))
+        document = Fixture.yaml(@fixture_path, kind: "arm-task fixture")
         unless document.is_a?(Hash)
           raise MalformedTask,
                 "arm fixture at #{@fixture_path} is not a mapping at the top level"
@@ -124,8 +121,6 @@ module Lain
         document.fetch("tasks")
       rescue KeyError
         raise MalformedTask, "arm fixture at #{@fixture_path} is missing the top-level `tasks:` key"
-      rescue Psych::Exception => e
-        raise MalformedTask, "arm fixture at #{@fixture_path} is not valid YAML: #{e.message}"
       end
 
       # Ids are lookup keys everywhere downstream, so a silent duplicate would
@@ -197,12 +192,6 @@ module Lain
           end
           ["#{path} #{kind} #{value.inspect}", ->(content) { template.call(content, value) }]
         end
-      end
-
-      def existing!(path)
-        raise MissingFixture, "no arm-task fixture at #{path}" unless File.file?(path)
-
-        path
       end
     end
   end

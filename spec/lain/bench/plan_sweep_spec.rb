@@ -190,9 +190,9 @@ RSpec.describe Lain::Bench::PlanSweep do
   end
 
   describe "a missing fixture is a loud, path-bearing error" do
-    it "raises MissingFixture naming the path, never a bare Errno" do
+    it "raises Fixture::Missing naming the path, never a bare Errno" do
       expect { described_class.new(plan_path: "no/such/plan.md", runs_path: fixtures[:runs_path]).measurements }
-        .to raise_error(Lain::Bench::PlanSweep::Fixture::MissingFixture, %r{no/such/plan\.md})
+        .to raise_error(Lain::Bench::Fixture::Missing, %r{no/such/plan\.md})
     end
   end
 

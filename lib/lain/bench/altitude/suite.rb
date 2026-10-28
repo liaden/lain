@@ -63,7 +63,7 @@ module Lain
         # reported as a SIZE being too thin, which tells the operator about a
         # size when the problem is the file.
         def raw_tasks
-          document = YAML.safe_load_file(existing!)
+          document = Fixture.yaml(@path, kind: "altitude fixture")
           raise MalformedTask, rooted("is not a mapping, so it declares no `tasks:` key") unless document.is_a?(Hash)
 
           declared!(document.fetch("tasks") { raise MalformedTask, rooted("is missing the top-level `tasks:` key") })
@@ -151,12 +151,6 @@ module Lain
           return built if duplicates.empty?
 
           raise MalformedTask, rooted("has duplicate task id(s): #{duplicates.join(", ")}")
-        end
-
-        def existing!
-          raise MissingFixture, "no altitude fixture at #{@path}" unless File.file?(@path)
-
-          @path
         end
       end
     end

@@ -117,7 +117,9 @@ module Lain
       end
 
       def tasks
-        @tasks ||= YAML.safe_load_file(existing!(@fixture_path)).fetch("tasks").map { |raw| build_task(raw) }
+        @tasks ||= Fixture.yaml(@fixture_path, kind: "disclosure sweep fixture").fetch("tasks").map do |raw|
+          build_task(raw)
+        end
       end
 
       # Everything is run through {Canonical.normalize} regardless of source: a
@@ -151,13 +153,6 @@ module Lain
       def validated_recorded(raw)
         recorded = raw.fetch("recorded")
         ARMS.each_key.to_h { |arm| [arm, recorded.fetch(arm)] }
-      end
-
-      def existing!(path)
-        # A checkout or packaging mistake, never user input to refuse.
-        raise Error, "no disclosure sweep fixture at #{path}" unless File.file?(path)
-
-        path
       end
 
       def render(measured_arms)

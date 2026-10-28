@@ -944,12 +944,12 @@ RSpec.describe Lain::Bench::CLI do
     def untouched? = journal.drain.empty? && !have_received(:provider).matches?(backend)
 
     it "for a missing fixture" do
-      expect(refusal(nil)).to be_a(Lain::Bench::ArmTasks::MissingFixture).and(have_attributes(message: /tasks\.yml/))
+      expect(refusal(nil)).to be_a(Lain::Bench::Fixture::Missing).and(have_attributes(message: /tasks\.yml/))
       expect(untouched?).to be(true)
     end
 
     it "for a fixture with a YAML syntax error" do
-      expect(refusal("tasks: [unclosed\n")).to be_a(Lain::Bench::ArmTasks::MalformedTask)
+      expect(refusal("tasks: [unclosed\n")).to be_a(Lain::Bench::Fixture::Malformed)
       expect(untouched?).to be(true)
     end
 

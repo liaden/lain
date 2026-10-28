@@ -28,11 +28,6 @@ module Lain
     # the eval is bound to exactly that gold set, and a `lain bench sweep` run
     # in an installed gem has no spec/ tree.
     class Sweep
-      # A packaging mistake or a deleted fixture, never a normal ArgumentError.
-      # Named and path-bearing so the exe presents it without a backtrace
-      # instead of an unhelpful Errno::ENOENT.
-      class MissingCorpus < Lain::Error; end
-
       DEFAULT_K = 5
       DEFAULT_MODEL = Embedder::Ollama::DEFAULT_MODEL
 
@@ -310,25 +305,12 @@ module Lain
       end
 
       def corpus
-        @corpus ||= YAML.safe_load_file(existing!(@corpus_path, "corpus"))
+        @corpus ||= Fixture.yaml(@corpus_path, kind: "sweep corpus file")
       end
 
       def embeddings
-        @embeddings ||= Embeddings.load(path: existing!(@embeddings_path, "embeddings"), items:, model: @model)
-      end
-
-      # A missing corpus or embeddings file is a packaging/checkout mistake,
-      # not user input to refuse (contrast Bench::CLI::Refusal) -- it names the
-      # exact path so the fix is obvious, and it is Errno::ENOENT's replacement,
-      # never its wrapper, so the exe's `rescue Lain::Error` catches it cleanly.
-      # `kind` says WHICH file is missing -- the corpus and the embeddings are
-      # two different paths, and a refusal that always says "corpus" sends
-      # someone hunting the wrong file when it is the embeddings that never
-      # got regenerated.
-      def existing!(path, kind)
-        raise MissingCorpus, "no sweep #{kind} file at #{path}" unless File.file?(path)
-
-        path
+        @embeddings ||= Embeddings.load(path: Fixture.existing!(@embeddings_path, kind: "sweep embeddings file"),
+                                        items:, model: @model)
       end
 
       def render(ranked_arms)

@@ -281,7 +281,7 @@ RSpec.describe Lain::Bench::CLI do
     # task is".
     it "surfaces ArmTasks' own error for a fixture path that is not there" do
       expect { cli.arms_report(fixture_path: "no/such/tasks.yml", backend:, provider:, tools: toolless) }
-        .to raise_error(Lain::Bench::ArmTasks::MissingFixture, %r{no/such/tasks\.yml})
+        .to raise_error(Lain::Bench::Fixture::Missing, %r{no/such/tasks\.yml})
     end
 
     # The provider flags reach the live seam, not a second parallel authority:

@@ -13,7 +13,6 @@ module Lain
       # density changes zero plan CONTENT, only where the seams sit.
       class Fixture
         # A checkout or packaging mistake, never user input to refuse.
-        class MissingFixture < Lain::Error; end
 
         # The three seam densities the sweep sweeps. `thinned` is the plan as its
         # author placed the seams; `every` seams after every step (the finest
@@ -72,7 +71,7 @@ module Lain
           @plan_path = plan_path
           @runs_path = runs_path
           @document = parse_plan
-          @raw = YAML.safe_load_file(existing!(runs_path))
+          @raw = Bench::Fixture.yaml(runs_path, kind: "plan-sweep fixture")
           runs # force the per-run coverage check loudly at load, not mid-driver
         end
 
@@ -97,12 +96,13 @@ module Lain
         # prose (or a stray path) parses to no steps and would otherwise drive a
         # vacuous sweep. Fail loud, naming the path.
         def parse_plan
-          document = Plan::Document.parse_markdown(File.read(existing!(@plan_path)))
+          document = Plan::Document.parse_markdown(File.read(Bench::Fixture.existing!(@plan_path,
+                                                                                      kind: "plan-sweep fixture")))
           return document if document.steps.any?
 
           # A fixture that loaded but is structurally broken -- a plan that parsed
           # no steps, or a scripted run missing a plan-required step. Distinct
-          # from {MissingFixture}, where the file is absent: here it is present
+          # from {Bench::Fixture::Missing}, where the file is absent: here it is present
           # and wrong, and a silent pass would yield a plausible-looking VACUOUS
           # report with the grader populated, every cost column zero, no signal.
           raise Error, "plan-sweep plan at #{@plan_path} parsed no steps (an empty or unparseable plan)"
@@ -139,12 +139,6 @@ module Lain
 
         def strip_seams
           @document.seams.inject(@document) { |doc, id| doc.remove_seam(after: id) }
-        end
-
-        def existing!(path)
-          raise MissingFixture, "no plan-sweep fixture at #{path}" unless File.file?(path)
-
-          path
         end
       end
     end
