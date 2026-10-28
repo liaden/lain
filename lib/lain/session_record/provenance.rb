@@ -22,7 +22,14 @@ module Lain
     # `lib/lain/lain.so` and `target/release/lain-fence` are outside it, so a
     # rebuild from unchanged source records the same harness.
     class Provenance
+      include Declarative
+
       UNRECORDED = "unrecorded"
+
+      # @return [Array<Symbol>] the members recorded as strings
+      STRINGS = (members - %i[weights]).freeze
+
+      declare { STRINGS.each { |name| attribute name, :lain_interned } }
 
       # The trees whose uncommitted edits change what lain does when it runs.
       HARNESS_TREES = %w[lib ext crates exe].freeze
@@ -145,9 +152,11 @@ module Lain
         end
       end
 
-      def initialize(harness:, tool_surface:, effort:, policy:, cwd:, root:, home:, weights: nil)
-        fields = { harness:, tool_surface:, effort:, policy:, cwd:, root:, home: }
-        super(weights:, **fields.transform_values { |value| -(value || UNRECORDED).to_s })
+      def initialize(weights: nil, **strings)
+        unknown = strings.keys - STRINGS
+        raise ArgumentError, "unknown keyword: #{unknown.map(&:inspect).join(", ")}" if unknown.any?
+
+        super(**self.class.settle!(**STRINGS.to_h { [_1, strings[_1] || UNRECORDED] }), weights:)
       end
 
       # @return [Hash{String=>Hash{String=>String}}] every field, nested under one key

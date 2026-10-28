@@ -240,6 +240,36 @@ RSpec.describe Lain::SessionRecord::Provenance do
     end
   end
 
+  describe ".new" do
+    let(:strings) { described_class::STRINGS.to_h { [_1, "x"] } }
+
+    it "names every member but the weights as a string field" do
+      expect(described_class::STRINGS).to eq(described_class.members - %i[weights])
+    end
+
+    it "records a nil in any string field as unrecorded" do
+      nils = described_class::STRINGS.to_h { [_1, nil] }
+
+      expect(described_class.new(**nils)).to have_attributes(nils.transform_values { "unrecorded" })
+    end
+
+    it "records an omitted string field as unrecorded" do
+      expect(described_class.new(**strings.except(:cwd)).cwd).to eq("unrecorded")
+    end
+
+    it "interns a value as its frozen string" do
+      expect(described_class.new(**strings, effort: :high).effort).to eq("high").and be_frozen
+    end
+
+    it "refuses a keyword that is not a member, naming it" do
+      expect { described_class.new(**strings, colour: "x") }.to raise_error(ArgumentError, /colour/)
+    end
+
+    it "is shareable with nil weights" do
+      expect(Ractor.shareable?(described_class.new(**strings))).to be(true)
+    end
+  end
+
   describe "#to_header" do
     it "nests every field under one provenance key" do
       expect(current.to_header).to eq("provenance" => { "harness" => current.harness,
