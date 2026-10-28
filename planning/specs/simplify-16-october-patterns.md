@@ -1,6 +1,6 @@
 # Simplify 16: the 10 October patterns, in 3 waves
 
-status: draft
+status: in-progress
 commit-mode: orchestrator-commits
 language: ruby (T46 is rust)
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson); T46 adds Andrew Gallant
@@ -168,7 +168,7 @@ Cards with no edge start at once. The waves are ordering, not gates: a wave-2 ca
 The record recipe every card in T14 to T20 follows, from the exemplar `lib/lain/telemetry/memory_root.rb`:
 
 1. Before touching the record, add 1 golden-line example to its mirror spec: build the record with every field set to a representative non-default value, and `expect(JSON.generate(record.to_journal)).to eq(<the literal the current code prints>)`. Run it green on the unchanged code and keep it. Add a second golden line for each `to_journal` override case (a field omitted, a nested term), and a third with every optional field nil, which is the shape the stored corpus holds most often.
-2. Declare a `Carriers::<Record> < Declarative::Carrier` naming every keyword `initialize` accepts, with its default. A field the old code interned (`-x.to_s`) is `attribute :x, :lain_interned` (T11; never `:string`, whose cast writes "f" for false and nil for nil where `-x.to_s` wrote "false" and ""); one it only froze is `attribute :x` untyped (`Copy` deep-copies Arrays and Hashes); a `fixed_point` field is `attribute :x, :lain_fixed_point` (T12). Move each `check!` validation onto the same carrier. Delete the hand `Carrier` that `check!` used, if one existed.
+2. Declare a `Carriers::<Record> < Declarative::Carrier` naming every keyword `initialize` accepts, with its default. A field the old code interned (`-x.to_s`) is `attribute :x, :lain_interned` (T11; never `:string`, whose cast writes "f" for false and nil for nil where `-x.to_s` wrote "false" and ""); an optional interned field declares `default: nil` (an omitted attribute with no default is never cast, so it stays nil where the hand code wrote ""); one it only froze is `attribute :x` untyped (`Copy` deep-copies Arrays and Hashes); a `fixed_point` field is `attribute :x, :lain_fixed_point` (T12). Move each `check!` validation onto the same carrier. Delete the hand `Carrier` that `check!` used, if one existed.
 3. `def initialize(**attrs) = super(**Carriers::<Record>.settle!(**attrs))`. Keep an explicit keyword list only where a required keyword has no validation to catch its absence (the `MemoryRoot` reason).
 4. A `to_journal` that dropped fields equal to their defaults becomes `def to_journal = omitting_defaults(super, :a, :b)` (T13). A `to_journal` that nests another record stays as written.
 5. Drop the `Data.define` then `class X` reopen when the block can hold the body; keep it when the class holds a constant (a constant inside a `Data.define` block scopes to the enclosing module, `CLAUDE.md` Known traps).
@@ -721,6 +721,7 @@ Scenario: a decision outside the set is refused
 Spec file: the 4 mirror specs
 
 **Stop and report if:**
+- A caller rescues `ArgumentError` from `Telemetry.fixed_point`: the declared type raises `Declarative::Types::CoercionError` (a `Lain::Error`), so that rescue no longer catches it; list each such site. A non-finite figure (`NaN`, `Infinity`) casts to its name, as `Telemetry.fixed_point` does today; report whether any emitter can produce one rather than refusing it here.
 - `BudgetOvershoot.check!` (`budget_overshoot.rb`) carries control flow that `Ceilings#check_dollars!` (`budget/ceilings.rb:22`) already owns; report the overlap, do not move it here.
 
 ### T17: Settle the carrier-checked telemetry records, first 12          [risk: low]
@@ -1702,4 +1703,71 @@ After the last card lands, in this order:
 
 ## Execution log
 
-(Written by /execute-plan.)
+Run 1, started 2026-10-27 21:45. Base `main` at `ccf8f0f7` (the plan commit; code unchanged since the grounding SHA `88bec85b`, so the Grounding holds).
+
+`git worktree list` at start: the main checkout plus 82 worktrees left from earlier plans under `tmp/worktrees/` (`card/T4` to `card/T89`, `BD`, `EXT`, `FLK`, `HARNESS`, `TIM`, several with uncommitted files). Their names collide with this plan's card ids, so this run names its worktrees and branches `s16-T<id>` and leaves the old ones alone. Branches besides those: `flake/review`, `spike/combined`, `spike/combined2`.
+
+Commit checks (`.pre-commit-config.yaml`), as an agent can run them on its own paths:
+- whitespace, end-of-file, merge-conflict, yaml, shebang hooks: any staged file
+- `bundle exec rubocop <paths>` (the hook runs it whole-repo, cached) and the full suite (`rake compile check`, parallel rspec): any Ruby or Rust file
+- `bundle exec yard-lint <paths>`: staged Ruby files
+- `cargo fmt -- --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`: any Rust file
+- `bin/lint-gherkin-docs <plan>`: staged plan docs; `bin/lint-commit-msg`: subject 72 chars max, no period, no dashes, no trailers
+- A Ruby commit takes about 2 to 3 minutes (the suite is about 74s at 12 workers plus rubocop and compile). The suite cannot run beside other tests: `rake pspec` takes the suite lock, and every landing needs a quiet box.
+- Paths that need user approval: none configured in the repo.
+
+- T1 started (worktree `tmp/worktrees/s16-T1`, cut at `ccf8f0f7`)
+- T11 started (worktree `tmp/worktrees/s16-T11`, cut at `ccf8f0f7`)
+- T21 started (worktree `tmp/worktrees/s16-T21`, cut at `ccf8f0f7`)
+- T5 started (worktree `tmp/worktrees/s16-T5`, cut at `ccf8f0f7`)
+- T6 started (worktree `tmp/worktrees/s16-T6`, cut at `ccf8f0f7`)
+- T7 started (worktree `tmp/worktrees/s16-T7`, cut at `ccf8f0f7`)
+- T9 started (worktree `tmp/worktrees/s16-T9`, cut at `ccf8f0f7`)
+- T22 started (worktree `tmp/worktrees/s16-T22`, cut at `ccf8f0f7`)
+- T30 started (worktree `tmp/worktrees/s16-T30`, cut at `ccf8f0f7`)
+- T46 started (worktree `tmp/worktrees/s16-T46`, cut at `ccf8f0f7`)
+- T9 plan-gap: Files widened to `cli/wiring.rb`, `bench/cli/run_recorder.rb` and every spec passing section keywords; no legacy keywords kept
+- T10 started (worktree `tmp/worktrees/s16-T10`, cut at `ccf8f0f7`)
+- T35 started (worktree `tmp/worktrees/s16-T35`, cut at `ccf8f0f7`)
+- T37 started (worktree `tmp/worktrees/s16-T37`, cut at `ccf8f0f7`)
+- T38 started (worktree `tmp/worktrees/s16-T38`, cut at `ccf8f0f7`)
+- T35 closed without change by its stop condition: on `Approval::Judged#handed_down` (`judged.rb:443-449`) caller extras precede `input_digest` today, and a member would move it ahead of them; the `extra` route stays
+- T11 landed `14847044` (first hook run red: 4 load-induced flakes with a reviewer running beside it; green alone, green on base and card pspec)
+- T7 landed `c3c92019`
+- T6 landed `40ea002d`
+- T21 landed `34e13db2`
+- T1 landed `4bcfd2e9`
+- T5 landed `4025b51b`
+- T30 landed `05b1cdab`
+- T37 landed `0b203781`
+- T38 landed `78cf3d5d`
+- T22 landed `2837bfa2`
+- T10 landed `4f884ff0`
+- T46 landed `d50dca12`
+- T2 started (worktree `tmp/worktrees/s16-T2`, cut at `d50dca12`)
+- T12 started (worktree `tmp/worktrees/s16-T12`, cut at `d50dca12`)
+- T8 started (worktree `tmp/worktrees/s16-T8`, cut at `d50dca12`)
+- T14 started (worktree `tmp/worktrees/s16-T14`, cut at `d50dca12`)
+- T17 started (worktree `tmp/worktrees/s16-T17`, cut at `d50dca12`)
+- T19 started (worktree `tmp/worktrees/s16-T19`, cut at `d50dca12`)
+- T23 started (worktree `tmp/worktrees/s16-T23`, cut at `d50dca12`)
+- T32 started (worktree `tmp/worktrees/s16-T32`, cut at `d50dca12`)
+- T36 started (worktree `tmp/worktrees/s16-T36`, cut at `d50dca12`)
+- T39 started (worktree `tmp/worktrees/s16-T39`, cut at `d50dca12`)
+- T43 started (worktree `tmp/worktrees/s16-T43`, cut at `d50dca12`)
+- T44 started (worktree `tmp/worktrees/s16-T44`, cut at `d50dca12`)
+- T32 closed without change by its stop condition: `source.rb:734` reports a withheld early handoff whenever the fallback is armed and the window is not authoritative, and `early?` also needs usage past the early share and a clean break, so `early_armed?` (configured) and `early?` (due now) stay distinct
+- T14 note: 13 of 18 records converted; `child_turn`, `files_written`, `observer_failed`, `questions_consumed` and `round_bounded` skipped by the card's stop condition (each converts its input: to_sym, Canonical.normalize, Integer(), per-element to_s)
+- T23 plan-gap: Files widened to `bench/fault_corpus.rb` (a rescue naming a removed class) and the `@raise` docs in `bench/cli.rb`
+- T12 landed `54adb159`
+- T8 landed `7562413c`
+- T9 landed `c3f57392`
+- T14 landed `bda49f05`
+- T17 landed `0a3d0f7d`
+- T19 landed `99430f8e`
+- T2 landed `a410ac37`
+- T36 landed `65d345f7`
+- T39 landed `538e0e54`
+- T43 landed `5e002904`
+- T44 landed `5bba92ec`
+- T23 landed `b9e0a02d`
