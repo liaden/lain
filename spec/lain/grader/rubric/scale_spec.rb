@@ -7,6 +7,10 @@ RSpec.describe Lain::Grader::Rubric::Scale do
     expect(described_class::NAMES).to eq(%i[unit binary three deduction])
   end
 
+  it "lists exactly the scales fetch answers, frozen" do
+    expect(described_class::NAMES).to be_frozen.and(all(satisfy { described_class.fetch(_1) }))
+  end
+
   it "refuses an unknown scale by name" do
     expect { described_class.fetch(:likert) }.to raise_error(ArgumentError, /likert.*unit, binary, three, deduction/)
   end

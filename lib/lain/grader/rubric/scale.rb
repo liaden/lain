@@ -8,8 +8,6 @@ module Lain
       # The shapes are compared on labelled findings by {Bench::JudgeScale}; {Unit} is the one every
       # recorded verdict was made under, so its prompt and threshold must not move.
       class Scale
-        NAMES = %i[unit binary three deduction].freeze
-
         VERDICT_REPLY = <<~PROMPT
           You are a strict grader. Decide whether the answer below satisfies the criteria.
           Reply with ONE JSON object and nothing else:
@@ -44,9 +42,8 @@ module Lain
         # @return [Boolean] whether the score is a probability, and so may be scored by Brier
         def probability? = false
 
-        private
-
         def unparseable!(message) = raise(Unparseable, message)
+        private :unparseable!
 
         # The scale today's judge answers on: a number between 0 and 1.
         class Unit < Scale
@@ -121,6 +118,8 @@ module Lain
 
         INSTANCES = { unit: Unit.new, binary: Binary.new, three: Three.new, deduction: Deduction.new }.freeze
         private_constant :INSTANCES
+
+        NAMES = INSTANCES.keys.freeze
       end
     end
   end
