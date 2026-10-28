@@ -288,6 +288,21 @@ RSpec.describe Lain::CLI::EpicLand, :seam do
       expect(progress.status("a")).to eq("in_flight")
     end
 
+    it "says a parked implementation gate waits for sign-off rather than denying" do
+      sha = worker("a", "README" => "a's work\n")
+      parked = Lain::Epic::GateDecision.new(
+        artifact_digest: Lain::Epic::Submission.implementation(slug: "demo", issue_id: "a", digest: sha).digest,
+        epic_slug: "demo", stage: "implementation", approved: false, answered_by: "none", policy: "deferred",
+        latency: 0.0, issue_id: "a"
+      )
+      session(plan_approval("a"), parked)
+
+      expect { command.land("a", "demo") }.to raise_error(Lain::Epic::Gate::NotApproved) { |error|
+        expect(error.message).to include("waits for sign-off", "lain epic queue")
+        expect(error.message).not_to include("no worker commit is anchored")
+      }
+    end
+
     it "offers no sha of a denied first attempt when the re-run anchored only its failing-test commit" do
       old = worker("a", "README" => "attempt 1\n")
       denial = decision("implementation", "a",

@@ -101,14 +101,16 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
     sha
   end
 
-  def approve(issue_id, sha, approved: true)
+  def approve(issue_id, sha, approved: true, policy: "hands_off")
     digest = Lain::Epic::Submission.implementation(slug: "demo", issue_id:, digest: sha).digest
     decisions << Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: "demo", stage: "implementation",
-                                              approved:, answered_by: "human", policy: "hands_off",
+                                              approved:, answered_by: "human", policy:,
                                               latency: 0.0, issue_id:)
   end
 
-  def deny(issue_id, sha) = approve(issue_id, sha, approved: false)
+  def deny(issue_id, sha) = approve(issue_id, sha, approved: false, policy: "signoff")
+
+  def park(issue_id, sha) = approve(issue_id, sha, approved: false, policy: "deferred")
 
   def anchor(id, attempt, sha)
     git("update-ref", Lain::Isolation::Worktree::Handback::Naming.new("issue.demo.#{id}.#{attempt}").ref, sha)
@@ -386,6 +388,42 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
       landing.admit("a", sha:, ref:)
 
       expect(calls.count { |argv| argv.include?("--format=%s") }).to eq(1)
+    end
+
+    context "when the implementation gate parked the commit for sign-off" do
+      it "says the commit waits and names lain epic queue, not an unanchored worker" do
+        sha, = worker("a", "README" => "a's work\n")
+        park("a", sha)
+
+        expect { landing.anchored("a") }.to raise_error(Lain::Epic::Gate::NotApproved) { |error|
+          expect(error.message).to include("waits for sign-off", sha, "lain epic queue")
+          expect(error.message).not_to include("no worker commit is anchored", "re-run the issue")
+        }
+      end
+
+      it "says the same when the commit is named directly" do
+        sha, ref = worker("a", "README" => "a's work\n")
+        park("a", sha)
+
+        expect { landing.admit("a", sha:, ref:) }.to raise_error(Lain::Epic::Gate::NotApproved, /waits for sign-off/)
+      end
+
+      it "lands once a later sign-off approves it" do
+        sha, ref = worker("a", "README" => "a's work\n")
+        park("a", sha)
+        approve("a", sha, policy: "signoff")
+
+        landing.call("a", sha:, ref:)
+
+        expect(contains?(sha)).to be(true)
+      end
+
+      it "still reports a human denial as a denial" do
+        sha, = worker("a", "README" => "a's work\n")
+        deny("a", sha)
+
+        expect { landing.anchored("a") }.to raise_error(Lain::Epic::Gate::NotApproved, /no worker commit is anchored/)
+      end
     end
 
     it "refuses an anchored commit no gate approved, naming lain epic submit implementation with its sha" do

@@ -160,13 +160,14 @@ module Lain
       # A gate that approved the red step's commit approved no implementation.
       def approved?(issue_id, sha) = gate_approved?(issue_id, sha) && !@red.only?(sha)
 
-      def gate_approved?(issue_id, sha)
-        @approvals.approved?(Epic::Submission.implementation(slug: @epic_slug, issue_id:, digest: sha).digest, issue_id)
-      end
+      def gate_approved?(issue_id, sha) = @approvals.approved?(address(issue_id, sha), issue_id)
+
+      def address(issue_id, sha) = Epic::Submission.implementation(slug: @epic_slug, issue_id:, digest: sha).digest
 
       def approved!(issue_id, sha)
         raise Epic::Gate::NotApproved, "#{sha} #{failing_tests(issue_id)}" if @red.only?(sha)
         return if gate_approved?(issue_id, sha)
+        raise Epic::Gate::NotApproved, waiting(issue_id, [sha]) if @approvals.parked?(address(issue_id, sha), issue_id)
 
         raise Epic::Gate::NotApproved, "issue #{issue_id}'s implementation gate has not approved #{sha}, so " \
                                        "nothing landed -- #{approve(issue_id, sha)}"
@@ -230,7 +231,11 @@ module Lain
       end
 
       def missing_approval(issue_id, candidates)
-        shas = offerable(issue_id, candidates)
+        current = current_shas(issue_id, candidates)
+        parked = current.select { |sha| parked?(issue_id, sha) }
+        return waiting(issue_id, parked) unless parked.empty?
+
+        shas = current.reject { |sha| denied?(issue_id, sha) }
         return unanchored(issue_id) if shas.empty?
 
         implementations = shas.reject { |sha| @red.only?(sha) }
@@ -238,8 +243,8 @@ module Lain
       end
 
       # Only the newest attempt's commits, and none a gate denied: an older
-      # attempt was superseded by the re-run, and a denial is not an invitation.
-      def offerable(issue_id, candidates)
+      # attempt was superseded by the re-run.
+      def current_shas(issue_id, candidates)
         stem = anchor_stem(issue_id)
         pattern = attempt_pattern(stem)
         anchors = candidates.filter_map do |sha, ref|
@@ -248,11 +253,17 @@ module Lain
         end
         newest = anchors.filter_map(&:last).max
         current = anchors.select { |_, attempt| newest.nil? || attempt == newest }
-        current.map(&:first).uniq.reject { |sha| denied?(issue_id, sha) }
+        current.map(&:first).uniq
       end
 
-      def denied?(issue_id, sha)
-        @approvals.denied?(Epic::Submission.implementation(slug: @epic_slug, issue_id:, digest: sha).digest, issue_id)
+      # A denial is not an invitation to approve the same commit again.
+      def denied?(issue_id, sha) = @approvals.denied?(address(issue_id, sha), issue_id)
+
+      def parked?(issue_id, sha) = @approvals.parked?(address(issue_id, sha), issue_id)
+
+      def waiting(issue_id, shas)
+        "issue #{issue_id}'s implementation gate parked #{shas.join(", ")}: the commit waits for sign-off, so " \
+          "nothing landed -- answer it from `lain epic queue #{@epic_slug}`"
       end
 
       def failing_tests(issue_id) = "holds only issue #{issue_id}'s failing tests; re-run the issue -- nothing landed"
@@ -355,13 +366,20 @@ module Lain
           new(Journal.records(entries, type: Epic::SignoffQueue::JOURNAL_TYPE)
                      .map { |decision| readable!(decision) }
                      .select { |decision| implementation?(decision) }
-                     .to_h { |decision| [[decision["issue_id"], decision["artifact_digest"]], decision["approved"]] })
+                     .to_h { |decision| [[decision["issue_id"], decision["artifact_digest"]], verdict(decision)] })
         end
 
         def self.implementation?(decision)
           decision["stage"] == "implementation" && !decision["issue_id"].to_s.empty?
         end
         private_class_method :implementation?
+
+        def self.verdict(decision)
+          return :approved if decision["approved"]
+
+          decision["policy"].to_s == Epic::SignoffQueue::DEFERRED_POLICY ? :parked : :denied
+        end
+        private_class_method :verdict
 
         def self.readable!(decision)
           return decision if [true, false].include?(decision["approved"])
@@ -374,16 +392,23 @@ module Lain
         end
         private_class_method :readable!
 
-        # @param verdicts [Hash{Array, String, String => Boolean}] the newest
+        # @param verdicts [Hash{Array, String, String => Symbol}] the newest
         #   verdict per issue and digest, the rule {Epic::SignoffQueue#approved?} reads by
         def initialize(verdicts)
           @verdicts = verdicts.freeze
           freeze
         end
 
-        def approved?(digest, issue_id) = @verdicts[[issue_id.to_s, digest.to_s]] == true
+        def approved?(digest, issue_id) = verdict(digest, issue_id) == :approved
 
-        def denied?(digest, issue_id) = @verdicts[[issue_id.to_s, digest.to_s]] == false
+        def denied?(digest, issue_id) = verdict(digest, issue_id) == :denied
+
+        # Not approved, and not refused either: {Epic::SignoffQueue} holds it for a human.
+        def parked?(digest, issue_id) = verdict(digest, issue_id) == :parked
+
+        private
+
+        def verdict(digest, issue_id) = @verdicts[[issue_id.to_s, digest.to_s]]
       end
 
       # A re-sync's commit, handed to the queue only when it would itself be
