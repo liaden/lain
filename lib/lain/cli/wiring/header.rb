@@ -13,13 +13,15 @@ module Lain
         # renders the prompt slots again.
         #
         # @param toolset [Toolset] the finished toolset the header pins
+        # @param arms [Arms] the run's arms, which the backend does not hold
         # @return [Hash{Symbol=>Object}] keywords for {Chronicle#start}
-        def fields(backend, toolset)
+        def fields(backend, toolset, arms)
           context = backend.context
-          { context:, profile: backend.run_profile, compaction: backend.compaction_header,
-            middleware: backend.middleware,
-            provenance: SessionRecord::Provenance.launched(project:, toolset:, effort: context.effort, paths:,
-                                                           weights: backend.provider.model_identity(backend.model)) }
+          provenance = SessionRecord::Provenance.launched(project:, toolset:, effort: context.effort, paths:,
+                                                          weights: backend.provider.model_identity(backend.model))
+          { context:, sections: SessionRecord::Sections.of(profile: backend.run_profile, arms:, provenance:,
+                                                           compaction: backend.compaction_header,
+                                                           middleware: backend.middleware) }
         end
       end
     end

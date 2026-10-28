@@ -79,7 +79,8 @@ RSpec.describe Lain::Bench::Variance do
     agent, = record_journaled_run(responses, journal:, toolset:,
                                              context:, workspace:)
     compaction = compact_strategy.nil? ? {} : { "compact_strategy" => compact_strategy, "compact_schedule" => "turn" }
-    Lain::SessionRecord::Scribe.new(journal:, context:, toolset:, workspace:, compaction:, writer: CoreGraph::NO_WRITER)
+    Lain::SessionRecord::Scribe.new(journal:, context:, toolset:, workspace:,
+                                    sections: Lain::SessionRecord::Sections.new(compaction:), writer: CoreGraph::NO_WRITER)
                                .catch_up(agent.timeline).close(reason: :exit)
   end
 

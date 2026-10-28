@@ -7,7 +7,9 @@ RSpec.describe Lain::CLI::RunProfile do
     header = Lain::SessionRecord.header(context: Lain::Context.new(model: fields.fetch(:model, "qwen3:4b"),
                                                                    max_tokens: 16, effort: fields[:effort]),
                                         toolset: Lain::Toolset.new,
-                                        profile: typed(**fields.except(:model)).to_header,
+                                        sections: Lain::SessionRecord::Sections.new(
+                                          profile: typed(**fields.except(:model)).to_header
+                                        ),
                                         writer: CoreGraph::NO_WRITER)
     described_class.from_header(JSON.parse(JSON.generate(header)))
   end

@@ -34,8 +34,8 @@ RSpec.describe Lain::Bench::Session do
   let(:provider) { run.last }
 
   def write_session(into: journal, under: context, compaction: {})
-    Lain::SessionRecord::Scribe.new(journal: into, context: under, toolset:, workspace:, compaction:,
-                                    writer: CoreGraph::NO_WRITER)
+    Lain::SessionRecord::Scribe.new(journal: into, context: under, toolset:, workspace:,
+                                    sections: Lain::SessionRecord::Sections.new(compaction:), writer: CoreGraph::NO_WRITER)
                                .catch_up(agent.timeline).close(reason: :exit)
   end
 
@@ -418,7 +418,7 @@ RSpec.describe Lain::Bench::Session do
                                                          effort: "high", policy: "blake3:p", cwd: "/w/sub",
                                                          root: "/w", home: "/h", weights:)
         Lain::SessionRecord::Scribe.new(journal:, context:, toolset:, workspace:, writer: CoreGraph::NO_WRITER,
-                                        provenance: provenance.to_header)
+                                        sections: Lain::SessionRecord::Sections.new(provenance: provenance.to_header))
                                    .catch_up(agent.timeline).close(reason: :exit)
         load_session.comparability
       end

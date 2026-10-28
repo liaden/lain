@@ -34,8 +34,9 @@ RSpec.describe Lain::Bench::Session::Loader do
   end
 
   def write_session(timeline, toolset:, compaction: {})
-    Lain::SessionRecord::Scribe.new(journal:, context:, toolset:, workspace:, compaction:,
-                                    writer: CoreGraph::NO_WRITER).catch_up(timeline).close(reason: :exit)
+    Lain::SessionRecord::Scribe.new(journal:, context:, toolset:, workspace:,
+                                    sections: Lain::SessionRecord::Sections.new(compaction:), writer: CoreGraph::NO_WRITER)
+                               .catch_up(timeline).close(reason: :exit)
   end
 
   def recording = described_class.new(entries).recording
@@ -446,7 +447,8 @@ RSpec.describe Lain::Bench::Session::Loader do
         resumed.journals_into(resumed_journal)
         scribe = Lain::SessionRecord::Scribe.new(
           journal: resumed_journal, context:, toolset:, workspace:, writer: CoreGraph::NO_WRITER,
-          compaction: compacting_backend.compaction_header, written: agent.timeline.to_a.map(&:digest),
+          sections: Lain::SessionRecord::Sections.new(compaction: compacting_backend.compaction_header),
+          written: agent.timeline.to_a.map(&:digest),
           resumed_from: { "file" => "a.ndjson", "head" => agent.timeline.head_digest }
         )
         later, = record_compacted_run(journal: resumed_journal, session: resumed, toolset:, context:, workspace:,
@@ -518,7 +520,7 @@ RSpec.describe Lain::Bench::Session::Loader do
 
     def provenanced_entries
       Lain::SessionRecord::Scribe.new(journal:, context:, toolset:, workspace:, writer:,
-                                      provenance: provenance.to_header)
+                                      sections: Lain::SessionRecord::Sections.new(provenance: provenance.to_header))
                                  .catch_up(agent.timeline).close(reason: :exit)
       journal_io.string.each_line
     end

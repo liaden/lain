@@ -39,6 +39,8 @@ class FlakySessionJournal
 end
 
 RSpec.describe Lain::SessionRecord::Scribe do
+  def sections(**given) = Lain::SessionRecord::Sections.new(**given)
+
   subject(:scribe) { described_class.new(journal:, context:, toolset:, workspace:) }
 
   let(:context) { CoreGraph.context(system: "be terse") }
@@ -95,7 +97,8 @@ RSpec.describe Lain::SessionRecord::Scribe do
 
   # An added key does not bump the format: the middleware section is one.
   it "keeps format 2 when the header carries the middleware section" do
-    described_class.new(journal:, context:, toolset:, workspace:, middleware: { "project" => "d1" })
+    described_class.new(journal:, context:, toolset:, workspace:,
+                        sections: sections(middleware: { "project" => "d1" }))
 
     expect(of_type("session").first).to include("format" => 2, "middleware" => { "project" => "d1" })
   end
@@ -110,7 +113,8 @@ RSpec.describe Lain::SessionRecord::Scribe do
 
   it "writes the recorded profile's fields into that header, and none it was not handed" do
     described_class.new(journal:, context:, toolset:, workspace:,
-                        profile: { "provider" => "ollama", "api_base" => "http://127.0.0.1:11434" })
+                        sections: sections(profile: { "provider" => "ollama",
+                                                      "api_base" => "http://127.0.0.1:11434" }))
 
     expect(of_type("session").first).to include("provider" => "ollama", "api_base" => "http://127.0.0.1:11434")
     expect(of_type("session").first).not_to have_key("num_ctx")
@@ -121,20 +125,22 @@ RSpec.describe Lain::SessionRecord::Scribe do
   # backend to the profile, while nothing resolves a fallback from a recording.
   it "writes the run's compaction section into that header" do
     described_class.new(journal:, context:, toolset:, workspace:,
-                        compaction: { "compact_fallback" => "none", "compact_schedule" => "turn" })
+                        sections: sections(compaction: { "compact_fallback" => "none",
+                                                         "compact_schedule" => "turn" }))
 
     expect(of_type("session").first).to include("compact_fallback" => "none")
   end
 
   it "writes the arms that are on under one arms key" do
-    described_class.new(journal:, context:, toolset:, workspace:, arms: { "confine" => "reader" })
+    described_class.new(journal:, context:, toolset:, workspace:,
+                        sections: sections(arms: { "confine" => "reader" }))
 
     expect(of_type("session").first).to include("arms" => { "confine" => "reader" })
   end
 
   it "names round_budget and round_dedup in the header of a default launch" do
     arms = Lain::CLI::Arms.from({}).to_header
-    described_class.new(journal:, context:, toolset:, workspace:, arms:)
+    described_class.new(journal:, context:, toolset:, workspace:, sections: sections(arms:))
 
     expect(of_type("session").first.fetch("arms")).to include("round_budget" => "window", "round_dedup" => "on")
   end
@@ -146,25 +152,28 @@ RSpec.describe Lain::SessionRecord::Scribe do
   end
 
   it "writes whose trust admitted the configured middleware under one middleware key" do
-    described_class.new(journal:, context:, toolset:, workspace:, middleware: { "project" => "d1" })
+    described_class.new(journal:, context:, toolset:, workspace:,
+                        sections: sections(middleware: { "project" => "d1" }))
 
     expect(of_type("session").first).to include("middleware" => { "project" => "d1" })
   end
 
   it "writes no middleware key when none is registered" do
-    expect(Lain::SessionRecord.header(context:, toolset:, workspace:, middleware: {},
+    expect(Lain::SessionRecord.header(context:, toolset:, workspace:,
+                                      sections: Lain::SessionRecord::Sections.none,
                                       writer: CoreGraph::NO_WRITER)).not_to have_key("middleware")
   end
 
   it "writes the provenance block it was handed under one provenance key, at format 2" do
     block = { "provenance" => { "harness" => "unrecorded", "tool_surface" => toolset.digest } }
-    described_class.new(journal:, context:, toolset:, workspace:, provenance: block)
+    described_class.new(journal:, context:, toolset:, workspace:, sections: sections(provenance: block))
 
     expect(of_type("session").first).to include("format" => 2, **block)
   end
 
   it "writes no provenance key when it was handed none" do
-    expect(Lain::SessionRecord.header(context:, toolset:, workspace:, provenance: {},
+    expect(Lain::SessionRecord.header(context:, toolset:, workspace:,
+                                      sections: Lain::SessionRecord::Sections.none,
                                       writer: CoreGraph::NO_WRITER)).not_to have_key("provenance")
   end
 
@@ -204,21 +213,24 @@ RSpec.describe Lain::SessionRecord::Scribe do
   # same word for the same arm regardless of which scribe wrote the header.
   it "writes a named compact_strategy into that same section" do
     described_class.new(journal:, context:, toolset:, workspace:,
-                        compaction: { "compact_fallback" => "handoff", "compact_strategy" => "elide",
-                                      "compact_schedule" => "turn" })
+                        sections: sections(compaction: { "compact_fallback" => "handoff",
+                                                         "compact_strategy" => "elide",
+                                                         "compact_schedule" => "turn" }))
 
     expect(of_type("session").first).to include("compact_fallback" => "handoff", "compact_strategy" => "elide")
   end
 
   it "writes a compact_schedule into that same section" do
-    described_class.new(journal:, context:, toolset:, workspace:, compaction: { "compact_schedule" => "idle" })
+    described_class.new(journal:, context:, toolset:, workspace:,
+                        sections: sections(compaction: { "compact_schedule" => "idle" }))
 
     expect(of_type("session").first).to include("compact_schedule" => "idle")
   end
 
   it "writes no compact_strategy key when the run recorded no strategy" do
     described_class.new(journal:, context:, toolset:, workspace:,
-                        compaction: { "compact_fallback" => "handoff", "compact_schedule" => "turn" })
+                        sections: sections(compaction: { "compact_fallback" => "handoff",
+                                                         "compact_schedule" => "turn" }))
 
     expect(of_type("session").first).not_to have_key("compact_strategy")
   end
@@ -1082,6 +1094,8 @@ end
 # `resumed_from`'s idiom again: a chat launched without the flag must keep
 # writing the header every session on disk already has.
 RSpec.describe Lain::SessionRecord, ".header" do
+  def sections(**given) = Lain::SessionRecord::Sections.new(**given)
+
   let(:toolset) { CoreGraph.toolset }
 
   def header(context) = described_class.header(context:, toolset:, writer: CoreGraph::NO_WRITER)
@@ -1090,6 +1104,19 @@ RSpec.describe Lain::SessionRecord, ".header" do
     named = Lain::CLI::ContextPipeline.named("prune+cache-breakpoints").context(model: "m", max_tokens: 8)
 
     expect(header(named)).to include("context_pipeline" => "prune+cache-breakpoints")
+  end
+
+  it "lays the sections after the context's own keys in a fixed order" do
+    context = Lain::CLI::ContextPipeline.named("prune+cache-breakpoints").context(model: "m", max_tokens: 8,
+                                                                                  effort: "low")
+    sections = sections(profile: { "provider" => "ollama" }, compaction: { "compact_schedule" => "idle" },
+                        arms: { "confine" => "reader" }, middleware: { "project" => "d1" },
+                        provenance: { "provenance" => { "harness" => "h" } })
+    record = described_class.header(context:, toolset:, sections:, resumed_from: { "file" => "a" },
+                                    writer: Lain::Liveness::Writer.current)
+
+    expect(record.keys.last(9)).to eq(%w[context_pipeline effort provider compact_schedule arms middleware provenance
+                                         writer resumed_from])
   end
 
   it "records the effort a context carries, and no key without one" do
@@ -1124,13 +1151,13 @@ RSpec.describe Lain::SessionRecord, ".header" do
   it "refuses a compaction section that names no schedule" do
     expect do
       described_class.header(context: Lain::Context.new(model: "m", max_tokens: 8), toolset:,
-                             compaction: { "compact_fallback" => "none" }, writer: CoreGraph::NO_WRITER)
+                             sections: sections(compaction: { "compact_fallback" => "none" }), writer: CoreGraph::NO_WRITER)
     end.to raise_error(ArgumentError, /compact_schedule/)
   end
 
   it "keeps the schedule the compaction section names" do
     expect(described_class.header(context: Lain::Context.new(model: "m", max_tokens: 8), toolset:,
-                                  compaction: { "compact_schedule" => "idle" }, writer: CoreGraph::NO_WRITER))
+                                  sections: sections(compaction: { "compact_schedule" => "idle" }), writer: CoreGraph::NO_WRITER))
       .to include("compact_schedule" => "idle")
   end
 

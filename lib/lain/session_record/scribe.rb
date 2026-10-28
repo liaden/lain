@@ -142,20 +142,12 @@ module Lain
       #   with turn records the views must not see, and because the chain has to
       #   move between the durable write and the live one: told first, a raising
       #   view would leave a record on disk this object had not followed.
-      # @param profile [Hash{String=>Object}] the run profile's header fields
-      #   (`CLI::RunProfile#to_header`); empty writes none
-      # @param compaction [Hash{String=>Object}] the run's compaction section
-      #   (`CLI::Backend#compaction_header`); empty writes the turn schedule alone
-      # @param arms [Hash{String=>String}] the bench arms that are on
-      #   (`CLI::Arms#to_header`); empty writes none
-      # @param middleware [Hash{String=>String}] whose trust digest admitted the
-      #   configured middleware (`Config::Middleware#to_header`); empty writes none
-      # @param provenance [Hash{String=>Hash}] what produced the run
-      #   ({Provenance#to_header}); empty writes none
+      # @param sections [Sections] the run's profile, compaction, arms, middleware and
+      #   provenance header fields; an empty section writes none
       # @param writer [Liveness::Writer] the process writing this session
       def initialize(journal:, context:, toolset:, workspace: Workspace.empty, resumed_from: nil, written: [],
-                     message_journal: nil, live: Channel::Null.instance, profile: {}, compaction: {},
-                     arms: {}, middleware: {}, provenance: {}, writer: Liveness::Writer.current)
+                     message_journal: nil, live: Channel::Null.instance, sections: Sections.none,
+                     writer: Liveness::Writer.current)
         @journal = journal
         @message_journal = message_journal || journal
         @live = live
@@ -164,8 +156,7 @@ module Lain
         # is the only question asked of it -- unlike {WrittenChain}, where the
         # ORDER is the claim.
         @spawned = Set.new
-        @journal << SessionRecord.header(context:, toolset:, workspace:, resumed_from:, profile:,
-                                         compaction:, arms:, middleware:, provenance:, writer:)
+        @journal << SessionRecord.header(context:, toolset:, workspace:, resumed_from:, sections:, writer:)
       end
 
       # The {EventLog::ChainWriter} observer duck: journal an off-render-chain

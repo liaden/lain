@@ -20,23 +20,26 @@ RSpec.describe Lain::CLI::Wiring::Header do
     Lain::CLI::Backend.new({ provider: "ollama", model: nil, max_tokens: 64, effort: "low" }, root: @root)
   end
 
-  it "hands on the backend's profile, compaction section and middleware" do
-    expect(header.fields(backend, toolset))
-      .to include(profile: backend.run_profile, compaction: backend.compaction_header,
-                  middleware: backend.middleware)
+  let(:arms) { Lain::CLI::Arms.from({}) }
+
+  it "gathers the backend's profile, compaction section and middleware, and the arms, as the header sections" do
+    expect(header.fields(backend, toolset, arms).fetch(:sections))
+      .to have_attributes(profile: backend.run_profile.to_header, compaction: backend.compaction_header,
+                          middleware: backend.middleware.to_header, arms: arms.to_header)
   end
 
   it "builds the context once, and records its effort in the provenance" do
     allow(backend).to receive(:context).and_call_original
-    fields = header.fields(backend, toolset)
+    fields = header.fields(backend, toolset, arms)
 
-    expect([fields.fetch(:context).effort, fields.fetch(:provenance).effort]).to eq(%w[low low])
+    expect([fields.fetch(:context).effort, fields.fetch(:sections).provenance.dig("provenance", "effort")])
+      .to eq(%w[low low])
     expect(backend).to have_received(:context).once
   end
 
   it "records the run's provenance in the project, over the toolset" do
-    expect(header.fields(backend, toolset).fetch(:provenance))
-      .to have_attributes(root: @root, cwd: @root, home: "/home/tester", tool_surface: toolset.digest)
+    expect(header.fields(backend, toolset, arms).fetch(:sections).provenance.fetch("provenance"))
+      .to include("root" => @root, "cwd" => @root, "home" => "/home/tester", "tool_surface" => toolset.digest)
   end
 
   describe "the weights" do
@@ -46,15 +49,15 @@ RSpec.describe Lain::CLI::Wiring::Header do
       provider = Lain::Provider::Mock.new
       allow(provider).to receive(:model_identity).with(backend.model).and_return(identity)
       allow(backend).to receive(:provider).and_return(provider)
-      header.fields(backend, toolset).fetch(:provenance)
+      header.fields(backend, toolset, arms).fetch(:sections).provenance.fetch("provenance")
     end
 
     it "asks the backend's provider about the backend's model" do
-      expect(provenance_with(weights).weights).to eq(weights)
+      expect(provenance_with(weights).fetch("weights")).to eq(weights.to_h.transform_keys(&:to_s))
     end
 
     it "records none for a provider that states none" do
-      expect(provenance_with(nil).weights).to be_nil
+      expect(provenance_with(nil)).not_to have_key("weights")
     end
   end
 end

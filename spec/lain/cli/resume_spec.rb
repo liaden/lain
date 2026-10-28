@@ -67,7 +67,8 @@ RSpec.describe Lain::CLI::Resume do
   # written before `provider` existed genuinely has no "provider" key at all,
   # not a nil-valued one, and the fixture must be able to say that.
   def open_header(resumed_from: nil, provider: nil, compaction: {})
-    header = Lain::SessionRecord.header(context: recorded_context, toolset:, compaction:,
+    header = Lain::SessionRecord.header(context: recorded_context, toolset:,
+                                        sections: Lain::SessionRecord::Sections.new(compaction:),
                                         writer: CoreGraph::NO_WRITER)
     header = header.merge("resumed_from" => resumed_from) unless resumed_from.nil?
     header = header.merge("provider" => provider) unless provider.nil?

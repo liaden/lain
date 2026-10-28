@@ -287,7 +287,10 @@ RSpec.describe Lain::CLI::Command::Btw, "the side chat's backend" do
   end
   let(:session_path) do
     context = Lain::Context.new(model: "qwen3:4b", max_tokens: 64)
-    header = Lain::SessionRecord.header(context:, toolset: Lain::Toolset.new, profile: { "provider" => "ollama" },
+    header = Lain::SessionRecord.header(context:, toolset: Lain::Toolset.new,
+                                        sections: Lain::SessionRecord::Sections.new(
+                                          profile: { "provider" => "ollama" }
+                                        ),
                                         writer: CoreGraph::NO_WRITER)
     write_session_file(File.join(Lain::Paths.new.sessions_dir, "20260101T000000-1.ndjson"), header:, timeline:)
   end
@@ -336,7 +339,10 @@ RSpec.describe Lain::CLI::Command::Btw, "the side chat's backend" do
   describe "a parent launched with --max-tokens" do
     let(:session_path) do
       context = Lain::Context.new(model: "qwen3:4b", max_tokens: Lain::OutputCeiling.typed(4096))
-      header = Lain::SessionRecord.header(context:, toolset: Lain::Toolset.new, profile: { "provider" => "ollama" },
+      header = Lain::SessionRecord.header(context:, toolset: Lain::Toolset.new,
+                                          sections: Lain::SessionRecord::Sections.new(
+                                            profile: { "provider" => "ollama" }
+                                          ),
                                           writer: CoreGraph::NO_WRITER)
       write_session_file(File.join(Lain::Paths.new.sessions_dir, "20260101T000000-1.ndjson"), header:, timeline:)
     end

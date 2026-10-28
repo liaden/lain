@@ -116,7 +116,8 @@ module ApprovalReplayFixtures
     stamp = Lain::SessionRecord::Provenance.new(harness: "unrecorded", tool_surface: toolset.digest, effort: nil,
                                                 policy:, cwd: at.cwd, root: at.root, home: at.home)
     writer = Lain::Liveness::Writer.new(pid: 1, start: "0", host: "approval-replay-fixture")
-    Lain::SessionRecord.header(context:, toolset:, writer:, provenance: policy ? stamp.to_header : {})
+    Lain::SessionRecord.header(context:, toolset:, writer:,
+                               sections: Lain::SessionRecord::Sections.new(provenance: policy ? stamp.to_header : {}))
   end
 
   def toolset

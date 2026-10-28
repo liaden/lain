@@ -12,6 +12,8 @@ require "tmpdir"
 # and how the record closes. Chronicle::Null is the --no-journal duck, so the
 # exe carries no scribe nil-checks.
 RSpec.describe Lain::CLI::Chronicle do
+  def sections(**given) = Lain::SessionRecord::Sections.new(**given)
+
   subject(:chronicle) { described_class.new(journal:) }
 
   let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse") }
@@ -310,7 +312,7 @@ RSpec.describe Lain::CLI::Chronicle do
     it "pins the run profile it is handed into that header" do
       profile = Lain::CLI::RunProfile.from_options(provider: "ollama", num_batch: 2048)
 
-      chronicle.start(context:, toolset:, profile:)
+      chronicle.start(context:, toolset:, sections: sections(profile: profile.to_header))
 
       expect(of_type("session").first).to include("provider" => "ollama", "num_batch" => 2048)
     end
@@ -318,14 +320,13 @@ RSpec.describe Lain::CLI::Chronicle do
     it "pins the bench arms it is handed into that header" do
       arms = Lain::CLI::Arms.new(confine: :reader, judge_facts: :off, tripwire: :off, round_budget: :off,
                                  round_dedup: :off, judge_denials: :off)
-      chronicle.start(context:, toolset:, arms:)
+      chronicle.start(context:, toolset:, sections: sections(arms: arms.to_header))
 
       expect(of_type("session").first).to include("arms" => { "confine" => "reader", "round_dedup" => "off" })
     end
 
     it "pins whose trust admitted the configured middleware into that header" do
-      chronicle.start(context:, toolset:, middleware: instance_double(Lain::Config::Middleware,
-                                                                      to_header: { "project" => "d1" }))
+      chronicle.start(context:, toolset:, sections: sections(middleware: { "project" => "d1" }))
 
       expect(of_type("session").first).to include("middleware" => { "project" => "d1" })
     end
@@ -334,7 +335,7 @@ RSpec.describe Lain::CLI::Chronicle do
       provenance = Lain::SessionRecord::Provenance.new(harness: "unrecorded", tool_surface: toolset.digest,
                                                        effort: "unrecorded", policy: "p", cwd: "/w", root: "/w",
                                                        home: "/h")
-      chronicle.start(context:, toolset:, provenance:)
+      chronicle.start(context:, toolset:, sections: sections(provenance: provenance.to_header))
 
       expect(of_type("session").first).to include(provenance.to_header)
     end
@@ -351,10 +352,10 @@ RSpec.describe Lain::CLI::Chronicle do
       expect(of_type("session").first).not_to have_key("middleware")
     end
 
-    it "writes only the dedup arm, off, when none is handed" do
+    it "writes no arms key when none is handed" do
       chronicle.start(context:, toolset:)
 
-      expect(of_type("session").first).to include("arms" => { "round_dedup" => "off" })
+      expect(of_type("session").first).not_to have_key("arms")
     end
 
     # Loud, not lossy: an event arriving before the scribe exists must raise,

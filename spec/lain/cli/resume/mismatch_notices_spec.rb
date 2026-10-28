@@ -10,7 +10,8 @@ RSpec.describe Lain::CLI::Resume::MismatchNotices do
 
   def session_with(arms:)
     header = Lain::SessionRecord.header(context: Lain::Context.new(model: "qwen3:4b", max_tokens: 64),
-                                        toolset: Lain::Toolset.new, arms:, writer: CoreGraph::NO_WRITER)
+                                        toolset: Lain::Toolset.new, sections: Lain::SessionRecord::Sections.new(arms:),
+                                        writer: CoreGraph::NO_WRITER)
     File.join(@dir, "session.ndjson").tap { |path| File.write(path, "#{JSON.generate(header)}\n") }
   end
 
@@ -84,7 +85,8 @@ RSpec.describe Lain::CLI::Resume::MismatchNotices do
   describe "the compaction notice" do
     def session_compacting(compaction)
       header = Lain::SessionRecord.header(context: Lain::Context.new(model: "qwen3:4b", max_tokens: 64),
-                                          toolset: Lain::Toolset.new, compaction:, writer: CoreGraph::NO_WRITER)
+                                          toolset: Lain::Toolset.new, sections: Lain::SessionRecord::Sections.new(compaction:),
+                                          writer: CoreGraph::NO_WRITER)
       File.join(@dir, "session.ndjson").tap { |path| File.write(path, "#{JSON.generate(header)}\n") }
     end
 
@@ -163,7 +165,9 @@ RSpec.describe Lain::CLI::Resume::MismatchNotices do
     def session_with_effort(effort)
       context = Lain::Context.new(model: "claude-opus-4-8", max_tokens: 64, effort:)
       header = Lain::SessionRecord.header(context:, toolset: Lain::Toolset.new,
-                                          profile: { "provider" => "anthropic" }, writer: CoreGraph::NO_WRITER)
+                                          sections: Lain::SessionRecord::Sections.new(
+                                            profile: { "provider" => "anthropic" }
+                                          ), writer: CoreGraph::NO_WRITER)
       File.join(@dir, "session.ndjson").tap { |path| File.write(path, "#{JSON.generate(header)}\n") }
     end
 

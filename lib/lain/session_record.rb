@@ -45,15 +45,15 @@ module Lain
     # pre-resume format, so absence is no key, never a nil value. The context
     # pipeline's name follows the same rule, through {.context_pipeline}.
     #
-    # `profile:` is the run profile's fields beside `model` -- `provider`,
+    # `sections.profile` is the run profile's fields beside `model` -- `provider`,
     # `api_base`, `num_ctx`, `num_batch`. It is what a resumed or forked chat
     # defaults its backend to.
     #
-    # `compaction:` is the run's compaction section -- the arms of the
+    # `sections.compaction` is the run's compaction section -- the arms of the
     # experiment, `--compact-fallback` among them. It is kept apart from
-    # `profile:` because the two are read for different things: a resumed chat
+    # `sections.profile` because the two are read for different things: a resumed chat
     # DEFAULTS its backend to the profile, while nothing resolves a fallback
-    # from a recording. It merges on `profile:`'s own rule, so a run that
+    # from a recording. It merges on `sections.profile`'s own rule, so a run that
     # recorded none writes no key -- except `compact_schedule`, which is always
     # written so the Loader can require it: {UNCOMPACTED_SCHEDULE} for an empty
     # section, while a section without one is a writer that forgot it, and raises.
@@ -61,10 +61,10 @@ module Lain
     # must keep it off; a compacting run writes no such key, so its header stays
     # the one it always was.
     #
-    # `arms:` is the bench arms that are on, and round_dedup either way
+    # `sections.arms` is the bench arms that are on, and round_dedup either way
     # (`CLI::Arms#to_header`); an empty hash writes no key.
     #
-    # `middleware:` is whose trust digest admitted the configured middleware
+    # `sections.middleware` is whose trust digest admitted the configured middleware
     # (`Config::Middleware#to_header`), nested the same way and on the same
     # rule: a run with none registered keeps the older header.
     #
@@ -77,19 +77,28 @@ module Lain
     # per-model one; a bare number writes none. A later `/model` does not
     # rewrite it.
     #
-    # `provenance:` is {Provenance#to_header}: what produced the run, nested
+    # `sections.provenance` is {Provenance#to_header}: what produced the run, nested
     # under its own key; an empty hash writes none.
-    def header(context:, toolset:, writer:, workspace: Workspace.empty, resumed_from: nil, profile: {},
-               compaction: {}, arms: {}, middleware: {}, provenance: {})
-      record = { "type" => HEADER_TYPE, "format" => FORMAT, "context_class" => context.class.name,
-                 "model" => context.model, "max_tokens" => context.max_tokens, **context.output_ceiling.to_header,
-                 "system" => context.system, "stream" => context.stream, "extra" => context.extra,
-                 "tools" => toolset.to_schema, "reminders" => workspace.reminders }
-      record = record.merge(context_pipeline(context), effort(context), profile, scheduled(compaction),
-                            section("arms", arms), section("middleware", middleware), provenance,
-                            writer.to_header)
+    def header(context:, toolset:, writer:, workspace: Workspace.empty, resumed_from: nil,
+               sections: Sections.none)
+      record = fixed_fields(context, toolset, workspace)
+      record = record.merge(context_pipeline(context), effort(context), sections.profile,
+                            scheduled(sections.compaction), section("arms", sections.arms),
+                            section("middleware", sections.middleware), sections.provenance, writer.to_header)
       resumed_from.nil? ? record : record.merge("resumed_from" => resumed_from)
     end
+
+    # @param context [Context]
+    # @param toolset [Toolset]
+    # @param workspace [Workspace]
+    # @return [Hash{String=>Object}] the keys every header carries
+    def fixed_fields(context, toolset, workspace)
+      { "type" => HEADER_TYPE, "format" => FORMAT, "context_class" => context.class.name,
+        "model" => context.model, "max_tokens" => context.max_tokens, **context.output_ceiling.to_header,
+        "system" => context.system, "stream" => context.stream, "extra" => context.extra,
+        "tools" => toolset.to_schema, "reminders" => workspace.reminders }
+    end
+    private_class_method :fixed_fields
 
     # Whether a header records the format this code reads. The resume pick and
     # the Loader both ask this, so a file the pick answers with always loads.

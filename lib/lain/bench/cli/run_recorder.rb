@@ -158,8 +158,9 @@ module Lain
           toolset = @tools.call(recorder:, journal:)
           provenance = SessionRecord::Provenance.launched(project: @project, toolset:, effort: @context.effort,
                                                           weights: @provider.model_identity(@context.model))
-          scribe = SessionRecord::Scribe.new(journal:, context: @context, toolset:, profile: @profile,
-                                             provenance: provenance.to_header)
+          scribe = SessionRecord::Scribe.new(journal:, context: @context, toolset:,
+                                             sections: SessionRecord::Sections.new(profile: @profile,
+                                                                                   provenance: provenance.to_header))
           journal << @attribution
           Capability::Policy.for(:degrade, journal:).resolve(@context, @provider)
           agent = build_agent(journal, recorder, toolset)
