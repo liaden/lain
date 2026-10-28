@@ -8,8 +8,9 @@ module Lain
   # resolution matters -- `link/..` is the link target's parent to the kernel,
   # and lexical cleaning would call it the cwd.
   #
-  # The filesystem is asked here, through {FileFacts}, and nowhere in
-  # {Sensitivity}, whose classifier stays lexical by contract.
+  # The filesystem is asked here, through {FileFacts}; {Sensitivity}'s
+  # classifier stays lexical by contract, and {Sensitivity::Policy} calls in
+  # here only for the paths a call really names.
   module Landing
     # A link whose target does not exist is not a missing file: the target can
     # be created later, outside the root, and the next read would follow it.
@@ -19,6 +20,12 @@ module Lain
     HOPS = 40
 
     module_function
+
+    # `Pathname#cleanpath` and not `File.expand_path`: it folds `.` and `..`
+    # with pure string work and consults neither the filesystem nor `Dir.pwd`.
+    # @param path [String]
+    # @return [String] the path with dot segments and doubled separators folded
+    def lexical(path) = Pathname.new(path).cleanpath.to_s
 
     # @param path [String] as the call wrote it, uncleaned
     # @param cwd [String] absolute; what a relative path is joined to
@@ -80,7 +87,7 @@ module Lain
       raise if parent == path
       raise Dangling, "#{path} is a link to nothing" if facts.symlink?(path)
 
-      Pathname.new(File.join(resolve(parent, facts), File.basename(path))).cleanpath.to_s
+      lexical(File.join(resolve(parent, facts), File.basename(path)))
     end
 
     # The deepest prefix that is a link to nothing, swapped for its target.

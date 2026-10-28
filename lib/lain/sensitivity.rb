@@ -771,7 +771,7 @@ module Lain
       # @return [Rules] self
       # @raise [Config::Refusal] naming the first entry that holds home or is not a directory
       def relating_directories!(non_directory, home:, path: nil)
-        home = Pathname.new(home).cleanpath.to_s
+        home = Landing.lexical(home)
         expanded = related.to_h { |entry| [entry, entry.sub(Sensitivity::TILDE_SEGMENT) { home }] }
         unspecific = expanded.find { |_entry, absolute| Landing.under?(home, absolute) }
         raise self.class.malformed(RELATED, unspecific.first, UNSPECIFIC, path:) if unspecific
@@ -944,7 +944,7 @@ module Lain
     TILDE_SEGMENT = %r{\A~[^/]*(?=/|\z)}
 
     # The two inputs that get past a String check and then raise: a NUL byte
-    # (`ArgumentError` out of `Pathname#cleanpath` and `File.fnmatch?`) and a
+    # (`ArgumentError` out of {Landing.lexical} and `File.fnmatch?`) and a
     # non-ASCII-compatible encoding (`Encoding::CompatibilityError`, which is NOT
     # an ArgumentError, so no rescue would catch it). {Approval::Root#contains?}
     # rescues the same pair, and the `&&` order matters: `include?` on a UTF-16
@@ -1141,13 +1141,12 @@ module Lain
 
       # Cleaned directly rather than through {#lexical}, which reads `@cwd` --
       # not yet set while this is anchoring `home`.
-      Pathname.new(Sensitivity.text_of(given)).cleanpath.to_s.dup.freeze
+      Landing.lexical(Sensitivity.text_of(given)).dup.freeze
     end
 
-    # `Pathname#cleanpath` and not `File.expand_path`: it folds `.` and `..`
-    # with pure string work, leaves a leading `~` alone, and consults neither the
-    # filesystem nor `Dir.pwd`. Every path here is held as UTF-8, see {.text_of}.
-    def lexical(path) = Pathname.new(rooted(path)).cleanpath.to_s
+    # {Landing.lexical}, not `File.expand_path`: pure string work that leaves a
+    # leading `~` alone. Every path here is held as UTF-8, see {.text_of}.
+    def lexical(path) = Landing.lexical(rooted(path))
 
     # Two rewrites, both pure string work: a leading tilde becomes the injected
     # home ({TILDE_SEGMENT}), and anything still relative resolves against the

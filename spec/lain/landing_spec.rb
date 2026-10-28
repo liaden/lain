@@ -193,4 +193,14 @@ RSpec.describe Lain::Landing do
         .to all(satisfy { |a, _b, c| under.call(a, c) })
     end
   end
+
+  describe ".lexical" do
+    it "folds dot segments without touching the filesystem" do
+      expect(described_class.lexical("/a/./b/../c//d/")).to eq("/a/c/d")
+    end
+
+    it "leaves a relative path relative and a leading tilde alone" do
+      expect([described_class.lexical("x/../y"), described_class.lexical("~/a/../b")]).to eq(["y", "~/b"])
+    end
+  end
 end

@@ -364,7 +364,7 @@ module Lain
       # An absolute row names itself. A relative one is joined to the target
       # LEXICALLY -- never through `File.expand_path`, whose tilde handling is
       # the getpwnam call {Sensitivity} exists without -- and the classifier's own
-      # `cleanpath` folds it from there.
+      # `Landing.lexical` folds it from there.
       #
       # A reading the classifier would call {Sensitivity::MALFORMED} is handed
       # over UNJOINED, because `File.join` raises on a NUL byte BEFORE anything

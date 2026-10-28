@@ -15,7 +15,7 @@ module Lain
       # @param places [Enumerable<String, nil>] absolute directories the session recorded
       # @param landings [Hash{String=>String}] path => where it lands, for the whole session
       def initialize(places:, landings: {})
-        @places = places.compact.to_set { clean(_1) }.freeze
+        @places = places.compact.to_set { Landing.lexical(_1) }.freeze
         @session = cleaned(landings)
         @landings = @session
         @guessed = false
@@ -33,28 +33,28 @@ module Lain
       end
 
       def realpath(path)
-        named = clean(path)
+        named = Landing.lexical(path)
         @landings.fetch(named) { known?(named) ? named : guess(named) }
       end
 
       def symlink?(path)
-        named = clean(path)
+        named = Landing.lexical(path)
         return @landings.fetch(named) != named if @landings.key?(named)
 
         known?(named) ? false : guess(false)
       end
 
-      def exist?(path) = known?(clean(path)) || guess(true)
+      def exist?(path) = known?(Landing.lexical(path)) || guess(true)
 
       def file?(path)
-        named = clean(path)
+        named = Landing.lexical(path)
         return landing?(named) unless unrecorded?(named)
 
         guess(false)
       end
 
       def directory?(path)
-        named = clean(path)
+        named = Landing.lexical(path)
         return @places.include?(named) unless unrecorded?(named)
 
         guess(false)
@@ -62,7 +62,7 @@ module Lain
 
       # @raise [Errno::EINVAL] for a path no record names a link
       def readlink(path)
-        named = clean(path)
+        named = Landing.lexical(path)
         target = @landings[named]
         return target if target && target != named
 
@@ -87,9 +87,7 @@ module Lain
         answer
       end
 
-      def cleaned(landings) = landings.to_h { |path, landing| [clean(path), clean(landing)] }.freeze
-
-      def clean(path) = Pathname.new(path).cleanpath.to_s
+      def cleaned(landings) = landings.to_h { |path, landing| [Landing.lexical(path), Landing.lexical(landing)] }.freeze
     end
   end
 end
