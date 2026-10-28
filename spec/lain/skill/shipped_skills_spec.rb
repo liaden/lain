@@ -217,6 +217,33 @@ RSpec.describe "shipped skills" do
         expect(scaffold).to include("reports, never fixes")
       end
     end
+
+    it "lands a card through the coordinator and never commits on main from bash" do
+      with_empty_project do |renderer|
+        scaffold = renderer.render("execute-plan")
+
+        expect(scaffold).to include("@dev/implement")
+        expect(scaffold).to include("lain land enqueue HEAD --id <card>")
+        expect(scaffold).to include("lain land wait")
+        expect(scaffold).to match(/never `?git commit`? on main from bash/i)
+        expect(scaffold).to match(/verification is skipped/i)
+        expect(scaffold).to include("lain land drain --branch")
+        expect(scaffold).to match(/^- 2:.{0,80}still queued/im)
+        expect(scaffold).to match(/own lease branch/i)
+        expect(scaffold).not_to match(/orchestrator-commits.{0,20}never run git/i)
+      end
+    end
+
+    it "keeps an execution log, resumes from it, lands on a quiet box and nudges an idle child" do
+      with_empty_project do |renderer|
+        scaffold = renderer.render("execute-plan")
+
+        expect(scaffold).to match(/Execution\s+log.{0,80}one\s+line\s+per\s+event/im)
+        expect(scaffold).to match(/fresh\s+session\s+resumes\s+from\s+(it|the log)/i)
+        expect(scaffold).to match(/quiet box/i)
+        expect(scaffold).to match(/idle child/i)
+      end
+    end
   end
 
   # One source for the ladder's policy, and it is the code. These pin the words

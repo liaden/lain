@@ -23,12 +23,16 @@ do not silently adapt: either the divergence is absorbable (note it in the plan 
 invalidates the card (escalate to the user with the diff and 2–3 options). Mark the plan
 `in-progress` and check cards off in the doc itself as they land.
 
+Keep the plan's Execution log as you go: one line per event (card started, landed with its
+sha, escalated, reviewed). It is the only memory that outlives your context, so a fresh
+session resumes from it: skip the landed cards, re-check the started ones, and continue.
+
 ## Phase 2 — Wave loop
 
 For each wave, spawn one implementing sub-agent per ready card, in parallel, each with
 `isolation: "worktree"`. Bind a card to its role with `@role/skill` when it inherits the
-session or `@role[/skill]` for a fresh context; the implementer is usually `dev`, the spec
-author `test_engineer`, both drawn from `Role::Catalog`.
+session or `@role[/skill]` for a fresh context; the implementer is usually `dev` bound with
+`@dev/implement`, the spec author `test_engineer`, both drawn from `Role::Catalog`.
 
 A model matched to the card's risk (cheap for low, strong for high) is a **skill's own
 declaration**, not something you pass at the call: a skill whose front-matter carries
@@ -42,7 +46,7 @@ The implementer's brief, assembled from the card verbatim where possible:
 - **TDD, red first**: write the named spec files from the Gherkin ACs, run them, show they
   fail for the right reason, *then* implement to green. The red run is part of the hand-back.
 - Scope is the card's Files list. Shared files are orchestrator-owned: hand back one-line
-  wiring diffs, never edit them. In `orchestrator-commits` mode, never run git.
+  wiring diffs, never edit them. The implementer commits only on its own lease branch, never on main (Phase 4 lands it).
 - Stop and escalate on any of the card's escalation triggers — report the surprise, do not
   work around it.
 - Write the full hand-back (files changed, red→green evidence, wiring diffs, surprises) to
@@ -51,6 +55,10 @@ The implementer's brief, assembled from the card verbatim where possible:
 When an implementer escalates, research and answer it yourself first — that is your job; only
 if still blocked do you escalate to the user with context and candidate directions. Continue a
 sub-agent with its context intact rather than respawning cold.
+
+An idle child is one that has gone quiet: read its hand-back file first, since a notice with no
+message can still be a finished report. If there is none and its worktree has not changed in 5
+minutes, continue it with a message rather than waiting hours on it.
 
 ## Phase 3 — Review per card
 
@@ -72,6 +80,37 @@ Follow the plan's `commit-mode`. Non-negotiable either way: leaf-first commit or
 suite green before anything lands, serialized landing of shared-file changes, and
 re-verification after any rebase (hooks do not fire on a ff-merge). A worktree forked before a
 sibling merged owns the integration touch-up at its own merge.
+
+Land through the coordinator, never by hand. Once a card's implementer (bound with
+`@dev/implement`) has committed in its lease and the review approves, enqueue the lease's HEAD
+from that worktree:
+
+```bash
+lain land enqueue HEAD --id <card>
+lain land wait <entry id>
+```
+
+`enqueue` prints the entry id that `wait` takes. Landing through the coordinator means the
+implementer commits on its own lease branch and the coordinator moves main. `wait` blocks, then
+exits with:
+
+- 0: the work is on the branch.
+- 1: it did not land; the output says why, and that goes back to the implementer.
+- 2: the timeout passed and the entry is still queued; wait again.
+- 3: no live drainer; run the `lain land drain --branch <b>` command it prints.
+- 64: the id, repository or branch was refused.
+- 130: interrupted.
+
+Never `git commit` on main from bash,
+and never merge or push a card yourself: the coordinator fast-forwards only to a commit its
+verification run passed. Where the project configures no `verify`, `wait` prints that
+verification is skipped; say so in the Execution log and treat the card's own suite run as the
+only evidence.
+
+Land on a quiet box. The verification suite runs alone, so before enqueueing check that no
+agent is running tests and the load is low; if agents keep running specs, stop spawning, wait
+for them to finish, then enqueue every approved card in dependency order and spawn again.
+Log each landing as "<card> landed <sha>".
 
 ## Phase 4½ — QA (optional; the plan or the user decides)
 
