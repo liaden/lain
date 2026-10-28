@@ -794,7 +794,8 @@ module Lain
     # a raise, so an edited dispatch is re-sent rather than lost here.
     #
     # A retry whose render comes out byte for byte the refused request is not
-    # sent: the earlier refusal stands as this ask's answer. Something
+    # sent: the handoff is asked for room instead, and the earlier refusal stands
+    # only when it makes none or one was already spent. Something
     # droppable does not promise the next render drops it -- a guessed window
     # withholds the signal and the floor refuses a rewrite that would not
     # shrink -- and the same bytes would buy only the same refusal. The
@@ -810,14 +811,15 @@ module Lain
         model_caller.call(request, on_stream_started:, stands_on:)
       end
     rescue WindowExceeded => e
-      raise if e.equal?(refused&.error)
+      raise if e.equal?(refused&.error) && spent.include?(:handoff)
 
-      retry_refused(RefusedRender.new(error: e, digest: sent), stands_on, on_stream_started, render, spent)
+      retry_refused(RefusedRender.new(error: e, digest: sent || refused&.digest), stands_on, on_stream_started, render,
+                    spent, unchanged: e.equal?(refused&.error))
     end
 
-    def retry_refused(refused, stands_on, on_stream_started, render, spent)
+    def retry_refused(refused, stands_on, on_stream_started, render, spent, unchanged: false)
       accounting.observe_refusal(prompt_tokens: refused.error.prompt_tokens, head: stands_on)
-      room = room_after(spent, refused.error)
+      room = room_after(spent, refused.error, unchanged:)
       raise refused.error unless room
 
       attempt(stands_on, on_stream_started, render, spent: [*spent, room], refused:)
@@ -827,8 +829,8 @@ module Lain
     # ordinary compaction has nothing left to offer, so the two never both
     # answer. The compaction retry is only ever the first retry: once a
     # handoff has replaced the history there is nothing older for it to drop.
-    def room_after(spent, refusal)
-      return :handoff if !spent.include?(:handoff) && handed_off(refusal)
+    def room_after(spent, refusal, unchanged: false)
+      return :handoff if !spent.include?(:handoff) && handed_off(refusal, unchanged:)
 
       :compaction if spent.empty? && @instrumentation.pipeline_source.droppable?
     end
@@ -838,8 +840,8 @@ module Lain
     # here, and a predicate name would read as a question about state. The
     # refusal goes with the ask, because whether a handoff can help at all is
     # measured against the count it carries.
-    def handed_off(refusal)
-      @instrumentation.pipeline_source.handoff(timeline: @timeline, session: @session, refusal:)
+    def handed_off(refusal, unchanged: false)
+      @instrumentation.pipeline_source.handoff(timeline: @timeline, session: @session, refusal:, unchanged:)
     end
 
     # Composing the Workspace with the session's live reminders per render keeps

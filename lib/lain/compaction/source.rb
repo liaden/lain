@@ -663,10 +663,13 @@ module Lain
       # @param session [Session] the run's, which records the cut
       # @param refusal [Lain::WindowExceeded] the refusal that asked, whose
       #   exact count and window the kept set is measured against
+      # @param unchanged [Boolean] whether the render after the refusal came out the refused
+      #   request again: something droppable then no longer promises an advance, so the handoff
+      #   is not held back for it
       # @return [Boolean] whether a handoff cut committed on THIS call
-      def handoff(timeline:, session:, refusal:)
+      def handoff(timeline:, session:, refusal:, unchanged: false)
         held_cut = HeldCut.on(session:, timeline:, derived: @derived, arm: @collapse_strategy)
-        return false if droppable?
+        return false if droppable? && !unchanged
 
         pins = session_pinned(held_cut.walk, session)
         kept = kept_tokens(held_cut, pins, refusal)

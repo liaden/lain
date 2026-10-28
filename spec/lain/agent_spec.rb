@@ -69,6 +69,20 @@ module A1PipelineSources
     end
   end
 
+  # A source whose render itself is refused, as a summarizer round trip inside
+  # it can be, before any request is built.
+  class RefusingRender
+    def initialize(error) = @error = error
+
+    def context_for(**)
+      raise @error
+    end
+
+    def droppable? = false
+
+    def handoff(**) = Lain::Agent::PipelineSource::Null::NO_ROOM
+  end
+
   # Whatever a cut or a compaction leaves the render, reduced to one fact: the
   # oldest message reads differently each generation, so no two renders match.
   class Rewritten < Lain::Context::Combinator
@@ -1767,6 +1781,59 @@ RSpec.describe Lain::Agent do
         expect(provider.sent).to eq(1)
         expect(refused).to be_withdrawn
         expect(a.timeline.to_a).to be_empty
+      end
+    end
+
+    # A compaction that shrank nothing leaves the next render the refused
+    # bytes, so the handoff is the only room left to ask for.
+    describe "when the render itself is refused before anything is sent" do
+      it "raises the refusal rather than failing on a request that was never named" do
+        refused = refusal
+        a = described_class.new(provider: scripted(text_response("never sent")), toolset:, context:,
+                                pipeline_source: A1PipelineSources::RefusingRender.new(refused))
+
+        expect { a.ask("a prompt that does not fit") }.to raise_error(refused)
+      end
+    end
+
+    describe "when the compaction retry renders the refused request again" do
+      def counting_agent(source, *outcomes)
+        sent = 0
+        provider = Class.new do
+          define_method(:complete) do |_request|
+            sent += 1
+            outcome = outcomes.shift || raise("script exhausted")
+            outcome.is_a?(Exception) ? raise(outcome) : outcome
+          end
+        end.new
+        [described_class.new(provider:, toolset:, context:, pipeline_source: source), -> { sent }]
+      end
+
+      it "asks the handoff and answers the ask when it makes room" do
+        source = A1PipelineSources::HandingOff.new(false, true, droppable: true, compacts: false)
+        a, sent = counting_agent(source, refusal, text_response("answered"))
+
+        expect(a.ask("a prompt that does not fit").text).to eq("answered")
+        expect(sent.call).to eq(2)
+        expect(source.calls.map { |call| call[:unchanged] }).to eq([false, true])
+      end
+
+      it "stands on the refusal when the handoff makes no room either" do
+        source = A1PipelineSources::HandingOff.new(false, false, droppable: true, compacts: false)
+        a, sent = counting_agent(source, refusal, text_response("never sent"))
+
+        expect { a.ask("a prompt that does not fit") }.to raise_error(refusal_class)
+        expect(sent.call).to eq(1)
+        expect(source.calls.size).to eq(2)
+      end
+
+      it "does not ask a third time after a handoff whose render is refused again" do
+        source = A1PipelineSources::HandingOff.new(false, true, true, droppable: true, compacts: false)
+        a, sent = counting_agent(source, refusal, refusal, text_response("never sent"))
+
+        expect { a.ask("a prompt that does not fit") }.to raise_error(refusal_class)
+        expect(sent.call).to eq(2)
+        expect(source.calls.size).to eq(2)
       end
     end
 

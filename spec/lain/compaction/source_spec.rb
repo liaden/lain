@@ -3445,6 +3445,15 @@ RSpec.describe Lain::Compaction::Source do
         expect(oracle.asks).to be_empty
       end
 
+      it "hands off over something droppable when the render after the refusal came out unchanged" do
+        built = advancing
+        cut_after_one_step(built, timeline(12))
+        grown = grow(timeline(12), 6)
+        context_for(built, grown)
+
+        expect(built.handoff(timeline: grown, session:, refusal:, unchanged: true)).to be(true)
+      end
+
       it "hands off when the refused render itself advanced" do
         built = advancing
         line = timeline(12)

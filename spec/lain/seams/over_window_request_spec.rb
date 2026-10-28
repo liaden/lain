@@ -228,7 +228,8 @@ RSpec.describe "a prompt that does not fit the served context", :seam do
       ask.attempt("DOES-NOT-FIT")
       ask.attempt("ping")
 
-      expect(chat_bodies.size).to eq(3)
+      # The fourth is the handoff the unchanged retry asks for; its answer is undecodable here, so no cut lands.
+      expect(chat_bodies.size).to eq(4)
       expect(chat_bodies.map { |body| body["truncate"] }).to all(be(false))
     end
 
@@ -341,7 +342,7 @@ RSpec.describe "a prompt that does not fit the served context", :seam do
       expect(journaled("run_interrupted").last).to include("reason" => "over_window")
       expect(published["window_guessed"]).to be(false)
       expect(published["hud"]).to match(/ ctx:\d+% /)
-      expect(chat_bodies.size).to eq(2)
+      expect(chat_bodies.count { |body| body["tools"].present? }).to eq(2)
     end
   end
 
@@ -387,6 +388,46 @@ RSpec.describe "a prompt that does not fit the served context", :seam do
       cuts = journaled("compaction_cut")
       expect(journaled("compaction_decision").map { |record| record["compacted"] }).to include(true)
       expect(cuts.size).to eq(1)
+      expect(JSON.generate(chat_bodies.last["messages"])).not_to include("FIRST-MARKER")
+    end
+  end
+
+  # A refusal reading under the approaching-window threshold fires no signal,
+  # so the compaction retry renders the refused bytes again; the handoff is
+  # then the room left.
+  describe "a refusal the compaction retry cannot act on" do
+    let(:state_document) do
+      { "goal" => "read two long files", "progress" => "both read", "files_and_decisions" => "none",
+        "open_todos" => "none", "next_step" => "answer" }
+    end
+
+    def answer(body)
+      chat_bodies << body
+      text = JSON.generate(body["messages"])
+      return summary if text.include?("no longer fits its context window")
+
+      refused = body["tools"].present? && text.include?("FIRST-MARKER") && text.include?("SECOND-MARKER")
+      return refusal(prompt_tokens: 5_000) if refused
+
+      super
+    end
+
+    def summary
+      reply = { "model" => model, "message" => { "role" => "assistant", "content" => JSON.generate(state_document) },
+                "done" => true, "done_reason" => "stop", "prompt_eval_count" => 100, "eval_count" => 20 }
+      { status: 200, headers: { "Content-Type" => "application/x-ndjson" }, body: "#{JSON.generate(reply)}\n" }
+    end
+
+    it "asks the handoff, answers the ask, and journals no over_window interruption" do
+      _, ask = chat(tty:)
+      ask.attempt(prose("FIRST-MARKER", 12_000))
+
+      reply = ask.attempt(prose("SECOND-MARKER", 12_000))
+
+      expect(reply.text).to eq("settled")
+      expect(chat_bodies.count { |body| JSON.generate(body["messages"]).include?("no longer fits its context") })
+        .to eq(1)
+      expect(journaled("run_interrupted")).to be_empty
       expect(JSON.generate(chat_bodies.last["messages"])).not_to include("FIRST-MARKER")
     end
   end
