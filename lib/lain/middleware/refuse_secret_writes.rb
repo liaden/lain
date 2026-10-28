@@ -73,6 +73,12 @@ module Lain
       MASKED_REWRITE = "memory item %<id>s was read masked this session and cannot be rewritten from that read -- " \
                        "leave it, or write a new item"
 
+      # Any stored field carrying a placeholder stores the mask's ordinal as if it were the
+      # value, and a later read cannot tell the two apart.
+      PLACEHOLDER_DECLINE = "#{DECLINE_PREFIX}placeholder".freeze
+      PLACEHOLDER_REFUSAL = "a redaction placeholder is not a fact -- write the fact without the masked value, " \
+                            "or leave it unwritten"
+
       # Null Object for the injectable predicate seam: never flags anything, so
       # today's default cannot be confused with a real opinion.
       # {Oracle::MemorySave::Gate} is the arm this seam exists for, and a future
@@ -107,6 +113,7 @@ module Lain
         return refuse(env, effect, pattern, "input matches a #{pattern} pattern") if pattern
         return refuse(env, effect, MASKED_DECLINE, format(MASKED_REWRITE, id: effect.input["id"].inspect)) \
           if masked_rewrite?(env, effect)
+        return refuse(env, effect, PLACEHOLDER_DECLINE, PLACEHOLDER_REFUSAL) if placeholder_input?(effect)
         return refuse(env, effect, ORACLE_DECLINE, DECLINED) if withhold?(effect.input)
 
         downstream(env, &app)
@@ -124,6 +131,10 @@ module Lain
 
         source = Session::Withheld::Source.memory(effect.input["id"])
         (env[:context] || Session::Null.instance).withheld?(source)
+      end
+
+      def placeholder_input?(effect)
+        effect.name == "memory_write" && text(effect.input).match?(::Lain::Sensitivity::Regions::PLACEHOLDER_SHAPE)
       end
 
       def matched_pattern(input)

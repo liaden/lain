@@ -1698,7 +1698,7 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
         expect(result.content).not_to include("hunter2pass")
       end
 
-      it "lets a write carrying a placeholder through when the item was never read masked" do
+      it "refuses a write carrying a placeholder even when the item was never read masked" do
         layers = Lain::CLI::ToolGuard.stack(chronicle, board).to_a
         input = { "id" => "other", "description" => "d", "body" => "DB_PASSWORD=<redacted:1>\n" }
         result = Sync do |task|
@@ -1707,8 +1707,8 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
           end
         end
 
-        expect(result).to have_attributes(is_error: false)
-        expect(recorder.fetch("other").body).to eq("DB_PASSWORD=<redacted:1>\n")
+        expect(result).to have_attributes(is_error: true)
+        expect(result.content).to include("a redaction placeholder is not a fact")
       end
 
       it "refuses to rewrite the item from that read, with no placeholder in the new body" do

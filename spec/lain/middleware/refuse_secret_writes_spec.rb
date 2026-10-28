@@ -188,11 +188,41 @@ RSpec.describe Lain::Middleware::RefuseSecretWrites do
       run(tool_call(name:, input: { "id" => "cache-note", "description" => "d", "body" => body }))
     end
 
-    it "is allowed, since writing a placeholder loses nothing" do
-      _, called = write_back("cache note: token_count = <redacted:2>")
+    it "is refused under a fresh id, saying a placeholder is not a fact" do
+      env, called = write_back("API_KEY=<redacted:1>")
+
+      expect(called).to be(false)
+      expect(env.fetch(:result)).to have_attributes(is_error: true)
+      expect(env.fetch(:result).content).to include("memory_write refused", "a redaction placeholder is not a fact")
+      expect(journal.events.first.pattern).to eq(described_class::PLACEHOLDER_DECLINE)
+      expect(described_class).to be_decline(journal.events.first.pattern)
+    end
+
+    it "refuses a body that merely quotes a placeholder, so the model rewrites it without one" do
+      env, called = write_back("the read tool shows secrets as <redacted:1>")
+
+      expect(called).to be(false)
+      expect(env.fetch(:result).content).to include("a redaction placeholder is not a fact")
+    end
+
+    it "refuses a placeholder in the description" do
+      env, called = run(tool_call(input: { "id" => "fresh", "description" => "key is <redacted:3>", "body" => "ok" }))
+
+      expect(called).to be(false)
+      expect(env.fetch(:result)).to have_attributes(is_error: true)
+    end
+
+    it "refuses a placeholder in a source" do
+      _, called = run(tool_call(input: { "id" => "fresh", "description" => "d", "body" => "b",
+                                         "sources" => ["<redacted:1>"] }))
+
+      expect(called).to be(false)
+    end
+
+    it "lets the literal angle-bracket word without an ordinal through" do
+      _, called = write_back("prose may say <redacted> when it means a removed value")
 
       expect(called).to be(true)
-      expect(journal.events).to be_empty
     end
 
     it "lets a body that only mentions the word redacted through" do
