@@ -1132,12 +1132,10 @@ RSpec.describe Lain::CLI::Switchboard do
     # A bare callable is adapted by the Gate into a ruling with no reason. No
     # production policy may need that, or its refusals could never say why.
     describe "the policy the gate holds" do
-      def held(board) = tool_stack(board).last.instance_variable_get(:@policy)
-
       it "is the board's own policy switch, not an adapter over it" do
         board = switchboard
 
-        expect(held(board)).to be(board.policy_switch)
+        expect(gate_asks?(board.policy_switch, tool_stack(board), toolset: board.toolset)).to be(true)
       end
 
       it "switches only between policies that answer a ruling themselves, attended or not" do

@@ -78,7 +78,7 @@ RSpec.describe Lain::Tripwire::Hit, :seam do
 
     expect(record["refusals"]).not_to be_empty
     expect(folded(record, "/usr/bin/git")).to include("refused_exec")
-    expect(stops.stopped?(Lain::Requester.main)).to be(true)
+    expect(stops.standing(Lain::Requester.main)).to eq(:stopped)
   end
 
   it "stops everyone for a nested shell reaching a toolchain outside /usr, an accepted false trip" do
@@ -87,7 +87,7 @@ RSpec.describe Lain::Tripwire::Hit, :seam do
 
     expect(record["refusals"].map { _1["path"] }).to include(File.join(bin, "lain-probe-tool"))
     expect(folded(record, "/usr/bin/sh")).to include("refused_exec")
-    expect(stops.stopped?(Lain::Requester.main)).to be(true)
+    expect(stops.standing(Lain::Requester.main)).to eq(:stopped)
   end
 
   it "stops everyone for a PATH search refused on one entry that runs the program from a later one, " \
@@ -98,7 +98,7 @@ RSpec.describe Lain::Tripwire::Hit, :seam do
     expect(record["refusals"].map { _1["path"] }).to eq([stray])
     expect(record["execs"].map { _1.values_at("path", "rc") }.last(2)).to eq([[stray, -1], ["/usr/bin/true", 0]])
     expect(folded(record, "/usr/bin/env")).to include("refused_exec")
-    expect(stops.stopped?(Lain::Requester.main)).to be(true)
+    expect(stops.standing(Lain::Requester.main)).to eq(:stopped)
   end
 
   it "still stops on a refused exec of a path outside every grant" do
@@ -106,6 +106,6 @@ RSpec.describe Lain::Tripwire::Hit, :seam do
     record = sandboxed(["sh", "-c", planted])
 
     expect(folded(record, "/usr/bin/sh")).to include("refused_exec")
-    expect(stops.stopped?(Lain::Requester.main)).to be(true)
+    expect(stops.standing(Lain::Requester.main)).to eq(:stopped)
   end
 end

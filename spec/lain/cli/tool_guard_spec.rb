@@ -178,6 +178,8 @@ RSpec.describe Lain::CLI::ToolGuard do
   let(:chronicle) { ToolGuardSpecChronicle.new(journal) }
   let(:queue) { Lain::Approval::Parked::Queue.new(journal:) }
 
+  def bash_toolset = Lain::Toolset.new([Lain::Tools::Bash.new])
+
   def guards(board) = described_class.stack(chronicle, board).to_a
 
   def read_guard(board) = guards(board).grep(Lain::Middleware::RedactSecretReads).first
@@ -191,8 +193,8 @@ RSpec.describe Lain::CLI::ToolGuard do
         .to eq([Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
                 Lain::Middleware::RedactSecretReads,
                 Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
-                Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::RememberedDenials,
-                Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
+                Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::TripwireStop,
+                Lain::Middleware::RememberedDenials, Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
     end
 
     describe "a grep through the main agent's stack" do
@@ -422,7 +424,7 @@ RSpec.describe Lain::CLI::ToolGuard do
       layers = guards(board).last(2)
 
       expect(layers.map { |layer| layer.instance_variable_get(:@sensitivity) }).to all(be(board.sensitivity))
-      expect(gate_of(guards(board)).instance_variable_get(:@policy)).to be(board.policy)
+      expect(gate_asks?(board.policy, guards(board), toolset: bash_toolset)).to be(true)
     end
 
     it "reports a refused call in the board's own words" do
@@ -529,19 +531,18 @@ RSpec.describe Lain::CLI::ToolGuard do
         .to eq([%w[approval_pending researcher], %w[approval_decision researcher], %w[read_released researcher]])
     end
 
-    # Production never reaches the gate's adapter for a bare callable, whose
-    # rulings carry no reason: the parent's gate holds the board's policy, a
-    # child's holds the ruling-answering wrapper naming it, and a run with no
-    # chat holds its own fixed policy.
-    it "holds a policy that answers a ruling itself on every stack it builds" do
+    it "asks the board's policy from the chat's stack and from a child's" do
       board = ToolGuardSpecBoard.new
-      held = [described_class.stack(chronicle, board),
-              described_class.child_stack(chronicle, board, Lain::WorkerEnv.default, requester: "researcher"),
-              described_class.detached(journal:).call(Lain::WorkerEnv.default)]
-             .map { |stack| gate_of(stack).instance_variable_get(:@policy) }
+      stacks = [described_class.stack(chronicle, board),
+                described_class.child_stack(chronicle, board, Lain::WorkerEnv.default, requester: "researcher")]
 
-      expect(held.map(&:class))
-        .to eq([ToolGuardSpecPolicy, described_class::Asking, Lain::Middleware::Gate::ApproveAll])
+      expect(stacks.map { |stack| gate_asks?(board.policy, stack, toolset: bash_toolset) }).to all(be(true))
+    end
+
+    it "lets a run with no chat through its own fixed policy" do
+      stack = described_class.detached(journal:).call(Lain::WorkerEnv.default)
+
+      expect(dispatched(stack).is_error).to be(false)
     end
 
     it "forwards a child's ruling from the board's policy, asked in a context naming the child" do
@@ -603,7 +604,8 @@ RSpec.describe Lain::CLI::ToolGuard do
                 Lain::Middleware::RefuseSecretWrites,
                 Lain::Middleware::RedactSecretReads, Lain::Middleware::WithholdSecretPaths,
                 Lain::Middleware::GuardTestLayout, Lain::Middleware::WithholdAutomaticOutput,
-                Lain::Middleware::RememberedDenials, Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
+                Lain::Middleware::TripwireStop, Lain::Middleware::RememberedDenials, Lain::Middleware::Sensitivity,
+                Lain::Middleware::Gate])
     end
 
     it "has the guards judge the path it passes on, as if the model had named it" do
@@ -791,7 +793,7 @@ RSpec.describe Lain::CLI::ToolGuard do
       stack = spawned.call(Lain::WorkerEnv.default)
 
       expect(stack.to_a.grep(Lain::Middleware::RedactSecretReads).first.ledger).to be(board.ledger)
-      expect(stack.to_a.last.instance_variable_get(:@policy).requester).to eq("subagent")
+      expect(gate_contexts(board.policy, stack, toolset: bash_toolset).map(&:requester)).to eq(%w[subagent])
     end
 
     # Rebinding who is asking is a copy differing in that one member, so the
@@ -799,8 +801,9 @@ RSpec.describe Lain::CLI::ToolGuard do
     it "names a different child in a copy, leaving itself as it was" do
       renamed = spawned.with(requester: "researcher")
 
-      expect(renamed.call(Lain::WorkerEnv.default).to_a.last.instance_variable_get(:@policy).requester)
-        .to eq("researcher")
+      asked = gate_contexts(board.policy, renamed.call(Lain::WorkerEnv.default), toolset: bash_toolset)
+
+      expect(asked.map(&:requester)).to eq(%w[researcher])
       expect(spawned.requester).to eq("subagent")
     end
 
@@ -1984,7 +1987,7 @@ RSpec.describe Lain::CLI::ToolGuard do
     def yield_to_trip(_parked) = nil
 
     describe "once a subagent tripped" do
-      before { stops.trip("researcher", at: Time.at(0)) }
+      before { stops.trip("researcher") }
 
       it "refuses a stopped child's next call with a final deny on the tripwire rung" do
         told = read_through(researcher(board(:auto)))
@@ -2038,7 +2041,7 @@ RSpec.describe Lain::CLI::ToolGuard do
 
     it "refuses a child's call parked before its trip, though a human approves it after" do
       held = board(:ask)
-      define_singleton_method(:yield_to_trip) { |_parked| stops.trip("researcher", at: Time.at(0)) }
+      define_singleton_method(:yield_to_trip) { |_parked| stops.trip("researcher") }
 
       _, told = answered_by_human(held) { run_through(researcher(held)) }
 
@@ -2048,7 +2051,7 @@ RSpec.describe Lain::CLI::ToolGuard do
 
     it "refuses the very call that tripped while the judge ruled on it, though the judge approves it" do
       judge = lambda do |**|
-        stops.trip("researcher", at: Time.at(0))
+        stops.trip("researcher")
         :approve
       end
 
@@ -2057,10 +2060,10 @@ RSpec.describe Lain::CLI::ToolGuard do
       expect(told.content).to include("the tripwire stopped researcher")
     end
 
-    it "builds no tripwire layer for a board whose stops stop no one" do
+    it "builds the same tripwire layer for a board whose stops stop no one" do
       plain = Lain::CLI::Switchboard.new(journal:, model: "m", toolset:)
 
-      expect(guards(plain).grep(Lain::Middleware::TripwireStop)).to be_empty
+      expect(guards(plain).grep(Lain::Middleware::TripwireStop).size).to eq(1)
     end
   end
 end

@@ -23,8 +23,6 @@ module Lain
       FOLDED = %w[escalation exec_resolution exec_record sandbox].freeze
       CALLS = 256
 
-      CLOCK = -> { Time.now }
-
       Standing = Data.define(:score, :evidence, :stop, :seeded)
 
       # What a requester has earned so far. `seeded` is the part of the score
@@ -59,11 +57,9 @@ module Lain
 
         # @param stops [Stops]
         # @param rules [Rules]
-        # @param clock [#call] stamps each trip
-        def initialize(stops:, rules:, clock:)
+        def initialize(stops:, rules:)
           @stops = stops
           @rules = rules
-          @clock = clock
         end
 
         # Only seeded signals count toward a trip; a hard stop crossed on the
@@ -83,19 +79,18 @@ module Lain
         # @param crossing [Crossing]
         # @return [Telemetry::TripwireStop]
         def settle(crossing)
-          outcome = crossing.trips ? @stops.trip(crossing.requester, at: @clock.call) : Telemetry::TripwireStop::OBSERVE_ONLY
+          outcome = crossing.trips ? @stops.trip(crossing.requester) : Telemetry::TripwireStop::OBSERVE_ONLY
           Telemetry::TripwireStop.new(**crossing.to_h.slice(:requester, :signal, :unseeded), outcome:)
         end
       end
 
       # @param journal [#<<] where each `tripwire` record is written
       # @param rules [Rules]
-      # @param stops [Stops, nil] without them a hard stop crossed stops no one
-      # @param clock [#call] stamps each trip
-      def initialize(journal:, rules: Rules::DEFAULT, stops: nil, clock: CLOCK)
+      # @param stops [Stops, Stops::None] with {Stops::None} a hard stop crossed stops no one
+      def initialize(journal:, rules: Rules::DEFAULT, stops: Stops::None)
         @journal = journal
         @rules = rules
-        @stopping = stops ? Stopping.new(stops:, rules:, clock:) : Stopping::Off
+        @stopping = stops.stopping(rules:)
         @lock = Mutex.new
         @requesters = {}
         @resolutions = {}

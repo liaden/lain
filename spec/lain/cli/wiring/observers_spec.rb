@@ -130,7 +130,7 @@ RSpec.describe Lain::CLI::Wiring::Observers do
                                              arms: Lain::CLI::Arms::OFF.with(tripwire: :stop))
         refused_exec_by("researcher")
 
-        expect([observers.stops.stopped?("researcher"), observers.stops.paused?("agent")]).to eq([true, true])
+        expect(%w[researcher agent].map { observers.stops.standing(_1) }).to eq(%i[stopped paused])
         expect(journal_records(io).select { _1["type"] == "tripwire_stop" }.sole)
           .to include("requester" => "researcher", "signal" => "refused_exec", "outcome" => "stopped")
       end
@@ -140,7 +140,7 @@ RSpec.describe Lain::CLI::Wiring::Observers do
                                              arms: Lain::CLI::Arms::OFF.with(tripwire: :observe))
         refused_exec_by("researcher")
 
-        expect(observers.stops.stopped?("researcher")).to be(false)
+        expect(observers.stops).to equal(Lain::Tripwire::Stops::None)
         types = journal_records(io).map { _1["type"] }
         expect([types.include?("tripwire"), types.include?("tripwire_stop")]).to eq([true, false])
       end

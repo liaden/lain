@@ -271,8 +271,8 @@ RSpec.describe LainCLI do
       [Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
        Lain::Middleware::RedactSecretReads,
        Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
-       Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::RememberedDenials,
-       Lain::Middleware::Sensitivity, Lain::Middleware::Gate]
+       Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::TripwireStop,
+       Lain::Middleware::RememberedDenials, Lain::Middleware::Sensitivity, Lain::Middleware::Gate]
     end
 
     def wired_tool_stack(tripwire)
@@ -295,7 +295,7 @@ RSpec.describe LainCLI do
 
     it "puts the tripwire stop ahead of the remembered denials under --tripwire stop" do
       expect(wired_tool_stack("stop").map(&:class))
-        .to eq(guarded.dup.insert(guarded.index(Lain::Middleware::RememberedDenials), Lain::Middleware::TripwireStop))
+        .to eq(guarded)
     end
   end
 

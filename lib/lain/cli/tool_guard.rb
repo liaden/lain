@@ -603,18 +603,12 @@ module Lain
         )
       end
 
-      # The tripwire stop when it is armed, which also reads the gate's ruling again.
+      # Built over {Tripwire::Stops::None} too, so the stack's shape does not depend on the tripwire arm.
       def closing(inputs, policy, journal, requester)
-        stopping = stopping(inputs, requester, journal)
-        [*stopping, remembered(inputs, requester, journal),
-         *gating(inputs, stopping.inject(policy) { |inner, layer| layer.over(inner) }, journal, requester)]
-      end
-
-      def stopping(inputs, requester, journal)
-        return [] if inputs.stops.equal?(Tripwire::Stops::None)
-
-        [Middleware::TripwireStop.new(stops: inputs.stops, journal:, mode: inputs.mode,
-                                      attended: !inputs.approvals.nil?, requester:)]
+        stopping = Middleware::TripwireStop.new(stops: inputs.stops, journal:, mode: inputs.mode,
+                                                attended: !inputs.approvals.nil?, requester:)
+        [stopping, remembered(inputs, requester, journal),
+         *gating(inputs, stopping.over(policy), journal, requester)]
       end
 
       def withheld(inputs)

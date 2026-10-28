@@ -77,9 +77,9 @@ module Lain
         #   and under `:stop` it trips the {Tripwire::Stops} the observers hold
         # @return [Observers]
         def self.register(chronicle:, paths:, project:, resumed:, arms:)
-          stops = Tripwire::Stops.new if arms.tripwire_stops?
+          stops = arms.tripwire_stops? ? Tripwire::Stops.new : Tripwire::Stops::None
           new(fresh: lineage_fresh(paths, project, resumed, chronicle.durable_journal),
-              unsealed: Unsealed.for(arms:, project:), stops: stops || Tripwire::Stops::None).tap do |observers|
+              unsealed: Unsealed.for(arms:, project:), stops:).tap do |observers|
             observers.register(chronicle)
             chronicle.observe(Tripwire::Ledger.new(journal: chronicle.durable_journal, stops:)) unless
               arms.tripwire_off?

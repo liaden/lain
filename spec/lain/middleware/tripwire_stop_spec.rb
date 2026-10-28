@@ -25,7 +25,7 @@ RSpec.describe Lain::Middleware::TripwireStop do
   def escalations = journal.map { Lain::Journal.hash_of(_1) }.select { _1["type"] == "escalation" }
 
   describe "a requester the tripwire stopped" do
-    before { stops.trip("researcher", at: Time.at(0)) }
+    before { stops.trip("researcher") }
 
     %i[ask auto bypass].each do |level|
       it "refuses its next call outright under #{level}, saying a running call was left to finish" do
@@ -56,7 +56,7 @@ RSpec.describe Lain::Middleware::TripwireStop do
   end
 
   describe "a main agent the tripwire paused" do
-    before { stops.trip("researcher", at: Time.at(0)) }
+    before { stops.trip("researcher") }
 
     %i[ask auto].each do |level|
       it "hands its next call to the asking rung under #{level}, barred from automatic approval" do
@@ -109,9 +109,9 @@ RSpec.describe Lain::Middleware::TripwireStop do
 
     it "reads where main stands once, so a second trip landing during the read cannot let the call through" do
       racing = Class.new(SimpleDelegator) do
-        %i[standing stopped?].each do |read|
+        %i[standing].each do |read|
           define_method(read) do |requester|
-            __getobj__.public_send(read, requester).tap { __getobj__.trip("writer", at: Time.at(1)) }
+            __getobj__.public_send(read, requester).tap { __getobj__.trip("writer") }
           end
         end
       end
@@ -123,7 +123,7 @@ RSpec.describe Lain::Middleware::TripwireStop do
   end
 
   it "refuses main outright once every requester is stopped" do
-    stops.trip("agent", at: Time.at(0))
+    stops.trip("agent")
 
     env, reached = through(layer(:ask))
 
@@ -148,7 +148,7 @@ RSpec.describe Lain::Middleware::TripwireStop do
 
     it "refuses an approve when the requester was stopped while its call was judged or parked" do
       stopping = lambda do |_effect, _context|
-        stops.trip("researcher", at: Time.at(0))
+        stops.trip("researcher")
         Lain::Approval::Escalation::Ruling.allow(rung: "spec", because: "settled", authority: :human)
       end
 
@@ -160,27 +160,27 @@ RSpec.describe Lain::Middleware::TripwireStop do
     end
 
     it "refuses a paused main's automatic approve" do
-      stops.trip("researcher", at: Time.at(0))
+      stops.trip("researcher")
 
       expect(ruled(settling(:allow))).to have_attributes(verdict: :deny, rung: "tripwire", liftable: true)
     end
 
     it "refuses a paused main's approve for good on a board nobody attends" do
-      stops.trip("researcher", at: Time.at(0))
+      stops.trip("researcher")
 
       expect(ruled(settling(:allow), via: layer(:ask, attended: false)))
         .to have_attributes(verdict: :deny, rung: "tripwire", liftable: false)
     end
 
     it "keeps a paused main's approve when a human gave it" do
-      stops.trip("researcher", at: Time.at(0))
+      stops.trip("researcher")
 
       expect(ruled(settling(:allow, authority: :human))).to have_attributes(verdict: :allow, rung: "spec")
       expect(journal).to be_empty
     end
 
     it "keeps a stopped requester's deny as the ladder settled it" do
-      stops.trip("agent", at: Time.at(0))
+      stops.trip("agent")
 
       expect(ruled(settling(:deny))).to have_attributes(verdict: :deny, rung: "spec")
     end

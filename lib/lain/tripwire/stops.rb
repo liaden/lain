@@ -27,49 +27,30 @@ module Lain
 
       # What a chat holds when the stop arm is off: no one is ever stopped.
       module None
-        def self.stopped?(_requester) = false
-
-        def self.paused?(_requester) = false
-
         def self.standing(_requester) = FREE
 
-        def self.tripped_at(_requester) = nil
-
         def self.first_tripped = nil
+
+        def self.stopping(**) = Ledger::Stopping::Off
       end
 
       # @param main [Requester, String] the chat's own agent
       def initialize(main: Requester.main)
         @main = name_of(main)
         @lock = Mutex.new
-        @tripped = {}
+        @tripped = Set.new
         @all = false
       end
 
       # @param requester [Requester, String]
-      # @param at [Time] when it tripped; a requester keeps its first
       # @return [Symbol] {STOPPED} for a subagent's first trip, else {ALL_STOPPED}
-      def trip(requester, at:)
+      def trip(requester)
         name = name_of(requester)
         @lock.synchronize do
-          @tripped[name] ||= at
+          @tripped.add(name)
           @all ||= [@main, *anonymous].include?(name) || @tripped.size > 1
           @all ? ALL_STOPPED : STOPPED
         end
-      end
-
-      # @param requester [Requester, String]
-      # @return [Boolean]
-      def stopped?(requester)
-        name = name_of(requester)
-        @lock.synchronize { @all || @tripped.key?(name) }
-      end
-
-      # @param requester [Requester, String]
-      # @return [Boolean] whether it is main, held while a subagent alone is stopped
-      def paused?(requester)
-        name = name_of(requester)
-        @lock.synchronize { !@all && name == @main && @tripped.any? }
       end
 
       # One read, so a trip landing between two separate reads cannot answer a mix of before and after.
@@ -79,22 +60,19 @@ module Lain
       def standing(requester)
         name = name_of(requester)
         @lock.synchronize do
-          if @all || @tripped.key?(name) then STOPPED
+          if @all || @tripped.include?(name) then STOPPED
           elsif name == @main && @tripped.any? then PAUSED
           else FREE
           end
         end
       end
 
-      # @param requester [Requester, String]
-      # @return [Time, nil] when it first tripped, nil for one that never did
-      def tripped_at(requester)
-        name = name_of(requester)
-        @lock.synchronize { @tripped[name] }
-      end
+      # @param rules [Rules]
+      # @return [Ledger::Stopping] the half of a ledger that trips these stops
+      def stopping(rules:) = Ledger::Stopping.new(stops: self, rules:)
 
       # @return [String, nil] the requester that tripped first, nil before any trip
-      def first_tripped = @lock.synchronize { @tripped.each_key.first }
+      def first_tripped = @lock.synchronize { @tripped.first }
 
       private
 

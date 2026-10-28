@@ -519,11 +519,22 @@ RSpec.describe Lain::Tripwire::Ledger do
     end
   end
 
+  describe "with Stops::None" do
+    it "journals a tripwire record and no crossing for a seeded signal" do
+      ledger = described_class.new(journal:, rules: Lain::Tripwire::Rules::DEFAULT, stops: Lain::Tripwire::Stops::None)
+      journal.observe(ledger)
+      approved(id: "tu_1", requester: "researcher")
+      write(exec_record(id: "tu_1", refusals: [refused(planted)]))
+
+      types = journal_records(io).map { _1["type"] }
+      expect([types.include?("tripwire"), types.include?("tripwire_stop")]).to eq([true, false])
+    end
+  end
+
   describe "with stops" do
     let(:stops) { Lain::Tripwire::Stops.new }
     let(:rules) { Lain::Tripwire::Rules::DEFAULT }
-    let(:tripped_at) { Time.utc(2026, 10, 27, 12) }
-    let(:ledger) { described_class.new(journal:, rules:, stops:, clock: -> { tripped_at }).tap { journal.observe(_1) } }
+    let(:ledger) { described_class.new(journal:, rules:, stops:).tap { journal.observe(_1) } }
 
     def stop_records = journal_records(io).select { _1["type"] == "tripwire_stop" }
 
@@ -537,15 +548,9 @@ RSpec.describe Lain::Tripwire::Ledger do
     it "stops a subagent that crosses the hard stop on a seeded signal, and pauses main" do
       refused_exec_by("researcher")
 
-      expect([stops.stopped?("researcher"), stops.paused?("agent"), stops.stopped?("agent")]).to eq([true, true, false])
+      expect(%w[researcher agent].map { stops.standing(_1) }).to eq(%i[stopped paused])
       expect(stop_records.sole).to include("requester" => "researcher", "signal" => "refused_exec",
                                            "outcome" => "stopped")
-    end
-
-    it "stamps the trip with its clock" do
-      refused_exec_by("researcher")
-
-      expect(stops.tripped_at("researcher")).to eq(tripped_at)
     end
 
     it "journals the stop after the tripwire record that crossed it" do
@@ -559,7 +564,7 @@ RSpec.describe Lain::Tripwire::Ledger do
       write(exec_record(connects: [connect, connect(call: "sendto", port: 9999, status: 4, errno: nil)]))
 
       expect(tripwires.last).to include("stop" => "would_stop")
-      expect([stops.stopped?("researcher"), stops.paused?("agent")]).to eq([false, false])
+      expect(%w[researcher agent].map { stops.standing(_1) }).to eq(%i[free free])
       expect(stop_records.sole).to include("requester" => "researcher", "signal" => "refused_connect",
                                            "outcome" => "observe_only",
                                            "unseeded" => %w[refused_connect datagram_send])
@@ -574,7 +579,7 @@ RSpec.describe Lain::Tripwire::Ledger do
 
         expect(tripwires.last).to include("stop" => "would_stop", "score" => 13)
         expect(ledger.standing("researcher")).to have_attributes(score: 13, seeded: 10)
-        expect(stops.stopped?("researcher")).to be(false)
+        expect(stops.standing("researcher")).not_to eq(:stopped)
         expect(stop_records.sole).to include("outcome" => "observe_only", "unseeded" => ["remembered_reask"])
       end
     end
@@ -585,7 +590,7 @@ RSpec.describe Lain::Tripwire::Ledger do
       refused_exec_by("researcher", id: "tu_2")
 
       expect(stop_records.map { _1["outcome"] }).to eq(%w[observe_only stopped])
-      expect(stops.stopped?("researcher")).to be(true)
+      expect(stops.standing("researcher")).to eq(:stopped)
     end
 
     it "trips a requester once, however many seeded signals follow" do
@@ -593,7 +598,7 @@ RSpec.describe Lain::Tripwire::Ledger do
       refused_exec_by("researcher", id: "tu_2")
 
       expect(stop_records.size).to eq(1)
-      expect(stops.stopped?("agent")).to be(false)
+      expect(stops.standing("agent")).not_to eq(:stopped)
     end
 
     it "stops every requester when a second one trips" do
@@ -602,14 +607,14 @@ RSpec.describe Lain::Tripwire::Ledger do
 
       expect(stop_records.map { _1.values_at("requester", "outcome") })
         .to eq([%w[researcher stopped], %w[writer all_stopped]])
-      expect(%w[agent researcher writer anyone].map { stops.stopped?(_1) }).to all(be(true))
+      expect(%w[agent researcher writer anyone].map { stops.standing(_1) }).to all(eq(:stopped))
     end
 
     it "stops every requester when main trips first" do
       refused_exec_by("agent")
 
       expect(stop_records.sole).to include("requester" => "agent", "outcome" => "all_stopped")
-      expect(stops.stopped?("researcher")).to be(true)
+      expect(stops.standing("researcher")).to eq(:stopped)
     end
 
     describe "a trip no escalation names" do
@@ -617,7 +622,7 @@ RSpec.describe Lain::Tripwire::Ledger do
         write(exec_record(id: "tu_9", refusals: [refused(planted)]))
 
         expect(stop_records.sole).to include("requester" => "unknown", "outcome" => "all_stopped")
-        expect(%w[agent researcher].map { stops.stopped?(_1) }).to all(be(true))
+        expect(%w[agent researcher].map { stops.standing(_1) }).to all(eq(:stopped))
       end
 
       it "stops every requester at the first of 2 subagents' unattributed trips" do
@@ -625,8 +630,8 @@ RSpec.describe Lain::Tripwire::Ledger do
               exec_record(id: "from_writer", refusals: [refused("/work/repo/bin/ls")]))
 
         expect(stop_records.map { _1.values_at("requester", "outcome") }).to eq([%w[unknown all_stopped]])
-        expect(stops.paused?("agent")).to be(false)
-        expect(stops.stopped?("agent")).to be(true)
+        expect(stops.standing("agent")).not_to eq(:paused)
+        expect(stops.standing("agent")).to eq(:stopped)
       end
 
       it "stops every requester when the call's escalation was evicted before its exec record" do

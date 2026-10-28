@@ -4812,7 +4812,7 @@ RSpec.describe Lain::CLI::Wiring do
           .to eq([WiringSpecToolStamp, Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
                   Lain::Middleware::RedactSecretReads, Lain::Middleware::WithholdSecretPaths,
                   Lain::Middleware::GuardTestLayout, Lain::Middleware::WithholdAutomaticOutput,
-                  Lain::Middleware::RememberedDenials,
+                  Lain::Middleware::TripwireStop, Lain::Middleware::RememberedDenials,
                   Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
       end
     end
@@ -5123,7 +5123,7 @@ RSpec.describe Lain::CLI::Wiring do
             .to eq([Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
                     Lain::Middleware::RedactSecretReads,
                     Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
-                    Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::RememberedDenials,
+                    Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::TripwireStop, Lain::Middleware::RememberedDenials,
                     Lain::Middleware::Sensitivity,
                     Lain::Middleware::Gate])
           expect(listing_guard(board).filter).to be(board.sensitivity.filter)
@@ -5597,7 +5597,7 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
         .to eq([Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
                 Lain::Middleware::RedactSecretReads,
                 Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
-                Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::RememberedDenials,
+                Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::TripwireStop, Lain::Middleware::RememberedDenials,
                 Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
     end
 
@@ -5686,10 +5686,11 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
         .to eq([Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
                 Lain::Middleware::RedactSecretReads,
                 Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
-                Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::RememberedDenials,
+                Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::TripwireStop, Lain::Middleware::RememberedDenials,
                 Lain::Middleware::Sensitivity, Lain::Middleware::Gate,
                 Lain::Effect::Handler::Live])
-      expect(runner.middleware.to_a.last.instance_variable_get(:@policy)).to be(board.policy_switch)
+      expect(gate_asks?(board.policy_switch, runner.middleware,
+                        toolset: Lain::Toolset.new([Lain::Tools::Bash.new]))).to be(true)
     end
 
     it "seeds the Agent with a resumed Timeline when one is passed" do
@@ -5874,7 +5875,8 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
       wire
       resolved = child_guard.board.call
 
-      expect(child_gate.instance_variable_get(:@policy).policy).to be(resolved.policy_switch)
+      expect(gate_asks?(resolved.policy_switch, child_guard.call(Lain::WorkerEnv.default), toolset: resolved.toolset))
+        .to be(true)
       expect(resolved.approvals).to be(wiring.approvals)
       expect(resolved.policy_switch.current).to be_a(Lain::Approval::Escalation)
       expect(resolved.policy_switch.current).not_to be_a(Lain::Middleware::Gate::ApproveAll)
