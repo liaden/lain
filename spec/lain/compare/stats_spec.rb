@@ -29,6 +29,29 @@ RSpec.describe Lain::Compare::Stats do
     end
   end
 
+  describe ".mean" do
+    it "is the arithmetic mean as a Float" do
+      expect(described_class.mean([1, 2, 4])).to eq(7 / 3.0)
+    end
+  end
+
+  describe ".percentile" do
+    it "interpolates linearly between ranks" do
+      expect([0.25, 0.5, 0.75].map { |fraction| described_class.percentile([4.0, 1.0, 3.0, 2.0], fraction) })
+        .to eq([1.75, 2.5, 3.25])
+    end
+  end
+
+  describe "the t quantile" do
+    it "is bisected once per confidence and degrees" do
+      allow(described_class).to receive(:t_cdf).and_call_original
+
+      100.times { described_class.mean_interval((1..10).map(&:to_f), confidence: 0.9137) }
+
+      expect(described_class).to have_received(:t_cdf).exactly(200).times
+    end
+  end
+
   describe ".wilson" do
     it "is Wilson's 95% interval for 9 of 28" do
       interval = described_class.wilson(9, 28)

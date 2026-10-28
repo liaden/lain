@@ -147,12 +147,7 @@ module Lain
       module Stats
         module_function
 
-        def quantile(samples, fraction)
-          sorted = samples.sort
-          at = (sorted.size - 1) * fraction
-          low = sorted[at.floor]
-          low + ((sorted[at.ceil] - low) * (at - at.floor))
-        end
+        def quantile(samples, fraction) = Compare::Stats.percentile(samples, fraction)
 
         def iqr(samples) = quantile(samples, 0.75) - quantile(samples, 0.25)
       end

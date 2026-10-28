@@ -17,7 +17,7 @@ module Lain
             unpaired: unpaired.to_h { |key, sides| [key, sides.find { |side| !side.is_a?(Numeric) }] }.freeze)
       end
 
-      def mean_difference = pairs.empty? ? nil : pairs.values.sum(0.0) / pairs.size
+      def mean_difference = pairs.empty? ? nil : Stats.mean(pairs.values)
       def interval = Stats.mean_interval(pairs.values)
       def wins = pairs.values.count(&:positive?)
       def losses = pairs.values.count(&:negative?)

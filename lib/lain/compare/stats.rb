@@ -13,14 +13,30 @@ module Lain
       NORMAL_FROM = 30
       private_constant :NORMAL_FROM
 
+      T_QUANTILES = Concurrent::Map.new
+      private_constant :T_QUANTILES
+
+      # @return [Float]
+      def self.mean(values) = values.sum(0.0) / values.size
+
+      # Linear interpolation between ranks.
+      # @param samples [Array<Numeric>]
+      # @param fraction [Float] 0.0 to 1.0
+      def self.percentile(samples, fraction)
+        sorted = samples.sort
+        at = (sorted.size - 1) * fraction
+        low = sorted[at.floor]
+        low + ((sorted[at.ceil] - low) * (at - at.floor))
+      end
+
       # @return [Interval, nil] nil when fewer than 2 values leave no spread to measure
       def self.mean_interval(values, confidence: 0.95)
         n = values.size
         return nil if n < 2
 
-        mean = values.sum(0.0) / n
+        mean = mean(values)
         sd = Math.sqrt(values.sum(0.0) { |value| (value - mean)**2 } / (n - 1))
-        margin = quantile(confidence, n - 1) * sd / Math.sqrt(n)
+        margin = t_quantile(confidence, n - 1) * sd / Math.sqrt(n)
         Interval.new(low: mean - margin, high: mean + margin)
       end
 
@@ -64,13 +80,15 @@ module Lain
         forecasts.zip(outcomes).sum(0.0) { |forecast, outcome| (forecast - outcome)**2 } / forecasts.size
       end
 
-      def self.quantile(confidence, degrees)
+      def self.t_quantile(confidence, degrees)
         upper = 1 - ((1 - confidence) / 2)
         return normal_quantile(upper) if degrees > NORMAL_FROM
 
-        bisect(0.0, 1000.0) { |x| t_cdf(x, degrees) < upper }
+        T_QUANTILES.compute_if_absent([confidence, degrees]) do
+          bisect(0.0, 1000.0) { |x| t_cdf(x, degrees) < upper }
+        end
       end
-      private_class_method :quantile
+      private_class_method :t_quantile
 
       def self.normal_quantile(probability)
         bisect(0.0, 10.0) { |x| (1 + Math.erf(x / Math.sqrt(2))) / 2 < probability }
