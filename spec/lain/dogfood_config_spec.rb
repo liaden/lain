@@ -92,6 +92,18 @@ RSpec.describe "the dogfood config tree" do
     end
   end
 
+  describe "the skills in the dogfood tree" do
+    it "lists implement-careful with a model while the shipped implement has none" do
+      Dir.mktmpdir do |root|
+        File.symlink(File.join(repo, "dogfood/lain"), File.join(root, ".lain"))
+        catalog = Lain::Skill::Catalog.load(root:)
+
+        expect([catalog.fetch(:"implement-careful").model, catalog.fetch(:implement).model.to_s])
+          .to eq(["opus", ""])
+      end
+    end
+  end
+
   it "names the real skill and slot paths in the README" do
     readme = File.read(File.join(repo, "README.md"))
 

@@ -313,6 +313,34 @@ RSpec.describe "shipped skills" do
     end
   end
 
+  describe "implement's scaffold briefs an implementer red first" do
+    it "asks for the failing spec first, one commit for lib and spec, named paths and the handback file" do
+      with_empty_project do |renderer|
+        scaffold = renderer.render("implement")
+
+        expect(scaffold).to match(/failing spec first/i)
+        expect(scaffold).to match(/red run/i)
+        expect(scaffold).to match(/lib and (its )?spec.*same commit/i)
+        expect(scaffold).to match(/name the paths you stage/i)
+        expect(scaffold).to match(/handback file/i)
+        expect(scaffold).to match(/never run the suite while another run holds the lock/i)
+      end
+    end
+
+    it "warns a commit runs the hooks and the suite, and forbids --no-verify, reset --hard and stash" do
+      with_empty_project do |renderer|
+        scaffold = renderer.render("implement")
+
+        expect(scaffold).to match(/commit runs the checkout's hooks and the suite's wall/i)
+        expect(scaffold).to include("--no-verify", "git reset --hard", "git stash")
+      end
+    end
+
+    it "carries no model, so it follows the session" do
+      expect(shipped_catalog.fetch(:implement).model.to_s).to eq("")
+    end
+  end
+
   describe "research's scaffold runs without a human and compares options" do
     it "asks no question, compares 3 options including doing nothing, and writes the dated report" do
       with_empty_project do |renderer|
