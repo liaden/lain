@@ -54,4 +54,41 @@ RSpec.describe Lain::Telemetry::TestLayoutRefused do
       refusal(tool_use_id: "tu_5", path: "spec/x_spec.rb", rule: :mirrors, expected: nil, reason: "it passed")
     end.to raise_error(ArgumentError, /rule/)
   end
+
+  describe "journal bytes" do
+    it "journals a named expected path" do
+      expect(JSON.generate(refusal(tool: :write_file, reason: :"wrong place").to_journal))
+        .to eq(
+          '{"type":"test_layout_refused","tool_use_id":"tu_1","tool":"write_file",' \
+          '"path":"spec/unit/models/order_extra_spec.rb",' \
+          '"rule":"elsewhere","expected":"spec/unit/models/order_spec.rb","reason":"wrong place"}'
+        )
+    end
+
+    it "journals an absent expected path as null" do
+      expect(JSON.generate(refusal(expected: nil, reason: :r).to_journal)).to eq(
+        '{"type":"test_layout_refused","tool_use_id":"tu_1","tool":"write_file",' \
+        '"path":"spec/unit/models/order_extra_spec.rb",' \
+        '"rule":"elsewhere","expected":null,"reason":"r"}'
+      )
+    end
+
+    it "interns a named expected path across equal records" do
+      first = refusal(expected: +"spec/a_spec.rb")
+      second = refusal(expected: +"spec/a_spec.rb")
+      expect(first.expected).to equal(second.expected)
+    end
+
+    it "refuses a keyword it does not declare" do
+      expect { refusal(stray: 1) }.to raise_error(ArgumentError, /stray/)
+    end
+  end
+
+  describe "blank names" do
+    it "refuses path given as false, an empty Array or an empty Hash, as it did before interning" do
+      [false, [], {}].each do |blank|
+        expect { refusal(path: blank) }.to raise_error(ArgumentError, /path must name the refused path/)
+      end
+    end
+  end
 end

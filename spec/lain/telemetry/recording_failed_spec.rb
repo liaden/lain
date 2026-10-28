@@ -30,4 +30,33 @@ RSpec.describe Lain::Telemetry::RecordingFailed do
     expect { described_class.new(error_class: nil, message: "boom") }
       .to raise_error(ArgumentError, /error_class must name what stopped the run/)
   end
+
+  describe "journal bytes" do
+    it "journals the class name then the message" do
+      expect(JSON.generate(event.to_journal)).to eq(
+        '{"type":"recording_failed","error_class":"Lain::Provider::Ollama::APIError","message":"connection refused"}'
+      )
+    end
+
+    it "journals a nil message as the empty string" do
+      expect(JSON.generate(described_class.new(error_class: "X", message: nil).to_journal)).to eq(
+        '{"type":"recording_failed","error_class":"X","message":""}'
+      )
+    end
+
+    it "refuses a keyword it does not declare" do
+      expect { described_class.new(error_class: "X", message: "m", stray: 1) }.to raise_error(ArgumentError, /stray/)
+    end
+  end
+
+  describe "blank names" do
+    it "refuses error_class given as false, an empty Array or an empty Hash, as it did before interning" do
+      [false, [], {}].each do |blank|
+        expect do
+          described_class.new(error_class: blank,
+                              message: "m")
+        end.to raise_error(ArgumentError, /error_class must name what stopped the run/)
+      end
+    end
+  end
 end

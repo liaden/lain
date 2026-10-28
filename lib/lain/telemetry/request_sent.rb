@@ -14,6 +14,9 @@ module Lain
       end
     end
 
+    RequestSent = Data.define(:digest, :payload, :stream, :extra, :prefix_digests, :prefix_chain_version,
+                              :requester)
+
     # One Request as it left for the model, recorded losslessly. The digest
     # deliberately EXCLUDES `stream` and `extra` (transport concerns, not prompt
     # identity), so digest equality alone cannot prove a recorded request can be
@@ -44,8 +47,7 @@ module Lain
     # since two formats' digests never agree and a comparison across them
     # would misread the change of format as a rewrite. A not-computed chain
     # carries none.
-    RequestSent = Data.define(:digest, :payload, :stream, :extra, :prefix_digests, :prefix_chain_version,
-                              :requester) do
+    class RequestSent
       include Journalable
 
       # The journaling constructor: every field is read off a live {Request},
@@ -79,6 +81,8 @@ module Lain
       # still need freezing, at O(markers) cost.
       def initialize(digest:, payload:, stream:, extra:, prefix_digests: nil, prefix_chain_version: nil,
                      requester: nil, normalized: false)
+        # check! and the hand freeze, not settle!: it runs on every round trip, and settling doubled the
+        # cost of .from on a 64 KB request.
         Carriers::RequestSent.check!(stream:)
         raise ArgumentError, "prefix_digests needs a prefix_chain_version" if prefix_digests && !prefix_chain_version
 
@@ -89,7 +93,7 @@ module Lain
           extra: normalized ? extra : Canonical.normalize(extra),
           prefix_digests: Canonical.normalize(prefix_digests),
           prefix_chain_version:,
-          requester: requester&.to_s
+          requester: requester&.then { -_1.to_s }
         )
       end
     end

@@ -15,6 +15,7 @@ module Lain
       # adjacency cannot name which stream died.
       class TruncatedStream < Declarative::Carrier
         attribute :kind
+        attribute :model, default: nil
         attribute :request_digest
         attribute :frames
         attribute :accumulated_bytes
@@ -106,10 +107,10 @@ module Lain
         # rejected value as the wanted one. `&.`, so a nil reaches the guard and
         # is refused BY NAME rather than dying one frame lower.
         kind = kind&.to_sym
-        Carriers::TruncatedStream.check!(kind:, request_digest:, frames:, accumulated_bytes:, tool_calls:)
-
-        super(kind:, model: model&.dup&.freeze, request_digest: request_digest.dup.freeze,
-              frames: frames.to_i, accumulated_bytes: accumulated_bytes.to_i, tool_calls: tool_calls.to_i)
+        settled = Carriers::TruncatedStream.settle!(kind:, model:, request_digest:, frames:, accumulated_bytes:,
+                                                    tool_calls:)
+        super(**settled, frames: settled.fetch(:frames).to_i, accumulated_bytes: settled.fetch(:accumulated_bytes).to_i,
+                         tool_calls: settled.fetch(:tool_calls).to_i)
       end
     end
   end

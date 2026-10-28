@@ -34,4 +34,17 @@ RSpec.describe Lain::Telemetry::ToolOutput do
       )
     end
   end
+
+  describe "journal bytes" do
+    it "journals the stream as a String and the bytes untouched" do
+      expect(JSON.generate(described_class.new(tool_use_id: "tu_1", stream: :stdout, bytes: "hi\n").to_journal)).to eq(
+        '{"type":"tool_output","tool_use_id":"tu_1","stream":"stdout","bytes":"hi\n"}'
+      )
+    end
+
+    it "refuses a keyword it does not declare" do
+      expect { described_class.new(tool_use_id: "t", stream: :stdout, bytes: "x", stray: 1) }
+        .to raise_error(ArgumentError, /stray/)
+    end
+  end
 end

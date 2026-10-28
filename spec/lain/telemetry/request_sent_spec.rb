@@ -166,4 +166,73 @@ RSpec.describe Lain::Telemetry::RequestSent do
       expect(rebuild(record).digest).to eq(record.fetch("digest"))
     end
   end
+
+  describe "journal bytes" do
+    let(:plain) do
+      Lain::Request.new(model: "claude-opus-4-8", system: [{ "type" => "text", "text" => "be terse" }],
+                        messages: [{ "role" => "user", "content" => [{ "type" => "text", "text" => "hi" }] }],
+                        max_tokens: 128, stream: false, extra: { "service_tier" => "flex" })
+    end
+    let(:line) do
+      '{"type":"request_sent","digest":"blake3:2e9e1ff7c5918bd6b63d2cddf0c752375934a2fff0dbf677d6a38bdd40a714dd",' \
+        '"payload":{"max_tokens":128,"messages":[{"content":[{"text":"hi","type":"text"}],"role":"user"}],' \
+        '"model":"claude-opus-4-8","reasoning":null,"system":[{"text":"be terse","type":"text"}],"tools":[]},' \
+        '"stream":false,"extra":{"service_tier":"flex"},"prefix_digests":[],"prefix_chain_version":2'
+    end
+
+    it "journals a request through .from with no requester key for the agent's own" do
+      expect(JSON.generate(described_class.from(plain).to_journal)).to eq("#{line}}")
+    end
+
+    it "journals a named requester last, a Symbol as its String" do
+      expect(JSON.generate(described_class.from(plain, requester: :handoff).to_journal))
+        .to eq(%(#{line},"requester":"handoff"}))
+    end
+
+    it "journals an explicit nil requester as the agent's own" do
+      expect(JSON.generate(described_class.from(plain, requester: nil).to_journal)).to eq("#{line}}")
+    end
+
+    it "journals a keyword-built record with a null chain and a chained one with its version" do
+      bare = described_class.new(digest: "d", payload: { "model" => "m" }, stream: true, extra: {})
+      chained = described_class.new(digest: "d", payload: { "model" => "m" }, stream: true, extra: {},
+                                    prefix_digests: [[-1, "blake3:sys"], [0, "blake3:m0"]], prefix_chain_version: 1,
+                                    requester: "agent")
+      expect(JSON.generate(bare.to_journal)).to eq(
+        '{"type":"request_sent","digest":"d","payload":{"model":"m"},"stream":true,"extra":{},' \
+        '"prefix_digests":null,"prefix_chain_version":null}'
+      )
+      expect(JSON.generate(chained.to_journal)).to eq(
+        '{"type":"request_sent","digest":"d","payload":{"model":"m"},"stream":true,"extra":{},' \
+        '"prefix_digests":[[-1,"blake3:sys"],[0,"blake3:m0"]],"prefix_chain_version":1,"requester":"agent"}'
+      )
+    end
+
+    it "refuses a chain with no version" do
+      expect { described_class.new(digest: "d", payload: {}, stream: true, extra: {}, prefix_digests: []) }
+        .to raise_error(ArgumentError, "prefix_digests needs a prefix_chain_version")
+    end
+
+    it "stringifies a Symbol requester" do
+      record = described_class.new(digest: "d", payload: {}, stream: true, extra: {}, requester: :handoff)
+      expect(record.requester).to eq("handoff")
+      expect(Ractor.shareable?(record)).to be(true)
+    end
+
+    it "journals a false requester as the String false" do
+      record = described_class.new(digest: "d", payload: {}, stream: true, extra: {}, requester: false)
+      expect(record.requester).to eq("false")
+    end
+
+    it "freezes a mutable digest, leaving the record shareable" do
+      record = described_class.new(digest: +"d", payload: {}, stream: true, extra: {}, requester: "agent")
+      expect(record.digest).to be_frozen
+      expect(Ractor.shareable?(record)).to be(true)
+    end
+
+    it "refuses a keyword it does not declare" do
+      expect { described_class.new(digest: "d", payload: {}, stream: true, extra: {}, stray: 1) }
+        .to raise_error(ArgumentError, /stray/)
+    end
+  end
 end

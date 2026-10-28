@@ -35,4 +35,68 @@ RSpec.describe Lain::Telemetry::TestsRan do
     expect(described_class.unrun(issue_id: +"a", sha: +"abc123", why: +"w")).to be_deeply_frozen
     expect(described_class.from(run_of(passed: ["p"]), issue_id: +"a", sha: +"abc123")).to be_deeply_frozen
   end
+
+  describe "journal bytes" do
+    def ran(**over)
+      described_class.new(issue_id: "i1", sha: "abc", ran: true, passed: 5, failed: 1, errors: 2, **over)
+    end
+
+    it "journals a run's counts and a null why" do
+      expect(JSON.generate(ran.to_journal)).to eq(
+        '{"type":"tests_ran","issue_id":"i1","sha":"abc","ran":true,"passed":5,"failed":1,"errors":2,"why":null}'
+      )
+    end
+
+    it "journals an unrun record with zero counts and its reason" do
+      expect(JSON.generate(described_class.unrun(issue_id: "i1", sha: "abc", why: "no harness").to_journal)).to eq(
+        '{"type":"tests_ran","issue_id":"i1","sha":"abc","ran":false,"passed":0,"failed":0,"errors":0,' \
+        '"why":"no harness"}'
+      )
+    end
+
+    it "interns the issue, the sha and the reason across equal records" do
+      first = described_class.unrun(issue_id: +"i1", sha: +"abc", why: +"no harness")
+      second = described_class.unrun(issue_id: +"i1", sha: +"abc", why: +"no harness")
+      %i[issue_id sha why].each { |field| expect(first.public_send(field)).to equal(second.public_send(field)) }
+    end
+
+    it "refuses a nil count instead of journaling null" do
+      expect { ran(passed: nil) }.to raise_error(StandardError)
+    end
+
+    it "refuses a keyword it does not declare" do
+      expect { ran(stray: 1) }.to raise_error(ArgumentError, /stray/)
+    end
+  end
+
+  describe "blank names" do
+    it "refuses issue_id given as false, an empty Array or an empty Hash, as it did before interning" do
+      [false, [], {}].each do |blank|
+        expect do
+          described_class.unrun(issue_id: "i", sha: "s", why: "w").then do
+            described_class.new(issue_id: blank, sha: "s", ran: false,
+                                why: "w")
+          end
+        end.to raise_error(ArgumentError, /issue_id must name the issue, got/)
+      end
+    end
+
+    it "refuses sha given as false, an empty Array or an empty Hash, as it did before interning" do
+      [false, [], {}].each do |blank|
+        expect do
+          described_class.unrun(issue_id: "i", sha: "s", why: "w").then do
+            described_class.new(issue_id: "i", sha: blank, ran: false,
+                                why: "w")
+          end
+        end.to raise_error(ArgumentError, /sha must name the sha tested, got/)
+      end
+    end
+  end
+
+  describe "post-settle conversions" do
+    it "journals numeric-string counts as Integers" do
+      record = described_class.new(issue_id: "i", sha: "s", ran: true, passed: "7", failed: "8", errors: "9")
+      expect([record.passed, record.failed, record.errors]).to eq([7, 8, 9])
+    end
+  end
 end

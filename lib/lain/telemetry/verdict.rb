@@ -7,12 +7,31 @@ module Lain
       # silently reject `false` -- the same reasoning as {RequestSent}'s
       # `stream`.
       class Verdict < Declarative::Carrier
+        NAMED = {
+          why: "must explain the verdict"
+        }.freeze
+
         attribute :digest
         attribute :survived
-        attribute :why
+        attribute :score
+        attribute :why, :lain_interned
+        attribute :scale, default: nil
+        attribute :refuter, default: nil
         validates :digest, presence: { message: "must name the finding it judged, got nil" }
         validates :survived, inclusion: { in: [true, false], message: "must be true or false, got %<value>s" }
         validates :why, presence: { message: "must explain the verdict, got nil" }
+
+        validate :names_are_not_blank
+
+        private
+
+        # The interning cast turns false, [] and {} into present Strings, so blankness is judged on the raw value.
+        def names_are_not_blank
+          NAMED.each do |name, text|
+            raw = @attributes[name.to_s].value_before_type_cast
+            errors.add(name, "#{text}, got #{raw.inspect}") if raw.blank? && !errors.include?(name)
+          end
+        end
       end
     end
 
@@ -31,10 +50,8 @@ module Lain
       include Journalable
 
       def initialize(digest:, survived:, score:, why:, scale: nil, refuter: nil)
-        Carriers::Verdict.check!(digest:, survived:, why:)
-
-        super(digest: digest.dup.freeze, survived:, score: score.to_f.clamp(0.0, 1.0), why: -why.to_s,
-              scale: scale&.to_s&.freeze, refuter:)
+        super(**Carriers::Verdict.settle!(digest:, survived:, score: score.to_f.clamp(0.0, 1.0), why:,
+                                          scale: scale&.to_s, refuter:))
       end
     end
   end

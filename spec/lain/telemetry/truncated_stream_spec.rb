@@ -130,4 +130,43 @@ RSpec.describe Lain::Telemetry::TruncatedStream do
                                tool_calls: 0).kind)
       .to eq(:counts_absent)
   end
+
+  describe "journal bytes" do
+    def severed(**over)
+      described_class.new(kind: :unterminated, request_digest: "blake3:d", frames: 4, accumulated_bytes: 2800,
+                          tool_calls: 1, **over)
+    end
+
+    it "journals a named model after the kind" do
+      expect(JSON.generate(severed(model: "qwen3:4b").to_journal)).to eq(
+        '{"type":"truncated_stream","kind":"unterminated","model":"qwen3:4b","request_digest":"blake3:d",' \
+        '"frames":4,"accumulated_bytes":2800,"tool_calls":1}'
+      )
+    end
+
+    it "journals an absent or explicitly nil model as null, and a String kind as a String" do
+      expected = '{"type":"truncated_stream","kind":"counts_absent","model":null,"request_digest":"blake3:d",' \
+                 '"frames":0,"accumulated_bytes":0,"tool_calls":0}'
+      expect(JSON.generate(severed(kind: "counts_absent", frames: 0, accumulated_bytes: 0, tool_calls: 0)
+        .to_journal)).to eq(expected)
+      expect(JSON.generate(severed(kind: :counts_absent, model: nil, frames: "0", accumulated_bytes: 0,
+                                   tool_calls: 0).to_journal)).to eq(expected)
+    end
+
+    it "keeps the kind a Symbol in process" do
+      expect(severed(kind: "unterminated").kind).to be(:unterminated)
+    end
+
+    it "refuses a keyword it does not declare" do
+      expect { severed(stray: 1) }.to raise_error(ArgumentError, /stray/)
+    end
+  end
+
+  describe "post-settle conversions" do
+    it "journals numeric-string counts as Integers" do
+      record = described_class.new(kind: :unterminated, request_digest: "d", frames: "4", accumulated_bytes: "5",
+                                   tool_calls: "2")
+      expect([record.frames, record.accumulated_bytes, record.tool_calls]).to eq([4, 5, 2])
+    end
+  end
 end

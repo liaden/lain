@@ -35,4 +35,37 @@ RSpec.describe Lain::Telemetry::SearchRedacted do
     expect { described_class.new(tool_use_id: "tu_2", path: "/tmp/x", regions: 1, released: 2) }
       .to raise_error(ArgumentError, /released must be <= regions/)
   end
+
+  describe "journal bytes" do
+    it "journals counts as Integers, including ones given as numeric strings" do
+      expect(JSON.generate(event.to_journal)).to eq(
+        '{"type":"search_redacted","tool_use_id":"tu_2","path":"/tmp/config.yml","regions":3,"released":1}'
+      )
+      expect(described_class.new(tool_use_id: "tu_2", path: "/tmp/config.yml", regions: "3", released: "1"))
+        .to eq(event)
+    end
+
+    it "interns the call id and the path across equal records" do
+      first = described_class.new(tool_use_id: +"tu_2", path: +"/tmp/x", regions: 1, released: 0)
+      second = described_class.new(tool_use_id: +"tu_2", path: +"/tmp/x", regions: 1, released: 0)
+      expect(first.tool_use_id).to equal(second.tool_use_id)
+      expect(first.path).to equal(second.path)
+    end
+
+    it "refuses a keyword it does not declare" do
+      expect { described_class.new(tool_use_id: "t", path: "/p", regions: 1, released: 0, stray: 1) }
+        .to raise_error(ArgumentError, /stray/)
+    end
+  end
+
+  describe "blank names" do
+    it "refuses path given as false, an empty Array or an empty Hash, as it did before interning" do
+      [false, [], {}].each do |blank|
+        expect do
+          described_class.new(tool_use_id: "t", path: blank, regions: 1,
+                              released: 0)
+        end.to raise_error(ArgumentError, /path must name the redacted path/)
+      end
+    end
+  end
 end

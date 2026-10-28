@@ -9,9 +9,16 @@ module Lain
       # (`/home/joel/.ssh/id_ed25519`), and a refusal a reader cannot attribute
       # to a file is not actionable.
       class ReadRefused < Declarative::Carrier
-        attribute :path
+        NAMED = {
+          tool: "must name the refused tool",
+          path: "must name the refused path"
+        }.freeze
+
+        attribute :tool_use_id
+        attribute :tool, :lain_interned
+        attribute :path, :lain_interned
         attribute :reason
-        attribute :tool
+        attribute :requester, default: nil
         validates :path, presence: { message: "must name the refused path, got nil" }
         validates :reason, presence: { message: "must name what refused, got nil" }
         # The record covers writers as well as readers, so a Journal reader
@@ -20,6 +27,18 @@ module Lain
         # say which call it refused is the same unattributable record `path`
         # exists to prevent.
         validates :tool, presence: { message: "must name the refused tool, got nil" }
+
+        validate :names_are_not_blank
+
+        private
+
+        # The interning cast turns false, [] and {} into present Strings, so blankness is judged on the raw value.
+        def names_are_not_blank
+          NAMED.each do |name, text|
+            raw = @attributes[name.to_s].value_before_type_cast
+            errors.add(name, "#{text}, got #{raw.inspect}") if raw.blank? && !errors.include?(name)
+          end
+        end
       end
     end
 
@@ -44,14 +63,13 @@ module Lain
     ReadRefused = Data.define(:tool_use_id, :tool, :path, :reason, :requester) do
       include Journalable
 
+      # Interned here rather than by the carrier, whose interned type would turn an explicit nil into "".
       def initialize(tool_use_id:, tool:, path:, reason:, requester: nil)
-        Carriers::ReadRefused.check!(path:, reason:, tool:)
-
-        super(tool_use_id: tool_use_id.dup.freeze, tool: tool.to_s.dup.freeze,
-              path: path.to_s.dup.freeze, reason: reason.dup.freeze, requester: requester && -requester.to_s)
+        super(**Carriers::ReadRefused.settle!(tool_use_id:, tool:, path:, reason:,
+                                              requester: requester && -requester.to_s))
       end
 
-      def to_journal = requester.nil? ? super.except("requester") : super
+      def to_journal = omitting_defaults(super, Carriers::ReadRefused, :requester)
     end
   end
 end

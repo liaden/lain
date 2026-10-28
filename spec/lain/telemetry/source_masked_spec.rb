@@ -58,4 +58,48 @@ RSpec.describe Lain::Telemetry::SourceMasked do
   it "refuses more released than found" do
     expect { build(regions: 9, released: 10) }.to raise_error(ArgumentError, /released must be <= regions/)
   end
+
+  describe "journal bytes" do
+    it "journals every field, the kind as a String" do
+      expect(JSON.generate(event.to_journal)).to eq(
+        '{"type":"source_masked","tool_use_id":"tu_2","kind":"file","key":"/tmp/config.yml","regions":3,' \
+        '"released":1}'
+      )
+    end
+
+    it "defaults released to 0 and takes a String kind as the Symbol" do
+      record = described_class.new(tool_use_id: "tu_2", kind: "memory", key: "item-1", regions: 2)
+      expect(JSON.generate(record.to_journal)).to eq(
+        '{"type":"source_masked","tool_use_id":"tu_2","kind":"memory","key":"item-1","regions":2,"released":0}'
+      )
+      expect(record.kind).to be(:memory)
+    end
+
+    it "interns the call id and the key across equal records" do
+      first = build(tool_use_id: +"tu_2", key: +"/tmp/x")
+      second = build(tool_use_id: +"tu_2", key: +"/tmp/x")
+      expect(first.tool_use_id).to equal(second.tool_use_id)
+      expect(first.key).to equal(second.key)
+    end
+
+    it "refuses a keyword it does not declare" do
+      expect { build(stray: 1) }.to raise_error(ArgumentError, /stray/)
+    end
+  end
+
+  describe "blank names" do
+    it "refuses key given as false, an empty Array or an empty Hash, as it did before interning" do
+      [false, [], {}].each do |blank|
+        expect { build(key: blank) }.to raise_error(ArgumentError, /key must name the masked source/)
+      end
+    end
+  end
+
+  describe "post-settle conversions" do
+    it "journals numeric-string counts as Integers" do
+      record = build(regions: "3", released: "1")
+      expect(record.regions).to eq(3)
+      expect(record.released).to eq(1)
+    end
+  end
 end

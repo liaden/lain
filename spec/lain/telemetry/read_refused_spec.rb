@@ -90,4 +90,57 @@ RSpec.describe Lain::Telemetry::ReadRefused do
       "path" => "/home/joel/.ssh/id_ed25519", "reason" => "ssh private key"
     )
   end
+
+  describe "journal bytes" do
+    def refused(**over)
+      described_class.new(tool_use_id: "tu_1", tool: :write_file, path: "/home/joel/.ssh/id_ed25519",
+                          reason: "ssh private key", **over)
+    end
+
+    it "journals a named requester after the reason" do
+      expect(JSON.generate(refused(requester: "researcher").to_journal)).to eq(
+        '{"type":"read_refused","tool_use_id":"tu_1","tool":"write_file","path":"/home/joel/.ssh/id_ed25519",' \
+        '"reason":"ssh private key","requester":"researcher"}'
+      )
+    end
+
+    it "leaves the requester off when it is given as an explicit nil" do
+      expect(JSON.generate(refused(requester: nil).to_journal)).to eq(
+        '{"type":"read_refused","tool_use_id":"tu_1","tool":"write_file","path":"/home/joel/.ssh/id_ed25519",' \
+        '"reason":"ssh private key"}'
+      )
+    end
+
+    it "interns the requester across equal records" do
+      first = refused(requester: +"researcher")
+      second = refused(requester: +"researcher")
+      expect(first.requester).to equal(second.requester)
+    end
+
+    it "refuses a keyword it does not declare" do
+      expect { refused(stray: 1) }.to raise_error(ArgumentError, /stray/)
+    end
+  end
+
+  describe "blank names" do
+    def with_name(**over)
+      described_class.new(tool_use_id: "t", tool: "read_file", path: "/p", reason: "r", **over)
+    end
+
+    it "refuses tool given as false, an empty Array or an empty Hash, as it did before interning" do
+      [false, [], {}].each do |blank|
+        expect do
+          with_name(tool: blank)
+        end.to raise_error(ArgumentError, /tool must name the refused tool/)
+      end
+    end
+
+    it "refuses path given as false, an empty Array or an empty Hash, as it did before interning" do
+      [false, [], {}].each do |blank|
+        expect do
+          with_name(path: blank)
+        end.to raise_error(ArgumentError, /path must name the refused path/)
+      end
+    end
+  end
 end

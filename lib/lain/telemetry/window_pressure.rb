@@ -7,11 +7,19 @@ module Lain
       # that cannot say how big the prompt was or how big the context is claims
       # an overflow nobody can check.
       class WindowPressure < Declarative::Carrier
+        NAMED = {
+          source: "must name the provider that refused the prompt",
+          request_digest: "must name the request that was refused"
+        }.freeze
+
         attribute :kind
-        attribute :source
-        attribute :request_digest
+        attribute :source, :lain_interned
+        attribute :model, default: nil
+        attribute :request_digest, :lain_interned
         attribute :prompt_tokens
         attribute :window_tokens
+        attribute :stands_on
+        attribute :spawn, default: nil
         validates :kind, inclusion: { in: %i[over_window], message: "must be over_window, got %<value>s" }
         validates :source, presence: { message: "must name the provider that refused the prompt, got nil" }
         validates :request_digest, presence: { message: "must name the request that was refused, got nil" }
@@ -21,6 +29,18 @@ module Lain
         validates :window_tokens,
                   numericality: { only_integer: true, greater_than: 0,
                                   message: "must be the positive context the provider loaded, got %<value>s" }
+
+        validate :names_are_not_blank
+
+        private
+
+        # The interning cast turns false, [] and {} into present Strings, so blankness is judged on the raw value.
+        def names_are_not_blank
+          NAMED.each do |name, text|
+            raw = @attributes[name.to_s].value_before_type_cast
+            errors.add(name, "#{text}, got #{raw.inspect}") if raw.blank? && !errors.include?(name)
+          end
+        end
       end
     end
 
@@ -55,11 +75,11 @@ module Lain
       def initialize(kind:, source:, request_digest:, prompt_tokens:, window_tokens:, stands_on:, model: nil,
                      spawn: nil)
         kind = kind&.to_sym
-        Carriers::WindowPressure.check!(kind:, source:, request_digest:, prompt_tokens:, window_tokens:)
-
-        super(kind:, source: -source.to_s, model: model && -model.to_s, request_digest: -request_digest.to_s,
-              prompt_tokens: Integer(prompt_tokens), window_tokens: Integer(window_tokens),
-              stands_on: stands_on && -stands_on.to_s, spawn: spawn && -spawn.to_s)
+        settled = Carriers::WindowPressure.settle!(kind:, source:, model: model && -model.to_s, request_digest:,
+                                                   prompt_tokens:, window_tokens:,
+                                                   stands_on: stands_on && -stands_on.to_s,
+                                                   spawn: spawn && -spawn.to_s)
+        super(**settled, prompt_tokens: Integer(prompt_tokens), window_tokens: Integer(window_tokens))
       end
     end
   end

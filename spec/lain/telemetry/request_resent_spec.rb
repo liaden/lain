@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "json"
 require "stringio"
 
 # A hand-edited resend must journal DISTINGUISHABLY from a real dispatch:
@@ -35,5 +36,17 @@ RSpec.describe Lain::Telemetry::RequestResent do
     entries = io.string.lines
     expect(Lain::Journal.records(entries, type: "request_sent").map { |r| r.fetch("digest") }.to_a).to eq(["real"])
     expect(Lain::Journal.records(entries, type: "request_resent").map { |r| r.fetch("digest") }.to_a).to eq(["d"])
+  end
+
+  it "journals its own type over the same fields, the requester only when named" do
+    expect(JSON.generate(event.to_journal)).to eq(
+      '{"type":"request_resent","digest":"d","payload":{"model":"m"},"stream":true,"extra":{},' \
+      '"prefix_digests":null,"prefix_chain_version":null}'
+    )
+    named = described_class.new(digest: "d", payload: { "model" => "m" }, stream: true, extra: {}, requester: "x")
+    expect(JSON.generate(named.to_journal)).to eq(
+      '{"type":"request_resent","digest":"d","payload":{"model":"m"},"stream":true,"extra":{},' \
+      '"prefix_digests":null,"prefix_chain_version":null,"requester":"x"}'
+    )
   end
 end

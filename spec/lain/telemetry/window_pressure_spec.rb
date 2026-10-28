@@ -86,4 +86,62 @@ RSpec.describe Lain::Telemetry::WindowPressure do
       expect { pressure(window_tokens: 0) }.to raise_error(ArgumentError, /window_tokens must be/)
     end
   end
+
+  describe "journal bytes" do
+    it "journals every field" do
+      expect(JSON.generate(pressure(model: "qwen3:4b", spawn: "sp1").to_journal)).to eq(
+        '{"type":"window_pressure","kind":"over_window","source":"ollama","model":"qwen3:4b",' \
+        '"request_digest":"blake3:abc","prompt_tokens":12011,"window_tokens":2048,"stands_on":"blake3:below",' \
+        '"spawn":"sp1"}'
+      )
+    end
+
+    it "journals an absent spawn and a nil model as null" do
+      expected = '{"type":"window_pressure","kind":"over_window","source":"ollama","model":null,' \
+                 '"request_digest":"blake3:abc","prompt_tokens":12011,"window_tokens":2048,"stands_on":null,' \
+                 '"spawn":null}'
+      expect(JSON.generate(pressure(stands_on: nil, model: nil).to_journal)).to eq(expected)
+      expect(JSON.generate(pressure(stands_on: nil, model: nil, spawn: nil).to_journal)).to eq(expected)
+    end
+
+    it "interns every name across equal records" do
+      first = pressure(source: +"ollama", model: +"m", request_digest: +"blake3:abc", stands_on: +"blake3:below",
+                       spawn: +"sp1")
+      second = pressure(source: +"ollama", model: +"m", request_digest: +"blake3:abc", stands_on: +"blake3:below",
+                        spawn: +"sp1")
+      %i[source model request_digest stands_on spawn].each do |field|
+        expect(first.public_send(field)).to equal(second.public_send(field))
+      end
+    end
+
+    it "refuses a keyword it does not declare" do
+      expect { pressure(stray: 1) }.to raise_error(ArgumentError, /stray/)
+    end
+  end
+
+  describe "blank names" do
+    it "refuses source given as false, an empty Array or an empty Hash, as it did before interning" do
+      [false, [], {}].each do |blank|
+        expect do
+          pressure(source: blank)
+        end.to raise_error(ArgumentError, /source must name the provider that refused the prompt/)
+      end
+    end
+
+    it "refuses request_digest given as false, an empty Array or an empty Hash, as it did before interning" do
+      [false, [], {}].each do |blank|
+        expect do
+          pressure(request_digest: blank)
+        end.to raise_error(ArgumentError,
+                           /request_digest must name the request that was refused/)
+      end
+    end
+  end
+
+  describe "post-settle conversions" do
+    it "journals numeric-string token counts as Integers" do
+      record = pressure(prompt_tokens: "9000", window_tokens: "2048")
+      expect([record.prompt_tokens, record.window_tokens]).to eq([9000, 2048])
+    end
+  end
 end

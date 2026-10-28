@@ -8,17 +8,36 @@ module Lain
       # a count is the one field bytes could ride in on, and a release of no
       # regions never happened.
       class ReadReleased < Declarative::Carrier
-        attribute :tool_use_id
-        attribute :path
+        NAMED = {
+          tool_use_id: "must name the released call",
+          path: "must name the released file",
+          requester: "must name who the read was for",
+          surface: "must name what released it"
+        }.freeze
+
+        attribute :tool_use_id, :lain_interned
+        attribute :path, :lain_interned
         attribute :regions
-        attribute :requester
-        attribute :surface
+        attribute :requester, :lain_interned
+        attribute :surface, :lain_interned
         validates :tool_use_id, presence: { message: "must name the released call, got nil" }
         validates :path, presence: { message: "must name the released file, got nil" }
         validates :regions, numericality: { only_integer: true, greater_than: 0,
                                             message: "must be a positive Integer, got %<value>s" }
         validates :requester, presence: { message: "must name who the read was for, got nil" }
         validates :surface, presence: { message: "must name what released it, got nil" }
+
+        validate :names_are_not_blank
+
+        private
+
+        # The interning cast turns false, [] and {} into present Strings, so blankness is judged on the raw value.
+        def names_are_not_blank
+          NAMED.each do |name, text|
+            raw = @attributes[name.to_s].value_before_type_cast
+            errors.add(name, "#{text}, got #{raw.inspect}") if raw.blank? && !errors.include?(name)
+          end
+        end
       end
     end
 
@@ -35,11 +54,11 @@ module Lain
     ReadReleased = Data.define(:tool_use_id, :path, :regions, :requester, :surface) do
       include Journalable
 
+      # `regions` stays untyped so numericality judges what the caller gave ("2" passes) before it
+      # becomes an Integer.
       def initialize(tool_use_id:, path:, regions:, requester:, surface:)
-        Carriers::ReadReleased.check!(tool_use_id:, path:, regions:, requester:, surface:)
-
-        super(tool_use_id: -tool_use_id.to_s, path: -path.to_s, regions: regions.to_i,
-              requester: -requester.to_s, surface: -surface.to_s)
+        settled = Carriers::ReadReleased.settle!(tool_use_id:, path:, regions:, requester:, surface:)
+        super(**settled, regions: settled.fetch(:regions).to_i)
       end
     end
   end
