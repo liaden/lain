@@ -105,8 +105,9 @@ RSpec.describe Lain::CLI::Sessions do
                                       "20260101T000000-1.ndjson")
       end
 
-      it "says a file with no format key predates the current one" do
-        expect(lines.first).to include("predating session format", "cannot be resumed")
+      it "gives a file with no format key the same other-format reason" do
+        expect(lines.first).to include("recording another session format, not", "cannot be resumed")
+        expect(lines.first).not_to include("predating")
       end
     end
 

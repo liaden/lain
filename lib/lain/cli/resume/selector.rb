@@ -16,7 +16,6 @@ module Lain
         # reported apart but rejected together.
         EMPTY = "empty (a chat that recorded nothing)"
         HEADERLESS = "with no session header"
-        PREDATES = "predating session format #{SessionRecord::FORMAT}".freeze
         OTHER_FORMAT = "recording another session format, not #{SessionRecord::FORMAT}".freeze
         EPHEMERAL = "ephemeral (--btw)"
 
@@ -50,7 +49,7 @@ module Lain
           return HEADERLESS if header.nil?
           return PICKABLE if SessionRecord.current_format?(header)
 
-          header.key?("format") ? OTHER_FORMAT : PREDATES
+          OTHER_FORMAT
         end
 
         private
@@ -142,14 +141,7 @@ module Lain
 
         def stamped(name)
           header = first_header(path_of(name))
-          case header_reason(header)
-          when PREDATES
-            raise Refusal, "#{name} predates session format #{SessionRecord::FORMAT}: its header has no " \
-                           "format key, so it cannot load"
-          when OTHER_FORMAT
-            raise Refusal, "#{name} records session format #{header["format"].inspect}, not " \
-                           "#{SessionRecord::FORMAT}, so it cannot load"
-          end
+          raise Refusal, "#{name} is #{OTHER_FORMAT}, so it cannot load" if header_reason(header) == OTHER_FORMAT
 
           name
         end
@@ -179,7 +171,7 @@ module Lain
         # `to_sentence` because three reasons chained on "and" reads as one
         # run-on clause, each already carrying its own parenthetical.
         def skipped
-          phrases = [counted(EMPTY), headerless_phrase, named(PREDATES), named(OTHER_FORMAT),
+          phrases = [counted(EMPTY), headerless_phrase, named(OTHER_FORMAT),
                      ephemeral_phrase].compact
           phrases.empty? ? "" : ": skipped #{phrases.to_sentence}"
         end
@@ -189,7 +181,7 @@ module Lain
           "#{count} #{reason}" if count.positive?
         end
 
-        # NAMED, as the format reasons are, where EMPTY and EPHEMERAL are only
+        # NAMED, as the format reason is, where EMPTY and EPHEMERAL are only
         # counted; and it IDENTIFIES rather than advises. An earlier version said "name one exactly to load
         # it anyway", which was false: the exact-name path is honored here, but
         # a headerless file then refuses at the Loader, so nothing loads either

@@ -216,10 +216,8 @@ module Lain
         def stamped(header)
           return header if SessionRecord.current_format?(header)
 
-          format = header["format"]
-          raise Corrupt, "session file predates format #{SessionRecord::FORMAT} (no format key)" if format.nil?
-
-          raise Corrupt, "session file records format #{format.inspect}; this loader reads format #{SessionRecord::FORMAT}"
+          raise Corrupt, "session file records format #{header["format"].inspect}; " \
+                         "this loader reads format #{SessionRecord::FORMAT}"
         end
 
         def header_field(key) = RequiredKeys.read(header, key) { "the session header" }
