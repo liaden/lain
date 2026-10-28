@@ -2526,6 +2526,67 @@ RSpec.describe Lain::Tools::Subagent do
         refuses_workspace("no space left on device")
       end
 
+      def writing_tool(files)
+        Class.new(Lain::Tool) do
+          define_method(:name) { "write" }
+          define_method(:description) { "Writes files under the scope's root." }
+          define_method(:input_schema) { { type: :object, properties: {} } }
+          define_method(:perform) do |_input, invocation|
+            root = session_of(invocation).scope.root
+            files.each do |name|
+              FileUtils.mkdir_p(File.dirname(File.join(root, name)))
+              File.write(File.join(root, name), "x\n")
+            end
+            Lain::Tool::Result.ok("wrote")
+          end
+        end.new
+      end
+
+      def writes(*files, kept: self.kept,
+                 provider: mock(tool_response(["c1", "cwd", {}], ["c2", "write", {}]), text_response("done")))
+        build_subagent(provider:,
+                       toolset: cwd_only(writing_tool(files)), policy: spawn_policy(only: %i[cwd write]),
+                       isolation: leases, kept:)
+      end
+
+      it "ends the result with the files the child wrote, by absolute path" do
+        result = writes("research.md", "notes/a.md").call({ "prompt" => "go" }, invocation)
+
+        expect(result.text).to end_with("[files written:\n#{seen.first}/notes/a.md\n#{seen.first}/research.md]")
+      end
+
+      it "carries no files line when the child wrote nothing" do
+        text = kept_tool.call({ "prompt" => "go" }, invocation).text
+
+        expect(text).not_to include("files written")
+      end
+
+      def releasing_kept(released)
+        counting = Class.new(Lain::Isolation::Scratch) do
+          define_method(:release) { |lease| super(lease).tap { released << lease } }
+        end.new(root: scratch_root, prefix: "research-")
+        described_class::Kept.new(root: project, paths:, related: ->(_path) { false }, scratch: counting)
+      end
+
+      it "lists nothing and releases no lease for a child that raises, keeping what it wrote" do
+        released = []
+        down = mock
+        allow(down).to receive(:complete).and_raise(RuntimeError, "provider down")
+        tool = writes("research.md", provider: down, kept: releasing_kept(released))
+
+        expect { tool.call({ "prompt" => "go" }, invocation) }.to raise_error(RuntimeError, "provider down")
+        expect(released).to be_empty
+      end
+
+      it "lists a successful child's files once, releasing its lease once" do
+        released = []
+
+        writes("research.md", kept: releasing_kept(released)).call({ "prompt" => "go" }, invocation)
+
+        expect(released.size).to eq(1)
+        expect(released.first).to be_released
+      end
+
       it "keeps the directory after the child ends" do
         kept_tool.call({ "prompt" => "go" }, invocation)
 

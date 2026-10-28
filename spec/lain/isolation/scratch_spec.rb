@@ -69,6 +69,56 @@ RSpec.describe Lain::Isolation::Scratch do
     expect(File.read(File.join(lease.worker_env.cwd, "notes.md"))).to eq("spike\n")
   end
 
+  describe "#release" do
+    it "names every file written under the lease, absolute, one per line" do
+      lease = scratch.acquire
+      dir = lease.worker_env.cwd
+      FileUtils.mkdir_p(File.join(dir, "notes"))
+      File.write(File.join(dir, "research.md"), "r\n")
+      File.write(File.join(dir, "notes", "a.md"), "a\n")
+
+      expect(scratch.release(lease)).to eq("#{dir}/notes/a.md\n#{dir}/research.md")
+    end
+
+    it "names at most 50 files, then how many more there were" do
+      lease = scratch.acquire
+      dir = lease.worker_env.cwd
+      51.times { |i| File.write(File.join(dir, format("f%02d.md", i)), "x") }
+
+      lines = scratch.release(lease).lines(chomp: true)
+
+      expect(lines.size).to eq(51)
+      expect(lines.first).to eq("#{dir}/f00.md")
+      expect(lines.last).to eq("... and 1 more under #{dir}")
+    end
+
+    it "lists a link by its own path and does not walk into what it points at" do
+      lease = scratch.acquire
+      dir = lease.worker_env.cwd
+      outside = File.join(File.dirname(@root), "outside")
+      FileUtils.mkdir_p(outside)
+      File.write(File.join(outside, "secret.md"), "x")
+      File.symlink(outside, File.join(dir, "link"))
+
+      expect(scratch.release(lease)).to eq("#{dir}/link")
+    end
+
+    it "releases the lease, and a second listing neither errors nor changes the answer" do
+      lease = scratch.acquire
+      File.write(File.join(lease.worker_env.cwd, "a.md"), "x")
+
+      expect([scratch.release(lease), scratch.release(lease)].uniq.size).to eq(1)
+      expect(lease).to be_released
+    end
+
+    it "answers nothing when nothing was written, and keeps the directory" do
+      lease = scratch.acquire
+
+      expect(scratch.release(lease)).to eq("")
+      expect(File.directory?(lease.worker_env.cwd)).to be(true)
+    end
+  end
+
   it "sits under lain's own directory in the system temporary root by default" do
     expect(described_class::ROOT).to eq(File.join(Dir.tmpdir, "lain", "scratch"))
   end

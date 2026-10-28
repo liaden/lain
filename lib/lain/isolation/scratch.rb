@@ -16,6 +16,10 @@ module Lain
     class Scratch
       ROOT = File.join(Dir.tmpdir, "lain", "scratch")
 
+      # Names a release lists before it only counts, so a child that writes
+      # thousands of files cannot flood its parent's context.
+      LISTED = 50
+
       # @param root [String] the directory each lease is made under
       # @param prefix [String] what each directory's name starts with, so a
       #   human listing the root can tell whose work each one holds
@@ -66,10 +70,21 @@ module Lain
       # what was written there.
       #
       # @param lease [Lease]
-      # @return [String] nothing to say
+      # @return [String] the files written under it, absolute, 1 per line, the
+      #   first {LISTED} and a count of the rest; empty when there are none
       def release(lease)
         lease.release
-        ""
+        dir = lease.worker_env.cwd
+        written = Dir.glob("**/*", File::FNM_DOTMATCH, base: dir, sort: true)
+                     .map { |name| File.join(dir, name) }
+                     .reject { |path| File.lstat(path).directory? }
+        (written.first(LISTED) + elided(written.size, dir)).join("\n")
+      end
+
+      private
+
+      def elided(count, dir)
+        count > LISTED ? ["... and #{count - LISTED} more under #{dir}"] : []
       end
     end
   end

@@ -1005,20 +1005,31 @@ module Lain
           #   directory as the checkout
           # @param reminder [String] what the model is told about where it is
           # @param kept [#call] records the lease kept
-          def initialize(worker_env:, reminder:, kept:)
+          # @param listing [#call] the files the child wrote, as text; empty for none
+          def initialize(worker_env:, reminder:, kept:, listing: -> { "" })
             @kept = kept
+            @listing = listing
             super(worker_env:, reminder:)
           end
 
-          def lend(leases) = Lent.new(lent: super, kept: @kept)
+          def lend(leases) = Lent.new(lent: super, kept: @kept, listing: @listing)
+        end
+
+        # What the parent is told beside the handback: the files the child left.
+        Written = Data.define(:report, :listing) do
+          def summary
+            files = listing.call
+            [report.summary, (files.empty? ? "" : "files written:\n#{files}")].reject(&:empty?).join("\n\n")
+          end
         end
 
         # A lent checkout whose every hold ends by recording the lease kept.
-        Lent = Data.define(:lent, :kept) do
+        Lent = Data.define(:lent, :kept, :listing) do
           def lane = lent.lane
 
           def hold(role, **, &)
-            lent.hold(role, **, &)
+            held = lent.hold(role, **, &)
+            held.with(report: Written.new(report: held.report, listing:))
           ensure
             kept.call
           end
@@ -1074,14 +1085,18 @@ module Lain
 
         private
 
-        def confined(lease, from)
+        def confined(lease, from, listing: -> { "" })
           record = Recorded.new(journal: @journal, origin: lease.origin, backend: from.class.name)
           record.call(:acquired)
-          Confined.new(worker_env: lease.worker_env, reminder: yield(lease.worker_env), kept: -> { record.call(:kept) })
+          Confined.new(worker_env: lease.worker_env, reminder: yield(lease.worker_env), listing:,
+                       kept: -> { record.call(:kept) })
         end
 
         def scratched
-          confined(@scratch.acquire, @scratch) { |env| format(SCRATCH, dir: env.cwd, root: @root) }
+          lease = @scratch.acquire
+          confined(lease, @scratch, listing: -> { @scratch.release(lease) }) do |env|
+            format(SCRATCH, dir: env.cwd, root: @root)
+          end
         rescue Isolation::Scratch::Unwritable => e
           raise Refused, e.message
         end
