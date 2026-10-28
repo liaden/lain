@@ -2,6 +2,15 @@
 
 module Lain
   module Telemetry
+    module Carriers
+      # `head_before` is nil when the crashed request was the session first; that is a value, not an absence.
+      class Salvaged < Declarative::Carrier
+        attribute :request_digest
+        attribute :head_before
+        attribute :head_after
+      end
+    end
+
     # One salvage-on-resume: the harness recovered a paid-for-but-uncommitted
     # response from the {Provider::ResponseWal} instead of re-spending.
     # `request_digest` is the join key onto the {RequestSent} the response
@@ -29,8 +38,7 @@ module Lain
       include Journalable
 
       def initialize(request_digest:, head_before:, head_after:)
-        super(request_digest: request_digest.dup.freeze, head_before: head_before&.dup&.freeze,
-              head_after: head_after.dup.freeze)
+        super(**Carriers::Salvaged.settle!(request_digest:, head_before:, head_after:))
       end
     end
   end

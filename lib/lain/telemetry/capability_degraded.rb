@@ -2,6 +2,15 @@
 
 module Lain
   module Telemetry
+    module Carriers
+      # Untyped on purpose: a live capability is a Symbol, which interning would turn into a String.
+      class CapabilityDegraded < Declarative::Carrier
+        attribute :capability
+        attribute :requirer
+        attribute :provider
+      end
+    end
+
     # Something declared it `requires` a capability the Provider does not have,
     # and the run's policy chose to DEGRADE rather than raise: the tactic
     # silently became a no-op. "Silently" is the whole danger -- a
@@ -23,7 +32,7 @@ module Lain
       include Journalable
 
       def initialize(capability:, requirer:, provider:)
-        super(capability:, requirer: requirer.dup.freeze, provider: provider.dup.freeze)
+        super(**Carriers::CapabilityDegraded.settle!(capability:, requirer:, provider:))
       end
     end
   end

@@ -2,6 +2,21 @@
 
 module Lain
   module Telemetry
+    module Carriers
+      # Untyped: the trace lists can be large, which interning would pin for the process.
+      class ExecRecord < Declarative::Carrier
+        attribute :tool_use_id
+        attribute :profile
+        attribute :execs
+        attribute :refusals
+        attribute :fd_execs
+        attribute :truncated
+        attribute :incomplete, default: false
+        attribute :connects, default: -> { [] }
+        attribute :connects_dropped, default: 0
+      end
+    end
+
     # Every program a confined call started, as the kernel trace saw it. `execs` holds each
     # execve (path, argv0, rc), `refusals` those the sandbox answered EACCES or EPERM, and
     # `fd_execs` the execveat calls on a descriptor (path is empty for a bare fd, or relative
@@ -31,11 +46,10 @@ module Lain
                              :connects, :connects_dropped) do
       include Journalable
 
-      def initialize(tool_use_id:, profile:, execs:, refusals:, fd_execs:, truncated:, incomplete: false,
-                     connects: [], connects_dropped: 0)
-        super(tool_use_id: tool_use_id.dup.freeze, profile:, truncated:, incomplete:,
-              execs: Ractor.make_shareable(execs), refusals: Ractor.make_shareable(refusals),
-              fd_execs: Ractor.make_shareable(fd_execs), connects: Ractor.make_shareable(connects), connects_dropped:)
+      def initialize(tool_use_id:, profile:, execs:, refusals:, fd_execs:, truncated:, incomplete: false, connects: [],
+                     connects_dropped: 0)
+        super(**Carriers::ExecRecord.settle!(tool_use_id:, profile:, execs:, refusals:, fd_execs:, truncated:,
+                                             incomplete:, connects:, connects_dropped:))
       end
     end
   end

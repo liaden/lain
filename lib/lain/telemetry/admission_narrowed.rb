@@ -2,6 +2,19 @@
 
 module Lain
   module Telemetry
+    module Carriers
+      # The endpoint is interned; the header values stay as sent, nil where absent.
+      class AdmissionNarrowed < Declarative::Carrier
+        attribute :endpoint, :lain_interned
+        attribute :from_width
+        attribute :to_width
+        attribute :max_concurrent
+        attribute :active
+        attribute :queue_limit
+        attribute :queued
+      end
+    end
+
     # A hosted endpoint's admission width lowered to the limit its server named
     # on a concurrency 429. The server sends its rate-limit headers only on a
     # refusal, so this record is the one place a session's real plan limit is
@@ -16,8 +29,8 @@ module Lain
       include Journalable
 
       def initialize(endpoint:, from_width:, to_width:, max_concurrent:, active:, queue_limit:, queued:)
-        super(endpoint: endpoint.to_s.dup.freeze, from_width:, to_width:, max_concurrent:, active:, queue_limit:,
-              queued:)
+        super(**Carriers::AdmissionNarrowed.settle!(endpoint:, from_width:, to_width:, max_concurrent:, active:,
+                                                    queue_limit:, queued:))
       end
     end
   end

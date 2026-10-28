@@ -2,6 +2,15 @@
 
 module Lain
   module Telemetry
+    module Carriers
+      # Every field is a name, interned.
+      class PolicySwitch < Declarative::Carrier
+        attribute :from, :lain_interned
+        attribute :to, :lain_interned
+        attribute :surface, :lain_interned
+      end
+    end
+
     # A gate-policy flip, attributed to the surface that made it -- "who changed
     # what the gate answers, and when" is evidence on a study bench, not incident
     # detail. The flip is DERIVED rather than typed: {CLI::Switchboard#apply}
@@ -16,9 +25,7 @@ module Lain
     PolicySwitch = Data.define(:from, :to, :surface) do
       include Journalable
 
-      def initialize(from:, to:, surface:)
-        super(from: from.to_s.dup.freeze, to: to.to_s.dup.freeze, surface: surface.to_s.dup.freeze)
-      end
+      def initialize(from:, to:, surface:) = super(**Carriers::PolicySwitch.settle!(from:, to:, surface:))
     end
   end
 end

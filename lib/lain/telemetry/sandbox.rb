@@ -2,6 +2,18 @@
 
 module Lain
   module Telemetry
+    module Carriers
+      # `created_sealed` and `kept_tmpdir` are absent from the record written before the call.
+      class Sandbox < Declarative::Carrier
+        attribute :tool_use_id
+        attribute :profile
+        attribute :trace
+        attribute :refused
+        attribute :created_sealed, default: -> { [] }
+        attribute :kept_tmpdir
+      end
+    end
+
     # The profile a bash call ran under: `profile` is its name, `trace` whether
     # its execs were traced, and `refused` the resolved programs it was not
     # started for because the profile may not run them, the granted path a
@@ -16,8 +28,7 @@ module Lain
       include Journalable
 
       def initialize(tool_use_id:, profile:, trace:, refused:, created_sealed: [], kept_tmpdir: nil)
-        super(tool_use_id: tool_use_id.dup.freeze, profile:, trace:, refused: Ractor.make_shareable(refused.dup),
-              created_sealed: Ractor.make_shareable(created_sealed.dup), kept_tmpdir: kept_tmpdir&.dup&.freeze)
+        super(**Carriers::Sandbox.settle!(tool_use_id:, profile:, trace:, refused:, created_sealed:, kept_tmpdir:))
       end
     end
   end

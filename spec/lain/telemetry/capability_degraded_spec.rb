@@ -28,4 +28,35 @@ RSpec.describe Lain::Telemetry::CapabilityDegraded do
       "type" => "capability_degraded", "capability" => "thinking"
     )
   end
+
+  describe "settled record" do
+    it "journals byte for byte with every field set" do
+      record = described_class.new(capability: :thinking,
+                                   requirer: "Lain::Context",
+                                   provider: "Lain::Provider::Mock")
+      expect(JSON.generate(record.to_journal)).to eq(
+        '{"type":"capability_degraded","capability":"thinking","requirer":"Lain::Context",' \
+        '"provider":"Lain::Provider::Mock"}'
+      )
+    end
+
+    it "is deeply frozen when built from mutable input" do
+      given = {
+        capability: :thinking,
+        requirer: "Lain::Context",
+        provider: "Lain::Provider::Mock"
+      }
+      mutable = given.transform_values { |value| value.is_a?(String) ? value.dup : value }
+      expect(described_class.new(**mutable)).to be_deeply_frozen
+    end
+
+    it "refuses a missing capability, naming it" do
+      given = {
+        capability: :thinking,
+        requirer: "Lain::Context",
+        provider: "Lain::Provider::Mock"
+      }
+      expect { described_class.new(**given.except(:capability)) }.to raise_error(ArgumentError, /capability/)
+    end
+  end
 end

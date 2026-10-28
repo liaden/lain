@@ -2,6 +2,19 @@
 
 module Lain
   module Telemetry
+    module Carriers
+      # The verdict is a closed pair; `call` is interned.
+      class JudgeRuled < Declarative::Carrier
+        VERDICTS = %w[approved denied].freeze
+
+        attribute :call, :lain_interned
+        attribute :verdict, :lain_interned
+        validates :verdict, inclusion: { in: VERDICTS, message: ->(_record, data) { unknown(data[:value]) } }
+
+        def self.unknown(value) = "is unknown: got #{value.inspect}, expected one of #{VERDICTS.join(", ")}"
+      end
+    end
+
     JudgeRuled = Data.define(:call, :verdict)
 
     # A call the judge approved or denied, as a human would read it: the tool,
@@ -11,15 +24,9 @@ module Lain
     class JudgeRuled
       include Journalable
 
-      VERDICTS = %w[approved denied].freeze
+      VERDICTS = Carriers::JudgeRuled::VERDICTS
 
-      def initialize(call:, verdict:)
-        unless VERDICTS.include?(verdict)
-          raise ArgumentError, "unknown judge verdict #{verdict.inspect}; expected one of #{VERDICTS.inspect}"
-        end
-
-        super(call: call.to_s.dup.freeze, verdict: -verdict)
-      end
+      def initialize(call:, verdict:) = super(**Carriers::JudgeRuled.settle!(call:, verdict:))
     end
   end
 end
