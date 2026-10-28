@@ -59,6 +59,18 @@ RSpec.describe Lain::Compare::Stats do
     end
   end
 
+  describe "Interval#percents" do
+    it "is the low and high bounds as whole percents" do
+      expect(described_class.wilson(9, 28).percents).to eq([18, 51])
+    end
+  end
+
+  describe ".rate_percent" do
+    it "is k of n as a whole percent" do
+      expect(described_class.rate_percent(9, 28)).to eq(32)
+    end
+  end
+
   describe ".wilson edge cases" do
     it "refuses zero trials" do
       expect { described_class.wilson(0, 0) }.to raise_error(ArgumentError)

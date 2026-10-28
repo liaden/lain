@@ -142,8 +142,10 @@ module Lain
         end
 
         def interval_of(row)
-          rate = (100.0 * row.false_trips / row.sessions).round if row.low
-          row.low && " (#{rate}%, 95% CI #{(100 * row.low).round}-#{(100 * row.high).round}%)"
+          return unless row.low
+
+          low, high = Compare::Stats::Interval.new(low: row.low, high: row.high).percents
+          " (#{Compare::Stats.rate_percent(row.false_trips, row.sessions)}%, 95% CI #{low}-#{high}%)"
         end
 
         def unattributed_lines

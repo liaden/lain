@@ -76,6 +76,12 @@ RSpec.describe Lain::Bench::ApprovalReplay::Score do
       expect(table).to match(%r{\d+/\d+ \(\d+%, 95% CI \d+%-\d+%, n \d+\)})
     end
 
+    it "prints the prompts-per-100 rate and its interval to 1 decimal" do
+      line = score(arm(:ask)).table.lines.grep(/prompts per 100/).first
+
+      expect(line).to include("80.0 (95% CI 37.6-96.4, n 5)")
+    end
+
     it "heads the perfect approver as the upper bound and approve_all as the floor, recorded as neither" do
       lines = score(arm(:ask), arm(:ask, :perfect), arm(:ask, :approve_all)).table.lines
 
@@ -169,6 +175,18 @@ RSpec.describe Lain::Bench::ApprovalReplay::Score do
       cells = scored(%w[a b c].to_h { [_1, "sensitive"] }, rows)
 
       expect(cells[:sensitive_held]).to have_attributes(k: 2, n: 3)
+    end
+  end
+
+  describe "a rate on a half-percent boundary" do
+    it "rounds half up, so 23 of 40 reads 58%" do
+      ask = arm(:ask)
+      template = replay(ask).rows.find { !_1.unanswered }
+      rows = (0...40).map { template.with(call_digest: "r#{_1}", verdict: _1 < 23 ? "deny" : "allow", prompted: false) }
+      records = rows.map { { digest: _1.call_digest, label: "harmful", source: "human" } }
+      table = described_class.new(rows:, labels: described_class.labels_from(sidecar_of(*records))).table
+
+      expect(table).to include("23/40 (58%,")
     end
   end
 

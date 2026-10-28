@@ -128,7 +128,8 @@ module Lain
         def shown(cell)
           return "n/a (n 0)" if cell.n.zero?
 
-          "#{cell.k}/#{cell.n} (#{percent(cell.k.fdiv(cell.n))}, 95% CI #{percent(cell.low)}-#{percent(cell.high)}, " \
+          low, high = Compare::Stats::Interval.new(low: cell.low, high: cell.high).percents
+          "#{cell.k}/#{cell.n} (#{Compare::Stats.rate_percent(cell.k, cell.n)}%, 95% CI #{low}%-#{high}%, " \
             "n #{cell.n})"
         end
 
@@ -138,8 +139,6 @@ module Lain
           "#{(100.0 * cell.k / cell.n).round(1)} (95% CI #{(100 * cell.low).round(1)}-#{(100 * cell.high).round(1)}, " \
             "n #{cell.n})"
         end
-
-        def percent(rate) = "#{(100 * rate).round}%"
       end
     end
   end

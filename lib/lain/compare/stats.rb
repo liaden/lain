@@ -8,7 +8,10 @@ module Lain
     # The t quantile is exact up to {NORMAL_FROM} samples and the normal
     # quantile beyond it, where the two differ by under 4%.
     module Stats
-      Interval = Data.define(:low, :high)
+      Interval = Data.define(:low, :high) do
+        # @return [Array<Integer>] low and high as whole percents
+        def percents = [low, high].map { (100 * _1).round }
+      end
 
       NORMAL_FROM = 30
       private_constant :NORMAL_FROM
@@ -28,6 +31,9 @@ module Lain
         low = sorted[at.floor]
         low + ((sorted[at.ceil] - low) * (at - at.floor))
       end
+
+      # @return [Integer] successes over trials as a whole percent
+      def self.rate_percent(successes, trials) = (100.0 * successes / trials).round
 
       # @return [Interval, nil] nil when fewer than 2 values leave no spread to measure
       def self.mean_interval(values, confidence: 0.95)
