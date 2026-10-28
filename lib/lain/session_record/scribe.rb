@@ -259,9 +259,10 @@ module Lain
       #
       # @param reason [Symbol] one of {Telemetry::SessionClosed::REASONS}
       # @param head [String, nil] the final head anchor
+      # @param error [String, nil] the exception class behind a `:crashed` close
       # @return [self]
-      def close(reason:, head: @written.head)
-        @journal << Telemetry::SessionClosed.new(head:, reason:)
+      def close(reason:, head: @written.head, error: nil)
+        @journal << Telemetry::SessionClosed.new(head:, reason:, error:)
         self
       end
 

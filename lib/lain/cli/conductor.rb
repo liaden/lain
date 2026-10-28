@@ -283,13 +283,14 @@ module Lain
       # where the conversation stopped it first, is unchanged.
       #
       # @param reason [Symbol] one of {Telemetry::SessionClosed::REASONS}
-      def close(reason:)
+      # @param detail [Hash] extra closer fields, today only `error:` (the exception class of a `:crashed` close)
+      def close(reason:, **detail)
         return self if @closed
 
         @closed = true
         catch_up
         @chronicle.interrupted(head: @timeline.call.head_digest, reason:) if INTERRUPT_REASONS.include?(reason)
-        stop_fleet_then_close(reason)
+        stop_fleet_then_close(reason, **detail)
         self
       end
 
@@ -362,10 +363,10 @@ module Lain
       # The close is unconditional: a farewell that raises -- a worktree release
       # git refuses -- still propagates, but after the record has closed, since
       # {#close} is already marked closed and nothing would close it later.
-      def stop_fleet_then_close(reason)
+      def stop_fleet_then_close(reason, **detail)
         @supervisor.stop
       ensure
-        @chronicle.close(reason:)
+        @chronicle.close(reason:, **detail)
       end
 
       def seed_ask_state

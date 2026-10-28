@@ -347,6 +347,36 @@ RSpec.describe Lain::CLI::ChatLaunch do
       expect(conductor).to have_received(:close).with(reason: :exit)
     end
 
+    it "closes as crashed when a non-Lain error escapes the conversation, then propagates" do
+      allow(wiring).to receive(:run).and_raise(NoMethodError, "undefined method")
+
+      expect { launch({ journal: false }, wiring_factory:).call { |_notice| nil } }
+        .to raise_error(NoMethodError, "undefined method")
+      expect(conductor).to have_received(:close).with(reason: :crashed, error: "NoMethodError")
+    end
+
+    it "lets the original crash escape when the close itself raises" do
+      allow(wiring).to receive(:run).and_raise(NoMethodError, "undefined method")
+      allow(conductor).to receive(:close).and_raise(IOError, "closed stream")
+
+      expect { launch({ journal: false }, wiring_factory:).call { |_notice| nil } }
+        .to raise_error(NoMethodError, "undefined method")
+    end
+
+    it "names an anonymous error class by its inspect form" do
+      allow(wiring).to receive(:run).and_raise(Class.new(StandardError), "anon")
+
+      expect { launch({ journal: false }, wiring_factory:).call { |_notice| nil } }.to raise_error(StandardError)
+      expect(conductor).to have_received(:close).with(reason: :crashed, error: match(/\A#<Class:/))
+    end
+
+    it "does not call a signal a crash" do
+      allow(wiring).to receive(:run).and_raise(Interrupt)
+
+      expect { launch({ journal: false }, wiring_factory:).call { |_notice| nil } }.to raise_error(Interrupt)
+      expect(conductor).to have_received(:close).with(reason: :exit)
+    end
+
     it "falls back to the chronicle when the raise landed before wiring existed" do
       chronicle = instance_spy(Lain::CLI::Chronicle)
       instance = launch({ journal: true },

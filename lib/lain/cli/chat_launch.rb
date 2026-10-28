@@ -104,31 +104,18 @@ module Lain
       def call(&notice)
         return preflight(&notice) if self.class.preflight?
 
-        refuse_contradictory_flags!
-        refuse_windows_outside_tmux!
-        # Ahead of everything that writes or spawns -- a salvaged resume, the
-        # reap, the record -- so a refused run leaves none of them behind. Not
-        # at construction: the probe behind it would make #preflight ask a
-        # server, which is the one thing that method promises it never does.
-        backend.num_ctx
-        backend.refuse_compaction_flags!
+        refuse_before_launch!
         resolve_project!
         refuse_isolation!
         resumed = resumed_run(backend)
         schedule_gc
         open_chronicle
         converse(backend:, resumed:, &notice)
+      rescue StandardError => e
+        note_crash(e)
+        raise
       ensure
-        # Graceful close anchors the head; a hard kill skips this. Routed
-        # through the conductor because its close is guarded: a signal that
-        # already closed the session (:interrupted / :grace_expired) makes this
-        # a no-op. Falls back to the chronicle if the run raised before wiring
-        # existed.
-        (@wiring&.conductor || chronicle).close(reason: :exit)
-        # Last-resort release of a held capped-overflow notice: the closers
-        # land in the RAW journal, not the tee, so a failure path may never
-        # cross the fleet sink's boundary recognition.
-        release_fleet
+        close_session
       end
 
       # Every refusal `lain chat` raises before it reads a byte of the
@@ -286,6 +273,45 @@ module Lain
       def exit_status = @wiring ? @wiring.exit_status : Repl::Outcome::COMPLETED
 
       private
+
+      # A Lain::Error is a refusal the operator reads, not a crash.
+      def note_crash(error) = @crash = (error unless error.is_a?(Lain::Error))
+
+      def refuse_before_launch!
+        refuse_contradictory_flags!
+        refuse_windows_outside_tmux!
+        # Ahead of everything that writes or spawns -- a salvaged resume, the
+        # reap, the record -- so a refused run leaves none of them behind. Not
+        # at construction: the probe behind it would make #preflight ask a
+        # server, which is the one thing that method promises it never does.
+        backend.num_ctx
+        backend.refuse_compaction_flags!
+      end
+
+      def close_session
+        close_record
+        # Last-resort release of a held capped-overflow notice: the closers
+        # land in the RAW journal, not the tee, so a failure path may never
+        # cross the fleet sink's boundary recognition.
+        release_fleet
+      end
+
+      # A close that fails while a crash is unwinding must not replace it: the
+      # crash is the error the operator needs.
+      def close_record
+        # Graceful close anchors the head; a hard kill skips this. Routed
+        # through the conductor because its close is guarded: a signal that
+        # already closed the session (:interrupted / :grace_expired) makes this
+        # a no-op. Falls back to the chronicle if the run raised before wiring
+        # existed.
+        (@wiring&.conductor || chronicle).close(**close_fields)
+      rescue StandardError
+        raise unless @crash
+      end
+
+      def close_fields
+        @crash ? { reason: :crashed, error: @crash.class.name || @crash.class.to_s } : { reason: :exit }
+      end
 
       # Before a resume salvages and before the record opens: salvage appends to
       # the old file and opening makes the session directory, and a refused flag

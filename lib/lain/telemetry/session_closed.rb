@@ -7,6 +7,7 @@ module Lain
       class SessionClosed < Declarative::Carrier
         attribute :head
         attribute :reason
+        attribute :error, default: nil
       end
     end
 
@@ -17,12 +18,15 @@ module Lain
     # than journaling a reason no reader expects. Its presence is what tells a
     # loader an open session (a header and no closer -- a
     # SIGKILL'd process) apart from one that ended on purpose.
-    SessionClosed = Data.define(:head, :reason) do
+    SessionClosed = Data.define(:head, :reason, :error) do
       include Journalable
 
-      def initialize(head:, reason:)
-        super(**Carriers::SessionClosed.settle!(head:, reason: self.class.reason!(reason)))
+      def initialize(head:, reason:, error: nil)
+        super(**Carriers::SessionClosed.settle!(head:, reason: self.class.reason!(reason), error:))
       end
+
+      # `error` is the class name of the exception behind a `:crashed` close; every other close leaves it off.
+      def to_journal = omitting_defaults(super, Carriers::SessionClosed, :error)
     end
 
     class SessionClosed
@@ -31,12 +35,16 @@ module Lain
       # enclosing MODULE (Telemetry), not the Data class (the pinned Ruby trap the
       # Request::SYSTEM_PREFIX comment records).
 
+      # `:crashed` is a non-Lain error unwinding past the REPL: the process
+      # closed its own file, but not on purpose. A Lain::Error refusal or a
+      # signal stays :exit (or the signal's own reason).
+      #
       # `:salvaged` names a closed-file shape none of the other three is honest
       # about: {CLI::Resume::Salvager} closes the file from a LATER process than
       # the one that opened it, after recovering what it could from the response
       # log -- not because the run stopped on purpose or was interrupted
       # mid-turn.
-      REASONS = %i[exit interrupted grace_expired salvaged].freeze
+      REASONS = %i[exit interrupted grace_expired salvaged crashed].freeze
 
       # `respond_to?` rather than a bare `to_sym`, and nil is the case that
       # forces it: a reconstruction from a journal line written before a field

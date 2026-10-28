@@ -74,6 +74,20 @@ RSpec.describe Lain::SessionRecord::Scribe do
     agent
   end
 
+  describe "#close with an error class" do
+    it "journals the class on the closer, and omits it when none is given" do
+      scribe.close(reason: :crashed, error: "KeyError")
+
+      expect(records.last).to include("type" => "session_closed", "reason" => "crashed", "error" => "KeyError")
+    end
+
+    it "writes the closer a version before this field existed wrote it" do
+      scribe.close(reason: :exit)
+
+      expect(records.last).not_to have_key("error")
+    end
+  end
+
   describe "a spawned subagent's turns reach the journal" do
     before { spawned_session }
 

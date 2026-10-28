@@ -15,10 +15,10 @@ RSpec.describe Lain::Telemetry::SessionClosed do
   end
 
   it "pins the reason enum, rejecting anything outside it, echoing the offender" do
-    expect(described_class::REASONS).to eq(%i[exit interrupted grace_expired salvaged])
+    expect(described_class::REASONS).to eq(%i[exit interrupted grace_expired salvaged crashed])
     expect { described_class.new(head: nil, reason: :kaput) }
       .to raise_error(ArgumentError,
-                      "reason must be one of [:exit, :interrupted, :grace_expired, :salvaged], got :kaput")
+                      "reason must be one of [:exit, :interrupted, :grace_expired, :salvaged, :crashed], got :kaput")
   end
 
   # nil is not a hypothetical offender: it is what `record["reason"]&.to_sym`
@@ -28,7 +28,7 @@ RSpec.describe Lain::Telemetry::SessionClosed do
   it "refuses a nil reason as the enum's own ArgumentError, not a NoMethodError" do
     expect { described_class.new(head: nil, reason: nil) }
       .to raise_error(ArgumentError,
-                      "reason must be one of [:exit, :interrupted, :grace_expired, :salvaged], got nil")
+                      "reason must be one of [:exit, :interrupted, :grace_expired, :salvaged, :crashed], got nil")
   end
 
   it "tolerates a nil head (a session that committed nothing) and stays a frozen value" do
@@ -42,6 +42,14 @@ RSpec.describe Lain::Telemetry::SessionClosed do
       .to eq('{"type":"session_closed","head":"blake3:h","reason":"exit"}')
     expect(JSON.generate(described_class.new(head: nil, reason: :salvaged).to_journal))
       .to eq('{"type":"session_closed","head":null,"reason":"salvaged"}')
+  end
+
+  it "names the error class of a crash, and leaves the field off every other close" do
+    crashed = described_class.new(head: "blake3:h", reason: :crashed, error: "NoMethodError")
+    expect(crashed.to_journal).to eq("type" => "session_closed", "head" => "blake3:h", "reason" => :crashed,
+                                     "error" => "NoMethodError")
+    expect(described_class.new(head: nil, reason: :exit).to_journal).not_to have_key("error")
+    expect(crashed).to be_deeply_frozen
   end
 
   it "reads a String reason as its Symbol" do

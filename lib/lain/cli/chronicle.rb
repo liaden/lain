@@ -423,8 +423,8 @@ module Lain
       # no header would be an orphan record, while raising here would mask the
       # original error. `@spool&.close` and not `spool.close`, because calling
       # {#spool} would force the lazy open a never-spooled run must not create.
-      def close(reason: :exit)
-        @scribe&.close(reason:)
+      def close(reason: :exit, **detail)
+        @scribe&.close(reason:, **detail)
         @spool&.close
         @journal.close
         reap_ephemeral if reason == :exit
