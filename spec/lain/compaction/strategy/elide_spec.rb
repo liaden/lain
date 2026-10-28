@@ -106,6 +106,82 @@ RSpec.describe Lain::Compaction::Strategy::Elide do
       end
     end
 
+    describe "the prose beside a tool call" do
+      def call(id) = { "type" => "tool_use", "id" => id, "name" => "todo_write", "input" => {} }
+
+      def result(id) = { "type" => "tool_result", "tool_use_id" => id, "content" => "ok" }
+
+      def answer(*blocks) = { "role" => "assistant", "content" => blocks }
+
+      def paired?(blocks)
+        uses = blocks.select { |b| b["type"] == "tool_use" }.map { |b| b["id"] }
+        results = blocks.select { |b| b["type"] == "tool_result" }.map { |b| b["tool_use_id"] }
+        uses.sort == results.sort
+      end
+
+      let(:prose) { "x" * 800 }
+      let(:round) do
+        [answer({ "type" => "text", "text" => prose }, call("tu_1")),
+         { "role" => "user", "content" => [result("tu_1")] }]
+      end
+
+      it "keeps the text block of an answer and drops its tool_use" do
+        content = elide.collapse(round).content
+
+        expect(content.map { |b| b["type"] }).to all(eq("text"))
+        expect(content.map { |b| b["text"] }).to include(prose)
+        expect(content.first["text"]).to include(described_class::ELIDED)
+      end
+
+      it "leaves no tool_use or tool_result block, so the pair can never split" do
+        content = elide.collapse(round).content
+
+        expect(content.map { |b| b["type"] } & Lain::Compaction::Strategy::Elide::TOOL_BLOCKS).to be_empty
+        expect(paired?(content)).to be(true)
+      end
+
+      def kept_prose(*texts)
+        blocks = texts.map { |t| { "type" => "text", "text" => t } }
+        elide.collapse([answer(*blocks, call("tu_2"))]).content.drop(1).map { |b| b["text"] }
+      end
+
+      it "cuts prose past the budget with an ellipsis inside it" do
+        kept = kept_prose("y" * (described_class::KEPT_PROSE_BYTES + 50)).sum(&:bytesize)
+
+        expect(kept).to be <= described_class::KEPT_PROSE_BYTES
+        expect(kept_prose("y" * 2000).first).to end_with("...")
+      end
+
+      it "spends one budget across many blocks and shrinks the message" do
+        blocks = Array.new(50) { { "type" => "text", "text" => "z" * 800 } }
+        original = answer(*blocks, call("tu_5"))
+
+        collapsed = elide.collapse([original]).content
+
+        expect(Lain::Canonical.dump(collapsed).bytesize).to be < Lain::Canonical.dump(original).bytesize
+        expect(kept_prose(*Array.new(50) { "z" * 800 }).sum(&:bytesize)).to be <= described_class::KEPT_PROSE_BYTES
+      end
+
+      it "cuts multibyte text on a character boundary" do
+        kept = kept_prose("\u00e9" * 1000).first
+
+        expect(kept).to be_valid_encoding
+        expect(kept.bytesize).to be <= described_class::KEPT_PROSE_BYTES
+      end
+
+      it "elides a message of only tool_use blocks whole, as before" do
+        content = elide.collapse([answer(call("tu_3"))]).content
+
+        expect(content.size).to eq(1)
+      end
+
+      it "never emits an empty text block" do
+        content = elide.collapse([answer({ "type" => "text", "text" => "  " }, call("tu_4"))]).content
+
+        expect(content.size).to eq(1)
+      end
+    end
+
     it "says the bytes are gone rather than implying a summary was taken" do
       expect(texts(elide.collapse(span))).to all(include(described_class::ELIDED))
     end

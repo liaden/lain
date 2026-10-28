@@ -10,7 +10,9 @@ module Lain
       # policies is measured against.
       #
       # THE INVARIANT IS {SummarySnapshot}'s: nothing disappears unattested. The
-      # bytes are gone, but the line names what stood there. The rendering is
+      # bytes are gone, except the prose an assistant wrote beside a tool call,
+      # which survives as text within a per-message byte budget; the line names
+      # what stood there. The rendering is
       # {SummarySnapshot.attest}, the one place a message is attested; the
       # snapshot object itself is keyed on TOOL-RESULT source digests and built by
       # `.take` over an {Oracle::Eager} -- a different question from attesting a
@@ -28,7 +30,7 @@ module Lain
       #
       # It renders one line per MESSAGE where {SummarySnapshot} renders one per
       # block, because that object's summaries may exist for SOME blocks of a
-      # message and not others. Here every block is elided identically, so
+      # message and not others. Here every tool block is elided identically, so
       # there is no per-block fact to state.
       #
       # == Why it is a homomorphism, and why that matters
@@ -58,6 +60,11 @@ module Lain
 
         TOOL_BLOCKS = %w[tool_use tool_result].freeze
 
+        # One budget per message, so eliding many prose blocks still shrinks the request.
+        KEPT_PROSE_BYTES = 1024
+
+        ELLIPSIS = "..."
+
         # The whole span, in one range. There is no cut this strategy could
         # prefer: it answers the same bytes under every partition of the span.
         def propose_ranges(_messages, span:) = [span]
@@ -69,7 +76,40 @@ module Lain
         private
 
         def attested(message)
-          [{ "type" => "text", "text" => [attestation(message), *gists(message), ELIDED].join(" ") }]
+          [{ "type" => "text", "text" => [attestation(message), *gists(message), ELIDED].join(" ") },
+           *prose(message)]
+        end
+
+        # The tool_use and its tool_result are elided in the same range, so no half of a pair survives.
+        def prose(message)
+          return [] unless message["role"] == "assistant" && tool_blocks?(message)
+
+          budget = KEPT_PROSE_BYTES
+          texts(message).each_with_object([]) do |text, kept|
+            fitted = fit(text, budget)
+            next_budget = fitted.nil? ? 0 : budget - fitted.bytesize
+            kept << { "type" => "text", "text" => fitted } if fitted
+            budget = next_budget
+          end
+        end
+
+        def texts(message)
+          message.fetch("content").grep(Hash).filter_map do |block|
+            text = block["text"].to_s.strip
+            text if block["type"] == "text" && !text.empty?
+          end
+        end
+
+        def tool_blocks?(message) = message.fetch("content").any? { |block| TOOL_BLOCKS.include?(block["type"]) }
+
+        # Cut on a character boundary with the ellipsis inside the budget.
+        def fit(text, budget)
+          return text if text.bytesize <= budget
+
+          room = budget - ELLIPSIS.bytesize
+          used = 0
+          head = text.each_char.take_while { |char| (used += char.bytesize) <= room }.join
+          head.empty? ? nil : "#{head}#{ELLIPSIS}"
         end
 
         def attestation(message) = "[#{SummarySnapshot.attest(message)}]"
