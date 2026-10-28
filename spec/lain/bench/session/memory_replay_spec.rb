@@ -63,6 +63,26 @@ RSpec.describe Lain::Bench::Session::MemoryReplay do
     end
   end
 
+  # Rescued here and not in Memory::Writes, which the live view shares: only a
+  # replay has a session file to blame.
+  describe "a memory_write result whose recorded line is damaged" do
+    def damaged(line)
+      [turn("d1", [write_use("a")]),
+       turn("d2", [result("a").merge("content" => "wrote memory item \"a\"\nrecorded item: #{line}")], parent: "d1")]
+    end
+
+    {
+      "truncated JSON" => '{"author":{"kind":"chat"},"digest":"blake3:00"',
+      "a missing key" => '{"author":{"kind":"chat"},"sources":{}}',
+      "an array canon" => "[1]"
+    }.each do |shape, line|
+      it "refuses #{shape} as Corrupt, naming the turn" do
+        expect { described_class.new(records: damaged(line)).recorded_memory }
+          .to raise_error(Lain::Bench::Session::Corrupt, /d1/)
+      end
+    end
+  end
+
   describe "#recorded_memory" do
     it "replays the successful writes and pairs each turn with its pre-write root" do
       memory = described_class.new(records: turns + roots).recorded_memory

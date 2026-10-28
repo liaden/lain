@@ -38,6 +38,15 @@ module Lain
         "split it across several ids, one subject each, so the manifest can point at the right one"
       ].freeze
 
+      # Each source's digest rides the result, so the count keeps the result
+      # inside its own ceiling for ordinary path lengths; a source is stored as
+      # its real path relative to the root, which the count does not bound.
+      SOURCES_BOUND = Tool::Bounds::Enumeration.new(limit: 32, unit: "sources")
+      SOURCES_NARROWER = Tool::Bounds.offer([
+                                              "name only the files the item was derived from",
+                                              "split it across several ids, one subject each"
+                                            ])
+
       # A manifest line has nowhere narrower to go than shorter.
       ID_NARROWER = ["use a shorter id -- a few words naming the subject"].freeze
       DESCRIPTION_NARROWER = ["shorten it to one short line -- the body is where the detail belongs"].freeze
@@ -95,7 +104,8 @@ module Lain
         sources = staleness_for(invocation).record(Array(input.sources))
         item = Memory::Item.new(id: input.id, description: input.description, body: input.body, author:, sources:)
         root = recorder.write(item, written_by: written_by(invocation))
-        Tool::Result.ok("wrote memory item #{item.id.inspect}; index root is now #{root}")
+        Tool::Result.ok("wrote memory item #{item.id.inspect}; index root is now #{root}\n" \
+                        "#{Memory::Writes.recorded(item)}")
       rescue ArgumentError, Memory::Ownership::Refused, Memory::Staleness::Refused => e
         Tool::Result.error(e.message)
       end
@@ -119,7 +129,16 @@ module Lain
       def oversized(input)
         refusal(ID_BOUND, input.id, ID_NARROWER) { "the id" } ||
           refusal(DESCRIPTION_BOUND, input.description, DESCRIPTION_NARROWER) { "the description" } ||
-          refusal(BOUND, input.body, NARROWER) { "the body for memory item #{input.id.inspect}" }
+          refusal(BOUND, input.body, NARROWER) { "the body for memory item #{input.id.inspect}" } ||
+          too_many_sources(input)
+      end
+
+      def too_many_sources(input)
+        count = Array(input.sources).size
+        return if SOURCES_BOUND.admits?(count)
+
+        Tool::Result.error("memory item #{input.id.inspect} names #{count} sources, over the cap of " \
+                           "#{SOURCES_BOUND.limit} -- instead, #{SOURCES_NARROWER.join(", or ")}")
       end
 
       # The subject is a block because the body's names the id, and an id that

@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "json"
+
 module Lain
   module Memory
     # The memory_write calls a chain actually executed, read out of the turns
@@ -15,8 +17,24 @@ module Lain
     class Writes
       include Enumerable
 
+      # A recorded result whose item, rebuilt with its call's input, addresses
+      # another digest than the one it recorded.
+      class Mismatch < ArgumentError; end
+
       NAME = "memory_write"
-      private_constant :NAME
+      RECORDED = "recorded item: "
+      private_constant :NAME, :RECORDED
+
+      # What a memory_write result carries beside its call's input so a replay
+      # rebuilds the item as written: the input names source paths, never their
+      # digests or the author. The body stays out, so the line does not grow with it.
+      #
+      # @param item [Item]
+      # @return [String]
+      def self.recorded(item)
+        "#{RECORDED}#{Canonical.dump({ "author" => item.author.to_h, "digest" => item.digest,
+                                       "sources" => item.sources })}"
+      end
 
       # @param contents [Enumerable<Array<Hash>>] each turn's content blocks, in
       #   chain order (root first), so a call and the turn answering it are both
@@ -31,7 +49,19 @@ module Lain
       #
       # @return [Array<Array<Item>>]
       def per_turn
-        @per_turn ||= @contents.map { |blocks| executed(blocks).map { |block| item_for(block) } }
+        @per_turn ||= @contents.each_index.map { |index| items_at(index) }
+      end
+
+      # The items the content at `index` wrote, alone, so a reader can name the
+      # turn whose recorded result fails to rebuild.
+      #
+      # @param index [Integer] a position in the contents given
+      # @return [Array<Item>]
+      # @raise [Mismatch] when a recorded result disagrees with its call; a live
+      #   caller never reaches it, because a chain loaded from disk is replayed
+      #   first and refused there as Corrupt
+      def items_at(index)
+        executed(@contents.fetch(index)).map { |call| item_for(call, results.fetch(call["id"])) }
       end
 
       def each(&block)
@@ -47,22 +77,53 @@ module Lain
       # landed -- so it must not enter a view any more than an errored one.
       def executed(blocks)
         blocks.select do |block|
-          block["type"] == "tool_use" && block["name"] == NAME && outcomes[block["id"]] == false
+          block["type"] == "tool_use" && block["name"] == NAME && results[block["id"]]&.[]("is_error") == false
         end
       end
 
-      # tool_use_id => is_error, across every content given: results answer
+      # tool_use_id => tool_result, across every content given: results answer
       # their call from the FOLLOWING turn, and ids are unique per run, so one
       # flat map is the pairing.
-      def outcomes
-        @outcomes ||= @contents.flatten(1)
-                               .select { |block| block["type"] == "tool_result" }
-                               .to_h { |block| [block["tool_use_id"], block["is_error"]] }
+      def results
+        @results ||= @contents.flatten(1)
+                              .select { |block| block["type"] == "tool_result" }
+                              .to_h { |block| [block["tool_use_id"], block] }
       end
 
-      def item_for(block)
-        input = block.fetch("input")
-        Item.new(id: input.fetch("id"), description: input.fetch("description"), body: input.fetch("body"))
+      # Results journaled before the recorded line existed, and hand-written
+      # fixtures, carry no line.
+      def item_for(call, result)
+        recorded = recorded_line(original(result)["content"])
+        return from_input(call.fetch("input")) unless recorded
+
+        verified(call, rebuilt(call.fetch("input"), recorded), recorded.fetch("digest"))
+      end
+
+      # A round budget answers a repeated result by naming the first call's.
+      def original(result)
+        first = Tool::RoundBudget.referenced(result["content"])
+        first ? results.fetch(first) : result
+      end
+
+      def from_input(input, **recorded)
+        Item.new(id: input.fetch("id"), description: input.fetch("description"), body: input.fetch("body"), **recorded)
+      end
+
+      def rebuilt(input, recorded)
+        from_input(input, author: Author.from(recorded.fetch("author")), sources: recorded.fetch("sources"))
+      end
+
+      def verified(call, item, digest)
+        return item if item.digest == digest
+
+        raise Mismatch, "memory_write #{call["id"]} rebuilds to #{item.digest} but its result recorded #{digest}"
+      end
+
+      def recorded_line(content)
+        return unless content.is_a?(String)
+
+        line = content.each_line(chomp: true).find { |text| text.start_with?(RECORDED) }
+        line && JSON.parse(line.delete_prefix(RECORDED))
       end
     end
   end

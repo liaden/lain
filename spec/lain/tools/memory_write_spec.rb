@@ -68,6 +68,50 @@ RSpec.describe Lain::Tools::MemoryWrite do
       expect(recorder.index).to be_empty
     end
 
+    # A resume rebuilds the write from the journaled tool_result, and the input
+    # alone names neither the digests nor the author the item was hashed with.
+    it "carries the written item's author, source digests and digest into the journaled result" do
+      File.write(File.join(@root, "a.rb"), "x = 1")
+      File.write(File.join(@root, "b.rb"), "y = 2")
+      author = Lain::Memory::Author.clerk(spawn: "sha256:abc")
+      result = described_class.new(recorder:, author:)
+                              .call({ id: "s", description: "d", body: "b", sources: %w[a.rb b.rb] }, invocation)
+      written = recorder.fetch("s")
+      journaled = JSON.parse(JSON.generate(Lain::Tool::ResultBlock.of(result, tool_use_id: "tu_1").to_h))
+      recorded = { "author" => author.to_h, "digest" => written.digest, "sources" => written.sources }
+
+      expect(written.sources.size).to eq(2)
+      expect(result.content).to include(Lain::Canonical.dump(recorded))
+      expect(journaled.fetch("content")).to eq(result.content)
+    end
+
+    # The body is in the call already; echoing it would let one result outgrow
+    # the ceiling every other result is held to, and the round budget never
+    # withholds a write.
+    it "keeps the result inside the memory_write ceiling whatever the body holds" do
+      paths = (1..described_class::SOURCES_BOUND.limit).map { |n| "source_#{n}.rb" }
+      paths.each { |path| File.write(File.join(@root, path), path) }
+      ceiling = Lain::Tool::Bounds::CEILINGS.fetch("memory_write")
+
+      results = ["\n", '"', "\u0001"].map do |char|
+        tool.call({ id: "s", description: "d", body: "x#{char}" * (ceiling / 2), sources: paths }, invocation)
+      end
+
+      expect(results.map(&:is_error)).to all(be(false))
+      expect(results.map { |result| result.content.bytesize }).to all(be <= ceiling)
+    end
+
+    it "refuses more sources than the cap, naming the count and a narrower action, and writes nothing" do
+      paths = (1..(described_class::SOURCES_BOUND.limit + 1)).map { |n| "source_#{n}.rb" }
+      paths.each { |path| File.write(File.join(@root, path), path) }
+
+      result = tool.call({ id: "s", description: "d", body: "b", sources: paths }, invocation)
+
+      expect(result).to be_error
+      expect(result.content).to include(paths.size.to_s, described_class::SOURCES_BOUND.limit.to_s, "instead")
+      expect(recorder.index).to be_empty
+    end
+
     it "refuses a source that does not exist, naming it" do
       result = tool.call({ id: "s", description: "d", body: "b", sources: ["nope.rb"] }, invocation)
 

@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "json"
+
 module Lain
   module Bench
     class Session
@@ -223,7 +225,15 @@ module Lain
         # the LIVE view it is checked against one fold rather than two
         # implementations of it.
         def write_calls(segment)
-          segment.turns.zip(Memory::Writes.new(segment.turns.map { |record| record.fetch("content") }).per_turn)
+          writes = Memory::Writes.new(segment.turns.map { |record| record.fetch("content") })
+          segment.turns.each_with_index.map { |record, index| [record, written(writes, record, index)] }
+        end
+
+        def written(writes, record, index)
+          writes.items_at(index)
+        rescue JSON::ParserError, KeyError, TypeError, ArgumentError => e
+          raise Corrupt, "turn #{record.fetch("digest")} holds a memory_write whose recorded result cannot be " \
+                         "rebuilt (#{e.message})"
         end
 
         def segments = @segments ||= sliced.map { |records| Segment.new(records) }

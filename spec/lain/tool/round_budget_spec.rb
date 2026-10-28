@@ -56,6 +56,14 @@ RSpec.describe Lain::Tool::RoundBudget do
     it "still deduplicates identical results holding no placeholder" do
       expect(answered_pair("plain")).to eq(["plain", "same result as call tu_1"])
     end
+
+    # A reader rebuilding state from a round's results follows a reference to
+    # the result it stands for, so the format has to read back.
+    it "reads the first call back out of a reference, and nothing out of any other content" do
+      expect(described_class.referenced(answered_pair("plain").last)).to eq("tu_1")
+      expect([described_class.referenced("plain"), described_class.referenced([{ "type" => "text" }])])
+        .to eq([nil, nil])
+    end
   end
 
   describe "the round 26 shape under the window budget" do

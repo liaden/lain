@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "tmpdir"
+
 # The ONE reader of "what did this chain write to memory", shared by the live
 # view following a rewind and by the replay rebuilding a recorded one. Driven
 # here over hand-written content blocks, because the claim is about the blocks
@@ -55,5 +57,83 @@ RSpec.describe Lain::Memory::Writes do
 
   it "is an Enumerator without a block, so a caller may compose rather than collect" do
     expect(described_class.new([]).each).to be_a(Enumerator)
+  end
+
+  # The input names source paths, never their digests, and never the author:
+  # an item rebuilt from it addresses a different digest than the one written.
+  describe "a write with sources, replayed from its recorded result" do
+    around do |example|
+      Dir.mktmpdir("lain-writes-sources") do |dir|
+        @root = File.realpath(dir)
+        File.write(File.join(@root, "a.rb"), "x = 1")
+        example.run
+      end
+    end
+
+    let(:recorder) { Lain::Memory::Recorder.new }
+    let(:session) { Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: @root, env: {}), root: @root) }
+    let(:tool) do
+      Lain::Tools::MemoryWrite.new(recorder:, author: Lain::Memory::Author.clerk(spawn: "sha256:abc"))
+    end
+    let(:input) { { "id" => "s", "description" => "d", "body" => "b", "sources" => ["a.rb"] } }
+    let(:use) { use_of("tu_s") }
+    let!(:journaled) { journal("tu_s") }
+    let(:turns) { turns_of([use], [journaled]) }
+
+    def use_of(id, given = input) = { "type" => "tool_use", "id" => id, "name" => "memory_write", "input" => given }
+
+    def journal(id)
+      result = tool.call(input.transform_keys(&:to_sym), Lain::Tool::Invocation.new(tool_use_id: id, context: session))
+      JSON.parse(JSON.generate(Lain::Tool::ResultBlock.of(result, tool_use_id: id).to_h))
+    end
+
+    def turns_of(uses, results)
+      [{ "type" => "turn", "digest" => "d1", "parent" => nil, "content" => uses },
+       { "type" => "turn", "digest" => "d2", "parent" => "d1", "content" => results }]
+    end
+
+    def replayed(turns)
+      empty = Lain::Memory::ProjectStore.empty
+      written = Lain::Memory::ProjectStore::Loaded.of([recorder.fetch("s")]).index.root
+      records = [{ "type" => "memory_loaded", "version" => empty.version, "items" => [] }, *turns,
+                 { "type" => "memory_root", "turn_digest" => "d1", "root" => empty.index.root },
+                 { "type" => "memory_root", "turn_digest" => "d2", "root" => written }]
+      Lain::Bench::Session::MemoryReplay.new(records:).recorded_memory
+    end
+
+    it "yields the item that was written" do
+      expect(described_class.new(turns.map { |turn| turn.fetch("content") }).first.digest)
+        .to eq(recorder.fetch("s").digest)
+    end
+
+    it "survives the next turn's replay check" do
+      expect(replayed(turns).index.fetch("s").digest).to eq(recorder.fetch("s").digest)
+    end
+
+    it "refuses by name a recorded result that disagrees with its call" do
+      edited = use_of("tu_s", input.merge("body" => "edited"))
+
+      expect { described_class.new([[edited], [journaled]]).to_a }
+        .to raise_error(described_class::Mismatch, /tu_s/)
+    end
+
+    # The default arms deduplicate a round, so a second identical write's
+    # result names the first call instead of carrying its own line.
+    describe "a repeated identical write in one round" do
+      let(:uses) { [use, use_of("tu_t")] }
+      let(:bounded) do
+        calls = %w[tu_s tu_t].map { |id| Lain::Tool::RoundBudget::Call.new(id:, tool:) }
+        Lain::Tool::RoundBudget.dedup_only.for(head: nil).call([journaled, journal("tu_t")], calls)
+      end
+
+      it "yields the written item for both calls" do
+        expect(bounded.last.fetch("content")).not_to eq(journaled.fetch("content"))
+        expect(described_class.new([uses, bounded]).map(&:digest)).to eq([recorder.fetch("s").digest] * 2)
+      end
+
+      it "survives the next turn's replay check" do
+        expect(replayed(turns_of(uses, bounded)).index.fetch("s").digest).to eq(recorder.fetch("s").digest)
+      end
+    end
   end
 end

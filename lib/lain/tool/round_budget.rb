@@ -36,6 +36,17 @@ module Lain
 
       NONE = Unbounded
 
+      REFERENCE = /\Asame result as call (\S+)\z/
+      private_constant :REFERENCE
+
+      # @param first [String] the call whose result a repeat stands for
+      # @return [String] what a deduplicated result says instead
+      def self.reference(first) = "same result as call #{first}"
+
+      # @param content [String, Array] a delivered result's content
+      # @return [String, nil] the call a deduplicated result stands for
+      def self.referenced(content) = content.is_a?(String) ? content[REFERENCE, 1] : nil
+
       # A budget no round reaches, as a number so the record's budget stays an Integer.
       UNLIMITED = Limit.new(bytes: 2**62, scope: "unlimited")
 
@@ -163,8 +174,6 @@ module Lain
         # smaller one after it is withheld too, rather than delivered past it.
         def fits?(block) = !@reached && @spent + size(block) <= @limit.bytes
 
-        def reference(first) = "same result as call #{first}"
-
         def size(block)
           content = block["content"]
           content.is_a?(String) ? content.bytesize : Canonical.dump(content).bytesize
@@ -178,7 +187,7 @@ module Lain
 
         def deduplicate(block, call, first)
           @fates[:deduplicated] << call.id
-          block.merge("content" => reference(first))
+          block.merge("content" => RoundBudget.reference(first))
         end
 
         def withhold(block, call)
