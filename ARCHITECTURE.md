@@ -1404,19 +1404,20 @@ model-calling command shares.
 ### `RunProfile`: one resolved backend per chat
 
 `CLI::RunProfile` (`lib/lain/cli/run_profile.rb`) is `Data.define(:provider, :model, :api_base,
-:num_ctx, :num_batch, :typed)`. The sixth member is the one that makes the rest work: `typed`
-names which of the five flags the human actually put on argv, which is only knowable because
+:num_ctx, :num_batch, :keep_alive, :effort, :typed)`, and `FIELDS` is every member but `typed`.
+The last member is the one that makes the rest work: `typed` names which of the `FIELDS` the
+human actually put on argv, which is only knowable because
 `exe/lain` declares them with **no Thor `default:`** — a default would materialize the key and
 make a typed flag indistinguishable from an unset one.
 
-`ModelFlags` (in `exe/lain`) is the single band that declares those five, plus the sampling and
-throughput flags, on every command that calls a model: `chat`, `epic submit`, `bench record`,
+`ModelFlags` (in `exe/lain`) is the single band that declares those flags, with the sampling,
+residency and price-tier flags beside them, on every command that calls a model: `chat`, `epic submit`, `bench record`,
 `bench arms`, `consolidate` and `improve`. It replaced `EpicSubmit::Adjudication.flags` and the
 backend halves of `RECORD_FLAGS` and `ARMS_FLAGS`, and `JournalPassFlags` now composes it rather
 than carrying a provider default of its own.
 
-A chat writes its resolved profile into the session header (`#to_header`, over every field but
-`model`, which the header already carries). `#over` then lays a recorded profile under a typed
+A chat writes its resolved profile into the session header (`#to_header`, over `HEADER_FIELDS`:
+every field but `model`, which the header already carries, `keep_alive` and `effort`). `#over` then lays a recorded profile under a typed
 one, so resolution is **typed → recorded → environment → built-in**: `--resume`, `--fork`, `/fork`
 and `/btw` default to the backend the header records, which is why a fork's pane command carries
 no backend flags and therefore no secret. **A flag the human types wins loudly**:

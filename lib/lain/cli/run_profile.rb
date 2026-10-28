@@ -14,12 +14,14 @@ module Lain
     # resumed or forked chat resolve typed, then recorded, then environment,
     # then built-in: a flag Thor filled from a `default:` would be
     # indistinguishable from one the human typed, which is why the exe declares
-    # these six flags without one.
+    # these flags without one.
     #
     # `keep_alive` is the one field a flag cannot type as a number: `-1`, `0`
     # and `"5m"` are one knob with two JSON types, which {Backend} sorts out.
     class RunProfile
-      FIELDS = %i[provider model api_base num_ctx num_batch keep_alive effort].freeze
+      include Declarative
+
+      FIELDS = (members - %i[typed]).freeze
 
       # What a run with no `--provider` and no LAIN_PROVIDER talks to.
       DEFAULT_PROVIDER = "anthropic"
@@ -68,15 +70,29 @@ module Lain
         end
       end
 
-      def initialize(provider:, model:, api_base:, num_ctx:, num_batch:, keep_alive:, effort: nil, typed: [])
-        unknown = typed - FIELDS
-        raise ArgumentError, "typed names #{unknown.inspect}, which are not profile fields #{FIELDS.inspect}" \
-          unless unknown.empty?
+      declare do
+        attribute :provider, :string
+        attribute :model, :string
+        attribute :api_base, :string
+        attribute :num_ctx
+        attribute :num_batch
+        attribute :keep_alive
+        attribute :effort, :string
+        attribute :typed, default: -> { [] }
+        validate :typed_names_are_fields
 
-        super(provider: provider&.dup&.freeze, model: model&.dup&.freeze, api_base: api_base&.dup&.freeze,
-              num_ctx:, num_batch:, keep_alive: keep_alive&.dup&.freeze, effort: effort&.dup&.freeze,
-              typed: typed.dup.freeze)
+        private
+
+        def typed_names_are_fields
+          unknown = typed - FIELDS
+          return if unknown.empty?
+
+          errors.add(:typed,
+                     "names #{unknown.inspect}, which are not profile fields #{FIELDS.inspect}")
+        end
       end
+
+      def initialize(**attrs) = super(**self.class.settle!(**attrs))
 
       # @return [Boolean] whether this came from a header that recorded a profile
       def recorded? = !provider.nil?
@@ -111,15 +127,14 @@ module Lain
       #   for an unset one
       def to_header = HEADER_FIELDS.to_h { |field| [field.to_s, public_send(field)] }.compact
 
-      # The header that recorded no profile: laid under typed fields, it changes nothing.
-      UNRECORDED = new(provider: nil, model: nil, api_base: nil, num_ctx: nil, num_batch: nil, keep_alive: nil,
-                       effort: nil)
-
-      private
+      UNRECORDED = new(**FIELDS.to_h { |field| [field, nil] })
 
       def untyped = FIELDS - typed
 
       def follows?(recorded) = !typed.include?(:provider) || provider == recorded.provider
+
+      # A bare `private` after the `declare` block is flagged useless and auto-deleted.
+      private :untyped, :follows?
     end
   end
 end

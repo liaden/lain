@@ -12,6 +12,13 @@ RSpec.describe Lain::CLI::RunProfile do
     described_class.from_header(JSON.parse(JSON.generate(header)))
   end
 
+  describe "FIELDS" do
+    it "is the member list without typed, and UNRECORDED holds every one as nil" do
+      expect(described_class::FIELDS).to eq(described_class.members - %i[typed])
+      expect(described_class::UNRECORDED.to_h).to eq(described_class::FIELDS.to_h { [_1, nil] }.merge(typed: []))
+    end
+  end
+
   describe ".from_options" do
     it "counts as typed exactly the fields the options carry a value for" do
       profile = typed(provider: "ollama", model: nil, num_batch: 2048, temperature: 0.2)
@@ -26,6 +33,11 @@ RSpec.describe Lain::CLI::RunProfile do
         described_class.new(provider: nil, model: nil, api_base: nil, num_ctx: nil, num_batch: nil,
                             keep_alive: nil, typed: [:temperature])
       end.to raise_error(ArgumentError, /temperature/)
+    end
+
+    it "refuses a typed name by name, whatever the other fields hold" do
+      expect { described_class.new(**described_class::FIELDS.to_h { [_1, nil] }, typed: [:colour]) }
+        .to raise_error(ArgumentError, /colour/)
     end
 
     it "is deeply frozen, so it can be shared as a value" do
