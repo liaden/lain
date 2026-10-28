@@ -2149,6 +2149,14 @@ XDG path relative, which put machine state back inside the user's repository)
    driver reads the newest decision and gc keeps unlanded anchors; rulings: a role's iteration ceiling is its own and
    checkout scope escalates an outside write. The suite half rests on test-prof, stackprof, a GC hook and rbspy: child
    boots (bootsnap in `exe/lain`), Reline's unanswered cursor query and fixed windows, plus `bin/suite-profile`. 45 cards.
+70. **Planned (2026-10-28)**: `planning/specs/ux-first-dogfood.md`, 69 cards in 5 groups: the QA round 28 discharge
+   (`planning/qa-findings-round28-2026-10-28.md`: a sourced memory item resumes, a string-arm allow grants the parsed
+   programs, a release reaches the egress guard, lockfiles read without a prompt, a crash is journaled as one), then the
+   dogfood loop from `planning/ux-first-research-2026-10.md` (a config tree and `bin/verify` for this repo, conventions
+   slots, thicker `create-plan` and `execute-plan`, `handoff`, `implement` and `research` skills, `send_message`, the
+   `TODOS.md` drain through a lease and `lain land`, the macOS build gate), then `lain://tree` with labels, `lain://todos`,
+   `lain export`, `/share` and a terminal plus morning-feed notifier, then TTY markdown, a working indicator, tool-call
+   lines, a `theme` table and the macOS runtime, then the older-session fallbacks deleted. Rulings in the plan's Intent.
 
 ## Map of the documents
 
