@@ -427,14 +427,25 @@ RSpec.describe Lain::Tools::WebFetch do
 
     # Megabytes of empty elements hold no text to stop at, so the walk budget
     # is the only thing between such a page and a stalled reactor.
-    it "refuses a page of more nodes than the walk budget quickly, naming raw" do
+    it "refuses a page of more nodes than the walk budget, naming raw, after walking no more than the budget" do
       page = "<main>#{"<br>" * (1024 * 1024 / 4)}</main>"
-      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      budget = Lain::Tools::WebFetch::Readable::Page::WALK_BUDGET
+      walked = 0
+      # Counts rather than times: a clock is load-dependent, and Page has no seam to read the count from.
+      page_class = Lain::Tools::WebFetch::Readable::Page
+      allow(page_class).to receive(:new).and_wrap_original do |original, *args, **kwargs|
+        original.call(*args, **kwargs).tap do |walk|
+          allow(walk).to receive(:visit).and_wrap_original do |visit|
+            visit.call
+            walked += 1
+          end
+        end
+      end
       result = fetching(page, headers: html)
 
       expect(result).to be_error
-      expect(result.content).to include("more than #{Lain::Tools::WebFetch::Readable::Page::WALK_BUDGET}", "raw: true")
-      expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started).to be < 3
+      expect(result.content).to include("more than #{budget}", "raw: true")
+      expect(walked).to eq(budget)
     end
 
     describe "a charset the page declares only in its markup" do

@@ -373,12 +373,9 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   and `the review annotation runtime a buffer that goes away drops the orphaned entry once it has
   settled it, so a reused bufnr inherits nothing`.
 
-  Added 2026-10-06, wall-clock examples red under a load average of about 12 (agents running specs
-  beside a suite) and green alone each time: `Lain::Tools::WebFetch an HTML page comes back as
-  readable text refuses a page of more nodes than the walk budget quickly, naming raw` (red twice,
-  and again on 2026-10-18 at 3.06s against its 3s bound in a pre-commit suite beside 2 reviewers, green
-  alone in 0.79s and green in a full suite on the base and on the card);
-  and `a chat whose terminal is gone ends at its prompt once the terminal is closed`.
+  Added 2026-10-06, a wall-clock example red under a load average of about 12 (agents running specs
+  beside a suite) and green alone each time: `a chat whose terminal is gone ends at its prompt once
+  the terminal is closed`. The walk-budget example that was on this list is retired below.
 
   Added 2026-10-21, a wall-clock count red once in a full `pspec` at 12 workers on a quiet box (24 ticks
   against 25), green alone (6 of 6) and green in the next 2 full suites, with no change to the code it
@@ -484,6 +481,9 @@ Unproven; counting only the example's own thread would settle it.
 
   **Retired, with the fix that ended each.** Keep a retired name here so a later red under it reads
   as a regression, not as a known flake.
+  - 2026-10-28: `Lain::Tools::WebFetch an HTML page comes back as readable text refuses a page of more nodes
+    than the walk budget quickly, naming raw` (red 3 times at about 3.05s against a 3s bound, load-induced).
+    The example now counts the nodes the walk visits instead of timing it.
   - 2026-10-23: `Lain::CredentialPatterns the credential assignment shape scans a 100 KB line in linear time
     for each gated password shape` (red in 4 pre-commit suites at loads 0.7 to 28, 0.25 to 0.32 s against
     a 0.2 s bound). The bound became a 100 KB over 10 KB time ratio under 30, so it judges growth,
