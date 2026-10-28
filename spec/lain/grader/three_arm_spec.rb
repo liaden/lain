@@ -13,6 +13,7 @@ RSpec.describe Lain::Grader::ThreeArm do
       checkout = File.join(dir, "checkout")
       FileUtils.mkdir_p(checkout)
       FileUtils.cp_r(File.join(project, "."), checkout)
+      trust_project(checkout)
       yield Lain::Isolation::Lease.new(worker_env: Lain::WorkerEnv.new(cwd: checkout, env: ENV.to_h),
                                        on_release: -> { FileUtils.remove_entry(checkout) },
                                        origin: Lain::Isolation::Lease::Origin.new(path: checkout)),
@@ -56,6 +57,7 @@ RSpec.describe Lain::Grader::ThreeArm do
   def with_base
     Dir.mktmpdir("lain-three-arm-base") do |base|
       FileUtils.cp_r(File.join(subject_project, "."), base)
+      trust_project(base)
       File.write(File.join(base, "lib/helper.rb"), "# helper\n")
       yield base
     end
@@ -253,6 +255,7 @@ RSpec.describe Lain::Grader::ThreeArm do
       leased do |lease, checkout|
         Dir.mktmpdir("lain-three-arm-base") do |other|
           FileUtils.cp_r(File.join(subject_project, "."), other)
+          trust_project(other)
           File.write(File.join(other, "lib/order.rb"), "# other\n")
 
           expect(described_class.new(lease:, level: level_in(checkout), base: other).identity.fetch("base"))

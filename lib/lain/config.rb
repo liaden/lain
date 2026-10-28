@@ -111,10 +111,12 @@ module Lain
     #   enforces the layout never passes one, so enforcement is opt-in: a
     #   detected preset imposes level roots the project never declared, and
     #   would refuse its existing flat specs as strays.
+    # @param vouched_by [Project::Trust, nil] a trusted project whose exact bytes `root` holds, so a
+    #   copy the caller made of it needs no mark of its own
     # @return [TestLayout] {TestLayout::None} when neither says what the layout is
     # @raise [Project::Trust::Untrusted] as {.load}
     # @raise [Refusal] as {.load}
-    def self.test_layout(root:, framework: nil) = built(root).test_layout(framework:)
+    def self.test_layout(root:, framework: nil, vouched_by: nil) = built(root, vouched_by:).test_layout(framework:)
 
     # A catalog whose own file is absent reads nothing else, the posture
     # {DslCatalog.load} takes, so an untrusted sibling cannot refuse a project
@@ -122,12 +124,12 @@ module Lain
     #
     # A path that exists but is not a regular file refuses: reading it as
     # absent would drop the restricting tables in silence.
-    def self.built(root, paths: Paths.new)
+    def self.built(root, paths: Paths.new, vouched_by: nil)
       project_dir = ProjectDir.new(root:, paths:)
       path = project_dir.config
       return Builder.new(path).built unless File.exist?(path)
 
-      judged(path, Project::Trust.for(project_dir:, paths:), Builder::VERBS, "this project's", "project")
+      judged(path, Project::Trust.for(project_dir:, paths:), Builder::VERBS, "this project's", "project", vouched_by:)
     end
 
     def self.user(paths)
@@ -139,11 +141,11 @@ module Lain
 
     # The digest is stamped after the memo, which is keyed on config.rb alone
     # while the trust covers every `.lain/*.rb`.
-    def self.judged(path, trust, verbs, whose, side)
+    def self.judged(path, trust, verbs, whose, side, vouched_by: nil)
       source = trust.sources[path]
       raise Project::Trust::Unreadable, Project::Trust.legible(format(NOT_A_FILE, path:, whose:)) if source.nil?
 
-      trust.require!
+      trust.require!(vouched_by:)
       outcome = evaluated(path, source, verbs)
       raise outcome if outcome.is_a?(Refusal)
 

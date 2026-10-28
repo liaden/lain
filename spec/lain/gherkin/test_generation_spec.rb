@@ -59,6 +59,7 @@ RSpec.describe Lain::Gherkin::TestGeneration do
   around do |example|
     Dir.mktmpdir do |root|
       FileUtils.cp_r(File.join(layout_mini, "."), root)
+      trust_project(root)
       @root = root
       @slots = Lain::Prompt::Slots.load(root:)
       example.run

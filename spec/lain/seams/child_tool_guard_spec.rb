@@ -133,6 +133,7 @@ RSpec.describe "A child's tools run behind its parent's guard", :seam do
 
     before do
       FileUtils.cp_r("spec/fixtures/projects/layout_mini/.", root)
+      trust_project(root)
       FileUtils.mkdir_p(File.join(root, "spec", "unit", "models"))
     end
 
@@ -166,6 +167,7 @@ RSpec.describe "A child's tools run behind its parent's guard", :seam do
       Dir.mktmpdir("lain-child-guard-state") do |state|
         FileUtils.cp_r("#{SeedRepo.at("README" => "seed\n")}/.", root)
         FileUtils.cp_r("spec/fixtures/projects/layout_mini/.", root)
+        trust_project(root)
         git("add", "-A")
         git("commit", "-q", "-m", "the layout")
         git("switch", "-q", "-c", "feat")

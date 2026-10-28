@@ -80,11 +80,71 @@ RSpec.describe Lain::Project::Trust do
       expect(trust_for(project("moved", "services.rb" => "postgres\n"))).not_to be_trusted
     end
 
-    it "carries to another root holding byte-identical files, like a worker checkout" do
+    it "does not carry to another root holding byte-identical files" do
       trust_for(project("app", "summarizers.rb" => "one\n", "services.rb" => "postgres\n")).grant!
 
-      expect(trust_for(project("checkout", "services.rb" => "postgres\n", "summarizers.rb" => "one\n")))
-        .to be_trusted
+      other = trust_for(project("checkout", "services.rb" => "postgres\n", "summarizers.rb" => "one\n"))
+
+      expect(other).not_to be_trusted
+      expect { other.require! }.to raise_error(described_class::Untrusted, /lain trust .*checkout/)
+    end
+
+    it "carries to a linked worktree that inherits the trusted root's .lain" do
+      root = project("app", "config.rb" => "one\n")
+      lease = File.join(@tmp, "lease")
+      admin = File.join(root, ".git", "worktrees", "wt")
+      FileUtils.mkdir_p([admin, lease])
+      File.write(File.join(admin, "commondir"), "../..\n")
+      File.write(File.join(lease, ".git"), "gitdir: #{admin}\n")
+      trust_for(root).grant!
+
+      expect(trust_for(lease)).to be_trusted
+    end
+
+    it "re-asks once for a mark written under the content-only key" do
+      root = project("app", "config.rb" => "x\n")
+      old = Digest::SHA256.hexdigest("9:config.rb2:x\n")
+      Lain::Project::Trust::Record.new(paths:).grant(old)
+
+      expect(trust_for(root)).not_to be_trusted
+      trust_for(root).grant!
+      expect(trust_for(root)).to be_trusted
+    end
+  end
+
+  describe "#content_digest" do
+    it "is the old content-only stream, the same in any root" do
+      one = trust_for(project("one", "config.rb" => "x\n"))
+      two = trust_for(project("two", "config.rb" => "x\n"))
+
+      expect(one.content_digest).to eq(Digest::SHA256.hexdigest("9:config.rb2:x\n"))
+      expect(two.content_digest).to eq(one.content_digest)
+      expect(two.digest).not_to eq(one.digest)
+    end
+  end
+
+  describe "#require! vouched_by:" do
+    it "accepts byte-identical files in another root when the voucher is trusted" do
+      subject_trust = trust_for(project("subject", "config.rb" => "x\n"))
+      subject_trust.grant!
+
+      expect { trust_for(project("copy", "config.rb" => "x\n")).require!(vouched_by: subject_trust) }
+        .not_to raise_error
+    end
+
+    it "refuses changed bytes even when the voucher is trusted" do
+      subject_trust = trust_for(project("subject", "config.rb" => "x\n"))
+      subject_trust.grant!
+
+      expect { trust_for(project("copy", "config.rb" => "y\n")).require!(vouched_by: subject_trust) }
+        .to raise_error(described_class::Untrusted)
+    end
+
+    it "refuses when the voucher itself is untrusted" do
+      subject_trust = trust_for(project("subject", "config.rb" => "x\n"))
+
+      expect { trust_for(project("copy", "config.rb" => "x\n")).require!(vouched_by: subject_trust) }
+        .to raise_error(described_class::Untrusted)
     end
   end
 
@@ -119,10 +179,11 @@ RSpec.describe Lain::Project::Trust do
   describe "the project digest's inputs" do
     # Every mark already granted on a machine is this digest; changing what
     # feeds it would void them all.
-    it "is each file's length-prefixed name and bytes, and nothing else" do
-      digest = trust_for(project("app", "config.rb" => "x\n")).digest
+    it "is the resolved project root and each file's length-prefixed name and bytes, and nothing else" do
+      root = project("app", "config.rb" => "x\n")
+      digest = trust_for(root).digest
 
-      expect(digest).to eq(Digest::SHA256.hexdigest("9:config.rb2:x\n"))
+      expect(digest).to eq(Digest::SHA256.hexdigest("root:#{File.realpath(root)}9:config.rb2:x\n"))
     end
   end
 
@@ -135,6 +196,15 @@ RSpec.describe Lain::Project::Trust do
     def user_config(body)
       FileUtils.mkdir_p(File.dirname(paths.user_config))
       File.write(paths.user_config, body)
+    end
+
+    it "does not vouch for a project copy of the same bytes" do
+      user_config("middleware { }\n")
+      voucher = described_class.for_user(paths:)
+      voucher.grant!
+      copy = trust_for(project("copy", "config.rb" => "middleware { }\n"))
+
+      expect { copy.require!(vouched_by: voucher) }.to raise_error(described_class::Untrusted)
     end
 
     it "judges the user's config.rb by its bytes" do

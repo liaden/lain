@@ -103,8 +103,8 @@ module Lain
                   policy: policy(project_dir: ProjectDir.new(root: project.root, paths:), paths:))
         end
 
-        # The trust digests, which name files by basename, so a clone holding
-        # the same bytes elsewhere is the same policy.
+        # The project's content digest, which names files by basename and ignores
+        # the root, so a clone holding the same bytes elsewhere is the same policy.
         #
         # @param project_dir [ProjectDir] whose `.lain/*.rb` the run evaluates
         # @param paths [Paths] where the user's config.rb lives
@@ -118,7 +118,7 @@ module Lain
         # @param project [Project::Trust] the project's `.lain/*.rb`
         # @param user [Project::Trust] the user's config
         # @return [String]
-        def policy_of(project, user) = Canonical.digest([project.digest, user.digest])
+        def policy_of(project, user) = Canonical.digest([project.content_digest, user.digest])
 
         private
 

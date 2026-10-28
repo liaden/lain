@@ -337,9 +337,10 @@ lain trust --user          # the same for $XDG_CONFIG_HOME/lain/config.rb, which
 ```
 
 Shows every top-level `.lain/*.rb` of the project at `PATH` (default: the current project), with
-control characters escaped, and on a yes records a mark for those exact bytes. Trust covers those
-files only, not what they `require` or `load`. Any changed byte, added file or rename is a new
-decision. A no, or end of input, records nothing and exits non-zero, so `lain trust && lain chat`
+control characters escaped, and on a yes records a mark for that project root and those exact
+bytes. Trust covers those files only, not what they `require` or `load`. Any changed byte, added
+file or rename is a new decision, and so is the same bytes under another root; a linked worktree
+that inherits the main checkout's `.lain/` is the same project and shares its mark. A no, or end of input, records nothing and exits non-zero, so `lain trust && lain chat`
 stops there. A project with no `.lain/*.rb` has nothing to trust. `--user` judges the one file
 `$XDG_CONFIG_HOME/lain/config.rb`, which runs in every project, under a mark no project's can equal.
 

@@ -97,6 +97,17 @@ RSpec.describe Lain::CLI::Trust do
     expect(output.string).not_to include("[y/N]")
   end
 
+  it "asks again in another repository holding byte-identical files" do
+    run(project("summarizers.rb" => "one\n"), answer: "y\n")
+    other = File.join(@tmp, "other")
+    FileUtils.mkdir_p(File.join(other, ".lain"))
+    File.write(File.join(other, ".lain", "summarizers.rb"), "one\n")
+    output.truncate(0)
+
+    expect(run(other, answer: "y\n")).to include("trusted:")
+    expect(output.string).to include("[y/N]")
+  end
+
   # The human consents to what is shown, so a file must not be able to redraw
   # the terminal and hide a line from them.
   it "shows control characters escaped rather than letting them reach the terminal" do

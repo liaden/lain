@@ -725,6 +725,10 @@ RSpec.describe Lain::Bench::CLI do
     it "journals fixture_tampered into the journal the command was given" do
       journal = []
       copies = Lain::Bench::Altitude::Subject.new(project: "#{ALTITUDE_CLI_SUBJECTS}/order-total")
+      # Every task is graded in this one order-total copy, so the other task's subject cannot vouch for it.
+      allow(copies).to receive(:acquire).and_wrap_original do |acquire, *args|
+        acquire.call(*args).tap { |lease| trust_project(lease.worker_env.cwd) }
+      end
       allow(Lain::CLI::IsolationBackend).to receive(:resolve).and_return(copies)
       allow(Lain::Bench::LiveArms).to receive(:altitude).and_return([AltitudeTamperingArm.new("cheat")])
 

@@ -89,6 +89,8 @@ module SeedRepo
     def with_layout(layout, into:)
       seed = at(SEED)
       copy_into(TEMPLATES.compute_if_absent([:layout, layout]) { build_layout(seed, layout) }, into)
+      Lain::Project::Trust.for(project_dir: Lain::ProjectDir.new(root: into)).grant!
+      into
     end
 
     # The seed plus whatever the block does to it, built once per key. The block

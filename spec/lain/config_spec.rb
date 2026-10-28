@@ -564,6 +564,25 @@ RSpec.describe Lain::Config do
       end
     end
 
+    it "reads an untrusted copy of a trusted project's bytes when that project vouches" do
+      Dir.mktmpdir do |dir|
+        body = "tests preset: :rspec, source_roots: %w[app]\n"
+        original = File.join(dir, "original")
+        copy = File.join(dir, "copy")
+        write_config(original, body)
+        FileUtils.mkdir_p(File.join(copy, ".lain"))
+        File.write(config_path(copy), body)
+        voucher = Lain::Project::Trust.for(project_dir: Lain::ProjectDir.new(root: original))
+
+        expect { described_class.test_layout(root: copy) }.to raise_error(Lain::Project::Trust::Untrusted)
+        expect(described_class.test_layout(root: copy, vouched_by: voucher).preset.name).to eq("rspec")
+
+        File.write(config_path(copy), "#{body}# edited\n")
+        expect { described_class.test_layout(root: copy, vouched_by: voucher) }
+          .to raise_error(Lain::Project::Trust::Untrusted)
+      end
+    end
+
     it "refuses a misspelt key, naming the key and the file" do
       Dir.mktmpdir do |root|
         write_config(root, "tests prest: :rspec\n")

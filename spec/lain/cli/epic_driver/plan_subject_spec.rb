@@ -13,6 +13,7 @@ RSpec.describe Lain::CLI::EpicDriver::PlanSubject do
   around do |example|
     Dir.mktmpdir("lain-plan-subject") do |dir|
       FileUtils.cp_r(File.join(layout_mini, "."), dir)
+      trust_project(dir)
       @root = dir
       example.run
     end

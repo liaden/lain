@@ -273,8 +273,10 @@ module Lain
         worker_env = lease.worker_env
         raise Grader::LeaseHarness::NoCheckout, no_checkout(task) if worker_env.nil?
 
-        Config.test_layout(root: worker_env.cwd).mapping.level(task.level)
+        Config.test_layout(root: worker_env.cwd, vouched_by: subject_trust(task)).mapping.level(task.level)
       end
+
+      def subject_trust(task) = Project::Trust.for(project_dir: ProjectDir.new(root: task.project))
 
       def no_checkout(task)
         "altitude task #{task.id.inspect} was graded through a lease holding no checkout, so its subject's " \

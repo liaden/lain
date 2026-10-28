@@ -612,9 +612,11 @@ There are no config files to write before the first run. Everything below has a 
 `.lain/summarizers.rb` are evaluated as Ruby. A launch that finds any top-level `.lain/*.rb`
 untrusted, or a `config.rb` that will not load, is refused before anything starts; the message
 names the file and line, and for an untrusted file it names [`lain trust`](docs/commands.md#lain-trust).
-Trust covers the top-level `.lain/*.rb` files only, not the files they `require` or `load`. A
-changed byte in any of them needs a new decision. Your user-level `$XDG_CONFIG_HOME/lain/config.rb`,
-which may declare `middleware` for every project, is trusted separately with `lain trust --user`.
+Trust covers the top-level `.lain/*.rb` files only, not the files they `require` or `load`, and is
+keyed on the project root and those bytes: a changed byte, or the same files under another root,
+needs a new decision, while a linked worktree that inherits the main checkout's `.lain/` shares it.
+Your user-level `$XDG_CONFIG_HOME/lain/config.rb`, which may declare `middleware` for every project,
+is trusted separately with `lain trust --user`.
 
 **Durable state, under XDG.** `Lain::Paths` resolves `$XDG_STATE_HOME` (falling back to
 `~/.local/state`), `$XDG_CONFIG_HOME`, `$XDG_CACHE_HOME`, and `$XDG_RUNTIME_DIR`. A non-absolute

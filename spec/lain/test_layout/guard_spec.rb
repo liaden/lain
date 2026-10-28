@@ -59,6 +59,7 @@ RSpec.describe Lain::TestLayout::Guard do
   def with_copy
     Dir.mktmpdir do |root|
       FileUtils.cp_r(File.join(layout_mini, "."), root)
+      trust_project(root)
       yield root
     end
   end

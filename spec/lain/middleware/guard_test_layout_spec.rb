@@ -17,6 +17,7 @@ RSpec.describe Lain::Middleware::GuardTestLayout do
     Dir.mktmpdir("lain-layout-guard") do |dir|
       @root = File.realpath(dir)
       FileUtils.cp_r("spec/fixtures/projects/layout_mini/.", @root)
+      trust_project(@root)
       # The fixture commits no test tree, and write_file creates no directory.
       FileUtils.mkdir_p(File.join(@root, "spec", "unit", "models"))
       example.run
@@ -174,6 +175,7 @@ RSpec.describe Lain::Middleware::GuardTestLayout do
       Dir.mktmpdir("lain-layout-checkout") do |dir|
         @checkout = File.realpath(dir)
         FileUtils.cp_r("spec/fixtures/projects/layout_mini/.", @checkout)
+        trust_project(@checkout)
         FileUtils.mkdir_p(File.join(@checkout, "spec", "unit", "models"))
         example.run
       end
@@ -218,6 +220,7 @@ RSpec.describe Lain::Middleware::GuardTestLayout do
 
     def checkout_copy(dir)
       FileUtils.cp_r("spec/fixtures/projects/layout_mini/.", dir)
+      trust_project(dir)
       FileUtils.mkdir_p(File.join(dir, "spec", "unit", "models", "order"))
       File.realpath(dir)
     end

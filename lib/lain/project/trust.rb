@@ -10,9 +10,10 @@ module Lain
     # `instance_eval`s with no sandbox. A cloned repository carries those files,
     # so nothing in them runs until a human has said yes to these exact bytes.
     #
-    # The consent is keyed on CONTENT, not on a root. The digest covers each
-    # file's name and bytes, so a leased worktree or a bench subject holding the
-    # same files needs no second decision, and one changed byte is a new one.
+    # The consent is keyed on the project's root AND its content. The digest
+    # covers the resolved root whose `.lain/` is read, then each file's name and
+    # bytes: a leased worktree inheriting that `.lain/` shares the decision, a
+    # byte-identical clone elsewhere does not, and one changed byte is a new one.
     #
     # It covers the top-level `.lain/*.rb` files only, never what they require
     # or load: digesting `.lain/**` would void trust on every `/meta` draft
@@ -101,8 +102,16 @@ module Lain
       # @return [Trust]
       # @raise [Unreadable] when a `.lain/*.rb` cannot be read
       def self.for(project_dir:, paths: Paths.new)
-        new(root: project_dir.root, sources: sources_in(project_dir.dir), record: Record.new(paths:))
+        new(root: project_dir.root, sources: sources_in(project_dir.dir), record: Record.new(paths:),
+            scope: resolved(File.dirname(project_dir.dir)))
       end
+
+      def self.resolved(path)
+        File.realpath(path)
+      rescue SystemCallError
+        File.expand_path(path)
+      end
+      private_class_method :resolved
 
       def self.sources_in(dir)
         files = Dir.glob("*.rb", base: dir).sort.map { |name| File.join(dir, name) }.select { |path| File.file?(path) }
@@ -136,11 +145,13 @@ module Lain
       # @param record [Record] the mark store
       # @param domain [String, nil] what keeps this digest apart from a project's; nil for a project
       # @param untrusted [String] the {UNTRUSTED}-shaped text {#require!} raises
-      def initialize(root:, sources:, record:, domain: nil, untrusted: UNTRUSTED)
+      # @param scope [String, nil] the resolved root whose `.lain/` is read; nil for the user's file
+      def initialize(root:, sources:, record:, domain: nil, untrusted: UNTRUSTED, scope: nil)
         @root = root
         @sources = sources.to_h { |path, bytes| [path.dup.freeze, bytes.dup.freeze] }.freeze
         @record = record
         @domain = domain
+        @scope = scope
         @untrusted = untrusted
         freeze
       end
@@ -152,17 +163,18 @@ module Lain
       def files = @sources.keys
 
       # Length-prefixed so no pair of names and bodies can be spelled as another.
-      # A project's stream opens with a digit, so a domain, which opens with a
-      # letter, can never be spelled as one.
       #
-      # @return [String] the full-width hex digest of every file's name and bytes
+      # @return [String] the full-width hex digest of every file's name and bytes, wherever they live
+      def content_digest = fed(domain_seeded).hexdigest
+
+      # What a mark is keyed on. A project's stream opens with `root:` and the
+      # user's with its domain, so neither can be spelled as the other.
+      #
+      # @return [String] the full-width hex digest of the root and then every file's name and bytes
       def digest
-        seed = Digest::SHA256.new
-        seed << "#{@domain}:" if @domain
-        @sources.each_with_object(seed) do |(path, bytes), sha|
-          name = File.basename(path)
-          sha << "#{name.bytesize}:#{name}#{bytes.bytesize}:" << bytes
-        end.hexdigest
+        seed = domain_seeded
+        seed << "root:#{@scope}" if @scope
+        fed(seed).hexdigest
       end
 
       # A project with no Ruby has nothing to consent to.
@@ -170,16 +182,29 @@ module Lain
       # @return [Boolean]
       def trusted? = @sources.empty? || @record.granted?(digest)
 
+      # @param vouched_by [Trust, nil] a trusted project whose exact bytes these are, such as the
+      #   subject a bench copied into a lease
       # @return [void]
       # @raise [Untrusted] naming every file and `lain trust`
-      def require!
-        raise Untrusted, Trust.legible(refusal) unless trusted?
+      def require!(vouched_by: nil)
+        raise Untrusted, Trust.legible(refusal) unless trusted? || vouches?(vouched_by)
       end
 
       # @return [String, nil] the mark written, or nil when there was nothing to trust
       def grant! = @sources.empty? ? nil : @record.grant(digest)
 
       private
+
+      def vouches?(other) = !other.nil? && other.trusted? && other.content_digest == content_digest
+
+      def domain_seeded = Digest::SHA256.new.tap { |sha| sha << "#{@domain}:" if @domain }
+
+      def fed(sha)
+        @sources.each_with_object(sha) do |(path, bytes), acc|
+          name = File.basename(path)
+          acc << "#{name.bytesize}:#{name}#{bytes.bytesize}:" << bytes
+        end
+      end
 
       def refusal
         many = files.length > 1

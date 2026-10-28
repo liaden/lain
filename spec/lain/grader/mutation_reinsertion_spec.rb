@@ -21,6 +21,7 @@ RSpec.describe Lain::Grader::MutationReinsertion do
       checkout = File.join(dir, "checkout")
       FileUtils.mkdir_p(checkout)
       FileUtils.cp_r(File.join(project, "."), checkout)
+      trust_project(checkout)
       yield Lain::Isolation::Lease.new(worker_env: Lain::WorkerEnv.new(cwd: checkout, env: ENV.to_h),
                                        on_release: -> { FileUtils.remove_entry(checkout) },
                                        origin: Lain::Isolation::Lease::Origin.new(path: checkout)),
@@ -38,6 +39,7 @@ RSpec.describe Lain::Grader::MutationReinsertion do
   def project_with(rspec_options)
     Dir.mktmpdir("lain-mutation-project") do |project|
       FileUtils.cp_r(File.join(subject_project, "."), project)
+      trust_project(project)
       File.write(File.join(project, ".rspec"), rspec_options)
       yield project
     end
