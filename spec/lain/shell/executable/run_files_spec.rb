@@ -394,9 +394,71 @@ RSpec.describe Lain::Shell::Executable::RunFiles do
     it "is :unresolved when options move the repository or the config" do
       touch(".git/config")
 
-      expect(git_in(root, "-C", "elsewhere", "commit")).to have_attributes(klass: :unresolved)
       expect(git_in(root, "-c", "core.hooksPath=/x", "commit")).to have_attributes(klass: :unresolved)
       expect(git_in(root, "--git-dir=/x", "commit")).to have_attributes(klass: :unresolved)
+    end
+
+    describe "git -C" do
+      it "reads the config and hooks of the directory it names" do
+        config = touch("sub/.git/config")
+        hook = touch("sub/.git/hooks/pre-commit")
+
+        expect(git_in(root, "-C", "sub", "commit").run_files.map(&:path)).to contain_exactly(config, hook)
+      end
+
+      it "composes with a second -C" do
+        config = touch("a/b/.git/config")
+
+        expect(git_in(root, "-C", "a", "-C", "b", "status").run_files.map(&:path)).to contain_exactly(config)
+      end
+
+      it "is :unresolved when the directory does not exist or has no value" do
+        expect(git_in(root, "-C", "elsewhere", "commit")).to have_attributes(klass: :unresolved)
+        expect(git_in(root, "-C")).to have_attributes(klass: :unresolved)
+      end
+
+      it "is :unresolved after a global option that takes a value" do
+        touch("other/.git/config")
+        touch("repo/.git/config")
+
+        [%w[--namespace foo], %w[--attr-source x]].each do |option|
+          expect(git_in(File.join(root, "repo"), *option, "-C", "../other", "log"))
+            .to have_attributes(klass: :unresolved), option.inspect
+        end
+      end
+
+      it "walks past the options that take no value" do
+        config = touch("sub/.git/config")
+
+        expect(git_in(root, "--no-pager", "-C", "sub", "log").run_files.map(&:path)).to contain_exactly(config)
+      end
+
+      it "follows a symlinked directory to the repository git really uses" do
+        planted = touch("real/.git/hooks/pre-commit")
+        FileUtils.mkdir_p(File.join(root, "work"))
+        File.symlink(File.join(root, "real"), File.join(root, "work/link"))
+        touch("work/.git/config")
+        physical = touch(".git/config")
+
+        expect(git_in(root, "-C", "work/link", "commit").run_files.map(&:path)).to include(planted)
+        expect(git_in(root, "-C", "work/link", "-C", "..", "commit").run_files.map(&:path))
+          .to eq([physical])
+      end
+
+      it "resolves a symlink before a .. operand applies" do
+        touch("other/sub/x")
+        File.symlink(File.join(root, "other/sub"), File.join(root, "link"))
+        physical = touch("other/.git/config")
+        touch(".git/config")
+
+        expect(git_in(root, "-C", "link/..", "log").run_files.map(&:path)).to eq([physical])
+      end
+
+      it "is :unresolved when another option moves the repository as well" do
+        touch("sub/.git/config")
+
+        expect(git_in(root, "-C", "sub", "--git-dir=/x", "commit")).to have_attributes(klass: :unresolved)
+      end
     end
   end
 

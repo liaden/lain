@@ -52,8 +52,12 @@ module Lain
         # Flags after which an interpreter prints and exits instead of reading stdin.
         INFORMATION = %w[-v -V -h --version --help].freeze
 
-        # Git options that change which repository or config is read.
-        GIT_REDIRECTS = /\A(?:-C|-c|--git-dir|--work-tree|--config-env|--exec-path)/
+        # Git options known to take no value and to leave the repository alone. An allowlist,
+        # so an option git adds later abstains rather than being read as the subcommand.
+        GIT_PLAIN_OPTIONS = %w[
+          -p -P --paginate --no-pager --no-replace-objects --no-optional-locks --no-lazy-fetch --no-advice
+          --literal-pathspecs --glob-pathspecs --noglob-pathspecs --icase-pathspecs
+        ].freeze
 
         # @param cwd [String]
         # @param stat [Stat]
@@ -183,15 +187,31 @@ module Lain
         end
 
         def git(args)
-          return if args.take_while { |word| word.start_with?("-") }.any? { |word| word.match?(GIT_REDIRECTS) }
+          from = git_start(args, @cwd)
+          return unless from
 
-          directories = git_directories(@cwd)
+          directories = git_directories(from)
           return [] if directories == :none
           return unless directories
 
           gitdir, common, top = directories
           hooks = hooks_directory(common, gitdir, top)
           hooks && [*existing_at(common, %w[config]), *existing_at(gitdir, %w[config.worktree]), *hook_files(hooks)]
+        end
+
+        # Where git starts looking for a repository: each `-C` before the subcommand moves it,
+        # and git chdirs physically, so a symlink is followed before the next one applies.
+        #
+        # @return [String, nil] nil on an option not known to leave the repository alone, or a
+        #   `-C` with no value or naming no directory
+        def git_start(args, from)
+          word = args.first
+          return from unless word&.start_with?("-")
+          return git_start(args.drop(1), from) if GIT_PLAIN_OPTIONS.include?(word)
+          return unless word == "-C" && args[1]
+
+          target = @stat.real(args[1].start_with?("/") ? args[1] : File.join(from, args[1]))
+          git_start(args.drop(2), target) if @stat.directory?(target)
         end
 
         # @return [Array(String, String, String), :none, nil] git dir, common dir and

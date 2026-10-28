@@ -36,6 +36,24 @@ RSpec.describe Lain::Shell::Stages do
     expect(read.stages.first.executable.resolved).to end_with("/ls")
   end
 
+  it "resolves a git -C stage to git and the build files of the directory it names" do
+    config = File.join(@root, "repo/.git/config")
+    FileUtils.mkdir_p(File.dirname(config))
+    File.write(config, "[core]\n")
+
+    stage = of("git -C repo log --oneline").stages.sole
+
+    expect(stage.executable.klass).not_to eq(:unresolved)
+    expect(File.basename(stage.executable.resolved)).to eq("git")
+    expect(stage.executable.run_files.map(&:path)).to eq([config])
+  end
+
+  it "leaves a git stage that moves the repository another way unresolved" do
+    FileUtils.mkdir_p(File.join(@root, "repo/.git"))
+
+    expect(of("git --git-dir=repo/.git log").stages.sole.executable.klass).to eq(:unresolved)
+  end
+
   it "keeps a stage it cannot place, unplaced and unresolved" do
     read = of("cd sub && ls ; ls")
 
