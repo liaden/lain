@@ -139,6 +139,15 @@ module Lain
           raise CoercionError, e.message
         end
       end
+
+      # `-x.to_s` is how 40 record sites intern a field; declaring it once keeps the interning
+      # that `Carrier::Copy` skips for an already-frozen String. `#cast`, not `#cast_value`:
+      # `Value#cast` returns nil before `cast_value` runs, and nil must become "".
+      class Interned < ActiveModel::Type::Value
+        def type = :lain_interned
+
+        def cast(value) = -value.to_s
+      end
     end
   end
 end

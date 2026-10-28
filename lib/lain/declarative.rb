@@ -169,3 +169,4 @@ end
 # registering the same name.
 ActiveModel::Type.register(:lain_strict_integer, Lain::Declarative::Types::StrictInteger)
 ActiveModel::Type.register(:lain_canonical, Lain::Declarative::Types::Canonicalized)
+ActiveModel::Type.register(:lain_interned, Lain::Declarative::Types::Interned)

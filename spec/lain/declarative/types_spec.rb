@@ -244,6 +244,37 @@ RSpec.describe Lain::Declarative::Types::Canonicalized do
   end
 end
 
+RSpec.describe Lain::Declarative::Types::Interned do
+  let(:type) { described_class.new }
+
+  it "is registered under :lain_interned, for declaration by symbol" do
+    expect(ActiveModel::Type.lookup(:lain_interned)).to be_a(described_class)
+  end
+
+  it "casts a Symbol, an Integer, false and a mutable String to their frozen strings" do
+    casts = [:sym, 7, false, +"text"].map { |value| type.cast(value) }
+
+    expect(casts).to eq(%w[sym 7 false text])
+    expect(casts).to all(be_frozen)
+  end
+
+  it "returns the same object for 2 casts of equal input" do
+    expect(type.cast(+"same")).to equal(type.cast(+"same"))
+  end
+
+  it "casts nil to the empty string, as -nil.to_s did" do
+    expect(type.cast(nil)).to eq("").and(be_frozen)
+  end
+
+  it "survives a settle! with the interned object, shareable" do
+    carrier = Class.new(Lain::Declarative::Carrier) { attribute :id, :lain_interned }
+    settled = carrier.settle!(id: +"abc")
+
+    expect(settled[:id]).to equal(-"abc")
+    expect(Ractor.shareable?(settled)).to be(true)
+  end
+end
+
 RSpec.describe "stock vs. strict coercion, pinned rather than assumed" do
   it "records that the stock :integer type casts \"3x\" to 3" do
     expect(ActiveModel::Type::Integer.new.cast("3x")).to eq(3)
