@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# The fence scrubs the child's environment, so the toolchain is rebuilt here. TMPDIR is
+# left as the caller set it: the verifier gives each candidate its own.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+eval "$(mise env -s bash ruby@4.0.6)"
+export LD_LIBRARY_PATH=/home/linuxbrew/.linuxbrew/lib
+
+bundle exec rake compile
+bundle exec rake pspec

@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo=$(cd "$(dirname "$0")/.." && pwd)
+cd "$repo"
+
+# A linked worktree reads the main checkout's .lain, so a link of its own would shadow it.
+if [ -f .git ]; then
+  echo "this is a linked worktree: it inherits the main checkout's .lain"
+  echo "run bin/dogfood-setup in the main checkout instead; nothing was linked"
+  exit 0
+fi
+
+if [ -e .lain ] || [ -L .lain ]; then
+  echo ".lain already exists; leaving it alone" >&2
+  exit 1
+fi
+
+ln -s dogfood/lain .lain
+# .gitignore's /.lain/ matches only a directory, so a symlink needs its own exclude.
+echo '/.lain' >> "$(git rev-parse --git-path info/exclude)"
+
+echo "linked .lain -> dogfood/lain"
+echo "review dogfood/lain/config.rb, then record it with:"
+echo "  lain trust"
