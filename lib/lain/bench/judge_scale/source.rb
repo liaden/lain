@@ -65,8 +65,7 @@ module Lain
         # @param state [Lain::Paths]
         # @return [String] a timestamped directory under the state home's `bench` directory
         def self.default_dir(state)
-          stamp = Time.now.utc.strftime("%Y%m%dT%H%M%S")
-          File.join(state.state_home, "bench", "judge-scale-#{stamp}-#{Process.pid}")
+          Journals.stamped(state, "judge-scale")
         end
 
         # Records what the wrapped refuter decided, the way {Grader::Verified} does, and turns a failure

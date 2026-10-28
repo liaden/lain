@@ -119,8 +119,7 @@ module Lain
         end
 
         def default_journal
-          stamp = Time.now.utc.strftime("%Y%m%dT%H%M%S")
-          File.join(@state.state_home, "bench", "compaction-sweep-#{stamp}-#{Process.pid}.ndjson")
+          Journals.stamped(@state, "compaction-sweep", ext: ".ndjson")
         end
 
         # `--live`: the backend whose provider, price-tier guard included, sends every arm. The

@@ -35,8 +35,7 @@ module Lain
         # @param state [Lain::Paths]
         # @return [String] a timestamped file under the state home's `bench` directory
         def self.default_journal(state)
-          stamp = Time.now.utc.strftime("%Y%m%dT%H%M%S")
-          File.join(state.state_home, "bench", "oracle-calibration-#{stamp}-#{Process.pid}.ndjson")
+          Journals.stamped(state, "oracle-calibration", ext: ".ndjson")
         end
 
         def self.wiring_for(oracle, model, gateway)
