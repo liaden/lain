@@ -47,7 +47,8 @@ module Lain
           Telemetry::ToolCalled => ToolCalled,
           Telemetry::AssistantText => AssistantText,
           Telemetry::JudgeRuled => JudgeRuled,
-          Telemetry::AskSettled => AskSettled
+          Telemetry::AskSettled => AskSettled,
+          Telemetry::EditApplied => EditDiff
         }
       end
       private_class_method :by_type

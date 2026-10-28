@@ -136,8 +136,25 @@ module Lain
           # snapshot scope ({Workspace::Snapshot}: write-set only, the documented
           # bash gap).
           session.record_read(path, tool_use_id: invocation&.tool_use_id).record_write(path, wrote: edited)
+          show_edit(invocation, path, input)
           Tool::Result.ok("replaced 1 occurrence of old_string in #{path}")
         end
+      end
+
+      # Masked as whole text, then cut, so a secret is never left half-cut.
+      def show_edit(invocation, path, input)
+        limit = Frontend::Decorators::EditDiff::LIMIT
+        removed = shown_lines(input.old_string, invocation)
+        added = shown_lines(input.new_string, invocation)
+        hidden = [removed.size - limit, 0].max + [added.size - limit, 0].max
+        invocation&.channel&.push(Telemetry::EditApplied.new(path:, removed: removed.first(limit),
+                                                             added: added.first(limit), hidden:))
+      end
+
+      def shown_lines(text, invocation)
+        secrets = Sensitivity::Secrets::Source::DEFAULT.for(invocation&.context)
+        Sensitivity::TextMask.new(secrets:).call(text).text.lines(chomp: true)
+                             .map { |line| line.truncate(Frontend::Decorators::EditDiff::WIDTH) }
       end
 
       # `String#scan` counts NON-overlapping matches, which would call "aa" in

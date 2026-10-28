@@ -521,6 +521,54 @@ RSpec.describe Lain::Tools::EditFile do
     end
   end
 
+  describe "showing what changed" do
+    let(:display) { RecordingChannel.new }
+
+    def edit(old, new, contents:)
+      path = write("shown.txt", contents)
+      session = Lain::Session.new.record_read(path)
+      invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: session, channel: display)
+      tool.call({ path:, old_string: old, new_string: new }, invocation)
+      display.events.grep(Lain::Telemetry::EditApplied).first
+    end
+
+    it "sends the removed and added lines to the display channel" do
+      applied = edit("one\ntwo", "1\n2\n3", contents: "one\ntwo\nend\n")
+
+      expect(applied).to have_attributes(removed: %w[one two], added: %w[1 2 3], hidden: 0)
+    end
+
+    it "cuts a long edit at the limit and counts the lines left out" do
+      lines = (1..80).map { |n| "line #{n}" }
+      applied = edit(lines.join("\n"), lines.map { |l| "#{l}!" }.join("\n"), contents: "#{lines.join("\n")}\n")
+
+      expect(applied).to have_attributes(removed: lines.first(20), hidden: 120)
+      expect(applied.added.size).to eq(20)
+    end
+
+    it "masks a secret in the new text before it is shown" do
+      applied = edit("a", "key = sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789", contents: "a\n")
+
+      expect(applied.added.join).not_to include("abcdefghijklmnopqrstuvwxyz")
+      expect(applied.added.join).to include("<redacted:")
+    end
+
+    it "bounds a one megabyte line" do
+      applied = edit("a", "x" * (1024 * 1024), contents: "a\n")
+
+      expect(applied.added.first.size).to be <= Lain::Frontend::Decorators::EditDiff::WIDTH
+    end
+
+    it "shows nothing for an edit that was refused" do
+      path = write("nope.txt", "hello")
+      session = Lain::Session.new.record_read(path)
+      invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: session, channel: display)
+      tool.call({ path:, old_string: "absent", new_string: "x" }, invocation)
+
+      expect(display.events).to be_empty
+    end
+  end
+
   # The bytes are on disk by the time the record is built, so a journal that
   # cannot take it must not turn a landed edit into a reported failure.
   it "still reports an edit, and the session still knows it, when the journal fails after the bytes land" do

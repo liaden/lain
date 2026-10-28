@@ -65,6 +65,8 @@ module Lain
         tool_header: %i[bold],           # Decorators::ToolCalled's line
         label: %i[dim],                  # Decorators::ToolOutput's attribution
         tool_error: %i[red],             # a tool subprocess's stderr bytes
+        added: %i[green],                # Decorators::EditDiff's + lines
+        removed: %i[red],                # Decorators::EditDiff's - lines
         tool_output: [],                 # a tool subprocess's stdout bytes
         plain: [],                       # a Renderable's own unstyled prose
         warm: %i[green],                 # the prompt cache is still inside its TTL
