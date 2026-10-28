@@ -831,6 +831,14 @@ RSpec.describe Lain::CLI::Epic do
       expect { command.merge("a", "b", "alpha", as: "a_b", title: "t") }.to raise_error(Lain::Error, /"a_b"/)
     end
 
+    it "ignores an empty part in the comma list" do
+      write_epic("alpha", chain)
+
+      command.split("a", "a1,,a2", "alpha")
+
+      expect(epic_home.read_epic.ids).to contain_exactly("a1", "a2", "b", "c")
+    end
+
     it "replaces one issue with its parts and journals one graph_revision" do
       write_epic("alpha", chain)
 

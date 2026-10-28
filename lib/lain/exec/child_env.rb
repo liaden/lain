@@ -47,10 +47,7 @@ module Lain
       # @param pass [Array<String>] the names a project's `env pass:` lists
       # @return [ChildEnv] passing those and the names {PASS_VARIABLE} lists
       # @raise [Refused] when one of them is secret-shaped
-      def self.from(env, pass: []) = new(pass: pass + listed(env), env:)
-
-      def self.listed(env) = env.fetch(PASS_VARIABLE, "").split(",").map(&:strip).reject(&:empty?)
-      private_class_method :listed
+      def self.from(env, pass: []) = new(pass: pass + Listed.comma(env.fetch(PASS_VARIABLE, "")), env:)
 
       # @param pass [Array<String>] names to keep from the process beyond {KEEP}
       # @param env [#[], #to_h] the process environment the child would

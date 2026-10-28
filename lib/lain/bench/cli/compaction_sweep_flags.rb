@@ -75,7 +75,7 @@ module Lain
         end
 
         def listed(names, what, valid)
-          listed = names.to_s.split(",").map(&:strip).reject(&:empty?).uniq
+          listed = Listed.comma(names).uniq
           raise Refusal, "no #{what} named; the #{what}s are #{valid.join(", ")}" if listed.empty?
 
           unknown = listed - valid
@@ -94,7 +94,7 @@ module Lain
         end
 
         def recordings(names)
-          names.to_s.split(",").map(&:strip).reject(&:empty?).each do |path|
+          Listed.comma(names).each do |path|
             raise Refusal, "no recording at #{path}" unless File.file?(path)
           end
         end

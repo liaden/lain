@@ -110,6 +110,12 @@ RSpec.describe Lain::Exec::ChildEnv do
       expect(passed).to contain_exactly("RAILS_ENV", "JAVA_HOME", "LAIN_ENV_PASS")
     end
 
+    it "ignores an empty entry in LAIN_ENV_PASS" do
+      env = parent.merge("LAIN_ENV_PASS" => "RAILS_ENV,,JAVA_HOME")
+
+      expect(described_class.from(env).passes?("")).to be(false)
+    end
+
     it "joins the names a project passes to the ones LAIN_ENV_PASS lists" do
       env = parent.merge("LAIN_ENV_PASS" => "JAVA_HOME")
 

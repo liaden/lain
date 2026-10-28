@@ -46,7 +46,7 @@ module Lain
       protected
 
       def perform(input, _invocation)
-        record = sink.append(note: input.note, kind: input.kind, evidence_digests: digests_from(input.evidence_digests))
+        record = sink.append(note: input.note, kind: input.kind, evidence_digests: Listed.comma(input.evidence_digests))
         return Tool::Result.ok("already recorded") unless record
 
         Tool::Result.ok("recorded #{record.kind} improvement for project #{record.project_hash} " \
@@ -58,10 +58,6 @@ module Lain
       private
 
       attr_reader :sink
-
-      def digests_from(raw)
-        raw.to_s.split(",").map(&:strip).reject(&:empty?)
-      end
     end
   end
 end

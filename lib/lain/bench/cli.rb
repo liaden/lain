@@ -153,7 +153,7 @@ module Lain
       def judge_scale_report(findings:, scales: JudgeScale::DEFAULT_SCALES.join(","), recorded: nil, backend: nil,
                              model: nil, journal: nil, state: Paths.new)
         labelled = JudgeScale.load(checked_file(findings, "findings file"))
-        names = scales.to_s.split(",").map(&:strip)
+        names = Listed.comma(scales)
         if recorded
           return "recorded from #{recorded}\n#{judge_scale(labelled, names, JudgeScale::Source.recorded(recorded))}"
         end

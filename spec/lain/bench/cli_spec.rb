@@ -1938,6 +1938,13 @@ RSpec.describe Lain::Bench::CLI do
         .to raise_error(described_class::Refusal, /--recorded/)
     end
 
+    it "ignores an empty entry in the scale list" do
+      recordings(tmp)
+
+      expect(cli.judge_scale_report(findings: fixture, recorded: tmp, scales: "binary,,three"))
+        .to include("binary").and include("three")
+    end
+
     it "refuses an unknown scale by name" do
       recordings(tmp)
 
@@ -2116,6 +2123,16 @@ RSpec.describe Lain::Bench::CLI do
     it "refuses a missing recording" do
       expect { cli.compaction_sweep_report(journals:, recorded: "/nonexistent/answers.ndjson") }
         .to raise_error(described_class::Refusal, %r{no recording at /nonexistent/answers.ndjson})
+    end
+
+    it "ignores an empty entry in the arm list" do
+      expect { cli.compaction_sweep_report(journals:, arms: "elide,,truncate-cumulative") }.not_to raise_error
+    end
+
+    it "ignores an empty entry in the recorded list" do
+      flags = described_class::CompactionSweepFlags
+
+      expect { flags.new(recorded: ",,#{journals.first}") }.not_to raise_error
     end
 
     it "refuses a recording under the local summarizer, which asks rather than replays" do

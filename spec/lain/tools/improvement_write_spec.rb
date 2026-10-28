@@ -31,6 +31,12 @@ RSpec.describe Lain::Tools::ImprovementWrite do
     expect(File.readlines(path).size).to eq(3)
   end
 
+  it "stores the digests around an empty entry" do
+    tool.call(**note, evidence_digests: "x,,y")
+
+    expect(JSON.parse(File.readlines(path).last).fetch("evidence_digests")).to eq(%w[x y])
+  end
+
   it "stores a note that differs in evidence digests" do
     tool.call(**note)
     tool.call(**note, evidence_digests: "deadbeef")

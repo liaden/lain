@@ -314,7 +314,7 @@ module Lain
       def split(id, into, slug = nil)
         apply(slug, remedy: "lain epic split ISSUE_ID SLUG") do |graph|
           original = graph.fetch(id)
-          parts = comma_ids(into).map { |part_id| original.with(id: part_id) }
+          parts = Listed.comma(into).map { |part_id| original.with(id: part_id) }
           fiber = nil
           revised = graph.split(id, into: parts) { |cut| fiber = cut }
           [revised, fiber]
@@ -485,8 +485,6 @@ module Lain
         raise UnmergeableIssue, "issue #{finished.id.inspect} is #{finished.status} -- a merge cannot fold in a " \
                                 "side that is already done or in_flight"
       end
-
-      def comma_ids(value) = value.to_s.split(",").map(&:strip)
 
       # The one shape every edit shares. The read and the write are two
       # different touches of the SAME artifact deliberately -- nothing here
