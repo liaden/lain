@@ -361,5 +361,15 @@ RSpec.describe Lain::Request do
     it "rides the cache payload only when set" do
       expect(request(effort: "low").cache_payload).to include("effort" => "low")
     end
+
+    it "leads the cache payload when set" do
+      expect(request(effort: "high").cache_payload.keys.first).to eq("effort")
+    end
+
+    it "keeps the digest equal to the digest of the cache payload in both shapes" do
+      [request, request(effort: "high")].each do |req|
+        expect(Lain::Canonical.digest(req.cache_payload)).to eq(req.digest)
+      end
+    end
   end
 end

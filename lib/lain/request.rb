@@ -63,7 +63,7 @@ module Lain
     end
 
     def cache_payload
-      self.class.cache_payload_of(model:, system:, tools:, messages:, max_tokens:, reasoning:, effort:)
+      self.class.cache_payload_of(**to_h.except(:stream, :extra))
     end
 
     attr_reader :digest
