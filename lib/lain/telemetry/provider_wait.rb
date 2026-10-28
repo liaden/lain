@@ -12,9 +12,10 @@ module Lain
       # prevent. Zero is refused for that reason, not merely for being falsy.
       class ProviderWait < Declarative::Carrier
         attribute :kind
-        attribute :endpoint
-        attribute :waited_seconds
+        attribute :endpoint, :lain_interned
+        attribute :waited_seconds, default: nil
         attribute :resolution_seconds
+        attribute :in_flight, default: 0
         validates :kind, inclusion: { in: %i[waited refused],
                                       message: "must be one of waited/refused, got %<value>s" }
         validates :endpoint, presence: { message: "must name the resolved endpoint the caller queued for, got nil" }
@@ -73,19 +74,14 @@ module Lain
       include Journalable
 
       def initialize(kind:, endpoint:, resolution_seconds:, in_flight: 0, waited_seconds: nil)
-        kind = kind.to_sym
-        Carriers::ProviderWait.check!(kind:, endpoint:, waited_seconds:, resolution_seconds:)
+        settled = Carriers::ProviderWait.settle!(kind: kind.to_sym, endpoint:, waited_seconds:, resolution_seconds:,
+                                                 in_flight:)
 
-        super(
-          kind:,
-          endpoint: endpoint.to_s.dup.freeze,
-          # Qualified, not bare: a `def` inside a `Data.define` block keeps the
-          # ENCLOSING module's cref, so an unqualified constant would be looked
-          # up in Telemetry and raise NameError.
-          waited_seconds: waited_seconds&.to_f&.round(ProviderWait::WAIT_PRECISION),
-          resolution_seconds: resolution_seconds.to_f,
-          in_flight: in_flight.to_i
-        )
+        # Qualified, not bare: a `def` inside a `Data.define` block keeps the
+        # ENCLOSING module's cref, so an unqualified constant would be looked
+        # up in Telemetry and raise NameError.
+        super(**settled, waited_seconds: settled[:waited_seconds]&.to_f&.round(ProviderWait::WAIT_PRECISION),
+                         resolution_seconds: settled[:resolution_seconds].to_f, in_flight: settled[:in_flight].to_i)
       end
     end
 

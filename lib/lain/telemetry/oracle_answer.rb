@@ -7,7 +7,11 @@ module Lain
       # replay substitutes on) and carry the question that was asked.
       class OracleAnswer < Declarative::Carrier
         attribute :oracle_digest
-        attribute :question
+        attribute :question, :lain_canonical
+        attribute :answer, :lain_canonical
+        attribute :model, default: nil
+        attribute :usage, :lain_canonical, default: -> { {} }
+        attribute :wall_clock, default: 0.0
         validates :oracle_digest, presence: { message: "must name the oracle it answered, got nil" }
         validates :question, presence: { message: "must carry the question asked, got nil" }
       end
@@ -39,16 +43,9 @@ module Lain
       include Journalable
 
       def initialize(oracle_digest:, question:, answer:, model: nil, usage: {}, wall_clock: 0.0)
-        Carriers::OracleAnswer.check!(oracle_digest:, question:)
+        settled = Carriers::OracleAnswer.settle!(oracle_digest:, question:, answer:, model:, usage:, wall_clock:)
 
-        super(
-          oracle_digest: oracle_digest.dup.freeze,
-          question: Canonical.normalize(question),
-          answer: Canonical.normalize(answer),
-          model: model&.to_s&.freeze,
-          usage: Canonical.normalize(usage),
-          wall_clock: wall_clock.to_f
-        )
+        super(**settled, model: settled[:model]&.to_s&.freeze, wall_clock: settled[:wall_clock].to_f)
       end
     end
   end

@@ -18,10 +18,7 @@ module Lain
     ClaimDemoted = Data.define(:strategy, :count) do
       include Journalable
 
-      def initialize(strategy:, count:)
-        Carriers::ClaimDemoted.check!(strategy:, count:)
-        super
-      end
+      def initialize(strategy:, count:) = super(**Carriers::ClaimDemoted.settle!(strategy:, count:))
     end
   end
 end

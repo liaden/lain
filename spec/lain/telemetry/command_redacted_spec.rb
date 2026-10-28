@@ -30,4 +30,16 @@ RSpec.describe Lain::Telemetry::CommandRedacted do
       expect { described_class.new(tool_use_id: "tu_9", regions: 1, prior: bad) }.to raise_error(ArgumentError, /prior/)
     end
   end
+
+  it "prints its journal line, with prior defaulting to 0" do
+    expect(JSON.generate(described_class.new(tool_use_id: "tu1", regions: 2, prior: 1).to_journal))
+      .to eq('{"type":"command_redacted","tool_use_id":"tu1","regions":2,"prior":1}')
+    expect(JSON.generate(event.to_journal))
+      .to eq('{"type":"command_redacted","tool_use_id":"tu_9","regions":2,"prior":0}')
+  end
+
+  it "interns the tool_use_id" do
+    expect(described_class.new(tool_use_id: +"tu_9", regions: 1).tool_use_id)
+      .to equal(described_class.new(tool_use_id: +"tu_9", regions: 1).tool_use_id)
+  end
 end

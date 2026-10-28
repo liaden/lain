@@ -10,10 +10,15 @@ module Lain
       # an empty timeline is a no-op that still records the edge, and a strategy
       # that drops every span answers the empty chain.
       class ContextDerived < Declarative::Carrier
+        attribute :source_head, default: nil
+        attribute :derived_head, default: nil
         attribute :strategy
-        attribute :spans
+        attribute :spans, :lain_canonical
         attribute :cut
-        attribute :mid_task
+        attribute :moved, default: 0
+        attribute :keep_last, default: nil
+        attribute :compaction_cut, default: nil
+        attribute :mid_task, default: nil
         validates :strategy, presence: { message: "must name the strategy that derived the chain, got nil" }
         validates :cut, inclusion: { in: %i[empty declined offered],
                                      message: "must be one of empty/declined/offered, got %<value>s" }
@@ -113,15 +118,11 @@ module Lain
 
       def initialize(source_head:, derived_head:, strategy:, spans:, cut:, moved: 0, keep_last: nil,
                      compaction_cut: nil, mid_task: nil)
-        strategy = named(strategy)
-        spans = Canonical.normalize(spans)
-        cut = cut.to_sym
-        Carriers::ContextDerived.check!(strategy:, spans:, cut:, mid_task:)
+        settled = Carriers::ContextDerived.settle!(source_head:, derived_head:, strategy: named(strategy), spans:,
+                                                   cut: cut.to_sym, moved:, keep_last:, compaction_cut:, mid_task:)
 
-        super(source_head: source_head&.dup&.freeze, derived_head: derived_head&.dup&.freeze,
-              strategy:, spans:, cut:, moved: Integer(moved), keep_last: keep_last&.then { |n| Integer(n) },
-              compaction_cut: compaction_cut&.then { |digest| -digest.to_s },
-              mid_task:)
+        super(**settled, moved: Integer(settled[:moved]), keep_last: settled[:keep_last]&.then { Integer(_1) },
+                         compaction_cut: settled[:compaction_cut]&.then { -_1.to_s })
       end
 
       private

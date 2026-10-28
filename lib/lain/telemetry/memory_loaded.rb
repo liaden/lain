@@ -9,8 +9,8 @@ module Lain
       # required: a load that cannot say which store version it read is the one
       # thing a later reader cannot reconstruct.
       class MemoryLoaded < Declarative::Carrier
-        attribute :version
-        attribute :items
+        attribute :version, :lain_interned
+        attribute :items, :lain_canonical
         validates :version, presence: { message: "must name the store version that was read, got nil" }
       end
     end
@@ -38,9 +38,7 @@ module Lain
       # record must stay deeply frozen, and these are nested Hashes a shallow
       # freeze would leave writable one level down.
       def initialize(version:, items:)
-        Carriers::MemoryLoaded.check!(version:, items:)
-
-        super(version: -version.to_s, items: Canonical.normalize(items))
+        super(**Carriers::MemoryLoaded.settle!(version:, items:))
       end
     end
   end

@@ -72,12 +72,10 @@ module Lain
       include Journalable
 
       def initialize(from_scope:, to_scope:, from_approval:, to_approval:, from_layers:, to_layers:, surface:)
-        Carriers::ModeSwitch.check!(from_scope:, to_scope:, from_approval:, to_approval:, from_layers:,
-                                    to_layers:, surface:)
+        settled = Carriers::ModeSwitch.settle!(from_scope:, to_scope:, from_approval:, to_approval:, from_layers:,
+                                               to_layers:, surface:)
 
-        super(from_scope: -from_scope.to_s, to_scope: -to_scope.to_s, from_approval: -from_approval.to_s,
-              to_approval: -to_approval.to_s, surface: -surface.to_s,
-              from_layers: interned_names(from_layers), to_layers: interned_names(to_layers))
+        super(**settled.to_h { |field, value| [field, value.is_a?(Array) ? interned_names(value) : -value.to_s] })
       end
 
       private

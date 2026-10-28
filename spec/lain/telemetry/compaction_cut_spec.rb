@@ -6,6 +6,8 @@
 # it lives -- `spec/lain/compaction/source_spec.rb` for when a cut commits and
 # `spec/lain/session_record/replay_spec.rb` for what a resume does with one;
 # what is asserted here is the VALUE.
+require "json"
+
 RSpec.describe Lain::Telemetry::CompactionCut do
   subject(:record) { described_class.new(**fields) }
 
@@ -138,5 +140,48 @@ RSpec.describe Lain::Telemetry::CompactionCut do
   it "is deeply frozen, content included" do
     expect(record).to be_deeply_frozen
     expect(described_class.new(**collapsing)).to be_deeply_frozen
+  end
+
+  describe "the journal line" do
+    it "prints a collapse with every field set, its collapses key-sorted" do
+      cut = described_class.new(digest: "blake3:d", head: "blake3:h", strategy: "summary", kind: "collapse",
+                                parent: "blake3:par", supersedes: %w[blake3:x blake3:y], plan_step_completions: 3,
+                                collapses: [{ "span" => %w[blake3:a blake3:b],
+                                              "content" => [{ "type" => "text", "text" => "s" }] }])
+
+      expect(JSON.generate(cut.to_journal)).to eq(
+        '{"type":"compaction_cut","digest":"blake3:d","head":"blake3:h","strategy":"summary","kind":"collapse",' \
+        '"parent":"blake3:par","supersedes":["blake3:x","blake3:y"],' \
+        '"collapses":[{"content":[{"text":"s","type":"text"}],"span":["blake3:a","blake3:b"]}],' \
+        '"plan_step_completions":3}'
+      )
+    end
+
+    it "prints an advance with a null parent and no superseded cuts" do
+      cut = described_class.new(digest: "blake3:d", head: "blake3:h", strategy: "summary", kind: "advance",
+                                parent: nil, supersedes: [], plan_step_completions: 0,
+                                collapses: [{ "span" => %w[blake3:a blake3:b], "content" => [] }])
+
+      expect(JSON.generate(cut.to_journal)).to eq(
+        '{"type":"compaction_cut","digest":"blake3:d","head":"blake3:h","strategy":"summary","kind":"advance",' \
+        '"parent":null,"supersedes":[],"collapses":[{"content":[],"span":["blake3:a","blake3:b"]}],' \
+        '"plan_step_completions":0}'
+      )
+    end
+  end
+
+  it "interns every String field, so equal cuts share their Strings" do
+    build = lambda do
+      described_class.new(digest: +"blake3:d", head: +"blake3:h", strategy: +"eager", kind: +"collapse",
+                          parent: +"blake3:two", supersedes: [+"blake3:one", +"blake3:two"],
+                          collapses: [collapse], plan_step_completions: 1)
+    end
+    first = build.call
+    second = build.call
+
+    %i[digest head strategy kind parent].each do |field|
+      expect(first.public_send(field)).to equal(second.public_send(field)), field.to_s
+    end
+    expect(first.supersedes.first).to equal(second.supersedes.first)
   end
 end

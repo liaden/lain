@@ -4,6 +4,8 @@
 # the `:spawn` body does not have to grow a prompt's first line, so the two
 # facts pinned hardest here are that it NAMES the spawn and that whatever the
 # model wrote reaches a row as one terminal line.
+require "json"
+
 RSpec.describe Lain::Telemetry::ChildProgress do
   describe "the dispatch record" do
     it "names the spawn, the role, the task line and the worker its lease was cut under" do
@@ -88,5 +90,47 @@ RSpec.describe Lain::Telemetry::ChildProgress do
     journal = described_class.new(spawn: "blake3:spawn", turns: 1, head: "blake3:t1").to_journal
 
     expect(journal).to include({ "type" => "child_progress", "spawn" => "blake3:spawn", "turns" => 1 })
+  end
+
+  describe "the journal line" do
+    it "prints every field of a dispatch record" do
+      record = described_class.new(spawn: "blake3:spawn", label: "dev-2", role: "dev", skill: "gherkin-tests",
+                                   task_line: "port the parser", worker: "spawn.dev.1", turns: 2, head: "blake3:t2")
+
+      expect(JSON.generate(record.to_journal)).to eq(
+        '{"type":"child_progress","spawn":"blake3:spawn","label":"dev-2","role":"dev","skill":"gherkin-tests",' \
+        '"task_line":"port the parser","worker":"spawn.dev.1","turns":2,"head":"blake3:t2"}'
+      )
+    end
+
+    it "prints null for every optional field" do
+      expect(JSON.generate(described_class.new(spawn: "blake3:spawn", turns: 0).to_journal)).to eq(
+        '{"type":"child_progress","spawn":"blake3:spawn","label":null,"role":null,"skill":null,' \
+        '"task_line":null,"worker":null,"turns":0,"head":null}'
+      )
+    end
+
+    it "is shareable when built from mutable input" do
+      record = described_class.new(spawn: +"blake3:spawn", label: +"dev", turns: 1, head: +"blake3:t1")
+
+      expect(record).to be_deeply_frozen
+    end
+  end
+
+  it "interns every String field, so equal records share their Strings" do
+    build = lambda do
+      described_class.new(spawn: +"blake3:s", label: +"dev-2", role: +"dev", skill: +"gherkin", task_line: +"port it",
+                          worker: +"spawn.dev.1", turns: 1, head: +"blake3:t1")
+    end
+    first = build.call
+    second = build.call
+
+    %i[spawn label role skill task_line worker head].each do |field|
+      expect(first.public_send(field)).to equal(second.public_send(field)), field.to_s
+    end
+  end
+
+  it "refuses an unknown keyword with an ArgumentError" do
+    expect { described_class.new(spawn: "blake3:s", turns: 0, bogus: 1) }.to raise_error(ArgumentError, /bogus/)
   end
 end

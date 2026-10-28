@@ -16,13 +16,13 @@ module Lain
       class CompactionCut < Declarative::Carrier
         KINDS = %w[advance collapse handoff].freeze
 
-        attribute :digest
-        attribute :head
-        attribute :strategy
+        attribute :digest, :lain_interned
+        attribute :head, :lain_interned
+        attribute :strategy, :lain_interned
         attribute :kind
         attribute :parent
         attribute :supersedes
-        attribute :collapses
+        attribute :collapses, :lain_canonical
         attribute :plan_step_completions
         validates :digest, presence: { message: "must name the source turn the compaction collapsed up to, got nil" }
         validates :head, presence: { message: "must name the source head the cut was committed at, got nil" }
@@ -106,13 +106,12 @@ module Lain
       # keys) and one built in-process (either) are the same value, render the
       # same bytes, and sit at the same address.
       def initialize(digest:, head:, strategy:, kind:, parent:, supersedes:, collapses:, plan_step_completions:)
-        collapses = Canonical.normalize(collapses)
-        Carriers::CompactionCut.check!(digest:, head:, strategy:, kind:, parent:, supersedes:, collapses:,
-                                       plan_step_completions:)
+        settled = Carriers::CompactionCut.settle!(digest:, head:, strategy:, kind:, parent:, supersedes:, collapses:,
+                                                  plan_step_completions:)
 
-        super(digest: -digest.to_s, head: -head.to_s, strategy: -strategy.to_s, kind: -kind,
-              parent: parent&.then { -_1.to_s }, supersedes: supersedes.map(&:-@).freeze,
-              collapses:, plan_step_completions: Integer(plan_step_completions))
+        super(**settled, kind: -settled[:kind], parent: settled[:parent]&.then { -_1.to_s },
+                         supersedes: settled[:supersedes].map(&:-@).freeze,
+                         plan_step_completions: Integer(settled[:plan_step_completions]))
       end
 
       # A handoff journals no {Compaction} record, unlike an advance or a collapse.

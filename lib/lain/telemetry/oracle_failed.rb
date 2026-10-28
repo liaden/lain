@@ -8,7 +8,7 @@ module Lain
       class OracleFailed < Declarative::Carrier
         attribute :tier
         attribute :oracle_digest
-        attribute :error_class
+        attribute :error_class, :lain_interned
         validates :tier, presence: { message: "must name the oracle's tier, got nil" }
         validates :oracle_digest, presence: { message: "must name the oracle that failed, got nil" }
         validates :error_class, presence: { message: "must name what broke, got nil" }
@@ -40,10 +40,7 @@ module Lain
       include Journalable
 
       def initialize(tier:, oracle_digest:, error_class:)
-        tier = tier&.to_sym
-        Carriers::OracleFailed.check!(tier:, oracle_digest:, error_class:)
-
-        super(tier:, oracle_digest: oracle_digest.dup.freeze, error_class: error_class.to_s.freeze)
+        super(**Carriers::OracleFailed.settle!(tier: tier&.to_sym, oracle_digest:, error_class:))
       end
     end
   end

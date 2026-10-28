@@ -11,9 +11,11 @@ module Lain
         attribute :step_id
         attribute :plan_digest
         attribute :size
+        attribute :chunk_turn_digests
         validates :closure_digest, presence: { message: "must name the closure in the Store, got nil" }
         validates :step_id, presence: { message: "must name the step it closed, got nil" }
         validates :plan_digest, presence: { message: "must name the plan the step belongs to, got nil" }
+        validates :chunk_turn_digests, exclusion: { in: [nil], message: "must list the chunk's turn digests, got nil" }
         validates :size, presence: { message: "must name the step's size class, got nil" }
       end
     end
@@ -38,15 +40,9 @@ module Lain
       include Journalable
 
       def initialize(closure_digest:, step_id:, plan_digest:, size:, chunk_turn_digests:)
-        Carriers::ClosureRecord.check!(closure_digest:, step_id:, plan_digest:, size:)
+        settled = Carriers::ClosureRecord.settle!(closure_digest:, step_id:, plan_digest:, size:, chunk_turn_digests:)
 
-        super(
-          closure_digest: closure_digest.dup.freeze,
-          step_id: step_id.dup.freeze,
-          plan_digest: plan_digest.dup.freeze,
-          size: size.dup.freeze,
-          chunk_turn_digests: chunk_turn_digests.map { |digest| -digest.to_s }.freeze
-        )
+        super(**settled, chunk_turn_digests: settled[:chunk_turn_digests].map { -_1.to_s }.freeze)
       end
     end
   end

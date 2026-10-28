@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "json"
+
 RSpec.describe Lain::Telemetry::Dropped do
   it "carries a positive count" do
     expect(described_class.new(count: 3).count).to eq(3)
@@ -12,5 +14,9 @@ RSpec.describe Lain::Telemetry::Dropped do
 
   it "journals as a dropped marker" do
     expect(described_class.new(count: 5).to_journal).to eq("type" => "dropped", "count" => 5)
+  end
+
+  it "prints its journal line" do
+    expect(JSON.generate(described_class.new(count: 5).to_journal)).to eq('{"type":"dropped","count":5}')
   end
 end

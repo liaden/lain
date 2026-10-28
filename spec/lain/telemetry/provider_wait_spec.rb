@@ -6,6 +6,8 @@
 # the VALUE -- its closed `kind` enum, the guard that keeps a refusal from
 # carrying a wait it never completed, and the `resolution_seconds` that travels
 # beside every `waited_seconds`.
+require "json"
+
 RSpec.describe Lain::Telemetry::ProviderWait do
   subject(:record) do
     described_class.new(kind: :waited, endpoint: "http://localhost:11434",
@@ -112,5 +114,26 @@ RSpec.describe Lain::Telemetry::ProviderWait do
                                   waited_seconds: 0.25, resolution_seconds: 0.05, in_flight: 1)
 
     expect(mutable).to be_deeply_frozen
+  end
+
+  describe "the journal line" do
+    it "prints a wait rounded to milliseconds" do
+      noisy = described_class.new(kind: :waited, endpoint: "http://x", waited_seconds: 1.23456,
+                                  resolution_seconds: 0.5, in_flight: 2)
+
+      expect(JSON.generate(noisy.to_journal)).to eq(
+        '{"type":"provider_wait","kind":"waited","endpoint":"http://x","waited_seconds":1.235,' \
+        '"resolution_seconds":0.5,"in_flight":2}'
+      )
+    end
+
+    it "prints a refusal with a null wait and in_flight defaulting to 0" do
+      refusal = described_class.new(kind: :refused, endpoint: "http://x", resolution_seconds: 0.5)
+
+      expect(JSON.generate(refusal.to_journal)).to eq(
+        '{"type":"provider_wait","kind":"refused","endpoint":"http://x","waited_seconds":null,' \
+        '"resolution_seconds":0.5,"in_flight":0}'
+      )
+    end
   end
 end

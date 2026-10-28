@@ -17,10 +17,7 @@ module Lain
     Dropped = Data.define(:count) do
       include Journalable
 
-      def initialize(count:)
-        Carriers::Dropped.check!(count:)
-        super
-      end
+      def initialize(count:) = super(**Carriers::Dropped.settle!(count:))
     end
   end
 end

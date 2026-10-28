@@ -6,8 +6,9 @@ module Lain
       # One non-negative Integer COUNT, never content: `Data` freezes the record
       # but not its members, so a Hash of leaked bytes would otherwise pass.
       class CommandRedacted < Declarative::Carrier
+        attribute :tool_use_id, :lain_interned
         attribute :regions
-        attribute :prior
+        attribute :prior, default: 0
         validates :regions, :prior, numericality: { only_integer: true, greater_than_or_equal_to: 0,
                                                     message: "must be a non-negative Integer, got %<value>s" }
       end
@@ -20,9 +21,9 @@ module Lain
       include Journalable
 
       def initialize(tool_use_id:, regions:, prior: 0)
-        Carriers::CommandRedacted.check!(regions:, prior:)
+        settled = Carriers::CommandRedacted.settle!(tool_use_id:, regions:, prior:)
 
-        super(tool_use_id: -tool_use_id.to_s, regions: regions.to_i, prior: prior.to_i)
+        super(**settled, regions: settled[:regions].to_i, prior: settled[:prior].to_i)
       end
     end
   end

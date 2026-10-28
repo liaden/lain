@@ -7,8 +7,14 @@ module Lain
       # the spawn whose branch it belongs to, and its turn count must be a
       # count: a row saying a child is "nil turns in" is worse than no row.
       class ChildProgress < Declarative::Carrier
-        attribute :spawn
+        attribute :spawn, :lain_interned
+        attribute :label, default: nil
+        attribute :role, default: nil
+        attribute :skill, default: nil
+        attribute :task_line, default: nil
+        attribute :worker, default: nil
         attribute :turns
+        attribute :head, default: nil
         validates :spawn, presence: { message: "must name the :spawn this child belongs to, got nil" }
         validates :turns,
                   numericality: { only_integer: true, greater_than_or_equal_to: 0,
@@ -59,12 +65,18 @@ module Lain
       def self.line(text) = Tools::AskHuman::InboxRow.one_line(text)
 
       def initialize(spawn:, turns:, label: nil, role: nil, skill: nil, task_line: nil, worker: nil, head: nil)
-        Carriers::ChildProgress.check!(spawn:, turns:)
+        settled = Carriers::ChildProgress.settle!(spawn:, turns:, label:, role:, skill:, task_line:, worker:, head:)
 
-        super(spawn: -spawn.to_s, label: label && -ChildProgress.line(label),
-              role: role && -ChildProgress.line(role), skill: skill && -ChildProgress.line(skill),
-              task_line: task_line && -ChildProgress.line(task_line)[0, MAX_TASK_LINE],
-              worker: worker && -worker.to_s, turns: Integer(turns), head: head && -head.to_s)
+        super(**settled.transform_values { _1&.then { |value| -value.to_s } },
+              **scrubbed(settled.slice(:label, :role, :skill, :task_line)), turns: Integer(settled[:turns]))
+      end
+
+      private
+
+      def scrubbed(lines)
+        scrubbed = lines.compact.transform_values { -ChildProgress.line(_1) }
+        scrubbed[:task_line] &&= -scrubbed[:task_line][0, MAX_TASK_LINE]
+        scrubbed
       end
     end
   end

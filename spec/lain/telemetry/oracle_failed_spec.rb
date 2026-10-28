@@ -58,4 +58,11 @@ RSpec.describe Lain::Telemetry::OracleFailed do
     expect { described_class.new(tier: :model, oracle_digest: "d", error_class: nil) }
       .to raise_error(ArgumentError, /error_class must name what broke/)
   end
+
+  it "prints its journal line" do
+    expect(JSON.generate(event.to_journal)).to eq(
+      '{"type":"oracle_failed","tier":"model","oracle_digest":"digest-abc",' \
+      '"error_class":"Lain::Oracle::UndecodableAnswer"}'
+    )
+  end
 end
