@@ -48,7 +48,8 @@ module Lain
           Telemetry::AssistantText => AssistantText,
           Telemetry::JudgeRuled => JudgeRuled,
           Telemetry::AskSettled => AskSettled,
-          Telemetry::EditApplied => EditDiff
+          Telemetry::EditApplied => EditDiff,
+          ::Lain::Provider::Residency::Waiting => ResidencyWaiting
         }
       end
       private_class_method :by_type

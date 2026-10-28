@@ -1118,7 +1118,7 @@ RSpec.describe Lain::Provider::Ollama do
                                                 "message" => { "role" => "assistant", "content" => "ok-#{marker}" }))
       end
       retries = TracingRetryTap.new(arrivals: 2)
-      provider = described_class.new(retries:, config: zero_retry_config)
+      provider = described_class.new(retries:, config: zero_retry_config, residency: Lain::Provider::Residency::Null.new)
 
       texts = without_admission do
         %w[alpha beta].map do |marker|
@@ -1131,6 +1131,97 @@ RSpec.describe Lain::Provider::Ollama do
 
       expect(texts.sort).to eq(%w[ok-alpha ok-beta])
       expect(retries.abandoned.tally).to eq({ "alpha" => 1, "beta" => 1 })
+    end
+  end
+
+  describe "the endpoint's model residency" do
+    let(:journal) { [] }
+    let(:held) do
+      Lain::Provider::Residency.for(endpoint: Lain::Provider::Ollama::Transport::DEFAULT_API_BASE,
+                                    paths: Lain::Paths.new)
+    end
+    let(:unsent) do
+      Class.new do
+        define_method(:sync_post) { |*| raise "the request reached the transport" }
+      end.new
+    end
+
+    # Answers the deadline each round trip asked for, and holds nothing.
+    let(:spy) do
+      Class.new do
+        attr_reader :deadlines
+
+        def initialize = @deadlines = []
+
+        def holding(deadline:, **)
+          @deadlines << deadline
+          yield
+        end
+      end.new
+    end
+
+    let(:channel) do
+      Class.new do
+        attr_reader :events
+
+        def initialize = @events = []
+        def push(event) = tap { @events << event }
+      end.new
+    end
+
+    def waited = journal.grep(Lain::Provider::Residency::Waited)
+
+    it "asks a queueing round trip to wait up to its bound, and one that may not queue to wait not at all" do
+      queued = described_class.new(transport: transport_sync(tool_call_body), residency: spy, residency_deadline: 7)
+      impatient = described_class.new(transport: transport_sync(tool_call_body), residency: spy, queue: false)
+
+      [queued, impatient].each { |provider| provider.complete(request) }
+
+      expect(spy.deadlines).to eq([7, 0])
+    end
+
+    it "proceeds once its bound passes while another model is resident, and journals that it proceeded" do
+      provider = described_class.new(transport: transport_sync(tool_call_body), journal:, residency_deadline: 0.05)
+
+      response = held.holding(model: "model-a", deadline: 0, journal: []) do
+        provider.complete(request(model: "model-b"))
+      end
+
+      expect(response).to be_a(Lain::Response)
+      expect(waited.map { |record| record.to_h.except(:waited) })
+        .to eq([{ endpoint: "http://localhost:11434", model: "model-b", resident: "model-a", outcome: "proceeded" }])
+    end
+
+    it "tells its channel, once the patience runs out, which model it is waiting on" do
+      patient = Lain::Provider::Residency.for(endpoint: Lain::Provider::Ollama::Transport::DEFAULT_API_BASE,
+                                              paths: Lain::Paths.new, patience: 0)
+      provider = described_class.new(transport: transport_sync(tool_call_body), channel:, residency: patient,
+                                     residency_deadline: 0.05)
+
+      held.holding(model: "model-a", deadline: 0, journal: []) { provider.complete(request(model: "model-b")) }
+
+      expect(channel.events.grep(Lain::Provider::Residency::Waiting).map(&:resident)).to eq(["model-a"])
+    end
+
+    it "skips at once, before the wire, when it may not queue and another model is resident" do
+      provider = described_class.new(transport: unsent, journal:, queue: false)
+
+      asked = request(model: "model-b")
+      swap = -> { held.holding(model: "model-a", deadline: 0, journal: []) { provider.complete(asked) } }
+
+      expect(&swap).to raise_error(Lain::Provider::Residency::Skipped, /model-a/) do |error|
+        expect(error).to be_a(Lain::PreWire)
+      end
+      expect(waited).to be_empty
+    end
+
+    it "runs at once beside a request for the same model" do
+      provider = described_class.new(transport: transport_sync(tool_call_body), journal:, queue: false)
+
+      response = held.holding(model: "qwen3:4b", deadline: 0, journal: []) { provider.complete(request) }
+
+      expect(response).to be_a(Lain::Response)
+      expect(waited).to be_empty
     end
   end
 

@@ -177,6 +177,40 @@ RSpec.describe Lain::Oracle::Eager do
                                                                     error_class: "Lain::Oracle::UndecodableAnswer")
     end
 
+    describe "over a local model that may not queue" do
+      let(:sent) { [] }
+      let(:transport) do
+        streamed = sent
+        Class.new { define_method(:stream) { |payload, *, **| streamed << payload } }.new
+      end
+      let(:journaling) do
+        provider = Lain::Provider::Ollama.new(transport:, queue: false)
+        model_tier = Lain::Oracle::Model.new(definition:, provider:, model: "summarizer-b")
+        Lain::Oracle::Recorded::Journaling.new(inner: model_tier, definition:, journal:)
+      end
+      let(:held) do
+        Lain::Provider::Residency.for(endpoint: Lain::Provider::Ollama::Transport::DEFAULT_API_BASE,
+                                      paths: Lain::Paths.new)
+      end
+
+      def fired = Sync { described_class.new(oracle: journaling).tap { |eager| eager.fire("src-1", "a result").wait } }
+
+      it "reaches the wire when no other model is resident" do
+        fired
+
+        expect(sent).not_to be_empty
+      end
+
+      it "gives way to another resident model: the fire is a skip, a miss, and never reaches the wire" do
+        eager = held.holding(model: "chat-a", deadline: 0, journal: []) { fired }
+
+        expect(eager.held("src-1")).to be_nil
+        expect(sent).to be_empty
+        expect(journal_io).to include_journal_record("oracle_failed",
+                                                     error_class: "Lain::Provider::Residency::Skipped")
+      end
+    end
+
     # A ScriptError, not a StandardError: {Summarizer::Base} raises exactly this
     # for a declaration whose `compact` is not written yet, and it travels up
     # through the tier into the fire's task. The task boundary is the

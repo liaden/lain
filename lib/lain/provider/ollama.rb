@@ -212,6 +212,11 @@ module Lain
       # @param spool [#open_frame, nil] where each round trip's raw response
       #   bytes are teed for salvage.
       # @param http_middleware [Array<Array>] `[klass, *args, kwargs]` entries, for a config built here
+      # @param residency [Residency, Residency::Null, nil] holds the endpoint's loaded model for each
+      #   round trip; nil resolves this endpoint's own under the user's state home, for
+      #   {Admission}'s reason: a bare construction takes no seam and still swaps models
+      # @param residency_deadline [Numeric] seconds a queueing round trip waits for another
+      #   model to be released before it proceeds anyway; one that may not queue never waits
       #
       #   THE NIL DEFAULT IS LOAD-BEARING and is not the missing Null Object it
       #   looks like: it is the only thing that tells "passed no spool" apart
@@ -226,7 +231,8 @@ module Lain
       #   injected both could see.
       def initialize(transport: nil, config: nil, channel: Channel::Null.instance, retries: nil,
                      sink: Sink::Null.new, api_base: nil, queue: true, journal: Channel::Null::INSTANCE,
-                     deployment: Deployment.local, spool: nil, http_middleware: [])
+                     deployment: Deployment.local, spool: nil, http_middleware: [], residency: nil,
+                     residency_deadline: Residency::DEFAULT_DEADLINE)
         super()
         raise ArgumentError, RETRIES_OWN_THE_SPOOL if retries && spool
 
@@ -234,6 +240,9 @@ module Lain
         @journal = journal
         @deployment = deployment
         @http_middleware = http_middleware
+        @channel = channel
+        @residency = residency
+        @residency_deadline = residency_deadline
         @model_capabilities = {}
         @retries = retries || RetryTap.new(channel:, journal:, spool: spool || Spool::Null.new)
         @config = journaled_retries(config || build_config(api_base:))
@@ -284,8 +293,10 @@ module Lain
       def complete(request)
         witness = ErrorWrapping::WireWitness.new
         admitted do
-          wrapping_errors(witness) do
-            build_response(dispatch(request, witness), request.max_tokens, @journal)
+          resident(request.model) do
+            wrapping_errors(witness) do
+              build_response(dispatch(request, witness), request.max_tokens, @journal)
+            end
           end
         end
       end
@@ -519,6 +530,24 @@ module Lain
       # {Admitted}'s collaborators. These are the CALLER's properties, which is
       # why they arrive at construction and not with a round trip.
       def queue_for_capacity? = @queue
+
+      # Inside admission, so the endpoint is held only while the round trip runs.
+      # A queueing caller past its deadline proceeds unheld rather than failing a turn.
+      def resident(model, &block)
+        answer = residency.holding(model:, deadline: @queue ? @residency_deadline : 0, journal: @journal,
+                                   notice: @channel.method(:push), &block)
+        return answer unless answer.equal?(Residency::SKIPPED)
+        raise Residency::Skipped, skipped_reason(model) unless @queue
+
+        yield
+      end
+
+      def skipped_reason(model)
+        "#{resolved_endpoint} is serving another model (#{residency.resident}), " \
+          "so #{model} would swap it out mid-request"
+      end
+
+      def residency = @residency ||= Residency.for(endpoint: resolved_endpoint, paths: Paths.new)
 
       def wait_journal = @journal
 
