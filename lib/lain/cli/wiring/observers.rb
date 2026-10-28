@@ -52,7 +52,7 @@ module Lain
           # @param arms [Arms]
           # @param project [#root]
           # @return [Unsealed, Unasked]
-          def self.for(arms:, project:) = arms.confine == :workspace ? new(project.root) : Unasked
+          def self.for(arms:, project:) = arms.workspace? ? new(project.root) : Unasked
 
           # @param root [String]
           def initialize(root)
@@ -77,12 +77,12 @@ module Lain
         #   and under `:stop` it trips the {Tripwire::Stops} the observers hold
         # @return [Observers]
         def self.register(chronicle:, paths:, project:, resumed:, arms:)
-          stops = Tripwire::Stops.new if arms.tripwire == :stop
+          stops = Tripwire::Stops.new if arms.tripwire_stops?
           new(fresh: lineage_fresh(paths, project, resumed, chronicle.durable_journal),
               unsealed: Unsealed.for(arms:, project:), stops: stops || Tripwire::Stops::None).tap do |observers|
             observers.register(chronicle)
             chronicle.observe(Tripwire::Ledger.new(journal: chronicle.durable_journal, stops:)) unless
-              arms.tripwire == :off
+              arms.tripwire_off?
           end
         end
 

@@ -419,9 +419,9 @@ module Lain
       # wherever a call is asked. One breaker for them all, so a requester's
       # count does not restart when its call is asked through another ladder.
       def hold_ladder_parts(rules:, approving:, classifiers:, verdict:, judge:, sensitivity:, arms:, request:)
-        @judge_facts = arms.judge_facts != :off
+        @judge_facts = arms.judge_facts?
         @denials = Approval::DenialBreaker.for(arms.judge_denials, journal: @journal)
-        @request = arms.judge_facts == :request ? request : Approval::Judge::Unrequested
+        @request = arms.judge_requests? ? request : Approval::Judge::Unrequested
         @rules = rules.to_a.freeze
         @approving = approving
         @classifiers = classifiers

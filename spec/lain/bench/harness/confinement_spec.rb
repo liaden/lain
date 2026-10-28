@@ -70,7 +70,7 @@ RSpec.describe Lain::Bench::Harness::Confinement do
     end
 
     it "runs a judge-approved call in the workspace profile only when the arm is workspace" do
-      workspace = described_class.new(project:, paths:, journal: run_journal, probe:, workspace: true)
+      workspace = described_class.new(project:, paths:, journal: run_journal, probe:, confine: :workspace)
       confined = workspace.tools(Lain::Bench::Harness::TOOLS).call(recorder:, journal: agent_journal)
 
       expect(judged_profile(exec_of(confined), agent_journal)).to eq(:workspace)
@@ -130,7 +130,7 @@ RSpec.describe Lain::Bench::Harness::Confinement do
     end
 
     it "names the workspace arm when the switch is on" do
-      expect(described_class.new(project:, paths:, journal: run_journal, probe:, workspace: true).state)
+      expect(described_class.new(project:, paths:, journal: run_journal, probe:, confine: :workspace).state)
         .to eq("workspace")
     end
   end
@@ -221,7 +221,7 @@ RSpec.describe Lain::Bench::Harness::Confinement do
     end
 
     context "when the arm is workspace" do
-      let(:confinement) { described_class.new(project:, paths:, journal: run_journal, probe:, workspace: true) }
+      let(:confinement) { described_class.new(project:, paths:, journal: run_journal, probe:, confine: :workspace) }
 
       # The workspace profile refuses a TMPDIR that holds home, and the spec's TMPDIR holds this run's.
       it "runs a command the gate approves in the workspace profile, where it may write the checkout" do

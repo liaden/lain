@@ -104,13 +104,32 @@ module Lain
       def with_dedup(policy) = round_dedup == :on ? policy : policy.without_dedup
       private :with_dedup
 
-      OFF = new(confine: :off, judge_facts: :off, tripwire: :off, round_budget: :off, round_dedup: :off,
-                judge_denials: :off)
+      # @return [Boolean] whether bash runs in a sandbox
+      def sandboxed? = SANDBOXED.include?(confine)
+
+      # @return [Boolean] whether a gate-approved call runs in the workspace profile
+      def workspace? = confine == :workspace
+
+      # @return [Boolean] whether approval uses the command classes; an unset arm reads as off
+      def classes? = !confine.nil? && confine != :off
+
+      # @return [Boolean] whether a tripped wire stops the run
+      def tripwire_stops? = tripwire == :stop
+
+      # @return [Boolean] whether no ledger watches the journal; an unset arm reads as off
+      def tripwire_off? = tripwire.nil? || tripwire == :off
+
+      # @return [Boolean] whether the judge is given facts
+      def judge_facts? = !judge_facts.nil? && judge_facts != :off
+
+      # @return [Boolean] whether the judge may ask for more
+      def judge_requests? = judge_facts == :request
+
+      OFF = new(**SETS.transform_values { :off })
       DEFAULT = new(confine: :workspace, judge_facts: :off, tripwire: :observe, round_budget: :window, round_dedup: :on,
                     judge_denials: :off)
       # No arm typed: laid under the flags, it keeps only what the human typed.
-      UNSET = new(confine: nil, judge_facts: nil, tripwire: nil, round_budget: nil, round_dedup: nil,
-                  judge_denials: nil)
+      UNSET = new(**SETS.transform_values { nil })
     end
   end
 end

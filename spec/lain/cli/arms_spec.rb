@@ -145,6 +145,40 @@ RSpec.describe Lain::CLI::Arms do
     end
   end
 
+  describe "predicates" do
+    it "answer the questions callers ask of the launch defaults" do
+      arms = described_class::DEFAULT
+
+      expect([arms.workspace?, arms.sandboxed?, arms.classes?]).to eq([true, true, true])
+      expect([arms.tripwire_stops?, arms.tripwire_off?, arms.judge_facts?, arms.judge_requests?])
+        .to eq([false, false, false, false])
+    end
+
+    it "read an unset arm as off" do
+      arms = described_class::UNSET
+
+      expect([arms.workspace?, arms.sandboxed?, arms.classes?, arms.tripwire_stops?, arms.judge_facts?,
+              arms.judge_requests?]).to all(be(false))
+      expect(arms.tripwire_off?).to be(true)
+    end
+
+    it "tell the stronger values from the weaker ones" do
+      reader = described_class::DEFAULT.with(confine: :reader, tripwire: :stop, judge_facts: :request)
+
+      expect([reader.workspace?, reader.sandboxed?, reader.tripwire_stops?, reader.judge_facts?,
+              reader.judge_requests?]).to eq([false, true, true, true, true])
+      expect(described_class::DEFAULT.with(confine: :classes)).to have_attributes(classes?: true, sandboxed?: false)
+    end
+  end
+
+  describe "OFF and UNSET" do
+    it "set every arm named in SETS to off and to nil" do
+      expect(described_class::OFF.to_h.values).to all(eq(:off))
+      expect(described_class::UNSET.to_h.values).to all(be_nil)
+      expect(described_class::OFF.to_h.keys).to eq(described_class::SETS.keys)
+    end
+  end
+
   describe "#to_header" do
     it "writes only round_dedup when every arm is off, and nothing when none was set" do
       expect(described_class::OFF.to_header).to eq("round_dedup" => "off")

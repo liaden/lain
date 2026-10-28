@@ -74,7 +74,7 @@ module Lain
           # in one command's argv lands.
           sensitivity = policy(project:, paths:, table:)
           factory = classifiers(project:, paths:, table:, facts: sensitivity.file_facts, **identity)
-          classes = arms.confine != :off
+          classes = arms.classes?
           Switchboard.for(chronicle:, options:, model:, toolset:, verdict:,
                           rules: [Lain::Approval::Remembered.from(config)].reject(&:empty?),
                           approving: ->(remembered, each) { approving(remembered, each, classes:) },

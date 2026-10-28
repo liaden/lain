@@ -55,12 +55,12 @@ module Lain
         # @param paths [Lain::Paths] the state home
         # @param journal [#<<] the run's journal, where the box's own degraded records land
         # @param probe [#call] `call(journal:, fence:) -> Confine::Probe`
-        # @param workspace [Boolean] whether a call the gate approves runs in the workspace profile
+        # @param confine [Symbol] `:reader` or `:workspace`: the profile a call the gate approves runs in
         # @raise [Lain::Config::Refusal] when the project's sensitivity table is malformed
-        def initialize(project:, paths:, journal:, probe: PROBE, workspace: false)
+        def initialize(project:, paths:, journal:, probe: PROBE, confine: :reader)
           @project = project
           @paths = paths
-          @workspace = workspace
+          @confine = confine
           @fence = Confine::Bwrap.fence_binary
           @notes = Once.new(journal)
           @probe = probe.call(journal:, fence: @fence)
@@ -110,7 +110,7 @@ module Lain
 
         def board = ::Lain::CLI::Wiring::BoardBuild
 
-        def arm = @workspace ? "workspace" : "reader"
+        def arm = @confine.to_s
 
         def policy
           @policy ||= board.policy(project: @project, paths: @paths,
@@ -119,7 +119,7 @@ module Lain
 
         def sandbox(journal)
           Confine::Sandbox.new(root: @project.root, home: @paths.home, masks: @masks, probe: @probe, fence: @fence,
-                               journal:, notes: @notes, workspace: @workspace)
+                               journal:, notes: @notes, workspace: @confine == :workspace)
         end
 
         # `bypass` approves what the read-only rung and the rules leave open, as the guard's own gate did.

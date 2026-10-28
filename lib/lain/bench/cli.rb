@@ -642,9 +642,9 @@ module Lain
       # Only the sandboxed arms change what the tools can do, so only they build a sandbox. `classes` is a
       # chat's approval arm and would change nothing here, so it is refused rather than reported as applied.
       def confinement_for(arms, journal:, probe:, project:, paths:)
-        return Harness::Confinement::Off if arms.confine == :off
+        return Harness::Confinement::Off unless arms.classes?
 
-        unless Lain::CLI::Arms::SANDBOXED.include?(arms.confine)
+        unless arms.sandboxed?
           raise Refusal, "--confine #{arms.confine} is a chat arm: bench arms take --confine " \
                          "#{CONFINES[..-2].join(", ")} or #{CONFINES.last}"
         end
@@ -652,7 +652,7 @@ module Lain
         run = journal || Channel::Null.instance
         Harness::Confinement.new(project: project || Lain::Project::Resolver.default_project,
                                  paths: paths || Lain::Paths.new, journal: run, probe:,
-                                 workspace: arms.confine == :workspace)
+                                 confine: arms.confine)
                             .tap { run << Telemetry::RunArms.new(arms: arms.to_header.merge(OPAQUE_REFUSED)) }
       end
 

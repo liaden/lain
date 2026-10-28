@@ -364,7 +364,7 @@ module Lain
                                                       search: Lain::Config.search(root: @root)))
         end
 
-        def bash_exec = Lain::CLI::Arms::SANDBOXED.include?(@arms.confine) ? confined(@exec) : @exec
+        def bash_exec = @arms.sandboxed? ? confined(@exec) : @exec
 
         def confined(exec)
           case exec
@@ -385,7 +385,7 @@ module Lain
           masks = Lain::Confine::MaskList.new(root: @root, policy: -> { @switchboard.call.sensitivity })
           @sandbox = Lain::Confine::Sandbox.new(root: @root, home:, masks:, probe: @probe, fence: @fence,
                                                 journal: seam.journal, notes: @notes, fresh: @fresh,
-                                                workspace: @arms.confine == :workspace)
+                                                workspace: @arms.workspace?)
           @sandbox.wrap(inner, requirer: self.class.name)
         end
 

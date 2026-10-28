@@ -1026,11 +1026,16 @@ The arms, recorded in the session header's `arms` key when on (`CLI::Arms`):
 
 | Flag | Values | Default | Switches |
 |---|---|---|---|
-| `--confine` | `off`, `classes`, `reader` | `reader` | `classes`: the class table. `reader`: the table plus the sandbox |
+| `--confine` | `off`, `classes`, `reader`, `workspace` | `workspace` | `classes`: the class table. `reader`: the table plus the sandbox. `workspace`: the sandbox with the workspace switch on |
 | `--tripwire` | `off`, `observe`, `stop` | `observe` | the ledger; `stop` adds the stops |
 | `--judge-facts` | `off`, `facts`, `request` | `off` | facts and the bar; `request` adds the human's last line |
+| `--round-budget` | `off`, `static`, `window` | `window` | the per-round budget, fixed or sized from the window |
+| `--round-dedup` | `off`, `on` | `on` | drops a repeated call within a round |
+| `--judge-denials` | `off`, `escalate_only`, `breaker` | `off` | what the judge's denials do; `breaker` trips `Approval::DenialBreaker` |
 
-`lain bench arms` defaults `--confine` to `off` (it takes `off` or `reader`) and always runs `--tripwire off`.
+`Arms::SETS` is the one table of arms and values; `OFF` and `UNSET` derive from it, and callers ask predicates (`workspace?`, `sandboxed?`, `tripwire_stops?`, `judge_requests?`) rather than compare values.
+
+`lain bench arms` defaults `--confine` to `off` (it takes `off`, `reader` or `workspace`) and always runs `--tripwire off`.
 Resolution and the env scrub are not arms: they run in every session.
 
 ## The secret boundary
