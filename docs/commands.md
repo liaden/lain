@@ -328,6 +328,26 @@ Knob guidance from one session's friction signals. Offline, deterministic, no AP
 Reads the journal back and tells you which knobs the run was fighting: approval churn,
 compaction thrash, iteration ceilings.
 
+### lain export
+
+```
+lain export SESSION [--html | --jsonl] [--out PATH] [--force] [--include-released]
+```
+
+`--html` (the default) is the share artifact: one self-contained page of the conversation only (turns,
+tool calls and results, compaction cuts), with the home directory written as `~` and the project root
+as `<project>`. Masked regions stay as their `<redacted:n>` placeholders; the footer counts masked reads,
+commands and searches, and any released reads, and nothing is re-scanned. A session that released reads
+to the model is refused unless `--include-released` is given.
+
+`--jsonl` is a LOCAL record, not for sharing: the applied record stream, one record per line, each
+byte for byte as the file holds it, so it keeps the system prompt, absolute paths and approval records.
+It drops a retreat line whose turn never landed, so the chain links no longer close and `lain verify`
+on the export will flag it. `--html` and `--jsonl` are exclusive.
+
+`SESSION` resolves the way `lain friction`'s does. Without `--out` the document goes to stdout; with it
+the file is written with mode 0600, an existing path is refused unless `--force`, and the path is printed.
+
 ### lain trust
 
 ```

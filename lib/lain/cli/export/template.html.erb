@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>lain session</title>
+<style>body{font-family:sans-serif;max-width:50em;margin:2em auto}pre{white-space:pre-wrap}.cut{color:#888;font-style:italic}footer{margin-top:2em;border-top:1px solid #ccc}</style>
+</head>
+<body>
+<% rows.each do |row| -%>
+<% if row["type"] == "cut" -%>
+<p class="cut">[compaction: earlier turns elided]</p>
+<% else -%>
+<section class="turn">
+<h3><%= h(row["role"]) %></h3>
+<% blocks(row["content"]).each do |block| -%>
+<pre class="<%= h(block["type"]) %>"><%= h(block_text(block)) %></pre>
+<% end -%>
+</section>
+<% end -%>
+<% end -%>
+<footer>
+<p><%= h(regions(masked)) %> were masked as &lt;redacted:n&gt;; the session was not re-scanned.</p>
+<% if @released.positive? -%>
+<p><%= h(regions(@released)) %> were released to the model and appear in clear.</p>
+<% end -%>
+</footer>
+</body>
+</html>

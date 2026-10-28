@@ -699,7 +699,8 @@ RSpec.describe LainCLI do
       "bench variance" => %w[bench variance /tmp --nope],
       "worktrees gc" => %w[worktrees gc --nope],
       "land status" => %w[land status --nope],
-      "up" => %w[up /tmp --nope]
+      "up" => %w[up /tmp --nope],
+      "export" => %w[export x --nope]
     }.each do |command, argv|
       it "refuses an unknown switch on `lain #{command}`, naming it" do
         expect { described_class.start(argv, debug: true) }

@@ -1568,6 +1568,22 @@ class LainCLI < Thor
   desc "friction SESSION", "Knob guidance from a session's friction signals (offline, deterministic)"
   def friction(selector) = render { Lain::CLI::Friction.new.report(selector) }
 
+  desc "export SESSION", "Share a session as HTML (default), or write its local JSONL record (not for sharing)"
+  method_option :html, type: :boolean, desc: "HTML of the conversation, home and project paths rewritten (the default)"
+  method_option :jsonl, type: :boolean, desc: "the raw applied record stream for local use; holds paths and prompts"
+  method_option :out, type: :string, banner: "PATH", desc: "write here (mode 0600) instead of stdout"
+  method_option :force, type: :boolean, desc: "overwrite an existing --out"
+  method_option :include_released, type: :boolean, desc: "let --html carry reads released to the model"
+  def export(selector)
+    raise Thor::Error, "--html and --jsonl are exclusive" if options[:html] && options[:jsonl]
+
+    render do
+      export = Lain::CLI::Export.new(selector:, paths: Lain::Paths.new, project: Lain::Project::Resolver.default_project)
+      export.call(format: options[:jsonl] ? :jsonl : :html, out: options[:out],
+                  include_released: options[:include_released] || false, force: options[:force] || false)
+    end
+  end
+
   desc "verify SESSION",
        "Check a session file's record chain: names the first edited, inserted or removed line (offline)"
   method_option :tip, type: :string, desc: "A tip a previous verify printed; checks the last line against it"
