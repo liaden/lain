@@ -1029,3 +1029,8 @@ first red one — checked, not assumed — so "CI changed under us" was ruled ou
   **Probe the behaviour, never parse `tmux -V`** — a distro backport makes the version string lie,
   and the pane is already there to ask. The general rule this is an instance of: an example that
   drives a real binary is pinned to *that binary's* bugs, and CI's copy is older than yours.
+
+- **`rake compile` on macOS builds the extension and skips `lain-fence`.** The fence is Linux-only
+  (Landlock), so the compile task prints a line and the sandbox runs degraded. The build is not the
+  last blocker: `setsid` and `FIONREAD` are the next 2 places the Mac port stops, and `rake default`
+  still runs the suite on a Mac regardless of this gate.

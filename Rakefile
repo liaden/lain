@@ -125,7 +125,13 @@ RbSys::ExtensionTask.new("lain", GEMSPEC) do |ext|
   ext.lib_dir = "lib/lain"
 end
 
-task(:compile) { sh "cargo build -p lain-fence --release" }
+task :compile do
+  if RbConfig::CONFIG["host_os"].include?("linux")
+    sh "cargo build -p lain-fence --release"
+  else
+    puts "lain-fence is Linux-only and was not built; the sandbox will run degraded"
+  end
+end
 
 MUTANT_FILES = %w[canonical event digest dag graph nogvl bm25].map { |f| "ext/lain/src/#{f}.rs" }.freeze
 # cargo-mutants exits 2 for a missed mutant and 3 for a timeout; the outcomes file, not the status, decides.

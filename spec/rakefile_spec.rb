@@ -4,7 +4,7 @@ require "rake"
 require "rb_sys/extensiontask"
 require "tmpdir"
 
-RSpec.describe "Rakefile pspec task", :seam do
+RSpec.describe "Rakefile", :seam do
   around do |example|
     Dir.mktmpdir("lain-rakefile") do |home|
       @state_home = File.realpath(home)
@@ -43,5 +43,37 @@ RSpec.describe "Rakefile pspec task", :seam do
     end
 
     expect(recorded.map { |command, free| [command.include?("parallel_rspec"), free] }).to eq([[true, false]])
+  end
+
+  describe "the compile task" do
+    def compile_on(host_os)
+      commands = []
+      app = Rake::Application.new
+      allow(RbSys::ExtensionTask).to receive(:new)
+      allow(TOPLEVEL_BINDING.receiver).to receive(:sh) { |*args| commands << args.last }
+      stub_const("RbConfig::CONFIG", RbConfig::CONFIG.merge("host_os" => host_os))
+      out = StringIO.new
+      previous = $stdout
+      Rake.with_application(app) do
+        load File.join(root, "Rakefile")
+        $stdout = out
+        Rake::Task[:compile].invoke
+      ensure
+        $stdout = previous
+      end
+      [commands, out.string]
+    end
+
+    it "builds the fence on linux" do
+      commands, = compile_on("linux-gnu")
+
+      expect(commands).to eq(["cargo build -p lain-fence --release"])
+    end
+
+    it "skips the fence on darwin and says the sandbox runs degraded" do
+      commands, said = compile_on("darwin24")
+
+      expect([commands, said]).to match([[], /lain-fence is Linux-only.*degraded/])
+    end
   end
 end
