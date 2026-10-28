@@ -23,7 +23,7 @@ module Lain
   #
   # The class/instance split mirrors {Paths}: class methods are pure NAMING (no
   # filesystem, no `Dir.pwd`), so a load-time constant can use them; an instance
-  # RESOLVES against one directory. Resolution creates nothing --
+  # RESOLVES against one directory. Resolution creates nothing (it reads at most the `.git` pointer file) --
   # {StatusFeed::Publication} mkdir_p's the container on its first publish -- so
   # a renderer may resolve a path just to name it in a message.
   #
@@ -131,7 +131,9 @@ module Lain
 
     attr_reader :root
 
-    def dir = File.join(@root, DIR)
+    # A linked worktree is cut from a sha that does not carry an ignored `.lain/`,
+    # so it borrows the main worktree's rather than running with no config.
+    def dir = own_config? ? own_dir : (main_worktree_dir || own_dir)
 
     def config = under(CONFIG_FILE)
     def prompt = under(PROMPT_FILE)
@@ -162,6 +164,27 @@ module Lain
     private
 
     def under(name) = File.join(dir, name)
+
+    def own_dir = File.join(@root, DIR)
+
+    def own_config? = File.file?(File.join(own_dir, CONFIG_FILE))
+
+    def main_worktree_dir
+      main = main_worktree
+      main&.then { |m| File.join(m, DIR) }&.then { |c| c if File.file?(File.join(c, CONFIG_FILE)) }
+    end
+
+    # Read as git does: the pointer names the admin dir, whose `commondir` is
+    # relative to it. Anything unreadable means "not a linked worktree".
+    def main_worktree
+      pointer = File.join(@root, ".git")
+      named = File.file?(pointer) && File.read(pointer)[/\Agitdir: (.+)$/, 1]
+      admin = named && File.expand_path(named, @root)
+      common = admin && File.join(admin, "commondir")
+      return unless common && File.file?(common)
+
+      File.dirname(File.expand_path(File.read(common).strip, admin))
+    end
 
     def state_dir = container(STATE_KIND)
   end

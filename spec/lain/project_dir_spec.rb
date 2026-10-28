@@ -443,6 +443,106 @@ RSpec.describe Lain::ProjectDir do
     end
   end
 
+  describe "a linked worktree" do
+    # No git runs: a linked worktree is a `.git` pointer file whose gitdir names
+    # `commondir`, and that is all the subject may read.
+    def linked(base, commondir: "../..")
+      main = File.join(base, "main")
+      admin = File.join(main, ".git", "worktrees", "wt")
+      lease = File.join(base, "lease")
+      [admin, lease, File.join(main, ".lain")].each { |d| FileUtils.mkdir_p(d) }
+      File.write(File.join(admin, "commondir"), "#{commondir}\n") if commondir
+      File.write(File.join(lease, ".git"), "gitdir: #{admin}\n")
+      [main, lease]
+    end
+
+    it "resolves to the main worktree's .lain when the lease has no config" do
+      Dir.mktmpdir("lain-project-dir") do |base|
+        main, lease = linked(base)
+        File.write(File.join(main, ".lain", "config.rb"), "")
+
+        expect(described_class.new(root: lease).config).to eq(File.join(main, ".lain", "config.rb"))
+      end
+    end
+
+    it "keeps its own .lain when that holds a config" do
+      Dir.mktmpdir("lain-project-dir") do |base|
+        main, lease = linked(base)
+        File.write(File.join(main, ".lain", "config.rb"), "")
+        FileUtils.mkdir_p(File.join(lease, ".lain"))
+        File.write(File.join(lease, ".lain", "config.rb"), "")
+
+        expect(described_class.new(root: lease).dir).to eq(File.join(lease, ".lain"))
+      end
+    end
+
+    it "is not shadowed by a bare .lain with no config" do
+      Dir.mktmpdir("lain-project-dir") do |base|
+        main, lease = linked(base)
+        File.write(File.join(main, ".lain", "config.rb"), "")
+        FileUtils.mkdir_p(File.join(lease, ".lain"))
+
+        expect(described_class.new(root: lease).dir).to eq(File.join(main, ".lain"))
+      end
+    end
+
+    it "resolves a relative gitdir against the lease, not the process cwd" do
+      Dir.mktmpdir("lain-project-dir") do |base|
+        main, lease = linked(base)
+        File.write(File.join(main, ".lain", "config.rb"), "")
+        File.write(File.join(lease, ".git"), "gitdir: ../main/.git/worktrees/wt\n")
+
+        resolved = Dir.chdir(Dir.tmpdir) { described_class.new(root: lease).dir }
+
+        expect(resolved).to eq(File.join(main, ".lain"))
+      end
+    end
+
+    it "stays at its own .lain when the main worktree has no config either" do
+      Dir.mktmpdir("lain-project-dir") do |base|
+        _main, lease = linked(base)
+
+        expect(described_class.new(root: lease).dir).to eq(File.join(lease, ".lain"))
+      end
+    end
+
+    it "stays at its own .lain when commondir is missing" do
+      Dir.mktmpdir("lain-project-dir") do |base|
+        _main, lease = linked(base, commondir: nil)
+
+        expect(described_class.new(root: lease).dir).to eq(File.join(lease, ".lain"))
+      end
+    end
+
+    it "stays at its own .lain when the pointer names nothing readable" do
+      Dir.mktmpdir("lain-project-dir") do |base|
+        FileUtils.mkdir_p(File.join(base, "lease"))
+        File.write(File.join(base, "lease", ".git"), "gitdir: /nowhere/at/all\n")
+
+        expect(described_class.new(root: File.join(base, "lease")).dir).to eq(File.join(base, "lease", ".lain"))
+      end
+    end
+
+    it "stays at its own .lain for a plain clone, whose .git is a directory" do
+      Dir.mktmpdir("lain-project-dir") do |base|
+        FileUtils.mkdir_p(File.join(base, ".git"))
+
+        expect(described_class.new(root: base).dir).to eq(File.join(base, ".lain"))
+      end
+    end
+
+    it "creates nothing" do
+      Dir.mktmpdir("lain-project-dir") do |base|
+        main, lease = linked(base)
+        File.write(File.join(main, ".lain", "config.rb"), "")
+
+        expect { described_class.new(root: lease).config }.not_to(change do
+          Dir.glob("#{base}/**/*", File::FNM_DOTMATCH).sort
+        end)
+      end
+    end
+  end
+
   # The recipe the state feed shares with five sibling containers, which was
   # composed eight ways before this method: one of them split across two
   # methods, one flattening the key into a filename, and one taking a digest of

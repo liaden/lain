@@ -739,4 +739,36 @@ RSpec.describe Lain::Config do
       end
     end
   end
+
+  describe "a linked worktree" do
+    def linked(base)
+      main = File.join(base, "main")
+      admin = File.join(main, ".git", "worktrees", "wt")
+      lease = File.join(base, "lease")
+      [admin, lease].each { |d| FileUtils.mkdir_p(d) }
+      File.write(File.join(admin, "commondir"), "../..\n")
+      File.write(File.join(lease, ".git"), "gitdir: #{admin}\n")
+      [main, lease]
+    end
+
+    it "reads the main worktree's tables when the lease has no config" do
+      Dir.mktmpdir do |base|
+        main, lease = linked(base)
+        write_config(main, "isolation retain_days: 3\n")
+        FileUtils.mkdir_p(File.join(lease, ".lain"))
+
+        expect(described_class.load(root: lease).isolation.retain_days).to eq(3)
+      end
+    end
+
+    it "reads its own config in preference to the main worktree's" do
+      Dir.mktmpdir do |base|
+        main, lease = linked(base)
+        write_config(main, "isolation retain_days: 3\n")
+        write_config(lease, "isolation retain_days: 5\n")
+
+        expect(described_class.load(root: lease).isolation.retain_days).to eq(5)
+      end
+    end
+  end
 end
