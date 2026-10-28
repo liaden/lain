@@ -87,7 +87,9 @@ module Lain
         end
 
         # Memoized for {Arrivals}' reason: it remembers what it has announced.
-        def arrivals = @arrivals ||= Arrivals.new(notice: @tty.method(:render_summons))
+        def arrivals
+          @arrivals ||= Arrivals.new(notice: @tty.method(:render_summons), lapsed: @tty.method(:render_warning))
+        end
       end
 
       class ApprovalSurfaces
@@ -106,7 +108,8 @@ module Lain
         #
         # `notice:` is the frontend's summons line ({Frontend::TTY#render_summons},
         # reached as {CLI::Wiring} reaches it for the run's line to the human),
-        # so a parked call rings while the `notify` layer is up.
+        # so a parked call rings while the `notify` layer is up. `lapsed:` takes
+        # the lapse line, which only informs: the human was already summoned.
         class Arrivals
           TICK = 0.05
 
@@ -121,8 +124,9 @@ module Lain
           LAPSED = "! %<requester>s asks %<call>s  -- %<lapse>s"
           UNANNOUNCED = "the chat could not announce a parked call (%<failure>s) -- lain://approval still lists it"
 
-          def initialize(notice:, wall_clock: -> { Time.now })
+          def initialize(notice:, lapsed:, wall_clock: -> { Time.now })
             @notice = notice
+            @lapsed = lapsed
             @wall_clock = wall_clock
             @announced = Set.new.compare_by_identity
           end
@@ -164,7 +168,7 @@ module Lain
           # clock denies a call, so the denial is said here as well as in the
           # approval list. A call whose [y/N] prompt drew already ended that line with the lapse.
           def lapse(pending)
-            @notice.call(stamp(format(LAPSED, requester: pending.label, call: pending.ask_face,
+            @lapsed.call(stamp(format(LAPSED, requester: pending.label, call: pending.ask_face,
                                               lapse: pending.closure)))
           rescue StandardError => e
             report(e)

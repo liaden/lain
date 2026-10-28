@@ -283,6 +283,30 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
       expect(output.string.lines.grep(/denied after/).join).to include("bash(")
     end
 
+    it "rings once for a parked call and not again when the clock denies it" do
+      raised << :notify
+      Sync do |task|
+        watched = surfaces(attached: editor).watch(task)
+        task.with_timeout(2) { task.async { queue.call(effect, nil) }.wait }
+        pumped_until(task, reason: "the lapse was said") { output.string.include?("denied after") }
+        watched.each(&:stop)
+      end
+
+      expect(output.string.count("\a")).to eq(1)
+    end
+
+    it "rings again for a second call that parks" do
+      raised << :notify
+      Sync do |task|
+        watched = surfaces(attached: editor).watch(task)
+        2.times { task.with_timeout(2) { task.async { queue.call(effect, nil) }.wait } }
+        pumped_until(task, reason: "both lapses were said") { output.string.scan("denied after").size == 2 }
+        watched.each(&:stop)
+      end
+
+      expect(output.string.count("\a")).to eq(2)
+    end
+
     it "names a skill child by its label when the clock denies its call" do
       child = Lain::Requester.new(name: "dev", role: "dev", skill: "gherkin-tests")
       Sync do |task|
