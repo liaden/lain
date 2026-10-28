@@ -61,6 +61,10 @@ module Lain
         warning: %i[yellow],             # TTY#render_warning
         prompt: %i[bold],                # TTY#compose
         heading: %i[bold],               # a section header in a listing (/help)
+        heading_md: %i[bold],            # Markdown's heading line in a model reply
+        code: %i[yellow],                # Markdown's code span or fenced row
+        bullet: %i[dim],                 # Markdown's list marker
+        emphasis: %i[bold],              # Markdown's bold run
         command_name: %i[cyan],          # a name in a listing's first column (/help)
         tool_header: %i[bold],           # Decorators::ToolCalled's line
         label: %i[dim],                  # Decorators::ToolOutput's attribution

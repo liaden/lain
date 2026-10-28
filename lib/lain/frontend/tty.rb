@@ -305,7 +305,8 @@ module Lain
       # Render the model's finished turn. Not Channel-sourced -- see the class
       # comment on why a synchronous Response bypasses the Channel entirely.
       def render_response(response)
-        render_turn(@theme.paint(:response, response.text))
+        markdown = Markdown.segments(response.text, prose: :response)
+        render_turn(markdown.paint(@theme), verbatim: Markdown.verbatim_rows(markdown))
       end
 
       # A command's structured answer. One paint call PER SEGMENT, each under
@@ -515,15 +516,19 @@ module Lain
 
       # A tool's streamed chunk is not a line, and breaking it would put a
       # newline where the command did not.
-      def fitted(rendered, decorator) = decorator.line_shaped? ? wrapped(rendered) : rendered
+      def fitted(rendered, decorator)
+        return rendered unless decorator.line_shaped?
+
+        wrapped(rendered, verbatim: decorator.respond_to?(:verbatim_rows) ? decorator.verbatim_rows : [])
+      end
 
       # A pipe has no width of its own, and whatever reads it should decide.
       # While a prompt is drawn the terminal is raw and a bare newline only
       # moves down, so the rows are joined the way {Notes} ends its own lines.
-      def wrapped(text, raw: @notes.drawn?)
+      def wrapped(text, raw: @notes.drawn?, verbatim: [])
         return text unless @output.tty?
 
-        Wrap.call(text, width:, eol: raw ? "\r\n" : "\n")
+        Wrap.call(text, width:, eol: raw ? "\r\n" : "\n", verbatim:)
       end
 
       # How a finished turn ENDS: the already-styled body, the rule beneath it,
@@ -533,8 +538,8 @@ module Lain
       # The leading `::` below is load-bearing: unqualified `TTY::Screen` would
       # resolve `TTY` to this very class, since we are lexically inside a class
       # of the same name.
-      def render_turn(styled)
-        @output.puts(wrapped(styled))
+      def render_turn(styled, verbatim: [])
+        @output.puts(wrapped(styled, verbatim:))
         @output.puts(rule)
         @output.flush
       end

@@ -420,6 +420,34 @@ RSpec.describe Lain::Frontend::TTY do
     end
   end
 
+  describe "#render_response markdown" do
+    let(:colored) { Pastel.new(enabled: true) }
+    let(:styling_tty) do
+      described_class.new(channel:, output:, input:, pastel: colored,
+                          theme: Lain::Frontend::Theme.new(pastel: colored, detect: -> { 256 }))
+    end
+
+    def respond(frontend, text)
+      frontend.render_response(Lain::Response.new(content: [{ "type" => "text", "text" => text }],
+                                                  stop_reason: :end_turn))
+    end
+
+    it "paints bold and code and drops their markers" do
+      respond(styling_tty, "Use **bold** and `code`")
+
+      expected = [colored.cyan("Use "), colored.bold("bold"), colored.cyan(" and "), colored.yellow("code")].join
+
+      expect(output.string).to start_with("#{expected}\n")
+    end
+
+    it "paints a heading without hashes and bullets with the glyph" do
+      respond(styling_tty, "## Plan\n- one")
+
+      expect(output.string.split("\n").first(2)).to eq([colored.bold("Plan"),
+                                                        "#{colored.dim("•")}#{colored.cyan(" one")}"])
+    end
+  end
+
   describe "#render_response" do
     it "prints the response's text" do
       response = Lain::Response.new(
@@ -470,7 +498,10 @@ RSpec.describe Lain::Frontend::TTY do
     let(:colored) { Pastel.new(enabled: true) }
     let(:terminal) { Class.new(StringIO) { def tty? = true }.new }
     let(:output) { terminal }
-    let(:tty) { described_class.new(channel:, output:, input:, pastel: Pastel.new(enabled: false)) }
+    let(:tty) do
+      pastel = Pastel.new(enabled: false)
+      described_class.new(channel:, output:, input:, pastel:)
+    end
     let(:wide_text) { "the quick brown fox jumps over the lazy dog" }
 
     def respond(frontend, text)
@@ -512,10 +543,27 @@ RSpec.describe Lain::Frontend::TTY do
       expect(body_lines).to eq(["the quick brown fox", "jumps over the lazy", "dog"])
     end
 
-    it "keeps the indentation of a code block that fits" do
+    it "keeps the indentation of a code block that fits, without its fence lines" do
       respond(tty, "```ruby\n  def run\n    work( now)\n  end\n```")
 
-      expect(body_lines).to eq(["```ruby", "  def run", "    work( now)", "  end", "```"])
+      expect(body_lines).to eq(["  def run", "    work( now)", "  end"])
+    end
+
+    it "does not wrap a fenced block's lines, which have no fence left to say so" do
+      code = "#{"a" * 15} #{"b" * 15}"
+
+      respond(tty, "some words that wrap\n```\n#{code}\n```")
+
+      expect(body_lines).to eq(["some words that wrap", code])
+    end
+
+    it "renders a decorated assistant text's block the same way" do
+      code = "#{"a" * 15} #{"b" * 15}"
+      text = Lain::Telemetry::AssistantText.new(text: "```\n#{code}\n```")
+
+      tty.send(:render, text)
+
+      expect(output.string.split("\n")).to include(code)
     end
 
     it "leaves the rule exactly the width of the screen" do
@@ -587,7 +635,7 @@ RSpec.describe Lain::Frontend::TTY do
       code = "x = [#{(1..12).to_a.join(", ")}]"
       respond(tty, "intro words that are long enough\n```\n#{code}\n```")
 
-      expect(body_lines).to eq(["intro words that are", "long enough", "```", code, "```"])
+      expect(body_lines).to eq(["intro words that are", "long enough", code])
     end
 
     it "leaves output that is not a terminal alone" do

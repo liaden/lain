@@ -27,16 +27,18 @@ module Lain
       #
       # @param text [String] may hold newlines and styling escapes
       # @param width [Integer] columns; zero or less leaves the text alone
+      # @param verbatim [Array<Integer>] 0-based rows to pass through whole,
+      #   for a code block whose fences were dropped before the text got here
       # @param eol [String] what joins the rows: a terminal in raw mode needs
       #   "\r\n", since a bare newline there only moves down
       # @return [String] escapes kept and not counted
-      def self.call(text, width:, eol: "\n")
+      def self.call(text, width:, eol: "\n", verbatim: [])
         return text unless width.positive? && text.valid_encoding?
 
         fenced = false
-        text.split("\n", -1).flat_map do |line|
+        text.split("\n", -1).each_with_index.flat_map do |line, row|
           fenced = !fenced if line.match?(FENCE)
-          fenced || line.match?(FENCE) ? [line] : Line.new(line, width).to_a
+          fenced || line.match?(FENCE) || verbatim.include?(row) ? [line] : Line.new(line, width).to_a
         end.join(eol)
       end
 

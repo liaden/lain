@@ -103,6 +103,14 @@ RSpec.describe Lain::Frontend::Wrap do
       )
     end
 
+    it "passes the named rows through, however wide, when no fence marks them" do
+      code = "#{"a" * 30} #{"b" * 30}"
+
+      wrapped = described_class.call("intro words here\n#{code}\nafter the fence", width: 12, verbatim: [1])
+
+      expect(wrapped.split("\n")).to eq(["intro words", "here", code, "after the", "fence"])
+    end
+
     it "passes text that is not valid UTF-8 through whole" do
       expect(described_class.call("review \xFF\xFE.md is waiting", width: 5)).to eq("review \xFF\xFE.md is waiting")
     end
