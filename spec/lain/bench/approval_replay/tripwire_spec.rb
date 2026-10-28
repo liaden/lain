@@ -54,7 +54,9 @@ RSpec.describe Lain::Bench::ApprovalReplay::Tripwire do
     Lain::Bench::ApprovalReplay::Score.labels_from(path)
   end
 
-  def tripwire(*journals, labels: nil, rules: [default]) = described_class.new(journals:, labels:, rules:)
+  def tripwire(*journals, labels: Lain::Bench::Labels::NONE, rules: [default])
+    described_class.new(journals:, labels:, rules:)
+  end
 
   describe "folding" do
     it "stands a requester where a live ledger journaled it, for a refused exec and two judge denials" do

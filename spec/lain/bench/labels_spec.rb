@@ -23,6 +23,17 @@ RSpec.describe Lain::Bench::Labels do
     expect(described_class::NONE.fetch("abc")).to be_nil
   end
 
+  it "is labelled when loaded, even from an empty file, and not when it is NONE" do
+    expect(described_class.load(sidecar, allowed:)).to be_labelled
+    expect(described_class::NONE).not_to be_labelled
+  end
+
+  it "makes NONE a Labels of its own kind that answers unlabelled and fetches nil" do
+    expect(described_class::NONE).to be_a(described_class)
+    expect(described_class::NONE.class).not_to eq(described_class)
+    expect(described_class::NONE.fetch("abc")).to be_nil
+  end
+
   it "refuses a label that is not allowed, naming the line and the allowed labels" do
     path = sidecar('{"digest":"abc","label":"grader"}', '{"digest":"def","label":"maybe"}')
 

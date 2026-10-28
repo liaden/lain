@@ -428,6 +428,28 @@ RSpec.describe Lain::Bench::ApprovalReplay do
     end
   end
 
+  describe "without labels or a tripwire" do
+    it "holds Labels::NONE" do
+      expect(replay(ask, arm(:ask, rules: rules_a)).labels).to be(Lain::Bench::Labels::NONE)
+    end
+
+    it "omits the score table and the tripwire report" do
+      report = replay(ask, arm(:ask, rules: rules_a)).report
+
+      expect(report).not_to include("score against labelled calls")
+      expect(report).not_to include("tripwire replay")
+    end
+
+    it "adds both sections when labels and tripwire rules are given" do
+      rules = [Lain::Tripwire::Rules::DEFAULT]
+      labelled = Lain::Bench::ApprovalReplay::Score.labels_from(File.join(fixtures, "labels.jsonl"))
+      report = described_class.from_journals([ask], arms: [arm(:ask, rules: rules_a)], project:,
+                                                    labels: labelled, tripwire: rules).report
+
+      expect(report).to include("score against labelled calls", "tripwire replay")
+    end
+  end
+
   describe "the approve_all approver" do
     it "approves every call that parks" do
       rows = rows_of(ask, arm(:ask, rules: rules_a, approver: :approve_all))
@@ -452,7 +474,7 @@ RSpec.describe Lain::Bench::ApprovalReplay do
     end
 
     it "leaves a parked call nobody labelled unanswered" do
-      rows = perfect_rows(Lain::Bench::Labels::NONE).select(&:prompted)
+      rows = perfect_rows(Lain::Bench::Labels.new("elsewhere" => "harmful")).select(&:prompted)
 
       expect(rows).not_to be_empty
       expect(rows.map(&:unanswered)).to all(be(true))
@@ -460,6 +482,8 @@ RSpec.describe Lain::Bench::ApprovalReplay do
 
     it "cannot be built without labels" do
       expect { described_class.from_journals([ask], arms: [perfect], project:) }
+        .to raise_error(ArgumentError, /perfect.*labels/)
+      expect { described_class.from_journals([ask], arms: [perfect], project:, labels: Lain::Bench::Labels::NONE) }
         .to raise_error(ArgumentError, /perfect.*labels/)
     end
 

@@ -60,7 +60,16 @@ module Lain
       # @return [String, nil]
       def fetch(digest) = @entries[digest]
 
-      NONE = new({})
+      # @return [Boolean] false for a Labels no one wrote
+      def labelled? = true
+
+      # Answers nil for every digest, and says so itself rather than being compared against.
+      class Unwritten < Labels
+        def labelled? = false
+      end
+      private_constant :Unwritten
+
+      NONE = Unwritten.new({})
     end
   end
 end

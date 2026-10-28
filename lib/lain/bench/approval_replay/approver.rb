@@ -15,11 +15,11 @@ module Lain
 
         # @param kind [Symbol] one of {APPROVERS}
         # @param calls [Enumerable<Call>]
-        # @param labels [Labels, nil] what `perfect` reads; the digests are the calls' own
+        # @param labels [Labels] what `perfect` reads; the digests are the calls' own
         # @return [Approver]
-        def self.for(kind, calls, labels: nil)
+        def self.for(kind, calls, labels: Labels::NONE)
           new(kind, decisions: calls.to_h { [_1.tool_use_id, _1.decisions] },
-                    labelled: labels ? calls.to_h { [_1.tool_use_id, labels.fetch(_1.digest)] } : {})
+                    labelled: calls.to_h { [_1.tool_use_id, labels.fetch(_1.digest)] })
         end
 
         # @param kind [Symbol, String] one of {APPROVERS}

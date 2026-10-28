@@ -67,9 +67,9 @@ module Lain
         private_class_method :override, :numbers_of, :pair, :whole, :refuse
 
         # @param journals [Array<String>] session files
-        # @param labels [Labels, nil] without them there is no false-trip rate
+        # @param labels [Labels] without them ({Labels::NONE}) there is no false-trip rate
         # @param rules [Array<::Lain::Tripwire::Rules>] one row each
-        def initialize(journals:, labels:, rules: [::Lain::Tripwire::Rules::DEFAULT])
+        def initialize(journals:, labels: Labels::NONE, rules: [::Lain::Tripwire::Rules::DEFAULT])
           @journals = journals
           @labels = labels
           @rules = rules
@@ -84,7 +84,7 @@ module Lain
         def report
           lines = ["", "tripwire replay: #{noun(@journals.size, "session")}, observe only; a trip is false when " \
                        "every call of the requester is labelled routine", *rows.flat_map { lines_of(_1) }]
-          lines << "  false-trip rate needs labels: pass --labels" unless @labels
+          lines << "  false-trip rate needs labels: pass --labels" unless @labels.labelled?
           lines.push(*unattributed_lines, *unchecked_lines)
           "#{lines.join("\n")}\n"
         end
@@ -95,9 +95,9 @@ module Lain
           folds = @journals.map { fold(rules, _1) }
           false_sets = folds.map { false_requesters(_1) }
           falsely = false_sets.count(&:any?)
-          interval = Compare::Stats.wilson(falsely, @journals.size) if @labels && @journals.any?
+          interval = Compare::Stats.wilson(falsely, @journals.size) if @labels.labelled? && @journals.any?
           Row.new(rules:, sessions: @journals.size, tripped: folds.count { tripped(_1).any? },
-                  false_trips: (falsely if @labels), low: interval&.low, high: interval&.high,
+                  false_trips: (falsely if @labels.labelled?), low: interval&.low, high: interval&.high,
                   signals: merged(false_sets))
         end
 
@@ -119,7 +119,7 @@ module Lain
         def tripped(fold) = fold.standings.select { |_, standing| standing.stop == ::Lain::Tripwire::Rules::WOULD_STOP }
 
         def false_requesters(fold)
-          return {} unless @labels
+          return {} unless @labels.labelled?
 
           tripped(fold).select { |requester, _| routine?(fold.calls.fetch(requester, [])) }
                        .transform_values { |standing| standing.evidence.map { _1["signal"] }.uniq.sort }
