@@ -28,6 +28,14 @@ RSpec.describe Lain::CLI::Wiring::Header do
                           middleware: backend.middleware.to_header, arms: arms.to_header)
   end
 
+  it "records the summarizer tier's provider and model" do
+    backend = Lain::CLI::Backend.new({ provider: "ollama", max_tokens: 64, summarizer_provider: "anthropic",
+                                       summarizer_model: "claude-haiku-5-5" }, root: @root)
+
+    expect(header.fields(backend, toolset, arms).fetch(:sections).summarizer)
+      .to eq("provider" => "anthropic", "model" => "claude-haiku-5-5")
+  end
+
   it "builds the context once, and records its effort in the provenance" do
     allow(backend).to receive(:context).and_call_original
     fields = header.fields(backend, toolset, arms)

@@ -68,6 +68,10 @@ module Lain
     # (`Config::Middleware#to_header`), nested the same way and on the same
     # rule: a run with none registered keeps the older header.
     #
+    # `sections.summarizer` is the summarizer tier's `provider` and `model`, nested
+    # the same way, so a reader can tell which model wrote the summaries; an
+    # empty hash writes none.
+    #
     # `writer:` is the process writing the file ({Liveness::Writer}), so a
     # reader elsewhere can tell a crashed session from a quiet one. Required,
     # so a new caller cannot forget it; an unrecorded writer writes no field.
@@ -84,7 +88,8 @@ module Lain
       record = fixed_fields(context, toolset, workspace)
       record = record.merge(context_pipeline(context), effort(context), sections.profile,
                             scheduled(sections.compaction), section("arms", sections.arms),
-                            section("middleware", sections.middleware), sections.provenance, writer.to_header)
+                            section("middleware", sections.middleware),
+                            section("summarizer", sections.summarizer), sections.provenance, writer.to_header)
       resumed_from.nil? ? record : record.merge("resumed_from" => resumed_from)
     end
 

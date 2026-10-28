@@ -3,7 +3,8 @@
 RSpec.describe Lain::SessionRecord::Sections do
   describe ".none" do
     it "renders every section as an empty hash" do
-      expect(described_class.none.to_h).to eq(profile: {}, compaction: {}, arms: {}, middleware: {}, provenance: {})
+      expect(described_class.none.to_h).to eq(profile: {}, compaction: {}, arms: {}, middleware: {}, provenance: {},
+                                              summarizer: {})
     end
 
     it "is shareable" do
@@ -19,11 +20,13 @@ RSpec.describe Lain::SessionRecord::Sections do
 
     it "asks each object for its header, once" do
       sections = described_class.of(profile:, compaction: { "compact_schedule" => "turn" }, arms:, middleware:,
-                                    provenance:)
+                                    provenance:,
+                                    summarizer: { "provider" => "ollama", "model" => "qwen3:4b" })
 
       expect(sections.to_h).to eq(profile: { "provider" => "ollama" }, compaction: { "compact_schedule" => "turn" },
                                   arms: { "confine" => "reader" }, middleware: { "project" => "d1" },
-                                  provenance: { "provenance" => { "a" => "b" } })
+                                  provenance: { "provenance" => { "a" => "b" } },
+                                  summarizer: { "provider" => "ollama", "model" => "qwen3:4b" })
       expect([profile, arms, middleware, provenance]).to all(have_received(:to_header).once)
     end
   end

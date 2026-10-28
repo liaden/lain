@@ -115,6 +115,14 @@ RSpec.describe Lain::CLI::Resume::MismatchNotices do
     end
   end
 
+  it "does not treat a recorded summarizer section as a disagreement" do
+    header = { "provider" => "anthropic", "model" => "claude-opus-4-8",
+               "summarizer" => { "provider" => "ollama", "model" => "qwen3:4b" } }
+    profile = Lain::CLI::RunProfile.from_options({ provider: "anthropic" })
+
+    expect(described_class.new(path: "unused", header:).call(profile:, model: "claude-opus-4-8")).to be_empty
+  end
+
   it "says nothing about arms a caller did not pass" do
     path = session_with(arms: {})
 

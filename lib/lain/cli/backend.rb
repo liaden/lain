@@ -70,11 +70,10 @@ module Lain
       # this set, matching Capability::Policy.for's voice.
       PROVIDERS = %w[anthropic ollama ollama-cloud].freeze
 
-      # Which of those the SUMMARIZER tier defaults to. Local, because an eager
-      # summary fires once per large tool result and paying frontier-model
-      # tokens to compress one costs more than resending it. A default, not a
-      # law: `--summarizer-provider` overrides it either way, which is why the
-      # tier is journalled.
+      # The SUMMARIZER tier for a run whose chat names no provider. Otherwise an
+      # unflagged summarizer follows the chat's own provider; an eager summary
+      # fires once per large tool result, so `--summarizer-provider ollama` is
+      # the way to keep that traffic free and local beside a hosted chat.
       DEFAULT_SUMMARIZER_PROVIDER = "ollama"
 
       # Compaction's knobs, in {Compaction::Head}'s canonical-byte proxy. They
@@ -310,9 +309,9 @@ module Lain
       # answers; each says why at its own `#tier`.
       def summarizer_provider(queue: true, requester: :summarizer) = provider(name: summarizer_name, queue:, requester:)
 
-      # `--summarizer-model`, defaulting to the CHAT's model when both tiers
-      # name one provider and to the summarizer provider's own default when they
-      # do not.
+      # `--summarizer-model`, defaulting to the CHAT's model while the tiers share
+      # a provider (the default, so a local chat still inherits its own model)
+      # and to the summarizer provider's own default when they do not.
       #
       # What FORCED the rule is local: one GPU holds one resident model, so an
       # unpinned summarizer on the chat's own provider evicts the chat model at
@@ -326,6 +325,12 @@ module Lain
       # shared namespace, and a model id that does not parse on the other side
       # -- so `--provider anthropic` must not name the local tier's model.
       def summarizer_model = @options[:summarizer_model] || tier_default_model
+
+      # The provider the summarizer tier resolves to: `--summarizer-provider`,
+      # else the chat's own.
+      #
+      # @return [String]
+      def summarizer_name = validated(knob(:summarizer_provider, followed_provider), "summarizer provider")
 
       # `--summarizer-max-tokens`. A summary that runs out of ceiling is a
       # truncated summary, and a truncated summary REPLACES the result it
@@ -485,7 +490,7 @@ module Lain
       def startup_notices
         notices = StartupNotices.new(provider: provider_name, model:, profile: run_profile,
                                      max_cost: @options[:max_cost], effort_rejected: effort_rejected?,
-                                     compacting: compaction?, summarizer: summarizer_name)
+                                     compacting: compaction?, summarizer: summarizer_name, summarizer_model:)
         return notices.ollama(ollama_tier(provider_name).startup_notices) if ollama_chat?
 
         notices.hosted(hosted_sampling_flags.keys - hosted_sampler_extra.keys)
@@ -828,7 +833,9 @@ module Lain
       # already known to be in PROVIDERS.
       def provider_name = validated(run_profile.provider, "provider")
 
-      def summarizer_name = validated(knob(:summarizer_provider, DEFAULT_SUMMARIZER_PROVIDER), "summarizer provider")
+      # An unknown chat provider is refused by {#provider_name} in its own words,
+      # so it must not also become the summarizer's default and be refused first.
+      def followed_provider = PROVIDERS.find { _1 == run_profile.provider } || DEFAULT_SUMMARIZER_PROVIDER
 
       def validated(name, flag) = self.class.validated(name, flag)
 
@@ -935,10 +942,10 @@ module Lain
       end
 
       # The window the HANDOFF tier will be asked in -- the summarizer's model
-      # through the run's own book, not the chat's. They are different models
-      # by default (a frontier chat summarizing locally), and sizing the
-      # question to the chat's window is how a 1M-token Anthropic run writes an
-      # input no local summarizer can read.
+      # through the run's own book, not the chat's. They can be different models
+      # (a frontier chat summarizing locally under `--summarizer-provider ollama`),
+      # and sizing the question to the chat's window is how a 1M-token Anthropic
+      # run writes an input no local summarizer can read.
       #
       # Resolved per call, on {#run_journal}'s reasoning: the book probes, and
       # this is asked only after a prompt has already been refused.

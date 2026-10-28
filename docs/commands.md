@@ -72,8 +72,8 @@ tiers work.
 | `--compact-keep` | `20` | Trailing messages a compaction leaves verbatim. About the last 10 exchanges. |
 | `--compact-strategy` | **none** | `summarizing`, `elide`, `summarize-conversation`, `elide-tools`, `truncate-cumulative`, `summarizing-flat`, or a `+`-joined composition of them. Which policy collapses a span — see [Collapse strategies](#collapse-strategies). Unset is not a synonym for any of them. |
 | `--compact-schedule` | `idle` | When a compaction runs. `idle` commits the cut while you are away (a fresh chat ticks every 5 seconds, and a prepare runs once the chat has sat idle past the provider's cache TTL, or at least 120 seconds where there is none), so your next line pays no summarizer wait. `turn` compacts at the next ask. Recorded in the session header as `compact_schedule`; a bad name is refused before the journal opens, and `--resume` inherits the recorded one. Bench runs under different schedules do not pool. |
-| `--summarizer-provider` | `ollama` | `anthropic`, `ollama`, or `ollama-cloud`. The summarizer is a **tier**, chosen independently of `--provider`. |
-| `--summarizer-model` | the summarizer provider's own | Never inherits the chat's `--model`. |
+| `--summarizer-provider` | the chat's `--provider` | `anthropic`, `ollama`, or `ollama-cloud`. The summarizer is a **tier**, chosen independently of `--provider`; `ollama` keeps the old local default. |
+| `--summarizer-model` | the chat's model when the providers match, else the summarizer provider's own | Inherits the chat's `--model` only while both tiers share a provider. |
 | `--summarizer-max-tokens` | `1024` | Ceiling per summary. A truncated summary *replaces* the result it compressed, so this is sized for a paragraph, not a turn. |
 
 Both provider flags are validated against the same set, and a typo in either is refused when the
@@ -87,7 +87,7 @@ and, when the wider arm would claim what it left, suggests `--compact-strategy e
 `--compact-keep`. A pin keeps its turn through a compaction and is not counted either.
 
 ```bash
-lain --provider anthropic --summarizer-provider ollama    # frontier chat, free local summaries (default)
+lain --provider anthropic --summarizer-provider ollama    # frontier chat, free local summaries
 lain --provider ollama --summarizer-provider anthropic \
      --summarizer-model claude-haiku-4-5-20251001         # local chat, bought summaries
 ```

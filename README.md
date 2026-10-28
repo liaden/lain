@@ -205,7 +205,8 @@ content address. It fires once per distinct result, off the turn's critical path
 smaller unclaimed result is simply left unsummarized, and renders as the same attested elision a
 summary still in flight does. The
 summarizer is a **tier chosen independently of the chat**: `--summarizer-provider`,
-`--summarizer-model`, `--summarizer-max-tokens`, defaulting to a local Ollama `qwen3:4b`, because
+`--summarizer-model`, `--summarizer-max-tokens`. It follows the chat's provider by default;
+`--summarizer-provider ollama` keeps a local Ollama `qwen3:4b`, because
 paying frontier-model tokens to compress a tool result usually costs more than resending the result.
 When it is a paid tier, its spend lands on the record as a `Telemetry::OracleAnswer` carrying the
 model and real usage — a summarizer that spends silently would make the whole ledger a fiction.
@@ -555,7 +556,7 @@ and a journal.
 | Symptom | Cause |
 |---|---|
 | Cache-hit ratio stays near zero on Claude | Anthropic's minimum cacheable prefix is **4096 tokens**. A short system prompt silently will not cache, with no error and nothing on the wire to tell you. Check the prefix length before anything else. |
-| Compaction leaves elision lines instead of summaries | The local summarizer had nothing to answer it. `ollama serve` and `ollama pull qwen3:4b`. The fire fails inside its task boundary, so nothing raises. |
+| Compaction leaves elision lines instead of summaries | With `--summarizer-provider ollama`, the local summarizer had nothing to answer it. `ollama serve` and `ollama pull qwen3:4b`. The fire fails inside its task boundary, so nothing raises. |
 | HUD prints `lain: no state yet` | No session has published a state file for this project yet, or the file was written by a `lain` too old to publish the rendered line — `lain up` prints the path it is watching. A degraded state by design, never an error. |
 | lain refuses to start, `$HOME is "" ... not an absolute path` | `$HOME` is **empty or relative** — a systemd unit with `Environment=HOME=`, an `env -i` cron job, or a container that sets it to something odd. (Genuinely *unset* is fine: lain asks the passwd database.) Every XDG fallback is built on `$HOME`, so a relative one would write lain's state into whatever directory you happen to be in. Export an absolute `HOME`. Setting `XDG_STATE_HOME`/`XDG_CONFIG_HOME`/`XDG_CACHE_HOME` fixes the *paths* but not the refusal: the secret-path classifier anchors on `$HOME` directly, and a relative anchor mis-classifies in silence, which is worse than stopping. |
 | `--windows` opens no subagent viewers | It needs `$TMUX` and a session journal. It is incompatible with `--no-journal`. |
@@ -873,8 +874,8 @@ official SDK, which stays mounted as the **correctness oracle**. The vendored pa
 against `Provider::Anthropic#encode`, and one live differential run must produce an identical
 `Lain::Response`. The SDK is retired only once the vendored path has held.
 
-Ollama is worth installing even if you never chat against it, because the compaction summarizer
-runs there by default. See [Compaction and summarizer
+Ollama is worth installing if you want free local summaries: `--summarizer-provider ollama`
+runs the compaction summarizer there. See [Compaction and summarizer
 tiers](#compaction-and-summarizer-tiers).
 
 Porting a fourth provider is documented in

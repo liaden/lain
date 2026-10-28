@@ -2,7 +2,7 @@
 
 module Lain
   module SessionRecord
-    Sections = Data.define(:profile, :compaction, :arms, :middleware, :provenance)
+    Sections = Data.define(:profile, :compaction, :arms, :middleware, :provenance, :summarizer)
 
     # The header sections a launch contributes, each already a header Hash. One
     # value so the writer, the scribe and the chronicle pass a single argument,
@@ -20,10 +20,11 @@ module Lain
       # @param arms [#to_header] `CLI::Arms`
       # @param middleware [#to_header] `Config::Middleware`
       # @param provenance [#to_header] {Provenance}
+      # @param summarizer [Hash{String=>String}] the summarizer tier's provider and model
       # @return [Sections]
-      def self.of(profile:, compaction:, arms:, middleware:, provenance:)
+      def self.of(profile:, compaction:, arms:, middleware:, provenance:, summarizer:)
         new(profile: profile.to_header, compaction:, arms: arms.to_header, middleware: middleware.to_header,
-            provenance: provenance.to_header)
+            provenance: provenance.to_header, summarizer:)
       end
 
       # @return [Sections] every section empty
@@ -34,7 +35,9 @@ module Lain
       # @param arms [Hash{String=>String}] the bench arms that are on
       # @param middleware [Hash{String=>String}] whose trust digest admitted the middleware
       # @param provenance [Hash{String=>Hash}] what produced the run
-      def initialize(profile: EMPTY, compaction: EMPTY, arms: EMPTY, middleware: EMPTY, provenance: EMPTY)
+      # @param summarizer [Hash{String=>String}] the summarizer tier's provider and model
+      def initialize(profile: EMPTY, compaction: EMPTY, arms: EMPTY, middleware: EMPTY, provenance: EMPTY,
+                     summarizer: EMPTY)
         super
       end
 

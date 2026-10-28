@@ -126,6 +126,26 @@ RSpec.describe Lain::CLI::Backend do
     end
   end
 
+  describe "#summarizer_name and #summarizer_model" do
+    it "follows an anthropic chat to anthropic and its model" do
+      backend = backend_for(provider: "anthropic", model: "claude-opus-4-8")
+
+      expect([backend.summarizer_name, backend.summarizer_model]).to eq(["anthropic", "claude-opus-4-8"])
+    end
+
+    it "keeps the local tier when --summarizer-provider ollama is typed on an anthropic chat" do
+      backend = backend_for(provider: "anthropic", summarizer_provider: "ollama")
+
+      expect([backend.summarizer_name, backend.summarizer_model]).to eq(["ollama", "qwen3:4b"])
+    end
+
+    it "names the typed --summarizer-model" do
+      backend = backend_for(provider: "anthropic", summarizer_model: "claude-haiku-5-5")
+
+      expect([backend.summarizer_name, backend.summarizer_model]).to eq(["anthropic", "claude-haiku-5-5"])
+    end
+  end
+
   describe "--max-cost" do
     it "sets the dollar ceiling of the chat's budget" do
       expect(backend_for(provider: "anthropic", max_cost: 0.5).ceilings.dollars).to eq(BigDecimal("0.5"))
@@ -155,8 +175,13 @@ RSpec.describe Lain::CLI::Backend do
     let(:base) { "http://h:11434" }
 
     it "says the base reaches only the ollama summarizer when the chat is anthropic" do
-      notices = backend_for(provider: "anthropic", api_base: base).startup_notices
+      notices = backend_for(provider: "anthropic", api_base: base, summarizer_provider: "ollama").startup_notices
       expect(notices.join).to include("--api-base reaches the ollama summarizer only, not the anthropic chat")
+    end
+
+    it "says the base reaches nothing when the anthropic chat summarizes on anthropic" do
+      expect(backend_for(provider: "anthropic", api_base: base).startup_notices.join)
+        .to include("--api-base reaches nothing")
     end
 
     it "says the base reaches nothing when the anthropic chat does not compact" do
@@ -251,11 +276,17 @@ RSpec.describe Lain::CLI::Backend do
         expect(backend_for(provider: "ollama").model).to eq("qwen3:4b")
       end
 
-      # The summarizer tier is LOCAL by default and must stay local when the
-      # chat is on the cloud -- the names differ, so it resolves the local
-      # arm's own default rather than inheriting the chat's cloud model.
-      it "keeps the summarizer tier on the local default when the chat is on the cloud" do
-        expect(with_key { backend_for(provider: "ollama-cloud").summarizer_model }).to eq("qwen3:4b")
+      it "follows a cloud chat to the cloud by default, inheriting its model" do
+        backend = with_key { backend_for(provider: "ollama-cloud") }
+
+        expect(with_key { [backend.summarizer_name, backend.summarizer_model] })
+          .to eq(["ollama-cloud", Lain::CLI::Backend::OllamaTier::CLOUD_DEFAULT_MODEL])
+      end
+
+      it "keeps the summarizer tier on the local default when --summarizer-provider ollama is typed" do
+        backend = with_key { backend_for(provider: "ollama-cloud", summarizer_provider: "ollama") }
+
+        expect(with_key { backend.summarizer_model }).to eq("qwen3:4b")
       end
 
       # #model is read per turn by #context, WindowBook and
@@ -292,14 +323,16 @@ RSpec.describe Lain::CLI::Backend do
         # NO --summarizer-provider is typed in either of these two: the default
         # is "ollama", so the summarizer is the only ollama-shaped arm there is
         # and the flag is plainly for it. This is the row the first rule broke.
-        ["anthropic", internal, internal, "the only ollama arm there is"],
-        [nil, internal, internal, "a hand-built Backend naming no chat provider"],
+        ["anthropic", internal, internal, "the only ollama arm there is", "ollama"],
+        [nil, internal, internal, "a hand-built Backend naming no chat provider", "ollama"],
         # --provider names an ollama arm, so the base is THAT arm's. Nothing is
         # lost: the chat provider receives it, as the example below this pins.
-        ["ollama-cloud", secure, "http://localhost:11434", "the base belongs to the cloud arm"]
-      ].each do |chat_provider, base, expected, why|
-        it "resolves the default summarizer at #{expected} for --provider #{chat_provider.inspect} (#{why})" do
-          backend = with_key { backend_for(provider: chat_provider, api_base: base, max_tokens: 64) }
+        ["ollama-cloud", secure, "http://localhost:11434", "the base belongs to the cloud arm", "ollama"]
+      ].each do |chat_provider, base, expected, why, summarizer|
+        it "resolves the summarizer at #{expected} for --provider #{chat_provider.inspect} (#{why})" do
+          backend = with_key do
+            backend_for(provider: chat_provider, api_base: base, max_tokens: 64, summarizer_provider: summarizer)
+          end
           expect(with_key { backend.summarizer_provider }.send(:resolved_endpoint)).to eq(expected)
         end
       end
@@ -1849,7 +1882,8 @@ RSpec.describe Lain::CLI::Backend do
     let(:toolset) { Lain::Toolset.new([]) }
 
     def compacting_backend(**overrides)
-      backend_for(provider: "anthropic", model: "claude-opus-4-8", max_tokens: 64, **overrides)
+      backend_for(provider: "anthropic", model: "claude-opus-4-8", max_tokens: 64, summarizer_provider: "ollama",
+                  **overrides)
     end
 
     def source_for(**overrides)
@@ -2420,7 +2454,8 @@ RSpec.describe Lain::CLI::Backend do
 
       it "takes the arm from a compaction profile handed in, over what the options say" do
         recorded = Lain::CLI::CompactionProfile.typed({ compact_keep: 4, compact_fallback: "none" })
-        backend = described_class.new({ provider: "anthropic", model: "claude-opus-4-8", max_tokens: 64 },
+        backend = described_class.new({ provider: "anthropic", model: "claude-opus-4-8", max_tokens: 64,
+                                        summarizer_provider: "ollama" },
                                       compaction: recorded, root: Dir.pwd)
 
         expect(fallback_of(backend)).to be(Lain::Compaction::Source::Fallback::None)

@@ -59,7 +59,8 @@ module MockRecording
   # from, at thresholds low enough that seven long tool rounds commit two elide cuts.
   def compacting_backend(strategy: "elide", keep: 2)
     Lain::CLI::Backend.new({ provider: "anthropic", model: "claude-opus-4-8", max_tokens: 1024, compact_bytes: 3_000,
-                             compact_cap: 3_000, compact_strategy: strategy, compact_keep: keep }, root: Dir.pwd)
+                             compact_cap: 3_000, compact_strategy: strategy, compact_keep: keep,
+                             summarizer_provider: "ollama" }, root: Dir.pwd)
   end
 
   # A journaled run through `backend`'s own pipeline source. Its cuts land wherever `session`

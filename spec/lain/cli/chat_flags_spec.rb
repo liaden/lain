@@ -368,8 +368,8 @@ RSpec.describe "lain chat's flag surface" do
   end
 
   describe "the summarizer tier flags" do
-    it "defaults the provider to Backend's own constant" do
-      expect(parse[:summarizer_provider]).to eq(Lain::CLI::Backend::DEFAULT_SUMMARIZER_PROVIDER)
+    it "leaves the provider unset so the summarizer follows the chat's" do
+      expect(parse[:summarizer_provider]).to be_nil
     end
 
     # Same shape --isolation and --compact-strategy already have: pin the help
@@ -534,7 +534,7 @@ RSpec.describe "lain chat's flag surface" do
     end
 
     def source_from(*argv, **overrides)
-      Lain::CLI::Backend.new(resolved(*argv).merge(overrides), root: Dir.pwd)
+      Lain::CLI::Backend.new(resolved("--summarizer-provider", "ollama", *argv).merge(overrides), root: Dir.pwd)
                         .pipeline_source(cache_profile: Lain::CacheProfile::NO_CACHING, journal:, sink:)
     end
 
@@ -563,7 +563,7 @@ RSpec.describe "lain chat's flag surface" do
         .to be_a(Lain::Compaction::Strategy::Elide)
     end
 
-    # End to end and through the DEFAULT summarizer provider, which is the
+    # End to end and through the local summarizer provider, which is the
     # one whose transport errors leaked. Nothing is listening on the ollama port
     # under WebMock, so the tier really is down -- and a down summarizer must
     # cost the SPAN, never the turn.

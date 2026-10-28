@@ -996,9 +996,9 @@ class LainCLI < Thor
     end
 
     def self.summarizer_endpoint(thor)
-      thor.method_option :summarizer_provider, type: :string, default: Backend::DEFAULT_SUMMARIZER_PROVIDER,
-                                               desc: "Provider for the compaction summarizer, chosen separately " \
-                                                     "from --provider: #{Lain::CLI::Backend::PROVIDERS.join(", ")}"
+      thor.method_option :summarizer_provider, type: :string,
+                                               desc: "Provider for the compaction summarizer; defaults to " \
+                                                     "--provider: #{Lain::CLI::Backend::PROVIDERS.join(", ")}"
       thor.method_option :summarizer_model, type: :string,
                                             desc: "Model id for the compaction summarizer; defaults to the " \
                                                   "chat's --model when both tiers name one provider, else to " \

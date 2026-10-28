@@ -21,7 +21,9 @@ module Lain
                                                           weights: backend.provider.model_identity(backend.model))
           { context:, sections: SessionRecord::Sections.of(profile: backend.run_profile, arms:, provenance:,
                                                            compaction: backend.compaction_header,
-                                                           middleware: backend.middleware) }
+                                                           middleware: backend.middleware,
+                                                           summarizer: { "provider" => backend.summarizer_name,
+                                                                         "model" => backend.summarizer_model }) }
         end
       end
     end

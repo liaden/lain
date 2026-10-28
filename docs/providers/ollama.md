@@ -23,23 +23,22 @@ then refuses to compare an Ollama run against an Anthropic run whose degraded se
 differs. That is the point: a context tactic that silently became a no-op would
 otherwise make the comparison a lie.
 
-## Ollama also powers compaction, on every provider
+## Ollama can power compaction, on any provider
 
-Even when you are chatting against Claude, the eager tool-result summarizer talks
-to a local Ollama model. `CLI::Backend#summary_oracle` wires
-`Provider::Ollama.new(api_base:)` at `DEFAULT_MODEL` unconditionally, never the
-chat's own provider: a summary fires once per large tool result, off the turn's
-critical path, and paying frontier-model tokens to compress a tool result would
-cost more than resending it.
+The eager tool-result summarizer follows the chat's provider unless you say otherwise.
+Beside a Claude chat, `--summarizer-provider ollama` sends summaries to a local Ollama
+model instead: a summary fires once per large tool result, off the turn's critical path,
+and paying frontier-model tokens to compress a tool result can cost more than resending it.
 
-So `ollama serve` + `ollama pull qwen3:4b` is worth doing even if you never pass
-`--provider ollama`. Without it, the fire fails inside `Oracle::Eager`'s task
-boundary, nothing raises, and the compacting turn renders an elision line instead
-of a summary. See the
+`ollama serve` + `ollama pull qwen3:4b` is worth doing for that. Without it, a local
+summarizer fails inside `Oracle::Eager`'s task boundary, nothing raises, and the
+compacting turn renders an elision line instead of a summary. See the
 [README](../../README.md#compaction-and-summarizer-tiers) for the three tiers.
 
-Ollama is the summarizer's **default**, not its only home: `--summarizer-provider`
-and `--summarizer-model` point that tier anywhere, independently of `--provider`.
+The summarizer follows the chat's provider by default, so a Claude chat summarizes on
+Claude and an Ollama chat on Ollama. `--summarizer-provider ollama` keeps the old local
+default beside a hosted chat; `--summarizer-provider` and `--summarizer-model` point that
+tier anywhere, independently of `--provider`.
 `--api-base` moves whichever of the two is on Ollama.
 
 ## Install and pull the model

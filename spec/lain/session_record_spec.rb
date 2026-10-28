@@ -138,6 +138,13 @@ RSpec.describe Lain::SessionRecord::Scribe do
     expect(of_type("session").first).to include("arms" => { "confine" => "reader" })
   end
 
+  it "writes the summarizer tier under one summarizer key" do
+    described_class.new(journal:, context:, toolset:, workspace:,
+                        sections: sections(summarizer: { "provider" => "ollama", "model" => "qwen3:4b" }))
+
+    expect(of_type("session").first).to include("summarizer" => { "provider" => "ollama", "model" => "qwen3:4b" })
+  end
+
   it "names round_budget and round_dedup in the header of a default launch" do
     arms = Lain::CLI::Arms.from({}).to_header
     described_class.new(journal:, context:, toolset:, workspace:, sections: sections(arms:))

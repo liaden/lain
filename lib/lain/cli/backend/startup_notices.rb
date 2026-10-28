@@ -22,17 +22,25 @@ module Lain
       #   @return [Boolean] whether a summarizer runs at all
       # @!attribute [r] summarizer
       #   @return [String] the summarizer tier's provider
+      # @!attribute [r] summarizer_model
+      #   @return [String] the summarizer tier's model
       StartupNotices = Data.define(:provider, :model, :profile, :max_cost, :effort_rejected, :compacting,
-                                   :summarizer) do
+                                   :summarizer, :summarizer_model) do
         # @param tier [Array<String>] what the ollama tier itself says
         # @return [Array<String>]
-        def ollama(tier) = [*tier, *unpriced_cost, *effort]
+        def ollama(tier) = [*tier, *unpriced_cost, *effort, *summarizer_tier]
 
         # @param dropped [Array<String>] the sampling flags the model refuses
         # @return [Array<String>]
-        def hosted(dropped) = [*stranded_base, *unpriced_cost, *sampling(dropped), *effort]
+        def hosted(dropped) = [*stranded_base, *unpriced_cost, *sampling(dropped), *effort, *summarizer_tier]
 
         private
+
+        def summarizer_tier
+          return unless compacting && (summarizer != provider || summarizer_model != model)
+
+          "summaries run on #{summarizer} (#{summarizer_model}), not the #{provider} chat's #{model}"
+        end
 
         def ollama? = OllamaTier::NAMES.include?(provider)
 
