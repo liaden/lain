@@ -38,7 +38,7 @@ module Lain
     # re-split on whitespace, and one holding a metacharacter goes through
     # `/bin/sh` outright. Every stage is therefore spawned in the
     # `[program, argv0]` form, which cannot do either, and reaches its own
-    # program as argv through {SETSID}. A stage whose one word is `echo hi`
+    # program as argv through the launcher. A stage whose one word is `echo hi`
     # looks for a program literally named `echo hi` and fails, which is the
     # correct answer.
     #
@@ -78,10 +78,6 @@ module Lain
       # The command outlived its deadline and its process groups were killed.
       # Carries the capture's report of what the command said before it died.
       class Timeout < Lain::Error; end
-
-      # This host cannot start a command in a session of its own, so no command
-      # is run at all: raised when the runner is built, not once per command.
-      class SessionUnavailable < Lain::Error; end
 
       # A reason not to run, and the status a shell would report it under.
       Refusal = Data.define(:status, :message)
@@ -141,8 +137,24 @@ module Lain
       # at once. Spawned WITHOUT `pgroup:`, so it is not a group leader and calls
       # `setsid()` itself rather than forking -- the session, its group and the
       # stage then share one pid, which is what the kill signals. Absolute, so a
-      # child PATH the caller curated cannot lose it; util-linux, and Linux only.
+      # child PATH the caller curated cannot lose it; util-linux, so a host
+      # without it starts the stage through {SESSION_LAUNCHER} instead.
       SETSID = "/usr/bin/setsid"
+
+      # The same `setsid()`-then-exec as {SETSID}, for a host that has no such
+      # binary. The program is exec'd as `[name, name]` so it is never re-split
+      # by a shell. The launcher is spawned without RUBYOPT and RUBYLIB, which
+      # the stage's env could make it fail on; it is handed the stage's own
+      # values as arguments and puts them back just before the exec.
+      SESSION_LAUNCHER = [RbConfig.ruby, "--disable-gems", "-e", <<~RUBY.tr("\n", ";")].freeze
+        keys = %w[RUBYOPT RUBYLIB]
+        keys.each { |key| flag, value = ARGV.shift(2); ENV[key] = value if flag == "1" }
+        Process.setsid
+        exec([ARGV[0], ARGV[0]], *ARGV.drop(1))
+      RUBY
+
+      # Spawned over the stage's env, so the launcher itself never reads them.
+      LAUNCHER_UNSET = { "RUBYOPT" => nil, "RUBYLIB" => nil }.freeze
 
       # How often a running command is asked whether its stages have exited,
       # while a pipe it left open still has nothing to read.
@@ -154,10 +166,15 @@ module Lain
       # it is its own business, neither waited on nor killed.
       DRAIN = 0.1
 
-      # Linux's ioctl for how many bytes a pipe holds right now. The queue is
+      # The ioctl for how many bytes a pipe holds right now. The queue is
       # measured rather than read until empty, so a background child that keeps
-      # writing cannot hold the drain open.
-      FIONREAD = 0x541B
+      # writing cannot hold the drain open. The request number is the host's.
+      #
+      # @param host_os [String] `RbConfig::CONFIG["host_os"]`
+      # @return [Integer]
+      def self.fionread(host_os) = host_os.include?("darwin") ? 0x4004667f : 0x541B
+
+      FIONREAD = fionread(RbConfig::CONFIG["host_os"])
 
       # What `IO.select` answers with when nothing became readable in time.
       NOTHING_READY = [[].freeze].freeze
@@ -192,19 +209,12 @@ module Lain
 
       # @param grace [Numeric] seconds between TERM and KILL
       # @param clock [#call] the monotonic seconds deadlines are measured on
-      # @param setsid [String] the {SETSID} every stage is started through,
-      #   checked here so a host without one fails once and by name
-      # @raise [SessionUnavailable] when it is not an executable file
+      # @param setsid [String] the {SETSID} every stage is started through when
+      #   it is an executable file, and {SESSION_LAUNCHER} otherwise
       def initialize(grace: DEFAULT_GRACE, clock: RunClock::MONOTONIC, setsid: SETSID)
-        unless File.file?(setsid) && File.executable?(setsid)
-          raise SessionUnavailable, "#{setsid} is not an executable file, and every tool command starts through " \
-                                    "it: it gives the command a session of its own, so the command never shares " \
-                                    "lain's terminal -- install util-linux, which provides it"
-        end
-
         @grace = grace
         @clock = clock
-        @setsid = setsid
+        @setsid = File.file?(setsid) && File.executable?(setsid) ? setsid : nil
         freeze
       end
 
@@ -418,7 +428,20 @@ module Lain
         # re-split, and `--` keeps a program named like an option from being read
         # as one.
         def commands(pipeline)
-          pipeline.stages.map { |stage| [@env, [@setsid, "setsid"], "--", *stage.argv, stage_options(stage)] }
+          pipeline.stages.map { |stage| [*launcher, *stage.argv, stage_options(stage)] }
+        end
+
+        def launcher
+          return [@env, [@setsid, "setsid"], "--"] if @setsid
+
+          [@env.merge(LAUNCHER_UNSET), *SESSION_LAUNCHER, "--", *handed_over]
+        end
+
+        def handed_over
+          LAUNCHER_UNSET.keys.flat_map do |key|
+            value = @env.fetch(key) { ENV.fetch(key, nil) }
+            value.nil? ? ["0", ""] : ["1", value]
+          end
         end
 
         # A stage's own options win over the pipeline's in Open3, which is how

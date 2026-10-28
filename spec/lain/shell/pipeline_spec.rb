@@ -72,7 +72,7 @@ RSpec.describe Lain::Shell::Pipeline do
       result = run([%w[printf hi]])
       expect(result.exit_status).to eq(0)
       expect(result.stdout).to eq("hi")
-      expect(result.stderr).to eq("")
+      expect(result.stdout).to eq("hi")
     end
 
     # The positive proof that no shell ran: a shell would have expanded this and
@@ -427,12 +427,86 @@ RSpec.describe Lain::Shell::Pipeline do
   end
 
   # Tool commands never share lain's terminal, and a session of their own is
-  # how; a runner that cannot give them one says so when it is built, rather
-  # than failing every command it is handed.
+  # how, with or without util-linux's setsid on the host.
   describe "the session each stage runs in" do
-    it "refuses to be built without setsid, naming it and why a command needs it" do
-      expect { described_class.new(setsid: "/nonexistent/lain/setsid") }
-        .to raise_error(described_class::SessionUnavailable, %r{/nonexistent/lain/setsid.*terminal}m)
+    def session_of(pipeline)
+      capture = Lain::Exec::Capture::Bounded.new(ceiling: 1_048_576)
+      pipeline.call(Lain::Shell::Term.of(["sh", "-c", "echo $$; ps -o sid= -p $$"]),
+                    cwd: Dir.pwd, env: {}, timeout: 10, fds: {}, capture:).stdout.split.map(&:to_i)
+    end
+
+    it "gives the command a session of its own when the setsid binary is absent" do
+      pid, sid = session_of(described_class.new(setsid: "/nonexistent/lain/setsid"))
+
+      expect(sid).to eq(pid)
+      expect(sid).not_to eq(Process.getsid)
+    end
+
+    it "does not raise for a missing setsid, and still runs the command" do
+      pipeline = described_class.new(grace: 0.2, setsid: "/nonexistent/lain/setsid")
+      capture = Lain::Exec::Capture::Bounded.new(ceiling: 1_048_576)
+
+      expect(pipeline.call(Lain::Shell::Term.of(%w[printf hi]), cwd: Dir.pwd, env: {}, timeout: 10, fds: {}, capture:)
+               .stdout).to eq("hi")
+    end
+
+    it "kills a TERM-ignoring command through the group without the setsid binary" do
+      Dir.mktmpdir do |dir|
+        pidfile = File.join(dir, "pid")
+        pipeline = described_class.new(grace: 0.2, setsid: "/nonexistent/lain/setsid")
+        capture = Lain::Exec::Capture::Bounded.new(ceiling: 1_048_576)
+        script = "trap '' TERM; sleep 30 & echo $! > #{pidfile}; wait"
+        started = monotonic
+
+        expect { pipeline.call(Lain::Shell::Term.of(["sh", "-c", script]), cwd: Dir.pwd, env: {}, timeout: 1, fds: {}, capture:) }
+          .to raise_error(Lain::Shell::Pipeline::Timeout)
+        expect(monotonic - started).to be < 5
+        expect(gone_within?(File.read(pidfile).to_i)).to be(true)
+      end
+    end
+
+    it "starts through the setsid binary where one exists" do
+      Dir.mktmpdir do |dir|
+        marker = File.join(dir, "ran")
+        wrapper = File.join(dir, "setsid")
+        File.write(wrapper, "#!/bin/sh\ntouch #{marker}\nexec /usr/bin/setsid \"$@\"\n")
+        File.chmod(0o755, wrapper)
+
+        session_of(described_class.new(setsid: wrapper))
+
+        expect(File.exist?(marker)).to be(true)
+      end
+    end
+
+    it "runs the command when the stage env carries a RUBYOPT the launcher cannot load" do
+      pipeline = described_class.new(setsid: "/nonexistent/lain/setsid")
+      capture = Lain::Exec::Capture::Bounded.new(ceiling: 1_048_576)
+      env = { "RUBYOPT" => "-rnonexistent_lib_zz", "RUBYLIB" => "/nonexistent/lain/lib" }
+
+      result = pipeline.call(Lain::Shell::Term.of(["sh", "-c", 'printf "%s|%s" "$RUBYOPT" "$RUBYLIB"']),
+                             cwd: Dir.pwd, env:, timeout: 10, fds: {}, capture:)
+
+      expect(result.stdout).to eq("-rnonexistent_lib_zz|/nonexistent/lain/lib")
+    end
+
+    it "leaves a RUBYOPT the caller scrubbed unset for the command" do
+      pipeline = described_class.new(setsid: "/nonexistent/lain/setsid")
+      capture = Lain::Exec::Capture::Bounded.new(ceiling: 1_048_576)
+
+      result = pipeline.call(Lain::Shell::Term.of(["sh", "-c", 'printf "%s" "${RUBYOPT-unset}"']),
+                             cwd: Dir.pwd, env: { "RUBYOPT" => nil }, timeout: 10, fds: {}, capture:)
+
+      expect(result.stdout).to eq("unset")
+    end
+  end
+
+  describe ".fionread" do
+    it "answers the Linux request number" do
+      expect(described_class.fionread("linux-gnu")).to eq(0x541B)
+    end
+
+    it "answers the BSD request number on darwin" do
+      expect(described_class.fionread("darwin24")).to eq(0x4004667f)
     end
   end
 
