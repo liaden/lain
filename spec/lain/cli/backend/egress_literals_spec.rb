@@ -31,15 +31,15 @@ RSpec.describe Lain::CLI::Backend::EgressLiterals do
     expect { holder.bind(source_of) }.to raise_error(Lain::CLI::Backend::Rebound)
   end
 
-  describe "#bind_board" do
+  describe "binding a board's secrets source" do
     it "reads the board's own child environment and history" do
       split = Lain::Sensitivity::HistoryLiterals::Split.new(known: %w[history-value-42],
                                                             refusable: %w[history-value-42])
       history = Class.new { define_method(:split) { split } }.new
       env = Lain::Exec::ChildEnv.new(env: { "DB_PASSWORD" => "board-env-secret-77" })
-      inputs = Struct.new(:child_env, :history).new(env, history)
+      secrets = Lain::Sensitivity::Secrets::Source.new(child_env: env, history:)
 
-      expect(holder.bind_board(inputs).egress.refused).to include("board-env-secret-77", "history-value-42")
+      expect(holder.bind(secrets).egress.refused).to include("board-env-secret-77", "history-value-42")
     end
   end
 

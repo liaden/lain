@@ -117,15 +117,17 @@ module Lain
       # is what the chat's config.rb files registered; a run with no chat
       # reads no config, which is its default. `denied_tools` are the tools its
       # config refuses outright, which the gate refuses whatever their tier.
-      # `history` is what the project's sensitive paths hold in git history; a
-      # run with no project reads none. `stops` is who the tripwire stopped, and
-      # `mode` the approval level a paused main is held under; a run with no
-      # tripwire stop stops no one.
+      # `secrets` is the one {Sensitivity::Secrets::Source} the result masker and
+      # the live display read: the launch's child environment and what the
+      # project's sensitive paths hold in git history; a run with no project
+      # reads the process default and no history. `stops` is who the tripwire
+      # stopped, and `mode` the approval level a paused main is held under; a
+      # run with no tripwire stop stops no one.
       Inputs = Data.define(:ledger, :approvals, :sensitivity, :test_layout, :policy, :policy_for, :denial, :bar,
-                           :scope, :middleware, :child_env, :denied_tools, :history, :stops, :mode) do
+                           :scope, :middleware, :secrets, :denied_tools, :stops, :mode) do
         def initialize(scope: UNSCOPED, middleware: Config::Middleware.empty,
-                       child_env: Exec::ChildEnv::DEFAULT, denied_tools: Set[].freeze,
-                       history: Lain::Sensitivity::HistoryLiterals::Null, stops: Tripwire::Stops::None,
+                       secrets: Lain::Sensitivity::Secrets::Source::DEFAULT, denied_tools: Set[].freeze,
+                       stops: Tripwire::Stops::None,
                        mode: Middleware::TripwireStop::NoMode, **)
           super
         end
@@ -723,7 +725,7 @@ module Lain
         { ledger: inputs.ledger,
           queue: inputs.approvals || Middleware::RedactSecretReads::Unqueued.instance,
           journal: chronicle.instrumentation.journal, related: inputs.sensitivity,
-          child_env: inputs.child_env, history: inputs.history, file_facts: inputs.sensitivity.file_facts }
+          secrets: inputs.secrets, file_facts: inputs.sensitivity.file_facts }
       end
 
       # The journal is READ off the chronicle's {Agent::Instrumentation}, whose

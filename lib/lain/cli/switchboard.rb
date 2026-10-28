@@ -108,11 +108,9 @@ module Lain
       #   `judge_denials` what a judge's deny does
       # @param request [#call] `context -> Approval::Judge::Request or nil`, what a judged call was made
       #   for; read only under `--judge-facts request`
-      # @param child_env [Exec::ChildEnv] the launch's, which the result masker and the live display read;
-      #   the process default by default
+      # @param secrets [Sensitivity::Secrets::Source] the launch's child environment and the history the project's
+      #   sensitive paths hold, which the result masker and the live display read; the process default by default
       # @param denied_tools [Enumerable<String>] the tools the trusted config refuses with `deny_tool`; none by default
-      # @param history [#to_a] what the project's sensitive paths hold in git history, which the result
-      #   masker and the live display read; none by default
       # @param stops [Tripwire::Stops, Tripwire::Stops::None] who the tripwire stopped, which every tool
       #   stack refuses or holds; no one by default
       # @option options [Boolean] :non_interactive no human is at this
@@ -126,11 +124,11 @@ module Lain
                    classifiers: Approval::Escalation::Triage::AnyPath.new,
                    verdict: Lain::Shell::Verdict.new, spike: Scoping::NOWHERE, middleware: Config::Middleware.empty,
                    approval_timeout: Approval::Parked::Queue::DEFAULT_TIMEOUT, display: Channel::Null.instance, arms: Arms::OFF,
-                   request: Approval::Judge::Unrequested, child_env: Exec::ChildEnv::DEFAULT,
-                   denied_tools: Set[].freeze, history: Sensitivity::HistoryLiterals::Null, stops: Tripwire::Stops::None)
+                   request: Approval::Judge::Unrequested, secrets: Sensitivity::Secrets::Source::DEFAULT,
+                   denied_tools: Set[].freeze, stops: Tripwire::Stops::None)
         new(journal: chronicle.record_journal, model:, toolset:, rules:, approving:, sensitivity:, classifiers:,
             verdict:, test_layout:, spike:, middleware:, approval_timeout:, judge:, display:, arms:, request:,
-            child_env:, denied_tools:, history:, stops:,
+            secrets:, denied_tools:, stops:,
             # A resumed session starts at the launch flag's approval, not its last recorded mode.
             attended: !options[:non_interactive], approval: options.fetch(:approval, :ask))
       end
@@ -144,17 +142,19 @@ module Lain
       # approves anything on a board that was never given a model to ask.
       DEFERRING = ->(**) { :defer }
 
-      # What the tool stack is built over, as ONE value: the ledger and the
-      # path policy described above, the approval queue, the session's one
-      # test layout run, the gate's one policy switch and the policy each
-      # worker is asked through ({#policy_for}), and what a refused call is
-      # reported as ({#denial}). The parent's stack and every child's read it,
-      # so they hold one of each and say an absence once.
+      # What the tool stack is built over, as ONE value, every member of
+      # {ToolGuard::Inputs}: the ledger, the approval queue, the path policy,
+      # the session's one test layout run, the gate's one policy switch and the
+      # policy each worker is asked through, what a refused call is reported as,
+      # the bar on automatic output, the scope, the configured middleware, the
+      # secrets source, the denied tools, the tripwire's stops and the approval
+      # mode. The parent's stack and every child's read it, so they hold one of
+      # each and say an absence once.
       attr_reader :guard_inputs
 
       # @return [Sensitivity::Display] the chat's live mask, over the child
       #   environment its result masker is built from
-      def live_display = Sensitivity::Display.new(child_env: guard_inputs.child_env, history: guard_inputs.history)
+      def live_display = Sensitivity::Display.new(secrets: guard_inputs.secrets)
 
       delegate :ledger, :sensitivity, :test_layout, to: :guard_inputs
 
@@ -234,9 +234,8 @@ module Lain
       # @param display [#<<] as on {.for}
       # @param arms [Arms] as on {.for}; every arm off by default
       # @param request [#call] as on {.for}; none by default
-      # @param child_env [Exec::ChildEnv] as on {.for}; the process default by default
+      # @param secrets [Sensitivity::Secrets::Source] as on {.for}; the process default by default
       # @param denied_tools [Enumerable<String>] as on {.for}; none by default
-      # @param history [#to_a] as on {.for}; none by default
       # @param stops [Tripwire::Stops, Tripwire::Stops::None] as on {.for}; no one by default
       def initialize(journal:, model:, toolset:, rules: [], approving: REMEMBERED,
                      sensitivity: Sensitivity::Policy::Null.instance,
@@ -245,8 +244,8 @@ module Lain
                      attended: true, approval: :ask, layers: [], spike: Scoping::NOWHERE, middleware: Config::Middleware.empty,
                      approval_timeout: Approval::Parked::Queue::DEFAULT_TIMEOUT, judge: DEFERRING,
                      display: Channel::Null.instance, arms: Arms::OFF, request: Approval::Judge::Unrequested,
-                     child_env: Exec::ChildEnv::DEFAULT, denied_tools: Set[].freeze,
-                     history: Sensitivity::HistoryLiterals::Null, stops: Tripwire::Stops::None)
+                     secrets: Sensitivity::Secrets::Source::DEFAULT, denied_tools: Set[].freeze,
+                     stops: Tripwire::Stops::None)
         @attended = attended
         @display = display
         @journal = journal
@@ -262,7 +261,7 @@ module Lain
         @guard_inputs = ToolGuard::Inputs.new(ledger: Sensitivity::Ledger.new, approvals: @approvals, sensitivity:,
                                               test_layout:, policy: @policy_switch, policy_for: method(:policy_for),
                                               denial:, bar: Middleware::WithholdAutomaticOutput::Bar.new,
-                                              scope: @scoping, middleware:, child_env:, denied_tools:, history:,
+                                              scope: @scoping, middleware:, secrets:, denied_tools:,
                                               stops:, mode: @mode_switch)
       end
 

@@ -694,7 +694,7 @@ RSpec.describe Lain::CLI::Wiring do
         it "hands the board's guard inputs the child env the backend holds" do
           board = board_on_path("/usr/bin")
 
-          expect(board.guard_inputs.child_env).to equal(classed.send(:exec_backend).child_env)
+          expect(board.guard_inputs.secrets.child_env).to equal(classed.send(:exec_backend).child_env)
         end
 
         it "memoizes the ExecBackend" do
@@ -1709,8 +1709,8 @@ RSpec.describe Lain::CLI::Wiring do
 
       board = wiring.instance_variable_get(:@switchboard)
       source = hosted.egress_literals.instance_variable_get(:@source)
-      expect(source.history).to be(board.guard_inputs.history)
-      expect(source.child_env).to be(board.guard_inputs.child_env)
+      expect(source.history).to be(board.guard_inputs.secrets.history)
+      expect(source.child_env).to be(board.guard_inputs.secrets.child_env)
     end
 
     it "parks no egress decision when supervision was not asked for" do

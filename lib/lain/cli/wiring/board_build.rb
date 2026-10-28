@@ -57,7 +57,7 @@ module Lain
         # @param identity [Hash] `resolver:` and `worker_env:`, on {Classifiers#initialize}'s
         #   terms: the session's ONE resolver, the instance the bash tool holds,
         #   and the session's own env, whose PATH the main agent's stages resolve through
-        # @param child_env [Lain::Exec::ChildEnv] the launch's, which the result masker and live display read
+        # @param child_env [Lain::Exec::ChildEnv] the launch's, one half of the board's secrets source
         # @param stops [Lain::Tripwire::Stops, Lain::Tripwire::Stops::None] who the tripwire stopped
         # @option options [Boolean] :non_interactive no human is at this
         #   session's terminal -- read by {Switchboard.for}, never here
@@ -75,7 +75,6 @@ module Lain
           sensitivity = policy(project:, paths:, table:)
           factory = classifiers(project:, paths:, table:, facts: sensitivity.file_facts, **identity)
           classes = arms.confine != :off
-          history = Lain::Sensitivity::HistoryLiterals.new(root: project.root, policy: sensitivity).prime
           Switchboard.for(chronicle:, options:, model:, toolset:, verdict:,
                           rules: [Lain::Approval::Remembered.from(config)].reject(&:empty?),
                           approving: ->(remembered, each) { approving(remembered, each, classes:) },
@@ -83,7 +82,8 @@ module Lain
                           classifiers: factory, middleware:,
                           test_layout: test_layout(project:, file_facts: sensitivity.file_facts),
                           approval_timeout: Config.approval_timeout(root: project.root), judge:, display:, arms:,
-                          request:, child_env:, denied_tools: config.approval.deny_tools, history:, stops:)
+                          request:, secrets: secrets(project:, sensitivity:, child_env:),
+                          denied_tools: config.approval.deny_tools, stops:)
         end
 
         # Where `/mode plan` confines this project's session: a spike worktree
@@ -192,6 +192,17 @@ module Lain
 
         def layout_run(layout, project, file_facts)
           Lain::Middleware::GuardTestLayout::Run.new(layout:, root: project.root, file_facts:)
+        end
+
+        # The history is primed here, once, and the source carries it to the masker and the egress guard.
+        #
+        # @param project [Lain::Project]
+        # @param sensitivity [Lain::Sensitivity::Policy] what the history walk reads the sensitive paths from
+        # @param child_env [Lain::Exec::ChildEnv]
+        # @return [Lain::Sensitivity::Secrets::Source]
+        def secrets(project:, sensitivity:, child_env:)
+          history = Lain::Sensitivity::HistoryLiterals.new(root: project.root, policy: sensitivity).prime
+          Lain::Sensitivity::Secrets::Source.new(child_env:, history:)
         end
 
         # The run's path boundary, wrapped in the policy both gates read

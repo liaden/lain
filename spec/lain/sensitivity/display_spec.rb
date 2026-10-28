@@ -7,10 +7,14 @@ RSpec.describe Lain::Sensitivity::Display do
   let(:channel) { RecordingChannel.new }
   let(:token) { "ghp_aB3dE5gH7jK9mN1pQ3sT5vX7zA9cE1gI3kM5" }
 
+  def source_over(child_env, history = Lain::Sensitivity::HistoryLiterals::Null)
+    Lain::Sensitivity::Secrets::Source.new(child_env:, history:)
+  end
+
   def invocation_on(channel, context: nil) = Lain::Tool::Invocation.new(tool_use_id: "tu_1", context:, channel:)
 
   describe "over a Null channel" do
-    let(:display) { described_class.new(child_env: Lain::Exec::ChildEnv.new(pass: %w[FOO], env: { "FOO" => token })) }
+    let(:display) { described_class.new(secrets: source_over(Lain::Exec::ChildEnv.new(pass: %w[FOO], env: { "FOO" => token }))) }
 
     it "answers a Null sink for each stream" do
       sinks = display.sinks(invocation_on(Lain::Channel::Null.instance))
@@ -37,7 +41,7 @@ RSpec.describe Lain::Sensitivity::Display do
   end
 
   it "masks a value lent to the call's context, read per call" do
-    display = described_class.new(child_env: Lain::Exec::ChildEnv.new(env: {}))
+    display = described_class.new(secrets: source_over(Lain::Exec::ChildEnv.new(env: {})))
     lent = { "LENT_TOKEN" => "hunterhunterhunter" }
     session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: Dir.pwd, env: lent))
     sink = display.sinks(invocation_on(channel, context: session)).fetch(:stdout_sink)
@@ -49,7 +53,7 @@ RSpec.describe Lain::Sensitivity::Display do
 
   it "masks a value history holds at a sensitive path" do
     history = instance_double(Lain::Sensitivity::HistoryLiterals, to_a: ["48291377"])
-    display = described_class.new(child_env: Lain::Exec::ChildEnv.new(env: {}), history:)
+    display = described_class.new(secrets: source_over(Lain::Exec::ChildEnv.new(env: {}), history))
     sink = display.sinks(invocation_on(channel)).fetch(:stdout_sink)
     sink << "ADMIN_PIN=48291377\n"
     sink.flush
@@ -61,7 +65,7 @@ RSpec.describe Lain::Sensitivity::Display do
     let(:environment) { ENV.to_h.merge("FOO" => token) }
     let(:child_env) { Lain::Exec::ChildEnv.new(pass: %w[FOO], env: environment) }
     let(:masked_tool) { Lain::Tools::Bash.new(exec: Lain::Exec::Local.new(child_env:)) }
-    let(:display) { described_class.new(child_env:) }
+    let(:display) { described_class.new(secrets: source_over(child_env)) }
 
     def placeholder(ordinal) = format(Lain::Sensitivity::Regions::PLACEHOLDER, ordinal)
 

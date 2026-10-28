@@ -10,7 +10,7 @@ RSpec.describe Lain::Tools::Bash do
 
   def invocation(tool_use_id: "tu_1")
     Lain::Tool::Invocation.new(tool_use_id:, channel:,
-                               live_display: Lain::Sensitivity::Display.new(child_env: Lain::Exec::ChildEnv::DEFAULT))
+                               live_display: Lain::Sensitivity::Display.new(secrets: Lain::Sensitivity::Secrets::Source::DEFAULT))
   end
 
   # A backend whose every call raises the timeout a real one would, carrying

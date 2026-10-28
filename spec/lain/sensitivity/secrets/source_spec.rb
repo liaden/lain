@@ -31,6 +31,30 @@ RSpec.describe Lain::Sensitivity::Secrets::Source do
                                              "history-ordinary-value", "history-secret-value")
   end
 
+  describe "#for" do
+    it "adds the calling worker's own environment to what the source knows" do
+      worker_env = Lain::WorkerEnv.new(cwd: Dir.pwd, env: { "LENT_TOKEN" => "worker-lent-value-9" })
+      context = Struct.new(:worker_env).new(worker_env)
+
+      expect(source_over({}).for(context)).to include("worker-lent-value-9", "history-secret-value")
+    end
+
+    it "reads as to_a for no context" do
+      expect(source_over(env).for(nil)).to eq(source_over(env).to_a)
+    end
+  end
+
+  describe "DEFAULT" do
+    it "is the process child environment over no history" do
+      expect(described_class::DEFAULT).to have_attributes(child_env: Lain::Exec::ChildEnv::DEFAULT,
+                                                          history: Lain::Sensitivity::HistoryLiterals::Null)
+    end
+
+    it "is shareable" do
+      expect(Ractor.shareable?(described_class::DEFAULT)).to be(true)
+    end
+  end
+
   describe "#egress" do
     subject(:egress) { source_over(env).egress }
 

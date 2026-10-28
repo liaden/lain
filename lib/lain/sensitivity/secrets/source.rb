@@ -12,12 +12,20 @@ module Lain
       # @!attribute [r] history
       #   @return [#to_a, #refusable] see {HistoryLiterals}
       Source = Data.define(:child_env, :history) do
-        # @return [Array<String>] every value the masker knows
-        def to_a = Secrets.for(child_env:, context: nil, history:)
+        # @param context [#worker_env, nil] the call whose worker's own environment is added
+        # @return [Array<String>] every value the masker knows for that call
+        def for(context) = Secrets.for(child_env:, context:, history:)
+
+        # @return [Array<String>] every value the masker knows, with no call's worker
+        def to_a = self.for(nil)
 
         # @return [Egress] the same values, split into those refused from
         #   leaving the machine and those only flagged
         def egress = Egress.of(child_env:, history:)
+      end
+
+      class Source
+        DEFAULT = new(child_env: Exec::ChildEnv::DEFAULT, history: HistoryLiterals::Null)
       end
     end
   end

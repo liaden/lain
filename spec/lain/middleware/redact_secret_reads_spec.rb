@@ -1361,8 +1361,9 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
   # A command's output has no file to key a release on, so its regions are
   # masked on every call, whoever approved it, and nothing parks.
   describe "a bash result" do
-    subject(:middleware) { described_class.new(ledger:, queue:, journal:, child_env:) }
+    subject(:middleware) { described_class.new(ledger:, queue:, journal:, secrets:) }
 
+    let(:secrets) { Lain::Sensitivity::Secrets::Source.new(child_env:, history: Lain::Sensitivity::HistoryLiterals::Null) }
     let(:token) { "ghp_aB3dE5gH7jK9mN1pQ3sT5vX7zA9cE1gI3kM5" }
     let(:environment) { {} }
     let(:child_env) { Lain::Exec::ChildEnv.new(env: environment) }
@@ -1404,7 +1405,9 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
     end
 
     describe "a value a gitignored sensitive file holds" do
-      subject(:middleware) { described_class.new(ledger:, queue:, journal:, child_env:, history:) }
+      subject(:middleware) { described_class.new(ledger:, queue:, journal:, secrets:) }
+
+      let(:secrets) { Lain::Sensitivity::Secrets::Source.new(child_env:, history:) }
 
       let(:history) { Lain::Sensitivity::HistoryLiterals.new(root: dir, policy:) }
       let(:policy) do
@@ -1460,7 +1463,7 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       let(:value) { "lowentropy-lent-2" }
       let(:session) { Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: dir, env: { "LENT_TOKEN" => value })) }
       let(:channel) { RecordingChannel.new }
-      let(:live) { Lain::Effect::Handler::Live.new(channel:, display: Lain::Sensitivity::Display.new(child_env:)) }
+      let(:live) { Lain::Effect::Handler::Live.new(channel:, display: Lain::Sensitivity::Display.new(secrets:)) }
 
       def run_live(command)
         call = Lain::Effect::ToolCall.new(tool_use_id: "tu_bash", name: "bash", input: { "command" => command })

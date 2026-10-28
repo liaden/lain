@@ -415,7 +415,7 @@ module Lain
       # @param board [#guard_inputs, #approvals] a chat's {Switchboard}
       # @return [void]
       def bind_egress(board)
-        egress_literals.bind_board(board.guard_inputs)
+        egress_literals.bind(board.guard_inputs.secrets)
         egress_hold.bind(board.approvals)
       end
 

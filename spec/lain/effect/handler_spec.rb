@@ -121,7 +121,7 @@ RSpec.describe Lain::Effect::Handler do
       end
 
       it "threads the handler's injected display through" do
-        display = Lain::Sensitivity::Display.new(child_env: Lain::Exec::ChildEnv::DEFAULT)
+        display = Lain::Sensitivity::Display.new(secrets: Lain::Sensitivity::Secrets::Source::DEFAULT)
         described_class.new(display:).call(env_for(tool_call("capturing"), tool: capturing))
         expect(capturing.captured.live_display).to be(display)
       end

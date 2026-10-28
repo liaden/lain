@@ -13,6 +13,8 @@ module Lain
           @configured = configured
         end
 
+        # A chat binds its board's own source, so nothing walks the history twice.
+        #
         # @param source [#egress] read on every ask, never copied
         # @return [self]
         # @raise [Rebound] when already bound to a different source
@@ -21,15 +23,6 @@ module Lain
 
           @source = source
           self
-        end
-
-        # A chat's board: its child environment and the history it primed,
-        # the objects the read masker holds, so nothing walks the history twice.
-        #
-        # @param inputs [#child_env, #history] a board's {ToolGuard::Inputs}
-        # @return [self]
-        def bind_board(inputs)
-          bind(Sensitivity::Secrets::Source.new(child_env: inputs.child_env, history: inputs.history))
         end
 
         # A command with no board: its child environment's secrets, and no

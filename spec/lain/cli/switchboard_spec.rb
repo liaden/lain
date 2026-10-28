@@ -113,23 +113,25 @@ RSpec.describe Lain::CLI::Switchboard do
         expect(board.guard_inputs.denial).to start_with("no approval is possible for tool %<name>s")
       end
 
-      it "carries the child env it is given among the guard's inputs, by identity" do
-        child_env = Lain::Exec::ChildEnv.new(env: {})
+      it "carries the secrets source it is given among the guard's inputs, by identity" do
+        secrets = Lain::Sensitivity::Secrets::Source.new(child_env: Lain::Exec::ChildEnv.new(env: {}),
+                                                         history: Lain::Sensitivity::HistoryLiterals::Null)
         board = described_class.for(chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base,
-                                    test_layout: layout_run, child_env:)
+                                    test_layout: layout_run, secrets:)
 
-        expect(board.guard_inputs.child_env).to be(child_env)
+        expect(board.guard_inputs.secrets).to be(secrets)
       end
 
-      it "carries the process default child env when none is given" do
-        expect(board_for.guard_inputs.child_env).to be(Lain::Exec::ChildEnv::DEFAULT)
+      it "carries the default secrets source when none is given" do
+        expect(board_for.guard_inputs.secrets).to be(Lain::Sensitivity::Secrets::Source::DEFAULT)
       end
 
-      it "builds its live display over the child env its guard's inputs carry" do
+      it "builds its live display over the secrets its guard's inputs carry" do
         token = "zq7lowentropyprobevalue42"
         child_env = Lain::Exec::ChildEnv.new(env: { "PROBE_API_TOKEN" => token })
+        secrets = Lain::Sensitivity::Secrets::Source.new(child_env:, history: Lain::Sensitivity::HistoryLiterals::Null)
         board = described_class.for(chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base,
-                                    test_layout: layout_run, child_env:)
+                                    test_layout: layout_run, secrets:)
         channel = RecordingChannel.new
         sink = board.live_display.sinks(Lain::Tool::Invocation.new(tool_use_id: "tu_1", channel:)).fetch(:stdout_sink)
         sink << "#{token}\n"

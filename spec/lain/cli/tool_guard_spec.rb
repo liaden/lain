@@ -1203,45 +1203,32 @@ RSpec.describe Lain::CLI::ToolGuard do
     end
   end
 
-  describe "the child env the result masker and live display read" do
-    let(:child_env) { Lain::Exec::ChildEnv.new(env: { "API_TOKEN" => "tok-abc123lowentropy" }) }
-
-    it "is the one the board's inputs carry" do
-      board = Lain::CLI::Switchboard.new(journal:, model: "m", toolset: Lain::Toolset.new([]), child_env:)
-
-      expect(board.guard_inputs.child_env).to be(child_env)
-      expect(read_guard(board).child_env).to be(child_env)
+  describe "the secrets source the result masker and live display read" do
+    let(:secrets) do
+      env = { "API_TOKEN" => "tok-abc123lowentropy" }
+      Lain::Sensitivity::Secrets::Source.new(child_env: Lain::Exec::ChildEnv.new(env:),
+                                             history: instance_double(Lain::Sensitivity::HistoryLiterals, to_a: []))
     end
 
-    it "defaults to the process default" do
+    it "is the one the board's inputs carry" do
+      board = Lain::CLI::Switchboard.new(journal:, model: "m", toolset: Lain::Toolset.new([]), secrets:)
+
+      expect(board.guard_inputs.secrets).to be(secrets)
+      expect(read_guard(board).secrets).to be(secrets)
+    end
+
+    it "defaults to the process default environment and no history" do
       board = Lain::CLI::Switchboard.new(journal:, model: "m", toolset: Lain::Toolset.new([]))
 
-      expect(read_guard(board).child_env).to be(Lain::Exec::ChildEnv::DEFAULT)
+      expect(read_guard(board).secrets).to be(Lain::Sensitivity::Secrets::Source::DEFAULT)
     end
 
-    it "stays the default for a detached run" do
+    it "stays the default for a detached run, whose history is the null one" do
       stack = described_class.detached(journal:).call(Lain::WorkerEnv.default)
+      secrets = stack.to_a.grep(Lain::Middleware::RedactSecretReads).first.secrets
 
-      expect(stack.to_a.grep(Lain::Middleware::RedactSecretReads).first.child_env)
-        .to be(Lain::Exec::ChildEnv::DEFAULT)
-    end
-  end
-
-  describe "the history the result masker reads" do
-    let(:history) { instance_double(Lain::Sensitivity::HistoryLiterals, to_a: []) }
-
-    it "is the one the board's inputs carry" do
-      board = Lain::CLI::Switchboard.new(journal:, model: "m", toolset: Lain::Toolset.new([]), history:)
-
-      expect(board.guard_inputs.history).to be(history)
-      expect(read_guard(board).history).to be(history)
-    end
-
-    it "is the null history for a detached run" do
-      stack = described_class.detached(journal:).call(Lain::WorkerEnv.default)
-
-      expect(stack.to_a.grep(Lain::Middleware::RedactSecretReads).first.history)
-        .to be(Lain::Sensitivity::HistoryLiterals::Null)
+      expect(secrets).to be(Lain::Sensitivity::Secrets::Source::DEFAULT)
+      expect(secrets.history).to be(Lain::Sensitivity::HistoryLiterals::Null)
     end
   end
 

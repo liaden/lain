@@ -157,7 +157,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
         child_env = Lain::Exec::ChildEnv.new(env: { "API_TOKEN" => "tok-abc123lowentropy" })
         board = board_for(root, home, child_env:)
 
-        expect(board.guard_inputs.child_env).to be(child_env)
+        expect(board.guard_inputs.secrets.child_env).to be(child_env)
       end
     end
 
@@ -179,7 +179,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
         end
         board = board_for(root, home)
 
-        expect(primed).to eq([board.guard_inputs.history])
+        expect(primed).to eq([board.guard_inputs.secrets.history])
         expect(Lain::Sensitivity::HistoryLiterals).to have_received(:new).with(root:, policy: board.sensitivity)
       end
     end

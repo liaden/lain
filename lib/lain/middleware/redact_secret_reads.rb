@@ -177,7 +177,7 @@ module Lain
       # ledger and the board's one queue, not a second of either. Asserting on
       # behaviour instead cannot tell a fresh ledger from the board's, which is
       # exactly the mutation that survived review.
-      attr_reader :ledger, :queue, :journal, :related, :child_env, :history, :file_facts
+      attr_reader :ledger, :queue, :journal, :related, :secrets, :file_facts
 
       # @param ledger [Sensitivity::Ledger] the run's ONE region ledger.
       #   REQUIRED, with no default and no Null Object: a default is how a
@@ -193,17 +193,14 @@ module Lain
       # @param related [#related?] answers whether an absolute path lies under
       #   a `sensitivity related:` directory, whose regions mask without asking.
       #   A default is safe here, unlike the two above: the default asks.
-      # @param child_env [Exec::ChildEnv] the launch's child environment, read on
-      #   every command result for the values of secret-named variables, beside
-      #   the calling worker's own
-      # @param history [#to_a] the values the project's sensitive paths hold in
-      #   git history and untracked files, masked in every command result
+      # @param secrets [Sensitivity::Secrets::Source] read on every command result for the
+      #   launch's secret-named variables and the project's history values, beside the
+      #   calling worker's own
       # @param file_facts [FileFacts::Live, FileFacts::Recorded] what tells a searched directory from a
       #   file, from {Sensitivity::Policy#file_facts}
       # @raise [ArgumentError] on a nil ledger or queue
       def initialize(ledger:, queue:, journal: Channel::Null.instance, requester: nil, related: Unrelated,
-                     child_env: Exec::ChildEnv::DEFAULT, history: ::Lain::Sensitivity::HistoryLiterals::Null,
-                     file_facts: FileFacts::LIVE)
+                     secrets: ::Lain::Sensitivity::Secrets::Source::DEFAULT, file_facts: FileFacts::LIVE)
         # A missing KEYWORD is Ruby's error; a nil VALUE is not, and nil is
         # exactly what `Switchboard#approvals` carries in an unattended run -- so
         # without this the argument that "no default means no silent approval"
@@ -216,8 +213,7 @@ module Lain
         @journal = journal
         @requester = requester
         @related = related
-        @child_env = child_env
-        @history = history
+        @secrets = secrets
         @file_facts = file_facts
         # Mutable, on a frozen object, deliberately: `freeze` seals the ivars,
         # not the Set they point at, and this is the run's accumulating
@@ -357,9 +353,7 @@ module Lain
       end
 
       def text_mask(carried)
-        secrets = ::Lain::Sensitivity::Secrets.for(child_env: @child_env, context: carried.fetch(:context),
-                                                   history: @history)
-        ::Lain::Sensitivity::TextMask.new(secrets:)
+        ::Lain::Sensitivity::TextMask.new(secrets: @secrets.for(carried.fetch(:context)))
       end
 
       def with_trailer(masked, trailer = OUTPUT_TRAILER)

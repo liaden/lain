@@ -18,12 +18,9 @@ module Lain
     # streams. The model's copy is numbered by {Middleware::RedactSecretReads}
     # by position in the result text: 2 numberings of the same masked bytes.
     class Display
-      # @param child_env [Exec::ChildEnv] the launch's child environment, the
-      #   one the result masker is built from
-      # @param history [#to_a] the project's history values, the result masker's too
-      def initialize(child_env:, history: HistoryLiterals::Null)
-        @child_env = child_env
-        @history = history
+      # @param secrets [Secrets::Source] the one the result masker reads too
+      def initialize(secrets:)
+        @secrets = secrets
       end
 
       # @param invocation [Tool::Invocation] the call whose output is shown
@@ -31,8 +28,7 @@ module Lain
       def sinks(invocation)
         return Null::SINKS if invocation.channel.is_a?(Channel::Null)
 
-        mask = TextMask.new(secrets: Secrets.for(child_env: @child_env, context: invocation.context,
-                                                 history: @history))
+        mask = TextMask.new(secrets: @secrets.for(invocation.context))
         ordinals = (1..).each
         %i[stdout stderr].to_h do |stream|
           adapter = Sink::IOAdapter.new(invocation.channel, tool_use_id: invocation.tool_use_id, stream:)
