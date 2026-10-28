@@ -103,6 +103,12 @@ module EscalationSpecSupport
     def call(_effect, _context) = true
   end
 
+  # Answers nil, which is neither a Ruling nor an abstention.
+  class Nilly
+    def name = "nilly"
+    def call(_effect, _context) = nil
+  end
+
   # Raises when consulted at all, loudly enough that the chain cannot swallow it.
   class Tripwire
     class Consulted < Exception; end # rubocop:disable Lint/InheritException
@@ -587,6 +593,19 @@ RSpec.describe Lain::Approval::Escalation do
       expect(built.call(effect, nil)).to be(false)
       expect(rulings.last).to include("rung" => "rules", "verdict" => "deny")
       expect(rulings.last["reason"]).to include("suppressed")
+    end
+
+    it "journals a rung answering nil as a faulted abstain, and suppresses the later allow" do
+      built = ladder(EscalationSpecSupport::Nilly.new, EscalationSpecSupport::Fixed.new("surfaces", :allow))
+
+      expect(built.call(effect, nil)).to be(false)
+      expect(rulings.first.except("ts")).to eq(
+        "type" => "escalation", "tool" => "bash", "tool_use_id" => "tu_1", "requester" => "agent",
+        "input_digest" => "blake3:8434380aa5d41e754df454b3fb00c99b3beed4ecc122aad8fcc788858b72fa88",
+        "verdict" => "abstain", "rung" => "nilly", "authority" => "automatic", "final" => false, "faulted" => true,
+        "reason" => "the rung itself failed, which is not an answer: " \
+                    "Lain::Error: nilly answered NilClass; a rung rules or abstains"
+      )
     end
 
     it "reaches a journal-backed recorder, so the run is not silently lenient" do

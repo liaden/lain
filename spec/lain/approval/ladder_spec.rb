@@ -143,8 +143,16 @@ RSpec.describe Lain::Approval::Ladder do
       end
     end
 
-    it "reads a nil answer as an abstention" do
-      expect(ladder(->(_input) {}, support::Allower.new("a")).call(:input).by).to eq("a")
+    it "faults a rung answering nil, and the next rung still decides" do
+      outcome = ladder(->(_input) {}, support::Allower.new("a")).call(:input)
+
+      expect([outcome.by, outcome.faults.sole.error]).to eq(["a", "Lain::Approval::Ladder::NotADecision"])
+    end
+
+    it "falls through ABSTAIN to the next rung with no fault" do
+      outcome = ladder(support::Silent.new("s"), support::Allower.new("a")).call(:input)
+
+      expect([outcome.by, outcome.faults]).to eq(["a", []])
     end
   end
 

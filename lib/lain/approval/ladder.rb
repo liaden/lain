@@ -5,7 +5,7 @@ module Lain
     # One first-decisive fold over rungs, shared by the chat's escalation
     # ladder and the rules ladder inside it.
     #
-    # A rung answers a decision, {ABSTAIN} (or nil), an {.abstain} with a
+    # A rung answers a decision, {ABSTAIN}, an {.abstain} with a
     # reason, or another ladder's {Outcome}. The first decision wins and no
     # rung past it is consulted. A rung that raises is a {Fault}, carried in
     # the outcome rather than reported from inside, so a nested ladder cannot
@@ -149,7 +149,7 @@ module Lain
       def answered(answer, name, faults, abstained)
         case answer
         when Outcome then unwrapped(answer, faults, abstained)
-        when ABSTAIN, nil then nil
+        when ABSTAIN then nil
         when Reasoned then abstained.push(answer.explain) && nil
         else [decision(answer, name), name]
         end
