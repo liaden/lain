@@ -312,14 +312,36 @@ local function question_bounds(lines, row)
   return heading, last
 end
 
+local function comment_text(line)
+  return vim.startswith(line, "  ")
+end
+
+-- Whether the line above `row` belongs to the option block's run.
+local function walkable_above(lines, row, first)
+  local above = row - 1
+  if option_mark(lines[above]) ~= nil or comment_text(lines[above]) then
+    return true
+  end
+  local text = above
+  while text > first and lines[text] == "" do
+    text = text - 1
+  end
+  return lines[above] == "" and text > first and comment_text(lines[text])
+end
+
 -- The question's OPTION BLOCK: the LAST run of option lines between `first`
 -- and `last`. That "last" is the whole defence against a body that shows the
 -- grammar. A body is written verbatim and may legally hold a line matching
 -- OPTION (a fenced diff showing `- [x] no` is the documented case), but the
 -- renderer emits the options as one unbroken run preceded by a blank line, and
--- the comment beneath them is INDENTED -- so nothing below the block wears this
--- shape at column 0, and a body's option-shaped line is always separated from
--- the block by at least that blank. nil when the question has no run at all.
+-- the comment beneath an option is INDENTED -- so nothing below the block wears
+-- this shape at column 0. The run is walked back THROUGH those indented lines,
+-- since a comment under the first option must not cut it off, and through a
+-- blank only when comment text sits above it (a comment's paragraphs are
+-- blank-separated). A body ending in an option-shaped line plus an indented
+-- continuation is therefore read as an option with its comment; the buffer
+-- alone cannot tell them apart, and the save refuses it as a changed body.
+-- nil when the question has no run at all.
 local function option_block(lines, first, last)
   local stop = last
   while stop > first and option_mark(lines[stop]) == nil do
@@ -329,8 +351,12 @@ local function option_block(lines, first, last)
     return nil
   end
   local start = stop
-  while start > first and option_mark(lines[start - 1]) ~= nil do
-    start = start - 1
+  local above = stop
+  while above > first and walkable_above(lines, above, first) do
+    above = above - 1
+    if option_mark(lines[above]) ~= nil then
+      start = above
+    end
   end
   return start, stop
 end

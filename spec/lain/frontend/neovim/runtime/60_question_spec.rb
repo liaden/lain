@@ -406,6 +406,83 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         end
       end
     end
+
+    describe "ticking with x" do
+      let(:engines) do
+        question("engines", "Which engine?\n- [ ] `decoy` shown by the body",
+                 options: [option("pg", "Postgres"), option("sqlite", "SQLite"), option("duck", "DuckDB")])
+      end
+      let(:engine_set) { Lain::Question::Set.new(questions: [engines]) }
+
+      def press_x_on(text)
+        inspector.exec_lua(<<~LUA, [text])
+          local text = ...
+          local buf = vim.fn.bufnr("lain://question")
+          vim.api.nvim_set_current_win(vim.fn.win_findbuf(buf)[1])
+          local row = vim.fn.index(vim.api.nvim_buf_get_lines(buf, 0, -1, false), text) + 1
+          vim.api.nvim_win_set_cursor(0, { row, 0 })
+          vim.api.nvim_feedkeys("x", "x", false)
+          return true
+        LUA
+      end
+
+      def comment_under_first_option
+        edit_question(buffer_lines("lain://question").flat_map do |line|
+          line.start_with?("- [ ] `pg`") ? [line, "  because it is what we run"] : [line]
+        end)
+      end
+
+      it "ticks the first of 3 options when it carries a comment" do
+        frontend.run do
+          wait_until_editor { buffer_lines("lain://journal").any? }
+          opened_question(engine_set)
+          comment_under_first_option
+
+          press_x_on("- [ ] `pg` Postgres")
+
+          expect(buffer_lines("lain://question")).to include("- [x] `pg` Postgres", "  because it is what we run")
+        end
+      end
+
+      it "ticks the first option when its comment runs over 2 paragraphs" do
+        frontend.run do
+          wait_until_editor { buffer_lines("lain://journal").any? }
+          opened_question(engine_set)
+          edit_question(buffer_lines("lain://question").flat_map do |line|
+            line.start_with?("- [ ] `pg`") ? [line, "  first paragraph", "", "  second paragraph"] : [line]
+          end)
+
+          press_x_on("- [ ] `pg` Postgres")
+
+          expect(buffer_lines("lain://question")).to include("- [x] `pg` Postgres")
+        end
+      end
+
+      it "ticks a body's option-shaped last line that has an indented continuation, which the save then refuses" do
+        shaped = question("engines", "Which engine?\n- [ ] `decoy` shown by the body\n  and indented under it",
+                          options: [option("pg", "Postgres"), option("sqlite", "SQLite")])
+        frontend.run do
+          wait_until_editor { buffer_lines("lain://journal").any? }
+          opened_question(Lain::Question::Set.new(questions: [shaped]))
+
+          press_x_on("- [ ] `decoy` shown by the body")
+
+          expect(buffer_lines("lain://question")).to include("- [x] `decoy` shown by the body")
+        end
+      end
+
+      it "still deletes on an option-shaped line in the body above the options" do
+        frontend.run do
+          wait_until_editor { buffer_lines("lain://journal").any? }
+          opened_question(engine_set)
+          comment_under_first_option
+
+          press_x_on("- [ ] `decoy` shown by the body")
+
+          expect(buffer_lines("lain://question")).to include(" [ ] `decoy` shown by the body")
+        end
+      end
+    end
   end
 
   # `:w` from inside the question buffer -- the human's own gesture. Returned as
