@@ -82,9 +82,9 @@ module Lain
       # turning one queued command into the right `nvim_exec_lua` call.
       class RenderQueue
         # THE ONE CHUNK every rail rides, and the whole of what Ruby now holds
-        # of lua. The entry point is DATA ({RAILS}) rather than thirteen
+        # of lua. The entry point is DATA ({RAILS}) rather than sixteen
         # near-identical strings, each of which spelled out its own
-        # `local a, b = ...; _G.__lain.fn(a, b)` binding -- thirteen places an
+        # `local a, b = ...; _G.__lain.fn(a, b)` binding -- sixteen places an
         # argument could be dropped or transposed with nothing said, because
         # nvim discards a notify's error. `runtime/01_dispatch.lua` binds them
         # instead, where `unpack` can do neither.
@@ -104,7 +104,7 @@ module Lain
         # drops the third in silence -- the one failure shape a payload
         # assertion cannot see. That used to be pinned for ONE rail, by
         # asserting on the text of its chunk; spelled here it is pinned for all
-        # thirteen, by a spec that reads the `function _G.__lain.<lua>(<params>)`
+        # sixteen, by a spec that reads the `function _G.__lain.<lua>(<params>)`
         # declarations out of the shipped runtime and compares them. So the
         # spelling is LUA's and not Ruby's: {RAILS}`[:thread]` says `anchor`
         # because that is what `51_thread.lua` calls it, whatever the Ruby
@@ -317,7 +317,7 @@ module Lain
         # chooses between the two rows, the rendering stamp changes the call's
         # ARITY rather than adding an argument, and the lines are checked as no
         # other rail's are. A table carrying those would need a `sanitize`
-        # column true for two rows of thirteen and an arity column that is a
+        # column true for two rows of sixteen and an arity column that is a
         # range for one, which is worse than a method with a reason.
         #
         # @param name [String] the lain:// buffer name

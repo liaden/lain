@@ -1,7 +1,7 @@
 -- ONE DOOR for every render rail, and the reason there is only one.
 --
 -- Ruby reaches this runtime by `nvim_exec_lua` NOTIFY, so the chunk it sends is
--- a string Ruby holds. Thirteen rails once meant thirteen such strings, each
+-- a string Ruby holds. Sixteen rails once meant sixteen such strings, each
 -- spelling out `local a, b = ...; if _G.__lain then _G.__lain.fn(a, b) end` --
 -- identical but for the names, and each one a place a parameter could be
 -- dropped or transposed with nothing said, because nvim discards a notify's

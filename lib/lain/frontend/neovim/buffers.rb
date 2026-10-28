@@ -213,6 +213,7 @@ module Lain
           @inbox = inbox || InboxView.new(store:, questions:)
           @timeline = timeline || TimelineView.new(store:, session:)
           @status = StatusView.new(epic:)
+          @todos = TodoView.new(session:)
           @questions = questions
           @session = session
           @last_reminders = nil
@@ -271,7 +272,8 @@ module Lain
         # @return [Hash{String=>Array<String>}] buffer name => initial lines
         def initial
           { TimelineView::NAME => @timeline.initial, WORKSPACE => workspace_update,
-            DIFF => ["(no requests yet)"], StatusView::NAME => @status.initial }.compact.merge(@inbox.initial)
+            DIFF => ["(no requests yet)"], StatusView::NAME => @status.initial,
+            TodoView::NAME => @todos.initial }.compact.merge(@inbox.initial)
         end
 
         # @param event [Object] one Channel event
@@ -280,7 +282,7 @@ module Lain
         def updates(event)
           { TimelineView::NAME => @timeline.update(event), WORKSPACE => workspace_update,
             DIFF => diff_update(event), InboxView::NAME => @inbox.update(event),
-            StatusView::NAME => @status.update(event) }.compact
+            StatusView::NAME => @status.update(event), TodoView::NAME => @todos.update(event) }.compact
         end
 
         private

@@ -474,6 +474,10 @@ module Lain
       self
     end
 
+    # @return [Array<Hash{String=>String}>] the current list as `"content"` and
+    #   `"status"` hashes, frozen
+    def todos = @todo_items.map { |todo| { "content" => todo.content, "status" => todo.status }.freeze }.freeze
+
     # How many {#write_todos} calls have raised the count of `"completed"`
     # items, ever: {Compaction::Need::PlanStepCompletion}'s signal. Monotone, so
     # a consumer can say how far it has consumed with one Integer -- a
@@ -1121,6 +1125,9 @@ module Lain
 
       # @return [self]
       def write_todos(_todos) = self
+
+      # @return [Array] never any
+      def todos = [].freeze
 
       # Accepted and discarded: {CLI::Chronicle#wrap_session} must be able to
       # hand a journal to whatever Session the run holds, without asking first.

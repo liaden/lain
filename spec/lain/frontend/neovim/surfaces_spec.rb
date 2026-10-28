@@ -57,9 +57,9 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
   def posted(name) = rpc.views.reverse.find { |view| view.first == name }&.at(1)
 
   describe "#prime" do
-    # The seven views that ride `post_view`. lain://approval is primed too (see
+    # The eight views that ride `post_view`. lain://approval is primed too (see
     # below) and is deliberately NOT in this list: it goes out through
-    # `set_approval`, so an eighth name here would mean the buffer had been
+    # `set_approval`, so a ninth name here would mean the buffer had been
     # created without its row count.
     it "posts every projection's at-rest state, so an idle session shows the whole buffer set" do
       surfaces.prime
@@ -70,6 +70,7 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
                                            Lain::Frontend::Neovim::Buffers::DIFF,
                                            Lain::Frontend::Neovim::InboxView::NAME,
                                            Lain::Frontend::Neovim::StatusView::NAME,
+                                           Lain::Frontend::Neovim::TodoView::NAME,
                                            Lain::Frontend::Neovim::RequestBuffer::REQUEST)
     end
 
@@ -170,6 +171,7 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
         def initialize(reminders) = @reminders = reminders
         attr_reader :reminders
 
+        def todos = []
         def pinned?(_digest) = false
       end.new(reminders)
 

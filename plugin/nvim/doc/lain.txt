@@ -259,18 +259,18 @@ LainRender              Fires after every landed render; `ev.data` carries
 
                         Note: attach PRIMES every view, so expect a burst of
                         LainRender events at attach time -- one per primed
-                        view (eight today) -- before the agent has done
+                        view (nine today) -- before the agent has done
                         anything. Do not treat that burst as agent activity.
 
 ------------------------------------------------------------------------------
 6.2 BUFFERS AND b:lain_view                                     *lain-buffers*
                                                                  *b:lain_view*
 
-The runtime owns seven buffers: `lain://journal` (append-only tool journal),
+The runtime owns eight buffers: `lain://journal` (append-only tool journal),
 `lain://timeline`, `lain://workspace`, `lain://diff`, `lain://inbox`,
-`lain://status` (all read-only projections), and `lain://request`, the one
-editable buffer (edit it, then `:LainResend`). lain primes an eighth beside
-them at attach, `lain://approval`, which is not in the runtime's buffer set. A ninth, `lain://compose`,
+`lain://status`, `lain://todos` (all read-only projections), and `lain://request`, the one
+editable buffer (edit it, then `:LainResend`). lain primes a ninth beside
+them at attach, `lain://approval`, which is not in the runtime's buffer set. A tenth, `lain://compose`,
 appears only while you are composing -- see |lain-compose|.
 
 `lain://status` is where the chat's epic stands: its progress, its issue graph
@@ -279,6 +279,10 @@ as a ```mermaid fence, and the subagents still running. Its filetype is
 draw the fence. It re-reads the epic from disk when a turn completes, so a
 transition written by another `lain` process shows up after the next turn.
 Without `--epic` it says no epic is mounted.
+
+`lain://todos` is the model's todo list, one line per item with its status
+glyph (`[ ]` pending, `[~]` in progress, `[x]` completed), open work first. It
+redraws on each completed turn and says `(no todos)` when the list is empty.
 
 A `lain://question` buffer appears the same way while you are answering a
 question set -- see |lain-question| -- and a `lain://approval` buffer while a

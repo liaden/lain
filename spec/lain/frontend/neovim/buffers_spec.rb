@@ -913,3 +913,19 @@ RSpec.describe Lain::Frontend::Neovim::Buffers, "#updates over a timeline the st
       .to eq(["[timeline unavailable: blake3:absent not in store]"])
   end
 end
+
+RSpec.describe Lain::Frontend::Neovim::Buffers, "lain://todos" do
+  let(:session) { Lain::Session.new }
+  let(:buffers) { described_class.new(session:) }
+  let(:turn) { Lain::Telemetry::TurnUsage.new(digest: "blake3:t", model: "m", stop_reason: :end_turn, usage: {}) }
+
+  it "starts empty" do
+    expect(buffers.initial.fetch("lain://todos")).to eq(["(no todos)"])
+  end
+
+  it "shows the list after a todo_write once the next turn_usage arrives" do
+    session.write_todos([Struct.new(:content, :status).new("write", "pending")])
+
+    expect(buffers.updates(turn).fetch("lain://todos")).to eq(["[ ] write"])
+  end
+end

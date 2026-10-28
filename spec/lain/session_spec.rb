@@ -871,6 +871,26 @@ RSpec.describe Lain::Session do
     end
   end
 
+  describe "#todos" do
+    def todo(content, status) = Struct.new(:content, :status).new(content, status)
+
+    it "is empty before any todo_write lands" do
+      expect(session.todos).to eq([])
+    end
+
+    it "answers the current list as frozen content/status hashes" do
+      session.write_todos([todo("a", "pending"), todo("b", "completed")])
+
+      expect(session.todos).to eq([{ "content" => "a", "status" => "pending" },
+                                   { "content" => "b", "status" => "completed" }])
+      expect(session.todos).to be_frozen
+    end
+
+    it "is empty on the null session" do
+      expect(Lain::Session::Null.instance.todos).to eq([])
+    end
+  end
+
   # The edge a compaction source latches on: a LEVEL stays up until the next
   # write, so a reader polling it every render would see one completed step as
   # a completion on every turn until the model writes its list again.
