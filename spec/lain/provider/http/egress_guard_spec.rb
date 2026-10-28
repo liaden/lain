@@ -97,6 +97,37 @@ RSpec.describe Lain::Provider::HTTP::EgressGuard do
       expect(message).to include("message 7 of 9", "/rewind 3", "after a compaction")
     end
 
+    context "when the secret enters at a tool result" do
+      def call_turn(name) = { role: "assistant", content: [{ type: "tool_use", id: name, name:, input: {} }] }
+
+      def result_turn(text) = { role: "user", content: [{ type: "tool_result", tool_use_id: "x", content: text }] }
+
+      def tool_request(*messages) = body("q").merge(messages:)
+
+      it "names a count that lands on the settled turn before the tool call, not on the call" do
+        stub_request(:post, url).to_return(ok)
+        messages = [{ role: "user", content: "q" }, call_turn("a"), result_turn("got #{secret}"),
+                    { role: "assistant", content: "ok" }, { role: "user", content: "next" }]
+
+        expect(refusal_of(tool_request(*messages)).message).to include("message 3 of 5", "/rewind 4 ")
+      end
+
+      it "lands on the result of the earlier call when two calls run in a row" do
+        stub_request(:post, url).to_return(ok)
+        messages = [{ role: "user", content: "q" }, call_turn("a"), result_turn("fine"), call_turn("b"),
+                    result_turn("got #{secret}")]
+
+        expect(refusal_of(tool_request(*messages)).message).to include("message 5 of 5", "/rewind 2 ")
+      end
+
+      it "counts the whole request when the call is the first message" do
+        stub_request(:post, url).to_return(ok)
+        messages = [call_turn("a"), result_turn("got #{secret}")]
+
+        expect(refusal_of(tool_request(*messages)).message).to include("/rewind 2 ")
+      end
+    end
+
     it "refuses every later request the same way while the turn is still there" do
       sent = stub_request(:post, url).to_return(ok)
       connection = build_connection

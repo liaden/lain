@@ -222,8 +222,59 @@ RSpec.describe Lain::CLI::Command::Rewind do
     end
 
     # timeline: user / assistant(tool_use) / user(tool_result) / assistant(text)
-    it "refuses a count landing on the dangling tool_use, naming the nearest valid targets" do
-      refuses("2", /tool_use.*nearest valid targets: 1, 3/m)
+    it "rounds a count landing on the dangling tool_use back to the settled turn before it, and says so" do
+      message = command.call("2", env)
+
+      expect(agent.timeline).to be_empty
+      expect(message).to include("/rewind 2 landed on an assistant tool_use turn", "went back 4 turns")
+    end
+
+    context "with a settled exchange before the tool round" do
+      let(:provider) do
+        Lain::Provider::Mock.new(responses: [text_response("one"),
+                                             tool_response(["tu_1", "echo", { "text" => "ping" }]),
+                                             text_response("done")])
+      end
+      let(:agent) do
+        Lain::Agent.new(provider:, toolset:, context:).tap do |built|
+          built.ask("first")
+          built.ask("use the tool")
+          chronicle.catch_up(built.timeline)
+        end
+      end
+
+      it "lands the head on the settled turn before the tool_use" do
+        settled = agent.timeline.rewind(4).head_digest
+
+        message = command.call("2", env)
+
+        expect(agent.timeline.head_digest).to eq(settled)
+        expect(message).to include("rewound 4 turns", "went back 4 turns")
+      end
+    end
+
+    context "with two tool rounds in a row" do
+      let(:provider) do
+        Lain::Provider::Mock.new(responses: [tool_response(["tu_1", "echo", { "text" => "a" }]),
+                                             tool_response(["tu_2", "echo", { "text" => "b" }]),
+                                             text_response("done")])
+      end
+
+      # user / tu_1 / result_1 / tu_2 / result_2 / text
+      it "rounds the later call to the result of the earlier one" do
+        settled = agent.timeline.rewind(3).head_digest
+
+        command.call("2", env)
+
+        expect(agent.timeline.head_digest).to eq(settled)
+      end
+
+      it "rounds the earlier call past the stranded prompt, and the note gives the final count" do
+        message = command.call("4", env)
+
+        expect(agent.timeline).to be_empty
+        expect(message).to include("rewound 6 turns", "went back 6 turns")
+      end
     end
 
     it "refuses a digest target that IS the tool_use turn, through the same guard" do

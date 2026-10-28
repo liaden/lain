@@ -129,7 +129,7 @@ module Lain
         def refusal(refused, scan, turn, pattern)
           return format(OUTSIDE_TURNS, refused:, part: scan.part(pattern)) if turn.nil?
 
-          format(IN_TURN, refused:, turn:, turns: scan.turns, back: scan.turns - turn + 1)
+          format(IN_TURN, refused:, turn:, turns: scan.turns, back: scan.back(turn))
         end
 
         # Over what this provider has not sent before only, so a flagged value
@@ -240,12 +240,19 @@ module Lain
         PARTS = { "the system prompt" => %i[system], "the tool schemas" => %i[tools] }.freeze
         private_constant :PARTS
 
-        Scan = Data.define(:messages, :parts) do
+        Scan = Data.define(:messages, :calls, :parts) do
           def self.of(body)
             hash = body.is_a?(Hash) ? body.transform_keys(&:to_sym) : { body: }
             named = PARTS.transform_values { |keys| joined(hash.slice(*keys)) }
             rest = joined(hash.except(:messages, *PARTS.values.flatten))
-            new(messages: Array(hash[:messages]).map { joined(_1) }, parts: named.merge("the request settings" => rest))
+            raw = Array(hash[:messages])
+            new(messages: raw.map { joined(_1) }, calls: raw.map { call?(_1) },
+                parts: named.merge("the request settings" => rest))
+          end
+
+          def self.call?(message)
+            content = message.is_a?(Hash) ? message.transform_keys(&:to_sym)[:content] : nil
+            Array(content).any? { _1.is_a?(Hash) && _1.transform_keys(&:to_sym)[:type].to_s == "tool_use" }
           end
 
           # Joined, then relabelled as bytes in place: copying each string to
@@ -280,6 +287,15 @@ module Lain
           def part(pattern) = parts.find { |_, text| pattern.match?(text) }&.first || "the request settings"
 
           def turns = messages.size
+
+          # The distance back to the nearest settled head before message
+          # `turn`: a head that is a tool call would dangle it.
+          # @return [Integer]
+          def back(turn)
+            head = turn - 1
+            head -= 1 while head.positive? && calls[head - 1]
+            turns - head
+          end
 
           def texts = [*messages, *parts.values]
         end

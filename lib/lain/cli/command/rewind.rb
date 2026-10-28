@@ -33,9 +33,10 @@ module Lain
           exclusively(env, typed) do
             from = env.timeline
             asked = count_for(args.to_s.strip, from)
-            count = past_stranded(asked, from)
+            settled = counted?(args) ? settled_count(asked, from) : asked
+            count = past_stranded(settled, from)
             settled_target!(count, from, typed)
-            moved(env, count, from:, dropped: from.ancestors.to_a[asked])
+            moved(env, count, from:, dropped: from.ancestors.to_a[settled]) + rounded_note(asked, settled, count, typed)
           end
         end
 
@@ -68,6 +69,24 @@ module Lain
         # was just rewound away, replaying its side effects.
         def past_stranded(count, timeline)
           EventLog::Guards.stranded_prompt?(timeline.ancestors.to_a[count]) ? count + 1 : count
+        end
+
+        def counted?(args) = args.to_s.strip.match?(/\A(-?\d+)?\z/)
+
+        # Only a typed count rounds: a digest names one turn, so landing on a
+        # tool_use with it is still refused by name.
+        def settled_count(count, timeline)
+          heads = timeline.ancestors.to_a
+          return count unless EventLog::Guards.pending_tool_use?(heads[count])
+
+          nearest_valid(count, heads).last
+        end
+
+        def rounded_note(asked, settled, count, typed)
+          return "" if asked == settled
+
+          "\n#{typed} landed on an assistant tool_use turn, so it went back #{count} turns, " \
+            "to the settled turn before it"
         end
 
         def dropped_note(event)
