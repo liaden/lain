@@ -97,6 +97,10 @@ RSpec.describe Lain::Bench::CompactionSweep do
     end
   end
 
+  def local_summarizer(asked)
+    described_class::Summarizer::Local.new(->(definition) { stub_tier(definition, asked) })
+  end
+
   def oracle_answer(definition, question, summary)
     JSON.generate("ts" => "1970-01-01T00:00:00Z", "type" => "oracle_answer", "oracle_digest" => definition.digest,
                   "question" => question, "answer" => { "summary" => summary })
@@ -167,6 +171,17 @@ RSpec.describe Lain::Bench::CompactionSweep do
     end
   end
 
+  describe "the report header" do
+    it "names the recorded summarizer by default" do
+      expect(sweep(arms: %w[elide]).report).to include("summarizer recorded")
+    end
+
+    it "names a handed-in summarizer as local" do
+      local = local_summarizer([])
+      expect(sweep(arms: %w[elide], summarizer: local).report).to include("summarizer local")
+    end
+  end
+
   describe "a model arm without a recorded answer" do
     it "is skipped, never invented" do
       rows = sweep(arms: %w[summarizing summarizing-flat]).rows
@@ -193,7 +208,7 @@ RSpec.describe Lain::Bench::CompactionSweep do
 
   describe "a model arm with recorded answers" do
     let(:asked) { [] }
-    let(:local) { ->(definition) { stub_tier(definition, asked) } }
+    let(:local) { local_summarizer(asked) }
 
     # What a stubbed summarizer was asked, answered by hand in copies of the sessions as the
     # oracle_answer records a live run journals.
@@ -235,7 +250,10 @@ RSpec.describe Lain::Bench::CompactionSweep do
         end
       end
 
-      expect { sweep(arms: %w[summarizing], summarizer: down).rows }.to raise_error(Lain::Error, /connection refused/)
+      expect do
+        sweep(arms: %w[summarizing],
+              summarizer: described_class::Summarizer::Local.new(down)).rows
+      end.to raise_error(Lain::Error, /connection refused/)
     end
   end
 
@@ -267,7 +285,7 @@ RSpec.describe Lain::Bench::CompactionSweep do
 
     it "asks only about results big enough for a model call" do
       asked = []
-      sweep(arms: %w[eager], summarizer: ->(each) { stub_tier(each, asked) }).rows
+      sweep(arms: %w[eager], summarizer: local_summarizer(asked)).rows
 
       expect(asked).to be_empty
     end
@@ -278,7 +296,7 @@ RSpec.describe Lain::Bench::CompactionSweep do
       def asked_over(size)
         path = large_session("sized-#{size}.ndjson", rounds: 3, size:)
         asked = []
-        sweep(journals: [path], arms: %w[eager], summarizer: ->(each) { stub_tier(each, asked) }).rows
+        sweep(journals: [path], arms: %w[eager], summarizer: local_summarizer(asked)).rows
         [tool_results(path).map(&:bytesize).uniq, asked.size]
       end
 
@@ -333,7 +351,7 @@ RSpec.describe Lain::Bench::CompactionSweep do
         copy = File.join(tmp, name)
         FileUtils.cp(path, copy)
         asked = []
-        sweep(journals: [copy], arms: %w[summarizing], summarizer: ->(each) { stub_tier(each, asked) }).rows
+        sweep(journals: [copy], arms: %w[summarizing], summarizer: local_summarizer(asked)).rows
         append(copy, asked.map { |definition, question| oracle_answer(definition, question, summary) })
         copy
       end

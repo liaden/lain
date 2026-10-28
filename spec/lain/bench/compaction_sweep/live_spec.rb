@@ -259,10 +259,14 @@ RSpec.describe Lain::Bench::CompactionSweep::Live do
       end
     end
 
+    def local_summarizer
+      Lain::Bench::CompactionSweep::Summarizer::Local.new(->(definition) { stub_tier(definition) })
+    end
+
     def record_answers
       sink = Lain::Journal.open(answers)
       Lain::Bench::CompactionSweep.new(journals: [journal_path], arms: %w[summarizing], price_as: model,
-                                       budget: 1_000, summarizer: ->(definition) { stub_tier(definition) },
+                                       budget: 1_000, summarizer: local_summarizer,
                                        journal: sink).rows
     ensure
       sink&.close

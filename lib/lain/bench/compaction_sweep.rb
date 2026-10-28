@@ -68,8 +68,7 @@ module Lain
       # @param price_as [String] the model every simulated cache write is priced as
       # @param placements [Array<String>] names {Compaction::Recap.for} knows
       # @param price_book [PriceBook]
-      # @param summarizer [Symbol, #call] `:recorded`, or a factory `->(definition) { tier }`
-      #   whose tier answers `#ask`, `#model` and `#usage`
+      # @param summarizer [Summarizer::Recorded, Summarizer::Local] where the model arms get their summaries
       # @param budget [Integer] head bytes past the held cut that fire a cut
       # @param planted [Array<PlantedClaims::Fixture>] the claim each planted journal carries
       # @param keep_last [Integer] trailing messages a cut never touches
@@ -79,7 +78,7 @@ module Lain
       #   also answers from, such as the one an earlier sweep's summarizer wrote
       # @raise [ArgumentError] on an unknown arm or placement, or none of either
       def initialize(journals:, arms:, price_as:, placements: %w[framed], price_book: PriceBook.default,
-                     summarizer: :recorded, budget: DEFAULT_BUDGET, planted: [],
+                     summarizer: Summarizer::Recorded.new, budget: DEFAULT_BUDGET, planted: [],
                      keep_last: ::Lain::CLI::Backend::DEFAULT_KEEP_LAST, journal: Channel::Null.instance, recorded: [])
         @arms = known_arms(arms.uniq)
         @placements = known_placements(placements.uniq)
@@ -199,10 +198,9 @@ module Lain
       end
 
       def header
-        summarizer = @summarizer == :recorded ? "recorded" : "local"
         journals = @journals.one? ? "1 journal" : "#{@journals.size} journals"
         "Compaction sweep: #{journals}, budget #{@budget} bytes, keep #{@keep_last}, " \
-          "priced as #{@price_as}, summarizer #{summarizer}"
+          "priced as #{@price_as}, summarizer #{@summarizer.name}"
       end
 
       def cells(row)
@@ -398,34 +396,19 @@ module Lain
           end
         end
 
-        # The live chat journals its eager answers through the same wrap, so a recorded sweep reads
-        # back exactly what a summarizer handed in here wrote.
         def self.eager(journal, summarizer, answers_to)
-          definition = Oracle::Summarize.definition
-          oracle = if summarizer == :recorded
-                     Oracle::Recorded.from_journal(journal.entries, definition:)
-                   else
-                     Oracle::Recorded::Journaling.new(inner: summarizer.call(definition), definition:,
-                                                      journal: answers_to)
-                   end
+          oracle = summarizer.oracle(Oracle::Summarize.definition, journal, answers_to:)
           answers = EagerAnswers.new(journal, oracle)
           new(strategy: nil, eager: answers, answered: -> { answers.answered? })
         end
 
         def self.modelled(arm, journal, summarizer, answers_to)
-          misses = Misses.new(loud: summarizer != :recorded)
-          answering = ->(definition) { tier(definition, journal, summarizer) }
+          misses = Misses.new(loud: summarizer.loud?)
+          answering = ->(definition) { summarizer.tier(definition, journal) }
           strategy = ::Lain::CLI::CompactionStrategy.resolve(arm, sink: misses, tier: answering, journal: answers_to)
           new(strategy:, answered: -> { misses.none? }, missed: -> { misses.count })
         end
-
-        # A recorded tier answers `#ask` alone; the strategy resolver reads the full live duck.
-        def self.tier(definition, journal, summarizer)
-          return summarizer.call(definition) unless summarizer == :recorded
-
-          RecordedTier.new(Oracle::Recorded.from_journal(journal.entries, definition:))
-        end
-        private_class_method :eager, :modelled, :tier
+        private_class_method :eager, :modelled
 
         def initialize(strategy:, eager: Compaction::Source::NoSummaries, answered: -> { true }, missed: -> { 0 })
           @strategy = strategy
@@ -442,20 +425,6 @@ module Lain
         def missed = @missed.call
       end
       private_constant :Policy
-
-      # {Oracle::Recorded} in the live-tier duck. It spends nothing, so its usage is empty.
-      class RecordedTier
-        def initialize(recorded)
-          @recorded = recorded
-        end
-
-        def ask(inputs = {}) = @recorded.ask(inputs)
-
-        def model = "recorded"
-
-        def usage = {}
-      end
-      private_constant :RecordedTier
 
       # The sink a summarizing strategy reports a span it could not collapse to. Under the recorded
       # summarizer that is a span with no recorded answer; a summarizer handed in that cannot answer

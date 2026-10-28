@@ -65,7 +65,12 @@ module Lain
         def sweep(paths, fixtures, **) = CompactionSweep.new(journals: paths, planted: fixtures, **@options, **)
 
         def journaled(paths, fixtures, sink)
-          sweep = @local ? sweep(paths, fixtures, summarizer: tier(sink), journal: sink) : sweep(paths, fixtures)
+          sweep = if @local
+                    sweep(paths, fixtures, summarizer: CompactionSweep::Summarizer::Local.new(tier(sink)),
+                                           journal: sink)
+                  else
+                    sweep(paths, fixtures)
+                  end
           @live ? @live.run(sweep, sink) : sweep.report
         end
 
