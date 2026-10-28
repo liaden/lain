@@ -241,7 +241,7 @@ module Lain
         # first one's notifier.
         self.class.registry.reporting_to(@notify) do
           reporting_shift_enter do
-            buffer = reading(prompt, answer:) { ::Reline.readmultiline(prompt, true) { |pending| submit?(pending) } }
+            buffer = keeping_keys { reading(prompt, answer:) { readmultiline(prompt) } }
             buffer && accept(buffer)
           end
         end
@@ -283,6 +283,10 @@ module Lain
       ensure
         ::Reline.prompt_proc = previous
       end
+
+      def readmultiline(prompt) = ::Reline.readmultiline(prompt, true) { |pending| submit?(pending) }
+
+      def keeping_keys(&block) = InputPane::Uncooked.new($stdin).keeping_keys(&block)
 
       def reporting_shift_enter
         terminal = ::Reline.core.output

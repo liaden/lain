@@ -5,17 +5,19 @@ module Lain
     class InputPane
       # The pane's terminal with its line discipline off and its signals on,
       # for the length of a block: keys arrive as typed and unechoed, a Ctrl-C
-      # still reaches the pane's trap, and a paste arrives bracketed, so its
-      # line ends are text. Linux's `struct termios` by ioctl, as TCGETS and
-      # TCSETS move it: four flag words and the line discipline, then the
-      # control characters. Anywhere else the terminal stays as it was, cooked,
-      # and the pane cannot see a draft.
+      # still reaches the pane's trap without flushing the keys written beside
+      # it, and a paste arrives bracketed, so its line ends are text. Linux's
+      # `struct termios` by ioctl, as TCGETS and TCSETS move it: four flag
+      # words and the line discipline, then the control characters. Anywhere
+      # else the terminal stays as it was, cooked, and the pane cannot see a
+      # draft.
       class Uncooked
         TCGETS = 0x5401
         TCSETS = 0x5402
         LFLAG_AT = 12
         ICANON = 0o2
         ECHO = 0o10
+        NOFLSH = 0o200
         VTIME_AT = 17 + 5
         VMIN_AT = 17 + 6
         PASTE_ON = "\e[?2004h"
@@ -40,6 +42,20 @@ module Lain
         end
 
         def uncooked? = !@mine.nil?
+
+        # The terminal keeps unread keys when it raises a Ctrl-C, for the
+        # length of the block: a draft typed in the write that carries the
+        # interrupt is not lost. Left as found when it already does.
+        #
+        # Only the bit is given back, so a mode change made during the block
+        # survives. SIGKILL and SIGTERM skip the restore, as they do for
+        # {#around}; there is no trap.
+        def keeping_keys
+          set = (found = termios) && !flag?(found, NOFLSH) && written(with_flag(found, NOFLSH))
+          yield
+        ensure
+          given_up_flush if set
+        end
 
         # Each read off the terminal, until the task is stopped or the terminal dies.
         #
@@ -73,11 +89,21 @@ module Lain
         end
 
         def owned(found)
-          set = found.dup
-          set[LFLAG_AT, 4] = [set.unpack1("L<", offset: LFLAG_AT) & ~(ICANON | ECHO)].pack("L<")
+          set = with_flag(found, NOFLSH, clear: ICANON | ECHO)
           set.setbyte(VMIN_AT, 1)
           set.setbyte(VTIME_AT, 0)
           written(set).tap { |mine| told(PASTE_ON) if mine }
+        end
+
+        def with_flag(found, flag, clear: 0)
+          found.dup.tap { |set| set[LFLAG_AT, 4] = [(set.unpack1("L<", offset: LFLAG_AT) & ~clear) | flag].pack("L<") }
+        end
+
+        def flag?(found, flag) = found.unpack1("L<", offset: LFLAG_AT).anybits?(flag)
+
+        def given_up_flush
+          now = termios
+          written(with_flag(now, 0, clear: NOFLSH)) if now && flag?(now, NOFLSH)
         end
 
         def given_back

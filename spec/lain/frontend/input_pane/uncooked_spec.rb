@@ -11,12 +11,21 @@ RSpec.describe Lain::Frontend::InputPane::Uncooked do
 
   after { pty.each { |io| io.close unless io.closed? } }
 
-  def modes = `stty -F #{terminal.path} -a`.split(/[\s;]+/) & %w[icanon -icanon echo -echo isig -isig]
+  def modes = `stty -F #{terminal.path} -a`.split(/[\s;]+/) & %w[icanon -icanon echo -echo isig -isig noflsh -noflsh]
 
-  it "turns line editing and echo off for the block, keeps signals, and gives the mode back after" do
+  it "turns line editing and echo off and NOFLSH on for the block, keeps signals, and gives the mode back after" do
     inside = described_class.new(terminal).around { modes }
 
-    expect([inside, modes]).to eq([%w[isig -icanon -echo], %w[isig icanon echo]])
+    expect([inside, modes]).to eq([%w[isig -icanon -echo noflsh], %w[isig icanon echo -noflsh]])
+  end
+
+  it "keeps keys written beside a Ctrl-C for the block and gives back only that bit" do
+    inside = described_class.new(terminal).keeping_keys do
+      terminal.echo = false
+      modes
+    end
+
+    expect([inside, modes]).to eq([%w[isig icanon -echo noflsh], %w[isig icanon -echo -noflsh]])
   end
 
   it "turns bracketed paste on for the block and off after" do

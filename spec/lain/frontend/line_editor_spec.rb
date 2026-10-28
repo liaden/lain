@@ -1300,6 +1300,7 @@ RSpec.describe Lain::Frontend::LineEditor do
             File.write(ARGV[3], Lain::Frontend::LineEditor.typed?.inspect)
           end
         end
+        trap("INT") { nil } if ARGV[1] == "int_with_keys"
         lines = Array.new(ARGV[4].to_i) do
           print "#{ready}"
           $stdout.flush
@@ -1409,8 +1410,18 @@ RSpec.describe Lain::Frontend::LineEditor do
       end
     end
 
-    # A Ctrl-C in the same write as the Enter cannot be driven: the terminal discards unread input when
-    # it raises the interrupt. So the interrupt is raised once the read has returned its line.
+    it "keeps the keys that arrive in the same write as a Ctrl-C" do
+      Dir.mktmpdir do |dir|
+        lines = Timeout.timeout(20) do
+          drive_child("xterm", [{ keys: "hello\x03", settle: 0.3 }], dir, "int_with_keys")
+        end
+
+        expect(lines).to eq(['"hello"'])
+      end
+    end
+
+    # A Ctrl-C in the same write as the Enter is raised once the read has returned its line, so the
+    # interrupt lands after the line is accepted.
     it "does not take an accepted line for a draft when the interrupt is handled after its Enter" do
       Dir.mktmpdir do |dir|
         lines = Timeout.timeout(20) { drive_child("xterm", [{ keys: "hello\r" }], dir, "int_after_enter") }
