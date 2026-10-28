@@ -405,6 +405,18 @@ Unproven; counting only the example's own thread would settle it.
   read it as another wall-clock budget starved, not a product defect. It is one sample; if it recurs
   without a profiler, that makes it a pattern.
 
+  Added 2026-10-28, from landing suites run beside 4 to 8 agents (load 17 to 34). Each went red once
+  in a pre-commit suite, then passed alone and passed with the failing seed 3 of 3 on the base and on
+  the card: `SecretSurface the audit sample of confident approves samples 5 percent by default`
+  (Async timeout); `repo_as_fixture has no example generated from a scan of repository content`
+  (watchdog STUCK, twice); `plugin/tmux lain.tmux against a real tmux server renders 'lain: no state
+  yet' when the pane's project has no state file` ("pane session ... outlived its tmux server");
+  `Lain::Tools::Subagent a one-shot child that does not finish when the ceiling stops a child that had
+  read files and written notes stays within the bound however the lists land against it` (watchdog
+  STUCK); `Lain::CLI::Up a chat pane that dies at once bounds what it costs a HEALTHY launch by the
+  grace it states` (0.43s against a 0.3s wall-clock bound, a threshold the 2026-10-27 ruling bans). The
+  CoreGraph descriptor count above went red again the same day (10 against 8).
+
   Added 2026-10-18, a wall-clock count red once in a pre-commit suite (6 ticks against 15) and green
   alone and in a full suite on the base and on the change: `Lain::Tool::Offload keeps a sibling fiber
   running while the work never gives up the lock between threads`. Red again on 2026-10-19, 6 against
