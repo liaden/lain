@@ -85,7 +85,8 @@ module E2E
     end
 
     def straggler_in(file)
-      command = File.read(file).tr("\0", " ")
+      # Every process on the box is scanned, and a cmdline is whatever bytes its argv held.
+      command = File.binread(file).force_encoding(Encoding::UTF_8).scrub.tr("\0", " ")
       [file[/\d+/].to_i, command.strip] if command.include?(dir.to_s)
     rescue SystemCallError
       nil
