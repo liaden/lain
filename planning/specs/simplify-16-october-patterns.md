@@ -170,7 +170,7 @@ The record recipe every card in T14 to T20 follows, from the exemplar `lib/lain/
 1. Before touching the record, add 1 golden-line example to its mirror spec: build the record with every field set to a representative non-default value, and `expect(JSON.generate(record.to_journal)).to eq(<the literal the current code prints>)`. Run it green on the unchanged code and keep it. Add a second golden line for each `to_journal` override case (a field omitted, a nested term), and a third with every optional field nil, which is the shape the stored corpus holds most often.
 2. Declare a `Carriers::<Record> < Declarative::Carrier` naming every keyword `initialize` accepts, with its default. A field the old code interned (`-x.to_s`) is `attribute :x, :lain_interned` (T11; never `:string`, whose cast writes "f" for false and nil for nil where `-x.to_s` wrote "false" and ""); an optional interned field declares `default: nil` (an omitted attribute with no default is never cast, so it stays nil where the hand code wrote ""); one it only froze is `attribute :x` untyped (`Copy` deep-copies Arrays and Hashes); a `fixed_point` field is `attribute :x, :lain_fixed_point` (T12). Move each `check!` validation onto the same carrier. Delete the hand `Carrier` that `check!` used, if one existed.
 3. `def initialize(**attrs) = super(**Carriers::<Record>.settle!(**attrs))`. Keep an explicit keyword list only where a required keyword has no validation to catch its absence (the `MemoryRoot` reason).
-4. A `to_journal` that dropped fields equal to their defaults becomes `def to_journal = omitting_defaults(super, :a, :b)` (T13). A `to_journal` that nests another record stays as written.
+4. A `to_journal` that dropped fields equal to their defaults becomes `def to_journal = omitting_defaults(super, Carriers::<Record>, :a, :b)` (T13; the record names its carrier, nothing looks it up by name). A `to_journal` that nests another record stays as written.
 5. Drop the `Data.define` then `class X` reopen when the block can hold the body; keep it when the class holds a constant (a constant inside a `Data.define` block scopes to the enclosing module, `CLAUDE.md` Known traps).
 6. Run the mirror spec, `spec/journalable_surface_spec.rb` and `spec/value_object_shareability_spec.rb`. A record without a mirror spec gets one, holding the golden line, a validation example and a shareability example.
 
@@ -641,8 +641,8 @@ Spec file: `spec/lain/telemetry_spec.rb`, `spec/lain/declarative_spec.rb`
 **Interface**
 
 ```ruby
-Declarative::ClassMethods#declared_defaults   # Hash{Symbol=>Object}, memoised, from the carrier's declaration
-Journalable#omitting_defaults(journal, *fields)   # journal minus fields whose value == declared default
+Declarative::ClassMethods#declared_defaults   # Hash{Symbol=>Object}, built per call from the carrier's declaration (a self-redefining memo failed on frozen classes and non-main Ractors)
+Journalable#omitting_defaults(journal, carrier, *fields)   # journal minus fields whose value == the carrier's declared default
 ```
 
 **Stop and report if:**
@@ -752,7 +752,7 @@ Spec file: the 12 mirror specs
 
 **Depends on:** T11, T13
 **Files:** `lib/lain/telemetry/{read_refused,read_released,recording_failed,request_sent,request_resent,search_redacted,source_masked,test_layout_refused,tests_ran,tool_output,truncated_stream,verdict,window_pressure}.rb` and mirror specs
-**Reuse:** `read_refused` and `request_sent` drop `requester` when nil through `omitting_defaults`; `RequestResent < RequestSent` journals under its own type
+**Reuse:** `read_refused` and `request_sent` drop `requester` when nil through `omitting_defaults`; `request_sent` is written on every round trip, so it hoists the defaults into a frozen constant (`DEFAULTS = Carriers::RequestSent.declared_defaults`) rather than paying the per-call lookup (about 7 us, measured in the T13 review); `RequestResent < RequestSent` journals under its own type
 **Shared-file wiring:** none
 **Reachable from:** `Provider::Journaled` emits `RequestSent` on every round trip (`provider/journaled.rb`); the rest grepped before converting
 
@@ -799,7 +799,7 @@ Spec file: the 6 mirror specs, `spec/lain/freezable_spec.rb` (new)
 
 **Depends on:** T11, T13
 **Files:** `lib/lain/telemetry/{approval_pending,handback,shell_arm}.rb`, `spec/lain/telemetry/{approval_pending,handback,shell_arm}_spec.rb`
-**Reuse:** the research spike's `ApprovalPending` conversion; `omitting_defaults(super, :notes, :kind, :input_digest)`; `handback.rb`'s JSON round trip (`stringified`) and `shell_arm.rb`'s `interned_term` returning `NO_TERM` stay as a step before `settle!`
+**Reuse:** the research spike's `ApprovalPending` conversion; `omitting_defaults(super, Carriers::ApprovalPending, :notes, :kind, :input_digest)`; `handback.rb`'s JSON round trip (`stringified`) and `shell_arm.rb`'s `interned_term` returning `NO_TERM` stay as a step before `settle!`
 **Shared-file wiring:** none
 **Reachable from:** `Parked::Queue#park` emits `ApprovalPending` (`approval/parked/queue.rb`); `Handback` from the merge coordinator; `ShellArm` from the shell verdict path
 
@@ -1687,6 +1687,33 @@ Spec file: the owning specs
 - A name has a caller under `spec/` in another subject's spec (memory `spec-census-is-not-a-delete-list`): keep it and list it in the report.
 - `Call#recorded` or `Selection#k` is read by a fixture-driven report (`planning/qa/`); keep it.
 
+### T48: Assert the WebFetch walk budget as a property, not a wall-clock bound          [risk: low]
+
+**Depends on:** none
+**Files:** `spec/lain/tools/web_fetch_spec.rb`, `docs/toolchain-traps.md` (retire the example from the known-flake list, by name)
+**Reuse:** `Lain::Tools::WebFetch::Readable::Page::WALK_BUDGET`; the user's 2026-10-27 ruling that specs carry no wall-clock thresholds (assert the property, or move the timing to `bin/hot-path-bench`)
+**Shared-file wiring:** none
+**Reachable from:** the spec runs under `rake pspec`
+
+Added during execution: "refuses a page of more nodes than the walk budget quickly, naming raw" went red twice in this run's commit hooks (3.04s and 3.03s against a 3s bound) and ran in 0.76s alone each time; it is already on the known-flake list.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: the walk stops at the budget
+  Given a page of more nodes than WALK_BUDGET
+  When the page is fetched
+  Then the result is the refusal naming raw, and the walk visited no more than WALK_BUDGET nodes (counted, not timed)
+
+Scenario: no wall clock in the example
+  When grep -n "clock_gettime" spec/lain/tools/web_fetch_spec.rb runs
+  Then the example holds no timing assertion
+```
+Spec file: `spec/lain/tools/web_fetch_spec.rb`
+
+**Stop and report if:**
+- Counting visited nodes needs a production seam that does not exist; then report the smallest one rather than adding it unasked.
+
 ## Integration checks
 
 After the last card lands, in this order:
@@ -1771,3 +1798,20 @@ Commit checks (`.pre-commit-config.yaml`), as an agent can run them on its own p
 - T43 landed `5e002904`
 - T44 landed `5bba92ec`
 - T23 landed `b9e0a02d`
+- Checkpoint 2026-10-28: 24 cards landed (T1, T2, T5 to T12, T14, T17, T19, T21 to T23, T30, T36 to T39, T43, T44, T46); T32 and T35 closed without change. Ready: T3, T4, T13, T25, T26, T31. Blocked on those: the rest. Worktrees from here set `CARGO_TARGET_DIR` to the main build instead of linking `target/`.
+- T3 started (worktree `tmp/worktrees/s16-T3`, cut at `321c3b7a`)
+- T4 started (worktree `tmp/worktrees/s16-T4`, cut at `321c3b7a`)
+- T13 started (worktree `tmp/worktrees/s16-T13`, cut at `321c3b7a`)
+- T25 started (worktree `tmp/worktrees/s16-T25`, cut at `321c3b7a`)
+- T26 started (worktree `tmp/worktrees/s16-T26`, cut at `321c3b7a`)
+- T31 started (worktree `tmp/worktrees/s16-T31`, cut at `321c3b7a`)
+- T13 review: `omitting_defaults` takes the carrier explicitly and the defaults are built at declare time; the recipe's step 4 and T13's interface are updated to match
+- T25 plan-gap: Files widened to `spec/lain/bench/compaction_sweep/live_spec.rb` (passes a bare lambda as `summarizer:`)
+- T4 plan-gap: Files widened to `spec/lain/cli/wiring_spec.rb` (2 examples read the removed `Inputs#child_env` and `#history`)
+- T4 landed `39b87ac9`
+- T3 landed `1ed9d517`
+- T13 landed `be131ba3`
+- T25 landed `a76f1e1e`
+- T26 landed `df614cf2`
+- T31 landed `59c50629`
+- T48 added: the WebFetch walk-budget wall-clock flake repeated (T22 and T3 hooks), so it becomes a card under the 2026-10-27 no-wall-clock ruling
