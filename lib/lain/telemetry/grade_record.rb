@@ -8,10 +8,14 @@ module Lain
       # `presence:`-cannot-reject-`false` reasoning as {Verdict}'s `survived`),
       # and explain itself.
       class GradeRecord < Declarative::Carrier
-        attribute :grader
-        attribute :subject_digest
+        attribute :grader, :lain_interned
+        attribute :score
         attribute :pass
-        attribute :why
+        attribute :why, :lain_interned
+        attribute :subject_digest
+        attribute :criteria_digest, default: nil
+        attribute :arm, default: nil
+        attribute :grader_digest, default: nil
         validates :grader, presence: { message: "must name the grader class, got nil" }
         validates :subject_digest, presence: { message: "must name the subject graded, got nil" }
         validates :pass, inclusion: { in: [true, false], message: "must be true or false, got %<value>s" }
@@ -50,21 +54,10 @@ module Lain
             grader_digest:)
       end
 
-      def initialize(grader:, score:, pass:, why:, subject_digest:, criteria_digest: nil, arm: nil,
-                     grader_digest: nil)
-        grader = grader.to_s
-        Carriers::GradeRecord.check!(grader:, subject_digest:, pass:, why:)
-
-        super(
-          grader: grader.dup.freeze,
-          score: score.to_f.clamp(0.0, 1.0),
-          pass:,
-          why: -why.to_s,
-          subject_digest: subject_digest.dup.freeze,
-          criteria_digest: criteria_digest&.dup&.freeze,
-          arm: arm && -arm.to_s,
-          grader_digest: grader_digest&.dup&.freeze
-        )
+      def initialize(grader:, score:, pass:, why:, subject_digest:, criteria_digest: nil, arm: nil, grader_digest: nil)
+        super(**Carriers::GradeRecord.settle!(grader:, score: score.to_f.clamp(0.0, 1.0), pass:, why:,
+                                              subject_digest:, criteria_digest:, grader_digest:,
+                                              arm: arm&.then { -_1.to_s }))
       end
     end
   end

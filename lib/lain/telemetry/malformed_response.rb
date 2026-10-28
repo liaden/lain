@@ -38,8 +38,9 @@ module Lain
       # today carry a nonsense `tool_name` or `excerpt`.
       class MalformedResponse < Declarative::Carrier
         attribute :kind
-        attribute :tool_name
-        attribute :excerpt
+        attribute :model, default: nil
+        attribute :tool_name, default: nil
+        attribute :excerpt, default: nil
         KINDS = %i[prose_tool_call empty_answer cut_tool_call bare_tool_call].freeze
 
         validates :kind, inclusion: { in: KINDS, message: "must be one of #{KINDS.join(", ")}, got %<value>s" }
@@ -120,14 +121,12 @@ module Lain
         # `&.`, where the sibling writes a bare `.to_sym`, so a nil still
         # reaches the guard and is refused BY NAME rather than dying in a
         # NoMethodError one frame lower.
-        kind = kind&.to_sym
-        Carriers::MalformedResponse.check!(kind:, tool_name:, excerpt:)
+        settled = Carriers::MalformedResponse.settle!(kind: kind&.to_sym, tool_name:, excerpt:, model:)
 
-        super(kind:, model: model&.dup&.freeze, tool_name: tool_name&.dup&.freeze,
-              # Qualified, not bare: a `def` inside a `Data.define` block keeps
-              # the ENCLOSING module's cref, so an unqualified constant would be
-              # looked up in Telemetry and raise NameError.
-              excerpt: excerpt&.slice(0, MalformedResponse::EXCERPT_LIMIT)&.freeze)
+        # Qualified, not bare: a `def` inside a `Data.define` block keeps
+        # the ENCLOSING module's cref, so an unqualified constant would be
+        # looked up in Telemetry and raise NameError.
+        super(**settled, excerpt: settled[:excerpt]&.slice(0, MalformedResponse::EXCERPT_LIMIT)&.freeze)
       end
     end
 

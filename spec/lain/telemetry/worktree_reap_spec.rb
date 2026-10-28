@@ -43,4 +43,42 @@ RSpec.describe Lain::Telemetry::WorktreeReap do
 
     expect(record).to be_deeply_frozen
   end
+
+  describe "journal bytes" do
+    it "prints every field when all are set" do
+      record = described_class.new(action: :kept, subject: :worktree, name: "/x", reason: "r", anchors: ["refs/a"])
+
+      expect(JSON.generate(record.to_journal)).to eq(
+        '{"type":"worktree_reap","action":"kept","subject":"worktree","name":"/x","reason":"r",' \
+        '"anchors":["refs/a"]}'
+      )
+    end
+
+    it "prints an empty anchors list by default" do
+      record = described_class.new(action: :reaped, subject: :branch, name: "refs/heads/x", reason: "merged")
+
+      expect(JSON.generate(record.to_journal)).to eq(
+        '{"type":"worktree_reap","action":"reaped","subject":"branch","name":"refs/heads/x",' \
+        '"reason":"merged","anchors":[]}'
+      )
+    end
+  end
+
+  describe "interning and refusals" do
+    def fresh(**extra)
+      described_class.new(action: :kept, subject: :worktree, name: +"/x", reason: +"r", anchors: [+"refs/a"], **extra)
+    end
+
+    it "interns name, reason and each anchor across equal records" do
+      a = fresh
+      b = fresh
+
+      expect([a.name.equal?(b.name), a.reason.equal?(b.reason), a.anchors.first.equal?(b.anchors.first)])
+        .to eq([true] * 3)
+    end
+
+    it "refuses an unknown keyword with ArgumentError" do
+      expect { fresh(bogus: 1) }.to raise_error(ArgumentError)
+    end
+  end
 end

@@ -1288,7 +1288,7 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
     # reason two identical class checks in two files are safe to keep.
     it "leaves TurnUsage the only Telemetry record answering both #usage and #digest" do
       dual_field = ObjectSpace.each_object(Class).select do |klass|
-        klass.name.to_s.start_with?("Lain::Telemetry::") &&
+        klass.name.to_s.start_with?("Lain::Telemetry::") && !klass.name.start_with?("Lain::Telemetry::Carriers::") &&
           klass.method_defined?(:usage) && klass.method_defined?(:digest)
       end
 

@@ -7,7 +7,12 @@ module Lain
       # name the worker it belongs to.
       class IsolationLease < Declarative::Carrier
         attribute :kind
-        attribute :worker_key
+        attribute :worker_key, :lain_interned
+        attribute :backend, :lain_interned
+        attribute :service, default: nil
+        attribute :path, default: nil
+        attribute :base, default: nil
+        attribute :branch, default: nil
         validates :kind, inclusion: { in: %i[acquired released kept service_provisioned service_torn_down],
                                       message: "must be one of acquired/released/kept/service_provisioned/" \
                                                "service_torn_down, got %<value>s" }
@@ -45,17 +50,10 @@ module Lain
       include Journalable
 
       def initialize(kind:, worker_key:, backend:, service: nil, path: nil, base: nil, branch: nil)
-        kind = kind.to_sym
-        Carriers::IsolationLease.check!(kind:, worker_key:)
-
-        super(
-          kind:,
-          worker_key: worker_key.to_s.dup.freeze,
-          backend: backend.to_s.dup.freeze,
-          service: service&.to_s&.freeze,
-          path: Freezable::Fields.pinned(path), base: Freezable::Fields.pinned(base),
-          branch: Freezable::Fields.pinned(branch)
-        )
+        super(**Carriers::IsolationLease.settle!(
+          kind: kind.to_sym, worker_key:, backend:, service: service&.to_s,
+          path: path&.then { -_1.to_s }, base: base&.then { -_1.to_s }, branch: branch&.then { -_1.to_s }
+        ))
       end
     end
   end

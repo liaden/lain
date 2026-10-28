@@ -6,7 +6,10 @@ module Lain
       # A usage record must name the turn it paid for and why the model stopped.
       class TurnUsage < Declarative::Carrier
         attribute :digest
+        attribute :model, default: nil
         attribute :stop_reason
+        attribute :usage, :lain_canonical
+        attribute :spawn, default: nil
         validates :digest, presence: { message: "must name the committed turn, got nil" }
         validates :stop_reason, presence: { message: "must name why the model stopped, got nil" }
       end
@@ -35,15 +38,8 @@ module Lain
       include Journalable
 
       def initialize(digest:, model:, stop_reason:, usage:, spawn: nil)
-        Carriers::TurnUsage.check!(digest:, stop_reason:)
-
-        super(
-          digest: digest.dup.freeze,
-          model: model&.to_s&.freeze,
-          stop_reason: stop_reason.to_sym,
-          usage: Canonical.normalize(usage),
-          spawn: spawn && -spawn.to_s
-        )
+        super(**Carriers::TurnUsage.settle!(digest:, model: model&.to_s, stop_reason: stop_reason&.to_sym, usage:,
+                                            spawn: spawn&.then { -_1.to_s }))
       end
 
       def to_journal = spawn ? super : super.except("spawn")

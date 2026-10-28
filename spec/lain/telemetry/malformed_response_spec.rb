@@ -170,4 +170,25 @@ RSpec.describe Lain::Telemetry::MalformedResponse do
     expect { described_class.new(kind: nil, tool_name: "bash", excerpt: "x") }
       .to raise_error(ArgumentError, /kind must be one of prose_tool_call/)
   end
+
+  describe "journal bytes" do
+    it "prints every field when all are set" do
+      expect(JSON.generate(event.to_journal)).to eq(
+        '{"type":"malformed_response","kind":"prose_tool_call","model":"qwen3-coder:30b",' \
+        '"tool_name":"bash","excerpt":"<function=bash>\n</function>"}'
+      )
+    end
+
+    it "prints null for every optional field" do
+      record = described_class.new(kind: :empty_answer)
+
+      expect(JSON.generate(record.to_journal)).to eq(
+        '{"type":"malformed_response","kind":"empty_answer","model":null,"tool_name":null,"excerpt":null}'
+      )
+    end
+  end
+
+  it "refuses an unknown keyword with ArgumentError" do
+    expect { described_class.new(kind: :empty_answer, bogus: 1) }.to raise_error(ArgumentError)
+  end
 end

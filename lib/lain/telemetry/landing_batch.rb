@@ -6,9 +6,19 @@ module Lain
       # A landing batch must name the branch it landed on and the desk and outcome
       # it reached.
       class LandingBatch < Declarative::Carrier
-        attribute :branch
+        attribute :branch, :lain_interned
         attribute :desk
+        attribute :verifier, default: nil
+        attribute :worker_keys
+        attribute :landed
+        attribute :ejected
+        attribute :declined
+        attribute :verifies
+        attribute :rebuilds
+        attribute :verify_wall_s
+        attribute :queue_wait_s
         attribute :outcome
+        attribute :flagged, default: -> { {} }
         validates :branch, presence: { message: "must name the branch the batch landed on, got nil" }
         validates :desk, inclusion: { in: %i[parent candidate],
                                       message: "must be one of parent/candidate, got %<value>s" }
@@ -29,22 +39,23 @@ module Lain
 
       def initialize(branch:, desk:, verifier:, worker_keys:, landed:, ejected:, declined:, verifies:, rebuilds:,
                      verify_wall_s:, queue_wait_s:, outcome:, flagged: {})
-        desk = desk&.to_sym
-        outcome = outcome&.to_sym
-        Carriers::LandingBatch.check!(branch:, desk:, outcome:)
-
-        super(branch: -branch.to_s, desk:, verifier: Freezable::Fields.pinned(verifier),
-              worker_keys: Freezable::Fields.pinned_each(worker_keys), landed: Freezable::Fields.pinned_each(landed),
-              ejected: Freezable::Fields.pinned_each(ejected), declined: Freezable::Fields.pinned_each(declined),
-              verifies: Integer(verifies), rebuilds: Integer(rebuilds), verify_wall_s: Float(verify_wall_s),
-              queue_wait_s: Ractor.make_shareable(queue_wait_s.to_h { |key, wait| [key.to_s, Float(wait)] }),
-              outcome:,
-              flagged: self.class.pinned_flags(flagged))
+        super(**Carriers::LandingBatch.settle!(
+          branch:, desk: desk&.to_sym, outcome: outcome&.to_sym, verifier: verifier&.then { -_1.to_s },
+          worker_keys: names(worker_keys), landed: names(landed),
+          ejected: names(ejected), declined: names(declined),
+          verifies: Integer(verifies), rebuilds: Integer(rebuilds), verify_wall_s: Float(verify_wall_s),
+          queue_wait_s: waits(queue_wait_s),
+          flagged: flags(flagged)
+        ))
       end
 
-      def self.pinned_flags(flagged)
-        Ractor.make_shareable(flagged.to_h { |key, flags| [key.to_s, flags.map { |flag| -flag.to_s }] })
-      end
+      private
+
+      def names(list) = list.map { -_1.to_s }
+
+      def flags(flagged) = flagged.to_h { |key, list| [key.to_s, names(list)] }
+
+      def waits(queue_wait_s) = queue_wait_s.to_h { |key, wait| [key.to_s, Float(wait)] }
     end
   end
 end

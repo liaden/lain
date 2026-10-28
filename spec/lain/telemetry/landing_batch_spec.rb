@@ -44,4 +44,57 @@ RSpec.describe Lain::Telemetry::LandingBatch do
   it "refuses a record that names no branch" do
     expect { build(branch: nil) }.to raise_error(ArgumentError, /branch/)
   end
+
+  describe "journal bytes" do
+    it "prints every field when all are set" do
+      record = build(verifies: 2, rebuilds: 1, ejected: %w[w-2], landed: %w[w-1], outcome: :partial,
+                     queue_wait_s: { "w-1" => 0.2, "w-2" => 3 }, flagged: { "w-1" => ["hooks"] })
+
+      expect(JSON.generate(record.to_journal)).to eq(
+        '{"type":"landing_batch","branch":"main","desk":"parent","verifier":"rake spec",' \
+        '"worker_keys":["w-1","w-2"],"landed":["w-1"],"ejected":["w-2"],"declined":[],"verifies":2,' \
+        '"rebuilds":1,"verify_wall_s":1.5,"queue_wait_s":{"w-1":0.2,"w-2":3.0},"outcome":"partial",' \
+        '"flagged":{"w-1":["hooks"]}}'
+      )
+    end
+
+    it "prints null and empty collections for every optional field" do
+      record = build(verifier: nil, worker_keys: [], landed: [], queue_wait_s: {})
+
+      expect(JSON.generate(record.to_journal)).to eq(
+        '{"type":"landing_batch","branch":"main","desk":"parent","verifier":null,"worker_keys":[],' \
+        '"landed":[],"ejected":[],"declined":[],"verifies":1,"rebuilds":0,"verify_wall_s":1.5,' \
+        '"queue_wait_s":{},"outcome":"landed","flagged":{}}'
+      )
+    end
+  end
+
+  describe "interning and refusals" do
+    def fresh
+      build(branch: +"main", verifier: +"v", worker_keys: [+"w-1"], landed: [+"w-1"], ejected: [+"w-2"],
+            declined: [+"w-3"])
+    end
+
+    it "interns branch, verifier and every key list across equal records" do
+      a = fresh
+      b = fresh
+
+      expect([a.branch.equal?(b.branch), a.verifier.equal?(b.verifier), a.worker_keys.first.equal?(b.worker_keys.first),
+              a.landed.first.equal?(b.landed.first), a.ejected.first.equal?(b.ejected.first),
+              a.declined.first.equal?(b.declined.first)]).to eq([true] * 6)
+    end
+
+    it "interns each flag across equal records" do
+      a = build(flagged: { +"w-1" => [+"hooks"] })
+      b = build(flagged: { +"w-1" => [+"hooks"] })
+
+      expect(a.flagged["w-1"].first).to equal(b.flagged["w-1"].first)
+    end
+
+    it "refuses an unknown keyword, a missing one and a nil list with ArgumentError or TypeError" do
+      expect { build(bogus: 1) }.to raise_error(ArgumentError)
+      expect { build(verifies: nil) }.to raise_error(TypeError)
+      expect { build(landed: nil) }.to raise_error(NoMethodError)
+    end
+  end
 end

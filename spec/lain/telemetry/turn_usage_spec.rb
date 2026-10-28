@@ -65,4 +65,50 @@ RSpec.describe Lain::Telemetry::TurnUsage do
       .to eq(["blake3:spawn", nil, false])
     expect(child).to be_deeply_frozen
   end
+
+  describe "journal bytes" do
+    let(:usage) { { input_tokens: 10 } }
+
+    it "prints the spawn key when a child paid" do
+      record = described_class.new(digest: "blake3:abc", model: "claude", stop_reason: :end_turn, usage:,
+                                   spawn: "blake3:spawn")
+
+      expect(JSON.generate(record.to_journal)).to eq(
+        '{"type":"turn_usage","digest":"blake3:abc","model":"claude","stop_reason":"end_turn",' \
+        '"usage":{"input_tokens":10},"spawn":"blake3:spawn"}'
+      )
+    end
+
+    it "leaves the spawn key out for the run own payment" do
+      record = described_class.new(digest: "blake3:abc", model: "claude", stop_reason: :end_turn, usage:)
+
+      expect(JSON.generate(record.to_journal)).to eq(
+        '{"type":"turn_usage","digest":"blake3:abc","model":"claude","stop_reason":"end_turn",' \
+        '"usage":{"input_tokens":10}}'
+      )
+    end
+
+    it "prints a null model" do
+      record = described_class.new(digest: "blake3:abc", model: nil, stop_reason: :end_turn, usage: {})
+
+      expect(JSON.generate(record.to_journal)).to eq(
+        '{"type":"turn_usage","digest":"blake3:abc","model":null,"stop_reason":"end_turn","usage":{}}'
+      )
+    end
+  end
+
+  describe "interning and refusals" do
+    def fresh(**extra)
+      described_class.new(digest: +"blake3:abc", model: +"m", stop_reason: :end_turn, usage: {}, spawn: +"s", **extra)
+    end
+
+    it "interns spawn across equal records" do
+      expect(fresh.spawn).to equal(fresh.spawn)
+    end
+
+    it "refuses an unknown keyword and a missing usage with ArgumentError" do
+      expect { fresh(bogus: 1) }.to raise_error(ArgumentError)
+      expect { described_class.new(digest: "d", model: nil, stop_reason: :end_turn) }.to raise_error(ArgumentError)
+    end
+  end
 end

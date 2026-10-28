@@ -8,8 +8,9 @@ module Lain
       class WorktreeReap < Declarative::Carrier
         attribute :action
         attribute :subject
-        attribute :name
-        attribute :reason
+        attribute :name, :lain_interned
+        attribute :reason, :lain_interned
+        attribute :anchors, default: -> { [] }
         validates :action, inclusion: { in: %i[reaped kept], message: "must be one of reaped/kept, got %<value>s" }
         validates :subject, inclusion: { in: %i[worktree anchor branch],
                                          message: "must be one of worktree/anchor/branch, got %<value>s" }
@@ -27,12 +28,8 @@ module Lain
       include Journalable
 
       def initialize(action:, subject:, name:, reason:, anchors: [])
-        action = action.to_sym
-        subject = subject.to_sym
-        Carriers::WorktreeReap.check!(action:, subject:, name:, reason:)
-
-        super(action:, subject:, name: -name.to_s, reason: -reason.to_s,
-              anchors: Freezable::Fields.pinned_each(anchors))
+        super(**Carriers::WorktreeReap.settle!(action: action.to_sym, subject: subject.to_sym, name:, reason:,
+                                               anchors: anchors.map { -_1.to_s }))
       end
 
       def reaped? = action == :reaped

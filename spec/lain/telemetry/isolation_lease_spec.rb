@@ -38,4 +38,51 @@ RSpec.describe Lain::Telemetry::IsolationLease do
     expect { described_class.new(kind: :borrowed, worker_key: "w-1", backend: "B") }
       .to raise_error(ArgumentError, /kind/)
   end
+
+  describe "journal bytes" do
+    it "prints every field when all are set" do
+      record = described_class.new(kind: :acquired, worker_key: "w-1", backend: "Lain::Isolation::Worktree",
+                                   service: "postgres", path: "/state/x", base: "a" * 40, branch: "feat")
+
+      expect(JSON.generate(record.to_journal)).to eq(
+        '{"type":"isolation_lease","kind":"acquired","worker_key":"w-1","backend":"Lain::Isolation::Worktree",' \
+        "\"service\":\"postgres\",\"path\":\"/state/x\",\"base\":\"#{"a" * 40}\",\"branch\":\"feat\"}"
+      )
+    end
+
+    it "prints null for every optional field" do
+      record = described_class.new(kind: :released, worker_key: "w-1", backend: "B")
+
+      expect(JSON.generate(record.to_journal)).to eq(
+        '{"type":"isolation_lease","kind":"released","worker_key":"w-1","backend":"B","service":null,' \
+        '"path":null,"base":null,"branch":null}'
+      )
+    end
+  end
+
+  describe "interning and refusals" do
+    def build(**extra)
+      described_class.new(kind: :acquired, worker_key: +"w", backend: +"B", path: +"/p", base: +"b", branch: +"br",
+                          **extra)
+    end
+
+    it "interns path, base and branch across equal records" do
+      a = build
+      b = build
+
+      expect([a.path.equal?(b.path), a.base.equal?(b.base), a.branch.equal?(b.branch)]).to eq([true] * 3)
+    end
+
+    it "interns worker_key and backend across equal records" do
+      a = build
+      b = build
+
+      expect([a.worker_key.equal?(b.worker_key), a.backend.equal?(b.backend)]).to eq([true, true])
+    end
+
+    it "refuses an unknown keyword and a missing worker_key with ArgumentError" do
+      expect { build(bogus: 1) }.to raise_error(ArgumentError)
+      expect { described_class.new(kind: :acquired, backend: "B") }.to raise_error(ArgumentError)
+    end
+  end
 end
