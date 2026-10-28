@@ -224,4 +224,38 @@ RSpec.describe Lain::Telemetry do
                                         bytes_after: 100, rewrite_cost:, payback:, verdict: :rewrite_now)
     end
   end
+
+  describe "Journalable#omitting_defaults" do
+    before do
+      stub_const("Lain::Telemetry::Carriers::Probe", Class.new(Lain::Declarative::Carrier) do
+        attribute :notes, default: -> { [] }
+        attribute :kind, default: "tool"
+        attribute :extra, default: "x"
+      end)
+      stub_const("Lain::Telemetry::Probe", Data.define(:notes, :kind, :extra) do
+        include Lain::Telemetry::Journalable
+
+        def initialize(**attrs) = super(**Lain::Telemetry::Carriers::Probe.settle!(**attrs))
+
+        def to_journal = omitting_defaults(super, Lain::Telemetry::Carriers::Probe, :notes, :kind)
+      end)
+    end
+
+    it "drops a named field at its default and keeps type first" do
+      journal = Lain::Telemetry::Probe.new.to_journal
+
+      expect(journal).to eq("type" => "probe", "extra" => "x")
+      expect(journal.keys.first).to eq("type")
+    end
+
+    it "keeps a named field off its default" do
+      journal = Lain::Telemetry::Probe.new(kind: "command", notes: ["n"]).to_journal
+
+      expect(journal).to include("kind" => "command", "notes" => ["n"])
+    end
+
+    it "never drops a field the call did not name" do
+      expect(Lain::Telemetry::Probe.new(extra: "x").to_journal).to include("extra" => "x")
+    end
+  end
 end

@@ -29,6 +29,17 @@ module Lain
         { "type" => journal_type }.merge(to_h.transform_keys(&:to_s))
       end
 
+      # Drops a named field only while it equals the carrier's default, so the
+      # journal shows what departed from the norm.
+      # @param journal [Hash{String=>Object}]
+      # @param carrier [Class] the record's {Lain::Declarative::Carrier}
+      # @param fields [Array<Symbol>]
+      # @return [Hash{String=>Object}]
+      def omitting_defaults(journal, carrier, *fields)
+        defaults = carrier.declared_defaults
+        journal.reject { |key, value| fields.include?(key.to_sym) && value == defaults.fetch(key.to_sym) }
+      end
+
       # The class's short name in snake_case, so {ToolOutput} journals as
       # `"tool_output"`. `String#underscore` is byte-identical to the hand-rolled
       # gsub it replaced for every current event -- an equivalence the spec pins,

@@ -279,4 +279,23 @@ RSpec.describe Lain::Declarative do
     expect(declared.declared_carrier).to be < Lain::Declarative::Carrier
     expect(declared.new).not_to respond_to(:valid?)
   end
+
+  describe ".declared_defaults" do
+    it "answers each declared attribute's default, a lambda default compared by value" do
+      declared = declaring_class do
+        attribute :kind, default: "tool"
+        attribute :notes, default: -> { [] }
+        attribute :head
+      end
+
+      expect(declared.declared_carrier.declared_defaults).to eq(kind: "tool", notes: [], head: nil)
+    end
+
+    it "answers on a frozen class" do
+      declared = declaring_class { attribute :kind, default: "tool" }
+      declared.freeze
+
+      expect(declared.declared_defaults).to eq(kind: "tool")
+    end
+  end
 end

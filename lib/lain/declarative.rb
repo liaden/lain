@@ -142,6 +142,10 @@ module Lain
       # @raise [UnsettleableAttribute] if an attribute holds a live collaborator
       def settle!(**attrs) = validated(**attrs).settled
 
+      # @return [Hash{Symbol => Object}] each declared attribute's default, built per call
+      #   so a lambda default stays fresh and a frozen class still answers.
+      def declared_defaults = declared_carrier.new.attributes.transform_keys(&:to_sym).freeze
+
       private
 
       # Raise naming EVERY offending attribute, so one raise reports the whole
