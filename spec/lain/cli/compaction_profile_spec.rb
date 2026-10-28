@@ -73,6 +73,15 @@ RSpec.describe Lain::CLI::CompactionProfile do
         .to raise_error(described_class::UnknownTrigger, /"everything".*head, request/)
     end
 
+    it "refuses an unknown trigger wherever the value is built" do
+      expect { described_class.typed({ compact_trigger: "everything" }) }
+        .to raise_error(described_class::UnknownTrigger, /"everything".*head, request/)
+    end
+
+    it "has every flag unset in UNSET" do
+      expect(described_class::UNSET.to_h).to eq(described_class::FLAGS.keys.to_h { [_1, nil] })
+    end
+
     it "records a typed trigger in the header" do
       expect(described_class.typed({ compact_trigger: "request" }).to_header).to include("compact_trigger" => "request")
     end
