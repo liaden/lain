@@ -11,9 +11,14 @@ require "stringio"
 RSpec.describe Lain::CLI::Repl::Ask do
   let(:timeline) { instance_double(Lain::Ext::Timeline, head_digest: "sha-head") }
   let(:context) { instance_double(Lain::Context, max_tokens: 4096) }
-  let(:agent) { instance_double(Lain::Agent, timeline:, context:) }
+  let(:agent) { instance_double(Lain::Agent, timeline:, context:, iterations: 3) }
   let(:tty) { instance_double(Lain::Frontend::TTY, render_error: nil, render_warning: nil, render_response: nil) }
-  let(:chronicle) { instance_double(Lain::CLI::Chronicle::Null, catch_up: nil, interrupted: nil, replaced: nil) }
+  let(:journal) { [] }
+  let(:chronicle) do
+    instance_double(Lain::CLI::Chronicle::Null, catch_up: nil, interrupted: nil, replaced: nil).tap do |double|
+      allow(double).to receive(:settled) { |record| journal << record }
+    end
+  end
   let(:ask) { described_class.new(agent:, tty:, chronicle:) }
   let(:response) { Lain::Response.new(content: [{ "type" => "text", "text" => "hi" }], stop_reason: :end_turn) }
 
@@ -27,6 +32,63 @@ RSpec.describe Lain::CLI::Repl::Ask do
     raise Lain::Provider::Anthropic::APIError.new("no chunk for 30.0s"), cause: stall
   rescue Lain::Provider::Anthropic::APIError => e
     e
+  end
+
+  describe "#settle of a finished ask" do
+    it "journals ask_settled after the turns are caught up" do
+      allow(agent).to receive(:ask).and_return(response)
+
+      ask.settle(ask.attempt("go"))
+
+      expect(chronicle).to have_received(:catch_up).with(timeline)
+      expect(journal.map(&:class)).to eq([Lain::Telemetry::AskSettled])
+      expect(journal.first).to have_attributes(head: "sha-head", stop_reason: "end_turn", turns: 3)
+      expect(journal.first.seconds).to be_a(Float).and be >= 0
+    end
+
+    it "journals nothing for a refusal" do
+      allow(agent).to receive(:ask).and_raise(Lain::Budget::Exceeded.new("ceiling"))
+
+      ask.settle(ask.attempt("go"))
+
+      expect(chronicle).to have_received(:interrupted)
+      expect(journal).to be_empty
+    end
+
+    it "journals nothing for a failed stop" do
+      truncated = Lain::Response.new(content: [{ "type" => "text", "text" => "hi" }], stop_reason: :max_tokens)
+      allow(agent).to receive(:ask).and_return(truncated)
+
+      ask.settle(ask.attempt("go"))
+
+      expect(journal).to be_empty
+    end
+  end
+
+  describe "over a real Agent, Chronicle and Journal", :seam do
+    let(:real_context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 256, system: "be terse") }
+    let(:real_agent) do
+      Lain::Agent.new(provider: Lain::Provider::Mock.new(responses: [text_response("hello")]),
+                      toolset: Lain::Toolset.new([]), context: real_context)
+    end
+    let(:io) { StringIO.new }
+    let(:real_chronicle) { Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io:)) }
+    let(:display) { [] }
+    let(:records) { io.string.each_line.map { |line| JSON.parse(line) } }
+
+    it "journals ask_settled once after the last turn record and tells the display channel" do
+      real_chronicle.wrap_tee(display)
+      real_chronicle.start(context: real_context, toolset: real_agent.toolset)
+      real_ask = described_class.new(agent: real_agent, tty:, chronicle: real_chronicle)
+
+      real_ask.settle(real_ask.attempt("hi"))
+
+      types = records.map { |record| record["type"] }
+      expect(types.count("ask_settled")).to eq(1)
+      expect(types.last).to eq("ask_settled")
+      expect(types.rindex("turn")).to be < types.index("ask_settled")
+      expect(display.map(&:class)).to include(Lain::Telemetry::AskSettled)
+    end
   end
 
   describe "#attempt" do

@@ -34,12 +34,16 @@ module Lain
       class Ask
         # @param agent [Lain::Agent] asked, and the Timeline an interrupt anchors from
         # @param tty [#render_error] the one boundary a refusal is said at
-        # @param chronicle [#catch_up, #interrupted] the session record
-        def initialize(agent:, tty:, chronicle:)
+        # @param clock [#call] monotonic seconds; the elapsed time of {#settle}'s record
+        # @param chronicle [#catch_up, #interrupted, #settled] the session record
+        def initialize(agent:, tty:, chronicle:, clock: RunClock::MONOTONIC)
           @agent = agent
           @tty = tty
           @chronicle = chronicle
+          @clock = clock
           @unfold = NOTHING_FOLDED
+          # An Ask is built per prompt, so construction time is the prompt's start.
+          @started = @clock.call
         end
 
         # @return [Lain::Response, Lain::Error] the model's answer, or the
@@ -62,7 +66,9 @@ module Lain
         def settle(outcome)
           return refuse(outcome) if outcome.is_a?(Lain::Error)
 
-          outcome&.failure ? say_failure(outcome) : outcome
+          return say_failure(outcome) if outcome&.failure
+
+          outcome&.tap { |response| record_settled(response) }
         end
 
         RESENDING = "the prompt at the head has no answer on this chain, so this ask carries it too -- " \
@@ -88,6 +94,14 @@ module Lain
           @tty.render_error(failure.message)
           remedy_for(response).each { |line| @tty.render_error(line) }
           nil
+        end
+
+        def record_settled(response)
+          @chronicle.catch_up(@agent.timeline)
+          seconds = @clock.call - @started
+          @chronicle.settled(Telemetry::AskSettled.new(head: @agent.timeline.head_digest,
+                                                       stop_reason: response.stop_reason,
+                                                       turns: @agent.iterations, seconds:))
         end
 
         def remedy_for(response)

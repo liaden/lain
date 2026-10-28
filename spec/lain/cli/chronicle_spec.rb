@@ -548,6 +548,17 @@ RSpec.describe Lain::CLI::Chronicle do
         .to eq(%w[rewound rewound run_interrupted])
     end
 
+    it "writes a settled ask to the file once and tells the views" do
+      views = []
+      started(views)
+      settled = Lain::Telemetry::AskSettled.new(head: line.head_digest, stop_reason: :end_turn, turns: 1, seconds: 0.5)
+
+      expect(chronicle.settled(settled)).to be(chronicle)
+
+      expect(of_type("ask_settled").size).to eq(1)
+      expect(views).to eq([settled])
+    end
+
     # The move the record announces is already on disk and still has to happen
     # in the caller: a `/rewind` that raised here would leave the Agent at a
     # head the record has retreated from, and every later catch_up refusing.
@@ -874,6 +885,17 @@ RSpec.describe Lain::CLI::Chronicle do
                              Lain::SessionRecord.retreat(from: nil, to: timeline.head_digest,
                                                          landing: folded.head_digest),
                              Lain::Telemetry::RunInterrupted.new(head: timeline.head_digest, reason: :stopped)])
+        expect(tee_records).to be_empty
+      end
+
+      it "tells the views a settled ask, and writes it nowhere" do
+        views = []
+        null.wrap_tee(views)
+        settled = Lain::Telemetry::AskSettled.new(head: "x", stop_reason: :end_turn, turns: 1, seconds: 0.5)
+
+        expect(null.settled(settled)).to be(null)
+
+        expect(views).to eq([settled])
         expect(tee_records).to be_empty
       end
 

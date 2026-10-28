@@ -86,6 +86,11 @@ module Lain
           self
         end
 
+        def settled(record)
+          @live << record
+          self
+        end
+
         # --no-journal + --nvim: there is no session record to share, so nvim
         # gets its OWN real journal. Returns it, the same duck the real
         # {Chronicle#wrap_tee} answers, so the exe's wiring is one line either
@@ -403,6 +408,13 @@ module Lain
       # @return [self]
       def interrupted(head:, reason:, status: nil)
         scribe.interrupted(head:, reason:, status:)
+        self
+      end
+
+      # Written once to the file and told to the live views, as {#interrupted} is.
+      def settled(record)
+        @journal << record
+        @live << record
         self
       end
 
