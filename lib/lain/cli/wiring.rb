@@ -577,7 +577,7 @@ module Lain
       # reading `resumed&.timeline` at the caller cost #wire_agent the one
       # branch that put it over AbcSize.
       def build_agent(toolset:, channel:, session:, backend:, resumed: nil, views: nil)
-        board = switchboard(backend, toolset).tap { backend.price_tier_hold.bind(_1.approvals, channel) }
+        board = switchboard(backend, toolset).tap { backend.attach(_1, channel) }
         agent_over(board:, channel:, session:, backend:, timeline: resumed&.timeline, views:)
       end
 
@@ -654,7 +654,6 @@ module Lain
       # than a second nobody reads. The stack's order is a security posture,
       # and {ToolGuard} is where it is stated.
       def backing(backend, channel, timeline, board:)
-        backend.bind_egress(board)
         provider = spooled_provider(backend, channel:)
         journal_degradation(backend.context, provider, journal: chronicle.record_journal)
         mount = CompactionMount.new(backend:, provider:, chronicle:, channel:)

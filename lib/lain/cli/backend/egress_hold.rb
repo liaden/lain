@@ -16,12 +16,29 @@ module Lain
         SCOPES = %w[off oracle all].freeze
         KIND = "egress"
         ORACLE = :secret_oracle
-        UNBOUND = Object.new.freeze
-        private_constant :UNBOUND
 
         NOT_READY = "egress supervision not ready: the request was refused because nothing was bound yet to " \
                     "ask the human"
         HEADLESS = "the request was refused: --supervise-egress needs a human to answer, and none is attached"
+
+        Unbound = Data.define do
+          def accepts?(_queue) = true
+
+          def ask_decision(_decision) = raise Provider::HTTP::EgressGuard::Refused, NOT_READY
+        end
+
+        Headless = Data.define do
+          def accepts?(queue) = queue.nil?
+
+          def ask_decision(_decision) = raise Provider::HTTP::EgressGuard::Refused, HEADLESS
+        end
+
+        Bound = Data.define(:queue) do
+          def accepts?(other) = queue.equal?(other)
+
+          def ask_decision(decision) = queue.ask_decision(decision)
+        end
+        private_constant :Unbound, :Headless, :Bound
 
         # The hold one provider's guard asks, for one requester.
         Supervised = Data.define(:holder, :requester) do
@@ -39,7 +56,7 @@ module Lain
           raise ArgumentError, "unknown egress supervision #{scope.inspect}, expected one of #{SCOPES.join(", ")}" \
             unless SCOPES.include?(@scope)
 
-          @queue = UNBOUND
+          @binding = Unbound.new
         end
 
         # The same queue again is no rebind: one board may back its agent twice.
@@ -48,10 +65,9 @@ module Lain
         # @return [self]
         # @raise [Rebound] when already bound to another queue
         def bind(queue)
-          raise Rebound, "the egress hold is already bound to another queue" \
-            unless @queue.equal?(UNBOUND) || @queue.equal?(queue)
+          raise Rebound, "the egress hold is already bound to another queue" unless @binding.accepts?(queue)
 
-          @queue = queue
+          @binding = queue.nil? ? Headless.new : Bound.new(queue)
           self
         end
 
@@ -68,12 +84,7 @@ module Lain
         #   flagged; never the body
         # @return [Boolean] the human's answer
         # @raise [Provider::HTTP::EgressGuard::Refused] when nobody can be asked
-        def ask(requester, summary)
-          raise Provider::HTTP::EgressGuard::Refused, NOT_READY if @queue.equal?(UNBOUND)
-          raise Provider::HTTP::EgressGuard::Refused, HEADLESS if @queue.nil?
-
-          @queue.ask_decision(decision(requester, summary))
-        end
+        def ask(requester, summary) = @binding.ask_decision(decision(requester, summary))
 
         private
 

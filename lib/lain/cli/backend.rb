@@ -392,31 +392,40 @@ module Lain
 
       # Where every Anthropic client built here asks before a request crosses
       # its model's price tier, and the approvals they share. Late-bound
-      # because the providers are built before the approval queue; {Wiring}
+      # because the providers are built before the approval queue; {#attach}
       # binds it, and unbound it refuses.
       #
       # @return [Provider::HTTP::PriceTierGuard::Hold]
       def price_tier_hold = @price_tier_hold ||= Provider::HTTP::PriceTierGuard::Hold.new
 
-      # What every provider built here refuses to send; {Wiring} binds it.
+      # What every provider built here refuses to send; {#attach} binds it.
       #
       # @return [EgressLiterals]
       def egress_literals = @egress_literals ||= EgressLiterals.new(middleware)
 
       # Where every provider built here asks the human before a request leaves,
-      # under `--supervise-egress`; {Wiring} binds it to the board's queue.
+      # under `--supervise-egress`; {#attach} binds it to the board's queue.
       #
       # @return [EgressHold]
       def egress_hold = @egress_hold ||= EgressHold.new(@options[:supervise_egress])
 
       # Before the first model request, so no provider sends unchecked or
-      # unasked: the board's secrets for the guard, its queue for the hold.
+      # unasked: the board's secrets for the egress guard, its queue for both
+      # holds. The board and channel are checked here rather than by the
+      # price-tier hold, which stays rebindable because the live compaction
+      # sweep binds it once per lane.
       #
       # @param board [#guard_inputs, #approvals] a chat's {Switchboard}
+      # @param channel [#push] where the price-tier hold shows a crossing an earlier approval carried
       # @return [void]
-      def bind_egress(board)
+      # @raise [Rebound] when already attached to another board or channel
+      def attach(board, channel)
+        raise Rebound, reattached(board, channel) unless attachable?(board, channel)
+
         egress_literals.bind(board.guard_inputs.secrets)
         egress_hold.bind(board.approvals)
+        price_tier_hold.bind(board.approvals, channel)
+        @attachment = [board, channel]
       end
 
       # `--model` defaults to the SELECTED provider's own default (resolved here,
@@ -944,6 +953,13 @@ module Lain
 
       # An unset numeric flag arrives as nil; the constant is the authority.
       def knob(flag, default) = @options[flag] || default
+
+      def attachable?(*pair) = @attachment.nil? || @attachment.zip(pair).all? { |was, now| was.equal?(now) }
+
+      def reattached(*pair)
+        moved = %w[board channel].zip(@attachment, pair).reject { |_, was, now| was.equal?(now) }.map(&:first)
+        "the backend is already attached to another #{moved.join(" and ")}"
+      end
 
       # The binding half of a memoized factory (see {Rebound}). Same arguments
       # are a cache hit and pass silently; different ones name WHICH argument

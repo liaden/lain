@@ -1523,11 +1523,13 @@ RSpec.describe Lain::CLI::Wiring do
       wire_agent
 
       verdict = Sync do |task|
-        asking = task.async { backend.price_tier_hold.decide(decision) }
-        pending = wiring.approvals.dequeue
-        expect(pending.kind).to eq("price_tier")
-        pending.approve(surface: "spec", authority: :human)
-        asking.wait
+        task.with_timeout(20) do
+          asking = task.async { backend.price_tier_hold.decide(decision) }
+          pending = wiring.approvals.dequeue
+          expect(pending.kind).to eq("price_tier")
+          pending.approve(surface: "spec", authority: :human)
+          asking.wait
+        end
       end
 
       expect(verdict).to eq(:approve)
@@ -1564,12 +1566,14 @@ RSpec.describe Lain::CLI::Wiring do
                                   messages: [{ role: "user", content: "x" * 400_000 }])
 
       Sync do |task|
-        sending = task.async { summarizer.complete(request) }
-        pending = wiring.approvals.dequeue
-        expect(pending.ask_face).to include("104,000", "100,000")
-        expect(sent).not_to have_been_requested
-        pending.approve(surface: "spec", authority: :human)
-        sending.wait
+        task.with_timeout(20) do
+          sending = task.async { summarizer.complete(request) }
+          pending = wiring.approvals.dequeue
+          expect(pending.ask_face).to include("104,000", "100,000")
+          expect(sent).not_to have_been_requested
+          pending.approve(surface: "spec", authority: :human)
+          sending.wait
+        end
       end
 
       expect(sent).to have_been_requested.once
@@ -1615,8 +1619,8 @@ RSpec.describe Lain::CLI::Wiring do
     end
   end
 
-  # The literals are the board's own secrets source, bound by #backing, so the
-  # history the board primed is the history the guard reads.
+  # The literals are the board's own secrets source, bound by Backend#attach, so
+  # the history the board primed is the history the guard reads.
   describe "the egress guard the backend's providers carry" do
     let(:journal) { RecordingChannel.new }
     let(:chronicle) { Lain::CLI::Chronicle.new(journal:, journal_path: "egress-guard-spec-fake-session.ndjson") }
@@ -1711,6 +1715,15 @@ RSpec.describe Lain::CLI::Wiring do
       source = hosted.egress_literals.instance_variable_get(:@source)
       expect(source.history).to be(board.guard_inputs.secrets.history)
       expect(source.child_env).to be(board.guard_inputs.secrets.child_env)
+    end
+
+    it "attaches the backend to the board it builds, so a second board is refused" do
+      wire_hosted
+
+      board = wiring.instance_variable_get(:@switchboard)
+      other = Struct.new(:guard_inputs, :approvals).new(board.guard_inputs, board.approvals)
+      expect { hosted.attach(other, channel) }.to raise_error(Lain::CLI::Backend::Rebound)
+      expect { hosted.attach(board, channel) }.not_to raise_error
     end
 
     it "parks no egress decision when supervision was not asked for" do

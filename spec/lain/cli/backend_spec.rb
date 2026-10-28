@@ -563,6 +563,85 @@ RSpec.describe Lain::CLI::Backend do
     end
   end
 
+  describe "#attach" do
+    let(:secrets) { literals_of("spec-attached-secret-24") }
+    let(:queue) do
+      Class.new do
+        define_method(:asked) { @asked ||= [] }
+        define_method(:ask_decision) { |decision, **| (asked << decision) && true }
+      end.new
+    end
+    let(:channel) { [] }
+    let(:summary) do
+      { endpoint: "localhost/api/chat", bytes: 1, body_digest: "blake3:00", literal_hits: 0, flagged: 0 }
+    end
+    let(:crossing) do
+      Lain::Approval::Parked::Queue::Decision.new(requester: Lain::Requester.main, kind: "price_tier",
+                                                  summary: "claude-haiku-5-5 crosses its tier", digest: "blake3:00")
+    end
+
+    def board_over(secrets, approvals)
+      Struct.new(:guard_inputs, :approvals).new(Struct.new(:secrets).new(secrets), approvals)
+    end
+
+    it "binds the egress literals, the egress hold and the price-tier hold to one board" do
+      backend = backend_for(provider: "ollama", supervise_egress: "all")
+
+      backend.attach(board_over(secrets, queue), channel)
+
+      expect(backend.egress_literals.egress.refused).to eq(["spec-attached-secret-24"])
+      backend.egress_hold.for(:agent).call(summary)
+      expect(backend.price_tier_hold.decide(crossing)).to eq(:approve)
+      expect(queue.asked.map(&:kind)).to eq(%w[egress price_tier])
+    end
+
+    it "shows a price-tier notice on the channel it was attached with" do
+      backend = backend_for(provider: "ollama")
+      backend.attach(board_over(secrets, queue), channel)
+
+      backend.price_tier_hold.show(:crossed)
+
+      expect(channel).to eq([:crossed])
+    end
+
+    it "takes the same board again, and refuses another one itself" do
+      backend = backend_for(provider: "ollama")
+      board = board_over(secrets, queue)
+      backend.attach(board, channel)
+
+      expect { backend.attach(board, channel) }.not_to raise_error
+      expect { backend.attach(board_over(secrets, queue), channel) }
+        .to raise_error(Lain::CLI::Backend::Rebound, /attached to another board\z/)
+    end
+
+    it "refuses the same board on another channel, so the notices are never re-pointed" do
+      backend = backend_for(provider: "ollama")
+      board = board_over(secrets, queue)
+      backend.attach(board, channel)
+
+      expect { backend.attach(board, []) }.to raise_error(Lain::CLI::Backend::Rebound, /attached to another channel\z/)
+      backend.price_tier_hold.show(:crossed)
+      expect(channel).to eq([:crossed])
+    end
+
+    it "is not attached by a call that failed to bind" do
+      backend = backend_for(provider: "ollama")
+      backend.egress_literals.bind(secrets)
+
+      expect { backend.attach(board_over(literals_of, queue), channel) }.to raise_error(Lain::CLI::Backend::Rebound)
+      expect { backend.attach(board_over(secrets, queue), channel) }.not_to raise_error
+    end
+
+    it "leaves the price-tier hold rebindable, as a live sweep rebinds it per lane" do
+      backend = backend_for(provider: "ollama")
+      backend.attach(board_over(secrets, queue), channel)
+
+      backend.price_tier_hold.bind(nil, carry: false)
+
+      expect(backend.price_tier_hold.decide(crossing)).to eq(:refuse)
+    end
+  end
+
   describe "--effort" do
     let(:messages_url) { "https://api.anthropic.com/v1/messages" }
     let(:reply) do

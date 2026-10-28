@@ -89,6 +89,16 @@ module RefusalWidthDiscipline
   # above, in its own file, which is where its callers are.
   SINKS = { "review_refused" => 0, "refusable" => 0 }.freeze
 
+  # Sentences the derivation reaches by shape alone that no rail ever echoes,
+  # each with where it surfaces instead. A Null binding refuses with a fixed
+  # sentence whatever it is asked, which is the stand-in shape {Reach} seeds on.
+  EGRESS_REFUSAL = "the chat shows it as its error: line and the secret oracle journals it as a declined " \
+                   "answer (SecretSurface#asked); neither path reaches the nvim rail"
+  OFF_RAIL = {
+    "Lain::CLI::Backend::EgressHold::NOT_READY" => EGRESS_REFUSAL,
+    "Lain::CLI::Backend::EgressHold::HEADLESS" => EGRESS_REFUSAL
+  }.freeze
+
   # The refusal SLOT. A gesture's outcome carries its sentence as `report:` --
   # `ReviewView::Opened`, `ReviewView::Marked`, `ApprovalView::Decided` -- and
   # `CLI::HumanReplies::Gestures#gestured` reads exactly that member and hands
@@ -997,8 +1007,12 @@ RSpec.describe "refusal width discipline" do
     expect(marked.rendered).to include(Lain::Review::MARK_STATES.max_by(&:length))
   end
 
+  it "exempts only sentences the derivation still reaches" do
+    expect(measured.map { |one| one.site.constant.path }).to include(*RefusalWidthDiscipline::OFF_RAIL.keys)
+  end
+
   it "keeps every sentence that rides the rail within the bar once rendered" do
-    over = measured.select(&:over?)
+    over = measured.select(&:over?).reject { |one| RefusalWidthDiscipline::OFF_RAIL.key?(one.site.constant.path) }
 
     expect(over).to be_empty, lambda {
       listing = over.sort_by { |one| -one.width }.map { |one| "  #{one}" }.join("\n")
