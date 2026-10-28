@@ -37,6 +37,16 @@ RSpec.describe Lain::Friction::BreakCause do
     end
   end
 
+  describe ".shape_of stamp" do
+    it "is a frozen Time when well formed" do
+      expect(described_class.shape_of(record).at).to be_frozen
+    end
+
+    it "is nil when torn" do
+      expect(described_class.shape_of(record(stamp: "2026-10-2")).at).to be_nil
+    end
+  end
+
   describe ".between" do
     it "names an added tool" do
       expect(cause(record, record(tools: [tool("read"), tool("bash")]))).to eq(:tools_changed)

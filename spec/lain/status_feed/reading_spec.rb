@@ -42,6 +42,12 @@ RSpec.describe Lain::StatusFeed::Reading do
     end
   end
 
+  describe "a deadline that is not a String" do
+    it "reports nothing rather than raising" do
+      expect(reading(cache_deadline: 5).warmth(now:)).to eq(:unpublished)
+    end
+  end
+
   describe "reading a published file" do
     around { |example| Dir.mktmpdir { |dir| @dir = dir and example.run } }
 

@@ -28,7 +28,7 @@ module Lain
         tools = Array(payload["tools"])
         Shape.new(tool_names: tools.map { |tool| tool.is_a?(Hash) ? tool["name"].to_s : "" }.freeze,
                   tools_digest: Canonical.digest(tools), system_digest: Canonical.digest(payload["system"]),
-                  effort_digest: Canonical.digest(payload["reasoning"]), at: stamped(record["ts"]))
+                  effort_digest: Canonical.digest(payload["reasoning"]), at: Stamp.iso8601(record["ts"]))
       end
 
       # @param before [Shape, nil]
@@ -60,13 +60,6 @@ module Lain
         cold && before.at && after.at && after.at - before.at > ttl
       end
       private_class_method :expired?
-
-      def self.stamped(value)
-        Time.iso8601(value).freeze if value.is_a?(String)
-      rescue ArgumentError
-        nil
-      end
-      private_class_method :stamped
     end
   end
 end

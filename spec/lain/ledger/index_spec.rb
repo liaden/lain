@@ -67,6 +67,20 @@ RSpec.describe Lain::Ledger::Index do
     end
   end
 
+  describe "a record's ts" do
+    def entry_at(stamp)
+      described_class.from_journal([record(digest: "blake3:aa").merge("ts" => stamp)]).entries_for("blake3:aa").first
+    end
+
+    it "is a frozen Time when well formed" do
+      expect(entry_at("2026-10-27T10:11:12Z").at).to eq(Time.utc(2026, 10, 27, 10, 11, 12)).and be_frozen
+    end
+
+    it "prices as unstamped when torn" do
+      expect(entry_at("2026-10-2").at).to be_nil
+    end
+  end
+
   describe "#entries_for" do
     it "answers an empty Array for a digest it never saw" do
       index = described_class.from_journal([])

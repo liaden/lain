@@ -231,10 +231,7 @@ module Lain
       end
 
       def cache_deadline
-        raw = @state["cache_deadline"]
-        raw && Time.iso8601(raw)
-      rescue ArgumentError, TypeError
-        nil
+        Stamp.iso8601(@state["cache_deadline"])
       end
 
       def marker(now:) = warmth(now:) == :warm ? HUD_WARM : HUD_COLD
