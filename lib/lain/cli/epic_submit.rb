@@ -516,7 +516,7 @@ module Lain
       # @return [EpicSubmit]
       def self.from_options(options, input:, output:, profile: RunProfile.from_options(options),
                             root: Project::Resolver.default_project.root, paths: Paths.new, config: Config.load(root:),
-                            backend: -> { Backend.new(options, profile:, root:).tap { _1.egress_literals.bind_env } })
+                            backend: -> { Backend.headless(options, profile:, root:) })
         spike_journal = Adjudication::Destination.new
         tool_guard = HomedGuard.new(root:)
         pair = Adjudication.pair(config:, paths:, root:, backend:, tool_middleware: tool_guard, journal: spike_journal)

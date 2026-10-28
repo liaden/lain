@@ -80,9 +80,7 @@ module Lain
         notices = mismatches.call(profile: resolved, model: resolved.model)
         new(path:, profile: resolved, project_dir:, notices:,
             consolidation: lambda { |journal|
-              backend = Backend.new(options, profile: resolved, root: project_dir.root)
-              # No board here, so the clerk's requests are checked against the environment's secrets only.
-              backend.egress_literals.bind_env
+              backend = Backend.headless(options, profile: resolved, root: project_dir.root)
               clerk_over(backend, journal, project_dir, notices)
             })
       end

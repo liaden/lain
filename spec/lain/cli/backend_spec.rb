@@ -3238,4 +3238,34 @@ RSpec.describe Lain::CLI::Backend do
       end
     end
   end
+
+  describe ".headless" do
+    it "binds the egress literals to the environment's secrets" do
+      expect(described_class.headless(options, root: Dir.pwd).egress_literals.egress.refused)
+        .to eq(Lain::Sensitivity::Secrets::Source::DEFAULT.egress.refused)
+    end
+
+    it "takes the keywords the constructor takes" do
+      expect(described_class.headless(options, root: Dir.pwd, ceiling_default: 7)).to be_a(described_class)
+    end
+
+    it "rejects a keyword the constructor does not know" do
+      expect { described_class.headless(options, root: Dir.pwd, bogus: 1) }.to raise_error(ArgumentError)
+    end
+
+    it "leaves a plain backend fail-closed before attach" do
+      expect { backend.egress_literals.egress }.to raise_error(Lain::Provider::HTTP::EgressGuard::NotBound)
+    end
+
+    it "keeps refusing every request under --supervise-egress all" do
+      chat = stub_request(:post, "http://localhost:11434/api/chat")
+      headless = described_class.headless({ provider: "ollama", supervise_egress: "all" }, root: Dir.pwd)
+      request = Lain::Request.new(model: "qwen3:4b", max_tokens: 64, stream: false,
+                                  messages: [{ role: "user", content: "hello" }])
+
+      expect { headless.provider.complete(request) }
+        .to raise_error(Lain::Provider::HTTP::EgressGuard::Refused, /egress supervision not ready/)
+      expect(chat).not_to have_been_requested
+    end
+  end
 end

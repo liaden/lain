@@ -1299,9 +1299,8 @@ class LainCLI < Thor
       # @param ceiling_default [Integer, nil] the `--max-tokens` default this command declares
       # @param options [Hash] the options it resolves; the command's own unless a caller overrides some
       def model_backend(ceiling_default = nil, options = self.options)
-        Lain::CLI::Backend.new(options, profile: ModelFlags.profile(options), ceiling_default:,
-                                        root: Lain::Project::Resolver.default_project.root)
-                          .tap { _1.egress_literals.bind_env }
+        Lain::CLI::Backend.headless(options, profile: ModelFlags.profile(options), ceiling_default:,
+                                             root: Lain::Project::Resolver.default_project.root)
       end
 
       def compaction_sweep_knobs

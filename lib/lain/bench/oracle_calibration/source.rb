@@ -52,7 +52,7 @@ module Lain
         # The smallest Backend the wiring asks for: no flags, so no supervision and no chat runner to share.
         # The bench calibrates the default configuration; it does not take the chat's ollama runner options
         # (num_ctx, num_batch, keep_alive from LAIN_PROVIDER, LAIN_NUM_CTX and the like).
-        def self.backend = Lain::CLI::Backend.new({}, root: Dir.pwd).tap { _1.egress_literals.bind_env }
+        def self.backend = Lain::CLI::Backend.headless({}, root: Dir.pwd)
 
         private_class_method :wiring_for, :backend
       end

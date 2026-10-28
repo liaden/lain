@@ -230,6 +230,12 @@ module Lain
         keep_alive
       end
 
+      # A backend for a command with no board, so its requests are checked against the environment's secrets only.
+      # @param options [Hash] the options {#initialize} takes
+      # @option options [String] :provider which provider answers, as {#initialize} reads it
+      # @return [Backend]
+      def self.headless(options, **) = new(options, **).tap { _1.egress_literals.bind_env }
+
       # `flag` names WHICH flag was wrong: `--provider` and
       # `--summarizer-provider` are two different mistakes to make, and a
       # refusal that named neither would send the operator to the wrong one.
