@@ -24,6 +24,9 @@ module Lain
         def pop(...) = @inbox.pop(...)
         def review_refused(message) = @rpc.review_refused(message)
 
+        # A view a gesture just changed, redrawn without waiting for an event to carry it.
+        def post_view(name, lines, generation: nil) = @rpc.post_view(name, lines, generation:)
+
         # A gesture lain answered LOCALLY joining the same rail: the editor's
         # question write is parsed on the RPC thread, and the answer set it
         # produced is popped by the consumer that serves every other verb.

@@ -61,6 +61,7 @@ module Lain
       module NoEditor
         def self.pop(*) = nil
         def self.review_refused(_message) = nil
+        def self.post_view(*, **) = nil
         def self.attached? = false
       end
 
@@ -76,7 +77,10 @@ module Lain
         module Nothing
           def self.opened? = false
           def self.pinned? = false
-          def self.report = "no editor is attached, so there is nothing to open or pin"
+          def self.rewindable? = false
+          def self.labeled? = false
+          def self.lines = nil
+          def self.report = "no editor is attached, so there is nothing to open, pin or rewind"
         end
 
         # `**` rather than the named keyword: a keyword is its own name, so no
@@ -84,6 +88,8 @@ module Lain
         def self.open(_line, **) = Nothing
         def self.open_next = Nothing
         def self.pin(_line) = Nothing
+        def self.tree_pick(_line, **) = Nothing
+        def self.tree_label(_line, _text, **) = Nothing
         def self.answered(_digest) = nil
         def self.question_settled(_digest, **) = nil
 
@@ -486,8 +492,20 @@ module Lain
           "reply" => ->(args) { reply(args) },
           "question_answered" => ->(args) { answer_document(args) },
           "review_done" => ->(args) { @reviews.settle(args) },
-          "goal_off" => ->(_args) { goal_off }
+          "goal_off" => ->(_args) { goal_off },
+          "tree_rewind" => ->(args) { tree_rewind(args) }
         }.merge(@gestures.routes).freeze
+      end
+
+      # <CR> in lain://tree. The rewind is the typed `/rewind <digest>` itself, sent down the one
+      # registry, so a refusal there and a resolution here cannot differ; a turn off the live chain is
+      # refused before it gets that far, because `/rewind` cannot name it.
+      def tree_rewind(args)
+        line, generation = args
+        pick = @views.tree_pick(line, generation:)
+        return report(pick.report) unless pick.rewindable?
+
+        @reply.run_command("/rewind #{pick.digest}")
       end
 
       # `:LainGoalOff`. The drive shows in the chat pane, so that is where its
@@ -1064,6 +1082,7 @@ module Lain
           {
             "open" => ->(args) { open_set(args) },
             "pin" => ->(args) { pin_turn(args) },
+            "tree_label" => ->(args) { label_turn(args) },
             "review_open" => ->(args) { open_hunk(args) },
             "review_mark" => ->(args) { mark_hunk(args) },
             "review_ask" => ->(args) { ask_docent(args) },
@@ -1101,6 +1120,18 @@ module Lain
         # No stamp is needed here: the timeline only ever grows, so a line names
         # one turn forever.
         def pin_turn(args) = gestured(@views.call.pin(args.first), &:pinned?)
+
+        # The line names the turn, as {#pin_turn}'s does; the text rides the wire because the editor
+        # is the one that prompted for it.
+        def label_turn(args)
+          line, text, generation = args
+          outcome = @views.call.tree_label(line, text, generation:)
+          gestured(outcome, &:labeled?)
+          return unless outcome.lines
+
+          @editor.call.post_view(Frontend::Neovim::TreeView::NAME, outcome.lines,
+                                 generation: outcome.generation)
+        end
 
         # The review sidebar's `<CR>`, in {#open_set}'s shape and for its
         # reasons. A sidebar row renders no hunk key -- a hunk key is a DIGEST,
@@ -1288,6 +1319,13 @@ module Lain
         # @see HumanReplies#bind_commands the only caller, and where the reason
         #   for binding rather than injecting is written
         def bind_commands(commands) = @commands = commands || NoSessionCommands.new
+
+        # A command the editor asked for, run through the registry the typed line uses. An unmatched
+        # line raises so the editor is told, where {#classify} would hand it back as `:unmatched`.
+        def run_command(line)
+          outcome = @commands.dispatch(line) { raise Error, "#{called(line)} is not a command this session has" }
+          delivered(outcome, line)
+        end
 
         # The reply prompt of a PARKED set. `/inbox` detours to the drain for
         # THIS item, so the document the human reads and the set their reply

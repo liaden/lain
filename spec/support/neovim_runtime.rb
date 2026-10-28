@@ -37,7 +37,7 @@ module NeovimRuntime
 
   # Every buffer the runtime owns -- the contract surface these specs pin.
   def all_views
-    %w[lain://journal lain://timeline lain://workspace lain://diff lain://inbox lain://request lain://status
+    %w[lain://journal lain://timeline lain://tree lain://workspace lain://diff lain://inbox lain://request lain://status
        lain://todos]
   end
 

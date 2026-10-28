@@ -59,15 +59,16 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
   def posted(name) = rpc.views.reverse.find { |view| view.first == name }&.at(1)
 
   describe "#prime" do
-    # The eight views that ride `post_view`. lain://approval is primed too (see
+    # The nine views that ride `post_view`. lain://approval is primed too (see
     # below) and is deliberately NOT in this list: it goes out through
-    # `set_approval`, so a ninth name here would mean the buffer had been
+    # `set_approval`, so a tenth name here would mean the buffer had been
     # created without its row count.
     it "posts every projection's at-rest state, so an idle session shows the whole buffer set" do
       surfaces.prime
 
       expect(rpc.names).to contain_exactly(Lain::Frontend::Neovim::JournalView::NAME,
                                            Lain::Frontend::Neovim::Buffers::TimelineView::NAME,
+                                           Lain::Frontend::Neovim::TreeView::NAME,
                                            Lain::Frontend::Neovim::Buffers::WORKSPACE,
                                            Lain::Frontend::Neovim::Buffers::DIFF,
                                            Lain::Frontend::Neovim::InboxView::NAME,
@@ -151,14 +152,15 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
 
     # The stamp is the editor's only honest answer to "which rendering am I
     # looking at", so it rides with the rendering it belongs to -- and
-    # ONLY the inbox has one, because it is the only view whose gesture
-    # resolves through a rendering index.
-    it "stamps the inbox's post with the rendering the gesture must name, and stamps no other view" do
+    # ONLY the inbox and the tree have one, because they are the only views whose
+    # gestures resolve through a rendering index.
+    it "stamps the inbox's and the tree's posts with the rendering a gesture must name, and no other view" do
       surfaces.prime
 
+      stamped = [Lain::Frontend::Neovim::InboxView::NAME, Lain::Frontend::Neovim::TreeView::NAME]
       stamps = rpc.stamps
-      expect(stamps.fetch(Lain::Frontend::Neovim::InboxView::NAME)).to be_a(Integer)
-      expect(stamps.except(Lain::Frontend::Neovim::InboxView::NAME).values.compact).to be_empty
+      expect(stamps.values_at(*stamped)).to all(be_a(Integer))
+      expect(stamps.except(*stamped).values.compact).to be_empty
     end
 
     # A reminder is bytes off disk -- a manifest path, a memory title -- so it

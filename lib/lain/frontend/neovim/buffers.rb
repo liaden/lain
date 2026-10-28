@@ -212,6 +212,7 @@ module Lain
                        questions: InboxView::Unwired, epic: StatusView::Unmounted)
           @inbox = inbox || InboxView.new(store:, questions:)
           @timeline = timeline || TimelineView.new(store:, session:)
+          @tree = TreeView.new(store:, session:)
           @status = StatusView.new(epic:)
           @todos = TodoView.new(session:)
           @questions = questions
@@ -226,6 +227,12 @@ module Lain
 
         # See {TimelineView#pin}.
         def pin(line) = @timeline.pin(line)
+
+        # See {TreeView#pick}.
+        def tree_pick(line, generation:) = @tree.pick(line, generation:)
+
+        # See {TreeView#label}.
+        def tree_label(line, text, generation:) = @tree.label(line, text, generation:)
 
         # See {InboxView#open} -- the `<CR>`/`r` gesture's Ruby end, delegated
         # here for {#digest_at}'s reason.
@@ -256,13 +263,18 @@ module Lain
         # committed turn that clears it.
         def answered(digest) = @inbox.answered(digest)
 
-        # Only ONE view has a stamp: lain://inbox is the only projection whose
-        # gesture resolves through a rendering index. Every other view answers
+        # Only TWO views have a stamp: lain://inbox and lain://tree are the only projections whose
+        # gestures resolve through a rendering index. Every other view answers
         # nothing, and {RenderQueue#post_view} then omits the argument rather
         # than sending a nil -- which crosses msgpack as `vim.NIL`, and
         # `vim.NIL` is TRUTHY in lua.
         # @return [Integer, nil]
-        def generation_of(name) = name == InboxView::NAME ? @inbox.generation : nil
+        def generation_of(name)
+          case name
+          when InboxView::NAME then @inbox.generation
+          when TreeView::NAME then @tree.generation
+          end
+        end
 
         # Posted once at attach: every view exists, and says what it awaits,
         # before the first event, so an idle session's `:buffers` does not read
@@ -271,7 +283,7 @@ module Lain
         # tracking.
         # @return [Hash{String=>Array<String>}] buffer name => initial lines
         def initial
-          { TimelineView::NAME => @timeline.initial, WORKSPACE => workspace_update,
+          { TimelineView::NAME => @timeline.initial, TreeView::NAME => @tree.initial, WORKSPACE => workspace_update,
             DIFF => ["(no requests yet)"], StatusView::NAME => @status.initial,
             TodoView::NAME => @todos.initial }.compact.merge(@inbox.initial)
         end
@@ -280,8 +292,8 @@ module Lain
         # @return [Hash{String=>Array<String>}] buffer name => full replacement
         #   lines, for every view this event moved -- empty when it moved none
         def updates(event)
-          { TimelineView::NAME => @timeline.update(event), WORKSPACE => workspace_update,
-            DIFF => diff_update(event), InboxView::NAME => @inbox.update(event),
+          { TimelineView::NAME => @timeline.update(event), TreeView::NAME => @tree.update(event),
+            WORKSPACE => workspace_update, DIFF => diff_update(event), InboxView::NAME => @inbox.update(event),
             StatusView::NAME => @status.update(event), TodoView::NAME => @todos.update(event) }.compact
         end
 

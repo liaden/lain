@@ -22,6 +22,9 @@ class RecordingEditorRail
   def push(command) = @commands.push(command)
   def pop(*) = @commands.shift
   def review_refused(message) = @refusals << message
+
+  def post_view(name, lines, generation: nil) = posts << [name, lines, generation]
+  def posts = @posts ||= []
   def attached? = true
 end
 
@@ -3065,6 +3068,100 @@ RSpec.describe Lain::CLI::HumanReplies do
 
       expect(editor.refusals).to contain_exactly(a_string_matching(/no turn/))
       expect(session.pins).to be_empty
+    end
+
+    # lain://tree's gestures. The view is the real {TreeView}; the command is a
+    # recording `/rewind`, so what is asserted is the line the gesture sends
+    # down the same registry a typed `/rewind <digest>` goes through.
+    describe "lain://tree's gestures" do
+      let(:tree) { Lain::Frontend::Neovim::TreeView.new(store:, session:) }
+      let(:tree_views) do
+        Struct.new(:tree) do
+          def tree_pick(line, generation:) = tree.pick(line, generation:)
+          def tree_label(line, text, generation:) = tree.label(line, text, generation:)
+        end.new(tree)
+      end
+      let(:rewind) { RecordingCommand.new("rewind", returns: "rewound 2 turns") }
+      let(:registry) { Lain::CLI::Command::Registry.new([rewind]).bind(build_command_env(replies:)) }
+      # Lines: 1 one, 2 two, 3 three (abandoned), 4 three again (head).
+      let(:one) { say(Lain::Dag::Factory.timeline(store:), :user, "one") }
+      let(:two) { say(one, :assistant, "two") }
+      let(:old) { say(two, :user, "three") }
+      let(:fresh) { say(two, :user, "three again") }
+
+      def say(timeline, role, text) = timeline.commit(role:, content: [{ "type" => "text", "text" => text }])
+
+      def usage(timeline)
+        Lain::Telemetry::TurnUsage.new(digest: timeline.head_digest, model: "m", stop_reason: :end_turn, usage: {})
+      end
+
+      before do
+        replies.bind_editor(editor, views: tree_views)
+        replies.bind_commands(registry)
+        tree.update(usage(old))
+        tree.update({ "type" => "rewound", "from" => old.head_digest, "to" => two.head_digest })
+        tree.update(usage(fresh))
+      end
+
+      it "rewinds to a turn of the live chain through /rewind with its digest" do
+        editor.push(["tree_rewind", [1, tree.generation]])
+
+        with_surfaces { rewind.calls.any? }
+
+        expect([rewind.calls, editor.refusals]).to eq([[one.head_digest], []])
+      end
+
+      it "refuses an abandoned turn in words and rewinds nothing" do
+        editor.push(["tree_rewind", [3, tree.generation]])
+
+        with_surfaces { editor.refusals.any? }
+
+        expect(rewind.calls).to be_empty
+        expect(editor.refusals).to contain_exactly(a_string_matching(/abandoned branch/))
+      end
+
+      it "tells the editor when the line names no turn" do
+        editor.push(["tree_rewind", [9, tree.generation]])
+
+        with_surfaces { editor.refusals.any? }
+
+        expect(rewind.calls).to be_empty
+        expect(editor.refusals).to contain_exactly(a_string_matching(/no turn/))
+      end
+
+      it "refuses a rewind stamped with a rendering the tree no longer holds" do
+        editor.push(["tree_rewind", [1, tree.generation - 1]])
+
+        with_surfaces { editor.refusals.any? }
+
+        expect(rewind.calls).to be_empty
+        expect(editor.refusals).to contain_exactly(a_string_matching(/changed/))
+      end
+
+      it "redraws the tree with the label at once, with no further event" do
+        editor.push(["tree_label", [3, "idea 2", tree.generation]])
+
+        with_surfaces { editor.posts.any? }
+
+        name, lines, generation = editor.posts.last
+        expect([name, generation]).to eq(["lain://tree", tree.generation])
+        expect(lines).to include(a_string_ending_with("# idea 2"))
+      end
+
+      it "labels the turn on the line" do
+        editor.push(["tree_label", [3, "idea 2", tree.generation]])
+
+        with_surfaces { session.labels.any? }
+
+        expect(session.labels).to eq(old.head_digest => "idea 2")
+      end
+
+      it "answers both gestures honestly with no editor bound at all" do
+        replies.bind_editor(nil)
+
+        expect { replies.send(:routes)["tree_rewind"].call([1, 1]) }.not_to raise_error
+        expect { replies.send(:routes)["tree_label"].call([1, "x", 1]) }.not_to raise_error
+      end
     end
 
     # Null over a nil check, one object further: a session with no editor has

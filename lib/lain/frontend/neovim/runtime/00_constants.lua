@@ -3,6 +3,7 @@
 -- pattern below share ONE spelling instead of five copies of the string.
 local JOURNAL = "lain://journal"
 local TIMELINE = "lain://timeline"
+local TREE = "lain://tree"
 local WORKSPACE = "lain://workspace"
 local DIFF = "lain://diff"
 local INBOX = "lain://inbox"
@@ -25,7 +26,7 @@ local TODOS = "lain://todos"
 -- still not in this set. It is created by 62_approval's own set_approval rather
 -- than by set_view, so nothing here needs its name, and its prime takes no
 -- window because that function opens one only `if rows > 0`.
-local BUFFERS = { JOURNAL, TIMELINE, WORKSPACE, DIFF, INBOX, REQUEST, STATUS, TODOS }
+local BUFFERS = { JOURNAL, TIMELINE, TREE, WORKSPACE, DIFF, INBOX, REQUEST, STATUS, TODOS }
 
 -- Filetype attached at buffer CREATION (see `named_buf`/`editable_buf`
 -- below), never re-set on re-attach -- both constructors already return
@@ -45,6 +46,7 @@ local BUFFERS = { JOURNAL, TIMELINE, WORKSPACE, DIFF, INBOX, REQUEST, STATUS, TO
 local READONLY_FILETYPES = {
   [DIFF] = "diff",
   [TIMELINE] = "lain",
+  [TREE] = "lain",
   [JOURNAL] = "lain",
   [INBOX] = "lain",
   [WORKSPACE] = "lain",

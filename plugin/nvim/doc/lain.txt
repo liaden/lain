@@ -266,11 +266,11 @@ LainRender              Fires after every landed render; `ev.data` carries
 6.2 BUFFERS AND b:lain_view                                     *lain-buffers*
                                                                  *b:lain_view*
 
-The runtime owns eight buffers: `lain://journal` (append-only tool journal),
-`lain://timeline`, `lain://workspace`, `lain://diff`, `lain://inbox`,
+The runtime owns nine buffers: `lain://journal` (append-only tool journal),
+`lain://timeline`, `lain://tree`, `lain://workspace`, `lain://diff`, `lain://inbox`,
 `lain://status`, `lain://todos` (all read-only projections), and `lain://request`, the one
-editable buffer (edit it, then `:LainResend`). lain primes a ninth beside
-them at attach, `lain://approval`, which is not in the runtime's buffer set. A tenth, `lain://compose`,
+editable buffer (edit it, then `:LainResend`). lain primes a tenth beside
+them at attach, `lain://approval`, which is not in the runtime's buffer set. An eleventh, `lain://compose`,
 appears only while you are composing -- see |lain-compose|.
 
 `lain://status` is where the chat's epic stands: its progress, its issue graph
@@ -349,7 +349,7 @@ your own `:highlight link` overrides any of them without a fight:
 
 Defined by the runtime at attach (they do not exist before it): `:LainSend`,
 `:LainResend`, `:LainContext`, `:LainReply {answer}`, `:LainOpen`, `:LainPin`,
-`:LainVersion`, `:LainReviewOpen`, `:LainReviewMark {state}`,
+`:LainTreeRewind`, `:LainTreeLabel`, `:LainVersion`, `:LainReviewOpen`, `:LainReviewMark {state}`,
 `:LainReviewVerdict {verdict}`, `:LainReviewClose`, `:LainApprove`,
 `:LainDeny [{reason}]`, `:LainMode {level}`, `:LainSurveyAdd`
 (defined, but refuses every time -- NOT YET AVAILABLE, see |:LainSurveyAdd|
@@ -403,6 +403,12 @@ In `lain://timeline`, `p` runs `:LainPin`: the turn under the cursor is pinned,
 which is a standing instruction that compaction may not elide it. It carries no
 rendering stamp and needs none -- a timeline only ever grows, so a line names
 one turn forever.
+
+`lain://tree` draws the session's turns as a tree, with each branch indented under
+the turn it left. `<CR>` on a turn of the live chain rewinds to it, as
+`/rewind <digest>` does. On a turn of an abandoned branch it refuses and says
+so, because jumping to another branch is not supported yet. `L` labels the turn
+under the cursor, as `/label` does.
 
 Both are ordinary global commands reading the CURRENT window's cursor, so each
 refuses outside the buffer it is about rather than acting on whatever happens
