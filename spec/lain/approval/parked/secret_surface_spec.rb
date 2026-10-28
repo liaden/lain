@@ -161,18 +161,17 @@ RSpec.describe Lain::Approval::Parked::SecretSurface do
       expect(described_class::DEFAULT_AUDIT_RATE).to eq(0.05)
       built = described_class.new(oracle: oracle(verdict: "approve", confidence: 0.99), journal: journaled,
                                   path_gate:, random: Random.new(48))
-      queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 3)
-      settled = Sync do |task|
+      queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 600)
+      left = Sync do |task|
         gated = Array.new(1000) do |i|
           read = SecretSurfaceSpecSupport::Effect.new("read_file", { "path" => path }, "tu_#{i}")
           task.async { queue.adjudicate(read, nil, outstanding:) }
         end
-        gated.each { task.with_timeout(2) { queue.dequeue } }
+        task.with_timeout(600) { gated.each { queue.dequeue } }
         built.sweep(queue)
-        gated.map { |park| task.with_timeout(5) { park.wait } }
+        queue.count { !_1.decided? }.tap { gated.each(&:stop) }
       end
 
-      left = settled.count { _1.surface == Lain::Approval::Parked::Queue::TIMEOUT_SURFACE }
       expect(left).to be_between(30, 70)
     end
   end
