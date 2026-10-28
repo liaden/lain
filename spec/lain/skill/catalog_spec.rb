@@ -157,8 +157,8 @@ RSpec.describe Lain::Skill::Catalog do
         catalog = described_class.load(root:)
 
         expect(catalog.names).to match_array(
-          %i[research-epic plan-epic iterate-epic create-epic-issues create-plan execute-plan critique handoff
-             gherkin-tests qa]
+          %i[research research-epic plan-epic iterate-epic create-epic-issues create-plan execute-plan critique
+             handoff gherkin-tests qa]
         )
         catalog.all.each { |skill| expect(skill.description).not_to be_empty }
       end

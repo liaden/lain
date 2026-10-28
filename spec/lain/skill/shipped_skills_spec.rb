@@ -313,6 +313,32 @@ RSpec.describe "shipped skills" do
     end
   end
 
+  describe "research's scaffold runs without a human and compares options" do
+    it "asks no question, compares 3 options including doing nothing, and writes the dated report" do
+      with_empty_project do |renderer|
+        scaffold = renderer.render("research")
+
+        expect(scaffold).to match(/ask no question|never ask/i)
+        expect(scaffold).to match(/at least 3 options/i)
+        expect(scaffold).to match(/do nothing/i)
+        expect(scaffold).to match(/existing library/i)
+        expect(scaffold).to include("planning/<slug>-research-<YYYY-MM>.md")
+        ["Executive summary", "Context", "Options", "Comparison", "Recommendation", "Discarded options",
+         "Open questions", "Sources"].each do |heading|
+          expect(scaffold).to include("## #{heading}")
+        end
+        expect(scaffold).to include("@researcher/research")
+      end
+    end
+
+    it "is listed beside research-epic with a different description" do
+      catalog = shipped_catalog
+
+      expect(catalog.names).to include(:research, :"research-epic")
+      expect(catalog.all.map(&:description).uniq.size).to eq(catalog.all.size)
+    end
+  end
+
   describe "the four epic-tier skills are catalog-visible and render" do
     it "presents each of them in the shipped catalog with a conventions slot that resolves" do
       Dir.mktmpdir do |root|
