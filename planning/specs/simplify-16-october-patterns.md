@@ -1,6 +1,6 @@
 # Simplify 16: the 10 October patterns, in 3 waves
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby (T46 is rust)
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson); T46 adds Andrew Gallant
@@ -1860,3 +1860,42 @@ Commit checks (`.pre-commit-config.yaml`), as an agent can run them on its own p
 - T27 landed `467ff2d4`
 - T40 landed `8f5c0c97`
 - T48 landed `27b038ea`
+- T28 started (worktree `tmp/worktrees/s16-T28`, cut at `512ac1fa`)
+- T29 started (worktree `tmp/worktrees/s16-T29`, cut at `512ac1fa`)
+- T41 started (worktree `tmp/worktrees/s16-T41`, cut at `512ac1fa`)
+- T49 started (worktree `tmp/worktrees/s16-T49`, cut at `512ac1fa`)
+- T29 plan-gap: Files widened to `spec/lain/cli_spec.rb` (its guard-stack expectation now includes TripwireStop); the identity check's commit (`5c3e4af3`) cites no measured cost, so the always-built layer stands
+- T28 landed `1cf00d6f`
+- T33 landed `a0dab724`
+- T41 landed `027fda4d`
+- T49 landed `2c562fe0`
+- T24 started (cut 2c562fe0)
+- T42 started (cut 2c562fe0)
+- T29 sent to second review
+- T29 hook red: `harness_spec` "holds all six guards and the gate" pins the layer list and now sees TripwireStop; fails alone, returned to implementer; plan-gap, Files widened to `spec/lain/bench/harness_spec.rb`
+- T42 review: APPROVE-WITH-FIXES (mechanical: blank-entry examples for 3 callers); follow-up noted: `grader/mutation_reinsertion.rb` still splits commas by hand
+- T24 review: APPROVE-WITH-FIXES (pin the zero-dollar ceiling for a lane with no counted requests; mutation survived)
+- T29 landed `00c5f380`
+- T42 landed `bba2ea81`
+- T45 started (cut bba2ea81)
+- T24 second review: APPROVE (nit left: the zero-ceiling example reds on a crash under the mutant, not on its assertion)
+- T45 review: APPROVE
+- T24 landed `75d623b1`
+- T45 landed `257282e9`
+- T34 started (cut 257282e9)
+- T34 review: APPROVE-WITH-FIXES (mechanical: guard the oracle-calibration live backend binding); Files widened to the oracle calibration source spec
+- T34 hook red: `repo_as_fixture_spec` watchdog stuck at load 26.9 (a game started on the box), seed 25391; green alone in 9.2s; confirmed flaky, card not the cause
+- T47 started (cut 257282e9)
+- spec-census: base `88bec85b` already over both ceilings (assertions 193, lib_reach 62 against 184 and 49); this run made lib_reach 58 and assertions 197 (4 raise-only examples from T42, T49, T34); T47 widened to fix the 3 landed ones, T34 fixes its own
+- Landings held at the user's request until a game on the box closes
+- T34 landed `1314c964`
+- T47 landed `a07a7e9f`
+- Close-out 2026-10-28: all cards landed but T32 and T35 (closed without change by their stop conditions)
+  - `rake pspec`: 29780 examples, 0 failures, 15 pending (29343 before T1)
+  - `rubocop` clean; `pre-commit run --all-files` clean in a clean worktree at HEAD, with ruby-checks skipped there since pspec and rubocop ran in main (cargo fmt, clippy, test and deny included)
+  - `bin/hot-path-bench`: 3 records at load under 2, then `--check` passed
+  - `bin/zeitwerk-census --check` and `bin/comment-census --check-tickets --check-load-order` clean; `grep -rn require_relative lib/` prints nothing
+  - `bin/spec-census --check` fails, as it did at the base: assertions 193 (base 193), lib_reach 57 (base 62), ceilings 184 and 49
+  - `bin/comment-census` on `lib/lain/telemetry/*.rb`: prose 1808 lines against 1772 at the base, prose:code 0.90 against 0.99; the records kept their comments
+  - Owed by the user: the approval-replay and compaction-sweep report diffs before and after the plan (item 8)
+  - `git worktree list` and the card branches match the start: main plus the 82 old worktrees
