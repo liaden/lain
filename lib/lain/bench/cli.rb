@@ -45,7 +45,8 @@ module Lain
       CONTAINING_BACKENDS = %w[worktree].freeze
 
       # The `--confine` values a bench arm takes; a chat's `classes` would change nothing here.
-      CONFINES = %w[off reader workspace].freeze
+      CONFINES = (Lain::CLI::Arms::CONFINE - [:classes]).map(&:to_s).freeze
+      DEFAULT_CONFINE = "off"
 
       # {Variance} compares it, so runs under different opaque policies are refused rather than pooled.
       OPAQUE_REFUSED = { "opaque" => "refused" }.freeze

@@ -144,6 +144,11 @@ RSpec.describe Lain::Bench::CLI do
 
   subject(:cli) { described_class.new }
 
+  it "offers every chat confine arm but classes" do
+    expect(described_class::CONFINES).to eq((Lain::CLI::Arms::CONFINE - [:classes]).map(&:to_s))
+    expect(described_class::CONFINES).to include(described_class::DEFAULT_CONFINE)
+  end
+
   # The whole point of the taxonomy: exe/lain rescues Lain::Error only, so a
   # refusal must BE one, and a bare ArgumentError must stay a loud bug.
   it "classes every bench refusal under Lain::Error" do

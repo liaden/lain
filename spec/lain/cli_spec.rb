@@ -369,6 +369,28 @@ RSpec.describe LainCLI do
   # PATH is replaced with an empty directory rather than trusted, so the
   # docker example means the same thing on a box that HAS docker -- where the
   # unguarded version would resolve, construct a chat, and park on a terminal.
+  describe "the arm flags' help text" do
+    %i[confine judge_facts judge_denials tripwire round_budget round_dedup].each do |arm|
+      it "states --#{arm.to_s.tr("_", "-")}'s default as Arms::DEFAULT holds it" do
+        expect(described_class.commands.fetch("chat").options.fetch(arm).description)
+          .to include("default #{Lain::CLI::Arms::DEFAULT.public_send(arm)}")
+      end
+    end
+
+    it "states the denial breaker's thresholds from DenialBreaker in --judge-denials' help" do
+      breaker = Lain::Approval::DenialBreaker
+      said = "#{breaker::IN_A_ROW} in a row or #{breaker::PER_SESSION} in a session"
+
+      expect(described_class.commands.fetch("chat").options.fetch(:judge_denials).description).to include(said)
+    end
+
+    it "names the judge-denials arms from Arms in approval-replay's help" do
+      option = LainCLI::Bench.commands.fetch("approval_replay").options.fetch(:judge_denials)
+
+      expect(option.banner).to eq(Lain::CLI::Arms::JUDGE_DENIALS.join("|"))
+    end
+  end
+
   describe "chat's --exec flag" do
     let(:exec_option) { described_class.commands.fetch("chat").options.fetch(:exec) }
 
