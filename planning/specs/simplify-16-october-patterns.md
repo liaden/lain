@@ -752,7 +752,7 @@ Spec file: the 12 mirror specs
 
 **Depends on:** T11, T13
 **Files:** `lib/lain/telemetry/{read_refused,read_released,recording_failed,request_sent,request_resent,search_redacted,source_masked,test_layout_refused,tests_ran,tool_output,truncated_stream,verdict,window_pressure}.rb` and mirror specs
-**Reuse:** `read_refused` and `request_sent` drop `requester` when nil through `omitting_defaults`; `request_sent` is written on every round trip, so it hoists the defaults into a frozen constant (`DEFAULTS = Carriers::RequestSent.declared_defaults`) rather than paying the per-call lookup (about 7 us, measured in the T13 review); `RequestResent < RequestSent` journals under its own type
+**Reuse:** `read_refused` and `request_sent` drop `requester` when nil through `omitting_defaults`; `request_sent` is written on every round trip; settling it measured about 2x the hand freeze, so under this card's stop condition it keeps `check!` and the hand freeze, with no defaults lookup; `RequestResent < RequestSent` journals under its own type
 **Shared-file wiring:** none
 **Reachable from:** `Provider::Journaled` emits `RequestSent` on every round trip (`provider/journaled.rb`); the rest grepped before converting
 
@@ -1714,6 +1714,33 @@ Spec file: `spec/lain/tools/web_fetch_spec.rb`
 **Stop and report if:**
 - Counting visited nodes needs a production seam that does not exist; then report the smallest one rather than adding it unasked.
 
+### T49: Judge raw blankness in one Declarative validator          [risk: low]
+
+**Depends on:** T18, T20
+**Files:** `lib/lain/declarative.rb`, `lib/lain/telemetry/{read_refused,read_released,recording_failed,search_redacted,source_masked,test_layout_refused,tests_ran,verdict,window_pressure,approval_pending,shell_arm}.rb`, `spec/lain/declarative_spec.rb`, and each record's mirror spec where an example names the helper
+**Reuse:** the 11 per-carrier copies (`names_are_not_blank`, `identifiers_not_false`) that read `@attributes[name].value_before_type_cast`
+**Shared-file wiring:** none
+**Reachable from:** every carrier that declares an interned identifier
+
+Added during execution: the `:lain_interned` cast runs `to_s` before validation, so `false`, `[]` and `{}` passed presence; T18 and T20 each restored the refusal with a per-carrier validator, leaving 11 copies of one check.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: one declaration refuses a blank raw value
+  Given a carrier that declares `attribute :tool, :lain_interned` and names it as required
+  When it settles tool: false, tool: [] or tool: {}
+  Then it raises the carrier's error naming tool, with the message each record raises today
+
+Scenario: no carrier keeps its own copy
+  When grep -rn "value_before_type_cast" lib/lain/telemetry runs
+  Then nothing matches, and every mirror spec passes with no expectation edited
+```
+Spec file: `spec/lain/declarative_spec.rb`
+
+**Stop and report if:**
+- The per-record messages differ in a way a shared validator cannot reproduce without a per-attribute message table; then report the table rather than flatten the messages.
+
 ## Integration checks
 
 After the last card lands, in this order:
@@ -1815,3 +1842,21 @@ Commit checks (`.pre-commit-config.yaml`), as an agent can run them on its own p
 - T26 landed `df614cf2`
 - T31 landed `59c50629`
 - T48 added: the WebFetch walk-budget wall-clock flake repeated (T22 and T3 hooks), so it becomes a card under the 2026-10-27 no-wall-clock ruling
+- T15 started (worktree `tmp/worktrees/s16-T15`, cut at `48d18469`)
+- T16 started (worktree `tmp/worktrees/s16-T16`, cut at `48d18469`)
+- T18 started (worktree `tmp/worktrees/s16-T18`, cut at `48d18469`)
+- T20 started (worktree `tmp/worktrees/s16-T20`, cut at `48d18469`)
+- T27 started (worktree `tmp/worktrees/s16-T27`, cut at `48d18469`)
+- T33 started (worktree `tmp/worktrees/s16-T33`, cut at `48d18469`)
+- T40 started (worktree `tmp/worktrees/s16-T40`, cut at `48d18469`)
+- T48 started (worktree `tmp/worktrees/s16-T48`, cut at `48d18469`)
+- T40 ruling: the approval-replay score cell now rounds k/n half-up exactly (23/40 prints 58%, was 57% through float error), the same as the tripwire cell; 24 of 180,900 k/n pairs up to n=600 change. No spec pinned them; the user's owed approval-replay diff (Integration check 8) should expect this
+- T18 review: `request_sent` keeps `check!` plus the hand freeze (`settle!` measured 1.9x to 2.2x on 1,000 `.from` calls of 64 KB); the `:lain_interned` cast accepted `false`, `[]` and `{}` on 9 fields main refused, so the carriers check the raw shape
+- T49 added: fold the 11 raw-blank validators T18 and T20 introduced into one Declarative check
+- T16 landed `268e3269`
+- T15 landed `4c662f5d`
+- T18 landed `ea16c457`
+- T20 landed `3394364e`
+- T27 landed `467ff2d4`
+- T40 landed `8f5c0c97`
+- T48 landed `27b038ea`
