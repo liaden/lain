@@ -789,12 +789,11 @@ RSpec.describe Lain::SessionRecord::Replay do
       expect(todo_reminder(described_class.new(record).session(on: kept))).to include("IRIS")
     end
 
-    it "places a snapshot with no head at the head the file had moved to when it was written" do
-      headless = written(snapshot("IRIS", nil).except("head"), snapshot("TULIP", nil).except("head"))
-      restored = described_class.new(headless).session(on: kept)
+    it "refuses a todo_snapshot that carries no head as Corrupt" do
+      headless = [{ "type" => "session" }, turn_record(0), snapshot("IRIS", nil).except("head")]
 
-      expect(todo_reminder(restored)).to include("IRIS")
-      expect(todo_reminder(restored)).not_to include("TULIP")
+      expect { described_class.new(headless).session(on: kept) }
+        .to raise_error(Lain::Bench::Session::Corrupt, /todo_snapshot record.*no head/)
     end
 
     it "keeps the plan-step count of every list written, the rewound ones included" do

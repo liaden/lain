@@ -266,16 +266,13 @@ module Lain
         direction ? fresh.record_pin(digest) : fresh.record_unpin(digest)
       end
 
-      # A snapshot written before snapshots carried their head is placed at the
-      # turn recorded last before it, which is the round it was written in.
       def placed_todos
-        Journal.records(@records).inject([nil, []]) do |(turn, placed), record|
-          case record["type"]
-          when TODO_SNAPSHOT_TYPE then [turn, placed << [record, record.fetch("head", turn)]]
-          when SessionRecord::TURN_TYPE then [record.fetch("digest"), placed]
-          else [turn, placed]
-          end
-        end.last
+        Journal.records(@records).select { |record| record["type"] == TODO_SNAPSHOT_TYPE }
+               .map { |record| [record, headed(record)] }
+      end
+
+      def headed(record)
+        record.fetch("head") { raise Bench::Session::Corrupt, "a todo_snapshot record carries no head" }
       end
 
       def items(record)

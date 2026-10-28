@@ -49,16 +49,13 @@ module Lain
       # An arm the header left out was off, because {#to_header} writes only
       # the arms that are on, except round_dedup, which it always writes; a
       # header older than the arms reads as every arm off.
-      # The exception is round_dedup: a budget deduplicated before the arm
-      # existed, so a header with a budget and no round_dedup key ran with it on.
       #
       # @param header [Hash] a session header record
       # @return [Arms]
       # @raise [Unknown] on a recorded value outside an arm's set
       def self.from_header(header)
         recorded = (header["arms"] || {}).transform_keys(&:to_sym)
-        arms = resolve(recorded, OFF) { |arm| "the session header records #{arm}" }
-        recorded.key?(:round_dedup) || arms.round_budget == :off ? arms : arms.with(round_dedup: :on)
+        resolve(recorded, OFF) { |arm| "the session header records #{arm}" }
       end
 
       # @param arm [Symbol] one of {SETS}' keys

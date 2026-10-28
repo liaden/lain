@@ -871,7 +871,8 @@ RSpec.describe Lain::CLI::Resume do
 
     let(:run_state_records) do
       [read_record("/tmp/app.rb"),
-       { "type" => "todo_snapshot", "todos" => [{ "content" => "check dosing", "status" => "pending" }] }]
+       { "type" => "todo_snapshot", "head" => memory_chain.head_digest,
+         "todos" => [{ "content" => "check dosing", "status" => "pending" }] }]
     end
 
     before { write_closed("20260101T000000-1.ndjson", memory_chain, extra: run_state_records) }

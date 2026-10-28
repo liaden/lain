@@ -63,13 +63,6 @@ RSpec.describe Lain::CLI::Resume::MismatchNotices do
     expect(notices(session_with(arms: at_defaults), typed)).to be_empty
   end
 
-  it "reads a header from before the dedup arm as dedup on, and notices nothing" do
-    path = session_with(arms: at_defaults.except("round_dedup"))
-
-    expect(notices(path, typed)).to be_empty
-    expect(notices(path, typed(round_dedup: :on))).to be_empty
-  end
-
   it "names round_dedup when a session recorded with dedup on is resumed with it off" do
     path = session_with(arms: at_defaults("round_dedup" => "on"))
 

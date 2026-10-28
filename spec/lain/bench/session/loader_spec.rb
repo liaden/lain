@@ -130,12 +130,12 @@ RSpec.describe Lain::Bench::Session::Loader do
       expect(described_class.new(lines).recording.arms).to eq("confine" => "reader")
     end
 
-    it "reads a header from before the dedup arm as the same arms with dedup on" do
+    it "reads a header without round_dedup as dedup off" do
       lines = entries.map do |line|
         record = JSON.parse(line)
         record.key?("context_class") ? JSON.generate(record.merge("arms" => { "round_budget" => "window" })) : line
       end
-      expect(described_class.new(lines).recording.arms).to eq("round_budget" => "window", "round_dedup" => "on")
+      expect(described_class.new(lines).recording.arms).to eq("round_budget" => "window")
     end
 
     it "refuses a header whose arms hold a value outside an arm's set, rather than pooling it" do
@@ -598,19 +598,11 @@ RSpec.describe Lain::Bench::Session::Loader do
         expect(loaded.timeline.head_digest).to eq(chain.head_digest)
       end
 
-      # Only a session_closed anchors a chain. The bench recorder that wrote
-      # its header after the run, head included, is gone, so a header that
-      # carries one is that recorder's file and is refused rather than read
-      # as an open session.
-      it "refuses a header that carries a head, naming the retired recorder" do
-        head = "blake3:#{"0" * 64}"
+      it "reads a header carrying a head like any other" do
         chain = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store).commit(role: :user, content: text("hi"))
-        records = roundtrip([open_header.merge("head" => head), Lain::SessionRecord.turn(chain.head)])
+        records = roundtrip([open_header.merge("head" => "blake3:#{"0" * 64}"), Lain::SessionRecord.turn(chain.head)])
 
-        expect { described_class.new(records).recording }
-          .to raise_error(Lain::Bench::Session::Corrupt) { |error|
-            expect(error.message).to include(head, "retired", "re-record")
-          }
+        expect(described_class.new(records).recording.open?).to be(true)
       end
 
       it "loads a header-only session (0 turns) flagged open with a nil head" do

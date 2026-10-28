@@ -76,13 +76,11 @@ RSpec.describe Lain::CLI::Arms do
       expect { described_class.from({ round_dedup: "maybe" }) }.to raise_error(described_class::Unknown, /round.dedup/)
     end
 
-    it "reads a header without the key as on under a budget, which always deduplicated, and off otherwise" do
-      expect(described_class.from_header({ "arms" => { "round_budget" => "window" } }).round_dedup).to eq(:on)
-      expect(described_class.from_header({ "arms" => { "round_budget" => "static" } }).round_dedup).to eq(:on)
-      expect(described_class.from_header({ "arms" => { "confine" => "reader" } }).round_dedup).to eq(:off)
+    it "reads a header without the key as off, whatever the budget" do
+      expect(described_class.from_header({ "arms" => { "round_budget" => "window" } }).round_dedup).to eq(:off)
       expect(described_class.from_header({ "arms" => { "round_budget" => "window",
-                                                       "round_dedup" => "off" } }).round_dedup)
-        .to eq(:off)
+                                                       "round_dedup" => "on" } }).round_dedup)
+        .to eq(:on)
     end
 
     it "makes a budget of off a dedup-only policy, and both off the unbounded one" do

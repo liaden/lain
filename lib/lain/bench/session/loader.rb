@@ -214,22 +214,12 @@ module Lain
         end
 
         def stamped(header)
-          return unanchored(header) if SessionRecord.current_format?(header)
+          return header if SessionRecord.current_format?(header)
 
           format = header["format"]
           raise Corrupt, "session file predates format #{SessionRecord::FORMAT} (no format key)" if format.nil?
 
           raise Corrupt, "session file records format #{format.inspect}; this loader reads format #{SessionRecord::FORMAT}"
-        end
-
-        # Only the retired bench recorder wrote a header after its run, head
-        # and all, and its files are not this format's whatever their stamp.
-        def unanchored(header)
-          head = header["head"]
-          return header if head.nil?
-
-          raise Corrupt, "the session header carries a head (#{RequiredKeys.shown(head)}), which only the retired " \
-                         "bench recorder wrote; re-record the session"
         end
 
         def header_field(key) = RequiredKeys.read(header, key) { "the session header" }
