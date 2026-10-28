@@ -5,25 +5,10 @@ module Lain
     module Carriers
       # The one fact a set-aside recording must be able to state.
       class RecordingFailed < Declarative::Carrier
-        NAMED = {
-          error_class: "must name what stopped the run"
-        }.freeze
-
         attribute :error_class, :lain_interned
         attribute :message, :lain_interned
         validates :error_class, presence: { message: "must name what stopped the run, got nil" }
-
-        validate :names_are_not_blank
-
-        private
-
-        # The interning cast turns false, [] and {} into present Strings, so blankness is judged on the raw value.
-        def names_are_not_blank
-          NAMED.each do |name, text|
-            raw = @attributes[name.to_s].value_before_type_cast
-            errors.add(name, "#{text}, got #{raw.inspect}") if raw.blank? && !errors.include?(name)
-          end
-        end
+        validates :error_class, raw_present: { message: "must name what stopped the run" }
       end
     end
 

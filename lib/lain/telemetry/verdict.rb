@@ -7,10 +7,6 @@ module Lain
       # silently reject `false` -- the same reasoning as {RequestSent}'s
       # `stream`.
       class Verdict < Declarative::Carrier
-        NAMED = {
-          why: "must explain the verdict"
-        }.freeze
-
         attribute :digest
         attribute :survived
         attribute :score
@@ -20,18 +16,7 @@ module Lain
         validates :digest, presence: { message: "must name the finding it judged, got nil" }
         validates :survived, inclusion: { in: [true, false], message: "must be true or false, got %<value>s" }
         validates :why, presence: { message: "must explain the verdict, got nil" }
-
-        validate :names_are_not_blank
-
-        private
-
-        # The interning cast turns false, [] and {} into present Strings, so blankness is judged on the raw value.
-        def names_are_not_blank
-          NAMED.each do |name, text|
-            raw = @attributes[name.to_s].value_before_type_cast
-            errors.add(name, "#{text}, got #{raw.inspect}") if raw.blank? && !errors.include?(name)
-          end
-        end
+        validates :why, raw_present: { message: "must explain the verdict" }
       end
     end
 

@@ -298,4 +298,31 @@ RSpec.describe Lain::Declarative do
       expect(declared.declared_defaults).to eq(kind: "tool")
     end
   end
+
+  describe "the raw_present validation" do
+    let(:refusing) do
+      declaring_class do
+        attribute :tool, :lain_interned
+        attribute :id, :lain_interned
+        validates :tool, raw_present: { message: "must name the tool" }
+        validates :id, raw_present: { only_false: true, message: "must not be false" }
+      end
+    end
+
+    it "refuses the raw false, [] and {} the interning cast would turn into present Strings" do
+      [false, [], {}, nil, ""].each do |blank|
+        expect { refusing.check!(tool: blank, id: "i") }
+          .to raise_error(ArgumentError, "tool must name the tool, got #{blank.inspect}")
+      end
+    end
+
+    it "accepts a present value" do
+      expect { refusing.check!(tool: "bash", id: "i") }.not_to raise_error
+    end
+
+    it "with only_false refuses false alone, under the message as given" do
+      expect { refusing.check!(tool: "bash", id: false) }.to raise_error(ArgumentError, "id must not be false")
+      expect { refusing.check!(tool: "bash", id: "") }.not_to raise_error
+    end
+  end
 end

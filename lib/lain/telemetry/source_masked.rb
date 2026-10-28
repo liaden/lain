@@ -7,10 +7,6 @@ module Lain
       # drives a control: {SessionRecord::Replay} folds it into the session, so a
       # record naming no source would withhold nothing, or the resume's cwd.
       class SourceMasked < Declarative::Carrier
-        NAMED = {
-          key: "must name the masked source"
-        }.freeze
-
         attribute :tool_use_id, :lain_interned
         attribute :kind
         attribute :key, :lain_interned
@@ -23,17 +19,7 @@ module Lain
                                                        message: "must be a non-negative Integer, got %<value>s" }
         include ReleasedWithinRegions
 
-        validate :names_are_not_blank
-
-        private
-
-        # The interning cast turns false, [] and {} into present Strings, so blankness is judged on the raw value.
-        def names_are_not_blank
-          NAMED.each do |name, text|
-            raw = @attributes[name.to_s].value_before_type_cast
-            errors.add(name, "#{text}, got #{raw.inspect}") if raw.blank? && !errors.include?(name)
-          end
-        end
+        validates :key, raw_present: { message: "must name the masked source" }
       end
     end
 

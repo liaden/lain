@@ -7,11 +7,6 @@ module Lain
       # that cannot say how big the prompt was or how big the context is claims
       # an overflow nobody can check.
       class WindowPressure < Declarative::Carrier
-        NAMED = {
-          source: "must name the provider that refused the prompt",
-          request_digest: "must name the request that was refused"
-        }.freeze
-
         attribute :kind
         attribute :source, :lain_interned
         attribute :model, default: nil
@@ -29,18 +24,8 @@ module Lain
         validates :window_tokens,
                   numericality: { only_integer: true, greater_than: 0,
                                   message: "must be the positive context the provider loaded, got %<value>s" }
-
-        validate :names_are_not_blank
-
-        private
-
-        # The interning cast turns false, [] and {} into present Strings, so blankness is judged on the raw value.
-        def names_are_not_blank
-          NAMED.each do |name, text|
-            raw = @attributes[name.to_s].value_before_type_cast
-            errors.add(name, "#{text}, got #{raw.inspect}") if raw.blank? && !errors.include?(name)
-          end
-        end
+        validates :source, raw_present: { message: "must name the provider that refused the prompt" }
+        validates :request_digest, raw_present: { message: "must name the request that was refused" }
       end
     end
 

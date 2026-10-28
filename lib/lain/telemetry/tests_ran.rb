@@ -5,11 +5,6 @@ module Lain
     module Carriers
       # `ran` is checked by inclusion: `presence:` would refuse a false.
       class TestsRan < Declarative::Carrier
-        NAMED = {
-          issue_id: "must name the issue",
-          sha: "must name the sha tested"
-        }.freeze
-
         attribute :issue_id, :lain_interned
         attribute :sha, :lain_interned
         attribute :ran
@@ -18,18 +13,8 @@ module Lain
         validates :sha, presence: { message: "must name the sha tested, got %<value>s" }
         validates :ran, inclusion: { in: [true, false], message: "must be true or false, got %<value>s" }
         validates :why, presence: { message: "must say why the tests were not run, got %<value>s" }, unless: :ran
-
-        validate :names_are_not_blank
-
-        private
-
-        # The interning cast turns false, [] and {} into present Strings, so blankness is judged on the raw value.
-        def names_are_not_blank
-          NAMED.each do |name, text|
-            raw = @attributes[name.to_s].value_before_type_cast
-            errors.add(name, "#{text}, got #{raw.inspect}") if raw.blank? && !errors.include?(name)
-          end
-        end
+        validates :issue_id, raw_present: { message: "must name the issue" }
+        validates :sha, raw_present: { message: "must name the sha tested" }
       end
     end
 

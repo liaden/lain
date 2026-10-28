@@ -17,16 +17,7 @@ module Lain
         validates :requester, presence: { message: "must name who the call was asked for, got nil" }
         validates :tool, presence: { message: "must name the gated tool, got nil" }
         validates :tool_use_id, presence: { message: "must name the gated call, got nil" }
-        validate :identifiers_not_false
-
-        private
-
-        # The interning cast writes "false" for false, which presence would then accept.
-        def identifiers_not_false
-          %i[requester tool tool_use_id].each do |name|
-            errors.add(name, "must not be false") if @attributes[name.to_s].value_before_type_cast == false
-          end
-        end
+        validates :requester, :tool, :tool_use_id, raw_present: { only_false: true, message: "must not be false" }
       end
     end
 

@@ -32,19 +32,12 @@ module Lain
                         inclusion: { in: %i[term string],
                                      message: "must be term or string, got %<value>s" }
         validates :reason, presence: { message: "must carry the verdict's reason, got nil" }
-        validate :identifiers_not_false
+        validates :tool_use_id, :reason, raw_present: { only_false: true, message: "must not be false" }
         validate :term_is_a_term
         validate :term_absent_unless_allowed
         validate :term_arm_needs_an_authorised_term
 
         private
-
-        # The interning cast writes "false" for false, which presence would then accept.
-        def identifiers_not_false
-          %i[tool_use_id reason].each do |name|
-            errors.add(name, "must not be false") if @attributes[name.to_s].value_before_type_cast == false
-          end
-        end
 
         # nil is refused here rather than coerced, because the empty term is
         # already a Null Object ({Shell::Verdict::NO_TERM}) and a record that

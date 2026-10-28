@@ -8,13 +8,6 @@ module Lain
       # a count is the one field bytes could ride in on, and a release of no
       # regions never happened.
       class ReadReleased < Declarative::Carrier
-        NAMED = {
-          tool_use_id: "must name the released call",
-          path: "must name the released file",
-          requester: "must name who the read was for",
-          surface: "must name what released it"
-        }.freeze
-
         attribute :tool_use_id, :lain_interned
         attribute :path, :lain_interned
         attribute :regions
@@ -26,18 +19,10 @@ module Lain
                                             message: "must be a positive Integer, got %<value>s" }
         validates :requester, presence: { message: "must name who the read was for, got nil" }
         validates :surface, presence: { message: "must name what released it, got nil" }
-
-        validate :names_are_not_blank
-
-        private
-
-        # The interning cast turns false, [] and {} into present Strings, so blankness is judged on the raw value.
-        def names_are_not_blank
-          NAMED.each do |name, text|
-            raw = @attributes[name.to_s].value_before_type_cast
-            errors.add(name, "#{text}, got #{raw.inspect}") if raw.blank? && !errors.include?(name)
-          end
-        end
+        validates :tool_use_id, raw_present: { message: "must name the released call" }
+        validates :path, raw_present: { message: "must name the released file" }
+        validates :requester, raw_present: { message: "must name who the read was for" }
+        validates :surface, raw_present: { message: "must name what released it" }
       end
     end
 

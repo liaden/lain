@@ -9,11 +9,6 @@ module Lain
       # (`/home/joel/.ssh/id_ed25519`), and a refusal a reader cannot attribute
       # to a file is not actionable.
       class ReadRefused < Declarative::Carrier
-        NAMED = {
-          tool: "must name the refused tool",
-          path: "must name the refused path"
-        }.freeze
-
         attribute :tool_use_id
         attribute :tool, :lain_interned
         attribute :path, :lain_interned
@@ -27,18 +22,8 @@ module Lain
         # say which call it refused is the same unattributable record `path`
         # exists to prevent.
         validates :tool, presence: { message: "must name the refused tool, got nil" }
-
-        validate :names_are_not_blank
-
-        private
-
-        # The interning cast turns false, [] and {} into present Strings, so blankness is judged on the raw value.
-        def names_are_not_blank
-          NAMED.each do |name, text|
-            raw = @attributes[name.to_s].value_before_type_cast
-            errors.add(name, "#{text}, got #{raw.inspect}") if raw.blank? && !errors.include?(name)
-          end
-        end
+        validates :tool, raw_present: { message: "must name the refused tool" }
+        validates :path, raw_present: { message: "must name the refused path" }
       end
     end
 

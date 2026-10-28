@@ -116,6 +116,31 @@ module Lain
         validates_with InclusionValidator, _merge_attributes(attr_names)
       end
 
+      # Judges an attribute on the value as GIVEN, because a cast such as
+      # `:lain_interned` runs `to_s` first and so turns false, [] and {} into
+      # present Strings that `presence` would accept. Reached as
+      # `validates :tool, raw_present: { message: "must name the tool" }`; the
+      # refusal reads "<message>, got <raw>". `only_false: true` refuses false
+      # alone and raises the message as given.
+      class RawPresentValidator < ActiveModel::EachValidator
+        def validate_each(record, attribute, _value)
+          raw = record.raw(attribute)
+          # presence: may already have refused this field; one message per field.
+          record.errors.add(attribute, failure(raw)) if refused?(raw) && !record.errors.include?(attribute)
+        end
+
+        private
+
+        def refused?(raw) = options[:only_false] ? raw == false : raw.blank?
+
+        def failure(raw) = options[:only_false] ? options[:message] : "#{options[:message]}, got #{raw.inspect}"
+      end
+
+      # @api private
+      # @param name [Symbol, String]
+      # @return [Object] the attribute's value before its type cast
+      def raw(name) = @attributes[name.to_s].value_before_type_cast
+
       # The declared attributes with their defaults applied, their types cast,
       # symbol-keyed for `super(**settled)`, and deeply frozen.
       #

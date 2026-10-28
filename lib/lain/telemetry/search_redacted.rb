@@ -6,10 +6,6 @@ module Lain
       # A path and two non-negative Integer COUNTS, never content; `released` is
       # a subset of `regions`, so more released than found is a malformed record.
       class SearchRedacted < Declarative::Carrier
-        NAMED = {
-          path: "must name the redacted path"
-        }.freeze
-
         attribute :tool_use_id, :lain_interned
         attribute :path, :lain_interned
         attribute :regions
@@ -19,17 +15,7 @@ module Lain
                                                        message: "must be a non-negative Integer, got %<value>s" }
         include ReleasedWithinRegions
 
-        validate :names_are_not_blank
-
-        private
-
-        # The interning cast turns false, [] and {} into present Strings, so blankness is judged on the raw value.
-        def names_are_not_blank
-          NAMED.each do |name, text|
-            raw = @attributes[name.to_s].value_before_type_cast
-            errors.add(name, "#{text}, got #{raw.inspect}") if raw.blank? && !errors.include?(name)
-          end
-        end
+        validates :path, raw_present: { message: "must name the redacted path" }
       end
     end
 
