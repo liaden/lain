@@ -46,7 +46,8 @@ module Lain
           Telemetry::FilesWritten => FilesWritten,
           Telemetry::ToolCalled => ToolCalled,
           Telemetry::AssistantText => AssistantText,
-          Telemetry::JudgeRuled => JudgeRuled
+          Telemetry::JudgeRuled => JudgeRuled,
+          Telemetry::AskSettled => AskSettled
         }
       end
       private_class_method :by_type

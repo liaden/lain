@@ -4297,6 +4297,47 @@ RSpec.describe Lain::CLI::Wiring do
         expect(seen.first.call.names).to eq([:notify])
       end
 
+      it "hands the factory a Notifier built from the process environment as the tmux duck" do
+        ducks = []
+        Dir.mktmpdir do |dir|
+          factory = lambda do |channel:, tmux:, **|
+            ducks << tmux
+            Lain::Frontend::TTY.new(channel:, output: StringIO.new, history_path: File.join(dir, "history"))
+          end
+          wiring = new_wiring(options: { grace: 5 }, chronicle:, status_feed:, tty_factory: factory,
+                              conductor_opener:, stdin: StringIO.new("quit\n"),
+                              paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => dir, "HOME" => dir }))
+          wiring.run(backend:, resumed: nil, nvim: nil)
+          wiring.conductor.close(reason: :exit)
+        end
+
+        expect(ducks.sole).to be_a(Lain::Frontend::TTY::Notifier)
+      end
+
+      it "rings a kitty terminal through the TTY's own output, masked, and feeds the same masked note" do
+        rendered = StringIO.new
+        fed = []
+        allow(Lain::Notices).to receive(:for).and_return(->(*args) { fed << args })
+        stub_const("ENV", ENV.to_h.merge("KITTY_WINDOW_ID" => "3").except("TMUX", "TERM_PROGRAM"))
+        factory = lambda do |channel:, layers:, tmux:, **|
+          Lain::Frontend::TTY.new(channel:, output: rendered, layers:, tmux:,
+                                  history_path: File.join(Dir.tmpdir, "wiring-notify-#{Process.pid}"))
+        end
+
+        Dir.mktmpdir do |dir|
+          wiring = new_wiring(options: { grace: 5 }, chronicle:, status_feed:, tty_factory: factory,
+                              conductor_opener:, stdin: StringIO.new("quit\n"),
+                              paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => dir, "HOME" => dir }))
+          wiring.run(backend:, resumed: nil, nvim: nil)
+          type_mode(wiring, "+notify")
+          wiring.told.call("key AKIAIOSFODNN7EXAMPLE is open")
+          wiring.conductor.close(reason: :exit)
+        end
+
+        expect(rendered.string).to include("\e]99;;key <redacted:1> is open\e\\")
+        expect(fed.sole.last).to eq("key <redacted:1> is open")
+      end
+
       # The review half of the notify layer: `request_review`'s line to the
       # human is a summons, so it rings while the layer is up.
       it "rings the terminal with the run's line to the human once /mode +notify is typed" do

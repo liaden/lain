@@ -736,6 +736,10 @@ Tokens **fold over one mode and switch once**, so `/mode bypass +notify -goal` j
 flip naming where the session started and where it ended. An axis holds one value, so two tokens
 naming the same axis refuse whole and name both: taking the last would hand a typo the gate.
 
+With `notify` up, a settled run or a waiting question rings the bell and sends the terminal a
+desktop notification (OSC 9, 99 or 777 by terminal), and writes a feed record. Under tmux 3.3 and
+later the notification sequence is dropped unless `set -g allow-passthrough on`.
+
 `--approval ask|auto|bypass` picks the level a chat starts in. A launched chat starts in `auto`,
 and the HUD shows no approval lighter for it; `ask` shows `ASK` and `bypass` shows `BYPASS`.
 `/mode !` lands on `ask`, not on the default, because a reset is the move you make to get a human

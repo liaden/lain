@@ -126,8 +126,8 @@ module Lain
         @theme = theme
         @layers = layers
         build_prompt_stack(prompt_renderer:, history_path:)
-        @bell = Bell.new(output:, raised: -> { layers.call.include?(:notify) }, tmux:)
         @countdown = Countdown.new(output:, input:, pastel:, clock:)
+        @bell = Bell.new(output:, raised: -> { layers.call.include?(:notify) }, tmux: written_by(@countdown, tmux))
         @wall_clock = wall_clock
         @warmth = Warmth.new(path: state_path, clock: wall_clock)
         @inbox = Inbox.new(output:, pastel:, clock: wall_clock, stamp: method(:stamp), fit: method(:wrapped))
@@ -510,6 +510,7 @@ module Lain
         rendered = decorator&.render(@theme)
         rendered = stamp(rendered) if decorator&.stamped? && !rendered.nil?
         @countdown.print_above(fitted(rendered, decorator), line_shaped: decorator.line_shaped?) unless rendered.nil?
+        @bell.ring(decorator.note) if decorator.respond_to?(:note) && rendered
       end
 
       # A tool's streamed chunk is not a line, and breaking it would put a
@@ -594,6 +595,12 @@ module Lain
       # where the parts that are not "owning the terminal" live. They share a
       # `notify:` because a degraded collaborator reports through the
       # frontend's one warning line.
+      # A notifier writes through the terminal's writer lock, like every other
+      # out-of-band write; any other duck is handed on untouched.
+      def written_by(countdown, tmux)
+        tmux.respond_to?(:bound_to) ? tmux.bound_to(Notifier::Drawn.new(countdown)) : tmux
+      end
+
       def build_prompt_stack(prompt_renderer:, history_path:)
         @composer = PromptComposer.new(theme: @theme, renderer: prompt_renderer, notify: method(:render_warning))
         @history = History.new(path: history_path, notify: method(:render_warning))

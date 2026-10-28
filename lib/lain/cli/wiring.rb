@@ -371,8 +371,8 @@ module Lain
       def open_terminal(agent, notice, startup)
         @tty_factory.call(channel:, input: Lain::Frontend::StdinPump.keys(@stdin),
                           prompt_renderer: prompt_renderer(agent, notice),
-                          layers: @switchboard.mode_switch.method(:layers),
-                          alternate_screen: alternate_screen?).then do |tty|
+                          layers: @switchboard.mode_switch.method(:layers), alternate_screen: alternate_screen?,
+                          tmux: Frontend::TTY::Notifier.for_chat(@switchboard.guard_inputs.secrets, root)).then do |tty|
           @human_line = tty.method(:render_summons)
           startup.each(&(pane? ? tty.method(:render_warning) : notice))
           alternate_screen? && Lain::Frontend::StdinPump.terminal?(@stdin) ? ScreenNotices.new(tty, startup) : tty

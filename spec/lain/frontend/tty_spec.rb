@@ -1666,6 +1666,48 @@ RSpec.describe Lain::Frontend::TTY do
       end
     end
 
+    describe "notify, on a settled ask" do
+      let(:settled) { Lain::Telemetry::AskSettled.new(head: "ab", stop_reason: :end_turn, turns: 2, seconds: 1.5) }
+      let(:fed) { [] }
+      let(:real) do
+        notifier = Lain::Frontend::TTY::Notifier.for(env: { "TERM_PROGRAM" => "iTerm.app" },
+                                                     feed: ->(*args) { fed << args }, project: "demo")
+        described_class.new(channel:, output:, input:, layers: -> { Lain::Mode::LayerSet.new(raised) },
+                            tmux: notifier)
+      end
+
+      it "draws the line and rings the terminal and the feed while the layer is up" do
+        raised << :notify
+        channel.push(settled)
+
+        real.drain_and_render
+
+        expect(output.string).to include("ask settled: end_turn after 2 turns").and include("\e]9;")
+        expect(fed).to eq([["lain", "demo", "ask settled: end_turn after 2 turns in 1.5s"]])
+      end
+
+      it "writes the sequence through the terminal's own writer, not a stream of its own" do
+        raised << :notify
+        stray = StringIO.new
+        notifier = Lain::Frontend::TTY::Notifier.for(env: {}, feed: ->(*) {}, output: stray)
+        described_class.new(channel:, output:, input:, layers: -> { Lain::Mode::LayerSet.new(raised) },
+                            tmux: notifier).render_summons("epic.md is open")
+
+        expect(output.string).to include("\e]777;notify;")
+        expect(stray.string).to be_empty
+      end
+
+      it "draws the line and rings nothing while the layer is down" do
+        channel.push(settled)
+
+        real.drain_and_render
+
+        expect(output.string).to include("ask settled: end_turn after 2 turns")
+        expect(output.string).not_to match(/\a|\e\]9;/)
+        expect(fed).to be_empty
+      end
+    end
+
     describe "notify, on a question's arrival" do
       it "rings the terminal and asks tmux to display a message naming the asker" do
         raised << :notify
