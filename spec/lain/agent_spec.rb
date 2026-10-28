@@ -335,11 +335,24 @@ RSpec.describe Lain::Agent do
       # declares: a default graph that opened a journal file, a socket or a
       # pipe would leave the descriptor behind. WebMock already owns "no
       # network" suite-wide (spec/network_posture_spec.rb), so asking it again
-      # here would be an assertion that cannot fail.
-      before_fds = Dir.children("/proc/self/fd").size
+      # here would be an assertion that cannot fail. Compared as (number,
+      # target) pairs, not a count: another thread's unrelated close must not
+      # mask a leak, and a leak that reuses a just-closed number still differs
+      # in what it points at.
+      open_fds = lambda do
+        Dir.children("/proc/self/fd").filter_map do |fd|
+          target = begin
+            File.readlink("/proc/self/fd/#{fd}")
+          rescue SystemCallError
+            nil
+          end
+          [fd, target] if target
+        end
+      end
+      before_fds = open_fds.call
       CoreGraph.agent(provider: CoreGraph.provider(text_response("hi"))).ask("hi")
 
-      expect(Dir.children("/proc/self/fd").size).to eq(before_fds)
+      expect(open_fds.call - before_fds).to be_empty
     end
   end
 
