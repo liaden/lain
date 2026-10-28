@@ -321,7 +321,7 @@ module Lain
 
           issue = seam.with(isolation: issue_leases(isolation, handoff, lane), holder: EPIC_ROOM)
           Lain::Tools::Subagent.new(seam: announcing(ISSUE_ORCHESTRATOR.to_s, over: issue),
-                                    toolset: orchestrating(issue, isolation),
+                                    toolset: orchestrating(issue, isolation, supervisor: seam.supervisor),
                                     policy: backend.spawn_policy(ISSUE_ORCHESTRATOR), budget: ORCHESTRATOR_BUDGET,
                                     persona: persona(ISSUE_ORCHESTRATOR), mode: :actor,
                                     announces_as: ISSUE_ORCHESTRATOR.to_s)
@@ -527,11 +527,13 @@ module Lain
           Lain::Tools::Subagent::Kept.new(root: @root, paths: @in_chat.fetch(:paths), related:, journal: seam.journal)
         end
 
-        # The floor plus the two names only the orchestrator holds: one spawner
-        # over both roles it fans work out to, and the renderer that puts the
-        # plan's skill in front of it.
-        def orchestrating(issue, isolation)
-          Lain::Toolset.new(@floor.to_a + [spawning(issue, isolation), run_skill])
+        # The floor plus the three names only the orchestrator holds: one spawner
+        # over both roles it fans work out to, the renderer that puts the
+        # plan's skill in front of it, and the mailbox.
+        def orchestrating(issue, isolation, supervisor:)
+          actors = -> { supervisor.live.map(&:actor).grep(Lain::Tools::Subagent::Actor) }
+          mailbox = Lain::Tools::SendMessage.new(live: actors)
+          Lain::Toolset.new(@floor.to_a + [spawning(issue, isolation), run_skill, mailbox])
         end
 
         # The one spawner the orchestrator holds, offering both roles it fans

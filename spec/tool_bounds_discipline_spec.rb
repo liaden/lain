@@ -343,6 +343,11 @@ module ToolBoundsRegistry
               "property of the renderer and does not move with the session's size"
     ),
     ToolExemption.new(
+      tool: "Lain::Tools::SendMessage", grounds: ToolExemption::FIXED_RESULT,
+      reason: "answers with one sentence naming the address; or a refusal whose size is set by lain's own " \
+              "sentence, the address the model sent and the live actors' addresses. The note is never quoted back"
+    ),
+    ToolExemption.new(
       tool: "Lain::Tools::ToolSearch", grounds: ToolExemption::FIXED_RESULT,
       reason: "renders one tool's schema or a match list over the toolset, so its size is set by " \
               "the toolset a run was configured with and not by anything the model or the world supplies"

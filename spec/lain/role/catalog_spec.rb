@@ -6,8 +6,14 @@ RSpec.describe Lain::Role::Catalog do
 
     # A whole plan runs inside one of these: it implements as dev does, fans
     # the work out to children, and renders the plan's skill back to itself.
-    it "holds the dev tools, the spawner and the skill renderer, and nothing else" do
-      expect(role.only).to match_array(described_class.fetch(:dev).only + %i[subagent run_skill])
+    it "holds the dev tools, the spawner, the skill renderer and the mailbox, and nothing else" do
+      expect(role.only).to match_array(described_class.fetch(:dev).only + %i[subagent run_skill send_message])
+    end
+
+    it "is the only role that can message a running actor" do
+      holders = described_class.all.select { |other| other.only.include?(:send_message) }
+
+      expect(holders.map(&:name)).to eq([:issue_orchestrator])
     end
 
     # Its shell reaches the session's approval gate exactly as dev's does, so

@@ -111,12 +111,13 @@ module Lain
         # hooks run the tests and this role reads.
         Role.new(name: :qa, only: %i[read_file list_files glob grep], unattended: true),
         # Runs a whole issue's plan in one ask: dev's tools, a spawner for the
-        # implementers and reviewers, and the renderer that puts the plan's
-        # skill in front of it. No chat floor holds either extra name, so only
-        # the epic's own Subagent can build this role; everywhere else it
-        # refuses at spawn, naming the tool the union lacks.
+        # implementers and reviewers, the renderer that puts the plan's skill in
+        # front of it, and the mailbox to its running actors. No chat floor holds
+        # any extra name, so only the epic's own Subagent can build this role;
+        # everywhere else it refuses at spawn, naming the tool the union lacks.
         Role.new(name: :issue_orchestrator,
-                 only: %i[read_file list_files glob grep edit_file write_file todo_write bash subagent run_skill])
+                 only: %i[read_file list_files glob grep edit_file write_file todo_write bash subagent run_skill
+                          send_message])
       ].to_h { |role| [role.name, role] }.freeze
 
       # Spawns a lineage reader skips: they are the harness ruling, not work.

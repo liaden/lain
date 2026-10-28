@@ -1500,14 +1500,77 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       expect([chat.reclaimed, issue_handoff.reclaimed]).to eq([[], []])
     end
 
-    it "grants issue_orchestrator at depth 2, over the floor plus a spawner and the skill renderer" do
+    it "grants issue_orchestrator at depth 2, over the floor plus a spawner, the skill renderer and the mailbox" do
       toolset_build.build(recorder, ask_human:)
       epic = issue_epic
       floor = Lain::CLI::Wiring::BaseTools.build(recorder).map(&:name)
 
       expect(epic.policy.only).to eq(orchestrator.spawn_policy.only)
       expect(Lain.live(epic.seam.holder).depth).to eq(2)
-      expect(epic.attenuates_from.names).to match_array(floor + %w[subagent run_skill])
+      expect(epic.attenuates_from.names).to match_array(floor + %w[subagent run_skill send_message])
+    end
+
+    it "leaves send_message off the chat floor" do
+      expect(toolset_build.build(recorder, ask_human:).names).not_to include("send_message")
+    end
+
+    describe "the orchestrator's send_message over a real supervisor", :seam do
+      let(:session_io) { StringIO.new }
+      let(:session_file) { Lain::Journal.new(io: session_io) }
+      let(:store) { CoreGraph.store }
+      let(:actor_parent) do
+        CoreGraph.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                 .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
+      end
+      let(:actor_tool) do
+        CoreGraph.subagent(provider: CoreGraph.provider(text_response("actor ready")), parent: actor_parent,
+                           journal: session_file, observer: CoreGraph.scribe(journal: session_file), mode: :actor)
+      end
+
+      def mailbox = issue_epic.attenuates_from.fetch("send_message")
+
+      def send_to(address, text = "also update the docs")
+        mailbox.call({ "address" => address, "text" => text }, Lain::Tool::Invocation.new(context: Lain::Session::Null.instance))
+      end
+
+      def running
+        Sync do |task|
+          supervisor.run(task)
+          toolset_build.build(recorder, ask_human:)
+          actor = supervisor.adopt(role: "dev") { |worker_env| actor_tool.launch_actor("go", worker_env:) }
+          actor.settle
+          yield actor
+        ensure
+          supervisor.stop
+        end
+      end
+
+      it "delivers the note to a launched actor and journals the message" do
+        running do |actor|
+          result = send_to(actor.address)
+
+          expect(result).not_to be_error
+          expect(result.content).to include("delivered")
+          sent = journal_records(session_io, "message").map { |record| record.dig("payload", "text") }
+          expect(sent).to include("also update the docs")
+        end
+      end
+
+      it "answers a stopped actor as an error result, not a raise" do
+        running do |actor|
+          actor.stop
+
+          expect(send_to(actor.address)).to be_error
+        end
+      end
+
+      it "skips a tracked one-shot row, which has no address" do
+        running do |actor|
+          supervisor.track(Async::Task.current.async { sleep }, role: "docent")
+
+          expect(send_to("nobody").content).to include("live addresses: #{actor.address}")
+        end
+      end
     end
 
     # The spawner in the orchestrator's union grants dev from the floor; its

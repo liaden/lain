@@ -134,7 +134,8 @@ module ToolRegistry
     # thunk over `Usage.zero` would be a fabricated zero, which is
     # the exact defect this tool exists to remove. Every property this table's
     # readers ask of the instance is a declaration, never #perform.
-    "session_usage" => -> { Lain::Tools::SessionUsage.new(usage: nil) }
+    "session_usage" => -> { Lain::Tools::SessionUsage.new(usage: nil) },
+    "send_message" => -> { Lain::Tools::SendMessage.new(live: -> { [] }) }
   }.freeze
 
   # `told:` is REQUIRED on the tool and undefaulted on purpose -- with no editor

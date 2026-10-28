@@ -1922,7 +1922,7 @@ RSpec.describe Lain::Tools::Subagent do
                                toolset: Lain::Toolset.new([EchoTool.new]), depth: 9)
       spawner = build_subagent(provider:, policy: spawn_policy(only: []),
                                toolset: Lain::Toolset.new([EchoTool.new, deepest]), depth: 9)
-      floor = %w[read_file list_files glob grep edit_file write_file todo_write bash run_skill]
+      floor = %w[read_file list_files glob grep edit_file write_file todo_write bash run_skill send_message]
       epic = build_subagent(provider:, policy: Lain::Role::Catalog.fetch(:issue_orchestrator).spawn_policy,
                             toolset: Lain::Toolset.new(floor.map { |name| ToolRegistry.build(name) } + [spawner]),
                             depth: 2)
