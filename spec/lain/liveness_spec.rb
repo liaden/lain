@@ -40,8 +40,8 @@ RSpec.describe Lain::Liveness do
                  "#{pid} (odd (name) here) S #{(4..21).to_a.join(" ")} #{start} 0 0\n")
     end
 
-    def probe(signal: ->(_signal, pid) { raise Errno::ESRCH unless pid == 42 })
-      described_class.new(proc_root: @proc_root, signal:)
+    def probe(signal: ->(_signal, pid) { raise Errno::ESRCH unless pid == 42 }, lstart: ->(_pid) { "" })
+      described_class.new(proc_root: @proc_root, signal:, lstart:)
     end
 
     it "reads the process group of a pid off its stat, past a command name that holds parentheses" do
@@ -84,6 +84,71 @@ RSpec.describe Lain::Liveness do
       expect(probe.of(42, started_at: Lain::Liveness::UNKNOWN_START)).to eq(:unknown)
     end
 
+    it "reads a start from ps when proc_root does not exist, the same for the same pid asked twice" do
+      absent = described_class.new(proc_root: File.join(@proc_root, "absent"))
+
+      tokens = Array.new(2) { absent.start_of(Process.pid) }
+
+      expect([tokens.uniq.size, tokens.first]).to match([1, satisfy { |token| token != Lain::Liveness::UNKNOWN_START }])
+    end
+
+    it "takes the token from the ps lstart field when there is no stat" do
+      asked = []
+      lstart = ->(pid) { (asked << pid) && "Tue Oct 28 10:00:00 2026\n" }
+
+      expect(probe(lstart:).start_of(42)).to eq("u1793181600")
+      expect(asked).to eq([42])
+    end
+
+    it "gives the same token for a pid whatever time zone the reader's own environment names" do
+      absent = described_class.new(proc_root: File.join(@proc_root, "absent"))
+      zone = ENV.fetch("TZ", nil)
+      tokens = %w[UTC Asia/Tokyo America/Los_Angeles].map do |name|
+        ENV["TZ"] = name
+        absent.start_of(Process.pid)
+      end
+
+      expect(tokens.uniq.size).to eq(1)
+    ensure
+      ENV["TZ"] = zone
+    end
+
+    it "answers unknown, not dead, when a stat tick count meets a ps token" do
+      stat(42, 777)
+
+      expect(probe.of(42, started_at: "u1761645600")).to eq(:unknown)
+    end
+
+    it "answers unknown, not dead, when a ps token meets a tick count" do
+      expect(probe(lstart: ->(_pid) { "Tue Oct 28 10:00:00 2026" }).of(42, started_at: "777")).to eq(:unknown)
+    end
+
+    it "answers unknown when ps prints something that is not a start" do
+      expect(probe(lstart: ->(_pid) { "garbage" }).start_of(42)).to eq(Lain::Liveness::UNKNOWN_START)
+    end
+
+    it "reads a ps token written earlier as the same process, live" do
+      lstart = ->(_pid) { "Tue Oct 28 10:00:00 2026" }
+
+      expect(probe(lstart:).of(42, started_at: "u1793181600")).to eq(:live)
+    end
+
+    it "answers unknown when ps names no such process" do
+      expect(probe(lstart: ->(_pid) { "\n" }).start_of(42)).to eq(Lain::Liveness::UNKNOWN_START)
+    end
+
+    it "answers unknown when ps cannot be run" do
+      expect(probe(lstart: ->(_pid) { raise Errno::ENOENT }).start_of(42)).to eq(Lain::Liveness::UNKNOWN_START)
+    end
+
+    it "does not spawn ps when stat exists" do
+      stat(42, 777)
+      spawned = false
+
+      expect(probe(lstart: ->(_pid) { spawned = true }).start_of(42)).to eq("777")
+      expect(spawned).to be(false)
+    end
+
     it "calls a pid too large for any process dead, rather than raising" do
       expect(described_class.new(proc_root: @proc_root).of(99_999_999_999_999_999_999, started_at: "1")).to eq(:dead)
     end
@@ -103,6 +168,15 @@ RSpec.describe Lain::Liveness do
   end
 
   describe Lain::Liveness::Writer do
+    it "reads back, judged, a header whose start came from ps" do
+      probe = Lain::Liveness::Probe.new(proc_root: "/nonexistent", lstart: ->(_pid) { "Tue Oct 28 10:00:00 2026" })
+      written = described_class.current(probe:)
+
+      read = described_class.from_header({ "type" => "session" }.merge(written.to_header))
+
+      expect([read, read.verdict(probe)]).to eq([written, :live])
+    end
+
     it "names this process: its pid, its start and this host" do
       expect(described_class.current).to eq(described_class.new(pid: Process.pid, start: own_start,
                                                                 host: Socket.gethostname))

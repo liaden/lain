@@ -148,7 +148,7 @@ RSpec.describe Lain::Isolation::Verifier::StaleGroup, :seam do
   it "kills nothing and says so when the start time cannot be read" do
     pid = ready(group(marked, "exec sleep 60"))
 
-    stale_group(proc_root: File.join(@dir, "no-proc")).call(line(pid, probe.start_of(pid)))
+    stale_group(proc_root: File.join(@dir, "no-proc"), lstart: ->(_pid) { "" }).call(line(pid, probe.start_of(pid)))
 
     expect([gone?(pid), notices]).to match([false, [a_string_including("verify group #{pid}", "left it running")]])
   end

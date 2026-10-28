@@ -247,7 +247,8 @@ RSpec.describe Lain::Isolation::Verifier::Command, :seam do
       pid = own_group("sleep", "60")
       stale(pid, probe.start_of(pid))
       blind = File.join(@dir, "no-proc")
-      stale_group = Lain::Isolation::Verifier::StaleGroup.new(notice: notices.method(:<<), proc_root: blind)
+      stale_group = Lain::Isolation::Verifier::StaleGroup.new(notice: notices.method(:<<), proc_root: blind,
+                                                              lstart: ->(_pid) { "" })
       command = described_class.new(%w[true], timeout: 5, lock: Lain::Isolation::SuiteLock.for(paths:),
                                               shell_out_factory: Lain::Shell::Out.public_method(:new), stale_group:)
 

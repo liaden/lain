@@ -129,8 +129,20 @@ RSpec.describe Lain::Isolation::LeaseLock do
       expect(table.current).to eq(Lain::Isolation::LeaseLock::Held.new(pid: 42, start: "777", host: "box"))
     end
 
+    it "writes a lease from a ps start that parses back as the same lease and is judged live" do
+      ps_table = described_class.new(pid: 42, host: "box", proc_root: @proc_root, signal: signal_for(42 => 1),
+                                     lstart: ->(_pid) { "Tue Oct 28 10:00:00 2026" })
+      held = ps_table.current
+
+      parsed = Lain::Isolation::LeaseLock.parse(held.reason)
+
+      expect([parsed, ps_table.verdict(parsed)]).to eq([held, :live])
+    end
+
     it "records an unreadable start as unknown rather than guessing" do
-      expect(table.current.start).to eq("-")
+      blind = described_class.new(pid: 42, host: "box", proc_root: @proc_root, lstart: ->(_pid) { "" })
+
+      expect(blind.current.start).to eq("-")
     end
 
     it "calls a lease live when its host, pid and start time all match" do

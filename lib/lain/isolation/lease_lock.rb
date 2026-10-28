@@ -16,7 +16,7 @@ module Lain
     # the worktree's age counts from. Anything lain cannot parse holds, because
     # a lock nobody can explain is one nobody may break.
     module LeaseLock
-      LEASE = /\Alain-lease pid=(\d+) start=(\S+) host=(\S+)\z/
+      LEASE = /\Alain-lease pid=(\d+) start=(\d+|u\d+|-) host=(\S+)\z/
       RETAINED = /\Alain-retained since=(\S+)\z/
 
       # Taken by a running process. Whether that process is still the one
@@ -125,11 +125,12 @@ module Lain
         # @param proc_root [String] where `<pid>/stat` is read from
         # @param signal [#call] `Process.kill`; signal 0 asks only whether the
         #   pid exists
+        # @param lstart [#call] pid to the `ps` start text, read where `proc_root` has none
         def initialize(pid: Process.pid, host: Socket.gethostname, proc_root: "/proc",
-                       signal: Process.public_method(:kill))
+                       signal: Process.public_method(:kill), lstart: Liveness::Probe::LSTART)
           @pid = pid
           @host = host
-          @probe = Liveness::Probe.new(proc_root:, signal:)
+          @probe = Liveness::Probe.new(proc_root:, signal:, lstart:)
         end
 
         # @return [Held] the lease this process writes into a lock

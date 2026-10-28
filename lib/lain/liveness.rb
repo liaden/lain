@@ -1,20 +1,25 @@
 # frozen_string_literal: true
 
+require "open3"
 require "socket"
+require "time"
 
 module Lain
   # Whether the process a record names is still the one that wrote it: the one
   # question a lease lock, a session header and gc all ask of a pid, answered
   # one way.
   #
-  # Every such record carries the same identity: a pid, that process's start in
-  # clock ticks since boot, and the host. Signal 0 asks only whether the pid
+  # Every such record carries the same identity: a pid, that process's start,
+  # and the host. The start is clock ticks since boot where `/proc` exists, and
+  # `u` and the UTC epoch second from `ps` where it does not. Signal 0 asks only whether the pid
   # exists, and EPERM is a process that exists and belongs to somebody else, so
   # it is not evidence of death. Existence proves nothing once a pid can be
   # reused, so the start must also match exactly: ticks count on the boot
   # clock, which a wall-clock step never moves, and a later boot's process
-  # cannot carry the same start. A start that cannot be compared answers
-  # `:unknown`, and each caller resolves that in the direction its own mistake
+  # cannot carry the same start. An epoch second is coarser, so a pid reused
+  # within the same second reads live, the direction every caller tolerates.
+  # A start that cannot be compared, including a tick count against an epoch
+  # second, answers `:unknown`, and each caller resolves that in the direction its own mistake
   # is cheapest: a lease holds, a watch keeps tailing, a resume does not claim
   # the session is open.
   #
@@ -32,7 +37,7 @@ module Lain
     # @return [Symbol] one of {VERDICTS}
     def self.of(pid, started_at:, probe: Probe.new) = probe.of(pid, started_at:)
 
-    # The process table, read through `/proc`.
+    # The process table, read through `/proc` and, where there is none, `ps`.
     class Probe
       # Field 22 of `/proc/<pid>/stat`, counted from after the command name,
       # which may itself hold spaces and parentheses.
@@ -41,11 +46,23 @@ module Lain
       # Field 5 of the same file, counted the same way.
       GROUP_FIELD = 2
 
+      # TZ and locale are pinned because lstart prints local time in the locale's words.
+      LSTART = lambda do |pid|
+        Open3.capture2({ "TZ" => "UTC", "LC_ALL" => "C", "LANG" => "C" },
+                       "ps", "-o", "lstart=", "-p", pid.to_s, err: File::NULL).first
+      end.freeze
+
+      EPOCH_PREFIX = "u"
+
+      LSTART_FORMAT = "%a %b %e %H:%M:%S %Y %Z"
+
       # @param proc_root [String] where `<pid>/stat` is read from
       # @param signal [#call] `Process.kill`; signal 0 delivers nothing
-      def initialize(proc_root: "/proc", signal: Process.public_method(:kill))
+      # @param lstart [#call] pid to the text `ps -o lstart=` prints for it
+      def initialize(proc_root: "/proc", signal: Process.public_method(:kill), lstart: LSTART)
         @proc_root = proc_root
         @signal = signal
+        @lstart = lstart
       end
 
       # @param pid [Integer]
@@ -55,7 +72,7 @@ module Lain
         return :dead unless exists?(pid)
 
         start = start_of(pid)
-        return :unknown if [start, started_at].include?(UNKNOWN_START)
+        return :unknown unless comparable?(start, started_at)
 
         start == started_at ? :live : :dead
       end
@@ -65,7 +82,7 @@ module Lain
       def start_of(pid)
         fields(pid).fetch(START_FIELD, UNKNOWN_START)
       rescue SystemCallError
-        UNKNOWN_START
+        ps_start_of(pid)
       end
 
       # @param pid [Integer]
@@ -77,6 +94,17 @@ module Lain
       end
 
       private
+
+      def ps_start_of(pid)
+        text = @lstart.call(pid).strip
+        text.empty? ? UNKNOWN_START : "#{EPOCH_PREFIX}#{Time.strptime("#{text} UTC", LSTART_FORMAT).to_i}"
+      rescue SystemCallError, ArgumentError
+        UNKNOWN_START
+      end
+
+      def comparable?(*starts)
+        starts.none?(UNKNOWN_START) && starts.map { |start| start.start_with?(EPOCH_PREFIX) }.uniq.size == 1
+      end
 
       def fields(pid) = File.read(File.join(@proc_root, pid.to_s, "stat")).rpartition(")").last.split
 
@@ -98,9 +126,9 @@ module Lain
     class Writer
       HEADER_KEY = "writer"
 
-      # A tick count, or {UNKNOWN_START}: anything else could never match a
-      # real start, and would read a live writer as dead.
-      START = /\A(?:\d+|#{Regexp.escape(UNKNOWN_START)})\z/
+      # A tick count, an epoch token or {UNKNOWN_START}: anything else could
+      # never match a real start, and would read a live writer as dead.
+      START = /\A(?:\d+|#{Probe::EPOCH_PREFIX}\d+|#{Regexp.escape(UNKNOWN_START)})\z/
 
       # A header that records no writer: one written before writers were
       # recorded, or one not written by a chat at all.

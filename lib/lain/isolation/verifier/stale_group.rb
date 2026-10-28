@@ -26,13 +26,14 @@ module Lain
         # @param notice [#call] told, in words, what became of a group a dead holder left
         # @param proc_root [String] the process table, read for a leader's start and a group's members
         # @param signal [#call] `Process.kill`; signal 0 delivers nothing
+        # @param lstart [#call] pid to the `ps` start text, read where `proc_root` has none
         # @param grace [Numeric] seconds a group is given to end after TERM, and again after KILL
         # @param clock [#call] monotonic seconds, which time the grace
         def initialize(notice: ParentLock::Silent, proc_root: "/proc", signal: Process.public_method(:kill),
-                       grace: GRACE, clock: RunClock::MONOTONIC)
+                       lstart: Liveness::Probe::LSTART, grace: GRACE, clock: RunClock::MONOTONIC)
           @notice = notice
           @proc_root = proc_root
-          @probe = Liveness::Probe.new(proc_root:)
+          @probe = Liveness::Probe.new(proc_root:, lstart:)
           @group = Shell::ProcessGroup.new(signal:, clock:, grace:, poll: POLL)
         end
 
