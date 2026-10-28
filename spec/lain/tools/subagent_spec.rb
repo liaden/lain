@@ -693,16 +693,26 @@ RSpec.describe Lain::Tools::Subagent do
       end
 
       # Where the lists end relative to the bound depends on line widths, so
-      # sweep the padding until some run lands them flush against it.
+      # sweep the padding until some run lands them flush against it. Driven
+      # through the answer's own cut: a run through the loop would execute
+      # thousands of real searches to build the same history.
       it "stays within the bound however the lists land against it" do
-        limit = Lain::Tools::Subagent::ANSWER_BOUND.limit
-        sizes = (0..9).map do |pad|
-          many = Array.new(1500) { |i| ["grep", { "pattern" => "n#{i}#{"p" * pad}", "path" => "lib" }] }
-          dispatched_by_parent(provider: mock(turn("n", *many),
-                                              turn("final text", read("Rakefile"))))["content"].bytesize
+        answer = Lain::Tools::Subagent::Answer.new
+        limit = answer.bounds.limit
+        searches = limit / 8
+        sizes = (0..19).map do |pad|
+          calls = Array.new(searches) do |i|
+            { "type" => "tool_use", "id" => "c#{i}", "name" => "grep",
+              "input" => { "pattern" => "n#{i}#{"p" * pad}", "path" => "lib" } }
+          end
+          events = [Struct.new(:role, :content).new("assistant", [{ "type" => "text", "text" => "n" }, *calls]),
+                    Struct.new(:role, :content).new("assistant", [{ "type" => "text", "text" => "final text" }])]
+          child = Struct.new(:timeline).new(events.each_entry)
+          answer.partial(child, "loop ran 2 iterations, ceiling is 2").bytesize
         end
 
         expect(sizes).to all(be <= limit)
+        expect(sizes.max).to be >= limit - 8
       end
 
       it "lists a numeric read path as no path at all" do
