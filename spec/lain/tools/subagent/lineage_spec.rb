@@ -72,6 +72,22 @@ RSpec.describe Lain::Tools::Subagent::Lineage do
       expect(message.to).to eq(lineage.correlation_of(parent))
     end
 
+    it "carries the failure's message beside its class" do
+      spawn = lineage.spawn(parent, prompt: "go")
+      message = lineage.ended(parent, spawn, child, lifecycle: failed, error: "Lain::Budget::Exceeded",
+                                                    message: "loop ran 25 iterations")
+
+      expect(message.body).to include("error" => "Lain::Budget::Exceeded", "message" => "loop ran 25 iterations")
+    end
+
+    it "keeps a partial answer apart from the result a completed child records" do
+      spawn = lineage.spawn(parent, prompt: "go")
+      message = lineage.ended(parent, spawn, child, lifecycle: failed, error: "Lain::Budget::Exceeded",
+                                                    message: "ceiling", partial: "what it found")
+
+      expect(message.body).to include("message" => "ceiling", "partial" => "what it found")
+    end
+
     it "names no head and no error for a stopped child that never committed a turn" do
       spawn = lineage.spawn(parent, prompt: "go")
       message = lineage.ended(parent, spawn, Lain::Dag::Factory.timeline(store:),

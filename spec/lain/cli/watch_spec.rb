@@ -178,6 +178,45 @@ RSpec.describe Lain::CLI::Watch do
       end
     end
 
+    context "when it failed with a reason" do
+      let(:completion_body) do
+        lineage.ended(parent_chain, spawned, child, lifecycle: "failed", error: "Lain::Budget::Exceeded",
+                                                    message: "loop ran 25 iterations").body
+      end
+
+      it "reads the reason inside the failed mark" do
+        watch.run
+
+        expect(output.string).to include("(failed: loop ran 25 iterations)")
+      end
+    end
+
+    context "when its message is long, multi-line and carries an escape byte" do
+      let(:completion_body) do
+        lineage.ended(parent_chain, spawned, child, lifecycle: "failed", error: "RuntimeError",
+                                                    message: "\e[31m#{"x" * 300}\nsecond line").body
+      end
+
+      it "reads one bounded line with the byte escaped" do
+        watch.run
+
+        mark = output.string.lines.grep(/\(failed: /).first
+        expect(mark).to include("\\e[31m")
+        expect(mark).not_to include("\e", "second line")
+        expect(mark.chomp.length).to be < 200
+      end
+    end
+
+    context "when it failed without a message" do
+      let(:completion_body) { lineage.ended(parent_chain, spawned, child, lifecycle: "failed").body }
+
+      it "reads a bare failed mark" do
+        watch.run
+
+        expect(output.string).to match(/\(failed\)\n/)
+      end
+    end
+
     context "when it was stopped before answering" do
       let(:completion_body) do
         lineage.ended(parent_chain, spawned, child, lifecycle: "stopped").body

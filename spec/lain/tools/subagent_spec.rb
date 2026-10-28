@@ -637,7 +637,8 @@ RSpec.describe Lain::Tools::Subagent do
 
       expect(result["is_error"]).to be(true)
       body = record.message.body
-      expect(body).to include("lifecycle" => failed, "error" => "Lain::Budget::Exceeded")
+      expect(body).to include("lifecycle" => failed, "error" => "Lain::Budget::Exceeded",
+                              "message" => a_string_matching(/\Aloop ran 2 iterations/))
       expect(body).not_to have_key("result")
       child = Lain::Dag::Factory.timeline(head_digest: body.fetch("final"), store:)
       expect(child.to_a.first.content.first["text"]).to eq("go")
@@ -667,6 +668,24 @@ RSpec.describe Lain::Tools::Subagent do
         expect(result["content"]).to start_with("loop ran 2 iterations, ceiling is 2")
         expect(result["content"]).to include("Gemfile", "Rakefile", "last note")
         expect(result["content"]).not_to include("first note")
+      end
+
+      it "journals the ceiling line as the message and the partial answer as partial" do
+        dispatched_by_parent(provider:)
+        body = record.message.body
+
+        expect(body.fetch("message")).to eq("loop ran 2 iterations, ceiling is 2")
+        expect(body.fetch("partial")).to include("Gemfile", "Rakefile", "last note")
+        expect(body.fetch("partial")).not_to include("ceiling is 2")
+      end
+
+      it "journals a completion the parent's mailbox does not fold and no reader counts as finished work" do
+        dispatched_by_parent(provider:)
+        conversation = [{ "role" => "user", "content" => [{ "type" => "text", "text" => "go" }] }]
+        snapshot = Lain::Context::Mailbox::Snapshot.new(recipient: record.message.to, events: [record.message])
+
+        expect(Lain::Context::Mailbox.new(snapshot:).call(conversation)).to eq(conversation)
+        expect(Lain::StatusFeed::SpawnLifecycle.new(record.message).finished?).to be(false)
       end
 
       it "lists only the reads that succeeded" do
@@ -902,8 +921,21 @@ RSpec.describe Lain::Tools::Subagent do
                                  tool_middleware: ToolRegistry::UNGUARDED)
 
       expect { tool.run("go") }.to raise_error("this child gets no context")
-      expect(record.message.body).to eq("lifecycle" => failed, "error" => "RuntimeError")
+      expect(record.message.body).to eq("lifecycle" => failed, "error" => "RuntimeError",
+                                        "message" => "this child gets no context")
       expect(record.message.causal_parents).to eq([record.spawn.digest])
+    end
+
+    it "records only a masked first line of a non-budget error's message" do
+      token = "ghp_aB3dE5gH7jK9mN1pQ3sT5vX7zA9cE1gI3kM5"
+      tool = described_class.new(provider: mock, context_factory: -> { raise "refused with #{token}\nsecond line" },
+                                 toolset: union, policy: spawn_policy, parent:, observer: record,
+                                 tool_middleware: ToolRegistry::UNGUARDED)
+
+      expect { tool.run("go") }.to raise_error(RuntimeError)
+      message = record.message.body.fetch("message")
+      expect(message).to start_with("refused with ")
+      expect(message).not_to include(token, "second line")
     end
 
     it "writes no spawn when the lease is refused, and hands the parent the refusal" do

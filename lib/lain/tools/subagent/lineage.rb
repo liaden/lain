@@ -116,12 +116,14 @@ module Lain
         end
 
         # A one-shot whose child did not answer: it raised, and `error` names
-        # the class, or its task was stopped. No `"result"`, which is what keeps
-        # it out of every reader of finished work; `"final"` only when the child
-        # has a head to name.
-        def ended(parent, spawn, child, lifecycle:, error: nil)
+        # the class and `message` says why, or its task was stopped. `partial`
+        # keeps what a ceiling-stopped child had found. Neither `"result"`, which
+        # keeps it out of every reader of finished work, nor `"text"`, which the
+        # mailbox would fold; `"final"` only when the child has a head to name.
+        def ended(parent, spawn, child, lifecycle:, error: nil, message: nil, partial: nil)
           final = child.head_digest
-          body = { "lifecycle" => lifecycle, "error" => error, "final" => final }.compact
+          body = { "lifecycle" => lifecycle, "error" => error, "message" => message, "partial" => partial,
+                   "final" => final }.compact
           put(parent, kind: :message, from: correlation_of(child), to: correlation_of(parent),
                       causal_parents: [spawn.digest, final].compact, body:)
         end
@@ -254,7 +256,7 @@ module Lain
           def recording
             yield self
           rescue StandardError => e
-            ended(StatusFeed::SpawnLifecycle::FAILED, error: e.class.name)
+            ended(StatusFeed::SpawnLifecycle::FAILED, error: e.class.name, **reason(e))
             raise
           ensure
             ended(StatusFeed::SpawnLifecycle::STOPPED)
@@ -280,15 +282,27 @@ module Lain
           # the task is already unwinding and a write is a suspension point:
           # `defer_stop` holds off one more cancel, the one a reactor teardown or
           # an ancestor task lands on a run already stopping.
-          def ended(lifecycle, error: nil)
+          def ended(lifecycle, error: nil, **detail)
             return unless @open && @spawn
 
             @open = false
             shielded do
-              completed(lifecycle, error)
+              completed(lifecycle, error, detail)
               retired(lifecycle)
             end
           end
+
+          # A ceiling's message leads the partial answer after a blank line. The
+          # partial is the model's or a transport's and never went through the
+          # middleware, and no session secrets reach this writer, so only what
+          # the detectors recognize on their own is masked.
+          def reason(error)
+            summary, partial = error.is_a?(Budget::Exceeded) ? error.message.split("\n\n", 2) : [error.message, nil]
+            { message: masked(summary.to_s.lines.first.to_s.chomp), partial: partial && masked(partial) }
+              .reject { |_, value| value.to_s.empty? }
+          end
+
+          def masked(text) = Sensitivity::TextMask.new(secrets: []).call(text).text
 
           def shielded(&block)
             task = Async::Task.current?
@@ -298,8 +312,8 @@ module Lain
           # Each write catches its own failure, so a lost completion never costs
           # the question its retirement, and neither replaces the exception
           # already climbing.
-          def completed(lifecycle, error)
-            @lineage.ended(@parent, @spawn, @child.settled, lifecycle:, error:)
+          def completed(lifecycle, error, detail)
+            @lineage.ended(@parent, @spawn, @child.settled, lifecycle:, error:, **detail)
           rescue StandardError => e
             lost("completion", lifecycle, e)
           end

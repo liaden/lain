@@ -248,6 +248,8 @@ module Lain
         Body = Data.define(:body)
         private_constant :Body
 
+        REASON_WIDTH = 120
+
         # @param record [Hash{String=>Object}] one admitted message record
         # @return [Array<String>] attributed lines, one per body line
         def lines(record)
@@ -265,7 +267,7 @@ module Lain
           payload = record["payload"]
           return "" unless payload.is_a?(Hash)
 
-          decorated(text_for(record["kind"].to_s, payload), lifecycle_of(payload))
+          decorated(text_for(record["kind"].to_s, payload), marked(payload))
         end
 
         # `text` is what {Tools::Subagent::Lineage#note} carries, `result`
@@ -281,6 +283,19 @@ module Lain
           return text.to_s if lifecycle.nil?
 
           ["(#{lifecycle})", text].reject { |part| part.to_s.empty? }.join(" ")
+        end
+
+        # A failure's reason reads inside its mark, where a reader looks for it.
+        def marked(payload)
+          mark = lifecycle_of(payload)
+          reason = payload["message"]
+          mark == StatusFeed::SpawnLifecycle::FAILED && reason.is_a?(String) ? "#{mark}: #{glanced(reason)}" : mark
+        end
+
+        # The record keeps the whole message; the mark is one escaped line.
+        def glanced(reason)
+          line = reason.lines.first.to_s.chomp.truncate(REASON_WIDTH)
+          line.gsub(/[[:cntrl:]]/) { |char| char.dump[1..-2] }
         end
 
         # A one-shot that answered writes the same "stopped" mark a killed one
