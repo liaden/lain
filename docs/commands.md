@@ -1128,8 +1128,8 @@ End the session. Same as a bare `quit`.
 
 ## Configuration (config.rb)
 
-`.lain/config.rb` is Ruby, evaluated once per launch, with 8 verbs: `epics`, `approval`,
-`isolation`, `sensitivity`, `shell`, `search`, `tests` and `middleware`. Each verb may appear once, and every
+`.lain/config.rb` is Ruby, evaluated once per launch, with 10 verbs: `epics`, `approval`,
+`isolation`, `sensitivity`, `shell`, `search`, `tests`, `middleware`, `env` and `todos`. Each verb may appear once, and every
 one is optional. Each is read by its own **strict** reader: an unknown key is refused by name,
 listing the keys that do exist, because a restricting table has to refuse a typo loudly rather than
 silently leave the restriction off.
@@ -1338,3 +1338,8 @@ tests preset: :rspec, source_roots: %w[lib app], exempt: %w[spec/fixtures/**]
 
 Omitted keys inherit the preset's, so the table above changes the source roots and the exemptions
 and keeps `rspec`'s level roots. A `tests` verb naming no `preset` is refused, listing the four.
+
+### todos
+
+`todos file: "CHORES.md"` names the chore file in the project root. The value is a bare file name, with
+no directory; without the verb it is `TODOS.md`. Anything else is refused by name with the file and line.

@@ -57,7 +57,8 @@ RSpec.describe Lain::Config::Builder do
                                                        search: Lain::SearchRules.empty,
                                                        tests: nil,
                                                        env_pass: [],
-                                                       approval_timeout: 300)
+                                                       approval_timeout: 300,
+                                                       todos: Lain::Config::Todos.empty)
     end
 
     it "builds the names env pass hands every child" do

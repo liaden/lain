@@ -9,7 +9,7 @@ module Lain
     # the detected-framework fallback survives, without every caller comparing
     # against {TestLayout::None}.
     Built = Data.define(:epics, :approval, :isolation, :sensitivity, :shell, :search, :tests, :middleware,
-                        :env_pass, :approval_timeout, :keys) do
+                        :env_pass, :approval_timeout, :keys, :todos) do
       # @param framework [String, nil] a detected test framework
       # @return [TestLayout] the declared layout, else what the framework implies
       def test_layout(framework: nil) = tests || TestLayout.from(nil, path: nil, framework:)
@@ -23,7 +23,7 @@ module Lain
     # A refusal names the line of the verb that caused it, because the user
     # wrote Ruby and a backtrace into this file points nowhere they can edit.
     class Builder
-      VERBS = %i[epics approval isolation sensitivity shell search tests middleware env].freeze
+      VERBS = %i[epics approval isolation sensitivity shell search tests middleware env todos].freeze
 
       ENV_TABLE = "`env`"
 
@@ -120,7 +120,8 @@ module Lain
                   middleware: @tables.fetch(:middleware, Middleware.empty),
                   env_pass: @tables.fetch(:env, []),
                   approval_timeout: @approval_timeout,
-                  keys: @tables.fetch(:keys) { Keys.empty })
+                  keys: @tables.fetch(:keys) { Keys.empty },
+                  todos: @tables.fetch(:todos) { Todos.empty })
       end
 
       def epics(**table, &block)
@@ -159,6 +160,8 @@ module Lain
       def middleware(&block)
         declare(:middleware, Middleware::TABLE) { Middleware.from(collect(block, Middleware::AREAS), path: @path) }
       end
+
+      def todos(**table) = declare(:todos, Todos::TABLE, table) { |at| Todos.from(shaped(table), path: at) }
 
       def keys(**table) = declare(:keys, Keys::TABLE, table) { |at| Keys.from(shaped(table), path: at) }
 

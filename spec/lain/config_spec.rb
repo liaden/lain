@@ -30,6 +30,28 @@ RSpec.describe Lain::Config do
     end
   end
 
+  describe "the todos table" do
+    it "makes configs differing only in todos unequal, with different hashes" do
+      plain = described_class.new(epics: Lain::Config::Epics.new(home: :xdg))
+      other = described_class.new(epics: Lain::Config::Epics.new(home: :xdg),
+                                  todos: Lain::Config::Todos.new(file: "X.md"))
+
+      expect([plain == other, plain.hash == other.hash]).to eq([false, false])
+    end
+
+    it "is TODOS.md without the verb" do
+      Dir.mktmpdir { |root| expect(described_class.load(root:).todos.file).to eq("TODOS.md") }
+    end
+
+    it "is the project's file name" do
+      Dir.mktmpdir do |root|
+        write_config(root, "todos file: \"CHORES.md\"\n")
+
+        expect(described_class.load(root:).todos.file).to eq("CHORES.md")
+      end
+    end
+  end
+
   describe "the env table" do
     it "is read by .load" do
       Dir.mktmpdir do |root|

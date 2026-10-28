@@ -34,7 +34,8 @@ module Lain
     # @raise [Refusal] naming the file and line of whatever it got wrong
     def self.load(root: Dir.pwd)
       built = built(root)
-      new(epics: built.epics, approval: built.approval, isolation: built.isolation, env_pass: built.env_pass)
+      new(epics: built.epics, approval: built.approval, isolation: built.isolation, env_pass: built.env_pass,
+          todos: built.todos)
     end
 
     # What a project adds to the path classifier's built-in tables, and the
@@ -177,11 +178,15 @@ module Lain
     #   beyond what {Exec::ChildEnv::KEEP} keeps
     attr_reader :env_pass
 
-    def initialize(epics:, approval: Answers.empty, isolation: Isolation.empty, env_pass: [])
+    # @return [Todos] which file in the project root holds the chores
+    attr_reader :todos
+
+    def initialize(epics:, approval: Answers.empty, isolation: Isolation.empty, env_pass: [], todos: Todos.empty)
       @epics = epics
       @approval = Answers.coerce(approval)
       @isolation = Isolation.coerce(isolation)
       @env_pass = env_pass.map(&:-@).freeze
+      @todos = todos
       freeze
     end
 
@@ -198,12 +203,12 @@ module Lain
     # treat as distinct keys must not collide.
     def ==(other)
       other.instance_of?(self.class) && epics == other.epics && approval == other.approval &&
-        isolation == other.isolation && env_pass == other.env_pass
+        isolation == other.isolation && env_pass == other.env_pass && todos == other.todos
     end
     alias eql? ==
 
     def hash
-      [self.class, epics, approval, isolation, env_pass].hash
+      [self.class, epics, approval, isolation, env_pass, todos].hash
     end
 
     # The default `gates` table must stay EMPTY. {Epics::Gates.check!} reads
