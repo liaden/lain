@@ -138,7 +138,7 @@ RSpec.describe Lain::Bench::HotPaths do
 
     # What the profile grants is not visible from a run that writes nothing, so it is read off the profile.
     it "writes the scratch repository, never the checkout it ran from, and pays its git seals" do
-      profile = bash.send(:profile_for, "workspace")
+      profile = bash.send(:profiles, "workspace").for(bash.send(:request_for, "workspace"))
 
       expect(profile.write_dirs).to include(@scratch)
       expect(profile.write_dirs.none? { Lain::Landing.under?(Dir.pwd, _1) }).to be(true)

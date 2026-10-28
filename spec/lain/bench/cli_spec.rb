@@ -2126,12 +2126,16 @@ RSpec.describe Lain::Bench::CLI do
     end
 
     it "ignores an empty entry in the arm list" do
-      expect { cli.compaction_sweep_report(journals:, arms: "elide,,truncate-cumulative") }.not_to raise_error
+      report = cli.compaction_sweep_report(journals:, arms: "elide,,truncate-cumulative")
+
+      expect(report).to include("elide").and include("truncate-cumulative")
     end
 
     it "ignores an empty entry in the recorded list" do
       flags = described_class::CompactionSweepFlags
 
+      expect { flags.new(recorded: ",,/nonexistent/x") }
+        .to raise_error(described_class::Refusal, %r{no recording at /nonexistent/x})
       expect { flags.new(recorded: ",,#{journals.first}") }.not_to raise_error
     end
 

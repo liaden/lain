@@ -153,8 +153,6 @@ module Lain
       end
       Subset::NONE = Subset.new(of: nil, gap: nil)
 
-      private_constant :Outcomes
-
       NOT_MEASURED_CELL = "not measured"
       private_constant :NOT_MEASURED_CELL
 

@@ -316,8 +316,8 @@ RSpec.describe Lain::Declarative do
       end
     end
 
-    it "accepts a present value" do
-      expect { refusing.check!(tool: "bash", id: "i") }.not_to raise_error
+    it "accepts a present value and returns nothing" do
+      expect(refusing.check!(tool: "bash", id: "i")).to be_nil
     end
 
     it "with only_false refuses false alone, under the message as given" do

@@ -285,8 +285,6 @@ module Lain
 
         def root_for(profile) = profile == "workspace" ? @scratch : Dir.pwd
 
-        def profile_for(profile) = profiles(profile).for(request_for(profile))
-
         def request_for(profile)
           ruling = { "reader" => ALLOWED, "workspace" => JUDGED }[profile]
           return Confine::Request::NONE unless ruling

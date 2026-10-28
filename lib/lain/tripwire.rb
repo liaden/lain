@@ -6,8 +6,7 @@ module Lain
   # record for each signal it counts, so a bench run can price the false trips.
   # Under the stop arm a seeded signal past the hard stop also trips {Stops}:
   # it records who is stopped or paused, journals a `tripwire_stop` record, and
-  # holds that state for a later consumer to refuse calls by. Nothing refuses
-  # one yet.
+  # holds that state for {Middleware::TripwireStop} to refuse calls by.
   module Tripwire
     Rules = Data.define(:points, :hard_stop)
 
