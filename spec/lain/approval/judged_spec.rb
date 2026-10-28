@@ -970,6 +970,8 @@ RSpec.describe Lain::Approval::Judged do
                                         home:, root:)
         end
         let(:store) { "the judge did not look: #{described_class::GIT_STORE}" }
+        let(:opaque) { "the judge did not look: #{described_class::OPAQUE}" }
+        let(:below) { "the judge did not look: #{described_class::BELOW_TOP}" }
 
         before do
           FileUtils.mkdir_p(File.join(root, ".git", "objects"))
@@ -1065,6 +1067,70 @@ RSpec.describe Lain::Approval::Judged do
           ruling = ruled(rung(spawn, under: ungated), bash("grep -r x ."))
 
           expect([ruling.verdict, spawn.calls.size]).to eq([:allow, 1])
+        end
+
+        def unattended(command)
+          spawn = spawn_answering("approve")
+          ruling = ruled(rung(spawn, asking: described_class::Unattended.new), bash(command))
+          [ruling.verdict, spawn.calls.size, escalations.last&.fetch("note", nil)]
+        end
+
+        it "unattended, asks the judge about a checkout-local add and commit, which name .git but not the store" do
+          commands = ["git add lib/x.rb spec/lain/x_spec.rb", "git commit -m msg"]
+
+          expect(commands.map { unattended(_1) }).to eq([[:allow, 1, nil]] * 2)
+        end
+
+        it "unattended, asks the judge about a checkout-local add and commit in a linked worktree" do
+          link_worktree
+          commands = ["git add lib/x.rb spec/lain/x_spec.rb", "git commit -m msg"]
+
+          expect(commands.map { unattended(_1) }).to eq([[:allow, 1, nil]] * 2)
+        end
+
+        it "unattended, refuses a write to the shared store, a skipped hook and a whole-tree read, naming the store" do
+          commands = ["git stash clear", "git tag -d v1", "git branch -D feature", "git switch -c topic", "git push",
+                      "git commit --no-verify -m x", "git --git-dir=/x/.git add .", "git diff", "git add ."]
+
+          expect(commands.to_h { [_1, unattended(_1)] }).to eq(commands.to_h { [_1, [:deny, 0, store]] })
+        end
+
+        it "unattended, refuses a root, glob or magic pathspec, naming the store, in either checkout" do
+          commands = ["git add -f '*'", "git add '*.pem'", "git add :/", "git add ':(top)'", "git add ':!x'",
+                      "git add ':(glob)**'", "git add .", "git restore '*'", "git restore .", "git checkout -- '*'",
+                      "git checkout -- .", "git rm -r ':/'", "git restore -m '*'", "git restore -m ':/'",
+                      "git commit -m x -o '*'", "git commit -m x -o ':/'", "git commit -m -- -a",
+                      "git commit --message -- -a", "git commit -m -- --no-verify", "git commit -F -- -a",
+                      "git checkout --conflict -- -f lib/x.rb"]
+          refused = commands.to_h { [_1, [:deny, 0, store]] }
+          real = commands.to_h { [_1, unattended(_1)] }
+          link_worktree
+
+          expect([real, commands.to_h { [_1, unattended(_1)] }]).to eq([refused, refused])
+        end
+
+        it "unattended, refuses a commit naming a credential as its attached message file" do
+          unweighable = format(described_class::UNWEIGHABLE, path: File.join(root, ".env"))
+
+          expect(unattended("git commit -F.env")).to eq([:deny, 0, "the judge did not look: #{unweighable}"])
+        end
+
+        it "unattended, refuses a checkout-local write run below the top level, in either checkout" do
+          FileUtils.mkdir_p(File.join(root, "lib"))
+          commands = ["cd lib && git add -A", "cd lib && git commit -am x", "cd lib && git reset --hard",
+                      "cd lib && git add x.rb", "cd lib && git commit -m x"]
+          refused = commands.to_h { [_1, [:deny, 0, below]] }
+          real = commands.to_h { [_1, unattended(_1)] }
+          link_worktree
+
+          expect([real, commands.to_h { [_1, unattended(_1)] }]).to eq([refused, refused])
+        end
+
+        it "unattended, refuses a git that points elsewhere or runs code it was handed, its paths unnamed" do
+          commands = ["git -C ../other commit -m x", "git --work-tree=/y commit", "GIT_DIR=/z git commit",
+                      "git -c core.fsmonitor=cmd status", "git -c alias.x=!sh x"]
+
+          expect(commands.to_h { [_1, unattended(_1)] }).to eq(commands.to_h { [_1, [:deny, 0, opaque]] })
         end
       end
 

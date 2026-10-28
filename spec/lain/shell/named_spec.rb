@@ -238,8 +238,7 @@ RSpec.describe Lain::Shell::Named do
 
     it "reads the whole tree for every subcommand but the few that print no file contents" do
       ["git stash show", "git stash list", "git archive HEAD", "git format-patch -1 --stdout", "git reflog -p",
-       "git whatchanged", "git range-diff A...B", "git cat-file -p HEAD", "git notes show", "git commit -m x",
-       "git annotate f", "git"]
+       "git whatchanged", "git range-diff A...B", "git cat-file -p HEAD", "git notes show", "git annotate f", "git"]
         .each { expect(patterns(_1)).to include("/p/**"), _1 }
       ["git status", "git ls-files", "git ls-tree -r HEAD", "git rev-parse HEAD", "git shortlog"]
         .each { expect(patterns(_1)).to be_empty, _1 }
@@ -254,6 +253,115 @@ RSpec.describe Lain::Shell::Named do
     it "scopes -c to before the subcommand" do
       expect(named("git log -c")).not_to be_opaque
       expect(named("git -ccore.pager=less log")).to be_opaque
+    end
+
+    describe "a checkout-local write" do
+      def dotgit(command) = named(command).paths.select { _1.resolved == "/p/.git" }.map(&:written)
+
+      def whole_tree(command) = named(command).paths.select { _1.pattern == "/p/**" }.map { [_1.written, _1.git] }
+
+      def written_besides_dotgit(command) = named(command).written.map(&:resolved) - ["/p/.git"]
+
+      it "names its paths and the .git directory as written, never the whole tree" do
+        {
+          "git add lib/x.rb spec/x_spec.rb" => %w[/p/lib/x.rb /p/spec/x_spec.rb], "git commit -m msg" => [],
+          "git commit -m msg lib/x.rb" => %w[/p/lib/x.rb], "git restore f" => %w[/p/f],
+          "git reset HEAD -- f" => %w[/p/f], "git rm f" => %w[/p/f], "git mv a b" => %w[/p/a /p/b],
+          "git checkout -- f" => %w[/p/f], "git commit --amend --no-edit" => [], "git commit -F msg.txt" => [],
+          "git commit --reuse-message=HEAD" => []
+        }.each do |command, pathspecs|
+          expect([dotgit(command), whole_tree(command), pathspecs - resolved(command)]).to eq([[true], [], []]), command
+        end
+      end
+
+      it "writes the paths rm, restore, mv and checkout name, and only reads those add, commit and reset name" do
+        expected = { "git rm f" => %w[/p/f], "git restore f" => %w[/p/f], "git mv a b" => %w[/p/a /p/b],
+                     "git checkout -- f" => %w[/p/f], "git add f" => [], "git commit -m x f" => [],
+                     "git reset HEAD -- f" => [] }
+
+        expect(expected.to_h { |command, _| [command, written_besides_dotgit(command)] }).to eq(expected)
+      end
+
+      it "keeps a commit's message and message file out of its pathspecs" do
+        ["git commit -m lib", "git commit --message lib", "git commit -F lib", "git commit -t lib",
+         "git commit --file lib"].each { expect(patterns(_1)).not_to include("/p/lib/**"), _1 }
+      end
+
+      it "names a commit's message file however its value is attached" do
+        ["git commit -F.env", "git commit -aF.env", "git commit -F .env", "git commit --file=.env",
+         "git commit -t.env -m x", "git commit --template=.env -m x"].each do |command|
+          expect(resolved(command)).to include("/p/.env"), command
+        end
+      end
+
+      it "reads the whole tree, as git, for every file it may take: a root, glob or magic pathspec, or -A" do
+        reads = ["git add .", "git add ./", "git add -f '*'", "git add '*.pem'", "git add 'lib/?.rb'",
+                 "git add '[a-z]*'", "git add :/", "git add ':(top)'", "git add ':!x'", "git add ':(glob)**'",
+                 "git add -A", "git add --all", "git add -u", "git commit -a -m x", "git commit -am x",
+                 "git commit --al -m x", "git reset -- '*'", "git commit -m x -o '*'", "git commit -m x -o ':/'"]
+
+        expect(reads.to_h { [_1, whole_tree(_1)] }).to eq(reads.to_h { [_1, [[false, true]]] })
+        expect(patterns("git add lib")).to include("/p/lib/**")
+        expect(patterns("git commit -qm x -o lib")).to include("/p/lib/**")
+      end
+
+      it "writes the whole tree, as git, for a hard reset, a detach, or a root, glob or magic pathspec it writes" do
+        writes = ["git reset --hard", "git reset --hard HEAD~1", "git switch --detach v1", "git switch -d v1",
+                  "git checkout --detach v1", "git restore '*'", "git restore .", "git checkout -- '*'",
+                  "git checkout -- .", "git rm -r ':/'", "git rm '*.rb'", "git mv ':(top)a' b", "git restore -m '*'",
+                  "git restore -m ':/'"]
+
+        expect(writes.to_h { [_1, whole_tree(_1)] }).to eq(writes.to_h { [_1, [[true, true]]] })
+      end
+
+      it "keeps in the class the forms each subcommand reads as it says" do
+        ["git add lib/x.rb", "git commit -m msg", "git commit --amend -m x", "git commit --squash=HEAD -m x",
+         "git reset main~0", "git reset --soft HEAD~1", "git rm --cached f", "git commit -m x -i lib",
+         "git restore -s base lib", "git checkout -m -- lib/x.rb", "git add lib", "git commit -qm x -o lib"]
+          .each { expect(dotgit(_1)).to eq([true]), _1 }
+      end
+
+      it "leaves out a short option cluster holding a letter its subcommand does not know" do
+        ["git commit -Xm x", "git add -o f", "git restore -t '*'", "git rm -m '*'", "git reset -m '*'",
+         "git mv -r a b"].each { expect(dotgit(_1)).to be_empty, _1 }
+      end
+
+      it "leaves out a write that opens an editor or prompts, which a headless run would wait on forever" do
+        ["git commit", "git commit -a", "git commit --amend", "git commit -e -m x", "git commit --edit -m x",
+         "git commit -c HEAD", "git commit -p -m x", "git commit --interactive -m x", "git add -e", "git add --edit",
+         "git add -p", "git add --patch", "git add -i", "git restore -p", "git reset -p", "git checkout -p -- f"]
+          .each { expect(dotgit(_1)).to be_empty, _1 }
+      end
+
+      it "leaves out a write to the shared store, a skipped hook and a pathspec read from a file" do
+        ["git stash clear", "git tag -d v1", "git branch -D feature", "git switch -c topic", "git switch topic",
+         "git checkout topic", "git push", "git commit --no-verify -m x", "git commit -n -m x",
+         "git commit --no-verif -m x", "git add --pathspec-from-file=list", "git --git-dir=/x/.git add .",
+         "git --namespace=n commit -m x", "git --no-pager commit -m x"].each do |command|
+          expect([dotgit(command), patterns(command).include?("/p/**")]).to eq([[], true]), command
+        end
+      end
+
+      it "leaves out a write naming a path outside the tree, as source or destination" do
+        ["git mv lib/x.rb ../moved.rb", "git mv lib/x.rb /tmp/moved.rb", "git mv /tmp/x lib/x.rb", "git add ../other/f",
+         "git rm lib/../../f", "git restore ~/f", "git checkout -- ../f", "git commit -m x -- /etc/f"]
+          .each { expect(dotgit(_1)).to be_empty, _1 }
+      end
+
+      it "reads a `--` that is an option's value as that value, not as the end of its options" do
+        expect(%w[-m --message -F].to_h { [_1, whole_tree("git commit #{_1} -- -a")] })
+          .to eq(%w[-m --message -F].to_h { [_1, [[false, true]]] })
+        expect(["git commit -m -- --no-verify", "git checkout --conflict -- -f lib/x.rb"].map { dotgit(_1) })
+          .to eq([[], []])
+        expect([dotgit("git commit -m x -- -a"), whole_tree("git commit -m x -- -a")]).to eq([[true], []])
+        expect(resolved("git commit -m x -- -a")).to include("/p/-a")
+      end
+
+      it "stays opaque where git points elsewhere or runs code it was handed" do
+        ["git -C ../other commit -m x", "git --work-tree=/y commit", "GIT_DIR=/z git commit",
+         "git -c core.fsmonitor=cmd status", "git -c alias.x=!sh x", "git --exec-path=/x commit -m x"]
+          .each { expect(named(_1)).to be_opaque, _1 }
+      end
     end
 
     it "names --git-dir as written on a subcommand that writes, and diff's --output" do

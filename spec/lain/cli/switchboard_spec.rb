@@ -504,6 +504,51 @@ RSpec.describe Lain::CLI::Switchboard do
       end
     end
 
+    # Scenario: a headless worker commits inside its lease
+    describe "unattended, in a worker's lease" do
+      around do |example|
+        Dir.mktmpdir("lain-lease") do |dir|
+          @lease = File.realpath(dir)
+          example.run
+        end
+      end
+
+      def leased_board(asked)
+        home = File.join(@lease, "home")
+        policy = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: @lease, root: @lease),
+                                               home:, root: @lease)
+        switchboard(attended: false, approval: :auto, judge: judge_answering(:approve, asked), sensitivity: policy)
+      end
+
+      def ruled_in_lease(board, command)
+        worker = Struct.new(:worker_env).new(Lain::WorkerEnv.new(cwd: @lease, env: {}, checkout: @lease))
+        effect = Struct.new(:name, :input, :tool_use_id).new("bash", { "command" => command }, "tu_git")
+        board.policy_switch.call(effect, worker)
+      end
+
+      before do
+        FileUtils.mkdir_p([File.join(@lease, ".git", "objects"), File.join(@lease, "lib")])
+        File.write(File.join(@lease, ".git", "HEAD"), "ref: refs/heads/lease\n")
+        File.write(File.join(@lease, "lib", "x.rb"), "1\n")
+      end
+
+      it "lets the judge allow an add and a commit as checkout-local writes" do
+        asked = []
+        board = leased_board(asked)
+
+        expect(["git add lib/x.rb", "git commit -m msg"].map { ruled_in_lease(board, _1) }).to eq([true, true])
+        expect(asked).to eq(%w[bash bash])
+      end
+
+      it "still refuses a write to the store the lease shares, without asking the judge" do
+        asked = []
+        board = leased_board(asked)
+
+        expect(["git stash clear", "git branch -D feature"].map { ruled_in_lease(board, _1) }).to eq([false, false])
+        expect(asked).to be_empty
+      end
+    end
+
     it "lets the judge decide the same path on a board whose policy gates nothing" do
       asked = []
       board = switchboard(approval: :auto, judge: judge_answering(:approve, asked))

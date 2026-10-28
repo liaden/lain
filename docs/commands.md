@@ -749,6 +749,17 @@ those rungs.
   not joined to the next command by `&&`. These lists are known to be incomplete: some readers
   lain does not know still reach the judge. A script a command runs (`bash x.sh`, `make`) is
   judged by the command's words, never by what the script reads.
+  A git write that stays inside the checkout (`git add`, `commit`, `restore`, `reset`, `rm`, `mv`
+  and `checkout -- <path>`) is held to the paths it names and the checkout's `.git`, not the whole
+  tree, when it runs from the checkout's top level with nothing before the subcommand, no
+  `--no-verify` or `--pathspec-from-file`, no short option its subcommand does not take, and nothing
+  that opens an editor or a prompt (a commit says where its message comes from: `-m`, `-F` or
+  `--no-edit`). Every path it names must be relative with no `..`, read from the words, so a link
+  inside the tree is followed; an absolute path, a `~` path or a run from a subdirectory goes to
+  you. `commit -a`, `add -A`/`-u`, a pathspec of `.` or with a glob or `:` magic, `reset --hard`,
+  `--merge` or `--keep`, and `switch` or `checkout` with `--detach` reach the whole tree and its
+  object store, so they go to you at any size; a plain directory pathspec (`git add lib`) is walked
+  whole, up to the 2,000-entry bound above.
   A headless run (`--non-interactive`) has no one to park for, so there an unsure
   call is **refused**, and so is a call that would have gone to a human.
 * **`bypass`** approves what the rules allow. It is the old approve-all, renamed. Nothing else

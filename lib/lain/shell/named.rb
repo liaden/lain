@@ -31,11 +31,14 @@ module Lain
       #   `<root>/**` for a search root such as find's
       # @!attribute guess [Boolean] one of several places an unknown program's
       #   attached value could start, so most of them name no real file
-      # @!attribute git [Boolean] the whole-tree read a git subcommand implies,
-      #   so its history is reached through `.git` even where that is a pointer file
+      # @!attribute git [Boolean] a tree a git subcommand reads or writes, so its
+      #   history is reached through `.git` even where that is a pointer file;
+      #   with no pattern, the `.git` a checkout-local write lands in
       Path = Data.define(:word, :resolved, :written, :directory, :pattern, :guess, :git) do
         # Data has no per-member defaults, so the keywords are defaulted here.
         def initialize(guess: false, git: false, **) = super
+
+        def checkout_git? = git && pattern.nil?
 
         # Whether the command wrote it so that the directory it runs in cannot
         # move it: a rooted path, or a `~` the home resolves.
@@ -371,6 +374,179 @@ module Lain
         end
       end
 
+      # A git write that lands in this checkout, read by its own subcommand's
+      # options rather than git's shared value letters, under which `commit -o`
+      # and `restore -m`, both flags, would swallow the pathspec after them.
+      class GitWrite
+        NONE = ["", [].freeze].freeze
+
+        # @!attribute flags [String] short options that take no value
+        # @!attribute valued [String] short options that take the rest of the cluster or the next word
+        # @!attribute attached [String] short options whose value can only be attached
+        # @!attribute long_values [Array<String>] long options that take the next word when no `=` gives a value
+        # @!attribute files [String] value options whose value names a file
+        # @!attribute refused [Array(String, Array<String>)] options that leave it out of the class
+        # @!attribute whole [Array(String, Array<String>)] options that reach the whole tree
+        # @!attribute message [Array(String, Array<String>), nil] one of which a commit needs, or it opens an editor
+        # @!attribute paths [Symbol] which operands are pathspecs: `:all`, `:separated` (after `--`), `:none`
+        # @!attribute writes_paths [Boolean] it writes the files its pathspecs name, not only reads them
+        # @!attribute rewrites [Boolean] a whole-tree option writes the tree, not only reads it
+        Reading = Data.define(:flags, :valued, :attached, :long_values, :files, :refused, :whole, :message, :paths,
+                              :writes_paths, :rewrites) do
+          def initialize(flags: "", valued: "", attached: "", long_values: [].freeze, files: "", refused: NONE,
+                         whole: NONE, message: nil, paths: :all, writes_paths: false, rewrites: false)
+            super
+          end
+
+          def plain = flags + refused.first + whole.first
+        end
+
+        # A stash, a tag and every other branch are shared with the main
+        # checkout, so only writes to this checkout's files, index and own
+        # branch are here. A skipped hook, a pathspec read from a file the judge
+        # never sees, and an editor or prompt a headless run would wait on
+        # forever are refused.
+        NOT_LOCAL = %w[--no-verify --pathspec-from-file].freeze
+        READINGS = {
+          "commit" => Reading.new(
+            flags: "qvsizo", valued: "mFtCc", attached: "uS", files: "Ft",
+            long_values: %w[
+              --author --date --message --file --template --reuse-message --reedit-message --fixup --squash --cleanup
+              --trailer
+            ].freeze,
+            refused: ["nepc", %w[--edit --patch --interactive --reedit-message].freeze], whole: ["a", %w[--all].freeze],
+            message: ["mF", %w[--message --file --no-edit --reuse-message].freeze]
+          ),
+          "add" => Reading.new(flags: "nvfN", long_values: %w[--chmod].freeze,
+                               refused: ["ipe", %w[--interactive --patch --edit].freeze],
+                               whole: ["Au", %w[--all --update --no-ignore-removal].freeze]),
+          "restore" => Reading.new(flags: "WSqm", valued: "s", long_values: %w[--source --conflict].freeze,
+                                   refused: ["p", %w[--patch].freeze], writes_paths: true),
+          "rm" => Reading.new(flags: "fnrq", writes_paths: true),
+          "mv" => Reading.new(flags: "fknv", writes_paths: true),
+          "reset" => Reading.new(flags: "qN", refused: ["p", %w[--patch].freeze],
+                                 whole: ["", %w[--hard --merge --keep].freeze], rewrites: true),
+          "checkout" => Reading.new(flags: "qfm", long_values: %w[--conflict].freeze,
+                                    refused: ["pbBtl", %w[--patch --orphan --track].freeze],
+                                    whole: ["", %w[--detach].freeze], paths: :separated, writes_paths: true,
+                                    rewrites: true),
+          "switch" => Reading.new(flags: "fmq", long_values: %w[--conflict].freeze,
+                                  refused: ["cCt", %w[--create --force-create --orphan --track].freeze],
+                                  whole: ["d", %w[--detach].freeze], paths: :none, rewrites: true)
+        }.freeze
+        # git expands these itself, so the files they match are known only to it.
+        MAGIC = /\A:|[*?\[]/
+
+        # @param words [Array<String>] after the program, the subcommand first
+        # @return [GitWrite, nil] nil for anything but a checkout-local write
+        def self.of(words)
+          reading = READINGS[words.first]
+          write = reading && new(words, reading)
+          write if write&.local?
+        end
+
+        def initialize(words, reading)
+          @words = words
+          @reading = reading
+          @separator = nil
+          @shorts = {}
+          @longs = []
+          @taken = Set.new
+          @unknown = false
+          (1...words.size).each { scan(_1) }
+        end
+
+        # A letter the subcommand does not know might take a value, so the
+        # pathspecs cannot be told from it. Its cwd is the top level, so a
+        # relative pathspec with no `..` is the only one known, lexically, to
+        # stay inside; a link inside the tree is still followed.
+        def local?
+          !@unknown && !has?(@reading.refused.first, [*@reading.refused.last, *NOT_LOCAL]) &&
+            (@reading.message.nil? || has?(*@reading.message)) &&
+            (@reading.paths == :all || whole? || pathspecs.any?) && pathspecs.none? { outside?(@words[_1]) }
+        end
+
+        # @return [Array<Integer>] the words, among those after the program, it takes as pathspecs
+        def pathspecs
+          case @reading.paths
+          when :none then []
+          when :separated then separated
+          else (1...(@separator || @words.size)).reject { @taken.include?(_1) || option?(_1) } + separated
+          end
+        end
+
+        def written = @reading.writes_paths ? pathspecs : []
+
+        # @return [Array<Symbol>] `:git` for the `.git` it lands in, then
+        #   `:root` or `:written` when it reaches the whole tree
+        def implied
+          matched = pathspecs.any? { MAGIC.match?(@words[_1]) }
+          return [:git] unless whole? || matched
+
+          writes = (whole? && @reading.rewrites) || (matched && @reading.writes_paths)
+          [:git, writes ? :written : :root]
+        end
+
+        # @return [Integer, nil] where an attached message or template file starts
+        def file_offset(index)
+          letters = @shorts[index]
+          letters.size + 1 if letters && !letters.empty? && @reading.files.include?(letters[-1])
+        end
+
+        private
+
+        def option?(index) = @words[index].start_with?("-") && @words[index] != "-"
+
+        def outside?(text) = text.start_with?("/", "~") || text.split("/").include?("..")
+
+        def separated = @separator ? ((@separator + 1)...@words.size).to_a : []
+
+        def whole? = has?(*@reading.whole)
+
+        # git takes any unambiguous prefix of a long option, so a prefix counts as the option.
+        def has?(letters, longs)
+          @shorts.each_value.any? { _1.count(letters).positive? } ||
+            @longs.any? { |name| name.size > 2 && longs.any? { _1.start_with?(name) } }
+        end
+
+        # A `--` ends the options only where it is not the value an option before it takes.
+        def scan(index)
+          return if @separator
+          return @separator = index if @words[index] == "--" && !@taken.include?(index)
+
+          read(index)
+        end
+
+        def read(index)
+          return if @taken.include?(index) || !option?(index)
+
+          text = @words[index]
+          text.start_with?("--") ? read_long(index, text) : read_short(index, text[1..])
+        end
+
+        def read_long(index, text)
+          name, equals, = text.partition("=")
+          @longs << name
+          @taken << (index + 1) if equals.empty? && @reading.long_values.include?(name)
+        end
+
+        def read_short(index, run)
+          at = run.each_char.find_index { !@reading.plain.include?(_1) } || run.size
+          @shorts[index] = run[0..at]
+          read_stop(index, run[at], last: at == run.size - 1)
+        end
+
+        # The first letter that is not a plain flag: a value's, an attached
+        # value's, or one this subcommand does not know.
+        def read_stop(index, letter, last:)
+          return if letter.nil?
+
+          valued = @reading.valued.include?(letter)
+          @unknown ||= !valued && !@reading.attached.include?(letter)
+          @taken << (index + 1) if valued && last
+        end
+      end
+
       # What a program does with the words {Argv} read, where this object
       # knows it: whether it runs other programs or moves to another directory,
       # what it writes, and what it searches recursively.
@@ -458,6 +634,7 @@ module Lain
           @command = TARS.include?(@name) ? "tar" : Programs.canonical(@name)
           @untrusted = untrusted
           @argv = Argv.new(texts.drop(1), @command)
+          @git_write = GitWrite.of(@argv.words) if git?
         end
 
         def git? = @command == "git" && !@untrusted
@@ -474,7 +651,9 @@ module Lain
         def value_offset(index)
           return if @untrusted
 
-          @command == "find" ? @argv.words[index].size : @argv.value_offset(index)
+          return @argv.words[index].size if @command == "find"
+
+          @git_write&.file_offset(index) || @argv.value_offset(index)
         end
 
         # `dd if=x` opens `x`; the whole word names no file.
@@ -504,6 +683,7 @@ module Lain
 
           case @command
           when "find" then find_roots
+          when "git" then @git_write ? @git_write.pathspecs : []
           when *ALWAYS_RECURSES then searched
           when *RECURSES.keys then recursive_roots
           when "tar" then tar_creates? ? operands : []
@@ -518,6 +698,7 @@ module Lain
           return [] if @untrusted
 
           if implied_write? then [:written]
+          elsif @git_write then @git_write.implied
           elsif (@command == "find" && find_roots.empty?) || (searches? && searched.empty?) || git_tree? then [:root]
           else []
           end
@@ -643,6 +824,8 @@ module Lain
 
         def git_written
           subcommand, *rest = operands
+          return @git_write.written if @git_write
+
           case word(subcommand)
           when "clone" then rest.size >= 2 ? rest.last(1) : []
           when "init" then rest
@@ -966,10 +1149,17 @@ module Lain
         end
 
         def implied_paths(program)
-          program.implied.map do |kind|
-            Path.new(word: "", resolved: @dir, written: kind == :written, directory: false,
-                     pattern: File.join(@dir, "**").freeze, git: program.git?)
-          end
+          program.implied.map { _1 == :git ? dotgit : tree(_1, program) }
+        end
+
+        def tree(kind, program)
+          Path.new(word: "", resolved: @dir, written: kind == :written, directory: false,
+                   pattern: File.join(@dir, "**").freeze, git: program.git?)
+        end
+
+        def dotgit
+          Path.new(word: "", resolved: File.join(@dir, ".git").freeze, written: true, directory: false, pattern: nil,
+                   git: true)
         end
 
         def redirect_paths(stage) = stage.redirects.map { redirect_path(_1) }
@@ -993,7 +1183,7 @@ module Lain
               option_paths(raw, literal, program.value_offset(index), written.include?(index))
             else
               operand_paths(raw, literal, written: written.include?(index), root: roots.include?(index),
-                                          assignment: program.assignments?)
+                                          assignment: program.assignments?, git: program.git?)
             end
           end
         end
@@ -1021,8 +1211,8 @@ module Lain
 
         # `cat a=b` opens `a=b`, so a name=value operand names the whole word and its
         # value; `dd if=x` opens only `x`, so dd names the value alone.
-        def operand_paths(raw, literal, written:, root:, assignment:)
-          whole = path(raw, literal, written:, root:)
+        def operand_paths(raw, literal, written:, root:, assignment:, git:)
+          whole = path(raw, literal, written:, root:, git: root && git)
           match = ASSIGNMENT.match(literal.text)
           return [whole] if match.nil?
 
@@ -1051,14 +1241,14 @@ module Lain
           found unless found.is_a?(Path) && found.resolved == File::NULL
         end
 
-        def path(raw, literal, written:, root: false, guess: false)
+        def path(raw, literal, written:, root: false, guess: false, git: false)
           return if literal.text.empty? || literal.text == LONE_DASH
 
           resolved = resolve(literal)
           return :opaque if resolved.nil?
 
           Path.new(word: -raw, resolved:, written:, directory: false, pattern: pattern(literal, resolved, root),
-                   guess:)
+                   guess:, git:)
         end
 
         def pattern(literal, resolved, root)
@@ -1110,7 +1300,7 @@ module Lain
         def stage_end(stage) = [stage.byte_range.end, *stage.redirects.map { _1.byte_range.end }].max
       end
 
-      private_constant :Word, :Argv, :Program, :SedScript, :Walk
+      private_constant :Word, :Argv, :GitWrite, :Program, :SedScript, :Walk
     end
   end
 end

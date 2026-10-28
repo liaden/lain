@@ -37,6 +37,7 @@ module Lain
       TOO_MANY = "it reaches more files than the judge weighs"
       UNWEIGHABLE = "%<path>s is not a path it may weigh"
       GIT_STORE = "it reads the repository's object store, which the judge cannot weigh"
+      BELOW_TOP = "it is a git write run below its checkout's top level, so the judge cannot see which tree it writes"
       DEFERRED = "deferred"
       DEFERRAL_NOTE = "the judge deferred this"
       ESCALATED = "the judge refused this call, and a judge's refusal goes to a human"
@@ -324,6 +325,7 @@ module Lain
 
         named = named_in(effect, context)
         return OPAQUE if named.opaque?
+        return BELOW_TOP if named.paths.any? { below_top?(_1) }
 
         reached = named.paths.map { Reach.of(_1, facts: @policy.file_facts) }
         return TOO_MANY if reached.any?(&:nil?)
@@ -339,6 +341,12 @@ module Lain
         paths.zip(reached).any? do |path, found|
           found.drop(1).any? { store_entry?(path.resolved, _1.delete_prefix(path.resolved), git: path.git) }
         end
+      end
+
+      # A checkout-local git write names the `.git` beside its cwd; with none
+      # there, its pathspecs and `-A` are relative to a top level it never named.
+      def below_top?(path)
+        path.checkout_git? && !(@policy.file_facts.directory?(path.resolved) || @policy.file_facts.file?(path.resolved))
       end
 
       def store_entry?(root, relative, git:)
