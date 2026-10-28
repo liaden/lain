@@ -15,32 +15,18 @@ module Lain
     # seal, so a head whose test files differ from base raises {LeaseHarness::Tampered} before any run.
     # "Test file" is that seal's scope, which is also why the revert can never touch one. With the seal
     # in place the third run is chiefly a determinism and leakage check: the reverted tree is base again.
-    class ThreeArm
+    class ThreeArm < Sealed
       # @param lease [#worker_env] the lease holding the arm's checkout; never released here
       # @param level [#name, #root] the level whose tests judge the work
       # @param base [String] the pristine tree the lease was copied from
       # @param harness [#call] `root -> #grade(worker_env, paths:)`, as {LeaseHarness} takes one
       def initialize(lease:, level:, base:, harness: TestHarness.public_method(:new))
-        @level = level
-        @base = base
-        pristine = LeaseHarness.manifest(base, level:)
-        @seal = Canonical.digest(pristine)
-        runs = Runs.new(harness:, base:, level:)
-        @sealed = LeaseHarness.new(lease:, level:, harness: ->(_root) { runs }, pristine:)
-      end
-
-      # @param _trajectory [Object] deliberately unread, as {LeaseHarness#grade} reads none
-      # @return [Grade]
-      # @raise [LeaseHarness::NoCheckout, LeaseHarness::Tampered]
-      def grade(_trajectory = nil) = @sealed.grade
-
-      # @return [Hash{String=>String}] deeply frozen
-      def identity
-        { "class" => self.class.name, "level" => @level.name.to_s.freeze, "sealed" => @seal.dup.freeze,
-          "base" => Canonical.digest(tree(@base)).freeze }.freeze
+        super(lease:, level:, base:, harness:, runs: Runs.method(:new))
       end
 
       private
+
+      def extra_identity = { "base" => Canonical.digest(tree(@base)).freeze }
 
       def tree(root)
         Runs.files(root).to_h { |path| [path, digest(File.join(root, path))] }
@@ -52,13 +38,13 @@ module Lain
         "unreadable"
       end
 
-      # The three runs and their verdict, in the shape {LeaseHarness} hands a harness.
+      # The runs behind the seal, kept private because only the grader above builds them.
       class Runs
         def self.files(root)
           Dir.glob("**/*", File::FNM_DOTMATCH, base: root).select { |path| File.file?(File.join(root, path)) }
         end
 
-        def initialize(harness:, base:, level:)
+        def initialize(harness:, base:, level:, **)
           @harness = harness
           @base = base
           @level = level

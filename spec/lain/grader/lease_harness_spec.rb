@@ -221,21 +221,23 @@ RSpec.describe Lain::Grader::LeaseHarness do
     it "seals the same tree to the same digest, and a different tree to a different one" do
       leased do |_lease, checkout|
         level = level_in(checkout, "unit")
-        before = described_class.seal(checkout, level:)
+        before = Lain::Canonical.digest(described_class.manifest(checkout, level:))
 
-        expect(before).to match(/\Ablake3:\h{64}\z/).and eq(described_class.seal(subject_project, level:))
+        expect(before).to match(/\Ablake3:\h{64}\z/).and eq(Lain::Canonical.digest(described_class.manifest(
+                                                                                     subject_project, level:
+                                                                                   )))
         edit_test(checkout)
-        expect(described_class.seal(checkout, level:)).not_to eq(before)
+        expect(Lain::Canonical.digest(described_class.manifest(checkout, level:))).not_to eq(before)
       end
     end
 
     it "does not seal source files, so an arm may change them" do
       leased do |_lease, checkout|
         level = level_in(checkout, "unit")
-        before = described_class.seal(checkout, level:)
+        before = Lain::Canonical.digest(described_class.manifest(checkout, level:))
         File.write(File.join(checkout, "lib/order_total.rb"), "# the arm's real work\n", mode: "a")
 
-        expect(described_class.seal(checkout, level:)).to eq(before)
+        expect(Lain::Canonical.digest(described_class.manifest(checkout, level:))).to eq(before)
       end
     end
 
@@ -357,7 +359,8 @@ RSpec.describe Lain::Grader::LeaseHarness do
     it "still refuses on a bare digest, with no paths to name" do
       leased do |lease, checkout|
         level = level_in(checkout, "unit")
-        harness = described_class.new(lease:, level:, sealed: described_class.seal(checkout, level:))
+        harness = described_class.new(lease:, level:,
+                                      sealed: Lain::Canonical.digest(described_class.manifest(checkout, level:)))
         edit_test(checkout)
 
         expect { harness.grade(trajectory) }.to raise_error(described_class::Tampered) { |error|

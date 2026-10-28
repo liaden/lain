@@ -109,9 +109,6 @@ module Lain
       end
       private_class_method :entry
 
-      # @return [String] digest of {.manifest}
-      def self.seal(root, level:) = Canonical.digest(manifest(root, level:))
-
       # @param lease [#worker_env] the lease still holding the checkout under
       #   test; never released here
       # @param level [#name, #root] the level root whose tests judge this work,
@@ -119,7 +116,7 @@ module Lain
       # @param harness [#call] `root -> #grade(worker_env, paths:)`, a factory so
       #   a subject with no detectable framework can be graded by an explicit
       #   adapter
-      # @param sealed [String, nil] {.seal} of the pristine subject; nil leaves the tests unchecked
+      # @param sealed [String, nil] digest of {.manifest} of the pristine subject; nil leaves the tests unchecked
       # @param pristine [Hash, nil] {.manifest} of the pristine subject, which names the changed paths
       #   and stands in for `sealed` when that is omitted
       # @param new_tests [Boolean] true lets the arm ADD test files the pristine subject lacked, for a grader

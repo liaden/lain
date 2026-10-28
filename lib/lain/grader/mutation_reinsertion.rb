@@ -19,7 +19,7 @@ module Lain
     #
     # A test that asserts the source's text, such as a digest of lib/tally.rb, kills every mutant. That is
     # a limit of mutation scoring; the pristine-source copy keeps it to the pristine text.
-    class MutationReinsertion
+    class MutationReinsertion < Sealed
       Mutation = Data.define(:name, :patch_path)
 
       # The pristine `.rspec` holds a `--pattern` this cannot read, so which new files are tests is unknown.
@@ -31,27 +31,17 @@ module Lain
       # @param base [String] the pristine tree the lease was copied from
       # @param harness [#call] `root -> #grade(worker_env, paths:)`, as {LeaseHarness} takes one
       def initialize(lease:, level:, mutations:, base:, harness: TestHarness.public_method(:new))
-        @level = level
         @mutations = mutations.freeze
-        pristine = LeaseHarness.manifest(base, level:)
-        @seal = Canonical.digest(pristine)
-        runs = Runs.new(harness:, level:, mutations:, pristine:, base:)
-        @sealed = LeaseHarness.new(lease:, level:, harness: ->(_root) { runs }, pristine:, new_tests: true)
-      end
-
-      # @param _trajectory [Object] deliberately unread, as {LeaseHarness#grade} reads none
-      # @return [Grade]
-      # @raise [LeaseHarness::NoCheckout, LeaseHarness::Tampered]
-      def grade(_trajectory = nil) = @sealed.grade
-
-      # @return [Hash{String=>String}] deeply frozen
-      def identity
-        patches = @mutations.to_h { |mutation| [mutation.name, patch_digest(mutation.patch_path)] }
-        { "class" => self.class.name, "level" => @level.name.to_s.freeze, "sealed" => @seal.dup.freeze,
-          "mutations" => Canonical.digest(patches).freeze }.freeze
+        super(lease:, level:, base:, harness:, new_tests: true,
+              runs: ->(**given) { Runs.new(mutations:, **given) })
       end
 
       private
+
+      def extra_identity
+        patches = @mutations.to_h { |mutation| [mutation.name, patch_digest(mutation.patch_path)] }
+        { "mutations" => Canonical.digest(patches).freeze }
+      end
 
       def patch_digest(path)
         Digest::SHA256.file(path).hexdigest
@@ -59,7 +49,7 @@ module Lain
         "unreadable"
       end
 
-      # The clean run, then one run per mutation, and their verdict, in the shape {LeaseHarness} hands a harness.
+      # The runs behind the seal, kept private because only the grader above builds them.
       class Runs
         # No GIT_DIR or index from a hook, no user or system config; `git apply` needs no repository.
         GIT_ENV = Isolation::Worktree::GIT_CONTEXT_SCRUB.merge("GIT_CONFIG_GLOBAL" => File::NULL,
@@ -76,7 +66,7 @@ module Lain
           @pristine = pristine
         end
 
-        def grade(worker_env, paths: nil) # rubocop:disable Lint/UnusedMethodArgument
+        def grade(worker_env, **)
           @worker_env = worker_env
           @added = added(worker_env.cwd)
           tests = @added.select { |path| test_file?(path) }
