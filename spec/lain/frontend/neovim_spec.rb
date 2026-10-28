@@ -777,7 +777,9 @@ RSpec.describe Lain::Frontend::Neovim do
     end
 
     it "is one pair for the session, so a gesture resolves against what was drawn" do
+      frontend.review_view.reviewing(round)
       frontend.review_surface.present(changeset, scope: :cumulative)
+      frontend.review_view.open(1, generation: 1)
 
       marked = frontend.review_view.marks(1, generation: 1)
 

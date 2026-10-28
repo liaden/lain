@@ -211,13 +211,7 @@ module Lain
         # opens nothing" one check rather than four. `hunk_keys` is {NO_KEYS}
         # for exactly those same rows, and is the row's OTHER identity: what a
         # mark gesture on it means (see the class doc).
-        #
-        # `read` is nil on those same rows and a Boolean on a file's -- the
-        # file's own `#chunked?`, under the word a navigator uses for it. It is
-        # carried for one reason: an empty `hunk_keys` has two causes and they
-        # are owed different sentences ({UNREAD} against {NO_HUNK}). The row is
-        # the only place that fact survives the render.
-        Row = Data.define(:text, :path, :line, :hunk_keys, :read)
+        Row = Data.define(:text, :path, :line, :hunk_keys)
         private_constant :Row
 
         # One rendering, as a gesture has to read it back: the STAMP the
@@ -271,9 +265,12 @@ module Lain
           # refusal: naming the round is not a gesture a human made, so there is
           # nobody to tell.
           def reviewing(_changeset) = nil
+
+          # Nothing can be opened here, so there is no open to demand before a mark.
+          def opened?(_path) = true
         end
 
-        # @param changesets [#open, #reviewing] where a resolved row is opened as
+        # @param changesets [#open, #reviewing, #opened?] where a resolved row is opened as
         #   the diff pair -- {ChangesetDiff}, which takes `(path, line)` and
         #   answers the notice saying why it did not open, or nil
         def initialize(changesets: Unwired)
@@ -381,15 +378,19 @@ module Lain
 
           row = rendering.at(line)
           keys = row.nil? ? NO_KEYS : row.hunk_keys
-          keys.empty? ? unmarked(unmarkable(row, line)) : Marked.new(hunk_keys: keys, report: naming(row, keys))
+          return unmarked(unmarkable(row, line)) if keys.empty? || unopened?(row)
+
+          Marked.new(hunk_keys: keys, report: naming(row, keys))
         end
 
+        # Asked at the gesture, not at render: the row was drawn before the open.
+        def unopened?(row) = !row.path.nil? && !@changesets.opened?(row.path)
+
         # Which of the two reasons this row names no unit -- see {UNREAD}.
-        # `== false` rather than a negation: `read` is nil for every row that is
-        # not a file at all (and `row` itself is nil for a line naming none),
-        # and all of those keep {NO_HUNK}.
+        # A row with no path is not a file at all (and `row` itself is nil for a
+        # line naming none), and all of those keep {NO_HUNK}.
         def unmarkable(row, line)
-          return format(NO_HUNK, line) unless row&.read == false
+          return format(NO_HUNK, line) unless row&.path && unopened?(row)
 
           format(UNREAD, path: displayed_path(row.path), line:)
         end
@@ -450,7 +451,7 @@ module Lain
         # `47_diff.lua`'s old-side buffer resolve through THAT, not {#displayed_path}'s text.
         def file_row(file, indent)
           plain("#{indent}#{state_marker(file)} #{displayed_path(file.path)}")
-            .with(path: file.path.to_s, line: first_line(file), hunk_keys: file.hunk_keys, read: file.chunked?)
+            .with(path: file.path.to_s, line: first_line(file), hunk_keys: file.hunk_keys)
         end
 
         # {HUNKLESS_MARKER} only once a file has actually been READ and produced
@@ -462,7 +463,7 @@ module Lain
           STATE_MARKERS.fetch(file.state.to_s)
         end
 
-        def plain(text) = Row.new(text:, path: nil, line: nil, hunk_keys: NO_KEYS, read: nil)
+        def plain(text) = Row.new(text:, path: nil, line: nil, hunk_keys: NO_KEYS)
 
         # Where an open lands. A row nobody has read has no hunk to land on and
         # must not be chunked to find that out, so it answers 1.

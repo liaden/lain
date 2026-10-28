@@ -83,6 +83,7 @@ module Lain
         def initialize(rpc:)
           @rpc = rpc
           @changeset = nil
+          @opened = Set.new
         end
 
         # REPLACING rather than accumulating: a second review in one editor opens
@@ -95,8 +96,13 @@ module Lain
         # @return [void]
         def reviewing(changeset)
           @changeset = changeset
+          @opened = Set.new
           nil
         end
+
+        # @param path [String] a row's path, as {#open} takes it
+        # @return [Boolean] whether the inlet accepted a diff for it this round
+        def opened?(path) = @opened.include?(path)
 
         # @param path [String] the file the row names: RELATIVE, to the root the
         #   editor resolves against ({ROOT} in `47_diff.lua`, the directory nvim
@@ -145,8 +151,10 @@ module Lain
 
         def posted(changeset, file, arguments)
           refusal = @rpc.open_changeset(*arguments)
-          registered(changeset, file) if refusal.nil?
-          refusal
+          return refusal unless refusal.nil?
+
+          @opened.add(file.path) if registered(changeset, file)
+          nil
         end
 
         # The file on disk IS the new side when the round presents no old side
@@ -171,8 +179,9 @@ module Lain
         # loud.
         def registered(changeset, file)
           changeset.read(file)
+          true
         rescue SystemCallError
-          nil
+          false
         end
 
         # A map rather than two positionals, because the pair is two commit-ish

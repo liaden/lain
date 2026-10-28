@@ -77,7 +77,7 @@ RSpec.describe Lain::Frontend::Neovim::ReviewView do
   # Where a resolved row is actually opened -- {ReviewView::Unwired}'s duck,
   # recording what it was asked for so "no file is opened" is an observation
   # rather than a tautology.
-  def recorder(answer: nil)
+  def recorder(answer: nil, opened: :every)
     calls = []
     rounds = []
     Object.new.tap do |port|
@@ -85,6 +85,7 @@ RSpec.describe Lain::Frontend::Neovim::ReviewView do
       port.define_singleton_method(:rounds) { rounds }
       port.define_singleton_method(:open) { |path, line| calls.push([path, line]) && answer }
       port.define_singleton_method(:reviewing) { |changeset| rounds.push(changeset) && nil }
+      port.define_singleton_method(:opened?) { |path| opened == :every || opened.include?(path) }
     end
   end
 
@@ -178,6 +179,7 @@ RSpec.describe Lain::Frontend::Neovim::ReviewView do
   # (`Review::Source::Corpus::Prefix.between`), so a row rendered verbatim
   # reads as a parent-directory traversal instead of a name.
   describe "a row named for a survey outside the project root" do
+    let(:opener) { recorder(opened: []) }
     let(:files) { [file_entry(path: "../../../etc/foo/bar.rb", first: 1)] }
 
     it "drops the climb from what is drawn" do
@@ -301,6 +303,7 @@ RSpec.describe Lain::Frontend::Neovim::ReviewView do
   # here raises when chunked, so each example below asserts work that did not
   # happen rather than a number a spy reported about itself.
   describe "drawing a survey nobody has read" do
+    let(:opener) { recorder(opened: []) }
     let(:unread) { (1..3).map { |n| unread_entry(path: "docs/#{n}.md", lines: n * 10) } }
 
     it "draws every row at flat scope without reading a file" do
@@ -380,6 +383,7 @@ RSpec.describe Lain::Frontend::Neovim::ReviewView do
     # sentence nothing else uses: a file something HAS read and which has no
     # hunk keeps the permanent refusal, because that is the true fact about it.
     it "keeps the permanent sentence for a READ file that has no hunk at all" do
+      opener.define_singleton_method(:opened?) { |_path| true }
       rendered = view.render(changeset(files: [file_entry(path: "img.png", hunks: [])]), scope: :cumulative)
 
       expect(view.marks(1, generation: rendered.generation).report)
@@ -409,11 +413,43 @@ RSpec.describe Lain::Frontend::Neovim::ReviewView do
     end
 
     it "still resolves the gesture on the one file something HAS read, beside unread neighbours" do
+      opener.define_singleton_method(:opened?) { |_path| true }
       read = file_entry(path: "docs/2.md", first: 12)
       rendered = view.render(changeset(files: [unread.first, read, unread.last]), scope: :cumulative)
 
       expect(view.marks(2, generation: rendered.generation))
         .to have_attributes(marked?: true, hunk_keys: read.hunk_keys)
+    end
+  end
+
+  # A diff source parses every file's hunks up front, so `#chunked?` says
+  # nothing about whether a human has looked: only the open gesture does.
+  describe "marking a row whose hunks are parsed but which nobody opened" do
+    let(:files) { [file_entry(path: "lib/a.rb"), file_entry(path: "lib/b.rb")] }
+    let(:opener) { recorder(opened: []) }
+
+    it "refuses and says nothing has read the row" do
+      rendered = view.render(changeset(files:), scope: :cumulative)
+
+      expect(view.marks(1, generation: rendered.generation))
+        .to have_attributes(marked?: false, report: format(described_class::UNREAD, path: "lib/a.rb", line: 1))
+    end
+
+    it "marks the row once the opener says it was opened, even though it was drawn before" do
+      opened = []
+      opener.define_singleton_method(:opened?) { |path| opened.include?(path) }
+      rendered = view.render(changeset(files:), scope: :cumulative)
+      opened << "lib/a.rb"
+
+      expect(view.marks(1, generation: rendered.generation))
+        .to have_attributes(marked?: true, hunk_keys: files.first.hunk_keys)
+    end
+
+    it "keeps the permanent sentence for a header row, which no open can ever read" do
+      groups = [commit_entry(subject: "Add", files:)]
+      rendered = view.render(changeset(files:, commits: groups), scope: :commits)
+
+      expect(view.marks(2, generation: rendered.generation).report).to eq(format(described_class::NO_HUNK, 2))
     end
   end
 

@@ -281,6 +281,50 @@ RSpec.describe Lain::Frontend::Neovim::ChangesetDiff do
     end
   end
 
+  describe "which rows a human has opened" do
+    before { diff.reviewing(changeset_over) }
+
+    it "has opened nothing before any gesture" do
+      expect(diff.opened?("guide.rb")).to be(false)
+    end
+
+    it "counts a row whose diff the inlet accepted" do
+      diff.open("guide.rb", 2)
+
+      expect(diff.opened?("guide.rb")).to be(true)
+    end
+
+    it "does not count a row the inlet refused" do
+      refusing = described_class.new(rpc: RecordingChangesetInlet.new(refusal: "no editor is attached"))
+      refusing.reviewing(changeset_over)
+      refusing.open("guide.rb", 2)
+
+      expect(refusing.opened?("guide.rb")).to be(false)
+    end
+
+    it "does not count a row the changeset does not carry" do
+      diff.open("other.rb", 1)
+
+      expect(diff.opened?("other.rb")).to be(false)
+    end
+
+    it "does not count a row whose read failed, though its pair was drawn" do
+      changeset = changeset_over
+      allow(changeset).to receive(:read).and_raise(Errno::ENOENT)
+      diff.reviewing(changeset)
+      diff.open("guide.rb", 2)
+
+      expect(diff.opened?("guide.rb")).to be(false)
+    end
+
+    it "forgets what was opened when the next round starts" do
+      diff.open("guide.rb", 2)
+      diff.reviewing(changeset_over)
+
+      expect(diff.opened?("guide.rb")).to be(false)
+    end
+  end
+
   describe "a renamed file" do
     let(:blobs) { { [base, "from.rb"] => "keep\nold\n".b } }
 

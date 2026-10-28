@@ -1116,7 +1116,8 @@ RSpec.describe Lain::CLI::Command::Review do
       rendering = sidebar
       row = row_of(rendering, "README")
 
-      gestured(["review_mark", [row, "reviewed", rendering.generation]]) do
+      gestured(["review_open", [row, rendering.generation]],
+               ["review_mark", [row, "reviewed", rendering.generation]]) do
         editor.bound.session.marks.to_h.any?
       end
 
@@ -1227,7 +1228,9 @@ RSpec.describe Lain::CLI::Command::Review do
       command.call("feature", env)
       rendering = sidebar
 
-      gestured(["review_mark", [row_of(rendering, "README"), "reviewed", rendering.generation]]) do
+      row = row_of(rendering, "README")
+      gestured(["review_open", [row, rendering.generation]],
+               ["review_mark", [row, "reviewed", rendering.generation]]) do
         editor.bound.session.marks.to_h.any?
       end
 
