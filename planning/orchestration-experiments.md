@@ -54,7 +54,7 @@ Maps almost perfectly onto Lain: the ledgers are **Workspace** content (sent-not
 don't accrete a stale copy per turn), the stall→replan edge is a **state-machine transition** (the
 M3b `state_machines` adoption can make it a legal/illegal transition with a `before_transition`
 Journal hook), and every ledger update is a journaled event. This gives the "smarter orchestrator
-that escalates deviations from the plan" in TODO.md a tested shape.
+that escalates deviations from the plan" in IDEAS.md a tested shape.
 
 ### LATS — the named upgrade path for speculative branching
 

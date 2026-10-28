@@ -135,7 +135,7 @@ correct-call rate the way a good hand-written description does?
 **Mechanism:** content-addressed fragments promoted to `Tool`s · the existing capability model.
 **Prototype:** Ruby-first; the loop is "detect reuse → propose crystallization → version by digest."
 **Risk:** crystallizing bad fragments compounds error; needs the grader in the loop before promotion.
-Connects to TODO.md's "promote ad-hoc scripts to helper tools."
+Connects to IDEAS.md's "promote ad-hoc scripts to helper tools."
 
 ### 7. The Workspace Timeline — a second content-addressed DAG, for files
 

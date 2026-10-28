@@ -485,9 +485,9 @@ only).
 component is the one-liner already described; degrade-to-empty keeps the statusline
 honest when no lain session is attached.
 
-## TODO.md cross-check: interface halves of already-covered ideas
+## IDEAS.md cross-check: interface halves of already-covered ideas
 
-A 2026-07-11 sweep of TODO.md against the ROADMAP found most UI-adjacent ideas already
+A 2026-07-11 sweep of IDEAS.md against the ROADMAP found most UI-adjacent ideas already
 landed (idle compaction → M3c's cache-aware scheduling spec; ollama → the M3b local-model
 arm; bash-without-pipes → subsumed by code mode; worktrees → M5 orchestration). But five
 of them have an **interface half** that the covering item didn't state. Now recorded in
