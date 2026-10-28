@@ -1,6 +1,6 @@
 # UX first: lain develops lain, the round 28 fixes, and the first daily-driver features
 
-status: draft
+status: in-progress
 commit-mode: orchestrator-commits
 language: ruby
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson)
@@ -3199,3 +3199,21 @@ After the last card lands:
 ## Execution log
 
 (Written by /execute-plan.)
+
+- 2026-10-28 run start. Base `main` at `f35cf34a`. `git worktree list` shows the main checkout plus 82
+  worktrees under `tmp/worktrees/` from earlier plans (branches `card/*`, every one merged into `main`).
+  Their names collide with this plan's ids, so this run cuts `tmp/worktrees/ux-T<id>` on branch `ux/T<id>`
+  and leaves the old ones alone.
+- Grounding: `955cf59b..f35cf34a` changes only this plan and `ROADMAP.md`; no card's files moved.
+- The user's index holds staged `.gitmodules`, `references/repos/cliffcompaction` and `references/repos/pi`.
+  Every landing commits with `git commit -- <card paths>` so those stay staged and out of the card.
+- Commit checks (`.pre-commit-config.yaml`): pre-commit-hooks (shebangs, merge conflict, yaml, end of file,
+  trailing whitespace), shellcheck on shell files, cargo fmt/clippy/test on Rust, cargo deny on Cargo files,
+  `bundle exec rake compile check` (pspec plus rubocop) on any Ruby or Rust, `bundle exec yard-lint --staged`
+  on Ruby, `bin/lint-gherkin-docs` on `planning/specs/*.md`, `bin/lint-commit-msg` at commit-msg (subject at
+  most 72 chars, no trailing period, blank second line, no em or en dashes, no trailers),
+  `bin/lint-price-freshness`. An agent's own-path checks: `bundle exec rubocop <paths>`,
+  `bundle exec yard-lint <paths>` is staged-only so the main session runs it, `shellcheck <scripts>`.
+- A Ruby commit runs the full suite (about 2 to 3 min with rubocop). The suite takes the suite lock and must
+  run alone. Paths needing user approval: `ROADMAP.md` and `CLAUDE.md` (user's uncommitted edits, T64);
+  anything under `~/dev/junk-drawer`.
