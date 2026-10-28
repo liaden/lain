@@ -72,7 +72,7 @@ module Lain
         held = @digests[absolute]
         return held.last if held && held.first == key
 
-        fresh = -"#{Canonical::DIGEST_ALGORITHM}:#{Lain::Ext.blake3_hex(File.binread(absolute))}"
+        fresh = Canonical.digest_bytes(File.binread(absolute))
         @digests[absolute] = [key, fresh]
         fresh
       end

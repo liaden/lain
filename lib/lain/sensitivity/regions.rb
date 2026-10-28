@@ -434,7 +434,7 @@ module Lain
         # @return [String] `blake3:<hex>` over the length-framed, scheme-tagged
         #   bytes
         def self.address(bytes)
-          -"#{Canonical::DIGEST_ALGORITHM}:#{Ext.blake3_hex("#{SCHEME} #{bytes.bytesize}\0".b + bytes)}"
+          Canonical.digest_bytes("#{SCHEME} #{bytes.bytesize}\0".b + bytes)
         end
 
         def initialize(start:, bytes:, reason:, detector:)

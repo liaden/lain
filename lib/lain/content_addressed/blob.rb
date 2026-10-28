@@ -33,7 +33,7 @@ module Lain
         # interpolating binary bytes into a UTF-8 literal raises
         # Encoding::CompatibilityError, concatenation does not.
         @bytes = bytes.b.freeze
-        @digest = -"#{Canonical::DIGEST_ALGORITHM}:#{Ext.blake3_hex(header + @bytes)}"
+        @digest = Canonical.digest_bytes(header + @bytes)
         freeze
       end
 

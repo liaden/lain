@@ -191,7 +191,7 @@ module Lain
           dumped = Canonical.dump(body)
           return if dumped.bytesize / BYTES_PER_TOKEN < price.tiers.first.above_prompt_tokens * NEAR
 
-          digest = -"#{Canonical::DIGEST_ALGORITHM}:#{Ext.blake3_hex(dumped)}"
+          digest = Canonical.digest_bytes(dumped)
           verdict = @verdicts.fetch(digest) { remember(digest, judged(body, price, digest)) }
           raise Refused, verdict.refusal unless verdict.sends?
         end

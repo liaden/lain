@@ -13,7 +13,7 @@ module Lain
 
       # @param line [String] one line as written, with or without its newline
       # @return [String] "blake3:<hex>" of the line's bytes without a trailing newline
-      def self.link(line) = "#{Canonical::DIGEST_ALGORITHM}:#{Ext.blake3_hex(line.delete_suffix("\n"))}"
+      def self.link(line) = Canonical.digest_bytes(line.delete_suffix("\n"))
 
       # A torn tail counts as the last line: a chained reopen seals it with a newline.
       #

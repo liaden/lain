@@ -146,7 +146,7 @@ module Lain
 
         def hold(env, scan, flagged)
           dumped = Canonical.dump(env.body)
-          digest = -"#{Canonical::DIGEST_ALGORITHM}:#{Ext.blake3_hex(dumped)}"
+          digest = Canonical.digest_bytes(dumped)
           return if env[APPROVED] == digest
 
           host = env.url.host.to_s

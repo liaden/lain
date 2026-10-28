@@ -64,9 +64,11 @@ module Lain
       # Frozen and deduplicated: digests are Hash keys all over (the Store,
       # cache-break walks), and one unfrozen ivar anywhere in a Turn makes the
       # whole object non-Ractor-shareable.
-      def digest(value)
-        -"#{DIGEST_ALGORITHM}:#{Lain::Ext.blake3_hex(dump(value))}"
-      end
+      def digest(value) = digest_bytes(dump(value))
+
+      # The same address over bytes already in hand, for callers that hash
+      # something other than a canonical dump.
+      def digest_bytes(bytes) = -"#{DIGEST_ALGORITHM}:#{Lain::Ext.blake3_hex(bytes)}"
 
       # Display form of a digest: the scheme plus the first +hex+ characters of
       # the hex part. Split on the scheme, never a flat slice off the front, so

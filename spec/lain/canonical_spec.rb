@@ -27,6 +27,22 @@ RSpec.describe Lain::Canonical do
     end
   end
 
+  describe ".digest_bytes" do
+    it "is the algorithm-prefixed blake3 of the bytes" do
+      expect(described_class.digest_bytes("abc".b)).to eq("blake3:#{Lain::Ext.blake3_hex("abc".b)}")
+    end
+
+    it "returns a frozen, deduplicated String" do
+      expect(described_class.digest_bytes("abc".b)).to be_frozen
+      expect(described_class.digest_bytes("abc".b)).to equal(described_class.digest_bytes("abc".b))
+    end
+
+    it "is what .digest addresses over the dump" do
+      value = { "a" => 1 }
+      expect(described_class.digest(value)).to eq(described_class.digest_bytes(described_class.dump(value)))
+    end
+  end
+
   describe ".digest" do
     it "prefixes the algorithm so a future migration is not a silent reinterpretation" do
       expect(described_class.digest("x")).to start_with("blake3:")
