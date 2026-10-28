@@ -2,6 +2,14 @@
 
 module Lain
   module Telemetry
+    module Carriers
+      # The reason is checked against the enum by the record before it is settled.
+      class SessionClosed < Declarative::Carrier
+        attribute :head
+        attribute :reason
+      end
+    end
+
     # A session's final anchor, written by {SessionRecord::Scribe} on a graceful
     # close. `head` is the Timeline head digest at close (nil for a session that
     # committed nothing); `reason` names WHY the session ended -- an enum, closed
@@ -13,7 +21,7 @@ module Lain
       include Journalable
 
       def initialize(head:, reason:)
-        super(head: head&.dup&.freeze, reason: self.class.reason!(reason))
+        super(**Carriers::SessionClosed.settle!(head:, reason: self.class.reason!(reason)))
       end
     end
 

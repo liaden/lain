@@ -25,4 +25,35 @@ RSpec.describe Lain::Telemetry::ExecImage do
 
     expect(JSON.parse(io.string.lines.first)).to include("id" => nil, "listed" => false, "reason" => "no ID")
   end
+
+  describe "the journal line" do
+    it "matches the line the record has always written" do
+      record = described_class.new(image: "alpine:latest", id: "sha256:abc", listed: true, reason: "no ID")
+
+      expect(JSON.generate(record.to_journal))
+        .to eq('{"type":"exec_image","image":"alpine:latest","id":"sha256:abc","listed":true,"reason":"no ID"}')
+    end
+
+    it "keeps a nil id and reason as null" do
+      record = described_class.new(image: "alpine:latest", id: nil, listed: false, reason: nil)
+
+      expect(JSON.generate(record.to_journal))
+        .to eq('{"type":"exec_image","image":"alpine:latest","id":null,"listed":false,"reason":null}')
+    end
+  end
+
+  it "shares the bytes of every interned field between 2 equal records" do
+    build = -> { described_class.new(image: +"alpine:latest", id: +"sha256:abc", listed: false, reason: +"no ID") }
+    one = build.call
+    other = build.call
+
+    expect([one.image, one.id, one.reason]).to eq([other.image, other.id, other.reason])
+    expect([one.image.equal?(other.image), one.id.equal?(other.id), one.reason.equal?(other.reason)])
+      .to eq([true, true, true])
+  end
+
+  it "refuses an unknown keyword as an ArgumentError" do
+    expect { described_class.new(image: "a", id: nil, listed: false, reason: nil, extra: 1) }
+      .to raise_error(ArgumentError, /extra/)
+  end
 end

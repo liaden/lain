@@ -2,6 +2,15 @@
 
 module Lain
   module Telemetry
+    module Carriers
+      # Head and status default to nil, the shape the stored corpus holds when a stream died first.
+      class RunInterrupted < Declarative::Carrier
+        attribute :head, default: nil
+        attribute :reason, default: :torn
+        attribute :status, default: nil
+      end
+    end
+
     # A single run stopped before its response committed. Distinct from
     # {SessionClosed}: the session lives on, but THIS ask produced no complete
     # turn, so `head` names the last committed turn it was generating from --
@@ -15,11 +24,11 @@ module Lain
       include Journalable
 
       def initialize(head:, reason: :torn, status: nil)
-        super(head: head&.dup&.freeze, reason: self.class.reason!(reason), status:)
+        super(**Carriers::RunInterrupted.settle!(head:, reason: self.class.reason!(reason), status:))
       end
 
-      # Left off when nil, so a record with no status is the line it always was.
-      def to_journal = super.compact
+      # Left off at their nil default, so a record with no status or head is the line it always was.
+      def to_journal = omitting_defaults(super, Carriers::RunInterrupted, :head, :status)
     end
 
     class RunInterrupted

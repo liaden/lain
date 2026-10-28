@@ -2,6 +2,14 @@
 
 module Lain
   module Telemetry
+    module Carriers
+      # Stages are copied, not interned: each is a journalled hash of paths.
+      class ExecResolution < Declarative::Carrier
+        attribute :tool_use_id, :lain_interned
+        attribute :stages
+      end
+    end
+
     # What each stage of a bash call will run, written before it runs: the
     # program's resolved path, its class and what could have shadowed it. A
     # reader joins it to the call's {ShellArm} on `tool_use_id`.
@@ -22,7 +30,7 @@ module Lain
       # @param tool_use_id [String] the `tool_use` block this call answers
       # @param stages [Array<Hash>] one {Shell::Executable#to_journal} per stage
       def initialize(tool_use_id:, stages:)
-        super(tool_use_id: -tool_use_id.to_s, stages: Ractor.make_shareable(stages))
+        super(**Carriers::ExecResolution.settle!(tool_use_id:, stages:))
       end
     end
   end

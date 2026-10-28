@@ -2,6 +2,16 @@
 
 module Lain
   module Telemetry
+    module Carriers
+      # The image tag is interned; the ID and reason stay as given, since nil is a real answer for both.
+      class ExecImage < Declarative::Carrier
+        attribute :image, :lain_interned
+        attribute :id
+        attribute :listed
+        attribute :reason
+      end
+    end
+
     # Which image a docker run's programs were resolved against, once per
     # image ID per run: the tag, the ID it named, and whether its listing was
     # read. When it was not, every stage stays unresolved and `reason` says why.
@@ -13,7 +23,9 @@ module Lain
       # @param listed [Boolean] whether programs were resolved from the image's listing
       # @param reason [String, nil] why they were not
       def initialize(image:, id:, listed:, reason:)
-        super(image: -image.to_s, id: (-id if id), listed:, reason: (-reason if reason))
+        settled = Carriers::ExecImage.settle!(image:, id:, listed:, reason:)
+
+        super(**settled, id: settled[:id]&.then(&:-@), reason: settled[:reason]&.then(&:-@))
       end
     end
   end

@@ -2,6 +2,16 @@
 
 module Lain
   module Telemetry
+    module Carriers
+      # `outcome` takes any text: {Tripwire::Ledger} compares it as a bare String.
+      class TripwireStop < Declarative::Carrier
+        attribute :requester, :lain_interned
+        attribute :signal, :lain_interned
+        attribute :outcome, :lain_interned
+        attribute :unseeded
+      end
+    end
+
     TripwireStop = Data.define(:requester, :signal, :outcome, :unseeded)
 
     # A requester's score crossed the hard stop under the stop arm. `outcome`
@@ -18,8 +28,8 @@ module Lain
       # @param outcome [String, Symbol]
       # @param unseeded [Array<String>]
       def initialize(requester:, signal:, outcome:, unseeded:)
-        super(requester: -requester.to_s, signal: -signal.to_s, outcome: -outcome.to_s,
-              unseeded: Ractor.make_shareable(unseeded.map { -_1.to_s }))
+        # Interned before settling: a frozen String is kept as it is, and a copy would not be shared.
+        super(**Carriers::TripwireStop.settle!(requester:, signal:, outcome:, unseeded: unseeded.map { -_1.to_s }))
       end
     end
   end

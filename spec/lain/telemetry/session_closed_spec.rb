@@ -36,4 +36,19 @@ RSpec.describe Lain::Telemetry::SessionClosed do
     expect(event.head).to be_nil
     expect(event).to be_deeply_frozen
   end
+
+  it "journals byte for byte, a nil head included" do
+    expect(JSON.generate(described_class.new(head: "blake3:h", reason: :exit).to_journal))
+      .to eq('{"type":"session_closed","head":"blake3:h","reason":"exit"}')
+    expect(JSON.generate(described_class.new(head: nil, reason: :salvaged).to_journal))
+      .to eq('{"type":"session_closed","head":null,"reason":"salvaged"}')
+  end
+
+  it "reads a String reason as its Symbol" do
+    expect(described_class.new(head: nil, reason: "exit").reason).to eq(:exit)
+  end
+
+  it "refuses an unknown keyword as an ArgumentError" do
+    expect { described_class.new(head: nil, reason: :exit, extra: 1) }.to raise_error(ArgumentError, /extra/)
+  end
 end

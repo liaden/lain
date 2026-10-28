@@ -2,11 +2,29 @@
 
 module Lain
   module Telemetry
+    module Carriers
+      # The count and turn stay untyped here: the record coerces them to Integer, and a nil turn is real.
+      class EgressRefused < Declarative::Carrier
+        attribute :host, :lain_interned
+        attribute :count
+        attribute :turn
+      end
+
+      # Counts only, never a value; the record coerces them to Integer.
+      class EgressFlagged < Declarative::Carrier
+        attribute :host, :lain_interned
+        attribute :regions
+        attribute :values
+      end
+    end
+
     EgressRefused = Data.define(:host, :count, :turn) do
       include Journalable
 
       def initialize(host:, count:, turn:)
-        super(host: -host.to_s, count: Integer(count), turn: turn&.then { Integer(_1) })
+        settled = Carriers::EgressRefused.settle!(host:, count:, turn:)
+
+        super(**settled, count: Integer(settled[:count]), turn: settled[:turn]&.then { Integer(_1) })
       end
     end
 
@@ -25,7 +43,9 @@ module Lain
         include Journalable
 
         def initialize(host:, regions:, values:)
-          super(host: -host.to_s, regions: Integer(regions), values: Integer(values))
+          settled = Carriers::EgressFlagged.settle!(host:, regions:, values:)
+
+          super(**settled, regions: Integer(settled[:regions]), values: Integer(settled[:values]))
         end
 
         # Its own discriminator, since the short name would read `flagged`.

@@ -2,6 +2,18 @@
 
 module Lain
   module Telemetry
+    module Carriers
+      # The evidence is copied deeply frozen; the score is the ledger's own Integer.
+      class Tripwire < Declarative::Carrier
+        attribute :requester, :lain_interned
+        attribute :signal, :lain_interned
+        attribute :weight, :lain_interned
+        attribute :score
+        attribute :stop, :lain_interned
+        attribute :evidence
+      end
+    end
+
     # One signal the tripwire counted against a requester: its `weight`, the
     # requester's running `score`, and `stop`, which is `would_stop` once the
     # score passes the hard stop and `none` before. Observe-only, so a
@@ -21,8 +33,7 @@ module Lain
       # @param stop [String]
       # @param evidence [Array<Hash{String=>Object}>]
       def initialize(requester:, signal:, weight:, score:, stop:, evidence:)
-        super(requester: -requester.to_s, signal: -signal.to_s, weight: -weight.to_s, score:, stop: -stop.to_s,
-              evidence: Ractor.make_shareable(evidence.dup))
+        super(**Carriers::Tripwire.settle!(requester:, signal:, weight:, score:, stop:, evidence:))
       end
     end
   end

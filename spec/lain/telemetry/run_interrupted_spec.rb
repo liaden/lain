@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "json"
+
 # An additive session-record type, its discriminator pinned here as the on-disk
 # contract -- additive by construction, so the turn-chain loader's `of_type`
 # narrowing skips it and an older reader stays unaffected.
@@ -54,5 +56,30 @@ RSpec.describe Lain::Telemetry::RunInterrupted do
   # unclassified thing rather than borrowing a narrower one it cannot support.
   it "defaults to the unclassified reason" do
     expect(described_class.new(head: nil).reason).to eq(:torn)
+  end
+
+  describe "the journal line" do
+    it "matches the line the record has always written" do
+      expect(JSON.generate(described_class.new(head: "blake3:h", reason: :rejected, status: 404).to_journal))
+        .to eq('{"type":"run_interrupted","head":"blake3:h","reason":"rejected","status":404}')
+    end
+
+    it "carries no head key for a record built without one" do
+      expect(JSON.generate(described_class.new(head: nil, reason: :transport).to_journal))
+        .to eq('{"type":"run_interrupted","reason":"transport"}')
+    end
+
+    it "carries only the default reason when nothing else was known" do
+      expect(JSON.generate(described_class.new(head: nil).to_journal))
+        .to eq('{"type":"run_interrupted","reason":"torn"}')
+    end
+  end
+
+  it "reads a String reason as its Symbol" do
+    expect(described_class.new(head: nil, reason: "stopped").reason).to eq(:stopped)
+  end
+
+  it "refuses an unknown keyword as an ArgumentError" do
+    expect { described_class.new(head: nil, extra: 1) }.to raise_error(ArgumentError, /extra/)
   end
 end

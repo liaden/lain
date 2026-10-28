@@ -2,6 +2,17 @@
 
 module Lain
   module Telemetry
+    module Carriers
+      # The path is interned; a nil tool_use_id means the write came from no tool call.
+      class FileWritten < Declarative::Carrier
+        attribute :tool_use_id
+        attribute :path, :lain_interned
+        attribute :device
+        attribute :inode
+        attribute :ctime
+      end
+    end
+
     # A file's identity just after a write, by a write tool or by a path a bash
     # command names as written (a redirect): which file (device and inode) and
     # which version of it (ctime). ctime rather than mtime because `touch -d`
@@ -23,7 +34,9 @@ module Lain
       # @param inode [Integer]
       # @param ctime [Integer] nanoseconds since the epoch
       def initialize(tool_use_id:, path:, device:, inode:, ctime:)
-        super(tool_use_id: tool_use_id&.to_s&.-@, path: -path.to_s, device:, inode:, ctime:)
+        settled = Carriers::FileWritten.settle!(tool_use_id:, path:, device:, inode:, ctime:)
+
+        super(**settled, tool_use_id: settled[:tool_use_id]&.then { -_1.to_s })
       end
 
       # @param stat [File::Stat] the written file's, taken after the write
