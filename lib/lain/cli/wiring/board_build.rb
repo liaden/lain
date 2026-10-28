@@ -72,15 +72,16 @@ module Lain
           # The SAME factory reaches both the triage rung and the approving
           # rule, so the two rungs cannot disagree about where a relative word
           # in one command's argv lands.
-          factory = classifiers(project:, paths:, table:, **identity)
-          classes = arms.confine != :off
           sensitivity = policy(project:, paths:, table:)
+          factory = classifiers(project:, paths:, table:, facts: sensitivity.file_facts, **identity)
+          classes = arms.confine != :off
           history = Lain::Sensitivity::HistoryLiterals.new(root: project.root, policy: sensitivity).prime
           Switchboard.for(chronicle:, options:, model:, toolset:, verdict:,
                           rules: [Lain::Approval::Remembered.from(config)].reject(&:empty?),
                           approving: ->(remembered, each) { approving(remembered, each, classes:) },
                           sensitivity:, spike: PlanSpike.new(project:, paths:),
-                          classifiers: factory, test_layout: test_layout(project:), middleware:,
+                          classifiers: factory, middleware:,
+                          test_layout: test_layout(project:, file_facts: sensitivity.file_facts),
                           approval_timeout: Config.approval_timeout(root: project.root), judge:, display:, arms:,
                           request:, child_env:, denied_tools: config.approval.deny_tools, history:, stops:)
         end
@@ -182,13 +183,16 @@ module Lain
         # never chose, and refuse its existing flat specs as strays.
         #
         # @param project [Lain::Project]
+        # @param file_facts [Lain::FileFacts::Live, Lain::FileFacts::Recorded] what the run resolves a root through
         # @return [Lain::Middleware::GuardTestLayout::Run]
         # @raise [Lain::Config::Refusal] when the file or the table is malformed
-        def test_layout(project:)
-          layout_run(Config.test_layout(root: project.root), project)
+        def test_layout(project:, file_facts: Lain::FileFacts::LIVE)
+          layout_run(Config.test_layout(root: project.root), project, file_facts)
         end
 
-        def layout_run(layout, project) = Lain::Middleware::GuardTestLayout::Run.new(layout:, root: project.root)
+        def layout_run(layout, project, file_facts)
+          Lain::Middleware::GuardTestLayout::Run.new(layout:, root: project.root, file_facts:)
+        end
 
         # The run's path boundary, wrapped in the policy both gates read
         # through -- {Middleware::Sensitivity} for what may not be touched
@@ -231,11 +235,12 @@ module Lain
         #   word must stay under
         # @param paths [Paths]
         # @param table [Lain::Sensitivity::Rules] as on {.policy}
+        # @param facts [Lain::FileFacts::Live, Lain::FileFacts::Recorded] what the confinement resolves through
         # @param identity [Hash] as on {.for}
         # @return [Classifiers]
-        def classifiers(project:, paths:, table:, **identity)
+        def classifiers(project:, paths:, table:, facts: Lain::FileFacts::LIVE, **identity)
           Classifiers.new(home: paths.home, cwd: project.cwd, rules: table, root: project.root,
-                          confinement: confinement(project:, paths:), **identity)
+                          confinement: confinement(project:, paths:), facts:, **identity)
         end
 
         # The boundary an automatic approval reads inside. A root holding the
@@ -364,12 +369,15 @@ module Lain
             # @param real_landing [String] where `landing` lands, defaulting to
             #   the unresolved spelling for a confinement that contains nothing
             #   and will never be asked
-            def initialize(root, cwd, landing: cwd, real_root: root, real_landing: landing)
+            # @param facts [Lain::FileFacts::Live, Lain::FileFacts::Recorded] what a word is resolved through
+            def initialize(root, cwd, landing: cwd, real_root: root, real_landing: landing,
+                           facts: Lain::FileFacts::LIVE)
               @root = root
               @cwd = cwd.dup.freeze
               @landing = landing.dup.freeze
               @real_root = real_root
               @real_landing = real_landing.dup.freeze
+              @facts = facts
               freeze
             end
 
@@ -378,7 +386,7 @@ module Lain
             # @param path [String] a word as the call wrote it
             # @return [String] the path the kernel will open for it
             # @raise [SystemCallError, ArgumentError] when no prefix resolves
-            def landing_of(path) = Lain::Landing.of(path, cwd: @landing).first
+            def landing_of(path) = Lain::Landing.of(path, cwd: @landing, facts: @facts).first
 
             private
 
@@ -487,13 +495,16 @@ module Lain
           # @param worker_env [Lain::WorkerEnv] the env the worker's commands
           #   run under, whose PATH {#executables} resolves through; its cwd is
           #   replaced by `cwd`, so the two cannot disagree
+          # @param facts [Lain::FileFacts::Live, Lain::FileFacts::Recorded] what the
+          #   confinement resolves the root and the cwd through
           # @raise [ArgumentError] from {Lain::Sensitivity}, when `home`, `cwd`
           #   or a root is not something a classifier can be anchored on
           def initialize(home:, cwd:, rules: Lain::Sensitivity::Rules.empty, root: nil, also_rooted: [],
                          confinement: Lain::Approval::Root::NOWHERE,
                          resolver: Lain::Shell::Executable::Resolver::NULL,
-                         worker_env: Lain::WorkerEnv.new(cwd:, env: {}))
+                         worker_env: Lain::WorkerEnv.new(cwd:, env: {}), facts: Lain::FileFacts::LIVE)
             @home = home
+            @facts = facts
             @rules = rules
             @roots = [root, *also_rooted].uniq.freeze
             @confinement = confinement
@@ -528,14 +539,14 @@ module Lain
             # exactly this string, so `inner/../h` runs in `h` whatever `inner`
             # links to, while a word's `..` is resolved by the kernel from there.
             landing = @worker_env.resolve(cwd)
-            real_root = Lain::Approval::Root.new(File.realpath(@confinement))
+            real_root = Lain::Approval::Root.new(@facts.realpath(@confinement))
             # The one resolution of the cwd, asked here and CARRIED: the root
             # question needs it, and so does every word a rule classifies
             # afterwards.
-            real_landing = Lain::Landing.of(landing, cwd: landing).first
+            real_landing = Lain::Landing.of(landing, cwd: landing, facts: @facts).first
             return @nowhere unless real_root.contains?(real_landing)
 
-            Confinement.new(@confinement, landing, landing:, real_root:, real_landing:)
+            Confinement.new(@confinement, landing, landing:, real_root:, real_landing:, facts: @facts)
           rescue StandardError
             @nowhere
           end

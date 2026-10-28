@@ -265,6 +265,70 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     end
   end
 
+  describe "a policy over recorded file facts" do
+    def board_over_recorded(root, home)
+      recorded = Lain::FileFacts::Recorded.new(places: [root, home])
+      project = project_at(root)
+      policy = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root, root:),
+                                             home:, root:, file_facts: recorded)
+      allow(described_class).to receive(:policy).and_return(policy)
+      [recorded, described_class.for(chronicle:, options: {}, judge: Lain::CLI::Switchboard::DEFERRING, model: "m",
+                                     toolset:, project:, paths: paths_at(home))]
+    end
+
+    # Project refuses a root that is not on disk, so the live disk is real here and every ask of it is recorded instead.
+    def live_asks
+      asked = []
+      stub_const("Lain::FileFacts::LIVE", recording_live(asked))
+      { File => %i[realpath symlink? exist? file? directory? readlink stat lstat open new],
+        Dir => %i[glob children each_child entries exist?] }.each do |owner, names|
+        names.each { |name| record_class_call(owner, name, asked) }
+      end
+      yield
+      asked
+    end
+
+    def recording_live(asked)
+      live = Lain::FileFacts::LIVE
+      Object.new.tap do |recorder|
+        Lain::FileFacts::Live.instance_methods(false).each do |name|
+          recorder.define_singleton_method(name) do |*args, **kw, &block|
+            asked << "FileFacts::Live##{name}"
+            live.public_send(name, *args, **kw, &block)
+          end
+        end
+      end
+    end
+
+    def record_class_call(owner, name, asked)
+      allow(owner).to receive(name).and_wrap_original do |original, *args, **kw|
+        asked << "#{owner}.#{name}"
+        original.call(*args, **kw)
+      end
+    end
+
+    it "classifies a write under its root without asking the live disk" do
+      in_tree do |root, home|
+        _recorded, board = board_over_recorded(root, home)
+        factory = board.ladder.first.instance_variable_get(:@sensitivity)
+        inside = nil
+
+        asked = live_asks { inside = factory.confinement(nil).contains?("src/a.rb") }
+
+        expect(asked).to eq([])
+        expect(inside).to be(true)
+      end
+    end
+
+    it "hands the test-layout run the policy's facts" do
+      in_tree do |root, home|
+        recorded, board = board_over_recorded(root, home)
+
+        expect(board.test_layout.file_facts).to be(recorded)
+      end
+    end
+  end
+
   # The file is evaluated whole, so a failure anywhere in it refuses every
   # reader: there is no table a session can carry on without.
   describe "a config that will not load" do

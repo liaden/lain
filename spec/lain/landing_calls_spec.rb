@@ -19,8 +19,7 @@ module LandingCalls
 
   NOT_YET = {
     "lib/lain/approval/parked/path_gate.rb" => [1, "waits for the queue's file facts to reach the gate"],
-    "lib/lain/frontend/approval_policy.rb" => [1, "waits for the queue's file facts to reach the display path"],
-    "lib/lain/cli/wiring/board_build.rb" => [2, "waits for the policy's file facts to reach the board build"]
+    "lib/lain/frontend/approval_policy.rb" => [1, "waits for the queue's file facts to reach the display path"]
   }.freeze
 
   # path => [omitting call count, reason]; a count that moves either way fails

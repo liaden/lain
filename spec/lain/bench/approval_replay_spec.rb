@@ -268,6 +268,22 @@ RSpec.describe Lain::Bench::ApprovalReplay do
     end
   end
 
+  describe "the facts a stack's policy holds" do
+    it "are the ones its classifiers and its test-layout run read" do
+      handed = []
+      allow(Lain::CLI::Wiring::BoardBuild::Classifiers).to receive(:new).and_wrap_original do |original, **kwargs|
+        handed << kwargs[:facts]
+        original.call(**kwargs)
+      end
+      board = described_class::Stack.new(place: project, arm: arm(:ask), judge: described_class::RecordedJudge.new)
+                                    .instance_variable_get(:@board)
+
+      expect(handed).to eq([board.sensitivity.file_facts])
+      expect(board.sensitivity.file_facts).to be_a(Lain::FileFacts::Recorded)
+      expect(board.test_layout.file_facts).to be(board.sensitivity.file_facts)
+    end
+  end
+
   describe "an approver that never answers" do
     it "fails the replay once the window closes, naming the call" do
       silent = Object.new

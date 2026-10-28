@@ -79,9 +79,11 @@ module Lain
           @journal = Capture.new
           @chronicle = Chronicle.new(record_journal: @journal)
           @toolset = self.class.toolset
+          sensitivity = policy
           @board = ::Lain::CLI::Switchboard.for(chronicle: @chronicle, options: { approval: arm.approval },
-                                                model: MODEL, toolset: @toolset, test_layout:, judge:, rules:,
-                                                sensitivity: policy, classifiers:, denied_tools:,
+                                                model: MODEL, toolset: @toolset, judge:, rules:, sensitivity:,
+                                                test_layout: test_layout(sensitivity),
+                                                classifiers: classifiers(sensitivity), denied_tools:,
                                                 approval_timeout: window,
                                                 arms: ::Lain::CLI::Arms::OFF.with(judge_denials: arm.denials))
           @window = window
@@ -162,12 +164,14 @@ module Lain
                                   home: @place.home, root: @place.root, file_facts: @facts)
         end
 
-        def classifiers
-          ::Lain::CLI::Wiring::BoardBuild::Classifiers.new(home: @place.home, cwd: @place.cwd, root: @place.root)
+        def classifiers(sensitivity)
+          ::Lain::CLI::Wiring::BoardBuild::Classifiers.new(home: @place.home, cwd: @place.cwd, root: @place.root,
+                                                           facts: sensitivity.file_facts)
         end
 
-        def test_layout
-          Middleware::GuardTestLayout::Run.new(layout: TestLayout::None, root: @place.root, file_facts: @facts)
+        def test_layout(sensitivity)
+          Middleware::GuardTestLayout::Run.new(layout: TestLayout::None, root: @place.root,
+                                               file_facts: sensitivity.file_facts)
         end
       end
     end
