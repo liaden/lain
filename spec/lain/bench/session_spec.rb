@@ -146,6 +146,18 @@ RSpec.describe Lain::Bench::Session do
     end
   end
 
+  describe "rebuilding a Recording from its own members" do
+    before { write_session(compaction: { "compact_strategy" => "elide", "compact_schedule" => "idle" }) }
+
+    it "equals the original and shares the members it does not coerce" do
+      recording = load_session
+      rebuilt = described_class::Recording.new(**recording.to_h)
+      expect(rebuilt).to eq(recording)
+      shared = %i[context toolset workspace timeline memory recorded_cuts mode]
+      expect(shared.all? { rebuilt.public_send(_1).equal?(recording.public_send(_1)) }).to be(true)
+    end
+  end
+
   describe "identity replay from disk" do
     it "re-renders byte-identical requests under the rebuilt context" do
       write_session

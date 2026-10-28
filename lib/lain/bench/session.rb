@@ -265,17 +265,14 @@ module Lain
                               :timeline, :baseline, :ledger_index, :degraded, :mode, :memory,
                               :open, :messages, :compaction, :schedule, :compaction_tally, :arms,
                               :compact, :opaque, :provenance, :served_models, :host, :started_at, :recorded_cuts) do
-        def initialize(context:, context_class:, toolset:, workspace:, timeline:, baseline:, ledger_index:,
-                       degraded:, mode:, memory:, open:, messages:, compaction:, schedule:, compaction_tally:,
-                       provenance:, served_models:, host:, started_at:, arms: {}, compact: nil, opaque: nil,
-                       recorded_cuts: RecordedCuts::NONE)
-          super(context:, context_class: -context_class.to_s, toolset:, workspace:,
-                timeline:, baseline: baseline.freeze, ledger_index:, degraded:, mode:, memory:,
-                open:, messages: messages.freeze, compaction: compaction && -compaction,
-                schedule: schedule && -schedule, compaction_tally:,
+        def initialize(context_class:, baseline:, messages:, compaction:, schedule:, provenance:, served_models:,
+                       host:, started_at:, arms: {}, compact: nil, opaque: nil, recorded_cuts: RecordedCuts::NONE,
+                       **rest)
+          super(context_class: -context_class.to_s, baseline: baseline.freeze, messages: messages.freeze,
+                compaction: compaction && -compaction, schedule: schedule && -schedule,
                 arms: Ractor.make_shareable(arms), compact:, opaque: opaque && -opaque,
                 provenance: Ractor.make_shareable(provenance), served_models: Ractor.make_shareable(served_models),
-                host: -host.to_s, started_at: started_at&.freeze, recorded_cuts:)
+                host: -host.to_s, started_at: started_at&.freeze, recorded_cuts:, **rest)
         end
 
         # A recording whose baseline outnumbers the DAG's assistant turns holds
