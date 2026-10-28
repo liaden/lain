@@ -147,7 +147,7 @@ module Lain
           return payload if pending.empty?
 
           raise Unresolved,
-                "#{pending.size} image#{"s" unless pending.one?} reached the provider encoder as an address " \
+                "#{pending.size} #{"image".pluralize(pending.size)} reached the provider encoder as an address " \
                 "(#{pending.map(&:digest).join(", ")}): put Lain::Middleware::ResolveAttachments in the model " \
                 "stack, innermost, or the turn asks about a picture the model never saw"
         end

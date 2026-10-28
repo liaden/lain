@@ -36,7 +36,7 @@ module Lain
 
         def head
           sessions = @replay.sessions.size
-          ["approval replay: #{@replay.calls.size} gated calls in #{sessions} session#{"s" unless sessions == 1}: " \
+          ["approval replay: #{@replay.calls.size} gated calls in #{sessions} #{"session".pluralize(sessions)}: " \
            "#{@replay.replayable.size} replayed",
            "not replayed: #{NOT_REPLAYED.join("; ")}", *places, *left]
         end

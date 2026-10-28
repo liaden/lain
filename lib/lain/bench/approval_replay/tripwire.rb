@@ -165,7 +165,7 @@ module Lain
            "not checked against the labels"]
         end
 
-        def noun(count, word) = "#{count} #{word}#{"s" unless count == 1}"
+        def noun(count, word) = "#{count} #{word.pluralize(count)}"
       end
     end
   end

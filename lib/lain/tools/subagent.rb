@@ -1413,7 +1413,7 @@ module Lain
         def self.refuse_unknown(unknown)
           return if unknown.empty?
 
-          raise ArgumentError, "unknown keyword#{"s" if unknown.size > 1}: #{unknown.map(&:inspect).join(", ")}"
+          raise ArgumentError, "unknown #{"keyword".pluralize(unknown.size)}: #{unknown.map(&:inspect).join(", ")}"
         end
         private_class_method :refuse_unknown, :middleware?
       end

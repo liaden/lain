@@ -252,5 +252,14 @@ RSpec.describe Lain::Attachment::Reference do
       expect { described_class.refuse_unresolved!([reference.block, second.block]) }
         .to raise_error(described_class::Unresolved, /#{second.digest}/)
     end
+
+    it "counts the pictures with a singular or plural noun" do
+      second = reference.with(digest: "blake3:#{"cd" * 32}")
+
+      expect { described_class.refuse_unresolved!([reference.block]) }
+        .to raise_error(described_class::Unresolved, /\A1 image reached/)
+      expect { described_class.refuse_unresolved!([reference.block, second.block]) }
+        .to raise_error(described_class::Unresolved, /\A2 images reached/)
+    end
   end
 end

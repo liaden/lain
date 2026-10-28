@@ -18,7 +18,7 @@ module Lain
            "#{counted(rows.count(&:extra_prompt), "extra prompt")}"]
         end
 
-        def self.counted(count, noun) = "#{count} #{noun}#{"s" unless count == 1}"
+        def self.counted(count, noun) = "#{count} #{noun.pluralize(count)}"
         private_class_method :counted
       end
     end
