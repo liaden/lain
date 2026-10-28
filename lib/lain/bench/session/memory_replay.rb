@@ -209,18 +209,13 @@ module Lain
         end
 
         def seeded(record)
-          rebuilt = Memory::ProjectStore::Loaded.of(record.fetch("items").map { |item| item_from(item) })
+          rebuilt = Memory::ProjectStore::Loaded.of(record.fetch("items").map { |item| Memory::Item.from_canon(item) })
           return rebuilt if rebuilt.version == record.fetch("version")
 
           raise Corrupt, "the memory_loaded record names version #{record.fetch("version").inspect} but its " \
                          "items address #{rebuilt.version.inspect}; the recorded view has been edited"
-        rescue KeyError, ArgumentError => e
+        rescue KeyError, ArgumentError, TypeError => e
           raise Corrupt, "a memory_loaded record cannot be rebuilt (#{e.message})"
-        end
-
-        def item_from(item)
-          Memory::Item.new(id: item.fetch("id"), description: item.fetch("description"), body: item.fetch("body"),
-                           author: Memory::Author.from(item["author"]))
         end
 
         # The file's writes, paired with the turn that made them.

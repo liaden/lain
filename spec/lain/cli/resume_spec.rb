@@ -943,6 +943,23 @@ RSpec.describe Lain::CLI::Resume do
       end
     end
 
+    # A clerk's consolidated row carries the files it was drawn from, and those
+    # are part of its digest, so a seed rebuilt without them addresses a
+    # different version and the resume refuses.
+    it "resumes a file whose seed holds a sourced clerk item, at the recorded version" do
+      seeded = Lain::Memory::ProjectStore::Loaded.of(
+        [Lain::Memory::Item.new(id: "db-conventions", description: "naming", body: "snake",
+                                author: Lain::Memory::Author.clerk(spawn: "sha256:abc"),
+                                sources: { "lib/a.rb" => "blake3:#{"0" * 64}" })]
+      )
+      write_closed("20260102T000000-1.ndjson", memory_chain,
+                   extra: [Lain::Telemetry::MemoryLoaded.of(seeded).to_journal])
+
+      result = resume.call
+
+      expect(result.recorder.loaded.version).to eq(seeded.version)
+    end
+
     it "folds run-state from EVERY file of a resume chain, not just the resumed head" do
       chained = open_header(resumed_from: { "file" => "20260101T000000-1.ndjson",
                                             "head" => memory_chain.head_digest })

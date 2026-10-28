@@ -60,7 +60,7 @@ module Lain
       def initialize(id:, description:, body:, author: Author.chat, sources: {})
         @id, @description, @body = self.class.settle!(id:, description:, body:).values_at(:id, :description, :body)
         @author = author
-        @sources = sources.to_h { |path, digest| [-path.to_s, -digest.to_s] }.freeze
+        @sources = Hash(sources).to_h { |path, digest| [-path.to_s, -digest.to_s] }.freeze
         @digest = Canonical.digest(payload)
         freeze
       end

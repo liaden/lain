@@ -13,6 +13,10 @@ RSpec.describe Lain::Memory::Item do
         .to eq("blake3:e9384e8b29e9094f2bfb85cb79ffccf1a0e97d99c43ebff6e7b27f22a9374e92")
     end
 
+    it "refuses sources that are not a map, as a TypeError" do
+      expect { described_class.new(id: "x", description: "d", body: "b", sources: 5) }.to raise_error(TypeError)
+    end
+
     it "defaults to no sources, frozen" do
       expect(item.sources).to eq({})
       expect(item.sources).to be_frozen

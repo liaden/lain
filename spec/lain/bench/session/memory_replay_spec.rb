@@ -51,14 +51,15 @@ RSpec.describe Lain::Bench::Session::MemoryReplay do
   let(:roots) { [loaded_record, *%w[d1 d2 d3].zip(snapshots).map { |digest, index| root_record(digest, index) }] }
 
   describe "a resume whose seed holds a clerk's row" do
-    it "rebuilds the seed at the version it was recorded under, author included" do
-      clerk = Lain::Memory::Item.new(id: "ttl", description: "d", body: "b",
-                                     author: Lain::Memory::Author.clerk(spawn: "sha256:abc"))
-      record = JSON.parse(JSON.generate(loaded_record(clerk)))
+    it "rebuilds a sourced item as the item that was written" do
+      sourced = Lain::Memory::Item.new(id: "ttl", description: "d", body: "b",
+                                       author: Lain::Memory::Author.clerk(spawn: "sha256:abc"),
+                                       sources: { "lib/a.rb" => "blake3:#{"0" * 64}" })
+      record = JSON.parse(JSON.generate(loaded_record(sourced)))
 
-      replay = described_class.new(records: [record])
+      rebuilt = described_class.new(records: [record]).loaded.items.first
 
-      expect(replay.loaded.items.first.author).to eq(clerk.author)
+      expect([rebuilt.sources, rebuilt.author, rebuilt.digest]).to eq([sourced.sources, sourced.author, sourced.digest])
     end
   end
 
@@ -192,6 +193,14 @@ RSpec.describe Lain::Bench::Session::MemoryReplay do
 
       it "raises Corrupt on a memory_loaded record missing its items" do
         expect { described_class.new(records: [{ "type" => "memory_loaded", "version" => "v" }]).recorded_memory }
+          .to raise_error(Lain::Bench::Session::Corrupt, /cannot be rebuilt/)
+      end
+
+      it "raises Corrupt on a memory_loaded item whose sources are not a map" do
+        damaged = { "id" => "a", "description" => "d", "body" => "b", "sources" => "x" }
+        record = { "type" => "memory_loaded", "version" => "v", "items" => [damaged] }
+
+        expect { described_class.new(records: [record]).recorded_memory }
           .to raise_error(Lain::Bench::Session::Corrupt, /cannot be rebuilt/)
       end
     end
