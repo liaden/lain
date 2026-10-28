@@ -26,9 +26,8 @@ module Lain
       class Halted < Error; end
 
       # A question that was not answered, and why.
-      Stop = Data.define(:ask, :note)
+      Stop = Data.define(:ask, :note, :halt)
 
-      DOLLAR_HALT = "not run: an earlier question passed its dollar ceiling"
       STOPS = [Budget::Exceeded, Provider::HTTP::PriceTierGuard::Refused].freeze
 
       SYSTEM = "Answer the question in one sentence."
@@ -36,7 +35,7 @@ module Lain
       COLUMNS = ["arm", "stale leak", "freshness", "drift", "n", "cost/question", "ci95", "median", "min",
                  "max", "note"].freeze
       NO_CELL = "-"
-      private_constant :DOLLAR_HALT, :STOPS, :SYSTEM, :EAGER_SYSTEM, :COLUMNS, :NO_CELL
+      private_constant :STOPS, :SYSTEM, :EAGER_SYSTEM, :COLUMNS, :NO_CELL
 
       # @param fixture [Fixture]
       # @param provider [Provider] answers every arm; counts tokens too under `confirm`
@@ -82,18 +81,25 @@ module Lain
       # A dollar stop ends the run, since the money is what the ceiling guards; any other stop ends
       # only its question.
       def run(ceilings)
-        @halt = nil
-        ARMS.to_h do |arm|
-          [arm, questions.map { |ask| @halt ? Stop.new(ask, @halt) : attempt(arm, ask, ceilings[[arm, ask.question]]) }]
+        done = ARMS.product(questions).each_with_object([]) do |(arm, ask), entries|
+          halt = entries.grep(Stop).filter_map(&:halt).first
+          entries << (halt ? Stop.new(ask, halt, nil) : attempt(arm, ask, ceilings[[arm, ask.question]]))
         end
+        ARMS.zip(done.each_slice(questions.size)).to_h
       end
 
       def attempt(arm, ask, budget)
         [ask, replay(arm, ask.question, @provider, budget)]
       rescue *STOPS => e
-        @halt = DOLLAR_HALT if e.is_a?(Budget::Exceeded) && e.kind == :dollars
-        Stop.new(ask, "stopped: #{e.message}")
+        Stop.new(ask, "stopped: #{e.message}", halting.halt_for(e))
       end
+
+      def priced(counted)
+        PricedRun.new(counted:, price_book: @price_book, model: @model, confirm: @confirm, unit: "question")
+      end
+
+      # Counting is paid for, so a run without a confirmation words its halts from an empty projection.
+      def halting = @halting ||= priced([])
 
       def row(arm, entries)
         stops, ran = entries.partition { _1.is_a?(Stop) }
@@ -143,26 +149,13 @@ module Lain
       def ceilings
         return Hash.new(Budget.ceilings) unless @confirm
 
-        checked = preflight
-        raise CompactionSweep::Live::Declined, CompactionSweep::Live::DECLINED unless @confirm.call(checked)
-
-        checked.requests.group_by { [_1.arm, _1.journal] }.transform_values do |requests|
-          Budget.ceilings.with(dollars: requests.sum(BigDecimal(0), &:cost) * CompactionSweep::Live::CEILING)
-        end
+        priced(ARMS.flat_map { |arm| questions.flat_map { |ask| counted(arm, ask.question) } }).ceilings
       end
 
       # Each prompt is priced as a cache write plus a full reply, so the figure confirmed is an upper
       # bound. The requests come from running the arms against a stub, since a request is only
-      # known once an agent has rendered it.
-      def preflight
-        counted = ARMS.flat_map { |arm| questions.flat_map { |ask| counted(arm, ask.question) } }
-        boundary = @price_book.price(@model).tiers.map(&:above_prompt_tokens).min
-        CompactionSweep::Live::Preflight.new(
-          requests: counted, projected: counted.group_by(&:arm).transform_values { _1.sum(BigDecimal(0), &:cost) },
-          over_tier: boundary ? counted.select { _1.tokens > boundary } : []
-        )
-      end
-
+      # known once an agent has rendered it. A request's journal field holds its question.
+      #
       # A tool arm is projected one more round trip: the first reply in full and the largest body a
       # memory_read could return are both in that request. A model that loops further hits the ceiling.
       def counted(arm, question)

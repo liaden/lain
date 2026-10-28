@@ -25,9 +25,10 @@ module Lain
         DECLINED = "no paid request was sent: the preflight was not confirmed (pass --yes to accept it without " \
                    "a terminal); only the free token counts were made"
         COLUMNS = ["arm", "journal", "requests sent", "projected", "spent", "ceiling", "note"].freeze
-        DOLLAR_HALT = "not run: an earlier lane passed its dollar ceiling"
         FAILED_HALT = "not run: an earlier lane failed"
-        private_constant :COLUMNS, :DOLLAR_HALT, :FAILED_HALT
+        # A lane with no counted request has no projection to cap, so it may spend nothing.
+        NO_REQUESTS = Budget.ceilings.with(dollars: BigDecimal(0))
+        private_constant :COLUMNS, :FAILED_HALT, :NO_REQUESTS
 
         # The human did not confirm the preflight.
         class Declined < Error; end
@@ -139,7 +140,7 @@ module Lain
         # @return [Preflight]
         # @raise [Unanswered] when a model arm lacks a recorded summary it needs
         def preflight
-          @preflight ||= Ractor.make_shareable(projection(lanes.flat_map { counted(_1) }))
+          priced.preflight
         end
 
         # @return [String] what each lane sent and spent beside its projection and ceiling, and why
@@ -148,11 +149,11 @@ module Lain
         # @raise [Failed] carrying that same table when a lane stopped on an unplanned error
         def run
           checked = preflight
-          raise Declined, DECLINED unless @confirm.call(checked)
+          ceilings = priced.ceilings
 
           halt = nil
           rows = lanes.map do |lane|
-            (halt ? not_run(lane, checked, halt) : replayed(lane, checked)).tap { halt ||= _1.halt }
+            (halt ? not_run(lane, checked, halt) : replayed(lane, checked, ceilings)).tap { halt ||= _1.halt }
           end
           failure = rows.filter_map(&:failure).first
           failure ? raise(Failed, "#{table(rows)}\n#{failure}") : table(rows)
@@ -162,11 +163,9 @@ module Lain
 
         def lanes = @lanes ||= @sweep.lanes
 
-        def projection(counted)
-          boundary = @price_book.price(@model).tiers.map(&:above_prompt_tokens).min
-          Preflight.new(requests: counted,
-                        projected: counted.group_by(&:arm).transform_values { _1.sum(BigDecimal(0), &:cost) },
-                        over_tier: boundary ? counted.select { _1.tokens > boundary } : [])
+        def priced
+          @priced ||= PricedRun.new(counted: lanes.flat_map { counted(_1) }, price_book: @price_book, model: @model,
+                                    confirm: @confirm, unit: "lane")
         end
 
         # Each prompt is priced as a cache write, the dearer of its two input rates, so the figure a
@@ -184,15 +183,18 @@ module Lain
           checked.requests.select { _1.arm == lane.label && _1.journal == lane.path }
         end
 
-        def replayed(lane, checked)
+        def replayed(lane, checked, ceilings)
           mine = projected(lane, checked)
-          projected = mine.sum(BigDecimal(0), &:cost)
           backstop = backstop(checked, lane)
           source = lane.source
-          stop = stopped(lane) { replay(lane, backstop, source, budget(mine.size, projected * CEILING)) }
+          budget = budget(mine.size, ceilings.fetch([lane.label, lane.path], NO_REQUESTS))
+          stop = stopped(lane) { replay(lane, backstop, source, budget) }
+          row(lane, backstop, mine.sum(BigDecimal(0), &:cost), stop, budget).with(note: note(stop, source.missed))
+        end
+
+        def row(lane, backstop, projected, stop, budget)
           Row.new(arm: lane.label, journal: lane.path, sent: backstop.sent, projected:, spent: backstop.spent,
-                  ceiling: projected * CEILING, note: note(stop, source.missed), halt: halt_for(stop),
-                  failure: failure(lane, stop))
+                  ceiling: budget.dollars, note: nil, halt: halt_for(stop), failure: failure(lane, stop))
         end
 
         # Bound one lane at a time, so an approval never carries past the lane's own allowance.
@@ -222,9 +224,7 @@ module Lain
         # A price-tier refusal, the progress breaker and a step limit end only their lane; a dollar
         # ceiling or a failure nobody planned for ends the run.
         def halt_for(stop)
-          return DOLLAR_HALT if stop.is_a?(Budget::Exceeded) && stop.kind == :dollars
-
-          FAILED_HALT if unplanned?(stop)
+          priced.halt_for(stop) || (FAILED_HALT if unplanned?(stop))
         end
 
         def unplanned?(stop)
@@ -253,8 +253,8 @@ module Lain
         end
 
         # The recorded call count bounds the steps too, with room for a model that takes more.
-        def budget(calls, dollars)
-          Budget.ceilings(iterations: [calls * 2, Budget::DEFAULT_ITERATIONS].max).with(dollars:)
+        def budget(calls, ceilings)
+          ceilings.with(iterations: [calls * 2, Budget::DEFAULT_ITERATIONS].max)
         end
 
         def table(rows)

@@ -1022,10 +1022,16 @@ class LainCLI < Thor
       options = thor.options
       return {} unless options[:live]
 
-      confirm = Lain::Bench::CompactionSweep::Live::Prompt.new(yes: options[:yes], terminal: $stdin.tty?,
-                                                               say: thor.method(:say), ask: thor.method(:yes?))
+      confirm = prompt(thor)
       backend = thor.model_backend(nil, options.merge("provider" => "anthropic", "model" => options[:live]))
       { live: options[:live], confirm:, live_backend: backend }
+    end
+
+    # @param thor [Bench] the running command
+    # @return [Lain::Bench::CompactionSweep::Live::Prompt] the confirmation both priced sweeps ask
+    def self.prompt(thor)
+      Lain::Bench::CompactionSweep::Live::Prompt.new(yes: thor.options[:yes], terminal: $stdin.tty?,
+                                                     say: thor.method(:say), ask: thor.method(:yes?))
     end
   end
 
@@ -1211,10 +1217,8 @@ class LainCLI < Thor
     def memory_sweep(fixture)
       render do
         backend = model_backend(nil, options.merge("provider" => "anthropic"))
-        confirm = Lain::Bench::CompactionSweep::Live::Prompt.new(yes: options[:yes], terminal: $stdin.tty?,
-                                                                 say: method(:say), ask: method(:yes?))
         Lain::Bench::CLI.new.memory_sweep_report(fixture_path: fixture, provider: backend.provider,
-                                                 model: backend.model, confirm:)
+                                                 model: backend.model, confirm: LiveSweep.prompt(self))
       end
     end
 

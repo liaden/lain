@@ -143,6 +143,18 @@ RSpec.describe Lain::Bench::CompactionSweep::Live do
       expect(provider.requests).to be_empty
     end
 
+    it "caps a lane with no counted request at 0 dollars, so it sends nothing" do
+      provider = counting.new(responses: replies_for(arms.size))
+      lane = sweep.lanes.first
+      allow(lane).to receive(:requests).and_return([])
+      allow(sweep).to receive(:lanes).and_return([lane])
+
+      report = live(provider:).run
+
+      expect(provider.requests).to be_empty
+      expect(report).to include("ceiling is 0.0")
+    end
+
     it "stops at a lane's dollar ceiling of 1.5 times its projection, runs no later lane, and still reports" do
       dear = Lain::Usage.new(input_tokens: 2_000_000, output_tokens: 0)
       provider = counting.new(responses: replies_for(arms.size, usage: dear))
