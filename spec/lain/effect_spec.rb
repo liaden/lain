@@ -113,7 +113,7 @@ RSpec.describe Lain::Effect do
 
       expect do
         stack.call({ effect: call, tool: Lain::Tools::Bash.new, context: nil }) { |env| ran << env }
-      end.to raise_error(FrozenError)
+      end.to raise_error(Lain::Middleware::MemberFailed) { |e| expect(e.cause).to be_a(FrozenError) }
       expect([asked, ran]).to eq([[], []])
     end
   end

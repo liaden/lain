@@ -44,6 +44,60 @@ RSpec.describe Lain::Middleware do
       expect(observe(stack)).to eq([%i[a in], %i[b in], %i[c in], %i[c out], %i[b out], %i[a out]])
     end
 
+    describe "a member that raises" do
+      let(:raising) do
+        Class.new(Lain::Middleware::Base) { def call(_env) = raise("boom") }.new
+      end
+
+      it "raises MemberFailed naming the member, with the original as its cause" do
+        expect { described_class.new([a, raising]).call({ trace: [] }) { |env| env } }
+          .to raise_error(Lain::Middleware::MemberFailed, /#<Class:/) do |error|
+            expect(error.member).to be(raising)
+            expect(error.cause).to be_a(RuntimeError).and have_attributes(message: "boom")
+          end
+      end
+
+      it "names a named member's class in the message" do
+        named = Class.new(Lain::Middleware::Base) { def call(_env) = raise("boom") }
+        stub_const("SpecRaisingMember", named)
+
+        expect { described_class.new([a, named.new]).call({ trace: [] }) { |env| env } }
+          .to raise_error(Lain::Middleware::MemberFailed, /SpecRaisingMember.*boom/)
+      end
+
+      it "wraps once, however many members it passes through" do
+        expect { described_class.new([a, raising, b]).call({ trace: [] }) { |env| env } }
+          .to raise_error(Lain::Middleware::MemberFailed) { |error| expect(error.member).to be(raising) }
+      end
+
+      it "leaves a Lain::Error a member raised as it is" do
+        refusal = Lain::Error.new("no")
+        refuser = Class.new(Lain::Middleware::Base) { define_method(:call) { |_env| raise refusal } }.new
+
+        expect { described_class.new([a, refuser]).call({ trace: [] }) { |env| env } }
+          .to raise_error(refusal)
+      end
+
+      it "tells a member's own raise from the app's by identity, not equality" do
+        original = RuntimeError.new("same")
+        reraiser = Class.new(Lain::Middleware::Base) do
+          define_method(:call) do |env, &downstream|
+            downstream.call(env)
+          rescue RuntimeError => e
+            raise e.dup
+          end
+        end.new
+
+        expect { described_class.new([reraiser, a]).call({ trace: [] }) { |_env| raise original } }
+          .to raise_error(Lain::Middleware::MemberFailed) { |error| expect(error.member).to be(reraiser) }
+      end
+
+      it "does not blame a member for what the terminal app raised" do
+        expect { described_class.new([a, b]).call({ trace: [] }) { |_env| raise "app broke" } }
+          .to raise_error(RuntimeError, "app broke")
+      end
+    end
+
     it "#insert_before places a middleware ahead of a matched class" do
       stack = described_class.new([a, c])
       stack.insert_before(c.class, b)

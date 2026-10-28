@@ -18,6 +18,7 @@ module Lain
     module StopReason
       RULES = {
         stopped: ->(chain) { chain.any?(Lain::Stopped) },
+        middleware: ->(chain) { chain.first.is_a?(Middleware::MemberFailed) },
         ceiling: ->(chain) { chain.first.is_a?(Budget::Exceeded) },
         over_window: ->(chain) { chain.first.is_a?(WindowExceeded) },
         stalled_stream: ->(chain) { chain.any?(Provider::HTTP::Streaming::StalledStreamError) },

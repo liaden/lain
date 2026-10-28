@@ -51,6 +51,27 @@ RSpec.describe Lain::CLI::ReplMiddleware do
       window: Lain::CLI::Backend::WindowBook::Served.new(model: "critic-model", window_tokens: 32_768) }
   end
 
+  describe "a tool middleware that raises" do
+    let(:raising) { Class.new(Lain::Middleware::Base) { def call(_env) = raise("boom") } }
+    let(:tty) { instance_double(Lain::Frontend::TTY, render_error: nil) }
+    let(:chronicle) { instance_double(Lain::CLI::Chronicle::Null, catch_up: nil, interrupted: nil) }
+
+    it "ends the ask as a refusal naming the member, journaled as middleware" do
+      stub_const("SpecRaisingToolMember", raising)
+      agent = Lain::Agent.new(
+        provider: CoreGraph.provider(tool_response(["tu_1", "echo", { "text" => "a" }])),
+        toolset: CoreGraph.toolset([EchoTool.new]), context: CoreGraph.context,
+        tool_middleware: Lain::Middleware::Stack.new([SpecRaisingToolMember.new])
+      )
+      ask = Lain::CLI::Repl::Ask.new(agent:, tty:, chronicle:)
+
+      expect(ask.attempt("go")).to be_a(Lain::Middleware::MemberFailed)
+      expect(ask.settle(ask.attempt("go"))).to be_nil
+      expect(tty).to have_received(:render_error).with(/SpecRaisingToolMember/)
+      expect(chronicle).to have_received(:interrupted).with(hash_including(reason: :middleware))
+    end
+  end
+
   describe ".build" do
     it "returns a Middleware::Stack carrying a SkillDispatch" do
       with_project do |root|

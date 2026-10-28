@@ -19,6 +19,18 @@ module Lain
     # A turn-stack member that does not answer `#settle`.
     class CannotSettle < Error; end
 
+    # A member's own failure, named. It is raised FROM the rescue, so
+    # `Exception#cause` is the original. Only a non-{Lain::Error} is wrapped: a
+    # harness refusal already says what it is.
+    class MemberFailed < Error
+      attr_reader :member
+
+      def initialize(member, original)
+        @member = member
+        super("middleware #{member.class} raised #{original.class}: #{original.message}")
+      end
+    end
+
     # @param stack [#call] a turn stack, or a lone member
     # @return [#call] `stack`, every member of it answering `#settle`
     # @raise [CannotSettle] naming each member that does not
@@ -127,14 +139,36 @@ module Lain
       # not double-wrap.
       def call(env, &app)
         wrapped = Env.wrap(env)
-        terminal = app || ->(inner_env) { inner_env }
+        passthrough = []
+        terminal = guard_terminal(app || ->(inner_env) { inner_env }, passthrough)
         chain = @middlewares.reverse.reduce(terminal) do |downstream, middleware|
-          ->(inner_env) { middleware.call(inner_env, &downstream) }
+          ->(inner_env) { naming(middleware, passthrough) { middleware.call(inner_env, &downstream) } }
         end
         chain.call(wrapped)
       end
 
       private
+
+      # What the app raised is the app's, not the innermost member's, so it is
+      # remembered and let through unwrapped.
+      def guard_terminal(app, passthrough)
+        lambda do |inner_env|
+          app.call(inner_env)
+        rescue StandardError => e
+          passthrough << e
+          raise
+        end
+      end
+
+      def naming(member, passthrough)
+        yield
+      rescue Lain::Error
+        raise
+      rescue StandardError => e
+        raise if passthrough.any? { _1.equal?(e) }
+
+        raise MemberFailed.new(member, e)
+      end
 
       def index_of!(target)
         index = @middlewares.index { |member| match?(member, target) }

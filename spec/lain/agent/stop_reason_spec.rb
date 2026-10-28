@@ -94,6 +94,22 @@ RSpec.describe Lain::Agent::StopReason do
     end
   end
 
+  it "says middleware for a member that raised" do
+    failed = Lain::Middleware::MemberFailed.new(Object.new, RuntimeError.new("boom"))
+
+    expect(described_class.for(failed)).to eq(:middleware)
+    expect(Lain::Telemetry::RunInterrupted::REASONS).to include(:middleware)
+  end
+
+  it "reads a member failure only at the head of the chain, as the ceiling is" do
+    failed = Lain::Middleware::MemberFailed.new(Object.new, RuntimeError.new("boom"))
+    outer = Lain::Error.new("wrapped")
+    allow(outer).to receive(:cause).and_return(failed)
+
+    expect(outer.cause).to be(failed)
+    expect(described_class.for(outer)).to eq(:torn)
+  end
+
   it "says torn for anything it cannot place" do
     expect(described_class.for(Lain::Error.new("no known kind"))).to eq(:torn)
     expect(described_class.for(RuntimeError.new("a bug"))).to eq(:torn)

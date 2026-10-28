@@ -28,7 +28,7 @@ RSpec.describe Lain::Telemetry::RunInterrupted do
   it "pins its own reason enum, distinct from a session's" do
     expect(described_class::REASONS)
       .to eq(%i[interrupted grace_expired stopped ceiling over_window transport rejected stalled_stream torn
-                max_tokens context_full refusal truncated malformed unknown])
+                middleware max_tokens context_full refusal truncated malformed unknown])
     expect(described_class::REASONS).not_to eq(Lain::Telemetry::SessionClosed::REASONS)
     expect(described_class::REASONS).to include(*Lain::CLI::Conductor::INTERRUPT_REASONS)
   end
@@ -37,8 +37,8 @@ RSpec.describe Lain::Telemetry::RunInterrupted do
     expect { described_class.new(head: nil, reason: :nonsense) }
       .to raise_error(ArgumentError,
                       "reason must be one of [:interrupted, :grace_expired, :stopped, :ceiling, :over_window, " \
-                      ":transport, :rejected, :stalled_stream, :torn, :max_tokens, :context_full, :refusal, " \
-                      ":truncated, :malformed, :unknown], " \
+                      ":transport, :rejected, :stalled_stream, :torn, :middleware, :max_tokens, :context_full, " \
+                      ":refusal, :truncated, :malformed, :unknown], " \
                       "got :nonsense")
   end
 
@@ -46,8 +46,8 @@ RSpec.describe Lain::Telemetry::RunInterrupted do
     expect { described_class.new(head: nil, reason: nil) }
       .to raise_error(ArgumentError,
                       "reason must be one of [:interrupted, :grace_expired, :stopped, :ceiling, :over_window, " \
-                      ":transport, :rejected, :stalled_stream, :torn, :max_tokens, :context_full, :refusal, " \
-                      ":truncated, :malformed, :unknown], " \
+                      ":transport, :rejected, :stalled_stream, :torn, :middleware, :max_tokens, :context_full, " \
+                      ":refusal, :truncated, :malformed, :unknown], " \
                       "got nil")
   end
 
