@@ -6,6 +6,9 @@
 //! fence exits. "The fence left nothing" is then "this process has no
 //! children", which is why the tests in this file run one at a time.
 
+pub mod common;
+
+use common::{FENCE, text};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
@@ -17,8 +20,6 @@ use nix::sys::prctl::set_child_subreaper;
 use nix::sys::signal::{Signal, kill, killpg};
 use nix::sys::wait::{WaitPidFlag, waitpid};
 use nix::unistd::Pid;
-
-const FENCE: &str = env!("CARGO_BIN_EXE_lain-fence");
 
 /// Bounded three ways, since a reaper that fails here would otherwise hand
 /// init an endless spawner: a counted loop, a per-user cap, and sleeps that
@@ -43,10 +44,6 @@ fn reaper(script: &str) -> Command {
         .env("LC_ALL", "C")
         .process_group(0);
     command
-}
-
-fn text(bytes: &[u8]) -> String {
-    String::from_utf8_lossy(bytes).into_owned()
 }
 
 fn children(pid: u32) -> Vec<u32> {

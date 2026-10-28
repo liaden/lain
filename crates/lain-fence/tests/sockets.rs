@@ -6,13 +6,14 @@
 //! straight to socket(2), adding `SOCK_CLOEXEC` to the type, which is the flag
 //! the filter must mask off. Its ctypes makes the raw io_uring and x32 calls.
 
-use std::fs;
-use std::io::{ErrorKind, Write};
+pub mod common;
+
+use common::{FENCE, cannot_run, refused_with, skipped};
+use std::io::ErrorKind;
 use std::net::{TcpListener, UdpSocket};
 use std::process::{Command, Output};
 use std::time::Duration;
 
-const FENCE: &str = env!("CARGO_BIN_EXE_lain-fence");
 const GRANTS: [&str; 5] = ["--read-dir", "/", "--exec-dir", "/usr", "--"];
 const EPERM: &str = "1";
 const ENOSYS: &str = "38";
@@ -142,12 +143,6 @@ fn fenced(kind: &str) -> Output {
     probe(true, kind, "0")
 }
 
-fn refused_with(out: &Output) -> Option<String> {
-    String::from_utf8_lossy(&out.stdout)
-        .strip_prefix("refused ")
-        .map(|errno| errno.trim().to_string())
-}
-
 fn assert_refused(kind: &str) {
     let out = fenced(kind);
     assert_eq!(
@@ -156,28 +151,6 @@ fn assert_refused(kind: &str) {
         "{kind}: {out:?}"
     );
     assert_eq!(out.status.code(), Some(3), "{kind}: {out:?}");
-}
-
-/// Decided from the kernel, never from the fence, so a broken fence cannot
-/// skip its own tests.
-fn cannot_run(what: &str) -> bool {
-    let lsm = fs::read_to_string("/sys/kernel/security/lsm").unwrap_or_default();
-    if !lsm.trim().split(',').any(|name| name == "landlock") {
-        return skipped(
-            what,
-            "Landlock is not an active LSM, so the fence refuses to run anything",
-        );
-    }
-    if Command::new("python3").arg("-c").arg("1").output().is_err() {
-        return skipped(what, "python3 is not on PATH");
-    }
-    false
-}
-
-/// Written past cargo's capture so a skip always shows.
-fn skipped(what: &str, reason: &str) -> bool {
-    let _ = writeln!(std::io::stderr(), "SKIPPED {what}: {reason}");
-    true
 }
 
 #[test]

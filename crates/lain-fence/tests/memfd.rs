@@ -4,17 +4,17 @@
 //! in, because its `os.memfd_create` passes the flags straight to the kernel
 //! and its ctypes can make the raw x32 call.
 
-use std::fs;
-use std::io::Write;
-use std::process::{Command, Output};
+pub mod common;
 
-const FENCE: &str = env!("CARGO_BIN_EXE_lain-fence");
+use common::{FENCE, cannot_run, refused_with, skipped, status, text};
+use std::process::{Command, Output};
 
 const MFD_CLOEXEC: u32 = 0x1;
 const MFD_NOEXEC_SEAL: u32 = 0x8;
 const EPERM: &str = "1";
 const EINVAL: &str = "22";
 const ENOSYS: &str = "38";
+const STATUS_ARGS: [&str; 3] = ["--status", "--exec-dir", "/usr"];
 
 /// Exit 3 marks a refusal at memfd_create itself, not at the exec after it.
 const PROBE: &str = r#"
@@ -64,47 +64,6 @@ fn probe(fenced: bool, flags: u32, route: &str, then: &str) -> Output {
         command
     };
     command.env("LC_ALL", "C").output().expect("spawn probe")
-}
-
-fn refused_with(out: &Output) -> Option<String> {
-    text(&out.stdout)
-        .strip_prefix("refused ")
-        .map(|errno| errno.trim().to_string())
-}
-
-fn status() -> serde_json::Value {
-    let out = Command::new(FENCE)
-        .args(["--status", "--exec-dir", "/usr"])
-        .output()
-        .expect("spawn fence");
-    assert!(out.status.success(), "fence --status failed: {out:?}");
-    serde_json::from_slice(&out.stdout).expect("status is JSON")
-}
-
-/// Decided from the kernel, never from the fence, so a broken fence cannot
-/// skip its own tests.
-fn cannot_run(what: &str) -> bool {
-    let lsm = fs::read_to_string("/sys/kernel/security/lsm").unwrap_or_default();
-    if !lsm.trim().split(',').any(|name| name == "landlock") {
-        return skipped(
-            what,
-            "Landlock is not an active LSM, so the fence refuses to run anything",
-        );
-    }
-    if Command::new("python3").arg("-c").arg("1").output().is_err() {
-        return skipped(what, "python3 is not on PATH");
-    }
-    false
-}
-
-/// Written past cargo's capture so a skip always shows.
-fn skipped(what: &str, reason: &str) -> bool {
-    let _ = writeln!(std::io::stderr(), "SKIPPED {what}: {reason}");
-    true
-}
-
-fn text(bytes: &[u8]) -> String {
-    String::from_utf8_lossy(bytes).into_owned()
 }
 
 #[test]
@@ -158,7 +117,7 @@ fn a_noexec_sealed_memfd_is_still_created() {
 
 #[test]
 fn status_reports_the_memfd_filter() {
-    let report = status();
+    let report = status(&STATUS_ARGS);
 
     let verdict = &report["rights"]["memfd_noexec"];
     assert!(
@@ -178,5 +137,5 @@ fn status_reads_enforced_when_the_refusal_is_seen() {
         return;
     }
 
-    assert_eq!(status()["rights"]["memfd_noexec"], "enforced");
+    assert_eq!(status(&STATUS_ARGS)["rights"]["memfd_noexec"], "enforced");
 }

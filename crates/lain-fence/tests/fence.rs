@@ -4,6 +4,9 @@
 //! the binary under test would let a broken `--status` skip every enforcement
 //! test and read as green.
 
+pub mod common;
+
+use common::{FENCE, fence, status, text};
 use std::fs;
 use std::io::Write;
 use std::net::TcpListener;
@@ -11,25 +14,7 @@ use std::os::linux::net::SocketAddrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{SocketAddr, UnixListener};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
-
-const FENCE: &str = env!("CARGO_BIN_EXE_lain-fence");
-
-fn fence(args: &[&str]) -> Output {
-    Command::new(FENCE)
-        .args(args)
-        .env("LC_ALL", "C")
-        .output()
-        .expect("spawn fence")
-}
-
-fn status(args: &[&str]) -> serde_json::Value {
-    let out = fence(args);
-    assert!(out.status.success(), "fence {args:?} failed: {out:?}");
-    let text = String::from_utf8(out.stdout).expect("utf-8 status");
-    assert_eq!(text.lines().count(), 1, "one status line, got {text:?}");
-    serde_json::from_str(&text).expect("status is JSON")
-}
+use std::process::Command;
 
 /// The first kernel release of each Landlock ABI, from landlock(7).
 const ABI_RELEASES: [(u64, (u64, u64)); 9] = [
@@ -79,10 +64,6 @@ fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
     fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("write script");
     fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("chmod");
     path
-}
-
-fn text(bytes: &[u8]) -> String {
-    String::from_utf8_lossy(bytes).into_owned()
 }
 
 #[test]

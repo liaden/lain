@@ -2,11 +2,12 @@
 //! and inside `bwrap --unshare-net` TCP works on lo while seccomp still
 //! refuses datagrams and nothing routes out.
 
+pub mod common;
+
+use common::{FENCE, refused_with, skipped, text};
 use std::fs;
-use std::io::Write;
 use std::process::{Command, Output};
 
-const FENCE: &str = env!("CARGO_BIN_EXE_lain-fence");
 const GRANTS: [&str; 4] = ["--read-dir", "/", "--exec-dir", "/usr"];
 const EACCES: &str = "13";
 const EPERM: &str = "1";
@@ -39,24 +40,10 @@ except OSError as e:
 print("ok")
 "#;
 
-fn text(bytes: &[u8]) -> String {
-    String::from_utf8_lossy(bytes).into_owned()
-}
-
-/// Written past cargo's capture, so a skip shows in every run.
-fn skipped(what: &str, reason: &str) -> bool {
-    let _ = writeln!(std::io::stderr(), "SKIPPED {what}: {reason}");
-    true
-}
-
 /// Decided from the kernel and bwrap, never from the fence under test.
 fn cannot_run(what: &str) -> bool {
-    let lsm = fs::read_to_string("/sys/kernel/security/lsm").unwrap_or_default();
-    if !lsm.trim().split(',').any(|name| name == "landlock") {
-        return skipped(what, "Landlock is not an active LSM");
-    }
-    if Command::new("python3").args(["-c", "1"]).output().is_err() {
-        return skipped(what, "python3 is not on PATH");
+    if common::cannot_run(what) {
+        return true;
     }
     let bwrap = Command::new("bwrap")
         .args(bwrap_prefix())
@@ -97,12 +84,6 @@ fn fenced_in_private_netns(fence_flags: &[&str], kind: &str) -> Output {
 
 fn private(kind: &str) -> Output {
     fenced_in_private_netns(&["--private-net"], kind)
-}
-
-fn refused_with(out: &Output) -> Option<String> {
-    text(&out.stdout)
-        .strip_prefix("refused ")
-        .map(|errno| errno.trim().to_string())
 }
 
 fn host_has_only_lo() -> bool {
