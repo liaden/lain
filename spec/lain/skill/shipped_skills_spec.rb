@@ -297,6 +297,22 @@ RSpec.describe "shipped skills" do
     end
   end
 
+  describe "handoff's scaffold leaves a note a fresh session can resume from" do
+    it "refuses while children run, writes the six sections under tmp, and prints the resume prompt" do
+      with_empty_project do |renderer|
+        scaffold = renderer.render("handoff")
+
+        expect(scaffold).to match(/refuse.{0,200}(children|subagent)/mi)
+        expect(scaffold).to include("tmp/handoff-<date>-<slug>.md")
+        ["Goal", "Decisions", "Current state", "Next steps", "Files that matter", "Open questions"].each do |heading|
+          expect(scaffold).to include("## #{heading}")
+        end
+        expect(scaffold).to match(/argument.{0,120}first.{0,80}Next steps/mi)
+        expect(scaffold).to match(/print.{0,80}resume prompt/i)
+      end
+    end
+  end
+
   describe "the four epic-tier skills are catalog-visible and render" do
     it "presents each of them in the shipped catalog with a conventions slot that resolves" do
       Dir.mktmpdir do |root|
