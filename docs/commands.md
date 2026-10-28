@@ -975,6 +975,14 @@ Pins live on the session and are journalled, so they survive `--resume`.
 `/unpin` releases a pin, taking the same argument grammar `/pin` does. A turn that was not pinned
 says so rather than reporting a release.
 
+### /label
+
+`/label [<digest>] <text>` names a turn, the last one by default, and the name survives `--resume`.
+A leading word of 4 or more hex characters (or a `blake3:` prefix) that a turn's digest starts with
+names that turn; a prefix 2 turns share is refused, as `/pin` refuses it. A label with no text
+clears the turn's label, so a lone word that a turn's digest starts with, such as `/label beef`,
+clears that turn rather than labeling the last one.
+
 ### /fork
 
 Fork this session at its head into a new tmux window: a durable sibling chat over the shared

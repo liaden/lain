@@ -811,4 +811,25 @@ RSpec.describe Lain::SessionRecord::Replay do
       expect(todo_reminder(restored)).not_to include("TULIP")
     end
   end
+
+  describe "the turn labels a record restores" do
+    def labeled(digest, label) = Lain::Telemetry::TurnLabeled.new(digest:, label:).to_journal
+
+    def restored(*records) = described_class.new([{ "type" => "session" }, *records]).session(on: timeline(1))
+
+    it "restores a label by digest" do
+      expect(restored(labeled("blake3:aaaa1111", "tried the cache idea")).labels)
+        .to eq("blake3:aaaa1111" => "tried the cache idea")
+    end
+
+    it "lets the last record for a digest win, so an empty label clears it" do
+      records = [labeled("blake3:aaaa1111", "x"), labeled("blake3:bbbb2222", "y"), labeled("blake3:aaaa1111", "")]
+
+      expect(restored(*records).labels).to eq("blake3:bbbb2222" => "y")
+    end
+
+    it "restores no labels from a record that has none" do
+      expect(restored.labels).to eq({})
+    end
+  end
 end

@@ -1495,6 +1495,25 @@ RSpec.describe Lain::Session do
       expect(of_type("session_pin").map(&:digest)).to eq(["blake3:aaaa1111"])
     end
 
+    it "journals a turn_labeled and holds the label by digest" do
+      journaled.record_label("blake3:aaaa1111", "tried the cache idea")
+
+      expect(journaled.labels).to eq("blake3:aaaa1111" => "tried the cache idea").and be_frozen
+      expect(of_type("turn_labeled").map(&:label)).to eq(["tried the cache idea"])
+    end
+
+    it "journals an empty label and drops the label from the held set" do
+      journaled.record_label("blake3:aaaa1111", "x")
+      journaled.record_label("blake3:aaaa1111", "")
+
+      expect(journaled.labels).to eq({})
+      expect(of_type("turn_labeled").map(&:label)).to eq(["x", ""])
+    end
+
+    it "records a label on a session built with no journal" do
+      expect(described_class.new.record_label("blake3:aaaa1111", "x").labels).to eq("blake3:aaaa1111" => "x")
+    end
+
     # A journal-less Session takes one -- the resumed path, where replay folds
     # the old record in before the new journal exists.
     it "takes a journal after construction, and then records into it" do

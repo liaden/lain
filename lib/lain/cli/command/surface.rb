@@ -176,7 +176,7 @@ module Lain
         # conversation (`/rewind`), the files its turns wrote (`/undo`), a
         # sibling opened at its head (`/fork`), and the turns compaction must
         # keep (`/pin`, `/unpin`, `/keep`).
-        def history_commands = [Rewind.new, Undo.new, Fork.new, Pin.new, Unpin.new, Keep.new]
+        def history_commands = [Rewind.new, Undo.new, Fork.new, Pin.new, Unpin.new, Keep.new, Label.new]
 
         # The commands of one review: `/review` and `/survey` each open a round
         # into {#outbox} -- the run's ONE, which is what lets each refuse over

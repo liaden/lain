@@ -68,7 +68,7 @@ module Lain
       @writes = Set.new
       @documents = []
       @pre_images = PreImages::Closed
-      @pins = Set.new
+      start_marks
       start_todos
       @compaction_cuts = [].freeze
       @cuts_by_address = {}
@@ -432,6 +432,22 @@ module Lain
       @pins.delete(named!(digest))
       @journal << Telemetry::SessionPin.new(digest:, pinned: false)
       self
+    end
+
+    # Names a turn for the human. Journaled whether it sets or clears, because
+    # the record stream is a log and an empty label is the retraction.
+    #
+    # @return [self]
+    def record_label(digest, label)
+      record = Telemetry::TurnLabeled.new(digest:, label:)
+      record.label.empty? ? @labels.delete(record.digest) : @labels[record.digest] = record.label
+      @journal << record
+      self
+    end
+
+    # @return [Hash{String => String}] the label of each labeled turn, by digest
+    def labels
+      @labels.dup.freeze
     end
 
     # Raise-free by construction: nothing blank can enter the set (see
@@ -855,6 +871,11 @@ module Lain
       self.class.normalize_path(path, cwd: @worker_env.cwd)
     end
 
+    def start_marks
+      @pins = Set.new
+      @labels = {}
+    end
+
     # A blank digest is refused rather than coerced: `-nil.to_s` would put "" in
     # the set, after which `pinned?(nil)` answers TRUE and a turn that does not
     # exist reads as protected.
@@ -1122,6 +1143,12 @@ module Lain
 
       # @return [self]
       def record_unpin(_digest) = self
+
+      # @return [self]
+      def record_label(_digest, _label) = self
+
+      # @return [Hash] never any
+      def labels = {}.freeze
 
       # @return [self]
       def write_todos(_todos) = self

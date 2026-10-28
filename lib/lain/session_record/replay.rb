@@ -37,6 +37,7 @@ module Lain
       SESSION_READ_WITHHELD_TYPE = "session_read_withheld"
       SOURCE_MASKED_TYPE = "source_masked"
       SESSION_PIN_TYPE = "session_pin"
+      TURN_LABELED_TYPE = "turn_labeled"
       TODO_SNAPSHOT_TYPE = "todo_snapshot"
       COMPACTION_CUT_TYPE = "compaction_cut"
       CUT_FIELDS = Telemetry::CompactionCut.members.freeze
@@ -65,13 +66,14 @@ module Lain
       # @param on [Ext::Timeline] the chain the resumed run stands on; its todo
       #   list is the newest one written on it
       # @return [Session] a fresh Session carrying the recorded read-set, the
-      #   pin-set the recorded transitions fold to, the todo list, every
+      #   pin-set the recorded transitions fold to, the turn labels, the todo list, every
       #   committed compaction cut, and the manifest reminders the recorded
       #   memory chain reconstructs
       def session(on:)
         Session.new.tap do |fresh|
           restore_reads(fresh)
           restore_pins(fresh)
+          restore_labels(fresh)
           restore_todos(fresh, on)
           restore_cuts(fresh)
         end.watch_memory(memory)
@@ -151,6 +153,13 @@ module Lain
       end
 
       def restore_pins(fresh) = pins.each { |record| apply_pin(fresh, record) }
+
+      # File order, so the last record for a digest wins and an empty label clears.
+      def restore_labels(fresh)
+        Journal.records(@records, type: TURN_LABELED_TYPE).each do |record|
+          fresh.record_label(record.fetch("digest"), record.fetch("label"))
+        end
+      end
 
       # Every list is written again at the head it was recorded at, so a later
       # rewind finds each list where the live session held it.
