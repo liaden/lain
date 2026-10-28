@@ -109,7 +109,8 @@ RSpec.describe Lain::Sensitivity::Ledger do
 
     # The mechanical half of the fiber-safety note in the class docstring: no
     # method here can yield between a read and its mutate, because none of them
-    # does anything that yields at all.
+    # does anything that yields at all. The one Monitor is the only lock, and a
+    # same-thread fiber re-enters it.
     #
     # Only things that actually YIELD are named. An earlier edition also barred
     # `File.` and `.read`, which forbade a correct change -- `File.absolute_path?`
@@ -121,7 +122,7 @@ RSpec.describe Lain::Sensitivity::Ledger do
       body = source.lines.grep_v(/^\s*#/).join
 
       expect(body).not_to match(/Fiber|Thread|Mutex|Ractor|Async|ConditionVariable|SizedQueue|
-                                 \bsleep\b|\bgets\b|\bsystem\b|`|%x|\.pop\b|\.synchronize\b|IO\./x)
+                                 \bsleep\b|\bgets\b|\bsystem\b|`|%x|\.pop\b|IO\./x)
     end
 
     it "reconciles only the path it was asked about" do
@@ -484,7 +485,8 @@ RSpec.describe Lain::Sensitivity::Ledger do
 
     it "holds the digests of a 2-region release and no byte of either value" do
       ledger.release(path, two, authority: :human)
-      kept = Marshal.dump(ledger)
+      held = ledger.instance_variables.reject { _1 == :@monitor }.map { ledger.instance_variable_get(_1) }
+      kept = Marshal.dump(held)
 
       expect(ledger.released_digests).to eq(two.to_set(&:digest))
       expect([first, second].select { kept.include?(_1) }).to be_empty
@@ -557,7 +559,8 @@ RSpec.describe Lain::Sensitivity::Ledger do
     # persistence path is what its absence has to be spec'd as.
     it "offers no way to persist or reload itself" do
       expect(described_class.public_instance_methods(false).sort)
-        .to eq(%i[empty? outstanding release released released? released_digests])
+        .to eq(%i[decline declined? empty? forget lapse lapsed? outstanding release released released?
+                  released_digests])
     end
 
     # The instance surface alone is not the guard: a `def self.load` would walk
@@ -583,6 +586,110 @@ RSpec.describe Lain::Sensitivity::Ledger do
 
         expect(Dir.children(dir)).to eq([])
       end
+    end
+  end
+
+  describe "declines and lapses" do
+    it "remembers a decline by path and region" do
+      ledger.decline(path, two)
+
+      expect(two.map { ledger.declined?(path, _1) }).to eq([true, true])
+    end
+
+    it "keeps a decline at one path from answering for the same bytes at another" do
+      ledger.decline(path, one)
+
+      expect(ledger.declined?(other_path, one.first)).to be(false)
+    end
+
+    it "does not count a decline as a release" do
+      ledger.decline(path, one)
+
+      expect(ledger.outstanding(path, one)).to eq(one)
+    end
+
+    it "keeps a lapse apart from a decline" do
+      ledger.decline(path, two)
+      ledger.lapse(path, one)
+
+      expect([ledger.lapsed?(path, two.first), ledger.lapsed?(path, two.last)]).to eq([true, false])
+    end
+
+    it "refuses a relative path" do
+      expect { ledger.decline("env", one) }.to raise_error(ArgumentError, /absolute/)
+    end
+
+    it "forgets one path's declines and lapses and says how many regions that cleared" do
+      ledger.decline(path, two)
+      ledger.lapse(path, one)
+      ledger.decline(other_path, one)
+
+      expect(ledger.forget(path)).to eq(2)
+    end
+
+    it "answers false for a forgotten region and still holds the other path" do
+      ledger.decline(path, two)
+      ledger.lapse(path, two)
+      ledger.decline(other_path, one)
+      ledger.forget(path)
+
+      expect([ledger.declined?(path, two.first), ledger.lapsed?(path, two.first),
+              ledger.declined?(other_path, one.first)]).to eq([false, false, true])
+    end
+
+    it "counts a lapse on one region and a decline on another as 2" do
+      ledger.lapse(path, [two.first])
+      ledger.decline(path, [two.last])
+
+      expect(ledger.forget(path)).to eq(2)
+    end
+
+    it "counts a lapse alone" do
+      ledger.lapse(path, two)
+
+      expect(ledger.forget(path)).to eq(2)
+    end
+
+    it "counts a region both lapsed and declined once" do
+      ledger.lapse(path, one)
+      ledger.decline(path, one)
+
+      expect(ledger.forget(path)).to eq(1)
+    end
+
+    it "enters its one monitor for every reader and writer" do
+      monitor = Monitor.new
+      entries = 0
+      allow(monitor).to(receive(:synchronize).and_wrap_original do |original, &block|
+        (entries += 1) && original.call(&block)
+      end)
+      allow(Monitor).to receive(:new).and_return(monitor)
+      guarded = described_class.new
+      calls = [-> { guarded.outstanding(path, one) }, -> { guarded.release(path, one) },
+               -> { guarded.released?(path, one.first.digest) }, -> { guarded.released(path) },
+               -> { guarded.released_digests }, -> { guarded.empty? }, -> { guarded.decline(path, one) },
+               -> { guarded.lapse(path, one) }, -> { guarded.declined?(path, one.first) },
+               -> { guarded.lapsed?(path, one.first) }, -> { guarded.forget(path) }]
+
+      entered = calls.map do |call|
+        before = entries
+        call.call
+        entries > before
+      end
+
+      expect(entered).to all(be(true))
+    end
+
+    it "answers 0 for a path it holds nothing for" do
+      expect(ledger.forget(path)).to eq(0)
+    end
+
+    it "keeps every decline made from parallel threads" do
+      paths = Array.new(8) { "/repo/file#{_1}.env" }
+
+      paths.map { |each| Thread.new { 50.times { ledger.decline(each, three) } } }.each(&:join)
+
+      expect(paths.sum { ledger.forget(_1) }).to eq(24)
     end
   end
 

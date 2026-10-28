@@ -825,6 +825,17 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       expect(decisions.length).to eq(1)
     end
 
+    it "masks a child stack's read of the same file without a new prompt" do
+      path = write("notes.txt", one_secret)
+      read(path) { |q| q.dequeue.deny(surface: "spec") }
+      child = described_class.new(ledger:, queue:, journal:, requester: "kid")
+
+      content = dispatch(effect(path, tool_use_id: "tu_2"), subject_stack: Lain::Middleware::Stack.new([child]))
+                .fetch(:result).content
+
+      expect([decisions.length, content]).to match([1, include("<redacted:1>")])
+    end
+
     # Keyed by (path, digest), not by digest -- {Sensitivity::Ledger}'s own
     # rule, for its own reason. The identical bytes in two files are not the
     # same secret, so a "no" about one must not silently answer for the other:
@@ -874,12 +885,12 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       expect(content).to include("3 regions are masked as <redacted:1> to <redacted:3>.")
     end
 
-    it "says a lapsed release timed out rather than was declined" do
+    it "says a lapsed release timed out rather than was declined, and that a human may still release it" do
       path = write("notes.txt", one_secret)
 
       content = read(path).fetch(:result).content
 
-      expect(content).to include("the release timed out")
+      expect(content).to include("the release timed out", "a human may still release")
       expect(content).not_to include("declined")
     end
 
@@ -903,8 +914,9 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
 
       content = dispatch(effect(path), subject_stack: Lain::Middleware::Stack.new([related])).fetch(:result).content
 
-      expect(content).to include("masked as <redacted:1>")
+      expect(content).to include("masked as <redacted:1>", "lies under a related directory", "never released")
       expect(content).not_to include("declined")
+      expect(content).not_to include("Tell the user which file you need unmasked")
     end
 
     it "adds a text block to a result that arrived as blocks" do
@@ -975,6 +987,16 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       expect(content).to include("<redacted:1>")
       expect(parks).to be_empty
       expect(redactions.length).to eq(1)
+    end
+
+    it "keeps the related trailer on a later read, never saying the release was declined" do
+      path = write_under("pitchcraft/notes.md", one_secret)
+      read(path)
+
+      content = read(path, tool_use_id: "tu_2").fetch(:result).content
+
+      expect(content).to include("lies under a related directory")
+      expect(content).not_to include("declined", "Tell the user which file you need unmasked")
     end
 
     it "records the masked read, so an edit over it is refused" do

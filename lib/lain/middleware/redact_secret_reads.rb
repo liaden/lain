@@ -217,16 +217,10 @@ module Lain
         @related = related
         @secrets = secrets
         @file_facts = file_facts
-        # Mutable, on a frozen object, deliberately: `freeze` seals the ivars,
-        # not the Set they point at, and this is the run's accumulating
-        # answer-memory -- {Sensitivity::Ledger}'s own posture, for its reason.
-        @declined = Set.new
-        # The subset of `@declined` nobody answered, so a later read can still say the window lapsed.
-        @lapsed = Set.new
-        # Kept apart from `@declined` because a row mask is not a ruling: a
+        # Kept apart from the ledger's declines because a row mask is not a ruling: a
         # file masked in a search must still park on its next `read_file`. Two
         # parallel searches can both journal the same mask, the race
-        # `@declined` accepts for its extra prompt.
+        # the ledger accepts for its extra prompt.
         @row_masked = Set.new
         super()
         freeze
@@ -406,16 +400,16 @@ module Lain
       # would have released. Two sibling fibers can both park for the same digests
       # (the check and the record sit either side of the await), which costs one
       # extra prompt and nothing else.
-      def declined?(withheld) = withheld.unreleased.all? { @declined.include?([withheld.path, _1.digest]) }
+      def declined?(withheld) = withheld.unreleased.all? { @ledger.declined?(withheld.path, _1) }
 
       # Why a read is masked without asking, or nil when it must ask.
       def remembered(withheld)
-        return (lapsed?(withheld) ? :timed_out : :declined) if declined?(withheld)
+        return :related if @related.related?(withheld.path)
 
-        :related if @related.related?(withheld.path)
+        (lapsed?(withheld) ? :timed_out : :declined) if declined?(withheld)
       end
 
-      def lapsed?(withheld) = withheld.unreleased.all? { @lapsed.include?([withheld.path, _1.digest]) }
+      def lapsed?(withheld) = withheld.unreleased.all? { @ledger.lapsed?(withheld.path, _1) }
 
       # The await is the only place in this class that can be unwound from
       # outside, and the read-set is already wrong when it is.
@@ -442,7 +436,7 @@ module Lain
         return release(carried, effect, withheld, settled) if approved
 
         why = settled.timed_out? ? :timed_out : :declined
-        withheld.unreleased.each { @lapsed << [withheld.path, _1.digest] } if why == :timed_out
+        @ledger.lapse(withheld.path, withheld.unreleased) if why == :timed_out
         mask(carried, effect, withheld, why)
       ensure
         withheld.session.record_withheld(Session::Withheld::Source.file(withheld.path)) unless decided
@@ -469,13 +463,12 @@ module Lain
       # rule, which this has to match or break. A redaction line per read would
       # mean an unmasked file journals once over ten iterations and a masked one
       # ten times, so the record would be noisiest exactly where the loop is most
-      # likely. `@declined` already holds "these
-      # digests at this path have been ruled on", which IS the transition, so the
-      # check goes BEFORE it is added to.
+      # likely. The ledger already holds "these digests at this path have been
+      # ruled on", which IS the transition, so the check goes BEFORE it is added to.
       def mask(carried, effect, withheld, why)
         withheld.session.record_withheld(Session::Withheld::Source.file(withheld.path))
         record(Telemetry::SourceMasked) { redaction(effect, withheld) } unless declined?(withheld)
-        withheld.unreleased.each { @declined << [withheld.path, _1.digest] }
+        @ledger.decline(withheld.path, withheld.unreleased)
         masked = withheld.scan.mask(withheld.unreleased)
         carried.merge(result: Tool::Result.ok(Trailer.append(masked, withheld.unreleased.length, why)))
       end
@@ -511,7 +504,7 @@ module Lain
       end
 
       def row_masked?(path, held)
-        held.all? { |region| [@row_masked, @declined].any? { _1.include?([path, region.digest]) } }
+        held.all? { |region| @row_masked.include?([path, region.digest]) || @ledger.declined?(path, region) }
       end
 
       def redaction(effect, withheld)
@@ -660,8 +653,12 @@ module Lain
       # What a masked read tells the model: the file is readable, so a refusal is not
       # a missing file, and the human is the one who can lift it.
       module Trailer
-        REASONS = { declined: "the release was declined", timed_out: "the release timed out",
-                    related: "it lies under a related directory, whose regions are never released" }.freeze
+        ASK = "Tell the user which file you need unmasked."
+        REASONS = {
+          declined: "the release was declined. #{ASK}",
+          timed_out: "the release timed out, and a human may still release it. #{ASK}",
+          related: "the file lies under a related directory, so its regions are never released."
+        }.freeze
 
         # @param content [String, Array] the masked result, shaped as it arrived
         # @param count [Integer] regions withheld
@@ -672,8 +669,7 @@ module Lain
         end
 
         def self.line(count, why)
-          "#{placeholders(count)}. The file is readable; #{REASONS.fetch(why)}. " \
-            "Tell the user which file you need unmasked."
+          "#{placeholders(count)}. The file is readable; #{REASONS.fetch(why)}"
         end
 
         def self.placeholders(count)

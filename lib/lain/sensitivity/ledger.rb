@@ -17,13 +17,12 @@ module Lain
     # reason: this must be free to call from any arm, in any order. That is why
     # a relative path RAISES rather than being resolved.
     #
-    # == Fiber-safe, not thread-safe
+    # == Fiber- and thread-safe
     #
-    # {Tools::ReadFile#parallel_safe?} makes sibling reads concurrent FIBERS,
-    # and every method here is pure Ruby with no IO and no yield point between a
-    # read and its mutate. It is deliberately unguarded against threads --
-    # `held(key) | digests` and {#reconcile}'s delete-then-set are both
-    # read-modify-writes, and nothing in this harness runs tools on threads.
+    # {Tools::ReadFile#parallel_safe?} makes sibling reads concurrent FIBERS, and
+    # parallel child stacks share this ledger, so every reader and writer runs
+    # under one Monitor: `held(key) | digests` and {#reconcile}'s delete-then-set
+    # are read-modify-writes.
     #
     # == Run-scoped, mutable, and owned by the Switchboard
     #
@@ -57,6 +56,9 @@ module Lain
       def initialize
         @released = {}
         @human = {}
+        @declined = {}
+        @lapsed = {}
+        @monitor = Monitor.new
       end
 
       # The read event. Reconciles this path's releases against the regions the
@@ -86,9 +88,11 @@ module Lain
 
         list = regions.to_a
         key = key!(path)
-        reconcile(key, list.map(&:digest)) if complete
+        locked do
+          reconcile(key, list.map(&:digest)) if complete
 
-        list.reject { |region| held(key).include?(region.digest) }.freeze
+          list.reject { |region| held(key).include?(region.digest) }.freeze
+        end
       end
 
       # Adds, never replaces, and never reconciles: what the human agreed to send
@@ -109,19 +113,21 @@ module Lain
 
         digests = regions.to_a.map(&:digest)
         key = key!(path)
-        add(@released, key, digests)
-        add(@human, key, digests) if authority == :human
+        locked do
+          add(@released, key, digests)
+          add(@human, key, digests) if authority == :human
+        end
         self
       end
 
       # @return [Boolean]
-      def released?(path, digest) = held(key!(path)).include?(digest)
+      def released?(path, digest) = locked { held(key!(path)).include?(digest) }
 
       # Sorted for {Session#reads}' reason: a consumer must not vary with the
       # order releases arrived.
       #
       # @return [Array<String>] frozen
-      def released(path) = held(key!(path)).sort.freeze
+      def released(path) = locked { held(key!(path)).sort.freeze }
 
       # A human's releases only. The block, when given, picks the paths that count,
       # because the egress guard sees a value and not the file it came from.
@@ -130,14 +136,66 @@ module Lain
       # @yieldreturn [Boolean] whether that path's releases count
       # @return [Set<String>] frozen copy
       def released_digests
-        counted = block_given? ? @human.select { |path, _| yield path } : @human
-        counted.each_value.reduce(Set.new, :|).freeze
+        locked do
+          counted = block_given? ? @human.select { |path, _| yield path } : @human
+          counted.each_value.reduce(Set.new, :|).freeze
+        end
       end
 
       # @return [Boolean] whether this run has released anything at all
-      def empty? = @released.empty?
+      def empty? = locked { @released.empty? }
+
+      # A decline is a ruling, not a release: the regions stay outstanding, and
+      # the read that was declined is masked again without asking.
+      #
+      # @param path [String, Pathname] the file, ABSOLUTE; see {#key!}
+      # @param regions [Enumerable<#digest>] the regions that were declined
+      # @return [self]
+      def decline(path, regions)
+        remember(@declined, path, regions)
+      end
+
+      # A decline nobody answered; a human may still release it.
+      #
+      # @param path [String, Pathname] the file, ABSOLUTE; see {#key!}
+      # @param regions [Enumerable<#digest>] the regions whose window lapsed
+      # @return [self]
+      def lapse(path, regions)
+        remember(@lapsed, path, regions)
+      end
+
+      # @param path [String, Pathname] the file, ABSOLUTE; see {#key!}
+      # @param region [#digest]
+      # @return [Boolean]
+      def declined?(path, region) = locked { held(key!(path), @declined).include?(region.digest) }
+
+      # @param path [String, Pathname] the file, ABSOLUTE; see {#key!}
+      # @param region [#digest]
+      # @return [Boolean]
+      def lapsed?(path, region) = locked { held(key!(path), @lapsed).include?(region.digest) }
+
+      # @param path [String, Pathname] the file, ABSOLUTE; see {#key!}
+      # @return [Integer] how many distinct regions had a decline or lapse
+      def forget(path)
+        key = key!(path)
+        locked do
+          cleared = (held(key, @declined) | held(key, @lapsed)).size
+          @declined.delete(key)
+          @lapsed.delete(key)
+          cleared
+        end
+      end
 
       private
+
+      def locked(&block) = @monitor.synchronize(&block)
+
+      def remember(table, path, regions)
+        digests = regions.to_a.map(&:digest)
+        key = key!(path)
+        locked { add(table, key, digests) }
+        self
+      end
 
       def held(key, table = @released) = table.fetch(key) { Set.new }
 
