@@ -600,8 +600,8 @@ There are no config files to write before the first run. Everything below has a 
 |---|---|
 | `.lain/slots/*.md` | Prompt slot fills. What lands in the system prompt for this project. |
 | `.lain/slots/role/*.md` | Per-role prompt fills, over the shipped role templates. `auto_approver.md`, `gate_adjudicator.md` and `evidence_researcher.md` are refused at launch: those roles decide approvals, and a project must not rewrite the prompt that judges its own calls. A project's `system.md` fill still reaches every role, these included. |
-| `.lain/slots/skill/*.md` | Per-skill prompt fills. |
-| `.lain/skills/*.md` | Your skills, merged over the shipped catalog. Reachable as `@role/skill` at the prompt. |
+| `.lain/slots/skill/<skill>/<hole>.md` | Per-skill prompt fills, one file per hole. |
+| `.lain/skills/<name>/skill.md` | Your skills, merged over the shipped catalog. Reachable as `@role/skill` at the prompt. |
 | `.lain/config.rb` | Your per-project settings: the `epics`, `approval`, `isolation`, `sensitivity`, `shell`, `tests` and `middleware` verbs. See [Configuration](docs/commands.md#configuration-configrb). |
 | `.lain/services.rb` | The isolation services DSL: the per-worker `postgres` databases and `compose` stacks a worker's lease provisions. Read by the `DbIndex` and `Compose` decorators, which layer over whatever `--isolation` resolved. |
 | `.lain/summarizers.rb` | Your deterministic tier-0 summarizers, tried before any model call. See [Compaction and summarizer tiers](#compaction-and-summarizer-tiers). |

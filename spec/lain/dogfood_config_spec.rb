@@ -69,4 +69,32 @@ RSpec.describe "the dogfood config tree" do
       expect([status.exitstatus, File.exist?(File.join(tree, ".lain")), out]).to match([0, false, /main checkout/])
     end
   end
+
+  describe "the conventions slots rendered over the dogfood tree" do
+    def render_over_dogfood(skill)
+      Dir.mktmpdir do |root|
+        File.symlink(File.join(repo, "dogfood/lain"), File.join(root, ".lain"))
+        Lain::Skill::Library.load(root:, locals: { epic_home: "/state/lain/epics/test" }).renderer.render(skill)
+      end
+    end
+
+    it "gives execute-plan this repo's commit, suite and comment traps and the Ruby panel" do
+      rendered = render_over_dogfood("execute-plan")
+
+      expect(rendered).to include("leaf first", "same commit", "stashes unstaged tracked changes", "untracked",
+                                  "suite.lock", "LAIN_SPEC_WORKERS", "WHY", "Linus Torvalds", "Aaron Patterson")
+    end
+
+    it "gives create-plan the Ruby panel and the planning conventions" do
+      rendered = render_over_dogfood("create-plan")
+
+      expect(rendered).to include("Sandi Metz", "planning/", "commit-mode", "same commit", "$stdout")
+    end
+  end
+
+  it "names the real skill and slot paths in the README" do
+    readme = File.read(File.join(repo, "README.md"))
+
+    expect(readme).to include(".lain/skills/<name>/skill.md", ".lain/slots/skill/<skill>/<hole>.md")
+  end
 end
