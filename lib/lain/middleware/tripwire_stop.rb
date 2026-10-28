@@ -78,7 +78,7 @@ module Lain
         effect = ::Lain::Sensitivity::Policy.unwrapped(env.fetch(:effect))
         return downstream(env, &app) unless effect.tool_call?
 
-        requester = requester_of(env[:context])
+        requester = Telemetry::Escalation.requester_of(env[:context], @requester)
         standing = @stops.standing(requester)
         return downstream(env, &app) if standing == Tripwire::Stops::FREE
         return downstream(paused(env), &app).merge(context: env[:context]) if held?(standing)
@@ -96,7 +96,7 @@ module Lain
       # @return [Approval::Escalation::Ruling] it, or a refusal if the requester stands stopped,
       #   or paused with no human behind the approve
       def rechecked(ruling, effect, context)
-        requester = requester_of(context)
+        requester = Telemetry::Escalation.requester_of(context, @requester)
         standing = @stops.standing(requester)
         return ruling if standing == Tripwire::Stops::FREE || (standing == Tripwire::Stops::PAUSED && ruling.human?)
 
@@ -104,8 +104,6 @@ module Lain
       end
 
       private
-
-      def requester_of(context) = Telemetry::Escalation.requester_of(context, @requester)
 
       def held?(standing) = standing == Tripwire::Stops::PAUSED && @attended && ASKING.include?(@mode.approval.name)
 

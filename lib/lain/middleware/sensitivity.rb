@@ -75,12 +75,10 @@ module Lain
                                                          named: env[:named])
         return downstream(env, &app) if denial.nil?
 
-        env.merge(result: refuse(denial, requester_of(env[:context])))
+        env.merge(result: refuse(denial, Telemetry::Escalation.requester_of(env[:context], @requester)))
       end
 
       private
-
-      def requester_of(context) = Telemetry::Escalation.requester_of(context, @requester)
 
       def refuse(denial, requester)
         @journal << Telemetry::ReadRefused.new(tool_use_id: denial.tool_use_id, tool: denial.tool,

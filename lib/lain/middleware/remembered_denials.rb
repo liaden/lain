@@ -57,7 +57,7 @@ module Lain
         reason, because = effect.tool_call? && remembered(effect, env[:context], env[:named])
         return downstream(env, &app) unless reason
 
-        record(effect, reason, because, requester_of(env[:context]))
+        record(effect, reason, because, Telemetry::Escalation.requester_of(env[:context], @requester))
         said = reason.presence || "#{because} this session"
         env.merge(result: Tool::Result.error("#{format(@denial, name: effect.name.inspect)}: #{said}"))
       end
@@ -71,7 +71,8 @@ module Lain
         return [on_path, PATH_DENIED] if on_path
         return if refused
 
-        repeated = @queue.denied_call(requester: requester_of(context), tool: effect.name, input: effect.input, cwd:)
+        repeated = @queue.denied_call(requester: Telemetry::Escalation.requester_of(context, @requester),
+                                      tool: effect.name, input: effect.input, cwd:)
         [repeated, CALL_DENIED] if repeated
       end
 
@@ -103,7 +104,9 @@ module Lain
              .find { |path, reason| reason && asked_at?(path, cwd, within) }&.last
       end
 
-      def denied_at(path, context) = @queue.denied(requester: requester_of(context), path:)
+      def denied_at(path, context)
+        @queue.denied(requester: Telemetry::Escalation.requester_of(context, @requester), path:)
+      end
 
       # A protected name spelled bare is only flagged by the triage, so the
       # call parks; written as a path it is refused outright, and a remembered
@@ -117,8 +120,6 @@ module Lain
         ruling = Approval::Escalation::Ruling.deny(rung: RUNG, because:, authority: :human, said: reason)
         Telemetry::Escalation.write(@journal, ruling, effect, nil, requester:)
       end
-
-      def requester_of(context) = Telemetry::Escalation.requester_of(context, @requester)
     end
   end
 end
