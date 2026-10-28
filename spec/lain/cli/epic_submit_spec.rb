@@ -1106,6 +1106,69 @@ RSpec.describe Lain::CLI::EpicSubmit do
     expect(stage_events).to eq([%w[research completed], %w[epic_plan started]])
   end
 
+  describe "an abbreviated implementation digest" do
+    before do
+      write_epic
+      session("started.ndjson", *epic_approved, stage_event("issue_plan"))
+      home.plan("a").write("the plan for a\n")
+      command.submit("issue_plan", issue: "a")
+    end
+
+    # Two commits whose ids share a 4-hex prefix, found by hashing candidate
+    # bodies in Ruby and writing only the pair.
+    def colliding_prefix
+      tree = SeedRepo.git(root, "mktree").stdout.strip
+      seen = {}
+      (0..).each do |n|
+        body = "tree #{tree}\nauthor t <t@example.com> 0 +0000\ncommitter t <t@example.com> 0 +0000\n\nc#{n}\n"
+        sha = Digest::SHA1.hexdigest("commit #{body.bytesize}\0#{body}")
+        seen[sha[0, 4]] ||= []
+        seen[sha[0, 4]] << body
+        return seen[sha[0, 4]] if seen[sha[0, 4]].size == 2
+      end
+    end
+
+    it "submits the full sha of the commit a unique prefix names" do
+      full = command.submit("implementation", issue: "a", digest: commit_sha)
+      abbreviated = command.submit("implementation", issue: "a", digest: commit_sha[0, 7])
+
+      expect(abbreviated.text).to start_with("already approved #{full.text[/blake3:\h+/]}")
+    end
+
+    it "refuses a prefix that matches 2 commits, saying it is ambiguous" do
+      commit_sha
+      bodies = colliding_prefix
+      bodies.each do |body|
+        IO.popen(["git", "-C", root.to_s, "hash-object", "-t", "commit", "-w", "--stdin", "--literally"], "r+") do |io|
+          io.write(body)
+          io.close_write
+          io.read
+        end
+      end
+      prefix = Digest::SHA1.hexdigest("commit #{bodies.first.bytesize}\0#{bodies.first}")[0, 4]
+
+      expect { command.submit("implementation", issue: "a", digest: prefix) }
+        .to raise_error(Lain::Error, /#{prefix}.*ambiguous/)
+    end
+
+    ["abc", "not-hex", "--foo", "--end-of-options"].each do |digest|
+      it "refuses #{digest.inspect} as not a commit without running git" do
+        commit_sha
+        expect(Lain::Isolation::Checkout).not_to receive(:new)
+
+        expect { command.submit("implementation", issue: "a", digest:) }
+          .to raise_error(Lain::Error, /#{Regexp.escape(digest)}.*not a commit/)
+      end
+    end
+
+    it "refuses a prefix that names no commit, by name" do
+      commit_sha
+
+      expect { command.submit("implementation", issue: "a", digest: "deadbeef") }
+        .to raise_error(Lain::Error, /deadbeef.*not a commit/)
+    end
+  end
+
   # The interactive asker: a y/n prompt on the INJECTED streams. Nothing here
   # may touch $stdout -- `spec/output_discipline_spec.rb` parses lib/ for that
   # -- so the question is written to the stream the command was handed.

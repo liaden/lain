@@ -262,14 +262,22 @@ module Lain
         end
 
         def commit!(digest)
-          return digest if commit?(digest)
+          raise Error, not_a_commit(digest) unless digest.match?(/\A\h{4,64}\z/)
 
-          raise Error, "the implementation digest #{digest} is not a commit in #{@root}"
+          found = verify(digest)
+          return found.stdout.strip if Shell::Out.ok?(found)
+
+          raise Error, "the implementation digest #{digest} is ambiguous in #{@root}; give more of the sha" if
+            found.stderr.include?("ambiguous")
+
+          raise Error, not_a_commit(digest)
         end
 
-        def commit?(digest)
-          digest.match?(/\A\h{40,64}\z/) &&
-            Shell::Out.ok?(checkout.run("cat-file", "-e", "#{digest}^{commit}"))
+        def not_a_commit(digest) = "the implementation digest #{digest} is not a commit in #{@root}"
+
+        # LC_ALL=C because "ambiguous" is read back from git's own stderr.
+        def verify(digest)
+          checkout.run("rev-parse", "--verify", "--end-of-options", "#{digest}^{commit}", env: { "LC_ALL" => "C" })
         end
 
         def checkout = Lain::Isolation::Checkout.new(@root)
