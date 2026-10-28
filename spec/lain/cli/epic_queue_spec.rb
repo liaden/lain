@@ -409,6 +409,31 @@ RSpec.describe Lain::CLI::EpicQueue do
       expect(queue.listing).to include("not recoverable")
     end
 
+    describe "an implementation gate parked with its question and test result" do
+      let(:commit) { "8b6b677" }
+      let(:question) { "Approve the implementation stage for \"alpha\"? (issue a, #{commit}, tests: 1 error)" }
+
+      before do
+        write_journal("20260728T062000-102.ndjson",
+                      [*approvals("research", "epic_plan", "issue_plan"),
+                       decision(digest: digest_c, at: "2026-07-28T06:20:00.000000Z", policy: "deferred",
+                                answered_by: "deferred", stage: "implementation", issue_id: "a"),
+                       Lain::Telemetry::GateParked.new(artifact_digest: digest_c, epic_slug: "alpha", issue_id: "a",
+                                                       stage: "implementation", sha: commit, question:)
+                                                  .to_journal.merge("ts" => "2026-07-28T06:20:00.000000Z"),
+                       Lain::Telemetry::TestsRan.from(Struct.new(:passed, :failed, :errors).new([], [], [3]),
+                                                      issue_id: "a", sha: commit)
+                                                .to_journal.merge("ts" => "2026-07-28T06:19:00.000000Z")])
+      end
+
+      it "shows the question and a tests line, and neither reads as unrecoverable" do
+        row = queue.listing("alpha").split("\n\n").find { |block| block.include?(digest_c) }
+
+        expect(row).to include("question:  #{question}", "tests:     0 passed, 1 error")
+        expect(row).not_to include("not recoverable")
+      end
+    end
+
     it "narrows to one epic when a slug is given" do
       write_journal("20260728T061000-101.ndjson",
                     [decision(digest: digest_c, at: "2026-07-28T06:10:00.000000Z", policy: "deferred",

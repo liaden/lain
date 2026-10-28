@@ -197,8 +197,8 @@ module Lain
             builder: ->(deps) { Policy::HandsOff.new(queue: deps.queue) }
           ),
           Policy::Deferred::NAME => Recipe.new(
-            seams: %i[queue],
-            builder: ->(deps) { Policy::Deferred.new(queue: deps.queue) }
+            seams: %i[queue journal],
+            builder: ->(deps) { Policy::Deferred.new(queue: deps.queue, journal: deps.journal) }
           ),
           # The one row wanting the adjudication seams -- what the per-policy
           # declaration was for: a session running `hands_off` overnight still

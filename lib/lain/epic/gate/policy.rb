@@ -179,6 +179,14 @@ module Lain
           NAME = SignoffQueue::DEFERRED_POLICY
           SURFACE = StandingAnswer.new(Answer.deny(NAME)).freeze
 
+          # @param queue [#park] see {Policy#initialize}
+          # @param journal [#record] where `gate_parked` lands; required, and it must be
+          #   the journal the gate decides into, so the two records sit together
+          def initialize(queue:, journal:)
+            super(queue:)
+            @journal = journal
+          end
+
           # The same queue the inherited stage-boundary check reads, because a
           # deferral parks into the very partition a later stage must find
           # drained.
@@ -187,12 +195,19 @@ module Lain
             approved = super
             @queue.park(artifact_digest: artifact.digest, epic_slug:, stage:, issue_id:, criteria_digest:,
                         question: artifact.gate_question)
+            journal_park(artifact, stage:, epic_slug:, issue_id:)
             approved
           end
 
           private
 
           def surface = SURFACE
+
+          def journal_park(artifact, stage:, epic_slug:, issue_id:)
+            sha = artifact.changeset if artifact.respond_to?(:changeset)
+            @journal.record(Telemetry::GateParked.new(artifact_digest: artifact.digest, epic_slug:, issue_id:, stage:,
+                                                      sha:, question: artifact.gate_question))
+          end
         end
 
         # The overnight policy: a read-only spike gathers evidence, a second

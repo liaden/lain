@@ -63,6 +63,9 @@ module Lain
       # against a real record's `#journal_type`, so the two cannot drift.
       EVIDENCE_TYPE = "gate_evidence"
 
+      PARKED_TYPE = "gate_parked"
+      TESTS_TYPE = "tests_ran"
+
       DEFAULT_CLOCK = -> { Time.now.utc }
 
       # @param paths [Paths] resolves `sessions_dir`, both for reading every
@@ -126,7 +129,8 @@ module Lain
       # listing's read is its own and never cached, so its tolerance cannot
       # reach the {#review} the deciding verbs read.
       def walk(damage)
-        SessionJournals.new(dirs:, types: [Lain::Epic::SignoffQueue::JOURNAL_TYPE, EVIDENCE_TYPE], damage:)
+        types = [Lain::Epic::SignoffQueue::JOURNAL_TYPE, EVIDENCE_TYPE, PARKED_TYPE, TESTS_TYPE]
+        SessionJournals.new(dirs:, types:, damage:)
       end
 
       def drain(digest, approved:, reason:)
@@ -259,7 +263,7 @@ module Lain
       # that parked it and the spike evidence behind it. `spiked` is whether a
       # spike ran at all, because an empty evidence cell means something else
       # when no policy ever asked for one.
-      Row = Data.define(:item, :parked_at, :waited, :reason, :question, :spiked) do
+      Row = Data.define(:item, :parked_at, :waited, :reason, :question, :spiked, :tests) do
         # Coarse on purpose: a morning review asks "has this been sitting since
         # yesterday", never "how many seconds".
         def self.waited_label(seconds)
@@ -299,6 +303,7 @@ module Lain
         def to_s
           ["#{item.stage}  epic #{item.epic_slug}#{issue}  waiting #{self.class.waited_label(waited)}",
            "  question:  #{question || "<not recoverable from the journal>"}",
+           *(tests ? ["  tests:     #{tests}"] : []),
            "  artifact:  #{item.artifact_digest}",
            "  evidence:  #{item.evidence_digest || no_evidence}",
            *(reason ? ["  hesitation: #{reason}"] : [])].join("\n")
@@ -386,7 +391,23 @@ module Lain
           deferral = deferrals.fetch(address(item)) { raise UnreadableRecord, orphan_message(item) }
           parked_at = parked_at(deferral, item)
           Row.new(item:, parked_at:, waited: waited(parked_at, item), reason: deferral["reason"],
-                  question: evidence.dig(address(item), "question"), spiked: evidence.key?(address(item)))
+                  question: question_of(item), spiked: evidence.key?(address(item)), tests: tests_of(item))
+        end
+
+        def question_of(item) = evidence.dig(address(item), "question") || parks.dig(address(item), "question")
+
+        def tests_of(item)
+          sha = parks.dig(address(item), "sha")
+          ran = sha && test_runs[[item.issue_id.to_s, sha]]
+          ran && tests_said(ran)
+        end
+
+        def tests_said(ran)
+          return "not run (#{ran["why"]})" unless ran["ran"]
+
+          counts = [[ran["passed"], "passed"], [ran["failed"], "failed"], [ran["errors"], "error"]]
+          said = counts.select { |number, word| word == "passed" || number.to_i.positive? }
+          said.map { |number, word| "#{number} #{word == "error" ? "error".pluralize(number) : word}" }.join(", ")
         end
 
         # A deferral stamped AFTER now is refused here rather than downstream:
@@ -425,6 +446,12 @@ module Lain
           @deferrals ||= of_type(Lain::Epic::SignoffQueue::JOURNAL_TYPE)
                          .select { |record| record["policy"].to_s == Lain::Epic::SignoffQueue::DEFERRED_POLICY }
                          .to_h { |record| [address_of(record), record] }
+        end
+
+        def parks = @parks ||= of_type(PARKED_TYPE).to_h { |record| [address_of(record), record] }
+
+        def test_runs
+          @test_runs ||= of_type(TESTS_TYPE).to_h { |record| [[record["issue_id"].to_s, record["sha"].to_s], record] }
         end
 
         def evidence

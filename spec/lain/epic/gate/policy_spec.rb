@@ -126,7 +126,7 @@ RSpec.describe Lain::Epic::Gate::Policy do
     it "labels each policy with the durable NAME its own subclass declares" do
       names = [described_class::Interactive.new(asker: scripted_asker { |p, _q| p }, queue: drained),
                described_class::HandsOff.new(queue: drained),
-               described_class::Deferred.new(queue:)].map(&:name)
+               described_class::Deferred.new(queue:, journal:)].map(&:name)
 
       expect(names).to eq(%w[interactive hands_off deferred])
     end
@@ -210,7 +210,7 @@ RSpec.describe Lain::Epic::Gate::Policy do
   end
 
   describe "deferred parks without approving" do
-    subject(:policy) { described_class::Deferred.new(queue:) }
+    subject(:policy) { described_class::Deferred.new(queue:, journal:) }
 
     it "answers false and journals answered_by deferred, approved false" do
       expect(decide(policy)).to be(false)
@@ -236,6 +236,30 @@ RSpec.describe Lain::Epic::Gate::Policy do
       decide(policy)
 
       expect(queue.first.question).to eq(plan.gate_question)
+    end
+
+    it "journals gate_parked beside the gate_decision, with the address, sha and question" do
+      parked_policy = described_class::Deferred.new(queue:, journal:)
+      commit = Data.define(:digest, :gate_question, :changeset).new(digest: "blake3:impl", changeset: "8b6b677",
+                                                                    gate_question: "Approve the commit?")
+      approved = Sync do
+        parked_policy.decide(commit, gate:, stage: "epic_plan", epic_slug: "alpha")
+      end
+
+      expect(approved).to be(false)
+      expect(journal_records(journal_io, "gate_parked")).to contain_exactly(
+        include("artifact_digest" => "blake3:impl", "epic_slug" => "alpha", "issue_id" => nil,
+                "stage" => "epic_plan", "sha" => "8b6b677", "question" => "Approve the commit?")
+      )
+      expect(decisions.size).to eq(1)
+    end
+
+    it "journals a null sha for an artifact that names no commit" do
+      Sync do
+        described_class::Deferred.new(queue:, journal:).decide(plan, gate:, stage: "epic_plan", epic_slug: "alpha")
+      end
+
+      expect(journal_records(journal_io, "gate_parked")).to contain_exactly(include("sha" => nil))
     end
 
     it "still refuses ensure_approved!, so an irreversible caller cannot proceed" do
@@ -274,7 +298,7 @@ RSpec.describe Lain::Epic::Gate::Policy do
     end
 
     it "parks nothing when the deferral's own journal write raises -- the queue is the journal's fold" do
-      expect { decide(described_class::Deferred.new(queue:)) }.to raise_error(IOError)
+      expect { decide(described_class::Deferred.new(queue:, journal:)) }.to raise_error(IOError)
 
       expect(queue.to_a).to be_empty
     end
@@ -293,7 +317,7 @@ RSpec.describe Lain::Epic::Gate::Policy do
     it "refuses a deferred gate at epic_plan while alpha's research is parked" do
       park_research
 
-      expect { decide(described_class::Deferred.new(queue:), stage: "epic_plan", epic_slug: "alpha") }
+      expect { decide(described_class::Deferred.new(queue:, journal:), stage: "epic_plan", epic_slug: "alpha") }
         .to raise_error(Lain::Epic::StageBlocked, /alpha.*research/m)
     end
 

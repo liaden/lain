@@ -77,6 +77,14 @@ RSpec.describe Lain::Epic::Gate::Policies do
       expect(queue.parked("alpha", "epic_plan").size).to eq(1)
     end
 
+    it "hands the Deferred the deps' journal -- the park is journaled where the gate writes" do
+      decide(described_class.for(stage: "epic_plan", config:, deps:), stage: "epic_plan")
+
+      expect(journal_records(journal_io, "gate_parked")).to contain_exactly(
+        include("artifact_digest" => plan.digest, "stage" => "epic_plan", "question" => plan.gate_question)
+      )
+    end
+
     it "hands the Interactive the injected asker -- the question reaches it" do
       decide(described_class.for(stage: "issue_plan", config:, deps:), stage: "issue_plan")
 
