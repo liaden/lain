@@ -280,7 +280,7 @@ module Lain
         def profiles(profile)
           probe = profile == "none" ? NoTrace.new : @probe
           Confine::Profiles.new(masks: NoMasks.new, probe:, home: Dir.home, root: root_for(profile),
-                                workspace: profile == "workspace")
+                                workspace: profile == "workspace", fresh: Shell::Executable::Fresh.for_lineage([]))
         end
 
         def root_for(profile) = profile == "workspace" ? @scratch : Dir.pwd

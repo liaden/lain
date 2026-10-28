@@ -96,6 +96,37 @@ RSpec.describe Lain::Exec::Sandboxed do
       expect([inner.calls, capture.exit_status, recorded("sandbox").sole.refused]).to eq([[], 126, [planted]])
     end
 
+    describe "the grants its record names" do
+      let(:tool) { File.join(home, ".cargo/bin/rg") }
+      let(:profile) { Lain::Confine::Profile.reader(root:, home:, exec_files: [tool]) }
+      let(:grants) do
+        [executable("rg", tool, :user), executable("x", File.join(@base, "elsewhere/x"), :user),
+         executable("env", "/usr/bin/env", :system)]
+      end
+
+      def granting(grants)
+        Lain::Confine::Request.new(ruling: ruling("rules", rule: "composed_term"), cwd: root, root:,
+                                   tool_use_id: "toolu_1", executables: [executable("cat", "/usr/bin/cat", :system)],
+                                   grants:)
+      end
+
+      it "names only the grants the profile runs because they were granted, not what /usr runs anyway" do
+        run(confinement: granting(grants))
+
+        expect(recorded("sandbox").sole.granted).to eq([tool])
+      end
+
+      it "names no grant for a call it does not confine" do
+        unconfined = Lain::Confine::Profile::TRACED.with(exec_files: [tool])
+        traced = Struct.new(:profile) { def for(_request) = profile }.new(unconfined)
+        described_class.new(inner:, launcher:, profiles: traced, journal:)
+                       .call(command: Lain::Shell::Term.of(%w[cat README.md]), cwd: root, env: {}, timeout: 5,
+                             confinement: granting(grants))
+
+        expect(recorded("sandbox").sole.granted).to eq([])
+      end
+    end
+
     it "bounds its refusal by the ceiling it was given" do
       capture = run(confinement: composed(executables: [executable("cat", File.join(root, "bin/cat"), :project)]))
       expect(capture.ceiling).to eq(4096)

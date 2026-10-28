@@ -6,7 +6,7 @@ RSpec.describe Lain::Telemetry::Sandbox do
   it "journals no arm or task of its own" do
     expect(record.to_journal).to eq(
       "type" => "sandbox", "tool_use_id" => "tu_1", "profile" => :reader, "trace" => false, "refused" => [],
-      "created_sealed" => [], "kept_tmpdir" => nil
+      "created_sealed" => [], "kept_tmpdir" => nil, "granted" => []
     )
   end
 
@@ -34,11 +34,12 @@ RSpec.describe Lain::Telemetry::Sandbox do
                                    trace: true,
                                    refused: ["/bin/curl"],
                                    created_sealed: ["/repo/.git/commondir"],
-                                   kept_tmpdir: "/t/lain-call-1")
+                                   kept_tmpdir: "/t/lain-call-1",
+                                   granted: ["/home/u/.local/bin/rg"])
       expect(JSON.generate(record.to_journal)).to eq(
         '{"type":"sandbox","tool_use_id":"tu_1","profile":"workspace","trace":true,' \
         '"refused":["/bin/curl"],"created_sealed":["/repo/.git/commondir"],' \
-        '"kept_tmpdir":"/t/lain-call-1"}'
+        '"kept_tmpdir":"/t/lain-call-1","granted":["/home/u/.local/bin/rg"]}'
       )
     end
 
@@ -49,7 +50,7 @@ RSpec.describe Lain::Telemetry::Sandbox do
                                    refused: [])
       expect(JSON.generate(record.to_journal)).to eq(
         '{"type":"sandbox","tool_use_id":"tu_1","profile":"reader","trace":false,"refused":[],' \
-        '"created_sealed":[],"kept_tmpdir":null}'
+        '"created_sealed":[],"kept_tmpdir":null,"granted":[]}'
       )
     end
 

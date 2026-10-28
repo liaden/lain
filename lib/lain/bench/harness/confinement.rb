@@ -66,7 +66,8 @@ module Lain
           @probe = probe.call(journal:, fence: @fence)
           @lacking = Confine::Sandbox.lacking(@probe)
           @masks = Shared.new(Confine::MaskList.new(root: project.root, policy: -> { policy }))
-          @resolver = Shell::Executable::Resolver.new(root: project.root, fresh: Shell::Executable::Fresh.for_lineage([]))
+          @fresh = Shell::Executable::Fresh.for_lineage([])
+          @resolver = Shell::Executable::Resolver.new(root: project.root, fresh: @fresh)
           @classifiers = board.classifiers(project:, paths:, table: board.rules(project:, paths:), resolver: @resolver)
           @ruling_tools = TOOLS.call(recorder: Memory::Recorder.new, resolver: @resolver)
         end
@@ -119,7 +120,7 @@ module Lain
 
         def sandbox(journal)
           Confine::Sandbox.new(root: @project.root, home: @paths.home, masks: @masks, probe: @probe, fence: @fence,
-                               journal:, notes: @notes, workspace: @confine == :workspace)
+                               journal:, notes: @notes, workspace: @confine == :workspace, fresh: @fresh)
         end
 
         # `bypass` approves what the read-only rung and the rules leave open, as the guard's own gate did.

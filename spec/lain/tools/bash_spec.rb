@@ -1322,6 +1322,12 @@ RSpec.describe Lain::Tools::Bash do
         expect(%w[git bundle].map { argv_of("#{_1} fetch").tap { requests.clear } }).to eq([[], []])
       end
 
+      it "hands no grants on the term arm, where the stages it resolved are the proof" do
+        call_with(ruled.ruled(ruling))
+
+        expect(requests.sole.grants).to eq([])
+      end
+
       it "carries no root for the main agent, which has no checkout" do
         call_with(ruled.ruled(ruling))
 
@@ -1514,6 +1520,95 @@ RSpec.describe Lain::Tools::Bash do
 
         _, confinement = requests.fetch(0)
         expect(confinement.executables.map { [_1.name, _1.klass] }).to eq([["cd sub && cargo run", :unresolved]])
+      end
+
+      def confinement_of(command, env:)
+        handed = []
+        backend = Class.new do
+          define_method(:takes_term?) { |_term| true }
+          define_method(:child_env) { Lain::Exec::ChildEnv::DEFAULT }
+          define_method(:call) do |confinement:, **|
+            handed << confinement
+            Lain::Exec::Capture.new(exit_status: 0, stdout: "", stderr: "")
+          end
+        end.new
+        session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: root, env: ENV.to_h.merge(env)))
+        described_class.new(exec: backend, journal:, resolver:)
+                       .call({ command: }, Lain::Tool::Invocation.new(tool_use_id: "tu_g", context: session, channel:))
+        handed.sole
+      end
+
+      it "hands the parsed stages' programs to the confinement as grants, never as proof" do
+        planted = crate
+
+        confinement = confinement_of("cd sub && cargo run", env: { "PATH" => path })
+
+        expect(confinement.grants.map { [_1.name, _1.realpath, _1.klass] }).to eq([["cargo", planted, :project]])
+        expect(confinement.executables.map(&:klass)).to eq([:unresolved])
+      end
+
+      it "hands the programs a wrapper runs as grants, the wrapper first" do
+        confinement = confinement_of("cd . && env ls", env: {})
+
+        expect(confinement.grants.flat_map(&:programs).map(&:name)).to eq(%w[env ls])
+      end
+
+      describe "a user program the session's PATH finds another program for" do
+        let(:outside) { File.realpath(Dir.mktmpdir) }
+        let(:planted) { plant(File.join(outside, "home"), "ruby") }
+        let(:session_ruby) { plant(File.join(outside, "tools"), "ruby") }
+        let(:profiles) do
+          probe = Struct.new(:nothing) { def supports?(_layer) = true }.new
+          tmpdir = File.join(outside, "tmp").tap { FileUtils.mkdir_p(_1) }
+          Lain::Confine::Profiles.new(masks: Struct.new(:masks).new([]), probe:, home: File.join(outside, "home"),
+                                      root:, workspace: true, tmpdir:)
+        end
+        let(:commands) { ["cd . && env PATH=#{File.dirname(planted)} ruby x.rb", "cd . && #{planted} x.rb"] }
+        # Holds a few system programs and no ruby, so they resolve while no other ruby is on the session's PATH.
+        let(:sys) do
+          File.join(outside, "sys").tap do |dir|
+            FileUtils.mkdir_p(dir)
+            %w[env ls nice].each { File.symlink("/usr/bin/#{_1}", File.join(dir, _1)) }
+          end
+        end
+
+        after { FileUtils.remove_entry(outside) }
+
+        def granted(command, path:)
+          confinement = confinement_of(command, env: { "PATH" => path })
+          ruled = confinement.with(ruling: Lain::Approval::Escalation::Ruling.allow(rung: "auto", because: "spec"))
+          profiles.for(ruled).exec_files
+        end
+
+        it "refuses it however the command reached it, by env PATH= or by its path" do
+          expect(commands.flat_map { granted(_1, path: "#{File.dirname(session_ruby)}:#{sys}") })
+            .not_to include(planted)
+        end
+
+        it "grants it when the session's PATH finds no other program of its name" do
+          expect(commands.map { granted(_1, path: sys) }).to all(include(planted))
+        end
+
+        it "grants it when the session's PATH finds it and no other program of its name" do
+          expect(granted("cd . && ruby x.rb", path: "#{File.dirname(planted)}:#{sys}")).to include(planted)
+        end
+
+        it "refuses a plant the term arm runs by its path" do
+          ls = plant(File.join(outside, "home"), "ls")
+
+          expect(confinement_of(ls, env: { "PATH" => sys }).argv).to eq([[ls]])
+          expect(granted(ls, path: sys)).not_to include(ls)
+        end
+
+        it "refuses a plant that wraps the program it runs" do
+          nice = plant(File.join(outside, "home"), "nice")
+
+          expect(granted("#{nice} ls", path: sys)).not_to include(nice)
+        end
+      end
+
+      it "grants nothing when the stages cannot be told" do
+        expect(confinement_of("export PATH=bin && ls", env: {}).grants).to eq([])
       end
 
       it "leaves the shell's builtins out of the record" do

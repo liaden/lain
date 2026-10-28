@@ -284,8 +284,7 @@ module Lain
         arm = arm_for(decision)
         journal_arm(decision, arm, invocation)
         options = runtime(input, invocation)
-        stages = journal_resolution(input.command, decision, invocation, options[:cwd], arm)
-        confinement = confinement_for(stages, invocation, options[:cwd], argv_on(arm, decision))
+        confinement = journalled_confinement(input.command, decision, invocation, options[:cwd], arm)
         capture = run_journalling_writes(input.command, options, invocation) do
           executed(on_arm(arm, input.command, decision), confinement, options)
         end
@@ -329,23 +328,37 @@ module Lain
                                                arm:, reason: decision.reason, term: decision.term))
       end
 
+      def journalled_confinement(command, decision, invocation, cwd, arm)
+        parsed = parsed_stages(command, decision, invocation, cwd)
+        stages = journal_resolution(command, decision, invocation, cwd, arm, parsed:)
+        shadows = SessionShadows.new(session_of(invocation).worker_env.with(cwd:))
+        confinement_for(shadows.over(stages), invocation, cwd, argv_on(arm, decision),
+                        grants: shadows.over(parsed&.map(&:executable) || []))
+      end
+
       # Written before the exec, so a call that times out still leaves the account.
       # Resolved where the command runs, since a relative PATH entry and a build
       # tool's run files are read from there.
-      def journal_resolution(command, decision, invocation, cwd, arm)
-        worker_env = session_of(invocation).worker_env.with(cwd:)
-        stages = resolve(command, decision, worker_env)
+      #
+      # A parsed stage is a guess at what the shell will run, so it is
+      # journalled and handed to the confinement as a grant, never as proof:
+      # the stages the call is checked against stay what the verdict resolved.
+      def journal_resolution(command, decision, invocation, cwd, arm, parsed:)
+        stages = resolve(command, decision, session_of(invocation).worker_env.with(cwd:))
         journal_record(Telemetry::ExecResolution.new(tool_use_id: invocation.tool_use_id,
-                                                     stages: recorded(command, decision, stages, worker_env, arm)))
+                                                     stages: recorded(parsed, stages, arm)))
         stages
       end
 
-      # A parsed stage is a guess at what the shell will run, so it is
-      # journalled and never handed to the confinement, which grants and
-      # refuses by what a stage resolved to.
-      def recorded(command, decision, stages, worker_env, arm)
-        parsed = Parsed.new(resolver: @resolver, worker_env:).journal(command) unless decision.allow?
-        entries = parsed || stages.map(&:to_journal)
+      # Only a command the verdict did not allow reaches a shell that reads it, so only its stages are parsed.
+      def parsed_stages(command, decision, invocation, cwd)
+        return if decision.allow?
+
+        Parsed.new(resolver: @resolver, worker_env: session_of(invocation).worker_env.with(cwd:)).of(command)
+      end
+
+      def recorded(parsed, stages, arm)
+        entries = parsed&.map { Parsed.entry(_1) } || stages.map(&:to_journal)
         arm == :string ? entries.map { shell_answered(_1) } : entries
       end
 
@@ -355,11 +368,11 @@ module Lain
       end
 
       # A context no ladder ruled through gets the ruling that allowed nothing.
-      def confinement_for(stages, invocation, cwd, argv)
+      def confinement_for(stages, invocation, cwd, argv, grants:)
         context = session_of(invocation)
         ruling = context.respond_to?(:ruling) ? context.ruling : Confine::Request::UNRULED
         Confine::Request.new(ruling:, executables: stages, argv:, cwd:, root: context.worker_env.checkout,
-                             tool_use_id: invocation.tool_use_id)
+                             tool_use_id: invocation.tool_use_id, grants:)
       end
 
       # On the string arm a shell reads the words, so none are vouched for.
@@ -482,7 +495,7 @@ module Lain
       end
 
       # The stages the string arm will hand a shell, each resolved in the
-      # directory it runs in, for the journal alone.
+      # directory it runs in, for the journal and the confinement's grants.
       class Parsed
         BASIS = "parsed"
 
@@ -495,21 +508,60 @@ module Lain
 
         # A journal step must not fail the call it describes, so a command
         # whose stages cannot be told leaves the record it would have had
-        # without the parse.
+        # without the parse, and grants nothing.
         #
         # @param command [String]
-        # @return [Array<Hash>, nil] one journal hash per stage a shell would
+        # @return [Array<Shell::Stages::Stage>, nil] one per stage a shell would
         #   exec, builtins left out; nil when its stages cannot be told
-        def journal(command)
+        def of(command)
           read = Shell::Stages.of(command, worker_env: @worker_env, resolver: @resolver)
-          read.stages.map { |stage| entry(stage) } if read.known?
+          read.stages if read.known?
         end
+
+        # @param stage [Shell::Stages::Stage]
+        # @return [Hash] the stage's journal entry, marked as parsed
+        def self.entry(stage) = stage.executable.to_journal.merge("basis" => BASIS, "cwd" => stage.directory)
+      end
+      private_constant :Parsed
+
+      # A program reached by its path or under a PATH the command set shadows
+      # nothing on the search that found it, so each user program is also
+      # looked for by name on the session's PATH: a different program of that
+      # name there is a shadow however the command reached it. The resolver
+      # cannot answer this, since it reads a stage's run files and leaves a
+      # bare interpreter unresolved.
+      class SessionShadows
+        # @param worker_env [WorkerEnv] the session's env, at the call's cwd
+        # @param host_env [#to_h] what a child inherits before the worker's env is laid over it
+        def initialize(worker_env, host_env: ENV)
+          @cwd = worker_env.cwd
+          @path = host_env.to_h.merge(worker_env.env).compact.fetch("PATH", Shell::Executable::Resolver::Bound::DEFAULT_PATH)
+        end
+
+        # @param executables [Array<Shell::Executable>]
+        # @return [Array<Shell::Executable>] each with the session's other programs of its name added to `shadowed`
+        def over(executables) = executables.map { widened(_1) }
 
         private
 
-        def entry(stage) = stage.executable.to_journal.merge("basis" => BASIS, "cwd" => stage.directory)
+        def widened(executable)
+          shadowed = executable.klass == :user ? executable.shadowed | others(executable) : executable.shadowed
+          executable.with(shadowed:, wrappers: executable.wrappers.map { widened(_1) })
+        end
+
+        def others(executable)
+          name = File.basename(executable.resolved)
+          @path.split(":", -1).map { File.expand_path(name, _1.empty? ? @cwd : File.expand_path(_1, @cwd)) }
+               .select { File.file?(_1) && File.executable?(_1) }.reject { landed(_1) == executable.realpath }
+        end
+
+        def landed(path)
+          File.realpath(path)
+        rescue SystemCallError
+          path
+        end
       end
-      private_constant :Parsed
+      private_constant :SessionShadows
     end
   end
 end

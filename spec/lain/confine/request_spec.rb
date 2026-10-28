@@ -15,6 +15,14 @@ RSpec.describe Lain::Confine::Request do
     expect([Ractor.shareable?(request), cwd.frozen?]).to eq([true, false])
   end
 
+  it "carries no grants unless handed some, and makes the ones it is handed shareable" do
+    grant = Lain::Shell::Executable.unresolved(+"ruby")
+    granted = described_class.new(ruling:, executables: [], cwd: "/p", root: "/p", tool_use_id: "t", grants: [grant])
+
+    expect(described_class.new(ruling:, executables: [], cwd: "/p", root: "/p", tool_use_id: "t").grants).to eq([])
+    expect([granted.grants.map(&:name), Ractor.shareable?(granted)]).to eq([["ruby"], true])
+  end
+
   it "has an unruled request that answers allow? false and names no rule" do
     expect([described_class::NONE.ruling.allow?, described_class::NONE.ruling.rule]).to eq([false, nil])
   end

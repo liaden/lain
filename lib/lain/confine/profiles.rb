@@ -94,7 +94,7 @@ module Lain
         @env = env
         @classifier = classifier
         @sealed = Sealed.new(home:, tmpdir:)
-        @build = BuildGrant.new(fresh:)
+        @build = BuildGrant.new(fresh:, home:)
       end
 
       # @param request [Request]
@@ -122,17 +122,18 @@ module Lain
       def reader(request)
         root = root_of(request)
         profile = Profile.reader(root:, home: @home, masks: mask_paths(root),
-                                 exec_files: exec_files(request.executables), trace: traceable?)
+                                 exec_files: exec_files(placed(request.executables)), trace: traceable?)
         granted(profile.with(read_dirs: [*profile.read_dirs, *git_configs(root)]))
       end
 
       # The call's dir is made last, so a call refused on the way leaves none
       # behind, and never beneath the private /tmp, which is the call's own already.
       def workspace(request)
-        executables = request.executables
+        masks = mask_paths(root_of(request))
+        programs = programs(request, masks)
         profile = granted(networked(ported(request)).then do |ported|
-          ported.with(masks: mask_paths(root_of(request)), exec_files: exec_files(executables),
-                      exec_dirs: [*ported.exec_dirs, *install_bins(executables)].uniq,
+          ported.with(masks:, exec_files: exec_files(programs),
+                      exec_dirs: [*ported.exec_dirs, *install_bins(programs)].uniq,
                       read_dirs: [*ported.read_dirs, *git_configs(root_of(request))].uniq)
         end)
         Profile::SYSTEM_WRITE.include?(@tmpdir) ? profile : housed(profile.for_call(call_dir, granted: @tmpdir))
@@ -154,9 +155,19 @@ module Lain
         raise NoTmpdir.new(path: @tmpdir)
       end
 
-      def install_bins(executables)
-        executables.flat_map(&:programs).select { grantable?(_1) }
-                   .filter_map { Profile.install_bin(_1.realpath, home: @home) }
+      # A bin dir is granted whole, its subdirs with it, so never one that holds a dir or anything fresh.
+      def install_bins(programs)
+        programs.filter_map { Profile.install_bin(_1.realpath, home: @home) }.uniq
+                .select { flat?(_1) && !@fresh.any_under?(_1) }
+      end
+
+      # A dir that is not there holds nothing to run; one that cannot be listed may hold anything.
+      def flat?(dir)
+        Dir.children(dir).none? { File.directory?(File.join(dir, _1)) }
+      rescue Errno::ENOENT
+        true
+      rescue SystemCallError
+        false
       end
 
       def ported(request)
@@ -211,11 +222,22 @@ module Lain
         profile
       end
 
-      # A program the call resolved to outside /usr may run, unless the project
-      # could have put it there: that is the plant the reader profile exists to stop.
-      def exec_files(executables)
-        executables.flat_map(&:programs).select { grantable?(_1) }.map(&:realpath).uniq
+      # A parsed guess under a mask is dropped where a resolved stage there
+      # refuses the call, since the guess may name a program the shell never runs.
+      def programs(request, masks)
+        [*placed(request.executables), *placed(request.grants).reject { masked?(_1.realpath, masks) }]
       end
+
+      # A program the call resolved to outside /usr may run, unless the project
+      # could have put it there: that is the plant the reader profile exists to
+      # stop. Both arms ask the one placement test a build tool's grant does.
+      def placed(executables)
+        executables.flat_map(&:programs).select { grantable?(_1) && BuildGrant.placed?(_1, home: @home) }
+      end
+
+      def exec_files(programs) = programs.map(&:realpath).uniq
+
+      def masked?(path, masks) = masks.any? { Landing.under?(path, _1) }
 
       def grantable?(executable)
         Profile::GRANTED_CLASSES.include?(executable.klass) && !executable.realpath.nil? &&
@@ -250,8 +272,21 @@ module Lain
         }.then { |table| Profile::GRANTS.keys.to_h { [_1, table.fetch(_1).freeze] } }.freeze
 
         # @param fresh [#any_under?]
-        def initialize(fresh:)
+        # @param home [String] absolute
+        def initialize(fresh:, home:)
           @fresh = fresh
+          @home = home
+        end
+
+        # ComposedTerm's test: a user program that shadows another of its name is how an old plant shows. A
+        # program in a mise install is the toolchain, which is put ahead of /usr/bin and mise's shims on purpose.
+        #
+        # @param stage [Shell::Executable]
+        # @param home [String] absolute; where the mise installs are
+        # @return [Boolean]
+        def self.placed?(stage, home:)
+          Profile::GRANTED_CLASSES.include?(stage.klass) && !stage.realpath.nil? && !stage.fresh &&
+            !(stage.klass == :user && stage.shadowed.any? && !Profile.install_bin(stage.realpath, home:))
         end
 
         # @param request [Request]
@@ -274,14 +309,8 @@ module Lain
         end
 
         def trusted?(stage, name)
-          stage.name == name && stage.wrappers.empty? && stage.anomalies.empty? && placed?(stage) &&
-            stage.run_files.none? { _1.fresh || _1.klass == :unresolved }
-        end
-
-        # ComposedTerm's test: a user program that shadows another of its name is how an old plant shows.
-        def placed?(stage)
-          Profile::GRANTED_CLASSES.include?(stage.klass) && !stage.realpath.nil? && !stage.fresh &&
-            !(stage.klass == :user && stage.shadowed.any?)
+          stage.name == name && stage.wrappers.empty? && stage.anomalies.empty? &&
+            self.class.placed?(stage, home: @home) && stage.run_files.none? { _1.fresh || _1.klass == :unresolved }
         end
 
         def asked?(subcommands, args)

@@ -11,6 +11,7 @@ module Lain
         attribute :refused
         attribute :created_sealed, default: -> { [] }
         attribute :kept_tmpdir
+        attribute :granted, default: -> { [] }
       end
     end
 
@@ -24,11 +25,15 @@ module Lain
     # left existing, and `kept_tmpdir` the call's own TMPDIR when it could not be
     # removed. The record written before the call holds neither; a second one for
     # the same call, written after it, holds them, and only when there is either.
-    Sandbox = Data.define(:tool_use_id, :profile, :trace, :refused, :created_sealed, :kept_tmpdir) do
+    #
+    # `granted` names the programs a parsed command was handed as grants that the
+    # profile lets run, on the record written before the call.
+    Sandbox = Data.define(:tool_use_id, :profile, :trace, :refused, :created_sealed, :kept_tmpdir, :granted) do
       include Journalable
 
-      def initialize(tool_use_id:, profile:, trace:, refused:, created_sealed: [], kept_tmpdir: nil)
-        super(**Carriers::Sandbox.settle!(tool_use_id:, profile:, trace:, refused:, created_sealed:, kept_tmpdir:))
+      def initialize(tool_use_id:, profile:, trace:, refused:, created_sealed: [], kept_tmpdir: nil, granted: [])
+        super(**Carriers::Sandbox.settle!(tool_use_id:, profile:, trace:, refused:, created_sealed:, kept_tmpdir:,
+                                          granted:))
       end
     end
   end

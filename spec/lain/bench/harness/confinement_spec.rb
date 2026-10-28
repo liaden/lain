@@ -77,6 +77,26 @@ RSpec.describe Lain::Bench::Harness::Confinement do
       expect(judged_profile(exec_of(tools), agent_journal)).to eq(:traced)
     end
 
+    it "grants a workspace call the mise install a binstub's `env ruby` runs from, as a chat's lineage does" do
+      bin = File.join(@base, "home/.local/share/mise/installs/ruby/4.0.6/bin")
+      FileUtils.mkdir_p(bin)
+      File.write(File.join(bin, "rake"), "#!/usr/bin/env ruby\n")
+      File.write(File.join(bin, "ruby"), "#!/bin/sh\n")
+      File.chmod(0o755, File.join(bin, "rake"), File.join(bin, "ruby"))
+      # The spec's home sits under TMPDIR, which a workspace call refuses to write.
+      allow(Dir).to receive(:tmpdir).and_return(File.join(@base, "tmp").tap { FileUtils.mkdir_p(_1) })
+      workspace = described_class.new(project:, paths:, journal: run_journal, probe:, confine: :workspace)
+      profiles = exec_of(workspace.tools(Lain::Bench::Harness::TOOLS).call(recorder:, journal: agent_journal))
+                 .instance_variable_get(:@profiles)
+      rake = Lain::Shell::Executable::Resolver.new(root:, fresh: Lain::Shell::Executable::Resolver::NeverFresh)
+                                              .for(Lain::WorkerEnv.new(cwd: root, env: { "PATH" => bin }))
+                                              .call(Lain::Shell::Term.of(%w[rake]))
+      ruling = Lain::Approval::Escalation::Ruling.allow(rung: Lain::Approval::Judged::NAME, because: "spec")
+      request = Lain::Confine::Request.new(ruling:, executables: rake, cwd: root, root:, tool_use_id: "tu_rake")
+
+      expect(profiles.for(request).runs?(File.join(bin, "ruby"))).to be(true)
+    end
+
     context "when the box lacks the layers" do
       let(:box) { ->(_argv) { ["", false] } }
 

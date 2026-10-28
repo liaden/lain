@@ -30,8 +30,8 @@ RSpec.describe Lain::Confine::Profiles do
     Lain::Approval::Escalation::Ruling.allow(rung:, because: "approved", rule:, authority:)
   end
 
-  def request(ruling, executables: [], root: self.root)
-    Lain::Confine::Request.new(ruling:, executables:, cwd: root, root:, tool_use_id: "toolu_1")
+  def request(ruling, executables: [], root: self.root, grants: [])
+    Lain::Confine::Request.new(ruling:, executables:, cwd: root, root:, tool_use_id: "toolu_1", grants:)
   end
 
   def composed(executables: []) = request(ruling("rules", rule: "composed_term"), executables:)
@@ -105,6 +105,17 @@ RSpec.describe Lain::Confine::Profiles do
       wrapped = Lain::Shell::Executable.unresolved("ruby", wrappers: [executable("bundle", bundle, :user)])
 
       expect(profiles.for(composed(executables: [wrapped])).exec_files).to eq([bundle])
+    end
+
+    it "refuses a reader a user program that shadows another of its name on PATH" do
+      FileUtils.mkdir_p(File.join(home, "bin"))
+      cat = File.join(home, "bin/cat").tap { File.write(_1, "#!/bin/sh\n") }.tap { File.chmod(0o755, _1) }
+      resolver = Lain::Shell::Executable::Resolver.new(root:, fresh: Lain::Shell::Executable::Resolver::NeverFresh)
+      shadowing = resolver.for(Lain::WorkerEnv.new(cwd: root, env: { "PATH" => "#{File.dirname(cat)}:/usr/bin" }))
+                          .call(Lain::Shell::Term.of(%w[cat README.md]))
+
+      expect(shadowing.map { [_1.realpath, _1.shadowed.any?] }).to eq([[cat, true]])
+      expect(profiles.for(composed(executables: shadowing)).exec_files).to eq([])
     end
 
     context "with the workspace switch on" do
@@ -199,6 +210,17 @@ RSpec.describe Lain::Confine::Profiles do
         expect(profiles.for(request(ruling("auto"))).masks).to eq([File.join(root, ".env")])
       end
 
+      it "refuses a stage the term resolved to a user program that shadows another of its name, or a fresh one" do
+        FileUtils.mkdir_p(File.join(home, "bin"))
+        ls = File.join(home, "bin/ls").tap { File.write(_1, "#!/bin/sh\n") }.tap { File.chmod(0o755, _1) }
+        resolver = Lain::Shell::Executable::Resolver.new(root:, fresh: Lain::Shell::Executable::Resolver::NeverFresh)
+        shadowing = resolver.for(Lain::WorkerEnv.new(cwd: root, env: { "PATH" => "#{File.dirname(ls)}:/usr/bin" }))
+                            .call(Lain::Shell::Term.of(%w[ls]))
+        fresh = executable("rg", File.join(home, ".cargo/bin/rg"), :user).with(fresh: true)
+
+        expect(profiles.for(request(ruling("auto"), executables: [*shadowing, fresh])).exec_files).to eq([])
+      end
+
       it "lets a workspace call run a program resolved outside /usr that no project could have planted" do
         grep = File.join(home, ".local/bin/grep")
         executables = [executable("grep", grep, :user), executable("cat", File.join(root, "bin/cat"), :project)]
@@ -206,11 +228,161 @@ RSpec.describe Lain::Confine::Profiles do
         expect(profiles.for(request(ruling("auto"), executables:)).exec_files).to eq([grep])
       end
 
+      describe "the programs a parsed command is handed as grants" do
+        let(:bin) { File.join(home, ".local/share/mise/installs/ruby/4.0.6/bin") }
+        let(:bundle) { executable("bundle", File.join(bin, "bundle"), :user) }
+        let(:fresh_paths) { [] }
+        let(:fresh) do
+          paths = fresh_paths
+          Module.new { define_singleton_method(:any_under?) { |dir| paths.any? { Lain::Landing.under?(_1, dir) } } }
+        end
+        let(:profiles) { described_class.new(masks:, probe:, home:, root:, workspace: true, tmpdir: scratch, fresh:) }
+
+        it "grants no install's bin dir when the lineage was not read, since anything in it may be fresh" do
+          unread = described_class.new(masks:, probe:, home:, root:, workspace: true, tmpdir: scratch)
+
+          expect(unread.for(request(ruling("auto"), grants: [bundle])).exec_dirs).not_to include(bin)
+        end
+
+        it "grants no install's bin dir that holds a fresh program, so the fresh one beside a granted one cannot run" do
+          ruby = script(bin, "ruby")
+          rake = script(bin, "rake")
+          fresh_paths << rake
+          grants = [executable("ruby", ruby, :user), executable("rake", rake, :user).with(fresh: true)]
+
+          profile = profiles.for(request(ruling("auto"), grants:))
+
+          expect([profile.runs?(ruby), profile.runs?(rake)]).to eq([true, false])
+        end
+
+        it "grants no install's bin dir that holds a dir, whose programs a dir grant would run too" do
+          ruby = script(bin, "ruby")
+          git = script(File.join(bin, "sub"), "git")
+
+          profile = profiles.for(request(ruling("auto"), grants: [executable("ruby", ruby, :user)]))
+
+          expect([profile.runs?(ruby), profile.runs?(git)]).to eq([true, false])
+        end
+
+        it "grants no install's bin dir it cannot list, since what it holds is unknown" do
+          ruby = script(bin, "ruby")
+          File.chmod(0o111, bin)
+
+          profile = profiles.for(request(ruling("auto"), grants: [executable("ruby", ruby, :user)]))
+
+          expect([profile.exec_files, profile.exec_dirs.include?(bin)]).to eq([[ruby], false])
+        ensure
+          File.chmod(0o755, bin)
+        end
+
+        it "runs a granted program and the install it sits in, through the filter every program passes" do
+          profile = profiles.for(request(ruling("auto"), grants: [bundle]))
+
+          expect([profile.exec_files, profile.exec_dirs]).to match([[bundle.realpath], include(bin)])
+        end
+
+        it "refuses a grant the project could have planted or that resolved to nothing, as it refuses a stage" do
+          grants = [executable("cat", File.join(root, "bin/cat"), :project), Lain::Shell::Executable.unresolved("x"),
+                    executable("tool", File.join(@base, "elsewhere/tool"), :unresolved)]
+
+          expect(profiles.for(request(ruling("auto"), grants:)).exec_files).to eq([])
+        end
+
+        it "drops a grant that lies under a mask rather than refusing the call" do
+          masked << mask(bin)
+
+          profile = profiles.for(request(ruling("auto"), grants: [bundle]))
+
+          expect(profile.exec_files).to eq([])
+          expect(profile.exec_dirs).not_to include(bin)
+        end
+
+        def script(dir, name)
+          FileUtils.mkdir_p(dir)
+          File.join(dir, name).tap do |path|
+            File.write(path, "#!/bin/sh\n")
+            File.chmod(0o755, path)
+          end
+        end
+
+        def resolved(argv, path:, fresh: Lain::Shell::Executable::Resolver::NeverFresh)
+          resolver = Lain::Shell::Executable::Resolver.new(root:, fresh:)
+          resolver.for(Lain::WorkerEnv.new(cwd: root, env: { "PATH" => path })).call(Lain::Shell::Term.of(argv))
+        end
+
+        it "refuses a user program first on PATH that shadows another of its name" do
+          shadow = script(File.join(@base, "userbin"), "ruby")
+          grants = resolved(%w[ruby x.rb], path: "#{File.dirname(shadow)}:#{ENV.fetch("PATH")}")
+
+          expect(grants.map { [_1.realpath, _1.klass, _1.shadowed.any?] }).to eq([[shadow, :user, true]])
+          expect(profiles.for(request(ruling("auto"), grants:)).exec_files).to eq([])
+        end
+
+        it "grants a mise install's program that shadows only mise's shim of its name" do
+          mise = File.join(home, ".local/share/mise")
+          ruby = script(File.join(mise, "installs/ruby/4.0.6/bin"), "ruby")
+          shims = File.dirname(script(File.join(mise, "shims"), "ruby"))
+          grants = resolved(%w[ruby x.rb], path: "#{File.dirname(ruby)}:#{shims}")
+
+          expect(grants.map { [_1.klass, _1.shadowed] }).to eq([[:user, [File.join(shims, "ruby")]]])
+          expect(profiles.for(request(ruling("auto"), grants:)).exec_files).to eq([ruby])
+        end
+
+        it "refuses a user program that shadows mise's shim, which dispatches to a different program" do
+          shims = File.dirname(script(File.join(home, ".local/share/mise/shims"), "ruby"))
+          plant = script(File.join(@base, "userbin"), "ruby")
+          grants = resolved(%w[ruby x.rb], path: "#{File.dirname(plant)}:#{shims}")
+
+          expect(profiles.for(request(ruling("auto"), grants:)).exec_files).to eq([])
+        end
+
+        it "grants a mise install's program ahead of another of its name, as /usr/bin's is, since it is toolchain" do
+          ruby = script(File.join(home, ".local/share/mise/installs/ruby/4.0.6/bin"), "ruby")
+          later = script(File.join(@base, "sysbin"), "ruby")
+          grants = resolved(%w[ruby x.rb], path: "#{File.dirname(ruby)}:#{File.dirname(later)}")
+
+          expect(grants.map(&:shadowed)).to eq([[later]])
+          expect(profiles.for(request(ruling("auto"), grants:)).exec_files).to eq([ruby])
+        end
+
+        it "refuses a ~/bin program ahead of a mise install's program of its name" do
+          plant = script(File.join(home, "bin"), "ruby")
+          ruby = script(File.join(home, ".local/share/mise/installs/ruby/4.0.6/bin"), "ruby")
+          grants = resolved(%w[ruby x.rb], path: "#{File.dirname(plant)}:#{File.dirname(ruby)}")
+
+          expect(profiles.for(request(ruling("auto"), grants:)).exec_files).to eq([])
+        end
+
+        it "grants a user program outside the project that shadows nothing" do
+          tool = script(File.join(@base, "outside"), "lain-t5-tool")
+          grants = resolved(%w[lain-t5-tool], path: File.dirname(tool))
+
+          expect(profiles.for(request(ruling("auto"), grants:)).exec_files).to eq([tool])
+        end
+
+        it "refuses a user program written this lineage" do
+          tool = script(File.join(@base, "outside"), "lain-t5-tool")
+          fresh = Class.new { define_method(:fresh?) { |path| path == tool } }.new
+          grants = resolved(%w[lain-t5-tool], path: File.dirname(tool), fresh:)
+
+          expect(profiles.for(request(ruling("auto"), grants:)).exec_files).to eq([])
+        end
+
+        it "hands a reader call none of its grants, since the reader runs only what the term resolved" do
+          tool = script(File.join(@base, "outside"), "lain-t5-tool")
+          grants = resolved(%w[lain-t5-tool], path: File.dirname(tool))
+
+          expect(profiles.for(request(ruling("rules", rule: "composed_term"), grants:)).exec_files).to eq([])
+        end
+      end
+
       it "runs the whole bin dir of a mise install a program resolved into, never a sibling version's" do
         bin = File.join(home, ".local/share/mise/installs/ruby/4.0.6/bin")
         planted = File.join(root, "bin/bundle")
         executables = [executable("bundle", File.join(bin, "bundle"), :user), executable("x", planted, :project)]
-        profile = profiles.for(request(ruling("auto"), executables:))
+        quiet = Module.new { def self.any_under?(_dir) = false }
+        read = described_class.new(masks:, probe:, home:, root:, workspace: true, tmpdir: scratch, fresh: quiet)
+        profile = read.for(request(ruling("auto"), executables:))
 
         expect(profile.exec_dirs).to include(bin)
         expect([profile.runs?(File.join(bin, "ruby")), profile.runs?("#{bin.sub("4.0.6", "4.0.5")}/ruby"),
@@ -414,11 +586,15 @@ RSpec.describe Lain::Confine::Profiles do
             .to all(eq(:workspace))
         end
 
-        it "refuses a user program that shadows another of its name, or one resolved with an anomaly" do
-          shadowing = bundle(shadowed: ["/usr/bin/bundle"])
+        it "refuses a user program outside a mise install that shadows another of its name, or one with an anomaly" do
+          shadowing = bundle(realpath: File.join(home, "bin/bundle"), shadowed: ["/usr/bin/bundle"])
           odd = bundle(anomalies: [:relative_path_entry])
 
           expect([shadowing, odd].map { profile_of(%w[bundle install], _1).name }).to all(eq(:workspace))
+        end
+
+        it "grants a mise install's program its ports though it shadows /usr/bin's, since it is toolchain" do
+          expect(profile_of(%w[bundle install], bundle(shadowed: ["/usr/bin/bundle"])).name).to eq(:grant)
         end
 
         it "refuses a subcommand the card does not name, a leading option, a path word or a wrapper" do

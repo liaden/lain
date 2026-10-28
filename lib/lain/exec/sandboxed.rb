@@ -113,7 +113,7 @@ module Lain
       def run_under(profile, confinement, command:, cwd:, env:, timeout:, **sinks)
         refused = unrunnable(profile, confinement.executables)
         @journal << Telemetry::Sandbox.new(tool_use_id: confinement.tool_use_id, profile: profile.name,
-                                           trace: profile.trace, refused:)
+                                           trace: profile.trace, refused:, granted: granted(profile, confinement))
         return refuse(confinement, profile, refused.first, sinks) if refused.any?
 
         run = { command:, cwd:, env:, timeout:, launch: launch(profile), pinned_env: pinned_env(profile), **sinks }
@@ -201,6 +201,16 @@ module Lain
 
       # A path is the command's to choose, and a newline in it would start a line of its own.
       def printable(path) = Utf8.legible(path).gsub(/[[:cntrl:]]/) { _1.inspect[1..-2] }
+
+      def granted(profile, confinement)
+        return [] unless profile.confined?
+
+        confinement.grants.flat_map(&:programs).filter_map(&:realpath).uniq
+                   .select { |path| profile.runs?(path) && !system_exec?(path) }
+      end
+
+      # What /usr holds runs under every confined profile, so no grant is what let it run.
+      def system_exec?(path) = Confine::Profile::SYSTEM_EXEC.any? { path.start_with?("#{_1}/") }
 
       def unrunnable(profile, executables)
         return [] unless profile.confined?
