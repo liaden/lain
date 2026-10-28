@@ -215,14 +215,15 @@ RSpec.describe Lain::Sensitivity::Ledger do
 
     # The falsy-guard sweep, pinned: `complete:` is the only boolean keyword in
     # the public surface, so the `complete: nil` blind spot that hid a
-    # mutate-then-check cannot reappear somewhere else unnoticed.
+    # mutate-then-check cannot reappear somewhere else unnoticed. The one other
+    # keyword, `authority:`, is a Symbol checked against a closed set.
     it "has exactly one boolean keyword in the public surface" do
       kinds = %i[key keyreq]
       keywords = described_class.public_instance_methods(false).flat_map do |name|
         described_class.instance_method(name).parameters.select { kinds.include?(_1.first) }
       end
 
-      expect(keywords).to eq([%i[key complete]])
+      expect(keywords).to contain_exactly(%i[key complete], %i[key authority])
     end
   end
 
@@ -434,6 +435,62 @@ RSpec.describe Lain::Sensitivity::Ledger do
     end
   end
 
+  describe "#released_digests" do
+    it "answers an empty set before anything is released" do
+      expect(ledger.released_digests).to eq(Set.new)
+    end
+
+    it "answers every human-released digest over every path" do
+      ledger.release(path, one, authority: :human).release(other_path, three.drop(1), authority: :human)
+
+      expect(ledger.released_digests).to eq(Set[*one.map(&:digest), *three.drop(1).map(&:digest)])
+    end
+
+    it "leaves out an automatic release, which still serves the read" do
+      ledger.release(path, two)
+
+      expect(ledger.released_digests).to be_empty
+      expect(ledger.outstanding(path, two)).to be_empty
+    end
+
+    it "keeps a digest a human released even when a surface released it automatically too" do
+      ledger.release(path, one, authority: :human).release(path, two)
+
+      expect(ledger.released_digests).to eq(one.to_set(&:digest))
+    end
+
+    it "answers only the paths the block accepts" do
+      ledger.release(path, one, authority: :human).release(other_path, three.drop(1), authority: :human)
+
+      expect(ledger.released_digests { _1 == path }).to eq(one.to_set(&:digest))
+    end
+
+    it "forgets a human release the file no longer holds" do
+      ledger.release(path, two, authority: :human)
+      ledger.outstanding(path, one)
+
+      expect(ledger.released_digests).to eq(one.to_set(&:digest))
+    end
+
+    it "refuses an authority no surface settles with" do
+      expect { ledger.release(path, one, authority: :model) }.to raise_error(ArgumentError, /authority/)
+    end
+
+    it "answers a frozen copy, so a caller cannot release through it" do
+      answer = ledger.release(path, one, authority: :human).released_digests
+
+      expect { answer << two.last.digest }.to raise_error(FrozenError)
+    end
+
+    it "holds the digests of a 2-region release and no byte of either value" do
+      ledger.release(path, two, authority: :human)
+      kept = Marshal.dump(ledger)
+
+      expect(ledger.released_digests).to eq(two.to_set(&:digest))
+      expect([first, second].select { kept.include?(_1) }).to be_empty
+    end
+  end
+
   describe "#released" do
     it "answers an empty list for a path it has never seen" do
       expect(ledger.released(path)).to eq([])
@@ -500,7 +557,7 @@ RSpec.describe Lain::Sensitivity::Ledger do
     # persistence path is what its absence has to be spec'd as.
     it "offers no way to persist or reload itself" do
       expect(described_class.public_instance_methods(false).sort)
-        .to eq(%i[empty? outstanding release released released?])
+        .to eq(%i[empty? outstanding release released released? released_digests])
     end
 
     # The instance surface alone is not the guard: a `def self.load` would walk

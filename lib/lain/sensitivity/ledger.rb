@@ -56,6 +56,7 @@ module Lain
 
       def initialize
         @released = {}
+        @human = {}
       end
 
       # The read event. Reconciles this path's releases against the regions the
@@ -93,15 +94,23 @@ module Lain
       # Adds, never replaces, and never reconciles: what the human agreed to send
       # is not a statement about what else the file holds.
       #
+      # Who settled it is kept because only a human's release may lift an egress
+      # refusal; an automatic one still serves the read. The default is the one
+      # that lifts nothing.
+      #
       # @param path [String, Pathname] the file, ABSOLUTE; see {#key!}
       # @param regions [Enumerable<#digest>] the regions they released
+      # @param authority [Symbol] one of {Approval::Parked::Queue::AUTHORITIES}
       # @return [self]
-      # @raise [ArgumentError] on a relative path
-      def release(path, regions)
+      # @raise [ArgumentError] on a relative path or an unknown authority
+      def release(path, regions, authority: :automatic)
+        raise ArgumentError, "unknown authority #{authority.inspect}" \
+          unless Approval::Parked::Queue::AUTHORITIES.include?(authority)
+
         digests = regions.to_a.map(&:digest)
         key = key!(path)
-        @released[key] = held(key) | digests unless digests.empty?
-
+        add(@released, key, digests)
+        add(@human, key, digests) if authority == :human
         self
       end
 
@@ -114,19 +123,36 @@ module Lain
       # @return [Array<String>] frozen
       def released(path) = held(key!(path)).sort.freeze
 
+      # A human's releases only. The block, when given, picks the paths that count,
+      # because the egress guard sees a value and not the file it came from.
+      #
+      # @yieldparam path [String] absolute
+      # @yieldreturn [Boolean] whether that path's releases count
+      # @return [Set<String>] frozen copy
+      def released_digests
+        counted = block_given? ? @human.select { |path, _| yield path } : @human
+        counted.each_value.reduce(Set.new, :|).freeze
+      end
+
       # @return [Boolean] whether this run has released anything at all
       def empty? = @released.empty?
 
       private
 
-      def held(key) = @released.fetch(key) { Set.new }
+      def held(key, table = @released) = table.fetch(key) { Set.new }
+
+      def add(table, key, digests)
+        table[key] = held(key, table) | digests unless digests.empty?
+      end
 
       # Deleted rather than left empty, so a path whose every release was
       # reconciled away is indistinguishable from one never read.
       def reconcile(key, digests)
-        kept = held(key) & digests
-        @released.delete(key)
-        @released[key] = kept unless kept.empty?
+        [@released, @human].each do |table|
+          kept = held(key, table) & digests
+          table.delete(key)
+          table[key] = kept unless kept.empty?
+        end
       end
 
       # {Sensitivity#text!}'s line, and the same two sides of it: a wrong TYPE is

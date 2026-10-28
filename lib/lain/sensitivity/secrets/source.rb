@@ -19,9 +19,10 @@ module Lain
         # @return [Array<String>] every value the masker knows, with no call's worker
         def to_a = self.for(nil)
 
+        # @param released [Set<String>] region digests a human released
         # @return [Egress] the same values, split into those refused from
         #   leaving the machine and those only flagged
-        def egress = Egress.of(child_env:, history:)
+        def egress(released: Set.new) = Egress.of(child_env:, history:, released:)
       end
 
       class Source

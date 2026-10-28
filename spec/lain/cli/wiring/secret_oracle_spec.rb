@@ -23,7 +23,7 @@ RSpec.describe Lain::CLI::Wiring::SecretOracle do
 
   def lending(value)
     egress = Lain::Sensitivity::Secrets::Egress.new(refused: [value], flagged: [])
-    Class.new { define_method(:egress) { egress } }.new
+    Class.new { define_method(:egress) { |**| egress } }.new
   end
 
   def tier_model(oracle) = oracle.tier(backend, journal).instance_variable_get(:@inner).model
@@ -92,7 +92,7 @@ RSpec.describe Lain::CLI::Wiring::SecretOracle do
     end
 
     before do
-      backend.egress_literals.bind(lending("lent-secret-value-0123"))
+      backend.egress_literals.bind(lending("lent-secret-value-0123"), ledger: Lain::Sensitivity::Ledger.new)
       backend.egress_hold.bind(nil)
     end
 
@@ -127,7 +127,7 @@ RSpec.describe Lain::CLI::Wiring::SecretOracle do
 
   it "guards the local oracle's requests with the backend's own egress literals" do
     stub_request(:post, "http://localhost:11434/api/chat")
-    backend.egress_literals.bind(lending("lent-secret-value-0123"))
+    backend.egress_literals.bind(lending("lent-secret-value-0123"), ledger: Lain::Sensitivity::Ledger.new)
     backend.egress_hold.bind(nil)
     tier = described_class.new({ secret_oracle: "local" }).tier(backend, journal)
 

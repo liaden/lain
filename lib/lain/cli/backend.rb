@@ -433,7 +433,7 @@ module Lain
       def attach(board, channel)
         raise Rebound, reattached(board, channel) unless attachable?(board, channel)
 
-        egress_literals.bind(board.guard_inputs.secrets)
+        egress_literals.bind(board.guard_inputs.secrets, ledger: board.ledger, sensitivity: board.sensitivity)
         egress_hold.bind(board.approvals)
         price_tier_hold.bind(board.approvals, channel)
         @attachment = [board, channel]

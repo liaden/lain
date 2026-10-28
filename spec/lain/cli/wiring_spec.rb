@@ -1741,6 +1741,38 @@ RSpec.describe Lain::CLI::Wiring do
       expect(journal.events.grep(Lain::Telemetry::ApprovalPending)).to be_empty
     end
 
+    it "sends a secret once a human releases it through the board's read path", :seam do
+      secret = "kJ8fQ2mZ4vX7pL0aB3nR6yT9uW1cE5dG8hK2jM4qS7vY0zA3"
+      SeedRepo.git(project_dir, "init", "-q")
+      path = File.join(project_dir, ".env").tap { File.write(_1, "API_KEY=#{secret}\n") }
+      sent = stub_request(:post, messages_url).to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                                                         body: JSON.generate(reply))
+      wire_hosted
+      board = wiring.instance_variable_get(:@switchboard)
+      before = sending(secret)
+
+      read = Sync do |task|
+        answerer = task.async { loop { board.approvals.dequeue.approve(surface: "spec", authority: :human) } }
+        session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: project_dir, env: {}))
+        dispatch_call("read_file", { "path" => path }, toolset: board.toolset,
+                                                       layers: Lain::CLI::ToolGuard.stack(chronicle, board).to_a,
+                                                       context: session).tap { answerer.stop }
+      end
+      after = sending("the key is #{secret}")
+
+      expect([before, read.content.include?(secret), after]).to eq([:refused, true, :sent])
+      expect(sent).to have_been_requested.once
+      expect(journal.events.filter_map { _1.to_journal["type"] if _1.respond_to?(:to_journal) })
+        .to include("egress_refused", "read_released")
+    end
+
+    def sending(text)
+      chat_provider.complete(ask(text))
+      :sent
+    rescue Lain::Provider::HTTP::EgressGuard::Refused
+      :refused
+    end
+
     def reply
       { "id" => "m", "type" => "message", "role" => "assistant", "model" => "claude-haiku-5-5",
         "content" => [{ "type" => "text", "text" => "ok" }], "stop_reason" => "end_turn",

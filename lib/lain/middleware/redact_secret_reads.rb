@@ -136,11 +136,13 @@ module Lain
         Verdict = Data.define(:requester)
 
         # The messages this middleware reads off a settled
-        # {Approval::Parked::Queue::Pending}: `approved?`, `timed_out?`, `surface`, `requester`.
+        # {Approval::Parked::Queue::Pending}: `approved?`, `timed_out?`, `surface`, `requester`,
+        # `authority`. Nobody answered, so its release never lifts an egress refusal.
         class Verdict
           def approved? = true
           def timed_out? = false
           def surface = SURFACE
+          def authority = :automatic
         end
 
         # `outstanding:` is accepted and discarded, but cannot be renamed to the
@@ -454,7 +456,7 @@ module Lain
       # a secret was sent: the decision record names no file and no count, and a
       # {Telemetry::SourceMasked} would resume the file as masked.
       def release(carried, effect, withheld, settled)
-        @ledger.release(withheld.path, withheld.unreleased)
+        @ledger.release(withheld.path, withheld.unreleased, authority: settled.authority)
         record(Telemetry::ReadReleased) do
           Telemetry::ReadReleased.new(tool_use_id: effect.tool_use_id, path: withheld.path,
                                       regions: withheld.unreleased.length, requester: settled.requester,

@@ -36,12 +36,12 @@ RSpec.describe Lain::CLI::Backend do
 
   # A backend whose egress literals are bound as Wiring binds them, over a
   # source holding no secret, for an example that sends a request.
-  def bound(backend) = backend.tap { _1.egress_literals.bind(literals_of) }
+  def bound(backend) = backend.tap { _1.egress_literals.bind(literals_of, ledger: Lain::Sensitivity::Ledger.new) }
 
   # A secrets source refusing `values`, as the board's answers it.
   def literals_of(*values)
     egress = Lain::Sensitivity::Secrets::Egress.new(refused: values, flagged: [])
-    Class.new { define_method(:egress) { egress } }.new
+    Class.new { define_method(:egress) { |**| egress } }.new
   end
 
   describe "#provider" do
@@ -503,7 +503,7 @@ RSpec.describe Lain::CLI::Backend do
     it "keeps a lent secret from a local ollama serving a cloud model" do
       chat = stub_request(:post, "http://localhost:11434/api/chat")
       backend = backend_for(provider: "ollama", model: "glm-5.3:cloud")
-      backend.egress_literals.bind(source)
+      backend.egress_literals.bind(source, ledger: Lain::Sensitivity::Ledger.new)
 
       expect { backend.provider(journal: records).complete(ask("here: #{secret}")) }
         .to raise_error(Lain::Provider::HTTP::EgressGuard::Refused)
@@ -515,7 +515,7 @@ RSpec.describe Lain::CLI::Backend do
     it "keeps it from an anthropic client, ahead of the price tier guard" do
       sent = stub_request(:post, "https://api.anthropic.com/v1/messages")
       backend = with_env("ANTHROPIC_API_KEY" => "sk-test") { backend_for(provider: "anthropic") }
-      backend.egress_literals.bind(source)
+      backend.egress_literals.bind(source, ledger: Lain::Sensitivity::Ledger.new)
       provider = with_env("ANTHROPIC_API_KEY" => "sk-test") { backend.provider }
 
       expect { provider.complete(ask(secret)) }.to raise_error(Lain::Provider::HTTP::EgressGuard::Refused)
@@ -527,7 +527,7 @@ RSpec.describe Lain::CLI::Backend do
     it "guards the summarizer tier with the same literals" do
       chat = stub_request(:post, "http://localhost:11434/api/chat")
       backend = backend_for(provider: "ollama", summarizer_provider: "ollama")
-      backend.egress_literals.bind(source)
+      backend.egress_literals.bind(source, ledger: Lain::Sensitivity::Ledger.new)
 
       expect { backend.summarizer_provider.complete(ask(secret)) }
         .to raise_error(Lain::Provider::HTTP::EgressGuard::Refused)
@@ -598,6 +598,7 @@ RSpec.describe Lain::CLI::Backend do
 
   describe "#attach" do
     let(:secrets) { literals_of("spec-attached-secret-24") }
+    let(:ledger) { Lain::Sensitivity::Ledger.new }
     let(:queue) do
       Class.new do
         define_method(:asked) { @asked ||= [] }
@@ -614,7 +615,8 @@ RSpec.describe Lain::CLI::Backend do
     end
 
     def board_over(secrets, approvals)
-      Struct.new(:guard_inputs, :approvals).new(Struct.new(:secrets).new(secrets), approvals)
+      Struct.new(:guard_inputs, :approvals, :ledger, :sensitivity)
+            .new(Struct.new(:secrets).new(secrets), approvals, ledger, Lain::Sensitivity::Policy::Null.instance)
     end
 
     it "binds the egress literals, the egress hold and the price-tier hold to one board" do
@@ -659,7 +661,7 @@ RSpec.describe Lain::CLI::Backend do
 
     it "is not attached by a call that failed to bind" do
       backend = backend_for(provider: "ollama")
-      backend.egress_literals.bind(secrets)
+      backend.egress_literals.bind(secrets, ledger:)
 
       expect { backend.attach(board_over(literals_of, queue), channel) }.to raise_error(Lain::CLI::Backend::Rebound)
       expect { backend.attach(board_over(secrets, queue), channel) }.not_to raise_error

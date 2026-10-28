@@ -133,6 +133,7 @@ RSpec.describe Lain::Approval::Parked::SecretSurface do
 
     expect(settled.approved?).to be(true)
     expect(settled.surface).to eq(described_class::SURFACE)
+    expect(settled.authority).to eq(:automatic)
   end
 
   describe "the audit sample of confident approves" do

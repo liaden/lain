@@ -30,18 +30,36 @@ module Lain
         # happens to begin with a slash is still refused.
         PATH = %r{\A~?/}
 
+        # A released value is compared by region digest, so no byte of it reaches the ledger.
+        #
         # @param child_env [Exec::ChildEnv]
         # @param history [#split] see {HistoryLiterals#split}; read once
+        # @param released [Set<String>] region digests a human released, from {Ledger#released_digests}
         # @return [Egress]
-        def self.of(child_env:, history:)
+        def self.of(child_env:, history:, released: Set.new)
           lent = Session::Null.instance.worker_env.env
           env = Literals.new(child_env:, lent:)
           past = history.split
           known = (env.to_a + past.known).map(&:b).uniq
           narrow = (named([*child_env.environment, *lent]) + env.detected_values + past.refusable).map(&:b)
-          refused = known & narrow
+          refused = unreleased(known & narrow, released)
           new(refused:, flagged: known - refused)
         end
+
+        def self.unreleased(values, released)
+          released.empty? ? values : values.reject { released?(_1, released) }
+        end
+        private_class_method :unreleased
+
+        # A value holding more than its secret, as a URL or a JSON line does, is released once
+        # every region inside it is. That trusts the detector to find each secret in the value.
+        def self.released?(value, released)
+          return true if released.include?(Regions::Region.address(value))
+
+          inside = Regions.detect(value)
+          inside.any? && inside.all? { released.include?(_1.digest) }
+        end
+        private_class_method :released?
 
         def self.named(variables)
           variables.filter_map do |name, value|
