@@ -57,7 +57,6 @@ module Lain
         @notice = notice
       end
 
-      # Nothing here holds a lock, so the drainer is spawned holding none of ours.
       # @param ref [String] the commit to land, resolved in the cwd's checkout
       # @param branch [String, nil] the branch to land on; the main worktree's when nil
       # @param id [String, nil] the worker's name; the cwd checkout's directory name when nil
@@ -65,17 +64,15 @@ module Lain
       # @raise [Lain::Error] when the ref does not resolve, its anchor cannot be
       #   written, or no branch is named and the main worktree is detached
       # @raise [Project::Trust::Untrusted] when the project's config is not trusted
-      def enqueue(ref = "HEAD", branch: nil, id: nil)
-        root = trusted_root
-        branch ||= checked_out(root)
-        here = git(@cwd)
-        home = home(root, branch)
-        usable!(home.drain_lock)
-        spool = Isolation::MergeCoordinator::Spool.new(home)
-        entry = spool.enqueue(anchored(here, ref, id || File.basename(toplevel(here))))
-        position = spool.pending.take_while { |each| each.id != entry.id }.size + 1
-        "queued #{entry.id} for #{branch} at position #{position}; #{drainer(root, branch, home)}"
-      end
+      def enqueue(ref = "HEAD", branch: nil, id: nil) = submitted(ref, branch, id).last
+
+      # {#enqueue} for a caller that waits on the entry rather than reading a line.
+      # @param ref [String] the commit to land, resolved in the cwd's checkout
+      # @param branch [String, nil] the branch to land on; the main worktree's when nil
+      # @param id [String, nil] the worker's name; the cwd checkout's directory name when nil
+      # @return [Isolation::MergeCoordinator::Spool::Entry] the entry, whose id {#wait} takes
+      # @raise [Lain::Error] as {#enqueue} does
+      def queued(ref = "HEAD", branch: nil, id: nil) = submitted(ref, branch, id).first
 
       # @param branch [String, nil] the branch whose queue is drained; the main worktree's when nil
       # @param project [String, nil] the project root; the cwd's main worktree when nil
@@ -125,6 +122,18 @@ module Lain
 
       private
 
+      # Nothing here holds a lock, so the drainer is spawned holding none of ours.
+      def submitted(ref, branch, id)
+        root = trusted_root
+        branch ||= checked_out(root)
+        home = home(root, branch)
+        usable!(home.drain_lock)
+        spool = Isolation::MergeCoordinator::Spool.new(home)
+        entry = spool.enqueue(anchored(git(root), ref, id))
+        position = spool.pending.take_while { |each| each.id != entry.id }.size + 1
+        [entry, "queued #{entry.id} for #{branch} at position #{position}; #{drainer(root, branch, home)}"]
+      end
+
       def usable!(lock)
         lock.holder
         lock.writable!
@@ -139,7 +148,20 @@ module Lain
       # The drainer reads the config after the entry is queued, so an untrusted file must refuse here.
       def trusted_root = main_root.tap { |root| Config.load(root:) }
 
-      def main_root = Isolation::MergeCoordinator.main_root(@cwd, shell_out_factory: @shell_out_factory)
+      def main_root = Isolation::MergeCoordinator.main_root(upstream, shell_out_factory: @shell_out_factory)
+
+      # A clone lain cut has a repository of its own, so its work lands in the
+      # one it was cut from, which only lain's record beside it names.
+      def upstream
+        clone = Isolation::Clone::Guard.enclosing(@cwd)
+        return @cwd unless clone
+
+        refusal = Isolation::Clone::Guard.refusal(clone)
+        raise Error, refusal unless refusal.empty?
+
+        Isolation::Clone::Guard.upstream(clone) or
+          raise Error, "#{clone} is a lease whose record names no repository it was cut from"
+      end
 
       def checked_out(root)
         Isolation::WorkingBranch.checked_out(repo_root: root, shell_out_factory: @shell_out_factory).name
@@ -153,15 +175,25 @@ module Lain
       end
 
       # Compare-and-swap, so two enqueues racing on one worker name fail
-      # loudly rather than one silently replacing the other's anchor.
-      def anchored(checkout, ref, id)
-        sha = checkout.target("#{ref}^{commit}")
+      # loudly rather than one silently replacing the other's anchor. The
+      # anchor is written where the drainer reads it, after the commit is
+      # fetched there from a clone that alone holds it.
+      def anchored(home, ref, id)
+        here = Isolation::Checkout.of(@cwd, shell_out_factory: @shell_out_factory)
+        sha = here.target("#{ref}^{commit}")
         raise Error, "#{ref} names no commit in #{@cwd}" if sha.empty?
 
+        folded!(home, sha)
+        id ||= File.basename(toplevel(here))
         anchor = Isolation::Worktree::Handback::Naming.new(id).ref
-        held = checkout.target(anchor)
-        write!(checkout, anchor, sha, held) unless held == sha
+        held = home.target(anchor)
+        write!(home, anchor, sha, held) unless held == sha
         Isolation::LandingQueue::Worker.new(id:, ref: anchor, sha:)
+      end
+
+      def folded!(home, sha)
+        fold = home.fold_in(Isolation::Clone::Guard.enclosing(@cwd) || @cwd, sha)
+        raise Error, "could not fetch #{sha} from #{@cwd}: #{fold.stderr.strip}" unless Shell::Out.ok?(fold)
       end
 
       def write!(checkout, anchor, sha, held)

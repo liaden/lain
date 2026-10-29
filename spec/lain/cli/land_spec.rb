@@ -145,6 +145,74 @@ RSpec.describe Lain::CLI::Land, :seam do
     end
   end
 
+  describe "#queued" do
+    it "answers the spool entry it queued, whose id wait takes, and starts a drainer" do
+      entry = land.queued("HEAD", id: "chore-1")
+
+      expect(spool.pending).to eq([entry])
+      expect(entry.worker.to_h).to eq({ id: "chore-1", ref: ref_for("chore-1"), sha: commit })
+      expect(spawned.size).to eq(1)
+      expect(land.wait(entry.id, timeout: 0)).to eq(2)
+    end
+
+    it "is the entry enqueue names in its line" do
+      said = land.enqueue(id: "chore-2")
+
+      expect(said).to start_with("queued #{spool.pending.sole.id} for main at position 1; ")
+    end
+
+    describe "from a clone lease" do
+      let(:lease) { Lain::CLI::IsolationBackend.resolve("worktree", root: @repo).acquire("chore-3") }
+      let(:clone) { lease.origin.path }
+
+      before do
+        File.write(File.join(clone, "chore"), "done\n")
+        git(clone, "add", "chore")
+        git(clone, "commit", "-q", "-m", "chore work")
+      end
+
+      after { lease.release(discard: true) }
+
+      def clone_head = Lain::Isolation::Checkout.of(clone).target("HEAD")
+
+      it "queues on the upstream's branch, with the lease's commit fetched into the upstream and anchored there" do
+        expect(Lain::Isolation::Clone::Guard.cut?(clone)).to be(true)
+
+        entry = land(cwd: clone).queued("HEAD", id: "chore-3")
+
+        expect(spool.pending).to eq([entry])
+        expect(entry.worker.sha).to eq(clone_head)
+        expect(git(@repo, "rev-parse", ref_for("chore-3"))).to eq(clone_head)
+        expect(spawned.sole.first).to include("--project", @repo)
+      end
+
+      it "refuses a clone whose record names no repository, and queues nothing" do
+        record = Lain::Isolation::Clone::Guard.record(clone)
+        File.write(record, "\n#{File.readlines(record, chomp: true)[1]}\n")
+
+        expect { land(cwd: clone).queued("HEAD", id: "chore-3") }.to raise_error(Lain::Error, /names no repository/)
+        expect(spool.pending).to be_empty
+      end
+
+      it "lands from a directory inside the clone, fetching from the clone itself" do
+        sub = File.join(clone, "deep")
+        FileUtils.mkdir_p(sub)
+
+        entry = land(cwd: sub).queued("HEAD", id: "chore-3")
+
+        expect(entry.worker.sha).to eq(clone_head)
+        expect(git(@repo, "rev-parse", ref_for("chore-3"))).to eq(clone_head)
+      end
+
+      it "refuses a clone whose git dir holds a planted name, and queues nothing" do
+        File.write(File.join(clone, ".git", "commondir"), "../evil\n")
+
+        expect { land(cwd: clone).queued("HEAD", id: "chore-3") }.to raise_error(Lain::Error, /commondir/)
+        expect(spool.pending).to be_empty
+      end
+    end
+  end
+
   describe "#enqueue with an untrusted project config" do
     before do
       FileUtils.mkdir_p(File.join(@repo, ".lain"))

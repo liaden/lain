@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "concurrent/array"
 require "json"
 require "fileutils"
 require "net/http"
@@ -16,6 +17,9 @@ module E2E
     # Per-run timestamps in a reply, which a committed cassette has no use for.
     TIMESTAMPS = /"(expires_at|created_at)":"[^"]*"/
     TIMESTAMP_PLACEHOLDER = "<RECORDED>"
+
+    # Read from the stand-in's thread, so it is shared state rather than a thread local.
+    SERVING_SINCE = Concurrent::Array.new
 
     class Missing < StandardError; end
     class Stale < StandardError; end
@@ -34,6 +38,7 @@ module E2E
     # A drift that stalls the chat first surfaces as a wait timing out. Failing the cassette on the
     # way out turns it into the Stale that names the field and the fix, with the timeout as its cause.
     def self.serve(name)
+      SERVING_SINCE.replace(Sandbox.live)
       cassette = self.for(name)
       upstream = Upstream.start(cassette, probes:)
       result = begin
@@ -45,11 +50,28 @@ module E2E
       result
     ensure
       upstream&.stop
+      SERVING_SINCE.clear
     end
+
+    # @return [Array<Sandbox>] the sandboxes already live when the current journey began serving
+    def self.serving_since = SERVING_SINCE.to_a
 
     def self.recording? = VcrRecording.provider == :ollama
 
     def self.relative(path) = path.delete_prefix("#{File.expand_path("../../..", __dir__)}/")
+
+    # @return [Hash{String=>String}] each live path that differs between runs, to its placeholder
+    def self.volatile = Sandbox.volatile(since: serving_since)
+
+    # A recorded reply can name a path too, so it is stored with placeholders and played back with
+    # whatever the current run's sandbox holds in their place.
+    def self.steady(text, volatile = self.volatile) = swapped(text, volatile)
+
+    def self.live(text) = swapped(text, volatile.invert)
+
+    def self.swapped(text, pairs)
+      pairs.sort_by { |found, _| -found.size }.reduce(text) { |swapping, (found, held)| swapping.gsub(found, held) }
+    end
 
     def self.re_record(path)
       journey = RSpec.current_example&.file_path&.delete_prefix("./") || "spec/e2e/<journey>_spec.rb"
@@ -57,12 +79,17 @@ module E2E
     end
 
     # The parts of a request its reply depends on. The system prompt is left out on purpose, so a
-    # prompt edit does not stale every cassette.
+    # prompt edit does not stale every cassette. A live sandbox's random root is swapped for a
+    # placeholder on both sides, so a message that names a path matches whatever tmpdir ran it.
     Fingerprint = Data.define(:model, :tools, :option_keys, :last_message) do
-      def self.of(body)
-        last = body.fetch("messages", []).last || {}
+      # @param body [Hash] the request's parsed JSON
+      # @param volatile [Hash{String=>String}] what to swap out; by default read from the live sandboxes
+      #   ({Sandbox}'s LIVE list) made since the journey began serving
+      def self.of(body, volatile: Cassette.volatile)
+        role, content = (body.fetch("messages", []).last || {}).values_at("role", "content")
+        steady = content.is_a?(String) ? Cassette.steady(content, volatile) : content
         new(model: body["model"], tools: body.fetch("tools", []).map { |tool| tool.dig("function", "name") }.sort,
-            option_keys: body.fetch("options", {}).keys.sort, last_message: last.values_at("role", "content"))
+            option_keys: body.fetch("options", {}).keys.sort, last_message: [role, steady])
       end
 
       def self.from(hash) = new(**hash.transform_keys(&:to_sym))
@@ -150,7 +177,7 @@ module E2E
 
           note(interaction.fingerprint, Fingerprint.of(request.body || {}))
           @played += 1
-          interaction.reply
+          interaction.with(response: Cassette.live(interaction.response)).reply
         end
       end
 
@@ -217,7 +244,7 @@ module E2E
         slot = @lock.synchronize { @interactions.push(nil).size - 1 }
         interaction = Ollama.forward("post", request.path, body: request.body,
                                                            kept: Fingerprint.of(request.body).to_h)
-        @lock.synchronize { @interactions[slot] = interaction }
+        @lock.synchronize { @interactions[slot] = interaction.with(response: Cassette.steady(interaction.response)) }
         interaction.reply
       end
 

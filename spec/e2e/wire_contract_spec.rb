@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "tmpdir"
 
 # A real `lain chat` replaying model turns recorded from a local ollama: what reaches the wire when
@@ -65,13 +66,13 @@ RSpec.describe E2E::Cassette, :e2e do
     E2E::Upstream::Request.new(verb: "POST", path: "/api/chat", body:)
   end
 
-  def cassette_holding(request, dir)
+  def cassette_holding(request, dir, response: "{\"done\":true}\n")
     interaction = {
       "request" => { "method" => "post", "uri" => "http://localhost:11434/api/chat",
                      "body" => { "encoding" => "UTF-8",
                                  "string" => JSON.generate(E2E::Cassette::Fingerprint.of(request.body).to_h) } },
       "response" => { "status" => { "code" => 200, "message" => "OK" },
-                      "body" => { "encoding" => "UTF-8", "string" => "{\"done\":true}\n" } }
+                      "body" => { "encoding" => "UTF-8", "string" => response } }
     }
     File.join(dir, "stale.yml").tap do |path|
       File.write(path, YAML.dump("http_interactions" => [interaction], "recorded_with" => "VCR 6.4.0"))
@@ -130,6 +131,114 @@ RSpec.describe E2E::Cassette, :e2e do
 
       expect(JSON.parse(recorded.lines.join)).to include("model_info")
       expect(replayed).to eq(recorded)
+    end
+  end
+
+  describe "a request naming a sandbox" do
+    def fingerprint(content)
+      last = { "role" => "user", "content" => content }
+      described_class::Fingerprint.of(chat_request(tools: %w[bash], last:).body)
+    end
+
+    def lease_in(sandbox)
+      "project root: #{sandbox.dir}/state/lain/worktrees/#{Lain::Paths.new.project_hash(sandbox.project.to_s)}/x"
+    end
+
+    # A journey's sandboxes are reaped after each example, so the next run's are a later lifetime.
+    def in_later_sandbox
+      E2E::Sandbox.reap_all!
+      yield E2E::Sandbox.create
+    end
+
+    it "fingerprints alike across sandbox lifetimes when only the sandbox's root differs" do
+      earlier = fingerprint(lease_in(E2E::Sandbox.create))
+
+      expect(in_later_sandbox { |sandbox| fingerprint(lease_in(sandbox)) }).to eq(earlier)
+    end
+
+    it "fingerprints apart when anything else differs" do
+      earlier = fingerprint(lease_in(E2E::Sandbox.create))
+
+      expect(in_later_sandbox { |sandbox| fingerprint("#{lease_in(sandbox)} and more") }).not_to eq(earlier)
+    end
+
+    it "keeps 2 projects that share a state dir apart" do
+      first = E2E::Sandbox.create
+      second = E2E::Sandbox.create(share_state_with: first, project: "proj-b")
+
+      expect(fingerprint(lease_in(first))).not_to eq(fingerprint(lease_in(second)))
+    end
+
+    it "numbers a sandbox from those made since its journey's cassette began serving" do
+      E2E::Sandbox.create
+      Dir.mktmpdir do |dir|
+        stub_const("E2E::Cassette::DIR", dir)
+        recorded = chat_request(tools: %w[read_file])
+        File.rename(cassette_holding(recorded, dir), File.join(dir, "numbered.yml"))
+
+        seen = described_class.serve("numbered") do |_upstream, cassette|
+          cassette.call(recorded)
+          fingerprint("cwd: #{E2E::Sandbox.create.project}").last_message.last
+        end
+
+        expect(seen).to eq("cwd: <SANDBOX1>/proj")
+      end
+    end
+
+    it "forgets a sandbox once it is reaped" do
+      E2E::Sandbox.create.reap
+
+      expect(fingerprint("cwd: #{E2E::Sandbox.create.project}").last_message.last).to eq("cwd: <SANDBOX1>/proj")
+    end
+
+    def leased(sandbox, id)
+      FileUtils.mkdir_p(File.join(lease_in(sandbox).delete_prefix("project root: ").delete_suffix("/x"), id)).first
+    end
+
+    it "names a lease checkout by its number, so a lease id that moves between runs fingerprints alike" do
+      earlier = fingerprint("wrote 2 bytes to #{leased(E2E::Sandbox.create, "bf376f3105f8")}/hello.txt")
+
+      later = in_later_sandbox do |sandbox|
+        fingerprint("wrote 2 bytes to #{leased(sandbox, "0788da1adf77")}/hello.txt")
+      end
+
+      expect(later).to eq(earlier)
+      expect(later.last_message.last).to eq("wrote 2 bytes to <LEASE1>/hello.txt")
+    end
+
+    it "records a reply that names a sandbox with its placeholder, and hands the live chat the real path" do
+      sandbox = E2E::Sandbox.create
+      said = "{\"message\":{\"content\":\"look in #{sandbox.project}\"},\"done\":true}\n"
+      request = chat_request(tools: %w[bash])
+      forwarded = described_class::Interaction.new(verb: "post", path: "/api/chat", request: {}, status: 200,
+                                                   message: "OK", response: said, recorded_at: "now")
+      allow(described_class::Ollama).to receive(:forward).and_return(forwarded)
+      Dir.mktmpdir do |dir|
+        recorder = described_class::Recorder.new(File.join(dir, "named.yml"))
+
+        expect(recorder.call(request).lines.join).to include("look in #{sandbox.project}")
+        recorder.save
+        stored = described_class::Tape.read(File.join(dir, "named.yml")).sole.response
+        expect(stored).to include("look in <SANDBOX1>/proj")
+      end
+    end
+
+    it "replays a recorded placeholder as the live sandbox's path" do
+      Dir.mktmpdir do |dir|
+        request = chat_request(tools: %w[read_file grep])
+        recorded = "{\"cwd\":\"<SANDBOX1>/proj\"}\n"
+        replay = described_class::Replay.load(cassette_holding(request, dir, response: recorded))
+        sandbox = E2E::Sandbox.create
+
+        expect(replay.call(request).lines.join).to include("#{sandbox.dir}/proj")
+      end
+    end
+
+    it "keeps 2 live sandboxes apart" do
+      first = E2E::Sandbox.create
+      second = E2E::Sandbox.create
+
+      expect(fingerprint("cwd: #{first.project}")).not_to eq(fingerprint("cwd: #{second.project}"))
     end
   end
 

@@ -10,6 +10,8 @@ module E2E
   class Sandbox
     BUNDLER_VARIABLES = %w[BUNDLE_GEMFILE RUBYOPT BUNDLE_BIN_PATH LAIN_BOOTSNAP_CACHE].freeze
     DEFAULT_PROJECT = "proj"
+    LEASE = /\A\h{12}\z/
+    SEEN_LEASES = Concurrent::Array.new
     LIVE = Concurrent::Array.new
     private_constant :LIVE
 
@@ -20,6 +22,28 @@ module E2E
         sandbox = new(root, files:, owner: share_state_with.nil?, project:)
         LIVE << sandbox
         sandbox
+      end
+
+      def live = LIVE.to_a
+
+      # What the live sandboxes' random roots make different in every run, each with the placeholder a
+      # cassette keeps in its place: a root, numbered in creation order, and the per-project key hashed
+      # from each project, named by its root and its directory. Sandboxes sharing a root share its number.
+      # One made before `since` was taken is left out, so an earlier example's leftover cannot shift a number.
+      def volatile(since: [])
+        counted = live - since
+        roots = counted.map(&:dir).uniq
+        named = counted.map { |sandbox| sandbox.volatile("SANDBOX#{roots.index(sandbox.dir) + 1}") }.reduce({}, :merge)
+        named.merge(leases(roots))
+      end
+
+      # A lease checkout's directory is a hash of its worker id that moves from run to run, so each is
+      # named by the order fingerprints first saw it in. The filesystem here keeps no birth time.
+      def leases(roots)
+        found = roots.flat_map { |root| Dir.glob(root.join("state", "lain", "worktrees", "*", "*").to_s).sort }
+                     .select { |path| File.basename(path).match?(LEASE) }
+        (found - SEEN_LEASES).each { |path| SEEN_LEASES << path }
+        (SEEN_LEASES & found).each_with_index.to_h { |path, index| [path, "<LEASE#{index + 1}>"] }
       end
 
       def reap_all!
@@ -52,10 +76,15 @@ module E2E
 
     def state_home = dir.join("state")
 
+    def volatile(name)
+      { dir.to_s => "<#{name}>", Lain::Paths.new.project_hash(project.to_s) => "<PROJECT:#{name}/#{project.basename}>" }
+    end
+
     def track(pid) = @pids << pid
 
     # A tracked pid is checked by reaping it, because a zombie still answers signal 0.
     def reap
+      LIVE.delete(self)
       found = stragglers
       found.each_key { |pid| kill(pid) }
       FileUtils.rm_rf(dir) if @owner
