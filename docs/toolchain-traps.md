@@ -430,6 +430,10 @@ Unproven; counting only the example's own thread would settle it.
   The CoreGraph descriptor count went red a third time (22 against 23: the count fell, so another
   thread closed an fd mid-ask) and is fixed: it now compares (fd, readlink target) pairs, so only a
   descriptor the ask left open fails it.
+  Both repeats that day are fixed too, so a red from either is no longer a known flake: the audit
+  sample now counts what the sweep left undecided behind one hang guard, with no per-dequeue bound,
+  and the `--confine workspace` arms report reads a small seed checkout, where it had walked all of
+  this one (about 3,100 files) once per sandboxed call, 73 times.
 
   Added 2026-10-18, a wall-clock count red once in a pre-commit suite (6 ticks against 15) and green
   alone and in a full suite on the base and on the change: `Lain::Tool::Offload keeps a sibling fiber

@@ -812,10 +812,18 @@ RSpec.describe Lain::Bench::CLI do
       Lain::Provider::Mock.new(responses: [*loop_turns, text_response("FILE lib/widget.rb\nEND")])
     end
 
-    def report(arms, **)
+    # A small checkout of its own: the walk reads the whole project root once per sandboxed call.
+    let(:root) { SeedRepo.derived("bench-cli-confine", into: Dir.mktmpdir("bench-cli-root")) { nil } }
+    let(:project) do
+      Lain::Project.new(root: File.realpath(root), cwd: File.realpath(root), kind: :project, detected_by: :flag)
+    end
+
+    after { FileUtils.remove_entry(root) }
+
+    def report(arms, **rest)
       allow(backend).to receive(:provider).and_return(looping)
       cli.arms_report(fixture_path: File.join(__dir__, "..", "..", "fixtures", "arms", "tasks.yml"), backend:,
-                      tools:, isolation: "none", journal:, arms:, probe:, **)
+                      tools:, isolation: "none", journal:, arms:, probe:, project:, paths: Lain::Paths.new, **rest)
     end
 
     it "hands every arm's tools a sandboxed exec" do
