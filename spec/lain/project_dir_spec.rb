@@ -543,6 +543,53 @@ RSpec.describe Lain::ProjectDir do
     end
   end
 
+  describe "a clone lease", :seam do
+    around do |example|
+      Dir.mktmpdir("lain-project-dir-clone") do |base|
+        @main = File.join(File.realpath(base), "main")
+        FileUtils.cp_r("#{SeedRepo.at(SeedRepo::SEED)}/.", @main.tap { FileUtils.mkdir_p(_1) })
+        SeedRepo.git(@main, "branch", "-M", "main")
+        FileUtils.mkdir_p(File.join(@main, ".lain"))
+        File.write(File.join(@main, ".lain", "config.rb"), "")
+        example.run
+      end
+    end
+
+    def cut
+      lease = Lain::CLI::IsolationBackend.resolve("worktree", root: @main).acquire("lease")
+      @leases = [*@leases, lease]
+      lease.origin.path
+    end
+
+    after { Array(@leases).each { _1.release(discard: true) } }
+
+    it "borrows the upstream's .lain when lain cut it, since an ignored .lain never travels into one" do
+      clone = cut
+
+      expect(Lain::Isolation::Clone::Guard.cut?(clone)).to be(true)
+      expect(described_class.new(root: clone).config).to eq(File.join(@main, ".lain", "config.rb"))
+    end
+
+    it "keeps its own .lain for a clone lain did not cut" do
+      plain = File.join(File.dirname(@main), "plain")
+      SeedRepo.git(File.dirname(@main), "clone", "-q", "--shared", @main, plain)
+
+      expect(described_class.new(root: plain).dir).to eq(File.join(plain, ".lain"))
+    end
+
+    # Run from a directory holding a config, so an empty name read as "." could not pass by borrowing nothing.
+    it "keeps its own .lain for a cut clone whose record names no object store" do
+      clone = cut
+      record = Lain::Isolation::Clone::Guard.record(clone)
+      File.write(record, "\n#{File.readlines(record, chomp: true)[1]}\n")
+      elsewhere = File.join(File.dirname(@main), "elsewhere")
+      FileUtils.mkdir_p(File.join(elsewhere, ".lain"))
+      File.write(File.join(elsewhere, ".lain", "config.rb"), "")
+
+      expect(Dir.chdir(elsewhere) { described_class.new(root: clone).dir }).to eq(File.join(clone, ".lain"))
+    end
+  end
+
   # The recipe the state feed shares with five sibling containers, which was
   # composed eight ways before this method: one of them split across two
   # methods, one flattening the key into a filename, and one taking a digest of

@@ -132,6 +132,19 @@ module Lain
           nil
         end
 
+        # The repository a clone lain cut was cut from, for its config and its
+        # landings: the worktree around a `.git` object store, and for an
+        # upstream whose git dir is kept apart, the git dir, which is what git
+        # itself names as such a repository's main worktree.
+        #
+        # @param root [String] a project root
+        # @return [String, nil] the upstream, or nil for anything lain did not cut or a record naming no store
+        def self.upstream(root)
+          objects = upstream_objects(root).first
+          git = objects && File.dirname(objects)
+          git && (File.basename(git) == ".git" ? File.dirname(git) : git)
+        end
+
         # Read from lain's record, never from the clone's alternates file,
         # which a call may have written.
         #

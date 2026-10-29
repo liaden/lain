@@ -175,8 +175,12 @@ module Lain
     end
 
     # Read as git does: the pointer names the admin dir, whose `commondir` is
-    # relative to it. Anything unreadable means "not a linked worktree".
+    # relative to it. Anything unreadable means "not a linked worktree". A
+    # clone lain cut has a real git dir, so its upstream comes from lain's
+    # record beside it, which no call can write.
     def main_worktree
+      return Isolation::Clone::Guard.upstream(@root) if Isolation::Clone::Guard.cut?(@root)
+
       pointer = File.join(@root, ".git")
       named = File.file?(pointer) && File.read(pointer)[/\Agitdir: (.+)$/, 1]
       admin = named && File.expand_path(named, @root)
