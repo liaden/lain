@@ -14,7 +14,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
   describe "workspace view has a lua-side home" do
     it "renders lain://workspace through set_view as a first-class lain buffer, not an orphan" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         # Session::Null has no reminders, so priming renders the empty state.
@@ -47,7 +47,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # renders one in. Read-only and claimed like every other projection.
   describe "status view has a lua-side home" do
     it "renders lain://status as a read-only markdown buffer" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         wait_until_editor { buffer_lines("lain://status").any? }
@@ -114,7 +114,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     it "reaches every rail's lua entry point, with the arity its row declares" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         wait_until_editor { buffer_lines("lain://workspace") == ["(no reminders)"] }

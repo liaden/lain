@@ -427,7 +427,7 @@ RSpec.describe "runtime/46_sidebar.lua", :nvim do
       # `human_replies_spec` pushes by hand -- so this is the one example that
       # says the editor produces the shape every spec on the other side assumes.
       it "sends the row, the state the key names, and the rendering's stamp" do
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           set_review(%w[one two], 7)
@@ -438,7 +438,7 @@ RSpec.describe "runtime/46_sidebar.lua", :nvim do
       end
 
       it "sends the OTHER state from the other key, on the same row" do
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           set_review(%w[one two], 7)
@@ -455,7 +455,7 @@ RSpec.describe "runtime/46_sidebar.lua", :nvim do
       # wrong way because both values are legal. Twice on one row, twice the same
       # word.
       it "sends the same state twice for two presses of one key rather than toggling" do
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           set_review(%w[one two], 7)
@@ -472,7 +472,7 @@ RSpec.describe "runtime/46_sidebar.lua", :nvim do
       # one with the other. A payload carrying the count, the first generation, or
       # nothing at all all read alike against a single render.
       it "carries the stamp of the rendering on screen, not the one before it" do
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           set_review(%w[one two], 6)
@@ -489,7 +489,7 @@ RSpec.describe "runtime/46_sidebar.lua", :nvim do
       # about a row nobody is looking at, and nothing in the payload examples above
       # can see either.
       it "keeps the keys buffer-local, so x in the human's own file still deletes a character" do
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           set_review(%w[one two], 7)
@@ -515,7 +515,7 @@ RSpec.describe "runtime/46_sidebar.lua", :nvim do
       # shape every verb on this rail uses -- and a flat-positional lua half fails
       # here with that refusal rather than passing quietly.
       it "hands the verdict to the bound review" do
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           frontend.bind_changeset_review(review)
@@ -536,7 +536,7 @@ RSpec.describe "runtime/46_sidebar.lua", :nvim do
       # COMPLETES and the sentence is echoed. What is asserted about the sentence
       # and about the review is unchanged -- only where the sentence is read from.
       it "refuses a word the vocabulary does not hold, and tells the human which words it does" do
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           frontend.bind_changeset_review(review)
@@ -551,7 +551,7 @@ RSpec.describe "runtime/46_sidebar.lua", :nvim do
       # no vocabulary to check against, so the empty verdict is refused by the
       # object that owns the words and the human is told what they are.
       it "refuses an empty verdict by naming the vocabulary rather than sending nothing" do
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           frontend.bind_changeset_review(review)
@@ -575,7 +575,7 @@ RSpec.describe "runtime/46_sidebar.lua", :nvim do
       # `:messages` back through the inspector connection. Nothing but the diff
       # bytes is a fixture.
       it "echoes the verdict into the editor's own message history" do
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           frontend.bind_changeset_review(handover_over(frontend.review_surface))
@@ -601,7 +601,7 @@ RSpec.describe "runtime/46_sidebar.lua", :nvim do
       end
 
       it "refuses approve while a blocker is drawn and names its file and line" do
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           frontend.bind_changeset_review(review)
@@ -614,7 +614,7 @@ RSpec.describe "runtime/46_sidebar.lua", :nvim do
       end
 
       it "sends approve once the blocker has been handed back" do
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           frontend.bind_changeset_review(review)
@@ -627,7 +627,7 @@ RSpec.describe "runtime/46_sidebar.lua", :nvim do
       end
 
       it "refuses approve while a blocker is only drafted" do
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           frontend.bind_changeset_review(review)
@@ -650,7 +650,7 @@ RSpec.describe "runtime/46_sidebar.lua", :nvim do
       end
 
       it "refuses approve while a note that is not a blocker is held, counting every held note" do
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           frontend.bind_changeset_review(review)
@@ -663,7 +663,7 @@ RSpec.describe "runtime/46_sidebar.lua", :nvim do
       end
 
       it "says 1 note, singular, and sends approve once it is handed back" do
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           frontend.bind_changeset_review(review)
@@ -683,7 +683,7 @@ RSpec.describe "runtime/46_sidebar.lua", :nvim do
       # every session: the command refuses with {NoReviewWrites}'s own sentence
       # rather than acking a verdict nothing recorded.
       it "refuses with the unopened-review sentence when no review is bound" do
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           expect(run("LainReviewVerdict approve")).to include("ok" => true)
@@ -703,7 +703,7 @@ RSpec.describe "runtime/46_sidebar.lua", :nvim do
       # Waiting for the refusal to land is what makes the absence of a traceback
       # beside it mean anything.
       it "shows no Lua stack traceback for any of those refusals" do
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           frontend.bind_changeset_review(review)

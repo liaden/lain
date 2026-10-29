@@ -1395,7 +1395,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
   describe "lain://inbox" do
     it "primes at attach with the empty note" do
-      frontend = described_class.new(channel:, socket_path: @socket, store:)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket, store:)
 
       frontend.run do
         wait_until { buffer_lines("lain://inbox").any? }
@@ -1407,7 +1407,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       asker_a = Lain::Tools::AskHuman.new(parent: parent_chain("a"))
       asker_b = Lain::Tools::AskHuman.new(parent: parent_chain("b"))
       promises = Sync { [asker_a.ask("deploy now?"), asker_b.ask("which db?")] }
-      frontend = described_class.new(channel:, socket_path: @socket, store:)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket, store:)
 
       frontend.run do
         push_question(asker_a)
@@ -1433,7 +1433,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       parent = parent_chain("a")
       asker = Lain::Tools::AskHuman.new(parent:)
       promise = Sync { asker.ask("which db?") }
-      frontend = described_class.new(channel:, socket_path: @socket, store:)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket, store:)
 
       frontend.run do |handle|
         push_question(asker)
@@ -1462,7 +1462,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     it "binds a buffer-local reply map when the human enters the inbox (the drain autocmd)" do
-      frontend = described_class.new(channel:, socket_path: @socket, store:)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket, store:)
 
       frontend.run do
         wait_until { buffer_lines("lain://inbox").any? }
@@ -1494,7 +1494,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     it "enqueues an open command naming the cursor's line when the human presses enter" do
-      frontend = described_class.new(channel:, socket_path: @socket, store:)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket, store:)
 
       frontend.run do |handle|
         two_pending
@@ -1506,7 +1506,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     it "opens the same set from r, which no longer prompts for a one-line answer" do
-      frontend = described_class.new(channel:, socket_path: @socket, store:)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket, store:)
 
       frontend.run do |handle|
         two_pending
@@ -1521,7 +1521,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # FIRST thing to reach the inbox must be that real one (the :LainPin
     # refusal example's idiom).
     it "sends nothing at all from the empty-state placeholder" do
-      frontend = described_class.new(channel:, socket_path: @socket, store:)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket, store:)
 
       frontend.run do |handle|
         wait_until { buffer_lines("lain://inbox").any? }
@@ -1537,7 +1537,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # CURRENT window's cursor, so hand-typed from lain://journal it would open
     # whatever inbox line shares that number -- a set the human never looked at.
     it "refuses to open from a buffer that is not the inbox, and says so" do
-      frontend = described_class.new(channel:, socket_path: @socket, store:)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket, store:)
 
       frontend.run do |handle|
         two_pending
@@ -1587,7 +1587,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     it "names the row the answer was typed on, with the stamp :LainOpen sends" do
-      frontend = described_class.new(channel:, socket_path: @socket, store:)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket, store:)
 
       frontend.run do |handle|
         two_pending
@@ -1604,7 +1604,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # index is the SECOND asker's, never the oldest listed. Resolved through the
     # very message `open` resolves through, off the same rendering.
     it "resolves that row to the digest it carries, as the open gesture does" do
-      frontend = described_class.new(channel:, socket_path: @socket, store:)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket, store:)
 
       frontend.run do |handle|
         _, asker_b = two_pending
@@ -1625,7 +1625,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # consumer keeps its oldest-listed reading, which is the terminal drain's
     # own rule.
     it "sends the answer alone when it is typed away from the inbox" do
-      frontend = described_class.new(channel:, socket_path: @socket, store:)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket, store:)
 
       frontend.run do |handle|
         two_pending
@@ -1648,7 +1648,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # keystroke that does nothing is self-evident, while an answer the human
     # TYPED vanishing without a word reads as a delivered reply.
     it "sends nothing at all from the empty-state placeholder, and says why" do
-      frontend = described_class.new(channel:, socket_path: @socket, store:)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket, store:)
 
       frontend.run do |handle|
         wait_until { buffer_lines("lain://inbox").any? }
@@ -1665,7 +1665,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # did not indent and neither carries an age, so `inbox_row` refuses them --
     # and both silently sent a bare reply before this.
     it "sends nothing from the blank and the keys hint under the list" do
-      frontend = described_class.new(channel:, socket_path: @socket, store:)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket, store:)
 
       frontend.run do |handle|
         two_folded
@@ -1759,7 +1759,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     it "closes each item onto its summary at rest, leaving its question hidden" do
-      frontend = described_class.new(channel:, socket_path: @socket, store:)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket, store:)
 
       frontend.run do
         lines = two_spanning
@@ -1782,7 +1782,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     it "leaves the keys line open, which is what keeps the last item closed" do
-      frontend = described_class.new(channel:, socket_path: @socket, store:)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket, store:)
 
       frontend.run do
         lines = two_spanning
@@ -1797,7 +1797,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     it "opens from a continuation line of an item, sending that very line" do
-      frontend = described_class.new(channel:, socket_path: @socket, store:)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket, store:)
 
       frontend.run do |handle|
         lines = two_spanning
@@ -1816,7 +1816,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # without it a whole item would be inert -- silently, since the fold around
     # it still looks right.
     it "opens a row whose record named no sender, which the age has to lead" do
-      frontend = described_class.new(channel:, socket_path: @socket, store:)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket, store:)
 
       frontend.run do |handle|
         channel.push(Lain::Telemetry::Message.new(digest: "blake3:q1", kind: :message, from: "", to: "human",
@@ -1847,7 +1847,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # nvim at all -- so the command arriving is the whole assertion; Ruby refuses
     # it afterwards, as it refuses any line of a rendering it did not draw.
     it "opens a row whose age went backwards, from its continuation line" do
-      frontend = described_class.new(channel:, socket_path: @socket, store:)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket, store:)
 
       frontend.run do |handle|
         wait_until { buffer_lines("lain://inbox").any? }
@@ -1866,7 +1866,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # silence. No sleep -- the gesture is followed by a real command, and the
     # first thing to reach the inbox must be that real one.
     it "sends nothing at all from the keys line under the list" do
-      frontend = described_class.new(channel:, socket_path: @socket, store:)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket, store:)
 
       frontend.run do |handle|
         lines = two_spanning

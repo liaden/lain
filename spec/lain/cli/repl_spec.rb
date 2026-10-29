@@ -160,7 +160,7 @@ class ReplGoalTerminal
 
     Lain::CLI::Repl.new(agent:, tty:, replies:, commands:, chronicle: Lain::CLI::Chronicle::Null.new, conductor:,
                         approvals: queue, goal_driver: driver, input: Lain::Frontend::StdinPump.new(rail:, screen: tty))
-                   .run(nvim: nil, store: nil, session: nil, first_prompt: "/goal make the specs green")
+                   .run(forks: -> { {} }, nvim: nil, store: nil, session: nil, first_prompt: "/goal make the specs green")
   RUBY
 
   READY = "File.write(File.join(ARGV[0], 'ready'), ''); sleep 10"
@@ -1370,7 +1370,7 @@ RSpec.describe Lain::CLI::Repl do
     # suite says nothing.
     def run_idling(dir, &at_prompt)
       allow(conductor).to receive(:read_prompt, &at_prompt)
-      Timeout.timeout(10) { repl_over(tty_for(dir)).run(nvim: nil, store: nil, session: nil) }
+      Timeout.timeout(10) { repl_over(tty_for(dir)).run(forks: no_forks, nvim: nil, store: nil, session: nil) }
     end
 
     it "opens the idle surface it was given for the conversation and stops it after" do
@@ -1389,7 +1389,7 @@ RSpec.describe Lain::CLI::Repl do
         replies.bind_changeset_review(review)
         repl = described_class.new(agent:, tty:, replies: AttachedReplies.new(replies), commands:, supervisor:,
                                    chronicle: Lain::CLI::Chronicle::Null.new, conductor:, idle:)
-        Timeout.timeout(10) { repl.run(nvim: nil, store: nil, session: nil) }
+        Timeout.timeout(10) { repl.run(forks: no_forks, nvim: nil, store: nil, session: nil) }
       end
 
       expect(spawned.size).to eq(1)
@@ -1402,7 +1402,9 @@ RSpec.describe Lain::CLI::Repl do
       allow(conductor).to receive(:read_prompt).and_return(nil)
       Dir.mktmpdir do |dir|
         nvim = { channel: Lain::Channel.new, socket_path: "unused" }
-        Timeout.timeout(10) { repl_over(tty_for(dir)).run(nvim:, store: nil, session: nil, epic_docs: docs) }
+        Timeout.timeout(10) do
+          repl_over(tty_for(dir)).run(forks: no_forks, nvim:, store: nil, session: nil, epic_docs: docs)
+        end
       end
 
       expect(Lain::Frontend::Neovim).to have_received(:new).with(hash_including(epic_docs: docs))
@@ -1422,7 +1424,7 @@ RSpec.describe Lain::CLI::Repl do
         repl = described_class.new(agent:, tty:, replies: AttachedReplies.new(replies), commands:, supervisor:,
                                    chronicle: Lain::CLI::Chronicle::Null.new, conductor:, mode_switch:)
         nvim = { channel: Lain::Channel.new, socket_path: "unused" }
-        Timeout.timeout(10) { repl.run(nvim:, store: nil, session: nil) }
+        Timeout.timeout(10) { repl.run(forks: no_forks, nvim:, store: nil, session: nil) }
       end
 
       expect(view.decide(0, "mode auto", generation: 0)).to be_decided
@@ -1539,7 +1541,11 @@ RSpec.describe Lain::CLI::Repl do
                                    commands:, chronicle: Lain::CLI::Chronicle::Null.new, conductor:)
         allow(conductor).to receive(:read_prompt).and_return("quit")
 
-        expect { Timeout.timeout(10) { repl.run(nvim: nil, store: nil, session: nil) } }.not_to raise_error
+        expect do
+          Timeout.timeout(10) do
+            repl.run(forks: no_forks, nvim: nil, store: nil, session: nil)
+          end
+        end.not_to raise_error
       end
     end
   end
@@ -1591,7 +1597,7 @@ RSpec.describe Lain::CLI::Repl do
       described_class.new(agent:, tty:, replies: replies_over(tty, one_line_conductor(tty)),
                           commands: passthrough_commands, chronicle: Lain::CLI::Chronicle::Null.new,
                           conductor: one_line_conductor(tty))
-                     .run(nvim: nil, store: nil, session: nil)
+                     .run(forks: no_forks, nvim: nil, store: nil, session: nil)
       out.string
     end
 
@@ -1766,7 +1772,7 @@ RSpec.describe Lain::CLI::Repl do
     def converse_over(commands, reading: :typed, approvals: nil, &at_prompt)
       allow(conductor).to receive(:read_reply, &reply_reader(reading))
       allow(conductor).to receive(:read_prompt, &at_prompt)
-      Timeout.timeout(10) { repl_over(commands, approvals).run(nvim: nil, store: nil, session: nil) }
+      Timeout.timeout(10) { repl_over(commands, approvals).run(forks: no_forks, nvim: nil, store: nil, session: nil) }
     end
 
     def repl_over(commands, approvals = nil)
@@ -1958,7 +1964,7 @@ RSpec.describe Lain::CLI::Repl do
       Timeout.timeout(20) do
         Lain::CLI::Repl.new(agent:, tty:, replies: replies_over(conductor), commands:,
                             chronicle:, conductor:, middleware: Lain::Middleware::Stack.new([middleware]))
-                       .run(nvim: nil, store: nil, session: nil)
+                       .run(forks: no_forks, nvim: nil, store: nil, session: nil)
       end
     ensure
       @signals&.uninstall
@@ -2178,7 +2184,7 @@ RSpec.describe Lain::CLI::Repl do
       agent = @agent = Lain::Agent.new(provider:, toolset: Lain::Toolset.new(tools), context:, mailbox:)
       described_class.new(agent:, tty:, replies:, commands: passing_through, conductor:, notes:, middleware:,
                           chronicle: Lain::CLI::Chronicle::Null.new)
-                     .run(nvim: nil, store: nil, session: nil)
+                     .run(forks: no_forks, nvim: nil, store: nil, session: nil)
     end
 
     # Refuses the line once its turn has run, as a middleware's own Lain::Error.
@@ -2224,7 +2230,7 @@ RSpec.describe Lain::CLI::Repl do
 
       described_class.new(agent:, tty:, replies:, commands: passing_through, conductor:, notes:,
                           middleware: Lain::Middleware::Stack.new, chronicle: Lain::CLI::Chronicle::Null.new)
-                     .run(nvim: nil, store: nil, session: nil)
+                     .run(forks: no_forks, nvim: nil, store: nil, session: nil)
       [idle, releaser].each { |thread| thread.join(5) }
 
       expect(out.string.scan("finishing a compaction summary before your prompt runs").size).to eq(1)

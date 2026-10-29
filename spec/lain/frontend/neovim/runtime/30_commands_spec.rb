@@ -43,7 +43,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # with a leading "r" -- "r" for the prompt, "rm" for `-- More --`, "r?" for
     # a confirm query -- and only one of the three is what this raises today.
     it "refuses :LainNote outside a review buffer without a traceback or a hit-enter prompt" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         attach_ui
@@ -59,7 +59,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     it "refuses :LainMode with a wrong value on the rail, naming ask, auto and bypass, and sends nothing" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         attach_ui
@@ -75,7 +75,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     it "sets the approval through the production consumer when :LainMode names a level" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
       journal_io = StringIO.new
       mode_switch = FlipOnlyModeSwitch.new(Lain::Mode::Switch.new(Lain::Mode.new(approval: :ask),
                                                                   journal: Lain::Journal.new(io: journal_io)))
@@ -105,7 +105,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # caught. Anchored at the start of a LINE rather than merely contained,
     # which is what makes "exactly once" sayable at all.
     it "prefixes the refusal exactly once, on one line of the message history" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         attach_ui
@@ -127,7 +127,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # which writes the same message area with none of the rail's fitting. The
     # editor is on lain://journal here, which is where attach leaves it.
     it "refuses :LainPin off the timeline on the rail, prefixed once" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         attach_ui
@@ -151,7 +151,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # regardless of routing (`rpc_thread.rb:1220`) -- proves that by staying
     # empty.
     it "refuses :LainSurveyAdd from a real file buffer instead of acking silently" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       Dir.mktmpdir do |dir|
         path = File.join(dir, "survey_target.rb")
@@ -180,7 +180,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # non-empty there, so the wrong-buffer guard fires before the not-wired
     # refusal ever would.
     it "keeps the wrong-buffer refusal distinct from the not-wired one" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         attach_ui

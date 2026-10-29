@@ -48,7 +48,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       Dir.mktmpdir("lain-review") do |dir|
         path = File.join(dir, "epic.md")
         File.write(path, "## b2 the thing\n")
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           frontend.open_review(path, 7, epic_slug: "alpha")
@@ -78,7 +78,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         io = StringIO.new
         review = Lain::Epic::Review.new(journal: Lain::Journal.new(io:), epic_slug: "alpha")
         token = review.open(path:, written:)
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           frontend.open_review(path, token.generation, epic_slug: "alpha")
@@ -114,7 +114,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # guard never raises at all; it echoes and returns, `review_refused`'s own
     # pattern one function above it in `65_review.lua`.
     it "refuses :LainReviewDone on a buffer no review ever opened, without a Lua stack traceback" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         # The freshly attached editor's own buffer 1 -- headless, `--clean`,
@@ -148,7 +148,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       Dir.mktmpdir("lain-review") do |dir|
         path = File.join(dir, "epic.md")
         File.write(path, "## b2 the thing\n")
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           frontend.open_review(path, 7, epic_slug: "alpha")
@@ -190,7 +190,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # review; the rule is the same at all three and is stated once, here, beside
     # the command that already keeps it.
     it "refuses :LainReviewVerdict without a traceback when the refusal crossed the wire" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         outcome = inspector.exec_lua(<<~LUA, [])
@@ -252,7 +252,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
     it "closes the round, draws the placeholder, and a verdict afterwards says no review is open" do
       io = StringIO.new
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         opened_round(frontend, io)
@@ -271,7 +271,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     it "refuses :LainReviewClose with no review open, in words and without a traceback" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         outcome = inspector.exec_lua(<<~LUA, [])
@@ -364,7 +364,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # `-- More --`, "r?" for a confirm query -- and only one of those three is
     # the one this fixture happens to raise today.
     it "does not raise a hit-enter prompt for a refusal wider than the message area" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         attach_ui(columns: 60)
@@ -380,7 +380,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # lost by it: `:messages` is where a human goes for the sentence they could
     # not read on one line, so the sentence has to actually be there, whole.
     it "keeps the whole sentence in :messages even when the echoed line is shortened" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         attach_ui(columns: 60)
@@ -399,7 +399,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # the return the only witness of what a human actually saw. Pinning both
     # here also says what "unchanged" means -- one line, one copy, same text.
     it "echoes a refusal that fits with its prefix and nothing else" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         attach_ui(columns: 60)
@@ -422,7 +422,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # this rail, and a `ScriptError#message` from Ruby 4's error formatter is
     # FIVE lines (measured: the source excerpt plus its carets).
     it "does not page on a refusal that is short but carries newlines" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         attach_ui(columns: 110)
@@ -438,7 +438,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # "shorten harder": elision alone never helped here, because a head-and-tail
     # cut of a many-lined sentence still carries newlines in both halves.
     it "does not page on a refusal of many short lines, and folds them onto one" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         attach_ui(columns: 110)
@@ -456,7 +456,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # the one-line echo does, not what the record does, or a human sent to
     # `:messages` for a five-line syntax error would find it run together.
     it "records a multi-line refusal with its line breaks intact" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         attach_ui(columns: 110)
@@ -494,7 +494,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # original with its breaks intact -- because the cheap fix (folding the
     # recorded copy too) would buy the first by destroying the second.
     it "does not page on a refusal taller than the pane" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         attach_ui(columns: 110, lines: 10)
@@ -527,7 +527,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # thing between the swap and the restore; the injection is undone inside the
     # same lua block, so nothing leaks into the assertions below it.
     it "puts both swapped options back even when the recording echo raises, and keeps the prompt working" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         attach_ui(columns: 60)
@@ -560,7 +560,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # must keep both ends -- a head-first clip would drop exactly the half that
     # says what to do next.
     it "keeps both the condition and the remedy when it shortens the line" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         attach_ui(columns: 60)
@@ -583,7 +583,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # On the wide sentence specifically: the traceback-free rule already
     # pinned for refusals that FIT must survive the path that shortens one.
     it "stays traceback-free on the path that shortens a refusal" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         attach_ui(columns: 60)

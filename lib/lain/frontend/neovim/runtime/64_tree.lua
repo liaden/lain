@@ -38,6 +38,12 @@ define("LainTreeLabel", function()
   end
 end)
 
+define("LainTreeRefresh", function()
+  if on_tree(":LainTreeRefresh", "rescans the session directory for forks of this session") then
+    vim.rpcrequest(chan, "lain_command", "tree_refresh", {})
+  end
+end)
+
 local tree_group = vim.api.nvim_create_augroup("lain_tree", { clear = true })
 vim.api.nvim_create_autocmd("BufEnter", {
   group = tree_group,

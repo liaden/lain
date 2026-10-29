@@ -90,6 +90,7 @@ module Lain
         def self.pin(_line) = Nothing
         def self.tree_pick(_line, **) = Nothing
         def self.tree_label(_line, _text, **) = Nothing
+        def self.tree_refresh = Nothing
         def self.answered(_digest) = nil
         def self.question_settled(_digest, **) = nil
 
@@ -1083,6 +1084,7 @@ module Lain
             "open" => ->(args) { open_set(args) },
             "pin" => ->(args) { pin_turn(args) },
             "tree_label" => ->(args) { label_turn(args) },
+            "tree_refresh" => ->(_args) { refresh_tree },
             "review_open" => ->(args) { open_hunk(args) },
             "review_mark" => ->(args) { mark_hunk(args) },
             "review_ask" => ->(args) { ask_docent(args) },
@@ -1131,6 +1133,16 @@ module Lain
 
           @editor.call.post_view(Frontend::Neovim::TreeView::NAME, outcome.lines,
                                  generation: outcome.generation)
+        end
+
+        # `:LainTreeRefresh`: the one gesture that rescans the session directory, so a fork made since the
+        # tree opened shows without waiting for a turn.
+        def refresh_tree
+          refreshed = @views.call.tree_refresh
+          return unless refreshed.lines
+
+          @editor.call.post_view(Frontend::Neovim::TreeView::NAME, refreshed.lines,
+                                 generation: refreshed.generation)
         end
 
         # The review sidebar's `<CR>`, in {#open_set}'s shape and for its

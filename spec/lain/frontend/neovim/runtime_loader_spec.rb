@@ -207,7 +207,7 @@ RSpec.describe Lain::Frontend::Neovim::RuntimeLoader do
       result
     end
 
-    let(:frontend) { Lain::Frontend::Neovim.new(channel: Lain::Channel.new, socket_path: @socket) }
+    let(:frontend) { Lain::Frontend::Neovim.new(forks: no_forks, channel: Lain::Channel.new, socket_path: @socket) }
 
     # One export per module that publishes one, so a module dropped from the glob
     # fails HERE by name rather than as a mystery somewhere downstream.

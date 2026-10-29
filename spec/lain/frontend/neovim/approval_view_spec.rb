@@ -1095,7 +1095,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     def rendered_fold_state(commands: [long_command], &probe)
       @release = Thread::Queue.new
       screen = nil
-      frontend = Lain::Frontend::Neovim.new(channel: Lain::Channel.new, socket_path: @socket)
+      frontend = Lain::Frontend::Neovim.new(forks: no_forks, channel: Lain::Channel.new, socket_path: @socket)
       # `Neovim#run` answers its own teardown, never the block's value, so the
       # reading is carried out rather than returned.
       frontend.run { |handle| screen = read_screen(handle, commands, &probe) }
@@ -1153,7 +1153,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       @release = Thread::Queue.new
       @empty = Thread::Queue.new
       surface = nil
-      frontend = Lain::Frontend::Neovim.new(channel: Lain::Channel.new, socket_path: @socket)
+      frontend = Lain::Frontend::Neovim.new(forks: no_forks, channel: Lain::Channel.new, socket_path: @socket)
       frontend.run { |handle| surface = read_windows(handle, &setup) }
       surface
     end

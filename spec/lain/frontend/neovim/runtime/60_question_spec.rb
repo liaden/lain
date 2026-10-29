@@ -34,7 +34,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # RPC thread and read from this one.
     let(:notices) { Thread::Queue.new }
     let(:frontend) do
-      described_class.new(channel:, socket_path: @socket, question_notify: notices.method(:push))
+      described_class.new(forks: no_forks, channel:, socket_path: @socket, question_notify: notices.method(:push))
     end
 
     # The document as the buffer holds it: one Array element per line, no

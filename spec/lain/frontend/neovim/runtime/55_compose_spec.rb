@@ -11,7 +11,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
   describe "the compose round trip" do
     let(:compose) { frontend.compose }
-    let(:frontend) { described_class.new(channel:, socket_path: @socket) }
+    let(:frontend) { described_class.new(forks: no_forks, channel:, socket_path: @socket) }
 
     it "opens the current draft in a writable, named lain://compose buffer" do
       frontend.run do
@@ -68,7 +68,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # and the text was simply gone. The buffer must stay dirty when the write
     # fails.
     it "leaves the buffer dirty when the write cannot reach lain" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
       frontend.run do
         frontend.compose.open("draft")
         wait_until_editor { compose_state }
@@ -90,7 +90,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # quitting a window a hide, not an abandon. My first comment here said :q
     # was refused; it is not.
     it "refuses to discard an unsaved compose buffer, though :q still hides it" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
       frontend.run do
         frontend.compose.open("draft")
         wait_until_editor { compose_state }

@@ -1035,7 +1035,7 @@ end
 # `set_review`/`open_changeset`/`set_thread` arrives in the sidebar, diff and
 # thread rails, and a spec that needed it would be reaching into their scope.
 RSpec.describe Lain::Frontend::Neovim, "the review write seam" do
-  subject(:frontend) { described_class.new(channel: Lain::Channel.new, socket_path: "/nonexistent.sock") }
+  subject(:frontend) { described_class.new(forks: no_forks, channel: Lain::Channel.new, socket_path: "/nonexistent.sock") }
 
   let(:review) { RecordingReviewWrites.new }
   let(:session) { instance_double(Neovim::Session, respond: nil) }

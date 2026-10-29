@@ -12,7 +12,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     let(:turns) { ["user: hi", "assistant: hello there", "user: and then?", "assistant: done"] }
 
     it "installs the foldexpr surface on record-shaped lain buffers" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         wait_until_editor { buffer_lines("lain://timeline").any? }
@@ -33,7 +33,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # replace (panel probe I), so preservation -- not re-defaulting -- is what
     # a render must exhibit.
     it "defaults once at display, then preserves fold state across re-renders" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         wait_until_editor { buffer_lines("lain://timeline").any? }
@@ -53,7 +53,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # Panel probe H: a turn the human opened by hand must survive the agent's
     # next render -- the stomp this fix round exists to kill.
     it "keeps a manually opened turn open across a re-render" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         wait_until_editor { buffer_lines("lain://timeline").any? }
@@ -72,7 +72,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # Probe H's zR case: opening everything is a foldlevel statement, and a
     # render must not write foldlevel back down.
     it "lets zR stick across renders" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         wait_until_editor { buffer_lines("lain://timeline").any? }
@@ -89,7 +89,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     it "groups journal lines by attribution run and preserves runs across appends" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         channel.push(Lain::Telemetry::ToolOutput.new(tool_use_id: "t1", stream: :stdout, bytes: "a\nb"))
@@ -113,7 +113,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # VARIABLES, so the new window carries lain's foldexpr with no saved
     # prior options -- an orphaned surface that must self-heal on leave.
     it "restores the window's prior fold options when it leaves the lain view, split windows included" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         wait_until_editor { buffer_lines("lain://timeline").any? }
@@ -138,7 +138,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # vim.g.lain_fold mid-session restores the window and drops lain's folds
     # on the next fold event, not merely at the next fresh display.
     it "un-installs live when vim.g.lain_fold flips to false mid-session" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         wait_until_editor { buffer_lines("lain://timeline").any? }
@@ -155,7 +155,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     it "stays hands-off when vim.g.lain_fold is false" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         wait_until_editor { buffer_lines("lain://timeline").any? }

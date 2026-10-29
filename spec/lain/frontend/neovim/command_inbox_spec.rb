@@ -10,7 +10,7 @@
 RSpec.describe Lain::Frontend::Neovim::CommandInbox do
   subject(:inbox) { frontend.command_inbox }
 
-  let(:frontend) { Lain::Frontend::Neovim.new(channel: Lain::Channel.new, socket_path: "/nonexistent.sock") }
+  let(:frontend) { Lain::Frontend::Neovim.new(forks: no_forks, channel: Lain::Channel.new, socket_path: "/nonexistent.sock") }
 
   it "says an editor is attached, which is the whole of the question a consumer asks" do
     expect(inbox).to be_attached

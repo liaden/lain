@@ -25,7 +25,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   end
 
   it "opens research.md read-only in a split while the cursor stays in the human's buffer" do
-    frontend = described_class.new(channel:, socket_path: @socket)
+    frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
     frontend.run do
       wait_until_editor { buffer_lines("lain://status").any? }
@@ -42,7 +42,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   end
 
   it "refreshes the same buffer in place on a second write without opening another window" do
-    frontend = described_class.new(channel:, socket_path: @socket)
+    frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
     frontend.run do
       wait_until_editor { buffer_lines("lain://status").any? }
@@ -59,7 +59,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   end
 
   it "names an issue plan by its home path" do
-    frontend = described_class.new(channel:, socket_path: @socket)
+    frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
     frontend.run do
       wait_until_editor { buffer_lines("lain://status").any? }

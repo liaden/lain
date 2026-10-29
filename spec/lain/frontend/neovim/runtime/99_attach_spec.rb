@@ -16,7 +16,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   describe "user autocmds get a stable surface" do
     it "fires User LainAttach and User LainRender with buffer names in the payload" do
       install_recorder
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         wait_until_editor { seen["LainAttach"].any? && seen["LainRender"].any? }
@@ -36,7 +36,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     it "sets b:lain_view on every lain:// buffer" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         views = wait_until_editor do
@@ -72,7 +72,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         })
         return true
       LUA
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         # The four "lain"-filetype buffers: journal, timeline, workspace, inbox.

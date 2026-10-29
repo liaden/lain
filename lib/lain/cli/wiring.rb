@@ -470,21 +470,9 @@ module Lain
         Lain::Frontend::InputPane::LAYERS.select { |layer| in_force.include?(layer) }
       end
 
-      # The first line at which the run HAS a Store, so it is where the HUD's
-      # feed is given one: {ChatLaunch} builds that feed before Wiring exists,
-      # and until it is bound its inbox_count retires nothing and only climbs.
-      #
-      # Named for the BINDING rather than the value, and private, because it is a
-      # command that happens to answer -- a query name would hide the write.
-      def bind_hud_store(agent) = agent.timeline.store.tap { |store| @status_feed.bind_store(store) }
-
-      # What the Repl builds its editor from, as the one set it is: the views
-      # to attach, the Store and Session its buffers read, the epic
-      # lain://status draws, and where a written epic document is read back.
-      # {ReviewSeams}' splatted-hash shape, for the same reason -- the keywords
-      # travel together.
       def editor_seams(nvim, agent, session)
-        { nvim:, store: bind_hud_store(agent), session:, epic: epic_status, epic_docs: epic_mount.homes }
+        EditorSeams.new(nvim:, agent:, session:, epic: epic_status, mount: epic_mount, feed: @status_feed,
+                        forks: Sessions::Forks.source(chronicle, paths: @paths, project:)).to_h
       end
 
       # The backend a run leases every worker's WorkerEnv from -- the actors a

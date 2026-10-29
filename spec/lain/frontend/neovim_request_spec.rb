@@ -86,7 +86,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
   describe "lain://request is the one editable view" do
     it "renders the pending request as editable pretty JSON" do
-      frontend = described_class.new(channel:, socket_path: @socket, journal:)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket, journal:)
 
       frontend.run do
         push_request(payload)
@@ -100,7 +100,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     it "exists at attach as an editable placeholder whose resend is a no-op" do
-      frontend = described_class.new(channel:, socket_path: @socket, journal:)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket, journal:)
 
       frontend.run do
         wait_until { buffer_lines("lain://request") == ["(no request yet)"] }
@@ -122,7 +122,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
   describe "edit, resend, see what changed (4-2.3)" do
     it "dispatches the edited request and shows exactly the change in lain://diff" do
-      frontend = described_class.new(channel:, socket_path: @socket, journal:)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket, journal:)
 
       frontend.run do
         push_request(payload)
@@ -155,7 +155,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
   describe "an unedited resend is a no-op diff (4-2.3)" do
     it "leaves the diff view empty when the buffer was not edited" do
-      frontend = described_class.new(channel:, socket_path: @socket, journal:)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket, journal:)
 
       frontend.run do
         push_request(payload)
@@ -187,7 +187,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       exploding = Class.new do
         def <<(_event) = raise "journal broke"
       end.new
-      frontend = described_class.new(channel:, socket_path: @socket, journal: exploding)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket, journal: exploding)
 
       # The death-driven close must be observable INSIDE the block -- teardown
       # closes the channel too, so only an in-block observation proves the
@@ -252,7 +252,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       provider = Lain::Provider::Mock.new(responses: [text_response("first"), text_response("re-answered")])
       agent = build_agent(provider)
       bridge = Lain::CLI::ResendBridge.new(agent:, journal:)
-      frontend = described_class.new(channel:, socket_path: @socket, journal:, resend_bridge: bridge)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket, journal:, resend_bridge: bridge)
 
       frontend.run do
         agent.ask("hi")
@@ -301,7 +301,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       provider = holding.new(responses: [text_response("held answer")])
       agent = build_agent(provider)
       bridge = Lain::CLI::ResendBridge.new(agent:, journal:)
-      frontend = described_class.new(channel:, socket_path: @socket, journal:, resend_bridge: bridge)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket, journal:, resend_bridge: bridge)
 
       frontend.run do
         asker = Thread.new { agent.ask("hi") }
@@ -347,7 +347,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         gate.pop
         "resend dispatched: held"
       end
-      frontend = described_class.new(channel:, socket_path: @socket, journal:, resend_bridge: blocking)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket, journal:, resend_bridge: blocking)
 
       returned = false
       stranded = Thread::Queue.new
@@ -381,7 +381,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
                                    .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
                                    .commit(role: :assistant, content: [{ "type" => "text", "text" => "hello" }])
       head = timeline.head_digest
-      frontend = described_class.new(channel:, socket_path: @socket, store:, journal:)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket, store:, journal:)
 
       frontend.run do
         channel.push(Lain::Telemetry::TurnUsage.new(digest: head, model: "m", stop_reason: :end_turn, usage: {}))

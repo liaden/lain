@@ -2865,7 +2865,7 @@ RSpec.describe Lain::CLI::HumanReplies do
     let(:nvim) { RecordingQuestionEditor.new }
     let(:question_view) { Lain::Frontend::Neovim::QuestionView.new(rpc: nvim) }
     let(:session) { Lain::Session.new }
-    let(:views) { Lain::Frontend::Neovim::Buffers.new(store:, session:, questions: question_view) }
+    let(:views) { Lain::Frontend::Neovim::Buffers.new(store:, session:, questions: question_view, forks: -> { {} }) }
     # Every rendering the inbox has produced, newest last: what the human would
     # be looking at, which is how "the new set is listed" is asserted without
     # reaching into the view.
@@ -3074,11 +3074,13 @@ RSpec.describe Lain::CLI::HumanReplies do
     # recording `/rewind`, so what is asserted is the line the gesture sends
     # down the same registry a typed `/rewind <digest>` goes through.
     describe "lain://tree's gestures" do
-      let(:tree) { Lain::Frontend::Neovim::TreeView.new(store:, session:) }
+      let(:children) { {} }
+      let(:tree) { Lain::Frontend::Neovim::TreeView.new(store:, session:, forks: -> { children }) }
       let(:tree_views) do
         Struct.new(:tree) do
           def tree_pick(line, generation:) = tree.pick(line, generation:)
           def tree_label(line, text, generation:) = tree.label(line, text, generation:)
+          def tree_refresh = tree.refresh
         end.new(tree)
       end
       let(:rewind) { RecordingCommand.new("rewind", returns: "rewound 2 turns") }
@@ -3156,8 +3158,29 @@ RSpec.describe Lain::CLI::HumanReplies do
         expect(session.labels).to eq(old.head_digest => "idea 2")
       end
 
+      it "redraws the tree with a fork a child file created after it opened, on refresh" do
+        children[two.head_digest] = ["child.ndjson"]
+        editor.push(["tree_refresh", []])
+
+        with_surfaces { editor.posts.any? }
+
+        name, lines, generation = editor.posts.last
+        expect([name, generation]).to eq(["lain://tree", tree.generation])
+        expect(lines).to include("  fork or resume: child.ndjson")
+      end
+
+      it "posts nothing on a refresh that found nothing new" do
+        editor.push(["tree_refresh", []])
+        editor.push(["tree_rewind", [9, tree.generation]])
+
+        with_surfaces { editor.refusals.any? }
+
+        expect(editor.posts).to be_empty
+      end
+
       it "answers both gestures honestly with no editor bound at all" do
         replies.bind_editor(nil)
+        expect { replies.send(:routes)["tree_refresh"].call([]) }.not_to raise_error
 
         expect { replies.send(:routes)["tree_rewind"].call([1, 1]) }.not_to raise_error
         expect { replies.send(:routes)["tree_label"].call([1, "x", 1]) }.not_to raise_error

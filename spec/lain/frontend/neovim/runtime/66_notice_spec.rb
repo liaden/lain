@@ -37,7 +37,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   end
 
   it "echoes the sentence prefixed, in the Normal highlight, and records it" do
-    frontend = described_class.new(channel:, socket_path: @socket)
+    frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
     frontend.run do
       attach_ui(columns: 110)
@@ -51,7 +51,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   end
 
   it "does not raise a hit-enter prompt for a sentence wider than the message area" do
-    frontend = described_class.new(channel:, socket_path: @socket)
+    frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
     frontend.run do
       attach_ui(columns: 60)
@@ -61,7 +61,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   end
 
   it "fits a wide sentence to the message area, keeping both ends" do
-    frontend = described_class.new(channel:, socket_path: @socket)
+    frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
     frontend.run do
       attach_ui(columns: 60)

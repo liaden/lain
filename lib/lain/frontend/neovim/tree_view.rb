@@ -19,6 +19,7 @@ module Lain
         HEAD = "  [head]"
         LABEL = "  # "
         INDENT = "  "
+        FORK = "fork or resume: "
         MISSING = "(turn not in store)"
         ABANDONED_REFUSAL = "that turn is on an abandoned branch; the head cannot move there"
         STALE = "the tree changed since it was drawn; look again and retry"
@@ -28,6 +29,9 @@ module Lain
         NEWLINES = Buffers::TimelineView::NEWLINES
 
         Node = Data.define(:parent, :text)
+
+        # What a refresh redrew: `lines` is nil when nothing moved.
+        Refreshed = Data.define(:lines, :generation)
 
         # What <CR> may do with a line: `digest` is nil exactly when the line is refused.
         Pick = Data.define(:digest, :report) do
@@ -39,9 +43,15 @@ module Lain
           def labeled? = !digest.nil?
         end
 
-        def initialize(store:, session:)
+        # @param store [Ext::Store] where the turns are read
+        # @param session [Session] holds the labels
+        # @param forks [#call] answers `{digest => [child file name]}`; read when the buffer is first drawn
+        #   and on {#refresh}, never per event, because it scans a directory
+        def initialize(store:, session:, forks:)
           @store = store
           @session = session
+          @forks = forks
+          @fork_files = {}.freeze
           @nodes = {}
           @children = Hash.new { |hash, key| hash[key] = [] }
           @head = nil
@@ -60,7 +70,13 @@ module Lain
         def generation = @slot.synchronize { @generation }
 
         # @return [Array<String>]
-        def initial = @shown = EMPTY.dup
+        def initial
+          @fork_files = @forks.call
+          @shown = EMPTY.dup
+        end
+
+        # @return [Refreshed]
+        def refresh = @slot.synchronize { redraw_forks }
 
         # @param event [Object] one Channel event
         # @return [Array<String>, nil] the whole buffer, or nil when it did not move
@@ -77,6 +93,12 @@ module Lain
         def label(line, text, generation:) = @slot.synchronize { labelled_at(line, text, generation) }
 
         private
+
+        def redraw_forks
+          @fork_files = @forks.call
+          drawn = redraw
+          Refreshed.new(lines: drawn, generation: @generation)
+        end
 
         def updated(event)
           moved = absorb(event)
@@ -163,10 +185,15 @@ module Lain
         def lines
           @live = Enumerator.produce(@head) { |digest| @nodes[digest]&.parent }.take_while(&:itself).to_set
           rows = walk
-          digests = rows.map(&:first).freeze
+          drawn = rows.flat_map { |digest, depth| [[digest, line(digest, depth)], *fork_rows(digest, depth)] }
+          digests = drawn.map(&:first).freeze
           @generation += 1 unless digests == @line_digests
           @line_digests = digests
-          rows.empty? ? EMPTY.dup : rows.map { |digest, depth| line(digest, depth) }
+          drawn.empty? ? EMPTY.dup : drawn.map(&:last)
+        end
+
+        def fork_rows(digest, depth)
+          Array(@fork_files[digest]).map { |file| [nil, "#{INDENT * (depth + 1)}#{FORK}#{file}"] }
         end
 
         # Preorder without recursion: a long chain is thousands deep. Off-trunk children come first and

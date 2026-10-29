@@ -4,7 +4,8 @@
 RSpec.describe Lain::Frontend::Neovim::TreeView do
   let(:store) { Lain::Dag::Factory.store }
   let(:session) { Lain::Session.new }
-  let(:view) { described_class.new(store:, session:) }
+  let(:forks) { -> { {} } }
+  let(:view) { described_class.new(store:, session:, forks:) }
   # Four turns, a rewind to the second, then two others.
   let(:first) { say(Lain::Dag::Factory.timeline(store:), :user, "one") }
   let(:second) { say(first, :assistant, "two") }
@@ -83,6 +84,60 @@ RSpec.describe Lain::Frontend::Neovim::TreeView do
     event = Lain::Telemetry::TurnUsage.new(digest: "blake3:nope", model: "m", stop_reason: :end_turn, usage: {})
 
     expect(view.update(event)).to eq(["(turn not in store)  [head]"])
+  end
+
+  describe "forks" do
+    let(:scans) { [] }
+    let(:found) { { second.head_digest => ["child.ndjson"] } }
+    let(:forks) { -> { scans << 1 and found } }
+
+    it "draws a line beneath the fork point naming the child file" do
+      view.initial
+
+      expect(view.update(usage(third))).to eq(["user: one", "assistant: two",
+                                               "  fork or resume: child.ndjson", "user: three  [head]"])
+    end
+
+    it "indents the line one step past its turn" do
+      view.initial
+
+      expect(view.update(usage(second)).last).to eq("  fork or resume: child.ndjson")
+    end
+
+    it "names no turn on a fork line, so a rewind or label there is refused" do
+      view.initial
+      view.update(usage(third))
+
+      expect([3, 4].map { |line| view.digest_at(line) }).to eq([nil, third.head_digest])
+    end
+
+    it "scans at the buffer's first draw and on refresh, never on a turn" do
+      view.initial
+      view.update(usage(second))
+      view.update(usage(third))
+
+      expect(scans.size).to eq(1)
+    end
+
+    it "shows a child created after the first draw once refreshed" do
+      view.initial
+      view.update(usage(third))
+      scans.clear
+      found.replace(first.head_digest => ["late.ndjson"])
+
+      refreshed = view.refresh
+
+      expect(refreshed.lines).to eq(["user: one", "  fork or resume: late.ndjson", "assistant: two",
+                                     "user: three  [head]"])
+      expect([scans.size, refreshed.generation]).to eq([1, view.generation])
+    end
+
+    it "answers no lines when the refresh found nothing new" do
+      view.initial
+      view.update(usage(third))
+
+      expect(view.refresh.lines).to be_nil
+    end
   end
 
   describe "#digest_at" do

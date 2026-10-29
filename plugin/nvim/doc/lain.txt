@@ -349,7 +349,7 @@ your own `:highlight link` overrides any of them without a fight:
 
 Defined by the runtime at attach (they do not exist before it): `:LainSend`,
 `:LainResend`, `:LainContext`, `:LainReply {answer}`, `:LainOpen`, `:LainPin`,
-`:LainTreeRewind`, `:LainTreeLabel`, `:LainVersion`, `:LainReviewOpen`, `:LainReviewMark {state}`,
+`:LainTreeRewind`, `:LainTreeLabel`, `:LainTreeRefresh`, `:LainVersion`, `:LainReviewOpen`, `:LainReviewMark {state}`,
 `:LainReviewVerdict {verdict}`, `:LainReviewClose`, `:LainApprove`,
 `:LainDeny [{reason}]`, `:LainMode {level}`, `:LainSurveyAdd`
 (defined, but refuses every time -- NOT YET AVAILABLE, see |:LainSurveyAdd|

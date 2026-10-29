@@ -91,7 +91,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
   describe "journal events render into a buffer" do
     it "renders a pushed Telemetry event into the lain:// buffer, agent-free" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do |handle|
         channel.push(Lain::Telemetry::ToolOutput.new(tool_use_id: "t1", stream: :stdout, bytes: "hello world"))
@@ -115,7 +115,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # (the example after pins that the placeholder never survives real
     # content -- see 40_journal.lua's buffer-local flag).
     it "creates lain://journal holding its idle placeholder at attach, before any event" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         wait_until { journal_lines == ["(no streamed tool output yet)"] }
@@ -128,7 +128,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # and the first render replaces the at-rest placeholder rather than
     # appending below it, so the journal never leads with a stale line.
     it "preserves interior blank lines and never leads the journal with the idle placeholder" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         channel.push(Lain::Telemetry::ToolOutput.new(tool_use_id: "t9", stream: :stdout, bytes: "a\n\n\nc\n"))
@@ -146,7 +146,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         config = Lain::Config.new(epics: Lain::Config::Epics.new(home: :xdg))
         homes = Lain::CLI::EpicMount::Homes.new(journal: [], root: File.join(tmp, "project"), paths:, config:)
         homes.for("frugirl").research.write("# Research\n")
-        frontend = described_class.new(channel:, socket_path: @socket, epic_docs: homes)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket, epic_docs: homes)
 
         frontend.run do
           channel.push(Lain::Epic::DocWritten.new(epic_slug: "frugirl", kind: "research", path: "research.md",
@@ -166,7 +166,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # Runs frontend.run on its own thread so a regression is a bounded join
     # timeout, not a hung suite.
     it "returns from run within a bounded time when nvim dies under a flood of renders" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       runner = Thread.new do
         frontend.run do
@@ -201,7 +201,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # thread (fix round): exe/lain forwards e.message verbatim, so a bare
     # "Broken pipe" with no source would be all the user ever saw.
     it "propagates RPC-thread death loudly, wrapped as a Lain::Error, and closes the channel" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       error = begin
         frontend.run do
@@ -236,7 +236,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # see {#malformed_output} -- rather than a stubbed view: it makes the same
     # render raise the same NoMethodError, and it needs no reach-in to do it.
     it "records an unexpected drain exception, closes the channel, and re-raises it after teardown" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       error = begin
         frontend.run do
@@ -258,7 +258,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # itself too -- its native failure (a raising journal write) is otherwise
     # indistinguishable from a drain death in the one message the exe shows.
     it "labels a resend-worker death with its source" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
       request_buffer = frontend.instance_variable_get(:@surfaces).request_buffer
       allow(request_buffer).to receive(:resend).and_raise(RuntimeError, "journal torn")
 
@@ -285,7 +285,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # something worth pinning) so a regression here fails for exactly the
     # reason the card names, not an incidental one.
     it "still stops the RPC thread when the drainer already died" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
       rpc_thread = nil
 
       begin
@@ -308,7 +308,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # recorded death is asserted through the ivar (like @rpc's thread above):
     # observability here means "not silently dropped", not a public reader.
     it "propagates the block's own exception unswapped, and still records the drainer's death" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
       block_error = Class.new(StandardError)
 
       error = begin
@@ -337,8 +337,8 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # second injection lands on top of a whole live runtime.
   describe "re-attach is idempotent" do
     it "defines namespaced :Lain* commands once and records the gem version" do
-      described_class.new(channel: Lain::Channel.new, socket_path: @socket).run { nil }
-      second = described_class.new(channel: Lain::Channel.new, socket_path: @socket)
+      described_class.new(forks: no_forks, channel: Lain::Channel.new, socket_path: @socket).run { nil }
+      second = described_class.new(forks: no_forks, channel: Lain::Channel.new, socket_path: @socket)
 
       # No `expect { }.not_to raise_error` around the block: `aggregate_failures`
       # is on for every example, so a failing inner expect never rises into such
@@ -352,7 +352,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     it "surfaces the gem version through :LainVersion" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         inspector.command("LainVersion")
@@ -367,10 +367,10 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # apart by construction, since the gem version is not among the bytes it
     # covers, and this is that property said out loud.
     it "does not refuse on a gem version bump alone" do
-      first = described_class.new(channel:, socket_path: @socket, version: "1.1.1")
+      first = described_class.new(forks: no_forks, channel:, socket_path: @socket, version: "1.1.1")
       first.run { wait_until { inspector.get_var("lain_rpc_version") == described_class.protocol } }
 
-      second = described_class.new(channel: Lain::Channel.new, socket_path: @socket, version: "9.9.9")
+      second = described_class.new(forks: no_forks, channel: Lain::Channel.new, socket_path: @socket, version: "9.9.9")
       second.run do
         inspector.command("LainVersion")
         expect(wait_until { messages.include?("9.9.9") }).to be(true)
@@ -383,13 +383,14 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # question; a refusal has to answer it about a real editor holding a real
     # older runtime, which is the only state that reaches the refusal at all.
     it "leaves the editor alive and its older runtime intact when it refuses" do
-      described_class.new(channel: Lain::Channel.new, socket_path: @socket, protocol: "OLDER-RUNTIME").run do
+      described_class.new(forks: no_forks, channel: Lain::Channel.new, socket_path: @socket,
+                          protocol: "OLDER-RUNTIME").run do
         wait_until do
           inspector.exec_lua("return type(_G.__lain) == 'table' and _G.__lain.protocol", []) == "OLDER-RUNTIME"
         end
       end
 
-      expect { described_class.new(channel:, socket_path: @socket).run { nil } }
+      expect { described_class.new(forks: no_forks, channel:, socket_path: @socket).run { nil } }
         .to raise_error(Lain::Frontend::Neovim::RuntimeStale)
       expect(inspector.evaluate("1 + 1")).to eq(2)
       expect(inspector.exec_lua("return _G.__lain.protocol", [])).to eq("OLDER-RUNTIME")
@@ -399,7 +400,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
   describe "inbound requests do not deadlock" do
     it "enqueues and acks a :Lain* command without freezing the editor" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do |handle|
         # Give the outbound render path live work so the inbound invoke races an
@@ -421,7 +422,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # {Buffers} and is pinned by the default-suite group at the bottom of this file.
   describe "the pin gesture on lain://timeline" do
     it "enqueues a pin command naming the cursor's line, buffer-locally" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do |handle|
         wait_until { bufnr("lain://timeline") != -1 }
@@ -444,7 +445,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # its own. Asserted without a sleep: the journal invocation is followed by a
     # real one, and the FIRST thing to reach the inbox must be the real one.
     it "refuses to pin from a buffer that is not the timeline, and says so" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do |handle|
         wait_until { bufnr("lain://timeline") != -1 && bufnr("lain://journal") != -1 }
@@ -484,7 +485,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     it "refuses instead of emitting survey_add" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
       path = real_file
 
       frontend.run do |handle|
@@ -502,7 +503,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # entry, so a refusal must not wedge the connection the way a raise
     # escaping a `define`d callback would (`refusal_delivery_discipline_spec.rb`).
     it "keeps serving requests after refusing, with no request ever reaching the router" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
       path = real_file
 
       frontend.run do |handle|
@@ -523,7 +524,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # above is the shape this follows. Both presses refuse; the point is that
     # the SENTENCES differ, so a human can tell which reason they hit.
     it "keeps the wrong-buffer refusal distinct from the not-wired refusal" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
       path = real_file
 
       frontend.run do |handle|
@@ -548,7 +549,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # order a human's init.lua puts it in.
     it "binds the gesture under vim.g.lain_prefix when the human moved it" do
       inspector.exec_lua("vim.g.lain_prefix = '<leader>z'", [])
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
       path = real_file
 
       frontend.run do
@@ -573,12 +574,12 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # ENTERS INSERT MODE) then `a`. The next `feed` then types its keys into the
     # buffer as text, and the example fails somewhere else entirely.
     it "unbinds the previous lhs when a re-attach moves the prefix" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run { wait_until { bufnr("lain://timeline") != -1 } }
       inspector.exec_lua("vim.g.lain_prefix = '<leader>z'", [])
 
-      described_class.new(channel:, socket_path: @socket).run do
+      described_class.new(forks: no_forks, channel:, socket_path: @socket).run do
         wait_until { bufnr("lain://timeline") != -1 }
 
         expect(inspector.exec_lua("return vim.fn.maparg('\\\\Lsa', 'n')", [])).to eq("")
@@ -598,7 +599,7 @@ end
 RSpec.describe Lain::Frontend::Neovim::Buffers do
   let(:store) { Lain::Dag::Factory.store }
   let(:session) { Lain::Session.new }
-  let(:buffers) { described_class.new(store:, session:) }
+  let(:buffers) { described_class.new(store:, session:, forks: no_forks) }
 
   # Three turns, alternating roles, root first -- {Timeline#to_a}'s order and
   # therefore the rendered line order.
@@ -669,7 +670,7 @@ RSpec.describe Lain::Frontend::Neovim::Buffers do
     # Session#record_pin, which refuses a blank digest loudly.
     it "pins nothing and reports the failure" do
       timeline = timeline_of("first", "second")
-      detached = described_class.new(store: Lain::Dag::Factory.store, session:)
+      detached = described_class.new(store: Lain::Dag::Factory.store, session:, forks: no_forks)
       allow(session).to receive(:record_pin).and_call_original
 
       lines = render(detached, timeline)
@@ -727,7 +728,7 @@ end
 # socket, and {Neovim#initialize} never calls it, so building a frontend here
 # is instant and touches no editor.
 RSpec.describe Lain::Frontend::Neovim do
-  let(:frontend) { described_class.new(channel: Lain::Channel.new, socket_path: "/nonexistent") }
+  let(:frontend) { described_class.new(forks: no_forks, channel: Lain::Channel.new, socket_path: "/nonexistent") }
   let(:listener) { frontend.instance_variable_get(:@rpc).instance_variable_get(:@listener) }
 
   describe "the listener RpcThread was built with" do

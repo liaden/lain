@@ -27,7 +27,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # `:LainGhost` is the residue the refusal exists to warn about: a command this
     # runtime defines and ours does not, so re-injection cannot take it away.
     def install_stale_runtime(token: "OLD-RUNTIME-TOKEN")
-      described_class.new(channel: Lain::Channel.new, socket_path: @socket, protocol: token).run do
+      described_class.new(forks: no_forks, channel: Lain::Channel.new, socket_path: @socket, protocol: token).run do
         wait_until_editor { live_protocol == token }
         inspector.exec_lua("vim.api.nvim_create_user_command('LainGhost', function() end, {}); return true", [])
       end
@@ -51,7 +51,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # The token is DERIVED from the bytes injected, so "the two halves agree" is
     # not a thing anybody maintains -- it is the same expression twice.
     it "attaches to an editor holding no runtime, stamping it with the digest of what it injected" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         wait_until_editor { live_protocol == described_class.protocol }
@@ -66,7 +66,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     it "refuses an editor whose live runtime was injected from a different source" do
       stale = install_stale_runtime
 
-      expect { described_class.new(channel:, socket_path: @socket).run { nil } }
+      expect { described_class.new(forks: no_forks, channel:, socket_path: @socket).run { nil } }
         .to raise_error(Lain::Frontend::Neovim::RuntimeStale, /#{stale[0, 12]}/)
     end
 
@@ -76,7 +76,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     it "names the socket and the runtime this gem would have injected" do
       install_stale_runtime
 
-      expect { described_class.new(channel:, socket_path: @socket).run { nil } }
+      expect { described_class.new(forks: no_forks, channel:, socket_path: @socket).run { nil } }
         .to raise_error(Lain::Frontend::Neovim::RuntimeStale,
                         /#{Regexp.escape(@socket)}.*#{described_class.protocol[0, 12]}/m)
     end
@@ -88,7 +88,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     it "does not refuse on a leftover stamp with no runtime behind it" do
       inspector.exec_lua("vim.g.lain_rpc_version = ('0'):rep(64); return true", [])
 
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
       frontend.run do |handle|
         inspector.command("LainReply over the litter")
         expect(Timeout.timeout(5) { handle.command_inbox.pop }).to eq(["reply", ["over the litter"]])
@@ -108,11 +108,11 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     it "announces once, leaves the published stamp alone, and attaches on the re-run" do
       stale = install_stale_runtime
 
-      expect { described_class.new(channel: Lain::Channel.new, socket_path: @socket).run { nil } }
+      expect { described_class.new(forks: no_forks, channel: Lain::Channel.new, socket_path: @socket).run { nil } }
         .to raise_error(Lain::Frontend::Neovim::RuntimeStale)
       expect(injected_stamp).to eq(stale)
 
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
       frontend.run do |handle|
         inspector.command("LainReply reclaimed")
         expect(Timeout.timeout(5) { handle.command_inbox.pop }).to eq(["reply", ["reclaimed"]])
@@ -130,9 +130,9 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       install_stale_runtime
       expect(ghost?).to be(true)
 
-      expect { described_class.new(channel: Lain::Channel.new, socket_path: @socket).run { nil } }
+      expect { described_class.new(forks: no_forks, channel: Lain::Channel.new, socket_path: @socket).run { nil } }
         .to raise_error(Lain::Frontend::Neovim::RuntimeStale)
-      described_class.new(channel:, socket_path: @socket).run { wait_until_editor { owner_channel } }
+      described_class.new(forks: no_forks, channel:, socket_path: @socket).run { wait_until_editor { owner_channel } }
 
       expect(ghost?).to be(true)
     end
@@ -145,20 +145,24 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     it "announces again the next time the runtime differs, rather than staying satisfied" do
       install_stale_runtime
 
-      expect { described_class.new(channel: Lain::Channel.new, socket_path: @socket).run { nil } }
+      expect { described_class.new(forks: no_forks, channel: Lain::Channel.new, socket_path: @socket).run { nil } }
         .to raise_error(Lain::Frontend::Neovim::RuntimeStale)
-      described_class.new(channel: Lain::Channel.new, socket_path: @socket).run { wait_until_editor { owner_channel } }
+      described_class.new(forks: no_forks, channel: Lain::Channel.new, socket_path: @socket).run { wait_until_editor { owner_channel } }
 
-      expect { described_class.new(channel:, socket_path: @socket, protocol: "A-THIRD-RUNTIME").run { nil } }
+      expect do
+        described_class.new(forks: no_forks, channel:, socket_path: @socket, protocol: "A-THIRD-RUNTIME").run do
+          nil
+        end
+      end
         .to raise_error(Lain::Frontend::Neovim::RuntimeStale, /#{described_class.protocol[0, 12]}/)
     end
 
     # The ordinary case -- the human quits lain and starts another one in the same
     # editor -- and it must cost nothing at all.
     it "attaches over a runtime injected from the SAME source, saying nothing" do
-      described_class.new(channel: Lain::Channel.new, socket_path: @socket).run { wait_until_editor { owner_channel } }
+      described_class.new(forks: no_forks, channel: Lain::Channel.new, socket_path: @socket).run { wait_until_editor { owner_channel } }
 
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
       frontend.run do |handle|
         inspector.command("LainReply same source")
         expect(Timeout.timeout(5) { handle.command_inbox.pop }).to eq(["reply", ["same source"]])
@@ -169,12 +173,12 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # lain's editor must be left exactly as it was found, and the stale check writes
     # a flag, which is still a write.
     it "refuses a live owner by channel, whatever the runtimes say" do
-      first = described_class.new(channel:, socket_path: @socket)
+      first = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       first.run do
         wait_until_editor { owner_channel }
 
-        expect { described_class.new(channel: Lain::Channel.new, socket_path: @socket, protocol: "OTHER").run { nil } }
+        expect { described_class.new(forks: no_forks, channel: Lain::Channel.new, socket_path: @socket, protocol: "OTHER").run { nil } }
           .to raise_error(Lain::Frontend::Neovim::SocketOwned)
         expect(live_protocol).to eq(described_class.protocol)
       end
@@ -195,7 +199,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # can see it.
   describe "one lain per editor" do
     it "refuses a second attach by name, and the first lain's replies keep arriving" do
-      first = described_class.new(channel:, socket_path: @socket)
+      first = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       first.run do |handle|
         wait_until_editor { owner_channel }
@@ -213,7 +217,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # marker still names the first lain, so nothing repointed, and the chunk
     # never reached the module that would have.
     it "leaves the owner's marker and its rendered views exactly as they were" do
-      first = described_class.new(channel:, socket_path: @socket)
+      first = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       first.run do
         owner = wait_until_editor { owner_channel }
@@ -235,7 +239,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     it "attaches over a marker left by a lain that has gone away" do
       inspector.exec_lua("_G.__lain = { channel = 9999 }; return true", [])
 
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
       frontend.run do |handle|
         inspector.command("LainReply reclaimed")
         expect(Timeout.timeout(5) { handle.command_inbox.pop }).to eq(["reply", ["reclaimed"]])
@@ -249,7 +253,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     it "attaches over a runtime that predates the ownership marker" do
       inspector.exec_lua("_G.__lain = { render = function() end }; return true", [])
 
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
       frontend.run { wait_until_editor { owner_channel } }
     end
 
@@ -257,9 +261,9 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # human quits lain and starts another one in the same editor. The first
     # lain's channel dies with its socket, so the second is not a second at all.
     it "attaches again once the lain that owned the editor has exited" do
-      described_class.new(channel: Lain::Channel.new, socket_path: @socket).run { wait_until_editor { owner_channel } }
+      described_class.new(forks: no_forks, channel: Lain::Channel.new, socket_path: @socket).run { wait_until_editor { owner_channel } }
 
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
       frontend.run do |handle|
         inspector.command("LainReply after the first quit")
         expect(Timeout.timeout(5) { handle.command_inbox.pop }).to eq(["reply", ["after the first quit"]])
@@ -270,7 +274,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # does the thing -- and the second time is the likelier one, since a human
     # who has just been refused tends to try again.
     it "refuses every further attach, not merely the first one after the owner" do
-      first = described_class.new(channel:, socket_path: @socket)
+      first = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       first.run do
         wait_until_editor { owner_channel }
@@ -293,7 +297,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # teardown closes the Channel it was built over, so sharing the `channel` let
   # would have the refused attach's teardown close the surviving lain's drain --
   # a second collision, inside the example testing the first.
-  def second_frontend = described_class.new(channel: Lain::Channel.new, socket_path: @socket)
+  def second_frontend = described_class.new(forks: no_forks, channel: Lain::Channel.new, socket_path: @socket)
 
   # The chunk nvim is actually sent. Read through the loader, never off runtime.lua,
   # which is only the chunk's HEAD and defines nothing.

@@ -12,7 +12,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
   describe "richer highlighting" do
     it "links all six documented lain* groups and defines their matches on lain buffers" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         wait_until_editor { buffer_lines("lain://timeline").any? }
@@ -36,7 +36,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # the runtime's defaults must never clobber it.
     it "yields to a user's pre-existing links for every group" do
       syntax_groups.each { |group| inspector.command("highlight link #{group} ErrorMsg") }
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         wait_until_editor { buffer_lines("lain://timeline").any? }

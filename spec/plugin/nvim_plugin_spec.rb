@@ -370,7 +370,7 @@ RSpec.describe "lain nvim plugin", :nvim do
       boot_nvim
       setup!
       channel = Lain::Channel.new
-      frontend = Lain::Frontend::Neovim.new(channel:, socket_path: deterministic_socket)
+      frontend = Lain::Frontend::Neovim.new(forks: no_forks, channel:, socket_path: deterministic_socket)
       frontend.run do
         wait_until do
           layout_views.none? { |name| lua("return vim.fn.bufnr(...)", name) == -1 }
@@ -402,7 +402,7 @@ RSpec.describe "lain nvim plugin", :nvim do
       inspector.command("LainStart") # armed BEFORE anything attaches
 
       channel = Lain::Channel.new
-      frontend = Lain::Frontend::Neovim.new(channel:, socket_path: deterministic_socket)
+      frontend = Lain::Frontend::Neovim.new(forks: no_forks, channel:, socket_path: deterministic_socket)
       frontend.run do
         shown = wait_until do
           names = lua(<<~LUA)
@@ -703,7 +703,7 @@ RSpec.describe "lain nvim plugin", :nvim do
     it "a bare nvim --listen attaches exactly as today" do
       boot_nvim(plugin: false)
       channel = Lain::Channel.new
-      frontend = Lain::Frontend::Neovim.new(channel:, socket_path: @control)
+      frontend = Lain::Frontend::Neovim.new(forks: no_forks, channel:, socket_path: @control)
       frontend.run do
         # The CONSTANT, not a literal: this example is about a bare nvim
         # attaching at all, and a hardcoded token turns every protocol bump

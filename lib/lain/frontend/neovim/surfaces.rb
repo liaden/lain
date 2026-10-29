@@ -40,6 +40,8 @@ module Lain
         # @param epic_docs [#for] the chat's epic homes, which {EpicDocView} reads a
         #   written document through; {EpicDocView::NoHomes} by default
         #
+        # @param forks [#call] the scan lain://tree draws fork lines from
+        #
         # The other three views are INJECTED and merely defaulted: `store:`,
         # `session:`, `journal:`, `questions:` and `epic:` exist only to build
         # those defaults.
@@ -51,13 +53,13 @@ module Lain
         # live attach assertion would still pass, because priming and
         # handing-over are different claims. Requiring it makes the mis-wire fail
         # at construction instead.
-        def initialize(rpc:, approval_view:, store: Buffers::DetachedStore.instance,
+        def initialize(rpc:, approval_view:, forks:, store: Buffers::DetachedStore.instance,
                        session: Session::Null.instance, journal: Channel::Null.instance,
                        questions: InboxView::Unwired, journal_view: JournalView.new, buffers: nil,
                        request_buffer: nil, epic: StatusView::Unmounted, epic_docs: EpicDocView::NoHomes)
           @rpc = rpc
           @journal_view = journal_view
-          @buffers = buffers || Buffers.new(store:, session:, questions:, epic:)
+          @buffers = buffers || Buffers.new(store:, session:, questions:, epic:, forks:)
           @request_buffer = request_buffer || RequestBuffer.new(journal:)
           @approval_view = approval_view
           @epic_doc_view = EpicDocView.new(homes: epic_docs)

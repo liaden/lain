@@ -201,7 +201,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     it "binds the note keys again on a row this round already opened" do
       Dir.mktmpdir("lain-review-tab") do |dir|
         write_round(dir)
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           survey(dir)
@@ -228,7 +228,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     it "leaves a file no row has opened out of the review, and says how to get back" do
       Dir.mktmpdir("lain-review-tab") do |dir|
         write_round(dir)
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           survey(dir)
@@ -254,7 +254,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     it "names a way back that works from the buffer the human landed in" do
       Dir.mktmpdir("lain-review-tab") do |dir|
         write_round(dir)
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           survey(dir)
@@ -276,7 +276,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     it "does not stamp a file the round has moved past in another tabpage" do
       Dir.mktmpdir("lain-review-tab") do |dir|
         write_round(dir)
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           survey(dir)
@@ -307,7 +307,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     it "gives the stamp back when the buffer leaves the review tabpage, and again when it returns" do
       Dir.mktmpdir("lain-review-tab") do |dir|
         write_round(dir)
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           survey(dir)
@@ -340,7 +340,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     it "keeps the claim while the review's tabpage is closed" do
       Dir.mktmpdir("lain-review-tab") do |dir|
         write_round(dir)
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           survey(dir)
@@ -364,7 +364,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     it "does not hand a later round a file the round before it opened" do
       Dir.mktmpdir("lain-review-tab") do |dir|
         write_round(dir)
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           survey(dir)
@@ -385,7 +385,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     it "forgets the thread anchors a settled round held" do
       Dir.mktmpdir("lain-review-tab") do |dir|
         write_round(dir)
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           survey(dir)
@@ -413,7 +413,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     it "hands back the stamp this round gave it, after the next row withdrew it" do
       Dir.mktmpdir("lain-review-tab") do |dir|
         write_round(dir)
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           survey(dir)
@@ -443,7 +443,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     it "lets a revisited row claim the review beside the pair being drawn" do
       Dir.mktmpdir("lain-review-tab") do |dir|
         write_round(dir)
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           survey(dir, %w[old new])
@@ -474,7 +474,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     it "stops handing stamps back once the round has settled" do
       Dir.mktmpdir("lain-review-tab") do |dir|
         write_round(dir)
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           survey(dir)

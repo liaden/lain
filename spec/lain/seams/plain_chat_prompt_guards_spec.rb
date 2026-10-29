@@ -167,7 +167,7 @@ module PlainChatPromptGuards
               end
             end
           end
-          repl.run(nvim: nil, store: nil, session: nil, first_prompt: first)
+          repl.run(forks: -> { {} }, nvim: nil, store: nil, session: nil, first_prompt: first)
         end
       end
     else

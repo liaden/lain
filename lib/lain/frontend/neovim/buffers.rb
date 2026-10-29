@@ -208,11 +208,12 @@ module Lain
         #   the consumer is wired -- invisible to a spec that injects `inbox:`
         #   ready-made.
         # @param epic [#lines] what lain://status draws ({StatusView})
-        def initialize(store: DetachedStore.instance, session: Session::Null.instance, inbox: nil, timeline: nil,
-                       questions: InboxView::Unwired, epic: StatusView::Unmounted)
+        # @param forks [#call] the directory scan {TreeView} reads its fork lines from
+        def initialize(forks:, store: DetachedStore.instance, session: Session::Null.instance, inbox: nil,
+                       timeline: nil, questions: InboxView::Unwired, epic: StatusView::Unmounted)
           @inbox = inbox || InboxView.new(store:, questions:)
           @timeline = timeline || TimelineView.new(store:, session:)
-          @tree = TreeView.new(store:, session:)
+          @tree = TreeView.new(store:, session:, forks:)
           @status = StatusView.new(epic:)
           @todos = TodoView.new(session:)
           @questions = questions
@@ -233,6 +234,9 @@ module Lain
 
         # See {TreeView#label}.
         def tree_label(line, text, generation:) = @tree.label(line, text, generation:)
+
+        # See {TreeView#refresh}.
+        def tree_refresh = @tree.refresh
 
         # See {InboxView#open} -- the `<CR>`/`r` gesture's Ruby end, delegated
         # here for {#digest_at}'s reason.

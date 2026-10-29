@@ -43,7 +43,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     let(:journal) { Lain::Journal.new(io: journal_io) }
 
     it "approves the parked call when the human presses y on its row" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do |handle|
         settled = with_parked_approval(handle) do
@@ -61,7 +61,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # and a DIFFERENT verdict reaching the gated fiber. A view that answered
     # `true` whatever was pressed passes the approve example alone.
     it "denies it when the human runs :LainDeny, so the two verdicts are not one gesture" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do |handle|
         settled = with_parked_approval(handle) do
@@ -77,7 +77,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     it "hands the model the words given after :LainDeny, in the refusal its tool result reads" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do |handle|
         told = with_parked_approval(handle, ask: method(:refusal_through_gate)) do
@@ -97,7 +97,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # gated call is still parked when the block ends, which is what
     # `:unsettled` means.
     it "answers nothing from a buffer that is not the approval list" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do |handle|
         settled = with_parked_approval(handle, grace: 1.5) do
@@ -119,7 +119,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     it "draws the list as a read-only lain view, stamped with the rendering and its row count" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do |handle|
         with_parked_approval(handle, grace: 0.1) do
@@ -150,7 +150,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # quadratic in a wrapped call's length) are derived. `call_for_row` below
     # is the lua consumer's own resolution, `calls[call_index[row]]`.
     it "carries the wrapped command unwrapped, with the rendered lines unchanged" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
       long_command = "x" * 200
       full_call = "bash(#{{ "command" => long_command }.inspect})"
 
@@ -177,7 +177,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     it "resolves one unwrapped call per answerable row, in queue order, for two parked approvals" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
       settled = Thread::Queue.new
       pwd_call = "bash(#{{ "command" => "pwd" }.inspect})"
       whoami_call = "bash(#{{ "command" => "whoami" }.inspect})"
@@ -356,7 +356,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     def repl_session
-      { nvim: { channel:, socket_path: @socket }, store: Lain::Dag::Factory.store,
+      { nvim: { channel:, socket_path: @socket }, store: Lain::Dag::Factory.store, forks: no_forks,
         session: Lain::Session::Null.instance }
     end
   end

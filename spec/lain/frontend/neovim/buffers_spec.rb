@@ -120,7 +120,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
   describe "existing highlighting attaches by filetype" do
     it "gives lain://diff the built-in diff filetype -- whatever a human's config attaches there just works" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         expect(filetype_of("lain://diff")).to eq("diff")
@@ -128,7 +128,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     it "gives lain://request the built-in markdown filetype" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         expect(filetype_of("lain://request")).to eq("markdown")
@@ -142,7 +142,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # buftype relaxation on lain://request reopens the hazard LOUDLY, as a
     # failing spec, rather than silently.
     it "keeps lain://request unwritable (buftype=nofile), so :write can never trigger a save-hooked formatter" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         wait_until { bufnr("lain://request") != -1 }
@@ -161,7 +161,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
   describe "the bespoke buffers get a small namespaced syntax (no treesitter grammar shipped)" do
     it "highlights a turn's role in lain://timeline as lainRole" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         wait_until { bufnr("lain://timeline") != -1 }
@@ -173,7 +173,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     it "highlights a digest and an event/stream kind in lain://journal" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         wait_until { bufnr("lain://journal") != -1 }
@@ -187,7 +187,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     it "highlights an item's age in lain://inbox as lainAge" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         wait_until { bufnr("lain://inbox") != -1 }
@@ -234,7 +234,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
     it "shows the second ask's turns after a first ask whose reply spans lines" do
       chain = ask(Lain::Dag::Factory.timeline(store:), "first", "one\ntwo\nthree")
-      frontend = described_class.new(channel:, socket_path: @socket, store:)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket, store:)
 
       frontend.run do
         channel.push(usage(chain.head_digest))
@@ -262,7 +262,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
     it "renders one line per turn, so the pin index still names the turn under the cursor" do
       chain = ask(Lain::Dag::Factory.timeline(store:), "first", "one\ntwo\nthree")
-      frontend = described_class.new(channel:, socket_path: @socket, store:)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket, store:)
 
       frontend.run do
         channel.push(usage(chain.head_digest))
@@ -274,7 +274,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     it "renders a digest this store never held as one legible line, and keeps draining" do
-      frontend = described_class.new(channel:, socket_path: @socket, store:)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket, store:)
 
       frontend.run do
         channel.push(usage("blake3:absent"))
@@ -289,7 +289,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
   describe "motions navigate records" do
     it "]] / [[ step between turns in lain://timeline, buffer-locally" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         wait_until { bufnr("lain://timeline") != -1 }
@@ -303,7 +303,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     it "]] / [[ step between items in lain://inbox, buffer-locally" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         wait_until { bufnr("lain://inbox") != -1 }
@@ -315,7 +315,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     it "does not treat the inbox's empty-state placeholder as a record" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         wait_until { bufnr("lain://inbox") != -1 }
@@ -326,7 +326,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     it "]] treats a wrapped multi-line tool-output run as ONE record in lain://journal" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         wait_until { bufnr("lain://journal") != -1 }
@@ -348,7 +348,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # -- the key invokes a COMMAND a human could type by hand, never a private
     # helper -- so both are provably one path.
     it "invokes :LainOpen when <CR> is pressed on an inbox item, carrying that line and the rendering it is in" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do |handle|
         wait_until { bufnr("lain://inbox") != -1 }
@@ -366,7 +366,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # gesture against the wrong one. What the editor sends back is what the
     # render that drew those lines stamped this buffer with.
     it "carries the stamp the rendering was posted with, not how many lines it holds" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do |handle|
         wait_until { bufnr("lain://inbox") != -1 }
@@ -382,7 +382,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
   describe "user mappings are respected" do
     it "keeps the motions and the inbox reply keys buffer-local, never global" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         wait_until { bufnr("lain://timeline") != -1 }
@@ -396,7 +396,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     it "namespaces every syntax group under lain*, so a human's own syntax plugins never collide" do
-      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
       frontend.run do
         wait_until { bufnr("lain://timeline") != -1 }
@@ -426,10 +426,10 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # defect as a feature for as long as it stood.
     it "re-attach is idempotent: no duplicate commands, and motions/syntax still work" do
       count_renders
-      described_class.new(channel: Lain::Channel.new, socket_path: @socket)
+      described_class.new(forks: no_forks, channel: Lain::Channel.new, socket_path: @socket)
                      .run { wait_until { bufnr("lain://timeline") != -1 } }
       primed = renders_of("lain://timeline")
-      second = described_class.new(channel: Lain::Channel.new, socket_path: @socket)
+      second = described_class.new(forks: no_forks, channel: Lain::Channel.new, socket_path: @socket)
 
       # No `expect { }.not_to raise_error` around the block: `aggregate_failures`
       # is on for every example, so a failing inner expect never rises into such
@@ -498,7 +498,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     let(:notes) { question("notes", "Anything else?") }
     let(:asked) { Lain::Question::Set.new(questions: [storage, checks, notes]) }
     let(:digest) { "blake3:c0ffee" }
-    let(:frontend) { described_class.new(channel:, socket_path: @socket) }
+    let(:frontend) { described_class.new(forks: no_forks, channel:, socket_path: @socket) }
 
     def lines_of(markdown) = markdown.lines.map { |line| line.delete_suffix("\n") }
 
@@ -889,13 +889,14 @@ RSpec.describe Lain::Frontend::Neovim::Buffers, "#question_settled" do
   let(:question_view) { Lain::Frontend::Neovim::QuestionView.new(rpc:) }
 
   it "hands the submitted digest and time to the question surface" do
-    described_class.new(questions: question_view).question_settled("blake3:abc", at: Time.new(2026, 10, 14, 17, 30, 0))
+    described_class.new(questions: question_view, forks: -> { {} })
+                   .question_settled("blake3:abc", at: Time.new(2026, 10, 14, 17, 30, 0))
 
     expect(rpc.settled).to eq([["blake3:abc", "17:30"]])
   end
 
   it "does nothing when no question surface is wired" do
-    expect(described_class.new.question_settled("blake3:abc", at: Time.now)).to be_nil
+    expect(described_class.new(forks: -> { {} }).question_settled("blake3:abc", at: Time.now)).to be_nil
   end
 end
 
@@ -903,20 +904,20 @@ RSpec.describe Lain::Frontend::Neovim::Buffers, "#updates over a timeline the st
   let(:missing) { Lain::Telemetry::TurnUsage.new(digest: "blake3:absent", model: nil, stop_reason: :end_turn, usage: {}) }
 
   it "renders a digest its store never held as unavailable" do
-    lines = described_class.new(store: Lain::Dag::Factory.store).updates(missing)
+    lines = described_class.new(store: Lain::Dag::Factory.store, forks: -> { {} }).updates(missing)
 
     expect(lines.fetch("lain://timeline")).to eq(["[timeline unavailable: blake3:absent not in store]"])
   end
 
   it "renders the unavailable state when no store was injected" do
-    expect(described_class.new.updates(missing).fetch("lain://timeline"))
+    expect(described_class.new(forks: -> { {} }).updates(missing).fetch("lain://timeline"))
       .to eq(["[timeline unavailable: blake3:absent not in store]"])
   end
 end
 
 RSpec.describe Lain::Frontend::Neovim::Buffers, "lain://todos" do
   let(:session) { Lain::Session.new }
-  let(:buffers) { described_class.new(session:) }
+  let(:buffers) { described_class.new(session:, forks: -> { {} }) }
   let(:turn) { Lain::Telemetry::TurnUsage.new(digest: "blake3:t", model: "m", stop_reason: :end_turn, usage: {}) }
 
   it "starts empty" do

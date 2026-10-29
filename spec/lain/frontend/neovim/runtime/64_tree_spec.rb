@@ -19,7 +19,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   end
 
   it "sends the cursor line on <CR>" do
-    frontend = described_class.new(channel:, socket_path: @socket)
+    frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
     frontend.run do
       open_tree
@@ -30,7 +30,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   end
 
   it "sends the cursor line and the typed text on L" do
-    frontend = described_class.new(channel:, socket_path: @socket)
+    frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
     frontend.run do
       open_tree
@@ -41,7 +41,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   end
 
   it "sends the generation the buffer had when L was pressed, not the one it has when the prompt answers" do
-    frontend = described_class.new(channel:, socket_path: @socket)
+    frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
     frontend.run do
       open_tree
@@ -54,7 +54,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   end
 
   it "sends nothing when the prompt is cancelled, so the next command on the rail is the next gesture" do
-    frontend = described_class.new(channel:, socket_path: @socket)
+    frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
     frontend.run do
       open_tree
@@ -63,6 +63,31 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       press("lain://tree", "<CR>", cursor: [1, 0])
 
       expect(next_command(frontend)).to eq(["tree_rewind", [1, 7]])
+    end
+  end
+
+  it "sends the refresh verb with no arguments on :LainTreeRefresh" do
+    frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
+
+    frontend.run do
+      open_tree
+      press("lain://tree", ":LainTreeRefresh<CR>")
+
+      expect(next_command(frontend)).to eq(["tree_refresh", []])
+    end
+  end
+
+  it "refuses :LainTreeRefresh off the tree buffer, without a traceback, and sends nothing" do
+    frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
+
+    frontend.run do
+      open_tree
+      inspector.command("LainTreeRefresh")
+
+      text = inspector.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
+      expect(text).to include("lain:").and include(":LainTreeRefresh")
+      expect(text).not_to include("stack traceback")
+      expect { frontend.command_inbox.pop(true) }.to raise_error(ThreadError)
     end
   end
 end

@@ -162,7 +162,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     it "places the note the pane was written with, on the line the pane was opened from" do
       Dir.mktmpdir("lain-note-pane") do |dir|
         write_round(dir)
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           survey(dir)
@@ -188,7 +188,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     it "hands a pane note back ahead of a cmdline note placed after the pane opened" do
       Dir.mktmpdir("lain-note-pane") do |dir|
         write_round(dir)
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           survey(dir)
@@ -211,7 +211,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     it "refuses an empty pane in words and leaves the buffer modified" do
       Dir.mktmpdir("lain-note-pane") do |dir|
         write_round(dir)
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           survey(dir)
@@ -236,7 +236,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     it "places nothing on a second write of a pane whose note is already placed" do
       Dir.mktmpdir("lain-note-pane") do |dir|
         write_round(dir)
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           survey(dir)
@@ -261,7 +261,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     it "leaves the cmdline note keys exactly as they were, and adds the pane's beside them" do
       Dir.mktmpdir("lain-note-pane") do |dir|
         write_round(dir)
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           survey(dir)
@@ -287,7 +287,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     it "acquires no stamp and binds no note key when it is entered inside the review tabpage" do
       Dir.mktmpdir("lain-note-pane") do |dir|
         write_round(dir)
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           survey(dir)
@@ -332,7 +332,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       Dir.mktmpdir("lain-note-pane") do |dir|
         write_round(dir)
 
-        described_class.new(channel:, socket_path: @socket).run do
+        described_class.new(forks: no_forks, channel:, socket_path: @socket).run do
           survey(dir)
           open_row("a.rb")
           compose(7)
@@ -341,7 +341,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         expect(pane_names.size).to eq(1)
 
         @inspector = nil
-        described_class.new(channel:, socket_path: @socket).run do
+        described_class.new(forks: no_forks, channel:, socket_path: @socket).run do
           survey(dir)
           open_row("a.rb")
 
@@ -372,7 +372,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     it "refuses to settle while a pane still holds a reservation, and names it" do
       Dir.mktmpdir("lain-note-pane") do |dir|
         write_round(dir)
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           survey(dir)
@@ -413,7 +413,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     it "gives back the place in line when the pane is renamed out from under lain" do
       Dir.mktmpdir("lain-note-pane") do |dir|
         write_round(dir)
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           survey(dir)
@@ -457,7 +457,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     it "takes the kind as the first word alone, and seeds the pane with what follows it" do
       Dir.mktmpdir("lain-note-pane") do |dir|
         write_round(dir)
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           survey(dir)
@@ -483,7 +483,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     it "fails the write and places nothing when the pane has been deleted under it" do
       Dir.mktmpdir("lain-note-pane") do |dir|
         write_round(dir)
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           survey(dir)
@@ -518,7 +518,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     it "names the buffer the draft lives in, and the line it is against" do
       Dir.mktmpdir("lain-note-pane") do |dir|
         write_round(dir)
-        frontend = described_class.new(channel:, socket_path: @socket)
+        frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
 
         frontend.run do
           survey(dir)

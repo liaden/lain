@@ -10,7 +10,7 @@
 RSpec.describe Lain::Frontend::Neovim::Surfaces do
   # The render inlet as these views address it ({RpcThread}'s outbound duck),
   # recorded rather than driven: nothing here touches nvim.
-  subject(:surfaces) { described_class.new(rpc:, approval_view:) }
+  subject(:surfaces) { described_class.new(forks: no_forks, rpc:, approval_view:) }
 
   # The frontend's own approval surface, handed over exactly as
   # {Lain::Frontend::Neovim} hands over the one the repl binds. There is no
@@ -78,7 +78,7 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
     end
 
     it "primes lain://status with the epic it was handed" do
-      described_class.new(rpc:, approval_view:, epic: epic_lines("# epic `demo`")).prime
+      described_class.new(forks: no_forks, rpc:, approval_view:, epic: epic_lines("# epic `demo`")).prime
 
       expect(posted(Lain::Frontend::Neovim::StatusView::NAME)).to include("# epic `demo`")
     end
@@ -119,7 +119,7 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
     # follows by building its own Filter so that a disagreeing pair cannot be
     # constructed at all. The one production call site already passes it.
     it "cannot be built without the approval view, so the mis-wire fails at construction" do
-      expect { described_class.new(rpc:) }.to raise_error(ArgumentError, /approval_view/)
+      expect { described_class.new(forks: no_forks, rpc:) }.to raise_error(ArgumentError, /approval_view/)
     end
 
     # The other half of the constructor's promise: required is not enough on
@@ -137,7 +137,7 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
         def prime = @primes += 1
       end.new
 
-      described_class.new(rpc:, approval_view:).prime
+      described_class.new(forks: no_forks, rpc:, approval_view:).prime
 
       expect(approval_view.primes).to eq(1)
       expect(rpc.approvals).to be_empty
@@ -179,7 +179,7 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
         def pinned?(_digest) = false
       end.new(reminders)
 
-      expect { described_class.new(rpc:, approval_view:, session:).prime }.not_to raise_error
+      expect { described_class.new(forks: no_forks, rpc:, approval_view:, session:).prime }.not_to raise_error
       expect(rpc.views.flat_map { |view| view[1] }).to include(/reminder caf\?* here/)
     end
 
@@ -262,7 +262,7 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
     it "draws a failing epic fold into lain://status while the other views keep updating" do
       failing = Class.new { def progress(_slug) = raise(Lain::Error, "torn journal") }.new
       epic = Lain::Frontend::Neovim::StatusView::Mounted.new(slug: "demo", status: failing)
-      surfaces = described_class.new(rpc:, approval_view:, epic:)
+      surfaces = described_class.new(forks: no_forks, rpc:, approval_view:, epic:)
 
       expect { surfaces.post(turn_usage) }.not_to raise_error
       expect(posted(Lain::Frontend::Neovim::StatusView::NAME)).to include(a_string_including("torn journal"))
@@ -285,7 +285,7 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
     it "posts the document on the epic doc rail under its lain://epic name" do
       artifact = Struct.new(:read).new("# Research\n")
       docs = Struct.new(:home) { def for(_slug) = home }.new(Struct.new(:research).new(artifact))
-      surfaces = described_class.new(rpc:, approval_view:, epic_docs: docs)
+      surfaces = described_class.new(forks: no_forks, rpc:, approval_view:, epic_docs: docs)
 
       surfaces.post(Lain::Epic::DocWritten.new(epic_slug: "frugirl", kind: "research", path: "research.md",
                                                byte_digest: "blake3:x"))
@@ -337,7 +337,17 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
   # need: an approval view built over a LIVE double while the rest posted into
   # a dead one would leave the last thing {Surfaces#prime} does still working,
   # and the rescue under test is the one covering all of them.
-  def over(inlet) = described_class.new(rpc: inlet, approval_view: Lain::Frontend::Neovim::ApprovalView.new(rpc: inlet))
+  it "draws the tree through the forks it was given" do
+    scans = []
+    described_class.new(rpc:, approval_view:, forks: -> { scans << 1 and {} }).buffers.initial
+
+    expect(scans.size).to eq(1)
+  end
+
+  def over(inlet)
+    described_class.new(forks: no_forks, rpc: inlet,
+                        approval_view: Lain::Frontend::Neovim::ApprovalView.new(rpc: inlet))
+  end
 
   # What the queue would send to `nvim_exec_lua`, drained through a client
   # double: the argument LIST is the wire contract, so it is what is asserted.

@@ -1302,7 +1302,7 @@ RSpec.describe Lain::CLI::Command::Review do
     end
 
     it "renders the changeset into lain://review, in the editor the chat is already attached to" do
-      frontend = Lain::Frontend::Neovim.new(channel: Lain::Channel.new, socket_path: @socket)
+      frontend = Lain::Frontend::Neovim.new(forks: no_forks, channel: Lain::Channel.new, socket_path: @socket)
 
       frontend.run do
         replies.bind_editor(frontend.command_inbox)
@@ -1315,7 +1315,7 @@ RSpec.describe Lain::CLI::Command::Review do
     end
 
     it "answers 2 asks sent at once with the right count each, and the session stays live" do
-      frontend = Lain::Frontend::Neovim.new(channel: Lain::Channel.new, socket_path: @socket)
+      frontend = Lain::Frontend::Neovim.new(forks: no_forks, channel: Lain::Channel.new, socket_path: @socket)
 
       frontend.run do
         3.times { |n| place_held_note(n) }
@@ -1328,7 +1328,7 @@ RSpec.describe Lain::CLI::Command::Review do
     end
 
     it "refuses a 2nd /review while the editor holds placed notes" do
-      frontend = Lain::Frontend::Neovim.new(channel: Lain::Channel.new, socket_path: @socket)
+      frontend = Lain::Frontend::Neovim.new(forks: no_forks, channel: Lain::Channel.new, socket_path: @socket)
 
       frontend.run do
         replies.bind_editor(frontend.command_inbox)

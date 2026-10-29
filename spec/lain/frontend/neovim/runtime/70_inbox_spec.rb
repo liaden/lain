@@ -29,7 +29,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       parent = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
       asker = Lain::Tools::AskHuman.new(parent:)
       Sync { asker.ask(Lain::Tools::AskHuman::Announcement.new(set)) }
-      frontend = described_class.new(channel:, socket_path: @socket, store:)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket, store:)
 
       frontend.run do
         channel.push(Lain::Telemetry::Message.from_event(asker.last_question))
@@ -86,7 +86,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     it "stops a standing goal before its next iteration, and its objective stays pinned" do
       driver.start("make the specs green", session:)
       timeline = driven(driver.poll(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)))
-      frontend = described_class.new(channel:, socket_path: @socket, store: Lain::Dag::Factory.store)
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket, store: Lain::Dag::Factory.store)
 
       frontend.run do
         consuming(frontend) do

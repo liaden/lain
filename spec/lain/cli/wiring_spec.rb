@@ -5387,6 +5387,24 @@ RSpec.describe Lain::CLI::Wiring do
       it "hands the editor an epic documents reader when the chat is in no epic" do
         expect(seams_handed_to_editor(seated).fetch(:epic_docs)).to be_a(Lain::CLI::EpicMount::Homes)
       end
+
+      context "with the chat's journal filed in the project's session directory" do
+        let(:project) { Lain::Project.new(root: epic_root, cwd: epic_root, kind: :project, detected_by: :flag) }
+        let(:session_dir) { Lain::Paths.new.session_dirs(project).first }
+        let(:chronicle) do
+          Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: StringIO.new),
+                                   journal_path: File.join(session_dir, "chat.ndjson"))
+        end
+
+        it "hands the editor a scan that finds the files resumed from this chat's journal" do
+          FileUtils.mkdir_p(session_dir)
+          header = { "type" => Lain::SessionRecord::HEADER_TYPE,
+                     "resumed_from" => { "file" => "chat.ndjson", "head" => "blake3:d1" } }
+          File.write(File.join(session_dir, "child.ndjson"), "#{JSON.generate(header)}\n")
+
+          expect(seams_handed_to_editor(seated).fetch(:forks).call).to eq("blake3:d1" => ["child.ndjson"])
+        end
+      end
     end
   end
 
