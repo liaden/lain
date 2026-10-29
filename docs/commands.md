@@ -1042,6 +1042,24 @@ forgot, or says nothing was declined for that path.
 A file under a related directory is refused by name: its regions are masked without ever asking,
 so there is no decline to forget.
 
+### /share
+
+```
+/share
+```
+
+Publishes this chat's session as a **secret** gist through `gh gist create --public=false`: the HTML
+export, which rewrites the home directory and project root. It takes no argument; the `--jsonl`
+record is local only (see [`lain export`](#lain-export)). The bytes are the model's masked view, never a
+re-scan, so a masked region stays its `<redacted:n>` placeholder. The reply names the file, the gist
+URL and how many regions were masked, and the journal records a `session_shared` entry.
+
+A session that released a read in clear is refused, naming how many regions were released and pointing
+at [`lain export`](#lain-export) for a local copy. It needs `gh` on `PATH` and logged in; without it the
+reply says so and nothing is sent. A chat started with `--no-journal` has no session file to share.
+
+A secret gist is unlisted, not private: anyone holding the URL can read it.
+
 ### /survey
 
 `/survey <path>` opens a survey of a directory in the editor this chat is **already** attached

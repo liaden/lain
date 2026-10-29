@@ -42,6 +42,9 @@ module Lain
         applied.sum { |record| record["type"] == "read_released" ? record.fetch("regions") : 0 }
       end
 
+      # @return [Integer] regions masked as placeholders, the count the html footer shows
+      def masked = applied.sum { |record| Html::REDACTIONS.include?(record["type"]) ? record.fetch("regions") : 0 }
+
       private
 
       def refuse_released

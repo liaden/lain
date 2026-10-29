@@ -54,6 +54,10 @@ RSpec.describe Lain::CLI::Export do
     expect(export.released).to eq(2)
   end
 
+  it "reports the regions the session masked, the count the html footer shows" do
+    expect(export.masked).to eq(1)
+  end
+
   it "refuses html while regions were released unless told to include them" do
     expect { export.call(format: :html) }.to raise_error(Lain::Error, /released/)
     expect(export.call(format: :html, include_released: true)).to include("2 regions were released")
