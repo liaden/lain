@@ -260,6 +260,30 @@ RSpec.describe Lain::Confine::Profile do
         expect(sealed_of(workspace))
           .to include(File.join(root, ".husky") => false, File.join(root, ".git", "hooks") => false)
       end
+
+      it "seals no core.hooksPath that is /dev/null, and binds nothing over it" do
+        SeedRepo.git(root, "config", "core.hooksPath", File::NULL)
+        expect(sealed_of(workspace)).not_to include(File::NULL)
+        expect(sealed_of(workspace)).to include(File.join(root, ".git", "hooks") => false)
+      end
+
+      it "seals a core.hooksPath that is a device node inside the project, which the call could replace" do
+        node = File.join(root, "hooks-node")
+        made = system("python3", "-I", "-c", "import os,stat,sys; os.mknod(sys.argv[1], stat.S_IFCHR|0o600, 0)", node,
+                      err: File::NULL)
+        skip("this box refuses mknod of a whiteout device") unless made
+
+        SeedRepo.git(root, "config", "core.hooksPath", node)
+        expect(sealed_of(workspace)).to include(node => false)
+      end
+
+      it "seals a core.hooksPath inside the project that is a regular file, or is missing" do
+        File.write(File.join(root, "hooks-file"), "x\n")
+        { "hooks-file" => false, "hooks-gone" => true }.each do |name, absent|
+          SeedRepo.git(root, "config", "core.hooksPath", name)
+          expect(sealed_of(workspace)).to include(File.join(root, name) => absent)
+        end
+      end
     end
 
     context "with a linked worktree" do

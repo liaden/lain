@@ -257,6 +257,25 @@ RSpec.describe Lain::Confine::Sandbox do
       expect(sandbox_records.sole).to have_attributes(profile: :workspace, created_sealed: [])
     end
 
+    it "flags the new landing of a hooks link to /dev/null the human repointed between calls" do
+      File.symlink(File::NULL, link = File.join(@base, "hooks-link"))
+      system(SeedRepo::SCRUB, "git", "-C", repo, "config", "core.hooksPath", link, exception: true)
+      exec = exec_in(repo)
+      judged_in(exec, repo, "true")
+      File.unlink(link)
+      File.symlink(File.join(repo, "landing-b"), link)
+      judged_in(exec, repo, "mkdir landing-b")
+
+      expect(sandbox_records.map(&:created_sealed).last).to eq([File.join(repo, "landing-b")])
+    end
+
+    it "runs git in a repository whose core.hooksPath is /dev/null" do
+      system(SeedRepo::SCRUB, "git", "-C", repo, "config", "core.hooksPath", File::NULL, exception: true)
+      capture = judged("git status --short")
+
+      expect([capture.exit_status, capture.stderr]).to eq([0, ""])
+    end
+
     it "refuses a write to the repository's config, and leaves the config as it was" do
       config = File.join(repo, ".git/config")
       before = File.read(config)

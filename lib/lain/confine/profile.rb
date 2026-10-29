@@ -615,7 +615,7 @@ module Lain
           named = [*in_git(root, *git), ProjectDir.new(root:).dir,
                    *Profile::PROJECT_SEALED.map { File.join(root, _1) }, *also]
           named.each { refuse_link(_1, writable, root) }
-          named.map { at(_1) }.group_by(&:path).map do |path, seals|
+          named.reject { device?(_1, writable) }.map { at(_1) }.group_by(&:path).map do |path, seals|
             new(path:, absent: seals.first.absent, hops: seals.flat_map(&:hops).uniq)
           end
         end
@@ -647,6 +647,18 @@ module Lain
           raise Unsealable.new(path:, link:, root:) if link
         end
 
+        # A read-only bind leaves a device unopenable, and git opens /dev/null on every call; one landing
+        # outside the writes cannot be swapped for a hooks dir, so it needs no seal. A link to one is still
+        # sealed, since its hops are what notice a repoint.
+        def self.device?(path, writable)
+          return false unless File.lstat(path).chardev?
+
+          landing = File.realpath(path)
+          writable.none? { Landing.under?(landing, _1) }
+        rescue SystemCallError
+          false
+        end
+
         def self.at(path, left = LINK_HOPS, followed = [])
           hops = File.symlink?(path) ? [*followed, path] : followed
           return new(path: -File.realpath(path), absent: false, hops:) if File.exist?(path)
@@ -654,7 +666,7 @@ module Lain
 
           at(File.expand_path(File.readlink(path), Profile.landing(File.dirname(path))), left - 1, hops)
         end
-        private_class_method :in_git, :worktrees, :pointer, :refuse_link, :at
+        private_class_method :in_git, :worktrees, :pointer, :refuse_link, :device?, :at
 
         # git answers core.hooksPath and a worktree's pointer itself, includes
         # and all, so this asks it once rather than parsing its config.
