@@ -92,7 +92,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
   def issue(id, **overrides) = Lain::Epic::Issue.new(id:, title: "the #{id} issue", **overrides)
   def chain = Lain::Epic::Graph.new(issues: [issue("a", blocks: ["b"]), issue("b")])
 
-  def sessions_dir = paths.sessions_dir
+  def sessions_dir = paths.filing_dir(root:)
 
   def session(name, *records, at: "2026-01-01T00:00:00Z")
     File.open(File.join(sessions_dir, name), "w") do |io|
@@ -326,7 +326,8 @@ RSpec.describe Lain::CLI::EpicSubmit do
     # here would.
     it "puts a in flight when a's parked plan is approved from the queue" do
       deferring.submit("issue_plan", issue: "a")
-      queue = Lain::CLI::EpicQueue.new(paths:, epics: Lain::CLI::Epic.new(root:, paths:, config: config(hands_off)))
+      queue = Lain::CLI::EpicQueue.new(paths:, root:,
+                                       epics: Lain::CLI::Epic.new(root:, paths:, config: config(hands_off)))
 
       said = queue.approve(parked_plans.first.artifact_digest)
 
@@ -1451,7 +1452,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       end
 
       paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => state_home })
-      written_to = paths.sessions_dir(project: paths.project_hash(root))
+      written_to = paths.filing_dir(root:)
       written = Dir.children(written_to).select { |name| name.end_with?(".ndjson") }
                    .flat_map { |name| Lain::Journal.records(File.foreach(File.join(written_to, name))).to_a }
       decisions = written.select { |record| record["type"] == "gate_decision" }

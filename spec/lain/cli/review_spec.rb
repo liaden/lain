@@ -134,7 +134,7 @@ RSpec.describe Lain::CLI::Review, :seam do
   def paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state })
 
   def command(**overrides)
-    described_class.new(repo_root: @repo, paths:, shell_out_factory: factory, **overrides)
+    described_class.new(repo_root: @repo, root: @repo, paths:, shell_out_factory: factory, **overrides)
   end
 
   def gh_calls = calls.select { |argv| argv.first == "gh" }

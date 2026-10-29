@@ -54,16 +54,9 @@ RSpec.describe Lain::CLI::Epic do
     Lain::Epic::Home.resolve(config: config(home), paths:, root:, slug:).write_epic(graph)
   end
 
-  # `sessions_dir`'s OWN default -- the working directory -- because that is what
-  # {Lain::CLI::Epic::Journals} folds. This helper said `project_hash(root)` until
-  # the journal keying moved, matching what that method said, and the pair agreed
-  # only because BOTH halves were written here: the code keyed on `@root` and the
-  # fixture wrote to `@root`. When `@root` stopped meaning the working directory
-  # the two came apart and no example could see it, which is the whole argument in
-  # spec/lain/seams/epic_project_keying_seam_spec.rb. `paths` is injected on a
-  # throwaway XDG state home, so the cwd-keyed directory is still inside the
-  # fixture's tmpdir.
-  def sessions_dir = paths.sessions_dir
+  # The root's directory, which {Lain::CLI::Epic::Journals} folds; `paths` is injected on a
+  # throwaway XDG state home inside the fixture's tmpdir.
+  def sessions_dir = paths.filing_dir(root:)
 
   # One session file, stamped with a clock the example controls: ordering across
   # files is by the `ts` on the record, never by the filename.
@@ -592,12 +585,12 @@ RSpec.describe Lain::CLI::Epic do
   end
 
   # The container is keyed by the resolved project root and the records live in
-  # two directories (the root's and the working directory's), so a report that
-  # named only the home would leave two runs with different progress for one
-  # epic indistinguishable. Printing the folded directories is what makes the
-  # partition visible in the one place a user is already looking.
+  # the root's session directory, so a report that named only the home would
+  # leave two runs with different progress for one epic indistinguishable.
+  # Printing the folded directory is what makes it visible in the one place a
+  # user is already looking.
   describe "the session directories the projection folded" do
-    let(:folded) { Lain::Paths.listing(paths.session_dirs(Lain::Paths::Place.here(root))) }
+    let(:folded) { Lain::Paths.listing([paths.filing_dir(root:)]) }
 
     it "prints them beside the home, so two runs reporting differently can be told apart" do
       write_epic("alpha", graph_of(issue("a1")))

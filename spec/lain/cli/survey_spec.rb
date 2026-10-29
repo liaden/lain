@@ -464,9 +464,8 @@ RSpec.describe Lain::CLI::Survey, :seam do
 
   # A survey does not need a repository, and this is the half that says so. Every
   # fixture here is a plain `mktmpdir` -- `git ls-files` has no answer in one, so
-  # the walk globs -- and the round still journals: `Paths#sessions_dir` keys on
-  # a digest of the process directory and does not care whether it is a
-  # repository.
+  # the walk globs -- and the round still journals: the sessions directory keys on
+  # a digest of the project root and does not care whether it is a repository.
   describe "a tree that is not a repository" do
     before { two_documents }
 
@@ -477,7 +476,7 @@ RSpec.describe Lain::CLI::Survey, :seam do
     it "journals the round into this project's sessions directory all the same" do
       command.present(@root)
 
-      expect(Dir.glob(File.join(paths.sessions_dir, "*.ndjson"))).not_to be_empty
+      expect(Dir.glob(File.join(paths.filing_dir(root: @root), "*.ndjson"))).not_to be_empty
     end
   end
 

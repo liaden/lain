@@ -65,16 +65,19 @@ module Lain
                   "object database instead -- %<message>s"
 
       # @param repo_root [String] the repository every git call reads
-      # @param paths [Paths] resolves `sessions_dir`, where the round is
+      # @param root [String, nil] the project root the round is journaled under; the resolved
+      #   project's, read when the round opens, when nil
+      # @param paths [Paths] resolves the sessions directory, where the round is
       #   journaled
       # @param bounds [Review::Bounds] the sizes past which a view is refused
       # @param surface [#present, nil] where the changeset is drawn; nil builds
       #   the text surface over a buffer this object owns
       # @param shell_out_factory [#call] builds the subprocess runner, injected
       #   as {Forge::Gh} and both sources do
-      def initialize(repo_root: Dir.pwd, paths: Paths.new, bounds: Lain::Review::Bounds.new,
+      def initialize(repo_root: Dir.pwd, root: nil, paths: Paths.new, bounds: Lain::Review::Bounds.new,
                      surface: nil, shell_out_factory: Lain::Shell::Out.public_method(:new))
         @paths = paths
+        @root = root
         @bounds = bounds
         @surface = surface
         @targets = Target.new(repo_root:, shell_out_factory:)
@@ -99,6 +102,8 @@ module Lain
 
       private
 
+      def root = @root ||= Project::Resolver.default_project.root
+
       # The flag's absence, not a second declaration of the vocabulary: the
       # word comes off {Review::Partition::DEFAULT_SCOPE}, which is read out of
       # the registry, and it still goes through {Review::Session.scope!} on the
@@ -115,7 +120,7 @@ module Lain
         # database and reports `already_local` for a combined diff GitHub
         # actually refused.
         report = fell_back(resolved.source)
-        journal = Journal.open(paths: @paths)
+        journal = Journal.open(paths: @paths, root:)
         begin
           session = Lain::Review::Session.open(changeset:, journal:, source: resolved.name, surface:, bounds: @bounds)
           drawn(resolved, session, scope, buffer, report)

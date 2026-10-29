@@ -418,7 +418,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     def another_process_writes(name, record)
-      File.open(File.join(epic_paths.sessions_dir, name), "w") do |io|
+      File.open(File.join(epic_paths.filing_dir(root: epic_root), name), "w") do |io|
         Lain::Journal.new(io:, clock: -> { "2026-01-01T00:00:00Z" }).record(record)
       end
     end

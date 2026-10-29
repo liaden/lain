@@ -15,7 +15,7 @@ RSpec.describe Lain::CLI::SessionFile do
 
   let(:paths) { instance_double(Lain::Paths, session_dirs: [@dir]) }
   let(:selector) { "20260721T000000-1" }
-  let(:project) { Lain::Paths::Place.new(root: @dir, cwd: @dir) }
+  let(:project) { instance_double(Lain::Project, root: @dir) }
 
   around do |example|
     Dir.mktmpdir do |dir|
@@ -74,38 +74,15 @@ RSpec.describe Lain::CLI::SessionFile do
     expect { described_class.resolve("nope", project:) }.to raise_error(ArgumentError, /paths/)
   end
 
-  describe "the root's directory and the working directory's" do
-    def second_directory_resolution(name)
-      Dir.mktmpdir do |state|
-        real = File.realpath(state)
-        root = File.join(real, "project")
-        sub = File.join(root, "sub")
-        FileUtils.mkdir_p([root, sub])
-        store = Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(real, "state") })
-        path = File.join(store.sessions_dir(project: store.project_hash(sub)), name)
-        File.write(path, "{}\n")
-        place = Lain::Paths::Place.new(root:, cwd: sub)
+  it "names the one candidate, in the root's directory, when nothing answers" do
+    Dir.mktmpdir do |state|
+      store = Lain::Paths.new(env: { "XDG_STATE_HOME" => state })
+      root = instance_double(Lain::Project, root: File.realpath(state))
 
-        [path, described_class.resolve(name.delete_suffix(".ndjson"), paths: store, project: place)]
-      end
-    end
-
-    it "resolves a bare filename held only by the working directory's" do
-      expected, resolved = second_directory_resolution("20260721T000000-1.ndjson")
-
-      expect(resolved).to eq(expected)
-    end
-
-    it "names the candidates in both directories when nothing answers" do
-      Dir.mktmpdir do |state|
-        store = Lain::Paths.new(env: { "XDG_STATE_HOME" => state })
-        place = Lain::Paths::Place.new(root: File.realpath(state), cwd: File.realpath(Dir.tmpdir))
-
-        expect { described_class.resolve("nope", paths: store, project: place) }
-          .to raise_error(described_class::SessionNotFound) { |error|
-            expect(error.message.scan("nope.ndjson").length).to eq(2)
-          }
-      end
+      expect { described_class.resolve("nope", paths: store, project: root) }
+        .to raise_error(described_class::SessionNotFound) { |error|
+          expect(error.message.scan("nope.ndjson").length).to eq(1)
+        }
     end
   end
 end

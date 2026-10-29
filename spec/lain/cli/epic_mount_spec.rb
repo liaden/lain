@@ -49,13 +49,9 @@ RSpec.describe Lain::CLI::EpicMount do
   # state home inside it too.
   def paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@dir, "state"), "HOME" => @dir })
 
-  # `sessions_dir`'s OWN default -- the working directory -- because that is
-  # where {EpicMount#prior_claims} folds and where a chat's Chronicle writes.
-  # It said `project_hash(@dir)` at one point, matching what `prior_claims` said,
-  # and the two agreed only because BOTH halves were written here. See
-  # spec/lain/seams/epic_project_keying_seam_spec.rb; `paths` is injected on a
-  # throwaway XDG state home, so this stays inside the fixture's tmpdir.
-  def sessions_dir = paths.sessions_dir
+  # The root's directory, where {EpicMount#prior_claims} folds and where a chat's Chronicle writes;
+  # `paths` is injected on a throwaway XDG state home inside the fixture's tmpdir.
+  def sessions_dir = paths.filing_dir(root: @dir)
   def config = Lain::Config.new(epics: Lain::Config::Epics.new(home: :repo))
 
   def mount_for(options: {}, **overrides)

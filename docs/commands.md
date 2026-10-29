@@ -301,7 +301,7 @@ List this project's recorded sessions, newest first. Offline.
 
 `--all` includes ephemeral `--btw` sessions, which are hidden by default.
 
-It lists the root's sessions directory and then the working directory's, so a session filed under the working directory's key by an earlier version still shows.
+It lists the root's sessions directory.
 
 A row ending in `N lines unparsed` names a session with unparseable lines in its journal
 (`Journal.records` skips them rather than raising, since a crash can tear

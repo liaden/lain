@@ -54,7 +54,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
       SeedRepo.with_layout(layout_mini, into: repo)
       @epic = Lain::Isolation::WorkingBranch.epic("demo", repo_root: repo)
       advance_epic
-      FileUtils.mkdir_p(paths.sessions_dir)
+      FileUtils.mkdir_p(paths.filing_dir(root: repo))
       write_epic
       %w[a c].each { |id| approve_plan(id) }
       example.run
@@ -176,7 +176,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
     decision = Lain::Epic::GateDecision.new(artifact_digest: plan.digest, epic_slug: "demo", stage: "issue_plan",
                                             approved: true, answered_by: "human", policy: "hands_off",
                                             latency: 0.0, issue_id: id)
-    File.open(File.join(paths.sessions_dir, "fixture.ndjson"), "a") do |io|
+    File.open(File.join(paths.filing_dir(root: repo), "fixture.ndjson"), "a") do |io|
       Lain::Journal.new(io:, clock: -> { "2026-01-01T00:00:00Z" }).record(decision)
     end
   end

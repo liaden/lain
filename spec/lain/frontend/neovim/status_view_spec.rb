@@ -33,7 +33,7 @@ RSpec.describe Lain::Frontend::Neovim::StatusView do
   # What `lain epic submit` leaves behind when it runs in ANOTHER process: a
   # session file of its own in the directory this chat's fold walks.
   def another_process_writes(name, *records)
-    File.open(File.join(paths.sessions_dir, name), "w") do |io|
+    File.open(File.join(paths.filing_dir(root:), name), "w") do |io|
       journal = Lain::Journal.new(io:, clock: -> { "2026-01-01T00:00:00Z" })
       records.each { |record| journal.record(record) }
     end

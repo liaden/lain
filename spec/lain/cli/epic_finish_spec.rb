@@ -23,7 +23,7 @@ RSpec.describe Lain::CLI::EpicFinish, :seam do
       git(root, "switch", "-q", "main")
       git(@tmp, "init", "--bare", "-q", remote)
       git(root, "remote", "add", "origin", remote)
-      FileUtils.mkdir_p(paths.sessions_dir)
+      FileUtils.mkdir_p(paths.filing_dir(root:))
       write_epic("demo", "a" => "done", "b" => "done")
       write_epic("other", "a" => "done", "b" => "in_flight")
       example.run
@@ -75,8 +75,8 @@ RSpec.describe Lain::CLI::EpicFinish, :seam do
   def command = described_class.new(root:, paths:, config:, github:, shell_out_factory: recording)
 
   def forge_actions
-    Dir.children(paths.sessions_dir).sort
-       .flat_map { |name| Lain::Journal.records(File.foreach(File.join(paths.sessions_dir, name))).to_a }
+    Dir.children(paths.filing_dir(root:)).sort
+       .flat_map { |name| Lain::Journal.records(File.foreach(File.join(paths.filing_dir(root:), name))).to_a }
        .select { |record| record["type"] == Lain::Forge::Intent::JOURNAL_TYPE }.map { |record| record["action"] }
   end
 
@@ -152,7 +152,7 @@ RSpec.describe Lain::CLI::EpicFinish, :seam do
                                               stage: "implementation", approved: true, answered_by: "human",
                                               policy: "hands_off", latency: 0.0, issue_id: "a")
       line = JSON.generate({ "ts" => "2026-01-01T00:00:00.000000Z" }.merge(decision.to_journal))
-      File.write(File.join(paths.sessions_dir, "fixture.ndjson"), line[0, line.size / 2])
+      File.write(File.join(paths.filing_dir(root:), "fixture.ndjson"), line[0, line.size / 2])
 
       expect { command.finish("demo") }
         .to raise_error(Lain::CLI::SessionJournals::Unreadable, /fixture\.ndjson.*line 1/)
@@ -260,8 +260,8 @@ RSpec.describe Lain::CLI::EpicFinish, :seam do
     end
 
     def forge_records
-      Dir.children(paths.sessions_dir).sort
-         .flat_map { |name| Lain::Journal.records(File.foreach(File.join(paths.sessions_dir, name))).to_a }
+      Dir.children(paths.filing_dir(root:)).sort
+         .flat_map { |name| Lain::Journal.records(File.foreach(File.join(paths.filing_dir(root:), name))).to_a }
          .select { |record| record["type"].start_with?("forge_") }
     end
 
@@ -340,7 +340,7 @@ RSpec.describe Lain::CLI::EpicFinish, :seam do
                                         issue_id: Lain::Forge::Landing::WHOLE_EPIC,
                                         params: { "head" => "epic/demo", "base" => "main", "sha" => tip })
       line = JSON.generate({ "ts" => "2026-01-01T00:00:00.000000Z" }.merge(crashed.to_journal))
-      File.write(File.join(paths.sessions_dir, "crashed.ndjson"), "#{line}\n")
+      File.write(File.join(paths.filing_dir(root:), "crashed.ndjson"), "#{line}\n")
       git(root, "remote", "add", "origin", remote)
 
       output = command.finish("demo").text

@@ -53,6 +53,8 @@ module Lain
     # @param fsync [Boolean] fsync the fd after every {#record} -- see {#initialize}
     # @param paths [Paths] resolves the default location; injectable so a spec
     #   never touches the real XDG env
+    # @param root [String, nil] the project root the default location is keyed
+    #   on; the working directory when nil
     # @param chain [Boolean] end each line with the link to the line before it,
     #   continuing from the file's last line, sealing it first when a crash
     #   left it without its newline. A chained Journal holds an exclusive flock
@@ -63,8 +65,8 @@ module Lain
     # @yieldparam journal [Journal] closed when the block returns or raises
     # @return [Journal, Object] the Journal, or what the block answered
     # @raise [Locked] when a chained writer holds the file, or, chained, when any writer does
-    def self.open(path = nil, clock: DEFAULT_CLOCK, fsync: false, paths: Paths.new, chain: false)
-      path ||= default_path(paths:)
+    def self.open(path = nil, clock: DEFAULT_CLOCK, fsync: false, paths: Paths.new, chain: false, root: nil)
+      path ||= default_path(paths:, root:)
       FileUtils.mkdir_p(File.dirname(path))
       # File.new, not the block form: the Journal owns this handle for its whole
       # life. `path:` ONLY when this call created the file -- it is the sole
@@ -140,8 +142,11 @@ module Lain
     def self.empty?(path) = !File.size?(path)
 
     # @param paths [Paths] resolves `sessions_dir`; injectable for specs
-    # @return [String] a timestamped path under `paths.sessions_dir`
-    def self.default_path(paths: Paths.new) = File.join(paths.sessions_dir, stem)
+    # @param root [String, nil] the project root to file under; the working directory when nil
+    # @return [String] a timestamped path under the root's sessions directory
+    def self.default_path(paths: Paths.new, root: nil)
+      File.join(root ? paths.filing_dir(root:) : paths.sessions_dir, stem)
+    end
 
     # What a journal file is CALLED, wherever it lands: UTC to the second, then
     # the pid, so two runs that started in the same second write two files and

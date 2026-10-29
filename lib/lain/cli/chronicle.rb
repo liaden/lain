@@ -19,7 +19,13 @@ module Lain
       # without naming arguments a Null never reads.
       class Null
         # Views to tell only once {#wrap_tee} names them.
-        def initialize
+        #
+        # @param root [String, nil] the project root the --nvim tee journal files under;
+        #   the working directory when nil
+        # @param paths [Paths] resolves that journal's directory
+        def initialize(root: nil, paths: Paths.new)
+          @root = root
+          @paths = paths
           @live = Channel::Null.instance
           @transition_listener = Agent::TransitionListener::Null
           @observers = []
@@ -96,7 +102,7 @@ module Lain
         # {Chronicle#wrap_tee} answers, so the exe's wiring is one line either
         # way.
         def wrap_tee(channel)
-          journal = Journal.open
+          journal = Journal.open(paths: @paths, root: @root)
           @observers.each { |observer| journal.observe(observer) }
           @tee_journal = journal
           @tee = JournalTee.new(journal, channel)
@@ -202,7 +208,7 @@ module Lain
         # @param btw [Boolean] whether the session is ephemeral
         # @param paths [Paths] resolves the sessions directory
         def for(enabled:, root:, btw: false, paths: Paths.new)
-          return Null.new unless enabled
+          return Null.new(root:, paths:) unless enabled
 
           # Computed here, not left to Journal.open's own default, so THIS path
           # is the one #spool derives the sibling `.wal` from -- the journal and

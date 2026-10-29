@@ -575,18 +575,18 @@ RSpec.describe Lain::Paths do
       expect(described_class.listing(%w[/a /b])).to eq("/a, /b")
     end
 
-    it "answers the root's directory first, then the working directory's" do
-      expect(store.session_dirs(Lain::Paths::Place.new(root: "/", cwd: "/tmp"))).to eq([key("/"), key("/tmp")])
+    it "answers the root's directory alone, whatever the working directory" do
+      project = Struct.new(:root, :cwd).new("/", "/tmp")
+
+      expect(store.session_dirs(project)).to eq([key("/")])
     end
 
-    it "answers one directory when the working directory is the root" do
-      expect(store.session_dirs(Lain::Paths::Place.new(root: "/tmp", cwd: "/tmp")).length).to eq(1)
+    it "is the directory a chat files under" do
+      expect(store.session_dirs(Struct.new(:root).new("/tmp"))).to eq([store.filing_dir(root: "/tmp")])
     end
 
-    it "keys the working directory by where the process stands when asked for the epic readers' pair" do
-      allow(Dir).to receive(:pwd).and_return("/tmp")
-
-      expect(store.session_dirs(Lain::Paths::Place.here("/"))).to eq([key("/"), key("/tmp")])
+    it "no longer defines a place that pairs a root with a working directory" do
+      expect(described_class.const_defined?(:Place, false)).to be(false)
     end
 
     it "files a chat under its root's directory alone" do

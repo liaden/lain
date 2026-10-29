@@ -304,9 +304,9 @@ module Lain
       # Otherwise this command opens its own session journal around the
       # decision and closes it after. Nothing is lost: a Journal that CREATED
       # its file and wrote no record removes it on close.
-      Owned = Data.define(:paths) do
+      Owned = Data.define(:paths, :root) do
         def hold
-          journal = Journal.open(paths:)
+          journal = Journal.open(paths:, root:)
           begin
             yield journal
           ensure
@@ -492,7 +492,7 @@ module Lain
         @config = config
         @asker = asker
         @unheard = Prompt.unheard(input:, output:) || Prompt::NO_ASKER
-        @journal = journal ? Lent.new(journal) : Owned.new(paths)
+        @journal = journal ? Lent.new(journal) : Owned.new(paths, root)
         @role_spawn = role_spawn
         @brief = brief
         @spike_journal = spike_journal
@@ -785,7 +785,7 @@ module Lain
       # same artifact twice, journaled two verdicts, and advanced the stage twice.
       # One object per process is a property of the executable, not of this class.
       def journals
-        SessionJournals.of(@paths, Paths::Place.here(@root), types: [Lain::Epic::SignoffQueue::JOURNAL_TYPE])
+        SessionJournals.of(@paths, @root, types: [Lain::Epic::SignoffQueue::JOURNAL_TYPE])
       end
 
       # A second verdict over the partition's standing approval of these bytes

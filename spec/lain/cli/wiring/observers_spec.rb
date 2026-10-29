@@ -14,7 +14,7 @@ RSpec.describe Lain::CLI::Wiring::Observers do
   end
 
   let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state }) }
-  let(:project) { Lain::Paths::Place.new(root: Dir.pwd, cwd: Dir.pwd) }
+  let(:project) { instance_double(Lain::Project, root: Dir.pwd) }
   let(:journal) { Lain::Journal.new(io: StringIO.new) }
   let(:chronicle) { Lain::CLI::Chronicle.new(journal:) }
   let(:file) { File.join(@state, "cat").tap { |path| File.write(path, "") } }
@@ -45,7 +45,7 @@ RSpec.describe Lain::CLI::Wiring::Observers do
   describe "a chat started from another directory with --root" do
     let(:root) { File.realpath(FileUtils.mkdir_p(File.join(@state, "project")).first) }
     let(:elsewhere) { File.realpath(FileUtils.mkdir_p(File.join(@state, "elsewhere")).first) }
-    let(:chat) { Lain::Paths::Place.new(root:, cwd: root) }
+    let(:chat) { instance_double(Lain::Project, root:) }
 
     def file_session(dir, name, resumed_from: nil)
       header = { "ts" => "2099-01-01T00:00:00.000000Z", "type" => "session" }
@@ -229,7 +229,7 @@ RSpec.describe Lain::CLI::Wiring::Observers do
             File.symlink("shared-envrc", File.join(root, ".envrc"))
           end
         end
-        let(:place) { Lain::Paths::Place.new(root: linked, cwd: linked) }
+        let(:place) { instance_double(Lain::Project, root: linked) }
 
         def notices_under(confine)
           described_class.register(chronicle:, paths:, project: place, resumed: nil,

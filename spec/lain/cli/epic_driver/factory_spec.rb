@@ -97,7 +97,7 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
       @root = File.realpath(dir)
       FileUtils.mkdir_p(repo)
       SeedRepo.with_layout(layout_mini, into: repo)
-      FileUtils.mkdir_p(paths.sessions_dir)
+      FileUtils.mkdir_p(paths.filing_dir(root: repo))
       example.run
     end
   end
@@ -149,7 +149,7 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
   # The stage boundary opens only over approved earlier stages. A file of its
   # own, because the torn-sign-off example halves `fixture.ndjson`.
   def approve_epic(slug = "demo")
-    File.open(File.join(paths.sessions_dir, "epic-approved.ndjson"), "a") do |io|
+    File.open(File.join(paths.filing_dir(root: repo), "epic-approved.ndjson"), "a") do |io|
       journal = Lain::Journal.new(io:, clock: -> { "2026-01-01T00:00:00Z" })
       %w[research epic_plan].each do |stage|
         journal.record(Lain::Epic::GateDecision.new(artifact_digest: "blake3:#{stage}-approved", epic_slug: slug,
@@ -171,14 +171,14 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
   end
 
   def journaled(decision)
-    File.open(File.join(paths.sessions_dir, "fixture.ndjson"), "a") do |io|
+    File.open(File.join(paths.filing_dir(root: repo), "fixture.ndjson"), "a") do |io|
       Lain::Journal.new(io:, clock: -> { "2026-01-01T00:00:00Z" }).record(decision)
     end
   end
 
   def chronicle
     @chronicle ||= Lain::CLI::Chronicle.new(
-      journal: Lain::Journal.new(io: File.open(File.join(paths.sessions_dir, "chat.ndjson"), "ab"))
+      journal: Lain::Journal.new(io: File.open(File.join(paths.filing_dir(root: repo), "chat.ndjson"), "ab"))
     )
   end
 
@@ -252,7 +252,7 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
   end
 
   def journaled_decisions
-    Lain::Journal.records(File.readlines(File.join(paths.sessions_dir, "chat.ndjson")),
+    Lain::Journal.records(File.readlines(File.join(paths.filing_dir(root: repo), "chat.ndjson")),
                           type: Lain::Epic::SignoffQueue::JOURNAL_TYPE).to_a
   end
 
@@ -634,7 +634,7 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
     # The project's lint runs in each actor's own checkout before retirement
     # anchors it, and what it found rides the retirement's handback record.
     describe "with an isolation lint" do
-      let(:lint_log) { File.join(paths.sessions_dir, "lint.log") }
+      let(:lint_log) { File.join(paths.filing_dir(root: repo), "lint.log") }
       let(:lint) { "echo \"$(git log -1 --format=%s)|$(pwd)\" >> #{lint_log}" }
       let(:config) do
         Lain::Config.new(epics: Lain::Config::Epics.new(home: :xdg, gates: hands_off),
@@ -799,7 +799,7 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
       git(repo, "switch", "-q", "main")
       factory = factory_over(mount, actors: ->(fleet) { FactorySpecActors.new(fleet, log, repo) },
                                     record: chronicle)
-      path = File.join(paths.sessions_dir, "fixture.ndjson")
+      path = File.join(paths.filing_dir(root: repo), "fixture.ndjson")
       File.write(path, File.read(path).then { |line| line[0, line.size / 2] })
 
       expect { factory.run(width: 1) }
@@ -1048,7 +1048,9 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
   # Retirement rebases the actor's branch, so the tree the gate names is the
   # anchored sha, not the checkout the actor held: that sha is what is tested.
   describe "testing the anchored tip before the implementation gate" do
-    def chat_records = File.readlines(File.join(paths.sessions_dir, "chat.ndjson")).map { |line| JSON.parse(line) }
+    def chat_records
+      File.readlines(File.join(paths.filing_dir(root: repo), "chat.ndjson")).map { |line| JSON.parse(line) }
+    end
 
     def anchored_sha(issue_id) = git(repo, "rev-parse", anchor_ref(issue_id))
 

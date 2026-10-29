@@ -36,7 +36,7 @@ RSpec.describe Lain::CLI::EpicLand, :seam do
   def config = Lain::Config.new(epics: Lain::Config::Epics.new(home: :xdg, gates: {}), isolation: @isolation || {})
 
   def verifying(*argv) = @isolation = { "verify" => argv }
-  def sessions_dir = paths.sessions_dir
+  def sessions_dir = paths.filing_dir(root:)
 
   def home(slug = "demo") = Lain::Epic::Home.resolve(config:, paths:, root:, slug:)
 

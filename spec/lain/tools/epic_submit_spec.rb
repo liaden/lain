@@ -30,7 +30,7 @@ RSpec.describe Lain::Tools::EpicSubmit do
       drawn.replace(lines) unless lines.nil?
     })
   end
-  let(:chronicle) { @chronicle ||= Lain::CLI::Chronicle.for(enabled: true, paths:, root: Dir.pwd) }
+  let(:chronicle) { @chronicle ||= Lain::CLI::Chronicle.for(enabled: true, paths:, root: @dir) }
   let(:submitter) do
     Lain::CLI::EpicSubmit.in_chat(chronicle:, root: @dir, paths:, config:, asker: ask_human, role_spawn: nil)
   end
@@ -107,8 +107,8 @@ RSpec.describe Lain::Tools::EpicSubmit do
         epic_slug: "frugirl-mvp", stage: "research", approved: false, answered_by: "deferred",
         policy: "deferred", latency: 1.0
       )
-      FileUtils.mkdir_p(paths.sessions_dir)
-      File.open(File.join(paths.sessions_dir, "parked.ndjson"), "w") { |io| Lain::Journal.new(io:).record(parked) }
+      FileUtils.mkdir_p(paths.filing_dir(root: @dir))
+      File.open(File.join(paths.filing_dir(root: @dir), "parked.ndjson"), "w") { |io| Lain::Journal.new(io:).record(parked) }
 
       result = Sync do |task|
         call = task.async { tool.call({ "stage" => "research", "slug" => "frugirl-mvp" }, invocation) }

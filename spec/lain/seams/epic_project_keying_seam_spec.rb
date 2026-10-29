@@ -4,20 +4,15 @@ require "fileutils"
 require "stringio"
 require "tmpdir"
 
-# A session record lands in one of two directories, and every reader folds both.
+# A session record lands in one directory, the resolved PROJECT ROOT's, and
+# every reader folds it.
 #
-#   * a CHAT files its journal under the resolved PROJECT ROOT
-#     ({Lain::CLI::Chronicle} keys it on `project_hash(root)`), so `--root P`
-#     from anywhere files the session where `lain sessions` run in P looks;
-#   * the epic WRITERS (`submit`, `land`, `queue`, `finish`, the driver) keep
-#     filing under the WORKING DIRECTORY, through {Lain::Paths#sessions_dir}'s
-#     `project_hash(Dir.pwd)` default -- nothing was migrated;
-#   * EVERY reader of a session directory folds
-#     {Lain::Paths#session_dirs}: the root's directory first, then the working
-#     directory's, once when they are the same. So a chat started below the
-#     root and `lain epic status` run from anywhere in the tree agree on what
-#     was recorded, and a session filed under the old working-directory key
-#     stays visible.
+#   * a CHAT files its journal under `project_hash(root)`
+#     ({Lain::CLI::Chronicle}), so `--root P` from anywhere files the session
+#     where `lain sessions` run in P looks;
+#   * the epic WRITERS (`submit`, `land`, `queue`, `finish`, the driver) file
+#     under the same root, never under the working directory;
+#   * EVERY reader folds {Lain::Paths#session_dirs}: that one directory.
 #
 # The epic CONTAINER -- where the documents live -- is keyed on the resolved
 # PROJECT ROOT as before ({Lain::Project::Resolver.default_project}).
@@ -101,19 +96,20 @@ RSpec.describe "the epic tier's project keying", :seam do
       end
     end
 
-    it "folds the root's directory, then the working directory's" do
-      in_subdirectory_of_a_project do |root, sub|
-        paths = Lain::Paths.new
-
-        expect(journal_dirs.values.first)
-          .to eq([paths.sessions_dir(project: paths.project_hash(root)),
-                  paths.sessions_dir(project: paths.project_hash(sub))])
+    it "folds the root's directory alone, from a subdirectory" do
+      in_subdirectory_of_a_project do |root, _sub|
+        expect(journal_dirs.values.first).to eq([Lain::Paths.new.filing_dir(root:)])
       end
     end
 
-    it "folds a single directory when the working directory is the root" do
-      in_subdirectory_of_a_project do |root, _sub|
-        Dir.chdir(root) { expect(journal_dirs.values.first.length).to eq(1) }
+    it "files a journal an epic writer opens under the root's directory, from a subdirectory" do
+      in_subdirectory_of_a_project do |root, sub|
+        paths = Lain::Paths.new
+        advances = Class.new { def write(journal) = journal.record("type" => "gate_decision") }.new
+        Lain::CLI::EpicQueue.new.send(:append, [], advances)
+
+        expect(Dir.children(paths.filing_dir(root:)).length).to eq(1)
+        expect(File.exist?(paths.container("sessions", key: paths.project_hash(sub)))).to be(false)
       end
     end
 

@@ -42,13 +42,12 @@ RSpec.describe Lain::CLI::SessionJournals do
   def torn_decision = halved(padded("gate_decision"))
 
   describe ".of" do
-    it "folds the directories Paths keys for the place it is handed" do
-      place = Lain::Paths::Place.new(root: "/root", cwd: "/cwd")
-      paths = instance_double(Lain::Paths, session_dirs: [@dir])
+    it "folds the directory a chat files under for the root it is handed" do
+      paths = instance_double(Lain::Paths, filing_dir: @dir)
       write("20260727T090000-1.ndjson", [record(type: "gate_decision", at: "2026-07-27T09:00:00Z", id: "a")])
 
-      expect(described_class.of(paths, place, types:).map { |r| r["id"] }).to eq(["a"])
-      expect(paths).to have_received(:session_dirs).with(place)
+      expect(described_class.of(paths, "/root", types:).map { |r| r["id"] }).to eq(["a"])
+      expect(paths).to have_received(:filing_dir).with(root: "/root")
     end
   end
 

@@ -175,6 +175,8 @@ module Lain
           # @param root [String] the checkout that stands on the epic's branch,
           #   which is lain's own wherever the human's does not
           # @param paths [Paths] where the session journals are read from
+          # @param project_root [String] the project the journals are filed under; `root` is a
+          #   checkout of it and keys no sessions directory
           # @param base [Isolation::WorkingBranch] `epic/<slug>`
           # @param config [Config::Isolation] the merge strategy, retry count and verification
           # @param journal [#<<] where each landing's records go
@@ -182,9 +184,10 @@ module Lain
           # @param submit [EpicSubmit] re-checks the plan approval at land time
           # @param layout [TestLayout] the PROJECT's, never read from `root`: lain's
           #   own checkout is cut by git, so a gitignored config never reaches it
-          def initialize(slug:, root:, paths:, base:, config:, journal:, epics:, submit:, layout:)
+          def initialize(slug:, root:, project_root:, paths:, base:, config:, journal:, epics:, submit:, layout:)
             @slug = slug
             @root = root
+            @project_root = project_root
             @paths = paths
             @base = base
             @config = config
@@ -226,7 +229,7 @@ module Lain
           end
 
           # FRESH per read, for {SessionJournals}' own reason: it caches its walk.
-          def records(type) = SessionJournals.of(@paths, Lain::Paths::Place.here(@root), types: [type])
+          def records(type) = SessionJournals.of(@paths, @project_root, types: [type])
         end
 
         # Lain's own checkout of the epic's branch, which the landing queue
@@ -583,7 +586,7 @@ module Lain
         # The landing runs in LAIN'S OWN checkout, never the human's -- see
         # {#landing_checkout}.
         def landing(checkout, layout)
-          Landing.new(slug:, root: checkout.root, paths: @paths, base: working_branch,
+          Landing.new(slug:, root: checkout.root, project_root: @root, paths: @paths, base: working_branch,
                       config: settings, journal: record, epics:, submit:, layout:)
         end
 
@@ -681,7 +684,7 @@ module Lain
         # FRESH per read, never memoized: a decision this run just journaled has
         # to be visible to the very next question about it.
         def signoffs
-          SessionJournals.of(@paths, Lain::Paths::Place.here(@root), types: [Lain::Epic::SignoffQueue::JOURNAL_TYPE]).to_a
+          SessionJournals.of(@paths, @root, types: [Lain::Epic::SignoffQueue::JOURNAL_TYPE]).to_a
         end
       end
 

@@ -114,7 +114,7 @@ module Lain
       # invocation, and `unknown_message` wants the same fold `find` just missed
       # in -- and why nothing here is offered as a long-lived object.
       def root = @root ||= Project::Resolver.default_project.root
-      def dirs = @dirs ||= @paths.session_dirs(Paths::Place.here(root))
+      def dirs = @dirs ||= [@paths.filing_dir(root:)]
       def review = @review ||= Review.new(journals.to_a, now: @clock.call)
 
       # The journal-discovery contract lives in {SessionJournals}, so this
@@ -162,12 +162,12 @@ module Lain
 
       def epics = @epics ||= Epic.new(paths: @paths)
 
-      # {Journal.open} creates a fresh file under `sessions_dir`, deliberately:
+      # {Journal.open} creates a fresh file under the root's session directory, deliberately:
       # the fold reads every file there, so a decision journaled from a one-shot
       # CLI lands in the same truth the next fold sees. The decisions go first,
       # and whatever they advance after them, as a verdict writes them.
       def append(decisions, advances)
-        journal = Journal.open(paths: @paths)
+        journal = Journal.open(paths: @paths, root:)
         begin
           decisions.each { |decision| journal.record(decision) }
           advances.write(journal)

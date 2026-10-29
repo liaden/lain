@@ -13,7 +13,7 @@ require "tmpdir"
 # to an empty queue, because this is the screen a human reads specifically to
 # decide that nothing is outstanding.
 RSpec.describe Lain::CLI::EpicQueue do
-  subject(:queue) { described_class.new(paths:, clock:) }
+  subject(:queue) { described_class.new(paths:, clock:, root:) }
 
   around do |example|
     Dir.mktmpdir { |dir| @state_home = dir and example.run }
@@ -66,14 +66,14 @@ RSpec.describe Lain::CLI::EpicQueue do
   # (truncated, or never JSON at all) rather than a JSON-encoded String.
   def write_journal(name, records)
     lines = records.map { |record| record.is_a?(String) ? record : JSON.generate(record) }
-    path = File.join(paths.sessions_dir, name)
+    path = File.join(paths.filing_dir(root:), name)
     File.write(path, "#{lines.join("\n")}\n")
     path
   end
 
   def journal_records
-    Dir.children(paths.sessions_dir).select { |name| name.end_with?(".ndjson") }.sort
-       .flat_map { |name| Lain::Journal.records(File.foreach(File.join(paths.sessions_dir, name))).to_a }
+    Dir.children(paths.filing_dir(root:)).select { |name| name.end_with?(".ndjson") }.sort
+       .flat_map { |name| Lain::Journal.records(File.foreach(File.join(paths.filing_dir(root:), name))).to_a }
   end
 
   def gate_decisions = journal_records.select { |record| record["type"] == "gate_decision" }
@@ -84,7 +84,7 @@ RSpec.describe Lain::CLI::EpicQueue do
   # it: the epic driver launches only issues in flight, so a plan signed off
   # here and left pending would never run.
   describe "approving a parked issue plan" do
-    subject(:queue) { described_class.new(paths:, clock:, epics:) }
+    subject(:queue) { described_class.new(paths:, clock:, epics:, root:) }
 
     def progress = Lain::Epic::Progress.fold(journal_records, graph: home.read_epic, epic_slug: "alpha")
 
@@ -130,7 +130,7 @@ RSpec.describe Lain::CLI::EpicQueue do
   # Research is approved before plan-epic writes epic.md, so these examples
   # hold research.md alone, as a real epic does at this gate.
   describe "approving a parked epic-wide stage" do
-    subject(:queue) { described_class.new(paths:, clock:, epics:) }
+    subject(:queue) { described_class.new(paths:, clock:, epics:, root:) }
 
     before do
       home.research.write("the research, such as it is\n")
@@ -450,13 +450,13 @@ RSpec.describe Lain::CLI::EpicQueue do
       first = queue.listing
 
       expect(first).to include(digest_a, digest_b)
-      expect(described_class.new(paths:, clock:).listing).to eq(first)
+      expect(described_class.new(paths:, clock:, root:).listing).to eq(first)
     end
   end
 
   describe "an empty queue" do
     it "names the directory it folded, so 'nothing outstanding' is checkable" do
-      expect(queue.listing).to include(paths.sessions_dir)
+      expect(queue.listing).to include(paths.filing_dir(root:))
     end
 
     it "reports what it understood, not merely how many files it opened" do
@@ -541,7 +541,7 @@ RSpec.describe Lain::CLI::EpicQueue do
   # A sign-off advances the epic exactly as a verdict does, so it meets the
   # boundary a verdict meets: a withdrawn research approval holds epic_plan.
   describe "approving a later stage over a denied earlier one" do
-    subject(:queue) { described_class.new(paths:, clock:, epics:) }
+    subject(:queue) { described_class.new(paths:, clock:, epics:, root:) }
 
     before do
       home.research.write("the research, such as it is\n")
@@ -592,7 +592,7 @@ RSpec.describe Lain::CLI::EpicQueue do
   # and the listing reach it first; the boundary still needs research signed
   # off before it.
   describe "a digest parked in two partitions, the later stage parked first" do
-    subject(:queue) { described_class.new(paths:, clock:, epics:) }
+    subject(:queue) { described_class.new(paths:, clock:, epics:, root:) }
 
     before do
       home.research.write("the research, such as it is\n")

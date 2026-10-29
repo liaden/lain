@@ -133,7 +133,7 @@ module Lain
       # no record removes it on close, so a run that changed nothing leaves no
       # trace on disk.
       def journaling
-        journal = Journal.open(paths: @paths)
+        journal = Journal.open(paths: @paths, root: @root)
         begin
           yield journal
         ensure
@@ -222,7 +222,7 @@ module Lain
 
         # FRESH per invocation, never memoized: {SessionJournals} caches its walk.
         def journals
-          SessionJournals.of(@paths, Paths::Place.here(@root),
+          SessionJournals.of(@paths, @root,
                              types: [Lain::Forge::Intent::JOURNAL_TYPE, Lain::Forge::Outcome::JOURNAL_TYPE])
         end
       end

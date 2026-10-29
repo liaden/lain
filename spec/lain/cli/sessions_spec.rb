@@ -311,9 +311,9 @@ RSpec.describe Lain::CLI::Sessions do
     end
   end
 
-  # A session is filed under its project root, but earlier versions filed it
-  # under the directory the chat started in, and those files must stay listed.
-  describe "listing both the root's directory and the working directory's" do
+  # A session is filed under its project root alone, so a listing from a
+  # subdirectory finds the chat's sessions and nothing keyed on the cwd.
+  describe "listing the root's directory from a subdirectory" do
     around do |example|
       @root = File.join(File.realpath(@state_home), "project")
       @sub = File.join(@root, "sub")
@@ -325,25 +325,13 @@ RSpec.describe Lain::CLI::Sessions do
       File.write(File.join(paths.sessions_dir(project: paths.project_hash(dir)), name), "")
     end
 
-    it "lists a session filed under the old cwd key when run in that subdirectory" do
-      file_under(@sub, "20260101T000000-1.ndjson")
-
-      expect(Dir.chdir(@sub) { sessions.listing }).to include("20260101T000000-1.ndjson")
-    end
-
-    it "lists the root's sessions and the cwd's together, newest first, from the subdirectory" do
+    it "lists the root's sessions, and not the working directory's" do
       file_under(@root, "20260102T000000-1.ndjson")
       file_under(@sub, "20260103T000000-1.ndjson")
 
       names = Dir.chdir(@sub) { sessions.listing }.lines.map { |line| line[/\S+/] }
 
-      expect(names).to eq(%w[20260103T000000-1.ndjson 20260102T000000-1.ndjson])
-    end
-
-    it "lists a session filed under the root when run at the root" do
-      file_under(@root, "20260102T000000-1.ndjson")
-
-      expect(Dir.chdir(@root) { sessions.listing }).to include("20260102T000000-1.ndjson")
+      expect(names).to eq(%w[20260102T000000-1.ndjson])
     end
   end
 end

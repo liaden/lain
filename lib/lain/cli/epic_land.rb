@@ -124,7 +124,7 @@ module Lain
       end
 
       def journaled
-        journal = Journal.open(paths: @paths)
+        journal = Journal.open(paths: @paths, root: @root)
         begin
           yield journal
         ensure
@@ -170,11 +170,11 @@ module Lain
       # FRESH per invocation, never memoized, for {CLI::EpicSubmit#journals}'
       # reason: {SessionJournals} caches its own walk.
       def journals
-        SessionJournals.of(@paths, Paths::Place.here(@root), types: [Lain::Epic::SignoffQueue::JOURNAL_TYPE])
+        SessionJournals.of(@paths, @root, types: [Lain::Epic::SignoffQueue::JOURNAL_TYPE])
       end
 
       def landings
-        SessionJournals.of(@paths, Paths::Place.here(@root), types: [Lain::Forge::LocalLanding::LANDED])
+        SessionJournals.of(@paths, @root, types: [Lain::Forge::LocalLanding::LANDED])
       end
 
       def named!(value)

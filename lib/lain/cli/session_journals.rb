@@ -182,16 +182,15 @@ module Lain
       Tally = Data.define(:files, :lines, :records, :unreadable, :misfiled)
 
       # @param paths [Paths]
-      # @param place [#root, #cwd] a {Project} or a {Paths::Place}
+      # @param root [String] the project root
       # @param types [Array<String>] the journal discriminators to keep
       # @param damage [#call] see {#initialize}
-      # @return [SessionJournals] over every directory the place's sessions are filed in
-      def self.of(paths, place, types:, damage: Refuse) = new(dirs: paths.session_dirs(place), types:, damage:)
+      # @return [SessionJournals] over the directory the root's sessions are filed in
+      def self.of(paths, root, types:, damage: Refuse) = new(dirs: paths.filing_dir(root:), types:, damage:)
 
-      # @param dirs [String, Array<String>] the project's session directory, or every
-      #   directory its sessions are filed in, already resolved -- this object does
-      #   no `Paths` arithmetic, which lets one caller scope by `Dir.pwd` and
-      #   another by an explicit root
+      # @param dirs [String, Array<String>] the session directory, or every
+      #   directory to fold, already resolved -- this object does no `Paths`
+      #   arithmetic
       # @param types [Array<String>] the journal discriminators to keep.
       #   REQUIRED, and deliberately so: every caller knows which records it is
       #   about, and a "keep everything" default would quietly make the

@@ -103,6 +103,7 @@ module Lain
         @bounds = bounds
         @surface = surface
         @cwd = project.cwd
+        @root = project.root
         @sensitivity = classifier(project)
         @projection = Lain::Survey::Projection.new(ledger: ledger || Lain::Sensitivity::Ledger.new)
       end
@@ -152,7 +153,7 @@ module Lain
       def opened(walk, source, scope, ceilings)
         buffer = StringIO.new
         surface = checked_surface(buffer)
-        journal = Journal.open(paths: @paths)
+        journal = Journal.open(paths: @paths, root: @root)
         begin
           drawn(walk, round(source, journal, surface, ceilings), scope, buffer)
         ensure

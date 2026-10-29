@@ -764,12 +764,5 @@ RSpec.describe Lain::CLI::Watch do
 
       expect(tail_from_subdirectory).to eq(0)
     end
-
-    it "tails a session filed under the working directory's key, the one an earlier version used" do
-      sub_dir = paths.sessions_dir(project: paths.project_hash(@sub))
-      File.write(File.join(sub_dir, "20260723T000000-1.ndjson"), closed_session)
-
-      expect(tail_from_subdirectory).to eq(0)
-    end
   end
 end

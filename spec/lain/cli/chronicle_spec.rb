@@ -81,6 +81,24 @@ RSpec.describe Lain::CLI::Chronicle do
       expect(described_class.for(enabled: nil, root: Dir.pwd)).to be_a(described_class::Null)
     end
 
+    it "files the --no-journal tee journal under the root's directory, from a subdirectory" do
+      Dir.mktmpdir do |dir|
+        base = File.realpath(dir)
+        root = File.join(base, "repo")
+        sub = File.join(root, "sub")
+        FileUtils.mkdir_p(sub)
+        env = { "XDG_STATE_HOME" => File.join(base, "state"), "HOME" => base }
+        paths = Lain::Paths.new(env:)
+
+        with_env(env) do
+          Dir.chdir(sub) { described_class.for(enabled: false, root:, paths:).wrap_tee(Lain::Channel::Null.instance) }
+        end
+
+        expect(Dir.children(paths.container("sessions", key: paths.project_hash(root)))).not_to be_empty
+        expect(Dir.exist?(paths.container("sessions", key: paths.project_hash(sub)))).to be(false)
+      end
+    end
+
     # /fork composes `<session>@<head>` from this reader, so the opened
     # chronicle must name the very file `.for` put on disk.
     it "exposes the opened journal's path -- the session identity /fork forks" do
@@ -851,7 +869,7 @@ RSpec.describe Lain::CLI::Chronicle do
       let(:tee_journal_io) { StringIO.new }
       let(:line) { timeline.commit(role: :assistant, content: text("yo")) }
 
-      before { allow(Lain::Journal).to receive(:open).with(no_args).and_return(Lain::Journal.new(io: tee_journal_io)) }
+      before { allow(Lain::Journal).to receive(:open).with(paths: kind_of(Lain::Paths), root: nil).and_return(Lain::Journal.new(io: tee_journal_io)) }
 
       def tee_records = tee_journal_io.string.each_line.map { |record| JSON.parse(record) }
 
@@ -923,7 +941,7 @@ RSpec.describe Lain::CLI::Chronicle do
     # independent of the (absent) record.
     it "wrap_tee opens its OWN real journal and still carries the --nvim tee's telemetry leg" do
       fresh_journal = instance_double(Lain::Journal, :<< => nil)
-      allow(Lain::Journal).to receive(:open).with(no_args).and_return(fresh_journal)
+      allow(Lain::Journal).to receive(:open).with(paths: kind_of(Lain::Paths), root: nil).and_return(fresh_journal)
 
       returned = null.wrap_tee([])
       instrumentation = null.instrumentation
@@ -936,7 +954,10 @@ RSpec.describe Lain::CLI::Chronicle do
     # Every journal-role collaborator of a run asks for this, and the null device
     # is a File: one per call would be one leaked descriptor per collaborator.
     it "answers one memoised journal that records into nothing, and never the --nvim tee" do
-      allow(Lain::Journal).to receive(:open).with(no_args).and_return(instance_double(Lain::Journal, :<< => nil))
+      allow(Lain::Journal).to receive(:open).with(paths: kind_of(Lain::Paths),
+                                                  root: nil).and_return(instance_double(
+                                                                          Lain::Journal, :<< => nil
+                                                                        ))
       first = null.durable_journal
       null.wrap_tee([])
 
@@ -948,7 +969,8 @@ RSpec.describe Lain::CLI::Chronicle do
     # --no-journal + --nvim: the durable records and the teed ones go to two
     # different journals, and an observer must see both.
     it "tells an observer what the durable journal and the --nvim tee's own journal write" do
-      allow(Lain::Journal).to receive(:open).with(no_args).and_return(Lain::Journal.new(io: StringIO.new))
+      allow(Lain::Journal).to receive(:open).with(paths: kind_of(Lain::Paths),
+                                                  root: nil).and_return(Lain::Journal.new(io: StringIO.new))
       before_tee = []
       after_tee = []
       null.observe(before_tee)

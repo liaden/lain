@@ -195,15 +195,14 @@ module Lain
       # every session back at 1. What is left is the genuinely concurrent case,
       # which a generation carrying a session id would close.
       #
-      # Both the root's directory and the working directory's, as
-      # {CLI::Epic::Journals#walk}: a chat files its claims under the root, an
-      # earlier version under the cwd.
+      # The root's directory, as {CLI::Epic::Journals#walk}: a chat files its
+      # claims under the root.
       #
       # @param paths [Paths] the state home the sessions directory resolves under
       # @param root [String] the project root
       # @return [Array<Hash>] every review open and close record on disk
       def self.prior_claims(paths, root:)
-        SessionJournals.of(paths, Paths::Place.here(root),
+        SessionJournals.of(paths, root,
                            types: [Lain::Epic::ReviewOpened::JOURNAL_TYPE,
                                    Lain::Epic::ReviewClosed::JOURNAL_TYPE]).to_a
       end

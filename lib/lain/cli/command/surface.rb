@@ -19,6 +19,9 @@ module Lain
       # {Tools::RunSkill} and {Backend#context}'s system prompt are readers of
       # one `.lain/` read rather than separate reads of the same tree.
       class Surface
+        # Stands in for a Project where only the root is known: session listing reads nothing else.
+        Rooted = Data.define(:root)
+
         # `chronicle:`, `status_feed:`, `model_switch:`, `mode_switch:`, `role_spawn:`,
         # `library:`, `ledger:`, `sensitivity:` and `snapshots:` are required, not defaulted:
         # each is always wired in the live path, so a defaulted Null would only
@@ -119,7 +122,7 @@ module Lain
           epic.driver(root: @root, library: @library, chronicle:)
         end
 
-        def place = Paths::Place.new(root: @root, cwd: @cwd)
+        def place = Rooted.new(@root)
 
         # The one Env assembly -- extracted so initialize stays the plain seeding
         # it reads as (the Metrics trip said so: extract, do not loosen). Only

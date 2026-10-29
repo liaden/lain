@@ -26,14 +26,6 @@ module Lain
   # Hash instead of mutating process-wide state -- the real `$HOME` is never
   # touched by this class or by its specs.
   class Paths
-    # All a session reader needs of a {Project}, for a caller that holds a root
-    # and a cwd without one.
-    Place = Data.define(:root, :cwd) do
-      # @return [Place] `root` with the process's working directory, for the epic
-      #   readers that key their journals on where they were started
-      def self.here(root) = new(root:, cwd: Dir.pwd)
-    end
-
     # A directory this class had to create and could not.
     class Unwritable < Error
       def initialize(path, cause)
@@ -291,17 +283,13 @@ module Lain
       ensure_dir(container("sessions", key: project))
     end
 
-    # Every directory a session reader folds, root first: a chat files under its
-    # project root, while earlier versions and the epic writers file under the
-    # working directory, and a reader that looked at one would lose the other.
-    # One place computes the pair so no reader can disagree with another.
+    # The directory a session reader folds: the project root's, where a chat and
+    # every epic writer file. An array, so a reader folds it the way it would
+    # fold several.
     #
-    # @param place [#root, #cwd] a {Project} or a {Place}
-    # @return [Array<String>] one directory when the two keys are the same
-    def session_dirs(place)
-      same = File.expand_path(place.cwd) == File.expand_path(place.root)
-      [place.root, *(place.cwd unless same)].map { |dir| sessions_dir(project: project_hash(dir)) }.uniq
-    end
+    # @param project [#root] a {Project}
+    # @return [Array<String>] the one directory
+    def session_dirs(project) = [filing_dir(root: project.root)]
 
     # @param root [String] the project root
     # @return [String] where a chat files its journal, created

@@ -2014,13 +2014,6 @@ RSpec.describe Lain::CLI::Resume do
       expect(Dir.chdir(@sub) { resume.locate("") }).to eq(path)
     end
 
-    it "finds a session filed under the old cwd key, and picks the newest across both" do
-      file_under(@root, "20260101T000000-1.ndjson", chain("one", "two"))
-      newer = file_under(@sub, "20260102T000000-1.ndjson", chain("three", "four"))
-
-      expect(Dir.chdir(@sub) { resume.locate("") }).to eq(newer)
-    end
-
     def split_chain(parent_dir:, child_dir:)
       parent = chain("one", "two")
       file_under(parent_dir, "20260101T000000-1.ndjson", parent)
@@ -2050,7 +2043,7 @@ RSpec.describe Lain::CLI::Resume do
     it "resumes a root-filed chat whose parent is filed under the directory it was started from" do
       elsewhere = File.join(File.realpath(@state_home), "elsewhere").tap { |dir| FileUtils.mkdir_p(dir) }
       parent = split_chain(parent_dir: elsewhere, child_dir: @root)
-      project = Lain::Paths::Place.new(root: @root, cwd: @root)
+      project = instance_double(Lain::Project, root: @root)
 
       result = Dir.chdir(elsewhere) { described_class.new(paths:, project:).call(selector: "20260102") }
 
