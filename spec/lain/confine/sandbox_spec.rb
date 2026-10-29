@@ -269,6 +269,114 @@ RSpec.describe Lain::Confine::Sandbox do
       expect(sandbox_records.map(&:created_sealed).last).to eq([File.join(repo, "landing-b")])
     end
 
+    it "refuses a call whose hooks link outside the writes leads to a link inside them, so no hook is planted" do
+      FileUtils.mkdir_p(real = File.join(@base, "real-hooks"))
+      File.symlink(real, inside = File.join(repo, "x"))
+      File.symlink(inside, outside = File.join(@base, "hooks-link"))
+      system(SeedRepo::SCRUB, "git", "-C", repo, "config", "core.hooksPath", outside, exception: true)
+      capture = judged("rm x && mkdir x && echo planted > x/pre-commit")
+
+      expect([capture.exit_status, capture.stderr]).to match([Lain::Shell::Pipeline::NOT_PERMITTED, /REFUSED/])
+      expect([File.symlink?(inside), File.exist?(File.join(real, "pre-commit"))]).to eq([true, false])
+    end
+
+    it "refuses a call whose hooks hop is spelled outside the writes but really lands on a link inside them" do
+      FileUtils.mkdir_p([real = File.join(@base, "real-hooks"), File.join(repo, "d")])
+      File.symlink(real, inside = File.join(repo, "d", "b"))
+      File.symlink(File.join(repo, "d"), File.join(@base, "out-a"))
+      File.symlink(File.join(@base, "out-a", "b"), outside = File.join(@base, "hooks-link"))
+      system(SeedRepo::SCRUB, "git", "-C", repo, "config", "core.hooksPath", outside, exception: true)
+      capture = judged("rm d/b && mkdir d/b && echo planted > d/b/pre-commit")
+
+      expect([capture.exit_status, capture.stderr]).to match([Lain::Shell::Pipeline::NOT_PERMITTED, /REFUSED/])
+      expect([File.symlink?(inside), File.exist?(File.join(real, "pre-commit"))]).to eq([true, false])
+    end
+
+    it "flags the new landing of a hooks chain whose second link the human repointed between calls" do
+      FileUtils.mkdir_p(real = File.join(@base, "real-hooks"))
+      File.symlink(real, second = File.join(@base, "second"))
+      File.symlink(second, first = File.join(@base, "hooks-link"))
+      system(SeedRepo::SCRUB, "git", "-C", repo, "config", "core.hooksPath", first, exception: true)
+      exec = exec_in(repo)
+      judged_in(exec, repo, "true")
+      File.unlink(second)
+      File.symlink(File.join(repo, "landing-b"), second)
+      judged_in(exec, repo, "mkdir landing-b")
+
+      expect(sandbox_records.map(&:created_sealed).last).to eq([File.join(repo, "landing-b")])
+    end
+
+    it "refuses a call whose hooks path meets a link inside the writes through a parent folder linked outside" do
+      FileUtils.mkdir_p(File.join(real = File.join(@base, "real"), "hooks"))
+      File.symlink(real, inside = File.join(repo, "c"))
+      File.symlink(inside, File.join(@base, "a"))
+      system(SeedRepo::SCRUB, "git", "-C", repo, "config", "core.hooksPath", File.join(@base, "a", "hooks"),
+             exception: true)
+      capture = judged("rm c && mkdir -p c/hooks && echo planted > c/hooks/pre-commit")
+
+      expect([capture.exit_status, capture.stderr]).to match([Lain::Shell::Pipeline::NOT_PERMITTED, /REFUSED/])
+      expect([File.symlink?(inside), File.exist?(File.join(real, "hooks", "pre-commit"))]).to eq([true, false])
+    end
+
+    it "flags the new landing of a hooks path whose parent folder's second link the human repointed between calls" do
+      FileUtils.mkdir_p(File.join(real = File.join(@base, "real"), "hooks"))
+      File.symlink(real, second = File.join(@base, "q"))
+      File.symlink(second, first = File.join(@base, "p"))
+      system(SeedRepo::SCRUB, "git", "-C", repo, "config", "core.hooksPath", File.join(first, "hooks"),
+             exception: true)
+      exec = exec_in(repo)
+      judged_in(exec, repo, "true")
+      File.unlink(second)
+      File.symlink(File.join(repo, "landing"), second)
+      judged_in(exec, repo, "mkdir -p landing/hooks")
+
+      expect(sandbox_records.map(&:created_sealed).last).to eq([File.join(repo, "landing", "hooks")])
+    end
+
+    it "seals the hooks dir git really runs when core.hooksPath climbs a .. after a link" do
+      FileUtils.mkdir_p([File.join(repo, "deep"), hooks = File.join(repo, "hooks")])
+      File.symlink(File.join(repo, "deep"), File.join(@base, "l"))
+      system(SeedRepo::SCRUB, "git", "-C", repo, "config", "core.hooksPath", "#{@base}/l/../hooks", exception: true)
+      capture = judged("echo planted > hooks/pre-commit")
+
+      expect(capture.stderr).to match(/Read-only file system|Permission denied/)
+      expect(File.exist?(File.join(hooks, "pre-commit"))).to be(false)
+    end
+
+    it "flags an absent hooks dir the call made, reached by a link target that climbs a .. after a link" do
+      FileUtils.mkdir_p(File.join(repo, "deep"))
+      File.symlink(File.join(repo, "deep"), File.join(@base, "l"))
+      File.symlink("l/../hooks", File.join(@base, "h"))
+      system(SeedRepo::SCRUB, "git", "-C", repo, "config", "core.hooksPath", File.join(@base, "h"), exception: true)
+      judged("mkdir hooks && echo planted > hooks/pre-commit")
+
+      expect(sandbox_records.map(&:created_sealed).last).to eq([File.join(repo, "hooks")])
+    end
+
+    it "flags the missing component the call made, when core.hooksPath climbs a .. after it" do
+      FileUtils.mkdir_p(File.join(repo, "hooks"))
+      system(SeedRepo::SCRUB, "git", "-C", repo, "config", "core.hooksPath", "missing/../hooks", exception: true)
+      judged("mkdir missing && echo planted > hooks/pre-commit")
+
+      expect(sandbox_records.map(&:created_sealed).last).to eq([File.join(repo, "missing")])
+    end
+
+    it "refuses a hook planted where a .. after a missing component spells, even with the missing name removed" do
+      FileUtils.mkdir_p(hooks = File.join(repo, "hooks"))
+      system(SeedRepo::SCRUB, "git", "-C", repo, "config", "core.hooksPath", "missing/../hooks", exception: true)
+      capture = judged("mkdir missing && echo planted > hooks/pre-commit; rmdir missing")
+
+      expect(capture.stderr).to match(/Read-only file system|Permission denied/)
+      expect(File.exist?(File.join(hooks, "pre-commit"))).to be(false)
+    end
+
+    it "flags the missing component the call made a link, when core.hooksPath climbs a .. after it" do
+      system(SeedRepo::SCRUB, "git", "-C", repo, "config", "core.hooksPath", "missing/../hooks", exception: true)
+      judged("mkdir -p a/b a/hooks && ln -s a/b missing && echo planted > a/hooks/pre-commit")
+
+      expect(sandbox_records.map(&:created_sealed).last).to eq([File.join(repo, "missing")])
+    end
+
     it "runs git in a repository whose core.hooksPath is /dev/null" do
       system(SeedRepo::SCRUB, "git", "-C", repo, "config", "core.hooksPath", File::NULL, exception: true)
       capture = judged("git status --short")

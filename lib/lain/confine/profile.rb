@@ -596,7 +596,7 @@ module Lain
 
         # @param path [String] where the seal lands
         # @param absent [Boolean]
-        # @param hops [Array<String>] the links followed to reach `path`
+        # @param hops [Array<String>] each link met on the way to `path`, at its real place
         def initialize(path:, absent:, hops: [])
           super(path:, absent:, hops: hops.map(&:-@).freeze)
         end
@@ -612,12 +612,16 @@ module Lain
         #   {Profile::PROJECT_SEALED}
         # @raise [Unsealable]
         def self.of(root, git = git_dirs(root), writable: [root], also: [])
-          named = [*in_git(root, *git), ProjectDir.new(root:).dir,
-                   *Profile::PROJECT_SEALED.map { File.join(root, _1) }, *also]
-          named.each { refuse_link(_1, writable, root) }
-          named.reject { device?(_1, writable) }.map { at(_1) }.group_by(&:path).map do |path, seals|
+          writes = writable.map { Profile.landing(_1) }
+          landed = named(root, git, also).map { [_1, landings(_1)] }
+          landed.each { |name, seals| seals.each { refuse_link(name, _1, writes, root) } }
+          landed.reject { device?(_1.first, writable) }.flat_map(&:last).group_by(&:path).map do |path, seals|
             new(path:, absent: seals.first.absent, hops: seals.flat_map(&:hops).uniq)
           end
+        end
+
+        def self.named(root, git, also)
+          [*in_git(root, *git), ProjectDir.new(root:).dir, *Profile::PROJECT_SEALED.map { File.join(root, _1) }, *also]
         end
 
         def self.in_git(root, common = nil, gitdir = nil, hooks = nil)
@@ -640,10 +644,10 @@ module Lain
         # A `.git` file redirects git, and a `.git` link is refused on the way to the seals under it.
         def self.pointer(dot_git) = File.file?(dot_git) || File.symlink?(dot_git) ? [dot_git] : []
 
-        def self.refuse_link(path, writable, root)
-          link = Pathname(path).descend.map(&:to_s).find do |step|
-            File.symlink?(step) && writable.any? { step != _1 && Landing.under?(step, _1) }
-          end
+        # The call could repoint a link inside the writes after the seal is mounted, so one anywhere on the way
+        # is refused rather than sealed past.
+        def self.refuse_link(path, seal, writes, root)
+          link = seal.hops.find { |place| writes.any? { place != _1 && Landing.under?(place, _1) } }
           raise Unsealable.new(path:, link:, root:) if link
         end
 
@@ -659,28 +663,70 @@ module Lain
           false
         end
 
-        def self.at(path, left = LINK_HOPS, followed = [])
-          hops = File.symlink?(path) ? [*followed, path] : followed
-          return new(path: -File.realpath(path), absent: false, hops:) if File.exist?(path)
-          return new(path: -path, absent: true, hops: followed) unless File.symlink?(path) && left.positive?
-
-          at(File.expand_path(File.readlink(path), Profile.landing(File.dirname(path))), left - 1, hops)
+        # A `..` after a missing component is sealed at that component, yet the call could plant beneath what
+        # the text spells today and remove the component again, so that is sealed too.
+        def self.landings(path)
+          seal = at(path)
+          spelled = seal.absent && parts(path).include?("..") ? [at(File.expand_path(path))].reject(&:absent) : []
+          [seal, *spelled]
         end
-        private_class_method :in_git, :worktrees, :pointer, :refuse_link, :device?, :at
+
+        def self.at(path) = walk(File::SEPARATOR, parts(path), [])
+
+        # One component at a time, as the kernel resolves it: a `..` after a link climbs from where the link
+        # lands, and a parent folder's link can be repointed as well as the named one.
+        def self.walk(dir, rest, hops)
+          return new(path: -dir, absent: false, hops:) if rest.empty?
+
+          name, *rest = rest
+          return walk(File.dirname(dir), rest, hops) if name == ".."
+
+          place = File.join(dir, name)
+          stat = lstat(place)
+          return new(path: -missing(place, rest), absent: true, hops:) unless stat
+
+          stat.symlink? ? follow(dir, place, rest, hops) : walk(place, rest, hops)
+        end
+
+        # The kernel gives up past LINK_HOPS links with ELOOP, so git finds nothing there either.
+        def self.follow(dir, link, rest, hops)
+          return new(path: -link, absent: true, hops:) if hops.size >= LINK_HOPS
+
+          target = File.readlink(link)
+          walk(target.start_with?(File::SEPARATOR) ? File::SEPARATOR : dir, [*parts(target), *rest], [*hops, link])
+        end
+
+        # A `..` after a missing component climbs from wherever the call makes it lead, so it is sealed itself.
+        def self.missing(place, rest) = rest.include?("..") ? place : File.join(place, *rest)
+
+        def self.parts(path) = path.split(File::SEPARATOR).reject { _1.empty? || _1 == "." }
+
+        def self.lstat(path)
+          File.lstat(path)
+        rescue SystemCallError
+          nil
+        end
+        private_class_method :named, :in_git, :worktrees, :pointer, :refuse_link, :device?, :landings, :at, :walk,
+                             :follow, :missing, :parts, :lstat
 
         # git answers core.hooksPath and a worktree's pointer itself, includes
         # and all, so this asks it once rather than parsing its config.
         #
         # @param root [String]
-        # @return [Array<String>] common dir, git dir and hooks dir; none where git cannot answer
+        # @return [Array<String>] common dir, git dir and hooks dir, the hooks dir as git spells it under `root`;
+        #   none where git cannot answer
         def self.git_dirs(root)
           out, status = Open3.capture2(Isolation::Worktree::GIT_CONTEXT_SCRUB, "git", "-C", root, *GIT_ASKS,
                                        err: File::NULL)
           hooks, *dirs = out.lines(chomp: true)
-          status.success? && dirs.size == 2 ? [*dirs, File.expand_path(hooks, root)] : []
+          status.success? && dirs.size == 2 ? [*dirs, spelled_under(root, hooks)] : []
         rescue SystemCallError
           []
         end
+
+        # Not expanded: a `..` after a link climbs from where the link lands, which only {.at} can see.
+        def self.spelled_under(root, path) = path.start_with?(File::SEPARATOR) ? path : File.join(root, path)
+        private_class_method :spelled_under
       end
     end
   end

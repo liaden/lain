@@ -206,6 +206,97 @@ RSpec.describe Lain::Confine::Profile do
         expect { workspace }.to raise_error(described_class::Unsealable, /#{Regexp.escape(File.join(root, ".husky"))}/)
       end
 
+      it "refuses a seal reached through a link outside the project that leads to a link inside it" do
+        FileUtils.mkdir_p(File.join(@dir, "real-hooks"))
+        File.symlink(File.join(@dir, "real-hooks"), inside = File.join(root, "x"))
+        File.symlink(inside, outside = File.join(@dir, "hooks-link"))
+        SeedRepo.git(root, "config", "core.hooksPath", outside)
+        expect { workspace }.to raise_error(described_class::Unsealable) { expect(_1.link).to eq(inside) }
+      end
+
+      it "refuses a hop spelled through an outside link that really lands on a link inside the project" do
+        FileUtils.mkdir_p([File.join(@dir, "real-hooks"), File.join(root, "d")])
+        File.symlink(File.join(@dir, "real-hooks"), inside = File.join(root, "d", "b"))
+        File.symlink(File.join(root, "d"), File.join(@dir, "out-a"))
+        File.symlink(File.join(@dir, "out-a", "b"), outside = File.join(@dir, "hooks-link"))
+        SeedRepo.git(root, "config", "core.hooksPath", outside)
+        expect { workspace }.to raise_error(described_class::Unsealable) { expect(_1.link).to eq(inside) }
+      end
+
+      it "refuses a link inside the project met through a parent folder that is a link outside it" do
+        FileUtils.mkdir_p(File.join(@dir, "real", "hooks"))
+        File.symlink(File.join(@dir, "real"), inside = File.join(root, "c"))
+        File.symlink(inside, File.join(@dir, "a"))
+        SeedRepo.git(root, "config", "core.hooksPath", File.join(@dir, "a", "hooks"))
+        expect { workspace }.to raise_error(described_class::Unsealable) { expect(_1.link).to eq(inside) }
+      end
+
+      it "names as hops every link met through a parent folder, so a repoint of the second one is noticed" do
+        FileUtils.mkdir_p(File.join(@dir, "real", "hooks"))
+        File.symlink(File.join(@dir, "real"), second = File.join(@dir, "q"))
+        File.symlink(second, first = File.join(@dir, "p"))
+        SeedRepo.git(root, "config", "core.hooksPath", File.join(first, "hooks"))
+        expect(workspace.sealed.find { _1.path == File.join(@dir, "real", "hooks") }.hops).to eq([first, second])
+      end
+
+      it "climbs a .. in core.hooksPath from where the link before it really lands, as git does" do
+        FileUtils.mkdir_p([File.join(root, "deep"), File.join(root, "hooks")])
+        File.symlink(File.join(root, "deep"), File.join(@dir, "l"))
+        SeedRepo.git(root, "config", "core.hooksPath", "#{@dir}/l/../hooks")
+        expect(sealed_of(workspace)).to include(File.join(root, "hooks") => false)
+        expect(sealed_of(workspace)).not_to include(File.join(@dir, "hooks"))
+      end
+
+      it "climbs a .. in a link's target from where the link before it really lands, sealing an absent one there" do
+        FileUtils.mkdir_p(File.join(root, "deep"))
+        File.symlink(File.join(root, "deep"), File.join(@dir, "l"))
+        File.symlink("l/../hooks", File.join(@dir, "h"))
+        SeedRepo.git(root, "config", "core.hooksPath", File.join(@dir, "h"))
+        expect(sealed_of(workspace)).to include(File.join(root, "hooks") => true)
+        expect(sealed_of(workspace)).not_to include(File.join(@dir, "hooks"))
+      end
+
+      it "refuses a link inside a TMPDIR that is named through a link" do
+        FileUtils.mkdir_p([real_tmp = File.join(@dir, "real-tmp"), File.join(@dir, "real-hooks")])
+        File.symlink(real_tmp, linked_tmp = File.join(@dir, "linked-tmp"))
+        File.symlink(File.join(@dir, "real-hooks"), inside = File.join(real_tmp, "x"))
+        File.symlink(inside, outside = File.join(@dir, "hooks-link"))
+        SeedRepo.git(root, "config", "core.hooksPath", outside)
+        expect { described_class.seals(root:, tmpdir: linked_tmp) }
+          .to raise_error(described_class::Unsealable) { expect(_1.link).to eq(inside) }
+      end
+
+      it "seals the first missing component, absent, when a .. follows it, since the call could make it a link" do
+        FileUtils.mkdir_p(File.join(root, "hooks"))
+        SeedRepo.git(root, "config", "core.hooksPath", "missing/../hooks")
+        expect(sealed_of(workspace)).to include(File.join(root, "missing") => true)
+        expect(sealed_of(workspace)).not_to include(File.join(root, "hooks") => true)
+      end
+
+      it "also seals what a path with a .. after a missing component spells, where that exists" do
+        FileUtils.mkdir_p(File.join(root, "hooks"))
+        SeedRepo.git(root, "config", "core.hooksPath", "missing/../hooks")
+        expect(sealed_of(workspace)).to include(File.join(root, "missing") => true, File.join(root, "hooks") => false)
+      end
+
+      it "stops a link loop absent where it loops, naming the link as its hop" do
+        File.symlink(loop = File.join(@dir, "loop"), loop)
+        SeedRepo.git(root, "config", "core.hooksPath", File.join(loop, "hooks"))
+        expect(workspace.sealed.find { _1.path == loop }).to have_attributes(absent: true, hops: [loop])
+      end
+
+      it "follows 40 links, as the kernel does, and stops absent at the 41st" do
+        FileUtils.mkdir_p(real = File.join(@dir, "real"))
+        links = (0..40).inject([real]) do |made, i|
+          [*made, File.join(@dir, "l#{i}").tap { File.symlink(made.last, _1) }]
+        end
+        SeedRepo.git(root, "config", "core.hooksPath", links[40])
+        expect(sealed_of(workspace)).to include(real => false)
+        SeedRepo.git(root, "config", "core.hooksPath", links[41])
+        expect(sealed_of(workspace)).to include(links[1] => true)
+        expect(sealed_of(workspace)).not_to include(real)
+      end
+
       it "lists, for a start-up check, the seals a workspace call holds, and refuses the same links" do
         expect(described_class.seals(root:, tmpdir:)).to eq(workspace.sealed)
 
