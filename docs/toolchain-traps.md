@@ -373,6 +373,15 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   and `the review annotation runtime a buffer that goes away drops the orphaned entry once it has
   settled it, so a reused bufnr inherits nothing`.
 
+  Seen again 2026-10-28: the `role_prelude_wiring_spec` example above counted 5 `cache_control` blocks
+  against its bound of 4 in a pre-commit suite at load 20, and was green 3 of 3 on the same seed on both
+  the base and the change. A second repeat makes it a card, not a list entry.
+
+  Added 2026-10-29, 2 Rust tests that walk `lib/` panicked with `NotFound` in `read_dir` when `cargo test`
+  ran right after a full `pspec`, and passed alone: `astgrep::tests::the_cancellable_walk_finds_what_find_all_finds_over_this_repositorys_ruby`
+  and `treesitter::tests::the_cancellable_query_finds_what_the_plain_query_finds_over_this_checkouts_sources`.
+  A directory under `lib/` vanished between listing and reading, and `test_sources.rs` unwraps every entry.
+
   Added 2026-10-06, a wall-clock example red under a load average of about 12 (agents running specs
   beside a suite) and green alone each time: `a chat whose terminal is gone ends at its prompt once
   the terminal is closed`. The walk-budget example that was on this list is retired below.
