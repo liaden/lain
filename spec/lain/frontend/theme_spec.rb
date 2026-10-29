@@ -173,6 +173,25 @@ RSpec.describe Lain::Frontend::Theme do
     it "reports itself disabled on a non-tty stream" do
       expect(described_class.for(StringIO.new)).not_to be_enabled
     end
+
+    context "with NO_COLOR set on a terminal" do
+      let(:terminal) { Class.new(StringIO) { def tty? = true }.new }
+
+      before { stub_const("ENV", ENV.to_h.merge("NO_COLOR" => "1")) }
+
+      it "has depth 0 and paints the text unchanged" do
+        subject = described_class.for(terminal)
+
+        expect([subject.depth, subject.paint(:error, "boom"), subject.enabled?]).to eq([0, "boom", false])
+      end
+    end
+
+    it "still paints on a terminal when NO_COLOR is unset" do
+      terminal = Class.new(StringIO) { def tty? = true }.new
+      stub_const("ENV", ENV.to_h.except("NO_COLOR"))
+
+      expect(described_class.for(terminal)).to be_enabled
+    end
   end
 
   describe "#tokens" do

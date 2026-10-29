@@ -566,7 +566,23 @@ RSpec.describe Lain::Frontend::TTY do
       expect(output.string.split("\n")).to include(code)
     end
 
-    it "leaves the rule exactly the width of the screen" do
+    it "draws the rule with a box glyph, the width of the screen, under UTF-8" do
+      allow(Encoding).to receive(:default_external).and_return(Encoding::UTF_8)
+      respond(tty, "ok")
+
+      expect(output.string.split("\n").last).to eq("\u2500" * 20)
+    end
+
+    it "keeps the ASCII rule, the width of the screen, when the locale is not UTF-8" do
+      allow(Encoding).to receive(:default_external).and_return(Encoding::US_ASCII)
+      respond(tty, "ok")
+
+      expect(output.string.split("\n").last).to eq("-" * 20)
+    end
+
+    it "keeps the ASCII rule on a pipe even under UTF-8" do
+      allow(Encoding).to receive(:default_external).and_return(Encoding::UTF_8)
+      allow(output).to receive(:tty?).and_return(false)
       respond(tty, "ok")
 
       expect(output.string.split("\n").last).to eq("-" * 20)

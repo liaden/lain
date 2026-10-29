@@ -78,14 +78,13 @@ module Lain
         match: %i[green bold]            # the characters a query matched (Completion::Menu)
       }.transform_values(&:freeze).freeze
 
-      # Colour is off unless the stream is a real terminal. A caller's own
-      # `pastel:` passes through and wins: forcing colour on for a pipe
-      # (`--color=always`) or off for a terminal is a real request, and this is
-      # the one place to make it.
+      # A caller's own `pastel:` passes through and wins: forcing colour on for a
+      # pipe (`--color=always`) or off for a terminal is a real request, and this
+      # is the one place to make it.
       #
       # @param stream [#tty?] the stream this theme will be styling for
       def self.for(stream, **)
-        new(pastel: Pastel.new(enabled: stream.tty?), **)
+        new(pastel: Pastel.new(enabled: stream.tty? && !::TTY::Color.disabled?), **)
       end
 
       # @return [Integer] what the terminal claims to support (tty-color's

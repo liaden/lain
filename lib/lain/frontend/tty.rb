@@ -564,7 +564,11 @@ module Lain
       end
 
       def rule
-        @theme.paint(:rule, "-" * width)
+        @theme.paint(:rule, rule_glyph * width)
+      end
+
+      def rule_glyph
+        @output.tty? && Encoding.default_external == Encoding::UTF_8 ? "\u2500" : "-"
       end
 
       # The width of the stream being written. `TTY::Screen` measures stderr,
