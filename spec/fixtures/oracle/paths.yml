@@ -667,19 +667,19 @@
   class: none
 - path: "/home/user/project/Gemfile.lock"
   label: benign
-  class: none
+  class: checksums
 - path: "/home/user/project/config/package-lock.json"
   label: benign
-  class: none
+  class: checksums
 - path: "/home/user/project/deploy/yarn.lock"
   label: benign
-  class: none
+  class: checksums
 - path: "/home/user/project/services/api/Cargo.lock"
   label: benign
-  class: none
+  class: checksums
 - path: "/home/user/project/infra/prod/poetry.lock"
   label: benign
-  class: none
+  class: checksums
 - path: "/home/user/project/scripts/README.md"
   label: benign
   class: none
@@ -745,16 +745,16 @@
   class: none
 - path: "/home/user/project/vendor/pkg26/go.sum"
   label: benign
-  class: none
+  class: checksums
 - path: "/home/user/project/vendor/pkg27/pnpm-lock.yaml"
   label: benign
-  class: none
+  class: checksums
 - path: "/home/user/project/vendor/pkg28/composer.lock"
   label: benign
-  class: none
+  class: checksums
 - path: "/home/user/project/vendor/pkg29/Pipfile.lock"
   label: benign
-  class: none
+  class: checksums
 - path: "/home/user/project/vendor/pkg30/flake.lock"
   label: benign
   class: none

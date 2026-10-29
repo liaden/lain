@@ -1017,6 +1017,228 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
     end
   end
 
+  # The policy the board wires, over a real classifier, so the checksums category
+  # reaches the mask the way it does in a chat.
+  describe "a lockfile the policy calls checksums" do
+    subject(:middleware) { described_class.new(ledger:, queue:, journal:, related: policy) }
+
+    let(:policy) { Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home: dir, cwd: dir)) }
+    let(:aws_key) { "AKIAZ7QW3RT5YU8IOP2L" }
+    let(:url_token) { "t0k3nV4lu3x9" }
+
+    def hex(seed) = OpenSSL::Digest.hexdigest("SHA256", seed)
+    def integrity(seed) = "sha512-#{[OpenSSL::Digest.digest("SHA512", seed)].pack("m0")}"
+
+    def gemfile_lock
+      checksums = (1..110).map { |n| "  gem#{n} (1.0.#{n}) sha256=#{hex("gem#{n}")}\n" }
+      "GEM\n  remote: https://rubygems.org/\n\nCHECKSUMS\n#{checksums.join}\nBUNDLED WITH\n   2.6.2\n"
+    end
+
+    def partial(path, offset:, limit:)
+      Sync do |task|
+        call = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file",
+                                          input: { "path" => path, "offset" => offset, "limit" => limit })
+        task.async { dispatch(call) }.wait
+      end
+    end
+
+    it "delivers 30 lines of a Gemfile.lock whole, with no release asked and no mask recorded" do
+      path = write("Gemfile.lock", gemfile_lock)
+
+      content = partial(path, offset: 10, limit: 30).fetch(:result).content
+
+      expect(content).to include(hex("gem20")).and include(hex("gem30"))
+      expect(content).not_to include("redacted")
+      expect(parks).to be_empty
+      expect(redactions).to be_empty
+    end
+
+    it "masks a hinted token in a yarn.lock and parks on it, and leaves the integrity hashes" do
+      path = write("yarn.lock", "a@^1.0.0:\n  version \"1.0.0\"\n  integrity #{integrity("a")}\n  " \
+                                "token: #{aws_key}\n  integrity #{integrity("b")}\n")
+
+      content = read(path).fetch(:result).content
+
+      expect(content).not_to include(aws_key)
+      expect(content).to include("<redacted:1>", integrity("a"), integrity("b"))
+      expect(content).not_to include("<redacted:2>")
+      expect(parks.size).to eq(1)
+    end
+
+    it "masks a credential in a package-lock.json URL and parks on it, and leaves the integrity hash" do
+      path = write("package-lock.json", <<~JSON)
+        {
+          "node_modules/a": {
+            "resolved": "https://user:#{url_token}@registry.example/a/-/a-1.0.0.tgz",
+            "integrity": "#{integrity("a")}"
+          }
+        }
+      JSON
+
+      content = read(path).fetch(:result).content
+
+      expect(content).not_to include(url_token)
+      expect(content).to include("<redacted:1>", integrity("a"))
+      expect(content).not_to include("<redacted:2>")
+      expect(parks.size).to eq(1)
+    end
+
+    it "still masks a 64-hex value in a file the policy does not call checksums" do
+      path = write("notes.txt", "build #{hex("notes")}\n")
+
+      content = read(path).fetch(:result).content
+
+      expect(content).not_to include(hex("notes"))
+      expect(parks.size).to eq(1)
+    end
+
+    it "leaves a lockfile hash in a grep row, and masks a hinted token in the same row" do
+      write("Cargo.lock", "checksum = \"#{hex("serde")}\" token: #{aws_key}\nchecksum = \"#{hex("rand")}\"\n")
+
+      content = Sync do
+        dispatch(Lain::Effect::ToolCall.new(tool_use_id: "tu_grep", name: "grep",
+                                            input: { "pattern" => "checksum", "path" => "Cargo.lock" }),
+                 tool: Lain::Tools::Grep.new).fetch(:result).content
+      end
+
+      expect(content).to include(hex("serde"), hex("rand"), "token: <redacted:1>")
+      expect(content).not_to include(aws_key)
+    end
+
+    describe "a value a checksum key does not name" do
+      let(:hinted) do
+        { "json token" => ->(v) { "    \"token\": \"#{v}\"," }, "yaml _authToken" => ->(v) { "  _authToken: #{v}" },
+          "yaml session" => ->(v) { "  session: #{v}" }, "json api_key" => ->(v) { "  \"api_key\": \"#{v}\"" },
+          "yaml private_key" => ->(v) { "  private_key: #{v}" },
+          "npmrc _authToken" => ->(v) { "//registry.example/:_authToken=#{v}" },
+          "yarn v1 token" => ->(v) { "  token \"#{v}\"" } }
+      end
+      let(:values) { hinted.keys.to_h { [_1, hex(_1)] } }
+      let(:planted) do
+        "a@^1.0.0:\n  integrity #{integrity("a")}\n#{hinted.map do |label, line|
+          line.call(values[label])
+        end.join("\n")}\n"
+      end
+
+      it "is masked in a read_file of the lockfile, and the integrity hash is not" do
+        content = read(write("yarn.lock", planted)).fetch(:result).content
+
+        expect(values.values.select { content.include?(_1) }).to be_empty
+        expect(content).to include(integrity("a"))
+      end
+
+      it "is masked in a grep row of the lockfile" do
+        write("yarn.lock", planted)
+
+        content = Sync do
+          dispatch(Lain::Effect::ToolCall.new(tool_use_id: "tu_grep", name: "grep",
+                                              input: { "pattern" => ".", "path" => "yarn.lock" }),
+                   tool: Lain::Tools::Grep.new).fetch(:result).content
+        end
+
+        expect(values.values.select { content.include?(_1) }).to be_empty
+        expect(content).to include(integrity("a"))
+      end
+    end
+
+    it "keeps an old yarn.lock's sha1 integrity, and masks the same shape under another key" do
+      kept = "sha1-#{[OpenSSL::Digest.digest("SHA1", "kept")].pack("m0")}"
+      pasted = "sha1-#{[OpenSSL::Digest.digest("SHA1", "pasted")].pack("m0")}"
+
+      content = read(write("yarn.lock", "a@^1.0.0:\n  integrity #{kept}\n  note #{pasted}\n")).fetch(:result).content
+
+      expect(content).to include(kept)
+      expect(content).not_to include(pasted)
+    end
+
+    describe "a real lockfile" do
+      let(:repository) { File.expand_path("../../..", __dir__) }
+      let(:lockfiles) do
+        { "Gemfile.lock" => File.read(File.join(repository, "Gemfile.lock")),
+          "Cargo.lock" => File.read(File.join(repository, "Cargo.lock")),
+          "package-lock.json" => <<~JSON,
+            {
+              "packages": {
+                "node_modules/a": {
+                  "version": "1.0.0",
+                  "resolved": "https://registry.npmjs.org/a/-/a-1.0.0.tgz",
+                  "integrity": "#{integrity("a")}"
+                }
+              }
+            }
+          JSON
+          "go.sum" => "golang.org/x/text v0.3.0 h1:#{[OpenSSL::Digest.digest("SHA256", "text")].pack("m0")}\n" \
+                      "golang.org/x/text v0.3.0/go.mod h1:#{[OpenSSL::Digest.digest("SHA256", "mod")].pack("m0")}\n" }
+      end
+
+      # In windows, since a real lockfile is over read_file's byte ceiling.
+      def windows(path, lines)
+        (1..lines).step(250).map { partial(path, offset: _1, limit: 250).fetch(:result) }
+      end
+
+      it "reads whole, with no release asked" do
+        results = lockfiles.to_h { |name, body| [name, windows(write(name, body), body.lines.size)] }
+
+        expect(results.values.flatten).to all(have_attributes(is_error: false))
+        expect(results.select { |_, read| read.any? { _1.content.include?("redacted") } }.keys).to be_empty
+        expect(parks).to be_empty
+      end
+    end
+
+    describe "a read by a worker whose checkout names the directory a secret" do
+      let(:policy) do
+        root = File.join(dir, "project")
+        Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home: dir, cwd: root, root:))
+      end
+      let(:other) { File.join(dir, "other") }
+      let(:session) { Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: other, env: {})) }
+
+      it "keeps the entropy arm, as the gate keeps the file gated" do
+        FileUtils.mkdir_p(File.join(other, "secrets"))
+        path = File.join(other, "secrets", "Cargo.lock").tap { File.write(_1, "checksum = \"#{hex("serde")}\"\n") }
+
+        content = read(path).fetch(:result).content
+
+        expect(content).not_to include(hex("serde"))
+        expect(parks.size).to eq(1)
+      end
+    end
+
+    describe "through a chat's guard stack" do
+      let(:chronicle) do
+        instance_double(Lain::CLI::Chronicle, record_journal: queue_journal,
+                                              instrumentation: Lain::Agent::Instrumentation.new(journal: queue_journal))
+      end
+      let(:toolset) { Lain::Toolset.new([Lain::Tools::ReadFile.new]) }
+
+      def board
+        paths = Lain::Paths.new(env: { "HOME" => dir, "XDG_STATE_HOME" => File.join(dir, "state") })
+        project = Lain::Project.new(root: dir, cwd: dir, kind: :project, detected_by: :git)
+        Lain::CLI::Wiring::BoardBuild.for(
+          chronicle:, options: {}, judge: Lain::CLI::Switchboard::DEFERRING, model: "m", toolset:, project:, paths:,
+          verdict: Lain::CLI::Wiring::BoardBuild.shell_verdict(project:)
+        ).bind_session(session)
+      end
+
+      it "reads a Gemfile.lock's checksums unmasked" do
+        body = File.read(File.expand_path("../../../Gemfile.lock", __dir__))
+        path = write("Gemfile.lock", body)
+        layers = Lain::CLI::ToolGuard.stack(chronicle, board).to_a
+        input = { "path" => path, "offset" => body.lines.index { _1.include?("sha256=") } + 1, "limit" => 100 }
+
+        result = Sync do |task|
+          task.with_timeout(10) do
+            dispatch_call("read_file", input, toolset:, layers:, context: session)
+          end
+        end
+
+        expect(result).not_to be_error
+        expect(result.content).to include(body.lines.grep(/sha256=/).first.strip)
+        expect(result.content).not_to include("redacted")
+      end
+    end
+  end
+
   describe "its collaborators" do
     it "refuses to be built without a ledger, because a second ledger releases in silence" do
       expect { described_class.new(queue:, journal:) }.to raise_error(ArgumentError, /ledger/)

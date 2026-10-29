@@ -623,6 +623,54 @@ RSpec.describe Lain::Sensitivity::Policy do
     end
   end
 
+  describe "#checksums?" do
+    around do |example|
+      Dir.mktmpdir("lain-policy-checksums") do |dir|
+        @base = File.realpath(dir)
+        FileUtils.mkdir_p(File.join(@base, "project"))
+        example.run
+      end
+    end
+
+    let(:home) { File.join(@base, "home") }
+    let(:cwd) { File.join(@base, "project") }
+
+    def written(name, body = "x\n") = File.join(cwd, name).tap { File.write(_1, body) }
+
+    it "answers true for a lockfile the checksums rule names" do
+      expect(policy.checksums?(written("Cargo.lock"), within: cwd)).to be(true)
+      expect(policy.classify(File.join(cwd, "Cargo.lock"))).to have_attributes(level: :ordinary, reason: :checksums)
+    end
+
+    it "answers false for any other file" do
+      expect(policy.checksums?(written("notes.txt"), within: cwd)).to be(false)
+    end
+
+    it "answers false for a link named like a lockfile that lands on another file" do
+      target = written("notes.txt")
+      File.symlink(target, File.join(cwd, "go.sum"))
+
+      expect(policy.checksums?(File.join(cwd, "go.sum"), within: cwd)).to be(false)
+    end
+
+    it "answers its policy's own answer when confined, and false on the Null" do
+      lock = written("yarn.lock")
+
+      expect(policy.confined(roots: [cwd]).checksums?(lock, within: cwd)).to be(true)
+      expect(described_class::Null.instance.checksums?(lock, within: cwd)).to be(false)
+    end
+
+    it "answers false where the reading worker's checkout names the directory a secret, as the gate does" do
+      other = File.join(@base, "other")
+      FileUtils.mkdir_p(File.join(other, "secrets"))
+      lock = File.join(other, "secrets", "Cargo.lock").tap { File.write(_1, "x\n") }
+
+      expect(policy.judge(lock, cwd: other)).to be_gated
+      expect(policy.checksums?(lock, within: other)).to be(false)
+      expect(policy.confined(roots: [other]).checksums?(lock, within: other)).to be(false)
+    end
+  end
+
   # The Null answers it too, because a run that wired no classifier must still
   # be able to walk a tree -- and everything it sees is ordinary, which is the
   # same posture its `gates?` already takes.

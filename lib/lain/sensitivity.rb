@@ -72,23 +72,26 @@ module Lain
         exempt: "exempted by this project's sensitivity config",
         malformed: "a path that cannot be read lexically",
         system: "a system account or privilege file",
-        account_database: "the system account database, which a confined agent may not read"
+        account_database: "the system account database, which a confined agent may not read",
+        checksums: "a lockfile of package checksums"
       }.freeze
       REASONS = EXPLANATIONS.keys.freeze
       # Ordinary, or gated only by where a path is, never by what it is. A name, a shape or
       # an operator's own rule is a judgement a path-and-tool oracle cannot
       # overrule, and an unreadable path is never waved through. An exempted
       # file is ordinary: the operator lifted its name gate on purpose.
-      ORACLE_APPROVABLE = %i[none exempt out_of_scope outside_project].freeze
+      ORACLE_APPROVABLE = %i[none exempt out_of_scope outside_project checksums].freeze
       # Within a level, stricter first. Every pair the classifier emits has its
       # own rank, because a tie between 2 unequal verdicts would make {#|}
       # answer whichever operand came first. A secret-naming name outranks a
       # credential-shaped one because a survey masks it whole, and an unreadable
       # path outranks a location so it is never relabelled into an approvable one.
+      # A checksums file ranks below `none`, so a link landing on any other file
+      # loses the entropy exemption its name would grant.
       REASON_RANK = Ractor.make_shareable(
         { denied: %i[account_database protected system configured],
           gated: %i[named credential configured protected malformed out_of_scope outside_project],
-          ordinary: %i[exempt none] }
+          ordinary: %i[exempt none checksums] }
       )
       # Nested by level so a comparison builds no key.
       STRICTNESS = Ractor.make_shareable(
@@ -908,6 +911,14 @@ module Lain
       Rule.within(".git", name: "config", level: :gated, reason: :credential)
     ].freeze
 
+    # Lockfiles, whose checksum values the entropy detector cannot tell from a
+    # token. Ordinary, and after every gated rule, so a name or a config that
+    # gates one still wins. For them only, {Regions.detect} lifts the entropy arm
+    # and an assignment's value-shape half, for a value behind a checksum key.
+    CHECKSUMS = %w[Gemfile.lock Cargo.lock package-lock.json yarn.lock pnpm-lock.yaml poetry.lock Pipfile.lock
+                   composer.lock go.sum].map { |name| Rule.named(name, level: :ordinary, reason: :checksums) }.freeze
+    RAISED_BY_A_CHECKOUT_NAME = %i[none checksums].freeze
+
     # The project's own Ruby, which a later launch evaluates. The trust digest
     # is the control; this makes a model write to it visible to a human as it
     # happens, and reads too, since the file may hold what the human typed.
@@ -999,7 +1010,7 @@ module Lain
       @anchors = Anchors.new(home: @home, root: anchored_root, base: anchored_root || @cwd)
 
       @rules = [*DENIED, *project_ruby(@anchors), *rules.denied, *rules.exempt.map(&:exactly), *CREDENTIALS,
-                *rules.exempt.select(&:homed?), *PERSONAL, *rules.gated, ORDINARY].freeze
+                *rules.exempt.select(&:homed?), *PERSONAL, *rules.gated, *CHECKSUMS, ORDINARY].freeze
       @related = rules.related.map { |entry| lexical(entry).freeze }.freeze
       freeze
     end
@@ -1036,6 +1047,13 @@ module Lain
 
     def denied?(path) = classify(path).denied?
     def gated?(path) = classify(path).gated?
+
+    # Whether {Regions.detect} may read `path`'s bytes as a lockfile's.
+    #
+    # @param path [String, Pathname] as on {#classify}
+    # @param within [String, nil] as on {#classify}
+    # @return [Boolean]
+    def checksums?(path, within: nil) = classify(path, within:).reason == :checksums
 
     # Whether `path` lies under a `related` directory, whose flagged regions
     # {Middleware::RedactSecretReads} masks without asking. Unreadable answers
@@ -1093,7 +1111,7 @@ module Lain
       base = File.basename(clean)
       segments = clean.split(File::SEPARATOR)
       verdict = @rules.find { |rule| rule.matches?(clean, @anchors, base, segments) }.verdict
-      verdict.reason == ORDINARY.reason && named_within?(clean, within) ? NAME.verdict : verdict
+      RAISED_BY_A_CHECKOUT_NAME.include?(verdict.reason) && named_within?(clean, within) ? NAME.verdict : verdict
     rescue ArgumentError, EncodingError
       # Defence in depth, {Approval::Root#contains?}'s posture: `readable?`
       # takes the two inputs we know of, and unresolvable is exactly the case

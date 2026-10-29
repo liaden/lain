@@ -147,6 +147,9 @@ module Lain
         # Nothing is related, so a flagged region still asks.
         def related?(_path) = false
 
+        # No lockfile is known, so the entropy arm reads every file.
+        def checksums?(_path, **) = false
+
         def in_related_tree?(_path) = false
 
         # @return [Array] none, frozen
@@ -229,7 +232,7 @@ module Lain
 
         def classify(path, within: nil) = @policy.classify(path, within:)
         delegate :related?, :in_related_tree?, :related_directories, :filter, :mask_paths, :marks, :lifts,
-                 to: :@policy
+                 :checksums?, to: :@policy
 
         # Asked by where a path lands, never by the reason its name is judged
         # for: a home directory gated by name is still outside every root.
@@ -417,6 +420,15 @@ module Lain
       #   @param path [String] an absolute directory, as spelled
       #   @return [Array] frozen; see {Sensitivity#lifts}
       delegate :related?, :in_related_tree?, :related_directories, :marks, :lifts, to: :@sensitivity
+
+      # Asked by {Middleware::RedactSecretReads} before it scans a file's
+      # bytes. Judged where the path lands, so a link named `go.sum` that opens
+      # another file is scanned as that file.
+      #
+      # @param path [String] absolute
+      # @param within [String] absolute; the reading worker's base, as the gate judges by, see {.base_of}
+      # @return [Boolean] whether the path's verdict is the checksums one
+      def checksums?(path, within:) = judge(path, cwd: within, within:).reason == :checksums
 
       # The stricter of the path as written and every spelling of where it
       # lands. The literal is asked first, so a denied name costs no syscall.

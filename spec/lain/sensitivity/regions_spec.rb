@@ -1062,6 +1062,158 @@ RSpec.describe Lain::Sensitivity::Regions do
     end
   end
 
+  describe ".detect with checksums" do
+    def checksummed(content) = described_class.detect(content, checksums: true)
+
+    def hex(seed, bytes) = OpenSSL::Digest.hexdigest("SHA256", seed)[0, bytes * 2]
+    def base64(seed, bytes) = [OpenSSL::Digest.digest("SHA512", seed)[0, bytes]].pack("m0")
+
+    lockfile_lines = {
+      "a Gemfile.lock checksum" => ->(s) { "  rake (13.0.6) sha256=#{s.hex("rake", 32)}\n" },
+      "a Cargo.lock checksum" => ->(s) { "checksum = \"#{s.hex("serde", 32)}\"\n" },
+      "a poetry.lock content hash" => ->(s) { "content-hash = \"#{s.hex("poetry", 32)}\"\n" },
+      "a Pipfile.lock hash" => ->(s) { "                \"sha256:#{s.hex("pipfile", 32)}\"\n" },
+      "a composer.lock shasum" => ->(s) { "                \"shasum\": \"#{s.hex("composer", 20)}\"\n" },
+      "a yarn.lock resolved commit" => lambda { |s|
+        "  resolved \"https://registry.yarnpkg.com/a/-/a-1.0.0.tgz##{s.hex("yarn", 20)}\"\n"
+      },
+      "a sha512 integrity" => ->(s) { "  integrity sha512-#{s.base64("npm", 64)}\n" },
+      "a sha256 integrity" => ->(s) { "  integrity sha256-#{s.base64("npm256", 32)}\n" },
+      "a go.sum h1 hash" => ->(s) { "golang.org/x/text v0.3.0 h1:#{s.base64("go", 32)}\n" },
+      "a gem whose name holds a hint word" => ->(s) { "  omniauth (2.1.0) sha256=#{s.hex("omniauth", 32)}\n" },
+      "a poetry.lock file hash" => lambda { |s|
+        "    {file = \"a.tar.gz\", hash = \"sha256:#{s.hex("poetry-file", 32)}\"},\n"
+      },
+      "a Pipfile.lock meta hash" => ->(s) { "            \"sha256\": \"#{s.hex("pipfile-meta", 32)}\"\n" },
+      "a package-lock.json integrity" => ->(s) { "      \"integrity\": \"sha512-#{s.base64("npm-json", 64)}\"\n" },
+      "a pnpm-lock.yaml integrity" => ->(s) { "    resolution: {integrity: sha512-#{s.base64("pnpm", 64)}}\n" },
+      "a composer.lock reference" => ->(s) { "                \"reference\": \"#{s.hex("composer-ref", 20)}\",\n" },
+      "a Gemfile.lock git revision" => ->(s) { "  revision: #{s.hex("gem-git", 20)}\n" },
+      "a Cargo.lock git source" => lambda { |s|
+        "source = \"git+https://github.com/org/crate?branch=main##{s.hex("cargo-git", 20)}\"\n"
+      }
+    }
+
+    lockfile_lines.each do |label, line|
+      it "reports no region for #{label}" do
+        expect(checksummed(line.call(self))).to be_empty
+      end
+
+      it "still reports #{label} without checksums" do
+        expect(detect(line.call(self))).not_to be_empty
+      end
+    end
+
+    hinted = {
+      "a JSON token" => ->(v) { "    \"token\": \"#{v}\",\n" },
+      "a YAML _authToken" => ->(v) { "  _authToken: #{v}\n" },
+      "a YAML session" => ->(v) { "  session: #{v}\n" },
+      "a JSON api_key" => ->(v) { "  \"api_key\": \"#{v}\"\n" },
+      "a YAML private_key" => ->(v) { "  private_key: #{v}\n" },
+      "an npmrc _authToken" => ->(v) { "//registry.example/:_authToken=#{v}\n" },
+      "a yarn v1 token" => ->(v) { "  token \"#{v}\"\n" },
+      "a quoted YAML token" => ->(v) { "  token: \"#{v}\"\n" }
+    }
+
+    hinted.each do |label, line|
+      it "still masks a hex64 value under #{label}" do
+        value = hex(label, 32)
+
+        expect(checksummed(line.call(value)).map(&:bytes)).to include(value)
+      end
+    end
+
+    # A checksum word or algorithm prefix counts only where a field starts, so it
+    # cannot be smuggled in inside a hinted value or a longer key.
+    {
+      "an algorithm prefix under a YAML private_key" => ->(h, _) { "  private_key: sha256:#{h}\n" },
+      "a sha1 prefix under a JSON _authToken" => ->(_, h40) { "  \"_authToken\": \"sha1:#{h40}\"\n" },
+      "a sha256= prefix under a JSON token" => ->(h, _) { "  \"token\": \"sha256=#{h}\"\n" },
+      "a sha1= prefix under an npmrc _authToken" => ->(_, h40) { "//registry/:_authToken=sha1=#{h40}\n" },
+      "a sha256= prefix under a YAML signature" => ->(h, _) { "  signature: sha256=#{h}\n" },
+      "an integrity word inside a JSON token" => ->(h, _) { "  \"token\": \"integrity #{h}\"\n" },
+      "a hash word after a token word" => ->(h, _) { "  token hash #{h}\n" },
+      "a dotted auth.hash key" => ->(h, _) { "auth.hash = \"#{h}\"\n" },
+      "a hash query parameter" => ->(h, _) { "  resolved \"https://registry.example/a.tgz?hash=#{h}\"\n" },
+      "a JSON api_token_sha256 key" => ->(h, _) { "  \"api_token_sha256\": \"#{h}\"\n" },
+      "a JSON auth-hash key" => ->(h, _) { "  \"auth-hash\": \"#{h}\"\n" },
+      "a JSON session_checksum key" => ->(h, _) { "  \"session_checksum\": \"#{h}\"\n" },
+      "a hash key after a comma with no space" => ->(h, _) { "  resolved \"https://r.example/a.tgz?a=1,hash=#{h}\"\n" },
+      "a checksum word with no separator after it" => ->(h, _) { "  hash #{h}\n" },
+      "an integrity word after another word" => ->(h, _) { "  token integrity #{h}\n" }
+    }.each do |label, line|
+      it "still masks #{label}" do
+        value40 = hex(label, 20)
+        value64 = hex(label, 32)
+        regions = checksummed(line.call(value64, value40)).map(&:bytes).join(" ")
+
+        expect([value64, value40].any? { regions.include?(_1) }).to be(true)
+      end
+    end
+
+    it "still masks a hex64 value no checksum key names" do
+      value = hex("bare", 32)
+
+      expect(checksummed("  #{value}\n").map(&:bytes)).to eq([value])
+    end
+
+    it "reports no region for an old yarn.lock sha1 integrity" do
+      expect(checksummed("  integrity sha1-#{base64("old-yarn", 20)}\n")).to be_empty
+    end
+
+    it "still masks a sha1 digest shape behind any key but integrity" do
+      lines = ["  note sha1-#{base64("note", 20)}\n", "  checksum sha1-#{base64("checksum", 20)}\n",
+               "  token: sha1-#{base64("token", 20)}\n"]
+
+      expect(lines.map { checksummed(_1).size }).to all(eq(1))
+    end
+
+    it "still masks an h1 value outside a go.sum module line" do
+      value = "h1:#{base64("loose-h1", 32)}"
+
+      expect(checksummed("  x #{value}\n").map(&:bytes)).to eq([value.delete_prefix("h1:")])
+    end
+
+    it "still masks an SRI-shaped value no checksum key names" do
+      value = "sha512-#{base64("unkeyed", 64)}"
+
+      expect(checksummed("  pasted #{value}\n").map(&:bytes)).to eq([value])
+    end
+
+    it "still masks a checksum-shaped value under a name hint" do
+      value = hex("hinted", 32)
+
+      expect(checksummed("auth_token = \"#{value}\"\n").map(&:bytes)).to eq([value])
+    end
+
+    it "still masks an issuer-shaped token beside the hashes" do
+      content = "  integrity sha512-#{base64("npm", 64)}\n  token: AKIAZ7QW3RT5YU8IOP2L\n"
+
+      expect(checksummed(content).map(&:bytes)).to eq(["AKIAZ7QW3RT5YU8IOP2L"])
+    end
+
+    it "still masks a credential in a URL" do
+      content = "\"resolved\": \"https://user:t0k3nV4lu3x9@registry.example/a/-/a-1.0.0.tgz\"\n"
+
+      expect(checksummed(content).map(&:bytes)).to eq(["t0k3nV4lu3x9"])
+    end
+
+    it "still masks a checksum shape glued onto more token bytes" do
+      digest = base64("glued", 32)
+      glued = ["#{hex("glued", 32)}ff", "xh1:#{digest}", "h1:#{digest}x", "sha512-#{base64("glued", 64)}x"]
+
+      expect(glued.map { checksummed("value #{_1}\n").size }).to all(eq(1))
+    end
+
+    it "still masks a sha512 prefix over a digest of the wrong length" do
+      expect(checksummed("  integrity sha512-#{base64("short", 32)}\n")).not_to be_empty
+    end
+
+    it "still masks a 50-hex run, which no checksum is" do
+      expect(checksummed("value #{hex("fifty", 32)[0, 50]}\n")).not_to be_empty
+    end
+  end
+
   describe Lain::Sensitivity::Regions::Region do
     def region(bytes) = described_class.new(start: 0, bytes:, reason: "dotenv assignment", detector: :pattern)
 

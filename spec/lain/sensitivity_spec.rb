@@ -778,6 +778,50 @@ RSpec.describe Lain::Sensitivity do
     end
   end
 
+  describe "lockfiles of package checksums" do
+    lockfiles = %w[Gemfile.lock Cargo.lock package-lock.json yarn.lock pnpm-lock.yaml poetry.lock Pipfile.lock
+                   composer.lock go.sum]
+
+    lockfiles.each do |name|
+      it "classes #{name} as ordinary, for its checksums" do
+        verdict = classify("vendor/app/#{name}")
+
+        expect([verdict.level, verdict.reason]).to eq(%i[ordinary checksums])
+        expect(sensitivity.checksums?("vendor/app/#{name}")).to be(true)
+      end
+    end
+
+    it "names only those files, not a spelling near one" do
+      %w[Cargo.lock.bak my-Cargo.lock go.sum.txt flake.lock notes.txt].each do |path|
+        expect(classify(path).reason).to eq(:none), path
+        expect(sensitivity.checksums?(path)).to be(false), path
+      end
+    end
+
+    it "lets a directory that names a secret still gate one" do
+      expect(classify("secrets/Cargo.lock")).to be_gated
+      expect(sensitivity.checksums?("secrets/Cargo.lock")).to be(false)
+    end
+
+    it "lets a secret-named directory in a checkout outside the base still gate one" do
+      path = "/srv/other/secrets/Cargo.lock"
+
+      expect(sensitivity.classify(path, within: "/srv/other")).to have_attributes(level: :gated, reason: :named)
+      expect(sensitivity.checksums?(path, within: "/srv/other")).to be(false)
+    end
+
+    it "lets a project's own gated rule still gate one" do
+      gated = described_class.new(home:, cwd:, rules: Lain::Sensitivity::Rules.from({ "gated" => ["go.sum"] }))
+
+      expect(gated.classify("go.sum")).to be_gated
+      expect(gated.checksums?("go.sum")).to be(false)
+    end
+
+    it "lets the secret oracle approve one, as any ordinary file" do
+      expect(Lain::Sensitivity::Verdict.new(level: :ordinary, reason: :checksums)).to be_oracle_approvable
+    end
+  end
+
   describe "the name a classify reads once" do
     let(:seen) { [] }
 
@@ -1838,7 +1882,8 @@ RSpec.describe Lain::Sensitivity::Verdict, "ordered by strictness" do
   emitted = [%i[denied account_database], %i[denied protected], %i[denied system], %i[denied configured],
              %i[gated named], %i[gated credential], %i[gated configured], %i[gated protected],
              %i[gated malformed], %i[gated out_of_scope], %i[gated outside_project],
-             %i[ordinary exempt], %i[ordinary none]].map { |level, reason| described_class.new(level:, reason:) }
+             %i[ordinary exempt], %i[ordinary none], %i[ordinary checksums]]
+            .map { |level, reason| described_class.new(level:, reason:) }
 
   it "ranks the verdicts the classifier emits, stricter first, with no 2 tied" do
     expect(emitted.sort.reverse).to eq(emitted)

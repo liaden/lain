@@ -89,6 +89,38 @@ module Lain
       DISGUISED_KEY = "pem private key block"
       OPENSSH_PUBLIC = %r{(?<![\w-])((?:ssh|ecdsa-sha2|sk)-[a-z0-9@.-]+) (AAAA[A-Za-z0-9+/]+={0,3})(?![A-Za-z0-9+/=])}
       PEM_PUBLIC = %r{-----BEGIN ((?:RSA )?PUBLIC KEY)-----\r?\n([A-Za-z0-9+/=\r\n]+)-----END \1-----}
+      # A lockfile's checksum is high-entropy by construction, so in a file the
+      # policy calls checksums a value in one of these shapes leaves both the
+      # entropy arm and the value-shape half of an assignment: hex sha1 or sha256,
+      # an SRI sha256 or sha512 digest, go.sum's `h1:`. Only behind a key that
+      # names a checksum, though, never by shape alone: the same hex under
+      # `token:` or `_authToken=` is a secret, and no hint list is complete
+      # enough to tell them apart the other way round.
+      CHECKSUM = %r{sha256-[A-Za-z0-9+/]{43}=|sha512-[A-Za-z0-9+/]{86}==|h1:[A-Za-z0-9+/]{43}=|\h{64}|\h{40}}
+      CHECKSUM_ALGORITHM = /sha(?:1|256|512)[:=]/
+      # A key counts only where a field starts -- a line's indent, after `{`, or
+      # after a `, ` -- so a checksum word inside a hinted value, a longer key or
+      # a URL query names nothing.
+      FIELD_START = /(?:^[ \t]*|\{[ \t]*|,[ \t]+)/
+      CHECKSUM_WORD = /integrity|checksum|content-hash|shasum|hash|sha256|reference|revision/
+      CHECKSUM_KEY = /"?(?:#{CHECKSUM_WORD})"?[ \t]*[:=][ \t]*["']?/
+      # yarn v1 writes `integrity <digest>` with no separator.
+      YARN_INTEGRITY = /[ \t]+integrity[ \t]+/
+      # The 2 grammars where a bare algorithm word is the key: Gemfile.lock's
+      # `name (version) sha256=` and a Pipfile.lock hash list item.
+      ALGORITHM_KEYED = /\) (?=sha256=)|^[ \t]*"(?=sha256:)/
+      # yarn's `resolved "...tgz#<sha1>"` and Cargo's `source = "git+...#<commit>"`.
+      URL_FRAGMENT = /(?:resolved|source)"?[ \t]*[:=]?[ \t]*"[^"\s#]*#/
+      # Module and version are required: a bare `h1:` anywhere would exempt any 44 base64 characters.
+      GO_SUM = /^\S+ v\S+ (?=h1:)/
+      CHECKSUM_FIELD = /
+        (?:#{FIELD_START}(?:#{CHECKSUM_KEY}|#{URL_FRAGMENT})|^#{YARN_INTEGRITY}|#{ALGORITHM_KEYED}|#{GO_SUM})
+        (?<value>(?:#{CHECKSUM_ALGORITHM})?(?:#{CHECKSUM}))
+      /x
+      # Old yarn's integrity digest, and only behind that key: a sha1 is short enough
+      # that no other key is trusted to name one.
+      INTEGRITY_KEY = /#{FIELD_START}"?integrity"?[ \t]*[:=][ \t]*["']?|^#{YARN_INTEGRITY}/
+      INTEGRITY_FIELD = %r{(?:#{INTEGRITY_KEY})(?<value>sha1-[A-Za-z0-9+/]{27}=)}
       # `.b` returns a NEW, MUTABLE String, so `frozen_string_literal` does not
       # reach this one and it has to be frozen by hand.
       BOM = "\xEF\xBB\xBF".b.freeze
@@ -138,8 +170,12 @@ module Lain
         #   here rather than by the caller, because the credential table
         #   deliberately does not normalize and this is the consumer that needs
         #   it. UTF-16 and invalid UTF-8 are safe as a result.
+        # @param checksums [Boolean] true for a file {Sensitivity::Policy#checksums?}
+        #   names: a value in {CHECKSUM} shape behind a checksum key is no longer
+        #   found by its entropy or value shape alone, while a name hint, an issuer
+        #   shape and every other pattern still find it
         # @return [Array<Region>] frozen, ascending by offset, no two overlapping
-        def detect(content)
+        def detect(content, checksums: false)
           bytes = content.b
           skip = bytes.start_with?(BOM) ? BOM.bytesize : 0
           scanned = skip.zero? ? bytes : bytes.byteslice(skip..)
@@ -149,7 +185,7 @@ module Lain
           # by rank anyway -- but `sort_by` is not stable, and without it the
           # fold's intermediate order is arbitrary. Deliberately unpinnable: no
           # mutant can kill it, which is the honest reason there is no spec.
-          merge(candidates(scanned).sort_by { [_1[:start], _1[:rank]] }, bytes, skip)
+          merge(candidates(scanned, checksums).sort_by { [_1[:start], _1[:rank]] }, bytes, skip)
         end
 
         # @param text [String]
@@ -227,11 +263,17 @@ module Lain
                      reason: candidate[:reason], detector: candidate[:detector])
         end
 
-        def candidates(scanned)
+        def candidates(scanned, checksums)
           public, disguised = matches(scanned, PEM_PUBLIC).partition { |block| PublicKey.pem?(block[1], block[2]) }
+          fields = checksums ? checksum_spans(scanned) : []
 
-          outside(pattern_candidates(scanned) + entropy_candidates(scanned), public_spans(scanned, public)) +
+          outside(pattern_candidates(scanned, fields) + outside(entropy_candidates(scanned), fields),
+                  public_spans(scanned, public)) +
             disguised.map { span(_1.begin(0), _1[0], DISGUISED_KEY, :pattern) }
+        end
+
+        def checksum_spans(scanned)
+          [CHECKSUM_FIELD, INTEGRITY_FIELD].flat_map { matches(scanned, _1) }.map { _1.begin(:value)..._1.end(:value) }
         end
 
         def outside(candidates, spans)
@@ -245,9 +287,9 @@ module Lain
                                           .map { _1.begin(1)..._1.end(2) }
         end
 
-        def pattern_candidates(scanned)
+        def pattern_candidates(scanned, fields)
           CONTENT_SHAPES.flat_map do |name, shape|
-            matches(scanned, shape).filter_map { |match| pattern_candidate(name, match) }
+            matches(scanned, shape).filter_map { |match| pattern_candidate(name, match, fields) }
           end
         end
 
@@ -255,15 +297,15 @@ module Lain
         # iteration; `scan` alone yields text without offsets.
         def matches(scanned, shape) = scanned.to_enum(:scan, shape).map { Regexp.last_match }
 
-        def pattern_candidate(name, match)
+        def pattern_candidate(name, match, fields)
           return value_group_span(match, name) if match.names.include?("value")
 
           assignment = ASSIGNMENT.match(match[0])
           return span(match.begin(0), match[0], name, :pattern) unless assignment
+          return nil if reference?(assignment[2])
 
-          return nil if reference?(assignment[2]) || !qualifies?(name, assignment[1], assignment[2])
-
-          value_span(match, assignment, name)
+          candidate = value_span(match, assignment, name)
+          candidate if qualifies?(name, assignment[1], assignment[2], outside([candidate], fields).any?)
         end
 
         def value_group_span(match, name)
@@ -288,10 +330,12 @@ module Lain
           span(match.begin(0) + within, emitted, name, :pattern)
         end
 
-        def qualifies?(name, key, value)
-          return secret_shaped?(value) if VALUE_GATED_ONLY.include?(name)
+        # `shaped` is false for a value inside a checksum field, which its shape alone no longer qualifies.
+        def qualifies?(name, key, value, shaped)
+          value_shaped = shaped && secret_shaped?(value)
+          return value_shaped if VALUE_GATED_ONLY.include?(name)
 
-          (key.match?(NAME_HINT) && substantial?(value) && !ordinary?(key, value)) || secret_shaped?(value)
+          (key.match?(NAME_HINT) && substantial?(value) && !ordinary?(key, value)) || value_shaped
         end
 
         def ordinary?(key, value) = !key.match?(SECRET_NAMING) && unquote(value).match?(ORDINARY_VALUE)

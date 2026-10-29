@@ -160,6 +160,7 @@ module Lain
       # region still asks.
       module Unrelated
         def self.related?(_path) = false
+        def self.checksums?(_path, **) = false
       end
 
       # The contract the required `ledger:` keeps, named so the raise below and
@@ -192,9 +193,10 @@ module Lain
       #   {Telemetry::SearchRedacted} and {Telemetry::ReadReleased} land
       # @param requester [Requester, nil] the child a read is asked for, as its
       #   gate names it; nil for the parent, whose context names nobody
-      # @param related [#related?] answers whether an absolute path lies under
-      #   a `sensitivity related:` directory, whose regions mask without asking.
-      #   A default is safe here, unlike the two above: the default asks.
+      # @param related [#related?, #checksums?] answers whether an absolute path lies under
+      #   a `sensitivity related:` directory, whose regions mask without asking,
+      #   and whether it is a lockfile whose checksums the entropy arm skips.
+      #   A default is safe here, unlike the two above: the default asks, and scans every file whole.
       # @param secrets [Sensitivity::Secrets::Source] read on every command result for the
       #   launch's secret-named variables and the project's history values, beside the
       #   calling worker's own
@@ -289,14 +291,15 @@ module Lain
       # list, never every region, because what the human agreed to send is not a
       # statement about what else the file holds.
       def adjudicate(carried, effect, result)
-        scan = Scan.new(result.content)
+        path = read_path(carried, effect)
+        scan = Scan.new(result.content, checksums: lockfile(carried).call(path))
         # Refused BEFORE the ledger is touched. `outstanding` RECONCILES -- it
         # drops the releases for regions the file no longer holds -- so asking it
         # about a view we are about to refuse would forget releases for regions
         # nobody looked at, and re-prompt for them forever after.
         return unreadable(carried, effect) unless scan.readable?
 
-        withheld = withheld_in(carried, effect, scan)
+        withheld = withheld_in(carried, path, scan)
         return carried unless withheld.unreleased.any?
         return mask(carried, effect, withheld, remembered(withheld)) if remembered(withheld)
 
@@ -376,17 +379,26 @@ module Lain
       # never scanned in part, and there is no size cap. So a scan that reaches
       # the ledger has by construction seen every byte, which is what makes the
       # reconcile inside `outstanding` sound.
-      def withheld_in(carried, effect, scan)
-        session = carried.fetch(:context) || Session::Null.instance
-        # ABSOLUTE, resolved against the READING WORKER's cwd and never the
-        # process's: the ledger is per-run and reaches every child, so it has no
-        # cwd of its own and raises on a relative path. This is the same rule
-        # {Tools::ReadFile} resolved by, so the ledger, the prompt and the
-        # read-set all name one file.
-        path = Session.normalize_path(effect.input[PATH_INPUT], cwd: session.worker_env.cwd)
-
-        Withheld.new(session:, path:, scan:,
+      def withheld_in(carried, path, scan)
+        Withheld.new(session: session_of(carried), path:, scan:,
                      unreleased: @ledger.outstanding(path, scan.regions, complete: true))
+      end
+
+      # ABSOLUTE, resolved against the READING WORKER's cwd and never the
+      # process's: the ledger is per-run and reaches every child, so it has no
+      # cwd of its own and raises on a relative path. This is the same rule
+      # {Tools::ReadFile} resolved by, so the ledger, the prompt and the
+      # read-set all name one file.
+      def read_path(carried, effect)
+        Session.normalize_path(effect.input[PATH_INPUT], cwd: session_of(carried).worker_env.cwd)
+      end
+
+      def session_of(carried) = carried.fetch(:context) || Session::Null.instance
+
+      # Judged from the reading worker's base, as the gate judges the same path.
+      def lockfile(carried)
+        within = ::Lain::Sensitivity::Policy.base_of(carried.fetch(:context))
+        ->(path) { @related.checksums?(path, within:) }
       end
 
       # Already asked about, and not approved. Asking again cannot produce a
@@ -486,8 +498,9 @@ module Lain
       end
 
       def rows_in(carried, effect, content)
-        cwd = (carried.fetch(:context) || Session::Null.instance).worker_env.cwd
-        Rows.new(content, base: Session.normalize_path(effect.input[PATH_INPUT], cwd:), cwd:, facts: @file_facts)
+        cwd = session_of(carried).worker_env.cwd
+        Rows.new(content, base: Session.normalize_path(effect.input[PATH_INPUT], cwd:), cwd:, facts: @file_facts,
+                          lockfile: lockfile(carried))
       end
 
       # {#mask}'s state-transition rule, over a set of its own so that nothing
@@ -570,10 +583,12 @@ module Lain
         # into.
         Piece = Data.define(:text, :key)
 
-        def initialize(content)
+        # @param content [String, Array] a tool result's content
+        # @param checksums [Boolean] as on {Sensitivity::Regions.detect}
+        def initialize(content, checksums: false)
           @content = content
           @pieces = content.is_a?(String) ? [Piece.new(text: content, key: nil)] : content.map { piece_of(_1) }
-          @detected = @pieces.map { |piece| piece && ::Lain::Sensitivity::Regions.detect(piece.text) }
+          @detected = @pieces.map { |piece| piece && ::Lain::Sensitivity::Regions.detect(piece.text, checksums:) }
           freeze
         end
 
@@ -690,6 +705,7 @@ module Lain
                   "and is not masked here."
 
         Row = Data.define(:prefix, :text, :path, :regions)
+        NO_LOCKFILE = ->(_path) { false }
 
         # A region masks where it was found. Its bytes can recur in the row: an
         # ast_search capture quotes the matched value, escaped as `inspect`
@@ -730,13 +746,16 @@ module Lain
         # @param base [String] the search target, resolved
         # @param cwd [String] the worker's cwd, against which a file target's label resolves
         # @param facts [FileFacts::Live, FileFacts::Recorded] what says whether a path is a directory or a file
-        def initialize(content, base:, cwd:, facts: FileFacts::LIVE)
+        # @param lockfile [#call] whether a row's file is a lockfile, scanned as `read_file` scans it
+        def initialize(content, base:, cwd:, facts: FileFacts::LIVE, lockfile: NO_LOCKFILE)
           @facts = facts
           @directory = facts.directory?(base)
           @anchor = @directory ? base : cwd
           @base = base
           @text = content
-          @rows = content.split("\n", -1).map { row_of(_1) }
+          # One landing judged per file, however many of its rows matched.
+          known = Hash.new { |judged, path| judged[path] = lockfile.call(path) }
+          @rows = content.split("\n", -1).map { row_of(_1, known) }
           freeze
         end
 
@@ -763,7 +782,7 @@ module Lain
         end
 
         # A row whose file cannot be found keys on its first reading, so it still masks.
-        def row_of(text)
+        def row_of(text, lockfile)
           fields = text.split(Middleware::WithholdSecretPaths::Matches::SEPARATOR, -1)
           labels = Middleware::WithholdSecretPaths::MATCHES.paths_in(text)
           return Line.new(text:) if labels.empty?
@@ -771,8 +790,9 @@ module Lain
           label = labels.find { file?(resolved(_1)) } || labels.first
           at = label.count(Middleware::WithholdSecretPaths::Matches::SEPARATOR) + 2
           text = fields.drop(at).join(":")
-          Row.new(prefix: "#{fields.take(at).join(":")}:", text:, path: resolved(label),
-                  regions: Scan.new(text).regions)
+          path = resolved(label)
+          Row.new(prefix: "#{fields.take(at).join(":")}:", text:, path:,
+                  regions: Scan.new(text, checksums: lockfile[path]).regions)
         end
 
         def resolved(label) = Session.normalize_path(label, cwd: @anchor)
