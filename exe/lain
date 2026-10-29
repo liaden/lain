@@ -703,6 +703,40 @@ class LainCLI < Thor
     def status = render { Lain::CLI::Land.new(cwd: Dir.pwd).status(branch: options[:branch]) }
   end
 
+  # The todos subcommand, on the same thin-wiring rule as land: Lain::CLI::Todos
+  # drains, reports and appends. `drain` owns its exit status: 0 when every item
+  # landed or was researched, 1 otherwise, 130 when interrupted.
+  class Todos < Thor
+    include Boundary
+
+    def self.exit_on_failure? = true
+
+    method_option :max_items, type: :numeric, desc: "Take at most this many items; every open item when unset"
+    method_option :max_cost, type: :numeric, default: 5, desc: "Each chore chat's --max-cost, in dollars"
+    desc "drain", "Run each open chore through a leased checkout, a headless chat and lain land"
+    def drain
+      exit_status do
+        project = Lain::Project::Resolver.default_project
+        paths = Lain::Paths.new
+        runner = -> { Lain::CLI::Todos.runner(project:, paths:, lain: File.expand_path(__FILE__), max_cost: options[:max_cost]) }
+        Lain::CLI::Todos.new(project:, paths:, sink: $stdout, runner:).drain(max_items: options[:max_items]&.to_i)
+      end
+    end
+
+    desc "status", "Count the chores and show each claimed line with its pid, host and liveness"
+    def status = render { todos.status }
+
+    desc "add TEXT", "Append an open chore line"
+    def add(text) = render { todos.add(text) }
+
+    no_commands do
+      def todos
+        Lain::CLI::Todos.new(project: Lain::Project::Resolver.default_project, paths: Lain::Paths.new,
+                             sink: $stdout, runner: nil)
+      end
+    end
+  end
+
   # The review subcommand, on the same thin-wiring rule as epic: Lain::CLI::Review
   # resolves the source, opens the round, and returns a String; this class parses
   # argv and says it.
@@ -1361,6 +1395,9 @@ class LainCLI < Thor
 
   desc "land SUBCOMMAND ...ARGS", "queue commits for the merge coordinator"
   subcommand "land", Land
+
+  desc "todos SUBCOMMAND", "the chore file: drain runs the open items, status and add read and extend it"
+  subcommand "todos", Todos
 
   desc "review [open] TARGET", "Review a pull request or a branch: `lain review 4821`, " \
                                "`lain review feature/foo`. Say `open` when the target " \

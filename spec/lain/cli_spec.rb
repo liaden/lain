@@ -681,7 +681,7 @@ RSpec.describe LainCLI do
     it "finds them all at all, so an empty sweep cannot pass vacuously" do
       expect(thor_classes).to contain_exactly(described_class, described_class::Survey,
                                               described_class::Review, described_class::Bench,
-                                              described_class::Epic, described_class::Worktrees,
+                                              described_class::Epic, described_class::Worktrees, described_class::Todos,
                                               described_class::Land)
     end
 
@@ -699,6 +699,7 @@ RSpec.describe LainCLI do
       "bench variance" => %w[bench variance /tmp --nope],
       "worktrees gc" => %w[worktrees gc --nope],
       "land status" => %w[land status --nope],
+      "todos status" => %w[todos status --nope],
       "up" => %w[up /tmp --nope],
       "export" => %w[export x --nope]
     }.each do |command, argv|

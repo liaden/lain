@@ -228,4 +228,40 @@ RSpec.describe Lain::Chores::Queue, :seam do
 
     expect { queue.open }.to raise_error(Lain::Chores::Queue::Unreadable, /UTF-8/)
   end
+
+  describe "#append" do
+    it "writes the open line inside the lock, after a final newline it adds when missing" do
+      File.write(file, "- [ ] one")
+      seen = []
+      path = file
+      lock = Object.new
+      lock.define_singleton_method(:hold) do |&block|
+        seen << File.read(path)
+        block.call.tap { seen << File.read(path) }
+      end
+
+      line = described_class.at(dir, lock:).append("two")
+
+      expect([line, seen]).to eq(["- [ ] two", ["- [ ] one", "- [ ] one\n- [ ] two\n"]])
+    end
+
+    it "ends the new line with CRLF in a CRLF file" do
+      File.binwrite(file, "- [ ] one\r\n- [ ] two")
+
+      queue.append("three")
+
+      expect(File.binread(file)).to eq("- [ ] one\r\n- [ ] two\r\n- [ ] three\r\n")
+    end
+
+    it "refuses text that would read back as a note" do
+      expect { queue.append("fix <!-- lain pid=1 -->") }.to raise_error(Lain::Error, /<!--/)
+      expect(File.read(file)).to eq(body)
+    end
+
+    it "keeps a file that already ends in a newline as it was" do
+      queue.append("tidy")
+
+      expect(File.read(file)).to eq("#{body}- [ ] tidy\n")
+    end
+  end
 end

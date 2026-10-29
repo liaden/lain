@@ -76,6 +76,22 @@ module Lain
         end
       end
 
+      # @param text [String] the chore, already one line
+      # @return [String] the open line added at the end of the file
+      # @raise [Lain::Error] for text holding `<!--`, which would read back as the line's note
+      def append(text)
+        raise Error, "a chore cannot contain <!--, which the file reads as a note" if text.include?("<!--")
+
+        line = Item.new(id: nil, text:, tag: nil, state: :open, claim: nil).render(" ", nil)
+        @lock.hold do
+          existing = File.exist?(@path) ? File.binread(@path) : ""
+          eol = existing[/\r?\n/] || "\n"
+          lead = existing.empty? || existing.end_with?("\n") ? "" : eol
+          File.open(@path, "ab") { |file| file.write("#{lead}#{line}#{eol}") }
+          line
+        end
+      end
+
       private
 
       def read

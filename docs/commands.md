@@ -506,6 +506,28 @@ group before its own verify starts, and says so (in `drain.log` for a drainer, o
 member carries a verify's `lain-verify-` TMPDIR; a start time it cannot read leaves the group
 running and is named the same way.
 
+### lain todos
+
+Drain, count and extend the project's chore file: one `- [ ] text` line per chore, `[research]` after
+the box for a question the research skill answers instead of a change. The file is `TODOS.md` unless
+the [`todos` verb](#todos) names another. [`docs/dogfood.md`](dogfood.md) covers keeping it out of git,
+what runs unattended, and a nightly timer.
+
+```bash
+lain todos drain --max-items 3
+lain todos status
+lain todos add 'tidy the README'
+```
+
+| Command | What it does |
+|---|---|
+| `lain todos drain` | Take each open line in file order: claim it, cut a clone lease, run a headless `lain chat` in it, and land the commit it made through [`lain land`](#lain-land). Prints one line per item. `--max-items` stops after that many; `--max-cost` is each chat's `--max-cost` in dollars (default 5). |
+| `lain todos status` | The counts by state, then each claimed line with its pid, host and whether that pid is live. |
+| `lain todos add TEXT` | Append `- [ ] TEXT` to the file. Nothing else in it changes. |
+
+`lain todos drain` exits `0` when every item landed or was researched, `1` when any failed, and `130`
+when interrupted. An interrupted item stays claimed, and the next drain takes it back.
+
 ### lain worktrees gc
 
 Reap lain's worker checkouts, anchors and merged epic branches whose work is safe elsewhere. No
