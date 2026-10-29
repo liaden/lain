@@ -132,6 +132,18 @@ RSpec.describe Lain::Frontend::InputPane do
     expect(settles { made.first&.fetch(:cycle_key) }).to eq("C-x")
   end
 
+  it "paints with the theme the user's config declares when opened" do
+    paths = Lain::Paths.new(env: { "HOME" => dir, "XDG_CONFIG_HOME" => File.join(dir, "config") })
+    FileUtils.mkdir_p(File.dirname(paths.user_config))
+    File.write(paths.user_config, "theme response: %w[green]\n")
+    Lain::Project::Trust.for_user(paths:).grant!
+    allow(Lain::Frontend::Theme).to receive(:configured).and_call_original
+    described_class.open(path:, input: reader, output: screen, paths:, history_path: File.join(dir, "h"),
+                         state_path: File.join(dir, "s.json"))
+
+    expect(Lain::Frontend::Theme).to have_received(:configured).with(screen, paths:)
+  end
+
   it "reads the approval key from the user's config when opened" do
     paths = Lain::Paths.new(env: { "HOME" => dir, "XDG_CONFIG_HOME" => File.join(dir, "config") })
     FileUtils.mkdir_p(File.dirname(paths.user_config))

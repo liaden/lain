@@ -3525,6 +3525,27 @@ RSpec.describe Lain::CLI::Wiring do
       expect(keys).to eq(["s-tab"])
     end
 
+    it "hands the chat's terminal the theme the user's config declares, with the pastel it paints through" do
+      handed = []
+      theme = Lain::Frontend::Theme.new(pastel: Pastel.new(enabled: false))
+      allow(Lain::Frontend::Theme).to receive(:on_stdout) { theme }
+
+      Dir.mktmpdir do |dir|
+        factory = lambda do |channel:, theme:, pastel:, **|
+          handed << [theme, pastel]
+          Lain::Frontend::TTY.new(channel:, theme:, pastel:, output: StringIO.new,
+                                  history_path: File.join(dir, "history"))
+        end
+        wiring = new_wiring(options: { grace: 5 }, chronicle:, status_feed:, stdin: StringIO.new("quit\n"),
+                            tty_factory: factory, conductor_opener:)
+        wiring.run(backend:, resumed: nil, nvim: nil)
+        wiring.conductor.close(reason: :exit)
+      end
+
+      expect(handed).to eq([[theme, theme.pastel]])
+      expect(Lain::Frontend::Theme).to have_received(:on_stdout).with(paths: an_instance_of(Lain::Paths))
+    end
+
     # A registered command runs outside every ask, so prose typed meanwhile
     # waits as the next prompt rather than going to an agent that is not running.
     it "holds prose typed while a registered command runs, rather than noting it" do

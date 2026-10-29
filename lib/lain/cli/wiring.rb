@@ -282,7 +282,7 @@ module Lain
         agent = wire_agent(channel: Lain::Channel.new, recorder:, session:, backend:, resumed:, views: nvim, notice:)
         startup = [*resumed&.notices, *memory_notices(recorder, resumed), *@observers.notices, *backend.startup_notices]
         tty = open_terminal(agent, notice, startup)
-        rail = Lain::Frontend::Intake.new(screen: tty, history: history_for(tty), notes:, on_cycle: approval_key)
+        rail = Lain::Frontend::Intake.new(screen: tty, history: human.history_for(tty), notes:, on_cycle: approval_key)
         @conductor = open_conductor(tty, rail)
         @conductor.guard do
           build_repl(tty:, agent:, backend:, input: input_for(rail, tty))
@@ -304,7 +304,7 @@ module Lain
       # when they are at this terminal, and a rail prompt when they are in the
       # input pane, which has no way to see this screen.
       def countdown_for(rail)
-        return Lain::CLI::Conductor::RailCountdown::Unoffered unless input_socket_name
+        return Lain::CLI::Conductor::RailCountdown::Unoffered unless human.socket_name
 
         Lain::CLI::Conductor::RailCountdown.new(rail:)
       end
@@ -366,16 +366,20 @@ module Lain
 
       attr_reader :options, :chronicle, :run_clock
 
+      def terminal_keywords(agent, notice)
+        { channel:, input: Lain::Frontend::StdinPump.keys(@stdin), prompt_renderer: prompt_renderer(agent, notice),
+          layers: @switchboard.mode_switch.method(:layers), alternate_screen: human.alternate_screen?,
+          tmux: Frontend::TTY::Notifier.for_chat(@switchboard.guard_inputs.secrets, root),
+          **Frontend::Theme.on_stdout(paths: @paths).terminal }
+      end
+
       # The countdown reads its keys through the pump's terminal, so stdin keeps
       # its one reader.
       def open_terminal(agent, notice, startup)
-        @tty_factory.call(channel:, input: Lain::Frontend::StdinPump.keys(@stdin),
-                          prompt_renderer: prompt_renderer(agent, notice),
-                          layers: @switchboard.mode_switch.method(:layers), alternate_screen: alternate_screen?,
-                          tmux: Frontend::TTY::Notifier.for_chat(@switchboard.guard_inputs.secrets, root)).then do |tty|
+        @tty_factory.call(**terminal_keywords(agent, notice)).then do |tty|
           @human_line = tty.method(:render_summons)
-          startup.each(&(pane? ? tty.method(:render_warning) : notice))
-          alternate_screen? && Lain::Frontend::StdinPump.terminal?(@stdin) ? ScreenNotices.new(tty, startup) : tty
+          startup.each(&(human.pane? ? tty.method(:render_warning) : notice))
+          human.alternate_screen? && Lain::Frontend::StdinPump.terminal?(@stdin) ? ScreenNotices.new(tty, startup) : tty
         end
       end
 
@@ -411,7 +415,7 @@ module Lain
       # all and every line arrives over the socket.
       def input_for(rail, tty)
         return Lain::Frontend::StdinPump::Idle unless attended?
-        unless input_socket_name
+        unless human.socket_name
           return Lain::Frontend::StdinPump.new(rail:, screen: tty, input: @stdin, notes:,
                                                cycle_key:)
         end
@@ -419,20 +423,9 @@ module Lain
         input_socket(rail, tty)
       end
 
-      def input_socket_name = Lain::CLI::InputSocket.named(options[:input])
-
-      # A pane reads the human, so the transcript scrolls in normal scrollback.
-      def alternate_screen? = attended? && !pane?
-
-      # The pane's scrollback is the terminal's to draw, so a notice wraps to its width.
-      def pane? = attended? && !input_socket_name.nil?
-
-      # History is a line editor's: the pane's, over a socket, or this
-      # terminal's. What a pipe feeds a chat is a script, not what a human
-      # would reach for at `you>`.
-      def history_for(tty)
-        typed = attended? && (input_socket_name || Lain::Frontend::StdinPump.terminal?(@stdin))
-        typed ? Lain::Frontend::Intake::Discretion.new(writer: tty) : Lain::Frontend::Intake::Unrecorded
+      def human
+        @human ||= HumanInput.new(input: options[:input], attended: attended?, stdin: @stdin, paths: @paths,
+                                  cwd: project.cwd)
       end
 
       # Bound BEFORE the conversation starts, so a second chat on one socket is
@@ -441,13 +434,9 @@ module Lain
       # or a line refused for its size, is something the human has to be able
       # to read, and the pane is the one surface that cannot report it.
       def input_socket(rail, tty)
-        Lain::CLI::InputSocket.new(rail:, path: input_socket_path, header: method(:hud_line),
+        Lain::CLI::InputSocket.new(rail:, path: human.socket_path, header: method(:hud_line),
                                    commands: method(:command_names), layers: method(:live_layers),
                                    notice: tty.method(:render_warning)).bind
-      end
-
-      def input_socket_path
-        Lain::CLI::InputSocket.path(name: input_socket_name, paths: @paths, cwd: project.cwd)
       end
 
       # What the input pane draws above its prompt: the one HUD line every
@@ -974,7 +963,7 @@ module Lain
                  supervisor:, middleware: @command_surface.middleware, attended: attended?,
                  commands: @command_surface.commands,
                  secret_surface: secret_surface(backend), goal_driver:, input:,
-                 echo_input: attended? && !input_socket_name.nil?, notes:, mode_switch: @switchboard.mode_switch,
+                 echo_input: attended? && !human.socket_name.nil?, notes:, mode_switch: @switchboard.mode_switch,
                  idle: idle_compaction(agent:, backend:), heard:)
       end
 

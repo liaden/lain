@@ -761,6 +761,31 @@ RSpec.describe Lain::Config do
         .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(paths.user_config)}:2: .*Hyper-Q/)
     end
 
+    it "reads the theme the user declared, every other token at its default" do
+      write_user("theme response: %w[green], tool_header: %w[magenta bold]\n")
+
+      expect(described_class.theme(paths:).tokens)
+        .to eq(Lain::Frontend::Theme::DEFAULT_TOKENS.merge(response: %i[green], tool_header: %i[magenta bold]))
+    end
+
+    it "is the default theme when the user has no config.rb" do
+      expect(described_class.theme(paths:).tokens).to eq(Lain::Frontend::Theme::DEFAULT_TOKENS)
+    end
+
+    it "refuses a misspelt token at the user's file and line" do
+      write_user("\ntheme respnse: %w[green]\n")
+
+      expect { described_class.theme(paths:) }
+        .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(paths.user_config)}:2: .*respnse/)
+    end
+
+    it "refuses theme in a project's config.rb" do
+      write_config(root, "theme response: %w[green]\n", paths:)
+
+      expect { described_class.middleware(root:, paths:) }
+        .to raise_error(Lain::Config::Refusal, /theme belongs in the user's config\.rb/)
+    end
+
     it "refuses keys in a project's config.rb" do
       write_config(root, "keys approval_cycle: \"C-x\"\n", paths:)
 

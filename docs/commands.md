@@ -1337,7 +1337,7 @@ it to the chat and to every subagent it spawns. `lain bench`, `lain consolidate`
 and `lain epic submit` read none, so a bench arm does not change with the home directory.
 
 **The user-level file.** `$XDG_CONFIG_HOME/lain/config.rb` (by default `~/.config/lain/config.rb`)
-accepts only the `middleware` and `keys` verbs and applies to every project. `keys approval_cycle:` names the
+accepts only the `middleware`, `keys` and `theme` verbs and applies to every project. `keys approval_cycle:` names the
 [approval cycle key](#cycling-approval-from-the-keyboard), is refused in a project's file, and accepts only
 `"S-Tab"` today: every `C-<letter>` is held by lain or by the line editor. It runs only after
 `lain trust --user`, which shows the file and records its exact bytes. Trust is consent to bytes
@@ -1410,6 +1410,47 @@ tests preset: :rspec, source_roots: %w[lib app], exempt: %w[spec/fixtures/**]
 
 Omitted keys inherit the preset's, so the table above changes the source roots and the exemptions
 and keeps `rspec`'s level roots. A `tests` verb naming no `preset` is refused, listing the four.
+
+### theme
+
+`theme token: %w[style ...]` recolours the tokens the terminal paints with. It is a verb of the user's
+`$XDG_CONFIG_HOME/lain/config.rb` only, after `lain trust --user`: a colour belongs to the person's terminal,
+not to a project, so a project's `.lain/config.rb` that says `theme` is refused with "theme belongs in the user's
+config.rb". Each value is a list of Pastel style names (colours such as `green`, `bright_red` or `on_blue`, and
+`bold`, `dim`, `italic`, `underline` and the other attributes Pastel knows); an empty list paints the token plain.
+A token left out keeps its default. An unknown token or style is refused by name, with the known ones, the file
+and the line. A `bright_` style falls back to its base colour on a terminal below 16 colours.
+
+| Token | Default style |
+|---|---|
+| `response` | `cyan` |
+| `rule` | `dim` |
+| `error` | `red` `bold` |
+| `question_label` | `yellow` `bold` |
+| `question` | `yellow` |
+| `warning` | `yellow` |
+| `prompt` | `bold` |
+| `heading` | `bold` |
+| `heading_md` | `bold` |
+| `code` | `yellow` |
+| `bullet` | `dim` |
+| `emphasis` | `bold` |
+| `command_name` | `cyan` |
+| `tool_header` | `bold` |
+| `label` | `dim` |
+| `tool_error` | `red` |
+| `added` | `green` |
+| `removed` | `red` |
+| `tool_output` | none |
+| `plain` | none |
+| `warm` | `green` |
+| `cold` | `dim` |
+| `match` | `green` `bold` |
+
+```ruby
+# ~/.config/lain/config.rb
+theme response: %w[green], tool_header: %w[magenta bold]
+```
 
 ### todos
 

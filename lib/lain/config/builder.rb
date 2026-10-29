@@ -9,7 +9,7 @@ module Lain
     # the detected-framework fallback survives, without every caller comparing
     # against {TestLayout::None}.
     Built = Data.define(:epics, :approval, :isolation, :sensitivity, :shell, :search, :tests, :middleware,
-                        :env_pass, :approval_timeout, :keys, :todos) do
+                        :env_pass, :approval_timeout, :keys, :todos, :theme) do
       # @param framework [String, nil] a detected test framework
       # @return [TestLayout] the declared layout, else what the framework implies
       def test_layout(framework: nil) = tests || TestLayout.from(nil, path: nil, framework:)
@@ -37,7 +37,7 @@ module Lain
 
       # The user's config.rb runs in every project, so the tables that rule
       # one project stay in that project's file.
-      USER_VERBS = %i[middleware keys].freeze
+      USER_VERBS = %i[middleware keys theme].freeze
 
       # Records the calls a block makes, so the verb that owns the block can
       # validate them at the line each was written on.
@@ -119,9 +119,7 @@ module Lain
                   tests: @tables[:tests],
                   middleware: @tables.fetch(:middleware, Middleware.empty),
                   env_pass: @tables.fetch(:env, []),
-                  approval_timeout: @approval_timeout,
-                  keys: @tables.fetch(:keys) { Keys.empty },
-                  todos: @tables.fetch(:todos) { Todos.empty })
+                  approval_timeout: @approval_timeout, **small_tables)
       end
 
       def epics(**table, &block)
@@ -165,6 +163,8 @@ module Lain
 
       def keys(**table) = declare(:keys, Keys::TABLE, table) { |at| Keys.from(shaped(table), path: at) }
 
+      def theme(**table) = declare(:theme, Theme::TABLE, table) { |at| Theme.from(shaped(table), path: at) }
+
       # `env pass: %w[DATABASE_URL RAILS_ENV]` hands those variables, from the
       # environment lain started under, to every command the bash tool runs.
       #
@@ -190,6 +190,11 @@ module Lain
       def respond_to_missing?(*) = super
 
       private
+
+      def small_tables
+        { keys: @tables.fetch(:keys) { Keys.empty }, todos: @tables.fetch(:todos) { Todos.empty },
+          theme: @tables.fetch(:theme) { Theme.empty } }
+      end
 
       def declare(table, label, keywords = {})
         at = located_at(self.class.line_in(@path))

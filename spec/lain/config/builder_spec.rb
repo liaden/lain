@@ -58,7 +58,8 @@ RSpec.describe Lain::Config::Builder do
                                                        tests: nil,
                                                        env_pass: [],
                                                        approval_timeout: 300,
-                                                       todos: Lain::Config::Todos.empty)
+                                                       todos: Lain::Config::Todos.empty,
+                                                       theme: Lain::Config::Theme.empty)
     end
 
     it "builds the names env pass hands every child" do
@@ -328,7 +329,7 @@ RSpec.describe Lain::Config::Builder do
 
     it "lists only the user's verbs as known" do
       expect { build_user("\nmiddlewear { }\n") }
-        .to raise_error(Lain::Config::Refusal, /config\.rb:2: .*:middlewear; known verbs: middleware, keys\z/)
+        .to raise_error(Lain::Config::Refusal, /config\.rb:2: .*:middlewear; known verbs: middleware, keys, theme\z/)
     end
 
     it "builds a keys table" do

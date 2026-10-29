@@ -93,6 +93,7 @@ module Lain
         @rail = Intake.new(screen: tty, on_cycle: -> { emit(@client, { "v" => "cycle" }) })
         @pump = StdinPump::Idle
         @relay = Relay.new
+        @rows = HeaderRows.new(tty:)
         @rail.route(@relay)
         start_unconnected
       end
@@ -107,7 +108,8 @@ module Lain
         layers = []
         tty = TTY.new(channel: Lain::Channel.new, output:, input: StdinPump.keys(input),
                       completion_sources: Completion::Sources.new(skills: commands),
-                      layers: -> { layers }, **terminal)
+                      layers: -> { layers },
+                      **Theme.configured(output, paths:).terminal, **terminal)
         new(path:, tty:, input:, commands:, layers:, cycle_key: Lain::Config.keys(paths:).approval_cycle)
       end
 
@@ -280,13 +282,13 @@ module Lain
       def restyled
         return unless restylable?
 
-        same_rows?(@shown, @wanted) ? rewrite(@wanted) : redrafted
+        HeaderRows.same_count?(@shown, @wanted) ? @rows.rewrite(@wanted) : redrafted
         @shown = @wanted
       end
 
       def restylable?
         @settled && !@resized && @wanted != @shown && !@shown.empty? && !@wanted.empty? &&
-          (same_rows?(@shown, @wanted) || @draft.seen?)
+          (HeaderRows.same_count?(@shown, @wanted) || @draft.seen?)
       end
 
       def redrafted
@@ -313,16 +315,6 @@ module Lain
         @shown = @wanted
         @adopted = @wanted.split("\n").size
         @tty.print_prompt("#{CLEAR_ROW}#{@wanted}\n#{@draft.shown}")
-      end
-
-      def same_rows?(shown, wanted)
-        rows = wanted.split("\n")
-        !rows.empty? && rows.size == shown.split("\n").size
-      end
-
-      def rewrite(header)
-        rows = header.split("\n")
-        @tty.print_prompt("\e7\e[#{rows.size}A#{rows.map { |row| "#{CLEAR_ROW}#{row}\n" }.join}\e8")
       end
 
       # The withdrawn read unwinds on the pump's fiber after this one starts,
@@ -385,9 +377,9 @@ module Lain
       def reheaded(task, client, frame)
         header = frame["header"].to_s
         return @held.hold(frame) if holding?
-        return redrawn_whole(task, client, frame) unless same_rows?(@drawn["header"].to_s, header)
+        return redrawn_whole(task, client, frame) unless HeaderRows.same_count?(@drawn["header"].to_s, header)
 
-        rewrite(header)
+        @rows.rewrite(header)
         @drawn = frame
       end
 
@@ -419,7 +411,7 @@ module Lain
       end
 
       # Whatever called for it, a draw replaces the read that was open: the
-      # header goes out through {#over_the_prompt}, the one writer, and the
+      # header goes out through {HeaderRows#over}, the one writer, and the
       # editor reopens under it. ANY draw settles a pending geometry change, so
       # the latch is cleared here rather than where it is read.
       def redraw(task, client, frame)
@@ -450,22 +442,12 @@ module Lain
         retracted
         return counted(client, frame) if frame["kind"] == "countdown"
 
-        hint_for(frame)
-        over_the_prompt(frame["header"])
+        @rows.hint(frame)
+        @rows.over(frame["header"])
         line = @rail.read(frame["kind"].to_sym, frame["text"].to_s, header: frame["header"].to_s)
         # The answer's echoed newline moved the cursor off the input row.
         @answered = !line.nil?
         emit(client, line.nil? ? { "v" => "eof" } : answer(line, frame))
-      end
-
-      # The cursor is wherever the read this frame replaced left it -- mid-row,
-      # after a `you> ` the editor had already drawn -- so the row is taken back
-      # before the header goes on it. Without this a redraw printed
-      # `you> ❄ fleet:4 inbox:0` as one line and cost the pane a row of its six.
-      def over_the_prompt(header)
-        return if header.to_s.empty?
-
-        @tty.print_prompt("#{CLEAR_ROW}#{header}\n")
       end
 
       # A header adopted below an answered echo is taken back before the next
@@ -477,13 +459,6 @@ module Lain
 
         @tty.print_prompt("\e[#{@replaced}A\r\e[J")
         @replaced = 0
-      end
-
-      def hint_for(frame)
-        return unless frame["kind"] == "you" && frame["generation"] != @hinted
-
-        @hinted = frame["generation"]
-        @tty.print_prompt("#{CLEAR_ROW}#{MULTILINE_HINT}\n")
       end
 
       def answer(line, frame) = { "v" => "line", "text" => line, "generation" => frame["generation"] }

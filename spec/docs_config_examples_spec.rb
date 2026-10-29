@@ -9,7 +9,9 @@ require "pathname"
 RSpec.describe "docs/commands.md Configuration (config.rb) examples" do
   doc = Pathname.new(File.expand_path("..", __dir__)).join("docs/commands.md").read
   section = doc[/^## Configuration \(config\.rb\)\n(.*?)(?=^## |\z)/m, 1].to_s
-  blocks = section.scan(/^```ruby\n(.*?)^```$/m).flatten
+  theme = section[/^### theme\n(.*?)(?=^### |\z)/m, 1].to_s
+  user_blocks = theme.scan(/^```ruby\n(.*?)^```$/m).flatten
+  blocks = section.scan(/^```ruby\n(.*?)^```$/m).flatten - user_blocks
 
   it "finds the section and some examples in it" do
     expect(blocks.size).to be > 3
@@ -18,6 +20,22 @@ RSpec.describe "docs/commands.md Configuration (config.rb) examples" do
   blocks.each_with_index do |source, index|
     it "evaluates example #{index + 1} without raising" do
       expect { Lain::Config::Builder.evaluate(source, path: "docs/commands.md") }.not_to raise_error
+    end
+  end
+
+  it "finds an example in the theme subsection" do
+    expect(user_blocks).not_to be_empty
+  end
+
+  user_blocks.each_with_index do |source, index|
+    it "evaluates theme example #{index + 1} as the user's config.rb" do
+      expect { Lain::Config::Builder.evaluate(source, path: "docs/commands.md", verbs: Lain::Config::Builder::USER_VERBS) }
+        .not_to raise_error
+    end
+
+    it "refuses theme example #{index + 1} in a project's config.rb" do
+      expect { Lain::Config::Builder.evaluate(source, path: "docs/commands.md") }
+        .to raise_error(Lain::Config::Refusal, /belongs in the user's config\.rb/)
     end
   end
 

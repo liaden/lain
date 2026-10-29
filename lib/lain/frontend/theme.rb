@@ -78,6 +78,9 @@ module Lain
         match: %i[green bold]            # the characters a query matched (Completion::Menu)
       }.transform_values(&:freeze).freeze
 
+      # `bright_` variants are still downgraded by {#depth}; the resets end a style rather than being one.
+      STYLES = (Pastel::ANSI::ATTRIBUTES.keys - %i[clear reset]).freeze
+
       # A caller's own `pastel:` passes through and wins: forcing colour on for a
       # pipe (`--color=always`) or off for a terminal is a real request, and this
       # is the one place to make it.
@@ -86,6 +89,18 @@ module Lain
       def self.for(stream, **)
         new(pastel: Pastel.new(enabled: stream.tty? && !::TTY::Color.disabled?), **)
       end
+
+      # The theme the user's config.rb declares, over `stream`.
+      #
+      # @param stream [#tty?]
+      # @param paths [Lain::Paths] where the user's config.rb lives
+      # @return [Theme]
+      # @raise [Lain::Config::Refusal] naming the user's file and line
+      def self.configured(stream, paths:) = self.for(stream, tokens: Lain::Config.theme(paths:).tokens)
+
+      # The configured theme over `$stdout`, for a caller outside `lib/lain/frontend/`
+      # that may not name it.
+      def self.on_stdout(paths:) = configured($stdout, paths:)
 
       # @return [Integer] what the terminal claims to support (tty-color's
       #   0/8/16/256/16_777_216), or 0 when this theme emits no colour at all.
@@ -114,6 +129,13 @@ module Lain
       end
 
       def enabled? = @pastel.enabled?
+
+      # @return [Pastel] the palette this theme paints through
+      attr_reader :pastel
+
+      # The keywords that give a terminal this theme and the palette it paints
+      # through, so a colour decision made once cannot be made twice.
+      def terminal = { theme: self, pastel: }
 
       # @return [Array<Symbol>] the registered vocabulary
       def tokens = @styles.keys

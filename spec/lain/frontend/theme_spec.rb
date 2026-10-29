@@ -194,6 +194,62 @@ RSpec.describe Lain::Frontend::Theme do
     end
   end
 
+  describe "STYLES" do
+    it "names every attribute Pastel can apply, which is all a config may ask a token to wear" do
+      expect(described_class::STYLES).to include(:green, :bold, :bright_red, :on_blue).and(be_deeply_frozen)
+      expect(described_class::STYLES).not_to include(:chartreuse)
+    end
+  end
+
+  describe "STYLES excludes the resets" do
+    it "leaves out clear and reset, which end a style rather than being one" do
+      expect(described_class::STYLES).not_to include(:clear, :reset)
+    end
+  end
+
+  describe "the user's configured theme" do
+    let(:terminal) { Class.new(StringIO) { def tty? = true }.new }
+    let(:paths) { Lain::Paths.new(env: { "HOME" => home, "XDG_CONFIG_HOME" => home }) }
+    let(:home) { Dir.mktmpdir }
+
+    before do
+      stub_const("ENV", ENV.to_h.except("NO_COLOR"))
+      FileUtils.mkdir_p(File.join(home, "lain"))
+      File.write(paths.user_config, "theme response: %w[green]\n")
+      Lain::Project::Trust.for_user(paths:).grant!
+    end
+
+    after { FileUtils.rm_rf(home) }
+
+    it "recolours the declared token and keeps the rest" do
+      subject = described_class.configured(terminal, paths:)
+
+      expect([subject.paint(:response, "hi"), subject.paint(:rule, "x")])
+        .to eq([Pastel.new(enabled: true).green("hi"), Pastel.new(enabled: true).dim("x")])
+    end
+
+    it "is what on_stdout builds, over $stdout" do
+      allow(described_class).to receive(:configured).and_call_original
+
+      described_class.on_stdout(paths:)
+
+      expect(described_class).to have_received(:configured).with($stdout, paths:)
+    end
+
+    it "hands a terminal its theme and the pastel that theme paints with" do
+      subject = described_class.configured(terminal, paths:)
+
+      expect(subject.terminal).to eq(theme: subject, pastel: subject.pastel)
+    end
+
+    it "honours NO_COLOR in the theme and in the pastel the terminal is handed alike" do
+      stub_const("ENV", ENV.to_h.merge("NO_COLOR" => "1"))
+      handed = described_class.configured(terminal, paths:).terminal
+
+      expect([handed[:theme].paint(:response, "hi"), handed[:pastel].green("hi")]).to eq(%w[hi hi])
+    end
+  end
+
   describe "#tokens" do
     it "answers the registered vocabulary" do
       expect(theme.tokens).to include(:response, :error, :question, :tool_error, :prompt)
