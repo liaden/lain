@@ -24,7 +24,7 @@ RSpec.describe "a tool result's bytes reaching a commit", :seam do
 
   def agent_for(tool, command, **input)
     toolset = Lain::Toolset.new([tool])
-    chronicle.start(context:, toolset:)
+    chronicle.start(context:, toolset:, sections: SessionSections.complete)
     Lain::Agent.new(provider: scripted(command, input), toolset:, context:,
                     handler: Lain::Effect::Handler::Live.new, tool_middleware: approving)
   end

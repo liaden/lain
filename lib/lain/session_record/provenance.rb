@@ -44,12 +44,6 @@ module Lain
       # The repo's own .gitignore files only, never the user's core.excludesFile.
       UNTRACKED = %w[ls-files -z --others --exclude-per-directory=.gitignore --].freeze
 
-      # A session started with nothing measured writes no block at all.
-      module Absent
-        # @return [Hash] empty, so the header gains no key
-        def self.to_header = {}
-      end
-
       # The harness of THIS process, read at its first launch and kept: eager
       # loading put its code in memory at boot, so a later edit on disk is not
       # what it runs.

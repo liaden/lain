@@ -43,7 +43,7 @@ module Lain
 
         def places
           @replay.sessions.flat_map do |path, header|
-            policy = header&.dig("provenance", "policy")
+            policy = header&.then { _1.fetch("provenance").fetch("policy") }
             [(format(GAP, session: named(path)) unless ApprovalReplay::Place.recorded(header)),
              (format(CONFIGURED, session: named(path), policy:) if policy && policy != UNCONFIGURED)].compact
           end

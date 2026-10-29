@@ -75,9 +75,9 @@ module Lain
         #   to the backend the run used
         # @param project [Project] the project the run is recorded in, whose root, cwd and
         #   `.lain/*.rb` the header's provenance names
-        def initialize(provider:, context:, attribution:, prompts:, tools: Harness::NO_TOOLS,
+        def initialize(provider:, context:, attribution:, prompts:, profile:, tools: Harness::NO_TOOLS,
                        instrumentation: Harness::INSTRUMENTATION, current_run: CurrentRun.new,
-                       memory: Memory::ProjectStore::Null, profile: {},
+                       memory: Memory::ProjectStore::Null,
                        project: Project::Resolver.default_project)
           @provider = provider
           @project = project

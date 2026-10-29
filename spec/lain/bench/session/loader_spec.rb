@@ -35,7 +35,7 @@ RSpec.describe Lain::Bench::Session::Loader do
 
   def write_session(timeline, toolset:, compaction: {})
     Lain::SessionRecord::Scribe.new(journal:, context:, toolset:, workspace:,
-                                    sections: Lain::SessionRecord::Sections.new(compaction:), writer: CoreGraph::NO_WRITER)
+                                    sections: SessionSections.complete(compaction:), writer: CoreGraph::NO_WRITER)
                                .catch_up(timeline).close(reason: :exit)
   end
 
@@ -154,8 +154,9 @@ RSpec.describe Lain::Bench::Session::Loader do
       expect(described_class.new(lines).recording.arms).to eq({})
     end
 
-    it "answers empty arms for a header carrying no arms key" do
-      expect(recording.arms).to eq({})
+    it "carries the arms the header recorded" do
+      expect(recording.arms).to eq("confine" => "workspace", "round_budget" => "window", "tripwire" => "observe",
+                                   "round_dedup" => "on")
     end
 
     it "rebuilds compact false from a header recording compaction off" do
@@ -365,21 +366,21 @@ RSpec.describe Lain::Bench::Session::Loader do
       records = forge("session") { |header| header.delete("format") }
       expect { described_class.new(records).recording }
         .to raise_error(Lain::Bench::Session::Corrupt) { |error|
-              expect(error.message).to match(/format nil.*format 2/)
+              expect(error.message).to match(/format nil.*format #{Lain::SessionRecord::FORMAT}/o)
               expect(error.message).not_to include("predates")
             }
     end
 
     it "raises Corrupt when the header names a format this loader does not read" do
-      records = forge("session") { |header| header["format"] = 3 }
+      records = forge("session") { |header| header["format"] = Lain::SessionRecord::FORMAT + 1 }
       expect { described_class.new(records).recording }
-        .to raise_error(Lain::Bench::Session::Corrupt, /format 3.*format 2/)
+        .to raise_error(Lain::Bench::Session::Corrupt, /format #{Lain::SessionRecord::FORMAT + 1}.*format #{Lain::SessionRecord::FORMAT}/)
     end
 
     it "refuses a format 1 file, whose masked reads it recorded as records no reader folds any more" do
       records = forge("session") { |header| header["format"] = 1 }
       expect { described_class.new(records).recording }
-        .to raise_error(Lain::Bench::Session::Corrupt, /format 1.*format 2/)
+        .to raise_error(Lain::Bench::Session::Corrupt, /format 1.*format #{Lain::SessionRecord::FORMAT}/o)
     end
 
     %w[compact_schedule extra].each do |key|
@@ -450,7 +451,7 @@ RSpec.describe Lain::Bench::Session::Loader do
         resumed.journals_into(resumed_journal)
         scribe = Lain::SessionRecord::Scribe.new(
           journal: resumed_journal, context:, toolset:, workspace:, writer: CoreGraph::NO_WRITER,
-          sections: Lain::SessionRecord::Sections.new(compaction: compacting_backend.compaction_header),
+          sections: SessionSections.complete(compaction: compacting_backend.compaction_header),
           written: agent.timeline.to_a.map(&:digest),
           resumed_from: { "file" => "a.ndjson", "head" => agent.timeline.head_digest }
         )
@@ -523,7 +524,7 @@ RSpec.describe Lain::Bench::Session::Loader do
 
     def provenanced_entries
       Lain::SessionRecord::Scribe.new(journal:, context:, toolset:, workspace:, writer:,
-                                      sections: Lain::SessionRecord::Sections.new(provenance: provenance.to_header))
+                                      sections: SessionSections.complete(provenance: provenance.to_header))
                                  .catch_up(agent.timeline).close(reason: :exit)
       journal_io.string.each_line
     end
@@ -533,8 +534,8 @@ RSpec.describe Lain::Bench::Session::Loader do
         .to eq(JSON.parse(JSON.generate(provenance.to_header)).fetch("provenance"))
     end
 
-    it "carries an empty provenance for a header written before the block existed" do
-      expect(recording.provenance).to eq({})
+    it "carries the provenance block of a header written without a Provenance of its own" do
+      expect(recording.provenance).to eq(SessionSections.complete.provenance.fetch("provenance"))
     end
 
     it "carries the host of the header's writer" do
@@ -571,6 +572,35 @@ RSpec.describe Lain::Bench::Session::Loader do
     end
   end
 
+  describe "a header that lacks provenance or a run profile" do
+    def header_without(*keys)
+      header = Lain::SessionRecord.header(context:, toolset:, workspace:, writer: CoreGraph::NO_WRITER,
+                                          sections: SessionSections.complete)
+      [JSON.parse(JSON.generate(header)).except(*keys)]
+    end
+
+    it "refuses a header with no provenance, naming it" do
+      expect { described_class.new(header_without("provenance")).recording }
+        .to raise_error(Lain::Bench::Session::Corrupt, /provenance/)
+    end
+
+    it "refuses a header with no run profile, naming the provider" do
+      expect { described_class.new(header_without("provider")).recording }
+        .to raise_error(Lain::Bench::Session::Corrupt, /provider/)
+    end
+
+    it "loads a header carrying both" do
+      expect(described_class.new(header_without).recording.open?).to be(true)
+    end
+
+    it "refuses a format-2 header, which predates both, as another format" do
+      records = [header_without.first.merge("format" => 2)]
+
+      expect { described_class.new(records).recording }
+        .to raise_error(Lain::Bench::Session::Corrupt, /records format 2; this loader reads format #{Lain::SessionRecord::FORMAT}/o)
+    end
+  end
+
   # The live session format's open sessions and resume chains, built record
   # by record from {Lain::SessionRecord} rather than through a Scribe, so each
   # example can leave out exactly the record its shape lacks.
@@ -584,7 +614,8 @@ RSpec.describe Lain::Bench::Session::Loader do
     def roundtrip(records) = records.map { |record| JSON.parse(JSON.generate(record)) }
 
     def open_header(resumed_from: nil)
-      header = Lain::SessionRecord.header(context:, toolset:, workspace:, writer: CoreGraph::NO_WRITER)
+      header = Lain::SessionRecord.header(context:, toolset:, workspace:, writer: CoreGraph::NO_WRITER,
+                                          sections: SessionSections.complete)
       resumed_from.nil? ? header : header.merge("resumed_from" => resumed_from)
     end
 

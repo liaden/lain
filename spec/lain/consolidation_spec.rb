@@ -230,7 +230,7 @@ RSpec.describe Lain::Consolidation do
     let(:lineages) { super().first(1) }
 
     def improve
-      Lain::CLI::Improve.new(path: "unread.ndjson", profile: Lain::CLI::RunProfile::UNRECORDED,
+      Lain::CLI::Improve.new(path: "unread.ndjson", profile: SessionSections.untyped,
                              project_dir: Lain::ProjectDir.new(root: @root),
                              backend: -> { raise "the guard stack needs no backend" })
     end

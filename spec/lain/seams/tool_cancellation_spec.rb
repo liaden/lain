@@ -286,7 +286,7 @@ RSpec.describe "a tool run torn by a real interrupt", :seam do
       stranded = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
                                    .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
                                    .commit(role: :assistant, content: tool_response(*calls).content)
-      [Lain::SessionRecord.header(context:, toolset:, writer: CoreGraph::NO_WRITER),
+      [Lain::SessionRecord.header(context:, toolset:, writer: CoreGraph::NO_WRITER, sections: SessionSections.complete),
        *stranded.to_a.map { |turn| Lain::SessionRecord.turn(turn) },
        Lain::Telemetry::SessionClosed.new(head: stranded.head_digest, reason: :exit).to_journal]
     end
@@ -294,7 +294,7 @@ RSpec.describe "a tool run torn by a real interrupt", :seam do
     def resumed_head_blocks
       lines = recorded_stranded_session.map { |record| "#{JSON.generate(record)}\n" }
       File.write(File.join(paths.sessions_dir, "20260101T000000-1.ndjson"), lines.join)
-      Lain::CLI::Resume.new(paths:).call.timeline.head.content
+      Lain::CLI::Resume.new(paths:).call(profile: SessionSections.untyped).timeline.head.content
     end
 
     it "repairs a resumed head with the blocks a torn settle commits, apart from the notice kind" do

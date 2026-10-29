@@ -28,7 +28,8 @@ RSpec.describe Lain::CLI::Improve do
   # An open session, header and turns: all this pass reads.
   def session_lines(timeline, context, toolset)
     records = []
-    Lain::SessionRecord::Scribe.new(journal: records, context:, toolset:, writer: CoreGraph::NO_WRITER)
+    Lain::SessionRecord::Scribe.new(journal: records, context:, toolset:, writer: CoreGraph::NO_WRITER,
+                                    sections: SessionSections.complete)
                                .catch_up(timeline)
     records.map { |record| JSON.generate(record) }.join("\n")
   end
@@ -484,7 +485,7 @@ RSpec.describe Lain::CLI::Improve do
   # collaborator can be required and a mis-wire is loud where it happened.
   describe "the collaborators are required at construction" do
     it "raises ArgumentError naming the keyword the wiring forgot" do
-      expect { described_class.new(path: "s1.ndjson", profile: Lain::CLI::RunProfile::UNRECORDED, project_dir:) }
+      expect { described_class.new(path: "s1.ndjson", profile: SessionSections.untyped, project_dir:) }
         .to raise_error(ArgumentError, /backend/)
     end
   end

@@ -17,7 +17,7 @@ class RoleSession
     parent = -> { agent.timeline }
     toolset = Lain::Toolset.new(roles.map { |role, answer| spawner(role, answer, parent:, observer:) })
     journal = Lain::Journal.new(io:)
-    scribe = Lain::SessionRecord::Scribe.new(journal:, context: RecordedSpawnSession::CONTEXT, toolset:)
+    scribe = CoreGraph.scribe(journal:, context: RecordedSpawnSession::CONTEXT, toolset:)
     agent = parent_agent(roles, toolset:, journal:, scribe:, parent:)
     agent.ask("go")
     scribe.catch_up(agent.timeline)

@@ -30,7 +30,9 @@ RSpec.describe Lain::CLI::Resume::Selector do
   # A real chat: {SessionRecord::Scribe} writes the header at construction, so
   # it is always a session file's FIRST record.
   def session(name, at:)
-    write(name, [Lain::SessionRecord.header(context:, toolset:, writer: CoreGraph::NO_WRITER).merge("ts" => at)])
+    write(name,
+          [Lain::SessionRecord.header(context:, toolset:, writer: CoreGraph::NO_WRITER,
+                                      sections: SessionSections.complete).merge("ts" => at)])
   end
 
   # What `lain epic approve` leaves behind: a durable, non-ephemeral, non-empty
@@ -44,12 +46,14 @@ RSpec.describe Lain::CLI::Resume::Selector do
   # A session written before the header carried its format: every key a chat
   # writes today but that one.
   def unstamped(name, at:)
-    write(name, [Lain::SessionRecord.header(context:, toolset:, writer: CoreGraph::NO_WRITER)
+    write(name, [Lain::SessionRecord.header(context:, toolset:, sections: SessionSections.complete,
+                                            writer: CoreGraph::NO_WRITER)
                                    .except("format").merge("ts" => at)])
   end
 
   def formatted(name, format, at:)
-    write(name, [Lain::SessionRecord.header(context:, toolset:, writer: CoreGraph::NO_WRITER)
+    write(name, [Lain::SessionRecord.header(context:, toolset:, sections: SessionSections.complete,
+                                            writer: CoreGraph::NO_WRITER)
                                    .merge("format" => format, "ts" => at)])
   end
 
@@ -76,7 +80,8 @@ RSpec.describe Lain::CLI::Resume::Selector do
     # skips -- a second --resume continues the chain rather than forking it.
     it "keeps a resumed session selectable, so --resume stays idempotent" do
       session("20260727T090000-111.ndjson", at: "2026-07-27T09:00:00Z")
-      resumed = Lain::SessionRecord.header(context:, toolset:, writer: CoreGraph::NO_WRITER)
+      resumed = Lain::SessionRecord.header(context:, toolset:, sections: SessionSections.complete,
+                                           writer: CoreGraph::NO_WRITER)
                                    .merge("ts" => "2026-07-28T09:00:00Z",
                                           "resumed_from" => { "file" => "20260727T090000-111.ndjson" })
       write("20260728T090000-222.ndjson", [resumed])
@@ -164,7 +169,7 @@ RSpec.describe Lain::CLI::Resume::Selector do
 
       expect { selector.call(nil) }
         .to raise_error(Lain::CLI::Resume::Refusal) { |error|
-              expect(error.message).to include("2 recording another session format, not 2 " \
+              expect(error.message).to include("2 #{described_class::OTHER_FORMAT} " \
                                                "(20260728T090000-222.ndjson, 20260727T090000-111.ndjson)")
               expect(error.message).not_to include("predat")
             }
@@ -182,7 +187,7 @@ RSpec.describe Lain::CLI::Resume::Selector do
 
       expect { selector.call("20260728T090000-222.ndjson") }
         .to raise_error(Lain::CLI::Resume::Refusal) { |error|
-              expect(error.message).to include("20260728T090000-222.ndjson is recording another session format, not 2")
+              expect(error.message).to include("20260728T090000-222.ndjson is recording another session format, not #{Lain::SessionRecord::FORMAT}")
               expect(error.message).not_to include("predate")
             }
     end
@@ -192,7 +197,15 @@ RSpec.describe Lain::CLI::Resume::Selector do
       unstamped("20260728T090000-222.ndjson", at: "2026-07-28T09:00:00Z")
 
       expect { selector.call("20260728") }
-        .to raise_error(Lain::CLI::Resume::Refusal, /is recording another session format, not 2/)
+        .to raise_error(Lain::CLI::Resume::Refusal, /is recording another session format, not #{Lain::SessionRecord::FORMAT}/o)
+    end
+
+    it "refuses a format-2 file, from before every header carried provenance and a profile" do
+      formatted("20260728T090000-222.ndjson", 2, at: "2026-07-28T09:00:00Z")
+
+      expect(described_class.header_reason({ "format" => 2 })).to eq(described_class::OTHER_FORMAT)
+      expect { selector.call("20260728T090000-222.ndjson") }
+        .to raise_error(Lain::CLI::Resume::Refusal, /is recording another session format/)
     end
 
     it "is refused when named exactly, saying it records another one" do
@@ -200,7 +213,7 @@ RSpec.describe Lain::CLI::Resume::Selector do
 
       expect { selector.call("20260728T090000-222.ndjson") }
         .to raise_error(Lain::CLI::Resume::Refusal,
-                        /20260728T090000-222\.ndjson is recording another session format, not 2/)
+                        /20260728T090000-222\.ndjson is recording another session format, not #{Lain::SessionRecord::FORMAT}/o)
     end
   end
 

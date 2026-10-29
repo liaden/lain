@@ -54,9 +54,15 @@ module PlainChatPromptGuards
     # the Null it had and writes no file.
     chronicle = if shape == "supervised"
       session_io = File.open(File.join(dir, "session.ndjson"), "a").tap { |io| io.sync = true }
+      toolset = Lain::Toolset.new([])
+      sections = Lain::SessionRecord::Sections.new(
+        profile: { "provider" => "anthropic" },
+        provenance: Lain::SessionRecord::Provenance.current(toolset:, root: dir, cwd: dir, home: dir, effort: nil,
+                                                            policy: "child", harness: "child").to_header
+      )
       Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: session_io))
                           .start(context: Lain::Context.new(model: "m", max_tokens: 64),
-                                 toolset: Lain::Toolset.new([]))
+                                 toolset:, sections:)
     else
       Lain::CLI::Chronicle::Null.new
     end

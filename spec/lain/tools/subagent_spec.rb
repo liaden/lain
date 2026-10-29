@@ -3375,7 +3375,7 @@ RSpec.describe Lain::Tools::Subagent do
       let(:session_context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024) }
       let(:scribe) do
         Lain::SessionRecord::Scribe.new(journal:, context: session_context, toolset: union,
-                                        workspace: Lain::Workspace.empty)
+                                        workspace: Lain::Workspace.empty, sections: SessionSections.complete)
       end
       let(:observer) { ->(event) { scribe.call(event) } }
       # The chronicle's own wiring: ONE scribe observes the whole funnel, the
@@ -3466,8 +3466,9 @@ RSpec.describe Lain::Tools::Subagent do
       # alone: it worked before this card and has to go on working.
       it "forks and resumes when the question was answered" do
         reopened(answered_journal) do |resume|
-          expect(resume.fork(selector: fork_selector).timeline.head_digest).to eq(parent.head_digest)
-          expect(resume.call.timeline.head_digest).to eq(parent.head_digest)
+          expect(resume.fork(selector: fork_selector,
+                             profile: SessionSections.untyped).timeline.head_digest).to eq(parent.head_digest)
+          expect(resume.call(profile: SessionSections.untyped).timeline.head_digest).to eq(parent.head_digest)
         end
       end
 
@@ -3525,13 +3526,14 @@ RSpec.describe Lain::Tools::Subagent do
 
         it "forks at its head" do
           reopened(parked_journal) do |resume|
-            expect(resume.fork(selector: fork_selector).timeline.head_digest).to eq(parent.head_digest)
+            expect(resume.fork(selector: fork_selector,
+                               profile: SessionSections.untyped).timeline.head_digest).to eq(parent.head_digest)
           end
         end
 
         it "resumes onto that head" do
           reopened(parked_journal) do |resume|
-            expect(resume.call.timeline.head_digest).to eq(parent.head_digest)
+            expect(resume.call(profile: SessionSections.untyped).timeline.head_digest).to eq(parent.head_digest)
           end
         end
 
@@ -3606,8 +3608,9 @@ RSpec.describe Lain::Tools::Subagent do
 
         it "forks and resumes" do
           reopened(parked_journal(nested_tool)) do |resume|
-            expect(resume.fork(selector: fork_selector).timeline.head_digest).to eq(parent.head_digest)
-            expect(resume.call.timeline.head_digest).to eq(parent.head_digest)
+            expect(resume.fork(selector: fork_selector,
+                               profile: SessionSections.untyped).timeline.head_digest).to eq(parent.head_digest)
+            expect(resume.call(profile: SessionSections.untyped).timeline.head_digest).to eq(parent.head_digest)
           end
         end
       end

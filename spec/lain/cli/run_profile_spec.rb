@@ -7,7 +7,7 @@ RSpec.describe Lain::CLI::RunProfile do
     header = Lain::SessionRecord.header(context: Lain::Context.new(model: fields.fetch(:model, "qwen3:4b"),
                                                                    max_tokens: 16, effort: fields[:effort]),
                                         toolset: Lain::Toolset.new,
-                                        sections: Lain::SessionRecord::Sections.new(
+                                        sections: SessionSections.complete(
                                           profile: typed(**fields.except(:model)).to_header
                                         ),
                                         writer: CoreGraph::NO_WRITER)
@@ -15,9 +15,8 @@ RSpec.describe Lain::CLI::RunProfile do
   end
 
   describe "FIELDS" do
-    it "is the member list without typed, and UNRECORDED holds every one as nil" do
+    it "is the member list without typed" do
       expect(described_class::FIELDS).to eq(described_class.members - %i[typed])
-      expect(described_class::UNRECORDED.to_h).to eq(described_class::FIELDS.to_h { [_1, nil] }.merge(typed: []))
     end
   end
 
@@ -108,11 +107,9 @@ RSpec.describe Lain::CLI::RunProfile do
                                        num_batch: nil, keep_alive: nil, effort: nil)
     end
 
-    it "changes nothing over a header that recorded no profile" do
-      profile = typed.with_defaults(provider: "anthropic").over(described_class.from_header({ "model" => "m" }))
-
-      expect(profile.provider).to eq("anthropic")
-      expect(profile.model).to be_nil
+    it "refuses a header that recorded no profile" do
+      expect { described_class.from_header({ "model" => "m" }) }
+        .to raise_error(Lain::Bench::Session::Corrupt, /provider/)
     end
   end
 
@@ -140,10 +137,6 @@ RSpec.describe Lain::CLI::RunProfile do
 
     it "reads the model back from the header's own model field" do
       expect(recorded(provider: "ollama", model: "qwen3:8b").model).to eq("qwen3:8b")
-    end
-
-    it "is unrecorded for a header with no provider" do
-      expect(described_class.from_header({ "model" => "m" })).not_to be_recorded
     end
   end
 end

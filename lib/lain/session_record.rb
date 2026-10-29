@@ -25,8 +25,10 @@ module Lain
     # key does not, since a reader that ignores it still reads the file right.
     # A key a reader starts to require also bumps this, unless no file of the
     # current format lacks it: compact_schedule became required without a bump
-    # because no format-1 file without it survived the state purge.
-    FORMAT = 2
+    # because no format-1 file without it survived the state purge. Format 3
+    # requires the provenance block and the run profile's provider, which a
+    # format-2 file may lack.
+    FORMAT = 3
     # What a run with no compaction configured schedules on: every turn renders whole.
     UNCOMPACTED_SCHEDULE = "turn"
     TURN_TYPE = "turn"
@@ -82,9 +84,9 @@ module Lain
     # rewrite it.
     #
     # `sections.provenance` is {Provenance#to_header}: what produced the run, nested
-    # under its own key; an empty hash writes none.
-    def header(context:, toolset:, writer:, workspace: Workspace.empty, resumed_from: nil,
-               sections: Sections.none)
+    # under its own key. `sections` is required, because a header without a
+    # profile or provenance is one the Loader refuses.
+    def header(context:, toolset:, writer:, sections:, workspace: Workspace.empty, resumed_from: nil)
       record = fixed_fields(context, toolset, workspace)
       record = record.merge(context_pipeline(context), effort(context), sections.profile,
                             scheduled(sections.compaction), section("arms", sections.arms),

@@ -35,7 +35,7 @@ RSpec.describe Lain::CLI::Watch do
   end
 
   def header_record
-    Lain::SessionRecord.header(context:, toolset:, writer: CoreGraph::NO_WRITER)
+    Lain::SessionRecord.header(context:, toolset:, writer: CoreGraph::NO_WRITER, sections: SessionSections.complete)
                        .merge("ts" => "2026-07-23T00:00:00.000000Z")
   end
 
@@ -668,7 +668,8 @@ RSpec.describe Lain::CLI::Watch do
     it "asks after the writer its header names, and exits 1 once that writer is gone" do
       path = Lain::Bench::CLI::RunRecorder.new(
         provider: Lain::Provider::Mock.new(responses: [text_response("325-650 mg q4h")]),
-        context:, attribution: Lain::Telemetry::SlotFills.new(digests: {}, fills: {}), prompts: ["dosing?"]
+        context:, attribution: Lain::Telemetry::SlotFills.new(digests: {}, fills: {}), prompts: ["dosing?"],
+        profile: SessionSections.complete.profile
       ).record(File.join(paths.sessions_dir, "20260723T000000-1.ndjson"))
       File.write(path, File.readlines(path).reject { |line| line.include?('"type":"session_closed"') }.join)
       probe = instance_double(Lain::Liveness::Probe)

@@ -747,7 +747,7 @@ RSpec.describe Lain::CLI::Conductor do
     let(:session_io) { StringIO.new }
     let(:session_file) { Lain::Journal.new(io: session_io) }
     let(:chronicle) do
-      Lain::CLI::Chronicle.new(journal: session_file).start(context:, toolset:)
+      Lain::CLI::Chronicle.new(journal: session_file).start(context:, toolset:, sections: SessionSections.complete)
     end
     let(:supervisor) do
       Lain::Supervisor.new(journal: session_file,

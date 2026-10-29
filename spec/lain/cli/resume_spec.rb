@@ -26,7 +26,12 @@ module ResumeKilledMidStream
     chronicle = Lain::CLI::Chronicle.new(journal:, journal_path: path)
     context = Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse")
     toolset = Lain::Toolset.new
-    chronicle.start(context:, toolset:)
+    sections = Lain::SessionRecord::Sections.new(
+      profile: { "provider" => "anthropic" },
+      provenance: Lain::SessionRecord::Provenance.current(toolset:, root: Dir.pwd, cwd: Dir.pwd, home: Dir.pwd,
+                                                          effort: nil, policy: "child", harness: "child").to_header
+    )
+    chronicle.start(context:, toolset:, sections:)
     reply = Lain::Response.new(content: [{ "type" => "text", "text" => "iota" }], stop_reason: :end_turn)
     agent = nil
     agent = Lain::Agent.new(provider: Lain::Provider::Mock.new(responses: [reply]), context:, toolset:,
@@ -45,13 +50,14 @@ end
 RSpec.describe Lain::CLI::Resume do
   subject(:resume) { described_class.new(paths:) }
 
-  around do |example|
-    Dir.mktmpdir { |dir| @state_home = dir and example.run }
-  end
-
+  let(:untyped) { SessionSections.untyped }
   let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => @state_home }) }
   let(:recorded_context) { Lain::Context.new(model: "recorded-model", max_tokens: 512, system: "be terse") }
   let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
+
+  around do |example|
+    Dir.mktmpdir { |dir| @state_home = dir and example.run }
+  end
 
   def text(body) = [{ "type" => "text", "text" => body }]
 
@@ -68,7 +74,7 @@ RSpec.describe Lain::CLI::Resume do
   # not a nil-valued one, and the fixture must be able to say that.
   def open_header(resumed_from: nil, provider: nil, compaction: {})
     header = Lain::SessionRecord.header(context: recorded_context, toolset:,
-                                        sections: Lain::SessionRecord::Sections.new(compaction:),
+                                        sections: SessionSections.complete(compaction:),
                                         writer: CoreGraph::NO_WRITER)
     header = header.merge("resumed_from" => resumed_from) unless resumed_from.nil?
     header = header.merge("provider" => provider) unless provider.nil?
@@ -121,7 +127,7 @@ RSpec.describe Lain::CLI::Resume do
     before { write_closed("20260101T000000-1.ndjson", three) }
 
     it "rebuilds the verified Timeline, closed, with the chained-header fields for the new journal" do
-      result = resume.call
+      result = resume.call(profile: untyped)
 
       expect(result.timeline.to_a.map(&:digest)).to eq(three.to_a.map(&:digest))
       expect(result.open?).to be(false)
@@ -132,10 +138,10 @@ RSpec.describe Lain::CLI::Resume do
     # The session ends on a prompt nothing answered, so the chat's next ask
     # folds it: the new file retreats past it before the folded turn lands.
     it "carries all three prior turns into the next request, and the new file's header chains to the old" do
-      result = resume.call
+      result = resume.call(profile: untyped)
       journal_io = StringIO.new
       chronicle = Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: journal_io))
-      chronicle.start(context: recorded_context, toolset:, resumed: result)
+      chronicle.start(context: recorded_context, toolset:, resumed: result, sections: SessionSections.complete)
 
       provider = Lain::Provider::Mock.new(responses: [text_response("answered")])
       agent = Lain::Agent.new(provider:, toolset:, context: recorded_context, timeline: result.timeline)
@@ -168,18 +174,27 @@ RSpec.describe Lain::CLI::Resume do
       Lain::Bench::CLI::RunRecorder.new(
         provider: Lain::Provider::Mock.new(responses: [text_response("325-650 mg q4h")]),
         context: recorded_context, attribution: Lain::Telemetry::SlotFills.new(digests: {}, fills: {}),
-        prompts: ["what is the aspirin dosing?"]
+        prompts: ["what is the aspirin dosing?"], profile: SessionSections.complete.profile
       ).record(File.join(paths.sessions_dir, "20260101T000000-1.ndjson"))
     end
 
     it "resumes closed, at the head its session_closed anchors" do
       closed = File.foreach(recorded).map { |line| JSON.parse(line) }.last
 
-      result = resume.call(selector: "20260101T000000-1.ndjson")
+      result = resume.call(selector: "20260101T000000-1.ndjson", profile: untyped)
 
       expect(result.open?).to be(false)
       expect(result.timeline.head_digest).to eq(closed.fetch("head"))
       expect(result.timeline.to_a.map(&:role)).to eq(%w[user assistant])
+    end
+  end
+
+  describe "the run profile" do
+    it "is a required keyword on every door, with no unrecorded default" do
+      expect { resume.call }.to raise_error(ArgumentError, /profile/)
+      expect { resume.resume_at("x.ndjson") }.to raise_error(ArgumentError, /profile/)
+      expect { resume.fork(selector: nil) }.to raise_error(ArgumentError, /profile/)
+      expect { resume.fork_at(nil) }.to raise_error(ArgumentError, /profile/)
     end
   end
 
@@ -193,25 +208,25 @@ RSpec.describe Lain::CLI::Resume do
     end
 
     it "bare --resume picks the newest session" do
-      expect(resume.call.file).to eq("20260202T000000-1.ndjson")
+      expect(resume.call(profile: untyped).file).to eq("20260202T000000-1.ndjson")
     end
 
     it "an exact filename picks that session" do
-      expect(resume.call(selector: "20260101T000000-1.ndjson").file).to eq("20260101T000000-1.ndjson")
+      expect(resume.call(selector: "20260101T000000-1.ndjson", profile: untyped).file).to eq("20260101T000000-1.ndjson")
     end
 
     it "a unique prefix picks its session" do
-      expect(resume.call(selector: "20260101").file).to eq("20260101T000000-1.ndjson")
+      expect(resume.call(selector: "20260101", profile: untyped).file).to eq("20260101T000000-1.ndjson")
     end
 
     it "refuses an ambiguous prefix, naming the candidates" do
-      expect { resume.call(selector: "2026") }.to raise_error(described_class::Refusal) do |error|
+      expect { resume.call(selector: "2026", profile: untyped) }.to raise_error(described_class::Refusal) do |error|
         expect(error.message).to include("20260101T000000-1.ndjson", "20260202T000000-1.ndjson")
       end
     end
 
     it "refuses a selector matching nothing, naming it and the directory" do
-      expect { resume.call(selector: "nope") }
+      expect { resume.call(selector: "nope", profile: untyped) }
         .to raise_error(described_class::Refusal) { |error|
               expect(error.message).to include("nope", paths.sessions_dir)
             }
@@ -228,16 +243,16 @@ RSpec.describe Lain::CLI::Resume do
       before { write_session("20260303T000000-9.btw.ndjson", [open_header] + turn_records(scratch)) }
 
       it "bare --resume picks the newest DURABLE session, mirroring `lain sessions`" do
-        expect(resume.call.file).to eq("20260202T000000-1.ndjson")
+        expect(resume.call(profile: untyped).file).to eq("20260202T000000-1.ndjson")
       end
 
       it "a prefix matches only durable sessions, refusing namedly" do
-        expect { resume.call(selector: "20260303") }
+        expect { resume.call(selector: "20260303", profile: untyped) }
           .to raise_error(described_class::Refusal, /20260303/)
       end
 
       it "the exact .btw filename still resumes -- a crashed scratch session stays salvageable" do
-        result = resume.call(selector: "20260303T000000-9.btw.ndjson")
+        result = resume.call(selector: "20260303T000000-9.btw.ndjson", profile: untyped)
 
         expect(result.file).to eq("20260303T000000-9.btw.ndjson")
         expect(result.timeline.head_digest).to eq(scratch.head_digest)
@@ -256,11 +271,11 @@ RSpec.describe Lain::CLI::Resume do
       before { File.write(File.join(paths.sessions_dir, empty_name), "") }
 
       it "bare --resume skips it for the newest session that has records" do
-        expect(resume.call.file).to eq("20260202T000000-1.ndjson")
+        expect(resume.call(profile: untyped).file).to eq("20260202T000000-1.ndjson")
       end
 
       it "naming it exactly refuses saying it is EMPTY, never that it is corrupt" do
-        expect { resume.call(selector: empty_name) }
+        expect { resume.call(selector: empty_name, profile: untyped) }
           .to raise_error(described_class::Refusal) { |error|
                 expect(error.message).to include(empty_name, "empty")
                 expect(error.message).not_to match(/corrupt/i)
@@ -268,7 +283,7 @@ RSpec.describe Lain::CLI::Resume do
       end
 
       it "a unique prefix naming it refuses the same way, not with 'no session matching'" do
-        expect { resume.call(selector: "20260404") }
+        expect { resume.call(selector: "20260404", profile: untyped) }
           .to raise_error(described_class::Refusal, /empty/)
       end
 
@@ -280,7 +295,7 @@ RSpec.describe Lain::CLI::Resume do
           .each { |name| File.write(File.join(paths.sessions_dir, name), "") }
         write_session("20260505T000000-9.btw.ndjson", [open_header])
 
-        expect { resume.call }
+        expect { resume.call(profile: untyped) }
           .to raise_error(described_class::Refusal) { |error|
                 expect(error.message).to include(paths.sessions_dir, "3 empty", "1 ephemeral")
               }
@@ -309,13 +324,13 @@ RSpec.describe Lain::CLI::Resume do
       it "naming it exactly refuses at the selection, naming the current format and not the provider" do
         expect { resume.locate(old_name) }
           .to raise_error(described_class::Refusal) { |error|
-                expect(error.message).to include(old_name, "recording another session format, not 2")
+                expect(error.message).to include(old_name, "recording another session format, not #{Lain::SessionRecord::FORMAT}")
                 expect(error.message).not_to include("anthropic")
               }
       end
 
       it "bare --resume resumes the newest stamped session instead" do
-        expect(resume.call.file).to eq("20260202T000000-1.ndjson")
+        expect(resume.call(profile: untyped).file).to eq("20260202T000000-1.ndjson")
       end
     end
 
@@ -323,13 +338,13 @@ RSpec.describe Lain::CLI::Resume do
       Dir.children(paths.sessions_dir).each { |name| File.delete(File.join(paths.sessions_dir, name)) }
       write_session("20260303T000000-9.btw.ndjson", [open_header] + turn_records(chain("scratchy")))
 
-      expect { resume.call }
+      expect { resume.call(profile: untyped) }
         .to raise_error(described_class::Refusal) { |error| expect(error.message).to include(paths.sessions_dir) }
     end
   end
 
   it "refuses namedly when there is nothing to resume" do
-    expect { resume.call }
+    expect { resume.call(profile: untyped) }
       .to raise_error(described_class::Refusal) { |error| expect(error.message).to include(paths.sessions_dir) }
   end
 
@@ -343,7 +358,7 @@ RSpec.describe Lain::CLI::Resume do
     end
 
     it "resumes the head of the CHAIN: same turns once, chained to the newest file, no fork" do
-      result = resume.call
+      result = resume.call(profile: untyped)
 
       expect(result.file).to eq("20260101T000100-1.ndjson")
       digests = result.timeline.to_a.map(&:digest)
@@ -359,7 +374,7 @@ RSpec.describe Lain::CLI::Resume do
     before { write_session("20260101T000000-1.ndjson", [open_header] + turn_records(two)) }
 
     it "loads the verified turns, reports the open state, and chat continues" do
-      result = resume.call
+      result = resume.call(profile: untyped)
 
       expect(result.open?).to be(true)
       expect(result.timeline.head_digest).to eq(two.head_digest)
@@ -378,7 +393,7 @@ RSpec.describe Lain::CLI::Resume do
     before { write_session(name, [open_header.merge(Lain::Liveness::Writer.current.to_header)] + turn_records(two)) }
 
     it "says the session is still open in that process, not that it wasn't gracefully closed" do
-      result = resume.call
+      result = resume.call(profile: untyped)
 
       expect(result.notices.join).to include(name, "still open in process #{Process.pid}")
       expect(result.notices.join).not_to include("not gracefully closed")
@@ -395,7 +410,7 @@ RSpec.describe Lain::CLI::Resume do
     end
 
     it "says the session was not gracefully closed" do
-      expect(resume.call.notices.join).to include("not gracefully closed")
+      expect(resume.call(profile: untyped).notices.join).to include("not gracefully closed")
     end
   end
 
@@ -413,7 +428,7 @@ RSpec.describe Lain::CLI::Resume do
     before { write_session(name, [open_header.merge(writer.to_header)] + turn_records(chain("hi", "hello"))) }
 
     it "says the session is still open in that process" do
-      result = described_class.new(paths:, probe:).call
+      result = described_class.new(paths:, probe:).call(profile: untyped)
 
       expect(result.notices.join).to include(name, "still open in process 4242")
     end
@@ -551,7 +566,7 @@ RSpec.describe Lain::CLI::Resume do
       it "recovers the prompt without the note, and the next prompt does not carry it again" do
         crashed_with_note("20260101T000000-1.ndjson")
 
-        result = resume.call
+        result = resume.call(profile: untyped)
         provider = Lain::Provider::Mock.new(responses: [text_response("answered")])
         Lain::Agent.new(provider:, context: recorded_context, toolset:, timeline: result.timeline,
                         mailbox: inbox).ask("fourth")
@@ -567,7 +582,7 @@ RSpec.describe Lain::CLI::Resume do
         write_crashed_session("20260101T000000-1.ndjson", request)
         write_complete_frame("20260101T000000-1.ndjson", request, canned_response)
 
-        result = resume.call
+        result = resume.call(profile: untyped)
 
         expect(result.open?).to be(false)
         expect(result.timeline.to_a.map { |turn| [turn.role, turn.content] })
@@ -584,7 +599,7 @@ RSpec.describe Lain::CLI::Resume do
         write_crashed_session("20260101T000000-1.ndjson", request)
         write_complete_frame("20260101T000000-1.ndjson", request, canned_response)
 
-        resume.call
+        resume.call(profile: untyped)
 
         path = File.join(paths.sessions_dir, "20260101T000000-1.ndjson")
         records = File.foreach(path).map { |line| JSON.parse(line) }
@@ -600,11 +615,11 @@ RSpec.describe Lain::CLI::Resume do
         request = in_flight_request
         write_crashed_session("20260101T000000-1.ndjson", request)
         write_complete_frame("20260101T000000-1.ndjson", request, canned_response)
-        result = resume.call
+        result = resume.call(profile: untyped)
 
         journal_io = StringIO.new
         chronicle = Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: journal_io))
-        chronicle.start(context: recorded_context, toolset:, resumed: result)
+        chronicle.start(context: recorded_context, toolset:, resumed: result, sections: SessionSections.complete)
         provider = Lain::Provider::Mock.new(responses: [text_response("answered")])
         agent = Lain::Agent.new(provider:, toolset:, context: recorded_context, timeline: result.timeline)
         agent.ask("fourth")
@@ -672,14 +687,14 @@ RSpec.describe Lain::CLI::Resume do
           write_complete_frame(name, request, canned_response)
           append_prefix(name, prefix) if prefix.positive?
 
-          result = resume.call
+          result = resume.call(profile: untyped)
 
           expect(result.timeline.to_a.map(&:role)).to eq(%w[user assistant user assistant])
           expect(result.timeline.head.content).to eq(canned_response.content)
           expect(result.open?).to be(false)
 
           # A further resume is now a clean no-op: the file is closed.
-          again = resume.call
+          again = resume.call(profile: untyped)
           expect(again.timeline.to_a.map(&:digest)).to eq(result.timeline.to_a.map(&:digest))
         end
       end
@@ -714,10 +729,10 @@ RSpec.describe Lain::CLI::Resume do
           write_crashed_mid_tool(name, request)
           append_prefix(name, prefix) if prefix.positive?
 
-          result = resume.call
+          result = resume.call(profile: untyped)
 
           expect(result.timeline.to_a.map(&:digest)).to eq(original.to_a.map(&:digest))
-          expect(resume.call.timeline.to_a.map(&:digest)).to eq(original.to_a.map(&:digest))
+          expect(resume.call(profile: untyped).timeline.to_a.map(&:digest)).to eq(original.to_a.map(&:digest))
         end
       end
     end
@@ -741,7 +756,7 @@ RSpec.describe Lain::CLI::Resume do
         write_crashed_session("20260101T000000-1.ndjson", request)
         write_corrupt_then_complete_frame("20260101T000000-1.ndjson", request, canned_response)
 
-        result = resume.call
+        result = resume.call(profile: untyped)
 
         expect(result.open?).to be(false)
         expect(result.timeline.head.content).to eq(canned_response.content)
@@ -765,7 +780,7 @@ RSpec.describe Lain::CLI::Resume do
         File.rename(wal_path_for(name),
                     Lain::Paths.wal_for(File.join(paths.sessions_dir, "20260101T000000-1.ndjson")))
 
-        result = resume.call(selector: name)
+        result = resume.call(selector: name, profile: untyped)
 
         expect(result.open?).to be(false)
         expect(result.timeline.head.content).to eq(canned_response.content)
@@ -778,7 +793,7 @@ RSpec.describe Lain::CLI::Resume do
         write_crashed_session(name, request)
         write_complete_frame(name, request, canned_response)
 
-        result = resume.call(selector: name)
+        result = resume.call(selector: name, profile: untyped)
 
         expect(result.open?).to be(false)
         expect(result.timeline.head.content).to eq(canned_response.content)
@@ -803,8 +818,8 @@ RSpec.describe Lain::CLI::Resume do
         write_crashed_session(name, request)
         write_torn_frame
 
-        first = resume.call
-        second = resume.call
+        first = resume.call(profile: untyped)
+        second = resume.call(profile: untyped)
 
         expect(first.notices.join).to include("did not finish", request.digest)
         expect(first.open?).to be(false)
@@ -821,8 +836,8 @@ RSpec.describe Lain::CLI::Resume do
         frame.append("event: ping\ndata: {\"type\":\"ping\"}\n\n")
         frame.close(complete: true)
 
-        first = resume.call
-        second = resume.call
+        first = resume.call(profile: untyped)
+        second = resume.call(profile: untyped)
 
         expect(first.notices.join).to include("held no answer")
         expect(written_records.last).to include("type" => "session_closed", "reason" => "salvaged")
@@ -834,7 +849,7 @@ RSpec.describe Lain::CLI::Resume do
         write_torn_frame
         before = File.read(path)
 
-        result = resume.call
+        result = resume.call(profile: untyped)
 
         expect(result.open?).to be(true)
         expect(File.read(path)).to eq(before)
@@ -847,7 +862,7 @@ RSpec.describe Lain::CLI::Resume do
         write_torn_frame
         before = File.read(path)
 
-        result = resume.call
+        result = resume.call(profile: untyped)
 
         expect(result.open?).to be(true)
         expect(File.read(path)).to eq(before)
@@ -884,14 +899,14 @@ RSpec.describe Lain::CLI::Resume do
     end
 
     it "folds reads and todos back into the Session" do
-      result = resume.call
+      result = resume.call(profile: untyped)
 
       expect(result.session.read?("/tmp/app.rb")).to be(true)
       expect(result.session.reminders.join).to include("check dosing")
     end
 
     it "rebuilds memory from the recorded writes, and the recorder IS the session's manifest source" do
-      result = resume.call
+      result = resume.call(profile: untyped)
 
       expect(result.session.reminders.join).to include("aspirin")
       result.recorder.write(Lain::Memory::Item.new(id: "ibuprofen", description: "alt", body: "10mg/kg"))
@@ -903,7 +918,9 @@ RSpec.describe Lain::CLI::Resume do
     # the child is shown, on every turn, a memory its own chain never wrote,
     # and its first request disagrees with its own record.
     describe "the memory view a fork opens on" do
-      def forked_at(digest) = resume.fork(selector: "20260101@#{digest.delete_prefix("blake3:")[0, 12]}")
+      def forked_at(digest)
+        resume.fork(selector: "20260101@#{digest.delete_prefix("blake3:")[0, 12]}", profile: untyped)
+      end
 
       it "carries nothing when the fork point is below the write" do
         forked = forked_at(memory_chain.to_a.first.digest)
@@ -929,7 +946,8 @@ RSpec.describe Lain::CLI::Resume do
         write_closed("20260102T000000-1.ndjson", memory_chain,
                      extra: [Lain::Telemetry::MemoryLoaded.of(seeded).to_journal])
 
-        forked = resume.fork(selector: "20260102@#{memory_chain.to_a.first.digest.delete_prefix("blake3:")[0, 12]}")
+        forked = resume.fork(selector: "20260102@#{memory_chain.to_a.first.digest.delete_prefix("blake3:")[0, 12]}",
+                             profile: untyped)
 
         expect(forked.recorder.index.to_h.keys).to eq(["db-conventions"])
       end
@@ -956,7 +974,7 @@ RSpec.describe Lain::CLI::Resume do
       write_closed("20260102T000000-1.ndjson", memory_chain,
                    extra: [Lain::Telemetry::MemoryLoaded.of(seeded).to_journal])
 
-      result = resume.call
+      result = resume.call(profile: untyped)
 
       expect(result.recorder.loaded.version).to eq(seeded.version)
     end
@@ -968,7 +986,7 @@ RSpec.describe Lain::CLI::Resume do
                     [chained, read_record("/tmp/later.rb"),
                      closed_record(memory_chain.head_digest)])
 
-      result = resume.call
+      result = resume.call(profile: untyped)
 
       expect(result.file).to eq("20260101T000100-1.ndjson")
       expect(result.session.read?("/tmp/app.rb")).to be(true)
@@ -986,8 +1004,9 @@ RSpec.describe Lain::CLI::Resume do
 
       refusal = ->(verb) { /\Acannot #{verb} 20260101T000000-1.ndjson: .*before reads carried line spans/ }
 
-      expect { resume.call }.to raise_error(described_class::Refusal, refusal.call("resume"))
-      expect { resume.fork(selector: "20260101@#{prefix}") }
+      expect { resume.call(profile: untyped) }.to raise_error(described_class::Refusal,
+                                                              refusal.call("resume"))
+      expect { resume.fork(selector: "20260101@#{prefix}", profile: untyped) }
         .to raise_error(described_class::Refusal, refusal.call("fork"))
     end
   end
@@ -1079,7 +1098,7 @@ RSpec.describe Lain::CLI::Resume do
       before { write_closed("20260101T000000-1.ndjson", three) }
 
       it "checks out the fork point as the new head and chains resumed_from {file, A}" do
-        result = resume.fork(selector: "20260101@#{prefix_for(ancestor)}")
+        result = resume.fork(selector: "20260101@#{prefix_for(ancestor)}", profile: untyped)
 
         expect(result.timeline.head_digest).to eq(ancestor)
         expect(result.timeline.to_a.map(&:digest)).to eq(three.to_a.map(&:digest).first(2))
@@ -1088,7 +1107,7 @@ RSpec.describe Lain::CLI::Resume do
       end
 
       it "forks from the final head too, when the selector names it" do
-        result = resume.fork(selector: "20260101@#{prefix_for(three.head_digest)}")
+        result = resume.fork(selector: "20260101@#{prefix_for(three.head_digest)}", profile: untyped)
 
         expect(result.timeline.head_digest).to eq(three.head_digest)
       end
@@ -1096,16 +1115,16 @@ RSpec.describe Lain::CLI::Resume do
       it "leaves the parent journal byte-identical" do
         before_bytes = File.binread(parent_path)
 
-        resume.fork(selector: "20260101@#{prefix_for(ancestor)}")
+        resume.fork(selector: "20260101@#{prefix_for(ancestor)}", profile: untyped)
 
         expect(File.binread(parent_path)).to eq(before_bytes)
       end
 
       it "the forked run writes a new journal the Loader reads back as one verified chain from A" do
-        result = resume.fork(selector: "20260101@#{prefix_for(ancestor)}")
+        result = resume.fork(selector: "20260101@#{prefix_for(ancestor)}", profile: untyped)
         journal_io = StringIO.new
         chronicle = Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: journal_io))
-        chronicle.start(context: recorded_context, toolset:, resumed: result)
+        chronicle.start(context: recorded_context, toolset:, resumed: result, sections: SessionSections.complete)
         provider = Lain::Provider::Mock.new(responses: [text_response("forked answer")])
         agent = Lain::Agent.new(provider:, toolset:, context: recorded_context, timeline: result.timeline)
         agent.ask("a different second question")
@@ -1131,7 +1150,7 @@ RSpec.describe Lain::CLI::Resume do
         expect(described_class::Salvager).not_to receive(:new)
         before_bytes = File.binread(parent_path)
 
-        result = resume.fork(selector: "20260101@#{prefix_for(two.head_digest)}")
+        result = resume.fork(selector: "20260101@#{prefix_for(two.head_digest)}", profile: untyped)
 
         expect(result.timeline.head_digest).to eq(two.head_digest)
         expect(File.binread(parent_path)).to eq(before_bytes)
@@ -1139,7 +1158,7 @@ RSpec.describe Lain::CLI::Resume do
       end
 
       it "keeps the parent loadable through its subsequent appends and close" do
-        resume.fork(selector: "20260101@#{prefix_for(two.head_digest)}")
+        resume.fork(selector: "20260101@#{prefix_for(two.head_digest)}", profile: untyped)
 
         extended = two.commit(role: :user, content: text("owner kept going"))
         File.open(parent_path, "a") do |file|
@@ -1167,7 +1186,7 @@ RSpec.describe Lain::CLI::Resume do
                                                        "input" => { "text" => "hi" } }])
       write_closed("20260101T000000-1.ndjson", mid_tool)
 
-      forked = resume.fork(selector: "20260101@#{prefix_for(mid_tool.head_digest)}")
+      forked = resume.fork(selector: "20260101@#{prefix_for(mid_tool.head_digest)}", profile: untyped)
 
       expect(forked.timeline.head.content.first)
         .to include("type" => "tool_result", "tool_use_id" => "tu_1")
@@ -1184,7 +1203,7 @@ RSpec.describe Lain::CLI::Resume do
       point = Lain::CLI::ForkPoint::Point.new(path: gone, digest: three.head_digest)
       allow(Lain::CLI::ForkPoint).to receive(:new).and_return(instance_double(Lain::CLI::ForkPoint, call: point))
 
-      expect { resume.fork(selector: "whatever@abcd") }
+      expect { resume.fork(selector: "whatever@abcd", profile: untyped) }
         .to raise_error(described_class::Refusal, /20260199T000000-1\.ndjson/)
     end
 
@@ -1193,7 +1212,9 @@ RSpec.describe Lain::CLI::Resume do
       tampered = records[1].merge("content" => text("tampered"))
       write_session("20260101T000000-1.ndjson", [records[0], tampered, *records[2..]])
 
-      expect { resume.fork(selector: "20260101@#{prefix_for(three.to_a[0].digest)}") }
+      expect do
+        resume.fork(selector: "20260101@#{prefix_for(three.to_a[0].digest)}", profile: untyped)
+      end
         .to raise_error(described_class::Refusal, /20260101T000000-1\.ndjson/)
     end
 
@@ -1211,7 +1232,7 @@ RSpec.describe Lain::CLI::Resume do
       write_closed("20260101T000000-1.ndjson", three,
                    extra: [Lain::Telemetry::Message.from_event(cited).to_journal])
 
-      expect { resume.fork(selector: "20260101@#{prefix_for(ancestor)}") }
+      expect { resume.fork(selector: "20260101@#{prefix_for(ancestor)}", profile: untyped) }
         .to raise_error(described_class::Refusal) do |error|
           expect(error.message).to include("20260101T000000-1.ndjson", dangling_digest)
         end
@@ -1224,7 +1245,7 @@ RSpec.describe Lain::CLI::Resume do
     it "refuses a fork over a message record whose causal_parents holds a null" do
       write_closed("20260101T000000-1.ndjson", three, extra: [null_parent_message])
 
-      expect { resume.fork(selector: "20260101@#{prefix_for(ancestor)}") }
+      expect { resume.fork(selector: "20260101@#{prefix_for(ancestor)}", profile: untyped) }
         .to raise_error(described_class::Refusal, /20260101T000000-1\.ndjson/)
     end
   end
@@ -1233,12 +1254,12 @@ RSpec.describe Lain::CLI::Resume do
     before { write_closed("20260101T000000-1.ndjson", chain("hi", "yo")) }
 
     it "names both models when the current flags disagree with the recording" do
-      notices = resume.call(model: "other-model").notices
+      notices = resume.call(model: "other-model", profile: untyped).notices
       expect(notices.join).to include("recorded-model", "other-model")
     end
 
     it "stays silent when they agree" do
-      expect(resume.call(model: "recorded-model").notices).to be_empty
+      expect(resume.call(model: "recorded-model", profile: untyped).notices).to be_empty
     end
   end
 
@@ -1322,27 +1343,27 @@ RSpec.describe Lain::CLI::Resume do
     end
 
     it "names the flag a typed value disagrees on" do
-      notices = resume.call(compaction: typed(compact_keep: 8)).notices
+      notices = resume.call(compaction: typed(compact_keep: 8), profile: untyped).notices
 
       expect(notices.join).to include("--compact-keep", "4", "8")
     end
 
     it "stays silent when the typed flag agrees, or nothing was typed" do
-      expect(resume.call(compaction: typed(compact_keep: 4)).notices).to be_empty
-      expect(resume.call(compaction: typed).notices).to be_empty
+      expect(resume.call(compaction: typed(compact_keep: 4), profile: untyped).notices).to be_empty
+      expect(resume.call(compaction: typed, profile: untyped).notices).to be_empty
     end
 
     it "says a typed schedule disagrees with the recorded one" do
       write_closed("20260101T000000-2.ndjson", chain("hi", "yo"), provider: "ollama",
                                                                   compaction: { "compact_schedule" => "turn" })
 
-      expect(resume.call(compaction: typed(compact_schedule: "idle")).notices.join)
+      expect(resume.call(compaction: typed(compact_schedule: "idle"), profile: untyped).notices.join)
         .to include("recorded with --compact-schedule turn; continuing with idle")
     end
 
     it "reads the recorded turn schedule: silent untyped, a notice when idle is typed" do
-      expect(resume.call(compaction: typed).notices).to be_empty
-      expect(resume.call(compaction: typed(compact_schedule: "idle")).notices.join)
+      expect(resume.call(compaction: typed, profile: untyped).notices).to be_empty
+      expect(resume.call(compaction: typed(compact_schedule: "idle"), profile: untyped).notices.join)
         .to include("recorded with --compact-schedule turn")
     end
 
@@ -1354,17 +1375,17 @@ RSpec.describe Lain::CLI::Resume do
       end
 
       it "says an untyped resume keeps running without compaction" do
-        expect(resume.call(compaction: typed).notices)
+        expect(resume.call(compaction: typed, profile: untyped).notices)
           .to eq(["running without compaction, as recorded (pass --compact to compact)"])
       end
 
       it "names the change a typed --compact makes" do
-        expect(resume.call(compaction: typed(compact: true)).notices)
+        expect(resume.call(compaction: typed(compact: true), profile: untyped).notices)
           .to eq(["recorded with --no-compact; continuing with --compact (the current flags win)"])
       end
 
       it "stays silent under a typed --no-compact, which agrees" do
-        expect(resume.call(compaction: typed(compact: false)).notices).to be_empty
+        expect(resume.call(compaction: typed(compact: false), profile: untyped).notices).to be_empty
       end
     end
 
@@ -1384,7 +1405,7 @@ RSpec.describe Lain::CLI::Resume do
     end
 
     it "names an arm a resume will run differently from the recording" do
-      notices = resume.resume_at(resume.locate(""), arms: off).notices
+      notices = resume.resume_at(resume.locate(""), arms: off, profile: untyped).notices
 
       expect(notices).to eq(["recorded with --confine reader; continuing with off (the current flags win)"])
     end
@@ -1392,20 +1413,19 @@ RSpec.describe Lain::CLI::Resume do
     it "names it for a fork too" do
       point = resume.fork_point("@#{two.head_digest.delete_prefix("blake3:")[0, 12]}")
 
-      expect(resume.fork_at(point, arms: off).notices.join).to include("recorded with --confine reader")
+      expect(resume.fork_at(point, arms: off,
+                                   profile: untyped).notices.join).to include("recorded with --confine reader")
     end
   end
 
-  # A header written before this field existed carries no "provider" key
-  # at all -- resume must still proceed (never a refusal), naming the gap.
-  describe "a header recorded with no provider field (old-caller compatibility)" do
-    before { write_closed("20260101T000000-1.ndjson", chain("hi", "yo")) }
+  describe "a header recorded with no provider field" do
+    before do
+      write_session("20260101T000000-1.ndjson", [open_header.except("provider")] + turn_records(chain("hi", "yo")))
+    end
 
-    it "proceeds with a 'provider unrecorded' notice rather than a refusal" do
-      result = resume.call(profile: Lain::CLI::RunProfile.from_options(provider: "ollama"))
-
-      expect(result.timeline.head_digest).not_to be_nil
-      expect(result.notices.join).to include("provider unrecorded", "ollama")
+    it "refuses, naming the file and the missing provider" do
+      expect { resume.call(profile: Lain::CLI::RunProfile.from_options(provider: "ollama")) }
+        .to raise_error(described_class::Refusal, /20260101T000000-1\.ndjson.*provider/)
     end
   end
 
@@ -1415,7 +1435,7 @@ RSpec.describe Lain::CLI::Resume do
       records[1] = records[1].merge("content" => text("tampered"))
       write_session("20260101T000000-1.ndjson", records)
 
-      expect { resume.call }.to raise_error(described_class::Refusal) do |error|
+      expect { resume.call(profile: untyped) }.to raise_error(described_class::Refusal) do |error|
         expect(error).to be_a(Lain::Error)
         expect(error.message).to include("20260101T000000-1.ndjson", "content address")
       end
@@ -1438,7 +1458,7 @@ RSpec.describe Lain::CLI::Resume do
                                 .commit(role: :assistant, content: text("81 mg"), causal_parents: [answered.digest])
       write_session("20260101T000000-1.ndjson", [open_header] + turn_records(cited))
 
-      expect { resume.call }.to raise_error(described_class::Refusal) do |error|
+      expect { resume.call(profile: untyped) }.to raise_error(described_class::Refusal) do |error|
         expect(error).to be_a(Lain::Error)
         expect(error.message).to include("20260101T000000-1.ndjson", answered.digest)
       end
@@ -1462,7 +1482,8 @@ RSpec.describe Lain::CLI::Resume do
       write_closed("20260101T000000-1.ndjson", chain("hi", "yo"))
       allow(Lain::Bench::Session::Loader).to receive(:new).and_raise(rust_store_miss)
 
-      expect { resume.call }.to raise_error(described_class::Refusal, /20260101T000000-1\.ndjson/)
+      expect { resume.call(profile: untyped) }.to raise_error(described_class::Refusal,
+                                                              /20260101T000000-1\.ndjson/)
     end
 
     it "refuses a Rust store's miss at --fork, naming the file" do
@@ -1470,14 +1491,16 @@ RSpec.describe Lain::CLI::Resume do
       write_closed("20260101T000000-1.ndjson", line)
       allow(Lain::Bench::Session::Loader).to receive(:new).and_raise(rust_store_miss)
 
-      expect { resume.fork(selector: "20260101@#{line.head_digest.delete_prefix("blake3:")[0, 12]}") }
+      expect do
+        resume.fork(selector: "20260101@#{line.head_digest.delete_prefix("blake3:")[0, 12]}", profile: untyped)
+      end
         .to raise_error(described_class::Refusal, /20260101T000000-1\.ndjson/)
     end
 
     it "refuses a session whose message record holds a null causal parent" do
       write_closed("20260101T000000-1.ndjson", chain("hi", "yo"), extra: [null_parent_message])
 
-      expect { resume.call }.to raise_error(described_class::Refusal) do |error|
+      expect { resume.call(profile: untyped) }.to raise_error(described_class::Refusal) do |error|
         expect(error).to be_a(Lain::Error)
         expect(error.message).to include("20260101T000000-1.ndjson")
       end
@@ -1504,13 +1527,13 @@ RSpec.describe Lain::CLI::Resume do
       flips = io.string.lines.map { |line| JSON.parse(line) }
       write_closed("20260101T000000-1.ndjson", chain("hi", "yo"), extra: flips)
 
-      expect { resume.call }.not_to raise_error
+      expect { resume.call(profile: untyped) }.not_to raise_error
     end
 
     describe "a damaged mode_switch record" do
       def resume_over(*flips)
         write_closed("20260101T000000-1.ndjson", chain("hi", "yo"), extra: flips)
-        resume.call
+        resume.call(profile: untyped)
       end
 
       def flip(from, to)
@@ -1537,7 +1560,7 @@ RSpec.describe Lain::CLI::Resume do
     it "refuses a pre-scribe (headerless, --nvim-era) journal namedly" do
       write_session("20260101T000000-1.ndjson", [{ "type" => "request_sent", "digest" => "blake3:#{"a" * 64}" }])
 
-      expect { resume.call }.to raise_error(described_class::Refusal) do |error|
+      expect { resume.call(profile: untyped) }.to raise_error(described_class::Refusal) do |error|
         expect(error.message).to include("20260101T000000-1.ndjson", "header")
       end
     end
@@ -1573,7 +1596,7 @@ RSpec.describe Lain::CLI::Resume do
                                                         "input" => { "text" => "hi" } }])
       write_session("20260101T000000-1.ndjson", [open_header] + turn_records(anonymous))
 
-      expect { resume.call }.to raise_error(described_class::Refusal) do |error|
+      expect { resume.call(profile: untyped) }.to raise_error(described_class::Refusal) do |error|
         expect(error.message).to include("20260101T000000-1.ndjson", "tool")
       end
     end
@@ -1605,19 +1628,21 @@ RSpec.describe Lain::CLI::Resume do
     before { path }
 
     it "resumes rather than refusing" do
-      expect { resume.call }.not_to raise_error
+      expect { resume.call(profile: untyped) }.not_to raise_error
     end
 
     it "forks at its advertised head rather than refusing" do
-      expect { resume.fork(selector: "20260101@#{digest_prefix(torn.head_digest)}") }.not_to raise_error
+      expect do
+        resume.fork(selector: "20260101@#{digest_prefix(torn.head_digest)}", profile: untyped)
+      end.not_to raise_error
     end
 
     it "rebuilds a chain the Messages API would accept, with no unanswered tool_use" do
-      expect(Lain::Context::Conversation.new(rendered(resume.call.timeline))).to be_valid
+      expect(Lain::Context::Conversation.new(rendered(resume.call(profile: untyped).timeline))).to be_valid
     end
 
     it "answers every stranded call in ONE user turn committed above the recorded head" do
-      timeline = resume.call.timeline
+      timeline = resume.call(profile: untyped).timeline
 
       expect(timeline.length).to eq(torn.length + 1)
       expect(timeline.head.role).to eq("user")
@@ -1625,7 +1650,7 @@ RSpec.describe Lain::CLI::Resume do
     end
 
     it "reports the call as cancelled, and reports no output for the tool" do
-      block = resume.call.timeline.head.content.first
+      block = resume.call(profile: untyped).timeline.head.content.first
 
       expect(block).to include("type" => "tool_result", "tool_use_id" => "tu_1", "is_error" => true)
       expect(block["content"]).to match(/cancel/i).and match(/no output/i)
@@ -1647,7 +1672,7 @@ RSpec.describe Lain::CLI::Resume do
                 .commit(role: :assistant, content: text("done"))
       write_closed("20260105T000000-1.ndjson", settled)
 
-      forked = resume.fork(selector: "20260105@#{digest_prefix(answered.head_digest)}")
+      forked = resume.fork(selector: "20260105@#{digest_prefix(answered.head_digest)}", profile: untyped)
       block = forked.timeline.head.content.first
 
       expect(block).to include("tool_use_id" => "tu_1")
@@ -1666,7 +1691,7 @@ RSpec.describe Lain::CLI::Resume do
     it "claims no interruption when resuming a session that is still open" do
       write_session("20260106T000000-1.ndjson", [open_header] + turn_records(torn))
 
-      block = resume.call(selector: "20260106").timeline.head.content.first
+      block = resume.call(selector: "20260106", profile: untyped).timeline.head.content.first
 
       expect(block["content"]).not_to match(/interrupt/i)
       expect(block["content"]).to match(/no result/i)
@@ -1677,7 +1702,7 @@ RSpec.describe Lain::CLI::Resume do
     it "repairs a torn head in an OPEN (crashed) session too, after salvage" do
       write_session("20260104T000000-1.ndjson", [open_header] + turn_records(torn))
 
-      result = resume.call(selector: "20260104")
+      result = resume.call(selector: "20260104", profile: untyped)
 
       expect(result.open?).to be(true)
       expect(result.timeline.head.content.first).to include("tool_use_id" => "tu_1")
@@ -1687,7 +1712,7 @@ RSpec.describe Lain::CLI::Resume do
     it "leaves the journal file's records byte-identical" do
       before_bytes = File.binread(path)
 
-      resume.call
+      resume.call(profile: untyped)
 
       expect(File.binread(path)).to eq(before_bytes)
     end
@@ -1697,7 +1722,7 @@ RSpec.describe Lain::CLI::Resume do
     # has ever held. Getting this wrong is silent: the new session writes
     # fine and only refuses as Corrupt when IT is later resumed.
     it "chains the new journal to the recorded head, never to the projected turn" do
-      result = resume.call
+      result = resume.call(profile: untyped)
 
       expect(result.resumed_from).to eq("file" => File.basename(path), "head" => torn.head_digest)
       expect(result.written).to eq(torn.to_a.map(&:digest))
@@ -1707,10 +1732,10 @@ RSpec.describe Lain::CLI::Resume do
     # where it lands -- and the whole chain must still reload as one verified
     # conversation across the two files.
     it "journals the projected turn into the NEW record, and the chain reloads" do
-      result = resume.call
+      result = resume.call(profile: untyped)
       journal_io = StringIO.new
       chronicle = Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: journal_io))
-      chronicle.start(context: recorded_context, toolset:, resumed: result)
+      chronicle.start(context: recorded_context, toolset:, resumed: result, sections: SessionSections.complete)
       chronicle.catch_up(result.timeline)
 
       new_records = journal_records(journal_io)
@@ -1734,7 +1759,7 @@ RSpec.describe Lain::CLI::Resume do
                                             content: [{ "type" => "tool_use", "name" => "echo", "input" => {} }])
       write_closed("20260102T000000-1.ndjson", anonymous)
 
-      expect { resume.call(selector: "20260102") }.to raise_error(described_class::Refusal) do |error|
+      expect { resume.call(selector: "20260102", profile: untyped) }.to raise_error(described_class::Refusal) do |error|
         expect(error.message).to include("20260102T000000-1.ndjson", "tool")
         # The real reason, not the old one: projecting a result falsifies
         # nothing, so "fabricating results would falsify the record" is now
@@ -1759,8 +1784,10 @@ RSpec.describe Lain::CLI::Resume do
       it "refuses at both doors, naming the orphan's position and digest" do
         orphan = buried.to_a[1]
 
-        [-> { resume.call(selector: "20260104") },
-         -> { resume.fork(selector: "20260104@#{digest_prefix(buried.head_digest)}") }].each do |door|
+        [-> { resume.call(selector: "20260104", profile: untyped) },
+         lambda {
+           resume.fork(selector: "20260104@#{digest_prefix(buried.head_digest)}", profile: untyped)
+         }].each do |door|
           expect(&door).to raise_error(described_class::Refusal) do |error|
             expect(error.message).to include("20260104T000000-1.ndjson", "turn 2 of 4", digest_prefix(orphan.digest))
             expect(error.message).to include("tu_1")
@@ -1769,18 +1796,22 @@ RSpec.describe Lain::CLI::Resume do
       end
 
       it "names a fork at the orphan itself, which the repair can answer" do
-        expect { resume.call(selector: "20260104") }.to raise_error(described_class::Refusal) do |error|
-          expect(error.message).to include("--fork 20260104T000000-1.ndjson@#{digest_prefix(buried.to_a[1].digest)}")
+        refusal = begin
+          resume.call(selector: "20260104", profile: untyped)
+        rescue described_class::Refusal => e
+          e
         end
+
+        expect(refusal.message).to include("--fork 20260104T000000-1.ndjson@#{digest_prefix(buried.to_a[1].digest)}")
       end
 
       it "says how many recorded turns that fork leaves behind" do
-        expect { resume.call(selector: "20260104") }
+        expect { resume.call(selector: "20260104", profile: untyped) }
           .to raise_error(described_class::Refusal, /drops the 2 turns recorded after it/)
       end
 
       it "forks below the damage without refusing" do
-        forked = resume.fork(selector: "20260104@#{digest_prefix(buried.to_a[1].digest)}")
+        forked = resume.fork(selector: "20260104@#{digest_prefix(buried.to_a[1].digest)}", profile: untyped)
 
         expect(Lain::Context::Conversation.new(rendered(forked.timeline))).to be_valid
       end
@@ -1790,7 +1821,7 @@ RSpec.describe Lain::CLI::Resume do
     # operator, is the invisible mutation the Journal doctrine exists against.
     # Open decision 5 defers the retry AFFORDANCE; disclosure is not that.
     it "tells the human the session was repaired, not only the model" do
-      result = resume.call
+      result = resume.call(profile: untyped)
 
       expect(result).to be_repaired
       expect(result.notices).to include(a_string_matching(/cancel/i))
@@ -1800,7 +1831,7 @@ RSpec.describe Lain::CLI::Resume do
       settled = chain("first", "ack", "second")
       write_closed("20260103T000000-1.ndjson", settled)
 
-      result = resume.call(selector: "20260103")
+      result = resume.call(selector: "20260103", profile: untyped)
 
       expect(result.timeline.to_a.map(&:digest)).to eq(settled.to_a.map(&:digest))
       expect(result.timeline.head.content.map { |block| block["type"] }).to eq(["text"])
@@ -1848,8 +1879,10 @@ RSpec.describe Lain::CLI::Resume do
     # BOTH doors, driven for real. The card is that they say different things,
     # so nothing here may assert against one of them alone.
     def refusals
-      { "resume" => raised { resume.call },
-        "fork" => raised { resume.fork(selector: "20260101@#{prefix_for(unpairable.head_digest)}") } }
+      { "resume" => raised { resume.call(profile: untyped) },
+        "fork" => raised do
+          resume.fork(selector: "20260101@#{prefix_for(unpairable.head_digest)}", profile: untyped)
+        end }
     end
 
     it "says resume at the resume door" do
@@ -1981,14 +2014,15 @@ RSpec.describe Lain::CLI::Resume do
     end
 
     it "resumes onto the parent's own recorded head" do
-      result = resume.call
+      result = resume.call(profile: untyped)
 
       expect(result.timeline.to_a.map(&:digest)).to eq(continued.to_a.map(&:digest))
       expect(result.open?).to be(false)
     end
 
     it "forks at that same head" do
-      forked = resume.fork(selector: "20260101@#{continued.head_digest.delete_prefix("blake3:")[0, 12]}")
+      forked = resume.fork(selector: "20260101@#{continued.head_digest.delete_prefix("blake3:")[0, 12]}",
+                           profile: untyped)
 
       expect(forked.timeline.head_digest).to eq(continued.head_digest)
       expect(forked.resumed_from).to eq("file" => "20260101T000000-1.ndjson", "head" => continued.head_digest)
@@ -2027,7 +2061,7 @@ RSpec.describe Lain::CLI::Resume do
     it "resumes a chain whose parent is filed in the other directory" do
       parent = split_chain(parent_dir: @sub, child_dir: @root)
 
-      result = Dir.chdir(@sub) { resume.call(selector: "20260102") }
+      result = Dir.chdir(@sub) { resume.call(selector: "20260102", profile: untyped) }
 
       expect(result.timeline.head_digest).to eq(parent.head_digest)
     end
@@ -2035,7 +2069,7 @@ RSpec.describe Lain::CLI::Resume do
     it "resumes that chain from the root, where the parent's directory is not among the two" do
       parent = split_chain(parent_dir: @sub, child_dir: @root)
 
-      result = Dir.chdir(@root) { resume.call(selector: "20260102") }
+      result = Dir.chdir(@root) { resume.call(selector: "20260102", profile: untyped) }
 
       expect(result.timeline.head_digest).to eq(parent.head_digest)
     end
@@ -2045,7 +2079,9 @@ RSpec.describe Lain::CLI::Resume do
       parent = split_chain(parent_dir: elsewhere, child_dir: @root)
       project = instance_double(Lain::Project, root: @root)
 
-      result = Dir.chdir(elsewhere) { described_class.new(paths:, project:).call(selector: "20260102") }
+      result = Dir.chdir(elsewhere) do
+        described_class.new(paths:, project:).call(selector: "20260102", profile: untyped)
+      end
 
       expect(result.timeline.head_digest).to eq(parent.head_digest)
     end

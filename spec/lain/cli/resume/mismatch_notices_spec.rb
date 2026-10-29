@@ -10,13 +10,13 @@ RSpec.describe Lain::CLI::Resume::MismatchNotices do
 
   def session_with(arms:)
     header = Lain::SessionRecord.header(context: Lain::Context.new(model: "qwen3:4b", max_tokens: 64),
-                                        toolset: Lain::Toolset.new, sections: Lain::SessionRecord::Sections.new(arms:),
+                                        toolset: Lain::Toolset.new, sections: SessionSections.complete(arms:),
                                         writer: CoreGraph::NO_WRITER)
     File.join(@dir, "session.ndjson").tap { |path| File.write(path, "#{JSON.generate(header)}\n") }
   end
 
   def notices(path, arms)
-    described_class.new(path:).call(profile: Lain::CLI::RunProfile::UNRECORDED, model: nil, arms:)
+    described_class.new(path:).call(profile: Lain::CLI::RunProfile.from_options({}), model: nil, arms:)
   end
 
   def typed(**values) = Lain::CLI::Arms::UNSET.with(**values)
@@ -78,13 +78,13 @@ RSpec.describe Lain::CLI::Resume::MismatchNotices do
   describe "the compaction notice" do
     def session_compacting(compaction)
       header = Lain::SessionRecord.header(context: Lain::Context.new(model: "qwen3:4b", max_tokens: 64),
-                                          toolset: Lain::Toolset.new, sections: Lain::SessionRecord::Sections.new(compaction:),
+                                          toolset: Lain::Toolset.new, sections: SessionSections.complete(compaction:),
                                           writer: CoreGraph::NO_WRITER)
       File.join(@dir, "session.ndjson").tap { |path| File.write(path, "#{JSON.generate(header)}\n") }
     end
 
     def compaction_notices(path, typed)
-      described_class.new(path:).call(profile: Lain::CLI::RunProfile::UNRECORDED, model: nil,
+      described_class.new(path:).call(profile: Lain::CLI::RunProfile.from_options({}), model: nil,
                                       compaction: Lain::CLI::CompactionProfile.typed(typed))
     end
 
@@ -110,7 +110,7 @@ RSpec.describe Lain::CLI::Resume::MismatchNotices do
     end
 
     it "says nothing about compaction a caller did not pass" do
-      expect(described_class.new(path: off).call(profile: Lain::CLI::RunProfile::UNRECORDED, model: nil))
+      expect(described_class.new(path: off).call(profile: Lain::CLI::RunProfile.from_options({}), model: nil))
         .to be_empty
     end
   end
@@ -123,16 +123,26 @@ RSpec.describe Lain::CLI::Resume::MismatchNotices do
     expect(described_class.new(path: "unused", header:).call(profile:, model: "claude-opus-4-8")).to be_empty
   end
 
+  it "refuses a header that recorded no run profile instead of calling the provider unrecorded" do
+    header = { "model" => "qwen3:4b" }
+
+    expect { described_class.new(path: "unused", header:).call(profile: typed_profile("ollama"), model: nil) }
+      .to raise_error(Lain::Bench::Session::Corrupt, /provider/)
+  end
+
+  def typed_profile(provider) = Lain::CLI::RunProfile.from_options({ provider: })
+
   it "says nothing about arms a caller did not pass" do
     path = session_with(arms: {})
 
-    expect(described_class.new(path:).call(profile: Lain::CLI::RunProfile::UNRECORDED, model: nil)).to be_empty
+    expect(described_class.new(path:).call(profile: Lain::CLI::RunProfile.from_options({}), model: nil)).to be_empty
   end
 
   describe "the output ceiling" do
     def session_with_ceiling(ceiling)
       header = Lain::SessionRecord.header(context: Lain::Context.new(model: "qwen3:4b", max_tokens: ceiling),
-                                          toolset: Lain::Toolset.new, writer: CoreGraph::NO_WRITER)
+                                          toolset: Lain::Toolset.new, writer: CoreGraph::NO_WRITER,
+                                          sections: SessionSections.complete)
       File.join(@dir, "session.ndjson").tap { |path| File.write(path, "#{JSON.generate(header)}\n") }
     end
 
@@ -166,7 +176,7 @@ RSpec.describe Lain::CLI::Resume::MismatchNotices do
     def session_with_effort(effort)
       context = Lain::Context.new(model: "claude-opus-4-8", max_tokens: 64, effort:)
       header = Lain::SessionRecord.header(context:, toolset: Lain::Toolset.new,
-                                          sections: Lain::SessionRecord::Sections.new(
+                                          sections: SessionSections.complete(
                                             profile: { "provider" => "anthropic" }
                                           ), writer: CoreGraph::NO_WRITER)
       File.join(@dir, "session.ndjson").tap { |path| File.write(path, "#{JSON.generate(header)}\n") }

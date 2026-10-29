@@ -54,7 +54,7 @@ RSpec.describe "Project memory across chats", :seam do
     recorder, session = wiring(chronicle).run_state(resumed)
     toolset = Lain::Toolset.new([Lain::Tools::MemoryWrite.new(recorder:, author: Lain::Memory::Author.chat)])
     context = Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024)
-    chronicle.start(context:, toolset:, resumed: resumed_start(resumed))
+    chronicle.start(context:, toolset:, resumed: resumed_start(resumed), sections: SessionSections.complete)
     provider = Lain::Provider::Mock.new(responses:)
     agent = Lain::Agent.new(provider:, context:, toolset:, session:,
                             journal: Lain::Memory::JournalMemoryRoot.new(journal: chronicle.durable_journal,

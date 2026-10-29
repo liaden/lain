@@ -288,7 +288,7 @@ RSpec.describe Lain::CLI::Command::Btw, "the side chat's backend" do
   let(:session_path) do
     context = Lain::Context.new(model: "qwen3:4b", max_tokens: 64)
     header = Lain::SessionRecord.header(context:, toolset: Lain::Toolset.new,
-                                        sections: Lain::SessionRecord::Sections.new(
+                                        sections: SessionSections.complete(
                                           profile: { "provider" => "ollama" }
                                         ),
                                         writer: CoreGraph::NO_WRITER)
@@ -340,7 +340,7 @@ RSpec.describe Lain::CLI::Command::Btw, "the side chat's backend" do
     let(:session_path) do
       context = Lain::Context.new(model: "qwen3:4b", max_tokens: Lain::OutputCeiling.typed(4096))
       header = Lain::SessionRecord.header(context:, toolset: Lain::Toolset.new,
-                                          sections: Lain::SessionRecord::Sections.new(
+                                          sections: SessionSections.complete(
                                             profile: { "provider" => "ollama" }
                                           ),
                                           writer: CoreGraph::NO_WRITER)

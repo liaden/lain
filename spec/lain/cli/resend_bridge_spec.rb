@@ -180,7 +180,7 @@ RSpec.describe Lain::CLI::ResendBridge do
     it "journals a rewound record, never raises Diverged, and the session stays loadable" do
       provider = Lain::Provider::Mock.new(responses: [text_response("first"), text_response("re-answered")])
       chronicle = Lain::CLI::Chronicle.new(journal:)
-      chronicle.start(context:, toolset:)
+      chronicle.start(context:, toolset:, sections: SessionSections.complete)
       agent = build_chat_shaped_agent(provider, chronicle)
       bridge = described_class.new(agent:, journal:, record: chronicle)
 

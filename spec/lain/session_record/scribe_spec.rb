@@ -25,7 +25,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
   let(:store) { Lain::Dag::Factory.store }
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
-  let(:scribe) { described_class.new(journal:, context:, toolset:, workspace:) }
+  let(:scribe) { described_class.new(journal:, context:, toolset:, workspace:, sections: SessionSections.complete) }
 
   def text(body) = [{ "type" => "text", "text" => body }]
   def records = journal_records(journal_io)
@@ -231,7 +231,10 @@ RSpec.describe Lain::SessionRecord::Scribe do
     let(:sink) { [] }
     let(:status) { Lain::StatusFeed.new(path: File.join(Dir.mktmpdir("scribe-tee"), "state.json")) }
     let(:tee) { Lain::CLI::JournalTee.new(journal, sink, status) }
-    let(:scribe) { described_class.new(journal:, context:, toolset:, workspace:, message_journal: tee) }
+    let(:scribe) do
+      described_class.new(journal:, context:, toolset:, workspace:, message_journal: tee,
+                          sections: SessionSections.complete)
+    end
     let(:parent) { Lain::Dag::Factory.timeline(store:).commit(role: :user, content: text("hi")) }
 
     it "keeps a child turn off the tee while the file still gets it once" do
@@ -285,7 +288,10 @@ RSpec.describe Lain::SessionRecord::Scribe do
     # only turn that can consume the row a human sees. The transcript still may
     # not route; the edges alone do.
     describe "a child turn's consumption edges" do
-      let(:scribe) { described_class.new(journal:, context:, toolset:, workspace:, message_journal: tee, live: sink) }
+      let(:scribe) do
+        described_class.new(journal:, context:, toolset:, workspace:, message_journal: tee, live: sink,
+                            sections: SessionSections.complete)
+      end
 
       let(:question) do
         Lain::EventLog::ChainWriter.new(observer: ->(event) { scribe.call(event) })
@@ -359,7 +365,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
           end
         end.new
         scribe = described_class.new(journal:, context:, toolset:, workspace:,
-                                     live: deaf)
+                                     live: deaf, sections: SessionSections.complete)
 
         expect { scribe.call(turn) }.to raise_error(IOError)
         expect { scribe.call(turn) }.not_to raise_error
@@ -388,7 +394,9 @@ RSpec.describe Lain::SessionRecord::Scribe do
   # raises can neither lose the record nor get it written twice.
   describe "the head moves, told to a live leg" do
     let(:live) { [] }
-    let(:scribe) { described_class.new(journal:, context:, toolset:, workspace:, live:) }
+    let(:scribe) do
+      described_class.new(journal:, context:, toolset:, workspace:, live:, sections: SessionSections.complete)
+    end
     let(:line) do
       %w[first second third].inject(Lain::Dag::Factory.timeline(store:)) do |grown, body|
         grown.commit(role: :user, content: text(body))
@@ -442,7 +450,8 @@ RSpec.describe Lain::SessionRecord::Scribe do
 
     it "has moved the written chain before a raising live leg is told" do
       deaf = Class.new { define_method(:<<) { |_record| raise IOError, "live view down" } }.new
-      scribe = described_class.new(journal:, context:, toolset:, workspace:, live: deaf)
+      scribe = described_class.new(journal:, context:, toolset:, workspace:, live: deaf,
+                                   sections: SessionSections.complete)
       scribe.catch_up(line)
 
       expect { scribe.rewound(to: line.to_a[1].digest) }.to raise_error(IOError)

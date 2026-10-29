@@ -109,7 +109,8 @@ module InheritChildCompactionSeam
       @child_tools = child_tools
       @child_compacts = child_compacts
       @arm = arm
-      @scribe = Lain::SessionRecord::Scribe.new(journal: @journal, context:, toolset:)
+      @scribe = Lain::SessionRecord::Scribe.new(journal: @journal, context:, toolset:,
+                                                sections: SessionSections.complete)
       @session = Lain::Session.new(journal: @journal)
       @source = handing_off(@journal)
       @agent = agent_over(toolset)

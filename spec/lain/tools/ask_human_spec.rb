@@ -120,7 +120,8 @@ RSpec.describe Lain::Tools::AskHuman do
       end
       asking = described_class.new(parent: -> { agent.timeline }, observer:)
       toolset = Lain::Toolset.new([asking])
-      scribe = Lain::SessionRecord::Scribe.new(journal: Lain::Journal.new(io: journal_io), context:, toolset:)
+      scribe = Lain::SessionRecord::Scribe.new(journal: Lain::Journal.new(io: journal_io), context:, toolset:,
+                                               sections: SessionSections.complete)
       agent = Lain::Agent.new(
         provider: Lain::Provider::Mock.new(responses: [tool_response(["tu_1", "ask_human", { "question" => "db?" }]),
                                                        text_response("done")]),

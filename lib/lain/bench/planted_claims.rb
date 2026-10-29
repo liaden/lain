@@ -113,7 +113,8 @@ module Lain
         def record(journal, plant)
           toolset = Toolset.new([Lookup.new(plant:)])
           context = Context.new(model: MODEL, max_tokens: 1024, system: "be terse")
-          scribe = SessionRecord::Scribe.new(journal:, context:, toolset:, writer: WRITER)
+          scribe = SessionRecord::Scribe.new(journal:, context:, toolset:, writer: WRITER,
+                                             sections: FixtureSections.for(toolset))
           agent = Agent.new(provider: Provider::Mock.new(responses:),
                             toolset:, context:, journal:,
                             model_middleware: Middleware::Stack.new([Middleware::JournalRequests.new(journal:)]))

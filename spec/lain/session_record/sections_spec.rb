@@ -1,15 +1,20 @@
 # frozen_string_literal: true
 
 RSpec.describe Lain::SessionRecord::Sections do
-  describe ".none" do
-    it "renders every section as an empty hash" do
-      expect(described_class.none.to_h).to eq(profile: {}, compaction: {}, arms: {}, middleware: {}, provenance: {},
-                                              summarizer: {})
+  describe ".new" do
+    it "refuses a profile or provenance left out, since a header without either is unreadable" do
+      expect { described_class.new }.to raise_error(ArgumentError, /profile.*provenance/)
     end
+  end
 
-    it "is shareable" do
-      expect(Ractor.shareable?(described_class.none)).to be(true)
-    end
+  it "refuses an empty profile or provenance, so a bad header fails at write time" do
+    complete = SessionSections.complete
+
+    expect do
+      described_class.new(profile: {}, provenance: complete.provenance)
+    end.to raise_error(ArgumentError, /profile/)
+    expect { described_class.new(profile: complete.profile, provenance: {}) }
+      .to raise_error(ArgumentError, /provenance/)
   end
 
   describe ".of" do

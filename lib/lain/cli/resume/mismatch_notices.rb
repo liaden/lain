@@ -78,14 +78,9 @@ module Lain
           continuing("model", recorded, model)
         end
 
-        # A header that recorded no profile is its own named case for the
-        # provider -- "unrecorded", not silently treated as a match -- and says
-        # nothing about the rest, which it never had. Within a recorded profile
-        # a field left unset is likewise no value to disagree with.
+        # A field the recorded profile left unset is no value to disagree with.
         def typed_notices(profile)
           recorded = recorded_profile
-          return [unrecorded_notice(profile)] unless recorded.recorded?
-
           LABELS.keys.intersection(profile.typed).map do |field|
             ours = profile.public_send(field)
             theirs = recorded.public_send(field)
@@ -152,10 +147,6 @@ module Lain
         # except round_dedup, which is always written.
         def as_recorded(arm, value)
           value == :off ? "without #{Arms.flag(arm)} (off)" : "with #{Arms.flag(arm)} #{value}"
-        end
-
-        def unrecorded_notice(profile)
-          continuing("provider", "unrecorded", profile.provider) if profile.typed.include?(:provider)
         end
 
         def continuing(label, recorded, current)

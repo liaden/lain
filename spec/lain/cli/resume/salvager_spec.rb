@@ -13,7 +13,7 @@ RSpec.describe Lain::CLI::Resume::Salvager do
   def session_file
     chronicle = Lain::CLI::Chronicle.for(enabled: true, paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @dir }),
                                          root: Dir.pwd)
-    chronicle.start(context:, toolset:)
+    chronicle.start(context:, toolset:, sections: SessionSections.complete)
     chronicle.close
     chronicle.journal_path
   end

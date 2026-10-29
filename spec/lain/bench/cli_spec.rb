@@ -281,17 +281,16 @@ RSpec.describe Lain::Bench::CLI do
         end
       end
 
-      # The committed fixtures predate the provenance block; one rewritten to
-      # carry it no longer pools with its old siblings.
-      it "refuses an old journal held against one naming a harness, naming the sources" do
+      it "refuses a journal of one harness held against one naming another, naming the sources" do
         Dir.mktmpdir do |tmp|
           FileUtils.cp(File.join(fixture_dir, "one.ndjson"), tmp)
           head, *rest = File.readlines(File.join(fixture_dir, "two.ndjson"))
-          stamped = JSON.parse(head).merge("provenance" => { "harness" => "sha-a+blake3:1" })
+          parsed = JSON.parse(head)
+          stamped = parsed.merge("provenance" => parsed.fetch("provenance").merge("harness" => "sha-a+blake3:1"))
           File.write(File.join(tmp, "two.ndjson"), ["#{JSON.generate(stamped)}\n", *rest].join)
           expect { cli.variance_report([tmp]) }
             .to raise_error(described_class::Refusal,
-                            /one\.ndjson.*two\.ndjson.*harness: unrecorded \(1\) vs sha-a\+blake3:1 \(2\)/m)
+                            /one\.ndjson.*two\.ndjson.*harness: fixture \(1\) vs sha-a\+blake3:1 \(2\)/m)
         end
       end
 
@@ -1165,7 +1164,8 @@ RSpec.describe Lain::Bench::CLI do
         records = File.foreach(path).map { |line| JSON.parse(line) }
         turns = records.select { |record| record["type"] == "turn" }
 
-        expect(records.first).to include("type" => "session", "format" => 2, "compact_schedule" => "turn",
+        expect(records.first).to include("type" => "session", "format" => Lain::SessionRecord::FORMAT,
+                                         "compact_schedule" => "turn",
                                          "provider" => "anthropic", "model" => "claude-sonnet-4-6")
         expect(records.first).to have_key("writer")
         expect(records.first).not_to have_key("head")
@@ -1233,7 +1233,7 @@ RSpec.describe Lain::Bench::CLI do
         recorder = described_class::RunRecorder.new(
           provider:, context: backend(model: "claude-sonnet-4-6").context,
           attribution: Lain::Telemetry::SlotFills.from(backend.slots), prompts: ["what is the aspirin dosing?"],
-          tools: Lain::Bench::Harness::TOOLS
+          tools: Lain::Bench::Harness::TOOLS, profile: SessionSections.complete.profile
         )
         recorder.record(File.join(tmp, "1.ndjson"))
 
@@ -1246,7 +1246,8 @@ RSpec.describe Lain::Bench::CLI do
       Dir.mktmpdir do |tmp|
         recorder = described_class::RunRecorder.new(
           provider:, context: backend.context,
-          attribution: Lain::Telemetry::SlotFills.from(backend.slots), prompts: ["what is the aspirin dosing?"]
+          attribution: Lain::Telemetry::SlotFills.from(backend.slots), prompts: ["what is the aspirin dosing?"],
+          profile: SessionSections.complete.profile
         )
         recorder.record(File.join(tmp, "1.ndjson"))
 

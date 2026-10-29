@@ -35,7 +35,7 @@ RSpec.describe Lain::Bench::Session do
 
   def write_session(into: journal, under: context, compaction: {})
     Lain::SessionRecord::Scribe.new(journal: into, context: under, toolset:, workspace:,
-                                    sections: Lain::SessionRecord::Sections.new(compaction:), writer: CoreGraph::NO_WRITER)
+                                    sections: SessionSections.complete(compaction:), writer: CoreGraph::NO_WRITER)
                                .catch_up(agent.timeline).close(reason: :exit)
   end
 
@@ -64,8 +64,11 @@ RSpec.describe Lain::Bench::Session do
       header = journal_records(named_io).find { |record| record["type"] == "session" }
       # `ts` is the Journal's own stamp on every record, not part of the header,
       # and `compact_schedule` is the run's compaction, not the Context's.
-      recorded = (header.keys - %w[type format compact_schedule context_class tools reminders ts])
-                 .map { |key| key == "context_pipeline" ? "pipeline_name" : key }
+      recorded = (header.keys - %w[type format compact_schedule context_class tools reminders ts provider arms
+                                   provenance])
+                 .map do |key|
+        key == "context_pipeline" ? "pipeline_name" : key
+      end
       # `pipeline` is a live CODE collaborator (a Combinator or ->(workspace)
       # provider), not serializable data -- like a `self.pipeline`-
       # overriding subclass, it is reconstructed by the Loader's injectable
@@ -375,16 +378,16 @@ RSpec.describe Lain::Bench::Session do
       write_session
       expect(load_session.comparability).to eq(
         "context pipeline" => "reminder+cache-breakpoints", "compaction arm" => "eager",
-        "compaction schedule" => "turn", "bench arms" => "none", "compaction" => "on", "opaque policy" => "unrecorded",
-        "model" => "claude-opus-4-8", "served model" => "claude-opus-4-8", "harness" => "unrecorded",
-        "tool surface" => toolset.digest, "effort" => "unrecorded", "policy" => "unrecorded", "weights" => "unrecorded",
+        "compaction schedule" => "turn",
+        "bench arms" => "confine=workspace,round_budget=window,round_dedup=on,tripwire=observe", "compaction" => "on",
+        "opaque policy" => "unrecorded", "model" => "claude-opus-4-8", "served model" => "claude-opus-4-8",
+        "harness" => "spec-harness", "tool surface" => toolset.digest, "effort" => "unrecorded",
+        "policy" => "spec-policy", "weights" => "none",
         "host" => "unrecorded"
       )
     end
 
-    # Every committed fixture predates the provenance block, so these pin what
-    # an old journal pools as.
-    describe "on a journal written before the provenance block" do
+    describe "on a committed fixture" do
       fixture = File.expand_path("../../fixtures/sessions/variance/one.ndjson", __dir__)
       let(:fixture_lines) { File.readlines(fixture) }
 
@@ -393,9 +396,10 @@ RSpec.describe Lain::Bench::Session do
         ["#{JSON.generate(header)}\n", *lines.drop(1)]
       end
 
-      it "reads every axis only the block records as unrecorded" do
+      it "reads the harness, policy and weights the block records" do
         labels = described_class.load(fixture).comparability
-        expect(labels.slice("harness", "policy", "weights").values.uniq).to eq(["unrecorded"])
+        expect(labels.slice("harness", "policy", "weights")).to eq("harness" => "fixture", "policy" => "fixture",
+                                                                   "weights" => "none")
       end
 
       it "reads the tool surface off the header's tools" do
@@ -418,7 +422,7 @@ RSpec.describe Lain::Bench::Session do
                                                          effort: "high", policy: "blake3:p", cwd: "/w/sub",
                                                          root: "/w", home: "/h", weights:)
         Lain::SessionRecord::Scribe.new(journal:, context:, toolset:, workspace:, writer: CoreGraph::NO_WRITER,
-                                        sections: Lain::SessionRecord::Sections.new(provenance: provenance.to_header))
+                                        sections: SessionSections.complete(provenance: provenance.to_header))
                                    .catch_up(agent.timeline).close(reason: :exit)
         load_session.comparability
       end

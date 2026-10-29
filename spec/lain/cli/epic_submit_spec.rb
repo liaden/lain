@@ -830,7 +830,8 @@ RSpec.describe Lain::CLI::EpicSubmit do
         Lain::CLI::Chronicle.new(journal: session_journal).tap do |chronicle|
           chronicle.wrap_tee(feed)
           chronicle.wrap_memory(Lain::Memory::Recorder.new)
-          chronicle.start(context: Lain::Context.new(model: "m", max_tokens: 64), toolset: Lain::Toolset.new)
+          chronicle.start(context: Lain::Context.new(model: "m", max_tokens: 64), toolset: Lain::Toolset.new,
+                          sections: SessionSections.complete)
         end
       end
       let(:asker) do

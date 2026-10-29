@@ -143,10 +143,10 @@ module Lain
       #   move between the durable write and the live one: told first, a raising
       #   view would leave a record on disk this object had not followed.
       # @param sections [Sections] the run's profile, compaction, arms, middleware and
-      #   provenance header fields; an empty section writes none
+      #   provenance header fields; an empty optional section writes none
       # @param writer [Liveness::Writer] the process writing this session
-      def initialize(journal:, context:, toolset:, workspace: Workspace.empty, resumed_from: nil, written: [],
-                     message_journal: nil, live: Channel::Null.instance, sections: Sections.none,
+      def initialize(journal:, context:, toolset:, sections:, workspace: Workspace.empty, resumed_from: nil,
+                     written: [], message_journal: nil, live: Channel::Null.instance,
                      writer: Liveness::Writer.current)
         @journal = journal
         @message_journal = message_journal || journal

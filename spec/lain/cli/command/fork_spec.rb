@@ -281,7 +281,7 @@ RSpec.describe Lain::CLI::Command::Fork, "the child's backend" do
     context = Lain::Context.new(model: "qwen3:4b", max_tokens: 64)
     profile = { "provider" => "ollama", "api_base" => recorded_base, "num_batch" => 2048 }
     records = [Lain::SessionRecord.header(context:, toolset: Lain::Toolset.new, writer: CoreGraph::NO_WRITER,
-                                          sections: Lain::SessionRecord::Sections.new(
+                                          sections: SessionSections.complete(
                                             profile:, arms: { "confine" => "workspace", "tripwire" => "observe",
                                                               "round_budget" => "window", "round_dedup" => "on" }
                                           )),

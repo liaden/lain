@@ -21,7 +21,7 @@ RSpec.describe "forking and rewinding a session that already wrote", :seam do
   let(:toolset) { Lain::Toolset.new([Lain::Tools::Bash.new]) }
   let(:chronicle) do
     journal = Lain::Journal.new(io: File.open(journal_path, "ab"), owns_io: true, fsync: true, path: journal_path)
-    Lain::CLI::Chronicle.new(journal:, journal_path:).tap { |built| built.start(context:, toolset:) }
+    Lain::CLI::Chronicle.new(journal:, journal_path:).tap { |built| built.start(context:, toolset:, sections: SessionSections.complete) }
   end
   let(:append) { { "command" => "echo written >> #{counter}" } }
 
@@ -50,7 +50,7 @@ RSpec.describe "forking and rewinding a session that already wrote", :seam do
 
     it "answers one more prompt without writing again" do
       point = Lain::CLI::ForkPoint::Point.new(path: journal_path.to_s, digest: fork_digest)
-      result = Lain::CLI::Resume.new(paths:).fork_at(point)
+      result = Lain::CLI::Resume.new(paths:).fork_at(point, profile: SessionSections.untyped)
       forked = Lain::Agent.new(provider: Lain::Provider::Mock.new(responses: [text_response("again")]), context:,
                                toolset:, session: result.session, timeline: result.timeline)
 

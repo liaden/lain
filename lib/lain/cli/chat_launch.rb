@@ -220,7 +220,23 @@ module Lain
       # over the profile a `--resume`d or `--fork`ed header recorded. Resolved
       # before the backend, and so before every refusal the backend raises,
       # because each is judged against the fields this resolves.
-      def profile = @profile ||= @typed_profile.over(RunProfile.from_header(recorded_header))
+      def profile
+        @profile ||= if recorded_header.empty?
+                       @typed_profile
+                     else
+                       @typed_profile.over(recorded_profile)
+                     end
+      end
+
+      # A recording whose header lacks the profile refuses as the door that read
+      # it does, naming the file, rather than escaping as a raw Corrupt.
+      def recorded_profile
+        RunProfile.from_header(recorded_header)
+      rescue Bench::Session::Corrupt => e
+        forking = @options[:fork]
+        raise Resume::Door.new(verb: forking ? "fork" : "resume", path: forking ? fork_point.path : resumed_path)
+                          .refuse(e.message)
+      end
 
       # The compaction arm, resolved the way {#profile} is: what was typed over
       # what the resumed or forked header recorded, so a resume renders under

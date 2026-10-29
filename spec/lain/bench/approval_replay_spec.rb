@@ -46,6 +46,21 @@ RSpec.describe Lain::Bench::ApprovalReplay do
     described_class::Call.new(session: "/s/probe.ndjson", tool:, input:, tool_use_id: id, place: project, **rest)
   end
 
+  describe "a session recording another format" do
+    it "is refused with the other-format reason and the path, never a raw KeyError" do
+      Dir.mktmpdir("lain-approval-replay-old") do |dir|
+        old = File.join(dir, "old.ndjson")
+        lines = File.readlines(ask)
+        header = JSON.parse(lines.first).except("provenance").merge("format" => 2)
+        File.write(old, ["#{JSON.generate(header)}\n", *lines.drop(1)].join)
+
+        expect { replay(old, arm(:ask, rules: rules_a)) }
+          .to raise_error(Lain::Bench::CLI::Refusal,
+                          /#{Regexp.escape(old)}.*#{Regexp.escape(Lain::CLI::Resume::Selector::OTHER_FORMAT)}/)
+      end
+    end
+  end
+
   describe "the committed fixtures" do
     it "are what the record writers produce today" do
       Dir.mktmpdir("lain-approval-replay-fixtures") do |dir|

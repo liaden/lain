@@ -128,7 +128,7 @@ module Lain
       end
 
       # {#resume_at} over a fresh {#locate}.
-      def call(selector: nil, profile: RunProfile::UNRECORDED, model: nil, compaction: CompactionProfile::UNSET,
+      def call(profile:, selector: nil, model: nil, compaction: CompactionProfile::UNSET,
                arms: nil)
         resume_at(locate(selector), profile:, model:, compaction:, arms:)
       end
@@ -144,13 +144,13 @@ module Lain
       #   nil, compared against the recorded ones; nil compares nothing
       # @return [Result]
       # @raise [Refusal]
-      def resume_at(path, profile: RunProfile::UNRECORDED, model: nil, compaction: CompactionProfile::UNSET,
+      def resume_at(path, profile:, model: nil, compaction: CompactionProfile::UNSET,
                     arms: nil)
         rebuild(path, Mismatch.new(profile:, model:, compaction:, arms:))
       end
 
       # {#fork_at} over a fresh {#fork_point}.
-      def fork(selector:, profile: RunProfile::UNRECORDED, model: nil, compaction: CompactionProfile::UNSET,
+      def fork(selector:, profile:, model: nil, compaction: CompactionProfile::UNSET,
                arms: nil)
         fork_at(fork_point(selector), profile:, model:, compaction:, arms:)
       end
@@ -171,7 +171,7 @@ module Lain
       # @param arms [Arms, nil] as {#resume_at}'s
       # @return [Result] whose `resumed_from` names `{file, fork digest}`
       # @raise [Refusal]
-      def fork_at(point, profile: RunProfile::UNRECORDED, model: nil, compaction: CompactionProfile::UNSET,
+      def fork_at(point, profile:, model: nil, compaction: CompactionProfile::UNSET,
                   arms: nil)
         recording = load_recording(point.path)
         forked = recording.timeline.checkout(point.digest)

@@ -12,7 +12,7 @@ require "tmpdir"
 # and how the record closes. Chronicle::Null is the --no-journal duck, so the
 # exe carries no scribe nil-checks.
 RSpec.describe Lain::CLI::Chronicle do
-  def sections(**given) = Lain::SessionRecord::Sections.new(**given)
+  def sections(**given) = SessionSections.complete(**given)
 
   subject(:chronicle) { described_class.new(journal:) }
 
@@ -35,7 +35,7 @@ RSpec.describe Lain::CLI::Chronicle do
         opened = described_class.for(enabled: true, paths:, root: Dir.pwd)
 
         expect(opened).to be_a(described_class)
-        opened.start(context:, toolset:)
+        opened.start(context:, toolset:, sections: SessionSections.complete)
         session_files = Dir.glob(File.join(dir, "lain", "sessions", "**", "*.ndjson"))
         expect(session_files.size).to eq(1)
         expect(JSON.parse(File.read(session_files.first).lines.first)).to include("type" => "session")
@@ -47,7 +47,7 @@ RSpec.describe Lain::CLI::Chronicle do
       Dir.mktmpdir do |dir|
         opened = described_class.for(enabled: true, paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => dir }),
                                      root: Dir.pwd)
-        opened.start(context:, toolset:)
+        opened.start(context:, toolset:, sections: SessionSections.complete)
         opened.durable_journal << { "type" => "note" }
         opened.close
 
@@ -225,7 +225,7 @@ RSpec.describe Lain::CLI::Chronicle do
 
     it ".for(btw: true) journals to <ts>-<pid>.btw.ndjson" do
       opened = described_class.for(enabled: true, btw: true, paths:, root: Dir.pwd)
-      opened.start(context:, toolset:)
+      opened.start(context:, toolset:, sections: SessionSections.complete)
 
       names = globbed("*.btw.ndjson").map { |path| File.basename(path) }
       expect(names.size).to eq(1)
@@ -235,7 +235,7 @@ RSpec.describe Lain::CLI::Chronicle do
 
     it "reaps journal and wal on a clean :exit close while unpromoted" do
       opened = described_class.for(enabled: true, btw: true, paths:, root: Dir.pwd)
-      opened.start(context:, toolset:)
+      opened.start(context:, toolset:, sections: SessionSections.complete)
       spool_frame(opened.spool)
       expect(globbed("*.btw.wal").size).to eq(1)
 
@@ -246,7 +246,7 @@ RSpec.describe Lain::CLI::Chronicle do
 
     it "leaves both files on any non-:exit close -- the crash-adjacent paths keep their salvage pair" do
       opened = described_class.for(enabled: true, btw: true, paths:, root: Dir.pwd)
-      opened.start(context:, toolset:)
+      opened.start(context:, toolset:, sections: SessionSections.complete)
       spool_frame(opened.spool)
 
       opened.close(reason: :interrupted)
@@ -257,7 +257,7 @@ RSpec.describe Lain::CLI::Chronicle do
 
     it "#promote! renames the pair, and the :exit close then keeps it" do
       opened = described_class.for(enabled: true, btw: true, paths:, root: Dir.pwd)
-      opened.start(context:, toolset:)
+      opened.start(context:, toolset:, sections: SessionSections.complete)
       spool_frame(opened.spool)
 
       promoted = opened.promote!
@@ -271,7 +271,7 @@ RSpec.describe Lain::CLI::Chronicle do
 
     it "keeps recording through the same journal fd after #promote! -- turns land in the promoted file" do
       opened = described_class.for(enabled: true, btw: true, paths:, root: Dir.pwd)
-      opened.start(context:, toolset:)
+      opened.start(context:, toolset:, sections: SessionSections.complete)
 
       promoted = opened.promote!
       opened.catch_up(timeline)
@@ -287,7 +287,7 @@ RSpec.describe Lain::CLI::Chronicle do
     # the stale marked `.btw.wal` after the rename.
     it "a first wal frame spooled AFTER #promote! lands at the promoted path" do
       opened = described_class.for(enabled: true, btw: true, paths:, root: Dir.pwd)
-      opened.start(context:, toolset:)
+      opened.start(context:, toolset:, sections: SessionSections.complete)
       spool = opened.spool
       expect(globbed("*.wal")).to be_empty
 
@@ -301,7 +301,7 @@ RSpec.describe Lain::CLI::Chronicle do
 
     it "frames spooled BEFORE promotion survive it, and later frames append to the same renamed wal" do
       opened = described_class.for(enabled: true, btw: true, paths:, root: Dir.pwd)
-      opened.start(context:, toolset:)
+      opened.start(context:, toolset:, sections: SessionSections.complete)
       spool = opened.spool
       spool_frame(spool, digest: "blake3:before")
 
@@ -317,11 +317,16 @@ RSpec.describe Lain::CLI::Chronicle do
   end
 
   describe "two-phase start" do
+    it "refuses a start that names no sections" do
+      expect { chronicle.start(context:, toolset:) }.to raise_error(ArgumentError, /sections/)
+      expect(records).to be_empty
+    end
+
     it "writes no header at construction; #start writes the OPEN header pinning the toolset" do
       chronicle
       expect(records).to be_empty
 
-      chronicle.start(context:, toolset:)
+      chronicle.start(context:, toolset:, sections: SessionSections.complete)
 
       expect(of_type("session").first).to include("model" => "claude-opus-4-8")
       expect(of_type("session").first).not_to have_key("head")
@@ -358,20 +363,14 @@ RSpec.describe Lain::CLI::Chronicle do
       expect(of_type("session").first).to include(provenance.to_header)
     end
 
-    it "writes no provenance key when none is handed" do
-      chronicle.start(context:, toolset:)
-
-      expect(of_type("session").first).not_to have_key("provenance")
-    end
-
     it "writes no middleware key when none is handed" do
-      chronicle.start(context:, toolset:)
+      chronicle.start(context:, toolset:, sections: SessionSections.complete)
 
       expect(of_type("session").first).not_to have_key("middleware")
     end
 
     it "writes no arms key when none is handed" do
-      chronicle.start(context:, toolset:)
+      chronicle.start(context:, toolset:, sections: sections(arms: {}))
 
       expect(of_type("session").first).not_to have_key("arms")
     end
@@ -395,7 +394,7 @@ RSpec.describe Lain::CLI::Chronicle do
     it "writes resumed_from into the open header and catch_up skips the already-written turns" do
       resumed_from = { "file" => "a.ndjson", "head" => timeline.head_digest }
       resumed = instance_double(Lain::CLI::Resume::Result, resumed_from:, written: timeline.to_a.map(&:digest))
-      chronicle.start(context:, toolset:, resumed:)
+      chronicle.start(context:, toolset:, resumed:, sections: SessionSections.complete)
 
       expect(of_type("session").first).to include("resumed_from" => resumed_from)
       expect(of_type("session").first).not_to have_key("head")
@@ -407,7 +406,7 @@ RSpec.describe Lain::CLI::Chronicle do
     end
 
     it "keeps a fresh session's header byte-shape: no resumed_from key when not resuming" do
-      chronicle.start(context:, toolset:)
+      chronicle.start(context:, toolset:, sections: SessionSections.complete)
 
       expect(of_type("session").first).not_to have_key("resumed_from")
     end
@@ -415,7 +414,7 @@ RSpec.describe Lain::CLI::Chronicle do
 
   describe "#observer" do
     it "routes tool events to the scribe: a ChainWriter put lands as a message record" do
-      chronicle.start(context:, toolset:)
+      chronicle.start(context:, toolset:, sections: SessionSections.complete)
       writer = Lain::EventLog::ChainWriter.new(observer: chronicle.observer)
 
       event = writer.put(timeline, kind: :message, from: "a", to: "human",
@@ -431,7 +430,7 @@ RSpec.describe Lain::CLI::Chronicle do
     it "routes message records through the tee once #wrap_tee has run: file once, live sink too" do
       channel = []
       chronicle.wrap_tee(channel)
-      chronicle.start(context:, toolset:)
+      chronicle.start(context:, toolset:, sections: SessionSections.complete)
       writer = Lain::EventLog::ChainWriter.new(observer: chronicle.observer)
 
       event = writer.put(timeline, kind: :message, from: "a", to: "human",
@@ -445,7 +444,7 @@ RSpec.describe Lain::CLI::Chronicle do
 
   describe "#turn_middleware" do
     it "wires JournalTurns so each iteration's committed turns are journaled through the live-head thunk" do
-      chronicle.start(context:, toolset:)
+      chronicle.start(context:, toolset:, sections: SessionSections.complete)
       live = timeline
       stack = chronicle.turn_middleware(-> { live })
 
@@ -546,7 +545,7 @@ RSpec.describe Lain::CLI::Chronicle do
 
     def started(views)
       chronicle.wrap_tee(views)
-      chronicle.start(context:, toolset:)
+      chronicle.start(context:, toolset:, sections: SessionSections.complete)
       chronicle.catch_up(line)
     end
 
@@ -718,7 +717,7 @@ RSpec.describe Lain::CLI::Chronicle do
   end
 
   describe "lifecycle delegation" do
-    before { chronicle.start(context:, toolset:) }
+    before { chronicle.start(context:, toolset:, sections: SessionSections.complete) }
 
     # The fluent return the three scribe forwards keep, and the reason they are
     # not written as `delegate ... to: :scribe`: that would answer the SCRIBE.
@@ -775,7 +774,7 @@ RSpec.describe Lain::CLI::Chronicle do
         nvim_journal = chronicle.wrap_tee([])
 
         run_context = Lain::Context.new(model: "claude-opus-4-8", max_tokens: 16)
-        chronicle.start(context: run_context, toolset: Lain::Toolset.new)
+        chronicle.start(context: run_context, toolset: Lain::Toolset.new, sections: SessionSections.complete)
 
         store = Lain::Dag::Factory.store
         write_input = { "id" => "aspirin", "description" => "dosing", "body" => "40mg/kg" }
@@ -853,7 +852,7 @@ RSpec.describe Lain::CLI::Chronicle do
     it "satisfies the whole duck and records nothing" do
       expect(null.journal_path).to be_nil
       expect(null.observer).to be_a(Lain::EventLog::ChainWriter::Null)
-      expect(null.start(context: nil, toolset: nil)).to be(null)
+      expect(null.start(context: nil, toolset: nil, sections: SessionSections.complete)).to be(null)
       expect(null.turn_middleware(-> {}).to_a).to be_empty
       expect(null.instrumentation.journal).to be(Lain::Channel::Null.instance)
       expect(null.instrumentation.model_middleware.to_a).to be_empty

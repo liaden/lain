@@ -25,7 +25,7 @@ module CompactionSweepLargeResults
     journal = Lain::Journal.open(path, clock: Lain::Bench::PlantedClaims::CLOCK)
     toolset = Lain::Toolset.new([tool(size)])
     context = Lain::Context.new(model: "claude-sonnet-4-6", max_tokens: 1024, system: "be terse")
-    scribe = Lain::SessionRecord::Scribe.new(journal:, context:, toolset:,
+    scribe = Lain::SessionRecord::Scribe.new(journal:, context:, toolset:, sections: SessionSections.complete,
                                              writer: Lain::Bench::PlantedClaims::WRITER)
     stack = Lain::Middleware::Stack.new([Lain::Middleware::JournalRequests.new(journal:)])
     agent = Lain::Agent.new(provider: Lain::Provider::Mock.new(responses: responses(rounds)), toolset:, context:,

@@ -302,7 +302,7 @@ module Lain
       # records fan to the live views while the file gets them once. `sections`
       # is what the run resolved for the header; see {SessionRecord::Sections}.
       # @see SessionRecord::Scribe#initialize
-      def start(context:, toolset:, workspace: Workspace.empty, resumed: nil, sections: SessionRecord::Sections.none)
+      def start(context:, toolset:, sections:, workspace: Workspace.empty, resumed: nil)
         @scribe = SessionRecord::Scribe.new(journal: @journal, context:, toolset:, workspace:, **resume_fields(resumed),
                                             message_journal: @tee, live: @live, sections:)
         self

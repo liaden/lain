@@ -96,6 +96,6 @@ module CoreGraph
   end
 
   def scribe(journal: CoreGraph.journal, context: CoreGraph.context, toolset: CoreGraph.toolset, **rest)
-    Lain::SessionRecord::Scribe.new(journal:, context:, toolset:, **rest)
+    Lain::SessionRecord::Scribe.new(journal:, context:, toolset:, sections: SessionSections.complete, **rest)
   end
 end

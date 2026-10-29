@@ -71,9 +71,9 @@ module Lain
         end
 
         # @param header [Hash, nil] a session header
-        # @return [Place, nil] nil when the header recorded no provenance, or an unrecorded field
+        # @return [Place, nil] nil for no header, or when a place field is unrecorded
         def self.recorded(header)
-          stamp = header&.fetch("provenance", nil)
+          stamp = header&.fetch("provenance")
           fields = stamp&.values_at("cwd", "root", "home")
           return nil if fields.nil? || fields.any? { _1.nil? || _1 == SessionRecord::Provenance::UNRECORDED }
 
@@ -90,10 +90,19 @@ module Lain
       # @return [ApprovalReplay]
       def self.from_journals(paths, arms:, project:, labels: Labels::NONE, tripwire: [])
         read = paths.to_h { [_1, Journal.records(File.foreach(_1)).to_a] }
+        sessions = read.to_h { |path, records| [path, current_header(path, records)] }
         calls = read.flat_map { |path, records| Call.joined(records, session: path) }
-        new(calls:, arms:, project:, labels:, tripwire:,
-            sessions: read.transform_values { |records| records.find { _1["type"] == SessionRecord::HEADER_TYPE } })
+        new(calls:, arms:, project:, labels:, tripwire:, sessions:)
       end
+
+      # @raise [CLI::Refusal] for a header recording another session format
+      def self.current_header(path, records)
+        header = records.find { _1["type"] == SessionRecord::HEADER_TYPE }
+        return header if header.nil? || SessionRecord.current_format?(header)
+
+        raise CLI::Refusal, "#{path} is #{::Lain::CLI::Resume::Selector::OTHER_FORMAT}"
+      end
+      private_class_method :current_header
 
       # The replay `lain bench approval-replay` asks for: every approval level under every rule set.
       #

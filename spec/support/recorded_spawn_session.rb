@@ -64,7 +64,8 @@ class RecordedSpawnSession
     child_tools << subagent(grandchild_responses, prefix, child_tools, depth: 1) unless grandchild_responses.nil?
     toolset = Lain::Toolset.new([*tools, subagent(child_responses, prefix, child_tools, depth: 2)])
     @journal = Lain::Journal.new(io: @io)
-    @scribe = Lain::SessionRecord::Scribe.new(journal: @journal, context: CONTEXT, toolset:, **resumed(resuming))
+    @scribe = Lain::SessionRecord::Scribe.new(journal: @journal, context: CONTEXT, toolset:, **resumed(resuming),
+                                              sections: SessionSections.complete)
     @agent = parent(parent_responses, toolset, resuming)
   end
 

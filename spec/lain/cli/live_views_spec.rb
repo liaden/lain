@@ -173,7 +173,7 @@ RSpec.describe Lain::CLI::LiveViews do
       # Production order: the scribe takes its tee at start, so LiveViews must wrap it first.
       described_class.new(options: { journal: true }, chronicle: real_chronicle, status_feed: feed)
       real_chronicle.start(context: Lain::Context.new(model: "m", max_tokens: 10, system: "s"),
-                           toolset: Lain::Toolset.new([]))
+                           toolset: Lain::Toolset.new([]), sections: SessionSections.complete)
     end
 
     it "counts a spawned child as fleet:1 while it runs" do
@@ -226,7 +226,7 @@ RSpec.describe Lain::CLI::LiveViews do
 
     it "drops the model segment when the chronicle journals an interrupted run" do
       real_chronicle.start(context: Lain::Context.new(model: "m", max_tokens: 10, system: "s"),
-                           toolset: Lain::Toolset.new([]))
+                           toolset: Lain::Toolset.new([]), sections: SessionSections.complete)
       listener.on_transition(from: :awaiting_user, to: :awaiting_model, event: :dispatch)
 
       real_chronicle.interrupted(head: nil, reason: :stopped)

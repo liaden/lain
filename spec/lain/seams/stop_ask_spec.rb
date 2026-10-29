@@ -38,8 +38,13 @@ module StopAsk
     chronicle = Lain::CLI::Chronicle.new(
       journal: Lain::Journal.new(io: File.open(session, "ab").tap { |io| io.sync = true }), journal_path: session
     )
-    chronicle.start(context: Lain::Context.new(model: "claude-opus-4-8", max_tokens: 64),
-                    toolset: Lain::Toolset.new([]))
+    toolset = Lain::Toolset.new([])
+    sections = Lain::SessionRecord::Sections.new(
+      profile: { "provider" => "anthropic" },
+      provenance: Lain::SessionRecord::Provenance.current(toolset: toolset, root: dir, cwd: dir, home: dir, effort: nil,
+                                                          policy: "child", harness: "child").to_header
+    )
+    chronicle.start(context: Lain::Context.new(model: "claude-opus-4-8", max_tokens: 64), toolset:, sections:)
     conductor = Lain::CLI::Conductor.new(tty:, chronicle:, signals: Lain::CLI::Signals.new, rail:, grace: 30,
                                          countdown: Lain::CLI::Conductor::RailCountdown.new(rail:))
 

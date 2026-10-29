@@ -8,7 +8,8 @@ require "tmpdir"
 # through CLI#record; this pins the unit directly.
 RSpec.describe Lain::Bench::CLI::RunRecorder do
   subject(:run_recorder) do
-    described_class.new(provider:, context:, attribution:, prompts: ["what is the aspirin dosing?"])
+    described_class.new(provider:, context:, attribution:, prompts: ["what is the aspirin dosing?"],
+                        profile: SessionSections.complete.profile)
   end
 
   let(:usage) { Lain::Usage.new(input_tokens: 120, output_tokens: 30) }
@@ -24,6 +25,11 @@ RSpec.describe Lain::Bench::CLI::RunRecorder do
       expect(recording.timeline.to_a.map(&:role)).to eq(%w[user assistant])
       expect(recording.baseline).to eq(provider.requests)
     end
+  end
+
+  it "refuses to be built without a run profile" do
+    expect { described_class.new(provider:, context:, attribution:, prompts: ["hi"]) }
+      .to raise_error(ArgumentError, /profile/)
   end
 
   it "refuses an occupied path, leaving the recorded bytes untouched" do
@@ -48,8 +54,8 @@ RSpec.describe Lain::Bench::CLI::RunRecorder do
 
     let(:written) { written_by(run_recorder) }
 
-    it "opens with the live header: format 2, this process as its writer, the turn schedule and no head" do
-      expect(written.first).to include({ "type" => "session", "format" => 2, "compact_schedule" => "turn" }
+    it "opens with the live header: the format, this process as its writer, the turn schedule and no head" do
+      expect(written.first).to include({ "type" => "session", "format" => Lain::SessionRecord::FORMAT, "compact_schedule" => "turn" }
                                          .merge(Lain::Liveness::Writer.current.to_header))
       expect(written.first).not_to have_key("head")
     end
@@ -89,7 +95,10 @@ RSpec.describe Lain::Bench::CLI::RunRecorder do
     let(:context) { Lain::Context.new(model: "qwen3:4b", max_tokens: 64) }
     let(:provider) { Lain::Provider::Ollama.new(journal: current_run) }
 
-    def recorder = described_class.new(provider:, context:, attribution:, prompts: ["hi"], current_run:)
+    def recorder
+      described_class.new(provider:, context:, attribution:, prompts: ["hi"], current_run:,
+                          profile: SessionSections.complete.profile)
+    end
 
     # A stream that stops without its `done` line.
     def stub_unterminated_stream
@@ -186,7 +195,8 @@ RSpec.describe Lain::Bench::CLI::RunRecorder do
       "an Anthropic transport error" => -> { Lain::Provider::Anthropic::APIError.new("timed out") }
     }.each do |name, error|
       it "sets aside a run that ended on #{name}" do
-        recorder = described_class.new(provider: refusing_once(error.call), context:, attribution:, prompts: ["hi"])
+        recorder = described_class.new(provider: refusing_once(error.call), context:, attribution:, prompts: ["hi"],
+                                       profile: SessionSections.complete.profile)
         Dir.mktmpdir do |tmp|
           expect(recorder.record(File.join(tmp, "1.ndjson"))).to include("1.failed.ndjson (set aside:")
         end
@@ -204,7 +214,8 @@ RSpec.describe Lain::Bench::CLI::RunRecorder do
             raise Lain::Provider::Ollama::APIError, "reset"
           end
         end
-        recorder = described_class.new(provider: sneaky.new, context:, attribution:, prompts: ["hi"])
+        recorder = described_class.new(provider: sneaky.new, context:, attribution:, prompts: ["hi"],
+                                       profile: SessionSections.complete.profile)
 
         expect { recorder.record(File.join(tmp, "1.ndjson")) }
           .to raise_error(Lain::Bench::CLI::Refusal, /1\.ndjson aside: .*1\.failed\.ndjson already exists/)
@@ -218,7 +229,8 @@ RSpec.describe Lain::Bench::CLI::RunRecorder do
       Dir.mktmpdir do |tmp|
         File.write(File.join(tmp, "1.failed.ndjson"), "earlier\n")
         recorder = described_class.new(provider: Lain::Provider::Mock.new(responses: [text_response("ok", usage:)]),
-                                       context:, attribution:, prompts: ["hi"])
+                                       context:, attribution:, prompts: ["hi"],
+                                       profile: SessionSections.complete.profile)
 
         expect(recorder.record(File.join(tmp, "1.ndjson"))).to eq(File.join(tmp, "1.ndjson"))
       end
@@ -233,7 +245,8 @@ RSpec.describe Lain::Bench::CLI::RunRecorder do
     it "records a run the budget stopped, as the recording it is" do
       turns = Array.new(Lain::Budget::DEFAULT_ITERATIONS + 1) { |i| tool_response(["tu_#{i}", "grep#{i}", {}], usage:) }
       looping = Lain::Provider::Mock.new(responses: turns)
-      recorder = described_class.new(provider: looping, context:, attribution:, prompts: ["hi"])
+      recorder = described_class.new(provider: looping, context:, attribution:, prompts: ["hi"],
+                                     profile: SessionSections.complete.profile)
       Dir.mktmpdir do |tmp|
         path = recorder.record(File.join(tmp, "1.ndjson"))
 
@@ -251,7 +264,8 @@ RSpec.describe Lain::Bench::CLI::RunRecorder do
     }.each do |name, error|
       it "sets the partial file aside and raises on #{name}, so the sweep stops" do
         raised = error.call
-        recorder = described_class.new(provider: refusing_once(raised), context:, attribution:, prompts: ["hi"])
+        recorder = described_class.new(provider: refusing_once(raised), context:, attribution:, prompts: ["hi"],
+                                       profile: SessionSections.complete.profile)
         Dir.mktmpdir do |tmp|
           expect { recorder.record(File.join(tmp, "1.ndjson")) }.to raise_error(raised.class)
 
@@ -289,7 +303,8 @@ RSpec.describe Lain::Bench::CLI::RunRecorder do
                                                                                      "HOME" => tmp }))
         )
         store.append(Lain::Memory::Item.new(id: "db-conventions", description: "naming", body: "snake"))
-        path = described_class.new(provider:, context:, attribution:, prompts: ["hi"], memory: store)
+        path = described_class.new(provider:, context:, attribution:, prompts: ["hi"], memory: store,
+                                   profile: SessionSections.complete.profile)
                               .record(File.join(tmp, "1.ndjson"))
 
         expect(loaded_in(path).first.fetch("version")).to eq(store.load.version)

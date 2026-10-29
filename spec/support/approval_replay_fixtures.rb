@@ -10,8 +10,8 @@ require "fileutils"
 # bytes are what the record writers produce, so a writer that changes shape makes the committed
 # files stale, and the approval replay spec says so. Regenerate with:
 #
-#   bundle exec ruby -Ilib -Ispec -e 'require "lain"; require "support/approval_replay_fixtures"; \
-#     ApprovalReplayFixtures.write'
+#   bundle exec ruby -Ilib -Ispec -e 'require "lain"; require "support/session_sections"; \
+#     require "support/approval_replay_fixtures"; ApprovalReplayFixtures.write'
 #
 # The committed files are ruled over {Lain::FileFacts::Recorded}, not the live disk: their project
 # is the placeholder /home/user/project, which exists on no machine, and a real one cannot stand in
@@ -98,7 +98,7 @@ module ApprovalReplayFixtures
      record(File.join(dir, "auto.ndjson"), AUTO, approval: :auto, policy: nil)]
   end
 
-  # A nil policy digest writes a header with no provenance at all, as a session from before it had one.
+  # A nil policy digest writes a provenance that names no place, as a session from before it recorded one.
   def record(path, script, approval:, policy:, rules: nil, at: place, facts: recorded(at))
     FileUtils.rm_f(path)
     journal = Lain::Journal.open(path, clock: CLOCK)
@@ -113,11 +113,14 @@ module ApprovalReplayFixtures
 
   def header(policy, at)
     context = Lain::Context.new(model: MODEL, max_tokens: 1024, system: "be terse")
+    unrecorded = Lain::SessionRecord::Provenance::UNRECORDED
     stamp = Lain::SessionRecord::Provenance.new(harness: "unrecorded", tool_surface: toolset.digest, effort: nil,
-                                                policy:, cwd: at.cwd, root: at.root, home: at.home)
+                                                policy: policy || unrecorded, cwd: policy ? at.cwd : unrecorded,
+                                                root: policy ? at.root : unrecorded,
+                                                home: policy ? at.home : unrecorded)
     writer = Lain::Liveness::Writer.new(pid: 1, start: "0", host: "approval-replay-fixture")
     Lain::SessionRecord.header(context:, toolset:, writer:,
-                               sections: Lain::SessionRecord::Sections.new(provenance: policy ? stamp.to_header : {}))
+                               sections: SessionSections.complete(provenance: stamp.to_header))
   end
 
   def toolset

@@ -80,7 +80,7 @@ RSpec.describe Lain::Bench::Variance do
                                              context:, workspace:)
     compaction = compact_strategy.nil? ? {} : { "compact_strategy" => compact_strategy, "compact_schedule" => "turn" }
     Lain::SessionRecord::Scribe.new(journal:, context:, toolset:, workspace:,
-                                    sections: Lain::SessionRecord::Sections.new(compaction:), writer: CoreGraph::NO_WRITER)
+                                    sections: SessionSections.complete(compaction:), writer: CoreGraph::NO_WRITER)
                                .catch_up(agent.timeline).close(reason: :exit)
   end
 
@@ -365,7 +365,7 @@ RSpec.describe Lain::Bench::Variance do
 
     it "raises when the recordings ran under different bench arms, naming both" do
       expect { described_class.new(recordings: [armed({ "confine" => "reader" }), reference]) }
-        .to raise_error(Lain::Error, /differ in bench arms: confine=reader \(1\) vs none \(2\)/)
+        .to raise_error(Lain::Error, /differ in bench arms: confine=reader \(1\) vs confine=workspace,/)
     end
 
     it "pools recordings that ran under the same bench arms" do
@@ -410,11 +410,9 @@ RSpec.describe Lain::Bench::Variance do
         .to include("2: byte-identical")
     end
 
-    # Unrecorded is a value here, not a wildcard: an old journal says nothing
-    # about its harness, so it cannot vouch for matching a new one.
-    it "refuses an old journal held against one naming a harness" do
+    it "refuses a journal of one harness held against one naming another" do
       expect { described_class.new(recordings: [reference, provenanced(block("sha-a+blake3:1"))]) }
-        .to raise_error(Lain::Error, /differ in harness: unrecorded \(1\) vs sha-a\+blake3:1 \(2\)/)
+        .to raise_error(Lain::Error, /differ in harness: spec-harness \(1\) vs sha-a\+blake3:1 \(2\)/)
     end
 
     it "refuses runs of one requested model whose turn_usage records name different served models" do

@@ -27,6 +27,14 @@ RSpec.describe "variance session fixtures" do
       end
     end
 
+    it "carry provenance, a run profile and arms in every header" do
+      paths.each do |path|
+        header = JSON.parse(File.foreach(path).first)
+        expect(header).to include("provenance" => a_kind_of(Hash), "provider" => a_kind_of(String),
+                                  "arms" => a_kind_of(Hash))
+      end
+    end
+
     it "all load uncorrupted, each a full tool_use-then-end_turn run of the one task" do
       recordings.each do |recording|
         expect(recording.timeline.to_a.map(&:role)).to eq(%w[user assistant user assistant])
@@ -39,7 +47,8 @@ RSpec.describe "variance session fixtures" do
     it "each open on the live header and close on their head" do
       paths.each do |path|
         records = File.foreach(path).map { |line| JSON.parse(line) }
-        expect(records.first).to include("type" => "session", "format" => 2, "compact_schedule" => "turn",
+        expect(records.first).to include("type" => "session", "format" => Lain::SessionRecord::FORMAT,
+                                         "compact_schedule" => "turn",
                                          "writer" => Lain::Bench::VarianceFixtures::WRITER.to_header.fetch("writer"))
         expect(records.first).not_to have_key("head")
         expect(records.last).to include("type" => "session_closed", "reason" => "exit")

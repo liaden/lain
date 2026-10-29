@@ -8,9 +8,8 @@
 # ever drifts, the suite says so before a commit does.
 
 require "bundler/setup"
-# The leaf alone cannot load: leaf files carry no internal requires (see
-# CLAUDE.md), so the constants VarianceFixtures references resolve only
-# through the lain.rb manifest.
+# Leaf files carry no internal requires, so the constants VarianceFixtures
+# references resolve only through the Zeitwerk loader that `require "lain"` sets up.
 require "lain"
 
 dir = File.expand_path("../spec/fixtures/sessions/variance", __dir__)

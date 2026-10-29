@@ -78,7 +78,8 @@ RSpec.describe "compaction-retention invariant" do
     # every committed turn -- byte-equal to the Timeline's own turns, which is
     # what SessionRecord.turn journals off (turn.content, never a rendered
     # view).
-    scribe = Lain::SessionRecord::Scribe.new(journal:, context:, toolset:, workspace:)
+    scribe = Lain::SessionRecord::Scribe.new(journal:, context:, toolset:, workspace:,
+                                             sections: SessionSections.complete)
     scribe.catch_up(agent.timeline)
     scribe.close(reason: :exit)
 

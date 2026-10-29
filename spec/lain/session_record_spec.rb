@@ -39,9 +39,9 @@ class FlakySessionJournal
 end
 
 RSpec.describe Lain::SessionRecord::Scribe do
-  def sections(**given) = Lain::SessionRecord::Sections.new(**given)
+  def sections(**given) = SessionSections.complete(**given)
 
-  subject(:scribe) { described_class.new(journal:, context:, toolset:, workspace:) }
+  subject(:scribe) { described_class.new(journal:, context:, toolset:, workspace:, sections: SessionSections.complete) }
 
   let(:context) { CoreGraph.context(system: "be terse") }
   let(:toolset) { CoreGraph.toolset }
@@ -92,15 +92,16 @@ RSpec.describe Lain::SessionRecord::Scribe do
   it "stamps that header with the session format" do
     scribe
 
-    expect(of_type("session").first).to include("format" => 2)
+    expect(of_type("session").first).to include("format" => Lain::SessionRecord::FORMAT)
   end
 
   # An added key does not bump the format: the middleware section is one.
-  it "keeps format 2 when the header carries the middleware section" do
+  it "keeps the format when the header carries the middleware section" do
     described_class.new(journal:, context:, toolset:, workspace:,
                         sections: sections(middleware: { "project" => "d1" }))
 
-    expect(of_type("session").first).to include("format" => 2, "middleware" => { "project" => "d1" })
+    expect(of_type("session").first).to include("format" => Lain::SessionRecord::FORMAT,
+                                                "middleware" => { "project" => "d1" })
   end
 
   # A reader in another process can then tell a crashed session from a quiet
@@ -153,7 +154,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
   end
 
   it "writes no arms key when every arm is off" do
-    scribe
+    described_class.new(journal:, context:, toolset:, workspace:, sections: sections(arms: {}))
 
     expect(of_type("session").first).not_to have_key("arms")
   end
@@ -165,32 +166,36 @@ RSpec.describe Lain::SessionRecord::Scribe do
     expect(of_type("session").first).to include("middleware" => { "project" => "d1" })
   end
 
+  it "refuses a header built without sections" do
+    expect { Lain::SessionRecord.header(context:, toolset:, workspace:, writer: CoreGraph::NO_WRITER) }
+      .to raise_error(ArgumentError, /sections/)
+  end
+
+  it "refuses a Scribe built without sections, writing no header" do
+    expect { described_class.new(journal:, context:, toolset:, workspace:) }.to raise_error(ArgumentError, /sections/)
+    expect(journal_io.string).to be_empty
+  end
+
   it "writes no middleware key when none is registered" do
     expect(Lain::SessionRecord.header(context:, toolset:, workspace:,
-                                      sections: Lain::SessionRecord::Sections.none,
+                                      sections: SessionSections.complete,
                                       writer: CoreGraph::NO_WRITER)).not_to have_key("middleware")
   end
 
-  it "writes the provenance block it was handed under one provenance key, at format 2" do
+  it "writes the provenance block it was handed under one provenance key, at the current format" do
     block = { "provenance" => { "harness" => "unrecorded", "tool_surface" => toolset.digest } }
     described_class.new(journal:, context:, toolset:, workspace:, sections: sections(provenance: block))
 
-    expect(of_type("session").first).to include("format" => 2, **block)
+    expect(of_type("session").first).to include("format" => Lain::SessionRecord::FORMAT, **block)
   end
 
-  it "writes no provenance key when it was handed none" do
-    expect(Lain::SessionRecord.header(context:, toolset:, workspace:,
-                                      sections: Lain::SessionRecord::Sections.none,
-                                      writer: CoreGraph::NO_WRITER)).not_to have_key("provenance")
-  end
-
-  it "loads a committed session that predates the provenance block exactly as before" do
+  it "loads a committed session whose header carries the provenance block" do
     fixture = File.expand_path("fixtures/sessions/variance/one.ndjson", File.join(__dir__, ".."))
     recording = Lain::Bench::Session.load(fixture)
 
     last_turn = File.foreach(fixture).map { |raw| JSON.parse(raw) }.reverse.find { |record| record["type"] == "turn" }
 
-    expect(File.foreach(fixture).first).not_to include("provenance")
+    expect(File.foreach(fixture).first).to include("provenance")
     expect([recording.context.model, recording.timeline.head_digest])
       .to eq(["claude-sonnet-4-6", last_turn.fetch("digest")])
   end
@@ -198,7 +203,8 @@ RSpec.describe Lain::SessionRecord::Scribe do
   it "writes the ceiling and its source when the Context resolved one" do
     resolved = Lain::Context.new(model: "claude-opus-4-6", max_tokens: Lain::OutputCeiling.typed(4_096))
 
-    expect(Lain::SessionRecord.header(context: resolved, toolset:, workspace:, writer: CoreGraph::NO_WRITER))
+    expect(Lain::SessionRecord.header(context: resolved, toolset:, workspace:, writer: CoreGraph::NO_WRITER,
+                                      sections: SessionSections.complete))
       .to include("max_tokens" => 4_096, "max_tokens_source" => "typed")
   end
 
@@ -261,7 +267,8 @@ RSpec.describe Lain::SessionRecord::Scribe do
       Dir.mktmpdir do |dir|
         path = File.join(dir, "session.ndjson")
         durable = Lain::Journal.open(path, fsync: true)
-        scribe = described_class.new(journal: durable, context:, toolset:, workspace:)
+        scribe = described_class.new(journal: durable, context:, toolset:, workspace:,
+                                     sections: SessionSections.complete)
 
         scribe.catch_up(timeline)
 
@@ -317,7 +324,8 @@ RSpec.describe Lain::SessionRecord::Scribe do
     # this compares cannot see each other.
     def fetches_for_one_more_turn(length)
       chain = chain_of(length)
-      caught_up = described_class.new(journal: Lain::Journal.new(io: StringIO.new), context:, toolset:, workspace:)
+      caught_up = described_class.new(journal: Lain::Journal.new(io: StringIO.new), context:, toolset:, workspace:,
+                                      sections: SessionSections.complete)
       caught_up.catch_up(chain)
       grown = chain.commit(role: :assistant, content: text("one more"))
 
@@ -341,7 +349,9 @@ RSpec.describe Lain::SessionRecord::Scribe do
   describe "the written: seed is a claim, and it is checked" do
     let(:digests) { timeline.to_a.map(&:digest) }
 
-    def seeded(written) = described_class.new(journal:, context:, toolset:, workspace:, written:)
+    def seeded(written)
+      described_class.new(journal:, context:, toolset:, workspace:, written:, sections: SessionSections.complete)
+    end
 
     it "refuses a head that is not on the chain at all, journaling nothing" do
       scribe = seeded(["blake3:#{"a" * 64}"])
@@ -440,7 +450,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
     it "checks the seed once, leaving later catch_ups at the bounded cost" do
       chain = chain_of(40)
       scribe = described_class.new(journal:, context:, toolset:, workspace:,
-                                   written: chain.to_a.map(&:digest))
+                                   written: chain.to_a.map(&:digest), sections: SessionSections.complete)
       scribe.catch_up(chain)
       grown = chain.commit(role: :user, content: text("more"))
 
@@ -462,7 +472,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
   describe "a journal that dies partway through a catch_up" do
     it "leaves the append point on the last landed turn, so the retry re-writes none of them" do
       flaky = FlakySessionJournal.new(fail_after: 3) # the header and two turns land; the third raises
-      scribe = described_class.new(journal: flaky, context:, toolset:, workspace:)
+      scribe = described_class.new(journal: flaky, context:, toolset:, workspace:, sections: SessionSections.complete)
       expect { scribe.catch_up(timeline) }.to raise_error(IOError)
       flaky.recover
 
@@ -743,7 +753,8 @@ RSpec.describe Lain::SessionRecord::Scribe do
     it "routes message records through an injected message_journal (a tee) with single delivery to the file" do
       sink = []
       tee = Lain::CLI::JournalTee.new(journal, sink)
-      routed = described_class.new(journal:, context:, toolset:, workspace:, message_journal: tee)
+      routed = described_class.new(journal:, context:, toolset:, workspace:, message_journal: tee,
+                                   sections: SessionSections.complete)
       writer = Lain::EventLog::ChainWriter.new(observer: routed)
 
       question = writer.put(parent, kind: :message, from: parent.correlation, to: "human",
@@ -761,7 +772,8 @@ RSpec.describe Lain::SessionRecord::Scribe do
     it "keeps turn records on the session journal even when a message_journal is injected" do
       sink = []
       routed = described_class.new(journal:, context:, toolset:, workspace:,
-                                   message_journal: Lain::CLI::JournalTee.new(journal, sink))
+                                   message_journal: Lain::CLI::JournalTee.new(journal, sink),
+                                   sections: SessionSections.complete)
 
       routed.catch_up(timeline)
 
@@ -773,7 +785,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
     # swallowed. The ChainWriter's pinned contract is that the raise propagates
     # AFTER the Store write lands, so the record loss is loud, never silent.
     it "propagates a scribe failure out of the ChainWriter, the write already landed" do
-      broken = described_class.new(journal:, context:, toolset:, workspace:)
+      broken = described_class.new(journal:, context:, toolset:, workspace:, sections: SessionSections.complete)
       def broken.call(_event) = raise("scribe down")
       writer = Lain::EventLog::ChainWriter.new(observer: broken)
 
@@ -1044,11 +1056,13 @@ RSpec.describe Lain::SessionRecord do
   # answers with is never one the Loader then refuses.
   describe ".current_format?" do
     it "accepts a header recording this format" do
-      expect(described_class.current_format?({ "format" => 2 })).to be(true)
+      expect(described_class.current_format?({ "format" => Lain::SessionRecord::FORMAT })).to be(true)
     end
 
     it "refuses a missing key, another number, and the right number as a String" do
-      expect([{}, { "format" => 1 }, { "format" => "2" }].map { |header| described_class.current_format?(header) })
+      expect([{}, { "format" => 1 }, { "format" => Lain::SessionRecord::FORMAT.to_s }].map do |header|
+        described_class.current_format?(header)
+      end)
         .to eq([false, false, false])
     end
   end
@@ -1101,11 +1115,13 @@ end
 # `resumed_from`'s idiom again: a chat launched without the flag must keep
 # writing the header every session on disk already has.
 RSpec.describe Lain::SessionRecord, ".header" do
-  def sections(**given) = Lain::SessionRecord::Sections.new(**given)
+  def sections(**given) = SessionSections.complete(**given)
 
   let(:toolset) { CoreGraph.toolset }
 
-  def header(context) = described_class.header(context:, toolset:, writer: CoreGraph::NO_WRITER)
+  def header(context)
+    described_class.header(context:, toolset:, writer: CoreGraph::NO_WRITER, sections: SessionSections.complete)
+  end
 
   it "names the pipeline a context was built under" do
     named = Lain::CLI::ContextPipeline.named("prune+cache-breakpoints").context(model: "m", max_tokens: 8)
@@ -1140,7 +1156,7 @@ RSpec.describe Lain::SessionRecord, ".header" do
   # Every writer is a process a reader may ask after, so a header that forgets
   # to say which one is refused where it is built.
   it "refuses to build a header that names no writer" do
-    expect { described_class.header(context: Lain::Context.new(model: "m", max_tokens: 8), toolset:) }
+    expect { described_class.header(context: Lain::Context.new(model: "m", max_tokens: 8), toolset:, sections: SessionSections.complete) }
       .to raise_error(ArgumentError, /writer/)
   end
 

@@ -34,7 +34,12 @@ module CrashMidTool
     toolset = Lain::Toolset.new([Lain::Tools::Bash.new])
     recorder = chronicle.wrap_memory(Lain::Memory::Recorder.new)
     session = chronicle.wrap_session(Lain::Session.new(memory: recorder))
-    chronicle.start(context:, toolset:)
+    sections = Lain::SessionRecord::Sections.new(
+      profile: { "provider" => "anthropic" },
+      provenance: Lain::SessionRecord::Provenance.current(toolset: toolset, root: Dir.pwd, cwd: Dir.pwd, home: Dir.pwd, effort: nil,
+                                                          policy: "child", harness: "child").to_header
+    )
+    chronicle.start(context:, toolset:, sections:)
     call = { "type" => "tool_use", "id" => "tu_sleep", "name" => "bash",
              "input" => { "command" => "echo $$ > #{marker}.tmp && mv #{marker}.tmp #{marker} && exec sleep 30" } }
     provider = Lain::Provider::Mock.new(responses: [Lain::Response.new(content: [call], stop_reason: :tool_use)])
@@ -105,7 +110,7 @@ RSpec.describe "a session killed while a tool runs", :seam do
 
   it "loads without refusal, its head the tool_use turn answered as cancelled" do
     killed_mid_tool
-    result = Lain::CLI::Resume.new(paths:).call
+    result = Lain::CLI::Resume.new(paths:).call(profile: SessionSections.untyped)
 
     expect(result.open?).to be(true)
     asked, cancelled = result.timeline.to_a.last(2)
@@ -164,7 +169,7 @@ RSpec.describe "a session killed while a tool runs", :seam do
         framed(public_send(bytes), wire) unless bytes.nil?
         written = records
 
-        result = Lain::CLI::Resume.new(paths:).call
+        result = Lain::CLI::Resume.new(paths:).call(profile: SessionSections.untyped)
 
         expect(result.timeline.to_a.map(&:role)).to eq(%w[user assistant user])
         expect(result.timeline.to_a[1].digest).to eq(written.find { |record| record["role"] == "assistant" }["digest"])

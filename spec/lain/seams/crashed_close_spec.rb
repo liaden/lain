@@ -13,7 +13,8 @@ RSpec.describe Lain::CLI::ChatLaunch, "closing a crashed chat", :seam do
   let(:wiring) { instance_double(Lain::CLI::Wiring, conductor:) }
 
   before do
-    chronicle.start(context: Lain::Context.new(model: "m", max_tokens: 16), toolset: Lain::Toolset.new([]))
+    chronicle.start(context: Lain::Context.new(model: "m", max_tokens: 16), toolset: Lain::Toolset.new([]),
+                    sections: SessionSections.complete)
   end
 
   def launch = described_class.new({ journal: false }, wiring_factory: ->(**) { wiring })

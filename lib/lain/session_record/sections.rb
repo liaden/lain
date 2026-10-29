@@ -6,8 +6,10 @@ module Lain
 
     # The header sections a launch contributes, each already a header Hash. One
     # value so the writer, the scribe and the chronicle pass a single argument,
-    # and an omitted section defaults here once. See {SessionRecord.header} for
-    # what each section writes.
+    # and an omitted optional section defaults here once. The profile and the
+    # provenance have no default, so a writer that forgets one raises instead of
+    # writing a header no reader can compare. See {SessionRecord.header} for what
+    # each section writes.
     class Sections
       EMPTY = {}.freeze
       private_constant :EMPTY
@@ -27,21 +29,20 @@ module Lain
             provenance: provenance.to_header, summarizer:)
       end
 
-      # @return [Sections] every section empty
-      def self.none = NONE
-
-      # @param profile [Hash{String=>Object}] the run profile's header fields
+      # @param profile [Hash{String=>Object}] the run profile's header fields, never empty
       # @param compaction [Hash{String=>Object}] the compaction section
       # @param arms [Hash{String=>String}] the bench arms that are on
       # @param middleware [Hash{String=>String}] whose trust digest admitted the middleware
-      # @param provenance [Hash{String=>Hash}] what produced the run
+      # @param provenance [Hash{String=>Hash}] what produced the run, never empty
       # @param summarizer [Hash{String=>String}] the summarizer tier's provider and model
-      def initialize(profile: EMPTY, compaction: EMPTY, arms: EMPTY, middleware: EMPTY, provenance: EMPTY,
-                     summarizer: EMPTY)
+      # @raise [ArgumentError] when the profile or the provenance is empty
+      def initialize(profile:, provenance:, compaction: EMPTY, arms: EMPTY, middleware: EMPTY, summarizer: EMPTY)
+        { profile:, provenance: }.each do |name, section|
+          raise ArgumentError, "#{name} section is empty; a header without it cannot be compared" if section.empty?
+        end
+
         super
       end
-
-      NONE = new
     end
   end
 end

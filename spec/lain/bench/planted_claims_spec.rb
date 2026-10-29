@@ -49,6 +49,14 @@ RSpec.describe Lain::Bench::PlantedClaims do
     end
   end
 
+  it "writes every header with provenance, a run profile and arms" do
+    fixtures.each do |fixture|
+      header = JSON.parse(File.foreach(fixture.path).first)
+      expect(header).to include("provenance" => a_kind_of(Hash), "provider" => a_kind_of(String),
+                                "arms" => a_kind_of(Hash))
+    end
+  end
+
   it "gives each fixture a claim of its own" do
     expect(fixtures.map(&:claim).uniq.size).to eq(fixtures.size)
   end

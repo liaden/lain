@@ -139,7 +139,7 @@ RSpec.describe Lain::CLI::ChatLaunch do
       def file_under(dir, name, effort: nil)
         context = Lain::Context.new(model: "qwen3:4b", max_tokens: 64, effort:)
         header = Lain::SessionRecord.header(context:, toolset: Lain::Toolset.new,
-                                            sections: Lain::SessionRecord::Sections.new(
+                                            sections: SessionSections.complete(
                                               profile: { "provider" => "ollama" }
                                             ),
                                             writer: CoreGraph::NO_WRITER)
@@ -453,7 +453,7 @@ RSpec.describe Lain::CLI::ChatLaunch do
             instance.open_chronicle
 
             chronicle = instance.chronicle
-            chronicle.start(context:, toolset: Lain::Toolset.new)
+            chronicle.start(context:, toolset: Lain::Toolset.new, sections: SessionSections.complete)
             chronicle.instrumentation.journal << Lain::Telemetry::TurnUsage.new(
               digest: "blake3:t1", model: nil, stop_reason: :end_turn, usage: {}
             )
@@ -486,7 +486,7 @@ RSpec.describe Lain::CLI::ChatLaunch do
             instance.open_chronicle
 
             chronicle = instance.chronicle
-            chronicle.start(context:, toolset: Lain::Toolset.new)
+            chronicle.start(context:, toolset: Lain::Toolset.new, sections: SessionSections.complete)
             chronicle.instrumentation.journal << Lain::Telemetry::TurnUsage.new(
               digest: "blake3:t1", model: nil, stop_reason: :end_turn,
               usage: { "cache_read_input_tokens" => 10 }
@@ -927,7 +927,8 @@ RSpec.describe Lain::CLI::ChatLaunch, "fork and btw flags" do
   # An unset flag reaches the backend as nil, so the recording can answer it;
   # a typed one still wins over the recording, field by field.
   it "builds the backend's compaction arm from the recorded one under whatever the human typed" do
-    recorded = { "compact_strategy" => "elide-tools+summarize-conversation", "compact_keep" => 4 }
+    recorded = { "provider" => "ollama", "compact_strategy" => "elide-tools+summarize-conversation",
+                 "compact_keep" => 4 }
     point = Lain::CLI::ForkPoint::Point.new(path: "/sessions/parent.ndjson", digest: "blake3:abc123")
     resolver = instance_double(Lain::CLI::Resume, fork_point: point, recorded_header: recorded)
     launch = lambda do |typed|
@@ -943,7 +944,8 @@ RSpec.describe Lain::CLI::ChatLaunch, "fork and btw flags" do
 
   it "resumes a --no-compact recording that holds a keep nobody typed this run" do
     point = Lain::CLI::ForkPoint::Point.new(path: "/sessions/parent.ndjson", digest: "blake3:abc123")
-    resolver = instance_double(Lain::CLI::Resume, fork_point: point, recorded_header: { "compact_keep" => 0 })
+    resolver = instance_double(Lain::CLI::Resume, fork_point: point,
+                                                  recorded_header: { "provider" => "ollama", "compact_keep" => 0 })
     instance = described_class.new({ fork: "@abc123", journal: false, max_tokens: 16, provider: "ollama",
                                      compact: false }, resume_factory: -> { resolver })
 
@@ -955,7 +957,7 @@ RSpec.describe Lain::CLI::ChatLaunch, "fork and btw flags" do
   describe "a resume of a --no-compact recording" do
     def resumed_backend(typed)
       resolver = instance_double(Lain::CLI::Resume, locate: "/sessions/parent.ndjson",
-                                                    recorded_header: { "compact" => false,
+                                                    recorded_header: { "provider" => "ollama", "compact" => false,
                                                                        "compact_schedule" => "turn" })
       described_class.new({ resume: "", journal: false, max_tokens: 16, provider: "ollama", **typed },
                           resume_factory: -> { resolver }).backend
@@ -992,13 +994,24 @@ RSpec.describe Lain::CLI::ChatLaunch, "fork and btw flags" do
     end
 
     it "inherits the recorded schedule, and a typed flag wins" do
-      expect(schedule_for({}, { "compact_schedule" => "idle" })).to eq("idle")
-      expect(schedule_for({ compact_schedule: "turn" }, { "compact_schedule" => "idle" })).to eq("turn")
+      expect(schedule_for({}, { "provider" => "ollama", "compact_schedule" => "idle" })).to eq("idle")
+      expect(schedule_for({ compact_schedule: "turn" },
+                          { "provider" => "ollama", "compact_schedule" => "idle" })).to eq("turn")
     end
   end
 
+  it "refuses a recorded header with no provider as a resume refusal naming the file" do
+    resolver = instance_double(Lain::CLI::Resume, locate: "/sessions/parent.ndjson",
+                                                  recorded_header: { "model" => "m" })
+    launch = described_class.new({ resume: "", journal: false, max_tokens: 16, provider: "ollama" },
+                                 resume_factory: -> { resolver })
+
+    expect { launch.backend }
+      .to raise_error(Lain::CLI::Resume::Refusal, /cannot resume parent\.ndjson: .*provider/)
+  end
+
   it "hands the resolver the compaction flags the human typed, to be compared with the recording" do
-    recorded = { "compact_keep" => 4 }
+    recorded = { "provider" => "ollama", "compact_keep" => 4 }
     resolver = instance_double(Lain::CLI::Resume, locate: "/sessions/parent.ndjson",
                                                   recorded_header: recorded)
     allow(resolver).to receive(:resume_at).and_return(nil)
@@ -1363,7 +1376,7 @@ RSpec.describe Lain::CLI::ChatLaunch, "the session a door selects" do
     context = Lain::Context.new(model: "qwen3:4b", max_tokens: 64)
     profile = { "provider" => "ollama", "api_base" => api_base }
     records = [Lain::SessionRecord.header(context:, toolset: Lain::Toolset.new,
-                                          sections: Lain::SessionRecord::Sections.new(profile:), writer: CoreGraph::NO_WRITER),
+                                          sections: SessionSections.complete(profile:), writer: CoreGraph::NO_WRITER),
                *timeline.to_a.map { |turn| Lain::SessionRecord.turn(turn) },
                Lain::Telemetry::SessionClosed.new(head: timeline.head_digest, reason: :exit).to_journal]
     File.write(File.join(Lain::Paths.new.filing_dir(root: @dir), name), records.map do |record|
@@ -1779,7 +1792,7 @@ RSpec.describe Lain::CLI::ChatLaunch, "a refused --isolation" do
   def dead_writer_header
     Lain::SessionRecord.header(context: Lain::Context.new(model: "qwen3:4b", max_tokens: 64),
                                toolset: Lain::Toolset.new,
-                               sections: Lain::SessionRecord::Sections.new(
+                               sections: SessionSections.complete(
                                  profile: { "provider" => "ollama" }
                                ),
                                writer: Lain::Liveness::Writer.current.with(start: "1"))

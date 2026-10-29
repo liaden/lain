@@ -104,7 +104,8 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild, "an issue orchestrator's childre
     journal = Lain::Channel.new
     # Wired as a chat wires it: the lifecycle reaches the record through the
     # chronicle's scribe, and the seam's journal is that same record.
-    chronicle = Lain::CLI::Chronicle.new(journal:).start(context: backend.context, toolset: Lain::Toolset.new([]))
+    chronicle = Lain::CLI::Chronicle.new(journal:).start(context: backend.context, toolset: Lain::Toolset.new([]),
+                                                         sections: SessionSections.complete)
     replies = Lain::Provider::Mock.new(responses: [text_response("a"), text_response("b")])
     fleet = described_class.new(backend:, provider: replies,
                                 chronicle:, options: {}, supervisor: Lain::Supervisor.new,

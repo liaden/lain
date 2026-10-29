@@ -222,7 +222,7 @@ RSpec.describe Lain::SessionRecord::Replay do
   # delivered it, and the resumed agent asks about the chain it resumed onto.
   describe "reads, against the chain the session resumes onto", :seam do
     let(:toolset) { Lain::Toolset.new([Lain::Tools::ReadFile.new, Lain::Tools::EditFile.new]) }
-    let(:scribe) { Lain::SessionRecord::Scribe.new(journal:, context: base, toolset:) }
+    let(:scribe) { Lain::SessionRecord::Scribe.new(journal:, context: base, toolset:, sections: SessionSections.complete) }
 
     around do |example|
       Dir.mktmpdir("lain-replay-reads") do |dir|
@@ -384,7 +384,7 @@ RSpec.describe Lain::SessionRecord::Replay do
   describe "a replay binding reads as the live session did", :seam do
     let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024, system: "sys") }
     let(:toolset) { Lain::Toolset.new([Lain::Tools::ReadFile.new, Lain::Tools::EditFile.new]) }
-    let(:scribe) { Lain::SessionRecord::Scribe.new(journal:, context:, toolset:) }
+    let(:scribe) { Lain::SessionRecord::Scribe.new(journal:, context:, toolset:, sections: SessionSections.complete) }
     let(:names) { %w[a b c err d e] }
     let(:store) { Lain::Dag::Factory.store }
     let(:root) { Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }]) }
@@ -576,7 +576,7 @@ RSpec.describe Lain::SessionRecord::Replay do
     attr_reader :path
 
     before do
-      Lain::SessionRecord::Scribe.new(journal:, context: base, toolset:)
+      Lain::SessionRecord::Scribe.new(journal:, context: base, toolset:, sections: SessionSections.complete)
       live.record_read(path)
     end
 

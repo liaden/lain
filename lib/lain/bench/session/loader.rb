@@ -40,6 +40,11 @@ module Lain
         NO_RECORDS = [].freeze
         private_constant :NO_RECORDS
 
+        # A header always carries what produced the run and the profile it ran
+        # under: `provider` is the profile's one key that is never nil.
+        REQUIRED_SECTIONS = %w[provenance provider].freeze
+        private_constant :REQUIRED_SECTIONS
+
         # The record types {MessageReplay} rebuilds: events that no render chain
         # carries, so they are reconstructed from their own flat records.
         FLAT_EVENT_TYPES = ["message", SessionRecord::CHILD_TURN_TYPE].freeze
@@ -214,10 +219,13 @@ module Lain
         end
 
         def stamped(header)
-          return header if SessionRecord.current_format?(header)
+          unless SessionRecord.current_format?(header)
+            raise Corrupt, "session file records format #{header["format"].inspect}; " \
+                           "this loader reads format #{SessionRecord::FORMAT}"
+          end
 
-          raise Corrupt, "session file records format #{header["format"].inspect}; " \
-                         "this loader reads format #{SessionRecord::FORMAT}"
+          REQUIRED_SECTIONS.each { |key| RequiredKeys.read(header, key) { "the session header" } }
+          header
         end
 
         def header_field(key) = RequiredKeys.read(header, key) { "the session header" }
@@ -256,7 +264,7 @@ module Lain
         def bench_facts = { arms:, compact: header["compact"], opaque: }
 
         def provenance_facts
-          { provenance: header.fetch("provenance", {}), served_models:, host:,
+          { provenance: header.fetch("provenance"), served_models:, host:,
             started_at: Ledger::Index::Entry.stamped(header["ts"]) }
         end
 

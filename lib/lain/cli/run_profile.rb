@@ -57,15 +57,15 @@ module Lain
           new(**values, typed: FIELDS.reject { |field| values[field].nil? })
         end
 
-        # What a session header recorded. A header with no provider recorded no
-        # profile at all, and answers {UNRECORDED}. A field it has no key for is
-        # nil, which {#over} reads as not recorded.
+        # What a session header recorded. Every header carries a provider, so one
+        # without it is damage. A field it has no key for is nil, which {#over}
+        # reads as not recorded.
         #
         # @param record [Hash{String=>Object}] a session header record
         # @return [RunProfile]
+        # @raise [Bench::Session::Corrupt] when the header recorded no provider
         def from_header(record)
-          return UNRECORDED unless record.key?("provider")
-
+          Bench::Session::RequiredKeys.read(record, "provider") { "the session header" }
           new(**FIELDS.to_h { |field| [field, record[field.to_s]] })
         end
       end
@@ -94,9 +94,6 @@ module Lain
 
       def initialize(**attrs) = super(**self.class.settle!(**attrs))
 
-      # @return [Boolean] whether this came from a header that recorded a profile
-      def recorded? = !provider.nil?
-
       # The environment's and the built-in answers, for the fields nobody typed.
       #
       # @param defaults [Hash{Symbol=>Object}] a subset of {FIELDS}
@@ -115,7 +112,7 @@ module Lain
       # @param recorded [RunProfile] what the resumed or forked header recorded
       # @return [RunProfile] still carrying this profile's `typed`
       def over(recorded)
-        return self unless recorded.recorded? && follows?(recorded)
+        return self unless follows?(recorded)
 
         with(**recorded.to_options.slice(*untyped).compact)
       end
@@ -126,8 +123,6 @@ module Lain
       # @return [Hash{String=>Object}] the header's profile fields, with no key
       #   for an unset one
       def to_header = HEADER_FIELDS.to_h { |field| [field.to_s, public_send(field)] }.compact
-
-      UNRECORDED = new(**FIELDS.to_h { |field| [field, nil] })
 
       def untyped = FIELDS - typed
 

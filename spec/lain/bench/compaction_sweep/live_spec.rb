@@ -428,7 +428,8 @@ module LiveSweepSession
     journal = Lain::Journal.open(path, clock: Lain::Bench::PlantedClaims::CLOCK)
     toolset = Lain::Toolset.new([tool(bytes)])
     context = Lain::Context.new(model: "claude-haiku-5-5", max_tokens: 1024, system: "be terse")
-    scribe = Lain::SessionRecord::Scribe.new(journal:, context:, toolset:, writer: Lain::Bench::PlantedClaims::WRITER)
+    scribe = Lain::SessionRecord::Scribe.new(journal:, context:, toolset:, writer: Lain::Bench::PlantedClaims::WRITER,
+                                             sections: SessionSections.complete)
     stack = Lain::Middleware::Stack.new([Lain::Middleware::JournalRequests.new(journal:)])
     agent = Lain::Agent.new(provider: Lain::Provider::Mock.new(responses: responses(topics)), toolset:, context:,
                             journal:, model_middleware: stack)

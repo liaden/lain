@@ -109,7 +109,8 @@ RSpec.describe Lain::Supervisor::Restart do
   end
 
   def scribed_actor(provider)
-    scribe = Lain::SessionRecord::Scribe.new(journal: record_journal, context:, toolset:)
+    scribe = Lain::SessionRecord::Scribe.new(journal: record_journal, context:, toolset:,
+                                             sections: SessionSections.complete)
     observer = described_class::JournalBlobs.new(journal: record_journal, store:, observer: scribe)
     actor = Lain::Tools::Subagent::Actor.new(agent: scribed_agent(provider, observer), parent: parent_timeline,
                                              lineage: Lain::Tools::Subagent::Lineage.new(policy: spawn_policy))

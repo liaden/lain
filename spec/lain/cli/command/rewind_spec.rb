@@ -16,7 +16,7 @@ RSpec.describe Lain::CLI::Command::Rewind do
   let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
-  let(:chronicle) { Lain::CLI::Chronicle.new(journal:).start(context:, toolset:) }
+  let(:chronicle) { Lain::CLI::Chronicle.new(journal:).start(context:, toolset:, sections: SessionSections.complete) }
   let(:provider) do
     Lain::Provider::Mock.new(responses: [text_response("one"), text_response("two"), text_response("post-rewind")])
   end

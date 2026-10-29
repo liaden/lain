@@ -252,8 +252,7 @@ module Lain
       # when the header names none. `opaque` is the opaque-command policy the run's `run_arms`
       # record names, nil for a run that wrote no such record.
       #
-      # `provenance` is the header's provenance block, `{}` for a header written
-      # before it existed. `served_models` is each model the agent's turn_usage
+      # `provenance` is the header's provenance block. `served_models` is each model the agent's turn_usage
       # records name, sorted and once each. `host` is the header writer's host,
       # or "unrecorded". `started_at` is the header line's stamp, nil when torn.
       # All four are required on the same no-default rule `mode` follows.
@@ -295,8 +294,8 @@ module Lain
         # not its word: an unset flag and `default` send the same bytes.
         #
         # "unrecorded" is a value here, unlike {Compare::Mode}'s wildcard: a run
-        # that names no harness cannot vouch for matching one that does, while
-        # two that both name none still pool, as every old journal must. cwd,
+        # that could not read an axis cannot vouch for matching one that did, while
+        # two that both could not still pool. cwd,
         # root and home are left out because they differ across clones by design.
         # The host axis follows the hostname, not the hardware.
         #
@@ -319,20 +318,15 @@ module Lain
 
         private
 
-        # The tool surface and effort are read off the header itself, which named
-        # both long before the block existed, so old journals still tell them apart.
         def produced_by
           { "model" => context.model, "served model" => served_models.empty? ? UNRECORDED : served_models.join(","),
-            "harness" => provenance.fetch("harness", UNRECORDED),
+            "harness" => provenance.fetch("harness"),
             "tool surface" => Canonical.digest(toolset.to_schema), "effort" => context.effort || UNRECORDED,
-            "policy" => provenance.fetch("policy", UNRECORDED), "weights" => weights, "host" => host }
+            "policy" => provenance.fetch("policy"), "weights" => weights, "host" => host }
         end
 
-        # The block omits weights for a provider with none to name, which is a
-        # different fact from a header that has no block at all.
+        # The block omits weights for a provider with none to name.
         def weights
-          return UNRECORDED if provenance.empty?
-
           provenance.key?("weights") ? listed(provenance.fetch("weights")) : "none"
         end
 

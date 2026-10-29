@@ -85,7 +85,8 @@ class DemoSupervision
   end
 
   def actor
-    scribe = Lain::SessionRecord::Scribe.new(journal: @journal, context: @context, toolset: @toolset)
+    scribe = Lain::SessionRecord::Scribe.new(journal: @journal, context: @context, toolset: @toolset,
+                                             sections:)
     @scribe = scribe
     observer = Lain::Supervisor::Restart::JournalBlobs.new(journal: @journal, store: @store, observer: scribe)
     agent = Lain::Agent.new(provider: @provider, toolset: @toolset, context: @context,
@@ -94,6 +95,14 @@ class DemoSupervision
                               root: @dir, log: Lain::Workspace::SnapshotLog.new(observer:)
                             ))
     Lain::Tools::Subagent::Actor.new(agent:, parent: parent_timeline, lineage:)
+  end
+
+  def sections
+    project = Lain::Project.new(root: @dir, cwd: @dir, kind: :project, detected_by: :flag)
+    provenance = Lain::SessionRecord::Provenance.launched(project:, toolset: @toolset, effort: @context.effort)
+    Lain::SessionRecord::Sections.of(profile: Lain::CLI::RunProfile.from_options({ provider: "anthropic" }),
+                                     compaction: {}, arms: Lain::CLI::Arms::DEFAULT, provenance:,
+                                     middleware: Lain::Config::Middleware.new, summarizer: {})
   end
 
   def parent_timeline

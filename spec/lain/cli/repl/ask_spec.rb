@@ -78,7 +78,7 @@ RSpec.describe Lain::CLI::Repl::Ask do
 
     it "journals ask_settled once after the last turn record and tells the display channel" do
       real_chronicle.wrap_tee(display)
-      real_chronicle.start(context: real_context, toolset: real_agent.toolset)
+      real_chronicle.start(context: real_context, toolset: real_agent.toolset, sections: SessionSections.complete)
       real_ask = described_class.new(agent: real_agent, tty:, chronicle: real_chronicle)
 
       real_ask.settle(real_ask.attempt("hi"))
