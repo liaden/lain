@@ -248,7 +248,7 @@ pattern must be a literal path. Evaluated 2026-09-30:
 
 The number is the built-in table's gated size, so it rises when a credential name is added (it was 13
 before round 20's credential variants, and 20 above is the old figure: round 22 read 25). The name-and-directory rule below may move it again. A stale number in
-this section is a scenario defect, not a finding: read it off the refusal.
+this section is a scenario defect, not a finding: read it off the refusal. Round 28 read 25 and the list now also names `.s3cfg`, `.dockercfg`, `.boto`, `.boto.*` and `.boto~`.
 
 **A malformed rule glob refuses at load.** A `denied`, `gated` or `exempt` pattern with an unclosed
 bracket, such as `"*.[ab"`, no longer loads and then silently matches nothing: the launch refuses
@@ -409,6 +409,8 @@ re-masks an already-released region is a second ledger.
 ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next; next unless r["type"]=="read_released"
   puts [r["tool_use_id"], r["path"], r["regions"], r["requester"], r["surface"]].join("\t")}' "$JOURNAL"
 ```
+
+Round 28 re-checks owed here. **g28-3 (MED-HIGH):** release a `.env` that existed at launch under `--approval ask`; today the release is refused at egress (`egress_refused`, `run_interrupted`) and every later request until `/rewind`, while a file created after launch releases fine (the control). **g28-1:** after `n` at a release, a re-read stays masked with no prompt and no command clears it, while the trailer still tells the model to ask.
 
 Round 26 (g26-4): after an approved release only `read_released` is written; a `source_masked` record with `released >= 1` does not appear, so §4 item 2 cannot be confirmed from a `source_masked` line after a release. This is the documented shape, not a defect to wait on (g26-4, docs only): confirm a release from `read_released`.
 
@@ -602,10 +604,10 @@ a25-4, fixed). A command's output has no release: nothing parks asking for one.
    token, and the result ends with `1 region was masked in this command's output; a command's output cannot be released.` No approval
    prompt follows. The live pane is masked as it streams, by the boundary (`Sensitivity::Display`; a26-3 fixed, T27, T28), so it shows `<redacted:N>` too; past about 1 MiB of live output the display stops with one note line (`[the live display stopped here; the result is bounded as before]`), and the recorded result keeps its bound and masking.
 2. **A session secret masks even when no pattern matches it.** With `OLLAMA_API_KEY=abc123lowentropyvalue` in the launching environment,
-   `echo abc123lowentropyvalue` comes back masked. A secret-named variable whose value is under 8 bytes (`1`, `true`) is not a mask.
+   printing it comes back masked. Since round 28 typing the value into the command (`echo abc123lowentropyvalue`) is refused at egress before anything runs, so print it from a file instead (`cat notes/k1.txt`). A secret-named variable whose value is under 8 bytes (`1`, `true`) is not a mask.
 3. **Clean output is untouched**: `echo hello` has no `<redacted:N>` and no trailer.
 4. Under `auto` or a rule-allowed call, the same print is withheld instead of masked (`bash output withheld: it held ...`), and the
-   command is barred from automatic approval: the retry goes to a human, and a human-approved retry is masked as in 1.
+   command is barred from automatic approval: the retry goes to a human, and a human-approved retry is masked as in 1. Round 28: a `cat` of a file holding a `ghp_` token is not rule-allowed (rules abstain) and `auto` defers, so reach the withheld path under `bypass`.
 Round 26 confirmed the live display showed what the masker hid, for 7 shapes, under `ask` too: the chat pane and `lain://journal`. The record (journal, WAL, requests) held 0. Ruled and fixed (T27, T28): the display is masked as it streams, so re-drive the 7 shapes and expect `<redacted:N>` in the pane and `lain://journal` too. The live and recorded copies are each fully masked, but their placeholder numbers can differ when stdout and stderr both carry secrets (round 27).
 
 *Wrong looks like:* the raw token in the tool result, the journal or the display; a prompt offering to release it.
@@ -628,7 +630,7 @@ export BUILD_TAG=Zx8kLm2Pq7RtVb4Y RAILS_ENV=development
 
 | command | expected |
 |---|---|
-| `echo hunter2xyz` | `<redacted:1>`: the DSN's password, printed alone, where no URL surrounds it |
+| `echo hunter2xyz` | `<redacted:1>`: the DSN's password, printed alone, where no URL surrounds it (round 28: typing a session secret into the command is now refused at egress before it runs, so write the value into a file and `cat` it) |
 | `echo $REDIS_URL` | the token after `sig=` is `<redacted:N>`; `redis://cache.local:6379/0?sig=` stays legible |
 | `echo Qm9vT2s3x9ZpL1aB` | `<redacted:1>`: the hinted name `REDIS_URL` lists the token |
 | `echo $BUILD_TAG` | **not masked**: `BUILD_TAG` is passed but not hinted, so its token `Zx8kLm2Pq7RtVb4Y` is legible. The control |
@@ -823,14 +825,14 @@ innocent explanations — "that path is not classified protected", "the absolute
 home-anchored rule" — are not ruled out, and a finding that has not ruled them out is not a finding.
 
 **Round 20's A-3: the withheld-output refusal says how a human gets asked.** Still under `/mode bypass`, ask
-plant a credential-shaped line in `config/master.key` and ask for `cat config/master.key`. A file whose content holds no detectable region runs and returns raw under `bypass`, by design. Or use any command whose automatically approved output holds a credential. The `tool_result` must
+plant a credential-shaped line in `config/master.key` and ask for `cat config/master.key`. A file whose content holds no detectable region runs and returns raw under `bypass`, by design (round 28: under the workspace sandbox `cat config/master.key` is hidden and answers `Permission denied`, not raw). Or use any command whose automatically approved output holds a credential. The `tool_result` must
 name **`/mode ask`**: `... If approval is bypass, no approval is possible, so a human must first switch to
 /mode ask.` A refusal that says only "a human must approve" is A-3 back, because under `bypass` there is no
 queue for a human to approve on. Retype the same command: it must refuse again, finally, but with a different sentence by design (`Escalation::Bypass::TOLD`): `this command's automatically approved output held a credential, so only a human may approve it, and no approval is possible while approval is bypass; do not re-send it`. The first sentence tells the human to switch to `/mode ask`; the second goes to the model, which cannot switch modes. `/approve` must still answer `no pending approvals`.
 
 Then `/mode !` and confirm the floor is back before anything else — the mode is session state,
 and carrying `bypass` forward would silently change what every later check measures. **`!` lands in
-`plan` scope**, so type `/mode checkout` (and `/mode auto` to return to the launch default) to get the round's default back; the write probe below
+`plan` scope** (in a fixture with no commit it cannot enter plan scope, stays in checkout scope and says so, round 28), so type `/mode checkout` (and `/mode auto` to return to the launch default) to get the round's default back; the write probe below
 would otherwise land in the spike, and a confinement refusal there would look like the write side
 working.
 
@@ -991,6 +993,8 @@ contents**.
 ```bash
 lain chat --provider ollama --model qwen3-coder:30b --secret-oracle local
 ```
+
+**g28-2 (round 28):** a lockfile read parks before the oracle is asked: every `sha256=` checksum is a region (Gemfile.lock 110, yarn.lock 2033), so a 30-line slice waits on a human under `ask` and `auto` alike, while `grep` masks the same lines without stopping. Re-check it here.
 
 Drive four reads of increasing ambiguity — a lockfile, a vendored JS bundle, `.env`, and
 `~/.ssh/id_qa` — and read every `oracle_answer`:
@@ -1157,7 +1161,7 @@ lain chat --supervise-egress all --non-interactive --prompt "what is 2 + 2?"
 | `--non-interactive` with the flag | the turn is refused at once, without waiting, and the error names `--supervise-egress` |
 | ask the model to repeat `qa-lent-password-24bytes` back to you (flag on or off) | refused before anything parks or is sent: `the request to <host> was not sent: it carries 1 known secret value(s)`, naming the message and the `/rewind` count. The session file holds an `egress_refused` record with the host and a count, never the value |
 
-| `--secret-oracle local --supervise-egress oracle`, then read a file holding a credential | the oracle's request parks first, as `secret_oracle sends N canonical bytes to localhost/api/chat ...`; the chat's own turns send without parking. Deny it and the oracle asks nothing; the read stays parked for you |
+| `--secret-oracle local --supervise-egress oracle`, then read a file holding a credential | the oracle's request parks first, as `secret_oracle sends N canonical bytes to localhost/api/chat ...` (in a plain chat, g28-6 open: the hold is journaled with the read but drawn only after the read's own `[y/N]` is answered; in a cockpit the order holds); the chat's own turns send without parking. Deny it and the oracle asks nothing; the read stays parked for you |
 | `--secret-oracle local --supervise-egress all`, the same read | the chat's turns and the oracle's request both park, each naming its requester |
 | `--secret-oracle local`, with `DB_PASSWORD` set and a file named `qa-lent-password-24bytes` read | the oracle's question is refused before it is sent (`egress_refused` in the session file), and the read stays parked for you |
 
@@ -1178,8 +1182,10 @@ one, even though it is loopback and forwards `:cloud` tags.
 # pane 1: the gateway, holding the key
 OLLAMA_API_KEY=... lain gateway --upstream https://ollama.com      # prints http://127.0.0.1:<port> and its token file
 # pane 2: the chat, which never sees the key
-lain chat --secret-oracle cloud --secret-oracle-model glm-5.3:cloud --gateway http://127.0.0.1:<port>
+lain chat --secret-oracle cloud --secret-oracle-model gpt-oss:120b-cloud --gateway http://127.0.0.1:<port>
 ```
+
+Use `gpt-oss:120b-cloud` (round 28): glm-5.3 on ollama.com ignores the request's `format` and answers in prose, so every question ends `oracle_failed UndecodableAnswer` and the read just stays parked. The gateway's own refusals (symlinked token, 0777 directory) need `OLLAMA_API_KEY` set first, or it refuses on the missing key.
 
 | act | expected |
 |---|---|
@@ -1203,9 +1209,9 @@ lain chat --secret-oracle cloud --secret-oracle-model glm-5.3:cloud --gateway ht
 | `--secret-oracle local --secret-oracle-model glm-5.3:cloud` (also `GLM-5.3:CLOUD`, `gpt-oss:120b-cloud`) | refused at launch, naming `--secret-oracle cloud` and `--gateway` |
 | with the right URL, read a file holding a credential | the gateway pane shows 1 request to `/api/chat`: a non-streaming body (`"stream":false`) naming only the path, the tool and the region count, never a region's bytes. Answer `y` and the verdict is applied, signed `secret_oracle`; answer `n` and the read stays parked for you |
 | `--secret-oracle-model claude-haiku-5-5` against `lain gateway --upstream https://api.anthropic.com` | the same crossing at `/v1/messages`; the chat's `ANTHROPIC_API_KEY` is not sent to the gateway (it sends `via-lain-gateway`, which the gateway replaces) |
-| add `--supervise-egress oracle`, then read a file holding a credential | you are asked twice for the one question: first the chat parks `secret_oracle sends N canonical bytes to 127.0.0.1/api/chat ...`, then, once you approve that, the gateway pane shows the body. A deny at either stops it, and the read stays parked for you |
+| add `--supervise-egress oracle`, then read a file holding a credential | you are asked twice for the one question (in a plain chat the read's `[y/N]` is drawn first, g28-6/j28-3, open): first the chat parks `secret_oracle sends N canonical bytes to 127.0.0.1/api/chat ...`, then, once you approve that, the gateway pane shows the body. A deny at either stops it, and the read stays parked for you |
 | the session file after the crossing | `oracle_answer` and `request_sent` records for `secret_oracle`; the token appears nowhere in it |
-| stop the gateway mid-session, then read another file | a notice on the chat screen: `secret oracle: the cloud oracle reaches a model only through a loopback lain gateway; the listener at http://127.0.0.1:<port> did not prove it ...; "<path>" is left for you`. The session file holds an `approval_surface_fault`; nothing is approved. The notice says `the gateway on port <port> changed since the chat started` and to restart the chat or the gateway |
+| stop the gateway mid-session, then read another file | a notice on the chat screen (in a plain chat it is drawn only after the read is answered, j28-3, open): `secret oracle: the cloud oracle reaches a model only through a loopback lain gateway; the listener at http://127.0.0.1:<port> did not prove it ...; "<path>" is left for you`. The session file holds an `approval_surface_fault`; nothing is approved. The notice says `the gateway on port <port> changed since the chat started` and to restart the chat or the gateway |
 | restart the gateway on the same port (`--port <port>`), then read another file | the chat reads the new token file once, the proof passes, and the question goes to the gateway pane as before; no notice |
 
 *Wrong looks like:* any question sent before the identity exchange, or without one; the token in a request, a

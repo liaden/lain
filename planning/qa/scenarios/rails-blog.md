@@ -173,7 +173,7 @@ rounds (or a first-turn `/pin`) left it nothing to collapse and the journal read
 `summary_hits 0` on 42 decisions while the head grew from 2 B to 95 KB. Now the head holds only the claimed turns. Drive
 it: `--compact-bytes 1500 --compact-keep 2 --compact-strategy summarize-conversation`, `/pin` the first prompt's digest,
 ask questions that each produce a few KB of conversation, and expect a compaction once a claimable run exists, with the
-pin surviving it. Say 'plain text only, no tools, no questions' in every ask: this model calls `ask_human` after an essay and wanders into epic skills. It may issue all reads as 1 parallel round. With the default `--round-budget window` (T92, T93; `off` and `static` are the other arms) a round that would not fit is held to a budget in call order: a repeated rerunnable result answers `same result as call <id>`, a read past the budget is an error result (so it does not count as read, and a later `edit_file` of it is refused), and one `round_bounded` record names what was delivered, deduplicated and withheld. A round already committed past the window (c26-3) still reaches a handoff or the stall line; its fix waits on round 27. Bench arms record `round_budget` off. `/unpin` is no longer the way out. When the window still fills with nothing the strategy can claim
+pin surviving it. Say 'plain text only, no tools, no questions' in every ask: this model calls `ask_human` after an essay and wanders into epic skills. qwen3-coder also wraps plain answers in `todo_write`, which makes `summarize-conversation` alone claim nothing (each run is trimmed to 1 turn), so the stall line above is what you will read (round 28). It may issue all reads as 1 parallel round. With the default `--round-budget window` (T92, T93; `off` and `static` are the other arms) a round that would not fit is held to a budget in call order: a repeated rerunnable result answers `same result as call <id>`, a read past the budget is an error result (so it does not count as read, and a later `edit_file` of it is refused), and one `round_bounded` record names what was delivered, deduplicated and withheld. A round already committed past the window (c26-3) still reaches a handoff or the stall line; its fix waits on round 27. Bench arms record `round_budget` off. `/unpin` is no longer the way out. When the window still fills with nothing the strategy can claim
 (all tool rounds, under `summarize-conversation` alone), the decision's stall line names the strategy and, only when the
 wider arm would claim what it left, the pair: `but summarize-conversation claims none of the droppable turns` ... `use
 --compact-strategy elide-tools+summarize-conversation, which claims tool rounds and conversation both, or start a new
@@ -185,7 +185,7 @@ claims both kinds, so it is never told to widen.
 Do this **early in the act, not last** — it is the point of the scenario.
 
 A cheap way to get medium results across many turns (round 25): ask the model to read the HTML error pages under
-`public/` (5 to 9 KB each), one per turn.
+`public/` (5 to 9 KB each), one per turn. c28-2, open: this recipe collides with the round budget at about 80% occupancy (26,211 of 32,768), where a 7 KB read answers `not delivered: this round reached its ... budget` and compaction has not fired yet (it waits for 90% or the window less 4,096). Expect `not delivered` results in that band.
 
 ```bash
 ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next;
@@ -218,6 +218,7 @@ in this bench can make.** Pull the rewritten span out of the derived context and
 - **tool-carrying messages became attestations** — one line each, of the shape
   `[<role> <12 hex characters> <bytes> bytes] …`, with the elision prose after it, which ends `(elided -- no summary was taken)` (any gist lines come before it). Count the attestation text
   against the message count: a run with 176 elided messages costs about 40% of what the full digest cost;
+- c28-4, open: a message that carries prose AND a tool call (qwen3-coder's `todo_write` on nearly every answer) is attested whole, so its prose answer is gone (`[calls todo_write] (elided -- no summary was taken)`); asked to quote it, the model says "NOT VISIBLE". Expect that today.
 - **conversational turns survive verbatim and in position** — not summarized, not reordered;
 - a **lone** conversational turn sitting between two tool runs is *retained*, not summarized. The
   strategy deliberately declines to pay a model call to turn one message into one message, so an
@@ -325,10 +326,10 @@ driven — this is integration check 7 of the discharging chunk)*:
   RB-3). `summarize-conversation` proposes nothing for a run of 1, so the source used to read as stuck
   without a handoff and every over-window ask was refused (13 in a row). Launch with `--compact-keep 4
   --no-nvim --compact-strategy elide-tools+summarize-conversation --num-ctx 32768`, then send 2 asks that
-  each carry a 45 KB filler prompt. **PASS:** the second is answered, with one `compaction_cut` of
+  each carry a filler prompt of about 16k tokens (size fillers by tokens: 45 KB of word-salad is about 16k, so the THIRD filler, not the second, crosses 32,768). **PASS:** the second is answered, with one `compaction_cut` of
   `"kind": "handoff"`. **Catches RB-3 returning:** an ask refused with `Compaction runs by itself` and no
   `compaction_cut` after it. When the re-render could not shrink, the tail reads `Nothing older can be
-  compacted yet` and must not advise compaction.
+  compacted yet` and must not advise compaction. c28-3, open (RB-3 on a new path): after fillers f1 f2 f3 f4 f1 f2, a short "hello", then f3 f4 f1, the last f1 is refused (`would_not_shrink true`, `run_interrupted over_window`) and the human is told to `/rewind`; the next prompt hands off. Today expect that refusal, not an answer.
 
   **After any earlier cut, a handoff fires only when nothing is droppable** (round 25, c25-1, fixed): the condition is the decision's
   own `nothing_droppable`, not "a cut exists", so a session with tens of KB still droppable past its held cut compacts instead of handing off.
@@ -401,7 +402,7 @@ ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next; next unless r["t
     puts b["content"].to_s.bytesize }}' "$JOURNAL" | sort -rn | head
 ```
 
-`rails new` alone should produce a result orders of magnitude past anything bowling generates. Note
+`rails new` alone does NOT produce a result orders of magnitude past anything bowling generates (round 28: `--minimal` printed 4,354 bytes and the largest result was `bundle install` at 13,730). Reaching the 16,384 ceilings needs a directive that reads a vendored file (a gem's `CHANGELOG.md` is 56 KB). Note
 which tools produced the top ten, and whether any of them disclosed a cap. Since round 25 `grep`,
 `ast_search`, `web_fetch` and `ast_dump` bound by cap-and-disclose, and `bash` output and `read_file` refuse over
 16,384 bytes and say how to narrow. Expect a refusal, not a 100 KB result, from either of those two.

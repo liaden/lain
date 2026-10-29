@@ -606,7 +606,7 @@ call reads as a missing record.
 Take one abstaining command at each approval level too (`git log --oneline -5` will do): expect
 `"verdict":"abstain","arm":"string"` with an empty term (`"term":{"pipelines":[]}`). **A record written only on the interesting
 branch cannot answer §9's question**, so a missing abstention record is a finding even
-though nothing about it looks wrong.
+though nothing about it looks wrong. Round 28: under `/mode bypass` that `git log` ends `rung bypass allow` and runs under sandbox profile `workspace`; `cat | head` is approved at `rules` and never reaches the bypass rung. k28-4, open: a string-arm command that runs a mise or `~/.cargo` program (`cargo --version; echo done`) is refused EACCES under `workspace` although the verdict allowed it; `/usr/bin` programs are unaffected.
 
 ## 7 — an ordinary pipeline under `--exec docker` *(cheap — local model + a docker daemon)*
 

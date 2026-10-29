@@ -60,14 +60,14 @@ in a bare clone. `lain land enqueue` on a detached main worktree is a plain erro
 
 ## 2: A batch
 
-Enqueue `c` with a verify that sleeps, and while it verifies enqueue `a` and `b`. They form 1 batch with 1 verify. Enqueued back to back, the first drainer takes `a` alone, because an enqueue takes about 1.3 s. Expect both to land under a single drainer; the verify log gains 1 line for the pair (1 verify per
+Enqueue `c` with a verify that sleeps, and while it verifies enqueue `a` and `b`. They form 1 batch with 1 verify. Enqueued back to back, the first drainer takes the first entry alone, because an enqueue takes about 1.3 s, so lead with a slow entry to form a batch (round 28: `c` alone with verify 1, then `d`+`b` as one batch with verify 2, both as merge commits). Expect the pair to land under a single drainer; the verify log gains 1 line for the pair (1 verify per
 batch), and `lain land status` between them shows `drain lock held by pid=... for Ns`. A second worker lands as a merge commit `Merge refs/lain/worker/<id> into main`; only a commit that already descends from main lands with no merge commit.
 
 ## 3: A red batch with bisection
 
 Commit a `BAD` file in `a`, a clean change in `b`, and enqueue both. Expect `wait` on `a`'s id to exit
 1 with `did not land` and the verify tail; `wait` on `b`'s to exit 0. `main` holds `b`'s commit and not
-`a`'s. The verify of §0 writes only on a pass, so it cannot show the runs. `wait` on `a` reports `did not land: declined … the batch failed verification: <cmd> exited 1`. To see the runs, log at the start of the verify, before the test: 3 runs (batch, `a`, `b`). Main's history keeps nothing from the red worker.
+`a`'s. The verify of §0 writes only on a pass, so it cannot show the runs. `wait` on `a` reports `did not land: declined … the batch failed verification: <cmd> exited 1`. To see the runs, log at the start of the verify, before the test: 3 runs (batch, `a`, `b`; round 28 with a leading slow entry `h` read 4 starts: `h`, the batch, then each alone). m27-2, open: the failed verify command in the `did not land` text is still printed shell-escaped (`sh -c date\ +\%s\%N\ \>\>\ ...`). Main's history keeps nothing from the red worker.
 
 ## 4: A moved tip
 
@@ -79,7 +79,7 @@ entries to report the branch moved. Past the cap, `wait` exits 1 with `did not l
 
 With a drainer mid-verify, run `lain epic land <issue>` on an approved issue. Expect it to wait on the
 drain lock, not to verify in parallel: 1 verify process at a time (`pgrep -af` the verify command).
-Its output ends with `verification passed on <tip>` or `verification skipped: ...`. The drainer must be on `epic/<slug>` to share the drain lock; across branches only the suite lock serializes the verifies. Rounds 26 and 27 both read this from the code only, because it needs an approved epic issue and the merge fork never had one. **Schedule it in the epic-tier fork** (`epic-tier.md`), which drives an approved issue anyway, and record the 2 verify processes it should never show at once.
+Its output ends with `verification passed on <tip>` or `verification skipped: ...`. The drainer must be on `epic/<slug>` to share the drain lock; across branches only the suite lock serializes the verifies. Rounds 26 and 27 read this from the code only; round 28 drove it live with no model. Recipe: an `epics` block with every gate `:deferred` (`gate :research, :deferred` and so on), an `epic.md` with 1 issue (`greet`), a `research.md` and `plans/greet.md`, then `lain epic submit` and `lain epic approve` for `research`, `epic_plan` and `issue_plan`; hand-commit a change and anchor it at `refs/lain/worker/issue.demo.greet.1-<hash>` (the name comes from `Handback::Naming`), then `lain epic submit implementation demo --issue greet --digest <sha>` and approve it (`submit --digest` accepts any string, so nothing checks that a commit by that sha exists until `epic land`). Start a drainer on `epic/demo` whose verify sleeps 20 s and logs its start and end with a pid, and run `lain epic land greet` mid-verify. Observed: `waiting on pid=<drainer> ... for the landing drain for epic-demo-... (<drain.lock>)`, then `landed greet at <sha> onto epic/demo -- merged as <sha>`, `greet moved in_flight -> done`, `verification passed on <tip>`; verify start A 40.36, end A 60.37, start B 60.45, end B 80.45, and a 0.5 s `pgrep` sampler never saw 2 verifies. Record the 2 verify processes it should never show at once.
 
 ## 6: A killed drainer
 
@@ -111,9 +111,9 @@ naming the file (`cannot use the lock <path>: ...`), with no backtrace and witho
 
 ## 7: A chat child hands back
 
-`lain chat --isolation worktree` with `@dev[/execute-plan] <task file>`, whose lease is a worktree (a bare `subagent` call spawns a researcher with a scratch lease that cannot commit). Expect the child to run `lint` over the changed files, and `check` only when a changed file is a test or has a mirrored test under a test layout in force, before its rebase, then answer `queued as <id>; lain land wait <id> --branch main`, and the
+`lain chat --isolation worktree` (interactive, `--no-nvim` is fine) with `@dev[/execute-plan] <task file>`, whose lease is a worktree (a bare `subagent` call spawns a researcher with a scratch lease that cannot commit). Expect the child to run `lint` over the changed files, and `check` only when a changed file is a test or has a mirrored test under a test layout in force, before its rebase, then answer `queued as <id>; lain land wait <id> --branch main`, and the
 parent checkout, even with uncommitted edits in it, is never merged into. `lain land wait` on that id
-exits 0 once landed. Observed in round 26: the reply was `[the worker's commits are on refs/lain/worker/dev-spawn.1-…, not yet on the branch -- queued as <id>; lain land wait <id> --branch main]` and `wait` exited 0; main fast-forwarded with the parent's uncommitted `seed.txt` edit intact.
+exits 0 once landed. Observed in round 26: the reply was `[the worker's commits are on refs/lain/worker/dev-spawn.1-…, not yet on the branch -- queued as <id>; lain land wait <id> --branch main]` and `wait` exited 0; main fast-forwarded with the parent's uncommitted `seed.txt` edit intact. Round 28 repeated it: `git add` and `git commit` each PARK for a human even under the default `auto` (`the judge did not look: it reads the repository's object store`, a wording that is wrong for commands that write it), so approve both; no `lint` record appears because `lint` defaults to `[]` (`config/isolation.rb:61`) until the config sets it. A child that committed and then died (the repeat guard `read_file called 3 times with the same input and result`, or a malformed reply) prints `[handback declined (<ref>) -- the work is anchored on <ref> and was not queued; run `lain land enqueue <ref> --branch main --id dev-spawn.4` to land it]` (m27-3 fixed). m28-1, open: the same prompt headless (`--non-interactive`, default `auto`) can never hand back: the judge marks `git add` and `git commit` unjudgeable, `--non-interactive` refuses what the judge did not approve, the child answers "The commit step would need to be done manually", the handback journals `nothing_to_do sync dirty`, and the pane prints `[the worker left uncommitted changes at <worktree>; they were not handed back]`.
 
 ## 8: Two repositories, one suite lock
 

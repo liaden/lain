@@ -180,6 +180,18 @@ To drive salvage with no spend, cut a completed cloud session's journal after it
 
 An HTTP 404 from `/api/chat` used to be journaled `run_interrupted reason: torn` (j26-2); it is now `reason: rejected` with the status (T64), and an ordinary refusal, a cut-off reply and a malformed reply journal their own reasons instead of nothing (T65). The retired `LAIN_OLLAMA_CLOUD_CONCURRENCY` was ignored without a word (j26-5); the cloud arm now says `LAIN_OLLAMA_CLOUD_CONCURRENCY was retired and is ignored; use LAIN_PROVIDER_CONCURRENCY.` (T71), and the local arm prints nothing.
 
+## 5b. The summarizer tier a cloud chat gets by default (x28-1, open)
+
+No quota spent if you stop at the journal. A cloud chat's eager summarizer does not follow the chat's provider: `DEFAULT_SUMMARIZER_PROVIDER = "ollama"` (`cli/backend.rb:77`), and the tier's model is the chat's only when the summarizer's provider IS the chat's (`:835`), else `Provider::Ollama::DEFAULT_MODEL`, `qwen3:4b`. Library probe, no model: `ollama-cloud` with `glm-5.3` gives `ollama/qwen3:4b`, `ollama-cloud` with the default model the same, `ollama` with `qwen3-coder:30b` gives `ollama/qwen3-coder:30b`, `anthropic` gives `ollama/qwen3:4b`.
+
+Live (costs 1 completion): `lain chat --provider ollama-cloud --model glm-5.3`, ask for a `list_files` of a directory with about 1000 entries so the result is eagerly summarized. Today expect:
+
+- an `oracle_answer` whose model is `qwen3:4b` and a `POST /api/chat` in the LOCAL ollama's log at the same moment (round 28: 12.1 s, and the local runner swapped to `qwen3:4b` then back, evicting whatever the GPU served; twice in fork k);
+- no startup notice that a cloud chat will dial `localhost:11434`, and no summarizer field in the session header (only the `oracle_answer` names the model);
+- on a box with no local ollama (`unshare -rn`, `ip link set lo up`, the TLS stub as the cloud): the summarizer request fails with `Faraday::ConnectionFailed`, one `provider_retry` is journaled, nothing is drawn, and the chat goes on with the raw result. The one-shot exits about 20 ms later, so whether a long session journals an `oracle_failed` is unknown.
+
+The design comment says local on purpose (frontier tokens cost more than a resend); the open question is the missing notice and header field.
+
 ## 6. Width, the launch notice and the 429 *(§6a costs nothing; §6b costs real quota or needs a stub)*
 
 The plan's grounding took "1 / 3 / 10 concurrent models" from the pricing page. **The wire says
@@ -199,6 +211,7 @@ deployment declares; a value in the variable is the operator's choice and is hon
 
 ```bash
 lain chat --provider ollama-cloud                                   # read the startup lines
+# zero cost: add `< /dev/null` (it prints the lines, reads EOF and exits, no completion); LAIN_PREFLIGHT=1 prints none of them
 LAIN_PROVIDER_CONCURRENCY=1 lain chat --provider ollama-cloud
 LAIN_PROVIDER_CONCURRENCY=2 lain chat --provider ollama-cloud
 LAIN_PROVIDER_CONCURRENCY=0 lain chat --provider ollama-cloud
@@ -231,7 +244,7 @@ Two ways to force it, and say which you used:
   **A stub on `127.0.0.1` is classed local, so its width is already 1 with `LAIN_PROVIDER_CONCURRENCY` unset** (round 25, j25-5; the launch
   notice now says so, see 6a): items 1, 3 and 4 cannot be shown with a loopback stub unless you set the variable to the width you want
   (an env value is honoured on loopback), or bind the stub to a non-loopback address. Say which you did.
-  No such stub is checked in. Run `--prompt 'Reply ok.' --model glm-5.3` against the stub with a dummy `OLLAMA_API_KEY`, so the real key never leaves the box. A working stub is at `~/tmp/lain-qa-2026-10-18-j/records/stub/stub.rb` (TLS, a plan file of `c<N>`, `slow` and `ok` steps). Restart it per item so its request counter resets.
+  No such stub is checked in. Run `--prompt 'Reply ok.' --model glm-5.3` against the stub with a dummy `OLLAMA_API_KEY`, so the real key never leaves the box. A working stub is at `~/tmp/lain-qa-2026-10-18-j/records/stub/stub.rb` (TLS, a plan file of `c<N>`, `slow` and `ok` steps). Restart it per item so its request counter resets. Round 28's copy is `~/tmp/lain-qa-2026-10-28-j/records/stub` (certificate valid to 2026-11-21): it also has `gone` (410), `ctx` (a context-length 429) and `tool` (a `list_files` call) steps, and `stubrun.sh` runs one item per call.
   Otherwise copy the response shape from `spec/lain/provider/ollama/retry_tap_spec.rb` (the webmock example near line 355): status 429, body `{"error":"too many concurrent requests"}`, headers `x-ratelimit-max-concurrent: 1` (the spec's refusal helper also sends `x-ratelimit-active`, `x-ratelimit-queue-limit` and `x-ratelimit-queued`), then a 200 with `{}`. The same file's `slow down` and `context length exceeded` bodies, with no concurrency header, are the other-reason 429s of item 5.
 
 Read the journal:

@@ -77,7 +77,7 @@ the same file. *Driven 2026-09-14*, the one-shot side: from a sibling directory,
 `lain survey <abs>/cs/changeset/lib` headlined `surveying <abs>/cs/changeset/lib at cumulative scope:
 1 file` and listed `[ ] cs/changeset/lib/tally.rb`; run from inside the repository as
 `lain survey lib` it listed `[ ] lib/tally.rb`. A one-shot run from another directory names every row relative to that cwd (`../` prefixes included), never relative to the surveyed root; read the rows against the directory you launched from. Survey the same absolute path with `/survey` from
-the same cwd and confirm the rows read identically. b25-10 is fixed (T10): the refusal, the `opened` report and the hunk count in `lain://review` now name a row's path as the sidebar displays it, so a leading `../` is stripped in all of them; check the sidebar naming against the refusal text. *(Prediction, not yet driven: the `/survey` side
+the same cwd and confirm the rows read identically. b25-10 is fixed (T10): the refusal, the `opened` report and the hunk count in `lain://review` now name a row's path as the sidebar displays it, so a leading `../` is stripped in all of them; check the sidebar naming against the refusal text. b27-2, still open in round 28: the thread header and the `annotation_placed.path` say `../plant/tree/lib/calc.rb` while the sidebar says `plant/tree/lib/calc.rb`, and the approve refusal says `../p7/README.md` beside sidebar `p7/README.md`. b28-2, inconclusive: fork m could not make `x` mark a never-opened survey row in 8 shapes (every one refused `nothing has read it -- <CR> opens it`), while fork b saw it after notes, a re-survey and a partial-verdict refusal on the same tree; the refusal fires only while nothing has chunked that row's file, so which call chunked it is the open question *(Prediction, not yet driven: the `/survey` side
 needs the cockpit.)*
 
 ## 2. The ceilings, at a size no round has driven
@@ -94,13 +94,13 @@ with `git ls-files --cached --others --exclude-standard` before trusting a count
 
 | target | files | lines | |
 |---|---:|---:|---|
-| `lib` | 995 | 202,121 | **over both** — 742/161,963 (r11), 748 (r14), 749 / 152,909 (r15), 778 / 163,904 (r17), 983 / 201,112 (2026-10-16), **995 / 202,121 (2026-10-18)**; RE-COUNT, never copy |
+| `lib` | 1,117 | 225,966 | **over both** — 742/161,963 (r11), 748 (r14), 749 / 152,909 (r15), 778 / 163,904 (r17), 983 / 201,112 (2026-10-16), 995 / 202,121 (2026-10-18), **1,117 / 225,966 (2026-10-28)**; RE-COUNT, never copy |
 | `lib/lain/frontend` | 56 | 14,199 | fits (r17) |
 | `lib/lain/review` | 39 | 8,520 | fits (r17) |
 | `lib/lain/survey` | 9 | 1,274 | fits (r17) |
 
 Round 17 timed the `lib` refusal at 1,668 ms against a do-nothing `lain help` at 1,451 ms — the
-comparative form `method.md` prescribes, and a refusal that still does not walk the tree. Round 26 measured the refusal at 321 ms with no walk, and `--unbounded` at about 5 s for 995 rows at 113 MB.
+comparative form `method.md` prescribes, and a refusal that still does not walk the tree. Round 26 measured the refusal at 321 ms with no walk, and `--unbounded` at about 5 s for 995 rows at 113 MB. Round 28 (a depth-1 clone, 1,117 rows): the one-shot refusal took 1.06 to 1.08 s against `lain help` at 0.88 to 0.89 s, `--unbounded` drew 1,117 rows in 3.4 s, and the chat's RSS went 127 to 130 MB. The refusal text reads `this corpus is 1117 files, over the ceiling of 300 -- survey a subdirectory instead, or raise the ceiling with --unbounded`.
 
 ```
 you> /survey ./lib

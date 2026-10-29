@@ -200,7 +200,7 @@ declares none keeps 25), the researcher can `grep` and `glob` as well as `read_f
 5. **The HUD while the child runs.** The `model` segment is present during the child's model calls, and
    `tool:grep` (or `tool:read_file`) during its tool rounds (`cockpit-surfaces.md` §7 owns the segment; check
    here only that it follows the child's loop as well as the parent's, and that it is gone once the child
-   finishes).
+   finishes). Round 28 measured the opposite: `state.json` `in_flight` read `{"kind":"tool","tools":["subagent"]}` in all 36 samples across the child's 2 minutes, with no `model` and no `tool:read_file` for the child. `cockpit-surfaces.md` says a child's tool call never reaches the parent's HUD, so expect the parent's `subagent` tool for the whole child and file only a departure from that.
 6. **`fleet:N` is an observation, not a check.** While each researcher runs and after it ends, record what
    the HUD's `fleet:` reads and the time. The trial read `fleet:0` after 2 had run; the fix investigation
    found counting correct end to end and could not reproduce it. A 0 while a child runs is a finding with a
@@ -211,7 +211,7 @@ declares none keeps 25), the researcher can `grep` and `glob` as well as `read_f
    than 3 files the line names the first 3 and ends `(+N more)`. The session file holds a `files_written` record for each,
    with the child's role. A researcher that only reads prints nothing and journals nothing. Known gap: a child leased its own
    worktree (`--isolation worktree`) reports paths relative to that worktree without naming it, so the line reads as the
-   parent's checkout; record what you see rather than failing it.
+   parent's checkout; record what you see rather than failing it. i28-1, open: a researcher's scratch lease returns "" on release, so the parent is told only `done` while the transcript line carries relative paths (`researcher wrote 2 files: a.txt, b.txt`); the parent model went looking in `/tmp`. A spike lease names its path.
 
 ### 2c: A researcher's kept lease, and what it may run
 
@@ -230,6 +230,7 @@ directory so the check is a `find`.
 3. **It can run a version probe and nothing riskier without asking.** `rustc --version` in the lease
    runs with no prompt. `curl -s http://127.0.0.1:11434/api/tags` parks with `researcher` as the
    requester. `cat ../outside` parks or refuses. `ruby --version` is not a probe and does not run unasked.
+   A human's deny of `ruby --version` is remembered within that child (`rung remembered`) but a re-spawned researcher with the same requester parks it again, because the remembered denial keys on the cwd and each researcher has its own scratch cwd (round 28, an observation).
 4. **A write aimed at the project is refused** with a message naming the lease, and not mentioning plan
    scope or `/mode`. Its read of `/etc/passwd` is refused (not parked), saying the home directory is in its environment block.
 5. **Under `plan` scope the researcher is lent the session's spike** and nothing new is cut.
@@ -272,6 +273,8 @@ aside, a memory item — and confirm it is absent from the child's request.
 ## 3 — `actor` mode, and `--isolation worktree`
 
 This is the section the scenario exists for, and the question it used to open with is closed now.
+
+**Round 28 (i28-2, open): only an `@role[/skill]` line leases a worktree under `--isolation worktree`.** A chat's plain `subagent` call is the researcher, which leases kept scratch or spike directories whatever the flag says (`cli/wiring/toolset_build.rb:515-516`), so `git worktree list` stays unchanged for the whole child, and `docs/commands.md:146-147` is wrong to say otherwise. Drive the lease checks below with `@dev[/qa] <text>` (`@dev <text>` with no skill is ordinary prose by design). Actor adoption, the grandchild third path and the depth cap are unreachable from a chat (actor mode is set only in `epic_subagent`).
 
 **Leasing by a model-dispatched spawn is no longer open** — `--isolation`'s help text and
 `CLI::Wiring` agree: the flag is resolved exactly once per launch (`Wiring#fleet_isolation`) and
@@ -352,7 +355,7 @@ the design: nothing a worker made is thrown away unasked.
 not retry an issue because the retained dirty lease still had `lain/issue/<slug>/<id>` checked out
 (F99). A retained or moved-aside checkout now anchors its HEAD and **detaches** it; the files stay.
 Check `git -C <retained path> symbolic-ref -q HEAD` exits non-zero and `git switch <that branch>`
-works in a fresh worktree. A clean checkout whose holder is dead is reaped (`...no longer the process that took it; clean, and a branch reaches its HEAD`). The `nothing has landed since it was cut` keep applies only while its holder is not abandoned. And gc no longer calls a fresh checkout "landed" just because its HEAD is
+works in a fresh worktree. A clean checkout whose holder is dead is reaped, but a clean checkout that was MOVED ASIDE by a later acquire is locked `lain-retained` and `gc` keeps it 7 days as `nothing has landed since it was cut` (round 28) (the reaped shape reads `...no longer the process that took it; clean, and a branch reaches its HEAD`). The `nothing has landed since it was cut` keep applies only while its holder is not abandoned. And gc no longer calls a fresh checkout "landed" just because its HEAD is
 reachable from `main`: a checkout still at the commit lain cut it at is kept as `nothing has landed
 since it was cut; retained until <date>`. *(Prediction, not yet driven: strings read from
 `isolation/gc.rb`.)*
@@ -419,7 +422,7 @@ Then the backend's own behaviour:
   `fresh` for an image path. Each image ID journals one `exec_image` record: `jq -c 'select(.type=="exec_image")' "$JOURNAL"`.
   **Drive each fallback**, which leaves every stage `"klass":"unresolved"` with the anomaly `container_backend` (`the command runs inside
   a container, where lain cannot see which file runs`): (1) an image absent locally, where the record has `id` null and a reason naming
-  the inspect; (2) an image with an `ENTRYPOINT` (such as `rhysd/actionlint`), where the reason quotes it and nothing is exported;
+  the inspect; (2) an image with an `ENTRYPOINT` (such as `rhysd/actionlint`), where the reason quotes it and nothing is exported (e28-3, open: the term arm then runs `docker run ... <image> cat README.md` with no `--entrypoint`, so the image runs `actionlint cat README.md` and exits 3, not what was approved);
   (3) a listing that fails, such as a `docker export` over 60s or an unreadable tar, where a notice on the first docker bash call says container programs
   could not be listed and, for a cached failure, names the cache file to delete and says to relaunch (the failure is also remembered in
   the process, so deleting the file alone does not retry). The approval consequence is by arm: on a fallback, `--confine classes` or
@@ -453,7 +456,7 @@ lain watch <prefix> --session <path>
 17 found only the `blake3:` spelling matched (F119). *Driven 2026-09-14* against a recorded chat
 session: `lain watch bfc36418ae69 --session <file>` rendered
 `[blake3:bfc36418ae69 spawn] fresh/schema spawned from blake3:ff9ca1f05f4a` and its completion, the
-same as the full digest. A one-shot child's `lain watch` is exactly 2 lines, the spawn and its completion; more means a record leaked into the lineage. **A no-match names the file it searched**: `lain watch zzzz --session
+same as the full digest. A one-shot child's `lain watch` is exactly 2 records, the spawn and its completion; a multi-line answer renders as one `[digest message]` line per answer line (24 lines in round 28), so count records, not lines, and more records means one leaked into the lineage. i28-5, open: every failed child reads `(failed)` with no error class, so a ceiling stop (`Lain::Budget::Exceeded`) and a prose-call failure (`MalformedAnswer`) look the same. **A no-match names the file it searched**: `lain watch zzzz --session
 <file>` → `no spawn matched selector "zzzz" in <file's basename>`, exit 1. The `in <file>` refusal comes only
 from a closed session (round 25). `lain watch` with stdout redirected to a file printed nothing until it exited (i26-5); it now flushes each line (T77).
 

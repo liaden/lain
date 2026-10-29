@@ -171,6 +171,8 @@ lain epic status                  # with TWO epics in the home: Ambiguous, never
 chmod 000 "$HOME_DIR" && lain epic status   # UnreadableHome -- not "no epics yet"
 ```
 
+b28-5, open: a home holding only `plans/x.md` counts as an epic (`holds 3 epics (demo, graph, half)`, and `lain epic show plans/x half` prints it), so Ambiguous can name a half-made directory.
+
 `Ambiguous` matters more than it looks: picking the alphabetically-first would report on work the
 caller never asked about, **in the one command whose entire job is telling the truth about which
 work is where**.
@@ -839,7 +841,7 @@ Three checks:
 - **without `--epic`** it says no epic is mounted rather than drawing an empty graph;
 - it **re-reads from disk** when a turn completes, so a transition written by a *different* `lain`
   process shows up after the next turn — drive `lain epic approve` in another terminal and confirm
-  the buffer catches up;
+  the buffer catches up (h28-5, open: a whole `/implement-epic` run from the chat, and a `lain epic land` from a shell during it, left the buffer reading `in_flight` and `1 gate parked` until the next ordinary chat turn; a slash-command run does not count as a completed turn);
 - a **fold failure is drawn into the buffer, not raised**: a raise here would kill the drain thread
   and freeze every other buffer. Corrupt a session file and confirm the buffer says so while the
   rest of the cockpit keeps working.
@@ -855,6 +857,8 @@ lain epic land export-stream         # lands one approved issue onto epic/<slug>
 lain epic land --resume export-stream
 ```
 
+h28-7, open: after the last issue lands and `lain epic finish <slug> --local` merges, `lain epic status <slug>` still reads `stage issue_plan -- N/N done`; no surface says the epic reached implementation or finished.
+
 **Round 23 g23-6, fixed: `land` names which thing is missing.** With no anchored worker commit for the issue it says `no
 worker commit is anchored for issue X of epic <slug>, so nothing landed -- re-run the issue through the epic driver, which
 anchors the work it hands back`; it no longer suggests `epic submit ... --digest`, which cannot create an anchor. With a
@@ -862,11 +866,13 @@ commit anchored but no approved implementation gate it says `no anchored commit 
 issue X, so nothing landed --` followed by `lain epic submit implementation <slug> --issue X --digest <sha>` for each anchored
 sha. Drive both: a hand-committed fix with no driver run gets the first; an anchored issue whose gate was denied gets the
 second. And `epic submit implementation --digest` with a value that is not a commit in the repository (a wrong sha, a
-word) is refused: `the implementation digest <x> is not a commit in <root>`.
+word) is refused: `the implementation digest <x> is not a commit in <root>`. h28-2, open: an abbreviated sha (`8b6b677`, which `git cat-file -t` calls a commit) is refused the same way, because the check wants 40 to 64 hex characters; the refusal should say a full sha. Nothing checks at submit time that a commit by that sha exists beyond that shape, so `epic land` is where a bad one shows.
 
 An issue whose actor committed nothing but its failing tests named its red anchor in `land`'s refusal as the sha to approve; round 26 followed the hint and landed failing tests on `main` (h26-1). Fixed (T36, T37, T38): a red-only commit is not offered for approval, approving one is refused (`only the failing-test commit is anchored for issue X; re-run the issue through the epic driver to anchor its implementation -- nothing landed`), and `lain epic submit implementation` of one is refused before a gate opens (`that commit holds only <id>'s failing tests; re-run the issue`). Drive all three. An epic with an abandoned issue cannot finish, and the remedy no longer names `land`: it says `mark it done or remove it from epic.md, never land it` (h26-5 fixed, T42; a mixed epic gets both remedies).
 
 **`land` offers only the newest attempt's commits, and never a denied one** (round 27, h27-4, fixed). When attempt 1's commit was denied and attempt 2 anchored only its red commit, `lain epic land <issue> <epic>` used to say to approve attempt 1's denied sha; it now says to re-run the issue and names no sha. A digest approved and then denied does not count as approved. Drive it: deny attempt 1's gate, retry to a red-only anchor, run `land`, and read that no sha is named.
+
+h28-3, open (the same filter, worse in effect): with `gate :implementation, :deferred` and the issue's gate PARKED (`lain epic queue` lists it), `lain epic land <issue> <epic>` says `no worker commit is anchored for issue X ... re-run the issue through the epic driver` and exits 1, while `refs/lain/worker/issue.<epic>.<issue>.1-<hash>` holds the commit and `lain worktrees gc` keeps it as anchored. A deferred park journals `approved: false`, so `land` reads it as denied. Expected: name the sha, or better `lain epic approve <digest>`. Control: after `lain epic approve <digest>` the same `land` lands the commit. Following the printed remedy re-runs the issue and supersedes the commit nobody had read yet. h28-4, open: `lain epic queue` for that parked gate reads `question: <not recoverable from the journal>` and `evidence: <none -- no spike ran>`, so a human approving from the queue never sees that `tests_ran` for the sha reports `1 error`.
 
 `lain epic land` takes an **issue id, never a commit**. The SHA argument is gone: the commit it
 lands is the one anchored when the implementation gate approved it — found, not named. So confirm

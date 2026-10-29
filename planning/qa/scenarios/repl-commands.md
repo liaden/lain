@@ -46,7 +46,7 @@ you> /create-plan something
 `/help` holds the **live** registry, so its listing is the authority: check every command driven
 below appears in it, and that nothing appears in it that has no implementation. Registration order
 is the listing order — a `/help` sorted alphabetically has been re-sorted somewhere, and that is a
-small finding worth recording because it means a second ordering exists.
+small finding worth recording because it means a second ordering exists. Round 28 read the live registry (25 commands, via `/ruby` over `ObjectSpace`, since `/help` scrolls off the alternate screen): `/help` ends `help approve model`, and `serves_replies?` is true for exactly `inbox` and `approve`.
 
 **`/nosuchcommand` refuses by name — it does NOT reach the model, and this paragraph said the
 opposite until round 14.** An unregistered `/word` produces `unknown skill "nosuchcommand", expected
@@ -143,6 +143,8 @@ lighter is history; the same drive today answers `checkout auto: ...` or `checko
   runs. *Driven 2026-09-14*: `/mode +notify` → `accept_edits: no layers active -> accept_edits:
   notify (BELL)`, and `/mode -notify` back. `cockpit-surfaces.md` §5 drives the bell itself —
   including that a `--no-nvim` chat's inline `[y/N]` is not an arrival line and does not ring.
+  Since the notifier landed the layer also writes a terminal escape sequence and runs `notify-feed`, so "nothing else" above
+  is the older shape; `notifications.md` owns those two channels.
 
 `/help` describes the command, not the values: `/mode [scope] [approval] [+layer] [-layer] [!] --
 show the mode, switch its scope or approval, toggle a layer, or reset`.
@@ -236,6 +238,8 @@ you> /unpin <same prefix>
 you> /unpin <never pinned> should refuse, not silently succeed
 ```
 
+f28-2, open: `/pin` of a turn that is already pinned answers `pinned ...` again and journals a second `session_pin pinned:true`, while `/unpin` of an unpinned turn refuses (`was not pinned -- nothing to release`). f27-2, still open: `/rewind 7955` reads an all-digit word as a count (`out of range`) while `/pin 7950` reads it as a digest prefix.
+
 *Driven 2026-09-14:* `/mode +nosuchlayer` → `error: unknown mode layer "nosuchlayer", expected one
 of [:goal, :notify, :vi]`. The bare-token refusal names the whole grammar rather than one roster:
 `/mode nosuchmode` → `error: unknown /mode token "nosuchmode" -- /mode takes ask, auto, bypass,
@@ -297,7 +301,7 @@ three doors disagreeing (F96): at `human>` with the parent's own `ask_human` par
 `rewound 3 turns: …` — then answering the question **re-committed all three rewound turns** on top
 of the new head, and the next request carried them. Since 2026-09-14 `/rewind` shares `/undo`'s
 in-flight predicate and refuses while any run holds the dispatch lock, naming the parked call and
-restating what the human typed:
+restating what the human typed. Park the call with a command that really parks, such as `git status --short` under `ask`: `wc -l` is approved by `composed_term` even there, so nothing parks and `/rewind` and `/fork` act (round 28). f27-3, still open: the `/fork` refusal says "a question is parked for you right now" when what is parked is an approval:
 
     /rewind 3 refused: this turn's 1 tool call is still in flight (ask_human), and settling it would commit its turns over a rewound head. Nothing moved -- answer or stop it, then rewind.
 
@@ -517,7 +521,7 @@ you> /mode
 ```
 
 Must read `checkout auto`, and the HUD must show no approval lighter. Then ask the model for one
-gated `bash` that no rung refuses (`wc -l README.md`, say), and check:
+gated `bash` that no rung refuses and no rule approves first (`git status --short`, say; round 28: `wc -l README.md` is approved by `composed_term` at the rules rung, so it never reaches the judge and nothing parks even under `ask`), and check:
 
 1. **The judge answered, not a human.** Nothing parks (`/approve` answers `no pending approvals`) when
    the judge approves. The journal carries an `escalation` record at rung `auto` whose reason is
@@ -690,7 +694,7 @@ its next iteration and the chat pane says `goal off from the editor -- the drive
 next iteration` *(driven in round 22, and it passes)*. With none driving, the editor says so, *driven
 2026-09-14* in a `lain up` cockpit: `lain: :LainGoalOff stops a standing goal, and none is driving`,
 with the chat pane untouched at `you>`. `:h lain-runtime-commands` (`plugin/nvim/doc/lain.txt`)
-documents it. `/mode -goal` with a goal standing stops it as `/goal off` does.
+documents it. `/mode -goal` with a goal standing stops it as `/goal off` does. f28-4, open: `/goal off` leaves the stopped objective PINNED (here the stop itself settled the pin on the way out), so `/ruby session.pins` lists it after the goal ends and compaction keeps a dead goal; `/meta` (prefix `inherit`) then chased the dead goal.
 
 The cap is the one to record numerically: **note how many turns it ran and what that cost**. Nothing
 else in `planning/qa/` records tokens per act, and a self-driving loop is where that gap is most

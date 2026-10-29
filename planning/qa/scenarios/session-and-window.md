@@ -48,7 +48,7 @@ screen and wiped it at exit, and the escapes reached a pipe). With `--non-intera
 answer or the refusal stays on the scrollback after exit, and redirected to a file stdout carries no `ESC[?1049h`. **This check is for `--non-interactive` only** (A23-a3): an attended chat with stdout redirected, such as `lain chat --prompt ... </dev/null | tail`, still writes `ESC[?1049h`. Record that as the known shape, not as X-1 returning.
 
 **The trained maximum must arrive with NOTHING resident** — it rides `/api/show` on the same 2s
-probe connection as `/api/ps`, and only when `--num-ctx` is set. Verify residency is empty first, or
+probe connection as `/api/ps`. Since round 28 `/api/show` is asked at every ollama launch (capabilities, quant), not only with `--num-ctx`; the trained maximum is still checked only when `--num-ctx` is set. Verify residency is empty first, or
 this proves nothing.
 
 ## 2 — Connect timeout against a blackhole
@@ -99,7 +99,7 @@ Float did not:
 The last row is the one that used to be a **crash** rather than a cosmetic problem: `Float::INFINITY.round(2)`
 raises, so a server-supplied `Retry-After` could take the render down where the old code printed
 harmlessly. It is not reachable from the blackhole probe above — a connect failure has no header —
-so if the round exercises the Anthropic path or a proxy that can forge one, that is where to look.
+so if the round exercises the Anthropic path or a proxy that can forge one, that is where to look. Through ollama the `a while` row cannot be reached at all (round 28); only an Anthropic path could.
 A long decimal tail on any of these is the regression.
 
 ## 3 — Cold start, then warm, in ONE session
@@ -178,7 +178,7 @@ decision[0].used_tokens          ->  nil          (cold: nothing measured yet)
 
 Read same-index -- which is what this paragraph used to say, on the strength of round 4's "both
 4515, exactly" from a session short enough for the pairing to be unambiguous -- and a healthy
-session reads 0/29 and looks like a defect. The three readers DO agree; the lag is inherent. Note the token counts are **nested
+session reads 0/29 and looks like a defect. The three readers DO agree; the lag is inherent. Judge spawns journal their own `turn_usage` (with a `spawn` key) between decisions, so the pairing must keep only the records without `spawn` (round 28: 24/24 filtered, 9/24 unfiltered). Note the token counts are **nested
 under `usage`**, not top-level — reading the wrong path makes them look absent.
 
 ## 5 — `capability_degraded`
@@ -224,7 +224,7 @@ env -u LAIN_NUM_BATCH lain chat --provider ollama ... --prompt hi
 ```
 
 Round 20 confirmed this on the wire from four forks (`num_predict` 4096, `num_batch` 2048,
-`truncate=false`). Round 25 read `num_predict` 16384 on the wire, not 4096; with no `--max-tokens` it is now the per-model ceiling (T89: the served window on a local ollama, `max_tokens_source: served_window`; a table row for a first-party model, `table`; else 32768 with `max_tokens_source: fallback`, which is what an ollama-cloud model reads), and a typed value still goes out verbatim with `typed`. The header records the value and `max_tokens_source`. A `--resume` or `--fork` of a session that typed `--max-tokens` keeps that value with no flag retyped (an untyped ceiling is re-resolved), and a typed `--max-tokens` that differs from the recorded typed one prints `recorded with --max-tokens <old>; continuing with <new> (the current flags win)`. Every request also carries a top-level `shift=false` since round 24, so a reply that fills
+`truncate=false`). Round 25 read `num_predict` 16384 on the wire, not 4096; with no `--max-tokens` it is now the per-model ceiling (T89: the served window on a local ollama, `max_tokens_source: served_window`; a table row for a first-party model, `table`; else 32768 with `max_tokens_source: fallback`, which is what an ollama-cloud model reads, and a local one when the server is cold at launch), and a typed value still goes out verbatim with `typed`. The header records the value and `max_tokens_source`. A `--resume` or `--fork` of a session that typed `--max-tokens` keeps that value with no flag retyped (an untyped ceiling is re-resolved), and a typed `--max-tokens` that differs from the recorded typed one prints `recorded with --max-tokens <old>; continuing with <new> (the current flags win)`. Every request also carries a top-level `shift=false` since round 24, so a reply that fills
 the window is cut instead of shifted.
 
 `max_tokens` is never the source of a silent zero here: a non-positive `--max-tokens` is refused at launch
@@ -235,7 +235,7 @@ The environment variable that used to set it was retired, and exporting one chan
 
 ## 7 — `--compact-strategy` resolves, and refuses, at LAUNCH
 
-Four names ship and they compose with `+`. All of this is settled while the `Backend` is built, so
+Six names ship (`truncate-cumulative` and `summarizing-flat` joined the four) and they compose with `+`. All of this is settled while the `Backend` is built, so
 **every check here is one non-interactive launch and no model call** — `< /dev/null` again, and the
 refusal fires before stdin is read.
 
@@ -268,7 +268,7 @@ Verified against the built binary 2026-08-18 (with `--prompt hi`, which the refu
 **1**, one line, **zero** backtrace frames:
 
 ```
-unknown part "nonesuch" in --compact-strategy "nonesuch", expected one of ["summarizing", "elide", "summarize-conversation", "elide-tools"], or several joined by "+"
+unknown part "nonesuch" in --compact-strategy "nonesuch", expected one of ["summarizing", "elide", "summarize-conversation", "elide-tools", "truncate-cumulative", "summarizing-flat"], or several joined by "+"
 unknown part "" in --compact-strategy "elide-tools+", expected one of [...], or several joined by "+"
 ```
 
@@ -285,14 +285,14 @@ Three things to read carefully, because each is a place a driver files the wrong
   refusal reporting `--compact-strategy ""` for input `elide-tools+` would be true about the part and
   false about what was typed; that wording was deliberate, so a report of `""` where `elide-tools+`
   was typed is a regression, not a cosmetic difference.
-- **The refusal must list all four names.** The set grew this chunk; a refusal still naming only
+- **The refusal must list all six names.** The set grew twice; a refusal still naming only
   `["summarizing", "elide"]` means the registry and the resolver have drifted apart.
 - **Every composition except `elide-tools+summarize-conversation` is refused at launch** (round 21 refused
   `elide+summarizing`; round 22 found 6 other overlapping spellings launching and tearing an ask with
   `Overlap`, and they are refused now too). Both parts of `elide+summarizing` claim the whole span, so the refusal
   names the value and points at the pair, as the live wording reads now:
   `--compact-strategy "elide+summarizing" would overlap; the one composable pair is
-  elide-tools+summarize-conversation, in either order`. The older quoted sentence ("each claim the whole span ...
+  elide-tools+summarize-conversation, in either order`. `elide-tools+elide-tools` refuses the same way ("would overlap", round 28), not as a repeated part. The older quoted sentence ("each claim the whole span ...
   which partition it") is stale. A pair that launches and then
   fails every ask is the round-21 finding back.
 
@@ -308,13 +308,14 @@ claims tool rounds and conversation both, or start a new session`. The old tail,
 session`, appearing for a strategy that claims nothing is the defect back. Free to check with a short script over
 `Compaction::Head` and the `Diagnosis`; live, see `rails-blog.md` section 1.
 
-Round 18 gave the over-window wall a fallback, and a flag that chooses whether to take it. Two
-arms, resolved at LAUNCH like everything else here:
+Round 18 gave the over-window wall a fallback, and a flag that chooses whether to take it. Three
+arms (`early-handoff` joined in round 28), resolved at LAUNCH like everything else here:
 
 ```bash
-run --compact-fallback nonesuch     # refuses, naming both arms
+run --compact-fallback nonesuch     # refuses, naming all three arms
 run --compact-fallback none         # legal: the refusal stands
 run --compact-fallback handoff      # legal, and the DEFAULT
+run --compact-fallback early-handoff # legal: writes its document once the last turn reaches a share of the window
 ```
 
 `handoff` is the default because the alternative is a session that can no longer be spoken to. It
@@ -323,7 +324,7 @@ summarizer call — and answers the ask. `none` leaves the provider's refusal st
 
 Two launch-level checks, both free:
 
-- **The unknown arm refuses at construction**, naming `handoff, none`, before stdin is read. A
+- **The unknown arm refuses at construction**, naming `handoff, early-handoff, none`, before stdin is read. A
   `--compact-fallback` that silently resolved to `none` would show up only as an ask that died
   where it should have been kept, which is exactly the failure this refusal exists to prevent.
 - **The session header records only the compaction flags that were TYPED.** (Round 20's RB-2 changed
@@ -343,7 +344,7 @@ Two launch-level checks, both free:
   launch, `turn` when typed so), so a reader can tell the two arms apart. `--no-compact` writes `compact_schedule: "turn"` (`UNCOMPACTED_SCHEDULE`), so its schedule is identical to `--compact-schedule turn`'s, but the header also writes `"compact": false`, and only a run with compaction off writes that key (a26-2 fixed, T58). A resume of such a session now runs with compaction off and says `running without compaction, as recorded (pass --compact to compact)`; a typed `--compact` wins with `recorded with --compact false; continuing with true (the current flags win)`. `lain bench variance` refuses to pool a compaction-off recording with a compaction-on one: `cannot compare runs where one ran without compaction: compaction off vs compaction on` (T59). A header with no key at all predates the field, and those runs compacted on
   the turn. `lain bench variance` refuses recordings made under different schedules, ending
   `cannot compare runs that differ in compaction schedule: idle vs turn` (exit 1); a recording
-  without the key counts as `turn`.
+  without the key counts as `turn`. a28-1, open: a `--no-compact` run against a compacting one is refused as the schedule (`idle (1) vs turn (2)`), never naming compaction off (seen again in round 28's bench run).
 - **The header also records which STRATEGY ran, as `compact_strategy` — present only when
   `--compact-strategy` was typed.** Like every other compaction key now, an unflagged launch writes no key at
   all rather than a default value; a reader normalizes that absence to the eager control arm
@@ -383,7 +384,7 @@ The window HUD and the StatusFeed show the pre-cut reading until the next reply,
 high after a prepare and drops on the first reply. That over-reports and hides nothing; it is not a
 finding.
 
-Step 4 needs a prepare that actually takes a summary. A head of tool rounds is elided with no summarizer call (`(elided -- no summary was taken)`), so a prepare takes milliseconds and there is nothing to type into. Build the head from asks with no tools. Typing during a real prepare's summary holds the ask until it lands, and now says so first: `finishing a compaction summary before your prompt runs` (c26-4 fixed, T25). Steps 1, 2, 3 and 5 were driven on 2026-10-18, with a prepare at `idle_seconds` 123.
+Step 4 needs a prepare that actually takes a summary. A head of tool rounds is elided with no summarizer call (`(elided -- no summary was taken)`), so a prepare takes milliseconds and there is nothing to type into. Build the head from asks with no tools. Eager prepares also never summarize a block under 4096 bytes (`RoutedSummarizer` `MODEL_THRESHOLD_BYTES`), so a small head's cut reads `(elided -- no summary held)`; step 4 needs `summarize-conversation` over blocks past that size, and a proxy to time the type-in (round 28). Typing during a real prepare's summary holds the ask until it lands, and now says so first: `finishing a compaction summary before your prompt runs` (c26-4 fixed, T25). Steps 1, 2, 3 and 5 were driven on 2026-10-18, with a prepare at `idle_seconds` 123.
 
 ## 8 — The price table, and the lint that keeps it honest
 
@@ -420,7 +421,7 @@ purpose.** `Price.members` is `[:input, :output, :cache_creation, :cache_read]` 
 `#cache_write`, and typing the older prose name straight into `/ruby` raises `NoMethodError`. Two
 separate drivers lost a turn to that on 2026-08-19.
 
-`claude-fable-5` and `claude-mythos-5` are deliberately **unpriced** and must raise by name:
+`claude-fable-5` and `claude-mythos-5` are deliberately **unpriced** and must raise by name (`claude-fable-5-1` and `claude-mythos-5-1` are priced since round 28, 10/50/12.5/0.25, and do not raise):
 
     no price for model "claude-fable-5"; configure a fallback to degrade
 
@@ -455,7 +456,7 @@ The freshness lint is a repo lint (`pre-commit`), not a runtime check, and it ru
 rather than the sandbox:
 
 ```bash
-bin/lint-price-freshness; echo "exit=$?"     # exit 0, prints NOTHING, while the marker is < 90 days old
+bin/lint-price-freshness; echo "exit=$?"     # exit 0, prints NOTHING, while the marker is < 90 days old (marker 2026-10-23: stale after 2027-01-21)
 ruby -rdate -e 'load "bin/lint-price-freshness"
   src = File.read("lib/lain/price_book.rb")
   puts PriceFreshnessLinter.check(source: src, path: "lib/lain/price_book.rb", today: Date.today + 200).message'
@@ -585,7 +586,7 @@ lain bench variance <the unset session> <the default session>
 ```
 
 Verified 2026-09-14: the first exits **1**, no backtrace, ending
-`cannot compare runs that differ in context pipeline: <prune's stages> vs reminder+cache-breakpoints` (an unset pipeline is named by its default stages); the second **reports**,
+`cannot compare runs that differ in context pipeline: <prune's stages> vs reminder+cache-breakpoints` (an unset pipeline is named by its default stages; since round 28 each side carries its run ordinal, `prune (1) vs reminder+cache-breakpoints (2)`); the second **reports**,
 because an unset flag and `default` render the same stages. A table for the first pair is the
 regression; a refusal for the second is too.
 

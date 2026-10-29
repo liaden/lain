@@ -57,7 +57,7 @@ Do not stop at a green build. **Break it and watch the loop recover:**
 sed -i 's/fn main()/fn main(x: i32)/' src/main.rs
 ```
 
-Then tell the model the build is broken and let it fix it. What to watch:
+Then tell the model to run `cargo build` first and fix what it prints (round 28: without "first run cargo build" the model may fix the file unbuilt). What to watch:
 
 - **Does the compile error survive as a usable tool result?** `cargo build` writes errors to
   **stderr**, often with ANSI colour and multi-line spans. Confirm the model receives the diagnostic

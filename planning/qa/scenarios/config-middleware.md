@@ -90,8 +90,10 @@ Expected: refused naming `.lain/config.rb:2`, with `has no verb :modle; known ve
 turn, repl, http`. Repeat with `turn SomeClass`, where `SomeClass` is a class with neither method (a named class prints as its plain name, `<Name>`: classes defined in the `instance_eval`'d builder live under its singleton class, and the `#<Class:0x…>::` prefix that showed in round 26 is stripped (j26-4 fixed, T73); an unnamed one prints
 `an anonymous class`). The refusal reads `<name> has no instance #call or #settle`, one sentence naming both missing methods (round 25, j25-3,
 fixed); a `tool` or `repl` class lacking `#call` reads `has no instance #call`. A module (define `module Hooks; end` in the user file and write `turn Hooks`) is refused as
-`a middleware is a Class, not a Module: Hooks`, before the missing-method check and never as `has no instance #call`; a value that is neither (`turn 5`) reads `a middleware is a Class or a block, got 5`. Also try `http { }` (a block): `http takes a Faraday middleware class, not a block`; each is refused at its own line. A class defined in the user file is not
-visible to a project file, so naming one from there refuses as `uninitialized constant`, for the wrong reason. Remove the project file before step 4.
+`a middleware is a Class, not a Module: Hooks`, before the missing-method check and never as `has no instance #call` (j27-1, open in round 28: `turn Hooks` and `http M2` read `a Class, not a Module: #<Class:0x...>::Hooks`, because `config/middleware.rb:37` still uses `klass.inspect` where `describe` is used one line below); a value that is neither (`turn 5`) reads `a middleware is a Class or a block, got 5`. Also try `http { }` (a block): `http takes a Faraday middleware class, not a block`; each is refused at its own line. A class defined in the user file is not
+visible to a project file, so naming one from there refuses as `uninitialized constant`, for the wrong reason. j28-2, open: a project mark follows a loader into any repo with the same bytes. With `.lain/config.rb` = `load File.join(__dir__, "extra", "x.rb")` and a benign `x.rb`, `lain trust` the repo, then in a second, never-trusted repo with the identical `config.rb` and its own `extra/x.rb` that writes a marker file, `LAIN_PREFLIGHT=1 lain chat` constructs with no refusal and the payload runs (trust keys on the top-level `.lain/*.rb` bytes only, `project/trust.rb:13-19`; the prompt names one project). Control: a repo with different `config.rb` bytes refuses. Today expect the payload to run.
+
+Remove the project file before step 4.
 
 ## 4. a tool middleware in a live cockpit runs outermost
 
@@ -115,7 +117,7 @@ In the same session ask the model to spawn a one-shot subagent that reads the sm
 
 Expected: `awk '{print $2}' "$TRACE" | sort -u | wc -l` is at least 2, and at least one `read_file`
 line carries a different `object_id` from the parent's. The child ran the member (inheritance), and
-on a fresh instance (no shared state). If the count is 1 while the child's `tool_use` is in the
+on a fresh instance (no shared state). Round 28: this model's first one-shot children answered with a prose `<function=read_file>` and called no tool, so spawn again until a child's `tool_use` is in the journal before judging the count (the third spawn passed). If the count is 1 while the child's `tool_use` is in the
 journal, the child's stack was built without the configured members: file it.
 
 ## 6. an `http` entry sees a real streamed Ollama request
@@ -141,7 +143,23 @@ middleware twice`.
 
 The load-time probe for `#call` (and `#settle` for `turn`) skips `http` entries, because a Faraday handler is constructed by Faraday and has no such contract here: an `http` class lacking `#call` is accepted at load, so do not expect a method refusal for one (a non-class or a Module still refuses, and so does a block). Expected: a line `http post /api/chat Hash`: the body is still the caller's Hash because the
 entry sits ahead of JSON encoding, and the request is the streamed one. Force a retry with a closed `--api-base` port or a severing proxy, never by killing the shared model server, and confirm the line repeats for each attempt: entries run on every
-attempt.
+attempt. j27-2, open: against an accept-and-RST listener the user `http` entry ran for the 4 `POST /api/chat` attempts (4 trace lines) but never for the 4 launch probe requests (`/api/ps`, `/api/tags`, `/api/show`, `/api/ps`), because `provider/ollama/transport.rb:239` clears `http_middleware` and the comment at `:233-235` still says only two numbers are overwritten.
+
+## 7. a member that raises (j28-4, open)
+
+Register two raising members in a trusted config, one per run: `model` calling a method `Lain::Middleware::Env` lacks (`env.keys`), and `class Boom < Lain::Middleware::Base; def call(env, &app) = raise "qa boom"; end` as `tool Boom`.
+
+```bash
+cd "$REPO" && lain chat --provider ollama --model qwen3-coder:30b --non-interactive --prompt 'read small.txt' ; echo "exit=$?"
+```
+
+Today (round 28): exit 1 with a raw Ruby backtrace (through `agent/model_caller.rb:39` for the `model` member, `agent/tool_runner.rb:460` for the `tool` one); the session file ends `session_closed reason "exit"` with no `run_interrupted` and no error record, the user turn unanswered (the tool_use turn committed with no tool_result in the `tool` case); in a cockpit the chat pane dies `Pane is dead (status 1)` and the journal again says `reason exit`. The control is a chat that quits normally, which writes the same record, so the journal cannot tell a crash from a quit. Neither stack contains a member's exception (`middleware.rb:132-134`). Re-check: the expected shape is one call failing, or the run ending with a named interruption.
+
+## 8. a `model` and an `http` member together over an eagerly summarized result (j28-5, open)
+
+Register `model Mtrace` and `http Wire` (both writing to `$TRACE`) in one `middleware do` block, run a local chat, and have it list a directory of about 1000 entries so the result is eagerly summarized.
+
+Expected today: the journal holds 3 `request_sent` (the agent's two and the summarizer's, `max_tokens` 1024) and 1 `oracle_answer`; the trace holds 3 `http post /api/chat` lines but only 2 `model` lines. The judge's call (escalation `auto`, allow) does pass through `model` on a fresh instance. So "around every model call" holds for the agent and the judge, not for the summarizer, the handoff or the secret oracle (`Oracle::Model` round trips outside the agent's stack, `cli/wiring.rb:696`, `tools/subagent.rb:1771`). Record the counts; a `model` line per `request_sent` would be the fix.
 
 ## Close-out
 

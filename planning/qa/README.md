@@ -182,6 +182,15 @@ that chunk `draft` and unlanded, was corrected on 2026-09-14.)
 
 It is deterministic apart from §7, so it joins the cheap deterministic set on the standing rule below.
 
+**Added 2026-10-29**: the surfaces of the UX-first plan (`planning/specs/ux-first-dogfood.md`). All three are written from the
+code at HEAD and none has been driven yet, so the first round that runs one corrects its predictions:
+
+| Scenario | The question it answers | Cost |
+|---|---|---|
+| [`todos-drain.md`](scenarios/todos-drain.md) | Does `lain todos drain` run each chore in a confined `git clone --shared` lease, move upstream's branch only when `lain land` lands the commit after verify, and leave a line (`[x]` with sha and session path, or `[!]` with why) that a human can check? Also the file's grammar, the `todos file:` verb, a failed or refused landing keeping its lease, and a drain that dies. | §1 free; one headless local-model chat per chore, about 3 chores |
+| [`session-tree-and-export.md`](scenarios/session-tree-and-export.md) | Does `lain://tree` draw the chain, abandoned branches and fork rows truthfully, do `<CR>` rewind and `L` / `/label` act on the right turn and survive `--resume`, and do `lain export` and `/share` carry only the model's masked view with paths rewritten and a released read refused? | cockpit plus about 5 local completions; export and share offline; a stand-in `gh` |
+| [`notifications.md`](scenarios/notifications.md) | Does a settled ask or a parked question ring the bell, a terminal OSC sequence, tmux and `notify-feed` exactly once under the `notify` layer and nothing with it down, and does a note never carry a secret or a control byte? Also the editor's echo of a settled ask. | cheap; 3 short local asks; stand-in `notify-feed` and `tmux` |
+
 ## Automated by `spec/e2e`
 
 Since 2026-10-03, `spec/e2e/` runs this checkout's real `exe/lain` (a plain chat, and a `lain up` cockpit with tmux and nvim) against a stand-in for ollama that replays recorded turns, or plays scripted ones, in `rake pspec` and the commit hook. Each section it drives carries an **Automated by** line naming the spec and its examples, and a **Still needs a human** half. That line is the list: this table only says where to look. A full round skips the automated half and always drives the human half; a round the user scopes to a named scenario or section drives it whole.
@@ -334,6 +343,14 @@ Written per round. **Rounds 2 through 12 have been deleted** -- every finding in
 discharged, and git history is the archive: `git log --diff-filter=D --stat -- planning/` names the
 commit that removed them, and `git show <commit>^:<path>` reads any of them back whole. A round
 stays here only while it is still in flight:
+
+- [`../qa-findings-round28-2026-10-28.md`](../qa-findings-round28-2026-10-28.md): round 28, a full round over all 22
+  scenarios in 13 forks, against `955cf59b` (452 commits past round 27). Both round 27 HIGHs are fixed, b27-4 on every
+  trigger. **One new HIGH:** a memory item with `sources` makes every later session in its project unresumable (i28-4).
+  **Two MED-HIGH:** a judge- or rule-approved string-arm command under the `workspace` sandbox cannot run a mise or
+  `~/.cargo` program, so a human's "always" is refused every time (k28-4, with c28-1 and l28-7), and approving the
+  release of a `.env` present at launch is refused at egress and wedges the chat (g28-3). Rulings asked: b28-2, x28-1,
+  j28-2, b28-6 and the k28-4 remedy.
 
 - [`../qa-findings-round27-2026-10-21.md`](../qa-findings-round27-2026-10-21.md): round 27, a full round over all 22
   scenarios in 13 forks, against `b5de73a4` (212 commits past round 26). Round 26 is almost entirely fixed, b26-1 included.

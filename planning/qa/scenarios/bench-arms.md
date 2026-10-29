@@ -112,6 +112,8 @@ an arm) that loops past the ceiling on one task for one arm. The adaptive-router
 models in round 20, so a real run is likely to supply one; if it does not, the ceiling arm of
 `spec/lain/arm/driver_spec.rb` is the fixture to copy.
 
+l28-4, open: the repeat guard's stop (`todo_write called 3 times with the same input and result`) is a `Budget::Exceeded` too, so it reports as `failed: ceiling` and `task N failed at the ceiling: ...`; a reader thinks the arm hit its iteration ceiling when it looped. Expect the ceiling wording for both.
+
 **PASS**, all of:
 
 1. the process **exits 0** and prints the header, the grade table, the token table and the cost column
@@ -175,6 +177,8 @@ Check all four lines:
 - **no credential and no base URL anywhere in it.** `spec/output_discipline_spec.rb` cannot see
   inside a report String, so this one is checked by eye, every round.
 
+l27-3, open: a default-arm run writes no `run_arms` record. l27-7, open: an interrupted run (INT) exits 0 and prints `Arm driver -- PARTIAL, interrupted after N graded run` with no fixture, model or isolation lines, so the one report most likely to be misread names nothing. Drive INT from a Ruby spawn or a foreground job: a `&` job in a non-interactive zsh starts with SIGINT ignored and runs to the end.
+
 `unrecorded` in any field is the honest "the record does not know" — legitimate for a hand-assembled
 run, and a finding when the flag was actually passed.
 
@@ -226,6 +230,8 @@ recording takes the same path.
 
 Driven round 26. Each run makes 4 attempts, so a single RST is retried away; sever every attempt of the target run. `sever.rb` with a `seq:pass,rst,rst,rst,rst,pass,pass` mode file (`~/tmp/lain-qa-2026-10-18-l/records/sever.rb`) gives exactly 1 `.failed.ndjson`. Variance then reports 2 recordings with a `== Set aside ==` reason, exit 0. With 1 survivor it refuses (exit 1) and lists both set-aside files.
 
+Round 28 report shapes, all open: l28-3, `ci95` is an unclamped t-interval, so a grade bounded in [0,1] prints `0.311..1.189` (and `-5.853..6.853` at n = 2) and token and wall columns can print a negative bound. l28-5, with no `--labels` every gold mismatch is attributed `reasoning`, a ceiling or repeat stop `reasoning`, any other `TaskFailure` `environment`, and `unattributed` reads 0, so a failure nobody labelled gets filed against the model. l28-6, `wins` counts the higher candidate on tokens and wall-time too (`total tokens wins 6` means it spent more), `<arm>: task N unpaired: malformed` can name the wrong arm (the baseline failed, the candidate's n is 8), and `cost (USD): not priced` prints once before each arm's unpaired line. l27-5, open: after a set-aside, survivors are numbered 1 and 2 beside files `1.ndjson` and `3.ndjson`.
+
 To see real figures, run one small sweep against a priced model — and note what the number excludes:
 **LLM-judge tokens are not on the arms' ledgers**, so a rubric-graded run's cost omits the judge. That
 omission is now *visible* for the first time; it is recorded, not fixed.
@@ -237,15 +243,15 @@ omission is now *visible* for the first time; it is recorded, not fixed.
   `this run is leased to <worktree> and no human is attached to approve a call outside it; work inside <worktree>`). Run the scenario from a
   repo with a sentinel file in a parent directory. After the run, `git status` in the scratch repo is clean and nothing outside the
   worktrees changed, the sentinel included. **What this does not cover:** an opaque shell command (`sh -c`, `python3 -c`) still runs
-  and can write outside the lease, which is the limit the refusal text states; `--confine reader` confines only a read-only command, and `--confine workspace` confines an opaque command's writes to the worktree (`WORKTREE_REACH`: "an opaque command's writes unless --confine workspace confines them to the worktree"; reads stay open). The workspace claim is undriven here: drive the round 26 loop under `--confine workspace` and check the parent sentinel.
+  and can write outside the lease, which is the limit the refusal text states; `--confine reader` confines only a read-only command, and `--confine workspace` confines an opaque command's writes to the worktree (`WORKTREE_REACH`: "an opaque command's writes unless --confine workspace confines them to the worktree"; reads stay open). The workspace claim was driven in round 28 (l27-4 fixed in effect): under `--confine workspace` over a 3-task escape fixture, the `$(find parent)` loop never reached the parent, the sentinel and launch repo were unchanged, and the refusal text ends `send the steps as separate calls`. Re-drive it and check the parent sentinel. l28-7, open (same mechanism as k28-4): `--confine workspace` cannot run a mise Ruby or Node program at all; `ruby bin/sum.rb` answers `exit status: 126 ... Permission denied | REFUSED by the sandbox` in every arm (control `--confine off` prints the value), and spelling the interpreter by absolute path is refused by the lease. l28-8, open: that refused call's `sandbox` record reads `profile workspace refused [] created_sealed []`, because the EACCES lives in an `exec_record` the bench does not copy, so the journal cannot tell a sandbox refusal from a clean run.
   Round 26: named paths are refused by the lease (absolute `write_file`, parsed `cd <outside> && touch`, outside `read_file` and `list_files`), but an opaque `cd <outside> && for f in $(find ...); do ...; done` from an arm wrote the parent sentinel and a tracked file in the launch repo (l26-1). Since T20 a leased run with no human attached refuses any bash command whose paths cannot be read (a loop, `$(...)`, `cd` then `;`, `sh -c`, `ruby -e`, `xargs`), with `this run is leased to <worktree> and no human is attached, so a command whose paths cannot be read is refused`, and the `run_arms` header records `"opaque": "refused"`. Re-run the loop and check `git status` in the launch repo and the parent sentinel: both unchanged. Round 27 found the refusal itself advising the walk-out (it told the arm to write a script, which ran outside the lease, l27-4). Now the refusal ends `send the steps as separate calls` and says nothing about a script, and a script the run wrote is refused too: `this run is leased to <worktree> and no human is attached: <path> was written during this run; a leased run cannot execute code it wrote`. The check covers the program a command runs, the files that program is known to run, and the regular files it hands an interpreter as an operand or a `-r` feature; it does not follow what those files load or require. Drive it: have an arm write `add_loop.sh` and send `bash add_loop.sh` (refused), and send `bash bin/check.sh` for a script committed before the run (approved as before). What stays open is a script that predates the run and loads something the run wrote, and a project interpreter script that writes anywhere; a write-confined sandbox for arms is a separate design. `lain bench arms --confine reader` also crashed at its first gated call in round 27 (l27-2, fixed: the arm's channel now holds journaled Hashes and records alike); re-drive a reader arm through a gated call and confirm a priced report.
-- **`--confine reader` and `--confine workspace` are the chat arms a bench takes** (`--confine off|reader|workspace`, default `off`; `classes` is refused as a chat arm with `--confine classes is a chat arm: bench arms take --confine off, reader or workspace`, and `--exec`,
+- **`--confine reader` and `--confine workspace` are the chat arms a bench takes** (`--confine off|reader|workspace`, default `off`; `classes` is refused (round 28: by Thor's enum message, `Expected '--confine' to be one of off, reader, workspace; got classes`, not the older `is a chat arm` sentence), and `--exec`,
   `--exec-image`, `--judge-facts` and `--tripwire` are not bench flags). With it, the report's first lines carry `confine:   reader`
   beside `isolation:` (and `reader (degraded: the box lacks bwrap and landlock)` on a box without them), and the journal's `run_arms`
   record names it. A refused run writes no record. The bench journal now carries the arm's `sandbox` records, stamped with `arm` and `task` (l26-2 fixed, T22); read the profile there, and still prove it from outside: sample `ps` for `lain-fence` during a slow allowlisted read. Not a 13 MB `sort`: the shell approver (`ComposedTerm`) approves nothing whose input is over 64 KiB (`cli/wiring/board_build.rb:408`), so that call parks or is refused and never runs under `reader`. Keep the input under 64 KiB (`sort small.txt | wc -l` on a 60 KB file, repeated in separate calls) and read the `sandbox` records. Round 26 saw only `strace -DD` (traced) and an outside `cat` that ran.
 - The **dual-ledger arm settles on its ledger rather than its grader**, and its terminal state
   distinguishes a dried-up ledger from a ceiling. It is readable from a bench run: a `ledger_transition` reaches the run journal, stamped with `arm` and `task`, only when `--journal` is given (l26-4 fixed, T23).
-- A fixture needs 2 or more tasks with distinct prompts; 1 task now refuses before anything is journaled (l26-3 fixed, T24; the Driver's own `ArgumentError` is untouched), and identical prompts refuse.
+- A fixture needs 2 or more tasks with distinct prompts; 1 task now refuses before anything is journaled (l26-3 fixed, T24; the Driver's own `ArgumentError` is untouched), and identical prompts refuse (l27-1, open: the duplicate-prompts refusal exits 1 with the right sentence but leaves a 159-byte journal holding one `capability_degraded prompt_caching` record).
 - `grade_record` carries `arm` since round 26's re-check, and a partial row reads `6 of 8` with the surviving grades folded (l25-2 fixed).
 - **No `StalledStreamError`.** This arm runs concurrent actors against a single-slot ollama, which
   is the shape that has killed sessions elsewhere. It has not fired here in two rounds — the
@@ -300,6 +306,17 @@ omission is now *visible* for the first time; it is recorded, not fixed.
   (Round 10 could not re-take the runner-argv control above: no separate `ollama runner` process is
   visible on ollama 0.32.12 on this box, so `-b`/`-c`/`-np` are unreadable from `ps`. Recorded as
   unreachable rather than as agreed.)
+
+## The other bench subcommands (round 28)
+
+Offline checks, no model:
+
+- `lain bench faults --fixture-dir spec/fixtures/grader/faults` runs and reports 3 classes, `1 grader fooled, 2 gold too strict`. `lain bench plan-sweep --plan spec/fixtures/plans/plan.md --runs <runs.yml>` runs (its `ci95` cells show l28-3).
+- l28-2, open: `lain bench variance DIR` and `lain bench compaction-sweep FILE` crash with a raw `ArgumentError` backtrace (`session resumes from X but no resolver was given; pass resolve: ... to Loader.new`) on any RESUMED chat session even with its parent beside it (`bench/session.rb:356`, `loader.rb:34-37`). Use a session that was not resumed.
+- i28-4 reaches the bench: `variance` and `compaction-sweep` over a session whose `memory_loaded` holds an item with `sources` refuse with `the memory_loaded record names version ... the recorded view has been edited` (exit 1, file named). `approval-replay` over a session with no gated calls is unaffected.
+- `compaction-sweep --summarizer local` defaults `--summarizer-provider` to ollama and, with `--provider` unset, the summarizer model is ollama's default `qwen3:4b` (x28-1's mechanism, stated in the flag help here).
+- l28-9, open: `lain bench memory-sweep FIXTURE --provider ollama --model qwen3-coder:30b` refuses `ANTHROPIC_API_KEY is not set; --provider anthropic needs it`, because `exe/lain:1219` merges `"provider" => "anthropic"` over the typed flag; the help offers `--provider` anthropic, ollama and ollama-cloud.
+- `lain bench oracle-calibration --journal J` on a local model (announce the swap): 300 answers in about 4 minutes; with qwen3:4b `wrong approves: 122 of 150 secret paths`, Brier 0.3902, `FAIL`, a model finding (the local tier is opt-in); `--recorded` re-scores it identically. `--attempts 2` over a 2-task fixture renders pass^k, rounds to pass and cost per solved task (`not priced`). `lain bench tree` heads its tree `lain_c_l_i:bench`, Thor's class name (cosmetic).
 
 ## What the arms cannot do today
 

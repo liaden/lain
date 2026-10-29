@@ -267,7 +267,7 @@ The three checks a survey structurally cannot make:
    back only through `:LainNoteDone` (round 25). When the head is the checked-out branch, NEW is the working file
    itself, so a note on NEW anchors in the file you can edit.
 3. **`x` marks a hunk, and a changeset has real hunks.** `cockpit-surfaces.md` §4's `x` refusal
-   ("nothing on that row") is the sibling failure; here the positive case is reachable.
+   ("nothing on that row") is the sibling failure; here the positive case is reachable. b28-2, open ruling: `x` on a never-opened changeset row (`spec/spec_helper.rb`) answered `marked reviewed: 1 hunk(s)` in round 28, because `read` is `file.chunked?` and a parsed changeset file is always chunked (`review_view.rb:453`), so the UNREAD refusal fires only on a row with no hunk keys. Whether marking without opening should refuse is the ruling. Ruled, and landed in 3c5aa85f (card T25): a row counts as read only once a human opened its diff in the round, so the prediction (a refusal on a row nobody opened, even one lain already chunked) holds today.
 4. **A verdict with held notes is refused, and nothing is dropped** (round 25, h25-10, fixed). Place a note, do not run
    `:LainNoteDone`, then `:LainReviewVerdict approve`. It refuses `1 note not handed back -- :LainNoteDone first` (`N notes` for
    more; a blocking note's `path:line` is appended after a colon) and the review stays open. After `:LainNoteDone`, the same verdict
@@ -275,6 +275,8 @@ The three checks a survey structurally cannot make:
    with the same sentence, and journals nothing. The `/review-submit` text says only that the verdict and the *handed-back* annotations are
    on the journal. A verdict that settles with the note gone, or a submit text that claims a held note is journaled, is the finding back.
    Round 26 re-checks both: a verdict with 3 notes held refuses `3 notes not handed back -- :LainNoteDone first: config/app.env:2` (h25-10 fixed); a second `/review` with notes held refuses the same way (h25-9 fixed).
+
+h28-6, open: under `--scope commits` a commit whose file a LATER commit also touched shows as `(no hunks reachable here)`: the red commit (`test: failing tests at ...`) lists no file, and the spec appears only under the implementation commit that rewrote it, so the view hides the red-to-green change. `/critique` does chunk the red commit separately.
 
 Then the verdict, both policies:
 
@@ -379,7 +381,7 @@ git config core.quotePath true              # and repeat with GIT_CONFIG_COUNT=1
 lain review unicode --base feature
 ```
 
-Both files must appear under their real names, under **all three** config routes. A `"caf\303\251.rb"`
+Both files must appear under their real names, under **all three** config routes. Also plant a name with a control character (`ruby -e 'File.write("evil\e[2K\rinnocent.rb","x\n")'`) and a newline in a name. h28-1, open: `lain review` prints the raw escape (`Review::Surface::Text#displayed_path` calls `Utf8.legible`, which scrubs only invalid UTF-8), so a terminal shows `innocent.rb` and a newline splits the row in 2; commit subjects have the same gap. `lain trust` escapes control characters in a file it prints, which is the precedent. A `"caf\303\251.rb"`
 in the listing is the finding, and it is one that only shows up if the round sets the config
 deliberately — the default already being ON is not enough, because a global config could equally be
 setting it OFF on this box.

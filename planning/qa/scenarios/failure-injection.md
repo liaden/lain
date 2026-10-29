@@ -270,7 +270,7 @@ of which record set the damage landed in. Drive the same damaged file through ea
 |---|---|---|
 | `--fork` | `lain chat --fork SESSION@DIGEST` | `cannot fork <session>: …` |
 | `--resume` | `lain chat --resume SESSION` | `cannot resume <session>: …` |
-| the bench | `lain bench variance <the damaged file>` | `<path>: <the same refusal>` |
+| the bench | `lain bench variance <the damaged file>` | `<path>: <the same refusal>` (the file must be CLOSED: over an open session, such as a live cockpit's copy, it is never replayed and reads `never closed ...` then `needs at least two recordings`) |
 | the supervisor | a supervised restart whose replay reads it | `cannot restart "<role>" from its session record: …` |
 
 All four exit 1 with **no backtrace frames** — `Bench::Session::Corrupt` is a `Lain::Error`, so the
@@ -371,7 +371,7 @@ human a verb**, so there is something to drive:
   Ctrl-C while an `ask_human` is parked and the countdown must appear.
 - At that countdown, **`s` stops the ask** and keeps the session: the journal gains a
   `run_interrupted` with `"reason": "stopped"`, there is **no** `session_closed`, and the prompt
-  comes back as `you>` on the same chain.
+  comes back as `you>` on the same chain. d28-4, open: the `(human> closed -- the ask waiting on it was stopped)` note is appended to the countdown line with no newline.
 - **`/stop` does the same thing from the parked prompt itself.** It is lifted off the input rail
   before the command registry sees it, so it works at a `human>` or a `[y/N]`, not only at
   `you>`.
@@ -423,6 +423,7 @@ the one that was actually fatal:
    ceiling counts model calls, not tool calls.
 2. **The stop is SAID, in one line:** `error: loop ran 25 iterations, ceiling is 25`. Round 4's
    failure rendered *nothing at all* while the HUD kept reading `idle 0s`.
+   A prose tool call ends a chain early on this model (about 15 calls in a cockpit, round 28), so read `turn_usage` before calling the ceiling reached. d28-1, open: after a withheld prose call the model's NEXT reply can be the literal `(a tool call written as text was withheld)`, which lain shows as lain's own sentence and journals as an ordinary answer (`end_turn`, no `malformed_response`).
 3. **The next prompt is answered normally**, on a fresh count. A per-session counter is the
    regression: it accepted every later prompt, committed it, immediately `run_interrupted` it, and
    answered nothing. `turn_usage` climbing past 25 across several prompts *while answers keep
@@ -519,7 +520,7 @@ the command's output (exit status: 1) is 200000 bytes, over the ceiling of 16384
 holds.** Any line-structured file over the ceiling, 3 MB and 300 KB alike, is offered the windowed advice; the live
 distinction is `one.json` against `lines.json` (below). Treat the paragraph that follows as history.
 
-`read_file`'s windowed advice is the same for a 3 MB file as for a 36 KB one ("a limit of about 201 lines fits one window") and never said how many windows were needed; the model followed it 25 windows to the ceiling, 75 calls across 3 asks (round 26, d26-2). Fixed (T66): the advice now says `this file takes about N windows of 16384 bytes` (N is the size over the window), and over 20 windows it offers a structural read first; the ceiling refusal reads `over the ceiling of N <unit>`.
+`read_file`'s windowed advice is the same for a 3 MB file as for a 36 KB one ("a limit of about 201 lines fits one window") and never said how many windows were needed; the model followed it 25 windows to the ceiling, 75 calls across 3 asks (round 26, d26-2). Fixed (T66): the advice now says `this file takes about N windows of 16384 bytes` (N is the size over the window), and over 20 windows it offers a structural read first; the ceiling refusal reads `over the ceiling of N <unit>`. d28-2, open: the two figures disagree, since 184 windows of 16384 bytes and a limit of about 201 lines (about 12.3 KB at 61 bytes a line) are different window sizes, so following the line advice takes about 249 calls (`read_file.rb:598` against `:622`).
 
 **The difference between those first two was the whole design and was worth reading twice.** The
 smaller file is offered a *full-cover window* — advice that leads somewhere — because a window
@@ -599,7 +600,7 @@ missing); the cap is applied **after** the deterministic sort, so two runs retur
 in the same order; and a *small* directory gains no trailer at all — a notice on an uncapped result
 is as much a defect as a missing one. `grep` and `ast_search` keep their older
 `... capped at 200 matches` trailer, deliberately, and must **not** have been unified into this
-wording: that string is pinned by the secret-filter specs.
+wording: that string is pinned by the secret-filter specs. d28-3, open: `grep` on a directory labels hits relative to that directory (`g.txt:2:...`, not `gdir/g.txt:2:...`), and the tool description does not say so.
 
 ## 9 — The windowed read, and which refusal `edit_file` gives
 

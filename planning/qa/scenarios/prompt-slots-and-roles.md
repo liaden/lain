@@ -249,7 +249,7 @@ $QA/drive.sh '/ruby Lain::CacheProfile::ANTHROPIC.min_prefix_tokens' 8 30 >/dev/
 573 bytes is ~143 tokens at the ~4-bytes-per-token estimate this project uses elsewhere
 (`Lain::ProxyBytes::BYTES_PER_TOKEN`), but the template is only half of what is cached.
 **Anthropic's cached prefix is the tools block plus the system prompt**, so the free half must
-count the tools block too: the tools block is 23 tools, 23,642 bytes on the ollama wire (round 26; 23,272 in round 25, 22,726 in round 23, 19,619 in round 22; the figure moves with the toolset, so re-measure each round rather than quoting it), which is about
+count the tools block too: the tools block is 23 tools, 24,074 bytes on the ollama wire (round 28, about 6,018 tokens; 23,878 in round 27, 23,642 in round 26; 23,272 in round 25, 22,726 in round 23, 19,619 in round 22; the figure moves with the toolset, so re-measure each round rather than quoting it), which is about
 5,900 tokens and so ABOVE the 4096-token floor `CacheProfile::ANTHROPIC.min_prefix_tokens` reports.
 573 bytes of template alone does not show the request is under the floor. Measure the tools
 block (the request's `tools` serialised, from the journal's request record) beside the template

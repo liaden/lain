@@ -368,7 +368,7 @@ Checks:
 9. **A related directory is in a child's scope as a tree (2026-10-09 trial fixes).** With `sensitivity related: %w[<$QA>/parent/sibling]` set (§4.8),
    ask a researcher to `list_files` and then `glob` `**/*.rs` on `<$QA>/parent/sibling` itself. Neither parks as
    `outside_project`; the trial's researchers were parked on the related root and could read only single files.
-   A path beside it, `<$QA>/parent/slow`, still parks under `ask`. Under `auto` the listing goes to the judge; if the judge denies it, the chat shows a stamped line `the judge denied <tool>(<input>)` and the model is told `the judge refused this call` (round 25, k25-1, fixed), so a refusal is never silent. A judge that times out (30 s, `reason: fault`) parked the call with no note, so the human could not tell a failed judge from no judge (round 26, k26-8); the parked row now carries `the judge could not be asked (it timed out or failed)` (T74). Under `--non-interactive` the model is told no human can approve it instead. State which approval level the step runs at.
+   A path beside it, `<$QA>/parent/slow`, still parks under `ask`. Under `auto` the listing goes to the judge; if the judge denies it, the chat shows a stamped line `the judge denied <tool>(<input>)` and the model is told `the judge refused this call` (round 25, k25-1, fixed), so a refusal is never silent. A judge that times out (30 s, `reason: fault`) parked the call with no note, so the human could not tell a failed judge from no judge (round 26, k26-8); the parked row now carries `the judge could not be asked (it timed out or failed)` (T74). Under `--non-interactive` the model is told no human can approve it instead. State which approval level the step runs at. k28-1, open (round 28, default `auto`): a judge-approved `bash` call cannot see a `related` directory and is not told. `git -C <sibling> rev-parse --is-inside-work-tree` ran under profile `workspace` and answered `not a git repository ... Stopping at filesystem boundary`, `cat <sibling>/src/m1.rs` answered `Permission denied`, both with `refusals []`; the same reads approved by a human (`traced`) worked, and `read_file`, `glob` and `list_files` of the tree work with no prompt. The model spent 4 calls debugging a repository that was not corrupt. k28-2, open: every `git -C <dir>` stage journals `exec_resolution` `resolved null`, `klass unresolved`, and trips `tripwire unresolved_exec strong would_stop` naming `/usr/bin/git`, while plain `git ...` resolves (`run_files.rb:56,186`).
 
 10. **Frugirl round 4 checks (default `auto`, relaunched without `--approval`).** Record the judge's latency
     per call and any approve that was wrong, and count the human prompts for the whole journey against
@@ -398,6 +398,8 @@ the plain `/` form so the skill runs in your chat and can interview you:
 /research-epic A small CLI that tracks my daily spending in a local file. No server. Rust.
 ```
 
+k28-4, open (MED-HIGH): during `/research-epic` the judge approved `cargo --version; rustc --version; rustup show active-toolchain; ls -a` (string arm); under profile `workspace` the `exec_record` refused `~/.cargo/bin/cargo`, `rustc` and `rustup` with EACCES, and the model wrote "cargo/rustc are hard-refused by the session sandbox" into `research.md`, which the human then approved at the gate. Control: `cargo --version` alone (term arm) runs. Expect research text that says the toolchain is refused.
+
 Checks:
 
 1. **The skill names only what the agent can reach.** The rendered skill (journal's first user
@@ -411,7 +413,7 @@ Checks:
 2. **The interview is a question set.** The model calls `ask_human` once with a batch (outcome,
    scope, constraints, done), and it arrives at `lain://inbox`, then `lain://question` in the
    editor. In `lain://question`: `x` ticks an option, indented prose under it says why, `:w`
-   submits. A line at column 0 that lain did not render is flagged and a hint row says where
+   submits (spell `questions` out in the directive: a free-text `question` with no options goes to `lain://inbox` only). k28-3, open: an option with an indented comment under it that is NOT the last option cannot be ticked, because `x` falls through to vim's `x` and deletes the option's leading `-` (` [ ] \`r\` red`), and the `:w` refusal then blames the indent rather than the removed dash; the option after the comment ticks. Repro: `:call append(<first option row>, '  why')`, `zR`, then `x` on the first option. A line at column 0 that lain did not render is flagged and a hint row says where
    answers go. Type one anyway. **Round 23 j-8 and j-9, fixed:** a ticked option (`- [x]`) is not flagged as a bad
    indent (before, all of them were), and a `:w` that lain refuses (a stray line, an untouched buffer) is answered on the
    review rail with the sentence on screen and the buffer left modified; it never raises a hit-enter prompt, so nvim stays
@@ -451,12 +453,12 @@ Checks:
    **you** to run `lain epic submit research <slug>`; the model relays that sentence and stops. It
    does not loop on the tool.
 8. **A new epic needs a restart to mount.** After `epic_write` created the epic in this chat, the
-   model's final text says to restart the chat. `/implement-epic` answers `this chat is in no epic` until you
+   model's final text says to restart the chat (round 28: glm-5.3's did not, a model finding, although `research-epic/skill.md:108` tells it to; the lain half passed: `/implement-epic` answers `this chat is in no epic`, `lain epic status` says `no epic artifact`, `lain epic show` prints the file). `/implement-epic` answers `this chat is in no epic` until you
    restart (there is no `/epic status`; it answers `unknown skill "epic"`, and `lain epic status` from a shell refuses with `No epic
    artifact at …/epic.md` until the plan stage writes one). After restart, with one epic in the home, it mounts on its own.
 9. **`epic_graph` adds an issue in-process.** After the research gate, `/plan-epic` runs the same
    way. Ask it to add one issue (`epic_graph` with `verb: add`) and then split it; the graph's
-   issue files appear under the epic home and no `lain epic split` command is suggested.
+   issues appear as `### [ ]` sections in `epic.md` (round 28: no issue files exist under the epic home until `/create-epic-issues`) and no `lain epic split` command is suggested. Round 28 also saw `epic_graph add` before `epic.md` existed answer `no epic artifact at .../epic.md`; the model then tried `write_file` into the epic home (parked as outside the project) before using `epic_write`.
 
 10. **The cap is roomy, and a cut names the flag (round 23 j-7, fixed).** `--max-tokens` defaulted to 16384 (it was 4096), and since T89 it is unset by default: the output ceiling comes from the model (the window an ollama server says it serves, else 32768), and a typed value overrides it with `max_tokens_source: typed` in the header,
     so glm-5.3's first `/research-epic` turn finishes instead of spending the cap thinking; `lain up -- --max-tokens 16384` is
@@ -466,7 +468,7 @@ Checks:
 
 11. **A long `epic_write` is not a stall (2026-10-09 trial fixes).** Ollama sends a tool call's arguments whole, after a silence
     that grows with their size (about 20s for 13 KB in a measurement). Ask the model to `epic_write` a `research` of about 300
-    lines (30 KB or more). With a typed `--max-tokens 16384`, glm-5.3's 30 KB write plus thinking hits the cap; the per-model default (T89) already allows more, and `-- --max-tokens 32768` forces the same for the unforced leg. The run finishes: no `stalled stream` error, `research.md` exists under the epic home, and
+    lines (30 KB or more). With a typed `--max-tokens 16384`, glm-5.3's 30 KB write plus thinking hits the cap; on a cloud model the per-model default is the 32768 fallback (round 28), so it does NOT already allow more: the unforced 30 KB `epic_write` ran a 238 s model call and ended `model hit max_tokens before finishing` plus `raise --max-tokens (now 32768); ...` with `research.md` unchanged, and a typed `-- --max-tokens 65536` finished (290 s, 54 KB). `-- --max-tokens 32768` forces the same for the unforced leg. The run finishes: no `stalled stream` error, `research.md` exists under the epic home, and
     the turn that carried the call is in the journal. A cloud deployment's stall limit is 115s and a local
     ollama's 295s, 5 under each request timeout. **Force a stall to read the message:** launch with
     `LAIN_STREAM_STALL_TIMEOUT=3` exported in the shell that runs `lain up` and repeat (it reaches the chat pane: `lain up` passes `LAIN_STREAM_STALL_TIMEOUT`, `LAIN_CONNECT_TIMEOUT`, `LAIN_STREAM_DEBUG` and `LAIN_ENV_PASS` on, round 25 k25-3, fixed). The ask ends with `stalled stream: no bytes for N.Ns, past the 3s

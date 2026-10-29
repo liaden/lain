@@ -23,7 +23,7 @@ since T14, so a session no longer expires after ~25 model calls — restart for 
 own. That file is `planning/qa/oracles/bowling.rb`:
 
 ```bash
-ruby planning/qa/oracles/bowling.rb <path-to-bowling.rb>   # exit 0 on 5/5
+ruby planning/qa/oracles/bowling.rb <path-to-bowling.rb>   # exit 0 on 5/5; pass an ABSOLUTE path (the oracle require_relatives its argument, so a relative one from the project directory raises LoadError)
 ```
 
 **It grades `Bowling.score(rolls_array)`** — a module function taking the whole roll array. Prompt

@@ -129,7 +129,7 @@ Checks:
    occupies exactly one pane row. **Measure it rather than eyeballing it**: a lead added outside
    the clamp once put a header line at 82 columns, which looks right until the terminal is
    exactly 80 wide and it wraps. Check the same row in `lain://status` too — the clamp is
-   shared, so a row that fits one surface and not the other is a finding.
+   shared, so a row that fits one surface and not the other is a finding. Round 28 measured two widths and that is correct: the input-pane header clamps to the pane's own width (97 and 98 columns in a 99-column pane), and only `lain://status` clamps at 80 (79 and 80 measured).
 7. **A task line cannot repaint the surface.** It is a model's words drawn on a terminal, so
    every cell of every row is scrubbed: newlines and tabs become spaces, then whole ANSI escape
    sequences are removed, then the control and format characters. Ask for a subagent whose task
@@ -139,7 +139,7 @@ Checks:
    words on the HUD line before the scrub landed: `\e[1A` walks the cursor up a row and `\e[2K`
    erases it. A bidi override (`U+202E`) in a task must likewise not reorder the row around it,
    and a tab inside one must become a space rather than vanish — deleting it would join two
-   words.
+   words. Send the ESC bytes through a scripted vehicle (a stub provider or a hand-fed spawn): a live ollama model's tool-call parser breaks on a raw ESC, so the model never delivers the task.
 8. **Every prompt is answered in the input pane** — `you>`, `[y/N]`, `human>`, the countdown.
    Nothing is typed into the chat pane.
    **The chat pane says your side back (2026-10-09 trial fixes).** A line read at `you>` is echoed there as
@@ -244,7 +244,7 @@ Checks:
     - **Enter then an immediate Ctrl-C keeps the line** (round 27, b27-1, fixed). Send the characters, Enter and Ctrl-C in 1
       tmux command (`send-keys 'hello' Enter C-c`). A line the editor already accepted is not a draft, so `hello` is
       committed as the prompt and nothing is withdrawn; the same happens at the plain chat's `you>`. The control is
-      `abc` typed with no Enter, which Ctrl-C still discards. A prompt that vanishes with nothing journaled is the finding.
+      `abc` typed with no Enter, which Ctrl-C still discards. A prompt that vanishes with nothing journaled is the finding. b28-1, open (round 28, forks b and f): the 1-command form loses the keys and ends the chat, in the cockpit input pane and in a plain chat alike, because the kernel's INTR flush discards the unread bytes before lain sees them. Today expect the loss; a pass needs lain to turn ISIG off or the scenario to name a different vehicle. Control: type `abc`, wait 1 s, Ctrl-C clears the draft and the chat lives.
     - **Tab goes into the draft** as a tab character; it does not trigger completion or move focus.
     - **Ctrl-Z** in a cockpit input pane does not stop the process (it is exec'd with no shell, so there is no `fg`);
       check only that the pane keeps working.
@@ -405,7 +405,7 @@ markdown list**, one row per child, indented under the parent it was spawned fro
 
 Six things to drive, in one session with a subagent that itself spawns:
 
-1. **A grandchild is nested.** Ask for a subagent that spawns a subagent, and confirm the third
+1. **A grandchild is nested.** Ask for a subagent that spawns a subagent (a chat child holds no `subagent` tool, so drive this from an epic run, where the issue role does), and confirm the third
    row is indented two levels. The parent edge is the head a child reports, not anything in the
    `:spawn` record, so this is the check that the two-record fold actually places branches.
 2. **No digest is drawn.** A row names the role, the state, the turn count, the age and the task
@@ -444,6 +444,12 @@ Six things to drive, in one session with a subagent that itself spawns:
    count and the head. A `worker` key is on the record's shape but **nothing renders it yet**,
    and the in-place lease mints none, so expect it nil — its absence from both surfaces is
    correct, not a gap.
+
+   The judge's spawn is the one exception to "no role joined the body" (round 28, forks b and i): a role spawn writes
+   `role` and, for an unattended role, `unattended` beside the five keys (`tools/subagent/lineage.rb`, written
+   conditionally), so an `auto_approver` `:spawn` reads `{"role":"auto_approver","unattended":true}` in addition. The
+   researcher's spawns carry neither. Compare the keys per role, not against one list. The judge still never appears
+   in the fleet tree.
 
 That view is still named misleadingly: it renders `Telemetry::ToolOutput` (streamed tool bytes)
 only, never the NDJSON session journal, and a rename was proposed rather than taken because
@@ -560,7 +566,7 @@ Check, in order:
   instead of one per unit, of which only the last survived the message line. A driver still expecting
   the digest form will file the fix as a regression; verified live, round 8.)
 - `x` on a row nothing has opened refuses **by name** and leaves the row unmarked:
-  `lain://review line 3 names lib/version.rb, nothing has read it -- <CR> opens it` (the shorter wording of T10, which also names the path as the sidebar shows it, b25-10 fixed).
+  `lain://review line 3 names lib/version.rb, nothing has read it -- <CR> opens it` (the shorter wording of T10, which also names the path as the sidebar shows it, b25-10 fixed). b28-2, open ruling: `x` on a never-opened row answered `marked reviewed: 1 hunk(s)` in round 28 (fork b on a survey, fork h on a changeset) once anything had chunked that file, because `read` means lain computed the hunks, not that a human opened the row (`review_view.rb:453`). Fork m could not reproduce it in 8 shapes. Re-check, and expect the refusal only on a row nothing has chunked. Ruled, and landed in 3c5aa85f (card T25): a row counts as read only once a human opened its diff in the round, so the prediction (a refusal on a row nobody opened, even one lain already chunked) holds today.
 - `x` on a row with no hunks (an empty file) refuses cleanly:
   `lain: no hunk on lain://review line 1 -- nothing on that row can be marked`.
 - `:LainReviewVerdict approve` over a **partially** reviewed changeset refuses, naming the
@@ -887,7 +893,8 @@ the chat pane and, inside `$TMUX`, runs `tmux display-message` with the arrival 
 200 characters at most, on a 2 s timeout that never blocks the render). There is no desktop
 notifier behind it. Read the bell off a `pipe-pane` capture of the chat pane rather than by ear, and
 the message off a `tmux` wrapper on the chat's `PATH` that logs its arguments (a detached test
-server has no client to show it on). *Driven 2026-09-14* in a `--no-nvim` chat inside tmux with
+server has no client to show it on). Since the notifier landed (round 28 predates it) the layer also writes a terminal escape sequence and
+runs `notify-feed`, so "no desktop notifier" is the older shape; `notifications.md` owns those two channels. *Driven 2026-09-14* in a `--no-nvim` chat inside tmux with
 `/mode +notify` (recorded 2026-09-14 as `accept_edits: no layers active -> accept_edits: notify
 (BELL)`; a mode reads `checkout ask: notify (BELL)` since round 18), for the parent's
 own `ask_human`:

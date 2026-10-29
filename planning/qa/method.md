@@ -1620,3 +1620,50 @@ fallback rather than redesigning mid-run.
   subjectAltName=IP:127.0.0.1`; fork j's fresh one is at `~/tmp/lain-qa-2026-10-21-j/records/stub`.
 - **A model that has completed every todo loops on `session_usage` to the ceiling.** Restart it; it is not a lain
   defect.
+
+## Round 28 (2026-10-28): what 13 forks taught the process
+
+- **An empty `$QA` turns a sandbox command into a repo command.** In zsh, `source env.sh | grep ...` sources in a
+  subshell, so the next command saw an empty `$QA`. Fork b's `git add -A && git commit` then ran in the lain checkout,
+  and the pre-commit fixers rewrote 41 user files (restored from the index; the fixer patch applying forward and not in
+  reverse is the check). Start every Bash call that touches files with `: "${QA:?}"`, and run a git write only when
+  `pwd` is under `$QA`.
+- **A cloud or Anthropic chat still loads a local model.** The summarizer defaults to local `qwen3:4b` (x28-1), and so
+  does the epic adjudicator when only `LAIN_PROVIDER` is set. On the shared server that is an unannounced runner swap.
+  Read the ollama log for `using llama-server for model` lines against `announce.log` after each wave; a load nobody
+  announced is a lead.
+- **A remembered `allow` reaches the sandbox with no judge.** An `approval do allow "bash", command: "..." end` in
+  `.lain/config.rb` is a deterministic rules-rung allow under `workspace`. Use it for any seam check that would
+  otherwise depend on whether the judge approves or defers.
+- **"The arm ran X" needs output nobody can guess.** A model can write `42` for `ruby -e 'puts 6*7'` without running
+  anything. Use a sha prefix of a fixture file.
+- **The bench keeps no transcripts.** To see what a tool returned to an arm, run a body-dumping proxy and pass its port
+  as `--api-base` (fork l's `teeproxy.rb` and `toolresults.rb` in `~/tmp/lain-qa-2026-10-28-l`).
+- **A `&` job in a non-interactive zsh starts with SIGINT ignored.** `kill -INT` then does nothing. Send the signal to a
+  child started from Ruby `spawn` after `trap("INT", "DEFAULT")`.
+- **Keys and Ctrl-C in 1 tmux write are a different test from keys, pause, Ctrl-C.** The kernel flushes unread input on
+  the signal (b28-1). Drive both; the split form is the control.
+- **Cap a cockpit's memory by starting the tmux server inside the scope.** `XDG_RUNTIME_DIR=/run/user/1000
+  systemd-run --user --scope -p MemoryMax=3G tmux -L <sock> new-session ...`; a scope around a later command does not
+  cover the panes.
+- **A `lain` subcommand under a redirected HOME needs the mise exports.** Without `MISE_DATA_DIR`, mise installs a
+  Ruby under `$QA/home` and bundler fails.
+- **A tmux `new-window` opens in `~/dev/lain`,** where direnv loads lain's `.envrc` into the pane. `cd $QA` first.
+- **lain ignores `OLLAMA_HOST`.** Point it with `--api-base`.
+- **Match a `[y/N]` prompt at `/N]$` as well;** at 200 columns it wraps.
+- **A gatekeeper's path match must be anchored** to a space, quote or `=` before the `/`, or `spec/unit/x.rb` reads as
+  `/unit/x.rb`. A gatekeeper whose settle wait times out must stop, not send the next prompt.
+- **A 250 KB `--prompt` hits "argument list too long".** Keep a single argument under 128 KB.
+- **Do not send several asks in one Bash call.** They ran past 120 s and 3 prompts landed at a child's `[y/N]`, held as
+  the next prompt.
+- **Check model residency right before a timed run.** The 5 minute keep-alive expired between fork l's check and run 1.
+- **The bench door refuses an open session as "never closed"** before replaying it. Replay a closed copy.
+- **A surveying cockpit over lain itself belongs on a `git clone --depth 1` inside `$QA`,** so nothing creates
+  `$LAIN_REPO/.lain`.
+- **Forks reached 200 turns.** Fork b stopped at its limit mid-act and was resumed to close out. Brief every fork to
+  update its report after each section and to begin close-out by turn 170.
+- **A `--non-interactive` turn that fails now exits 1.** A one-shot's exit code is evidence again; the older notes that
+  say it exits 0 are stale.
+- **A background auto-approver can be refused by the agent harness.** Fork c's was ("Create Unsafe Agents"), while
+  fork h's narrow gatekeeper ran, so expect to answer parked calls by hand. A small script that refuses unless exactly 1 call is parked, answers it, then waits for the
+  next keeps each answer cheap (fork c's `records/ok.sh`).
