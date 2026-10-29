@@ -20,6 +20,8 @@ module Lain
 
           def masks = @lock.synchronize { @masks.masks }
 
+          def related = @lock.synchronize { @masks.related }
+
           def classify(path) = @masks.classify(path)
 
           def prime

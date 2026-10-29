@@ -75,6 +75,19 @@ RSpec.describe Lain::Confine::Profiles do
       expect(profiles.for(composed).masks).to eq([File.join(root, ".env")])
     end
 
+    it "reads each related directory the classifier names, after the project, with the masks named with it" do
+      related = File.join(@base, "sibling").tap { FileUtils.mkdir_p(_1) }
+      hidden = File.join(related, ".env")
+      masked << mask(File.join(root, ".env"))
+      answer = Lain::Confine::MaskList::Related.new(roots: [related], masks: [mask(hidden)])
+      classifier = Struct.new(:related) { def classify(_) = Lain::Sensitivity::ORDINARY.verdict }.new(answer)
+
+      profile = described_class.new(masks:, probe:, home:, root:, classifier:).for(composed)
+
+      expect(profile.read_dirs.first(2)).to eq([root, related])
+      expect(profile.masks).to eq([File.join(root, ".env"), hidden])
+    end
+
     it "traces a judge's approval without confining it" do
       expect(profiles.for(request(ruling("judge")))).to eq(Lain::Confine::Profile::TRACED)
     end
@@ -877,7 +890,10 @@ RSpec.describe Lain::Confine::Profiles do
     describe "git's config files" do
       let(:scratch) { File.join(@base, "scratch").tap { FileUtils.mkdir_p(_1) } }
       let(:elsewhere) { File.join(@base, "elsewhere").tap { FileUtils.mkdir_p(_1) } }
-      let(:classifier) { Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root)) }
+      let(:classifier) do
+        policy = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root))
+        Lain::Confine::MaskList.new(root:, policy: -> { policy })
+      end
       let(:profiles) { described_class.new(masks:, probe:, home:, root:, classifier:) }
       let(:workspace) do
         described_class.new(masks:, probe:, home:, root:, workspace: true, tmpdir: scratch, classifier:)

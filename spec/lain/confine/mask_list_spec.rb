@@ -169,6 +169,170 @@ RSpec.describe Lain::Confine::MaskList do
     expect(masks.map { [_1.path, _1.reason] }).to match_array(judged.uniq(&:first).select { File.exist?(_1.first) })
   end
 
+  describe "a related directory" do
+    let(:home) { File.join(@base, "home") }
+    let(:sibling) { File.join(@base, "sibling").tap { FileUtils.mkdir_p(_1) } }
+    let(:policy) { relating(sibling) }
+
+    def relating(*related)
+      rules = Lain::Sensitivity::Rules.new(related:)
+      Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root, rules:))
+    end
+
+    def secret(dir) = File.join(dir, ".env").tap { File.write(_1, "KEY=value\n") }
+
+    def related_after_masks(listing = list)
+      listing.masks
+      listing.related
+    end
+
+    it "names a related repository readable together with its masks, and keeps them apart from the project's" do
+      SeedRepo.git(sibling, "init", "-q")
+      File.write(File.join(sibling, "notes.md"), "x\n")
+      hidden = secret(sibling)
+      write(".env")
+
+      related = related_after_masks
+
+      expect([related.roots, related.masks.map(&:path)]).to eq([[sibling], [hidden]])
+      expect(paths).to eq([File.join(root, ".env")])
+    end
+
+    it "names no related directory readable before its masks are listed" do
+      SeedRepo.git(sibling, "init", "-q")
+
+      expect(list.related).to eq(described_class::Related::NONE)
+    end
+
+    it "names a related directory that is not a repository unreadable, since no listing finds its secrets" do
+      secret(sibling)
+
+      expect(related_after_masks.roots).to eq([])
+    end
+
+    # Each answer is 1 value, so a refresh between 2 asks cannot grant a root without its masks.
+    it "names a root that became listable between 2 refreshes only with the masks listed for it" do
+      hidden = secret(sibling)
+      list.masks
+      SeedRepo.git(sibling, "init", "-q")
+      list.masks
+
+      related = list.related
+
+      expect([related.roots, related.masks.map(&:path)]).to eq([[sibling], [hidden]])
+    end
+
+    it "unlists a related directory whose listing fails, whatever an earlier listing found" do
+      SeedRepo.git(sibling, "init", "-q")
+      expect(related_after_masks.roots).to eq([sibling])
+      FileUtils.rm_rf(File.join(sibling, ".git"))
+      secret(sibling)
+
+      expect(related_after_masks).to have_attributes(roots: [], masks: [])
+    end
+
+    it "unlists a related directory whose listing times out, and keeps the project's masks" do
+      SeedRepo.git(sibling, "init", "-q")
+      write(".env")
+      failing = false
+      shell_out = lambda do |*argv, **opts|
+        sibling_call = argv.include?(sibling)
+        failing && sibling_call ? raise(Lain::Shell::Out::Timeout) : Lain::Shell::Out.new(*argv, **opts)
+      end
+      flaky = described_class.new(root:, policy: -> { policy }, shell_out:)
+      expect(related_after_masks(flaky).roots).to eq([sibling])
+
+      failing = true
+
+      expect(related_after_masks(flaky).roots).to eq([])
+      expect(flaky.masks.map(&:path)).to eq([File.join(root, ".env")])
+    end
+
+    it "unlists every related directory when the project's own listing fails" do
+      SeedRepo.git(sibling, "init", "-q")
+      failing = false
+      shell_out = lambda do |*argv, **opts|
+        failing && argv.include?(root) ? raise(Lain::Shell::Out::Timeout) : Lain::Shell::Out.new(*argv, **opts)
+      end
+      flaky = described_class.new(root:, policy: -> { policy }, shell_out:)
+      expect(related_after_masks(flaky).roots).to eq([sibling])
+
+      failing = true
+
+      expect(related_after_masks(flaky).roots).to eq([])
+    end
+
+    it "masks each directory below a pruned one whole, since the listing does not look inside it" do
+      SeedRepo.git(sibling, "init", "-q")
+      FileUtils.mkdir_p(%w[tmp/x a/node_modules/p/q vendor].map { File.join(sibling, _1) })
+      File.write(File.join(sibling, "tmp", "x", ".env"), "KEY=value\n")
+      File.write(File.join(sibling, "a", "node_modules", "p", "q", "f"), "x\n")
+      File.write(File.join(sibling, "vendor", "top.txt"), "x\n")
+
+      masks = related_after_masks.masks
+
+      expect(masks.map(&:path)).to contain_exactly(File.join(sibling, "tmp", "x"),
+                                                   File.join(sibling, "a", "node_modules", "p"))
+    end
+
+    it "masks each directory below a pruned one inside a nested repository whole" do
+      SeedRepo.git(sibling, "init", "-q")
+      nested = File.join(sibling, "nested")
+      FileUtils.mkdir_p(File.join(nested, "target", "x"))
+      SeedRepo.git(nested, "init", "-q")
+      File.write(File.join(nested, "target", "x", "creds.txt"), "x\n")
+
+      expect(related_after_masks.masks.map(&:path)).to eq([File.join(nested, "target", "x")])
+    end
+
+    it "masks no pruned directory of the project whole, whose gap is documented" do
+      FileUtils.mkdir_p(File.join(root, "tmp", "x"))
+      File.write(File.join(root, "tmp", "x", ".env"), "KEY=value\n")
+
+      expect(paths).to be_empty
+    end
+
+    it "starts no git process for a related directory that is missing" do
+      gone = File.join(@base, "gone")
+      started = []
+      shell_out = lambda do |*argv, **opts|
+        started << argv
+        Lain::Shell::Out.new(*argv, **opts)
+      end
+      list = described_class.new(root:, policy: -> { relating(gone) }, shell_out:)
+
+      expect(related_after_masks(list).roots).to eq([])
+      expect(started).to all(satisfy { !_1.include?(gone) })
+      expect(started).not_to be_empty
+    end
+
+    it "names no related directory whose own path the policy would hide" do
+      keys = File.join(home, ".ssh").tap { FileUtils.mkdir_p(_1) }
+      SeedRepo.git(keys, "init", "-q")
+      list = described_class.new(root:, policy: -> { relating(keys) })
+
+      expect(related_after_masks(list).roots).to eq([])
+    end
+
+    it "stops naming a related directory once the policy no longer holds it" do
+      SeedRepo.git(sibling, "init", "-q")
+      current = policy
+      changing = described_class.new(root:, policy: -> { current })
+      changing.masks
+      current = relating
+
+      expect(related_after_masks(changing).roots).to eq([])
+    end
+
+    it "names the related files that landed on a mask, by their path" do
+      SeedRepo.git(sibling, "init", "-q")
+      hidden = secret(sibling)
+      related_after_masks
+
+      expect(list.landed_on(hidden)).to eq([hidden])
+    end
+  end
+
   describe "#prime" do
     it "leaves masks answering what an unprimed list answers" do
       write(".env")

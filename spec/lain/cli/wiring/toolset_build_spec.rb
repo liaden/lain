@@ -1047,7 +1047,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       masks = profiles.instance_variable_get(:@masks)
 
       expect(masks.instance_variable_get(:@policy).call).to be(board.sensitivity)
-      expect(masks.instance_variable_get(:@root)).to eq(root)
+      expect(masks.instance_variable_get(:@project).root).to eq(root)
       expect(profiles.instance_variable_get(:@home)).to eq(Lain::Paths.new.home)
     end
 

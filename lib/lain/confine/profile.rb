@@ -215,11 +215,13 @@ module Lain
       # @param masks [Array<String>] resolved paths hidden from the call
       # @param exec_files [Array<String>] programs outside /usr the call may run
       # @param trace [Boolean] false where this kernel cannot trace
+      # @param related [Array<String>] absolute; directories outside the project read whole, their masks among `masks`
       # @return [Profile]
-      def self.reader(root:, home:, masks: [], exec_files: [], trace: true)
+      def self.reader(root:, home:, masks: [], exec_files: [], trace: true, related: [])
         new(name: :reader, trace:, exec_files:, masks:, write_dirs: SYSTEM_WRITE,
             exec_dirs: [*SYSTEM_EXEC, *HOME_EXEC.map { File.join(home, _1) }],
-            read_dirs: [landing(root), *linked_git_dir(root), *SYSTEM_READ, *HOME_READ.map { File.join(home, _1) }])
+            read_dirs: [landing(root), *linked_git_dir(root), *related.map { landing(_1) }, *SYSTEM_READ,
+                        *HOME_READ.map { File.join(home, _1) }])
       end
 
       # The reader's reach, plus writes to the project and the caller's TMPDIR,

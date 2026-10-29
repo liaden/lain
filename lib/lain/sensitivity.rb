@@ -1052,6 +1052,9 @@ module Lain
     # @return [Boolean]
     def in_related_tree?(path) = under_related?(text!(path), itself: true)
 
+    # @return [Array<String>] each related directory, absolute and expanded, as {#related?} matches it
+    def related_directories = @related
+
     private
 
     def marked(path)

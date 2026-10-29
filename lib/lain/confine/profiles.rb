@@ -61,6 +61,9 @@ module Lain
         # @param _path [String]
         # @return [Sensitivity::Verdict]
         def self.classify(_path) = Sensitivity::ORDINARY.verdict
+
+        # @return [MaskList::Related] none: with no policy, no directory outside the project is read
+        def self.related = MaskList::Related::NONE
       end
 
       # The freshness a caller that read no lineage hands over: every root
@@ -80,8 +83,9 @@ module Lain
       # @param tmpdir [String] absolute; where each workspace call gets a dir of its own to write
       # @param fresh [#any_under?] the lineage's freshness, which a build tool's grant needs to be quiet
       # @param env [#[]] where a grant reads where bundler installs
-      # @param classifier [#classify] the session's policy on a path, asked before a git config file outside the
-      #   project is granted; by default every path is ordinary
+      # @param classifier [#classify, #related] the session's policy on a path, asked before a git config file
+      #   outside the project is granted, and the related directories a reader may read, each with its masks; by
+      #   default every path is ordinary and none is related
       def initialize(masks:, probe:, home:, root:, workspace: false, tmpdir: Dir.tmpdir, fresh: Unread, env: ENV,
                      classifier: Unclassified)
         @masks = masks
@@ -121,8 +125,11 @@ module Lain
 
       def reader(request)
         root = root_of(request)
-        profile = Profile.reader(root:, home: @home, masks: mask_paths(root),
-                                 exec_files: exec_files(placed(request.executables)), trace: traceable?)
+        masks = mask_paths(root)
+        related = @classifier.related
+        profile = Profile.reader(root:, home: @home, masks: [*masks, *related.masks.map(&:path)].uniq,
+                                 related: related.roots, exec_files: exec_files(placed(request.executables)),
+                                 trace: traceable?)
         granted(profile.with(read_dirs: [*profile.read_dirs, *git_configs(root)]))
       end
 

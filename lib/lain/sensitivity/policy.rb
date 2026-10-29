@@ -149,6 +149,9 @@ module Lain
 
         def in_related_tree?(_path) = false
 
+        # @return [Array] none, frozen
+        def related_directories = NONE
+
         # {Filter::Null}, which already means "withholds nothing" -- so the
         # Null's third answer needs no third object. A policy that gates
         # nothing listing everything is the same posture said once more.
@@ -225,7 +228,8 @@ module Lain
         end
 
         def classify(path, within: nil) = @policy.classify(path, within:)
-        delegate :related?, :in_related_tree?, :filter, :mask_paths, :marks, :lifts, to: :@policy
+        delegate :related?, :in_related_tree?, :related_directories, :filter, :mask_paths, :marks, :lifts,
+                 to: :@policy
 
         # Asked by where a path lands, never by the reason its name is judged
         # for: a home directory gated by name is still outside every root.
@@ -397,6 +401,11 @@ module Lain
       #   @param path [String] absolute
       #   @return [Boolean] whether it is a `related` directory or lies under one
       #
+      # Asked by {Confine::MaskList}, which lists masks under each one.
+      #
+      # @!method related_directories
+      #   @return [Array<String>] absolute and expanded
+      #
       # Asked by {Confine::MaskList}, whose walk follows a link only where its
       # spelling carries a mark its landing does not.
       #
@@ -407,7 +416,7 @@ module Lain
       # @!method lifts(path)
       #   @param path [String] an absolute directory, as spelled
       #   @return [Array] frozen; see {Sensitivity#lifts}
-      delegate :related?, :in_related_tree?, :marks, :lifts, to: :@sensitivity
+      delegate :related?, :in_related_tree?, :related_directories, :marks, :lifts, to: :@sensitivity
 
       # The stricter of the path as written and every spelling of where it
       # lands. The literal is asked first, so a denied name costs no syscall.

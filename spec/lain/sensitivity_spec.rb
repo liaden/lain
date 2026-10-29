@@ -1658,6 +1658,13 @@ RSpec.describe Lain::Sensitivity do
       expect(sensitivity.in_related_tree?("/srv/shared/a\0b")).to be(false)
     end
 
+    it "lists each related directory absolute, expanded against the injected home, without its trailing separator" do
+      sensitivity = described_class.new(home:, cwd:, rules: related("~/dev/pitchcraft/", "/srv/shared"))
+
+      expect(sensitivity.related_directories).to eq(["#{home}/dev/pitchcraft", "/srv/shared"])
+      expect(described_class.new(home:, cwd:).related_directories).to eq([])
+    end
+
     it "accepts one trailing separator on either anchor" do
       sensitivity = described_class.new(home:, cwd:, rules: related("~/dev/pitchcraft/", "/srv/shared/"))
 

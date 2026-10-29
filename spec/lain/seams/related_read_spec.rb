@@ -102,3 +102,131 @@ RSpec.describe "A read under a related directory", :seam do
     expect { board }.to raise_error(Lain::Config::Refusal, /related must name a specific tree/)
   end
 end
+
+# The same configured directory, read by an allowed command inside the reader
+# sandbox: the real mask list over the real policy, bwrap, Landlock and the fence.
+RSpec.describe "A related directory inside the reader sandbox", :seam do
+  let(:fence) { Lain::Confine::Bwrap.fence_binary }
+  let(:journal) { RecordingChannel.new }
+
+  around do |example|
+    Dir.mktmpdir("lain-related-sandbox") do |dir|
+      @base = File.realpath(dir)
+      @home, @repo, @sibling = %w[home repo sibling].map { File.join(@base, _1).tap { |d| FileUtils.mkdir_p(d) } }
+      SeedRepo.git(@repo, "init", "-q")
+      seed_sibling
+      example.run
+    end
+  end
+
+  before do
+    skip("bwrap or strace is not installed") unless %w[/usr/bin/bwrap /usr/bin/strace].all? { File.executable?(_1) }
+    skip("lain-fence is not built at #{fence} -- run `bundle exec rake compile`") unless File.executable?(fence)
+    skip("bwrap cannot make a user namespace on this host") unless
+      system("/usr/bin/bwrap", "--ro-bind", "/", "/", "--", "true", %i[out err] => File::NULL)
+  end
+
+  def seed_sibling
+    FileUtils.mkdir_p(File.join(@sibling, "src"))
+    File.write(File.join(@sibling, "src", "m1.rs"), "fn m1() {}\n")
+    SeedRepo.git(@sibling, "init", "-q")
+    SeedRepo.git(@sibling, "add", "src/m1.rs")
+    SeedRepo.git(@sibling, "-c", "user.name=T", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false",
+                 "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "seed")
+  end
+
+  def policy(related)
+    rules = Lain::Sensitivity::Rules.new(related:)
+    Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home: @home, cwd: @repo, root: @repo, rules:),
+                                  home: @home, root: @repo)
+  end
+
+  def sandboxed(related)
+    judging = policy(related)
+    masks = Lain::Confine::MaskList.new(root: @repo, policy: -> { judging })
+    Lain::Confine::Sandbox.new(root: @repo, home: @home, masks:, fence:, journal:,
+                               probe: Lain::Confine::Probe.new(fence:, journal:))
+                          .wrap(Lain::Exec::Local.new, requirer: "Spec")
+  end
+
+  def call(sandbox, command)
+    ruling = Lain::Approval::Escalation::Ruling.allow(rung: "rules", because: "spec", rule: "composed_term")
+    request = Lain::Confine::Request.new(ruling:, executables: [], cwd: @repo, root: @repo, tool_use_id: "toolu_1")
+    sandbox.call(command:, cwd: @repo, env: {}, timeout: 10, confinement: request)
+  end
+
+  def run_confined(command, related: [@sibling]) = call(sandboxed(related), command)
+
+  it "lets an allowed command read a related repository's file and its history" do
+    cat = run_confined("cat #{@sibling}/src/m1.rs")
+    log = run_confined("git -C #{@sibling} log --format=%s")
+
+    expect([cat.exit_status, cat.stdout]).to eq([0, "fn m1() {}\n"]), cat.stderr
+    expect([log.exit_status, log.stdout]).to eq([0, "seed\n"]), log.stderr
+    expect(journal.events.grep(Lain::Telemetry::Sandbox).map(&:profile)).to eq(%i[reader reader])
+  end
+
+  # The mask refuses the read where the sibling file beside it is read.
+  it "keeps a related directory's secret masked" do
+    File.write(File.join(@sibling, ".env"), "KEY=value\n")
+
+    capture = run_confined("cat #{@sibling}/.env #{@sibling}/src/m1.rs")
+
+    expect(capture.stdout).to eq("fn m1() {}\n"), capture.stderr
+    expect(capture.stdout + capture.stderr).not_to include("value")
+  end
+
+  it "refuses a read under a related directory that is not a repository, whose secrets no listing finds" do
+    FileUtils.rm_rf(File.join(@sibling, ".git"))
+
+    capture = run_confined("cat #{@sibling}/src/m1.rs")
+
+    expect(capture.exit_status).not_to eq(0)
+    expect(capture.stdout).not_to include("fn m1")
+  end
+
+  it "stops reading a related directory once it can no longer be listed, whatever its old masks were" do
+    sandbox = sandboxed([@sibling])
+    first = call(sandbox, "cat #{@sibling}/src/m1.rs")
+    FileUtils.rm_rf(File.join(@sibling, ".git"))
+    File.write(File.join(@sibling, ".env"), "KEY=value\n")
+
+    capture = call(sandbox, "cat #{@sibling}/.env #{@sibling}/src/m1.rs")
+
+    expect(first.stdout).to eq("fn m1() {}\n"), first.stderr
+    expect(capture.stdout + capture.stderr).not_to include("value")
+    expect(capture.stdout).not_to include("fn m1")
+  end
+
+  it "hides what lies below a pruned directory, which no listing looks inside" do
+    FileUtils.mkdir_p(File.join(@sibling, "tmp", "x"))
+    File.write(File.join(@sibling, "tmp", "x", ".env"), "KEY=value\n")
+    File.write(File.join(@sibling, "tmp", "top.txt"), "top\n")
+
+    capture = run_confined("cat #{@sibling}/tmp/x/.env #{@sibling}/tmp/top.txt")
+
+    expect(capture.stdout).to eq("top\n"), capture.stderr
+    expect(capture.stdout + capture.stderr).not_to include("value")
+  end
+
+  # git lists a nested repository as 1 leaf, so the walk below it is what finds its pruned directories.
+  it "hides what lies below a pruned directory inside a nested repository" do
+    nested = File.join(@sibling, "nested")
+    FileUtils.mkdir_p(File.join(nested, "target", "x"))
+    SeedRepo.git(nested, "init", "-q")
+    File.write(File.join(nested, "target", "x", "creds.txt"), "KEY=value\n")
+    File.write(File.join(nested, "ok.txt"), "ok\n")
+
+    capture = run_confined("cat #{nested}/target/x/creds.txt #{nested}/ok.txt")
+
+    expect(capture.stdout).to eq("ok\n"), capture.stderr
+    expect(capture.stdout + capture.stderr).not_to include("value")
+  end
+
+  it "refuses the same read where no related directory is configured" do
+    capture = run_confined("cat #{@sibling}/src/m1.rs", related: [])
+
+    expect(capture.exit_status).not_to eq(0)
+    expect(capture.stdout).not_to include("fn m1")
+  end
+end

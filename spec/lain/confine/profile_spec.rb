@@ -20,6 +20,18 @@ RSpec.describe Lain::Confine::Profile do
       )
     end
 
+    it "reads a related directory after the project and its git dir, the project first" do
+      Dir.mktmpdir("lain-profile-related") do |dir|
+        base = File.realpath(dir)
+        root, admin, related = %w[p admin s].map { File.join(base, _1).tap { |d| FileUtils.mkdir_p(d) } }
+        File.write(File.join(root, ".git"), "gitdir: #{admin}\n")
+
+        read = described_class.reader(root:, home: "/h", related: [related]).read_dirs
+
+        expect(read.first(4)).to eq([root, admin, related, "/usr"])
+      end
+    end
+
     it "writes nowhere but /dev/null and its own private /tmp, and masks what it was handed" do
       expect([profile.write_dirs, profile.masks]).to eq([%w[/dev/null /tmp], ["/p/.env"]])
     end

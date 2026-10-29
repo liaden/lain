@@ -609,6 +609,11 @@ RSpec.describe Lain::Sensitivity::Policy do
       expect(policy.related?("#{home}/dev/other/notes.md")).to be(false)
     end
 
+    it "lists the related directories its classifier holds, expanded, and none on the Null" do
+      expect(policy.related_directories).to eq(["#{home}/dev/pitchcraft"])
+      expect(described_class::Null.instance.related_directories).to eq([])
+    end
+
     it "answers false on the Null, so a run that wired no classifier still asks" do
       expect(described_class::Null.instance.related?("#{home}/dev/pitchcraft/notes.md")).to be(false)
     end
@@ -1152,6 +1157,7 @@ RSpec.describe Lain::Sensitivity::Policy do
       expect(confined.filter).to be(policy.filter)
       expect(confined.gates?(read(".env"), cwd: root)).to be(true)
       expect(confined.related?(File.join(home, "notes", "a.md"))).to be(true)
+      expect(confined.related_directories).to eq([File.join(home, "notes")])
     end
 
     it "keeps a credential reason outside its roots, which the secret oracle may not approve" do
