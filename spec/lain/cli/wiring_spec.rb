@@ -2964,7 +2964,7 @@ RSpec.describe Lain::CLI::Wiring do
       it "hands the supervisor the resolved worktree backend" do
         in_throwaway_repo { adopt_worker(wiring_with("worktree")) }
 
-        expect(leases.map(&:backend).uniq).to eq(["Lain::Isolation::Worktree"])
+        expect(leases.map(&:backend).uniq).to eq(["Lain::Isolation::Clone"])
       end
 
       # THROUGH THE TOOL: nothing here is doubled. The backend is the one

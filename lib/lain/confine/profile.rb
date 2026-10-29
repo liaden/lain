@@ -110,6 +110,40 @@ module Lain
         def profile = :workspace
       end
 
+      # A clone lain cut whose git dir holds a name that redirects git, which a call may have planted.
+      class Tampered < Error
+        # @return [String] the clone
+        attr_reader :path
+
+        # @return [Symbol] the profile the call would have run under
+        attr_reader :profile
+
+        # @param path [String] the clone
+        # @param why [String] what was found there
+        # @param profile [Symbol] the profile the call would have run under
+        def initialize(path:, why:, profile:)
+          @path = path
+          @profile = profile
+          super("#{path}: #{why}")
+        end
+      end
+
+      # A root that holds lain's state home would let a call write the lease records lain trusts.
+      class HoldsState < Error
+        attr_reader :path
+
+        # @param path [String] the root
+        # @param state [String] lain's state home beneath it
+        def initialize(path:, state:)
+          @path = path
+          super("a workspace root must not hold lain's state home #{state}, whose lease records lain trusts, " \
+                "got #{path.inspect}")
+        end
+
+        # @return [Symbol] the profile the call would have run under
+        def profile = :workspace
+      end
+
       # A TMPDIR at or above home would make home writable.
       class HomeTmpdir < Error
         attr_reader :path
@@ -217,12 +251,19 @@ module Lain
       # @param trace [Boolean] false where this kernel cannot trace
       # @param related [Array<String>] absolute; directories outside the project read whole, their masks among `masks`
       # @return [Profile]
+      # @raise [Tampered] when the root is a clone lain cut whose git dir was tampered with
       def self.reader(root:, home:, masks: [], exec_files: [], trace: true, related: [])
+        refuse_tampered(landing(root), :reader)
         new(name: :reader, trace:, exec_files:, masks:, write_dirs: SYSTEM_WRITE,
             exec_dirs: [*SYSTEM_EXEC, *HOME_EXEC.map { File.join(home, _1) }],
-            read_dirs: [landing(root), *linked_git_dir(root), *related.map { landing(_1) }, *SYSTEM_READ,
+            read_dirs: [landing(root), *git_reads(root), *related.map { landing(_1) }, *SYSTEM_READ,
                         *HOME_READ.map { File.join(home, _1) }])
       end
+
+      # git cannot run without the git dir a linked worktree points at, nor without the objects a clone lain cut
+      # reads through alternates; the latter comes from lain's own record, never from the alternates file.
+      def self.git_reads(root) = [*linked_git_dir(root), *Isolation::Clone::Guard.upstream_objects(landing(root))]
+      private_class_method :git_reads
 
       # The reader's reach, plus writes to the project and the caller's TMPDIR,
       # which Ruby and this repo need on the project's filesystem. So a call
@@ -269,17 +310,21 @@ module Lain
       # @return [Profile]
       # @raise [Unsealable] when a seal is reached through a link inside the writes
       # @raise [HomeTmpdir] when the TMPDIR is home or holds it
+      # @raise [Tampered] when the root is a clone lain cut whose git dir was tampered with
+      # @raise [HoldsState] when the root is lain's state home or holds it
       def self.workspace(root:, home:, tmpdir:, masks: [], exec_files: [], trace: true, configs: [])
         refuse_workspace(root, home, tmpdir)
+        refuse_tampered(landing(root), :workspace)
         reader = reader(root:, home:, masks:, exec_files:, trace:)
         project = reader.read_dirs.first
         git = Seal.git_dirs(project)
         writes = [project, tmpdir, *commit_writes(project, git)]
         homes = PrivateHome.of(home)
+        hooks = hooks_outside(project, git)
         new(**reader.to_h, name: :workspace, sealed: sealing(project, git, tmpdir, configs), homes:,
                            write_dirs: [*writes, *homes.map(&:path), *SYSTEM_WRITE],
-                           exec_dirs: [*reader.exec_dirs, *target(project)],
-                           read_dirs: [*reader.read_dirs, *system_files], hidden: hidden(home))
+                           exec_dirs: [*reader.exec_dirs, *target(project), *hooks],
+                           read_dirs: [*reader.read_dirs, *system_files, *hooks], hidden: hidden(home))
       end
 
       # The seals a workspace call in `root` would hold, refused as {.workspace} refuses them.
@@ -401,11 +446,48 @@ module Lain
       # git's answer is read a line per path, and a TMPDIR at or above home grants home.
       def self.refuse_workspace(root, home, tmpdir)
         raise ArgumentError, "a workspace root must not contain a newline, got #{root.inspect}" if root.include?("\n")
+
+        refuse_state_root(root)
         return unless tmpdir.start_with?(File::SEPARATOR) && Landing.under?(landing(home), landing(tmpdir))
 
         raise HomeTmpdir.new(path: tmpdir)
       end
       private_class_method :refuse_workspace
+
+      # A clone sits two levels into the container, or three under a lease root's aside dir; anything shallower
+      # holds the records beside the clones.
+      def self.refuse_state_root(root)
+        container = landed_ancestry(Isolation::Clone::Guard.container)
+        project = landing(root)
+        raise HoldsState.new(path: root, state: File.dirname(container)) if holds_records?(project, container)
+      end
+      private_class_method :refuse_state_root
+
+      # The container is made at the first lease, so before it exists its nearest existing ancestor is resolved
+      # and the rest appended: a linked state home must be compared where it really is. Nothing is made here.
+      def self.landed_ancestry(path)
+        missing = []
+        until File.exist?(path) || path == File::SEPARATOR
+          missing.unshift(File.basename(path))
+          path = File.dirname(path)
+        end
+        File.join(landing(path), *missing)
+      end
+      private_class_method :landed_ancestry
+
+      def self.holds_records?(project, container)
+        return Landing.under?(File.dirname(container), project) unless Landing.under?(project, container)
+
+        parts = Pathname(project).relative_path_from(container).each_filename.to_a
+        parts.size < 2 || parts[1..] == [Isolation::Worktree::RETAINED]
+      end
+      private_class_method :holds_records?
+
+      def self.refuse_tampered(project, profile)
+        why = Isolation::Clone::Guard.refusal(project)
+        raise Tampered.new(path: project, why:, profile:) unless why.empty?
+      end
+      private_class_method :refuse_tampered
 
       # @param root [String]
       # @param git [Array<String>] common dir and git dir, or none
@@ -429,6 +511,21 @@ module Lain
       rescue SystemCallError
         root
       end
+
+      # git runs a hook beneath a hooks dir outside the project, a shared clone's upstream's among them, only
+      # when the call may read and exec it; it is sealed, so what runs there is what the human put there.
+      #
+      # @param project [String]
+      # @param git [Array<String>] {Seal.git_dirs} of `project`
+      # @return [Array<String>] the hooks dir where it lands, or none
+      def self.hooks_outside(project, git)
+        hooks = git[2]
+        return [] unless hooks && File.directory?(hooks)
+
+        landed = landing(hooks)
+        Landing.under?(landed, project) ? [] : [landed]
+      end
+      private_class_method :hooks_outside
 
       # A linked worktree's or a submodule's `.git` is a file naming a git dir
       # outside the project, and git cannot run without reading it. A worktree's
@@ -594,6 +691,10 @@ module Lain
       class Seal
         LINK_HOPS = 40
 
+        # Where git reads further object stores from: a call that repoints one makes an unsandboxed fetch out
+        # of the checkout read objects from wherever it names.
+        ALTERNATES = %w[alternates http-alternates].freeze
+
         # @param path [String] where the seal lands
         # @param absent [Boolean]
         # @param hops [Array<String>] each link met on the way to `path`, at its real place
@@ -630,7 +731,7 @@ module Lain
 
           [File.join(common, "hooks"), File.join(common, "config"), File.join(gitdir, "config.worktree"), hooks,
            File.join(gitdir, "commondir"), *pointer(dot_git), File.join(common, "modules"),
-           *worktrees(common, gitdir)]
+           *worktrees(common, gitdir), *ALTERNATES.map { File.join(common, "objects", "info", _1) }]
         end
 
         # The main checkout seals every worktree's admin dir whole, as one mount however many there are; a
@@ -716,6 +817,9 @@ module Lain
         # @return [Array<String>] common dir, git dir and hooks dir, the hooks dir as git spells it under `root`;
         #   none where git cannot answer
         def self.git_dirs(root)
+          laid_out = Isolation::Clone::Guard.git_dirs(root)
+          return laid_out if laid_out
+
           out, status = Open3.capture2(Isolation::Worktree::GIT_CONTEXT_SCRUB, "git", "-C", root, *GIT_ASKS,
                                        err: File::NULL)
           hooks, *dirs = out.lines(chomp: true)

@@ -46,6 +46,47 @@ RSpec.describe Lain::FileWalk do
     expect(relatives).to contain_exactly(".gitignore", "tracked.rb", "untracked.rb")
   end
 
+  it "runs no fsmonitor a nested repository's config names, which a sandboxed call could have written" do
+    init_repo
+    marker = File.join(File.dirname(root), "#{File.basename(root)}-fsmonitor")
+    nested = init_repo("sub")
+    File.write(File.join(nested, ".git", "config"), "[core]\n\tfsmonitor = \"touch #{marker}; false\"\n", mode: "a")
+    write("sub/file.rb")
+
+    walk.to_a
+
+    expect(File.exist?(marker)).to be(false)
+  ensure
+    FileUtils.rm_f(marker) if marker
+  end
+
+  # The plant's config ignores the worker's file, so a listing that read it would lose that work.
+  it "lists a clone lain cut, and any directory inside it, never through a planted commondir" do
+    upstream = init_repo("upstream")
+    git("-c", "user.name=a", "-c", "user.email=a@b", "commit", "-q", "--allow-empty", "-m", "i", chdir: upstream)
+    leases = File.join(Lain::Paths.new.state_home, "worktrees", Lain::Paths.new.project_hash(upstream))
+    FileUtils.mkdir_p(leases)
+    Lain::Isolation::Clone::Registry.new(repo_root: upstream, root: leases,
+                                         shell_out_factory: Lain::Shell::Out.public_method(:new))
+                                    .add(clone = File.join(leases, "a"), "HEAD", reason: "held")
+    evil = File.join(clone, "evil")
+    FileUtils.mkdir_p(evil)
+    FileUtils.cp_r([File.join(clone, ".git", "objects"), File.join(clone, ".git", "refs")], evil)
+    File.write(File.join(evil, "ignore-all"), "work.rb\n")
+    File.write(File.join(evil, "config"),
+               "[core]\n\trepositoryformatversion = 0\n\texcludesFile = #{evil}/ignore-all\n")
+    File.write(File.join(clone, ".git", "commondir"), "../evil\n")
+    FileUtils.mkdir_p(File.join(clone, "lib"))
+    File.write(work = File.join(clone, "lib", "work.rb"), "x\n")
+    File.write(File.join(clone, "lib", "other.rb"), "x\n")
+
+    listed = [clone, File.join(clone, "lib")].map { described_class.new(root: _1).to_a }
+
+    expect(listed).to all(include(work))
+  ensure
+    FileUtils.rm_rf(leases) if leases
+  end
+
   describe "re-included ignored paths" do
     subject(:walk) { described_class.new(root:, include: ["notes/**/*.md"]) }
 

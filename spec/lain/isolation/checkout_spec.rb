@@ -251,4 +251,65 @@ RSpec.describe Lain::Isolation::Checkout, :seam do
         .to raise_error(boom, "exit 128")
     end
   end
+
+  describe "#fold_in" do
+    def clone_with_commit
+      clone = File.join(File.dirname(@dir), "#{File.basename(@dir)}-clone")
+      SeedRepo.git(@dir, "clone", "-q", "--shared", @dir, clone)
+      File.write(File.join(clone, "README"), "work\n")
+      SeedRepo.git(clone, "-c", "user.name=w", "-c", "user.email=w@e", "commit", "-q", "-am", "work")
+      [clone, SeedRepo.git(clone, "rev-parse", "HEAD").stdout.strip]
+    end
+
+    def present?(commit) = Lain::Shell::Out.ok?(checkout.run("cat-file", "-e", "#{commit}^{commit}"))
+
+    it "fetches a commit only another repository holds, leaving no ref and no FETCH_HEAD" do
+      clone, commit = clone_with_commit
+      before = present?(commit)
+      folded = checkout.fold_in(clone, commit)
+
+      expect([before, Lain::Shell::Out.ok?(folded), present?(commit)]).to eq([false, true, true])
+      expect(File.exist?(File.join(@dir, ".git", "FETCH_HEAD"))).to be(false)
+    ensure
+      FileUtils.rm_rf(clone) if clone
+    end
+
+    it "refuses a commit that fails fsck, since an agent wrote the objects" do
+      clone, = clone_with_commit
+      tree = SeedRepo.git(clone, "rev-parse", "HEAD^{tree}").stdout.strip
+      bad = SeedRepo.git(clone, "hash-object", "-t", "commit", "--literally", "-w", "--stdin",
+                         input: "tree #{tree}\nauthor nobody 0 +0000\ncommitter nobody 0 +0000\n\nbad\n").stdout.strip
+
+      expect([Lain::Shell::Out.ok?(checkout.fold_in(clone, bad)), present?(bad)]).to eq([false, false])
+    ensure
+      FileUtils.rm_rf(clone) if clone
+    end
+
+    it "fetches nothing from a clone lain cut whose git dir holds a planted commondir" do
+      root = File.join(Lain::Paths.new.state_home, "worktrees", Lain::Paths.new.project_hash(@dir))
+      FileUtils.mkdir_p(root)
+      registry = Lain::Isolation::Clone::Registry.new(repo_root: @dir, root:,
+                                                      shell_out_factory: Lain::Shell::Out.public_method(:new))
+      registry.add(clone = File.join(root, "a"), run_git("rev-parse", "HEAD"), reason: "held")
+      File.write(File.join(clone, "README"), "work\n")
+      SeedRepo.git(clone, "-c", "user.name=w", "-c", "user.email=w@e", "commit", "-q", "-am", "work")
+      commit = SeedRepo.git(clone, "rev-parse", "HEAD").stdout.strip
+      FileUtils.mkdir_p(evil = File.join(clone, "evil"))
+      FileUtils.cp_r([File.join(clone, ".git", "objects"), File.join(clone, ".git", "refs")], evil)
+      File.write(File.join(evil, "config"), "[core]\n\trepositoryformatversion = 0\n")
+      File.write(File.join(clone, ".git", "commondir"), "../evil\n")
+
+      expect([Lain::Shell::Out.ok?(checkout.fold_in(clone, commit)), present?(commit)]).to eq([false, false])
+    ensure
+      FileUtils.rm_rf(root) if root
+    end
+
+    it "fetches nothing for a commit it already holds" do
+      expect(Lain::Shell::Out.ok?(checkout.fold_in("/nonexistent", run_git("rev-parse", "HEAD")))).to be(true)
+    end
+
+    it "answers the failed fetch when the source cannot give the commit" do
+      expect(Lain::Shell::Out.ok?(checkout.fold_in(@dir, "0" * 40))).to be(false)
+    end
+  end
 end

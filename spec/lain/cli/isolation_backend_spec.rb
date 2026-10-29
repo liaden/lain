@@ -125,7 +125,7 @@ RSpec.describe Lain::CLI::IsolationBackend, :seam do
       init_repo(@project)
 
       expect(described_class::BACKENDS.map { |name| resolve(name).class })
-        .to eq([Lain::Isolation::Null, Lain::Isolation::Worktree])
+        .to eq([Lain::Isolation::Null, Lain::Isolation::Clone])
     end
 
     it "refuses an unrecognized name, naming the valid set" do
@@ -295,6 +295,19 @@ RSpec.describe Lain::CLI::IsolationBackend, :seam do
 
       expect { resolve("worktree", root: File.join(trap, "link")) }
         .to raise_error(described_class::NotARepository)
+    end
+  end
+
+  describe "an isolated checkout" do
+    it "is a shared clone, so a sandboxed call there can write no upstream byte" do
+      init_repo(@project)
+
+      lease = resolve("worktree").acquire("worker-1")
+
+      expect(File).to exist(File.join(lease.worker_env.cwd, ".git", "objects", "info", "alternates"))
+      expect(registered_worktrees.lines.grep(/^worktree /).size).to eq(1)
+    ensure
+      lease&.release
     end
   end
 
@@ -479,7 +492,7 @@ RSpec.describe Lain::CLI::IsolationBackend, :seam do
       lease.release
 
       expect(journal.map(&:kind)).to eq(%i[acquired released])
-      expect(journal.map(&:backend).uniq).to eq(["Lain::Isolation::Worktree"])
+      expect(journal.map(&:backend).uniq).to eq(["Lain::Isolation::Clone"])
     end
 
     it "journals nothing twice on a double release" do

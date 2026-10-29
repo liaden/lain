@@ -75,13 +75,14 @@ module Lain
                      process_table: LeaseLock::ProcessTable.new, clock: -> { Time.now },
                      trunk: WorkingBranch::TRUNK, shell_out_factory: Shell::Out.public_method(:new))
         repo_root = File.expand_path(repo_root)
-        registry = Worktree::Registry.new(repo_root:, shell_out_factory:)
+        clones = Clone::Registry.new(repo_root:, root: File.expand_path(root), shell_out_factory:)
+        registry = Registries.new(Worktree::Registry.new(repo_root:, shell_out_factory:), clones)
         repo = Repo.new(Checkout.new(repo_root, shell_out_factory:), trunk:)
         # In this order: expiring a checkout writes anchors, which the anchor
-        # pass then reports on in the same run.
+        # pass then reports on in the same run, and removing a clone drops its pin.
         @passes = [Checkouts.new(registry:, repo:, root:, table: process_table, clock:, retain_days:,
                                  shell_out_factory:),
-                   Anchors.new(repo:), Branches.new(repo:, registry:)]
+                   Anchors.new(repo:), Branches.new(repo:, registry:), Pins.new(repo:, clones:)]
         @journal = journal
       end
 
@@ -121,6 +122,10 @@ module Lain
 
         # @return [String] the commit `ref` names, or "" for none
         def tip(ref) = @git.target(ref)
+
+        # A shared clone's commit is in its own store until fetched here.
+        # @return [Shell::Out]
+        def fold(source, commit) = @git.fold_in(source, commit)
 
         # Against the branch by its full name: a tag of the trunk's name would
         # otherwise win git's disambiguation.
@@ -199,7 +204,7 @@ module Lain
 
         def initialize(dir, shell_out_factory:)
           @dir = dir
-          @git = Checkout.new(dir, shell_out_factory:)
+          @git = Checkout.of(dir, shell_out_factory:)
         end
 
         # The working state's first parent is HEAD and its second is the
@@ -302,7 +307,7 @@ module Lain
         end
 
         def age(entry)
-          Age.new(deadline: entry.lock.aged_from(Worktree.cut_at(entry.path, @clock)) + (@retain_days * DAY),
+          Age.new(deadline: entry.lock.aged_from(@registry.cut_at(entry.path, @clock)) + (@retain_days * DAY),
                   now: @clock.call)
         end
 
@@ -327,7 +332,7 @@ module Lain
         # or unreadable proves nothing, and what gc cannot judge it keeps,
         # which `retain_days` still bounds.
         def moved?(entry)
-          shell = Checkout.new(entry.path, shell_out_factory: @shell_out_factory)
+          shell = Checkout.of(entry.path, shell_out_factory: @shell_out_factory)
                           .run("reflog", "show", "--format=%H", "HEAD")
           Shell::Out.ok?(shell) && shell.stdout.split("\n").any? { |commit| commit != entry.head }
         end
@@ -357,6 +362,9 @@ module Lain
         # Named for the checkout, the kind of work and the commit, so a rerun
         # over the same checkout names the same ref rather than a second one.
         def anchor(path, kind, commit)
+          fetched = @repo.fold(path, commit)
+          raise Unanchored, "#{commit} could not be fetched from #{path}" unless Shell::Out.ok?(fetched)
+
           Worktree::Handback::Naming.new("gc #{File.basename(path)} #{kind} #{commit}").ref
                                     .tap { |ref| @repo.anchor(ref, commit, reason: ANCHORED) }
         end
@@ -387,11 +395,17 @@ module Lain
         # that record may be all that holds a crashed worker's commit: it is
         # anchored before the registration goes.
         def vanished(entry)
-          anchors = @repo.landing(entry.head).empty? ? [anchor(entry.path, "head", entry.head)] : []
+          anchors = held_only_here(entry)
           refusal = remove(entry)
           refusal.empty? ? gone(entry.path, anchors) : Records.kept(:worktree, entry.path, refusal, anchors)
         rescue Unanchored => e
           Records.kept(:worktree, entry.path, "its checkout is gone, but its commit is not anchored: #{e.message}")
+        end
+
+        # A lock left with no clone records no HEAD, so there is nothing to anchor.
+        def held_only_here(entry)
+          head = entry.head
+          head.empty? || !@repo.landing(head).empty? ? [] : [anchor(entry.path, "head", head)]
         end
 
         def gone(path, anchors)
@@ -495,6 +509,28 @@ module Lain
           return Records.reaped(:branch, marker, "its branch no longer exists") if @repo.delete(marker, marked)
 
           Records.kept(:branch, marker, "it moved while gc ran")
+        end
+      end
+
+      # Every base pin of this root's clone leases, deleted once its clone is
+      # gone: nothing reads that history through it any more. Another root's
+      # pins are that root's reaper's.
+      class Pins
+        GONE = "its clone is gone, so nothing reads the base it pinned"
+
+        def initialize(repo:, clones:)
+          @repo = repo
+          @clones = clones
+        end
+
+        def call = @clones.stale_pins.map { judge(*_1) }
+
+        private
+
+        def judge(ref, held)
+          return Records.reaped(:anchor, ref, GONE) if @repo.delete(ref, held)
+
+          Records.kept(:anchor, ref, "it moved while gc ran")
         end
       end
     end

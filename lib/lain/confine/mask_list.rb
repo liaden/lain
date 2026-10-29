@@ -387,7 +387,12 @@ module Lain
           nil
         end
 
-        def git(*, **) = Isolation::Checkout.new(@root, shell_out_factory: @shell_out).run(*, timeout: TIMEOUT, **)
+        # Run before every call, outside the sandbox, in a tree the last call wrote: no fsmonitor its config
+        # names runs, and a clone lain cut is read only through its own git dir.
+        def git(*, **)
+          Isolation::Checkout.of(@root, shell_out_factory: @shell_out)
+                             .run(*, timeout: TIMEOUT, pins: FileWalk::FSMONITOR_OFF, **)
+        end
       end
       private_constant :Tree
     end

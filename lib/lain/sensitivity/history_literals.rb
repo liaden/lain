@@ -63,7 +63,7 @@ module Lain
         # Bytes, as git lists a name, so a name and the root always join.
         @root = root.b
         @policy = policy
-        @git = Isolation::Checkout.new(root, shell_out_factory: ->(*argv, **opts) { shell.call(*argv, clock:, **opts) })
+        @git = Isolation::Checkout.of(root, shell_out_factory: ->(*argv, **opts) { shell.call(*argv, clock:, **opts) })
         @lock = Mutex.new
         @fingerprint = nil
         @sensitive = {}

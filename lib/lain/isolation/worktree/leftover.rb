@@ -49,21 +49,24 @@ module Lain
 
         def move_aside(entry)
           refuse_held(entry)
-          raise Refused, "worktree path #{entry.path} changed while it was being cleared" unless @registry.claim(entry)
+          unless @registry.claim(entry)
+            raise Refused,
+                  "#{@registry.label} at #{entry.path} changed while it was cleared"
+          end
           return drop(entry) unless File.directory?(entry.path)
 
           detach(entry) unless entry.branch.empty?
-          relocate(entry.path, LeaseLock::Retained.at(entry.lock.aged_from(Worktree.cut_at(entry.path, @clock))))
+          relocate(entry.path, LeaseLock::Retained.at(entry.lock.aged_from(@registry.cut_at(entry.path, @clock))))
         end
 
         def refuse_held(entry)
           interrupted = @registry.interrupted(entry.path)
-          raise Refused, "worktree path #{entry.path} is held: #{interrupted}" unless interrupted.empty?
+          raise Refused, "#{@registry.label} at #{entry.path} is held: #{interrupted}" unless interrupted.empty?
 
           lock = entry.lock
           return unless lock.held?(@process_table)
 
-          raise Refused, "worktree path #{entry.path} is held: #{lock.why(@process_table)}"
+          raise Refused, "#{@registry.label} at #{entry.path} is held: #{lock.why(@process_table)}"
         end
 
         # The directory is gone but git still records its HEAD, which may be
@@ -72,9 +75,10 @@ module Lain
         def drop(entry)
           @registry.anchorage.keep(entry, reason: DROPPED)
           shell = @registry.remove(entry.path)
-          raise Refused.from_git("remove", entry.path, shell) unless Shell::Out.ok?(shell)
+          raise Refused.from_git("remove", entry.path, shell, label: @registry.label) unless Shell::Out.ok?(shell)
         rescue Anchorage::Unwritten => e
-          raise Refused, "worktree path #{entry.path} still holds a commit that could not be anchored: #{e.message}"
+          raise Refused,
+                "#{@registry.label} at #{entry.path} still holds a commit that could not be anchored: #{e.message}"
         end
 
         # Anchored first, so a HEAD no ref reaches is never left the commit's
@@ -84,16 +88,17 @@ module Lain
           shell = @registry.detach(entry.path, entry.head, reason: DETACHED)
           return if Shell::Out.ok?(shell)
 
-          raise Refused, "worktree path #{entry.path} could not be detached from #{entry.branch}: #{shell.stderr.strip}"
+          raise Refused,
+                "#{@registry.label} at #{entry.path} could not be detached from #{entry.branch}: #{shell.stderr.strip}"
         rescue Anchorage::Unwritten => e
-          raise Refused, "worktree path #{entry.path} holds a commit that could not be anchored: #{e.message}"
+          raise Refused, "#{@registry.label} at #{entry.path} holds a commit that could not be anchored: #{e.message}"
         end
 
         def relocate(path, retention)
           aside = File.join(@root, RETAINED, "#{File.basename(path)}-#{SecureRandom.hex(4)}")
           FileUtils.mkdir_p(File.dirname(aside))
           moved = @registry.move(path, aside)
-          raise Refused.from_git("move", path, moved) unless Shell::Out.ok?(moved)
+          raise Refused.from_git("move", path, moved, label: @registry.label) unless Shell::Out.ok?(moved)
 
           @registry.lock(aside, retention.reason)
         end

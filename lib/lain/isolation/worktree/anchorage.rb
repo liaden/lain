@@ -6,7 +6,8 @@ module Lain
       # Pins a checkout's HEAD under `refs/lain/worker/` when nothing else
       # holds it, so the checkout can go without its commits going with it. A
       # detached HEAD is the only thing keeping a worker's commits alive; drop
-      # the checkout or its registration and git collects them.
+      # the checkout or its registration and git collects them. A shared
+      # clone's HEAD is fetched in first, since only the clone's store has it.
       class Anchorage
         # The anchor could not be written, so the checkout must stay.
         class Unwritten < Error; end
@@ -21,10 +22,15 @@ module Lain
         # commit, so a second call over the same checkout finds its own anchor.
         # @param entry [Registry::Entry] the checkout, with the HEAD git recorded for it
         # @param reason [String] stamped into the anchor's reflog
-        # @return [String] the anchor written, or "" when a ref already reaches HEAD
+        # @return [String] the anchor written, or "" when a ref already reaches HEAD or git recorded none
         # @raise [Unwritten]
         def keep(entry, reason:)
           commit = entry.head
+          return "" if commit.empty?
+
+          folded = @repo.fold_in(entry.path, commit)
+          raise Unwritten, "#{commit} could not be fetched from #{entry.path}: #{folded.stderr.strip}" unless
+            Shell::Out.ok?(folded)
           return "" if reached?(commit)
 
           ref = Handback::Naming.new("#{File.basename(entry.path)} #{commit}").ref

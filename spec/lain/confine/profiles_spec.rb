@@ -137,6 +137,27 @@ RSpec.describe Lain::Confine::Profiles do
 
       def git_init(dir) = system(SeedRepo::SCRUB, "git", "init", "-q", dir, exception: true)
 
+      it "reads no git config in a clone lain cut whose git dir was tampered with, and refuses it" do
+        upstream = File.join(@base, "upstream")
+        git_init(upstream)
+        system(SeedRepo::SCRUB, "git", "-C", upstream, "-c", "user.name=a", "-c", "user.email=a@b", "commit", "-q",
+               "--allow-empty", "-m", "i", exception: true)
+        leases = File.join(Lain::Paths.new.state_home, "worktrees", Lain::Paths.new.project_hash(upstream))
+        FileUtils.mkdir_p(leases)
+        clone = File.join(leases, "a")
+        Lain::Isolation::Clone::Registry.new(repo_root: upstream, root: leases,
+                                             shell_out_factory: Lain::Shell::Out.public_method(:new))
+                                        .add(clone, "HEAD", reason: "held")
+        File.write(File.join(clone, ".git", "commondir"), "../evil\n")
+        allow(Open3).to receive(:capture2).and_call_original
+        tampered = described_class.new(masks:, probe:, home:, root: clone, workspace: true, tmpdir: scratch)
+
+        expect { tampered.for(request(ruling("auto"), root: clone)) }.to raise_error(Lain::Confine::Profile::Tampered)
+        expect(Open3).not_to have_received(:capture2).with(anything, "git", "-C", clone, "config", any_args)
+      ensure
+        FileUtils.rm_rf(leases) if leases
+      end
+
       { "the judge" => "auto", "a rule" => "rules", "bypass" => "bypass" }.each do |who, rung|
         it "confines an automatic approval by #{who} under the workspace profile" do
           expect(profiles.for(request(ruling(rung, rule: "project_rules"))))

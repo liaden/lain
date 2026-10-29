@@ -23,6 +23,7 @@ module Lain
 
     # Seconds one `git` may take; a child that outlives it reads as "no repository".
     GIT_TIMEOUT = 10
+    FSMONITOR_OFF = ["core.fsmonitor=false"].freeze
 
     NUL = "\0"
 
@@ -167,9 +168,11 @@ module Lain
       end
     end
 
-    # nil for every way git can fail to answer, which callers read as "no repository".
+    # nil for every way git can fail to answer, which callers read as "no repository". A nested repository's
+    # config is whatever a sandboxed call wrote there, so no listing runs the fsmonitor it names.
     def git(dir, *argv)
-      shell = Isolation::Checkout.new(dir, shell_out_factory: @shell_out_factory).run(*argv, timeout: GIT_TIMEOUT)
+      shell = Isolation::Checkout.of(dir, shell_out_factory: @shell_out_factory)
+                                 .run(*argv, timeout: GIT_TIMEOUT, pins: FSMONITOR_OFF)
       shell.stdout if Shell::Out.ok?(shell)
     rescue Shell::Out::Timeout, SystemCallError
       nil

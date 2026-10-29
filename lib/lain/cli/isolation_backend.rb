@@ -67,6 +67,10 @@ module Lain
       # since it is the default.
       BACKENDS = %w[none worktree].freeze
 
+      # The backends that cut a checkout per worker from a repository. `worktree` names an isolated checkout,
+      # which is a shared clone: a sandboxed call there can write no upstream byte, as a linked worktree's could.
+      CHECKOUTS = { "worktree" => Isolation::Clone }.freeze
+
       # An unset flag arrives as nil and falls through to this constant, not a
       # Thor default, so one authority answers "what does no `--isolation`
       # mean?"
@@ -165,7 +169,7 @@ module Lain
       # @raise [Isolation::WorkingBranch::Refused] for `worktree` on a detached HEAD
       # @raise [Error] for compose services declared with no compose file
       def check!
-        backend_name.tap { |name| check_worktree if name == "worktree" }
+        backend_name.tap { |name| check_worktree if CHECKOUTS.key?(name) }
       end
 
       private
@@ -174,10 +178,10 @@ module Lain
       # resolves `worktree` from, so its `#repo_root` answers the repository
       # THIS run would cut from, not an unrelated one found from the process cwd.
       def concrete
-        case backend_name
-        when "worktree" then worktree
-        else Isolation::Null.new(root: @root, paths: @paths, home: @home, cwd: @cwd)
-        end
+        checkout = CHECKOUTS[backend_name]
+        return worktree(checkout) if checkout
+
+        Isolation::Null.new(root: @root, paths: @paths, home: @home, cwd: @cwd)
       end
 
       # Validated once, so the mapping above only ever sees a name already
@@ -191,10 +195,10 @@ module Lain
         refuse_without_compose_file if services.grep(Isolation::Services::Compose).any?
       end
 
-      def worktree
+      def worktree(checkout)
         repo = repo_root
-        Isolation::Worktree.new(root: self.class.worktree_root(repo, paths: @paths), repo_root: repo,
-                                base: working_branch(repo), paths: @paths, shell_out_factory: @shell_out_factory)
+        checkout.new(root: self.class.worktree_root(repo, paths: @paths), repo_root: repo,
+                     base: working_branch(repo), paths: @paths, shell_out_factory: @shell_out_factory)
       end
 
       # Named HERE, which for chat is launch: the branch the parent stands on
@@ -211,7 +215,7 @@ module Lain
         nearest = nearest_repository
         return nearest.path if nearest.found?
 
-        raise NotARepository, "--isolation worktree needs a git repository to branch checkouts from, and " \
+        raise NotARepository, "--isolation #{@name} needs a git repository to branch checkouts from, and " \
                               "#{nearest.searched(@root)}; run it from a repository or use " \
                               "--isolation #{DEFAULT}"
       end

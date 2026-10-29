@@ -339,7 +339,7 @@ module Lain
 
         def initialize(dir, shell_out_factory:)
           @dir = dir
-          @checkout = Checkout.new(dir, shell_out_factory:)
+          @checkout = Checkout.of(dir, shell_out_factory:)
         end
 
         def head = run!("rev-parse", "HEAD")

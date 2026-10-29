@@ -94,24 +94,12 @@ module Lain
       # by a live process or by something lain did not write.
       class Refused < Error
         # Carries the OPERATION so a teardown-path (`remove`) failure is not
-        # mislabeled as an `add`.
-        def self.from_git(operation, path, shell)
-          new("git worktree #{operation} #{path} failed " \
+        # mislabeled as an `add`, and the registry's label so a clone's is not
+        # mislabeled as a worktree's.
+        def self.from_git(operation, path, shell, label: Registry::LABEL)
+          new("#{label} #{operation} #{path} failed " \
               "(exit #{shell.exitstatus}): #{shell.stderr.strip}")
         end
-      end
-
-      # `worktree add` writes the checkout's `.git` file and nothing rewrites
-      # it in place, so its mtime is when the checkout was cut. One that cannot
-      # be read counts as cut now, which errs towards keeping.
-      #
-      # @param path [String] a checkout
-      # @param clock [#call] answers now
-      # @return [Time]
-      def self.cut_at(path, clock)
-        File.mtime(File.join(path, ".git"))
-      rescue SystemCallError
-        clock.call
       end
 
       # @param repo_root [String] the repository the worktrees branch from
@@ -126,14 +114,16 @@ module Lain
       # @param shell_out_factory [#call] builds the subprocess runner, a factory
       #   so a spec substitutes it. {Shell::Out} spawns rather than forks, so a
       #   `git` here costs the parent nothing linear in its own RSS.
+      # @param registry [Registry, Clone::Registry] how checkouts are cut, listed, locked and reclaimed
       def initialize(root:, repo_root: Dir.pwd, base: WorkingBranch::NONE, paths: Paths.new,
                      process_table: LeaseLock::ProcessTable.new, clock: -> { Time.now },
-                     shell_out_factory: Shell::Out.public_method(:new))
+                     shell_out_factory: Shell::Out.public_method(:new),
+                     registry: Registry.new(repo_root: File.expand_path(repo_root), shell_out_factory:))
         @root = File.expand_path(root)
         @base = base
         @paths = paths
         @process_table = process_table
-        @registry = Registry.new(repo_root: File.expand_path(repo_root), shell_out_factory:)
+        @registry = registry
         @leftover = Leftover.new(registry: @registry, root: @root, process_table:, clock:)
         @release = Release.new(registry: @registry, clock:)
         @monitor = Monitor.new
@@ -195,7 +185,7 @@ module Lain
       # refuses leaving nothing behind.
       # @return [String] the SHA the checkout was cut from
       def check_out(path)
-        raise Refused, "worktree path #{path} is already leased" if @leased.include?(path)
+        raise Refused, "#{@registry.label} at #{path} is already leased" if @leased.include?(path)
 
         base = @base.tip
         FileUtils.mkdir_p(@root)
@@ -210,7 +200,7 @@ module Lain
 
       def add(path, commit)
         shell = @registry.add(path, commit, reason: @process_table.current.reason)
-        raise Refused.from_git("add", path, shell) unless Shell::Out.ok?(shell)
+        raise Refused.from_git("add", path, shell, label: @registry.label) unless Shell::Out.ok?(shell)
       end
 
       # Deregister then reclaim, serialized against acquire so a concurrent

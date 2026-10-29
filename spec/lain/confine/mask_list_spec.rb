@@ -46,6 +46,17 @@ RSpec.describe Lain::Confine::MaskList do
 
   def paths = list.masks.map(&:path)
 
+  # The listing runs before every call, outside the sandbox, over a tree the last call wrote.
+  it "runs no fsmonitor the checkout's config names" do
+    marker = File.join(@base, "fsmonitor-ran")
+    git("config", "core.fsmonitor", "touch #{marker}; false")
+    write(".env", "A=1\n")
+
+    list.masks
+
+    expect(File.exist?(marker)).to be(false)
+  end
+
   it "masks an untracked secret at its resolved path" do
     write(".env", "A=1\n")
     write("README.md")

@@ -93,6 +93,37 @@ RSpec.describe Lain::Sensitivity::HistoryLiterals, :seam do
     expect(described_class.new(root:, policy:).to_a).to include("correct horse battery")
   end
 
+  # A commondir a call plants after the reader was built names refs the clone does not hold; only the clone's
+  # own git dir decides which history is read.
+  it "reads only a clone's own refs, never those a planted commondir names" do
+    seed_deleted("ADMIN_PIN=48291377\n")
+    secret = git("rev-parse", "HEAD").stdout.strip
+    git("reset", "-q", "--hard", "HEAD~2")
+    git("reflog", "expire", "--expire=now", "--all")
+    leases = File.join(Lain::Paths.new.state_home, "worktrees", Lain::Paths.new.project_hash(root))
+    FileUtils.mkdir_p(leases)
+    clone = File.join(leases, "a")
+    base = git("rev-parse", "HEAD").stdout.strip
+    Lain::Isolation::Clone::Registry.new(repo_root: root, root: leases,
+                                         shell_out_factory: Lain::Shell::Out.public_method(:new))
+                                    .add(clone, base, reason: "held")
+    clone_policy = Lain::Sensitivity::Policy.new(
+      sensitivity: Lain::Sensitivity.new(home: File.join(@base, "home"), cwd: clone, rules: Lain::Sensitivity::Rules.empty,
+                                         root: clone), root: clone
+    )
+    literals = described_class.new(root: clone, policy: clone_policy)
+    evil = File.join(clone, "evil")
+    FileUtils.mkdir_p(File.join(evil, "refs", "heads"))
+    FileUtils.cp_r(File.join(root, ".git", "objects"), evil)
+    File.write(File.join(evil, "refs", "heads", "planted"), "#{secret}\n")
+    File.write(File.join(evil, "config"), "[core]\n\trepositoryformatversion = 0\n")
+    File.write(File.join(clone, ".git", "commondir"), "../evil\n")
+
+    expect(literals.to_a).not_to include("48291377")
+  ensure
+    FileUtils.rm_rf(leases) if leases
+  end
+
   it "lists nothing an ordinary path held" do
     seed_deleted("ADMIN_PIN=48291377\n")
     commit("notes.txt", "COLOUR=ultraviolet-blue\n")

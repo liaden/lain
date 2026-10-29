@@ -99,6 +99,127 @@ RSpec.describe Lain::Confine::Profile do
       end
     end
 
+    describe "a shared clone, whose objects live in another repository" do
+      around do |example|
+        Dir.mktmpdir do |dir|
+          @dir = File.realpath(dir)
+          FileUtils.mkdir_p(@upstream = File.join(@dir, "upstream"))
+          FileUtils.cp_r("#{SeedRepo.at(SeedRepo::SEED)}/.", @upstream)
+          example.run
+        ensure
+          FileUtils.rm_rf(leases)
+        end
+      end
+
+      def objects = File.join(@upstream, ".git", "objects")
+      # Under lain's lease container, the one tree whose records lain trusts.
+      def leases = File.join(Lain::Paths.new.state_home, "worktrees", Lain::Paths.new.project_hash(@upstream))
+
+      it "reads the objects of the upstream lain cut the lease from, without which git cannot run" do
+        root = File.join(leases, "a")
+        FileUtils.mkdir_p(File.dirname(root))
+        Lain::Isolation::Clone::Registry.new(repo_root: @upstream, root: File.dirname(root),
+                                             shell_out_factory: Lain::Shell::Out.public_method(:new))
+                                        .add(root, SeedRepo.git(@upstream, "rev-parse", "HEAD").stdout.strip,
+                                             reason: "held")
+
+        expect(described_class.reader(root:, home: "/h").read_dirs).to include(objects)
+      end
+
+      it "reads no store lain's record names that is not an objects dir" do
+        root = File.join(leases, "a")
+        FileUtils.mkdir_p([root, elsewhere = File.join(@dir, "elsewhere")])
+        File.write(Lain::Isolation::Clone::Guard.record(root), "#{elsewhere}\n")
+
+        expect(described_class.reader(root:, home: "/h").read_dirs).not_to include(elsewhere)
+      end
+
+      it "trusts no record a call planted beside an ordinary repository: its hooks stay sealed, nothing is granted" do
+        root = File.join(@dir, "pkg")
+        FileUtils.mkdir_p([File.join(root, ".githooks"), hooks = File.join(@dir, "elsewhere")])
+        SeedRepo.git(@dir, "init", "-q", root)
+        SeedRepo.git(root, "config", "core.hooksPath", ".githooks")
+        File.write(File.join(@dir, ".pkg.lease"), "#{objects}\n#{hooks}\n")
+        profile = described_class.workspace(root:, home: "/h", tmpdir: File.join(@dir, "t"))
+
+        expect(profile.sealed.map(&:path)).to include(File.join(root, ".githooks"))
+        expect(profile.read_dirs).not_to include(objects)
+        expect(profile.exec_dirs).not_to include(hooks)
+      end
+
+      it "trusts no record a call planted inside a clone lain cut" do
+        clone = File.join(leases, "a")
+        FileUtils.mkdir_p(leases)
+        Lain::Isolation::Clone::Registry.new(repo_root: @upstream, root: leases,
+                                             shell_out_factory: Lain::Shell::Out.public_method(:new))
+                                        .add(clone, SeedRepo.git(@upstream, "rev-parse", "HEAD").stdout.strip,
+                                             reason: "held")
+        inner = File.join(clone, "sub", "inner")
+        FileUtils.mkdir_p(File.join(inner, ".githooks"))
+        SeedRepo.git(clone, "init", "-q", inner)
+        SeedRepo.git(inner, "config", "core.hooksPath", ".githooks")
+        File.write(File.join(clone, "sub", ".inner.lease"), "#{objects}\n/usr/local\n")
+        profile = described_class.workspace(root: inner, home: "/h", tmpdir: File.join(@dir, "t"))
+
+        expect(profile.sealed.map(&:path)).to include(File.join(inner, ".githooks"))
+        expect(profile.exec_dirs).not_to include("/usr/local")
+      end
+
+      def genuine_clone
+        clone = File.join(leases, "a")
+        FileUtils.mkdir_p(leases)
+        Lain::Isolation::Clone::Registry.new(repo_root: @upstream, root: leases,
+                                             shell_out_factory: Lain::Shell::Out.public_method(:new))
+                                        .add(clone, SeedRepo.git(@upstream, "rev-parse", "HEAD").stdout.strip,
+                                             reason: "held")
+        clone
+      end
+
+      def repo_with_tracked_hooks(root)
+        FileUtils.mkdir_p(File.join(root, ".githooks"))
+        SeedRepo.git(File.dirname(root), "init", "-q", root)
+        SeedRepo.git(root, "config", "core.hooksPath", ".githooks")
+      end
+
+      it "trusts no symlink named like a record beside an ordinary repository, even one aimed at a genuine record" do
+        genuine = Lain::Isolation::Clone::Guard.record(genuine_clone)
+        root = File.join(@dir, "pkg")
+        repo_with_tracked_hooks(root)
+        File.symlink(genuine, File.join(@dir, ".pkg.lease"))
+        profile = described_class.workspace(root:, home: "/h", tmpdir: File.join(@dir, "t"))
+
+        expect(profile.sealed.map(&:path)).to include(File.join(root, ".githooks"))
+        expect(profile.read_dirs).not_to include(objects)
+      end
+
+      # Only lain writes a lease root, so this link cannot be planted by a call; it pins the link check on its own.
+      it "trusts no link named like a record even inside a lease root, aimed at a genuine record" do
+        genuine = Lain::Isolation::Clone::Guard.record(genuine_clone)
+        FileUtils.mkdir_p(fake = File.join(leases, "fake"))
+        File.symlink(genuine, Lain::Isolation::Clone::Guard.record(fake))
+
+        expect(Lain::Isolation::Clone::Guard.cut?(fake)).to be(false)
+      end
+
+      it "trusts no symlink named like a record that a call planted inside a clone" do
+        clone = genuine_clone
+        inner = File.join(clone, "sub", "inner")
+        repo_with_tracked_hooks(inner)
+        File.symlink(Lain::Isolation::Clone::Guard.record(clone), File.join(clone, "sub", ".inner.lease"))
+        profile = described_class.workspace(root: inner, home: "/h", tmpdir: File.join(@dir, "t"))
+
+        expect(profile.sealed.map(&:path)).to include(File.join(inner, ".githooks"))
+      end
+
+      it "reads nothing an alternates file names in a checkout lain did not cut, so a plant widens no read" do
+        root = File.join(@dir, "plain")
+        FileUtils.mkdir_p(File.join(root, ".git", "objects", "info"))
+        File.write(File.join(root, ".git", "objects", "info", "alternates"), "#{objects}\n")
+
+        expect(described_class.reader(root:, home: "/h").read_dirs).not_to include(objects)
+      end
+    end
+
     it "adds no git dir for an ordinary checkout, whose own .git is under the project" do
       Dir.mktmpdir do |root|
         Dir.mkdir(File.join(root, ".git"))
@@ -160,6 +281,7 @@ RSpec.describe Lain::Confine::Profile do
           File.join(git, "hooks") => false, File.join(git, "config") => false,
           File.join(git, "config.worktree") => true, File.join(git, "commondir") => true,
           File.join(git, "modules") => true, File.join(git, "worktrees") => true,
+          File.join(git, "objects/info/alternates") => true, File.join(git, "objects/info/http-alternates") => true,
           File.join(root, ".lain") => true, **in_root(*described_class::PROJECT_SEALED).to_h { [_1, true] }
         )
       end
@@ -377,6 +499,71 @@ RSpec.describe Lain::Confine::Profile do
       end
     end
 
+    context "with a shared clone lain cut" do
+      # Under lain's lease container, the one tree whose records lain trusts.
+      def leases = File.join(Lain::Paths.new.state_home, "worktrees", Lain::Paths.new.project_hash(@dir))
+      def root = File.join(leases, "r")
+
+      after { FileUtils.rm_rf(leases) }
+
+      before do
+        linked_worktree
+        FileUtils.rm_rf(root)
+        Lain::Isolation::Clone::Registry.new(repo_root: File.dirname(common), root: leases,
+                                             shell_out_factory: Lain::Shell::Out.public_method(:new))
+                                        .add(root, SeedRepo.git(File.dirname(common), "rev-parse", "HEAD").stdout.strip,
+                                             reason: "held")
+      end
+
+      def git = File.join(root, ".git")
+
+      it "seals the clone's alternates beside its config, and writes nothing in upstream" do
+        expect(sealed_of(workspace)).to include(
+          File.join(git, "objects/info/alternates") => false, File.join(git, "config") => false,
+          File.join(git, "hooks") => false
+        )
+        expect(workspace.write_dirs).to eq([root, tmpdir, "/dev/null", "/tmp"])
+      end
+
+      it "writes nothing that holds the record lain trusts, nor the lease root it sits in" do
+        record = Lain::Isolation::Clone::Guard.record(root)
+
+        expect(workspace.write_dirs.select { Lain::Landing.under?(record, _1) || Lain::Landing.under?(leases, _1) })
+          .to eq([])
+      end
+
+      it "reads upstream's objects and nothing else of upstream" do
+        expect(workspace.read_dirs).to include(File.join(common, "objects"))
+        expect(workspace.read_dirs).not_to include(common, File.dirname(common))
+      end
+
+      it "seals the layout lain cut without asking git, so a plant in the git dir cannot steer the seals" do
+        File.write(File.join(git, "HEAD"), "not a ref\n")
+
+        expect(sealed_of(workspace)).to include(File.join(git, "config") => false, File.join(git, "hooks") => false,
+                                                File.join(git, "objects/info/alternates") => false)
+      end
+
+      it "refuses a workspace or a reader in a clone whose git dir holds a planted commondir" do
+        File.write(File.join(git, "commondir"), "../evil\n")
+
+        refusals = [-> { workspace }, -> { described_class.reader(root:, home: "/h") }].map do |build|
+          build.call
+        rescue described_class::Tampered => e
+          [e.profile, e.message[/commondir/]]
+        end
+
+        expect(refusals).to eq([%i[workspace] + ["commondir"], %i[reader] + ["commondir"]])
+      end
+
+      it "reads and runs a hooks dir outside the project, which git runs on a commit, and seals it" do
+        SeedRepo.git(root, "config", "core.hooksPath", hooks = File.join(common, "hooks"))
+
+        expect([workspace.read_dirs, workspace.exec_dirs]).to all(include(hooks))
+        expect(sealed_of(workspace)).to include(hooks => false)
+      end
+    end
+
     context "with a linked worktree" do
       before { linked_worktree }
 
@@ -428,6 +615,48 @@ RSpec.describe Lain::Confine::Profile do
       [File.join(@dir, "h"), @dir].each do |tmp|
         expect { described_class.workspace(root:, home: File.join(@dir, "h"), tmpdir: tmp) }
           .to raise_error(described_class::HomeTmpdir, /home/) { expect(_1).to have_attributes(path: tmp) }
+      end
+    end
+
+    it "refuses a root that holds lain's state home, whose lease records a call there could write" do
+      state = File.join(@dir, "home-ish", "state")
+      FileUtils.mkdir_p([state, tmpdir])
+      root_above = File.join(@dir, "home-ish")
+
+      with_env("XDG_STATE_HOME" => state) do
+        expect { described_class.workspace(root: root_above, home: "/h", tmpdir:) }
+          .to raise_error(described_class::HoldsState, /state/) { expect(_1).to have_attributes(path: root_above) }
+      end
+    end
+
+    it "refuses a lease root, which holds the records beside its clones" do
+      lease_root = File.join(Lain::Isolation::Clone::Guard.container, "spec-#{File.basename(@dir)}")
+      FileUtils.mkdir_p([lease_root, tmpdir])
+
+      expect { described_class.workspace(root: lease_root, home: "/h", tmpdir:) }
+        .to raise_error(described_class::HoldsState)
+    ensure
+      FileUtils.rm_rf(lease_root) if lease_root
+    end
+
+    it "refuses a lease root's aside dir, which holds the records beside the clones moved there" do
+      aside = File.join(Lain::Isolation::Clone::Guard.container, "spec-#{File.basename(@dir)}", "retained")
+      FileUtils.mkdir_p([aside, tmpdir])
+
+      expect { described_class.workspace(root: aside, home: "/h", tmpdir:) }.to raise_error(described_class::HoldsState)
+    ensure
+      FileUtils.rm_rf(File.dirname(aside)) if aside
+    end
+
+    # The container is made at the first lease, so before that the state home's real place is what must be compared.
+    it "refuses a root holding the real place of a linked state home, before any lease made the container" do
+      real = File.join(@dir, "disk", "state")
+      FileUtils.mkdir_p([real, File.join(@dir, "home", ".local"), tmpdir])
+      File.symlink(real, linked = File.join(@dir, "home", ".local", "state"))
+
+      with_env("XDG_STATE_HOME" => linked) do
+        expect { described_class.workspace(root: File.join(@dir, "disk"), home: "/h", tmpdir:) }
+          .to raise_error(described_class::HoldsState)
       end
     end
 

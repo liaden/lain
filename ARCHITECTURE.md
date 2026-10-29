@@ -1574,14 +1574,15 @@ context a worker leases. One message, `acquire(worker_id) -> Lease`. A `Lease` c
 whatever the acquire provisioned. The 2 are separated so a strategy can enrich the leased
 `WorkerEnv` without reshaping the base.
 
-Two **backends** answer it directly:
+Three **backends** answer it directly:
 
 | Backend | What a lease is |
 |---|---|
 | `Isolation::Null` | the shared process. The control arm still acquires and releases, so it honors the same lifecycle a fan-out arm uses |
-| `Isolation::Worktree` | an isolated `git worktree` checkout per worker, with `GIT_CONTEXT_SCRUB` applied |
+| `Isolation::Worktree` | an isolated `git worktree` checkout per worker, with `GIT_CONTEXT_SCRUB` applied; what epic and plan leases use |
+| `Isolation::Clone` | a shared clone (`git clone --shared`) per worker, what chat and bench lease under `--isolation worktree` |
 
-Three **decorators** wrap either backend. They are decorators rather than `worker_env_for`
+Three **decorators** wrap any backend. They are decorators rather than `worker_env_for`
 overrides because each owns a `release` that must compose with the inner backend's own release:
 
 - `Isolation::DbIndex` provisions one database per declared service per worker, named from the worker key.

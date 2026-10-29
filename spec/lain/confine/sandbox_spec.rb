@@ -427,6 +427,160 @@ RSpec.describe Lain::Confine::Sandbox do
     end
   end
 
+  describe "a workspace call in a shared clone lease, on this box", :seam do
+    let(:fence) { Lain::Confine::Bwrap.fence_binary }
+
+    before do
+      skip("bwrap or strace is not installed") unless %w[/usr/bin/bwrap /usr/bin/strace].all? { File.executable?(_1) }
+      skip("lain-fence is not built at #{fence} -- run `bundle exec rake compile`") unless File.executable?(fence)
+    end
+
+    around do |example|
+      Dir.mktmpdir("lain-sandbox-clone") do |dir|
+        @base = File.realpath(dir)
+        FileUtils.mkdir_p([upstream, home, scratch])
+        FileUtils.cp_r("#{SeedRepo.at(SeedRepo::SEED)}/.", upstream)
+        SeedRepo.git(upstream, "config", "--unset", "core.hooksPath")
+        FileUtils.mkdir_p(File.join(upstream, ".git", "hooks"))
+        File.write(hook = File.join(upstream, ".git", "hooks", "pre-commit"), "#!/bin/sh\necho upstream-hook-ran >&2\n")
+        File.chmod(0o755, hook)
+        @backend = Lain::Isolation::Clone.new(repo_root: upstream, root: leases,
+                                              base: Lain::Isolation::WorkingBranch.checked_out(repo_root: upstream))
+        @lease = @backend.acquire("worker-1")
+        example.run
+      ensure
+        @lease&.release(discard: true)
+        FileUtils.rm_rf(leases)
+      end
+    end
+
+    def upstream = File.join(@base, "upstream")
+    def home = File.join(@base, "home")
+    def scratch = File.join(@base, "scratch")
+    def clone = @lease.worker_env.cwd
+    # Under lain's lease container, the one tree whose records lain trusts.
+    def leases = File.join(Lain::Paths.new.state_home, "worktrees", Lain::Paths.new.project_hash(upstream))
+    def git_in_clone(*) = SeedRepo.git(clone, *).stdout.strip
+    def upstream_refs = SeedRepo.git(upstream, "for-each-ref", "--format=%(refname) %(objectname)").stdout
+
+    def masks
+      policy = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: clone, root: clone),
+                                             home:, root: clone)
+      Lain::Confine::MaskList.new(root: clone, policy: -> { policy })
+    end
+
+    def call(command)
+      exec = described_class.new(root: clone, home:, masks:, probe: Lain::Confine::Probe.new(fence:, journal:), fence:,
+                                 journal:, workspace: true, tmpdir: scratch)
+                            .wrap(Lain::Exec::Local.new, requirer: "Spec")
+      ruling = Lain::Approval::Escalation::Ruling.allow(rung: Lain::Approval::Judged::NAME, because: "judged")
+      request = Lain::Confine::Request.new(ruling:, executables: [], cwd: clone, root: clone, tool_use_id: "toolu_1")
+      exec.call(command:, cwd: clone, env: {}, timeout: 20, confinement: request)
+    end
+
+    def as_worker = "git -c user.name=w -c user.email=w@e"
+
+    it "commits under upstream's pre-commit, deletes a packed branch and finishes a conflicted merge cleanly" do
+      git_in_clone("branch", "doomed")
+      git_in_clone("pack-refs", "--all")
+      capture = call(<<~SH)
+        set -e
+        echo one > README && #{as_worker} commit -qam one
+        #{as_worker} branch -d doomed
+        #{as_worker} switch -qc side HEAD~1 && echo side > README && #{as_worker} commit -qam side
+        #{as_worker} switch -q --detach @{-1}
+        #{as_worker} merge -q side || true
+        echo resolved > README && git add README && #{as_worker} commit -q --no-edit
+        test ! -e .git/AUTO_MERGE && echo clean
+      SH
+
+      expect([capture.exit_status, capture.stdout.lines.last]).to eq([0, "clean\n"])
+      expect(capture.stderr).to include("upstream-hook-ran")
+      expect(capture.stderr).not_to match(/Read-only|Permission denied|unable to/)
+      expect(git_in_clone("branch", "--list", "doomed")).to eq("")
+    end
+
+    it "refuses or flags every write to the clone's config, hooks and alternates, and to upstream's refs and objects" do
+      before = upstream_refs
+      tip = git_in_clone("rev-parse", "HEAD")
+      config = File.read(File.join(clone, ".git", "config"))
+      capture = call(<<~SH)
+        echo x >> .git/config
+        git config core.hooksPath /tmp
+        echo x > .git/hooks/pre-commit
+        echo /tmp > .git/objects/info/alternates
+        echo #{tip} > #{upstream}/.git/refs/heads/planted
+        touch #{upstream}/.git/objects/planted
+        echo #{tip} > .git/objects/info/http-alternates
+        true
+      SH
+
+      expect(capture.stderr.scan(/Read-only file system|Permission denied|Device or resource busy/).size).to be >= 6
+      expect(File.read(File.join(clone, ".git", "config"))).to eq(config)
+      expect(File.exist?(File.join(clone, ".git", "hooks", "pre-commit"))).to be(false)
+      expect(File.read(File.join(clone, ".git", "objects", "info", "alternates")).strip)
+        .to eq(File.join(upstream, ".git", "objects"))
+      expect([upstream_refs, File.exist?(File.join(upstream, ".git", "objects", "planted"))]).to eq([before, false])
+      expect(journal.events.grep(Lain::Telemetry::Sandbox).last.created_sealed)
+        .to eq([File.join(clone, ".git", "objects", "info", "http-alternates")])
+    end
+
+    it "refuses a workspace call rooted at the lease root, which holds the records lain trusts" do
+      exec = described_class.new(root: leases, home:, masks:, probe: Lain::Confine::Probe.new(fence:, journal:), fence:,
+                                 journal:, workspace: true, tmpdir: scratch)
+                            .wrap(Lain::Exec::Local.new, requirer: "Spec")
+      ruling = Lain::Approval::Escalation::Ruling.allow(rung: Lain::Approval::Judged::NAME, because: "judged")
+      request = Lain::Confine::Request.new(ruling:, executables: [], cwd: leases, root: leases, tool_use_id: "toolu_1")
+      capture = exec.call(command: "true", cwd: leases, env: {}, timeout: 20, confinement: request)
+
+      expect([capture.exit_status, capture.stderr])
+        .to match([Lain::Shell::Pipeline::NOT_PERMITTED, /REFUSED.*holds lain's own state/])
+    end
+
+    it "never runs a commondir plant from release or gc, and keeps the clone for a human" do
+      marker = File.join(@base, "pwned")
+      call(<<~SH)
+        mkdir -p evil && cp -r .git/objects .git/refs evil/
+        printf '[core]\\n\\trepositoryformatversion = 0\\n\\tfsmonitor = "touch #{marker}; false"\\n' > evil/config
+        echo ../evil > .git/commondir
+      SH
+      lain_reads_the_lease
+      @lease.release
+      record = Lain::Isolation::Gc.new(repo_root: upstream, root: leases, retain_days: 0,
+                                       clock: -> { Time.now + 86_400 }).call.find { _1.name == clone }
+
+      expect(File.exist?(File.join(clone, ".git", "commondir"))).to be(true)
+      expect([File.exist?(marker), File.directory?(clone)]).to eq([false, true])
+      expect([record.action, record.reason]).to match([:kept, /commondir/])
+      expect(@outcomes).to eq(%i[failed failed failed])
+      expect([@refused.exit_status,
+              @refused.stderr]).to match([Lain::Shell::Pipeline::NOT_PERMITTED, /REFUSED.*redirects git/])
+    end
+
+    # Every site where lain runs its own git in a lease, outside the sandbox.
+    def lain_reads_the_lease
+      @refused = call("true")
+      [clone, File.join(clone, "evil")].each { Lain::FileWalk.new(root: _1).first(3) }
+      expect { checked_tree.dirty? }.to raise_error(Lain::Error, /commondir/)
+      @outcomes = [Lain::Isolation::SelfSync.new(base: @backend.base).unasked(@lease, worker_id: "worker-1").outcome,
+                   handed_back.kind, retired.kind]
+    end
+
+    def checked_tree
+      Lain::Isolation::WorkerChecks::Tree.new(clone, base: @backend.base,
+                                                     shell_out_factory: Lain::Shell::Out.public_method(:new))
+    end
+
+    def handed_back
+      Lain::Isolation::Worktree::Handback.new(repo_root: upstream, base: Lain::Isolation::WorkingBranch::NONE)
+                                         .anchor(@lease, worker_id: "worker-1")
+    end
+
+    def retired
+      Lain::Isolation::Worktree::Handback::Retirement.over(isolation: @backend).surrender(@lease, worker_id: "worker-1")
+    end
+  end
+
   describe "a reader call whose listed link lands on what the call runs on", :seam do
     let(:fence) { Lain::Confine::Bwrap.fence_binary }
 

@@ -55,9 +55,19 @@ module Lain
                    "file it leads to could be repointed and run later. Retrying, or running the same effect another " \
                    "way, will be refused again. Stop and ask the human to replace the link with the file, or to " \
                    "restart with --confine reader, then wait for the answer."
+      HOLDS_STATE = "REFUSED by the sandbox, not a transient error: the project root %<path>s holds lain's own " \
+                    "state, where the lease records lain trusts live, so a write there could forge one. Retrying " \
+                    "will be refused again. Stop and ask the human to run lain from the project itself, then wait " \
+                    "for the answer."
+      TAMPERED = "REFUSED by the sandbox, not a transient error: the git dir of the checkout %<path>s holds a name " \
+                 "that redirects git, so lain runs nothing there. Retrying will be refused again. Stop and tell the " \
+                 "human, then wait for the answer."
       HOME_TMPDIR = "REFUSED by the sandbox, not a transient error: the TMPDIR %<path>s is home or holds it, so a " \
                     "write there would reach home. Retrying will be refused again. Stop and ask the human to set " \
                     "TMPDIR elsewhere and restart, then wait for the answer."
+      # Each profile build that refuses for a path, and the sentence that says why.
+      UNBUILT = { Confine::Profiles::NoTmpdir => NO_TMPDIR, Confine::Profile::HomeTmpdir => HOME_TMPDIR,
+                  Confine::Profile::HoldsState => HOLDS_STATE, Confine::Profile::Tampered => TAMPERED }.freeze
 
       # Bundler reads the user's config, which may hold gem-source credentials,
       # and the reader profile grants no home directory to find it in.
@@ -101,17 +111,18 @@ module Lain
           profile = reaped(@profiles.for(confinement))
         rescue Confine::Profiles::Overmasked => e
           return overmasked(confinement, e, sinks)
-        rescue Confine::Profiles::NoTmpdir => e
-          return refused_before(confinement, e, phrased(NO_TMPDIR, path: printable(e.path)), sinks)
         rescue Confine::Profile::Unsealable => e
           return unsealable(confinement, e, sinks)
-        rescue Confine::Profile::HomeTmpdir => e
-          return refused_before(confinement, e, phrased(HOME_TMPDIR, path: printable(e.path)), sinks)
+        rescue *UNBUILT.keys => e
+          return refused_before(confinement, e, phrased(unbuilt(e), path: printable(e.path)), sinks)
         end
         finishing(confinement, profile) { run_under(profile, confinement, command:, cwd:, env:, timeout:, **sinks) }
       end
 
       private
+
+      # By kind, so a refusal subclassed later still gets its sentence.
+      def unbuilt(error) = UNBUILT.find { |klass, _| error.is_a?(klass) }.last
 
       def run_under(profile, confinement, command:, cwd:, env:, timeout:, **sinks)
         refused = unrunnable(profile, confinement.executables)

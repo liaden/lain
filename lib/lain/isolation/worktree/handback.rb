@@ -465,7 +465,7 @@ module Lain
 
         # Built per operation rather than held, because a stale one would name a
         # directory that has been reclaimed.
-        def checkout(lease) = Checkout.new(lease.worker_env.cwd, shell_out_factory: @shell_out_factory)
+        def checkout(lease) = Checkout.of(lease.worker_env.cwd, shell_out_factory: @shell_out_factory)
 
         # "Already has it" is asked as reachability rather than remembered from
         # the add, so a parent that moved on under a worker that committed
@@ -477,6 +477,8 @@ module Lain
           return failed(key, "rev-parse HEAD", head) unless Shell::Out.ok?(head)
 
           commit = head.stdout.strip
+          folded = @parent.fold_in(worktree.dir, commit)
+          return failed(key, "fetch #{commit}", folded) unless Shell::Out.ok?(folded)
           return outcome(:nothing_to_do, key) if @parent.ancestor?(commit)
 
           held = @parent.target(ref)

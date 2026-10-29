@@ -16,12 +16,35 @@ module Lain
       # cannot check for itself.
       CONFLICTED = /^<<<<<<< .*^=======$.*^>>>>>>> /m
 
+      # What a step that is not a git command answers, read as a shell is.
+      Done = Data.define(:exitstatus, :stdout, :stderr) do
+        def self.ok = new(exitstatus: 0, stdout: "", stderr: "")
+        def self.refused(why) = new(exitstatus: 1, stdout: "", stderr: why)
+      end
+
+      # A lease's checkout: a clone lain cut is questioned only through the
+      # repository it pins ({Clone::Guard}), and any other is as written.
+      #
+      # @param dir [String]
+      # @param shell_out_factory [#call]
+      # @return [Checkout]
+      def self.of(dir, shell_out_factory: Shell::Out.public_method(:new))
+        Clone::Guard.checkout(dir, shell_out_factory:)
+      end
+
       # @param dir [String] the working tree every command runs in
       # @param shell_out_factory [#call] builds the subprocess runner
-      def initialize(dir, shell_out_factory: Shell::Out.public_method(:new))
+      # @param env [Hash] merged beneath each call's own env
+      # @param pins [Array<String>] config spelled before each call's own pins
+      def initialize(dir, shell_out_factory: Shell::Out.public_method(:new), env: {}, pins: [])
         @dir = dir
         @shell_out_factory = shell_out_factory
+        @env = env
+        @pins = pins
       end
+
+      # @return [String] the working tree every command runs in
+      attr_reader :dir
 
       # The positional arguments are the git subcommand and its arguments.
       # @param env [Hash] merged over the scrub, so a caller adds to it and never
@@ -32,8 +55,9 @@ module Lain
       # @param pins [Array<String>] `key=value` config, each spelled `-c key=value`
       # @return [Shell::Out] the finished command; its status is the caller's to read
       def run(*, env: {}, timeout: nil, input: nil, pins: [])
-        options = { environment: Worktree::GIT_CONTEXT_SCRUB.merge(env), timeout:, input: }.compact
-        shell = @shell_out_factory.call("git", "-C", @dir, *pins.flat_map { |pin| ["-c", pin] }, *, **options)
+        options = { environment: Worktree::GIT_CONTEXT_SCRUB.merge(@env, env), timeout:, input: }.compact
+        shell = @shell_out_factory.call("git", "-C", @dir, *[*@pins, *pins].flat_map { |pin| ["-c", pin] }, *,
+                                        **options)
         shell.run_command
         shell
       end
@@ -121,6 +145,27 @@ module Lain
       # dropped (measured, git 2.43).
       def update_ref(ref, commit, held = nil, reason:)
         run("update-ref", "--create-reflog", "-m", reason, ref, commit, *held)
+      end
+
+      # A shared clone's commits live in its own store until fetched, so a ref
+      # here naming one would point at nothing. upload-pack runs in the source
+      # and reads its git dir, so a clone a call tampered with is never fetched
+      # from. Fetched by SHA onto no ref:
+      # the caller's compare-and-swapped `update-ref` is what makes it
+      # reachable. fsck'd, because the objects come from a tree an agent wrote.
+      #
+      # @param source [String] the repository that holds `commit`
+      # @param commit [String] a full SHA
+      # @return [Shell::Out] the fetch, or the check that found nothing to fetch
+      def fold_in(source, commit)
+        held = run("cat-file", "-e", "#{commit}^{commit}")
+        return held if Shell::Out.ok?(held)
+
+        refusal = Clone::Guard.refusal(source)
+        return Done.refused(refusal) unless refusal.empty?
+
+        run("fetch", "--quiet", "--no-tags", "--no-write-fetch-head", source, commit,
+            pins: ["transfer.fsckObjects=true"])
       end
 
       # `-z`, because the default output runs every path through

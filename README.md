@@ -755,38 +755,45 @@ authorization. A `Role` packages that attenuation with a prompt slot and a spawn
 ### Workers can be isolated, and their commits survive the isolation
 
 Isolation is one seam — `acquire(worker_id) -> Lease` — and a `Lease` carries the `WorkerEnv` a
-worker resolves its paths against. `--isolation worktree` resolves an `Isolation::Worktree` behind
-it, decorated by whatever `.lain/services.rb` declares, so a worker can get its own checkout and its
-own `postgres` without the topology knowing that happened.
+worker resolves its paths against. `--isolation worktree` resolves an `Isolation::Clone` behind it,
+decorated by whatever `.lain/services.rb` declares, so a worker can get its own checkout and its own
+`postgres` without the topology knowing that happened.
 
-The checkout is **detached** on purpose, and release **destroys** it. A bare `git worktree add`
-would leak a branch per cycle, and a re-acquire after a crash would check out that leaked tip —
-bleeding a dead worker's state into its successor, which defeats isolation on exactly the
-crash-restart path. Leaving a checkout on disk is worse still, because a leaked worktree silently
-defeats the next acquire. So uncommitted work in a worktree is **scratch**.
+Each checkout is a `git clone --shared` of the repository: a repository of its own that reads
+upstream's objects through alternates. Its whole git dir is under the lease, so the sandbox lets a
+worker commit, delete branches and finish merges there, while no upstream byte is writable. The
+clone is cut **detached** at the working branch's tip, as a SHA, and keeps no branch or remote ref,
+so a re-acquire after a crash is always a clean checkout of the base and never a dead worker's
+tip. Upstream pins the base under `refs/lain/lease/` while the clone exists, so an upstream prune
+cannot take history the clone reads. The clone runs upstream's hooks, from a config the sandbox
+seals.
 
-*Committed* work is not. Before reclaim, `Worktree::Handback` captures the worker's `HEAD` to
-`refs/lain/worker/<id>` — outside `refs/heads/`, so it is not a branch and `add --detach` can never
-check it out — and then queues that ref for the merge coordinator. The parent checkout is never
+A worker's commits live in its clone's own store, and they reach upstream **only at the fold-back
+fetch**: before any ref names one, lain fetches it from the clone by SHA, fsck'd. Then
+`Worktree::Handback` writes the worker's `HEAD` to `refs/lain/worker/<id>` — outside `refs/heads/`,
+so it is not a branch — and queues that ref for the merge coordinator. The parent checkout is never
 merged into. The coordinator builds each batch as a candidate commit no checkout holds, runs the
 project's verify command on it in a scratch worktree, and moves the branch only on green, by
 fast-forward where a worktree holds it. A conflict is reported with its paths, and the work stays
 on its ref. The worker's tool result names the entry, and `lain land wait <id>` says whether it
 landed ([`docs/commands.md`](docs/commands.md#lain-land)). Handback never raises past its caller and
-never removes a worktree.
+never removes a checkout.
 
-**A worker brings itself current before it hands back.** It runs its fast checks, then anchors its `HEAD` and rebases
-onto the working branch it was cut from, and verifies with `git cherry` that every patch survived —
-so a sibling that landed first cannot silently swallow this worker's commits. The checks are its
-changed specs and the mirror specs of its changed sources, then the lint. One
-drainer per branch lands the queue, and `lain epic land` takes turns with it on the same lock, so
-the full suite runs once per batch rather than once per worker. The retry count, the merge
+**A worker brings itself current before it hands back.** It runs its fast checks, then anchors its
+`HEAD` and rebases onto the working branch it was cut from, and verifies with `git cherry` that
+every patch survived — so a sibling that landed first cannot silently swallow this worker's
+commits. The checks are its changed specs and the mirror specs of its changed sources, then the
+lint. One drainer per branch lands the queue, and `lain epic land` takes turns with it on the same
+lock, so the full suite runs once per batch rather than once per worker. The retry count, the merge
 strategy, the verify and check commands and the batch size are the `isolation` verb of
 `.lain/config.rb`.
 
-Nothing is destroyed while it might still hold work. A dirty checkout is kept rather than released,
-and `lain worktrees gc` anchors a committed `HEAD` — plus a snapshot of any dirty state — under
-`refs/lain/worker/*` before it removes anything.
+Nothing is destroyed while it might still hold work. A dirty clone is kept rather than released,
+and `lain worktrees gc` reaps clones as it reaps worktrees: it fetches and anchors a committed
+`HEAD` — plus a snapshot of any dirty state — under `refs/lain/worker/*` before it removes a clone
+and its pin. A clone whose git dir holds a name that redirects git (`commondir`, `config.worktree`,
+`worktrees`, `modules`), which a sandboxed call may have planted, gets no git run in it at all: it
+is kept for a human, and `lain worktrees gc` says why.
 
 One limit stands: the worktree root is keyed on the repository, so one concurrent isolated run per
 project is a precondition, not a bug.

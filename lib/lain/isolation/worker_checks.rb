@@ -236,7 +236,7 @@ module Lain
           @dir = dir
           @base = base
           @shell_out_factory = shell_out_factory
-          @git = Checkout.new(dir, shell_out_factory:)
+          @git = Checkout.of(dir, shell_out_factory:)
           @swept = []
         end
 

@@ -139,13 +139,16 @@ lain --compact-strategy elide-tools+summarize-conversation \
 
 #### Isolation flag
 
-`--isolation worktree` resolves an `Isolation::Worktree` backend under a per-project root, decorated
+`--isolation worktree` resolves an `Isolation::Clone` backend under a per-project root, decorated
 with whatever `.lain/services.rb` declares, and hands it to the `Supervisor` the chat fleet leases
-from. Worth knowing before you reach for it:
+from. Each worker's checkout is a `git clone --shared` of the repository, cut detached at the
+working branch's tip; its commits reach upstream only at the fold-back fetch, when it hands back.
+`lain worktrees gc` reaps clones, and keeps one whose git dir was tampered with for a human. Worth
+knowing before you reach for it:
 
 - **One-shot and `@role` spawns lease too.** Under `--isolation worktree`, a one-shot spawn and an
-  `@role/skill` line each take a worktree of their own from the supervisor. Actor-mode children are
-  what [`/implement-epic`](#implement-epic) runs, and the epic driver builds its own worktree
+  `@role/skill` line each take a clone of their own from the supervisor. Actor-mode children are
+  what [`/implement-epic`](#implement-epic) runs, and the epic driver builds its own linked-worktree
   isolation over the epic's working branch rather than leasing through this flag.
 - **A chat's workers do hand their commits back, through the merge coordinator.** A worker runs its
   fast checks (`check`, and `lint` on the files `lint_files` selects) before it rebases onto the

@@ -48,12 +48,16 @@ RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
   end
 
   let(:journal) { [] }
+  # Under lain's lease container, the one tree whose records lain trusts.
+  let(:lease_root) { File.join(Lain::Paths.new.state_home, "worktrees", Lain::Paths.new.project_hash(@repo_root)) }
   # The opt-out from a working-branch target, spelled at every call site that takes it.
   let(:no_target) { Lain::Isolation::WorkingBranch::NONE }
   let(:backend) do
     Lain::Isolation::Worktree.new(repo_root: @repo_root, root: @root,
                                   base: Lain::Isolation::WorkingBranch.checked_out(repo_root: @repo_root))
   end
+
+  after { FileUtils.rm_rf(lease_root) }
 
   # Copied, not rebuilt: five git subprocesses per example for a directory that
   # is identical every time (see {SeedRepo}).
@@ -933,6 +937,39 @@ RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
       expect(reachable_from_head?(commit)).to be(false)
       expect(merging?).to be(false)
       expect(head_refs).not_to include(a_string_including("worker-1"))
+    ensure
+      lease&.release
+    end
+
+    it "fetches a shared clone's commit into the parent before writing its ref" do
+      clones = Lain::Isolation::Clone.new(repo_root: @repo_root, root: lease_root,
+                                          base: Lain::Isolation::WorkingBranch.checked_out(repo_root: @repo_root))
+      lease = clones.acquire("worker-1")
+      File.write(File.join(lease.worker_env.cwd, "README"), "worker\n")
+      run_git(lease.worker_env.cwd, "-c", "user.name=w", "-c", "user.email=w@e", "commit", "-q", "-am", "work")
+      commit = head_commit(lease.worker_env.cwd)
+      before = try_git(@repo_root, "cat-file", "-e", commit).exitstatus.zero?
+
+      outcome = handback.anchor(lease, worker_id: "worker-1")
+
+      expect([before, outcome.kind, ref_target(outcome.ref).stdout.strip]).to eq([false, :declined, commit])
+    ensure
+      lease&.release
+    end
+
+    it "answers failed, naming the fetch, and writes no ref when a shared clone's commit cannot be fetched" do
+      clones = Lain::Isolation::Clone.new(repo_root: @repo_root, root: lease_root,
+                                          base: Lain::Isolation::WorkingBranch.checked_out(repo_root: @repo_root))
+      lease = clones.acquire("worker-1")
+      File.write(File.join(lease.worker_env.cwd, "README"), "worker\n")
+      run_git(lease.worker_env.cwd, "-c", "user.name=w", "-c", "user.email=w@e", "commit", "-q", "-am", "work")
+      failing = described_class.new(repo_root: @repo_root, base: no_target, journal:,
+                                    shell_out_factory: factory_failing("fetch"))
+
+      outcome = failing.anchor(lease, worker_id: "worker-1")
+
+      expect([outcome.kind, outcome.detail]).to match([:failed, /git fetch \h{40} failed/])
+      expect(worker_refs.grep(%r{\Arefs/lain/worker/})).to eq([])
     ensure
       lease&.release
     end

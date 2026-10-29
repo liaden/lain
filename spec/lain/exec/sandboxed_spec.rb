@@ -638,6 +638,13 @@ RSpec.describe Lain::Exec::Sandboxed do
         end
       end
 
+      it "refuses a subclass of a refusal it knows with that refusal's sentence" do
+        later = Class.new(Lain::Confine::Profile::Tampered)
+        capture = refused_by(later.new(path: "/srv/lease", why: "commondir", profile: :workspace))
+
+        expect([capture.exit_status, capture.stderr]).to match([Lain::Shell::Pipeline::NOT_PERMITTED, /redirects git/])
+      end
+
       it "refuses a call whose TMPDIR has gone, in words, and journals it" do
         gone = "/srv/scratch/gone"
         capture = refused_by(Lain::Confine::Profiles::NoTmpdir.new(path: gone, profile: :workspace))

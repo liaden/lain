@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "securerandom"
-
 module Lain
   module Isolation
     class Worktree
@@ -9,18 +7,16 @@ module Lain
       # lain changes it. Every call answers the shell rather than raising, so
       # each caller decides which failure is loud.
       class Registry
+        include Registered
+
         # One registered worktree, with its lock read as a {LeaseLock}.
         # `branch` is the full ref a checkout has out, "" when detached.
         # `seal` is the lock's reason exactly as git reported it -- what a
         # {#claim} compares, byte for byte, before anything is unlocked.
         Entry = Data.define(:path, :head, :branch, :lock, :seal)
 
-        # The two places git keeps a rebase in progress, each naming the
-        # branch it will rewrite when it finishes.
-        REBASES = %w[rebase-merge rebase-apply].freeze
-
-        # What {#claim} renames a lock to while it holds it.
-        CLAIMED = "locked.lain-claim-"
+        # What a refusal names these checkouts by.
+        LABEL = "git worktree"
 
         # @param repo_root [String] any checkout of the repository
         # @param shell_out_factory [#call] builds the subprocess runner
@@ -33,6 +29,9 @@ module Lain
 
         # @return [String] the repository every command below runs against
         attr_reader :repo_root
+
+        # @return [String] what a refusal names these checkouts by
+        def label = LABEL
 
         # `-z`, because a path and a lock reason are free text, and the plain
         # porcelain quotes any holding a newline. Records end in an extra NUL.
@@ -58,18 +57,6 @@ module Lain
 
         def move(from, to) = @repo_lock.synchronize { @git.run("worktree", "move", from, to) }
 
-        # Rewrites HEAD alone, never the index or a file, so a tree holding
-        # uncommitted work or an index git cannot read detaches all the same.
-        # Compare-and-swapped against `commit`: pointing a HEAD that has moved
-        # on back at it would leave the newer commit's changes reading as
-        # staged, work nobody made.
-        # @param path [String] a registered checkout
-        # @param commit [String] the commit HEAD resolved to when it was read
-        # @param reason [String] stamped into HEAD's reflog
-        def detach(path, commit, reason:)
-          at(path).run("update-ref", "--no-deref", "-m", reason, "HEAD", commit, commit)
-        end
-
         # Refuses a locked tree, which is what makes a lock that appears after
         # a {#claim} stop the removal. It also drops the registration of an
         # unlocked checkout whose directory is already gone, and only that one.
@@ -77,77 +64,26 @@ module Lain
 
         def prune = @repo_lock.synchronize { @git.run("worktree", "prune") }
 
-        # @return [Anchorage] over this repository
-        def anchorage = Anchorage.new(repo_root: @repo_root, shell_out_factory: @shell_out_factory)
-
-        # Untracked files count: a file a worker wrote and never added is
-        # uncommitted work too. Ignored ones do not, being regenerable by
-        # definition. Anything that stops git answering -- a corrupt index, a
-        # timeout -- counts as uncommitted, since "unknown" must never read as
-        # "safe to delete". A directory that is gone holds nothing to lose.
-        # @return [Boolean]
-        def uncommitted?(path)
-          return false unless File.directory?(path)
-
-          shell = at(path).run("status", "--porcelain", "--untracked-files=all")
-          !Shell::Out.ok?(shell) || !shell.stdout.empty?
-        rescue StandardError
-          true
-        end
-
-        # A compare-and-swap on the lock, through git's documented layout
-        # (gitrepository-layout(5)): a linked worktree's lock is the file
-        # `locked` in its admin directory, holding the reason and a newline.
-        # Renaming it away is atomic, so the claim holds only when what was
-        # taken is what was judged; a lock that changed meanwhile is put back
-        # as it now is. A tree judged unlocked is claimed only while it has no
-        # lock at all, and {#remove} refuses one that appears afterwards. A
-        # second acquirer during a claim can move a live checkout into
-        # `retained/`, which moves it whole, so nothing is lost.
-        #
-        # @param entry [Entry] the checkout as it was judged
-        # @return [Boolean] whether its lock, if any, is now the caller's to drop
-        def claim(entry)
-          admin = admin(entry.path)
-          return false if admin.empty?
-
-          locked = File.join(admin, "locked")
-          return !File.exist?(locked) if entry.lock.equal?(LeaseLock::UNLOCKED)
-
-          taken = File.join(admin, "#{CLAIMED}#{SecureRandom.hex(6)}")
-          File.rename(locked, taken)
-          sealed?(taken, entry.seal) || restore(taken, locked)
+        # @param path [String] a registered checkout
+        # @param clock [#call] answers now
+        # @return [Time] when it was cut: `worktree add` writes its `.git` file and nothing rewrites it in
+        #   place. One that cannot be read counts as cut now, which errs towards keeping.
+        def cut_at(path, clock)
+          File.mtime(File.join(path, ".git"))
         rescue SystemCallError
-          false
+          clock.call
         end
 
-        # A crash between {#claim}'s rename and its put-back leaves the taken
-        # lock under its claim name, and the tree reading as unlocked. Such a
-        # tree is kept, never judged: the taken lock goes back only where no
-        # lock stands -- a link, never an overwrite -- and otherwise both stay
-        # for someone to look at.
+        protected
+
         # @param path [String] a registered checkout
-        # @return [String] why an interrupted claim holds it, or "" when none does
-        def interrupted(path)
+        # @return [String] the file holding its lock, or "" when git keeps none for it
+        def lock_file(path)
           admin = admin(path)
-          strays = admin.empty? ? [] : Dir.glob(File.join(admin, "#{CLAIMED}*"))
-          return "" if strays.empty?
-
-          stray = strays.first
-          "an interrupted lock claim (#{File.basename(stray)}) #{reinstate(stray, File.join(admin, "locked"))}"
-        rescue SystemCallError => e
-          "its lock files could not be read: #{e.message}"
+          admin.empty? ? "" : File.join(admin, "locked")
         end
 
-        # @param path [String] a registered checkout
-        # @return [String] the branch a rebase in that checkout will rewrite, or "" for none
-        def rebasing(path)
-          shell = at(path).run("rev-parse", "--absolute-git-dir")
-          return "" unless Shell::Out.ok?(shell)
-
-          REBASES.map { |kind| File.join(shell.stdout.strip, kind, "head-name") }
-                 .select { |name| File.file?(name) }.map { |name| File.read(name).strip }.first.to_s
-        end
+        def at(path) = Checkout.new(path, shell_out_factory: @shell_out_factory)
 
         private
 
@@ -160,33 +96,6 @@ module Lain
 
         # A key with no value (`detached`, a bare `locked`) reads as "".
         def fields(lines) = lines.to_h { |line| line.split(" ", 2).then { |key, value| [key, value.to_s] } }
-
-        def sealed?(taken, seal)
-          return false unless File.binread(taken).chomp.b == seal.b
-
-          File.delete(taken)
-          true
-        end
-
-        # A link, not a rename, so a newer lock that arrived in between is
-        # never overwritten: it stands, and the one taken is discarded.
-        def restore(taken, locked)
-          File.link(taken, locked)
-          File.delete(taken)
-          false
-        rescue Errno::EEXIST
-          File.delete(taken)
-          false
-        end
-
-        # @return [String] what became of an interrupted claim's taken lock
-        def reinstate(stray, locked)
-          File.link(stray, locked)
-          File.delete(stray)
-          "was put back as its lock"
-        rescue Errno::EEXIST
-          "sits beside a newer lock; both are left for someone to look at"
-        end
 
         # Found through the checkout's own `.git` pointer while the checkout
         # exists, and by scanning the admin directories once it is gone; either
@@ -226,8 +135,6 @@ module Lain
         def common_dir
           @common_dir ||= -@git.run("rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip
         end
-
-        def at(path) = Checkout.new(path, shell_out_factory: @shell_out_factory)
       end
     end
   end

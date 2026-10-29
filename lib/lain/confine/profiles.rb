@@ -454,7 +454,10 @@ module Lain
 
         def git_env = ENV.to_h.merge(Isolation::Worktree::GIT_CONTEXT_SCRUB)
 
+        # A clone lain cut whose git dir was tampered with is one lain runs no git in, this read included.
         def read_configs(root)
+          return [] unless Isolation::Clone::Guard.refusal(root).empty?
+
           out, status = Open3.capture2(Isolation::Worktree::GIT_CONTEXT_SCRUB, "git", "-C", root, *CONFIG_ASKS,
                                        err: File::NULL)
           status.success? ? out.split("\0").each_slice(2).to_a : []

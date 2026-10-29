@@ -100,6 +100,48 @@ RSpec.describe Lain::Isolation::Worktree::Handback::Retirement do
       lease&.release
     end
 
+    context "with a shared clone lease, whose commits upstream lacks until they are fetched" do
+      # Under lain's lease container, the one tree whose records lain trusts.
+      let(:lease_root) { File.join(Lain::Paths.new.state_home, "worktrees", Lain::Paths.new.project_hash(@repo_root)) }
+      let(:backend) do
+        Lain::Isolation::Clone.new(repo_root: @repo_root, root: lease_root,
+                                   base: Lain::Isolation::WorkingBranch.checked_out(repo_root: @repo_root))
+      end
+
+      after { FileUtils.rm_rf(lease_root) }
+
+      def commit_in(dir, contents, message)
+        File.write(File.join(dir, "worker.txt"), contents)
+        run_git(dir, "add", "-A")
+        run_git(dir, "-c", "user.name=w", "-c", "user.email=w@e", "commit", "-q", "-m", message)
+        run_git(dir, "rev-parse", "HEAD")
+      end
+
+      it "fetches the worker's commit into upstream and anchors it there" do
+        lease = backend.acquire("worker-1")
+        commit = commit_in(lease.worker_env.cwd, "worker\n", "worker work")
+
+        report = settle(lease, worker_id: "worker-1")
+
+        expect([report.kind, report.sha, run_git(@repo_root, "rev-parse", worker_ref("worker-1"))])
+          .to eq([:declined, commit, commit])
+      ensure
+        lease&.release
+      end
+
+      it "moves its own earlier anchor forward onto work that contains it" do
+        lease = backend.acquire("worker-2")
+        settle(lease, worker_id: "worker-2") if commit_in(lease.worker_env.cwd, "one\n", "one")
+        later = commit_in(lease.worker_env.cwd, "two\n", "two")
+
+        report = settle(lease, worker_id: "worker-2")
+
+        expect([report.kind, run_git(@repo_root, "rev-parse", worker_ref("worker-2"))]).to eq([:declined, later])
+      ensure
+        lease&.release
+      end
+    end
+
     it "reads a worker that committed nothing as nothing to do, writing no ref" do
       lease = backend.acquire("worker-2")
 

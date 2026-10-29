@@ -785,6 +785,166 @@ RSpec.describe Lain::Isolation::Gc, :seam do
     end
   end
 
+  describe "a shared clone lease" do
+    # Under lain's lease container, the one tree whose records lain trusts.
+    around do |example|
+      @root = File.join(Lain::Paths.new.state_home, "worktrees", Lain::Paths.new.project_hash(@repo_root))
+      FileUtils.mkdir_p(@root)
+      example.run
+    ensure
+      FileUtils.rm_rf([@root, "#{@root}-other"])
+    end
+
+    def clones(table: dead_table)
+      Lain::Isolation::Clone.new(repo_root: @repo_root, root: @root, base: branch("main"), process_table: table)
+    end
+
+    def clone_commit(dir, file)
+      File.write(File.join(dir, file), "#{file}\n")
+      run_git(dir, "add", file)
+      run_git(dir, "-c", "user.name=w", "-c", "user.email=w@e", "commit", "-q", "-m", file)
+      sha("HEAD", dir:)
+    end
+
+    def pins = refs("refs/lain/lease/")
+
+    it "reaps a crashed clean clone a branch reaches, with its base pin" do
+      dir = clones.acquire("w1").worker_env.cwd
+
+      records = gc
+
+      expect(summary(record_for(records, dir)).first(2)).to eq(%i[reaped worktree])
+      expect([File.exist?(dir), pins]).to eq([false, []])
+    end
+
+    it "anchors an expired retained clone's unmerged commit and snapshot in upstream, then reaps it and its pin" do
+      lease = clones(table: Lain::Isolation::LeaseLock::ProcessTable.new).acquire("w1")
+      dir = lease.worker_env.cwd
+      head = clone_commit(dir, "work.txt")
+      File.write(File.join(dir, "dirty.txt"), "d\n")
+      lease.release
+
+      record = record_for(gc(at: now + (8 * day)), dir)
+
+      expect([record.action, File.exist?(dir), pins]).to eq([:kept, false, []])
+      expect(record.anchors.map { sha(_1) }).to include(head)
+      expect(record.anchors.size).to eq(2)
+    end
+
+    it "keeps the live pin of a lease under another root of the same repository" do
+      other = Lain::Isolation::Clone.new(repo_root: @repo_root, root: "#{@root}-other", base: branch("main"))
+      live = other.acquire("w1")
+
+      gc
+
+      expect(pins.size).to eq(1)
+    ensure
+      live&.release
+    end
+
+    it "claims and drops a dead process's lock whose clone is gone" do
+      dir = clones.acquire("w1").worker_env.cwd
+      FileUtils.rm_rf(dir)
+
+      records = gc
+
+      expect(summary(record_for(records, dir)).first(2)).to eq(%i[reaped worktree])
+      expect(Dir.children(@root)).to eq([])
+    end
+
+    it "keeps a clone whose git dir holds a planted commondir, running no git in it, and says why" do
+      dir = clones.acquire("w1").worker_env.cwd
+      File.write(File.join(dir, ".git", "commondir"), "../evil\n")
+
+      record = record_for(gc(at: now + (30 * day)), dir)
+
+      expect([record.action, record.reason, File.directory?(dir), pins.size])
+        .to match([:kept, /commondir/, true, 1])
+    end
+
+    it "drops a base pin left with neither its clone nor its lock" do
+      backend = clones
+      dir = backend.acquire("w1").worker_env.cwd
+      File.delete(File.join(@root, ".#{File.basename(dir)}.locked"))
+      FileUtils.rm_rf(dir)
+
+      records = gc
+
+      expect([pins, records.map(&:subject)]).to eq([[], [:anchor]])
+    end
+
+    def plant_on_status(dir, marker)
+      lambda do |*argv, **kwargs|
+        if argv.include?("status") && !File.exist?(File.join(dir, ".git", "commondir"))
+          FileUtils.mkdir_p(evil = File.join(dir, "evil"))
+          FileUtils.cp_r([File.join(dir, ".git", "objects"), File.join(dir, ".git", "refs")], evil)
+          File.write(File.join(evil, "config"), "[core]\n\tfsmonitor = \"touch #{marker}; false\"\n")
+          File.write(File.join(dir, ".git", "commondir"), "../evil\n")
+        end
+        Lain::Shell::Out.new(*argv, **kwargs)
+      end
+    end
+
+    it "runs no snapshot in a clone whose commondir lands after gc looked, and keeps it" do
+      lease = clones(table: Lain::Isolation::LeaseLock::ProcessTable.new).acquire("w1")
+      dir = lease.worker_env.cwd
+      File.write(File.join(dir, "dirty.txt"), "d\n")
+      lease.release
+      marker = File.join(@repo_root, "..", "#{File.basename(@repo_root)}-pwned")
+
+      record = record_for(gc(at: now + (8 * day), shell_out_factory: plant_on_status(dir, marker)), dir)
+
+      expect([record.action, File.exist?(marker), File.directory?(dir)]).to eq([:kept, false, true])
+    ensure
+      FileUtils.rm_f(marker) if marker
+    end
+
+    # A plant landing after gc read the entries: a signed HEAD and a commondir whose config asks for signatures.
+    def plant_signed_on_status(dir, marker)
+      lambda do |*argv, **kwargs|
+        plant_signed(dir, marker) if argv.include?("status") && !File.exist?(File.join(dir, ".git", "commondir"))
+        Lain::Shell::Out.new(*argv, **kwargs)
+      end
+    end
+
+    def plant_signed(dir, marker)
+      gpg = File.join(File.dirname(marker), "#{File.basename(marker)}-gpg")
+      File.write(gpg, "#!/bin/sh\ntouch #{marker}\nexit 1\n")
+      File.chmod(0o755, gpg)
+      tree = sha("HEAD^{tree}", dir:)
+      body = "tree #{tree}\nparent #{sha("HEAD", dir:)}\nauthor a <a@a> 1 +0000\ncommitter a <a@a> 1 +0000\n" \
+             "gpgsig -----BEGIN PGP SIGNATURE-----\n \n -----END PGP SIGNATURE-----\n\nsigned\n"
+      signed = SeedRepo.git(dir, "hash-object", "-t", "commit", "-w", "--stdin", input: body).stdout.strip
+      run_git(dir, "update-ref", "--no-deref", "-m", "signed", "HEAD", signed)
+      # Outside the clone, so the plant leaves its tree clean and gc goes on to read the reflog.
+      FileUtils.mkdir_p(evil = "#{marker}-evil")
+      FileUtils.cp_r([File.join(dir, ".git", "objects"), File.join(dir, ".git", "refs")], evil)
+      File.write(File.join(evil, "config"), "[core]\n\trepositoryformatversion = 0\n[log]\n\tshowSignature = true\n" \
+                                            "[gpg]\n\tprogram = #{gpg}\n")
+      File.write(File.join(dir, ".git", "commondir"), "#{evil}\n")
+    end
+
+    it "reads no reflog through a commondir that lands after gc looked, so no signature program runs" do
+      dir = clones.acquire("w1").worker_env.cwd
+      marker = File.join(@repo_root, "..", "#{File.basename(@repo_root)}-signed")
+
+      gc(shell_out_factory: plant_signed_on_status(dir, marker))
+
+      expect(File.exist?(marker)).to be(false)
+    ensure
+      FileUtils.rm_rf([marker, "#{marker}-gpg", "#{marker}-evil"]) if marker
+    end
+
+    it "drops a base pin whose clone is gone" do
+      dir = clones.acquire("w1").worker_env.cwd
+      FileUtils.rm_rf(dir)
+
+      gc
+
+      expect(pins).to eq([])
+    end
+  end
+
   describe "running twice" do
     it "reaps nothing the second time" do
       run_git(@repo_root, "switch", "-q", "-c", "feat")

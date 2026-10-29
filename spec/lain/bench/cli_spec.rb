@@ -562,7 +562,7 @@ RSpec.describe Lain::Bench::CLI do
           expect(isolations.uniq.size).to eq(1)
           expect(acquired.size).to eq(arms.size * tasks.size)
           expect(acquired.map(&:worker_key).uniq).to contain_exactly("arm-a", "arm-b")
-          expect(acquired.map(&:backend).uniq).to eq([Lain::Isolation::Worktree.name])
+          expect(acquired.map(&:backend).uniq).to eq([Lain::Isolation::Clone.name])
           # Acquire alone is not the claim: a backend that leaked every lease
           # would satisfy it. The record is a LIFECYCLE, so every acquire the
           # arms took must have a release journaled against it.
