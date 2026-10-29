@@ -1,10 +1,10 @@
 # Lain — ROADMAP
 
-> Lain is an agent harness built as a **study bench**. The agent is the vehicle; the bench is the
-> deliverable. Everything here optimizes for making context strategies, tool designs, orchestration
-> tactics, and memory/retrieval **swappable, observable, and comparable** — so we can *prove* which
-> choice moved the correct-call rate, and transfer that intuition to medical-literature tool-call
-> work where correctness cannot be eyeballed.
+> Lain is the agent you develop with, and it carries a **study bench** where lain's own developers
+> prove that an architectural or process idea really pays off. The bench makes context strategies,
+> tool designs, orchestration tactics, and memory/retrieval **swappable, observable, and comparable**
+> — so we can *prove* which choice moved the correct-call rate, and transfer that intuition to
+> medical-literature tool-call work where correctness cannot be eyeballed.
 >
 > **Sources of truth.** The approved architecture and its *why* live in `ARCHITECTURE.md`, and this
 > ROADMAP's own `## Status` and `## Milestones` sections are the committed plan. Exploratory ideas
@@ -20,9 +20,10 @@
 
 Lain serves two distinct people, and nearly every item below belongs primarily to one of them:
 
-- **The lain dev** builds and studies the harness. Their *project is Lain itself*; the **bench**
-  (M3c — `DryReplay`, graders, `Compare`, the swept axes, the parked GEPA / self-improving loop) is
-  *their* cockpit. It measures the harness and is not shipped in the user's hot path.
+- **The lain dev** builds and studies the harness. Their *project is Lain itself*, and their daily
+  loop (plan, implement, verify, land) runs inside lain; the **bench** (M3c — `DryReplay`, graders,
+  `Compare`, the swept axes, the parked GEPA / self-improving loop) is *their* cockpit for checking
+  those choices. It measures the harness and is not shipped in the user's hot path.
 - **The lain user** is a developer using Lain to work on *some other* codebase (ultimately
   medical-literature tooling). To them Lain is a coding agent: tools, memory, code mode, the
   interface, prompt slots, and graders-as-TDD-gate are *their* features. `.lain/` lives in *their*
@@ -99,6 +100,26 @@ structure it realizes (the 4 kinds, `meet`/`diverge_at` over the DAG, the Rust p
 
 ## Status
 
+**The organizing idea, revised 2026-10-28.** Lain is the agent you develop with. The bench remains
+and grounds choices where it can measure them; it no longer sets the order of work. The order is the
+dogfood loop first (U1), then the views (U2), then polish and reach (U3). The test for a candidate
+feature is "does this remove a step from a real day", and the bench's job is to say whether the step
+was worth removing.
+
+- **U1, the dogfood loop.** `[planned]` `planning/specs/ux-first-dogfood.md`, T32 to T46: a config
+  tree and `bin/verify` for this repo, conventions slots, thicker `create-plan` and `execute-plan`,
+  `handoff`, `implement` and `research` skills, `send_message`, the `TODOS.md` drain through a lease
+  and `lain land`, the macOS build gate. Done when `/create-plan` and `/execute-plan` run inside lain
+  for a lain card and land through `lain land`, and when a `TODOS.md` item runs overnight and shows
+  up in morning-feed with an exported session.
+- **U2, the views.** `[planned]` `planning/specs/ux-first-dogfood.md`, T47 to T54: `lain://tree`
+  with labels and forks, `lain://todos`, `lain export`, `/share`, and a terminal plus morning-feed
+  notifier. Done when `lain://tree` shows the rewinds and forks of a real session with labels, and a
+  finished run notifies the terminal and the feed.
+- **U3, polish and reach.** `[planned]` `planning/specs/ux-first-dogfood.md`, T55 to T62: TTY
+  markdown, a working indicator, tool-call lines, glyphs, a `theme` table, diff colour, and the macOS
+  runtime fixes. Done when the plan's integration checks 7 and 8 pass: an export opens in a browser,
+  and the suite runs on the MacBook with only the known skips.
 - **M0–M1 — housekeeping + the spine.** `[built]` `Canonical`, content-addressed `Timeline`
   (meet-semilattice property-tested), provider-neutral value objects, `Tool`/`Toolset`,
   `Effect`/`Handler`/`Middleware`, `Provider`, pure `Context#render`,
@@ -142,7 +163,7 @@ structure it realizes (the 4 kinds, `meet`/`diverge_at` over the DAG, the Rust p
   cancel around ast_search, TreeSitter, Bm25 and Fuzzy through 1 helper, held for small calls. Next:
   path encoding, since the suite under a non-ASCII TMPDIR is red (211 examples, red before this plan).
 
-**The bench — the deliverable — now exists.** For the first time the project can *compare strategies*:
+**The bench now exists.** For the first time the project can *compare strategies*:
 `DryReplay` re-renders a recorded Timeline byte-identically under one `Context` and yields a
 deterministic diff under another, and `Compare` reports distributions over `n` runs (refusing to
 compare mismatched capability-degraded sets). The remaining committed work — the key-gated **P**
@@ -2156,7 +2177,7 @@ XDG path relative, which put machine state back inside the user's repository)
    slots, thicker `create-plan` and `execute-plan`, `handoff`, `implement` and `research` skills, `send_message`, the
    `TODOS.md` drain through a lease and `lain land`, the macOS build gate), then `lain://tree` with labels, `lain://todos`,
    `lain export`, `/share` and a terminal plus morning-feed notifier, then TTY markdown, a working indicator, tool-call
-   lines, a `theme` table and the macOS runtime, then the older-session fallbacks deleted. Rulings in the plan's Intent.
+   lines, a `theme` table and the macOS runtime, then the older-session fallbacks deleted. Rulings in the plan's Intent. Status carries the direction as U1 (T32 to T46), U2 (T47 to T54) and U3 (T55 to T62).
 
 ## Map of the documents
 

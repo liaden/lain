@@ -1,8 +1,9 @@
 # Working on Lain
 
-Lain is an agent harness built as a **study bench**. The agent is the vehicle; the bench is
-the deliverable. Optimize for making context strategies, tool designs, and orchestration
-tactics swappable, observable, and comparable — not for making the agent good.
+Lain is the agent you develop with, and it carries a **study bench** where lain's own developers
+prove that an architectural or process idea really pays off. The bench makes context strategies,
+tool designs, and orchestration tactics swappable, observable, and comparable, so a choice is
+measured where it can be. The test for a feature is whether it removes a step from a real day of work.
 
 The committed plan is `ROADMAP.md`'s `## Status` and `## Milestones` — read it before deciding architecture.
 
