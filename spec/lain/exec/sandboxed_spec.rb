@@ -297,6 +297,75 @@ RSpec.describe Lain::Exec::Sandboxed do
       end
     end
 
+    describe "naming the sandbox when a read is denied" do
+      def failing(stderr, exit_status: 1)
+        inner.behaviour = lambda do |fds:, **|
+          fds.fetch(3).write("")
+          Lain::Exec::Capture.new(exit_status:, stdout: "", stderr:)
+        end
+      end
+
+      it "ends the output with a line naming the profile and read_file for a Permission denied outside the read list" do
+        failing("cat: /srv/elsewhere/notes.txt: Permission denied\n")
+
+        expect(run.stderr).to end_with(
+          "The reader sandbox limits reads to the project and its related directories. " \
+          "To see a masked file, use read_file.\n"
+        )
+      end
+
+      it "leaves a Permission denied for a path inside the read list alone" do
+        failing("cat: #{root}/secret: Permission denied\n")
+
+        expect(run.stderr).not_to include("read_file")
+      end
+
+      it "names the sandbox for a relative Permission denied path that resolves outside the read list" do
+        FileUtils.mkdir_p(root)
+        failing("cat: ../other/secret: Permission denied\n")
+
+        expect(run.stderr).to include("read_file")
+      end
+
+      it "leaves a relative Permission denied path that resolves inside the read list alone" do
+        failing("cat: docs/secret: Permission denied\n")
+
+        expect(run.stderr).not_to include("read_file")
+      end
+
+      {
+        "a single-quoted absolute path" => "cat: '/srv/elsewhere/x': Permission denied\n",
+        "a double-quoted absolute path" => "cat: \"/srv/elsewhere/x\": Permission denied\n",
+        "an absolute path with spaces" => "cat: /srv/my dir/x: Permission denied\n",
+        "a quoted relative path" => "cat: '../other/my x': Permission denied\n",
+        "one denial among several" => "cat: ROOT/a: Permission denied\ncat: /srv/elsewhere/x: Permission denied\n"
+      }.each do |what, stderr|
+        it "names the sandbox for #{what} outside the read list" do
+          failing(stderr.gsub("ROOT", root))
+
+          expect(run.stderr).to end_with("use read_file.\n")
+        end
+      end
+
+      it "leaves several denials all inside the read list alone" do
+        failing("cat: '#{root}/my dir/a': Permission denied\ncat: docs/b: Permission denied\n")
+
+        expect(run.stderr).not_to include("read_file")
+      end
+
+      it "leaves an ordinary failure alone" do
+        failing("1 example, 1 failure\n")
+
+        expect(run.stderr).to eq("1 example, 1 failure\n")
+      end
+
+      it "leaves a successful call alone" do
+        failing("cat: /srv/elsewhere/notes.txt: Permission denied\n", exit_status: 0)
+
+        expect(run.stderr).not_to include("read_file")
+      end
+    end
+
     it "folds the same connect from 2 stages into one entry and sums the dropped" do
       line = %(5 connect(3, {sa_family=AF_UNIX, sun_path="/x"}, 110) = 0\n)
       inner.behaviour = lambda do |fds:, **|

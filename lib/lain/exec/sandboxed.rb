@@ -46,6 +46,9 @@ module Lain
       NO_TMPDIR = "REFUSED by the sandbox, not a transient error: the TMPDIR %<path>s cannot hold this call's own " \
                   "dir, most often because it is gone. Retrying will be refused again. Stop and tell the human, " \
                   "then wait for the answer."
+      DENIED_READ = "The %<profile>s sandbox limits reads to the project and its related directories. " \
+                    "To see a masked file, use read_file."
+      DENIED = /^(?:[^:\n]+: )+?(?:'([^']*)'|"([^"]*)"|([^:\n]+?)): Permission denied$/
       PATH_WITHHELD = "[path withheld]"
       WITHHELD = { path: PATH_WITHHELD, names: "[name withheld]" }.freeze
       UNSEALABLE = "REFUSED by the sandbox, not a transient error: %<link>s is a link inside the project, so the " \
@@ -164,7 +167,7 @@ module Lain
           raise
         end
         record = journal_trace(channels, confinement, profile, nil)
-        profile.confined? ? worded(capture, record) : capture
+        profile.confined? ? worded(capture, record, profile, run[:cwd]) : capture
       ensure
         channels&.close
       end
@@ -179,14 +182,28 @@ module Lain
 
       # The tool refuses an over-ceiling result whole, so the line replaces the
       # output rather than being cut with it.
-      def worded(capture, record)
-        line = refused_paths(record).map { "#{phrased(REFUSED, path: printable(_1))}\n" }.join
+      def worded(capture, record, profile, cwd)
+        line = notice(capture, record, profile, cwd)
         return capture if line.empty?
         return Capture.new(**capture.to_h, stderr: capture.stderr + line, size: capture.size + line.bytesize) if
           capture.size + line.bytesize <= @ceiling
 
         Capture::Bounded.new(ceiling: @ceiling).take(:stderr, line).finish(capture.exit_status)
       end
+
+      def notice(capture, record, profile, cwd)
+        line = refused_paths(record).map { "#{phrased(REFUSED, path: printable(_1))}\n" }.join
+        return line unless line.empty? && denied_read?(capture, profile, cwd)
+
+        "#{format(DENIED_READ, profile: profile.name)}\n"
+      end
+
+      def denied_read?(capture, profile, cwd)
+        !capture.exit_status.zero? &&
+          denied_paths(capture.stderr, cwd).any? { |path| profile.read_dirs.none? { Landing.under?(path, _1) } }
+      end
+
+      def denied_paths(stderr, cwd) = stderr.scan(DENIED).map { File.expand_path(_1.compact.first, cwd) }
 
       # A refused PATH entry lets the shell fall through to the next one, so only
       # a refusal with no later successful exec of the same basename counts.
