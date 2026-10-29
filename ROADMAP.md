@@ -2178,6 +2178,16 @@ XDG path relative, which put machine state back inside the user's repository)
    `TODOS.md` drain through a lease and `lain land`, the macOS build gate), then `lain://tree` with labels, `lain://todos`,
    `lain export`, `/share` and a terminal plus morning-feed notifier, then TTY markdown, a working indicator, tool-call
    lines, a `theme` table and the macOS runtime, then the older-session fallbacks deleted. Rulings in the plan's Intent. Status carries the direction as U1 (T32 to T46), U2 (T47 to T54) and U3 (T55 to T62).
+71. **Planned (2026-10-29, panel-reviewed)**: `planning/specs/algebra-applications-and-cleanup.md`, 41 cards in 3 streams,
+   applies item 66's laws to what item 70 wrote by hand and takes the 2026-10-29 review's reuse and simplification
+   findings: every journal record read back typed through 1 reader with session format 4, `Journal::Projection` held to
+   an incremental-fold law so resume, export, the sessions listing, the review queue and `lain watch` fold a file once,
+   `Sensitivity::Roots` as the confined policy's join, `Landing.walk` as the 1 symlink walk behind the seal and the
+   resolver, the request digest as the prefix chain's last state (spiked: 6 to 7 times cheaper per chat turn; the
+   Merkle shape measured slower and is rejected), 7 round trips held; then 1 escaper, 1 PATH search, `ProcessGroup`
+   and `AtomicFile` in the chores, `Checkout.of` at 55 sites, and the small cleanups. No compatibility owed, sessions
+   included (user ruling 2026-10-29).
+
 
 ## Map of the documents
 
