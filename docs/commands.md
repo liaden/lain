@@ -1032,6 +1032,16 @@ and a pasted block of several lines whatever its first line says, leaves the app
 prompt, with one line saying `a y or n answers the approval`. A prompt that lapses on its clock tells the model so
 (`approval denied for tool "bash": denied after 5:00 with no answer`), where a human's `n` gives the bare sentence.
 
+### /release
+
+`/release <path>` forgets this run's decline or lapse for a file, so the model's next read of it
+parks on the release prompt again instead of returning the masked copy. A relative path resolves
+against the chat's working directory. It answers with how many declined or lapsed regions it
+forgot, or says nothing was declined for that path.
+
+A file under a related directory is refused by name: its regions are masked without ever asking,
+so there is no decline to forget.
+
 ### /survey
 
 `/survey <path>` opens a survey of a directory in the editor this chat is **already** attached
