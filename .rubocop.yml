@@ -403,6 +403,7 @@ ThreadSafety/NewThread:
     - "lib/lain/frontend/neovim.rb"
     - "lib/lain/frontend/neovim/rpc_thread.rb"
     - "lib/lain/frontend/tty.rb"
+    - "lib/lain/frontend/tty/indicator.rb"
     - "lib/lain/gateway/server.rb"
     - "lib/lain/provider/http/streaming/faraday_handlers.rb"
     - "lib/lain/sensitivity/history_literals.rb"

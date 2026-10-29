@@ -127,6 +127,7 @@ module Lain
         @layers = layers
         build_prompt_stack(prompt_renderer:, history_path:)
         @countdown = Countdown.new(output:, input:, pastel:, clock:)
+        @indicator = indicator_on(@countdown, clock:)
         @bell = Bell.new(output:, raised: -> { layers.call.include?(:notify) }, tmux: written_by(@countdown, tmux))
         @wall_clock = wall_clock
         @warmth = Warmth.new(path: state_path, clock: wall_clock)
@@ -169,6 +170,7 @@ module Lain
         # screen flips back: a block that raised mid-countdown must never
         # leave the terminal raw (see Countdown's window lifecycle).
         @countdown.stop
+        @indicator.stop
         exit_alternate_screen if @alternate_screen
       end
 
@@ -305,6 +307,7 @@ module Lain
       # Render the model's finished turn. Not Channel-sourced -- see the class
       # comment on why a synchronous Response bypasses the Channel entirely.
       def render_response(response)
+        @indicator.stop
         markdown = Markdown.segments(response.text, prose: :response)
         render_turn(markdown.paint(@theme), verbatim: Markdown.verbatim_rows(markdown))
       end
@@ -326,6 +329,7 @@ module Lain
       # is: the reply-path shows the question and reads the answer inline, a
       # finished exchange rather than a concurrently-arriving stream.
       def render_question(question)
+        @indicator.clear
         @output.puts(@theme.paint(:question_label, "the agent asks:"))
         @output.puts(wrapped(@theme.paint(:question, question)))
         @output.flush
@@ -462,7 +466,10 @@ module Lain
         end
       end
 
-      def noted(&block) = @notes.note(&block)
+      def noted(&block)
+        @indicator.clear
+        @notes.note(&block)
+      end
 
       def styled(text) = "#{warmth_prefix}#{@theme.paint(:prompt, text)}"
 
@@ -507,11 +514,22 @@ module Lain
       # covers BOTH ways an event can decline to print: no decorator at all, and
       # a decorator that rendered nothing.
       def render(event)
+        @indicator.start if working?(event)
+        @indicator.stop if event.is_a?(Telemetry::AskSettled)
         decorator = Decorators.for(event)
         rendered = decorator&.render(@theme)
+        @indicator.clear unless rendered.nil?
         rendered = stamp(rendered) if decorator&.stamped? && !rendered.nil?
         @countdown.print_above(fitted(rendered, decorator), line_shaped: decorator.line_shaped?) unless rendered.nil?
         @bell.ring(decorator.note) if decorator.respond_to?(:note) && rendered
+      end
+
+      def indicator_on(countdown, clock:)
+        Indicator.new(output: Notifier::Drawn.new(countdown), theme: @theme, clock:, tty: @output.tty?)
+      end
+
+      def working?(event)
+        event.is_a?(Telemetry::RequestSent) && [nil, "agent"].include?(event.requester)
       end
 
       # A tool's streamed chunk is not a line, and breaking it would put a
@@ -539,6 +557,7 @@ module Lain
       # resolve `TTY` to this very class, since we are lexically inside a class
       # of the same name.
       def render_turn(styled, verbatim: [])
+        @indicator.clear
         @output.puts(wrapped(styled, verbatim:))
         @output.puts(rule)
         @output.flush

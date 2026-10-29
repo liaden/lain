@@ -2212,4 +2212,148 @@ RSpec.describe Lain::Frontend::TTY do
       expect(rows(/of the fleet/)).to all(match(/\A\d\d:\d\d:\d\d \? researcher note/))
     end
   end
+
+  describe "the working indicator" do
+    let(:terminal) { Class.new(StringIO) { def tty? = true }.new }
+    let(:now) { [0.0] }
+    let(:erase) { "\r#{TTY::Cursor.clear_line}" }
+    let(:indicators) { [] }
+    let(:tty) do
+      allow(described_class::Indicator).to receive(:new).and_wrap_original do |original, *args, **kwargs|
+        original.call(*args, **kwargs).tap { |made| indicators << made }
+      end
+      described_class.new(channel:, output: terminal, input:, pastel: Pastel.new(enabled: false),
+                          clock: -> { now.first }, alternate_screen: false)
+    end
+    let(:indicator) { tty && indicators.first }
+    let!(:threads_before) { Thread.list.size }
+    let(:request) do
+      Lain::Telemetry::RequestSent.new(digest: "d", payload: {}, stream: true, extra: {})
+    end
+    let(:settled) do
+      Lain::Telemetry::AskSettled.new(head: "blake3:x", stop_reason: :end_turn, turns: 1, seconds: 0.5)
+    end
+
+    after { indicators.each(&:stop) }
+
+    def drawn_at(seconds)
+      channel << request
+      tty.drain_and_render
+      now[0] = seconds
+      indicator.tick
+    end
+
+    def stranded = terminal.string.scan(/working… \d+s(?!#{Regexp.escape(erase)})/)
+
+    def tickers = Thread.list.size - threads_before
+
+    it "erases the line before the next event prints, so it never reaches the scrollback" do
+      drawn_at(2.0)
+      channel << tool_output(bytes: "hi\n")
+
+      tty.drain_and_render
+
+      expect(terminal.string).to match(/working… 2s#{Regexp.escape(erase)}.*hi/m)
+    end
+
+    it "erases the line before an arrival prints" do
+      drawn_at(3.0)
+
+      tty.render_arrival("what colour?", from: "researcher")
+
+      expect(terminal.string).to match(/working… 3s#{Regexp.escape(erase)}.*researcher/m)
+      expect(stranded).to be_empty
+    end
+
+    it "erases the line before a question prints" do
+      drawn_at(3.0)
+
+      tty.render_question("what colour?")
+
+      expect(terminal.string).to match(/working… 3s#{Regexp.escape(erase)}.*what colour/m)
+    end
+
+    it "erases the line before a warning prints" do
+      drawn_at(3.0)
+
+      tty.render_warning("careful")
+
+      expect(terminal.string).to match(/working… 3s#{Regexp.escape(erase)}.*careful/m)
+    end
+
+    it "erases the line before the reply prints" do
+      drawn_at(3.0)
+
+      tty.render_response(Lain::Response.new(content: [{ "type" => "text", "text" => "done" }], stop_reason: :end_turn))
+
+      expect(terminal.string).to match(/working… 3s#{Regexp.escape(erase)}.*done/m)
+    end
+
+    it "erases the line before a command's answer prints" do
+      drawn_at(3.0)
+      answer = Struct.new(:text) { def paint(_theme) = text }.new("all well")
+
+      tty.render_renderable(answer)
+
+      expect(terminal.string).to match(/working… 3s#{Regexp.escape(erase)}.*all well/m)
+    end
+
+    it "shows again after a further quiet second, once a line has cleared it" do
+      drawn_at(2.0)
+      channel << tool_output(bytes: "hi\n")
+      tty.drain_and_render
+      now[0] = 2.5
+      indicator.tick
+      expect(terminal.string.split("hi").last).not_to include("working")
+
+      now[0] = 3.0
+      indicator.tick
+
+      expect(terminal.string.split("hi").last).to include("working… 1s")
+    end
+
+    it "stops for good when the ask settles" do
+      drawn_at(2.0)
+      channel << settled
+      tty.drain_and_render
+      before = terminal.string.dup
+
+      now[0] = 9.0
+      indicator.tick
+
+      expect(terminal.string).to eq(before)
+      expect(tickers).to eq(0)
+    end
+
+    it "stops for good when the reply prints" do
+      drawn_at(2.0)
+      tty.render_response(Lain::Response.new(content: [{ "type" => "text", "text" => "done" }], stop_reason: :end_turn))
+      before = terminal.string.dup
+
+      now[0] = 9.0
+      indicator.tick
+
+      expect(terminal.string).to eq(before)
+      expect(tickers).to eq(0)
+    end
+
+    it "leaves no ticker running after run raises" do
+      indicator.start
+
+      expect { tty.run { raise "boom" } }.to raise_error("boom")
+
+      expect(tickers).to eq(0)
+    end
+
+    it "draws nothing for a request when the output is a pipe" do
+      quiet = described_class.new(channel:, output:, input:, clock: -> { now.first })
+      channel << request
+      now[0] = 5.0
+
+      quiet.drain_and_render
+
+      expect(output.string).to eq("")
+      expect(tickers).to eq(0)
+    end
+  end
 end
