@@ -1247,6 +1247,19 @@ RSpec.describe Lain::Sensitivity::Policy do
         .to eq([true, false])
     end
 
+    it "holds the project root joined with the roots it is given, and nothing else" do
+      paths = [File.join(root, "lib"), File.join(worker, "a.rb"), File.join(@base, "elsewhere"), home]
+
+      expect(paths.map { confined.roots.held?(_1) }).to eq([true, true, false, false])
+    end
+
+    it "is built over a Roots value" do
+      built = described_class::Confined.new(policy:, roots: Lain::Sensitivity::Roots.of(worker), anchors: {})
+
+      expect([read(File.join(worker, "a.rb")), read(File.join(root, "lib"))].map { built.gates?(_1, cwd: worker) })
+        .to eq([false, true])
+    end
+
     it "confines again with more roots, keeping the ones it had" do
       again = confined.confined(roots: [File.join(@base, "elsewhere")])
 

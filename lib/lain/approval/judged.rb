@@ -389,7 +389,8 @@ module Lain
       # Where each path lands, as the gate judges it. Not {Sensitivity::Policy#confined},
       # which always holds the project root, and a write there from a leased tree is outside.
       def held_to(roots)
-        ::Lain::Sensitivity::Policy::Confined.new(policy: @policy, roots:,
+        held = ::Lain::Sensitivity::Roots.of(*roots, facts: @policy.file_facts)
+        ::Lain::Sensitivity::Policy::Confined.new(policy: @policy, roots: held,
                                                   anchors: { home: @policy.home, root: @policy.root })
       end
 

@@ -133,7 +133,7 @@ module Lain
         #
         # @param roots [Array<String>] absolute
         # @return [Confined]
-        def confined(roots:) = Confined.new(policy: self, roots:, anchors: {})
+        def confined(roots:) = Confined.new(policy: self, roots: Roots.of(*roots, facts: file_facts), anchors: {})
 
         # @return [nil] no home was configured
         def home = nil
@@ -197,20 +197,25 @@ module Lain
 
         attr_reader :policy
 
+        # @return [Roots] a path under one is in scope
+        attr_reader :roots
+
         # @param policy [Policy] what every other answer is
-        # @param roots [Array<String>] absolute; a path under one is in scope
+        # @param roots [Roots] a path under one is in scope
         # @param anchors [Hash] the policy's home and root as configured, so a
         #   landing is also spelled under them
         def initialize(policy:, roots:, anchors:)
           @policy = policy
           @anchors = anchors
-          @roots = roots.flat_map { spellings(_1) }.uniq.freeze
+          @roots = roots
           freeze
         end
 
-        # @param roots [Array<String>] absolute; added to the ones held
+        # @param roots [Array<String>] absolute; joined to the ones held
         # @return [Confined]
-        def confined(roots:) = Confined.new(policy: @policy, roots: [*@roots, *roots], anchors: @anchors)
+        def confined(roots:)
+          Confined.new(policy: @policy, roots: @roots | Roots.of(*roots, facts: file_facts), anchors: @anchors)
+        end
 
         # @return [String, nil] the policy's home as configured
         def home = @anchors[:home]
@@ -315,16 +320,7 @@ module Lain
         # Every spelling is of where the path lands, so a link that leaves is
         # judged at its target; a related directory is matched as configured.
         def held?(named)
-          landings(named).any? { under_root?(_1) || @policy.in_related_tree?(_1) }
-        end
-
-        def under_root?(path) = @roots.any? { |root| Landing.under?(path, root) }
-
-        def spellings(root)
-          expanded = File.expand_path(root)
-          [expanded, file_facts.realpath(expanded)]
-        rescue SystemCallError
-          [expanded]
+          landings(named).any? { @roots.held?(_1) || @policy.in_related_tree?(_1) }
         end
       end
 
@@ -464,7 +460,9 @@ module Lain
       #
       # @param roots [Array<String>] absolute; the child's own trees
       # @return [Confined]
-      def confined(roots:) = Confined.new(policy: self, roots: [*@anchors[:root], *roots], anchors: @anchors)
+      def confined(roots:)
+        Confined.new(policy: self, roots: Roots.of(*@anchors[:root], *roots, facts: file_facts), anchors: @anchors)
+      end
 
       # The path a call names, read off {PATH_FIELDS}, and nil for a call that
       # names none.

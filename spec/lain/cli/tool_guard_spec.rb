@@ -1159,6 +1159,16 @@ RSpec.describe Lain::CLI::ToolGuard do
           .to eq(%i[none outside_project])
       end
 
+      it "holds a leased child to the parent's roots joined with its checkout and read roots, and nothing else" do
+        lent = File.join(File.dirname(@project), "epics", "demo").tap { FileUtils.mkdir_p(_1) }
+        child = child_stack(env_at(@checkout, checkout: @checkout).with(read_roots: [lent]))
+        held = child.to_a.grep(Lain::Middleware::RedactSecretReads).first.related
+        paths = [File.join(@project, "lib"), File.join(@checkout, "a.rb"), File.join(lent, "a.md"),
+                 File.join(File.dirname(lent), "other"), File.dirname(@project)]
+
+        expect(paths.map { held.roots.held?(_1) }).to eq([true, true, true, false, false])
+      end
+
       it "holds a lent root to reads: a write there is still refused" do
         lent = File.join(File.dirname(@project), "epics", "demo").tap { FileUtils.mkdir_p(_1) }
         child = child_stack(env_at(@checkout, checkout: @checkout).with(read_roots: [lent]))
