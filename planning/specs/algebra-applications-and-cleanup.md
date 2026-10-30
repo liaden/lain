@@ -1,6 +1,6 @@
 # Laws applied: journal projections, round trips, the root join and the one walk, with the October cleanups
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby (binding-facing card: T17)
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson); the algebra seats (Edward Kmett, Philip Wadler, Conal Elliott) join for T1, T3, T4, T11, T12, T14, T15, T16, T17
@@ -284,7 +284,7 @@ flowchart LR
 
 ### Wave A: the laws
 
-### T1: Read every journal record back as the value it was written from          [risk: medium]
+### [x] T1: Read every journal record back as the value it was written from          [risk: medium]
 
 **Depends on:** T2
 **Files:** `lib/lain/telemetry.rb`, `lib/lain/telemetry/untyped.rb` (new), `lib/lain/telemetry/request_sent.rb`,
@@ -389,7 +389,7 @@ Spec file: `spec/lain/telemetry_spec.rb`, `spec/lain/telemetry/round_trip_spec.r
 - `TurnUsage#to_journal` writes a `:lain_fixed_point` or `:lain_canonical` value the type cannot cast back from JSON
   (`declarative/types.rb:134`, `:156`); then the type gains a cast and `spec/lain/declarative_spec.rb` joins Files
 
-### T2: Settle the 6 hand-frozen records through declared carriers          [risk: low]
+### [x] T2: Settle the 6 hand-frozen records through declared carriers          [risk: low]
 
 **Depends on:** none
 **Files:** `lib/lain/telemetry/{tool_called,edit_applied,files_written,child_turn,observer_failed,round_bounded}.rb`,
@@ -434,7 +434,7 @@ Spec file: the 6 record specs
 - `spec/lain/frontend/decorators/tool_called_spec.rb` or `spec/lain/agent/tool_runner_spec.rb:197-218` compares `phase`
   against a Symbol
 
-### T3: Fold a session once, through projections held to the incremental law          [risk: medium]
+### [x] T3: Fold a session once, through projections held to the incremental law          [risk: medium]
 
 **Depends on:** T1
 **Files:** `lib/lain/journal/projection.rb` (new), `lib/lain/journal/projections.rb` (new), `lib/lain/journal/tail.rb` (new),
@@ -522,7 +522,7 @@ Spec file: `spec/lain/journal/projection_spec.rb`, `spec/lain/journal/projection
   agree: a NUL fails `JSON.parse` both ways and `"\r\n"` parses): then T9, which owns `watch_spec.rb`, pins the case,
   not this card
 
-### T4: Restore a session through projections, as format 4          [risk: high]
+### [x] T4: Restore a session through projections, as format 4          [risk: high]
 
 **Depends on:** T3, T19
 **Files:** `lib/lain/session_record/replay.rb`, `lib/lain/session_record.rb`, `lib/lain/bench/session/loader.rb`,
@@ -587,7 +587,7 @@ Spec file: `spec/lain/session_record/replay_spec.rb`, `spec/lain/cli/resume/sele
 - the loader's `REQUIRED_SECTIONS` read (`loader.rb:50`) and `Telemetry.read` disagree on the header, which is not a
   `Journalable`: the header keeps its own reader (`SessionRecord.current_format?`) and the card documents the 2 readers
 
-### T5: Count an export through one projection          [risk: low]
+### [x] T5: Count an export through one projection          [risk: low]
 
 **Depends on:** T4, T19
 **Files:** `lib/lain/cli/export.rb`, `lib/lain/cli/export/html.rb`, `lib/lain/journal/projection/redactions.rb` (new),
@@ -621,7 +621,7 @@ Spec file: `spec/lain/cli/export_spec.rb`, `spec/lain/cli/export/html_spec.rb`, 
 - `Html` reads records for anything but counts and the turn chain (`html.rb:41-46`), so the counts projection would
   leave a second walk in place: then the chain becomes a projection too, in this card
 
-### T6: Build a sessions row from one fold          [risk: low]
+### [x] T6: Build a sessions row from one fold          [risk: low]
 
 **Depends on:** T4
 **Files:** `lib/lain/cli/sessions.rb`, `lib/lain/journal/projection/session_row.rb` (new), `spec/lain/cli/sessions_spec.rb`,
@@ -646,7 +646,7 @@ Spec file: `spec/lain/cli/sessions_spec.rb`, `spec/lain/journal/projection/sessi
 - `Listing#chain` (`sessions.rb:175`) and `ChainFold` (`chain_fold.rb:21`) are the same fold and the card can make the
   row use `ChainFold`: then it does, and says so, since 1 chain fold beats 2
 
-### T7: Find a session's forks without rescanning every file          [risk: low]
+### [x] T7: Find a session's forks without rescanning every file          [risk: low]
 
 **Depends on:** T3
 **Files:** `lib/lain/cli/sessions/forks.rb`, `spec/lain/cli/sessions/forks_spec.rb`
@@ -677,7 +677,7 @@ Spec file: `spec/lain/cli/sessions/forks_spec.rb`
 **Stop and report if:**
 - `TreeView` (`tree_view.rb:74`, `:98`) depends on `@forks.call` answering a fresh Hash each time (it compares by identity)
 
-### T8: Build the review queue's 4 record maps in 1 pass          [risk: low]
+### [x] T8: Build the review queue's 4 record maps in 1 pass          [risk: low]
 
 **Depends on:** T3
 **Files:** `lib/lain/cli/epic_queue.rb`, `spec/lain/cli/epic_queue_spec.rb`
@@ -707,7 +707,7 @@ Spec file: `spec/lain/cli/epic_queue_spec.rb`
 **Stop and report if:**
 - a row builder reads a record type none of the 4 memos holds (grep `of_type(` in the file): it joins the composite
 
-### T9: Follow a lineage with the projection that reads one back          [risk: medium]
+### [x] T9: Follow a lineage with the projection that reads one back          [risk: medium]
 
 **Depends on:** T3, T18
 **Files:** `lib/lain/bench/session/lineages.rb`, `lib/lain/cli/watch/lineage_filter.rb`, `lib/lain/cli/watch.rb`,
@@ -755,7 +755,7 @@ Spec file: `spec/lain/journal/projection/lineage_spec.rb`, `spec/lain/cli/watch/
   projection folds records and the Store lookup stays in `Lineages#value`, and the card says which fields it reads
 - `spec/lain/tools/subagent_spec.rb:813` pins the filter's admit order byte for byte
 
-### T10: Walk the chain once in /rewind          [risk: low]
+### [x] T10: Walk the chain once in /rewind          [risk: low]
 
 **Depends on:** T4, T19
 **Files:** `lib/lain/cli/command/rewind.rb`, `lib/lain/session_record/replay.rb`, `spec/lain/cli/command/rewind_spec.rb`
@@ -783,7 +783,7 @@ Spec file: `spec/lain/cli/command/rewind_spec.rb`
 - `Rewind#past_stranded` or `settled_count` needs the whole chain to decide (`rewind.rb:36-39`): then 1 full walk,
   never 4, and the card says why 1 is the floor
 
-### T11: Sensitivity::Roots, the join a confined policy computes by hand          [risk: medium]
+### [x] T11: Sensitivity::Roots, the join a confined policy computes by hand          [risk: medium]
 
 **Depends on:** none
 **Files:** `lib/lain/sensitivity/roots.rb` (new), `lib/lain/sensitivity/policy.rb`, `lib/lain/cli/tool_guard.rb`,
@@ -858,7 +858,7 @@ Spec file: `spec/lain/sensitivity/roots_spec.rb`, `spec/lain/sensitivity/policy_
 - the held-set equality cannot be computed without the filesystem (2 spellings of 1 directory): then `equal:` compares
   the real spellings only, and the card says so
 
-### T12: One component walk behind the landing, the seal and the resolver          [risk: high]
+### [x] T12: One component walk behind the landing, the seal and the resolver          [risk: high]
 
 **Depends on:** none
 **Files:** `lib/lain/landing.rb`, `lib/lain/landing/walk.rb` (new), `lib/lain/confine/profile.rb`,
@@ -925,7 +925,7 @@ Spec file: `spec/lain/landing/walk_spec.rb`, `spec/lain/landing_spec.rb`, `spec/
 - `Seal`'s `missing` rule and `Landing.resolve`'s `lexical` fold disagree on a `..` after a missing component
   (`profile.rb:801` against `landing.rb:94`): the walk returns the uncleaned tail and each caller keeps its own fold
 
-### T13: Paths.resolved, the one realpath-or-expand          [risk: low]
+### [x] T13: Paths.resolved, the one realpath-or-expand          [risk: low]
 
 **Depends on:** T18
 **Files:** `lib/lain/paths.rb`, `lib/lain/project/trust.rb`, `lib/lain/project/resolver.rb`, `lib/lain/isolation/clone/guard.rb`,
@@ -970,7 +970,7 @@ Spec file: `spec/lain/paths_spec.rb` plus the 3 site specs
 - a caller relied on realpath of the RAW path differing from realpath of the expanded one (a relative path with a cwd
   that is itself a link): name the caller and keep its order under its own test
 
-### T14: Digest a request as the last state of its prefix chain          [risk: high]
+### [x] T14: Digest a request as the last state of its prefix chain          [risk: high]
 
 **Depends on:** T4
 **Files:** `lib/lain/request.rb`, `lib/lain/request/prefix_chain.rb`, `lib/lain/context.rb`, `lib/lain/agent.rb`,
@@ -1096,7 +1096,7 @@ Spec file: `spec/lain/request_spec.rb`, `spec/lain/request/prefix_chain_spec.rb`
 - `Bench::Rewrites` (`spec/lain/bench/rewrites_spec.rb`) reads a changed `max_tokens` as a rewrite at every position:
   it should not, since the entries exclude it; if it does, the entries leaked the combine and the card is wrong
 
-### T15: Hold the 4 line grammars to a round trip          [risk: medium]
+### [x] T15: Hold the 4 line grammars to a round trip          [risk: medium]
 
 **Depends on:** T1
 **Files:** `lib/lain/chores/item.rb`, `lib/lain/chores/queue.rb`, `lib/lain/isolation/lease_lock.rb`, `lib/lain/liveness.rb`,
@@ -1150,7 +1150,7 @@ Spec file: `spec/lain/chores/item_spec.rb`, `spec/lain/isolation/lease_lock_spec
 - `Item::CLAIM`'s `start=(\S+)` (`item.rb:20`) accepts a start the token grammar refuses and a committed chore file
   relies on it: then the claim keeps `\S+` and the card says why
 
-### T16: Hold the header sections to a round trip          [risk: medium]
+### [x] T16: Hold the header sections to a round trip          [risk: medium]
 
 **Depends on:** T1, T4, T14
 **Files:** `lib/lain/session_record/sections.rb`, `lib/lain/bench/session/loader.rb`, `lib/lain/cli/run_profile.rb`,
@@ -1183,7 +1183,7 @@ Spec file: `spec/lain/session_record/sections_spec.rb`, `spec/lain/bench/session
 - a section's `to_header` drops a field it cannot read back (grep each section class for `to_header`); then the
   field is written or the section's reader defaults it, and the card says which
 
-### T17: Hold a stored event to a round trip through its canon          [risk: low]
+### [x] T17: Hold a stored event to a round trip through its canon          [risk: low]
 
 **Depends on:** T1
 **Files:** `spec/lain/rust/event_round_trip_spec.rb` (new), `spec/lain/rust/turn_spec.rb`
@@ -1212,7 +1212,7 @@ Spec file: `spec/lain/rust/event_round_trip_spec.rb`
 
 ### Wave B: reuse
 
-### T18: One control-character escaper          [risk: medium]
+### [x] T18: One control-character escaper          [risk: medium]
 
 **Depends on:** T2
 **Files:** `lib/lain/utf8.rb`, `lib/lain/frontend/decorators/edit_diff.rb`, `lib/lain/frontend/markdown.rb`,
@@ -1264,7 +1264,7 @@ Spec file: `spec/lain/utf8_spec.rb` plus the 6 site specs
 - `trust_spec.rb:265-270` pins a format character outside the bidi set being dumped: then the spec moves to the bidi
   witness it names, U+202E
 
-### T19: Pluralise the 7 hand-rolled counts          [risk: low]
+### [x] T19: Pluralise the 7 hand-rolled counts          [risk: low]
 
 **Depends on:** none
 **Files:** `lib/lain/frontend/decorators/ask_settled.rb`, `lib/lain/frontend/neovim/surfaces.rb`, `lib/lain/cli/command/rewind.rb`,
@@ -1291,7 +1291,7 @@ Spec file: the 7 site specs
 **Stop and report if:**
 - `html_spec.rb:108-127` or `share_spec.rb:43-72` pins "regions" for a count of 1
 
-### T20: Say "ask settled" once          [risk: low]
+### [x] T20: Say "ask settled" once          [risk: low]
 
 **Depends on:** T19
 **Files:** `lib/lain/frontend/decorators/ask_settled.rb`, `lib/lain/frontend/neovim/surfaces.rb`,
@@ -1316,7 +1316,7 @@ Spec file: `spec/lain/frontend/neovim/surfaces_spec.rb`, `spec/lain/frontend/dec
 **Stop and report if:**
 - `surfaces_spec.rb:311-317` pins the nvim wording ("done in") as a user-facing contract rather than a shape
 
-### T21: Stop a chore's chat through Shell::ProcessGroup          [risk: medium]
+### [x] T21: Stop a chore's chat through Shell::ProcessGroup          [risk: medium]
 
 **Depends on:** none
 **Files:** `lib/lain/chores/runner.rb`, `spec/lain/chores/runner_spec.rb`
@@ -1348,7 +1348,7 @@ Spec file: `spec/lain/chores/runner_spec.rb`
 - `runner_spec.rb:256`'s ungrouped case reproduces against a real `Process.spawn(pgroup: true)` (it should not); then the
   fallback stays and the card reports the host where a leader is not a leader
 
-### T22: Write the chore file through AtomicFile          [risk: low]
+### [x] T22: Write the chore file through AtomicFile          [risk: low]
 
 **Depends on:** T15
 **Files:** `lib/lain/chores/queue.rb`, `spec/lain/chores/queue_spec.rb`
@@ -1385,7 +1385,7 @@ Spec file: `spec/lain/chores/queue_spec.rb`
 - `AtomicFile.write`'s `mkdir_p` creates a directory the queue's `Unwritable` refusal (`queue.rb:36-44`) expects to be
   missing; then the queue checks first and the card says so
 
-### T23: One PATH search          [risk: low]
+### [x] T23: One PATH search          [risk: low]
 
 **Depends on:** none
 **Files:** `lib/lain/shell/path.rb` (new), `lib/lain/notices.rb`, `lib/lain/confine/sandbox.rb`, `lib/lain/cli/exec_backend.rb`,
@@ -1418,7 +1418,7 @@ Spec file: `spec/lain/shell/path_spec.rb` plus the 4 site specs
 **Stop and report if:**
 - `pipeline_spec.rb` pins `search_path` honouring an env override that `find` would not see (`pipeline.rb:372-374`)
 
-### T24: TextMask.text, the one masking line          [risk: low]
+### [x] T24: TextMask.text, the one masking line          [risk: low]
 
 **Depends on:** T18
 **Files:** `lib/lain/sensitivity/text_mask.rb`, `lib/lain/tools/edit_file.rb`, `lib/lain/tools/subagent/lineage.rb`,
@@ -1443,7 +1443,7 @@ Spec file: `spec/lain/sensitivity/text_mask_spec.rb`
 **Stop and report if:**
 - a site passes `secrets` as a Set and `TextMask.new` expects an Array (`notifier.rb:47` calls `to_a`)
 
-### T25: Wait for a resident model through FileLock          [risk: high]
+### [x] T25: Wait for a resident model through FileLock          [risk: high]
 
 **Depends on:** none
 **Files:** `lib/lain/file_lock.rb`, `lib/lain/provider/residency.rb`, `spec/lain/file_lock_spec.rb`, `spec/lain/provider/residency_spec.rb`
@@ -1476,7 +1476,7 @@ Spec file: `spec/lain/file_lock_spec.rb`, `spec/lain/provider/residency_spec.rb`
   own file (`file_lock.rb:44`): then only the wait moves (a `FileLock::Wait` value both use) and the flock stays in
   Residency, which the card states
 
-### T26: Checkout#fold_in!, the fetch that raises the caller's error          [risk: low]
+### [x] T26: Checkout#fold_in!, the fetch that raises the caller's error          [risk: low]
 
 **Depends on:** none
 **Files:** `lib/lain/isolation/checkout.rb`, `lib/lain/isolation/worktree/anchorage.rb`, `lib/lain/isolation/worktree/handback/retirement.rb`,
@@ -1504,7 +1504,7 @@ Spec file: the 5 site specs
 
 ### Wave C: simplifications
 
-### T27: One preview and one NEWLINES in the nvim views          [risk: low]
+### [x] T27: One preview and one NEWLINES in the nvim views          [risk: low]
 
 **Depends on:** none
 **Files:** `lib/lain/frontend/neovim/text.rb` (new), `lib/lain/frontend/neovim/{tree_view,todo_view,status_view,buffers}.rb`,
@@ -1530,7 +1530,7 @@ Spec file: `spec/lain/frontend/neovim/text_spec.rb` plus the 4 view specs
 - the 2 `preview` copies have drifted (diff them first; the grounding found them byte-identical at `6040f4ab`), or
   `status_view.rb:165-174` uses `NEWLINES` to split where the 2 others use it to join
 
-### T28: The isolation constants and refusals, spelled once          [risk: low]
+### [x] T28: The isolation constants and refusals, spelled once          [risk: low]
 
 **Depends on:** T37
 **Files:** `lib/lain/isolation/checkout.rb`, `lib/lain/file_walk.rb`, `lib/lain/isolation/clone/{guard,guarded,registry,tampered}.rb`,
@@ -1558,7 +1558,7 @@ Spec file: `spec/lain/isolation/clone/guard_spec.rb`, `spec/lain/isolation/clone
 - `registry.rb:153` builds `Tampered.new(found:)` as a LOCK rather than for its sentence: that site stays, and the
   refusal helper serves the other 3 only
 
-### T29: One window-room formula, and the dead detector list          [risk: low]
+### [x] T29: One window-room formula, and the dead detector list          [risk: low]
 
 **Depends on:** none
 **Files:** `lib/lain/reply_reserve.rb`, `lib/lain/compaction/source.rb`, `lib/lain/compaction/need.rb`, `lib/lain/tool/round_budget.rb`,
@@ -1585,7 +1585,7 @@ Spec file: `spec/lain/reply_reserve_spec.rb` plus the 3 site specs
 - `round_budget.rb:75` subtracting input plus output while the 2 others subtract 1 `used` is a real difference (check
   what `room.usage` carries): then `room` takes `used:` as the caller's sum and the card names the 2 meanings
 
-### T30: Announcer in its own file          [risk: low]
+### [x] T30: Announcer in its own file          [risk: low]
 
 **Depends on:** T24
 **Files:** `lib/lain/agent/tool_runner/announcer.rb` (new), `lib/lain/agent/tool_runner.rb`, `spec/lain/agent/tool_runner/announcer_spec.rb` (new),
@@ -1611,7 +1611,7 @@ Spec file: `spec/lain/agent/tool_runner/announcer_spec.rb`
 **Stop and report if:**
 - `Fleet.clamped` clamps by grapheme while the announcer's spec pins a byte count
 
-### T31: Build the decorator table once          [risk: low]
+### [x] T31: Build the decorator table once          [risk: low]
 
 **Depends on:** none
 **Files:** `lib/lain/frontend/decorators.rb`, `spec/lain/frontend/decorators_spec.rb`
@@ -1636,7 +1636,7 @@ Spec file: `spec/lain/frontend/decorators_spec.rb`
 - a decorator class is defined after the first `for` call at boot (Zeitwerk eager load should settle this; prove it with
   a fresh-boot example)
 
-### T32: Parse a reply's markdown once          [risk: low]
+### [x] T32: Parse a reply's markdown once          [risk: low]
 
 **Depends on:** none
 **Files:** `lib/lain/frontend/decorators/assistant_text.rb`, `spec/lain/frontend/decorators/assistant_text_spec.rb`
@@ -1659,7 +1659,7 @@ Spec file: `spec/lain/frontend/decorators/assistant_text_spec.rb`
 **Stop and report if:**
 - a decorator is reused across 2 events (it is built per event by `Decorators.for`; prove it with the spec)
 
-### T33: Walk the related secrets once per egress build          [risk: low]
+### [x] T33: Walk the related secrets once per egress build          [risk: low]
 
 **Depends on:** none
 **Files:** `lib/lain/sensitivity/secrets/egress.rb`, `spec/lain/sensitivity/secrets/egress_spec.rb` (new; the subject is
@@ -1684,7 +1684,7 @@ Spec file: `spec/lain/sensitivity/secrets/egress_spec.rb`
 - `Egress.of` is built more than once per bind (`egress_literals.rb:56` against `source.rb`): then the memo belongs on
   `Source`, and the card says so
 
-### T34: Paths#filing_dir in place of the 1-element session_dirs          [risk: medium]
+### [x] T34: Paths#filing_dir in place of the 1-element session_dirs          [risk: medium]
 
 **Depends on:** T5, T6, T7, T9, T13, T14
 **Files:** `lib/lain/paths.rb`, `lib/lain/cli/sessions/forks.rb`, `lib/lain/cli/watch.rb`, `lib/lain/cli/resume.rb`,
@@ -1713,7 +1713,7 @@ Spec file: `spec/lain/paths_spec.rb` plus the site specs
 - `Paths#sibling_session_dirs` (`paths.rb:362`) still answers several directories for a chain file and a caller folds
   over those: that one keeps its list and the card says which
 
-### T35: Take the project root at construction          [risk: low]
+### [x] T35: Take the project root at construction          [risk: low]
 
 **Depends on:** T8
 **Files:** `lib/lain/cli/epic_queue.rb`, `lib/lain/cli/review.rb`, `spec/lain/cli/epic_queue_spec.rb`, `spec/lain/cli/review_spec.rb`
@@ -1737,7 +1737,7 @@ Spec file: `spec/lain/cli/epic_queue_spec.rb`, `spec/lain/cli/review_spec.rb`
 - a spec builds `EpicQueue` or `Review` outside any project and relied on the root never being resolved
   (`review_spec.rb:71` builds a tmp root; check `epic_queue_spec.rb:16`)
 
-### T36: Answer a provider's membership by include?          [risk: low]
+### [x] T36: Answer a provider's membership by include?          [risk: low]
 
 **Depends on:** none
 **Files:** `lib/lain/cli/backend.rb`, `spec/lain/cli/backend_spec.rb`
@@ -1760,7 +1760,7 @@ Spec file: `spec/lain/cli/backend_spec.rb`
 **Stop and report if:**
 - `backend_spec.rb` has no example for the default arm: add it, since it is the one the rewrite could break
 
-### T37: Checkout.of, the only way to a checkout          [risk: high]
+### [x] T37: Checkout.of, the only way to a checkout          [risk: high]
 
 **Depends on:** T13, T26, T35
 **Files:** `lib/lain/isolation/checkout.rb`, `lib/lain/isolation/clone/guard.rb`, and the 55 `Checkout.new` sites in
@@ -1807,7 +1807,7 @@ Spec file: `spec/lain/isolation/checkout_calls_spec.rb`, `spec/lain/isolation/ve
   would make `enclosing` answer a clone (a review source over an arbitrary branch): name it, and that site keeps the
   plain constructor through `Checkout.of_root` with the reason in a comment
 
-### T38: Count a parked row's tests with pluralize          [risk: low]
+### [x] T38: Count a parked row's tests with pluralize          [risk: low]
 
 **Depends on:** T35
 **Files:** `lib/lain/cli/epic_queue.rb`, `spec/lain/cli/epic_queue_spec.rb`
@@ -1832,7 +1832,7 @@ Spec file: `spec/lain/cli/epic_queue_spec.rb`
 - `epic_queue_spec.rb` pins "passed" being left unpluralised for a count of 1 (it is a participle, not a noun, and the
   card keeps it so)
 
-### T39: One config-table preamble          [risk: low]
+### [x] T39: One config-table preamble          [risk: low]
 
 **Depends on:** none
 **Files:** `lib/lain/config/table.rb` (new), `lib/lain/config/{keys,todos,theme}.rb`, `spec/lain/config/table_spec.rb` (new),
@@ -1859,7 +1859,7 @@ Spec file: `spec/lain/config/table_spec.rb` plus the 3 table specs
 - `theme.rb:21` refuses unknown TOKENS through its own message rather than `unknown_keys`: then `Table.read` takes
   `keys: nil` for a table whose keys are open, and theme keeps its refusal
 
-### T40: The sensitivity policy contract          [risk: low]
+### [x] T40: The sensitivity policy contract          [risk: low]
 
 **Depends on:** T11
 **Files:** `spec/support/shared_examples/sensitivity_policy.rb` (new), `spec/lain/sensitivity/policy_spec.rb`
@@ -1885,7 +1885,7 @@ Spec file: `spec/lain/sensitivity/policy_spec.rb`
 - `Confined` answers 1 of the 16 through `delegate` with a different arity than `Policy` (`policy.rb:234-235`): the
   group states the arity and the card fixes the delegate
 
-### T41: Record the laws and the format in the architecture docs          [risk: low]
+### [x] T41: Record the laws and the format in the architecture docs          [risk: low]
 
 **Depends on:** T1, T3, T4, T9, T11, T12, T14
 **Files:** `ARCHITECTURE.md`, `docs/GLOSSARY.md`, `CLAUDE.md`, `spec/docs_naming_spec.rb`
@@ -1928,7 +1928,7 @@ Spec file: `spec/docs_naming_spec.rb`
 
 ## Execution log
 
-Run start 2026-10-29: base `main` at `53407ce5`. `git worktree list` at start: the main checkout plus 83 stale
+Run start 2026-10-29: base `main` at `53407ce5`. `git worktree list` at start: the main checkout plus 82 stale
 `card/*` worktrees from earlier plans under `tmp/worktrees/` (BD, EXT, FLK, HARNESS, T4 to T89, TIM); they reuse this
 plan's card names, so this run cuts `tmp/worktrees/aa-T<n>` on branch `card/aa-T<n>` and leaves those alone. Extra
 branches at start: `flake/review`, `spike/combined`, `spike/combined2`. The 3 staged submodule entries in the main
@@ -1966,3 +1966,66 @@ review due), T18 (second review), T40 (implementing). Rulings made in-run, each 
 Flaky: T11's first hook run went red at load 26 on `todos_drain_spec` (2 examples) and `repo_as_fixture_spec:352`
 (watchdog); both green alone at load 3 and the base suite green (30,887 examples); T11 relanded green. Follow-up:
 `Provider::Admission#wait_for_slot` is a third copy of the wait loop `FileLock::Wait` now owns.
+
+Checkpoint 2026-10-30, resumed after a context compaction. Landed after the first checkpoint: T1 `e5af01c9`,
+T17 `93df4797`, T3 `eb1dbce1`, T15 `f2917d4f`, T18 `989d45e8`, T24 `892c8c67`, T7 `307dae8e`, T22 `5c12540c`,
+T8 `107ca5de`, T13 `5fe253dd`, T30 `1ca62114`, T35 `bcc93643`, T20 `46e78e18`, T38 `f91488a3`, T9 `44978f71`,
+F1 `759b167a`, T4 `222d0570`, T10 `ac59df76`, T5 `7b3297f6`, T6 `2e4d55c9`, T37 `a7ed7156`, T28 `243340d4`,
+T14 `d3f1302b`, the ceiling raise `8f98f8bc`, T34 `e6df239c`, F2 `83637769`, T41 `23614f05`, T16 `dc16e0c8`,
+F5 `1a9bf20f`, F6 `9bea46cf`, F4 `0eb54b8d`, and T40 `7e6851ae`.
+
+Rulings and accepted costs:
+- T1's second review failed (order-dependent coverage from `stub_const` leftovers); fixed, third review approved.
+- T4 needed 3 reviews: header boundary, the Corrupt wording ("record N of the resume chain, counting from 0"), and a
+  foreign-line resume pin. `replay.rb` keeps `record["type"]` at both sites (the mutant there is equivalent).
+- T9's lineage projection stays superlinear: `Journal::Projection` calls `Ractor.make_shareable` on its state every
+  step (64% of the cost at 24,000 records). The most message lines in any of 2,304 real sessions is 14.
+- T10 walks the chain once, through `Agent#rewind` into `Recorder#follow`, never 4 times.
+- T6 cut the fork header to 3 keys; the new read is at most 1.4x the old over 9 files.
+- T14: per-turn chat render went from about 15.5 to 9 ms; a cold full render went from about 45 to 87 ms, accepted on
+  the Rust-flip precedent (judge the per-turn render). `Loader#recording` stayed about 1 ms over its bar, a constant
+  compare cost. `Canonical::Equality.same?` replaced `==`, which held `1 == 1.0`. The ceilings for `render_cold_10k`
+  (111) and `journal_1000000` (0.971) were raised in their own commit, `8f98f8bc`; the journal row regresses only
+  after the render rows run, from the heap they leave.
+- T37 struck the tree-checkout half of acceptance 1, which no spec could meet.
+- F3 (resume types only the records a projection keeps) was cut from the memory profile and dropped: T4 made refusing
+  an unbuildable record of any type the reason for format 4, and its own scenario is the `ask_settled` example F3
+  would have turned off. Real sessions here are at most 0.3 MB with 7 `request_sent` records, far below the 8 MB
+  table step.
+
+Fix cards, each from a repeat flake or a finding, not in the card list above:
+- F1: the CredentialPatterns linear-time ratio moved from a spec to 2 bench rows (`Regexp.linear_time?` is false for
+  11 of 26 shapes).
+- F2: the tmux plugin spec's teardown ends each pane session (TERM, then KILL) instead of waiting and raising.
+- F4: `lain land wait` answered "no drainer" for a drainer still booting under load. The spawner records the started
+  pid; a live started drainer counts as attended for `Land::BOOT_WINDOW` (60 s); the drainer deletes the record once
+  it holds the lock. Likely cause, not reproduced (0 of 10 load runs).
+- F5: the Rust `test_sources` walk skips a directory or entry that vanishes mid-walk. What removed it was not found.
+- F6: the repo-as-fixture scan walks only files whose text can hold the shape: about 9 s to 5 s, the same 1,349 files
+  and the same empty report.
+
+Flakes: T20 (CredentialPatterns ratio, a retired name, so F1), T41 (tmux teardown, F2; then the todos drain journey,
+F4), F5's first landing (repo_as_fixture watchdog at load 20, F6). Each was green alone and green on its failing
+seed on the base and the card before it became a card.
+
+Memory profile, 2026-10-30, `80ae9f29` against `dc16e0c8`, `env -i`, the same data in both trees, base measured
+twice as the control (spread 0.1 MB or less): a 10,000-message chat holds 0.7 MB less after 20 turns and peaks
+59 MB lower; resuming an 800-turn, 33.7 MB session retains 8.1 MB more heap and 12.9 MB more RSS, all of it
+`Canonical::PRODUCED` doubling from 8 to 16 MB as Replay types the 400 `request_sent` records. One `rake pspec`
+raises the box's used memory by 6.4 GB at peak, which is what swapped the box when landings overlapped agents' runs.
+
+Integration checks at `dc16e0c8`: `rake pspec` 31,256 examples, 0 failures; rubocop clean; `yard-lint lib` 2
+offenses on lines from September; `pre-commit run --all-files` red only on the 2 Rust walk tests F5 then fixed;
+`hot-path-bench --check` and `runtime-census --check` ok; zeitwerk census 0; comment census clean; `spec-census
+--check` over its ceilings at 199 and 58, against 198 and 57 at the plan's base `53407ce5`; clippy clean; gherkin
+lint clean; the overlap probe (`probe-r2-overlap-probe.rb <plan>`) 0 parallel overlaps.
+
+Follow-ups: `Journal::Projection`'s `make_shareable` per step; bound `Recorder#follow` and `Session#rewound_to`;
+`private_class_method :new` on `Checkout`; move `plant_commondir` into `spec/support`; a duplicate chore text is
+parsed twice (`Item.id_of`); a `read:` option for the incremental-fold group; lower the `render_chat_10k` ceiling to
+11.4; `RequestSent` could normalize its payload lazily if long sessions appear; `Provider::Admission#wait_for_slot`
+is a third wait loop; the spec-census excess; the 2 old yard-lint offenses.
+
+Manual pass still owed by the user: see Integration checks.
+
+Close 2026-10-30: status done. Worktrees and branches match the start.
