@@ -65,8 +65,8 @@ module Lain
         # @return [RunProfile]
         # @raise [Bench::Session::Corrupt] when the header recorded no provider
         def from_header(record)
-          Bench::Session::RequiredKeys.read(record, "provider") { "the session header" }
-          new(**FIELDS.to_h { |field| [field, record[field.to_s]] })
+          recorded = SessionRecord::Sections.profile_of(record).merge(record.slice("model", "effort"))
+          new(**FIELDS.to_h { |field| [field, recorded[field.to_s]] })
         end
       end
 

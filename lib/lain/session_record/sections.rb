@@ -14,6 +14,9 @@ module Lain
       EMPTY = {}.freeze
       private_constant :EMPTY
 
+      COMPACTION_KEYS = CLI::CompactionProfile::FLAGS.values.map(&:to_s).freeze
+      private_constant :COMPACTION_KEYS
+
       # A compaction section is not asked for a header because
       # `CLI::Backend#compaction_header` resolves one from the backend already.
       #
@@ -29,6 +32,27 @@ module Lain
             provenance: provenance.to_header, summarizer:)
       end
 
+      # The one reader of {#to_header}: a section the header leaves out reads as
+      # empty, and a header with no profile or provenance is {Bench::Session::Corrupt}.
+      #
+      # @param header [Hash{String=>Object}] a session header record
+      # @return [Sections]
+      # @raise [Bench::Session::Corrupt] when the header carries no provider or no provenance
+      def self.from_header(header)
+        Bench::Session::RequiredKeys.read(header, "provenance") { "the session header" }
+        new(profile: profile_of(header), compaction: header.slice(*COMPACTION_KEYS),
+            arms: header.fetch("arms", EMPTY), middleware: header.fetch("middleware", EMPTY),
+            provenance: header.slice("provenance"), summarizer: header.fetch("summarizer", EMPTY))
+      end
+
+      # @param header [Hash{String=>Object}] a session header record
+      # @return [Hash{String=>Object}] the profile's header fields, as {CLI::RunProfile#to_header} wrote them
+      # @raise [Bench::Session::Corrupt] when the header carries no provider
+      def self.profile_of(header)
+        Bench::Session::RequiredKeys.read(header, "provider") { "the session header" }
+        header.slice(*CLI::RunProfile::HEADER_FIELDS.map(&:to_s)).compact
+      end
+
       # @param profile [Hash{String=>Object}] the run profile's header fields, never empty
       # @param compaction [Hash{String=>Object}] the compaction section
       # @param arms [Hash{String=>String}] the bench arms that are on
@@ -42,6 +66,16 @@ module Lain
         end
 
         super
+      end
+
+      # The sections as the flat record the header merges in: the profile and
+      # compaction fields at the top, the other 3 each nested under their key
+      # when they hold anything, and the provenance under its own.
+      #
+      # @return [Hash{String=>Object}]
+      def to_header
+        nested = { "arms" => arms, "middleware" => middleware, "summarizer" => summarizer }
+        profile.merge(compaction, nested.reject { |_name, fields| fields.empty? }, provenance)
       end
     end
   end

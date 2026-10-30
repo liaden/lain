@@ -40,11 +40,6 @@ module Lain
         NO_RECORDS = [].freeze
         private_constant :NO_RECORDS
 
-        # A header always carries what produced the run and the profile it ran
-        # under: `provider` is the profile's one key that is never nil.
-        REQUIRED_SECTIONS = %w[provenance provider].freeze
-        private_constant :REQUIRED_SECTIONS
-
         # The record types {MessageReplay} rebuilds: events that no render chain
         # carries, so they are reconstructed from their own flat records.
         FLAT_EVENT_TYPES = ["message", SessionRecord::CHILD_TURN_TYPE].freeze
@@ -212,6 +207,13 @@ module Lain
 
         def of_type(type) = @by_type.fetch(type.to_s, NO_RECORDS)
 
+        # Read while the header is stamped, so a header without its profile or
+        # provenance refuses before any other field is asked of it.
+        def sections
+          header
+          @sections
+        end
+
         def header
           @header ||= stamped(sole(HEADER_TYPE, "#{HEADER_TYPE.inspect} header records in one journal; " \
                                                 "the format is one run, one journal, one file") ||
@@ -224,7 +226,7 @@ module Lain
                            "this loader reads format #{SessionRecord::FORMAT}"
           end
 
-          REQUIRED_SECTIONS.each { |key| RequiredKeys.read(header, key) { "the session header" } }
+          @sections = SessionRecord::Sections.from_header(header)
           header
         end
 
@@ -264,7 +266,7 @@ module Lain
         def bench_facts = { arms:, compact: header["compact"], opaque: }
 
         def provenance_facts
-          { provenance: header.fetch("provenance"), served_models:, host:,
+          { provenance: sections.provenance.fetch("provenance"), served_models:, host:,
             started_at: Ledger::Index::Entry.stamped(header["ts"]) }
         end
 

@@ -90,10 +90,9 @@ module Lain
     # profile or provenance is one the Loader refuses.
     def header(context:, toolset:, writer:, sections:, workspace: Workspace.empty, resumed_from: nil)
       record = fixed_fields(context, toolset, workspace)
-      record = record.merge(context_pipeline(context), effort(context), sections.profile,
-                            scheduled(sections.compaction), section("arms", sections.arms),
-                            section("middleware", sections.middleware),
-                            section("summarizer", sections.summarizer), sections.provenance, writer.to_header)
+      scheduled_sections = sections.with(compaction: scheduled(sections.compaction))
+      record = record.merge(context_pipeline(context), effort(context), scheduled_sections.to_header,
+                            writer.to_header)
       resumed_from.nil? ? record : record.merge("resumed_from" => resumed_from)
     end
 
@@ -124,16 +123,6 @@ module Lain
       return compaction if compaction.key?("compact_schedule")
 
       raise ArgumentError, "a compaction section must name its compact_schedule, got #{compaction.keys.inspect}"
-    end
-
-    # Fields nested under one key, so a reader of the header's flat keys never
-    # mistakes one for a profile field.
-    #
-    # @param name [String] the header key, `arms` or `middleware`
-    # @param fields [Hash{String=>String}]
-    # @return [Hash{String=>Hash}] empty when there are no fields
-    def section(name, fields)
-      fields.empty? ? {} : { name => fields }
     end
 
     # The header field naming which catalog pipeline rendered the session, and

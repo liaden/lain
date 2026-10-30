@@ -595,6 +595,13 @@ RSpec.describe Lain::Bench::Session::Loader do
         .to raise_error(Lain::Bench::Session::Corrupt, /provider/)
     end
 
+    it "reads the provenance through the one sections reader" do
+      read = SessionSections.complete(provenance: { "provenance" => { "harness" => "from-the-reader" } })
+      allow(Lain::SessionRecord::Sections).to receive(:from_header).and_return(read)
+
+      expect(described_class.new(header_without).recording.provenance).to eq("harness" => "from-the-reader")
+    end
+
     it "loads a header carrying both" do
       expect(described_class.new(header_without).recording.open?).to be(true)
     end

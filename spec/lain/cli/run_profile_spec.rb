@@ -135,6 +135,15 @@ RSpec.describe Lain::CLI::RunProfile do
         .to eq("provider" => "ollama", "num_ctx" => 8192)
     end
 
+    it "reads the profile section the sections reader reads" do
+      header = JSON.parse(JSON.generate(Lain::SessionRecord::Sections.new(
+        profile: typed(provider: "ollama", num_ctx: 8192).to_header, provenance: { "provenance" => { "a" => "b" } }
+      ).to_header))
+
+      expect(described_class.from_header(header).to_header)
+        .to eq(Lain::SessionRecord::Sections.from_header(header).profile)
+    end
+
     it "reads the model back from the header's own model field" do
       expect(recorded(provider: "ollama", model: "qwen3:8b").model).to eq("qwen3:8b")
     end
