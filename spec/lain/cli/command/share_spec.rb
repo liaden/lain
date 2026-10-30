@@ -117,7 +117,7 @@ RSpec.describe Lain::CLI::Command::Share do
 
   it "does not blame gh when the session file is gone" do
     gone = lambda { |file|
-      Lain::CLI::Export.new(selector: file, paths: instance_double(Lain::Paths, session_dirs: []),
+      Lain::CLI::Export.new(selector: file, paths: instance_double(Lain::Paths, filing_dir: "/gone"),
                             project: instance_double(Lain::Project, root: "/x"))
     }
     sharing = described_class.new(exports: gone, shell: gh, journal:)

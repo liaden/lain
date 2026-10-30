@@ -30,10 +30,9 @@ module Lain
         # one sentence.
         NAMED_LIMIT = 3
 
-        # @param dir [String, Array<String>] the project's session directory, or every
-        #   directory its sessions are filed in
+        # @param dir [String] the project's session directory
         def initialize(dir:)
-          @dirs = Array(dir)
+          @dir = dir
         end
 
         # @param selector [String, nil]
@@ -56,14 +55,14 @@ module Lain
 
         def header_reason(header) = self.class.header_reason(header)
 
-        def path_of(name) = Paths.session_file(name, dirs: @dirs)
+        def path_of(name) = Paths.session_file(name, dir: @dir)
 
         # UTC-timestamped filenames sort chronologically, so `.last` is the
         # newest -- also what makes resume idempotent: a resumed session that
         # exited immediately is itself the newest file, so a second `--resume`
         # continues the head of the CHAIN rather than forking the original.
         def session_names
-          Paths.session_names(@dirs)
+          Paths.session_names(@dir)
         end
 
         # The bare pick and prefix matching see only the durable record -- the
@@ -159,7 +158,7 @@ module Lain
         end
 
         def newest
-          resumable_names.last or raise Refusal, "no sessions to resume under #{Paths.listing(@dirs)}#{skipped}"
+          resumable_names.last or raise Refusal, "no sessions to resume under #{@dir}#{skipped}"
         end
 
         # "No sessions" said about a directory the user can SEE files in is a
@@ -227,9 +226,9 @@ module Lain
           candidates = narrowed(matches)
           return candidates.first if candidates.size == 1
 
-          raise Refusal, "no session matching #{selector.inspect} under #{Paths.listing(@dirs)}" if matches.empty?
+          raise Refusal, "no session matching #{selector.inspect} under #{@dir}" if matches.empty?
 
-          raise Refusal, "#{selector.inspect} is ambiguous under #{Paths.listing(@dirs)}: #{candidates.join(", ")}"
+          raise Refusal, "#{selector.inspect} is ambiguous under #{@dir}: #{candidates.join(", ")}"
         end
 
         # An unloadable file never makes a prefix AMBIGUOUS: picking it could

@@ -8,7 +8,7 @@ RSpec.describe Lain::CLI::Friction do
 
   let(:tmpdir) { Dir.mktmpdir }
   let(:sessions_dir) { File.join(tmpdir, "sessions").tap { |dir| FileUtils.mkdir_p(dir) } }
-  let(:paths) { instance_double(Lain::Paths, session_dirs: [sessions_dir]) }
+  let(:paths) { instance_double(Lain::Paths, filing_dir: sessions_dir) }
 
   before do
     fixture_path = File.join(__dir__, "..", "..", "fixtures", "friction", "clean.ndjson")

@@ -108,12 +108,12 @@ module Lain
       #   project's session dir
       # @return [String] the selected session's path
       # @raise [Refusal]
-      def locate(selector) = Selector.new(dir: dirs).call(selector)
+      def locate(selector) = Selector.new(dir:).call(selector)
 
       # @param selector [String] `<session>@<digest-prefix>`
       # @return [ForkPoint::Point]
       # @raise [Refusal]
-      def fork_point(selector) = ForkPoint.new(dir: dirs).call(selector)
+      def fork_point(selector) = ForkPoint.new(dir:).call(selector)
 
       # The header a selected session recorded, read BEFORE the backend exists
       # so an untyped flag can default to it. Reads the header and nothing
@@ -193,7 +193,7 @@ module Lain
 
       private
 
-      def dirs = @dirs ||= @paths.session_dirs(@project)
+      def dir = @dir ||= @paths.filing_dir(root: @project.root)
 
       # An OPEN recording gets one salvage attempt before anything else runs.
       # {Salvager#close!} retroactively turns a crash whose writer is dead into an ordinary
@@ -265,7 +265,7 @@ module Lain
       # Run-state and memory replay are chain-wide, where the Loader folds only
       # the Timeline and message events across `resumed_from` -- so the entries
       # come from {ChainWalk}, every file of the chain, oldest first.
-      def replay(path) = SessionRecord::Replay.new(ChainWalk.new(paths: @paths, dirs:).entries(path))
+      def replay(path) = SessionRecord::Replay.new(ChainWalk.new(paths: @paths, dir:).entries(path))
 
       def mismatches(path, current)
         MismatchNotices.new(path:).call(**current.to_h)
@@ -383,7 +383,7 @@ module Lain
       # into the Corrupt refusal naming the missing file.
       def resolver
         lambda do |basename|
-          path = @paths.chain_file(basename, dirs:)
+          path = @paths.chain_file(basename, dir:)
           File.file?(path) ? File.foreach(path) : nil
         end
       end

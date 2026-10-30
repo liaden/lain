@@ -3,7 +3,7 @@
 RSpec.describe Lain::CLI::Export do
   let(:tmpdir) { Dir.mktmpdir }
   let(:sessions_dir) { File.join(tmpdir, "sessions").tap { |dir| FileUtils.mkdir_p(dir) } }
-  let(:paths) { instance_double(Lain::Paths, session_dirs: [sessions_dir]) }
+  let(:paths) { instance_double(Lain::Paths, filing_dir: sessions_dir) }
   let(:project) { instance_double(Lain::Project, root: "/work/proj") }
   let(:secret) { "hunter2-s3cr3t-value" }
   let(:session_records) do

@@ -157,22 +157,22 @@ module Lain
       # {Sessions}' discovery idiom: Dir.children, sorted -- the filenames are
       # UTC-timestamped, so lexicographic IS chronological.
       def newest_session
-        dirs = @paths.session_dirs(@project)
-        names = watchable(dirs)
+        dir = @paths.filing_dir(root: @project.root)
+        names = watchable(dir)
         # No `path:` and no recorded sessions: nothing to tail, said loudly.
-        raise Error, "no sessions to watch under #{Paths.listing(dirs)}#{skipped(dirs)}" if names.empty?
+        raise Error, "no sessions to watch under #{dir}#{skipped(dir)}" if names.empty?
 
-        Paths.session_file(names.last, dirs:)
+        Paths.session_file(names.last, dir:)
       end
 
       # "No sessions" said about a directory the user can SEE files in is a
       # refusal they stop believing. Name what was passed over, and why it could
       # never have ended: an empty file has no writer, so the session_closed
       # that stops the tail is never coming.
-      def skipped(dirs)
+      def skipped(dir)
         counts = { "empty (nothing is writing them, so they can never close)" =>
-                     durable_names(dirs).size - watchable(dirs).size,
-                   "ephemeral (--btw)" => Paths.session_names(dirs).size - durable_names(dirs).size }
+                     durable_names(dir).size - watchable(dir).size,
+                   "ephemeral (--btw)" => Paths.session_names(dir).size - durable_names(dir).size }
         named = counts.filter_map { |label, count| "#{count} #{label}" if count.positive? }
         named.empty? ? "" : ": skipped #{named.join(" and ")}"
       end
@@ -183,10 +183,10 @@ module Lain
       # FINISH. A zero-byte file is the sharpest case: it is what
       # {Journal.open} leaves when a chat dies before its header, nobody is
       # writing it, and a choice that lands on it chose nothing to watch.
-      def durable_names(dirs) = Paths.session_names(dirs).reject { |name| Paths.ephemeral?(name) }
+      def durable_names(dir) = Paths.session_names(dir).reject { |name| Paths.ephemeral?(name) }
 
-      def watchable(dirs)
-        durable_names(dirs).reject { |name| Journal.empty?(Paths.session_file(name, dirs:)) }.sort
+      def watchable(dir)
+        durable_names(dir).reject { |name| Journal.empty?(Paths.session_file(name, dir:)) }.sort
       end
 
       # The fd tail as an Enumerable of the records of COMPLETE ("\n"-terminated)

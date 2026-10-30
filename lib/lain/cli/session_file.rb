@@ -39,7 +39,7 @@ module Lain
       # @raise [SessionNotFound] naming every candidate, so a typo against a
       #   session dir the user did not expect is diagnosable from the message
       def self.resolve(selector, paths:, project:)
-        tried = candidates(selector, paths.session_dirs(project))
+        tried = candidates(selector, paths.filing_dir(root: project.root))
         tried.find { |candidate| File.file?(candidate) } ||
           raise(SessionNotFound, "no session found for #{selector.inspect} -- looked at #{tried.join(", ")}")
       end
@@ -48,8 +48,8 @@ module Lain
       # outside this project stays reachable), then under this project's session
       # dir, then with the suffix a user drops reading a name off
       # `lain sessions`.
-      def self.candidates(selector, dirs)
-        [selector, *dirs.flat_map { |dir| [File.join(dir, selector), File.join(dir, "#{selector}.ndjson")] }]
+      def self.candidates(selector, dir)
+        [selector, File.join(dir, selector), File.join(dir, "#{selector}.ndjson")]
       end
       private_class_method :candidates
     end

@@ -8,7 +8,7 @@ RSpec.describe Lain::CLI::JournalVerify do
   end
 
   let(:sink) { StringIO.new }
-  let(:paths) { instance_double(Lain::Paths, session_dirs: [@dir]) }
+  let(:paths) { instance_double(Lain::Paths, filing_dir: @dir) }
   let(:cli) { described_class.new(sink:, paths:) }
   let(:path) { File.join(@dir, "20260721T000000-1.ndjson") }
   let(:said) { sink.string }

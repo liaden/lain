@@ -118,7 +118,7 @@ module Lain
           def earlier
             return [] if @journal_path.nil? || !File.file?(@journal_path)
 
-            walk = Lain::CLI::Resume::ChainWalk.new(paths: @paths, dirs: [File.dirname(@journal_path)])
+            walk = Lain::CLI::Resume::ChainWalk.new(paths: @paths, dir: File.dirname(@journal_path))
             walk.paths(@journal_path)[0...-1]
           end
 

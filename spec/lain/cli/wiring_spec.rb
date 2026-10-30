@@ -5411,7 +5411,7 @@ RSpec.describe Lain::CLI::Wiring do
 
       context "with the chat's journal filed in the project's session directory" do
         let(:project) { Lain::Project.new(root: epic_root, cwd: epic_root, kind: :project, detected_by: :flag) }
-        let(:session_dir) { Lain::Paths.new.session_dirs(project).first }
+        let(:session_dir) { Lain::Paths.new.filing_dir(root: project.root) }
         let(:chronicle) do
           Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: StringIO.new),
                                    journal_path: File.join(session_dir, "chat.ndjson"))

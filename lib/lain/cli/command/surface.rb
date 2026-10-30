@@ -133,7 +133,7 @@ module Lain
           Env.new(
             status: status_feed, sessions: Lain::CLI::Sessions.new(project: place),
             approvals: approvals || Env::NoApprovals, supervisor:,
-            replies:, fork_point: ForkPoint.new(dir: Paths.new.session_dirs(place)),
+            replies:, fork_point: ForkPoint.new(dir: Paths.new.filing_dir(root: place.root)),
             tmux_surface: TmuxSurface.new, agent:, chronicle:,
             model_switch:, mode_switch:, role_spawn: @role_spawn, snapshots:, epic_driver:
           )

@@ -20,7 +20,7 @@ RSpec.describe Lain::CLI::Sessions::Forks do
     write("c.ndjson", header(resumed_from: { "file" => "a.ndjson", "head" => "blake3:d1" }))
     write("d.ndjson", header(resumed_from: { "file" => "a.ndjson", "head" => "blake3:d2" }))
 
-    expect(described_class.of(parent, dirs: [@dir]))
+    expect(described_class.of(parent, dir: @dir))
       .to eq("blake3:d1" => %w[b.ndjson c.ndjson], "blake3:d2" => ["d.ndjson"])
   end
 
@@ -29,17 +29,17 @@ RSpec.describe Lain::CLI::Sessions::Forks do
     write("b.ndjson", header(resumed_from: { "file" => "z.ndjson", "head" => "blake3:d1" }))
     write("c.ndjson", header)
 
-    expect(described_class.of(parent, dirs: [@dir])).to eq({})
+    expect(described_class.of(parent, dir: @dir)).to eq({})
   end
 
   it "finds nothing for a chat with no journal file" do
-    expect(described_class.of(nil, dirs: [@dir])).to eq({})
+    expect(described_class.of(nil, dir: @dir)).to eq({})
   end
 
   it "scans the chronicle's current file each time the source is called" do
     paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => @dir })
     project = Lain::Project.new(root: @dir, cwd: @dir, kind: :project, detected_by: :flag)
-    @dir = paths.session_dirs(project).first
+    @dir = paths.filing_dir(root: project.root)
     FileUtils.mkdir_p(@dir)
     first = write("a.ndjson", header)
     write("b.ndjson", header(resumed_from: { "file" => "c.ndjson", "head" => "blake3:d1" }))
@@ -56,18 +56,7 @@ RSpec.describe Lain::CLI::Sessions::Forks do
     File.write(File.join(@dir, "b.ndjson"), "not json\n")
     File.write(File.join(@dir, "c.ndjson"), "")
 
-    expect(described_class.of(parent, dirs: [@dir])).to eq({})
-  end
-
-  it "looks in every directory it is given" do
-    other = Dir.mktmpdir
-    parent = write("a.ndjson", header)
-    File.write(File.join(other, "b.ndjson"),
-               "#{JSON.generate(header(resumed_from: { "file" => "a.ndjson", "head" => "blake3:d1" }))}\n")
-
-    expect(described_class.of(parent, dirs: [@dir, other])).to eq("blake3:d1" => ["b.ndjson"])
-  ensure
-    FileUtils.remove_entry(other)
+    expect(described_class.of(parent, dir: @dir)).to eq({})
   end
 
   describe ".source over unchanged files" do
@@ -78,7 +67,7 @@ RSpec.describe Lain::CLI::Sessions::Forks do
     let(:resume) { { "file" => "a.ndjson", "head" => "blake3:d1" } }
 
     before do
-      @dir = paths.session_dirs(project).first
+      @dir = paths.filing_dir(root: project.root)
       FileUtils.mkdir_p(@dir)
       @parent = write("a.ndjson", header)
       @child = write("b.ndjson", header(resumed_from: resume))

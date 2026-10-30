@@ -7,14 +7,14 @@ module Lain
       # A fork and a resume write the same pair, so a child is only known to start there, not how.
       module Forks
         # @param session_file [String, nil] the session whose children are wanted; nil (no journal) has none
-        # @param dirs [Array<String>] the directories the project's sessions are filed in
+        # @param dir [String] the directory the project's sessions are filed in
         # @param facts [#call] answers a path's `resumed_from` hash
         # @return [Hash{String => Array<String>}] child file names, by the digest they resumed from
-        def self.of(session_file, dirs:, facts: method(:resumed_from))
+        def self.of(session_file, dir:, facts: method(:resumed_from))
           return {} if session_file.nil?
 
           parent = File.basename(session_file)
-          dirs.flat_map { |dir| Paths.ndjson_in(dir) }.sort.each_with_object({}) do |path, found|
+          Paths.ndjson_in(dir).sort.each_with_object({}) do |path, found|
             from = facts.call(path)
             (found[from["head"]] ||= []) << File.basename(path) if from["file"] == parent
           end
@@ -32,7 +32,7 @@ module Lain
           seen = {}
           lambda do
             memo = ->(path) { (seen[path] = remembered(seen[path], path, facts))[1] }
-            of(chronicle.journal_path, dirs: paths.session_dirs(project), facts: memo)
+            of(chronicle.journal_path, dir: paths.filing_dir(root: project.root), facts: memo)
           end
         end
 

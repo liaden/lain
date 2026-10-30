@@ -13,7 +13,7 @@ require "tmpdir"
 RSpec.describe Lain::CLI::SessionFile do
   subject(:resolved) { described_class.resolve(selector, paths:, project:) }
 
-  let(:paths) { instance_double(Lain::Paths, session_dirs: [@dir]) }
+  let(:paths) { instance_double(Lain::Paths, filing_dir: @dir) }
   let(:selector) { "20260721T000000-1" }
   let(:project) { instance_double(Lain::Project, root: @dir) }
 

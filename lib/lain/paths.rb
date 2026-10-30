@@ -298,29 +298,18 @@ module Lain
       ensure_dir(container("sessions", key: project))
     end
 
-    # The directory a session reader folds: the project root's, where a chat and
-    # every epic writer file. An array, so a reader folds it the way it would
-    # fold several.
-    #
-    # @param project [#root] a {Project}
-    # @return [Array<String>] the one directory
-    def session_dirs(project) = [filing_dir(root: project.root)]
-
     # @param root [String] the project root
-    # @return [String] where a chat files its journal, created
+    # @return [String] where a chat and every epic writer file, and every reader looks, created
     def filing_dir(root:) = sessions_dir(project: project_hash(root))
 
     # @param name [String] a session's basename
-    # @param dirs [Array<String>] where to look
-    # @return [String] its path in the first directory holding it, else in the first directory
-    def self.session_file(name, dirs:)
-      candidates = dirs.map { |dir| File.join(dir, name) }
-      candidates.find { |path| File.exist?(path) } || candidates.first
-    end
+    # @param dir [String] the session directory
+    # @return [String] the path of that session in it
+    def self.session_file(name, dir:) = File.join(dir, name)
 
-    # @param dirs [Array<String>] session directories
-    # @return [Array<String>] the basenames of every session file in them, oldest first
-    def self.session_names(dirs) = dirs.flat_map { |dir| ndjson_in(dir) }.map { |path| File.basename(path) }.uniq.sort
+    # @param dir [String] the session directory
+    # @return [Array<String>] the basename of every session file in it, oldest first
+    def self.session_names(dir) = ndjson_in(dir).map { |path| File.basename(path) }.sort
 
     # `Dir.children`, never a glob: a directory name carrying glob
     # metacharacters is a name, not a pattern.
@@ -331,7 +320,7 @@ module Lain
       Dir.children(dir).select { |name| name.end_with?(".ndjson") }.map { |name| File.join(dir, name) }
     end
 
-    # @param dirs [Array<String>] session directories
+    # @param dirs [Array<String>] directories a fold covered
     # @return [String] them as a sentence names where it looked
     def self.listing(dirs) = dirs.join(", ")
 
@@ -340,13 +329,13 @@ module Lain
     # and pid make a basename unique across every project's directory.
     #
     # @param name [String] a session's basename
-    # @param dirs [Array<String>] where to look first
-    # @return [String] its path in `dirs`, else in any sibling project directory, else in the first of `dirs`
-    def chain_file(name, dirs:)
-      listed = self.class.session_file(name, dirs:)
+    # @param dir [String] where to look first
+    # @return [String] its path in `dir`, else in any sibling project directory, else in `dir`
+    def chain_file(name, dir:)
+      listed = self.class.session_file(name, dir:)
       return listed if File.exist?(listed)
 
-      siblings = sibling_session_dirs.map { |dir| File.join(dir, name) }
+      siblings = sibling_session_dirs.map { |sibling| File.join(sibling, name) }
       siblings.find { |path| File.exist?(path) } || listed
     end
 

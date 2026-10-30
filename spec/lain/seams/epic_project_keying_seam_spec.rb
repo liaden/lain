@@ -12,7 +12,7 @@ require "tmpdir"
 #     where `lain sessions` run in P looks;
 #   * the epic WRITERS (`submit`, `land`, `queue`, `finish`, the driver) file
 #     under the same root, never under the working directory;
-#   * EVERY reader folds {Lain::Paths#session_dirs}: that one directory.
+#   * EVERY reader looks in {Lain::Paths#filing_dir}: that one directory.
 #
 # The epic CONTAINER -- where the documents live -- is keyed on the resolved
 # PROJECT ROOT as before ({Lain::Project::Resolver.default_project}).

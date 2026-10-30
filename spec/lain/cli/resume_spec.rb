@@ -1602,7 +1602,7 @@ RSpec.describe Lain::CLI::Resume do
       write_session("20260101T000000-1.ndjson", [a])
       write_session("20260102T000000-1.ndjson", [b])
 
-      walk = described_class::ChainWalk.new(paths:, dirs: [paths.sessions_dir])
+      walk = described_class::ChainWalk.new(paths:, dir: paths.sessions_dir)
       expect { walk.paths(File.join(paths.sessions_dir, "20260101T000000-1.ndjson")) }
         .to raise_error(described_class::Refusal) do |error|
           expect(error.message).to include("20260101T000000-1.ndjson", "cycle")
