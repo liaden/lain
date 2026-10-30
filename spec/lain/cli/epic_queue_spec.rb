@@ -434,6 +434,40 @@ RSpec.describe Lain::CLI::EpicQueue do
       end
     end
 
+    it "shows the later deferral's reason when an artifact was deferred twice" do
+      records = ["first try", second = "second try"].each_with_index.map do |reason, at|
+        decision(digest: digest_c, at: "2026-07-28T06:2#{at}:00.000000Z", policy: "deferred",
+                 answered_by: "deferred", reason:)
+      end
+
+      rows = described_class.const_get(:Review).new(records, now:).rows
+
+      expect(rows.map(&:reason)).to eq([second])
+    end
+
+    it "walks the records once to build every row" do
+      commit = "8b6b677"
+      records = [*approvals("research", "epic_plan", "issue_plan"),
+                 decision(digest: digest_c, at: "2026-07-28T06:20:00.000000Z", policy: "deferred",
+                          answered_by: "deferred", stage: "implementation", issue_id: "a"),
+                 Lain::Telemetry::GateParked.new(artifact_digest: digest_c, epic_slug: "alpha", issue_id: "a",
+                                                 stage: "implementation", sha: commit, question: "q?")
+                                            .to_journal.merge("ts" => "2026-07-28T06:20:00.000000Z"),
+                 Lain::Telemetry::TestsRan.from(Struct.new(:passed, :failed, :errors).new([1], [], []),
+                                                issue_id: "a", sha: commit)
+                                          .to_journal.merge("ts" => "2026-07-28T06:19:00.000000Z")]
+      walks = 0
+      walked = Enumerator.new do |yielder|
+        walks += 1
+        records.each { |record| yielder << record }
+      end
+
+      rows = described_class.const_get(:Review).new(walked, now:).rows
+
+      expect(rows.join).to include("question:  q?", "tests:     1 passed")
+      expect(walks).to eq(1)
+    end
+
     it "narrows to one epic when a slug is given" do
       write_journal("20260728T061000-101.ndjson",
                     [decision(digest: digest_c, at: "2026-07-28T06:10:00.000000Z", policy: "deferred",

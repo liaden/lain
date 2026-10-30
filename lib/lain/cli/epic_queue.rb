@@ -362,11 +362,61 @@ module Lain
       # review is a separate responsibility from the command surface over it, and
       # because the rebuild must be reachable by a spec without a CLI.
       class Review
+        # The latest record of one type per key. Records arrive as the raw hashes the fold reads,
+        # because the row builders index them by field name.
+        class LatestBy < Journal::Projection
+          def self.unit = new({})
+
+          def step(record)
+            admits?(record) ? self.class.new(state.merge(key_of(record) => record)) : self
+          end
+
+          private
+
+          def admits?(record) = record["type"].to_s == self.class::TYPE
+
+          def key_of(record)
+            [record["artifact_digest"].to_s, record["epic_slug"].to_s, record["stage"].to_s]
+          end
+        end
+
+        # Last write wins: an artifact deferred twice is one thing to sign off,
+        # and the most recent attempt carries the hesitation a reader wants.
+        class Deferrals < LatestBy
+          TYPE = Lain::Epic::SignoffQueue::JOURNAL_TYPE
+
+          private
+
+          def admits?(record) = super && record["policy"].to_s == Lain::Epic::SignoffQueue::DEFERRED_POLICY
+        end
+
+        class Parks < LatestBy
+          TYPE = PARKED_TYPE
+        end
+
+        class Evidence < LatestBy
+          TYPE = EVIDENCE_TYPE
+        end
+
+        # Keyed by the issue and the commit the tests ran at, as a parked row finds them.
+        class TestRuns < LatestBy
+          TYPE = TESTS_TYPE
+
+          private
+
+          def key_of(record) = [record["issue_id"].to_s, record["sha"].to_s]
+        end
+
+        private_constant :LatestBy, :Deferrals, :Parks, :Evidence, :TestRuns
+
         def initialize(records, now:)
-          @records = records
           @now = now
+          # Materialized once: the queue fold and the record maps both read it, and a lazy source walks per reader.
+          records = records.to_a
           # NO rescue, here or anywhere below it. See the class comment.
           @queue = Lain::Epic::SignoffQueue.from_journal(records)
+          @maps = Journal::Projections.of(deferrals: Deferrals.unit, parks: Parks.unit, test_runs: TestRuns.unit,
+                                          evidence: Evidence.unit).over(Journal.records(records))
         end
 
         # @param slug [String, nil]
@@ -440,25 +490,13 @@ module Lain
                                   "sign-off may not journal a latency nobody measured"
         end
 
-        # Last write wins: an artifact deferred twice is one thing to sign off,
-        # and the most recent attempt carries the hesitation a reader wants.
-        def deferrals
-          @deferrals ||= of_type(Lain::Epic::SignoffQueue::JOURNAL_TYPE)
-                         .select { |record| record["policy"].to_s == Lain::Epic::SignoffQueue::DEFERRED_POLICY }
-                         .to_h { |record| [address_of(record), record] }
-        end
+        def deferrals = @maps[:deferrals].value
 
-        def parks = @parks ||= of_type(PARKED_TYPE).to_h { |record| [address_of(record), record] }
+        def parks = @maps[:parks].value
 
-        def test_runs
-          @test_runs ||= of_type(TESTS_TYPE).to_h { |record| [[record["issue_id"].to_s, record["sha"].to_s], record] }
-        end
+        def test_runs = @maps[:test_runs].value
 
-        def evidence
-          @evidence ||= of_type(EVIDENCE_TYPE).to_h { |record| [address_of(record), record] }
-        end
-
-        def of_type(type) = Journal.records(@records, type:)
+        def evidence = @maps[:evidence].value
 
         def address(item) = [item.artifact_digest, item.epic_slug, item.stage]
 
