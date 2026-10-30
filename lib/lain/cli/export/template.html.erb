@@ -19,9 +19,9 @@
 <% end -%>
 <% end -%>
 <footer>
-<p><%= h(regions(masked)) %> were masked as &lt;redacted:n&gt;; the session was not re-scanned.</p>
+<p><%= h(regions(masked)) %> <%= were(masked) %> masked as &lt;redacted:n&gt;; the session was not re-scanned.</p>
 <% if @released.positive? -%>
-<p><%= h(regions(@released)) %> were released to the model and appear in clear.</p>
+<p><%= h(regions(@released)) %> <%= were(@released) %> released to the model and appear in clear.</p>
 <% end -%>
 </footer>
 </body>

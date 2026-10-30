@@ -13,7 +13,7 @@ module Lain
 
         # @return [String] the line unpainted and unstamped, for a notification
         def note
-          turns = "#{@event.turns} #{@event.turns == 1 ? "turn" : "turns"}"
+          turns = "#{@event.turns} #{"turn".pluralize(@event.turns)}"
           "ask settled: #{@event.stop_reason} after #{turns} in #{format("%.1f", @event.seconds)}s"
         end
 

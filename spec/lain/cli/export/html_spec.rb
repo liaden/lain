@@ -123,6 +123,12 @@ RSpec.describe Lain::CLI::Export::Html do
     expect(html).to include("3 regions", "&lt;redacted:n&gt;", "not re-scanned")
   end
 
+  it "says region in the singular for a count of one" do
+    one = { "type" => "source_masked", "tool_use_id" => "t1", "kind" => "file", "key" => ".env", "regions" => 1 }
+
+    expect(render([*chain, one], released: 1)).to include("1 region was masked", "1 region was released")
+  end
+
   it "says how many regions were released when there are any" do
     expect(render(chain, released: 2)).to include("2 regions were released")
     expect(render(chain)).not_to include("released")

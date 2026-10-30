@@ -74,6 +74,18 @@ RSpec.describe Lain::CLI::Command::Share do
     expect(journal).not_to have_received(:record)
   end
 
+  it "says region in the singular when one was masked" do
+    allow(export).to receive(:masked).and_return(1)
+
+    expect(command.call("", env)).to include("(1 region masked)")
+  end
+
+  it "says region in the singular when one was released" do
+    allow(export).to receive(:released).and_return(1)
+
+    expect(command.call("", env)).to include("1 region was released to the model")
+  end
+
   it "refuses plainly when gh is not installed" do
     allow(gh).to receive(:new).and_raise(Errno::ENOENT)
 

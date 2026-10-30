@@ -40,7 +40,7 @@ module Lain
         def forgotten(written, count)
           return "nothing was declined for #{written}" if count.zero?
 
-          "#{written}: forgot #{count} declined or lapsed region(s), so the next read asks again"
+          "#{written}: forgot #{count} declined or lapsed #{"region".pluralize(count)}, so the next read asks again"
         end
       end
     end

@@ -214,7 +214,7 @@ module Lain
         end
 
         def rendered(count, from:, to:)
-          "rewound #{count} #{count == 1 ? "turn" : "turns"}: #{name_of(from)} -> #{name_of(to)}"
+          "rewound #{count} #{"turn".pluralize(count)}: #{name_of(from)} -> #{name_of(to)}"
         end
 
         def name_of(timeline)

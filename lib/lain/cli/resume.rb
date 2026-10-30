@@ -310,8 +310,9 @@ module Lain
       # on the fork-below-results door -- that file did not stop, and the call
       # it names returned. This side knows only what the CONTINUATION carries.
       def repair_notice(built)
+        calls = built.timeline.head.content.length
         "#{built.file}: the conversation being continued carries no result for " \
-          "#{built.timeline.head.content.length} tool call(s); they are reported to the model as " \
+          "#{calls} #{"tool call".pluralize(calls)}; they are reported to the model as " \
           "cancelled so the session can continue -- the journal is unchanged"
       end
 
@@ -357,7 +358,7 @@ module Lain
         position = violation.positions.first
         digest = Canonical.abbreviate(turns.fetch(position).digest, scheme: false)
         later = turns.length - position - 1
-        dropped = "#{later} #{later == 1 ? "turn" : "turns"}"
+        dropped = "#{later} #{"turn".pluralize(later)}"
         door.refuse("its turn #{position + 1} of #{turns.length} (#{digest}) is an assistant tool_use whose call " \
                     "#{violation.subject.inspect} is never answered, and later turns were recorded on top of " \
                     "it, so it cannot be repaired without rewriting that history. Fork at that turn instead, " \

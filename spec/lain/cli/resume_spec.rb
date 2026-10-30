@@ -1709,6 +1709,17 @@ RSpec.describe Lain::CLI::Resume do
       expect(Lain::Context::Conversation.new(rendered(result.timeline))).to be_valid
     end
 
+    it "counts the unanswered tool calls in the notice, in the singular for one" do
+      expect(resume.call(selector: "20260101", profile: untyped).notices.join).to include("for 1 tool call;")
+
+      two = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                              .commit(role: :user, content: text("echo hi"))
+                              .commit(role: :assistant, content: [tool_use("tu_1"), tool_use("tu_2")])
+      write_closed("20260107T000000-1.ndjson", two)
+
+      expect(resume.call(selector: "20260107", profile: untyped).notices.join).to include("for 2 tool calls;")
+    end
+
     it "leaves the journal file's records byte-identical" do
       before_bytes = File.binread(path)
 
@@ -1803,6 +1814,14 @@ RSpec.describe Lain::CLI::Resume do
         end
 
         expect(refusal.message).to include("--fork 20260104T000000-1.ndjson@#{digest_prefix(buried.to_a[1].digest)}")
+      end
+
+      it "says turn in the singular when that fork drops one" do
+        one_later = torn.commit(role: :user, content: text("never mind"))
+        write_closed("20260105T000000-1.ndjson", one_later)
+
+        expect { resume.call(selector: "20260105", profile: untyped) }
+          .to raise_error(described_class::Refusal, /drops the 1 turn recorded after it/)
       end
 
       it "says how many recorded turns that fork leaves behind" do

@@ -57,7 +57,8 @@ module Lain
 
         def masked = @records.sum { |r| REDACTIONS.include?(r["type"]) ? r.fetch("regions") : 0 }
 
-        def regions(count) = "#{count} #{count == 1 ? "region" : "regions"}"
+        def regions(count) = "#{count} #{"region".pluralize(count)}"
+        def were(count) = count == 1 ? "was" : "were"
 
         def blocks(content)
           (content.is_a?(Array) ? content : [content]).map do |block|

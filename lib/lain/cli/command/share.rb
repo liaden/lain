@@ -75,7 +75,7 @@ module Lain
           raise GhMissing
         end
 
-        def regions(count) = "#{count} #{count == 1 ? "region" : "regions"}"
+        def regions(count) = "#{count} #{"region".pluralize(count)}"
       end
     end
   end

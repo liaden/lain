@@ -36,6 +36,16 @@ RSpec.describe Lain::CLI::Command::Release do
     expect(ledger.lapsed?(path, region)).to be(false)
   end
 
+  it "says region in the singular for one forgotten and regions for two" do
+    one = File.join(root, "one.key")
+    two = File.join(root, "two.key")
+    ledger.decline(one, [region])
+    ledger.decline(two, [region, Struct.new(:digest).new("blake3:bbb")])
+
+    expect(command.call(one, env)).to include("forgot 1 declined or lapsed region, so")
+    expect(command.call(two, env)).to include("forgot 2 declined or lapsed regions, so")
+  end
+
   it "says nothing was declined for a path with nothing to forget" do
     expect(command.call("README.md", env)).to include("nothing was declined for README.md")
   end

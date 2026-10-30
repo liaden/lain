@@ -129,7 +129,7 @@ module Lain
         end
 
         def settled_sentence(settled)
-          "done in #{settled.seconds.round}s, #{settled.turns} #{settled.turns == 1 ? "turn" : "turns"}"
+          "done in #{settled.seconds.round}s, #{settled.turns} #{"turn".pluralize(settled.turns)}"
         end
 
         def post_epic_doc(event)
