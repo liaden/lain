@@ -434,8 +434,7 @@ Unproven; counting only the example's own thread would settle it.
   switch on, and says so in the report` (watchdog STUCK inside `Confine::MaskList`'s walk); all 4
   examples of `two cockpits on one machine` (a `you>` line never held in the input pane within 15s,
   and once STUCK at 30s awaiting the prompt: a launch is 5 boots in a row that outrun the waits under
-  load); `Lain::CredentialPatterns the credential assignment shape scans a 100 KB line in linear time
-  on both sides` (a timing ratio over 30, the shape the 2026-10-27 ruling bans).
+  load). The CredentialPatterns "on both sides" timing example is gone; see the retired list.
   The CoreGraph descriptor count went red a third time (22 against 23: the count fell, so another
   thread closed an fd mid-ask) and is fixed: it now compares (fd, readlink target) pairs, so only a
   descriptor the ask left open fails it.
@@ -526,7 +525,11 @@ Unproven; counting only the example's own thread would settle it.
   - 2026-10-23: `Lain::CredentialPatterns the credential assignment shape scans a 100 KB line in linear time
     for each gated password shape` (red in 4 pre-commit suites at loads 0.7 to 28, 0.25 to 0.32 s against
     a 0.2 s bound). The bound became a 100 KB over 10 KB time ratio under 30, so it judges growth,
-    not the machine; its sibling "on both sides" moved with it.
+    not the machine; its sibling "on both sides" moved with it. It reddened again on 2026-10-30 as that
+    ratio (31.7 against 30, green alone and on base). Ruby cannot judge some of these shapes linear (some use a backreference
+    or an atomic group inside a lookahead, which defeat `Regexp.linear_time?`), so both examples were deleted
+    and the timing moved to the `credential_scan_assignment` and `credential_scan_gated` rows of
+    `bin/hot-path-bench`, held to a ceiling.
   - 2026-10-22: `Lain::Ext::Fuzzy#match on another thread lets the calling thread keep ticking while
     it matches` (red once on 2026-10-21 with a p99 tick gap of 28.7 ms against an 8 ms bound). The
     spec judged a released GVL by an absolute tick gap, which a loaded box inflates. It now judges

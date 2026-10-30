@@ -47,8 +47,13 @@ module HotPathBench
     "journal_chained_small" => 0.00738,
     "journal_chained_1000000" => 1.08,
     "mask_first_output" => 0.263,
-    "wire_ready" => 17.1
+    "wire_ready" => 17.1,
+    "credential_scan_assignment" => 37.7,
+    "credential_scan_gated" => 63.7
   }.freeze
+
+  SCAN_SIZE = 100_000
+  SCAN_REPS = 21
 
   HotPaths = Lain::Bench::HotPaths
 
@@ -59,7 +64,36 @@ module HotPathBench
   def logs = records.texts.map { HotPaths::Log.parse(_1) }
 
   def measure
-    puts JSON.generate(HotPaths.new.rows.map(&:to_h))
+    hot_paths = HotPaths.new
+    puts JSON.generate([*hot_paths.rows, *credential_scan_rows(hot_paths)].map(&:to_h))
+  end
+
+  # A backtracking shape stalls every read and write it guards on a long unbroken line; Ruby cannot
+  # judge these shapes linear, so the cost is held to a ceiling here rather than timed in a spec.
+  def credential_scan_rows(hot_paths)
+    write = Lain::CredentialPatterns.for(:write)
+    gated = ["quoted password key", "url credentials", "bearer header", "password variable assignment"]
+    [["credential_scan_assignment", [write.fetch("credential assignment"),
+                                     Lain::CredentialPatterns.for(:content).fetch("credential literal assignment")],
+      assignment_lines], ["credential_scan_gated", write.values_at("github token", *gated), gated_lines]]
+      .map { |name, shapes, lines| scan_row(hot_paths, name, shapes, lines) }
+  end
+
+  def scan_row(hot_paths, name, shapes, lines)
+    hot_paths.measure(SCAN_REPS, name:) { shapes.product(lines).each { |shape, line| line.match?(shape) } }
+  end
+
+  def assignment_lines
+    ["token=" * (SCAN_SIZE / 6), "token=#{"a" * SCAN_SIZE}1", "x_token=#{"a" * SCAN_SIZE}(",
+     "token=abcdefg1(" * (SCAN_SIZE / 15)]
+  end
+
+  def gated_lines
+    a = "a" * SCAN_SIZE
+    ["A_PWD=" * (SCAN_SIZE / 6), "A_PWD=#{a}1(", "A#{"_" * SCAN_SIZE}", "#{"A" * SCAN_SIZE}PWD=x", "A_PWD='#{a}",
+     "A_PASSWORD=\"$(#{a}", %("password": "#{a}), %("password": "${#{a}), "postgres://#{a}",
+     "postgres://a:#{"b" * SCAN_SIZE}", "postgres://a:$#{"B" * SCAN_SIZE}", "ghp_#{a}",
+     "Authorization: Bearer #{a} ", "Authorization: Bearer x" * (SCAN_SIZE / 25), "a:" * (SCAN_SIZE / 2)]
   end
 
   def record
