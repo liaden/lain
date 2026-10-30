@@ -256,7 +256,22 @@ module Lain
     # there yet is provisional. Unreachable for {ProjectDir#state_path}, whose
     # callers pass a checked directory or `Dir.pwd`.
     def project_hash(dir = Dir.pwd)
-      Digest::SHA256.hexdigest(resolved(dir))[0, 12]
+      Digest::SHA256.hexdigest(self.class.resolved(dir))[0, 12]
+    end
+
+    # Expansion first (`~`, relative segments), THEN kernel resolution, so the
+    # fallback is the lexical form realpath would have started from. Only the
+    # RESOLUTION is rescued: `File.expand_path` raises ArgumentError on an
+    # unknown `~user`, a malformed name rather than an absent directory.
+    #
+    # @param path [String]
+    # @param facts [#realpath] what the disk is asked through
+    # @return [String] where the path lands, or its expanded spelling when the disk refuses
+    def self.resolved(path, facts: FileFacts::LIVE)
+      expanded = File.expand_path(path)
+      facts.realpath(expanded)
+    rescue SystemCallError
+      expanded
     end
 
     # The ONE recipe for durable per-project state: `sessions`, `status`,
@@ -362,19 +377,6 @@ module Lain
     def sibling_session_dirs
       parent = File.dirname(container("sessions", key: project_hash))
       File.directory?(parent) ? Dir.children(parent).map { |key| File.join(parent, key) } : []
-    end
-
-    # Expansion first (`~`, relative segments), THEN kernel resolution, so the
-    # fallback hashes the same lexical form realpath would have started from.
-    # The rescue covers the RESOLUTION only: `File.expand_path` itself raises
-    # ArgumentError on an unknown `~user`, which is deliberately not caught --
-    # that is a malformed name rather than an absent directory, and no CLI door
-    # reaches this method with one.
-    def resolved(dir)
-      expanded = File.expand_path(dir)
-      File.realpath(expanded)
-    rescue SystemCallError
-      expanded
     end
 
     def xdg_dir(var, fallback)

@@ -107,7 +107,7 @@ module Lain
       # ascend for `.git`, and they once ascended DIFFERENT ancestries: a
       # symlink whose lexical parent holds a repository its real parent does
       # not made the resolver answer the plain leaf and this walk answer the
-      # trap. {Project::Resolver.resolved} is the resolver's own spelling of
+      # trap. {Paths.resolved} is the one spelling of
       # it, and keeps the tolerance a lexical expansion had for a root naming
       # nothing on disk.
       #
@@ -136,7 +136,7 @@ module Lain
                      home: paths.home_or_nil,
                      shell_out_factory: Shell::Out.public_method(:new), cwd: nil)
         @name = name || DEFAULT
-        @root = Project::Resolver.resolved(File.expand_path(root), File)
+        @root = Paths.resolved(root)
         @journal = journal
         @paths = paths
         @home = home

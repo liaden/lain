@@ -140,7 +140,7 @@ RSpec.describe Lain::CLI::ExecBackend do
       expect(resolve("docker", path: docker_on_path, root: link).project).to eq(File.realpath(@bin))
     end
 
-    # The tolerance `expand_path` had, which {Project::Resolver.resolved} keeps:
+    # The tolerance `expand_path` had, which {Paths.resolved} keeps:
     # a root naming nothing on disk is not this object's to refuse.
     it "still answers a root that names nothing on disk" do
       absent = File.join(@bin, "not", "here")

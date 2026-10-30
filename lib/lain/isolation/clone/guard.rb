@@ -95,19 +95,11 @@ module Lain
         # @param dir [String]
         # @return [String, nil] the nearest clone lain cut at or above `dir`
         def self.enclosing(dir)
-          expanded = resolved(dir)
+          expanded = Paths.resolved(dir)
           return unless inside_container?(expanded)
 
           Pathname(expanded).ascend.map(&:to_s).find { cut?(_1) }
         end
-
-        # A link from anywhere into a clone reaches the clone, so the clone is what is judged.
-        def self.resolved(dir)
-          File.realpath(dir)
-        rescue SystemCallError
-          File.expand_path(dir)
-        end
-        private_class_method :resolved
 
         def self.inside_container?(path)
           base = container

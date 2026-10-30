@@ -136,16 +136,7 @@ module Lain
       # @return [Array<String>]
       def self.spellings(path, filesystem)
         expanded = File.expand_path(path)
-        [expanded, resolved(expanded, filesystem)].uniq
-      end
-
-      # @param path [String] an already-expanded absolute path
-      # @param filesystem [#realpath]
-      # @return [String] the resolved path, or the given one when it does not resolve
-      def self.resolved(path, filesystem)
-        filesystem.realpath(path)
-      rescue SystemCallError
-        path
+        [expanded, Paths.resolved(expanded, facts: filesystem)].uniq
       end
 
       # The one place `$HOME` is validated, so no other object has to guess

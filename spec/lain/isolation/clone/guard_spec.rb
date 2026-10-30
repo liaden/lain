@@ -25,6 +25,20 @@ RSpec.describe Lain::Isolation::Clone::Guard, :seam do
     lease.origin.path
   end
 
+  describe ".enclosing" do
+    it "answers the clone for a directory reached through a link into it" do
+      clone = cut(seeded(File.join(@base, "main")))
+      link = File.join(@base, "into-clone")
+      File.symlink(clone, link)
+
+      expect(described_class.enclosing(link)).to eq(clone)
+    end
+
+    it "answers nothing for a path that does not exist" do
+      expect(described_class.enclosing(File.join(@base, "missing"))).to be_nil
+    end
+  end
+
   describe ".upstream" do
     it "answers the worktree a clone was cut from" do
       main = seeded(File.join(@base, "main"))

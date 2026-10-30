@@ -120,6 +120,20 @@ RSpec.describe Lain::Project::Resolver do
     fs
   end
 
+  describe ".spellings" do
+    it "gives the expanded and the resolved spelling of a path reached through a link" do
+      real = mkdir("real")
+      link = File.join(tmp, "link")
+      File.symlink(real, link)
+
+      expect(described_class.spellings(link, real_filesystem)).to eq([link, real])
+    end
+
+    it "gives the expanded spelling alone for a path that does not resolve" do
+      expect(described_class.spellings(File.join(tmp, "missing"), real_filesystem)).to eq([File.join(tmp, "missing")])
+    end
+  end
+
   describe "rung 3, a .git entry" do
     it "resolves a monorepo subtree to the repository top" do
       repo = init_repo(File.join(tmp, "work", "repo"))

@@ -102,15 +102,8 @@ module Lain
       # @raise [Unreadable] when a `.lain/*.rb` cannot be read
       def self.for(project_dir:, paths: Paths.new)
         new(root: project_dir.root, sources: sources_in(project_dir.dir), record: Record.new(paths:),
-            scope: resolved(File.dirname(project_dir.dir)))
+            scope: Paths.resolved(File.dirname(project_dir.dir)))
       end
-
-      def self.resolved(path)
-        File.realpath(path)
-      rescue SystemCallError
-        File.expand_path(path)
-      end
-      private_class_method :resolved
 
       def self.sources_in(dir)
         files = Dir.glob("*.rb", base: dir).sort.map { |name| File.join(dir, name) }.select { |path| File.file?(path) }

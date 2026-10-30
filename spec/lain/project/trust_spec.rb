@@ -187,6 +187,26 @@ RSpec.describe Lain::Project::Trust do
     end
   end
 
+  describe "a project reached through a link" do
+    it "digests the same as the project reached directly" do
+      root = project("app", "config.rb" => "x\n")
+      link = File.join(@tmp, "app-link")
+      File.symlink(root, link)
+
+      expect(trust_for(link).digest).to eq(trust_for(root).digest)
+    end
+
+    it "digests a root that does not exist by its expanded spelling" do
+      FileUtils.mkdir_p(File.join(@tmp, "ghost", ".lain"))
+      File.write(File.join(@tmp, "ghost", ".lain", "config.rb"), "x\n")
+      dir = Lain::ProjectDir.new(root: File.join(@tmp, "ghost"), paths:)
+      FileUtils.rm_rf(File.join(@tmp, "ghost"))
+
+      expect(described_class.for(project_dir: dir, paths:).digest)
+        .to eq(Digest::SHA256.hexdigest("root:#{File.join(@tmp, "ghost")}"))
+    end
+  end
+
   describe ".for_user" do
     let(:paths) do
       Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@tmp, "state"),

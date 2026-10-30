@@ -37,7 +37,7 @@ module Lain
                      home: paths.home_or_nil,
                      gc_factory: Isolation::Gc.public_method(:new), config: Config.public_method(:load),
                      clock: -> { Time.now })
-        @root = Project::Resolver.resolved(File.expand_path(root), File)
+        @root = Paths.resolved(root)
         @paths = paths
         @home = home
         @gc_factory = gc_factory

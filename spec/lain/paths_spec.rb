@@ -204,6 +204,49 @@ RSpec.describe Lain::Paths do
     end
   end
 
+  describe ".resolved" do
+    let(:asked) { [] }
+    let(:facts) do
+      log = asked
+      Object.new.tap do |facts|
+        facts.define_singleton_method(:realpath) do |path|
+          log << path
+          raise Errno::ENOENT, path
+        end
+      end
+    end
+
+    it "answers the expanded spelling of a missing relative path, asking the filesystem once" do
+      expect(described_class.resolved("no/such/dir", facts:)).to eq(File.expand_path("no/such/dir"))
+      expect(asked).to eq([File.expand_path("no/such/dir")])
+    end
+
+    it "answers the kernel's spelling of a path reached through a link" do
+      Dir.mktmpdir do |real|
+        link = "#{real}-link"
+        File.symlink(real, link)
+
+        expect(described_class.resolved(link)).to eq(File.realpath(real))
+      ensure
+        File.unlink(link) if File.symlink?(link)
+      end
+    end
+
+    it "is the spelling Trust, Guard, project_hash and Resolver all see for a linked directory" do
+      Dir.mktmpdir do |real|
+        link = "#{real}-link"
+        File.symlink(real, link)
+        real_path = File.realpath(real)
+        paths = described_class.new(env: { "HOME" => real_path, "XDG_STATE_HOME" => File.join(real_path, "s") })
+
+        expect(paths.project_hash(link)).to eq(Digest::SHA256.hexdigest(real_path)[0, 12])
+        expect(Lain::Project::Resolver.spellings(link, File)).to eq([File.expand_path(link), real_path])
+      ensure
+        File.unlink(link) if File.symlink?(link)
+      end
+    end
+  end
+
   describe "#project_hash" do
     it "is a stable 12-hex-char digest of the expanded cwd" do
       first = paths.project_hash("/some/project")

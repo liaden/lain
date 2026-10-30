@@ -58,7 +58,7 @@ module Lain
         # checkouts" for "there is nothing to merge into".
         raise Error, "this Isolation::Null was built with no root to search from" unless @root
 
-        resolved = Project::Resolver.resolved(File.expand_path(@root), File)
+        resolved = Paths.resolved(@root)
         nearest = Project::Repository.nearest(resolved, paths: @paths, home: @home)
         return nearest.path if nearest.found?
 

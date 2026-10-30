@@ -76,7 +76,7 @@ module Lain
       #   ITSELF, so a symlinked root would mount as `<symlink>:<symlink>` and
       #   everything inside that RESOLVES -- git, `__dir__`, a `..` crossing
       #   the link -- would disagree with the path the command was handed.
-      #   {Project::Resolver.resolved} keeps the tolerance a lexical expansion
+      #   {Paths.resolved} keeps the tolerance a lexical expansion
       #   had for a root naming nothing on disk. Required, with no default: the
       #   one caller that does not care says so at its own call site rather
       #   than inheriting a silence.
@@ -95,7 +95,7 @@ module Lain
                      notice: ->(_text) {})
         @name = name || DEFAULT
         @image = image || Exec::Docker::DEFAULT_IMAGE
-        @root = Project::Resolver.resolved(File.expand_path(root), File)
+        @root = Paths.resolved(root)
         @path = path
         @filesystem = filesystem
         @child_env = child_env
