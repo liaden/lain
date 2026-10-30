@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require "stringio"
 
 RSpec.describe Lain::Telemetry::ToolOutput do
   subject(:event) { described_class.new(tool_use_id: "t1", stream: :stdout, bytes: "hi") }
@@ -46,5 +47,12 @@ RSpec.describe Lain::Telemetry::ToolOutput do
       expect { described_class.new(tool_use_id: "t", stream: :stdout, bytes: "x", stray: 1) }
         .to raise_error(ArgumentError, /stray/)
     end
+  end
+
+  it "reads its own journal line back, the stream a Symbol again" do
+    io = StringIO.new
+    Lain::Journal.new(io:).record(event)
+
+    expect(Lain::Telemetry.read(Lain::Journal.parse(io.string))).to eq(event).and have_attributes(stream: :stdout)
   end
 end

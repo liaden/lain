@@ -32,8 +32,8 @@ module Lain
       include Journalable
 
       def initialize(tool_use_id:, profile:, trace:, refused:, created_sealed: [], kept_tmpdir: nil, granted: [])
-        super(**Carriers::Sandbox.settle!(tool_use_id:, profile:, trace:, refused:, created_sealed:, kept_tmpdir:,
-                                          granted:))
+        super(**Carriers::Sandbox.settle!(tool_use_id:, profile: profile&.to_sym, trace:, refused:, created_sealed:,
+                                          kept_tmpdir:, granted:))
       end
     end
   end

@@ -9,7 +9,9 @@ module Lain
       class ToolOutput < Declarative::Carrier
         STREAMS = %i[stdout stderr].freeze
 
+        attribute :tool_use_id
         attribute :stream
+        attribute :bytes
         validate :stream_is_known
 
         private
@@ -33,6 +35,8 @@ module Lain
       include Journalable
 
       def initialize(tool_use_id:, stream:, bytes:)
+        # A line read back holds the stream as the String JSON made of the Symbol.
+        stream = stream.to_sym if stream.is_a?(String)
         Carriers::ToolOutput.check!(stream:)
 
         # bytes is frozen in place, not dup'd: copying possibly-large subprocess output would double it.

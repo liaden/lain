@@ -27,7 +27,7 @@ module Lain
       include Journalable
 
       def initialize(tool_use_id:, tool:, path:, rule:, expected:, reason:)
-        super(**Carriers::TestLayoutRefused.settle!(tool_use_id:, tool:, path:, rule:,
+        super(**Carriers::TestLayoutRefused.settle!(tool_use_id:, tool:, path:, rule: rule&.to_sym,
                                                     expected: expected && -expected.to_s, reason:))
       end
     end

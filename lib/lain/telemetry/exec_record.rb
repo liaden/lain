@@ -48,8 +48,8 @@ module Lain
 
       def initialize(tool_use_id:, profile:, execs:, refusals:, fd_execs:, truncated:, incomplete: false, connects: [],
                      connects_dropped: 0)
-        super(**Carriers::ExecRecord.settle!(tool_use_id:, profile:, execs:, refusals:, fd_execs:, truncated:,
-                                             incomplete:, connects:, connects_dropped:))
+        super(**Carriers::ExecRecord.settle!(tool_use_id:, profile: profile&.to_sym, execs:, refusals:, fd_execs:,
+                                             truncated:, incomplete:, connects:, connects_dropped:))
       end
     end
   end

@@ -23,6 +23,7 @@ module Lain
         attribute :arm
         attribute :reason, :lain_interned
         attribute :term
+        attribute :claim, default: -> { Shell::Verdict::CLAIM }
         validates :tool_use_id,
                   presence: { message: "must name the call this record is about, got nil" }
         validates :verdict, presence: { message: "must name the verdict the call was given, got nil" },
@@ -129,8 +130,16 @@ module Lain
       # @param term [Shell::Term] the argv stages an allow authorised
       def initialize(tool_use_id:, verdict:, arm:, reason:, term: Shell::Verdict::NO_TERM)
         super(**Carriers::ShellArm.settle!(tool_use_id:, verdict: verdict.to_s.to_sym, arm: arm.to_s.to_sym,
-                                           reason:, term: interned_term(term)),
-              claim: Shell::Verdict::CLAIM)
+                                           reason:, term: interned_term(term)))
+      end
+
+      # The term journals through {Shell::Term#to_journal}, so no declaration can cast it back.
+      #
+      # @param hash [Hash{String=>Object}] the record's line, the Journal's envelope stripped
+      # @return [ShellArm]
+      def self.from_journal(hash)
+        new(tool_use_id: hash.fetch("tool_use_id"), verdict: hash.fetch("verdict"), arm: hash.fetch("arm"),
+            reason: hash.fetch("reason"), term: Shell::Term.from_journal(hash.fetch("term")))
       end
 
       # THE TWO PREDICATES, and the difference between them is the whole reason

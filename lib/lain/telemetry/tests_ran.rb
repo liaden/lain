@@ -8,6 +8,8 @@ module Lain
         attribute :issue_id, :lain_interned
         attribute :sha, :lain_interned
         attribute :ran
+        attribute :passed, :lain_strict_integer, default: 0
+        attribute :failed, :lain_strict_integer, default: 0
         attribute :why, default: nil
         validates :issue_id, presence: { message: "must name the issue, got %<value>s" }
         validates :sha, presence: { message: "must name the sha tested, got %<value>s" }
@@ -38,10 +40,10 @@ module Lain
       # @return [TestsRan]
       def self.unrun(issue_id:, sha:, why:) = new(issue_id:, sha:, ran: false, why:)
 
-      # The counts are not declared: `errors` is ActiveModel's own reader for the carrier's refusals.
       def initialize(issue_id:, sha:, ran:, passed: 0, failed: 0, errors: 0, why: nil)
-        super(**Carriers::TestsRan.settle!(issue_id:, sha:, ran:, why: why && -why.to_s),
-              passed: Integer(passed), failed: Integer(failed), errors: Integer(errors))
+        # `errors` stays outside the carrier: an attribute of that name replaces ActiveModel's own `errors`.
+        super(**Carriers::TestsRan.settle!(issue_id:, sha:, ran:, passed:, failed:, why: why && -why.to_s),
+              errors: Declarative::Types::StrictInteger.new.cast(errors))
       end
     end
   end

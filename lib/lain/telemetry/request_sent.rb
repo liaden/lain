@@ -6,8 +6,16 @@ module Lain
       # `stream` must be a real boolean so it round-trips through the journal. A
       # required boolean is validated by inclusion in [true, false], because
       # `presence: true` would reject `false` (the Tool::Input idiom).
+      #
+      # Every member is declared so the carrier names the whole line a reader rebuilds.
       class RequestSent < Declarative::Carrier
+        attribute :digest, :lain_interned
+        attribute :payload
         attribute :stream
+        attribute :extra
+        attribute :prefix_digests, default: nil
+        attribute :prefix_chain_version, default: nil
+        attribute :requester, default: nil
         # %<value>s echoes the offender un-inspected ("got yes", not 'got "yes"')
         # -- the one diagnostic byte lost versus the hand-rolled guard.
         validates :stream, inclusion: { in: [true, false], message: "must be true or false, got %<value>s" }

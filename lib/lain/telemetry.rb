@@ -58,6 +58,36 @@ module Lain
     module Carriers
     end
 
+    # A record of our own whose line will not rebuild: a torn record is corruption, not a foreign line.
+    class Unreadable < Error; end
+
+    # One journal line read back as the value it was written from. A type a record here claims
+    # (one with a carrier named for it) rebuilds through its own `from_journal` or the class's own
+    # constructor, so each record's normalising runs as it did on write; a type nobody claims
+    # comes back whole as {Untyped}, so nothing on the line is dropped.
+    #
+    # @param hash [Hash{String=>Object}] a parsed line, envelope and all
+    # @param strict [Boolean] a claimed type that will not rebuild raises {Unreadable} when true,
+    #   and answers {Untyped} when false, the lenient reading foreign or torn bytes are owed
+    # @return [Journalable, Untyped] never nil
+    # @raise [Unreadable]
+    def self.read(hash, strict: true)
+      payload = Journal.payload_of(hash)
+      klass = Readers::BY_TYPE[payload["type"]]
+      klass ? rebuilt(klass, payload, strict) : Untyped.new(fields: payload)
+    end
+
+    def self.rebuilt(klass, payload, strict)
+      return klass.from_journal(payload) if klass.respond_to?(:from_journal)
+
+      klass.new(**payload.except("type").transform_keys(&:to_sym))
+    rescue StandardError => e
+      raise Unreadable, "#{payload["type"]} will not rebuild: #{e.class}: #{e.message}" if strict
+
+      Untyped.new(fields: payload)
+    end
+    private_class_method :rebuilt
+
     # A money figure as a fixed-point ("F") decimal String, the form every priced
     # record journals: `BigDecimal`'s default `to_s` emits scientific notation
     # (`"0.12345e-2"`) that is valid JSON but unreadable in an NDJSON line meant

@@ -98,5 +98,12 @@ RSpec.describe Lain::Telemetry::TestsRan do
       record = described_class.new(issue_id: "i", sha: "s", ran: true, passed: "7", failed: "8", errors: "9")
       expect([record.passed, record.failed, record.errors]).to eq([7, 8, 9])
     end
+
+    it "refuses a fractional count alike in every one of the three" do
+      %i[passed failed errors].each do |count|
+        expect { described_class.new(issue_id: "i", sha: "s", ran: true, count => 1.5) }
+          .to raise_error(Lain::Declarative::Types::CoercionError, /integral/), "#{count} took 1.5"
+      end
+    end
   end
 end

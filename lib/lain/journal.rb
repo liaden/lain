@@ -198,10 +198,24 @@ module Lain
     #
     # @param entries [Enumerable<Hash, String>]
     # @param type [String, Symbol, nil] keep only records of this type, when given
-    # @return [Enumerator::Lazy<Hash{String=>Object}>]
-    def self.records(entries, type: nil)
+    # @param typed [Boolean] answer each record as {Telemetry.read} rebuilds it, leniently. Lenient
+    #   reading cannot raise on a JSON line; an entry given as a Hash must hold only JSON values,
+    #   or carrying it whole raises {Declarative::UnsettleableAttribute}.
+    # @return [Enumerator::Lazy<Hash{String=>Object}, Telemetry::Journalable, Telemetry::Untyped>]
+    def self.records(entries, type: nil, typed: false)
       records = entries.lazy.filter_map { |entry| parse(entry) }
-      type.nil? ? records : records.select { |record| record["type"].to_s == type.to_s }
+      records = records.select { |record| record["type"].to_s == type.to_s } unless type.nil?
+      typed ? records.map { |record| Telemetry.read(record, strict: false) } : records
+    end
+
+    # The inverse of the envelope {#record} adds: the stamp and the chain's own link go, and an
+    # entry's own link, renamed on the way in to make room, comes back under its name.
+    #
+    # @param hash [Hash{String=>Object}] one parsed line
+    # @return [Hash{String=>Object}]
+    def self.payload_of(hash)
+      payload = hash.except("ts", LINK)
+      payload.key?(ENTRY_LINK) ? payload.transform_keys(ENTRY_LINK => LINK) : payload
     end
 
     # @param io [IO, StringIO] the destination the Journal writes to

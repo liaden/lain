@@ -390,4 +390,10 @@ RSpec.describe Lain::Telemetry::ShellArm do
     expect { described_class.new(tool_use_id: "t", verdict: :deny, arm: :string, reason: "r", extra: 1) }
       .to raise_error(ArgumentError)
   end
+
+  describe ".from_journal" do
+    it "rebuilds the record from its own line, the term included" do
+      expect(described_class.from_journal(JSON.parse(JSON.generate(event.to_journal)))).to eq(event)
+    end
+  end
 end

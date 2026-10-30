@@ -97,6 +97,43 @@ RSpec.describe Lain::Journal do
     end
   end
 
+  describe ".payload_of" do
+    def chained_line(entry)
+      chained = described_class.new(io:, clock: -> { "T" }, chain: described_class::Line::ORIGIN)
+      chained.record(entry)
+      described_class.parse(lines.last)
+    end
+
+    it "strips the stamp and the Journal's own link" do
+      expect(described_class.payload_of(chained_line("type" => "t", "x" => 1))).to eq("type" => "t", "x" => 1)
+    end
+
+    it "gives an entry's own link back under its name" do
+      expect(described_class.payload_of(chained_line("type" => "t", "prev" => "mine")))
+        .to eq("type" => "t", "prev" => "mine")
+    end
+  end
+
+  describe ".records with typed: true" do
+    it "answers each record as the value it was written from" do
+      record = Lain::Telemetry::Dropped.new(count: 2)
+      journal.record(record)
+      journal.record("type" => "turn", "digest" => "d")
+
+      typed = described_class.records(io.string.lines, typed: true).to_a
+
+      expect(typed.first).to eq(record)
+      expect(typed.last).to have_attributes(type: "turn")
+    end
+
+    it "carries a torn record of our own whole rather than raising" do
+      journal.record("type" => "ask_settled", "stop_reason" => "end_turn", "turns" => 1, "seconds" => 1.0)
+
+      expect(described_class.records(io.string.lines, typed: true).to_a)
+        .to contain_exactly(an_instance_of(Lain::Telemetry::Untyped).and(have_attributes(type: "ask_settled")))
+    end
+  end
+
   describe "#observe" do
     let(:observer_class) do
       Class.new do

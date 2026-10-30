@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require "stringio"
 
 RSpec.describe Lain::Telemetry do
   # The Lain::Event name was freed from telemetry (records moved to
@@ -256,6 +257,50 @@ RSpec.describe Lain::Telemetry do
 
     it "never drops a field the call did not name" do
       expect(Lain::Telemetry::Probe.new(extra: "x").to_journal).to include("extra" => "x")
+    end
+  end
+
+  describe ".read" do
+    def written(record, chain: nil)
+      io = StringIO.new
+      Lain::Journal.new(io:, chain:).record(record)
+      Lain::Journal.parse(io.string)
+    end
+
+    let(:settled) { Lain::Telemetry::AskSettled.new(head: "blake3:head", stop_reason: "end_turn", turns: 2, seconds: 1.5) }
+
+    it "reads a journaled line back as the record written" do
+      expect(described_class.read(written(settled))).to eq(settled)
+    end
+
+    it "brings back a field the record left off at its default" do
+      closed = Lain::Telemetry::SessionClosed.new(head: "blake3:head", reason: :exit)
+      line = written(closed)
+
+      expect(line).not_to have_key("error")
+      expect(described_class.read(line)).to eq(closed).and have_attributes(error: nil)
+    end
+
+    it "carries a type nobody claims whole, without the Journal's stamp" do
+      line = written({ "type" => "turn", "digest" => "blake3:t", "role" => "user", "parent" => nil, "meta" => {} })
+      read = described_class.read(line)
+
+      expect(read).to be_a(Lain::Telemetry::Untyped).and have_attributes(type: "turn")
+      expect(read.fields.keys).to match_array(%w[type digest role parent meta])
+    end
+
+    it "refuses a torn record of its own when strict, naming the type, and carries it whole when lenient" do
+      torn = written(settled).except("head")
+
+      expect { described_class.read(torn) }.to raise_error(Lain::Telemetry::Unreadable, /ask_settled.*head/)
+      expect(described_class.read(torn, strict: false)).to be_a(Lain::Telemetry::Untyped)
+        .and have_attributes(type: "ask_settled")
+    end
+
+    it "gives a chained line's own link back under its name, and drops the Journal's" do
+      line = written({ "type" => "rewound", "prev" => "blake3:own" }, chain: Lain::Journal::Line::ORIGIN)
+
+      expect(described_class.read(line).fields).to eq("type" => "rewound", "prev" => "blake3:own")
     end
   end
 end

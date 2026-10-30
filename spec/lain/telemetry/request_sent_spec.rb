@@ -235,4 +235,12 @@ RSpec.describe Lain::Telemetry::RequestSent do
         .to raise_error(ArgumentError, /stray/)
     end
   end
+
+  it "reads back from its journal line as the record sent, through .from with a chain and a requester" do
+    sent = described_class.from(request, requester: :summarizer)
+    io = StringIO.new
+    Lain::Journal.new(io:).record(sent)
+
+    expect(Lain::Telemetry.read(Lain::Journal.parse(io.string))).to eq(sent)
+  end
 end
