@@ -478,28 +478,54 @@ RSpec.describe "plugin/tmux" do
     # kill-server returns before the panes' processes are gone, and a pane
     # shell's startup hooks (mise) keep writing into the exported
     # XDG_STATE_HOME, so the temp dir's removal would race them (ENOTEMPTY)
-    # on a loaded box. A pane shell leads a session, which its children keep
-    # even when they leave its process group.
+    # on a loaded box. Waiting for them lost that race under load, and a
+    # child that ignores HUP never leaves at all, so each pane's session is
+    # ended outright. A pane shell leads a session, which its children keep
+    # even when they leave its process group, so the session id finds them.
     after { stop_server_and_panes if tmux_present? }
 
     def stop_server_and_panes
-      sessions = tmux("list-panes", "-a", "-F", "\#{pane_pid}").split.map(&:to_i)
+      sessions = tmux("list-panes", "-a", "-F", "\#{pane_pid}").split.map(&:to_i).select(&:positive?)
       system("tmux", "-L", socket, "kill-server", out: File::NULL, err: File::NULL)
-      sessions.each { |sid| wait_for_session_exit(sid) }
+      sessions.each { |sid| end_session(sid) }
     end
 
-    def wait_for_session_exit(sid)
-      deadline = Time.now + 10
+    def end_session(sid)
+      signal_session(sid, "TERM")
+      wait_for_session_exit(sid, within: 0.2)
+      signal_session(sid, "KILL")
+      wait_for_session_exit(sid, within: 5)
+      raise "pane session #{sid} survived SIGKILL" if session_alive?(sid)
+    end
+
+    def signal_session(sid, signal)
+      session_members(sid).each_key do |pid|
+        Process.kill(signal, pid)
+      rescue Errno::ESRCH
+        nil
+      end
+    end
+
+    def wait_for_session_exit(sid, within:)
+      deadline = Time.now + within
       sleep(0.02) while Time.now < deadline && session_alive?(sid)
-      raise "pane session #{sid} outlived its tmux server" if session_alive?(sid)
     end
 
-    def session_alive?(sid)
-      Dir.glob("/proc/[0-9]*/stat").any? do |stat|
-        state, _ppid, _pgrp, session = File.read(stat).rpartition(")").last.split
-        session.to_i == sid && state != "Z"
+    def wait_for_session_command(sid, command)
+      deadline = Time.now + 5
+      sleep(0.02) while Time.now < deadline && !session_members(sid).value?(command)
+      raise "pane session #{sid} never started #{command}" unless session_members(sid).value?(command)
+    end
+
+    def session_alive?(sid) = session_members(sid).any?
+
+    def session_members(sid)
+      Dir.glob("/proc/[0-9]*/stat").each_with_object({}) do |stat, members|
+        head, _, tail = File.read(stat).rpartition(")")
+        state, _ppid, _pgrp, session = tail.split
+        members[head.to_i] = head.partition("(").last if session.to_i == sid && state != "Z"
       rescue Errno::ENOENT, Errno::ESRCH
-        false
+        nil
       end
     end
 
@@ -677,6 +703,18 @@ RSpec.describe "plugin/tmux" do
       boot("", entry: File.join(spaced, "lain.tmux"))
 
       expect(eval_status_job("hud")).to eq("🔥 fleet:1 inbox:1")
+    end
+
+    it "ends a pane child that ignores SIGHUP and SIGTERM rather than waiting on it" do
+      boot
+      system("tmux", "-L", socket, "new-session", "-d", "-s", "stubborn", "trap '' HUP TERM; sleep 300",
+             out: File::NULL, err: File::NULL)
+      sid = tmux("display-message", "-p", "-t", "stubborn", "\#{pane_pid}").to_i
+      wait_for_session_command(sid, "sleep")
+
+      stop_server_and_panes
+
+      expect(session_alive?(sid)).to be false
     end
 
     it "binds a prefix key that opens the btw popup, guarded down to a message" do

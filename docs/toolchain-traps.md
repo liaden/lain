@@ -418,9 +418,7 @@ Unproven; counting only the example's own thread would settle it.
   in a pre-commit suite, then passed alone and passed with the failing seed 3 of 3 on the base and on
   the card: `SecretSurface the audit sample of confident approves samples 5 percent by default`
   (Async timeout); `repo_as_fixture has no example generated from a scan of repository content`
-  (watchdog STUCK, twice); `plugin/tmux lain.tmux against a real tmux server renders 'lain: no state
-  yet' when the pane's project has no state file` ("pane session ... outlived its tmux server");
-  `Lain::Tools::Subagent a one-shot child that does not finish when the ceiling stops a child that had
+  (watchdog STUCK, twice); `Lain::Tools::Subagent a one-shot child that does not finish when the ceiling stops a child that had
   read files and written notes stays within the bound however the lists land against it` (watchdog
   STUCK); `Lain::CLI::Up a chat pane that dies at once bounds what it costs a HEALTHY launch by the
   grace it states` (0.43s against a 0.3s wall-clock bound, a threshold the 2026-10-27 ruling bans). The
@@ -448,11 +446,6 @@ Unproven; counting only the example's own thread would settle it.
   running while the work never gives up the lock between threads`. Red again on 2026-10-19, 6 against
   15 at a load of about 5, and green alone and in a full suite with the failing seed on the base and
   on the change. Twice is a pattern: the count is a wall-clock budget the box's load can starve.
-
-  Added 2026-10-18, red once in a pre-commit suite at a load of about 6 with agents working beside it
-  ("pane session ... outlived its tmux server"), green alone and in a full suite on the base and on
-  the card: `plugin/tmux lain.tmux against a real tmux server survives an install path with spaces in
-  it`.
 
   Added 2026-10-09, red once (watchdog STUCK at 30s) in a pre-commit suite under a load of about
   11 on 16 cores with a reviewer's probes running beside it, and green 3 of 3 runs of its file
@@ -519,6 +512,11 @@ Unproven; counting only the example's own thread would settle it.
 
   **Retired, with the fix that ended each.** Keep a retired name here so a later red under it reads
   as a regression, not as a known flake.
+  - 2026-10-30: `plugin/tmux lain.tmux against a real tmux server survives an install path with spaces
+    in it` and `... renders 'lain: no state yet' when the pane's project has no state file` (red on
+    2026-10-18, 2026-10-28 and 2026-10-30, seed 44048, "pane session ... outlived its tmux server").
+    The teardown waited 10s for each pane's session to empty and raised; it now sends TERM, then KILL
+    after 0.2s, to every process in each pane's session, so a slow or HUP-ignoring child is ended.
   - 2026-10-28: `Lain::Tools::WebFetch an HTML page comes back as readable text refuses a page of more nodes
     than the walk budget quickly, naming raw` (red 3 times at about 3.05s against a 3s bound, load-induced).
     The example now counts the nodes the walk visits instead of timing it.
