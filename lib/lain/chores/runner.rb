@@ -148,35 +148,17 @@ module Lain
       end
 
       def stopped(pid)
-        signal("TERM", pid)
-        reaped(pid, deadline(KILL_AFTER)) || killed(pid)
+        group.terminate(pid, reaper: -> { reaped(pid, 0) })
+        reaped(pid, deadline(POLL))
         nil
       end
 
-      def killed(pid)
-        signal("KILL", pid)
-        Process.wait(pid)
-      end
+      def group = Shell::ProcessGroup.new(clock: RunClock::MONOTONIC, grace: KILL_AFTER, poll: POLL)
 
       def reaped?(pid)
         !Process.wait2(pid, Process::WNOHANG).nil?
       rescue Errno::ECHILD
         true
-      end
-
-      # A chat that never led its own group is signalled alone, so it is still stopped.
-      def signal(name, pid)
-        Process.kill(name, -pid)
-        nil
-      rescue Errno::ESRCH
-        signalled(name, pid)
-      end
-
-      def signalled(name, pid)
-        Process.kill(name, pid)
-        nil
-      rescue Errno::ESRCH
-        nil
       end
 
       def reaped(pid, deadline)
@@ -186,6 +168,8 @@ module Lain
           status = Process.wait2(pid, Process::WNOHANG)&.last
         end
         status
+      rescue Errno::ECHILD
+        nil
       end
 
       def deadline(seconds) = now + seconds

@@ -252,15 +252,33 @@ RSpec.describe Lain::Chores::Runner, :seam do
       wait_until(reason: "the chat's process group gone") { group_gone?(@pids.sole) }
     end
 
-    it "still stops a chat that never got its own process group" do
+    it "kills a grandchild that ignores TERM after the leader has exited on it" do
       stub_const("#{described_class}::KILL_AFTER", 0.3)
-      grouped = tracked(%w[sleep 30], @pids = [])
-      ungrouped = ->(*argv, **options) { grouped.call(*argv, **options, pgroup: nil) }
+      orphaning = ["sh", "-c", "(trap '' TERM; sleep 30) & trap 'exit 0' TERM; wait"]
 
-      drained = Thread.new { runner(spawner: ungrouped, chat_timeout: 0.2).to_a }.join(15)
+      drained = Thread.new { runner(spawner: tracked(orphaning, @pids = []), chat_timeout: 0.3).to_a }.join(15)
 
       expect(drained).not_to be_nil
-      expect(line).to start_with("- [!] add a spec for Foo#bar  <!-- timed out ")
+      wait_until(reason: "the chat's process group gone") { group_gone?(@pids.sole) }
+    end
+
+    it "reaps the leader of a chat stopped by timeout" do
+      stub_const("#{described_class}::KILL_AFTER", 0.3)
+
+      runner(spawner: tracked(%w[sleep 30], @pids = []), chat_timeout: 0.2).to_a
+
+      expect { Process.wait2(@pids.sole) }.to raise_error(Errno::ECHILD)
+    end
+
+    it "reaps a leader that traps TERM when stopped directly" do
+      stub_const("#{described_class}::KILL_AFTER", 0.3)
+      pid = Process.spawn("sh", "-c", "trap '' TERM; while :; do sleep 0.05; done", pgroup: true)
+      @pids = [pid]
+      sleep 0.2
+
+      runner(spawner: ->(*) {}).send(:stopped, pid)
+
+      expect { Process.wait2(pid) }.to raise_error(Errno::ECHILD)
     end
 
     it "stops the chat's group when the runner is interrupted while the chat runs" do
