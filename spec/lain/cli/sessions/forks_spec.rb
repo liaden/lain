@@ -69,4 +69,45 @@ RSpec.describe Lain::CLI::Sessions::Forks do
   ensure
     FileUtils.remove_entry(other)
   end
+
+  describe ".source over unchanged files" do
+    let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => @dir }) }
+    let(:project) { Lain::Project.new(root: @dir, cwd: @dir, kind: :project, detected_by: :flag) }
+    let(:read) { [] }
+    let(:facts) { ->(path) { read << File.basename(path) and described_class.send(:resumed_from, path) } }
+    let(:resume) { { "file" => "a.ndjson", "head" => "blake3:d1" } }
+
+    before do
+      @dir = paths.session_dirs(project).first
+      FileUtils.mkdir_p(@dir)
+      @parent = write("a.ndjson", header)
+      @child = write("b.ndjson", header(resumed_from: resume))
+    end
+
+    def source = described_class.source(Struct.new(:journal_path).new(@parent), paths:, project:, facts:)
+
+    it "steps no file on the second call and answers the same grouping" do
+      forks = source
+      first = forks.call
+      read.clear
+
+      expect([forks.call, read]).to eq([first, []])
+    end
+
+    it "reads a file again when it is rewritten to the same size with a newer mtime" do
+      forks = source
+      forks.call
+      read.clear
+      File.write(@child, File.read(@child).tr("1", "2"))
+      File.utime(Time.now + 60, Time.now + 60, @child)
+
+      expect([forks.call, read]).to eq([{ "blake3:d2" => ["b.ndjson"] }, ["b.ndjson"]])
+    end
+
+    it "builds from the production path with no facts given" do
+      forks = described_class.source(Struct.new(:journal_path).new(@parent), paths:, project:)
+
+      expect([forks.call, forks.call]).to eq([{ "blake3:d1" => ["b.ndjson"] }] * 2)
+    end
+  end
 end
