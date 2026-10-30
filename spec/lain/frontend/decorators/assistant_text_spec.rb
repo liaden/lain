@@ -22,6 +22,21 @@ RSpec.describe Lain::Frontend::Decorators::AssistantText do
     expect(described_class.new(event("hi\n```\ncode\n```")).verbatim_rows).to eq([1])
   end
 
+  it "parses a reply's markdown once across render and verbatim_rows" do
+    allow(Lain::Frontend::Markdown).to receive(:segments).and_call_original
+    decorator = described_class.new(event("hi\n```\ncode\n```"))
+    decorator.render(theme)
+    decorator.verbatim_rows
+
+    expect(Lain::Frontend::Markdown).to have_received(:segments).once
+  end
+
+  it "builds one decorator per event, each rendering its own text" do
+    first, second = %w[one two].map { |text| Lain::Frontend::Decorators.for(event(text)) }
+
+    expect([first.equal?(second), first.render(theme), second.render(theme)]).to eq([false, "one", "two"])
+  end
+
   it "is a line, unstamped" do
     decorator = described_class.new(event("x"))
 

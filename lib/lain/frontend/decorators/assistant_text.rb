@@ -21,7 +21,7 @@ module Lain
 
         private
 
-        def segments = Markdown.segments(@event.text, prose: :response)
+        def segments = @segments ||= Markdown.segments(@event.text, prose: :response)
       end
     end
   end
