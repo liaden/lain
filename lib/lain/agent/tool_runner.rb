@@ -273,7 +273,7 @@ module Lain
           key ? input[key] : input.values.find { |value| value.is_a?(String) }
         end
 
-        def masked(text, context) = Sensitivity::TextMask.new(secrets: @secrets.for(context)).call(text).text
+        def masked(text, context) = Sensitivity::TextMask.text(text, secrets: @secrets.for(context))
 
         # Cut after masking, so a secret is never left half-cut and unrecognisable, and
         # past the end of any placeholder the cut lands in.

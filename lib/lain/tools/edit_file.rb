@@ -153,7 +153,7 @@ module Lain
 
       def shown_lines(text, invocation)
         secrets = Sensitivity::Secrets::Source::DEFAULT.for(invocation&.context)
-        Sensitivity::TextMask.new(secrets:).call(text).text.lines(chomp: true)
+        Sensitivity::TextMask.text(text, secrets:).lines(chomp: true)
                              .map { |line| line.truncate(Telemetry::EditApplied::WIDTH) }
       end
 

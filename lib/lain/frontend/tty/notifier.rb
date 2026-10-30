@@ -44,7 +44,7 @@ module Lain
         # @param env [#[]] the chat process's environment
         # @param output [#print, #flush] where the sequence is written
         def self.for_chat(secrets, project, env: ENV, output: $stdout)
-          mask = ->(text) { Sensitivity::TextMask.new(secrets: secrets.to_a).call(text).text }
+          mask = ->(text) { Sensitivity::TextMask.text(text, secrets:) }
           self.for(env:, feed: Notices.for(env:), project: File.basename(project.to_s), mask:, output:)
         end
 

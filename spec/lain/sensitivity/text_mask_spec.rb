@@ -10,6 +10,18 @@ RSpec.describe Lain::Sensitivity::TextMask do
 
   def streamed(stream, chunks) = chunks.map { stream << _1 }.join + stream.finish
 
+  describe ".text" do
+    it "masks as the instance does" do
+      text = "A_TOKEN=#{secret}\necho #{other}\n"
+
+      expect(described_class.text(text, secrets: [other])).to eq(described_class.new(secrets: [other]).call(text).text)
+    end
+
+    it "takes any secrets that answer to_a" do
+      expect(described_class.text("echo #{other}\n", secrets: Set[other])).to eq("echo #{placeholder(1)}\n")
+    end
+  end
+
   describe "#call" do
     it "returns the masked text and the fresh count, numbering from 1" do
       text = "A_TOKEN=#{secret}\nB_TOKEN=#{other}\n"

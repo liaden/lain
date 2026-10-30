@@ -12,6 +12,11 @@ module Lain
     # A command's output has no file to key a release on, so nothing here is
     # ever released: what is detected is masked.
     class TextMask
+      # @param text [String] the whole output
+      # @param secrets [#to_a] values masked wherever they appear
+      # @return [String] the text with every detected or given secret masked
+      def self.text(text, secrets:) = new(secrets: secrets.to_a).call(text).text
+
       # @param secrets [Array<String>] values masked wherever they appear
       def initialize(secrets:)
         @secrets = secrets.map(&:-@).freeze

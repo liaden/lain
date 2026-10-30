@@ -302,7 +302,7 @@ module Lain
               .reject { |_, value| value.to_s.empty? }
           end
 
-          def masked(text) = Sensitivity::TextMask.new(secrets: []).call(text).text
+          def masked(text) = Sensitivity::TextMask.text(text, secrets: [])
 
           def shielded(&block)
             task = Async::Task.current?
