@@ -418,8 +418,7 @@ Unproven; counting only the example's own thread would settle it.
   Added 2026-10-28, from landing suites run beside 4 to 8 agents (load 17 to 34). Each went red once
   in a pre-commit suite, then passed alone and passed with the failing seed 3 of 3 on the base and on
   the card: `SecretSurface the audit sample of confident approves samples 5 percent by default`
-  (Async timeout); `repo_as_fixture has no example generated from a scan of repository content`
-  (watchdog STUCK, twice); `Lain::Tools::Subagent a one-shot child that does not finish when the ceiling stops a child that had
+  (Async timeout); `Lain::Tools::Subagent a one-shot child that does not finish when the ceiling stops a child that had
   read files and written notes stays within the bound however the lists land against it` (watchdog
   STUCK); `Lain::CLI::Up a chat pane that dies at once bounds what it costs a HEALTHY launch by the
   grace it states` (0.43s against a 0.3s wall-clock bound, a threshold the 2026-10-27 ruling bans). The
@@ -513,6 +512,10 @@ Unproven; counting only the example's own thread would settle it.
 
   **Retired, with the fix that ended each.** Keep a retired name here so a later red under it reads
   as a regression, not as a known flake.
+  - 2026-10-30: `the repository is not a spec fixture has no example generated from a scan of repository
+    content` (watchdog STUCK at 30s on 2026-10-28 twice, 2026-10-29 and 2026-10-30, about 16 s of CPU at load
+    20 or more). The scanner now skips the syntax walk for a file whose text cannot hold the shape, and walks
+    the rest once instead of 5 times, so the scan takes about 5 s alone, down from about 9.
   - 2026-10-30: `astgrep::tests::the_cancellable_walk_finds_what_find_all_finds_over_this_repositorys_ruby` and
     `treesitter::tests::the_cancellable_query_finds_what_the_plain_query_finds_over_this_checkouts_sources`
     (red 2026-10-29 and twice on 2026-10-30, `NotFound` in `read_dir`, after a full suite and inside a

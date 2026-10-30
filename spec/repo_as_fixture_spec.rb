@@ -70,6 +70,16 @@ module RepoAsFixture
   # spec-owned-fixture shape this file's own failure message recommends.
   SUBSCRIPT_RECEIVERS = %w[Dir Pathname].freeze
 
+  # Each tree read this file recognises shows in the raw text: a scan method
+  # name, a subscript on a directory constant (`Dir[`, `Dir.[]`, `Dir::[]`), or
+  # a shell-out. A file with none of them cannot violate, so the syntax-tree
+  # walk is skipped for it; that walk is nearly all of the scan's cost over
+  # ~1,300 files.
+  TREE_READ_TEXT = /glob|children|entries|each_child|each_entry|\b(?:Dir|Pathname)\s*(?:\.|::)?\s*\[|`|%x/
+
+  # The inclusion routes are matched on the same raw text for the same reason.
+  MINTING_TEXT = /\b(?:#{(EXAMPLE_METHODS + INCLUSION_METHODS).join("|")})\b/
+
   # A path expression anchored at the spec file -- or at the directory the suite
   # is run from -- is anchored at this repository; a fixture built under
   # `Dir.mktmpdir` is not, and that is the whole distinction. `__FILE__` parses
@@ -268,27 +278,33 @@ module RepoAsFixture
       # the only question that can answer "was this really read?".
       raise "could not parse #{@path}" if result.failure?
 
-      root = result.value
-      @sources = Sources.new(root)
-      (generated_examples(root) + scan_derived_inclusions(root)).uniq
+      reads_and_mints?(source) ? scan_tree(result.value) : []
     end
 
     private
 
-    # Every call carrying a block, paired with the ancestors it sits under, so
-    # an example can ask what it is nested inside.
-    def call_stack(root)
-      each_node(root).with_object({}) do |node, stacks|
-        node.compact_child_nodes.each { |child| stacks[child] = (stacks[node] || []) + [node] }
-      end
+    def reads_and_mints?(source) = source.match?(TREE_READ_TEXT) && source.match?(MINTING_TEXT)
+
+    def scan_tree(root)
+      @root = root
+      @sources = nil
+      (generated_examples(root) + scan_derived_inclusions(root)).uniq
     end
 
-    def generated_examples(root)
-      stacks = call_stack(root)
-      each_node(root).select { |node| minting_call?(node) }.flat_map do |example|
-        iterators(stacks.fetch(example, [])).select { |call| @sources.reads_tree?(call.receiver) }
-                                            .map { |call| violation(example, call) }
-      end
+    # Built on first use: most files have no example under an iterating call,
+    # and for those the definitions pass would answer a question nobody asked.
+    def sources = (@sources ||= Sources.new(@root))
+
+    # One descent carrying the iterating calls above the node, in place of a
+    # per-node ancestor list, so an example can ask what it is nested inside.
+    def generated_examples(node, iterators = [])
+      own = minting_call?(node) ? violations_under(node, iterators) : []
+      inner = iterator?(node) ? iterators + [node] : iterators
+      own + node.compact_child_nodes.flat_map { |child| generated_examples(child, inner) }
+    end
+
+    def violations_under(example, iterators)
+      iterators.select { |call| sources.reads_tree?(call.receiver) }.map { |call| violation(example, call) }
     end
 
     # An inclusion counts as minting here as well as below, because the two
@@ -299,17 +315,17 @@ module RepoAsFixture
         inclusion_call?(node)
     end
 
-    # The enclosing calls that ITERATE -- a block-bearing call with a receiver
-    # that is not one of RSpec's own nesting methods.
-    def iterators(stack)
-      stack.select { |node| node.is_a?(Prism::CallNode) && !node.block.nil? && !node.receiver.nil? }
-           .reject { |node| GROUP_METHODS.include?(node.name.to_s) }
+    # A block-bearing call with a receiver that is not one of RSpec's own
+    # nesting methods: the shape that loops.
+    def iterator?(node)
+      node.is_a?(Prism::CallNode) && !node.block.nil? && !node.receiver.nil? &&
+        !GROUP_METHODS.include?(node.name.to_s)
     end
 
     # The other route: the loop lives in the shared group, so the corpus handed
     # to it is what decides how many examples exist.
     def scan_derived_inclusions(root)
-      each_node(root).select { |node| inclusion_call?(node) && @sources.reads_tree?(node.arguments) }
+      each_node(root).select { |node| inclusion_call?(node) && sources.reads_tree?(node.arguments) }
                      .map do |node|
                        Violation.new(@path, node.location.start_line,
                                      "#{node.name} handed a repository scan")
@@ -328,7 +344,7 @@ module RepoAsFixture
     # Named apart because the remedy differs: a scan is pinned by listing the
     # files, a subprocess by not asking the machine a question at load time.
     def source_of(receiver)
-      @sources.subprocess?(receiver) ? "a subprocess's output" : "a repository scan"
+      sources.subprocess?(receiver) ? "a subprocess's output" : "a repository scan"
     end
   end
 
@@ -404,6 +420,28 @@ RSpec.describe "the repository is not a spec fixture" do
       ]
 
       expect(minted.map { |source| flagged(source).size }).to eq([1] * 12)
+    end
+
+    it "still flags the spellings that carry no scan method name" do
+      spellings = [
+        %(Dir.[]("planning/*.md").each { |doc| it("x") { } }),
+        %(Dir::[]("planning/*.md").each { |doc| it("x") { } }),
+        %(Pathname::[]("planning/*.md").each { |doc| it("x") { } }),
+        %(%x(git ls-files).lines.each { |doc| it("x") { } }),
+        "<<~`SH`.lines.each { |doc| it('x') { } }\n  git ls-files\nSH\n"
+      ]
+
+      expect(spellings.map { |source| flagged(source).size }).to eq([1] * 5)
+    end
+
+    it "does not flag a file that mints examples but never reads a tree" do
+      source = %([1, 2].each { |n| it("case \#{n}") { } })
+
+      expect(flagged(source)).to be_empty
+    end
+
+    it "still refuses a file it would otherwise skip when it cannot be parsed" do
+      expect { flagged("it 'x' do") }.to raise_error(/could not parse self_test/)
     end
 
     it "does not flag a repository scan performed inside an example" do
