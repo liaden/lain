@@ -114,3 +114,29 @@ RSpec.describe Lain::Frontend::Decorators do
     end
   end
 end
+
+RSpec.describe Lain::Frontend::Decorators, ".for" do
+  def crossed(decision)
+    Lain::Telemetry::PriceTierCrossed.new(model: "claude-haiku-5-5", prompt_tokens: 104_000, boundary: 100_000,
+                                          standard_cost: "0.0104", tier_cost: "0.052", decision:)
+  end
+
+  it "reads the one prebuilt table for every event" do
+    event = Lain::Telemetry::ToolOutput.new(tool_use_id: "tu_1", stream: :stdout, bytes: "x")
+    table = described_class::Table::BY_TYPE.dup
+    allow(table).to receive(:find).and_call_original
+    stub_const("Lain::Frontend::Decorators::Table::BY_TYPE", table)
+
+    100.times { described_class.for(event) }
+
+    expect(table).to have_received(:find).exactly(100).times
+  end
+
+  it "still gives a carried price tier PriceTierCarried" do
+    expect(described_class.for(crossed(:carried))).to be_a(described_class::PriceTierCarried)
+  end
+
+  it "leaves a price tier the human answered to the type table" do
+    expect(described_class.for(crossed(:approve))).to be_nil
+  end
+end

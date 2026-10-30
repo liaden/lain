@@ -29,30 +29,14 @@ module Lain
       #   -- answering ALL three messages above, not just the first -- or nil if the
       #   frontend does not render this event type (it is silently skipped)
       def self.for(event)
-        return PriceTierCarried.new(event) if event.is_a?(Telemetry::PriceTierCrossed) && event.decision == :carried
+        return PriceTierCarried.new(event) if carried_crossing?(event)
 
-        _, decorator = by_type.find { |type, _| event.is_a?(type) }
+        _, decorator = Table::BY_TYPE.find { |type, _| event.is_a?(type) }
         decorator&.new(event)
       end
 
-      # A method rather than a constant: the decorator classes are defined below {.for}.
-      def self.by_type
-        {
-          Telemetry::ToolOutput => ToolOutput,
-          Telemetry::ProviderRetry => ProviderRetry,
-          ::Lain::Agent::SnapshotSlot::SnapshotDegraded => SnapshotDegraded,
-          ::Lain::Agent::SnapshotSlot::SnapshotNarrowed => SnapshotNarrowed,
-          TTY::PromptUnclosed => PromptUnclosed,
-          Telemetry::FilesWritten => FilesWritten,
-          Telemetry::ToolCalled => ToolCalled,
-          Telemetry::AssistantText => AssistantText,
-          Telemetry::JudgeRuled => JudgeRuled,
-          Telemetry::AskSettled => AskSettled,
-          Telemetry::EditApplied => EditDiff,
-          ::Lain::Provider::Residency::Waiting => ResidencyWaiting
-        }
-      end
-      private_class_method :by_type
+      def self.carried_crossing?(event) = event.is_a?(Telemetry::PriceTierCrossed) && event.decision == :carried
+      private_class_method :carried_crossing?
 
       # A dim attribution label (`[tool_use_id stream]`) followed by the bytes,
       # with stderr in red so a failing command reads at a glance.
