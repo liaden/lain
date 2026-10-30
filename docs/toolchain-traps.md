@@ -377,6 +377,12 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   against its bound of 4 in a pre-commit suite at load 20, and was green 3 of 3 on the same seed on both
   the base and the change. A second repeat makes it a card, not a list entry.
 
+  Added 2026-10-30, both checks of 1 e2e journey red together in a pre-commit suite (seed 59949), the
+  lease reporting "no drainer" where the chat's commit should have landed: `draining one chore through a
+  lease, a headless chat and lain land lands the chat's commit on the main branch` and `... marks the
+  chore done with the landed sha and the session path`. Green 3 of 3 alone, and green on seed 59949 on
+  both the base and the change.
+
   Added 2026-10-29, 2 Rust tests that walk `lib/` panicked with `NotFound` in `read_dir` when `cargo test`
   ran right after a full `pspec`, and passed alone: `astgrep::tests::the_cancellable_walk_finds_what_find_all_finds_over_this_repositorys_ruby`
   and `treesitter::tests::the_cancellable_query_finds_what_the_plain_query_finds_over_this_checkouts_sources`.
