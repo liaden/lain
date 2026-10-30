@@ -165,6 +165,17 @@ RSpec.describe Lain::CLI::Review, :seam do
       expect(Lain::Shell::Out).to have_received(:new).with("git", any_args).at_least(:once)
     end
 
+    it "asks the project resolver once, at construction, when no root is given" do
+      project = instance_double(Lain::Project, root: @repo)
+      allow(Lain::Project::Resolver).to receive(:default_project).and_return(project)
+
+      built = described_class.new(repo_root: @repo, paths:, shell_out_factory: factory)
+      expect(Lain::Project::Resolver).to have_received(:default_project).once
+
+      2.times { built.present("feature") }
+      expect(Lain::Project::Resolver).to have_received(:default_project).once
+    end
+
     it "reads a branch name as a local branch, spawning no gh at all" do
       command.present("feature")
 

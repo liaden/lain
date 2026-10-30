@@ -65,8 +65,7 @@ module Lain
                   "object database instead -- %<message>s"
 
       # @param repo_root [String] the repository every git call reads
-      # @param root [String, nil] the project root the round is journaled under; the resolved
-      #   project's, read when the round opens, when nil
+      # @param root [String] the project root the round is journaled under
       # @param paths [Paths] resolves the sessions directory, where the round is
       #   journaled
       # @param bounds [Review::Bounds] the sizes past which a view is refused
@@ -74,7 +73,7 @@ module Lain
       #   the text surface over a buffer this object owns
       # @param shell_out_factory [#call] builds the subprocess runner, injected
       #   as {Forge::Gh} and both sources do
-      def initialize(repo_root: Dir.pwd, root: nil, paths: Paths.new, bounds: Lain::Review::Bounds.new,
+      def initialize(repo_root: Dir.pwd, root: Project::Resolver.default_project.root, paths: Paths.new, bounds: Lain::Review::Bounds.new,
                      surface: nil, shell_out_factory: Lain::Shell::Out.public_method(:new))
         @paths = paths
         @root = root
@@ -102,7 +101,7 @@ module Lain
 
       private
 
-      def root = @root ||= Project::Resolver.default_project.root
+      attr_reader :root
 
       # The flag's absence, not a second declaration of the vocabulary: the
       # word comes off {Review::Partition::DEFAULT_SCOPE}, which is read out of

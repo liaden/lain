@@ -76,10 +76,9 @@ module Lain
       # @param epics [CLI::Epic, nil] answers where an epic stands, asked only
       #   when an approval advances its epic ({Epic::Advance#moves?}); nil builds the
       #   default one at that moment, so a drain that moves nothing never
-      #   resolves a project
-      # @param root [String, nil] the project root, where a chat files its journal; resolved when
-      #   first read if nil, so a drain that moves nothing still resolves no project
-      def initialize(paths: Paths.new, clock: DEFAULT_CLOCK, epics: nil, root: nil)
+      #   builds the epic command
+      # @param root [String] the project root, where a chat files its journal
+      def initialize(paths: Paths.new, clock: DEFAULT_CLOCK, epics: nil, root: Project::Resolver.default_project.root)
         @paths = paths
         @root = root
         @clock = clock
@@ -113,7 +112,8 @@ module Lain
       # decision landed. Right for a one-shot CLI -- Thor builds a fresh one per
       # invocation, and `unknown_message` wants the same fold `find` just missed
       # in -- and why nothing here is offered as a long-lived object.
-      def root = @root ||= Project::Resolver.default_project.root
+      attr_reader :root
+
       def dirs = @dirs ||= [@paths.filing_dir(root:)]
       def review = @review ||= Review.new(journals.to_a, now: @clock.call)
 

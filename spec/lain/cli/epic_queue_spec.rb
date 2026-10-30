@@ -488,6 +488,26 @@ RSpec.describe Lain::CLI::EpicQueue do
     end
   end
 
+  describe "the project root it files under" do
+    let(:project) { instance_double(Lain::Project, root:) }
+
+    before { allow(Lain::Project::Resolver).to receive(:default_project).and_return(project) }
+
+    it "asks the resolver once, at construction, when no root is given" do
+      built = described_class.new(paths:, clock:)
+      expect(Lain::Project::Resolver).to have_received(:default_project).once
+
+      2.times { built.listing }
+      expect(Lain::Project::Resolver).to have_received(:default_project).once
+    end
+
+    it "does not ask the resolver when a root is given" do
+      described_class.new(paths:, clock:, root:).listing
+
+      expect(Lain::Project::Resolver).not_to have_received(:default_project)
+    end
+  end
+
   describe "an empty queue" do
     it "names the directory it folded, so 'nothing outstanding' is checkable" do
       expect(queue.listing).to include(paths.filing_dir(root:))
