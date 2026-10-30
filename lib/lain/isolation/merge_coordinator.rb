@@ -71,6 +71,50 @@ module Lain
           FileUtils.mkdir_p(dir)
           FileLock.new(File.join(dir, "drain.lock"), label: "the landing drain for #{File.basename(dir)}")
         end
+
+        # A drainer holds no lock while it boots, so its pid is recorded where
+        # a waiter can tell it from no drainer at all. Renamed into place, so
+        # a reader never sees half a pid. Only a hint: without it a waiter
+        # falls back to the lock alone, so a failed write is not an error.
+        # @param pid [Integer] the drainer just started
+        # @return [void]
+        def drainer_started(pid)
+          partial = "#{started_record}.#{pid}.partial"
+          FileUtils.mkdir_p(dir)
+          File.write(partial, pid.to_s)
+          File.rename(partial, started_record)
+        rescue SystemCallError
+          nil
+        ensure
+          FileUtils.rm_f(partial)
+        end
+
+        # Called with the lock held, so a later start's record lost to the
+        # read-then-delete race costs nothing: this holder still lands its entry.
+        # @param pid [Integer] the drainer now holding the drain lock
+        # @return [void]
+        def drainer_holds(pid)
+          File.delete(started_record) if File.read(started_record).to_i == pid
+        rescue Errno::ENOENT
+          nil
+        end
+
+        # @param now [Time] the wall clock's now
+        # @param window [Numeric] seconds a started drainer may boot before it no longer counts
+        # @param alive [#call] whether a pid names a running process
+        # @return [Boolean] whether the drainer last started is alive, has not
+        #   taken the lock, and was started less than `window` seconds ago
+        def booting_drainer?(now:, window:, alive:)
+          written = File.mtime(started_record)
+          pid = File.read(started_record).to_i
+          pid.positive? && now - written < window && alive.call(pid)
+        rescue Errno::ENOENT
+          false
+        end
+
+        private
+
+        def started_record = File.join(dir, "drain.started")
       end
     end
   end

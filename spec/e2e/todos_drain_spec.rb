@@ -44,9 +44,19 @@ RSpec.describe "draining one chore through a lease, a headless chat and lain lan
     drainers.each(&:join)
     { outcome:, status:, after: SeedRepo.git(project, "status", "--porcelain", "--untracked-files=no").stdout,
       line: File.readlines(File.join(project, "TODOS.md"), chomp: true).fetch(1),
-      landed: Lain::Shell::Out.new("git", "-C", project, "show", "main:hello.txt",
-                                   environment: SeedRepo::SCRUB).run_command.stdout,
-      chat_err: File.read(chat_err(sandbox)), session_kept: outcome.session && File.exist?(outcome.session) }
+      landed: landed(project),
+      chat_err: File.read(chat_err(sandbox)), drain_log: drain_log(project),
+      session_kept: outcome.session && File.exist?(outcome.session) }
+  end
+
+  def landed(project)
+    Lain::Shell::Out.new("git", "-C", project, "show", "main:hello.txt", environment: SeedRepo::SCRUB)
+                    .run_command.stdout
+  end
+
+  def drain_log(project)
+    log = File.join(Lain::Isolation::MergeCoordinator::Home.for(repo_root: project, branch: "main").dir, "drain.log")
+    File.exist?(log) ? File.readlines(log).last(20).join : "(no drain.log)"
   end
 
   def dates = { "GIT_AUTHOR_DATE" => "2026-10-28T00:00:00Z", "GIT_COMMITTER_DATE" => "2026-10-28T00:00:00Z" }
@@ -79,8 +89,10 @@ RSpec.describe "draining one chore through a lease, a headless chat and lain lan
   # The runner here lives in rspec, which the default spawner rightly declines to re-exec as lain.
   def drainer(sandbox)
     spawn = lambda do |argv, **options|
-      drainers << Process.detach(Process.spawn(sandbox.env, *argv, unsetenv_others: true, **options)
-                                        .tap { sandbox.track(_1) })
+      Process.spawn(sandbox.env, *argv, unsetenv_others: true, **options).tap do |pid|
+        sandbox.track(pid)
+        drainers << Process.detach(pid)
+      end
     end
     Lain::Isolation::MergeCoordinator::Spawner.new(spawn:, program: E2E::PlainChat::EXE)
   end
@@ -95,7 +107,8 @@ RSpec.describe "draining one chore through a lease, a headless chat and lain lan
 
   it "lands the chat's commit on the main branch" do
     expect(journey.fetch(:outcome).status).to eq(:landed),
-                                              "#{journey.fetch(:outcome).summary}\n#{journey.fetch(:chat_err)}"
+                                              "#{journey.fetch(:outcome).summary}\n#{journey.fetch(:chat_err)}\n" \
+                                              "drain.log:\n#{journey.fetch(:drain_log)}"
     expect(journey.fetch(:landed).strip).to eq("hi")
   end
 

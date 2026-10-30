@@ -13,7 +13,8 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Spawner do
   end
 
   let(:spawned) { [] }
-  let(:recording) { ->(argv, **options) { spawned << [argv, options] } }
+  # A pid above the kernel's ceiling, so no process can ever answer to it.
+  let(:recording) { ->(argv, **options) { (spawned << [argv, options]).size + 4_194_304 } }
   let(:log) { File.join(@dir, Lain::Isolation::MergeCoordinator::DIRECTORY, "home", "drain.log") }
 
   def spawner(program: "/opt/lain/exe/lain", spawn: recording) = described_class.new(spawn:, program:)
@@ -68,6 +69,32 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Spawner do
     it "answers false when nothing was started, and BY_HAND says how to drain instead" do
       expect(spawner(program: "/usr/bin/rspec").drain(branch: "feat", root: "/repo", home:)).to be(false)
       expect(format(described_class::BY_HAND, branch: "feat")).to eq("run `lain land drain --branch feat` to land it")
+    end
+
+    it "leaves the pid of the drainer it started in the home, for a waiter to tell one still booting" do
+      spawner.drain(branch: "feat", root: "/repo", home:)
+
+      expect(home.booting_drainer?(now: Time.now, window: 60, alive: ->(pid) { pid == 4_194_305 })).to be(true)
+    end
+
+    it "leaves no drainer booting when it started none" do
+      spawner(program: "/usr/bin/rspec").drain(branch: "feat", root: "/repo", home:)
+
+      expect(home.booting_drainer?(now: Time.now, window: 60, alive: ->(_) { true })).to be(false)
+    end
+
+    it "leaves the real child's own pid, not a reaper's" do
+      program = File.join(@dir, "lain")
+      seen = File.join(@dir, "seen")
+      File.write(program, "File.write(#{seen.dump} + '.partial', Process.pid.to_s)\n" \
+                          "File.rename(#{seen.dump} + '.partial', #{seen.dump})\n")
+
+      described_class.new(program:).drain(branch: "feat", root: @dir, home:)
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 10
+      sleep 0.02 until File.exist?(seen) || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+
+      child = File.read(seen).to_i
+      expect(home.booting_drainer?(now: Time.now, window: 60, alive: ->(pid) { pid == child })).to be(true)
     end
   end
 

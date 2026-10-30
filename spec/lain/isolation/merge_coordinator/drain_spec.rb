@@ -149,6 +149,24 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Drain, :seam do
       expect(spool.result(entry.id).verification.outcome).to eq(:failed)
     end
 
+    it "forgets the record of its own start once it holds the lock" do
+      configure(verify: passing)
+      home.drainer_started(Process.pid)
+
+      drain.call
+
+      expect(home.booting_drainer?(now: Time.now, window: 60, alive: ->(_) { true })).to be(false)
+    end
+
+    it "keeps the record of a later drainer's start" do
+      configure(verify: passing)
+      home.drainer_started(4_194_305)
+
+      drain.call
+
+      expect(home.booting_drainer?(now: Time.now, window: 60, alive: ->(_) { true })).to be(true)
+    end
+
     it "leaves no session file behind when nothing was pending" do
       configure(verify: passing)
 

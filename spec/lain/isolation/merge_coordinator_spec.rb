@@ -83,6 +83,66 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Home, :seam do
     expect(File.basename(home(@repo, "epic/demo").dir)).to eq(key)
   end
 
+  describe "the drainer last started" do
+    let(:started) { home(@repo, "main") }
+
+    def booting?(now: Time.now, alive: ->(pid) { pid == 4242 })
+      started.booting_drainer?(now:, window: 60, alive:)
+    end
+
+    it "is not booting when none was started" do
+      expect(booting?(alive: ->(_) { true })).to be(false)
+    end
+
+    it "is booting while its pid is alive and it was started within the window" do
+      started.drainer_started(4242)
+
+      expect(booting?).to be(true)
+    end
+
+    it "is not booting once its pid is dead" do
+      started.drainer_started(4242)
+
+      expect(booting?(alive: ->(_) { false })).to be(false)
+    end
+
+    it "is not booting once the window has passed, though a reused pid answers alive" do
+      started.drainer_started(4242)
+
+      expect(booting?(now: Time.now + 61)).to be(false)
+    end
+
+    it "is forgotten once it holds the lock, and only when the record names it" do
+      started.drainer_started(4242)
+
+      started.drainer_holds(99)
+      kept = booting?
+      started.drainer_holds(4242)
+
+      expect([kept, booting?]).to eq([true, false])
+    end
+
+    it "is replaced by the next start, leaving no temp file beside it" do
+      started.drainer_started(4242)
+      started.drainer_started(17)
+
+      expect(booting?(alive: ->(pid) { pid == 17 })).to be(true)
+      expect(Dir.children(started.dir)).to eq(["drain.started"])
+    end
+
+    it "is only a hint, so a full disk records nothing and leaves no temp file" do
+      FileUtils.mkdir_p(started.dir)
+      allow(File).to receive(:write).and_wrap_original do |write, *args|
+        write.call(*args)
+        raise Errno::ENOSPC
+      end
+
+      expect { started.drainer_started(4242) }.not_to raise_error
+      expect(booting?).to be(false)
+      expect(Dir.children(started.dir)).to be_empty
+    end
+  end
+
   it "refuses a directory in no repository, naming it" do
     Dir.mktmpdir("lain-coordinator-bare") do |bare|
       expect { home(bare, "main") }.to raise_error(Lain::Error, /#{Regexp.escape(bare)}/)

@@ -13,12 +13,13 @@ module Lain
       # A launcher that is not lain, rspec included, starts nothing.
       class Spawner
         # Detached, so the submitter never waits on the child or leaves it a zombie.
-        SPAWN = ->(argv, **options) { Process.detach(Process.spawn(*argv, **options)) }
+        # Answers the child's pid, which {#drain} leaves in the home.
+        SPAWN = ->(argv, **options) { Process.spawn(*argv, **options).tap { |pid| Process.detach(pid) } }
 
         # What a submitter says when {#drain} started nothing.
         BY_HAND = "run `lain land drain --branch %<branch>s` to land it"
 
-        # @param spawn [#call] starts `argv` with `Process.spawn` options
+        # @param spawn [#call] starts `argv` with `Process.spawn` options, answering the child's pid
         # @param program [String] the launching binary
         # @param ruby [String] the interpreter that runs it
         def initialize(spawn: SPAWN, program: $PROGRAM_NAME, ruby: RbConfig.ruby)
@@ -32,31 +33,41 @@ module Lain
         # @param args [Array<String>] lain's arguments, `land drain ...`
         # @param chdir [String] where the child runs
         # @param log [String] the file its output is appended to
+        # @yieldparam pid [Integer] the child's pid, when one was started
         # @return [Boolean] whether a child was started; false when the spawn
         #   itself fails, so the submitter can say how to drain by hand
         def call(args, chdir:, log:)
-          return false unless lain?
-
-          FileUtils.mkdir_p(File.dirname(log))
-          @spawn.call(command(args), chdir:, in: File::NULL, out: [log, "a"], err: [log, "a"], pgroup: true)
-          true
-        rescue SystemCallError
-          false
+          pid = spawned(args, chdir:, log:)
+          yield pid if block_given? && pid.positive?
+          pid.positive?
         end
 
         # The drainer is handed its project on the command line rather than
         # finding one from its directory, so it journals and verifies for the
-        # submitter's project however it was started.
+        # submitter's project however it was started. Its pid is left in the
+        # home, since under load its boot alone can take seconds.
         # @param branch [String] the branch whose queue is drained
         # @param root [String] the repository's main worktree
-        # @param home [Home] the branch's coordinator home, where the log goes
+        # @param home [Home] the branch's coordinator home, where the log and the pid go
         # @return [Boolean] whether a drainer was started
         def drain(branch:, root:, home:)
-          call(["land", "drain", "--branch", branch, "--project", root], chdir: root,
-                                                                         log: File.join(home.dir, "drain.log"))
+          call(["land", "drain", "--branch", branch, "--project", root],
+               chdir: root, log: File.join(home.dir, "drain.log")) do |pid|
+            home.drainer_started(pid)
+          end
         end
 
         private
+
+        # @return [Integer] the child's pid, 0 when none was started
+        def spawned(args, chdir:, log:)
+          return 0 unless lain?
+
+          FileUtils.mkdir_p(File.dirname(log))
+          @spawn.call(command(args), chdir:, in: File::NULL, out: [log, "a"], err: [log, "a"], pgroup: true)
+        rescue SystemCallError
+          0
+        end
 
         def command(args) = [@ruby, File.expand_path(@program), *args]
 

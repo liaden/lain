@@ -23,6 +23,11 @@ module Lain
           def self.hold(**) = yield
         end
 
+        # A home no drainer start was recorded in, for a drainer built by hand.
+        module Unrecorded
+          def self.drainer_holds(_pid) = nil
+        end
+
         # The repository's main worktree is the root of the config read, the
         # journal written and the verify tree reused, whichever checkout
         # started the drainer.
@@ -42,7 +47,7 @@ module Lain
           home = Home.for(repo_root: root, branch:, shell_out_factory:)
           isolation = config.isolation
           journal_path = File.join(paths.sessions_dir(project: paths.project_hash(root)), ::Lain::Journal.stem)
-          new(lock: home.drain_lock, branch:, spool: Spool.new(home), isolation:,
+          new(lock: home.drain_lock, branch:, spool: Spool.new(home), isolation:, home:,
               journal: -> { ::Lain::Journal.open(journal_path) },
               verify: Verifier.from(isolation, paths:, shell_out_factory:, notice:),
               queue_for: queues(root, branch, isolation, paths, shell_out_factory),
@@ -71,10 +76,12 @@ module Lain
         # @param sleeper [#call] waits between tries while another process holds the lock
         # @param interval [Numeric] seconds between those tries, {FileLock}'s own default
         # @param notice [#call] told when git cannot say whether an entry is superseded
+        # @param home [#drainer_holds] told this process's pid once it holds the lock
         def initialize(lock:, branch:, spool:, isolation:, journal:, verify:, queue_for:, git:,
                        clock: RunClock::MONOTONIC, wall_clock: -> { Time.now },
-                       sleeper: Kernel.method(:sleep), interval: 0.05, notice: ParentLock::Silent)
+                       sleeper: Kernel.method(:sleep), interval: 0.05, notice: ParentLock::Silent, home: Unrecorded)
           @lock = lock
+          @home = home
           @branch = branch
           @spool = spool
           @isolation = isolation
@@ -106,7 +113,10 @@ module Lain
         private
 
         def turn(journal, total)
-          took = @lock.try { total = batches(journal, total) }
+          took = @lock.try do
+            @home.drainer_holds(Process.pid)
+            total = batches(journal, total)
+          end
           @sleeper.call(@interval) unless took
           total
         end

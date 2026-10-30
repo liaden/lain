@@ -17,6 +17,10 @@ module Lain
       # How long a queued entry may go without a live drainer before {#wait} gives up on one.
       NO_DRAINER_AFTER = 5
 
+      # How long a started drainer that has not yet taken the lock counts as live,
+      # so a reused pid or a drainer stuck in boot still ends in "no drainer".
+      BOOT_WINDOW = 60
+
       # EPERM means the process exists under another user.
       ALIVE = lambda do |pid|
         Process.kill(0, pid)
@@ -89,8 +93,9 @@ module Lain
       # @param branch [String, nil] the branch it was queued for; the main worktree's when nil
       # @param timeout [Numeric, nil] seconds to wait; forever when nil
       # @return [Integer] 0 when the work is on the branch, 1 when it is not, 2 on
-      #   timeout, 3 when no live process has held the drain lock for 5 seconds
-      #   (a drainer still booting can be reported so), and 130 on
+      #   timeout, 3 when for 5 seconds no live process has held the drain lock
+      #   and no drainer started for the branch in the last 60 seconds is
+      #   alive, so at most about 65 seconds after the last start, and 130 on
       #   Ctrl-C, the shell's code for a SIGINT, as every other interrupted lain
       #   command answers
       # @raise [Lain::Error] when the id is not one the spool mints, or the
@@ -221,7 +226,7 @@ module Lain
         until result || expired?(deadline) || @clock.call - attended >= NO_DRAINER_AFTER
           @sleeper.call(POLL)
           result = spool.result(id)
-          attended = @clock.call if live_holder(home)
+          attended = @clock.call if live_holder(home) || booting?(home)
         end
         result
       end
@@ -244,6 +249,8 @@ module Lain
         holder = home.drain_lock.holder
         holder unless holder.empty? || !@alive.call(holder_pid(holder))
       end
+
+      def booting?(home) = home.booting_drainer?(now: @wall_clock.call, window: BOOT_WINDOW, alive: @alive)
 
       def expired?(deadline) = !deadline.nil? && @clock.call >= deadline
 
@@ -288,11 +295,14 @@ module Lain
       # mtime is when that holder took it.
       def holder_line(home)
         holder = home.drain_lock.holder
+        return held_line(home, holder) if live_holder(home)
+        return "a drainer is starting and has not taken the lock yet" if booting?(home)
         return "no drainer running" if holder.empty?
 
-        pid = holder_pid(holder)
-        return "no drainer running; a stale holder line from pid #{pid} was left" unless @alive.call(pid)
+        "no drainer running; a stale holder line from pid #{holder_pid(holder)} was left"
+      end
 
+      def held_line(home, holder)
         held = [(@wall_clock.call - File.mtime(File.join(home.dir, "drain.lock"))).to_i, 0].max
         "drain lock held by #{holder} for #{held}s"
       end

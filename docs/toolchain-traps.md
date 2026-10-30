@@ -377,12 +377,6 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   against its bound of 4 in a pre-commit suite at load 20, and was green 3 of 3 on the same seed on both
   the base and the change. A second repeat makes it a card, not a list entry.
 
-  Added 2026-10-30, both checks of 1 e2e journey red together in a pre-commit suite (seed 59949), the
-  lease reporting "no drainer" where the chat's commit should have landed: `draining one chore through a
-  lease, a headless chat and lain land lands the chat's commit on the main branch` and `... marks the
-  chore done with the landed sha and the session path`. Green 3 of 3 alone, and green on seed 59949 on
-  both the base and the change.
-
   Added 2026-10-06, a wall-clock example red under a load average of about 12 (agents running specs
   beside a suite) and green alone each time: `a chat whose terminal is gone ends at its prompt once
   the terminal is closed`. The walk-budget example that was on this list is retired below.
@@ -512,6 +506,12 @@ Unproven; counting only the example's own thread would settle it.
 
   **Retired, with the fix that ended each.** Keep a retired name here so a later red under it reads
   as a regression, not as a known flake.
+  - 2026-10-30: `draining one chore through a lease, a headless chat and lain land lands the chat's commit
+    on the main branch` and `... marks the chore done with the landed sha and the session path` (both red
+    together on 2026-10-29 at load 26 and on 2026-10-30, seed 59949, the chore marked "no drainer").
+    Likely cause, not reproduced under added load: `lain land wait` gave up after 5s with
+    no live drain lock holder, and a drainer still booting under load holds none yet. The enqueue now
+    records the started drainer's pid in the home, and a live one counts for up to 60s of boot.
   - 2026-10-30: `the repository is not a spec fixture has no example generated from a scan of repository
     content` (watchdog STUCK at 30s on 2026-10-28 twice, 2026-10-29 and 2026-10-30, about 16 s of CPU at load
     20 or more). The scanner now skips the syntax walk for a file whose text cannot hold the shape, and walks

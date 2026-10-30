@@ -30,7 +30,8 @@ RSpec.describe Lain::CLI::Land, :seam do
 
   let(:paths) { Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => @state, "XDG_STATE_HOME" => @state }) }
   let(:spawned) { [] }
-  let(:recording) { ->(argv, **options) { spawned << [argv, options] } }
+  # A pid above the kernel's ceiling, so no process can ever answer to it.
+  let(:recording) { ->(argv, **options) { (spawned << [argv, options]).size + 4_194_304 } }
   let(:program) { "/opt/lain/exe/lain" }
   let(:spawner) { Lain::Isolation::MergeCoordinator::Spawner.new(spawn: recording, program:) }
   let(:sink) { StringIO.new }
@@ -107,7 +108,7 @@ RSpec.describe Lain::CLI::Land, :seam do
       free = nil
       spawn = lambda do |argv, **options|
         free = home.drain_lock.try { nil }
-        spawned << [argv, options]
+        recording.call(argv, **options)
       end
 
       land(spawner: Lain::Isolation::MergeCoordinator::Spawner.new(spawn:, program:)).enqueue(branch: "main")
@@ -411,9 +412,9 @@ RSpec.describe Lain::CLI::Land, :seam do
   end
 
   describe "#wait with no drainer" do
-    def ticking
+    def ticking(since: Time.now)
       now = 0.0
-      { clock: -> { now }, sleeper: ->(seconds) { now += seconds } }
+      { clock: -> { now }, sleeper: ->(seconds) { now += seconds }, wall_clock: -> { since + now } }
     end
 
     def dead_pid
@@ -437,6 +438,37 @@ RSpec.describe Lain::CLI::Land, :seam do
 
       expect(land(**ticking).wait(entry.id, branch: "main")).to eq(3)
       expect(sink.string).to include("pid #{pid}", "lain land drain --branch main")
+    end
+
+    it "keeps waiting while the drainer its enqueue started is alive but has not taken the lock yet" do
+      booting = land.queued(branch: "main")
+      alive = ->(pid) { pid == 4_194_305 }
+
+      expect(land(**ticking, alive:).wait(booting.id, branch: "main", timeout: 20)).to eq(2)
+    end
+
+    it "answers 3 once the drainer its enqueue started has died without taking the lock" do
+      orphaned = land.queued(branch: "main")
+
+      expect(land(**ticking, alive: ->(_) { false }).wait(orphaned.id, branch: "main", timeout: 20)).to eq(3)
+    end
+
+    it "answers 3 once a started drainer has stayed alive past the boot window without taking the lock" do
+      stuck = land.queued(branch: "main")
+      alive = ->(pid) { pid == 4_194_305 }
+
+      expect(land(**ticking, alive:).wait(stuck.id, branch: "main", timeout: 1000)).to eq(3)
+    end
+
+    it "answers 3 at once when a started drainer's pid, reused by another process, was recorded long ago" do
+      reused = land.queued(branch: "main")
+      alive = ->(pid) { pid == 4_194_305 }
+
+      clocks = ticking(since: Time.now + 3600)
+
+      expect(land(**clocks, alive:).wait(reused.id, branch: "main", timeout: 1000)).to eq(3)
+      expect(clocks.fetch(:clock).call).to be < described_class::BOOT_WINDOW
+      expect(sink.string).to include(reused.id, "no drainer")
     end
 
     it "keeps waiting while a live drainer holds the lock" do
@@ -507,6 +539,15 @@ RSpec.describe Lain::CLI::Land, :seam do
 
       expect(said).to include("nothing queued", "no drainer running")
       expect(said).not_to include("held by")
+    end
+
+    it "says a drainer is starting while the one its enqueue started has not taken the lock yet" do
+      land.queued(branch: "main")
+
+      said = land(alive: ->(pid) { pid == 4_194_305 }).status(branch: "main")
+
+      expect(said).to include("a drainer is starting and has not taken the lock yet")
+      expect(said).not_to include("no drainer running")
     end
 
     it "takes a pid it may not signal for a live one" do
