@@ -13,9 +13,6 @@ module Lain
       FENCE = /\A\s*```/
       GLYPH = "•"
       NEWLINE = "\n"
-      # Newline and tab are layout; every other control byte, ESC included,
-      # would reach the terminal as a command from the model.
-      CONTROL = /[[:cntrl:]&&[^\n\t]]/
 
       # @param text [String]
       # @param prose [Symbol] the token for words with no markup, so a reply
@@ -23,13 +20,7 @@ module Lain
       # @return [Lain::Renderable] the words without their markers, each run
       #   under its construct's token; fence lines are dropped
       def self.segments(text, prose: Renderable::PLAIN)
-        fenced = false
-        lines = text.to_s.split(NEWLINE, -1).map { |line| safe(line) }.filter_map do |line|
-          fenced = !fenced if line.match?(FENCE)
-          next if line.match?(FENCE)
-
-          fenced ? Renderable.new.with(:code, line) : line_segments(line, prose)
-        end
+        lines = body_lines(text, prose)
         lines.each_with_index.inject(Renderable.new) do |all, (line, index)|
           (index.zero? ? all : all.plain(NEWLINE)) + line
         end
@@ -51,7 +42,17 @@ module Lain
         rows.each_index.select { |index| rows[index].any? && rows[index].all?(:code) }
       end
 
-      def self.safe(line) = line.chomp("\r").gsub(CONTROL) { |char| char.dump[1..-2] }
+      def self.body_lines(text, prose)
+        fenced = false
+        marked = text.to_s.split(NEWLINE, -1).map { |line| safe(line) }
+                     .map { |line| [line, line.match?(FENCE), fenced ^= line.match?(FENCE)] }
+        marked.reject { |_, fence, _| fence }
+              .map { |line, _, inside| inside ? Renderable.new.with(:code, line) : line_segments(line, prose) }
+      end
+      private_class_method :body_lines
+
+      # Newline and tab are layout; any other control byte would reach the terminal as a command from the model.
+      def self.safe(line) = Utf8.escaped(line.chomp("\r"), keep: "\n\t")
       private_class_method :safe
 
       def self.line_segments(line, prose)

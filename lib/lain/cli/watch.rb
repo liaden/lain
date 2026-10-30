@@ -294,8 +294,7 @@ module Lain
 
         # The record keeps the whole message; the mark is one escaped line.
         def glanced(reason)
-          line = reason.lines.first.to_s.chomp.truncate(REASON_WIDTH)
-          line.gsub(/[[:cntrl:]]/) { |char| char.dump[1..-2] }
+          Utf8.escaped(reason.lines.first.to_s.chomp.truncate(REASON_WIDTH))
         end
 
         # A one-shot that answered writes the same "stopped" mark a killed one

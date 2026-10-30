@@ -228,7 +228,7 @@ module Lain
       end
 
       # A path is the command's to choose, and a newline in it would start a line of its own.
-      def printable(path) = Utf8.legible(path).gsub(/[[:cntrl:]]/) { _1.inspect[1..-2] }
+      def printable(path) = Utf8.escaped(path)
 
       def granted(profile, confinement)
         return [] unless profile.confined?

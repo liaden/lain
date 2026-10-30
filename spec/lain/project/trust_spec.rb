@@ -272,6 +272,27 @@ RSpec.describe Lain::Project::Trust do
     end
   end
 
+  describe ".legible" do
+    it "escapes the invisible format characters a name could hide behind" do
+      expect(described_class.legible("a\u200Bb\u200Ec")).to eq("a\\u200Bb\\u200Ec")
+    end
+
+    it "keeps a newline" do
+      expect(described_class.legible("one\ntwo")).to eq("one\ntwo")
+    end
+  end
+
+  describe "a file name holding a joined emoji" do
+    it "reaches the refusal with the joiner unescaped" do
+      name = "\u{1F468}\u200D\u{1F469}.rb"
+      root = project("app", name => "one\n")
+
+      expect { trust_for(root).require! }.to raise_error(described_class::Untrusted) { |error|
+        expect(error.message).to include(name)
+      }
+    end
+  end
+
   describe "what cannot be read" do
     # A Lain::Error, so the launch renders it; its own class, because no
     # trust decision was made and `lain trust` would not help.

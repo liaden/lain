@@ -484,7 +484,7 @@ module Lain
 
       # The human's own bytes, said back: a control character they typed ahead
       # -- a Ctrl-D, a paste bracket -- is shown rather than sent to the screen.
-      def legible(text) = text.gsub(/[[:cntrl:]]/) { |char| char.dump[1..-2] }
+      def legible(text) = Utf8.escaped(text)
 
       def legible_lines(text) = text.split("\n", -1).map { |row| legible(row) }
 
@@ -1037,7 +1037,7 @@ module Lain
         # Scrubbed first: a note can carry a file name, whose bytes nothing
         # promises are UTF-8, and every pattern below raises on invalid ones.
         def literal(note)
-          note.to_s.scrub[0, LIMIT].gsub(/[[:cntrl:]]/) { |char| char.dump[1..-2] }.gsub("#", "##").gsub("%", "%%")
+          Utf8.escaped(note.to_s.scrub[0, LIMIT]).gsub("#", "##").gsub("%", "%%")
         end
       end
 

@@ -22,5 +22,9 @@ module Lain
         super(**Carriers::EditApplied.settle!(path:, removed: removed.map(&:to_s), added: added.map(&:to_s), hidden:))
       end
     end
+
+    class EditApplied
+      WIDTH = 80
+    end
   end
 end

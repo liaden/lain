@@ -42,4 +42,44 @@ RSpec.describe Lain::Utf8 do
       expect(described_class.legible(nil)).to eq("")
     end
   end
+
+  describe ".escaped" do
+    it "makes an escape and a bidi override visible" do
+      escaped = described_class.escaped("\e[2J\u202Eevil")
+
+      expect(escaped).to eq("\\e[2J\\u202Eevil")
+      expect(escaped.size).to eq(15)
+    end
+
+    it "dumps the marks that reorder text without a bidi override" do
+      expect(described_class.escaped("\u200E\u200F\u061C")).to eq("\\u200E\\u200F\\u061C")
+    end
+
+    it "dumps a C1 control" do
+      expect(described_class.escaped("a\u0085b")).to eq("a\\u0085b")
+    end
+
+    it "leaves the characters named in keep" do
+      expect(described_class.escaped("a\tb\nc\e", keep: "\n\t")).to eq("a\tb\nc\\e")
+    end
+
+    it "leaves a joined emoji and a flag whole" do
+      joined = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}\u{1F1EB}\u{1F1F7}"
+
+      expect(described_class.escaped(joined)).to eq(joined)
+    end
+
+    it "scrubs invalid bytes first" do
+      expect(described_class.escaped("a\xFF\e".b)).to eq("a\u{FFFD}\\e")
+    end
+  end
+
+  describe "the one escaper" do
+    it "is the only place in lib that dumps a control character" do
+      root = File.expand_path("../../lib", __dir__)
+      files = Dir[File.join(root, "**", "*.rb")].select { File.read(_1).match?(/gsub.*(dump|inspect)\[1\.\.-2\]/) }
+
+      expect(files.map { _1.delete_prefix("#{root}/") }).to eq(["lain/utf8.rb"])
+    end
+  end
 end

@@ -27,5 +27,16 @@ module Lain
     def legible(bytes, replacement = nil)
       bytes.to_s.dup.force_encoding(Encoding::UTF_8).scrub(replacement)
     end
+
+    # The controls that move a cursor or reorder text. Not all of `\p{Cf}`: U+200D joins an emoji.
+    MOVING = /[\p{Cc}\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/
+
+    # @param text [#to_s]
+    # @param keep [String] characters left as they are, such as a newline
+    # @param also [Regexp] further characters to write out, beyond {MOVING}
+    # @return [String] scrubbed, every {MOVING} or `also` character outside `keep` written out as its escape
+    def escaped(text, keep: "", also: MOVING)
+      legible(text).gsub(Regexp.union(MOVING, also)) { |char| keep.include?(char) ? char : char.dump[1..-2] }
+    end
   end
 end

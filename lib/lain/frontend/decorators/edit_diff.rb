@@ -7,7 +7,6 @@ module Lain
       # added line behind a `+`, and a count of what the tool cut off.
       class EditDiff
         LIMIT = 20
-        WIDTH = 80
 
         def initialize(event) = @event = event
 
@@ -27,9 +26,7 @@ module Lain
 
         private
 
-        def painted(theme, token, sign, lines) = lines.map { |line| theme.paint(token, "#{sign}#{legible(line)}") }
-
-        def legible(line) = line.gsub(/[[:cntrl:]]/) { |char| char.dump[1..-2] }
+        def painted(theme, token, sign, lines) = lines.map { |line| theme.paint(token, "#{sign}#{Utf8.escaped(line)}") }
 
         def footer = (["… #{@event.hidden} more lines"] if @event.hidden.positive?)
       end

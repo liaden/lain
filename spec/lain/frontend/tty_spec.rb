@@ -113,6 +113,17 @@ RSpec.describe Lain::Frontend::TTY do
     end
   end
 
+  describe "a reply holding joined characters" do
+    it "reaches the terminal with a joined emoji and a flag unchanged" do
+      joined = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467} \u{1F1EB}\u{1F1F7}"
+      channel.push(Lain::Telemetry::AssistantText.new(text: joined))
+
+      tty.drain_and_render
+
+      expect(output.string).to include(joined)
+    end
+  end
+
   describe "#run" do
     it "enters the alternate screen before yielding and restores it after" do
       tty.run { channel.close }

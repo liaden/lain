@@ -556,7 +556,7 @@ RSpec.describe Lain::Tools::EditFile do
     it "bounds a one megabyte line" do
       applied = edit("a", "x" * (1024 * 1024), contents: "a\n")
 
-      expect(applied.added.first.size).to be <= Lain::Frontend::Decorators::EditDiff::WIDTH
+      expect(applied.added.first.size).to eq(80)
     end
 
     it "shows nothing for an edit that was refused" do

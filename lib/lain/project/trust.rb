@@ -44,13 +44,12 @@ module Lain
       # A `.lain/*.rb` or a mark that could not be read, so no answer is possible.
       class Unreadable < Error; end
 
-      # Every control and format character but a newline, so a name or a body
-      # can neither redraw the terminal nor reorder a line with a bidi override.
-      HIDDEN = /[\p{Cc}\p{Cf}&&[^\n]]/
+      # Every format character but the joiner, which keeps an emoji whole; a zero-width one could pass off a name.
+      INVISIBLE = /[\p{Cf}&&[^\u200D]]/
 
       # @param text [String] anything headed for a human's terminal
-      # @return [String] the text with every {HIDDEN} character escaped
-      def self.legible(text) = text.scrub.gsub(HIDDEN) { |char| char.dump[1..-2] }
+      # @return [String] the text with every control and format character but a newline and the joiner escaped
+      def self.legible(text) = Utf8.escaped(text, keep: "\n", also: INVISIBLE)
 
       # A mark is one file per trusted digest, whose body is that digest.
       #

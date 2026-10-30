@@ -154,7 +154,7 @@ module Lain
       def shown_lines(text, invocation)
         secrets = Sensitivity::Secrets::Source::DEFAULT.for(invocation&.context)
         Sensitivity::TextMask.new(secrets:).call(text).text.lines(chomp: true)
-                             .map { |line| line.truncate(Frontend::Decorators::EditDiff::WIDTH) }
+                             .map { |line| line.truncate(Telemetry::EditApplied::WIDTH) }
       end
 
       # `String#scan` counts NON-overlapping matches, which would call "aa" in

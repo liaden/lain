@@ -72,6 +72,12 @@ RSpec.describe Lain::Frontend::Markdown do
       expect(pairs("a\tb")).to eq([[:plain, "a\tb"]])
     end
 
+    it "keeps the newline and tab of a code line while dumping an escape" do
+      segments = described_class.segments("```\na\tb\e\n```\n")
+
+      expect(segments.text).to eq("a\tb\\e\n")
+    end
+
     it "carries no carriage return from CRLF line ends" do
       segments = described_class.segments("## Plan\r\n- one\r\n```\r\ncode\r\n```\r\nend\r\n")
 
