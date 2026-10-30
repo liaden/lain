@@ -26,12 +26,7 @@ module Lain
       # @return [Keys]
       # @raise [Refusal] for an unknown key, or a name the line editor cannot bind
       def self.from(table, path:)
-        table = {} if table.nil?
-        raise Refusal.not_a_table(table, path:, table: TABLE) unless table.is_a?(Hash)
-
-        unknown = table.keys - KEYS
-        raise Refusal.unknown_keys(unknown, known: KEYS, path:, table: TABLE) unless unknown.empty?
-
+        table = Table.read(table, path:, name: TABLE, keys: KEYS)
         settings = DEFAULTS.merge(table)
         settings.each { |key, value| check!(key, value, path:, declared: table.key?(key)) }
         new(**settings.transform_keys(&:to_sym))

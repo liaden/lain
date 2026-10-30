@@ -20,4 +20,10 @@ RSpec.describe Lain::Config::Todos do
         .to raise_error(Lain::Config::Refusal, /file must be a bare file name/)
     end
   end
+
+  it "refuses a non-table, naming the table and the file's line" do
+    expect { described_class.from("x", path: "/p/config.rb:1") }
+      .to raise_error(Lain::Config::Refusal,
+                      %r{`todos`.*must be a table.*/p/config.rb:1|/p/config.rb:1.*`todos`.*must be a table}m)
+  end
 end

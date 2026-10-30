@@ -69,4 +69,10 @@ RSpec.describe Lain::Config::Keys do
         .to raise_error(Lain::Config::Refusal, %r{\A/u/config\.rb:5: .*S-Tab is held by .*inputrc})
     end
   end
+
+  it "refuses a non-table, naming the table and the file's line" do
+    expect { described_class.from("x", path: "/u/config.rb:1") }
+      .to raise_error(Lain::Config::Refusal,
+                      %r{`keys`.*must be a table.*/u/config.rb:1|/u/config.rb:1.*`keys`.*must be a table}m)
+  end
 end

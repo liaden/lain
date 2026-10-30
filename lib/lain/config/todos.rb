@@ -15,12 +15,7 @@ module Lain
       # @return [Todos]
       # @raise [Refusal] for an unknown key, or a file that is not a bare name
       def self.from(table, path:)
-        table = {} if table.nil?
-        raise Refusal.not_a_table(table, path:, table: TABLE) unless table.is_a?(Hash)
-
-        unknown = table.keys - KEYS
-        raise Refusal.unknown_keys(unknown, known: KEYS, path:, table: TABLE) unless unknown.empty?
-
+        table = Table.read(table, path:, name: TABLE, keys: KEYS)
         file = table.fetch("file", DEFAULT)
         unless bare?(file)
           raise Refusal.new("file must be a bare file name, got #{file.inspect}", path:, table: TABLE, key: "file",

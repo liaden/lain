@@ -15,9 +15,7 @@ module Lain
       # @return [Theme] every token, the declared ones recoloured
       # @raise [Refusal] for an unknown token, or a style Pastel cannot apply
       def self.from(table, path:)
-        table = {} if table.nil?
-        raise Refusal.not_a_table(table, path:, table: TABLE) unless table.is_a?(Hash)
-
+        table = Table.read(table, path:, name: TABLE, keys: nil)
         refuse_unknown_tokens(table.keys - defaults.keys.map(&:to_s), path:)
         declared = table.to_h { |token, styles| [token.to_sym, styles_of(token, styles, path:)] }
         new(tokens: defaults.merge(declared).freeze)
