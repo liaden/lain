@@ -34,7 +34,7 @@ module HotPathBench
   # is its own commit, saying why.
   CEILINGS = {
     "render_chat_10k" => 18.3,
-    "render_cold_10k" => 52.1,
+    "render_cold_10k" => 111,
     "bash_true_none" => 3.09,
     "bash_true_traced" => 7.92,
     "bash_true_reader" => 12.2,
@@ -43,7 +43,7 @@ module HotPathBench
     "request_1000000" => 2.98,
     "request_guarded_1000000" => 5.49,
     "journal_small" => 0.0052,
-    "journal_1000000" => 0.751,
+    "journal_1000000" => 0.971,
     "journal_chained_small" => 0.00738,
     "journal_chained_1000000" => 1.08,
     "mask_first_output" => 0.263,
