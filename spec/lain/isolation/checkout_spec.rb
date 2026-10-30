@@ -312,4 +312,19 @@ RSpec.describe Lain::Isolation::Checkout, :seam do
       expect(Lain::Shell::Out.ok?(checkout.fold_in(@dir, "0" * 40))).to be(false)
     end
   end
+
+  describe "#fold_in!" do
+    let(:boom) { Class.new(StandardError) }
+
+    it "answers the shell of a commit it already holds" do
+      shell = checkout.fold_in!("/nonexistent", run_git("rev-parse", "HEAD"), error: boom)
+
+      expect(Lain::Shell::Out.ok?(shell)).to be(true)
+    end
+
+    it "raises the caller's error naming the commit and the source when the fetch fails" do
+      expect { checkout.fold_in!(@dir, "0" * 40, error: boom) }
+        .to raise_error(boom, /\A#{"0" * 40} could not be fetched from #{Regexp.escape(@dir)}: .+/)
+    end
+  end
 end

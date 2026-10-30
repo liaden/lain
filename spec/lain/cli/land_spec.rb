@@ -204,6 +204,16 @@ RSpec.describe Lain::CLI::Land, :seam do
         expect(git(@repo, "rev-parse", ref_for("chore-3"))).to eq(clone_head)
       end
 
+      it "raises the CLI error naming the commit and the clone when the fetch is refused" do
+        tree = git(clone, "rev-parse", "HEAD^{tree}")
+        bad = SeedRepo.git(clone, "hash-object", "-t", "commit", "--literally", "-w", "--stdin",
+                           input: "tree #{tree}\nauthor n 0 +0000\ncommitter n 0 +0000\n\nbad\n").stdout.strip
+        git(clone, "update-ref", "refs/heads/bad", bad)
+
+        expect { land(cwd: clone).queued("refs/heads/bad", id: "chore-3") }
+          .to raise_error(Lain::Error, /\A#{bad} could not be fetched from #{Regexp.escape(clone)}: /)
+      end
+
       it "refuses a clone whose git dir holds a planted name, and queues nothing" do
         File.write(File.join(clone, ".git", "commondir"), "../evil\n")
 

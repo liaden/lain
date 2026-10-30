@@ -97,6 +97,17 @@ RSpec.describe Lain::Isolation::Worktree, :seam do
                         process_table: Lain::Isolation::LeaseLock::ProcessTable.new(pid: dead_pid))
   end
 
+  describe Lain::Isolation::Worktree::Anchorage do
+    it "raises Unwritten naming the commit and the source when the commit cannot be fetched" do
+      entry = Struct.new(:head, :path).new("0" * 40, @repo_root)
+      anchorage = described_class.new(repo_root: @repo_root, shell_out_factory: Lain::Shell::Out.public_method(:new))
+
+      expect { anchorage.keep(entry, reason: "r") }
+        .to raise_error(described_class::Unwritten,
+                        /\A#{"0" * 40} could not be fetched from #{Regexp.escape(@repo_root)}: .+/)
+    end
+  end
+
   describe "the lease lock" do
     it "locks every checkout it adds, naming this process, its start time and this host" do
       lease = backend.acquire("worker-1")

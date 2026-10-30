@@ -831,6 +831,25 @@ RSpec.describe Lain::Isolation::Gc, :seam do
       expect(record.anchors.size).to eq(2)
     end
 
+    it "keeps an expired clone and names the commit and the source when upstream cannot fetch it" do
+      dir = clones.acquire("w1").worker_env.cwd
+      head = clone_commit(dir, "work.txt")
+      failing = lambda do |*argv, **kwargs|
+        if argv.include?("fetch")
+          Lain::Shell::Out.new("sh", "-c",
+                               "echo nope >&2; exit 1")
+        else
+          Lain::Shell::Out.new(*argv, **kwargs)
+        end
+      end
+
+      records = gc(at: now + (8 * day), shell_out_factory: failing)
+      record = record_for(records, dir)
+
+      expect([record.action, File.exist?(dir), record.reason])
+        .to eq([:kept, true, "expired, but left on disk: #{head} could not be fetched from #{dir}: nope"])
+    end
+
     it "keeps the live pin of a lease under another root of the same repository" do
       other = Lain::Isolation::Clone.new(repo_root: @repo_root, root: "#{@root}-other", base: branch("main"))
       live = other.acquire("w1")

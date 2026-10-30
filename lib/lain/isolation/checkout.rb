@@ -168,6 +168,19 @@ module Lain
             pins: ["transfer.fsckObjects=true"])
       end
 
+      # {#fold_in} for the caller that cannot go on without the commit.
+      # @param source [String] as for {#fold_in}
+      # @param commit [String] as for {#fold_in}
+      # @param error [Class] raised when the commit cannot be fetched, so each caller keeps its own refusal
+      # @return [Shell::Out]
+      # @raise [Class] `error`
+      def fold_in!(source, commit, error:)
+        folded = fold_in(source, commit)
+        return folded if Shell::Out.ok?(folded)
+
+        raise error, "#{commit} could not be fetched from #{source}: #{folded.stderr.strip}"
+      end
+
       # `-z`, because the default output runs every path through
       # `core.quotePath`: a conflict on `föö.txt` is reported as
       # `"f\303\266\303\266.txt"`, which no resolver can open and no `git add

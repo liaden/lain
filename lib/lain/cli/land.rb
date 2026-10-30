@@ -192,8 +192,7 @@ module Lain
       end
 
       def folded!(home, sha)
-        fold = home.fold_in(Isolation::Clone::Guard.enclosing(@cwd) || @cwd, sha)
-        raise Error, "could not fetch #{sha} from #{@cwd}: #{fold.stderr.strip}" unless Shell::Out.ok?(fold)
+        home.fold_in!(Isolation::Clone::Guard.enclosing(@cwd) || @cwd, sha, error: Error)
       end
 
       def write!(checkout, anchor, sha, held)

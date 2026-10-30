@@ -28,6 +28,28 @@ RSpec.describe Lain::Isolation::Worktree::Handback::Retirement do
     end
   end
 
+  describe Lain::Isolation::Worktree::Handback::Retirement::Anchor, :seam do
+    it "fails the outcome with SelfSync::Failed naming the commit and the source when the fetch fails" do
+      Dir.mktmpdir("lain-retire-repo") do |repo|
+        FileUtils.cp_r("#{SeedRepo.at({ "README" => "seed\n" })}/.", repo)
+        unknown = "0" * 40
+        head = Struct.new(:exitstatus, :stdout, :stderr) do
+          def run_command = self
+        end.new(0, "#{unknown}\n", "")
+        factory = ->(*argv, **kwargs) { argv.include?("rev-parse") ? head : Lain::Shell::Out.new(*argv, **kwargs) }
+        base = instance_double(Lain::Isolation::WorkingBranch, name: "", tip: "")
+        anchor = described_class.new(parent: Lain::Isolation::Checkout.new(repo), base:, shell_out_factory: factory)
+        lease = Struct.new(:worker_env).new(Struct.new(:cwd).new(repo))
+
+        outcome = anchor.anchor(lease, worker_id: "w", from: nil)
+
+        sentence = "#{unknown} could not be fetched from #{Regexp.escape(repo)}: .+"
+        expect([outcome.kind, outcome.detail])
+          .to match([:failed, /\ALain::Isolation::SelfSync::Failed: #{sentence}/])
+      end
+    end
+  end
+
   describe Lain::Isolation::Worktree::Handback::Retirement::Null do
     it "answers the whole duck with nothing synced and nothing anchored" do
       env = Lain::WorkerEnv.new(cwd: "/leased/checkout", env: {})

@@ -124,8 +124,8 @@ module Lain
         def tip(ref) = @git.target(ref)
 
         # A shared clone's commit is in its own store until fetched here.
-        # @return [Shell::Out]
-        def fold(source, commit) = @git.fold_in(source, commit)
+        # @raise [Unanchored] when the commit cannot be fetched
+        def fold(source, commit) = @git.fold_in!(source, commit, error: Unanchored)
 
         # Against the branch by its full name: a tag of the trunk's name would
         # otherwise win git's disambiguation.
@@ -362,8 +362,7 @@ module Lain
         # Named for the checkout, the kind of work and the commit, so a rerun
         # over the same checkout names the same ref rather than a second one.
         def anchor(path, kind, commit)
-          fetched = @repo.fold(path, commit)
-          raise Unanchored, "#{commit} could not be fetched from #{path}" unless Shell::Out.ok?(fetched)
+          @repo.fold(path, commit)
 
           Worktree::Handback::Naming.new("gc #{File.basename(path)} #{kind} #{commit}").ref
                                     .tap { |ref| @repo.anchor(ref, commit, reason: ANCHORED) }

@@ -28,9 +28,7 @@ module Lain
           commit = entry.head
           return "" if commit.empty?
 
-          folded = @repo.fold_in(entry.path, commit)
-          raise Unwritten, "#{commit} could not be fetched from #{entry.path}: #{folded.stderr.strip}" unless
-            Shell::Out.ok?(folded)
+          @repo.fold_in!(entry.path, commit, error: Unwritten)
           return "" if reached?(commit)
 
           ref = Handback::Naming.new("#{File.basename(entry.path)} #{commit}").ref

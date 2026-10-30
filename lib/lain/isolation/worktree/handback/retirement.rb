@@ -105,13 +105,7 @@ module Lain
               head = Checkout.of(dir, shell_out_factory: @shell_out_factory).head
               raise SelfSync::Failed, "git rev-parse HEAD failed in #{dir}" unless Shell::Out.ok?(head)
 
-              head.stdout.strip.tap { |commit| fold(dir, commit) }
-            end
-
-            def fold(dir, commit)
-              folded = @parent.fold_in(dir, commit)
-              raise SelfSync::Failed, "git fetch #{commit} from #{dir} failed: #{folded.stderr.strip}" unless
-                Shell::Out.ok?(folded)
+              head.stdout.strip.tap { |commit| @parent.fold_in!(dir, commit, error: SelfSync::Failed) }
             end
 
             # Everything the worker has, its working branch already has.
