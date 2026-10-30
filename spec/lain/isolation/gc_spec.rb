@@ -991,4 +991,17 @@ RSpec.describe Lain::Isolation::Gc, :seam do
     expect(journal).to eq(records)
     expect(journal).to all(be_a(Lain::Telemetry::WorktreeReap))
   end
+
+  describe Lain::Isolation::Worktree::Leftover do
+    it "names a held leftover as its registry's label at its path" do
+      lock = instance_double(Lain::Isolation::LeaseLock::Retained, held?: true, why: "a live process")
+      entry = Struct.new(:path, :lock).new("/work/a", lock)
+      registry = instance_double(Lain::Isolation::Worktree::Registry, label: "git worktree",
+                                                                      entries: [entry], interrupted: "")
+      leftover = described_class.new(registry:, root: "/work", process_table: nil, clock: -> { Time.now })
+
+      expect { leftover.clear("/work/a") }
+        .to raise_error(Lain::Isolation::Worktree::Refused, "git worktree at /work/a is held: a live process")
+    end
+  end
 end

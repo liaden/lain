@@ -93,7 +93,7 @@ module Lain
         # a {#claim} stop the removal, and for a clone kept for a human.
         def remove(path)
           return Done.refused("#{path} is locked") if File.exist?(lock_file(path))
-          return Done.refused(Tampered.new(found: Guard.tampered(path)).why(nil)) if tampered?(path)
+          return Done.refused(Tampered.refusal(Guard.tampered(path))) if tampered?(path)
 
           FileUtils.rm_rf(path)
           FileUtils.rm_f(Guard.record(path))

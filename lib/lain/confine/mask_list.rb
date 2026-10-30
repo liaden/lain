@@ -391,7 +391,7 @@ module Lain
         # names runs, and a clone lain cut is read only through its own git dir.
         def git(*, **)
           Isolation::Checkout.of(@root, shell_out_factory: @shell_out)
-                             .run(*, timeout: TIMEOUT, pins: FileWalk::FSMONITOR_OFF, **)
+                             .run(*, timeout: TIMEOUT, pins: Isolation::Checkout::FSMONITOR_OFF, **)
         end
       end
       private_constant :Tree

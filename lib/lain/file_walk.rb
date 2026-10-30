@@ -23,7 +23,6 @@ module Lain
 
     # Seconds one `git` may take; a child that outlives it reads as "no repository".
     GIT_TIMEOUT = 10
-    FSMONITOR_OFF = ["core.fsmonitor=false"].freeze
 
     NUL = "\0"
 
@@ -172,7 +171,7 @@ module Lain
     # config is whatever a sandboxed call wrote there, so no listing runs the fsmonitor it names.
     def git(dir, *argv)
       shell = Isolation::Checkout.of(dir, shell_out_factory: @shell_out_factory)
-                                 .run(*argv, timeout: GIT_TIMEOUT, pins: FSMONITOR_OFF)
+                                 .run(*argv, timeout: GIT_TIMEOUT, pins: Isolation::Checkout::FSMONITOR_OFF)
       shell.stdout if Shell::Out.ok?(shell)
     rescue Shell::Out::Timeout, SystemCallError
       nil

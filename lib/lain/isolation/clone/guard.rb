@@ -76,7 +76,7 @@ module Lain
         # @return [String] why lain runs no git there, or "" when nothing stops it
         def self.refusal(path)
           found = cut?(path) ? tampered(path) : []
-          found.empty? ? "" : Tampered.new(found:).why(nil)
+          found.empty? ? "" : Tampered.refusal(found)
         end
 
         # @param dir [String] any directory, a clone lain cut or one inside it included

@@ -16,6 +16,10 @@ module Lain
       # cannot check for itself.
       CONFLICTED = /^<<<<<<< .*^=======$.*^>>>>>>> /m
 
+      # A repository's own config can name a program as `core.fsmonitor`; every call into a tree a sandbox wrote to
+      # pins it off.
+      FSMONITOR_OFF = ["core.fsmonitor=false"].freeze
+
       # What a step that is not a git command answers, read as a shell is.
       Done = Data.define(:exitstatus, :stdout, :stderr) do
         def self.ok = new(exitstatus: 0, stdout: "", stderr: "")

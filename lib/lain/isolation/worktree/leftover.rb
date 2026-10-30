@@ -47,11 +47,13 @@ module Lain
 
         private
 
+        def named(entry) = "#{@registry.label} at #{entry.path}"
+
         def move_aside(entry)
           refuse_held(entry)
           unless @registry.claim(entry)
             raise Refused,
-                  "#{@registry.label} at #{entry.path} changed while it was cleared"
+                  "#{named(entry)} changed while it was cleared"
           end
           return drop(entry) unless File.directory?(entry.path)
 
@@ -61,12 +63,12 @@ module Lain
 
         def refuse_held(entry)
           interrupted = @registry.interrupted(entry.path)
-          raise Refused, "#{@registry.label} at #{entry.path} is held: #{interrupted}" unless interrupted.empty?
+          raise Refused, "#{named(entry)} is held: #{interrupted}" unless interrupted.empty?
 
           lock = entry.lock
           return unless lock.held?(@process_table)
 
-          raise Refused, "#{@registry.label} at #{entry.path} is held: #{lock.why(@process_table)}"
+          raise Refused, "#{named(entry)} is held: #{lock.why(@process_table)}"
         end
 
         # The directory is gone but git still records its HEAD, which may be
@@ -78,7 +80,7 @@ module Lain
           raise Refused.from_git("remove", entry.path, shell, label: @registry.label) unless Shell::Out.ok?(shell)
         rescue Anchorage::Unwritten => e
           raise Refused,
-                "#{@registry.label} at #{entry.path} still holds a commit that could not be anchored: #{e.message}"
+                "#{named(entry)} still holds a commit that could not be anchored: #{e.message}"
         end
 
         # Anchored first, so a HEAD no ref reaches is never left the commit's
@@ -89,9 +91,9 @@ module Lain
           return if Shell::Out.ok?(shell)
 
           raise Refused,
-                "#{@registry.label} at #{entry.path} could not be detached from #{entry.branch}: #{shell.stderr.strip}"
+                "#{named(entry)} could not be detached from #{entry.branch}: #{shell.stderr.strip}"
         rescue Anchorage::Unwritten => e
-          raise Refused, "#{@registry.label} at #{entry.path} holds a commit that could not be anchored: #{e.message}"
+          raise Refused, "#{named(entry)} holds a commit that could not be anchored: #{e.message}"
         end
 
         def relocate(path, retention)

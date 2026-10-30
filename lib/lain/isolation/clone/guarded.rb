@@ -13,14 +13,14 @@ module Lain
         # @param shell_out_factory [#call]
         def initialize(dir, clone:, shell_out_factory:)
           git = File.join(clone, ".git")
-          super(dir, shell_out_factory:, pins: ["core.fsmonitor=false"],
+          super(dir, shell_out_factory:, pins: FSMONITOR_OFF,
                      env: { "GIT_DIR" => git, "GIT_COMMON_DIR" => git, "GIT_WORK_TREE" => clone })
           @clone = clone
         end
 
         def run(*, **)
           found = Guard.tampered(@clone)
-          found.empty? ? super : Checkout::Done.refused(Tampered.new(found:).why(nil))
+          found.empty? ? super : Checkout::Done.refused(Tampered.refusal(found))
         end
       end
     end

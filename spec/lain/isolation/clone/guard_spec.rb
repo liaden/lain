@@ -72,4 +72,23 @@ RSpec.describe Lain::Isolation::Clone::Guard, :seam do
       expect(described_class.upstream(clone)).to be_nil
     end
   end
+
+  describe "a tampered clone's refusal" do
+    it "is one sentence whether a guarded checkout, the registry or the guard is asked" do
+      main = seeded(File.join(@base, "main"))
+      clone = cut(main)
+      FileUtils.mkdir_p(File.join(clone, ".git", "worktrees"))
+      registry = Lain::Isolation::Clone::Registry.new(repo_root: main, root: File.dirname(clone),
+                                                      shell_out_factory: Lain::Shell::Out.public_method(:new))
+
+      registry.unlock(clone)
+
+      sentences = [described_class.checkout(clone, shell_out_factory: Lain::Shell::Out.public_method(:new))
+                                  .run("status").stderr,
+                   registry.remove(clone).stderr,
+                   described_class.refusal(clone)]
+
+      expect(sentences.uniq).to eq(["git dir holds worktrees; lain runs no git here, so a human must look"])
+    end
+  end
 end

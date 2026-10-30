@@ -6,6 +6,10 @@ module Lain
       # A clone's lock as lain reads it once the clone was tampered with: held
       # against everything, whatever its lock file says.
       Tampered = Data.define(:found) do
+        # @param found [Array<String>] the planted names
+        # @return [String] the sentence every refusal of a tampered clone carries
+        def self.refusal(found) = new(found:).why(nil)
+
         def held?(_table) = true
 
         def abandoned?(_table) = false
