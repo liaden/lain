@@ -517,8 +517,10 @@ module Lain
       # @param effect [Lain::Effect] any effect at all; the question is total
       #   over the vocabulary, so no caller guards on kind first
       # @param cwd [String] absolute; the call's own base, see {Session.cwd_of}
+      # @param named [Shell::Named, nil] accepted so a caller holding a confined policy's parse can pass it here too
       # @return [Denial, nil] nil when nothing here refuses
-      def denial(effect, cwd:, **)
+      def denial(effect, cwd:, named: nil)
+        _ = named
         call = self.class.unwrapped(effect)
         # {.path_in} reads `effect.name`, which a {Effect::ModelCall} has not
         # got. Without this guard the boundary raises NoMethodError on the

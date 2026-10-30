@@ -1383,3 +1383,27 @@ RSpec.describe Lain::Sensitivity::Policy do
     end
   end
 end
+
+RSpec.describe "the sensitivity policy contract" do
+  let(:contract_sensitivity) do
+    Lain::Sensitivity.new(home: "/home/tester", cwd: "/home/tester/project", rules: Lain::Sensitivity::Rules.empty)
+  end
+
+  context "with Policy" do
+    include_examples "a sensitivity policy", lacks: %i[roots policy outside?],
+                                             policy_factory: -> { Lain::Sensitivity::Policy.new(sensitivity: contract_sensitivity) }
+  end
+
+  context "with Confined" do
+    include_examples "a sensitivity policy",
+                     own: %i[roots policy outside?],
+                     policy_factory: lambda {
+                       Lain::Sensitivity::Policy.new(sensitivity: contract_sensitivity).confined(roots: [Dir.pwd])
+                     }
+  end
+
+  context "with Null" do
+    include_examples "a sensitivity policy", swallows: true, lacks: %i[roots policy outside?],
+                                             policy_factory: -> { Lain::Sensitivity::Policy::Null.instance }
+  end
+end
