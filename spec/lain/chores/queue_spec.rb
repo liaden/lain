@@ -237,6 +237,25 @@ RSpec.describe Lain::Chores::Queue, :seam do
     expect(File.read(real)).to include("- [~] fix the thing")
   end
 
+  it "keeps the mode of a symlinked chore file's target through a claim" do
+    real = File.join(dir, "real.md")
+    File.rename(file, real)
+    File.chmod(0o640, real)
+    File.symlink(real, file)
+    queue.claim(queue.open.first)
+
+    expect([File.symlink?(file), File.stat(real).mode & 0o777]).to eq([true, 0o640])
+  end
+
+  it "parses each line once" do
+    File.write(file, (1..50).map { |n| "- [ ] chore #{n}\n" }.join)
+    allow(Lain::Chores::Item).to receive(:parse).and_call_original
+
+    queue.items
+
+    expect(Lain::Chores::Item).to have_received(:parse).exactly(50).times
+  end
+
   it "names a file that is not valid UTF-8" do
     File.binwrite(file, "- [ ] caf\xE9\n")
 
@@ -265,6 +284,21 @@ RSpec.describe Lain::Chores::Queue, :seam do
       queue.append("three")
 
       expect(File.binread(file)).to eq("- [ ] one\r\n- [ ] two\r\n- [ ] three\r\n")
+    end
+
+    it "leaves the old bytes and no scratch file when the rename is refused" do
+      allow(File).to receive(:rename).and_raise(Errno::EACCES)
+
+      expect { queue.append("two") }.to raise_error(Errno::EACCES)
+      expect([File.read(file), Dir.children(dir).grep(/\.partial\z/)]).to eq([body, []])
+    end
+
+    it "creates the chore file when it is missing" do
+      File.delete(file)
+
+      queue.append("first")
+
+      expect(File.read(file)).to eq("- [ ] first\n")
     end
 
     it "refuses text that would read back as a note" do

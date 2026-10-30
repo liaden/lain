@@ -86,7 +86,7 @@ module Lain
           existing = File.exist?(@path) ? File.binread(@path) : ""
           eol = existing[/\r?\n/] || "\n"
           lead = existing.empty? || existing.end_with?("\n") ? "" : eol
-          File.open(@path, "ab") { |file| file.write("#{lead}#{line}#{eol}") }
+          land("#{existing}#{lead}#{line}#{eol}".b)
           line
         end
       end
@@ -100,13 +100,15 @@ module Lain
         File.readlines(@path, encoding: "UTF-8").map do |line|
           raise Unreadable, @path unless line.valid_encoding?
 
-          [line, Item.parse(line, ordinal: ordinal_of(line, seen))]
+          [line, numbered(line, seen)]
         end
       end
 
-      def ordinal_of(line, seen)
-        text = Item.parse(line)&.text
-        text && ((seen[text] += 1) - 1)
+      def numbered(line, seen)
+        Item.parse(line)&.then do |found|
+          ordinal = (seen[found.text] += 1) - 1
+          ordinal.zero? ? found : Item.parse(line, ordinal:)
+        end
       end
 
       def judged(item)
@@ -133,21 +135,17 @@ module Lain
           raise Taken, item unless index
 
           result, text = yield judged(lines[index].last)
-          save(lines.each_with_index.map { |(line, _), at| at == index ? text + line[/\r?\n\z/].to_s : line })
+          land(lines.each_with_index.map { |(line, _), at| at == index ? text + line[/\r?\n\z/].to_s : line }.join)
           result
         end
       end
 
       # The link's target is replaced, so a symlinked chore file stays a link.
-      def save(lines)
+      def land(bytes)
+        return AtomicFile.write(@path, bytes) unless File.exist?(@path)
+
         target = File.realpath(@path)
-        temp = "#{target}.lain-#{Process.pid}"
-        File.write(temp, lines.join)
-        File.chmod(File.stat(target).mode & 0o777, temp)
-        File.rename(temp, target)
-      rescue SystemCallError
-        FileUtils.rm_f(temp) if temp
-        raise
+        AtomicFile.write(target, bytes, mode: File.stat(target).mode & 0o777)
       end
     end
   end
