@@ -993,7 +993,8 @@ RSpec.describe Lain::SessionRecord::Replay do
       it "refuses a read record that carries no span, as a corrupt session record" do
         spanless = [{ "type" => "session_read", "path" => "/tmp/old.rb", "identity" => {}, "tool_use_id" => nil }]
 
-        expect { replayed_session(spanless) }.to raise_error(Lain::Bench::Session::Corrupt, /"lines"/)
+        expect { replayed_session(spanless) }
+          .to raise_error(Lain::Bench::Session::Corrupt, /session_read .*missing keywords: :lines/)
       end
     end
 

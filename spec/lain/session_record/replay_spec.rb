@@ -346,24 +346,25 @@ RSpec.describe Lain::SessionRecord::Replay do
       bogus = journal_io.string.each_line.map { |line| JSON.parse(line).merge("lines" => [0, nil]) }
 
       expect { described_class.new(bogus).session(on: empty_chain) }
-        .to raise_error(Lain::Bench::Session::Corrupt, /session_read record .* cannot be rebuilt.*lines must be/)
+        .to raise_error(Lain::Bench::Session::Corrupt, /cannot be rebuilt: session_read .*lines must be/)
     end
 
-    # Every session file written before reads carried spans holds this shape.
-    # It does not resume -- but it is refused as the damage it is, which both
+    # A record of ours missing its fields is refused as the damage it is, which both
     # doors turn into "cannot resume <file>", never a raw KeyError.
-    it "refuses a read record written before reads carried spans, as a corrupt session record" do
+    it "refuses a read record that carries no span, as a corrupt session record" do
       old = [{ "type" => "session_read", "path" => "/tmp/a.rb", "complete" => true }]
+      named = Regexp.escape('record 0 of the resume chain, counting from 0 ("/tmp/a.rb"), ')
 
       expect { described_class.new(old).session(on: empty_chain) }
-        .to raise_error(Lain::Bench::Session::Corrupt, /before reads carried line spans/)
+        .to raise_error(Lain::Bench::Session::Corrupt, /\A#{named}cannot be rebuilt: session_read .*lines/)
     end
 
     it "refuses a withheld-round marker that names no round, as a corrupt session record" do
       unbuildable = [{ "type" => "session_read_withheld", "rounds" => [["h", nil]] }]
 
       expect { described_class.new(unbuildable).session(on: empty_chain) }
-        .to raise_error(Lain::Bench::Session::Corrupt, /session_read_withheld record cannot be rebuilt/)
+        .to raise_error(Lain::Bench::Session::Corrupt,
+                        /\Arecord 0 of the resume chain, counting from 0, cannot be rebuilt: session_read_withheld/)
     end
 
     it "refuses a read record whose file version cannot be rebuilt, as a corrupt session record" do
@@ -528,6 +529,39 @@ RSpec.describe Lain::SessionRecord::Replay do
       again = described_class.new(lines).session(on: delivered)
 
       expect([resumed.on_chain(delivered).read?(file("b")), again.read?(file("b"))]).to eq([true, true])
+    end
+
+    it "resumes past foreign lines with no type, still counting a delivered read" do
+      session = Lain::Session.new(journal:)
+      asked = asking(root, 0)
+      [root, asked].each { |turn| journal << Lain::SessionRecord.turn(turn.head) }
+      session.on_chain(asked)
+      session.record_read(file("a"), tool_use_id: "ollama-tool-0")
+      delivered = answering(asked)
+      journal << Lain::SessionRecord.turn(delivered.head)
+      lines = journal_io.string.lines.flat_map { |line| [line, "{\"foo\":1}\n", "not json\n", "[1,2]\n"] }
+
+      expect(described_class.new(lines).session(on: delivered).read?(file("a"))).to be(true)
+    end
+
+    # A later process never delivers an earlier one's round, so a header ends every round still open,
+    # even when the next file's first turn answers the same call on the same head.
+    it "withholds an open read at the next session header, though a later turn answers its call" do
+      session = Lain::Session.new(journal:)
+      asked = asking(root, 0)
+      [root, asked].each { |turn| journal << Lain::SessionRecord.turn(turn.head) }
+      session.on_chain(asked)
+      session.record_read(file("a"), tool_use_id: "ollama-tool-0")
+      before_header = journal_io.string.lines
+      delivered = answering(asked)
+      delivering = "#{JSON.generate(Lain::SessionRecord.turn(delivered.head))}\n"
+      headed = [*before_header, "#{JSON.generate(header(asked.head_digest))}\n", delivering]
+
+      replayed = [[*before_header, delivering], headed].map do |lines|
+        described_class.new(lines).session(on: delivered).read?(file("a"))
+      end
+
+      expect(replayed).to eq([true, false])
     end
 
     # A round on head A that commits nothing, then the byte-identical A
@@ -830,6 +864,79 @@ RSpec.describe Lain::SessionRecord::Replay do
 
     it "restores no labels from a record that has none" do
       expect(restored.labels).to eq({})
+    end
+  end
+
+  describe "a session record read as typed values" do
+    fixtures = File.expand_path("../../fixtures/sessions", __dir__)
+    digest = "blake3:#{"a" * 64}"
+    identity = { "device" => 1, "inode" => 2, "mtime" => 3, "size" => 4 }
+    header = Lain::Telemetry::Untyped.new(fields: { "type" => "session" })
+    turn = Lain::Telemetry::Untyped.new(fields: { "type" => "turn", "digest" => digest, "parent" => nil,
+                                                  "content" => [{ "type" => "text", "text" => "näive" }] })
+    read = Lain::Telemetry::SessionRead.new(path: "/tmp/ü.rb", lines: [1, nil], identity:, tool_use_id: nil, head: nil)
+    todos = Lain::Telemetry::Untyped.new(fields: { "type" => "todo_snapshot", "head" => digest,
+                                                   "todos" => [{ "content" => "café", "status" => "pending" }] })
+    cut = Lain::Telemetry::CompactionCut.new(digest:, head: digest, strategy: "eager", kind: "advance", parent: nil,
+                                             supersedes: [], plan_step_completions: 0,
+                                             collapses: [{ "span" => [digest, digest], "content" => [] }])
+    population = lambda do
+      [[header, read, turn, Lain::Telemetry::SessionPin.new(digest:, pinned: true)],
+       [Lain::Telemetry::SessionPin.new(digest:, pinned: true), Lain::Telemetry::SessionPin.new(digest:, pinned: false),
+        Lain::Telemetry::TurnLabeled.new(digest:, label: "x"), Lain::Telemetry::TurnLabeled.new(digest:, label: "")],
+       [Lain::Telemetry::SourceMasked.new(tool_use_id: "t", kind: :file, key: "/tmp/.env", regions: 1), todos],
+       [Lain::Telemetry::SessionReadWithheld.new(rounds: [[nil, "tu_1"]]), cut]]
+    end
+
+    %i[Reads Pins Labels Todos Cuts WithheldSources].each do |name|
+      describe "its #{name} projection" do
+        include_examples "an incremental fold", projection: described_class.const_get(name), population:
+      end
+    end
+
+    it "parses each line once, for every projection and the memory view together" do
+      Lain::Session.new(journal:).record_read("/tmp/a.rb").record_pin(digest).record_label(digest, "x")
+      parses = 0
+      lines = journal_io.string.each_line.map do |line|
+        line.dup.tap { |counted| counted.define_singleton_method(:to_s) { (parses += 1) && super() } }
+      end
+      walks = 0
+      entries = Enumerator.new { |out| (walks += 1) && lines.each { |line| out << line } }
+
+      replay = described_class.new(entries)
+      replay.session(on: empty_chain)
+      replay.memory
+
+      expect([walks, parses]).to eq([1, lines.size])
+    end
+
+    it "refuses a record of its own that will not rebuild, naming its type and index" do
+      torn = Lain::Telemetry::AskSettled.new(head: digest, stop_reason: "end_turn", turns: 2, seconds: 1.5)
+                                        .to_journal.except("head")
+
+      expect { described_class.new([{ "type" => "session" }, torn]).session(on: empty_chain) }
+        .to raise_error(Lain::Bench::Session::Corrupt,
+                        /\Arecord 1 of the resume chain, counting from 0, cannot be rebuilt: ask_settled .*head/)
+    end
+
+    it "resumes a recorded approval session, its approval and escalation records carried whole" do
+      lines = File.readlines(File.join(fixtures, "approval_replay", "ask.ndjson"))
+      types = lines.map { |line| JSON.parse(line).fetch("type") }
+
+      resumed = described_class.new(lines).session(on: Lain::Bench::Session.load(lines).timeline)
+
+      expect(types).to include("approval_decision", "escalation")
+      expect(resumed.withheld?(Lain::Session::Withheld::Source.file("/home/user/project/.env"))).to be(true)
+    end
+
+    it "reads every committed session fixture at the current format" do
+      replayed = Dir[File.join(fixtures, "*", "*.ndjson")].map do |fixture|
+        lines = File.readlines(fixture)
+        [Lain::SessionRecord.current_format?(JSON.parse(lines.first)),
+         described_class.new(lines).session(on: Lain::Bench::Session.load(lines).timeline)]
+      end
+
+      expect(replayed).to all(match([true, an_instance_of(Lain::Session)])).and(have_attributes(size: 5))
     end
   end
 end

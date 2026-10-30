@@ -29,21 +29,18 @@ module Lain
     # {Bench::Session::MemoryReplay} reconstructs a {Memory::Index} from, and
     # that index is what {Session}'s `memory:` wants.
     #
+    # Every line is read once, through {Telemetry.read}, and the typed records
+    # are folded once through the six projections below; the raw records go to
+    # the memory replay, which reads them as written. A record of ours that will
+    # not rebuild refuses the resume as {Bench::Session::Corrupt}: a torn record
+    # of our own is damage, where a foreign one comes back whole and is ignored.
+    #
     # A record type with zero occurrences replays to that type's neutral state
     # (no reads, no todo reminder, an empty manifest) -- the tolerant
     # zero-record precedent {Bench::Session::MemoryReplay} itself sets.
     class Replay
-      SESSION_READ_TYPE = "session_read"
-      SESSION_READ_WITHHELD_TYPE = "session_read_withheld"
-      SOURCE_MASKED_TYPE = "source_masked"
-      SESSION_PIN_TYPE = "session_pin"
-      TURN_LABELED_TYPE = "turn_labeled"
-      TODO_SNAPSHOT_TYPE = "todo_snapshot"
       COMPACTION_CUT_TYPE = "compaction_cut"
-      CUT_FIELDS = Telemetry::CompactionCut.members.freeze
-      READ_FIELDS = Telemetry::SessionRead.members.map(&:to_s).freeze
-      SOURCE_MASKED_FIELDS = Telemetry::SourceMasked.members.freeze
-      private_constant :CUT_FIELDS, :READ_FIELDS, :SOURCE_MASKED_FIELDS
+      TODO_SNAPSHOT_TYPE = "todo_snapshot"
 
       # A private value satisfying {Session#write_todos}'s
       # `#content`/`#status` duck: {Tools::TodoWrite}'s own Item is
@@ -52,11 +49,117 @@ module Lain
       Todo = Data.define(:content, :status)
       private_constant :Todo
 
-      # @param entries [Enumerable<Hash, String>] the {Journal.parse} duck --
-      #   a String is one raw NDJSON line, a Hash is already-parsed; foreign
-      #   entries (somebody else's records) are skipped, not raised on
+      # The records a projection keeps, in the order they were folded, for a Session that must take
+      # them in that order. A list of pairs, newest first, so a step shares the list it extends: an
+      # Array copied per step is quadratic in a session's turns.
+      class Log < Journal::Projection
+        # @return [Log]
+        def self.unit = new(nil)
+
+        # @param record [Telemetry::Journalable, Telemetry::Untyped]
+        # @return [Log] self for a record this log does not keep
+        def step(record) = keeps?(record) ? self.class.new([record, state]) : self
+
+        # @return [Array<Telemetry::Journalable, Telemetry::Untyped>] oldest first
+        def value
+          Enumerator.produce(state, &:last).take_while(&:itself).map(&:first).reverse.freeze
+        end
+      end
+
+      # What the model has seen of each file, and on which chain: the reads, the rounds the live
+      # session withheld, and the turns and headers that deliver or withhold them.
+      class Reads < Log
+        BOUNDARIES = [SessionRecord::TURN_TYPE, SessionRecord::HEADER_TYPE].freeze
+
+        private
+
+        def keeps?(record)
+          case record
+          when Telemetry::SessionRead, Telemetry::SessionReadWithheld then true
+          when Telemetry::Untyped then BOUNDARIES.include?(record["type"])
+          else false
+          end
+        end
+      end
+
+      # Every list, each at the head it was written at.
+      class Todos < Log
+        private
+
+        def keeps?(record) = record.is_a?(Telemetry::Untyped) && record["type"] == TODO_SNAPSHOT_TYPE
+      end
+
+      # Every committed cut, the superseded ones included, parent before child.
+      class Cuts < Log
+        private
+
+        def keeps?(record) = record.is_a?(Telemetry::CompactionCut)
+      end
+
+      # The pinned digests: the stream is a log of transitions, so the last one for a digest wins.
+      class Pins < Journal::Projection
+        # @return [Pins]
+        def self.unit = new({})
+
+        # @param record [Telemetry::Journalable, Telemetry::Untyped]
+        # @return [Pins]
+        def step(record)
+          return self unless record.is_a?(Telemetry::SessionPin)
+
+          self.class.new(record.pinned ? state.merge(record.digest => true) : state.except(record.digest))
+        end
+
+        # @return [Array<String>]
+        def value = state.keys
+      end
+
+      # Each labeled turn's label, by digest; an empty label clears.
+      class Labels < Journal::Projection
+        # @return [Labels]
+        def self.unit = new({})
+
+        # @param record [Telemetry::Journalable, Telemetry::Untyped]
+        # @return [Labels]
+        def step(record)
+          return self unless record.is_a?(Telemetry::TurnLabeled)
+
+          self.class.new(record.label.empty? ? state.except(record.digest) : state.merge(record.digest => record.label))
+        end
+      end
+
+      # A masked source replays from {Telemetry::SourceMasked}, NOT from a
+      # `session_read` line, and that is the only shape available:
+      # `record_read` by construction cannot reach the masked set, so a
+      # `session_read` line would replay to a read and quietly permit the write
+      # that a mask exists to refuse. Both are add-only, so order against the reads does not matter.
+      class WithheldSources < Journal::Projection
+        # @return [WithheldSources]
+        def self.unit = new({})
+
+        # @param record [Telemetry::Journalable, Telemetry::Untyped]
+        # @return [WithheldSources]
+        def step(record)
+          return self unless record.is_a?(Telemetry::SourceMasked)
+
+          self.class.new(state.merge(Session::Withheld::Source.new(kind: record.kind, key: record.key) => true))
+        end
+
+        # @return [Array<Session::Withheld::Source>]
+        def value = state.keys
+      end
+
+      PROJECTIONS = { reads: Reads, pins: Pins, labels: Labels, todos: Todos, cuts: Cuts,
+                      withheld: WithheldSources }.freeze
+      private_constant :PROJECTIONS
+
+      # @param entries [Enumerable<Hash, String>] the {Journal.parse} duck, walked once -- a
+      #   String is one raw NDJSON line, a Hash is already parsed; a line that does not parse
+      #   is somebody else's and skipped
+      # @raise [Bench::Session::Corrupt] for a record of our own that will not rebuild
       def initialize(entries)
-        @records = entries.to_a
+        @records = Journal.records(entries).to_a.freeze
+        @folded = Journal::Projections.of(**PROJECTIONS.transform_values(&:unit))
+                                      .over(@records.each_with_index.lazy.map { |record, index| typed(record, index) })
       end
 
       # The recorded memory view is attached last: placing the todo lists on
@@ -93,10 +196,21 @@ module Lain
       #
       # @return [Memory::Recorder]
       def memory
-        @memory ||= built_from(Bench::Session::MemoryReplay.new(records: Journal.records(@records)))
+        @memory ||= built_from(Bench::Session::MemoryReplay.new(records: @records))
       end
 
       private
+
+      def typed(record, index)
+        Telemetry.read(record)
+      rescue Telemetry::Unreadable => e
+        raise Bench::Session::Corrupt, "record #{index} of the resume chain, counting from 0#{naming(record)}, " \
+                                       "cannot be rebuilt: #{e.message}"
+      end
+
+      def naming(record) = record.key?("path") ? " (#{record["path"].inspect})" : ""
+
+      def projected(key) = @folded[key].value
 
       # The SEED rides along, not just the folded index: a caller holding a
       # chain shorter than the recorded one -- a `/fork` below a memory_write --
@@ -107,10 +221,6 @@ module Lain
         Memory::Recorder.new(index: replay.recorded_memory.index, loaded: replay.loaded)
       end
 
-      # The read-set is THREE record types, folded together here because they
-      # rebuild one thing: what the model has seen of each file, and on which
-      # chain.
-      #
       # A read binds to the first turn after it whose parent is the head its
       # round opened on and whose results answer its call -- the pair a live
       # session binds by, so a reused call id, a repair written late or a file
@@ -119,52 +229,43 @@ module Lain
       # landed, and is withheld: where the live session recorded withholding it,
       # at the end of the record, and at each session header a resume chain
       # carries, since no later process delivers an earlier one's round.
-      #
-      # A record this cannot rebuild -- one written before reads carried spans,
-      # or a damaged one -- refuses the resume as {Bench::Session::Corrupt},
-      # which both doors turn into "cannot resume <file>".
       def restore_reads(fresh)
-        Journal.records(@records).each { |record| restore_read(fresh, record) }
+        projected(:reads).each { |record| restore_read(fresh, record) }
         fresh.withhold_undelivered
         # A known limit: a child's guard journals into this same record, and
         # nothing on a mask says whose read it was, so a child's masked read
         # resumes as the parent's. It fails closed -- the parent is refused a
         # write over a file the child saw masked.
-        withheld_sources.each { |source| fresh.record_withheld(source) }
+        projected(:withheld).each { |source| fresh.record_withheld(source) }
       end
 
       def restore_read(fresh, record)
-        case record["type"]
-        when SESSION_READ_TYPE then fresh.record_read(record.fetch("path"), **read_fields(record))
-        when SESSION_READ_WITHHELD_TYPE then fresh.withhold_rounds(withheld_rounds(record))
-        when SessionRecord::TURN_TYPE then fresh.record_delivery(**delivery_fields(record))
-        when SessionRecord::HEADER_TYPE then fresh.withhold_undelivered
+        case record
+        when Telemetry::SessionRead then fresh.record_read(record.path, **read_fields(record))
+        when Telemetry::SessionReadWithheld then fresh.withhold_rounds(record.rounds)
+        else restore_boundary(fresh, record)
         end
       end
 
-      def withheld_rounds(record)
-        Telemetry::SessionReadWithheld.new(rounds: record.fetch("rounds")).rounds
-      rescue KeyError, ArgumentError => e
-        raise Bench::Session::Corrupt, "a session_read_withheld record cannot be rebuilt (#{e.message})"
+      def restore_boundary(fresh, record)
+        return fresh.withhold_undelivered unless record["type"] == SessionRecord::TURN_TYPE
+
+        fresh.record_delivery(**%w[digest parent content].to_h { |key| [key.to_sym, record.fields.fetch(key)] })
       end
 
-      def delivery_fields(record)
-        { digest: record.fetch("digest"), parent: record.fetch("parent"), content: record.fetch("content") }
+      def read_fields(read)
+        { lines: read.lines.first..read.lines.last, tool_use_id: read.tool_use_id, head: read.head,
+          identity: Session::FileIdentity.new(**read.identity.to_h { |key, value| [key.to_sym, value] }) }
       end
 
-      def restore_pins(fresh) = pins.each { |record| apply_pin(fresh, record) }
+      def restore_pins(fresh) = projected(:pins).each { |digest| fresh.record_pin(digest) }
 
-      # File order, so the last record for a digest wins and an empty label clears.
-      def restore_labels(fresh)
-        Journal.records(@records, type: TURN_LABELED_TYPE).each do |record|
-          fresh.record_label(record.fetch("digest"), record.fetch("label"))
-        end
-      end
+      def restore_labels(fresh) = projected(:labels).each { |digest, label| fresh.record_label(digest, label) }
 
       # Every list is written again at the head it was recorded at, so a later
       # rewind finds each list where the live session held it.
       def restore_todos(fresh, chain)
-        placed_todos.each { |record, head| fresh.on_chain(placed_on(chain, head)).write_todos(items(record)) }
+        projected(:todos).each { |record| fresh.on_chain(placed_on(chain, headed(record))).write_todos(items(record)) }
         fresh.rewound_to(chain)
       end
 
@@ -180,14 +281,23 @@ module Lain
         "a todo_snapshot record names head #{head.inspect}, which this session record never wrote"
       end
 
+      def headed(record)
+        record.fields.fetch("head") { raise Bench::Session::Corrupt, "a todo_snapshot record carries no head" }
+      end
+
+      def items(record)
+        record.fields.fetch("todos").map do |todo|
+          Todo.new(content: todo.fetch("content"), status: todo.fetch("status"))
+        end
+      end
+
       # Recorded order puts every parent ahead of its child, and the Session
       # refuses a child whose parent it has not folded -- so a truncated record
       # fails here, loudly, instead of resuming onto a seam with a hole in it.
       # As {Bench::Session::Corrupt}, because that is the damage it is, and the
       # refusal resume and fork already turn into "cannot resume <file>".
       def restore_cuts(fresh)
-        Journal.records(@records, type: COMPACTION_CUT_TYPE).each do |record|
-          cut = Telemetry::CompactionCut.new(**cut_fields(record))
+        projected(:cuts).each do |cut|
           superseded(fresh, cut)
           fresh.record_compaction_cut(cut)
         end
@@ -208,84 +318,6 @@ module Lain
           raise Bench::Session::Corrupt, "the compaction_cut at #{cut.digest} supersedes #{address}, which is " \
                                          "not a cut this session record holds"
         end
-      end
-
-      def cut_fields(record)
-        CUT_FIELDS.to_h { |field| [field, record.fetch(field.to_s)] }
-      end
-
-      # A masked source replays from {Telemetry::SourceMasked}, NOT from a
-      # `session_read` line, and that is the only shape available:
-      # `record_read` by construction cannot reach the masked set, so a
-      # `session_read` line would replay to a read and quietly permit the write
-      # that a mask exists to refuse. The record is already written by
-      # {Middleware::RedactSecretReads} into this same journal.
-      #
-      # Order against the reads does not matter: both are add-only and
-      # {Session#record_withheld} is idempotent, so a mask folded before or
-      # after its own `session_read` lands on the same state.
-      def withheld_sources
-        Journal.records(@records, type: SOURCE_MASKED_TYPE).map { |record| withheld_source(record) }
-      end
-
-      def withheld_source(record)
-        masked = Telemetry::SourceMasked.new(**SOURCE_MASKED_FIELDS.to_h { |field| [field, record.fetch(field.to_s)] })
-        Session::Withheld::Source.new(kind: masked.kind, key: masked.key)
-      rescue KeyError, ArgumentError => e
-        raise Bench::Session::Corrupt, "a source_masked record cannot be rebuilt (#{e.message})"
-      end
-
-      # Every field is fetched, and the span is rebuilt through the writer's
-      # own guard: a salvaged or hand-edited journal is exactly what these
-      # records must survive, and a span read loosely rebuilds as more of the
-      # file than the model saw. Loud beats plausible.
-      def read_fields(record)
-        settled = Telemetry::SessionRead.new(**READ_FIELDS.to_h { |field| [field.to_sym, record.fetch(field)] })
-        { lines: settled.lines.first..settled.lines.last, tool_use_id: settled.tool_use_id, head: settled.head,
-          identity: Session::FileIdentity.new(**settled.identity.to_h { |key, value| [key.to_sym, value] }) }
-      rescue KeyError, ArgumentError => e
-        raise Bench::Session::Corrupt, "a session_read record for #{record["path"].inspect} cannot be rebuilt " \
-                                       "(#{e.message}); a record written before reads carried line spans, " \
-                                       "or a damaged one, cannot say what the model saw of the file"
-      end
-
-      def pins
-        Journal.records(@records, type: SESSION_PIN_TYPE)
-      end
-
-      # RECORDED ORDER is the whole contract: a `session_pin` stream is an
-      # ordered log of transitions, so folding it in file order makes the last
-      # transition for a digest win -- which is how a pin-then-unpin rebuilds
-      # as NOT pinned rather than as a stale pin nothing can retract.
-      #
-      # The direction is read as a STRICT boolean, matching what
-      # {Telemetry::Carriers::SessionPin} enforces on the way out. Folding by
-      # truthiness instead would trust more than the writer ever promised:
-      # `"pinned": "false"` would rebuild as PINNED and `null` as an unpin, and
-      # a salvaged or hand-edited journal is exactly the input this record type
-      # exists to survive. Loud beats plausible.
-      def apply_pin(fresh, record)
-        digest = record.fetch("digest")
-        direction = record.fetch("pinned")
-        unless [true, false].include?(direction)
-          raise Error, "session_pin for #{digest.inspect} must carry pinned true or false, " \
-                       "got #{direction.inspect}"
-        end
-
-        direction ? fresh.record_pin(digest) : fresh.record_unpin(digest)
-      end
-
-      def placed_todos
-        Journal.records(@records).select { |record| record["type"] == TODO_SNAPSHOT_TYPE }
-               .map { |record| [record, headed(record)] }
-      end
-
-      def headed(record)
-        record.fetch("head") { raise Bench::Session::Corrupt, "a todo_snapshot record carries no head" }
-      end
-
-      def items(record)
-        record.fetch("todos").map { |todo| Todo.new(content: todo.fetch("content"), status: todo.fetch("status")) }
       end
     end
   end

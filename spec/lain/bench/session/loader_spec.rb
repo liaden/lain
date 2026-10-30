@@ -383,6 +383,12 @@ RSpec.describe Lain::Bench::Session::Loader do
         .to raise_error(Lain::Bench::Session::Corrupt, /format 1.*format #{Lain::SessionRecord::FORMAT}/o)
     end
 
+    it "refuses a format 3 file, saying it reads format 4" do
+      records = forge("session") { |header| header["format"] = 3 }
+      expect { described_class.new(records).recording }
+        .to raise_error(Lain::Bench::Session::Corrupt, /records format 3; this loader reads format 4/)
+    end
+
     %w[compact_schedule extra].each do |key|
       it "raises Corrupt naming #{key} when a stamped header lacks it" do
         records = forge("session") { |header| header.delete(key) }

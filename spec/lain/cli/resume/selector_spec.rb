@@ -208,6 +208,14 @@ RSpec.describe Lain::CLI::Resume::Selector do
         .to raise_error(Lain::CLI::Resume::Refusal, /is recording another session format/)
     end
 
+    it "refuses a format-3 file, whose records were read by type and skipped when they would not rebuild" do
+      formatted("20260728T090000-222.ndjson", 3, at: "2026-07-28T09:00:00Z")
+
+      expect { selector.call("20260728T090000-222.ndjson") }
+        .to raise_error(Lain::CLI::Resume::Refusal,
+                        /20260728T090000-222\.ndjson is recording another session format, not 4/)
+    end
+
     it "is refused when named exactly, saying it records another one" do
       formatted("20260728T090000-222.ndjson", "2", at: "2026-07-28T09:00:00Z")
 

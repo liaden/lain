@@ -27,8 +27,10 @@ module Lain
     # current format lacks it: compact_schedule became required without a bump
     # because no format-1 file without it survived the state purge. Format 3
     # requires the provenance block and the run profile's provider, which a
-    # format-2 file may lack.
-    FORMAT = 3
+    # format-2 file may lack. Format 4 reads every record back through
+    # {Telemetry.read}, so a record of ours that will not rebuild refuses the
+    # resume where format 3 skipped it.
+    FORMAT = 4
     # What a run with no compaction configured schedules on: every turn renders whole.
     UNCOMPACTED_SCHEDULE = "turn"
     TURN_TYPE = "turn"

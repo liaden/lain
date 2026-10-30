@@ -237,17 +237,17 @@ RSpec.describe Lain::SessionRecord::Replay do
 
     it "refuses a string 'false' rather than replaying it as PINNED" do
       expect { replay_raw({ "type" => "session_pin", "digest" => "blake3:aaaa1111", "pinned" => "false" }) }
-        .to raise_error(Lain::Error, /must carry pinned true or false/)
+        .to raise_error(Lain::Bench::Session::Corrupt, /session_pin .*pinned must be true or false/)
     end
 
     it "refuses a null pinned rather than silently replaying it as an unpin" do
       expect { replay_raw({ "type" => "session_pin", "digest" => "blake3:aaaa1111", "pinned" => nil }) }
-        .to raise_error(Lain::Error, /must carry pinned true or false/)
+        .to raise_error(Lain::Bench::Session::Corrupt, /session_pin .*pinned must be true or false/)
     end
 
-    it "still raises KeyError when the pinned key is absent entirely" do
+    it "refuses a record with no pinned key as a corrupt session" do
       expect { replay_raw({ "type" => "session_pin", "digest" => "blake3:aaaa1111" }) }
-        .to raise_error(KeyError)
+        .to raise_error(Lain::Bench::Session::Corrupt, /session_pin .*missing keyword: :pinned/)
     end
   end
 end

@@ -8,10 +8,8 @@ require "fileutils"
 # {Lain::CLI::ToolGuard.stack}, wired here and not through the replay's own Stack -- with a
 # scripted human and judge and a mock interpreter answering each call's scripted output. The
 # bytes are what the record writers produce, so a writer that changes shape makes the committed
-# files stale, and the approval replay spec says so. Regenerate with:
-#
-#   bundle exec ruby -Ilib -Ispec -e 'require "lain"; require "support/session_sections"; \
-#     require "support/approval_replay_fixtures"; ApprovalReplayFixtures.write'
+# files stale, and the approval replay spec says so. Regenerate them, with every other session
+# fixture, through bin/regenerate-session-fixtures.
 #
 # The committed files are ruled over {Lain::FileFacts::Recorded}, not the live disk: their project
 # is the placeholder /home/user/project, which exists on no machine, and a real one cannot stand in

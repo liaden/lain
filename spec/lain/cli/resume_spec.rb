@@ -979,6 +979,33 @@ RSpec.describe Lain::CLI::Resume do
       expect(result.recorder.loaded.version).to eq(seeded.version)
     end
 
+    it "restores the reads, pins, labels, todos, cut and memory the live session held" do
+      io = StringIO.new
+      live = Lain::Session.new(journal: Lain::Journal.new(io:))
+      head = memory_chain.head_digest
+      live.record_read("/tmp/app.rb").record_read("/tmp/lib.rb").record_pin(head).record_label(head, "dosing")
+      live.on_chain(memory_chain).write_todos([Struct.new(:content, :status).new("check dosing", "pending")])
+      live.record_compaction_cut(
+        Lain::Telemetry::CompactionCut.new(digest: head, head:, strategy: "eager", kind: "advance", parent: nil,
+                                           supersedes: [], plan_step_completions: 0,
+                                           collapses: [{ "span" => [head, head], "content" => [] }])
+      )
+      write_closed("20260103T000000-1.ndjson", memory_chain, extra: io.string.lines.map { |line| JSON.parse(line) })
+
+      restored = resume.call(selector: "20260103", profile: untyped).session
+      todo_list = ->(session) { session.reminders.grep(/\ACurrent todo list/) }
+
+      expect(%w[/tmp/app.rb /tmp/lib.rb].map { |path| restored.read?(path) }).to eq([true, true])
+      expect([restored.pins, restored.labels, restored.compaction_cuts])
+        .to eq([live.pins, live.labels, live.compaction_cuts])
+      expect(todo_list.call(restored))
+        .to eq(todo_list.call(live)).and(contain_exactly(a_string_including("check dosing")))
+      live.watch_memory(Lain::Memory::Recorder.new.tap do |recorder|
+        recorder.write(Lain::Memory::Item.new(id: "aspirin", description: "dosing", body: "40mg/kg"))
+      end)
+      expect(restored.reminders).to eq(live.reminders).and(include(a_string_including("aspirin")))
+    end
+
     it "folds run-state from EVERY file of a resume chain, not just the resumed head" do
       chained = open_header(resumed_from: { "file" => "20260101T000000-1.ndjson",
                                             "head" => memory_chain.head_digest })
@@ -994,15 +1021,14 @@ RSpec.describe Lain::CLI::Resume do
       expect(result.session.reminders.join).to include("aspirin")
     end
 
-    # Every session file written before reads carried line spans holds this
-    # record. It cannot say what the model saw, so it does not resume -- and it
-    # is refused at the door in words, never as a raw backtrace out of the exe.
-    it "refuses a file holding a read record from before line spans, at both doors, in words" do
+    # A read record with no span cannot say what the model saw, so it does not
+    # resume -- and it is refused at the door in words, never as a raw backtrace out of the exe.
+    it "refuses a file holding a read record with no line span, at both doors, in words" do
       old = [{ "type" => "session_read", "path" => "/tmp/app.rb", "complete" => true }]
       write_closed("20260101T000000-1.ndjson", memory_chain, extra: old)
       prefix = memory_chain.head_digest.delete_prefix("blake3:")[0, 12]
 
-      refusal = ->(verb) { /\Acannot #{verb} 20260101T000000-1.ndjson: .*before reads carried line spans/ }
+      refusal = ->(verb) { /\Acannot #{verb} 20260101T000000-1.ndjson: .*cannot be rebuilt: session_read .*lines/ }
 
       expect { resume.call(profile: untyped) }.to raise_error(described_class::Refusal,
                                                               refusal.call("resume"))

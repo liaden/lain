@@ -1,16 +1,24 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# Regenerates the committed variance session fixtures deterministically:
-# scripted Provider::Mock runs, a fixed clock, explicit paths. Running it twice
-# yields byte-identical files -- spec/lain/bench/variance_fixture_spec.rb
-# asserts exactly that against the committed bytes, so if this script's output
-# ever drifts, the suite says so before a commit does.
+# Regenerates every committed session fixture, so a session format bump is one
+# command. The variance set and the planted compaction corpus are deterministic:
+# scripted Provider::Mock runs, a fixed clock, explicit paths, and their specs
+# assert that a second run yields the committed bytes. The approval replay set
+# is written by its spec support, whose decision latencies are measured and so
+# differ run to run.
 
 require "bundler/setup"
 # Leaf files carry no internal requires, so the constants VarianceFixtures
 # references resolve only through the Zeitwerk loader that `require "lain"` sets up.
 require "lain"
 
-dir = File.expand_path("../spec/fixtures/sessions/variance", __dir__)
-Lain::Bench::VarianceFixtures.write(dir:).each { |path| puts "wrote #{path} (#{File.size(path)} bytes)" }
+$LOAD_PATH.unshift(File.expand_path("../spec", __dir__))
+require "support/session_sections"
+require "support/approval_replay_fixtures"
+
+fixtures = File.expand_path("../spec/fixtures", __dir__)
+written = Lain::Bench::VarianceFixtures.write(dir: File.join(fixtures, "sessions/variance")) +
+          Lain::Bench::PlantedClaims.generate(File.join(fixtures, "compaction/planted")) +
+          ApprovalReplayFixtures.write.map(&:to_s)
+written.each { |path| puts "wrote #{path} (#{File.size(path)} bytes)" }
