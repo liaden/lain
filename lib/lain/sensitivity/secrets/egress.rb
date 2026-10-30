@@ -35,41 +35,49 @@ module Lain
         # @param child_env [Exec::ChildEnv]
         # @param history [#split] see {HistoryLiterals#split}; read once
         # @param released [Set<String>] region digests a human released, from {Ledger#released_digests}
+        # @param lent [Hash] the worker's environment, whose values the masker also knows
         # @return [Egress]
-        def self.of(child_env:, history:, released: Set.new)
-          lent = Session::Null.instance.worker_env.env
+        def self.of(child_env:, history:, released: Set.new,
+                    lent: Session::Null.instance.worker_env.env)
           env = Literals.new(child_env:, lent:)
           past = history.split
           known = (env.to_a + past.known).map(&:b).uniq
-          narrow = (named([*child_env.environment, *lent]) + env.detected_values + past.refusable).map(&:b)
-          refused = unreleased(known & narrow, released)
+          memo = {}
+          regions = ->(value) { memo[value.b] ||= Regions.detect(value) }
+          narrow = narrow(env, [*child_env.environment, *lent], past, regions)
+          refused = unreleased(known & narrow, released, regions)
           new(refused:, flagged: known - refused)
         end
 
-        def self.unreleased(values, released)
-          released.empty? ? values : values.reject { released?(_1, released) }
+        def self.narrow(env, variables, past, regions)
+          (named(variables, regions) + env.detected_values + past.refusable).map(&:b)
+        end
+        private_class_method :narrow
+
+        def self.unreleased(values, released, regions)
+          released.empty? ? values : values.reject { released?(_1, released, regions) }
         end
         private_class_method :unreleased
 
         # A value holding more than its secret, as a URL or a JSON line does, is released once
         # every region inside it is. That trusts the detector to find each secret in the value.
-        def self.released?(value, released)
+        def self.released?(value, released, regions)
           return true if released.include?(Regions::Region.address(value))
 
-          inside = Regions.detect(value)
+          inside = regions[value]
           inside.any? && inside.all? { released.include?(_1.digest) }
         end
         private_class_method :released?
 
-        def self.named(variables)
+        def self.named(variables, regions)
           variables.filter_map do |name, value|
-            value.to_s if Exec::ChildEnv::SECRET.match?(name) && !path?(value.to_s)
+            value.to_s if Exec::ChildEnv::SECRET.match?(name) && !path?(value.to_s, regions)
           end
         end
         private_class_method :named
 
-        def self.path?(value)
-          PATH.match?(value) && Regions.detect(value).empty? && !Entropy.high?(value)
+        def self.path?(value, regions)
+          PATH.match?(value) && regions[value].empty? && !Entropy.high?(value)
         end
         private_class_method :path?
       end
