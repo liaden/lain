@@ -9,15 +9,8 @@ module Lain
     # @param program [String, nil] a program the user named, used without a PATH search
     # @return [Feed, Null]
     def self.for(env: ENV, program: nil)
-      found = program || on_path(env["PATH"].to_s)
+      found = program || Shell::Path.find(PROGRAM, path: env["PATH"].to_s)
       found ? Feed.new(program: found) : Null.new
     end
-
-    def self.on_path(path)
-      path.split(File::PATH_SEPARATOR).map { |dir| File.join(dir, PROGRAM) }.find { |file| executable?(file) }
-    end
-
-    def self.executable?(file) = File.file?(file) && File.executable?(file)
-    private_class_method :on_path, :executable?
   end
 end

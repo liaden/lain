@@ -151,14 +151,7 @@ module Lain
                            "install it, or use --exec #{DEFAULT}"
       end
 
-      # BOTH questions, because `File.executable?` answers true for every
-      # directory: a directory named `docker` on PATH is not a client.
-      def on_path?(client)
-        @path.split(File::PATH_SEPARATOR).any? do |dir|
-          candidate = File.join(dir, client)
-          @filesystem.file?(candidate) && @filesystem.executable?(candidate)
-        end
-      end
+      def on_path?(client) = !Shell::Path.find(client, path: @path, filesystem: @filesystem).nil?
     end
   end
 end

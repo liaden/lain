@@ -30,6 +30,12 @@ RSpec.describe Lain::Notices do
       expect(described_class.for(env: { "PATH" => bin }, program: "/opt/feed")).to be_a(Lain::Notices::Feed)
     end
 
+    it "does not find a notify-feed in the cwd through an empty PATH entry" do
+      install("notify-feed")
+
+      Dir.chdir(bin) { expect(described_class.for(env: { "PATH" => "::" })).to be_a(Lain::Notices::Null) }
+    end
+
     it "is a Null when PATH is unset" do
       expect(described_class.for(env: {})).to be_a(Lain::Notices::Null)
     end

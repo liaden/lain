@@ -84,6 +84,13 @@ RSpec.describe Lain::CLI::ExecBackend do
         .to raise_error(described_class::Unavailable, /--exec docker.*docker.*PATH/m)
     end
 
+    it "does not take a docker in the cwd for the client through an empty PATH entry" do
+      docker_on_path
+      Dir.chdir(@bin) do
+        expect { resolve("docker", path: "::") }.to raise_error(described_class::Unavailable)
+      end
+    end
+
     # A directory named `docker` is not a client. `File.executable?` says true
     # for every directory, so the presence test has to ask both questions.
     it "does not mistake a directory named docker for the client" do

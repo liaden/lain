@@ -89,10 +89,7 @@ module Lain
       # The probe finds both programs on PATH, so the launcher runs the ones it found.
       def launcher = Bwrap.new(fence: @fence, bwrap: on_path("bwrap"), strace: on_path("strace"))
 
-      def on_path(program)
-        ENV.fetch("PATH", "").split(File::PATH_SEPARATOR).map { File.join(_1, program) }
-           .find { File.file?(_1) && File.executable?(_1) }
-      end
+      def on_path(program) = Shell::Path.find(program, path: ENV.fetch("PATH", ""))
     end
   end
 end

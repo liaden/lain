@@ -24,6 +24,18 @@ RSpec.describe Lain::Confine::Sandbox do
       expect(degraded).to be_empty
     end
 
+    it "does not launch a bwrap found in the cwd through an empty PATH entry" do
+      Dir.mktmpdir("lain-sandbox-cwd") do |dir|
+        File.write(File.join(dir, "bwrap"), "#!/bin/sh\n")
+        File.chmod(0o755, File.join(dir, "bwrap"))
+        stub_const("ENV", ENV.to_h.merge("PATH" => "::"))
+
+        launcher = Dir.chdir(dir) { sandbox.wrap(inner, requirer: "Spec").instance_variable_get(:@launcher) }
+
+        expect(launcher.instance_variable_get(:@bwrap)).to be_nil
+      end
+    end
+
     it "hands the profiles the mask list it was given and the home" do
       profiles = sandbox.wrap(inner, requirer: "Spec").instance_variable_get(:@profiles)
 

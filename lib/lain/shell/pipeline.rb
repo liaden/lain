@@ -370,7 +370,7 @@ module Lain
         # which refuses rather than resolves -- the strict direction.
         def search_path
           raw = @env.key?("PATH") ? @env["PATH"] : ENV.fetch("PATH", "")
-          raw.to_s.split(File::PATH_SEPARATOR).reject(&:empty?)
+          Path.entries(raw)
         end
 
         # Every stage but the first of each pipeline: a pipeline after an `&&`
