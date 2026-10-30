@@ -66,6 +66,17 @@ RSpec.describe Lain::Bench::Session::Lineages do
     end
   end
 
+  # The messages are folded into lineages, so a completion's spawn is one of them and never a Store guess.
+  describe "a completion whose spawn is not among the messages" do
+    it "refuses it by name" do
+      recording = Lain::Bench::Session.load(two_spawns.lines)
+      lineages = described_class.new(messages: recording.messages.reject { |event| event.kind == :spawn },
+                                     store: recording.timeline.store)
+
+      expect { lineages.to_a }.to raise_error(Lain::Bench::Session::Corrupt, /cites no :spawn/)
+    end
+  end
+
   describe "a chat that spawned two one-shot subagents" do
     let(:session) { two_spawns }
     let(:lineages) { lineages_of(session).to_a }

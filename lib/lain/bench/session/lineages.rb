@@ -23,6 +23,9 @@ module Lain
       # chosen: the scribe writes a turn once per digest, so a child turn equal
       # to one already recorded -- a twin's transcript, or a fresh child seeded
       # with text the session already committed -- can have no record of its own.
+      #
+      # Which spawn a completion ended is {Journal::Projection::Lineage}'s answer over the
+      # messages, the fold `lain watch` steps live, so the two read one lineage alike.
       class Lineages
         include Enumerable
 
@@ -159,6 +162,7 @@ module Lain
           @messages = messages
           @store = store
           @skip_roles = skip_roles
+          @lineages = Journal::Projection::Lineage.over(messages.map { |event| Telemetry::Message.from_event(event) })
         end
 
         # Twin completions -- the same work from one head, answered alike --
@@ -190,9 +194,11 @@ module Lain
           Lineage.new(spawn:, completion:, child_turns: child_turns(completion, spawn))
         end
 
+        # The Store holds the spawn's body, which the lineage's `spawned_from` and role are read from.
         def spawn_of(completion)
-          completion.causal_parents.map { |digest| @store.fetch(digest) }.find { |event| event.kind == :spawn } ||
-            raise(Corrupt, "completion #{completion.digest} cites no :spawn; a one-shot's completion always does")
+          @store.fetch(@lineages.completing(completion.digest) do |digest|
+            raise Corrupt, "completion #{digest} cites no :spawn; a one-shot's completion always does"
+          end)
         end
 
         def child_turns(completion, spawn)

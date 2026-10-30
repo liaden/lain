@@ -811,11 +811,10 @@ RSpec.describe Lain::Tools::Subagent do
       it "is admitted by lain watch's lineage filter for that child" do
         warned(mock(*readings))
         filter = Lain::CLI::Watch::LineageFilter.new(selector: record.spawn.digest)
-        filter.admit?({ "type" => "message", "kind" => "spawn", "digest" => record.spawn.digest })
-        note = record.messages.find { |message| message.from == "lain" }
+        filter.admit?(Lain::Telemetry::Message.from_event(record.spawn))
+        note = Lain::Telemetry::Message.from_event(record.messages.find { |message| message.from == "lain" })
 
-        expect(filter.admit?({ "type" => "message", "digest" => note.digest, "from" => note.from, "to" => note.to,
-                               "causal_parents" => [] })).to be(true)
+        expect(filter.admit?(note.with(causal_parents: []))).to be(true)
       end
 
       it "hands the parent a text block the child wrote after the warning" do

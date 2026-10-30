@@ -83,17 +83,18 @@ module Lain
         say("waiting for records in #{path}")
       end
 
-      # The tail as composition: {Tail} yields only COMPLETE lines,
-      # {Journal.records} parses them and skips foreign bytes (the shared-fd
-      # contract every reader honors), and the first closer stops the pull --
-      # `any?` IS the loop, short-circuiting on the closer. A tail that ends
-      # because its writer is gone ends it with no closer seen.
+      # The tail as composition: {Tail} yields the records of COMPLETE lines,
+      # each is read leniently, so a record that will not rebuild arrives as
+      # {Telemetry::Untyped} rather than stopping the watch, and the first
+      # closer stops the pull -- `any?` IS the loop, short-circuiting on the
+      # closer. A tail that ends because its writer is gone ends it with no
+      # closer seen.
       #
       # @return [Boolean] whether session_closed arrived
       def follow(io)
         tail = Tail.new(io, wait: -> { wait_for_more },
                             writing: -> { @writer.verdict(@probe) != :dead })
-        Journal.records(tail).any? { |record| closed_by?(record) }
+        tail.lazy.map { |hash| Telemetry.read(hash, strict: false) }.any? { |record| closed_by?(record) }
       end
 
       # A live file with no match is indistinguishable from a quiet actor until
@@ -110,10 +111,17 @@ module Lain
       # what chains to the watched spawn, and answer whether this record closed
       # the session.
       def closed_by?(record)
-        @writer = Liveness::Writer.from_header(record) if record["type"] == SessionRecord::HEADER_TYPE
+        @writer = Liveness::Writer.from_header(record) if header?(record)
         render(record) if @filter.admit?(record)
-        record["type"] == SESSION_CLOSED_TYPE
+        closer?(record)
       end
+
+      def header?(record) = untyped?(record, SessionRecord::HEADER_TYPE)
+
+      # A closer whose reason this build does not know reads back untyped, and it still closed the session.
+      def closer?(record) = record.is_a?(Telemetry::SessionClosed) || untyped?(record, SESSION_CLOSED_TYPE)
+
+      def untyped?(record, type) = record.is_a?(Telemetry::Untyped) && record["type"] == type
 
       def render(record)
         @view.lines(record).each { |line| say(line) }
@@ -181,13 +189,11 @@ module Lain
         durable_names(dirs).reject { |name| Journal.empty?(Paths.session_file(name, dirs:)) }.sort
       end
 
-      # The fd tail as an Enumerable of COMPLETE ("\n"-terminated) lines,
-      # composing with {Journal.records}. The fragment buffer lives here: at
-      # EOF, IO#gets consumes a torn write's first half WITHOUT its newline,
-      # so a tailer that hands that half onward desyncs -- both halves fail
-      # parse separately and the record is silently lost (a torn
-      # session_closed would hang the watch forever). Held halves are joined
-      # with the bytes the writer lands later and yielded whole.
+      # The fd tail as an Enumerable of the records of COMPLETE ("\n"-terminated)
+      # lines. At EOF, IO#gets consumes a torn write's first half WITHOUT its
+      # newline, and a tailer that handed that half onward would lose the
+      # record (a torn session_closed would hang the watch forever), so the
+      # halves wait in a {Journal::Tail} until the writer lands the rest.
       #
       # Unbounded while the file has a writer: the consumer stops pulling at a
       # closer (see {Watch#follow}), which this altitude cannot detect. It ends
@@ -205,7 +211,7 @@ module Lain
           @io = io
           @wait = wait
           @writing = writing
-          @fragment = +""
+          @lines = Journal::Tail.new
           @gone = false
           @over = false
         end
@@ -218,10 +224,9 @@ module Lain
 
         private
 
-        def pull
+        def pull(&block)
           piece = @io.gets
-          piece.nil? ? at_end : @fragment << piece
-          yield take if @fragment.end_with?("\n")
+          piece.nil? ? at_end : (@lines << piece).each(&block)
         end
 
         # A writer found gone gets one more read before the tail ends: it may
@@ -232,16 +237,10 @@ module Lain
           @gone ||= !@writing.call
           @wait.call unless @gone
         end
-
-        def take
-          line = @fragment
-          @fragment = +""
-          line
-        end
       end
 
       # The display duck -- {Frontend::Neovim::JournalView}'s shape (#lines:
-      # one record in, plain text lines out), over admitted NDJSON records
+      # one record in, plain text lines out), over admitted message records
       # instead of Channel events. Plain text on purpose: the sink may be a
       # terminal or a buffer, and neither wants ANSI invented here.
       class View
@@ -250,10 +249,10 @@ module Lain
 
         REASON_WIDTH = 120
 
-        # @param record [Hash{String=>Object}] one admitted message record
+        # @param record [Telemetry::Message] one admitted message record
         # @return [Array<String>] attributed lines, one per body line
         def lines(record)
-          prefix = "[#{shorten(record["digest"])} #{record["kind"]}]"
+          prefix = "[#{shorten(record.digest)} #{record.kind}]"
           body(record).chomp.split("\n", -1).map { |line| line.empty? ? prefix : "#{prefix} #{line}" }
         end
 
@@ -264,10 +263,10 @@ module Lain
         # old or foreign writer's shape) renders as nothing at all: tolerated
         # garbage, like every other skipped line, never a crash.
         def body(record)
-          payload = record["payload"]
+          payload = record.payload
           return "" unless payload.is_a?(Hash)
 
-          decorated(text_for(record["kind"].to_s, payload), marked(payload))
+          decorated(text_for(record.kind.to_s, payload), marked(payload))
         end
 
         # `text` is what {Tools::Subagent::Lineage#note} carries, `result`

@@ -366,6 +366,67 @@ RSpec.describe Lain::CLI::Watch do
     end
   end
 
+  # The bytes a foreign or killed writer leaves, each read as lain watch has always read it.
+  describe "lines that are not plain records" do
+    let(:never_poll) { ->(_seconds) { raise "watch polled a session whose writer is gone" } }
+
+    def reply_line(text, digest: s_reply_digest)
+      JSON.generate(message_record(digest:, from: s_spawn_digest, to: parent_correlation, text:,
+                                   causal_parents: [s_spawn_digest]))
+    end
+
+    def gone_writer
+      { "writer" => { "pid" => Process.spawn("true").tap { |pid| Process.wait(pid) },
+                      "start" => File.read("/proc/#{Process.pid}/stat").rpartition(")").last.split.fetch(19),
+                      "host" => Socket.gethostname } }
+    end
+
+    def watched(bytes)
+      path = write_journal([header_record.merge(gone_writer), *opening_records.drop(1)])
+      append_bytes(path, bytes)
+      [described_class.new(selector:, path:, sink: output, paths:, sleeper: never_poll).run, output.string]
+    end
+
+    it "skips a line holding a NUL and reads the record after it" do
+      nul = reply_line("NUL-TEXT").sub("NUL-TEXT", "NUL\0TEXT")
+      said = watched("#{nul}\n#{reply_line("AFTER-NUL", digest: "5ddd#{s_reply_digest[4..]}")}\n").last
+
+      expect([said.include?("AFTER-NUL"), said.include?("NUL\0TEXT")]).to eq([true, false])
+    end
+
+    it "reads a line holding a lone CR between its tokens, which JSON reads as space" do
+      expect(watched("#{reply_line("LONE-CR").sub(",", ",\r")}\n").last).to include("LONE-CR")
+    end
+
+    it "skips a line holding a lone CR inside a string" do
+      expect(watched("#{reply_line("LONE-CR").sub("LONE-CR", "LONE\rCR")}\n").last).not_to include("LONE")
+    end
+
+    it "reads a line ending in CR LF" do
+      expect(watched("#{reply_line("CRLF-TEXT")}\r\n").last).to include("CRLF-TEXT")
+    end
+
+    it "holds a torn session_closed, so a writer gone with one reads as ended without closing" do
+      closer = JSON.generate(closed_record)
+      status, said = watched(closer[0, closer.size / 2])
+
+      expect([status, said]).to match([1, a_string_including("ended without closing the session")])
+    end
+
+    it "closes on a session_closed whose reason this build does not know" do
+      closer = JSON.generate(closed_record.merge("reason" => "vanished"))
+
+      expect(watched("#{closer}\n").first).to eq(0)
+    end
+
+    it "skips a chained message whose bytes are not UTF-8 rather than failing on it" do
+      bad = "#{reply_line("BAD-TEXT")}\n".b.sub("BAD-TEXT".b, "BAD\xFFTEXT".b)
+      status, said = watched("#{bad}#{reply_line("AFTER-BAD", digest: "5ddd#{s_reply_digest[4..]}")}\n")
+
+      expect([status, said]).to match([1, a_string_including("AFTER-BAD")])
+    end
+  end
+
   describe "an ambiguous selector" do
     subject(:watch) { described_class.new(selector: "5", path:, sink: output, paths:) }
 
