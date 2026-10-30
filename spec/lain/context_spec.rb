@@ -624,6 +624,18 @@ RSpec.describe Lain::Context do
                      input_keyword: true,
                      equal: ->(a, b) { a.digest == b.digest }
 
+    describe "with a prefix chain in its keywords" do
+      chain = Lain::Request::PrefixChain.new
+
+      include_examples "a pure operation",
+                       instance: -> { default },
+                       operation: :render,
+                       population: triples,
+                       input_keyword: true,
+                       keywords: ->(_triple) { { chain: } },
+                       equal: ->(a, b) { a == b && a.digest == b.digest }
+    end
+
     describe "with a live model switch" do
       let(:outcomes) do
         switch = Lain::Context::ModelSwitch.new("claude-opus-4-8", journal: Lain::Journal.new(io: StringIO.new))
@@ -644,6 +656,63 @@ RSpec.describe Lain::Context do
       it "raises in no law" do
         expect(outcomes.values).to all(satisfy { |outcome| outcome.is_a?(Symbol) })
       end
+    end
+  end
+
+  describe "rendering through a prefix chain" do
+    let(:prefixed) { Data.define(:timeline, :advance) { def messages = advance.call(timeline).messages } }
+    let(:store) { Lain::Dag::Factory.store }
+    let(:plain) { described_class.new(model: "claude-opus-4-8", max_tokens: 1024, pipeline: Lain::Context::Identity) }
+
+    def said(text) = [{ "type" => "text", "text" => text }]
+
+    def grown(from, count, label)
+      count.times.inject(from) { |tl, i| tl.commit(role: i.even? ? :user : :assistant, content: said("#{label}#{i}")) }
+    end
+
+    it "renders the same request whatever chain it was given" do
+      base = grown(Lain::Dag::Factory.timeline(store:), 6, "m")
+      warmed = Lain::Request::PrefixChain.new.tap { |chain| context.render(timeline: base, toolset:, chain:) }
+      diverged = Lain::Request::PrefixChain.new.tap do |chain|
+        context.render(timeline: grown(base.checkout(base.to_a[2].digest), 4, "d"), toolset:, chain:)
+      end
+      chains = [Lain::Request::PrefixChain::NONE, Lain::Request::PrefixChain.new, warmed, diverged]
+
+      rendered = chains.map { |chain| context.render(timeline: base, toolset:, chain:) }
+      expect(rendered.uniq).to eq([context.render(timeline: base, toolset:)])
+      expect(rendered.map(&:digest).uniq.size).to eq(1)
+    end
+
+    it "hashes only a chat turn's new messages and the combine, and strips no unmarked message" do
+      prefix = Lain::Agent::RenderedPrefix.none
+      advance = ->(tl) { prefix = prefix.over(tl) }
+      chain = Lain::Request::PrefixChain.new
+      long = grown(Lain::Dag::Factory.timeline(store:), 10_000, "m")
+      plain.render(timeline: prefixed.new(timeline: long, advance:), toolset:, chain:)
+
+      stripped = 0
+      allow(Lain::Request).to receive(:without_markers).and_wrap_original do |original, *args|
+        stripped += 1
+        original.call(*args)
+      end
+      next_turn = grown(long, 2, "new")
+      digested = digests_during do
+        plain.render(timeline: prefixed.new(timeline: next_turn, advance:), toolset:, chain:)
+      end
+
+      expect([digested, stripped]).to eq([3, 0])
+    end
+
+    it "hashes only a chat turn's new messages through the default pipeline, whose cache markers move" do
+      prefix = Lain::Agent::RenderedPrefix.none
+      advance = ->(tl) { prefix = prefix.over(tl) }
+      chain = Lain::Request::PrefixChain.new
+      long = grown(Lain::Dag::Factory.timeline(store:), 200, "m")
+      context.render(timeline: prefixed.new(timeline: long, advance:), toolset:, chain:)
+
+      next_turn = grown(long, 2, "new")
+      expect(digests_during { context.render(timeline: prefixed.new(timeline: next_turn, advance:), toolset:, chain:) })
+        .to eq(3)
     end
   end
 

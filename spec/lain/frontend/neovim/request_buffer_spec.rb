@@ -99,7 +99,7 @@ RSpec.describe Lain::Frontend::Neovim::RequestBuffer do
 
         resent = buffer.resend(lines_for(edited))
 
-        expect(resent.digest).to eq(Lain::Canonical.digest(edited))
+        expect(resent.digest).to eq(Lain::Request.new(**edited.transform_keys(&:to_sym)).digest)
         expect(resent).not_to have_same_digest_as(baseline)
       end
 
@@ -123,6 +123,15 @@ RSpec.describe Lain::Frontend::Neovim::RequestBuffer do
       it "answers nil for a malformed edit rather than raising, and journals nothing" do
         expect(buffer.resend(["{ not json"])).to be_nil
         expect(journal).to be_empty
+      end
+
+      [nil, "hi", 3].each do |messages|
+        it "journals an edit whose messages are #{messages.inspect} rather than raising on the worker" do
+          resent = buffer.resend(lines_for(baseline.payload.merge("messages" => messages)))
+
+          expect(resent).to be_a(Lain::Telemetry::RequestResent)
+          expect { buffer.rebuild(resent) }.to raise_error(ArgumentError, /messages/)
+        end
       end
 
       it "leaves the baseline intact after a malformed edit, so the next valid resend still works" do

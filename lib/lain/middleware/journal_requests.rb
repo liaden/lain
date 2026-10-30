@@ -16,8 +16,8 @@ module Lain
     # attempt in the Journal: a request_sent with no following turn_usage is how a
     # failure reads.
     #
-    # The sender's prefix-chain memo rides the env as `prefix_chain`, so a
-    # long conversation's chain is extended rather than recomputed per call.
+    # The chain the sender rendered through rides the env as `prefix_chain`, so
+    # the walk finds every state the render already rolled.
     class JournalRequests < Base
       # @param journal [#<<] where RequestSent records land; the Null channel by
       #   default, so no caller guards `if journal`

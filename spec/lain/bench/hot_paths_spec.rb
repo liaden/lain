@@ -149,7 +149,7 @@ RSpec.describe Lain::Bench::HotPaths do
   describe "the measured fixture" do
     it "pins what a render is measured over, so a card cannot change it unseen" do
       expect(described_class::Corpus.cold_request(turns: 10).digest)
-        .to eq("blake3:50970980eb367381c15cc69fd0fda5b8f2d075660fe5211275670bcf9cbbe2be")
+        .to eq("blake3:a066b3e75500cc44fb5f32e34f651e20af2179e7e18e8d98974fc84329d659de")
     end
   end
 

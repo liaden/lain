@@ -15,17 +15,21 @@ module Lain
           @records = records
         end
 
+        # 1 chain for the whole baseline, so each request rolls only
+        # the messages past the one before it.
+        #
         # @return [Array<Request>] frozen, root to head
         # @raise [Corrupt] on a record whose payload no longer re-derives to
         #   its recorded digest
         def baseline
-          @records.each_with_index.map { |record, index| verified(record, index) }.freeze
+          chain = Request::PrefixChain.new
+          @records.each_with_index.map { |record, index| verified(record, index, chain) }.freeze
         end
 
         private
 
-        def verified(record, index)
-          request = Request.new(stream: record.fetch("stream"), extra: record.fetch("extra"),
+        def verified(record, index, chain)
+          request = Request.new(stream: record.fetch("stream"), extra: record.fetch("extra"), chain:,
                                 **record.fetch("payload").transform_keys(&:to_sym))
           recorded = record.fetch("digest")
           return request if request.digest == recorded

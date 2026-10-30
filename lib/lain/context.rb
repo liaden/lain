@@ -119,10 +119,12 @@ module Lain
     def with_pipeline(pipeline) = copy(pipeline:)
 
     # The default strategy is one point in the combinator space a caller reaches
-    # for directly, never a parallel implementation of it.
+    # for directly, never a parallel implementation of it. The `chain:` is the
+    # caller's memo of its last walk, and the request is the same whichever one
+    # it is given.
     #
     # @return [Lain::Request] deterministic for identical inputs
-    def render(timeline:, toolset:, workspace: Workspace.empty)
+    def render(timeline:, toolset:, workspace: Workspace.empty, chain: Request::PrefixChain::NONE)
       pipeline = pipeline_for(workspace)
 
       Request.new(
@@ -133,7 +135,8 @@ module Lain
         max_tokens:,
         stream:,
         extra:,
-        effort:
+        effort:,
+        chain:
       )
     end
 

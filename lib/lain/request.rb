@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "json"
+
 module Lain
   # Everything that goes to a model, in Lain's own vocabulary and nothing
   # Anthropic-shaped. That anti-corruption is what makes dry replay (re-render a
@@ -13,9 +15,14 @@ module Lain
   #
   # Frozen and content-addressed: two Contexts rendering to the same #digest hit
   # the same prompt cache, and two that do not, will not. The bench leans on this.
+  #
+  # The `chain:` a caller passes is a memo of earlier walks ({Request::PrefixChain}),
+  # never a member: the digest is the same whichever chain built it.
   Request = Data.define(:model, :system, :tools, :messages, :max_tokens, :stream, :reasoning, :extra, :effort) do
     def initialize(model:, messages:, max_tokens:, system: nil, tools: [], stream: true, reasoning: nil, extra: {},
-                   effort: nil)
+                   effort: nil, chain: Request::PrefixChain::NONE)
+      raise ArgumentError, "messages must be an Array, got #{messages.class}" unless messages.is_a?(Array)
+
       ceiling = Integer(max_tokens)
       # A non-positive ceiling is not a small ceiling. Ollama reads
       # `num_predict` -1 as "generate until the model stops" and -2 as "fill
@@ -38,9 +45,8 @@ module Lain
                    effort: effort && -effort.to_s }
       # Digested once, before `super` freezes the instance: a model call asks
       # for it five or six times (the retry guard, the stream frame, the
-      # journal, the budget), and each ask was a full serialisation of the
-      # conversation.
-      @digest = Canonical.digest(self.class.cache_payload_of(**identity))
+      # journal, the budget).
+      @digest = self.class.digest_through(chain, **identity)
       super(**identity, stream: !stream.nil? && stream != false, extra: Canonical.normalize(extra))
     end
 
@@ -54,7 +60,7 @@ module Lain
     # without a second deep walk of the full message history. The odd-looking
     # alphabetical key order is that contract, and request_spec pins it.
     #
-    # `effort` is keyed only when set, so every digest recorded before it existed rebuilds unchanged.
+    # `effort` is keyed only when set, so a request without one journals the payload it always did.
     def self.cache_payload_of(model:, system:, tools:, messages:, max_tokens:, reasoning:, effort: nil)
       payload = { "max_tokens" => max_tokens, "messages" => messages, "model" => model,
                   "reasoning" => reasoning, "system" => system, "tools" => tools }
@@ -66,7 +72,29 @@ module Lain
       self.class.cache_payload_of(**to_h.except(:stream, :extra))
     end
 
+    # The prefix chain's last state, combined with what the states leave out:
+    # `max_tokens`, `reasoning`, `effort`, and every marker the walk stripped,
+    # so 2 requests differing only there still differ. A warm chain rolls only
+    # the messages it has not seen.
+    #
+    # @return [String]
     attr_reader :digest
+
+    # @return [String] see {#digest}, walked through a chain answering `#seed` and `#entry`
+    def self.digest_through(chain, model:, system:, tools:, messages:, max_tokens:, reasoning:, effort:)
+      seed = chain.seed(model, tools, system)
+      markers = seed.markers.dup
+      state = seed.state
+      # A local rather than `inject`: its destructured pair is an allocation per
+      # message, a third of a warm 10,000-message walk.
+      messages.each_with_index do |message, index|
+        entry = chain.entry(index, message, state)
+        state = entry.state
+        entry.markers.each { |path, key, value| markers << [["messages", index, *path], key, value] }
+      end
+      # Every part is canonical already, so dumping it again through Canonical would only re-walk it.
+      Canonical.digest_bytes(JSON.generate([state, max_tokens, reasoning, effort, markers]))
+    end
 
     # Anthropic's cache is a prefix match over tools -> system -> messages. Any
     # byte change invalidates everything after it, so the prefix is what a
@@ -139,7 +167,7 @@ module Lain
     # its own {PrefixChain}, so each walk digests only the messages it has not
     # seen; the result is the same either way.
     #
-    # @param chain [#state] the states of an earlier walk; {PrefixChain::NONE} remembers nothing
+    # @param chain [#seed, #entry] the states of an earlier walk; {PrefixChain::NONE} remembers nothing
     def prefix_digests(chain: PrefixChain::NONE)
       cuts = marked_cuts
       cuts.empty? ? [] : rolled_entries(cuts.to_h, chain)
@@ -153,13 +181,54 @@ module Lain
     #
     # @param value [Object] a message, a block, or any part of one
     # @return [Object] the value with both markers removed at every depth
-    def self.strip_cache_markers(value)
+    def self.strip_cache_markers(value) = without_markers(value).first
+
+    # @param value [Object] a message, a block, or any part of one
+    # @return [Array(Object, Array)] the value stripped, and a frozen `[path, key, value]` per marker taken
+    def self.without_markers(value)
+      removed = []
+      [stripped(value, [].freeze, removed), removed.freeze]
+    end
+
+    MARKER_KEYS = ["cache", Workspace::WORKSPACE_MARKER].freeze
+    private_constant :MARKER_KEYS
+
+    # An unmarked value comes back as itself, already canonical, so the digest
+    # that follows does not normalise a copy of it; only the path down to a
+    # marker is copied.
+    def self.stripped(value, path, removed)
+      return value unless marked?(value)
+
       case value
-      when Hash then value.except("cache", Workspace::WORKSPACE_MARKER).transform_values { |v| strip_cache_markers(v) }
-      when Array then value.map { |v| strip_cache_markers(v) }
-      else value
+      when Hash then stripped_hash(value, path, removed)
+      when Array then value.each_with_index.map { |inner, index| stripped(inner, [*path, index].freeze, removed) }
       end
     end
+
+    # A hand-filled Hash rather than `except` and `to_h`: this runs per marked
+    # message on a replay, and those allocate a pair per key.
+    def self.stripped_hash(hash, path, removed)
+      kept = {}
+      hash.each do |key, inner|
+        if MARKER_KEYS.include?(key)
+          removed << [path, key, inner].freeze
+        else
+          kept[key] = stripped(inner, [*path, key].freeze, removed)
+        end
+      end
+      kept
+    end
+
+    # @param value [Object] a message, a block, or any part of one
+    # @return [Boolean] whether a marker sits anywhere in it
+    def self.marked?(value)
+      case value
+      when Hash then value.any? { |key, inner| MARKER_KEYS.include?(key) || marked?(inner) }
+      when Array then value.any? { |inner| marked?(inner) }
+      else false
+      end
+    end
+    private_class_method :stripped, :stripped_hash
 
     private
 
@@ -210,10 +279,9 @@ module Lain
     end
 
     def rolled_states(count, chain)
-      messages.first(count).each_with_index.with_object([fixed_prefix_digest]) do |(message, index), states|
-        states << chain.state(index, message, states.last) do
-          Canonical.digest([states.last, self.class.strip_cache_markers(message)])
-        end
+      seed = chain.seed(model, tools, system).state
+      messages.first(count).each_with_index.with_object([seed]) do |(message, index), states|
+        states << chain.entry(index, message, states.last).state
       end
     end
 
@@ -229,13 +297,6 @@ module Lain
 
     def final_block?(message, block_index)
       block_index == message["content"].size - 1
-    end
-
-    # Model and tools lead system lead messages on the wire, and none carries a
-    # position of its own, so together they seed every entry.
-    def fixed_prefix_digest
-      Canonical.digest("model" => model, "tools" => self.class.strip_cache_markers(tools),
-                       "system" => self.class.strip_cache_markers(system))
     end
 
     # The bytes `cache_control` covers: content through the marked block.

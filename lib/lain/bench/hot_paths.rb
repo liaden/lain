@@ -157,13 +157,13 @@ module Lain
       # render row measures without a failing example saying so.
       module Corpus
         Prefixed = Data.define(:timeline, :advance) { def messages = advance.call(timeline).messages }
-        Render = Struct.new(:timeline, :context, :toolset, :prefix, :turns_added) do
+        Render = Struct.new(:timeline, :context, :toolset, :prefix, :turns_added, :prefix_chain) do
           def chat
             self.turns_added += 1
             role = turns_added.even? ? :user : :assistant
             self.timeline = timeline.commit(role:, content: Corpus.text("c#{turns_added}"))
             advance = ->(tl) { self.prefix = prefix.over(tl) }
-            context.render(timeline: Prefixed.new(timeline:, advance:), toolset:)
+            context.render(timeline: Prefixed.new(timeline:, advance:), toolset:, chain: prefix_chain)
           end
 
           def cold = context.render(timeline:, toolset:)
@@ -178,7 +178,7 @@ module Lain
           timeline = Dag::Factory.timeline(store:)
           turns.times { |i| timeline = timeline.commit(role: i.even? ? :user : :assistant, content: text(i)) }
           Render.new(timeline, Context.new(model: "bench", max_tokens: 64), Toolset.new([]),
-                     Agent::RenderedPrefix.none, 0).tap(&:chat)
+                     Agent::RenderedPrefix.none, 0, Request::PrefixChain.new).tap(&:chat)
         end
 
         def cold_request(turns:) = render(turns:).cold

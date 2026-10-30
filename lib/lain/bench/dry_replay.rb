@@ -82,7 +82,8 @@ module Lain
       # @param context [Lain::Context]
       # @return [Array<Lain::Request>] one per step, in order
       def replay(context)
-        @calls.map { |call| render(held(call).render(context), call.timeline) }
+        chain = Request::PrefixChain.new
+        @calls.map { |call| render(held(call).render(context), call.timeline, chain) }
       end
 
       # Byte-diff the recorded baseline against a re-render under `context`.
@@ -111,8 +112,8 @@ module Lain
       # Found on first ask, so a caller counting steps walks no chain per step.
       def held(call) = @held[call.index] ||= @holding.call(call.timeline)
 
-      def render(context, timeline)
-        context.render(timeline:, toolset: @toolset, workspace: @workspace)
+      def render(context, timeline, chain)
+        context.render(timeline:, toolset: @toolset, workspace: @workspace, chain:)
       end
 
       # Couples to `Agent#step`'s commit order: the model is called, THEN its

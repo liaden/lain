@@ -96,14 +96,23 @@ module Lain
         # The edit lives only in the buffer bytes, so a resend rebuilds the whole
         # record from them: the payload is the edited JSON, while `stream` and
         # `extra` (transport, not shown in the buffer) ride along from the
-        # baseline. The digest is recomputed over the edited payload -- the same
-        # content address {Request#digest} would give it.
+        # baseline. The digest is the edited payload's {Request#digest}.
         def build(lines, base)
           return nil if base.nil?
 
           payload = parse(lines)
-          payload && Telemetry::RequestResent.new(digest: Canonical.digest(payload), payload:,
+          payload && Telemetry::RequestResent.new(digest: address(payload), payload:,
                                                   stream: base.stream, extra: base.extra)
+        end
+
+        # An edit that parses but is no request still journals, addressed by its
+        # bytes; {#rebuild} is where it refuses.
+        def address(payload)
+          return Canonical.digest(payload) unless payload.is_a?(Hash)
+
+          Request.new(**payload.transform_keys(&:to_sym)).digest
+        rescue ArgumentError, TypeError
+          Canonical.digest(payload)
         end
 
         def parse(lines)

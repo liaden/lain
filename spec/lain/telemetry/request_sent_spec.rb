@@ -174,7 +174,7 @@ RSpec.describe Lain::Telemetry::RequestSent do
                         max_tokens: 128, stream: false, extra: { "service_tier" => "flex" })
     end
     let(:line) do
-      '{"type":"request_sent","digest":"blake3:2e9e1ff7c5918bd6b63d2cddf0c752375934a2fff0dbf677d6a38bdd40a714dd",' \
+      '{"type":"request_sent","digest":"blake3:32c4425bbcff40783a38c25cfe6104d314d466331d2698d670f5123b3a9f7e7f",' \
         '"payload":{"max_tokens":128,"messages":[{"content":[{"text":"hi","type":"text"}],"role":"user"}],' \
         '"model":"claude-opus-4-8","reasoning":null,"system":[{"text":"be terse","type":"text"}],"tools":[]},' \
         '"stream":false,"extra":{"service_tier":"flex"},"prefix_digests":[],"prefix_chain_version":2'

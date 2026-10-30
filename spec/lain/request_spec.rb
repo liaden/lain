@@ -246,15 +246,14 @@ RSpec.describe Lain::Request do
         req = chained_request(texts: Array.new(8) { |i| "m#{i}" }, caches: [true] * 8)
 
         digested = []
-        allow(Lain::Canonical).to receive(:digest).and_wrap_original do |original, value|
-          digested << value
-          original.call(value)
+        allow(Lain::Canonical).to receive(:digest_bytes).and_wrap_original do |original, bytes|
+          digested << bytes
+          original.call(bytes)
         end
         req.prefix_digests
 
         expect(digested.size).to eq(9)
-        full_prefix_payloads = digested.select { |value| value.is_a?(Hash) && value.key?("messages") }
-        expect(full_prefix_payloads).to be_empty
+        expect(digested.grep(/"messages":/)).to be_empty
       end
     end
 
@@ -366,9 +365,117 @@ RSpec.describe Lain::Request do
       expect(request(effort: "high").cache_payload.keys.first).to eq("effort")
     end
 
-    it "keeps the digest equal to the digest of the cache payload in both shapes" do
-      [request, request(effort: "high")].each do |req|
-        expect(Lain::Canonical.digest(req.cache_payload)).to eq(req.digest)
+    it "combines into the digest whether set or not" do
+      expect(request(effort: "high").digest).to eq(
+        Lain::Canonical.digest([last_state(request), 1024, nil, "high", []])
+      )
+    end
+  end
+
+  def last_state(req)
+    seed = Lain::Canonical.digest("model" => req.model, "tools" => [], "system" => nil)
+    req.messages.inject(seed) { |state, message| Lain::Canonical.digest([state, message]) }
+  end
+
+  describe "#digest as the last state of the prefix chain" do
+    def marked(text, **flags) = { "role" => "user", "content" => [{ "type" => "text", "text" => text, **flags }] }
+
+    it "combines the chain's last state with max_tokens, reasoning, effort and the stripped markers" do
+      req = request(messages: [marked("a"), marked("b", "cache" => true)])
+
+      unmarked = last_state(request(messages: [marked("a"), marked("b")]))
+      markers = [[["messages", 1, "content", 0], "cache", true]]
+
+      expect(req.digest).to eq(Lain::Canonical.digest([unmarked, 1024, nil, nil, markers]))
+    end
+
+    it "normalizes each message once when rebuilt from bytes, the digest included" do
+      messages = JSON.parse(JSON.generate(Array.new(4) { |i| marked("m#{i}") }))
+      normalized = 0
+      allow(Lain::Canonical).to receive(:normalize).and_wrap_original do |original, value|
+        normalized += 1 if value.is_a?(Hash) && value.key?("role")
+        original.call(value)
+      end
+
+      request(messages:, chain: Lain::Request::PrefixChain.new)
+
+      expect(normalized).to eq(4)
+    end
+
+    # The chain dumps a stripped message itself rather than through Canonical.dump,
+    # so the 2 must give the same state for every shape a request carries.
+    it "rolls a message to the state Canonical's dump gives it" do
+      shapes = [
+        { "role" => "user", "content" => [{ "type" => "text", "text" => '{"cache":true} "workspace":' }] },
+        { role: :user, content: [{ type: :text, text: "caf\u00e9 \u2028 </script> \"q\" \\ \t\u0001 \u{1F600}" }] },
+        { "role" => "assistant", "content" => [
+          { "type" => "tool_use", "id" => "t1", "name" => "edit",
+            "input" => { "z" => 1.5, "a" => [1, -2, 1e-7, 3.0e20, nil, true, false], "m" => { "y" => "", "b" => {} } } }
+        ] },
+        { "role" => "user", "content" => [
+          { "type" => "tool_result", "tool_use_id" => "t1", "content" => [{ "type" => "text", "text" => "ok" }],
+            "is_error" => false, "cache" => true }
+        ] },
+        { "role" => "user", "content" => [{ "type" => "text", "text" => "tail", Lain::Workspace::WORKSPACE_MARKER => true }] }
+      ]
+
+      previous = Lain::Canonical.digest("seed")
+      request(messages: shapes).messages.each do |message|
+        stripped = described_class.strip_cache_markers(message)
+        expect(described_class::PrefixChain::NONE.entry(0, message, previous).state)
+          .to eq(Lain::Canonical.digest([previous, stripped]))
+      end
+    end
+
+    it "combines a reasoning setting into the bytes Canonical gives it" do
+      reasoning = { "type" => "enabled", "budget_tokens" => 2048, "display" => "summarized" }
+      req = request(reasoning:, effort: "high", messages: [marked("a", "cache" => true)])
+      state = last_state(request(messages: [marked("a")]))
+      markers = [[["messages", 0, "content", 0], "cache", true]]
+      combined = [state, 1024, Lain::Canonical.normalize(reasoning), "high", markers]
+
+      expect(req.digest).to eq(Lain::Canonical.digest(combined))
+    end
+
+    it "is a function of the request alone, whatever chain built it" do
+      messages = Array.new(6) { |i| marked("m#{i}") }
+      warm = Lain::Request::PrefixChain.new
+      request(messages: messages.first(4), chain: warm)
+
+      built = [warm, Lain::Request::PrefixChain.new, Lain::Request::PrefixChain::NONE]
+              .map { |chain| request(messages:, chain:).digest }
+      expect(built.uniq).to eq([request(messages:).digest])
+    end
+
+    it "builds a warm chain's request equal to a cold one's, as a whole value" do
+      messages = Array.new(3) { |i| marked("m#{i}") }
+
+      expect(request(messages:, chain: Lain::Request::PrefixChain.new)).to eq(request(messages:))
+    end
+
+    describe "telling apart what the states do not carry" do
+      def pair(**differing)
+        base = { system: [{ "type" => "text", "text" => "sys" }],
+                 messages: [marked("a", "cache" => true), marked("b")] }
+        [request(**base), request(**base, **differing)]
+      end
+
+      {
+        "max_tokens" => { max_tokens: 2048 },
+        "a cache marker on a system block" => { system: [{ "type" => "text", "text" => "sys", "cache" => true }] },
+        "the workspace flag" => {
+          messages: [{ "role" => "user", "content" => [{ "type" => "text", "text" => "a", "cache" => true }] },
+                     { "role" => "user",
+                       "content" => [{ "type" => "text", "text" => "b", Lain::Workspace::WORKSPACE_MARKER => true }] }]
+        }
+      }.each do |name, differing|
+        it "differs on #{name} alone, while the message entries agree" do
+          one, other = pair(**differing)
+
+          expect(one.digest).not_to eq(other.digest)
+          expect(one.prefix_digests.to_h.except(-1)).to eq(other.prefix_digests.to_h.except(-1))
+          expect(one.prefix_digests.to_h.except(-1)).not_to be_empty
+        end
       end
     end
   end

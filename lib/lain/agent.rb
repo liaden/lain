@@ -625,6 +625,7 @@ module Lain
       @dispatch_lock = Monitor.new
       @preparing = false
       @rendered_prefix = RenderedPrefix.none
+      @prefix_chain = Request::PrefixChain.new
     end
 
     def summarizing
@@ -808,7 +809,7 @@ module Lain
         raise refused.error if refused&.digest == request.digest
 
         sent = request.digest
-        model_caller.call(request, on_stream_started:, stands_on:)
+        model_caller.call(request, on_stream_started:, stands_on:, prefix_chain: @prefix_chain)
       end
     rescue WindowExceeded => e
       raise if e.equal?(refused&.error) && spent.include?(:handoff)
@@ -857,7 +858,7 @@ module Lain
     def render_request(inbox)
       turn_context = inbox.over(@instrumentation.pipeline_source.context_for(**render_inputs))
       turn_context.render(timeline: PrefixedTimeline.new(timeline: @timeline, advance: method(:advance_prefix)),
-                          toolset: @toolset, workspace: @workspace.with(*@session.reminders))
+                          toolset: @toolset, workspace: @workspace.with(*@session.reminders), chain: @prefix_chain)
     end
 
     def advance_prefix(timeline) = @rendered_prefix = @rendered_prefix.over(timeline)

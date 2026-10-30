@@ -63,18 +63,13 @@ RSpec.describe Lain::Middleware::JournalRequests do
       expect(event.prefix_digests).not_to be_empty
     end
 
-    it "walks the chain through the env's prefix_chain, so an Agent's memo serves the journal" do
+    it "walks the chain the request was built through, so the journal digests nothing the render rolled" do
       marked = [{ "role" => "user", "content" => [{ "type" => "text", "text" => "hello", "cache" => true }] }]
-      sent = request(messages: marked)
       memo = Lain::Request::PrefixChain.new
-      middleware.call({ request: sent, prefix_chain: memo }) { |env| env }
-      middleware.call({ request: sent, prefix_chain: memo }) { |env| env }
+      sent = request(messages: marked, chain: memo)
 
-      allow(Lain::Canonical).to receive(:digest).and_call_original
-      middleware.call({ request: sent, prefix_chain: memo }) { |env| env }
-
-      expect(Lain::Canonical).to have_received(:digest).once
-      expect(journal.events.map(&:prefix_digests).uniq).to eq([sent.prefix_digests])
+      expect(digests_during { middleware.call({ request: sent, prefix_chain: memo }) { |env| env } }).to eq(0)
+      expect(journal.events.map(&:prefix_digests)).to eq([request(messages: marked).prefix_digests])
     end
 
     # Record-before-dispatch is a semantic, not an implementation accident: a

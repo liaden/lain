@@ -147,14 +147,18 @@ module Lain
           [score(run), folded.fetch(:tokens), Rewrites.new(chains: folded.fetch(:chain)).count]
         end
 
-        def reactive_seed = { timeline: Dag::Factory.timeline(store: Dag::Factory.store), tokens: 0, chain: [] }
+        def reactive_seed
+          { timeline: Dag::Factory.timeline(store: Dag::Factory.store), tokens: 0, chain: [],
+            memo: Request::PrefixChain.new }
+        end
 
         def reactive_turn(state, run, step_id, scheduler, need)
           timeline = state.fetch(:timeline)
-          request = render(timeline, reactive_pipeline(timeline, scheduler, need))
-          { timeline: commit_step(timeline, run, step_id),
+          memo = state.fetch(:memo)
+          request = render(timeline, reactive_pipeline(timeline, scheduler, need), memo)
+          { timeline: commit_step(timeline, run, step_id), memo:,
             tokens: state.fetch(:tokens) + Canonical.dump(request.messages).bytesize,
-            chain: state.fetch(:chain) + [[Request::PREFIX_CHAIN_VERSION, request.prefix_digests]] }
+            chain: state.fetch(:chain) + [[Request::PREFIX_CHAIN_VERSION, request.prefix_digests(chain: memo)]] }
         end
 
         # This turn's render pipeline, chosen by the reactive scheduler off the
@@ -189,9 +193,10 @@ module Lain
         # through its pipeline) into a request and count the prefix rewrites across
         # the chain -- exactly the churn projection the seam-policy spec pins.
         def mainline_writes(continuations, store)
+          memo = Request::PrefixChain.new
           chain = continuations.map do |continuation|
-            request = render(continuation.timeline(store), continuation.pipeline)
-            [Request::PREFIX_CHAIN_VERSION, request.prefix_digests]
+            request = render(continuation.timeline(store), continuation.pipeline, memo)
+            [Request::PREFIX_CHAIN_VERSION, request.prefix_digests(chain: memo)]
           end
           Rewrites.new(chains: chain).count
         end
@@ -199,8 +204,8 @@ module Lain
         # The arm's own Context with only the pipeline swapped -- the same move
         # {Plan::Runner} makes per chunk, which is what keeps the churn this
         # projects and the tokens the Runner measures on ONE prompt.
-        def render(timeline, pipeline)
-          @context.with_pipeline(pipeline).render(timeline:, toolset: @toolset, workspace: Workspace.empty)
+        def render(timeline, pipeline, chain)
+          @context.with_pipeline(pipeline).render(timeline:, toolset: @toolset, workspace: Workspace.empty, chain:)
         end
 
         def step_ids = @fixture.document_for(:none).map(&:id)

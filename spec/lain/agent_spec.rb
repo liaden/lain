@@ -2046,6 +2046,24 @@ RSpec.describe Lain::Agent do
         expect(record["prefix_digests"]).to eq(fresh.prefix_digests)
       end
     end
+
+    it "puts the chain it rendered through on the env, so the journal's walk digests nothing" do
+      seen = []
+      probe = Class.new(Lain::Middleware::Base) do
+        define_method(:call) do |env, &downstream|
+          seen << env.to_h.values_at(:prefix_chain, :request)
+          downstream.call(env)
+        end
+      end.new
+      agent = described_class.new(provider:, toolset:, context:, model_middleware: Lain::Middleware::Stack.new.use(probe))
+      agent.ask("hi")
+      agent.ask("again")
+
+      chain, request = seen.last
+      expect(seen.map(&:first).uniq).to eq([chain])
+      expect(digests_during { request.prefix_digests(chain:) }).to eq(0)
+      expect(request.prefix_digests(chain:)).to eq(request.prefix_digests)
+    end
   end
 
   describe "session threading" do

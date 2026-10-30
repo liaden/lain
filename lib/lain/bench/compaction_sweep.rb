@@ -340,8 +340,10 @@ module Lain
         # @return [Array<Request>] each recorded model call, rendered through this arm in order
         def render(journal, base)
           recording = journal.recording
+          chain = Request::PrefixChain.new
           journal.timelines.map do |timeline|
-            context(base, timeline).render(timeline:, toolset: recording.toolset, workspace: recording.workspace)
+            context(base, timeline).render(timeline:, toolset: recording.toolset, workspace: recording.workspace,
+                                           chain:)
           end
         end
 
