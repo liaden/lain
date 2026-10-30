@@ -305,16 +305,17 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
       Lain::Telemetry::AskSettled.new(head: "blake3:x", stop_reason: :end_turn, turns:, seconds:)
     end
 
-    it "posts one notice naming the wall time and the turns" do
-      surfaces.post(settled(turns: 3, seconds: 12.4))
+    it "posts the sentence the terminal decorator prints" do
+      event = settled(turns: 3, seconds: 12.4)
+      surfaces.post(event)
 
-      expect(rpc.notices).to eq(["done in 12s, 3 turns"])
+      expect(rpc.notices).to eq([Lain::Frontend::Decorators::AskSettled.new(event).note])
     end
 
-    it "says turn in the singular for one round trip" do
+    it "names the stop reason, the turns and the wall time to 1 decimal" do
       surfaces.post(settled(turns: 1, seconds: 0.5))
 
-      expect(rpc.notices).to eq(["done in 1s, 1 turn"])
+      expect(rpc.notices).to eq(["ask settled: end_turn after 1 turn in 0.5s"])
     end
 
     it "posts no notice for an ordinary event" do

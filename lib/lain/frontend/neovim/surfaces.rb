@@ -125,11 +125,7 @@ module Lain
         private
 
         def post_notice(event)
-          @rpc.notice(settled_sentence(event)) if event.is_a?(Telemetry::AskSettled)
-        end
-
-        def settled_sentence(settled)
-          "done in #{settled.seconds.round}s, #{settled.turns} #{"turn".pluralize(settled.turns)}"
+          @rpc.notice(Decorators::AskSettled.new(event).note) if event.is_a?(Telemetry::AskSettled)
         end
 
         def post_epic_doc(event)
