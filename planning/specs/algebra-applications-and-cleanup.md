@@ -1,6 +1,6 @@
 # Laws applied: journal projections, round trips, the root join and the one walk, with the October cleanups
 
-status: planned
+status: in-progress
 commit-mode: orchestrator-commits
 language: ruby (binding-facing card: T17)
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson); the algebra seats (Edward Kmett, Philip Wadler, Conal Elliott) join for T1, T3, T4, T11, T12, T14, T15, T16, T17
@@ -1928,4 +1928,21 @@ Spec file: `spec/docs_naming_spec.rb`
 
 ## Execution log
 
-(Written by /execute-plan.)
+Run start 2026-10-29: base `main` at `53407ce5`. `git worktree list` at start: the main checkout plus 83 stale
+`card/*` worktrees from earlier plans under `tmp/worktrees/` (BD, EXT, FLK, HARNESS, T4 to T89, TIM); they reuse this
+plan's card names, so this run cuts `tmp/worktrees/aa-T<n>` on branch `card/aa-T<n>` and leaves those alone. Extra
+branches at start: `flake/review`, `spike/combined`, `spike/combined2`. The 3 staged submodule entries in the main
+index (`.gitmodules`, `references/repos/cliffcompaction`, `references/repos/pi`) were unstaged so no commit sweeps them
+in; they are re-staged at close.
+
+Hook (`.pre-commit-config.yaml`), as commands an agent can run on its own paths:
+- whitespace, end of file, shebang, yaml and merge-conflict checks on staged files
+- `bundle exec rubocop <paths>` and the full suite: the hook runs `bundle exec rake compile check`, which is
+  `rake pspec` (about 74s at 12 workers, takes the suite lock) beside a whole-repo rubocop
+- `bundle exec yard-lint <lib paths>` (the hook runs `--staged`)
+- `bin/lint-gherkin-docs <plan>` for a staged plan doc; `bin/lint-commit-msg` at commit-msg
+- Rust (fmt, clippy, cargo test) only when a `.rs` file is staged; no card stages one
+- repo ratchet specs an agent runs by path: `bundle exec rspec spec/*_spec.rb`
+A commit takes about 90s. The suite takes `$XDG_STATE_HOME/lain/locks/suite.lock` and must run alone on the box;
+agent spec runs by path are not locked, so landings happen in quiet windows. No path needs user approval.
+Each worktree gets its own `TMPDIR` under `$HOME/tmp/lain/aa-T<n>`.
