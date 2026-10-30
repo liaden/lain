@@ -2,6 +2,20 @@
 
 module Lain
   module Telemetry
+    module Carriers
+      # Canonical fields keep a nested payload deterministic, as the child's digest depends on it.
+      class ChildTurn < Declarative::Carrier
+        attribute :digest, :lain_interned
+        attribute :kind
+        attribute :from, :lain_canonical
+        attribute :to, :lain_canonical
+        attribute :render_parent, :lain_canonical
+        attribute :payload, :lain_canonical
+        attribute :causal_parents, :lain_canonical
+        attribute :correlation, :lain_canonical
+      end
+    end
+
     # A SPAWNED chain's turn, promoted to the session record. Its own type, and
     # the reason is mechanical: a child's chain shares no render edge with the
     # parent's, so {Bench::Session::ChainFold} -- which re-commits every `turn`
@@ -33,16 +47,8 @@ module Lain
       end
 
       def initialize(digest:, kind:, from:, to:, render_parent:, payload:, causal_parents:, correlation:)
-        super(
-          digest: digest.dup.freeze,
-          kind: kind.to_sym,
-          from: Canonical.normalize(from),
-          to: Canonical.normalize(to),
-          render_parent: Canonical.normalize(render_parent),
-          payload: Canonical.normalize(payload),
-          causal_parents: Canonical.normalize(causal_parents),
-          correlation: Canonical.normalize(correlation)
-        )
+        super(**Carriers::ChildTurn.settle!(digest:, kind: kind.to_sym, from:, to:, render_parent:, payload:,
+                                            causal_parents:, correlation:))
       end
     end
   end

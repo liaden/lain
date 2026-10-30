@@ -23,7 +23,7 @@ module Lain
         def summary = (@event.summary unless @event.summary.empty?)
 
         def tail
-          return unless @event.phase == :end
+          return unless @event.phase == "end"
 
           format("%<outcome>s %<seconds>.1fs", outcome: @event.outcome, seconds: @event.seconds)
         end

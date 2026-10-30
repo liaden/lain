@@ -505,7 +505,7 @@ RSpec.describe Lain::Agent do
             display:, secrets:).ask("go")
 
       called = display.grep(Lain::Telemetry::ToolCalled)
-      expect(called.map(&:phase)).to eq(%i[start end])
+      expect(called.map(&:phase)).to eq(%w[start end])
       expect(called.map(&:summary).join).not_to include("hunter2-plain")
     end
   end

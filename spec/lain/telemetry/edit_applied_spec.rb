@@ -8,8 +8,8 @@ RSpec.describe Lain::Telemetry::EditApplied do
   end
 
   it "journals under its own type with every field" do
-    expect(record.to_journal).to include("type" => "edit_applied", "path" => "lib/a.rb", "removed" => ["old"],
-                                         "added" => %w[new more], "hidden" => 0)
+    expect(record.to_journal).to eq("type" => "edit_applied", "path" => "lib/a.rb", "removed" => ["old"],
+                                    "added" => %w[new more], "hidden" => 0)
   end
 
   it "is shareable across Ractors, even when built from mutable strings" do

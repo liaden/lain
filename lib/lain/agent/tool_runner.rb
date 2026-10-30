@@ -200,7 +200,7 @@ module Lain
             @context = context
             @started = announcer.clock.call
             @open = true
-            announcer.emit(tool_use, context, :start)
+            announcer.emit(tool_use, context, "start")
           end
 
           def finish(block) = close { ended(@announcer.outcome(block, @context)) }
@@ -211,7 +211,7 @@ module Lain
 
           def ended(outcome)
             seconds = @announcer.clock.call - @started
-            @announcer.emit(@tool_use, @context, :end, outcome:, seconds:)
+            @announcer.emit(@tool_use, @context, "end", outcome:, seconds:)
           end
 
           def close

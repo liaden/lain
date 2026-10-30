@@ -5,7 +5,7 @@ RSpec.describe Lain::Frontend::Decorators::ToolCalled do
   let(:theme) { Lain::Frontend::Theme.new(pastel: Pastel.new(enabled: false), tokens:) }
 
   def record(**over)
-    Lain::Telemetry::ToolCalled.new(tool_use_id: "toolu_01ab", tool: "edit_file", summary: "lib/a.rb", phase: :start,
+    Lain::Telemetry::ToolCalled.new(tool_use_id: "toolu_01ab", tool: "edit_file", summary: "lib/a.rb", phase: "start",
                                     outcome: nil, seconds: nil, **over)
   end
 
@@ -16,11 +16,11 @@ RSpec.describe Lain::Frontend::Decorators::ToolCalled do
   end
 
   it "adds the outcome and the time when the call ends" do
-    expect(rendered(phase: :end, outcome: "ok", seconds: 0.4)).to eq("▸ [01ab] edit_file lib/a.rb  ok 0.4s")
+    expect(rendered(phase: "end", outcome: "ok", seconds: 0.4)).to eq("▸ [01ab] edit_file lib/a.rb  ok 0.4s")
   end
 
   it "carries the first line of an error in the outcome" do
-    expect(rendered(phase: :end, outcome: "failed no such file", seconds: 1.0))
+    expect(rendered(phase: "end", outcome: "failed no such file", seconds: 1.0))
       .to eq("▸ [01ab] edit_file lib/a.rb  failed no such file 1.0s")
   end
 

@@ -2,6 +2,15 @@
 
 module Lain
   module Telemetry
+    module Carriers
+      # The hook is kept a Symbol, the form the journal has always carried.
+      class ObserverFailed < Declarative::Carrier
+        attribute :hook
+        attribute :digest, :lain_interned
+        attribute :message, :lain_interned
+      end
+    end
+
     # An injected observer callback raised instead of running cleanly. A
     # caller-supplied hook is not allowed to cost a round trip its Response just
     # because the hook is buggy -- but a swallowed exception is a lie by
@@ -12,7 +21,7 @@ module Lain
       include Journalable
 
       def initialize(hook:, digest:, message:)
-        super(hook: hook.to_sym, digest: digest.dup.freeze, message: message.to_s.dup.freeze)
+        super(**Carriers::ObserverFailed.settle!(hook: hook.to_sym, digest:, message:))
       end
     end
   end

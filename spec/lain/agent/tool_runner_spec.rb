@@ -206,7 +206,7 @@ RSpec.describe Lain::Agent::ToolRunner do
       run_with(ok_handler, ["tu_1", "edit_file", { "path" => "lib/a.rb" }])
 
       expect(display.map { |event| [event.phase, event.tool, event.summary, event.outcome] })
-        .to eq([[:start, "edit_file", "lib/a.rb", nil], [:end, "edit_file", "lib/a.rb", "ok"]])
+        .to eq([["start", "edit_file", "lib/a.rb", nil], ["end", "edit_file", "lib/a.rb", "ok"]])
       expect(display.last.seconds).to be >= 0
     end
 
@@ -294,7 +294,7 @@ RSpec.describe Lain::Agent::ToolRunner do
       handler = Lain::Effect::Handler::Mock.new { |_effect, _context| raise torn }
 
       expect { run_with(handler, ["tu_1", "bash", { "command" => "sleep 9" }]) }.to raise_error(torn)
-      expect(display.map(&:phase)).to eq(%i[start end])
+      expect(display.map(&:phase)).to eq(%w[start end])
       expect(display.last.outcome).to eq("interrupted")
     end
 
