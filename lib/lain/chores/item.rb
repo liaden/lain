@@ -16,8 +16,10 @@ module Lain
     # mark (open, claimed, done, failed), an optional tag, a trailing comment.
     class Item
       MARKS = { " " => :open, "~" => :claimed, "x" => :done, "X" => :done, "!" => :failed }.freeze
+      MARK = { open: " ", claimed: "~", done: "x", failed: "!" }.freeze
       LINE = /\A[-*] \[(?<mark>[ ~xX!])\] (?:\[(?<tag>[\w-]+)\] )?(?<text>.*?)(?:\s*<!--\s*(?<note>.*?)\s*-->)?\s*\z/
-      CLAIM = /\Alain pid=(?<pid>\d+) start=(?<start>\S+) host=(?<host>\S+) since=(?<since>\S+)\z/
+      CLAIM_NOTE = /\Alain pid=\d+ start=\S+ host=\S+ since=\S+\z/
+      CLAIM = /\Alain pid=(?<pid>\d+) start=(?<start>#{Liveness::START_TOKEN}) host=(?<host>\S+) since=(?<since>\S+)\z/
 
       # @param line [String] one line of the file
       # @param ordinal [Integer] how many identical texts precede this one, which keeps their ids apart
@@ -27,8 +29,14 @@ module Lain
         return unless match
 
         text = match[:text]
-        new(id: id_of(text, ordinal), text:, tag: match[:tag], state: MARKS.fetch(match[:mark]),
-            claim: claim_in(match[:note]))
+        claim = claim_in(match[:note])
+        state = state_of(MARKS.fetch(match[:mark]), claim, match[:note])
+        new(id: id_of(text, ordinal), text:, tag: match[:tag], state:, claim:)
+      end
+
+      # A lain note naming no readable claim is one nobody can still hold; a line with no lain note is a human's.
+      def self.state_of(state, claim, note)
+        state == :claimed && claim.nil? && CLAIM_NOTE.match?(note.to_s) ? :abandoned : state
       end
 
       def self.id_of(text, ordinal)
@@ -39,11 +47,12 @@ module Lain
         found = CLAIM.match(note.to_s)
         found && Claim.new(pid: Integer(found[:pid]), start: found[:start], host: found[:host], since: found[:since])
       end
-      private_class_method :id_of, :claim_in
+      private_class_method :id_of, :claim_in, :state_of
 
-      # @return [String] the line this item reads as in the file, with +mark+ and +note+ in place
-      def render(mark, note)
-        ["- [#{mark}]", ("[#{tag}]" if tag), text].compact.join(" ") + (note ? "  <!-- #{note} -->" : "")
+      # @param note [String, nil] the comment to carry; a claimed item's own claim when not given
+      # @return [String] the line this item reads as in the file
+      def line(note: claim&.comment)
+        ["- [#{MARK.fetch(state)}]", ("[#{tag}]" if tag), text].compact.join(" ") + (note ? "  <!-- #{note} -->" : "")
       end
     end
   end

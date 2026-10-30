@@ -136,4 +136,30 @@ RSpec.describe Lain::Memory::Writes do
       end
     end
   end
+
+  describe ".recorded" do
+    let(:item) { Lain::Memory::Item.new(id: "s", description: "d", body: "b", sources: { "a.rb" => "blake3:ab" }) }
+    let(:fields) { ->(item) { %i[id description body author sources].map { |field| item.public_send(field) } } }
+    let(:read_back) do
+      lambda do |line|
+        recorded = JSON.parse(line.delete_prefix("recorded item: "))
+        Lain::Memory::Item.new(id: "recorded", description: "", body: "",
+                               author: Lain::Memory::Author.from(recorded["author"]), sources: recorded["sources"])
+      end
+    end
+    let(:battery) do
+      AlgebraLaws::RoundTrip.from(render: described_class.method(:recorded), parse: read_back,
+                                  equal: ->(a, b) { fields.call(a) == fields.call(b) },
+                                  population: -> { [item] })
+    end
+
+    it "is a verification, not a round trip: the line holds the digest and never the body" do
+      outcomes = AlgebraLaws.outcomes(battery)
+
+      expect(outcomes).to eq(AlgebraLaws::ROUND_TRIP_LAW => :fails)
+      expect(battery.witness).to eq(item)
+      expect(JSON.parse(described_class.recorded(item).delete_prefix("recorded item: ")).keys)
+        .to contain_exactly("author", "digest", "sources")
+    end
+  end
 end

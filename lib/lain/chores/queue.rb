@@ -20,8 +20,6 @@ module Lain
         def initialize(path) = super("#{path} is not valid UTF-8, so its chores cannot be read")
       end
 
-      DONE = { done: "x", failed: "!" }.freeze
-
       # @param root [String] the project root the chore file sits in
       # @param file [String] a bare file name
       # @param liveness [Liveness::Probe] judges whether a claim's process still runs
@@ -61,7 +59,7 @@ module Lain
       def claim(item)
         rewrite(item, method(:takeable?)) do |found|
           found.with(state: :claimed, claim: mine).then do |claimed|
-            [claimed, claimed.render("~", claimed.claim.comment)]
+            [claimed, claimed.line]
           end
         end
       end
@@ -72,7 +70,8 @@ module Lain
       # @raise [Taken] when the item is no longer claimed in the file
       def finish(item, outcome:, note:)
         rewrite(item, method(:live?)) do |found|
-          [found.with(state: outcome, claim: nil), found.render(DONE.fetch(outcome), comment_safe(note))]
+          finished = found.with(state: outcome, claim: nil)
+          [finished, finished.line(note: comment_safe(note))]
         end
       end
 
@@ -82,7 +81,7 @@ module Lain
       def append(text)
         raise Error, "a chore cannot contain <!--, which the file reads as a note" if text.include?("<!--")
 
-        line = Item.new(id: nil, text:, tag: nil, state: :open, claim: nil).render(" ", nil)
+        line = Item.new(id: nil, text:, tag: nil, state: :open, claim: nil).line
         @lock.hold do
           existing = File.exist?(@path) ? File.binread(@path) : ""
           eol = existing[/\r?\n/] || "\n"

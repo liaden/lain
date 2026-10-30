@@ -16,7 +16,7 @@ module Lain
     # the worktree's age counts from. Anything lain cannot parse holds, because
     # a lock nobody can explain is one nobody may break.
     module LeaseLock
-      LEASE = /\Alain-lease pid=(\d+) start=(\d+|u\d+|-) host=(\S+)\z/
+      LEASE = /\Alain-lease pid=(\d+) start=(#{Liveness::START_TOKEN}) host=(\S+)\z/
       RETAINED = /\Alain-retained since=(\S+)\z/
 
       # Taken by a running process. Whether that process is still the one

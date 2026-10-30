@@ -204,6 +204,20 @@ RSpec.describe Lain::Chores::Queue, :seam do
     expect { queue.claim(item) }.to raise_error(Lain::Chores::Queue::Taken)
   end
 
+  it "offers a [~] line whose lain note no longer parses as abandoned, and a claim takes it again" do
+    File.write(file, "- [~] fix  <!-- lain pid=1 start=abc host=box since=s -->\n")
+
+    expect(queue.open.map(&:state)).to eq([:abandoned])
+    expect(queue.claim(queue.open.first).claim.pid).to eq(Process.pid)
+  end
+
+  it "leaves a [~] line alone whose comment is a human's, lain-prefixed or not" do
+    File.write(file, "- [~] mine  <!-- remember to review -->\n- [~] also mine  <!-- lain pid=3 is slow -->\n")
+
+    expect(queue.items.map(&:state)).to eq(%i[claimed claimed])
+    expect(queue.open).to eq([])
+  end
+
   it "gives identical texts distinct ids, so each can be claimed alone" do
     File.write(file, "- [ ] dup\n- [ ] dup\n")
     first, second = queue.open

@@ -119,6 +119,9 @@ module Lain
       end
     end
 
+    # The start grammar, unanchored so a header, a lease and a claim each embed it in their own pattern.
+    START_TOKEN = /\d+|#{Probe::EPOCH_PREFIX}\d+|#{Regexp.escape(UNKNOWN_START)}/
+
     Writer = Data.define(:pid, :start, :host)
 
     # The process writing a session file, recorded in its header so a reader in
@@ -128,7 +131,7 @@ module Lain
 
       # A tick count, an epoch token or {UNKNOWN_START}: anything else could
       # never match a real start, and would read a live writer as dead.
-      START = /\A(?:\d+|#{Probe::EPOCH_PREFIX}\d+|#{Regexp.escape(UNKNOWN_START)})\z/
+      START = /\A#{START_TOKEN}\z/
 
       # A header that records no writer: one written before writers were
       # recorded, or one not written by a chat at all.

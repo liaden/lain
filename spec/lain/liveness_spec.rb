@@ -229,4 +229,36 @@ RSpec.describe Lain::Liveness do
       expect(described_class.current).to be_deeply_frozen
     end
   end
+
+  describe "the start grammar" do
+    it "is written once, for the header, the lease and the claim to interpolate" do
+      token = Regexp.new("\\A#{described_class::START_TOKEN}\\z")
+
+      expect(%w[12 u1700000000 -].map { |start| token.match?(start) }).to eq([true] * 3)
+      expect(%w[x u 1a u-1].map { |start| token.match?(start) }).to eq([false] * 4)
+    end
+
+    it "is spelled out by none of the 3 patterns that read it" do
+      sources = %w[liveness isolation/lease_lock chores/item].map do |name|
+        File.read(File.expand_path("../../lib/lain/#{name}.rb", __dir__))
+      end
+
+      expect(sources.map { |source| source.scan("u\\d+").size }).to eq([0, 0, 0])
+      expect(sources.map { |source| source.scan("START_TOKEN").size }).to all(be >= 1)
+    end
+  end
+
+  describe "the header it writes" do
+    def self.writers
+      gen = PropCheck::Generators
+      start = gen.one_of(gen.positive_integer.map(&:to_s), gen.positive_integer.map { |n| "u#{n}" }, gen.constant("-"))
+      gen.fixed_hash(pid: gen.positive_integer, start:, host: gen.alphanumeric_string(min: 1, max: 8))
+         .map { |fields| Lain::Liveness::Writer.new(**fields) }
+    end
+
+    include_examples "a round trip",
+                     render: :to_header.to_proc,
+                     parse: ->(header) { Lain::Liveness::Writer.from_header(header) },
+                     generator: writers
+  end
 end

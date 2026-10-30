@@ -187,4 +187,18 @@ RSpec.describe Lain::Isolation::LeaseLock do
       expect(table(host: "other").verdict(table.current)).to eq(:elsewhere)
     end
   end
+
+  describe "a lease reason" do
+    def self.leases
+      gen = PropCheck::Generators
+      start = gen.one_of(gen.positive_integer.map(&:to_s), gen.positive_integer.map { |n| "u#{n}" }, gen.constant("-"))
+      gen.fixed_hash(pid: gen.positive_integer, start:, host: gen.alphanumeric_string(min: 1, max: 8))
+         .map { |fields| Lain::Isolation::LeaseLock::Held.new(**fields) }
+    end
+
+    include_examples "a round trip",
+                     render: :reason.to_proc,
+                     parse: ->(reason) { described_class.parse(reason) },
+                     generator: leases
+  end
 end
