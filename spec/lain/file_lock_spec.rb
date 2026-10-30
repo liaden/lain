@@ -91,6 +91,31 @@ RSpec.describe Lain::FileLock, :seam do
     expect(notices.first).to include("pid=#{holder}")
   end
 
+  # Notices told while a fake sleeper moves a fake clock, and releases the lock once it reaches `release_at`.
+  def notices_on_clock(release_at)
+    now = [0.0]
+    notices = []
+    File.open(@path, File::RDWR | File::CREAT) do |blocker|
+      blocker.flock(File::LOCK_EX)
+      sleeper = lambda do |seconds|
+        now[0] += seconds
+        blocker.flock(File::LOCK_UN) if now.first >= release_at
+      end
+      lock = described_class.new(@path, interval: 0.1, patience: 0.5, sleeper:, clock: -> { now.first })
+
+      expect(lock.hold(notice: ->(text) { notices << text }) { :entered }).to eq(:entered)
+    end
+    notices
+  end
+
+  it "tells no notice before the patience runs out on its clock" do
+    expect(notices_on_clock(0.3)).to be_empty
+  end
+
+  it "tells 1 notice once its clock passes the patience" do
+    expect(notices_on_clock(0.8).size).to eq(1)
+  end
+
   describe "reclaim" do
     def killed_holder
       ready, held = IO.pipe

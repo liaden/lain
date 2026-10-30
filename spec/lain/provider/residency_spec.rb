@@ -75,6 +75,46 @@ RSpec.describe Lain::Provider::Residency, :seam do
     expect(waited.first.waited).to be >= 0.05
   end
 
+  it "tells a waiter past a fake clock's deadline once, then runs it holding no flock" do
+    holder = held_elsewhere("model-a")
+    base = Dir[File.join(@dir, "**", "residency-*.meta")].sole.delete_suffix(".meta")
+    ticks = [0.0]
+    faked = described_class.new(base:, endpoint: "http://localhost:11434", patience: 0.5,
+                                clock: -> { ticks[0] += 0.25 })
+    notices = []
+
+    free = faked.holding(model: "model-b", deadline: 1, journal:, notice: ->(event) { notices << event }) do
+      holder.release
+      File.open("#{base}.lock") { |lock| lock.flock(File::LOCK_EX | File::LOCK_NB) == 0 }
+    end
+
+    expect([free, notices.size, waited.map(&:outcome)]).to eq([true, 1, ["proceeded"]])
+    expect(waited.first.waited).to eq(1.5)
+  end
+
+  it "names a waiter that won the endpoint as resident, so a request for the old model is refused" do
+    holder = held_elsewhere("model-a")
+    waiting = Queue.new
+    entered = Queue.new
+    leave = Queue.new
+    told_at_once = described_class.for(endpoint: "http://127.0.0.1:11434", paths:, patience: 0)
+    winner = Thread.new do
+      told_at_once.holding(model: "model-b", deadline: 30, journal:, notice: waiting.method(:<<)) do
+        entered << :in
+        leave.pop
+      end
+    end
+    expect(waiting.pop(timeout: 5)).not_to be_nil
+    holder.release
+    expect(entered.pop(timeout: 5)).not_to be_nil
+
+    expect(residency.holding(model: "model-a", deadline: 0, journal: []) { :ran }).to eq(:skipped)
+    expect(residency.resident).to eq("model-b")
+  ensure
+    leave&.push(:out)
+    winner&.join
+  end
+
   it "tells no notice before the patience runs out" do
     held_elsewhere("model-a")
     notices = []

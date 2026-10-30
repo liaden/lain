@@ -24,14 +24,13 @@ module Lain
     # @param interval [Numeric] seconds between tries
     # @param patience [Numeric] seconds of waiting before the waiter is told who holds it
     # @param label [String] what the notice calls the lock
+    # @param clock [#call] the monotonic reading the patience is measured against
     def initialize(path, mode: File::LOCK_EX, sleeper: Kernel.method(:sleep), interval: 0.05, patience: 5,
-                   label: "the lock")
+                   label: "the lock", clock: RunClock::MONOTONIC)
       @path = path
       @label = label
       @mode = mode
-      @sleeper = sleeper
-      @interval = interval
-      @told_after = [(patience / interval.to_f).ceil, 1].max
+      @wait = Wait.new(patience:, interval:, sleeper:, clock:)
     end
 
     # A clean release truncates the file, so a line still there when the lock is
@@ -97,11 +96,9 @@ module Lain
     end
 
     def waited(file, notice)
-      tries = 0
-      until file.flock(@mode | File::LOCK_NB)
-        notice.call(waiting_on) if (tries += 1) == @told_after
-        @sleeper.call(@interval)
-      end
+      return if file.flock(@mode | File::LOCK_NB)
+
+      @wait.succeeded?(-> { notice.call(waiting_on) }) { file.flock(@mode | File::LOCK_NB) }
     end
 
     # Shared holders must not overwrite one another's name, so only an exclusive one writes it.

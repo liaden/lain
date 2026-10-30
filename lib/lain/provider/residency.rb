@@ -21,7 +21,7 @@ module Lain
     # when each has its own. A dead holder's flock goes with its process, so a
     # stale `.resident` costs nothing.
     #
-    # Every wait is a `Kernel#sleep` poll, for {Admission}'s reason: a blocking
+    # Every wait is a {FileLock::Wait} poll, for {Admission}'s reason: a blocking
     # flock would stall the whole reactor thread.
     class Residency
       # The longest a queued request waits for another model to be released,
@@ -67,8 +67,7 @@ module Lain
         @lock_path = "#{base}.lock"
         @resident_path = "#{base}.resident"
         @endpoint = endpoint
-        @patience = patience
-        @interval = interval
+        @wait = FileLock::Wait.new(patience:, interval:, clock:)
         @clock = clock
       end
 
@@ -98,28 +97,9 @@ module Lain
       # Closing the descriptor, in #holding, is what releases the endpoint.
       def after_waiting(lock, waiting, deadline, journal, notice)
         started = @clock.call
-        held = waited?(lock, waiting, started, deadline, notice)
+        held = @wait.succeeded?(-> { notice.call(waiting) }, deadline:) { attempt(lock, waiting.model).nil? }
         journal << Waited.new(**waiting.to_h, outcome: held ? "held" : "proceeded", waited: @clock.call - started)
         yield
-      end
-
-      def waited?(lock, waiting, started, deadline, notice)
-        told = false
-        until (remaining = deadline - (elapsed = @clock.call - started)) <= 0
-          told ||= told?(notice, waiting, elapsed)
-          sleep([@interval, remaining].min)
-          return true if attempt(lock, waiting.model).nil?
-        end
-        false
-      end
-
-      # Tells the notice once the patience has run out.
-      # @return [Boolean] whether the notice has been told
-      def told?(notice, waiting, elapsed)
-        return false if elapsed < @patience
-
-        notice.call(waiting)
-        true
       end
 
       # @return [String, nil] the model holding the endpoint, or nil once `lock` holds it for `model`
