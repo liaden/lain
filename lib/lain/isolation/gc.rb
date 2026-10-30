@@ -77,7 +77,7 @@ module Lain
         repo_root = File.expand_path(repo_root)
         clones = Clone::Registry.new(repo_root:, root: File.expand_path(root), shell_out_factory:)
         registry = Registries.new(Worktree::Registry.new(repo_root:, shell_out_factory:), clones)
-        repo = Repo.new(Checkout.new(repo_root, shell_out_factory:), trunk:)
+        repo = Repo.new(Checkout.of(repo_root, shell_out_factory:), trunk:)
         # In this order: expiring a checkout writes anchors, which the anchor
         # pass then reports on in the same run, and removing a clone drops its pin.
         @passes = [Checkouts.new(registry:, repo:, root:, table: process_table, clock:, retain_days:,

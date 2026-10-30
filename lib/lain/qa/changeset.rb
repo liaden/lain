@@ -17,7 +17,7 @@ module Lain
       # @return [Changeset]
       # @raise [Lain::Error] when git is half way through an operation, or
       #   cannot resolve either end or diff them
-      def self.read(root:, base:, git: Isolation::Checkout.new(root))
+      def self.read(root:, base:, git: Isolation::Checkout.of(root))
         raise Error, refusal(root) if git.operation_in_progress?
 
         from = resolved(git, base)

@@ -30,7 +30,7 @@ module Lain
       # @param shell_out_factory [#call] every git subprocess
       def initialize(root:, shell_out_factory: Shell::Out.public_method(:new))
         @root = root
-        @checkout = Isolation::Checkout.new(root, shell_out_factory:)
+        @checkout = Isolation::Checkout.of(root, shell_out_factory:)
       end
 
       # @param slug [String] the epic whose `epic/<slug>` merges

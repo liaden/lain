@@ -405,4 +405,37 @@ RSpec.describe Lain::Isolation::CandidateDesk, :seam do
       expect([handbacks.map(&:worker_key), candidate_refs]).to eq([["w2"], ""])
     end
   end
+
+  describe "a desk over a clone lain cut that a call then tampered with" do
+    around do |example|
+      @root = File.join(Lain::Paths.new.state_home, "worktrees", Lain::Paths.new.project_hash(@repo))
+      FileUtils.mkdir_p(@root)
+      example.run
+    ensure
+      FileUtils.rm_rf(@root) if @root
+    end
+
+    let(:clone) { File.join(@root, "a") }
+    # Runs no git, so the refusal can only come from the desk's own checkout.
+    let(:verify_tree) { instance_double(Lain::Isolation::VerifyCheckout, at: nil) }
+    let(:cloned_desk) do
+      described_class.new(
+        repo_root: clone, journal:, strategy: Lain::Isolation::MergeStrategy::DEFAULT,
+        base: Lain::Isolation::WorkingBranch.new(branch, repo_root: clone, git: Lain::Isolation::Checkout.of(clone)),
+        home: Lain::Isolation::MergeCoordinator::Home.for(repo_root: clone, branch:),
+        checkout: verify_tree, shell_out_factory: Lain::Shell::Out.public_method(:new)
+      )
+    end
+
+    it "writes no candidate ref there, and says why by name" do
+      Lain::Isolation::Clone::Registry.new(repo_root: @repo, root: @root,
+                                           shell_out_factory: Lain::Shell::Out.public_method(:new))
+                                      .add(clone, tip, reason: "held")
+      SeedRepo.git(clone, "switch", "-q", "-c", branch)
+      cloned_desk.ready!
+      FileUtils.mkdir_p(File.join(clone, ".git", "modules"))
+
+      expect { cloned_desk.candidate }.to raise_error(Lain::Error, /holds modules/)
+    end
+  end
 end

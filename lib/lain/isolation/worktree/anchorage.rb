@@ -15,7 +15,7 @@ module Lain
         # @param repo_root [String] any checkout of the repository
         # @param shell_out_factory [#call] builds the subprocess runner
         def initialize(repo_root:, shell_out_factory:)
-          @repo = Checkout.new(repo_root, shell_out_factory:)
+          @repo = Checkout.of(repo_root, shell_out_factory:)
         end
 
         # Created against "must not exist" and named for the checkout and the

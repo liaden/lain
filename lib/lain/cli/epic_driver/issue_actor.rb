@@ -112,7 +112,7 @@ module Lain
           private
 
           def branches
-            git = Lain::Isolation::Checkout.new(@repo_root, shell_out_factory: @shell_out_factory)
+            git = Lain::Isolation::Checkout.of(@repo_root, shell_out_factory: @shell_out_factory)
             epic = Lain::Isolation::WorkingBranch.epic_name(@slug)
             Lain::Isolation::WorkingBranch.owned_under(IssueActor.branch_prefix(@slug),
                                                        repo_root: @repo_root, shell_out_factory: @shell_out_factory)
@@ -219,7 +219,7 @@ module Lain
 
           def working_branch(checkout, branch)
             Lain::Isolation::WorkingBranch.new(branch, repo_root: checkout,
-                                                       git: Lain::Isolation::Checkout.new(
+                                                       git: Lain::Isolation::Checkout.of(
                                                          checkout, shell_out_factory: @shell_out_factory
                                                        ))
           end
@@ -406,7 +406,7 @@ module Lain
 
         def lane_for(issue_id, attempt) = "issue.#{@slug}.#{issue_id}.#{attempt}"
 
-        def checkout(dir) = Lain::Isolation::Checkout.new(dir, shell_out_factory: @shell_out_factory)
+        def checkout(dir) = Lain::Isolation::Checkout.of(dir, shell_out_factory: @shell_out_factory)
 
         # git's stderr arrives as ASCII-8BIT, so a refusal interpolating it raw
         # dies of Encoding::CompatibilityError rather than naming itself.

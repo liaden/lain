@@ -144,7 +144,7 @@ module Lain
         # Exit 0 is ignored, 1 is not, 128 is could-not-answer (no repository
         # here) -- so only a literal 0 is a yes.
         def reason(path)
-          shell = Lain::Isolation::Checkout.new(@root, shell_out_factory: @shell_out_factory)
+          shell = Lain::Isolation::Checkout.of(@root, shell_out_factory: @shell_out_factory)
                                            .run("check-ignore", "-v", "--", path)
           return "" unless Shell::Out.ok?(shell)
 

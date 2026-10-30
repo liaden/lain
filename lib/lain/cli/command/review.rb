@@ -288,7 +288,7 @@ module Lain
         end
 
         def close_branch_hint
-          shell = Lain::Isolation::Checkout.new(@root, shell_out_factory: @shell_out_factory)
+          shell = Lain::Isolation::Checkout.of(@root, shell_out_factory: @shell_out_factory)
                                            .run("rev-parse", "--verify", "--quiet", "--end-of-options", CLOSE_REF)
           CLOSE_BRANCH_HINT if Shell::Out.ok?(shell)
         end

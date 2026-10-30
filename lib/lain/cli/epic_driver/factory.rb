@@ -257,7 +257,7 @@ module Lain
           # @param shell_out_factory [#call] builds the git subprocess runner
           def initialize(repo_root:, path:, branch:, process_table: Lain::Isolation::LeaseLock::ProcessTable.new,
                          shell_out_factory: Lain::Shell::Out.public_method(:new))
-            @git = Lain::Isolation::Checkout.new(repo_root, shell_out_factory:)
+            @git = Lain::Isolation::Checkout.of(repo_root, shell_out_factory:)
             @registry = Lain::Isolation::Worktree::Registry.new(repo_root:, shell_out_factory:)
             @path = path
             @branch = branch
@@ -288,7 +288,7 @@ module Lain
           # driving its epic twice does not accumulate worktrees.
           def standing?
             Dir.exist?(@path) &&
-              Lain::Isolation::Checkout.new(@path, shell_out_factory: @shell_out_factory).symbolic_head == @branch.ref
+              Lain::Isolation::Checkout.of(@path, shell_out_factory: @shell_out_factory).symbolic_head == @branch.ref
           end
 
           def add
@@ -656,7 +656,7 @@ module Lain
           @working_branch ||= Lain::Isolation::WorkingBranch.epic(slug, repo_root: @root)
         end
 
-        def parent = @parent ||= Lain::Isolation::Checkout.new(@root)
+        def parent = @parent ||= Lain::Isolation::Checkout.of(@root)
 
         def worktree_root = IsolationBackend.worktree_root(@root, paths: @paths)
 
@@ -1506,7 +1506,7 @@ module Lain
         end
 
         def dirty(root)
-          Lain::Isolation::Checkout.new(root, shell_out_factory: @shell_out_factory)
+          Lain::Isolation::Checkout.of(root, shell_out_factory: @shell_out_factory)
                                    .run("status", "--porcelain", "-z", "--no-renames",
                                         "--untracked-files=all")
                                    .stdout.split("\0").map { |entry| entry[3..] }
@@ -1517,7 +1517,7 @@ module Lain
         def earlier(root, target, digest, since)
           return unless File.file?(File.join(root, target))
 
-          git = Lain::Isolation::Checkout.new(root, shell_out_factory: @shell_out_factory)
+          git = Lain::Isolation::Checkout.of(root, shell_out_factory: @shell_out_factory)
           wanted = message(target, digest)
           git.run("log", "--first-parent", "--format=%H%x00%s", "#{since}..HEAD").stdout.split("\n")
              .map { |line| line.split("\0", 2) }
@@ -1543,7 +1543,7 @@ module Lain
         end
 
         def branch_of(worker_env)
-          Lain::Isolation::Checkout.new(worker_env.cwd, shell_out_factory: @shell_out_factory)
+          Lain::Isolation::Checkout.of(worker_env.cwd, shell_out_factory: @shell_out_factory)
                                    .symbolic_head.delete_prefix("refs/heads/")
         end
 
@@ -1554,7 +1554,7 @@ module Lain
         # commit fails by design: a hook that runs the suite would refuse
         # exactly the state this step exists to record.
         def commit(root, record)
-          git = Lain::Isolation::Checkout.new(root, shell_out_factory: @shell_out_factory)
+          git = Lain::Isolation::Checkout.of(root, shell_out_factory: @shell_out_factory)
           committed!(git.run("add", "--", record.target))
           committed!(git.run("commit", "--no-verify", "-q", "-m", message(record.target, record.criteria_digest),
                              "--", record.target))

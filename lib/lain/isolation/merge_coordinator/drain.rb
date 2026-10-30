@@ -46,11 +46,11 @@ module Lain
               journal: -> { ::Lain::Journal.open(journal_path) },
               verify: Verifier.from(isolation, paths:, shell_out_factory:, notice:),
               queue_for: queues(root, branch, isolation, paths, shell_out_factory),
-              git: Checkout.new(root, shell_out_factory:), notice:)
+              git: Checkout.of(root, shell_out_factory:), notice:)
         end
 
         def self.queues(root, branch, isolation, paths, shell_out_factory)
-          base = WorkingBranch.new(branch, repo_root: root, git: Checkout.new(root, shell_out_factory:))
+          base = WorkingBranch.new(branch, repo_root: root, git: Checkout.of(root, shell_out_factory:))
           lambda do |journal:, verify:|
             LandingQueue.candidate(root:, base:, journal:, isolation:, paths:, lock: AlreadyHeld, verify:,
                                    shell_out_factory:)

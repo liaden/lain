@@ -71,7 +71,7 @@ module Lain
         def initialize(base:, head: "HEAD", repo_root: Dir.pwd,
                        shell_out_factory: Shell::Out.public_method(:new))
           @repo_root = File.expand_path(repo_root)
-          @git = Isolation::Checkout.new(@repo_root, shell_out_factory:)
+          @git = Isolation::Checkout.of(@repo_root, shell_out_factory:)
           @head_ref = resolve!("head", head)
           @base_ref = merge_base!(base, head)
         end

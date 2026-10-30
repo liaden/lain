@@ -35,7 +35,7 @@ module Lain
           @repo_root = repo_root
           @root = root
           @shell_out_factory = shell_out_factory
-          @git = Checkout.new(repo_root, shell_out_factory:)
+          @git = Checkout.of(repo_root, shell_out_factory:)
           @pins = "#{PINS}/#{paths.project_hash(root)}"
         end
 

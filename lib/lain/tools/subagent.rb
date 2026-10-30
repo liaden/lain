@@ -1126,7 +1126,7 @@ module Lain
         end
 
         def committed?(repo)
-          Shell::Out.ok?(Isolation::Checkout.new(repo).run("rev-parse", "--verify", "--quiet", "HEAD^{commit}"))
+          Shell::Out.ok?(Isolation::Checkout.of(repo).run("rev-parse", "--verify", "--quiet", "HEAD^{commit}"))
         end
       end
 

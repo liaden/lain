@@ -136,7 +136,7 @@ module Lain
 
         root = File.expand_path(repo_root)
         @desk = desk
-        @probe = Probe.new(parent: Checkout.new(root, shell_out_factory:), strategy: @desk.strategy)
+        @probe = Probe.new(parent: Checkout.of(root, shell_out_factory:), strategy: @desk.strategy)
         @retries = Integer(retries)
         @verify = verify
         @notice = notice

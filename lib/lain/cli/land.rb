@@ -139,7 +139,7 @@ module Lain
         lock.writable!
       end
 
-      def git(dir) = Isolation::Checkout.new(dir, shell_out_factory: @shell_out_factory)
+      def git(dir) = Isolation::Checkout.of(dir, shell_out_factory: @shell_out_factory)
 
       def home(root, branch)
         Isolation::MergeCoordinator::Home.for(repo_root: root, branch:, shell_out_factory: @shell_out_factory)

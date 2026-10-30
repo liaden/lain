@@ -17,7 +17,7 @@ module Lain
       # @return [String]
       # @raise [Lain::Error] when repo_root is in no repository, or in a bare one
       def self.main_root(repo_root, shell_out_factory: Shell::Out.public_method(:new))
-        listed = Checkout.new(File.expand_path(repo_root), shell_out_factory:)
+        listed = Checkout.of(File.expand_path(repo_root), shell_out_factory:)
                          .run("worktree", "list", "--porcelain", "-z")
         raise Error, "#{repo_root} is in no git repository, so it has no main worktree" unless
           Shell::Out.ok?(listed)
@@ -44,7 +44,7 @@ module Lain
         end
 
         def self.common_dir(root, shell_out_factory)
-          shell = Checkout.new(root, shell_out_factory:).run("rev-parse", "--path-format=absolute", "--git-common-dir")
+          shell = Checkout.of(root, shell_out_factory:).run("rev-parse", "--path-format=absolute", "--git-common-dir")
           unless Shell::Out.ok?(shell)
             raise Error,
                   "#{root} is in no git repository, so it has no merge coordinator home"

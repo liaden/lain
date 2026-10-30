@@ -122,6 +122,58 @@ RSpec.describe Lain::Isolation::VerifyCheckout, :seam do
     end
   end
 
+  describe "a repository root that is a clone lain cut" do
+    around do |example|
+      @root = File.join(Lain::Paths.new.state_home, "worktrees", Lain::Paths.new.project_hash(@repo))
+      FileUtils.mkdir_p(@root)
+      example.run
+    ensure
+      FileUtils.rm_rf(@root) if @root
+    end
+
+    let(:clone) { File.join(@root, "a") }
+    let(:marker) { File.join(@state, "fsmonitor-ran") }
+    let(:asked) { [] }
+    let(:recording) do
+      lambda { |*argv, **opts|
+        asked << [argv[2], opts.fetch(:environment, {})["GIT_DIR"]]
+        Lain::Shell::Out.new(*argv, **opts)
+      }
+    end
+    let(:over_clone) do
+      described_class.new(repo_root: clone, path: File.join(@state, "verify"), keep:, shell_out_factory: recording)
+    end
+
+    before do
+      Lain::Isolation::Clone::Registry.new(repo_root: @repo, root: @root,
+                                           shell_out_factory: Lain::Shell::Out.public_method(:new))
+                                      .add(clone, git("rev-parse", "HEAD"), reason: "held")
+    end
+
+    # An absent commondir naming a git dir a call wrote, whose config runs a program as core.fsmonitor.
+    def plant_commondir
+      evil = File.join(clone, "evil")
+      FileUtils.mkdir_p(evil)
+      FileUtils.cp_r([File.join(clone, ".git", "objects"), File.join(clone, ".git", "refs")], evil)
+      File.write(File.join(evil, "config"),
+                 "[core]\n\trepositoryformatversion = 0\n\tfsmonitor = \"touch #{marker}; false\"\n")
+      File.write(File.join(clone, ".git", "commondir"), "../evil\n")
+    end
+
+    it "runs every git call pinned to the clone's own git dir" do
+      over_clone.at(git("rev-parse", "HEAD"))
+
+      expect(asked.map(&:last).uniq).to eq([File.join(clone, ".git")])
+    end
+
+    it "refuses a tampered clone by name, and runs nothing it planted" do
+      plant_commondir
+
+      expect { over_clone.at(git("rev-parse", "HEAD")) }.to raise_error(Lain::Error, /commondir/)
+      expect(File.exist?(marker)).to be(false)
+    end
+  end
+
   describe "#path" do
     it "differs per branch" do
       other = described_class.for(repo_root: @repo, branch: "epic/x", paths:, keep:)

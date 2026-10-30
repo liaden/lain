@@ -154,7 +154,7 @@ module Lain
       end
 
       def self.checkout(repo_root, shell_out_factory)
-        Checkout.new(File.expand_path(repo_root), shell_out_factory:)
+        Checkout.of(File.expand_path(repo_root), shell_out_factory:)
       end
       private_class_method :checkout
 

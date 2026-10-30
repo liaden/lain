@@ -253,7 +253,7 @@ module Lain
           @repo_root = File.expand_path(repo_root)
           @remote = remote.to_s
           @shell_out_factory = shell_out_factory
-          @git = Isolation::Checkout.new(@repo_root, shell_out_factory:)
+          @git = Isolation::Checkout.of(@repo_root, shell_out_factory:)
           @remote_pr = Remote.new(ref: pull_request.to_s, cwd: @repo_root, timeout:,
                                   shell_out_factory:)
           read_refs

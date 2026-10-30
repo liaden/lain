@@ -361,7 +361,7 @@ module Lain
         #   dozen times per handback
         def initialize(base:, repo_root: Dir.pwd, journal: Channel::Null.instance, strategy: MergeStrategy::DEFAULT,
                        shell_out_factory: Shell::Out.public_method(:new))
-          @parent = Checkout.new(File.expand_path(repo_root), shell_out_factory:)
+          @parent = Checkout.of(File.expand_path(repo_root), shell_out_factory:)
           @journal = journal
           @strategy = strategy
           @merge = Merge.new(parent: @parent, strategy:, base:)

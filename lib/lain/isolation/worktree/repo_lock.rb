@@ -74,7 +74,7 @@ module Lain
         # nil when git cannot say, which leaves the in-process lock to carry on.
         def lock_file
           @lock_file ||= begin
-            shell = Checkout.new(@repo_root).run("rev-parse", "--git-common-dir")
+            shell = Checkout.of(@repo_root).run("rev-parse", "--git-common-dir")
             File.join(File.expand_path(shell.stdout.strip, @repo_root), FILE) if Shell::Out.ok?(shell)
           end
         end

@@ -145,7 +145,7 @@ module Lain
       private
 
       def inspecting(root, layout, base, shell_out_factory)
-        git = Isolation::Checkout.new(root, shell_out_factory:)
+        git = Isolation::Checkout.of(root, shell_out_factory:)
         [Commits.new(git:, base:), Placement.new(repo_root: root, layout:, base:, shell_out_factory:),
          Epic::RedCommit.new(git:, base: base.ref)]
       end
@@ -461,7 +461,7 @@ module Lain
         def initialize(repo_root:, layout:, base:, shell_out_factory:)
           @layout = layout
           @base = base
-          @git = Isolation::Checkout.new(repo_root, shell_out_factory:)
+          @git = Isolation::Checkout.of(repo_root, shell_out_factory:)
         end
 
         # Every refusing verdict counts, `:no_source` included.

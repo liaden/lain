@@ -37,7 +37,7 @@ module Lain
         # The handback outcome has no base member, and only the desk knows the tip a commit landed onto.
         @bases = {}
         root = File.expand_path(repo_root)
-        @git = Checkout.new(root, shell_out_factory:)
+        @git = Checkout.of(root, shell_out_factory:)
         @forward = Forward.new(repo_root: root, base:, strategy:, shell_out_factory:)
       end
 
@@ -188,7 +188,7 @@ module Lain
 
         def initialize(repo_root:, base:, strategy:, shell_out_factory:)
           @repo_root = repo_root
-          @git = Checkout.new(repo_root, shell_out_factory:)
+          @git = Checkout.of(repo_root, shell_out_factory:)
           @base = base
           @strategy = strategy
           @shell_out_factory = shell_out_factory
@@ -209,7 +209,7 @@ module Lain
           listed = @git.run("worktree", "list", "--porcelain", "-z").stdout.split("\0\0")
           held = listed.map { |record| fields(record) }
                        .find { |each| each["branch"] == @base.ref && !each.key?("prunable") }
-          held && Checkout.new(held.fetch("worktree"), shell_out_factory: @shell_out_factory)
+          held && Checkout.of(held.fetch("worktree"), shell_out_factory: @shell_out_factory)
         end
 
         # A key with no value, such as `detached` or `prunable` alone, reads as "".

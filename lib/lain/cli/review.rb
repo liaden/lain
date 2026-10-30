@@ -198,7 +198,7 @@ module Lain
         def initialize(repo_root:, shell_out_factory:, ledger: Lain::Sensitivity::Ledger.new)
           @repo_root = File.expand_path(repo_root)
           @shell_out_factory = shell_out_factory
-          @git = Isolation::Checkout.new(@repo_root, shell_out_factory:)
+          @git = Isolation::Checkout.of(@repo_root, shell_out_factory:)
           @projection = Lain::Survey::Projection.new(ledger:)
         end
 

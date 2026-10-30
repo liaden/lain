@@ -36,7 +36,7 @@ module Lain
           # @param key [String] the branch's key, as its {Home} names it
           # @param shell_out_factory [#call] builds the git subprocess
           def initialize(git_dir:, key:, shell_out_factory: Shell::Out.public_method(:new))
-            @git = Checkout.new(git_dir, shell_out_factory:)
+            @git = Checkout.of(git_dir, shell_out_factory:)
             @key = key
           end
 

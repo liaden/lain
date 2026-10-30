@@ -280,7 +280,7 @@ module Lain
           checkout.run("rev-parse", "--verify", "--end-of-options", "#{digest}^{commit}", env: { "LC_ALL" => "C" })
         end
 
-        def checkout = Lain::Isolation::Checkout.new(@root)
+        def checkout = Lain::Isolation::Checkout.of(@root)
 
         def digest!(stage)
           return commit!(@digest) unless @digest.to_s.strip.empty?

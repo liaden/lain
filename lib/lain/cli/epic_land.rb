@@ -161,7 +161,7 @@ module Lain
                                                 shell_out_factory: @shell_out_factory)
       end
 
-      def checkout = Lain::Isolation::Checkout.new(@root, shell_out_factory: @shell_out_factory)
+      def checkout = Lain::Isolation::Checkout.of(@root, shell_out_factory: @shell_out_factory)
 
       def approvals = Lain::Forge::LocalLanding::Approvals.from(journals.to_a)
 

@@ -176,7 +176,7 @@ module Lain
                         retries: 1, checks: Checked::Unchecked)
             base = isolation.base
             new(sync: Checked.new(checks:, sync: SelfSync.new(base:, strategy:, retries:)), journal:, strategy:,
-                anchor: Anchor.new(parent: Checkout.new(isolation.repo_root), base:))
+                anchor: Anchor.new(parent: Checkout.of(isolation.repo_root), base:))
           end
 
           # @param sync [#call, #editorless] {SelfSync}, or {Checked} around one

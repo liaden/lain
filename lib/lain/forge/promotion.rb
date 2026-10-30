@@ -111,7 +111,7 @@ module Lain
         def initialize(repo_root:, remote:, shell_out_factory:)
           @repo_root = File.expand_path(repo_root)
           @remote = remote
-          @git = Isolation::Checkout.new(@repo_root, shell_out_factory:)
+          @git = Isolation::Checkout.of(@repo_root, shell_out_factory:)
         end
 
         # git's own opinion of the composed name: the canary for {Epic::Home::NAME}

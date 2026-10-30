@@ -25,7 +25,7 @@ module Lain
         # @param tmp [String] the directory the throwaway worktree is cut under
         # @param shell_out_factory [#call] builds the git subprocess runner
         def initialize(repo_root:, harness:, journal:, tmp:, shell_out_factory: Lain::Shell::Out.public_method(:new))
-          @git = Lain::Isolation::Checkout.new(repo_root, shell_out_factory:)
+          @git = Lain::Isolation::Checkout.of(repo_root, shell_out_factory:)
           @harness = harness
           @journal = journal
           @tmp = tmp

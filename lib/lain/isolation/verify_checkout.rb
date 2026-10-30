@@ -30,7 +30,7 @@ module Lain
         @path = path
         @keep = keep
         @registry = Worktree::Registry.new(repo_root:, shell_out_factory:)
-        @tree = Checkout.new(path, shell_out_factory:)
+        @tree = Checkout.of(path, shell_out_factory:)
         @process_table = process_table
       end
 

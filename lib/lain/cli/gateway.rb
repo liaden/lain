@@ -80,7 +80,7 @@ module Lain
 
       def caveats = git_checkout? ? [] : [format(NOT_GIT, root:)]
 
-      def git_checkout? = Shell::Out.ok?(Isolation::Checkout.new(root).run("rev-parse", "--show-toplevel"))
+      def git_checkout? = Shell::Out.ok?(Isolation::Checkout.of(root).run("rev-parse", "--show-toplevel"))
 
       def server(upstream, journal, port, token)
         Lain::Gateway::Server.new(bind: LOOPBACK, port:, upstream:,

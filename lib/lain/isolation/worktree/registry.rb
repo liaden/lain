@@ -23,7 +23,7 @@ module Lain
         def initialize(repo_root:, shell_out_factory:)
           @repo_root = repo_root
           @shell_out_factory = shell_out_factory
-          @git = Checkout.new(repo_root, shell_out_factory:)
+          @git = Checkout.of(repo_root, shell_out_factory:)
           @repo_lock = RepoLock.for(repo_root)
         end
 
@@ -83,7 +83,7 @@ module Lain
           admin.empty? ? "" : File.join(admin, "locked")
         end
 
-        def at(path) = Checkout.new(path, shell_out_factory: @shell_out_factory)
+        def at(path) = Checkout.of(path, shell_out_factory: @shell_out_factory)
 
         private
 
