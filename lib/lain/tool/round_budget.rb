@@ -72,8 +72,8 @@ module Lain
       # @return [RoundBudget]
       def self.window
         new(:window) do |room|
-          left = room.window - room.usage.total_input_tokens - room.usage.output_tokens -
-                 ReplyReserve.tokens(window: room.window, ceiling: room.ceiling)
+          left = ReplyReserve.room(window: room.window, used: room.usage.total_input_tokens + room.usage.output_tokens,
+                                   ceiling: room.ceiling)
           Limit.new(bytes: bytes_for(left),
                     scope: "window #{room.window} tokens")
         end

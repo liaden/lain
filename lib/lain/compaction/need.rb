@@ -30,6 +30,11 @@ module Lain
 
           ReplyReserve.tokens(window: window_tokens, ceiling: reply_ceiling)
         end
+
+        # @return [Integer] the window less the turn and the reply reserve; meaningful only while {#reserve} is
+        def room
+          ReplyReserve.room(window: window_tokens, used: used_tokens, ceiling: reply_ceiling)
+        end
       end
       private_constant :State
 
@@ -120,8 +125,7 @@ module Lain
         # The earlier of the ratio and window minus the reply reserve, so the
         # next reply is guaranteed room however large the ratio's share is.
         def reserve_eaten?(state)
-          reserve = state.reserve
-          reserve && state.used_tokens >= state.window_tokens - reserve
+          state.reserve && state.room <= 0
         end
       end
 
@@ -132,10 +136,7 @@ module Lain
         KIND = :read_starved
 
         def fired?(state)
-          reserve = state.reserve
-          return false unless reserve
-
-          Tool::RoundBudget.starved?(state.window_tokens - state.used_tokens - reserve, state.window_tokens)
+          state.reserve && Tool::RoundBudget.starved?(state.room, state.window_tokens)
         end
       end
 
@@ -162,9 +163,6 @@ module Lain
 
         def fired?(state) = state.plan_step_completed
       end
-
-      DETECTORS = [TokenThreshold, ApproachingWindow, ReadStarved, Manual, PlanStepCompletion].freeze
-      private_constant :DETECTORS
 
       # @param byte_threshold [Integer] see {TokenThreshold}
       # @param approaching_ratio [Float] see {ApproachingWindow}

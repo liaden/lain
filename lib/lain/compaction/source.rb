@@ -259,7 +259,7 @@ module Lain
       # tested through that object.
       #
       # ONLY `:approaching_window` counts as warrant, and the narrowness is the
-      # whole point. {Need} runs four detectors and three of them say nothing
+      # whole point. {Need} runs five detectors and four of them say nothing
       # about how full the window is -- {Need::PlanStepCompletion} in
       # particular is a plain boolean independent of history size, which
       # {Source#weigh} says "reaches it in an ordinary chat, with compaction on
@@ -989,8 +989,7 @@ module Lain
       end
 
       def room_left(usage, resolution, ceiling)
-        window = resolution.window_tokens
-        window - usage.to_i - ReplyReserve.tokens(window:, ceiling: ceiling.to_i)
+        ReplyReserve.room(window: resolution.window_tokens, used: usage.to_i, ceiling: ceiling.to_i)
       end
 
       # An advance collapses what is droppable past the cut. With nothing there

@@ -17,5 +17,13 @@ module Lain
       floor = [FLOOR_TOKENS, window / 4].min
       [ceiling, [floor, window / 8].max, window / 2].min
     end
+
+    # `used` is the caller's sum, since a tool round counts output tokens that a status line does not.
+    #
+    # @param window [Integer] the context window in tokens
+    # @param used [Integer] tokens the turn already holds
+    # @param ceiling [Integer] the output cap in tokens
+    # @return [Integer] tokens left once the reply reserve is held back; negative when the turn has eaten into it
+    def self.room(window:, used:, ceiling:) = window - used - tokens(window:, ceiling:)
   end
 end

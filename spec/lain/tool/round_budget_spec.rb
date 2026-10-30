@@ -222,6 +222,16 @@ RSpec.describe Lain::Tool::RoundBudget do
     expect(records.first.budget).to eq(19_650)
   end
 
+  it "budgets the room ReplyReserve.room names, counting input and output as the turn used" do
+    usage = Lain::Usage.new(input_tokens: 100_000, output_tokens: 50_000)
+    room = Lain::ReplyReserve.room(window: 200_000, used: 150_000, ceiling: 8_192)
+    budget = described_class.window.for(head: nil) { room(window: 200_000, usage:, ceiling: 8_192) }
+
+    _, records = bounded(budget, [result("tu_1", "a" * 200_000)], [call("tu_1")])
+
+    expect(records.first.budget).to eq((room * Lain::Oracle::Handoff::BYTES_PER_TOKEN).floor)
+  end
+
   it "leaves a small window room for a small result despite the reply reserve's floor" do
     usage = Lain::Usage.new(input_tokens: 5_084, output_tokens: 643)
     budget = described_class.window.for(head: nil) { room(window: 8_192, usage:) }

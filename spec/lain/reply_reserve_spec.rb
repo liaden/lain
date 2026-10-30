@@ -36,4 +36,30 @@ RSpec.describe Lain::ReplyReserve do
       expect(reserve(window, ceiling + 1)).to be >= reserve(window, ceiling)
     end
   end
+
+  describe ".room" do
+    it "is the window less what is used and the reply reserve" do
+      expect(described_class.room(window: 200_000, used: 150_000, ceiling: 8_192)).to eq(200_000 - 150_000 - 8_192)
+    end
+
+    it "is the room Need, Source and RoundBudget each compute for the same turn" do
+      expected = described_class.room(window: 200_000, used: 150_000, ceiling: 8_192)
+      need_state = Lain::Compaction::Need.const_get(:State)
+                                         .new(head_bytes: 0, fixed_bytes: 0, used_tokens: 150_000,
+                                              window_tokens: 200_000, manual: false, plan_step_completed: false,
+                                              reply_ceiling: 8_192)
+      resolution = Struct.new(:window_tokens).new(200_000)
+      source_room = Lain::Compaction::Source.allocate.send(:room_left, 150_000, resolution, 8_192)
+      usage = Lain::Usage.new(input_tokens: 100_000, output_tokens: 50_000)
+      limit = Lain::Tool::RoundBudget.window.instance_variable_get(:@limit)
+                                     .call(Lain::Tool::Room.new(window: 200_000, usage:, ceiling: 8_192))
+
+      expect([need_state.room, source_room, limit.bytes])
+        .to eq([expected, expected, (expected * Lain::Oracle::Handoff::BYTES_PER_TOKEN).floor])
+    end
+
+    it "goes negative once the turn has eaten into the reserve" do
+      expect(described_class.room(window: 32_768, used: 30_000, ceiling: 16_384)).to eq(-1_328)
+    end
+  end
 end
