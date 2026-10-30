@@ -151,6 +151,42 @@ RSpec.describe Lain::CLI::Command::Rewind do
     end
   end
 
+  describe "the walk is bounded by the count it needs" do
+    let(:provider) { Lain::Provider::Mock.new(responses: Array.new(100) { |i| text_response("reply #{i}") }) }
+    let(:agent) do
+      Lain::Agent.new(provider:, toolset:, context:).tap do |built|
+        100.times { |i| built.ask("ask #{i}") }
+        chronicle.catch_up(built.timeline)
+      end
+    end
+
+    # Agent#rewind re-derives the session's memory view over the whole chain,
+    # which is the session's walk and not this command's, so it is stubbed out
+    # of the two measuring examples.
+    before { allow(agent).to receive(:rewind) }
+
+    it "reads fewer than 10 turns of a 200-turn chain for /rewind 3" do
+      reads = count_dag_reads { command.call("3", env) }
+
+      expect(reads).to be < 10
+    end
+
+    it "never walks the chain to its root" do
+      walks = count_walks { command.call("3", env) }
+
+      expect(walks.values.sum).to eq(0)
+    end
+
+    it "still lands where a full walk would", :aggregate_failures do
+      allow(agent).to receive(:rewind).and_call_original
+      target = agent.timeline.rewind(4).head_digest
+
+      command.call("3", env)
+
+      expect(agent.timeline.head_digest).to eq(target)
+    end
+  end
+
   describe "/rewind <digest> (resolution rules against this session's own chain)" do
     it "resolves a hex prefix to the recorded turn and rewinds to it" do
       target = agent.timeline.rewind(2).head_digest

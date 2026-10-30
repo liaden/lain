@@ -19,6 +19,25 @@ module Lain
       class Rewind
         class Refusal < Error; end
 
+        # The head-first chain, read only as far as a question reaches: a rewind
+        # of 3 on a long session asks about a handful of turns, not all of them.
+        class Chain
+          attr_reader :length
+
+          def initialize(timeline)
+            @walk = timeline.ancestors
+            @length = timeline.length
+            @seen = []
+          end
+
+          # @return [Ext::Event, nil] nil past the root
+          def [](index)
+            @seen << @walk.next while @seen.size <= [index, @length - 1].min
+            @seen[index]
+          end
+        end
+        private_constant :Chain
+
         def initialize = freeze
 
         def name = "rewind"
@@ -33,10 +52,11 @@ module Lain
           exclusively(env, typed) do
             from = env.timeline
             asked = count_for(args.to_s.strip, from)
-            settled = counted?(args) ? settled_count(asked, from) : asked
-            count = past_stranded(settled, from)
-            settled_target!(count, from, typed)
-            moved(env, count, from:, dropped: from.ancestors.to_a[settled]) + rounded_note(asked, settled, count, typed)
+            heads = Chain.new(from)
+            settled = counted?(args) ? settled_count(asked, heads) : asked
+            count = past_stranded(settled, heads)
+            settled_target!(count, heads, typed)
+            moved(env, count, from:, dropped: heads[settled]) + rounded_note(asked, settled, count, typed)
           end
         end
 
@@ -67,16 +87,15 @@ module Lain
 
         # A stranded head would fold the next line into a prompt whose answer
         # was just rewound away, replaying its side effects.
-        def past_stranded(count, timeline)
-          EventLog::Guards.stranded_prompt?(timeline.ancestors.to_a[count]) ? count + 1 : count
+        def past_stranded(count, heads)
+          EventLog::Guards.stranded_prompt?(heads[count]) ? count + 1 : count
         end
 
         def counted?(args) = args.to_s.strip.match?(/\A(-?\d+)?\z/)
 
         # Only a typed count rounds: a digest names one turn, so landing on a
         # tool_use with it is still refused by name.
-        def settled_count(count, timeline)
-          heads = timeline.ancestors.to_a
+        def settled_count(count, heads)
           return count unless EventLog::Guards.pending_tool_use?(heads[count])
 
           nearest_valid(count, heads).last
@@ -186,8 +205,7 @@ module Lain
         # `/fork` reads that), which is why the live doors are the
         # conservative ones. Both forms funnel through the count, so both meet
         # the guard.
-        def settled_target!(count, timeline, typed)
-          heads = timeline.ancestors.to_a
+        def settled_target!(count, heads, typed)
           return unless EventLog::Guards.pending_tool_use?(heads[count])
 
           raise Refusal, "#{typed} lands on an assistant tool_use turn; its tool results would be rewound " \
@@ -200,8 +218,8 @@ module Lain
         # `heads[heads.length]` is nil -- exactly what
         # {EventLog::Guards.pending_tool_use?}'s nil guard exists for.
         def nearest_valid(count, heads)
-          valid = (1..heads.length).reject { |candidate| EventLog::Guards.pending_tool_use?(heads[candidate]) }
-          [valid.reverse.find { |candidate| candidate < count }, valid.find { |candidate| candidate > count }].compact
+          settled = ->(candidate) { !EventLog::Guards.pending_tool_use?(heads[candidate]) }
+          [(count - 1).downto(1).find(&settled), ((count + 1)..heads.length).find(&settled)].compact
         end
 
         # The ForkPoint rule, restated over the live chain: hex-only below a
