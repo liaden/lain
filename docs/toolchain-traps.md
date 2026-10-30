@@ -383,11 +383,6 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   chore done with the landed sha and the session path`. Green 3 of 3 alone, and green on seed 59949 on
   both the base and the change.
 
-  Added 2026-10-29, 2 Rust tests that walk `lib/` panicked with `NotFound` in `read_dir` when `cargo test`
-  ran right after a full `pspec`, and passed alone: `astgrep::tests::the_cancellable_walk_finds_what_find_all_finds_over_this_repositorys_ruby`
-  and `treesitter::tests::the_cancellable_query_finds_what_the_plain_query_finds_over_this_checkouts_sources`.
-  A directory under `lib/` vanished between listing and reading, and `test_sources.rs` unwraps every entry.
-
   Added 2026-10-06, a wall-clock example red under a load average of about 12 (agents running specs
   beside a suite) and green alone each time: `a chat whose terminal is gone ends at its prompt once
   the terminal is closed`. The walk-budget example that was on this list is retired below.
@@ -518,6 +513,13 @@ Unproven; counting only the example's own thread would settle it.
 
   **Retired, with the fix that ended each.** Keep a retired name here so a later red under it reads
   as a regression, not as a known flake.
+  - 2026-10-30: `astgrep::tests::the_cancellable_walk_finds_what_find_all_finds_over_this_repositorys_ruby` and
+    `treesitter::tests::the_cancellable_query_finds_what_the_plain_query_finds_over_this_checkouts_sources`
+    (red 2026-10-29 and twice on 2026-10-30, `NotFound` in `read_dir`, after a full suite and inside a
+    pre-commit run). A directory under the live checkout vanished between listing and reading; a poll of
+    directory creates and deletes over a full `pspec` in a worktree saw none, so the writer was not found
+    and is not shown to be a spec. `test_sources.rs` now skips a vanished directory or entry
+    and still panics on any other error.
   - 2026-10-30: `plugin/tmux lain.tmux against a real tmux server survives an install path with spaces
     in it` and `... renders 'lain: no state yet' when the pane's project has no state file` (red on
     2026-10-18, 2026-10-28 and 2026-10-30, seed 44048, "pane session ... outlived its tmux server").
