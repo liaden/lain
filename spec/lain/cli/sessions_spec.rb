@@ -191,6 +191,29 @@ RSpec.describe Lain::CLI::Sessions do
       end
     end
 
+    context "with a closed session of 4 turns and 1 rewind" do
+      let(:four) { chain("one", "two", "three", "four") }
+      let(:name) { "20260101T000000-1.ndjson" }
+
+      before do
+        write_session(name, [header(started_at: "2026-01-01T00:00:00.000000Z")] +
+                            four.to_a.map { |turn| Lain::SessionRecord.turn(turn) } +
+                            [Lain::SessionRecord.rewound(from: four.head_digest, to: four.to_a[1].digest),
+                             closed_record(four.to_a[1].digest)])
+      end
+
+      it "reads the file once and builds the row from the 1 session fold" do
+        allow(Lain::Journal).to receive(:parse).and_call_original
+        allow(Lain::Journal::Projection::SessionRow).to receive(:over).and_call_original
+
+        row = sessions.listing
+
+        expect(Lain::Journal).to have_received(:parse).exactly(7).times
+        expect(Lain::Journal::Projection::SessionRow).to have_received(:over).once
+        expect(row).to eq("#{name}  2026-01-01T00:00:00  2 turns  closed  #{four.to_a[1].digest[0, 19]}")
+      end
+    end
+
     it "answers an honest empty-state line naming the directory" do
       expect(sessions.listing).to include("no sessions", paths.sessions_dir)
     end

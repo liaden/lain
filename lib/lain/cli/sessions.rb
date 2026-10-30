@@ -75,12 +75,10 @@ module Lain
         # A header timestamp is cut to its first 19 characters (to the second).
         SHORT = 19
 
-        FOLDS = [SessionRecord::TURN_TYPE, SessionRecord::REWOUND_TYPE].freeze
-
         def self.for(name:, path:)
           entries = LineCount.new(File.foreach(path))
-          records = Journal.records(entries).to_a
-          new(name:, records:, empty: Journal.empty?(path), skipped: entries.lines_read - records.size)
+          fold = Journal::Projection::SessionRow.over(Journal.records(entries))
+          new(name:, fold:, empty: Journal.empty?(path), skipped: entries.lines_read - fold.size)
         end
 
         # `empty:` is required, not defaulted: a default exists only to let a
@@ -89,9 +87,9 @@ module Lain
         # confusion this row was split to end. `skipped:` is required for the
         # same reason -- a default would let a caller forget it and reintroduce
         # the silence about skipped lines.
-        def initialize(name:, records:, empty:, skipped:)
+        def initialize(name:, fold:, empty:, skipped:)
           @name = name
-          @records = records
+          @fold = fold
           @empty = empty
           @skipped = skipped
         end
@@ -147,9 +145,9 @@ module Lain
         # listing catching up with a distinction the tree had drawn elsewhere.
         def unloadable
           return "empty" if @empty
-          return "unreadable" if @records.empty?
+          return "unreadable" unless @fold.size.positive?
 
-          "#{@records.first["type"]}, not a chat"
+          "#{@fold.first_type}, not a chat"
         end
 
         # The listing and the resume pick must not disagree about a file.
@@ -157,31 +155,9 @@ module Lain
 
         def format_refusal = "#{format_reason}, cannot be resumed"
 
-        def header = @records.find { |record| record["type"] == SessionRecord::HEADER_TYPE }
-        def closed = @records.find { |record| record["type"] == "session_closed" }
-
-        # The records that move the head. A `rewound` record moves it back to a
-        # turn already recorded, or to nothing, and the turns above that stay in
-        # the file only because the journal is append-only.
-        def folded
-          @folded ||= SessionRecord.applied(@records.select { |record| FOLDS.include?(record["type"]) })
-        end
-
-        # The digests left on the chain. A rewind to a turn this file never
-        # recorded goes below the head it was resumed from, so none of this
-        # file's turns remain. {Bench::Session::ChainFold} and the scribe's
-        # written chain hold the same rewind rule; a listing holds no Store to
-        # fold with, so it keeps its own.
-        def chain = folded.each_with_object([]) { |record, digests| fold(digests, record) }
-
-        def fold(digests, record)
-          return digests << record["digest"] if record["type"] == SessionRecord::TURN_TYPE
-
-          digests.slice!(kept(digests, record["to"])..)
-        end
-
-        # A rewind keeps the digests up to and including its target.
-        def kept(digests, target) = (digests.index(target) || -1) + 1
+        def header = @fold.header
+        def closed = @fold.closed
+        def chain = @chain ||= @fold.chain
 
         def started
           timestamp = header["ts"]
@@ -193,18 +169,10 @@ module Lain
           header["resumed_from"] ? "#{state}, chained" : state
         end
 
-        # The last turn or rewind is the most recent head this file knows, and a
-        # rewind to nothing leaves none; a file with neither falls back to its
-        # recorded anchors (a closed file's own, then the chained-from head), "-"
-        # for a header-only session.
         def head_short
-          digest = folded.empty? ? anchor : head_of(folded.last)
+          digest = @fold.head
           digest ? Canonical.abbreviate(digest) : "-"
         end
-
-        def head_of(record) = record["type"] == SessionRecord::TURN_TYPE ? record["digest"] : record["to"]
-
-        def anchor = closed&.fetch("head", nil) || header.dig("resumed_from", "head")
       end
     end
   end
