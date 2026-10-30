@@ -17,9 +17,6 @@ module Lain
         # Open work first; the glyph is the item's status.
         GLYPHS = { "pending" => "[ ]", "in_progress" => "[~]", "completed" => "[x]" }.freeze
 
-        # {StatusView::NEWLINES}' reason: one item is one buffer line.
-        NEWLINES = /\R+/
-
         # @param session [#todos]
         def initialize(session:)
           @session = session
@@ -48,7 +45,7 @@ module Lain
         def rank(todo) = GLYPHS.keys.index(todo["status"]) || GLYPHS.size
 
         def row(todo)
-          content = Utf8.legible(todo["content"], "?").gsub(NEWLINES, " ")
+          content = Utf8.legible(todo["content"], "?").gsub(Text::NEWLINES, " ")
           "#{GLYPHS.fetch(todo["status"], "[?]")} #{content}"
         end
       end

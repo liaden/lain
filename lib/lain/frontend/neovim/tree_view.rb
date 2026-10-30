@@ -26,7 +26,6 @@ module Lain
         NO_TURN = "no turn on lain://tree line %<line>d"
         LABELED = "labeled %<digest>s"
         NOTHING_TO_SAY = ""
-        NEWLINES = Buffers::TimelineView::NEWLINES
 
         Node = Data.define(:parent, :text)
 
@@ -170,16 +169,8 @@ module Lain
         end
 
         def register(turn, parent)
-          @nodes[turn.digest] = Node.new(parent:, text: "#{turn.role}: #{preview(turn.content)}")
+          @nodes[turn.digest] = Node.new(parent:, text: "#{turn.role}: #{Text.preview(turn.content)}")
           @children[parent] << turn.digest
-        end
-
-        def preview(content)
-          text = Array(content).select { |block| block["type"] == "text" }.map { |block| block["text"] }.join(" ")
-          return text.gsub(NEWLINES, " ") unless text.empty?
-
-          kinds = Array(content).filter_map { |block| block["type"] }.uniq
-          kinds.empty? ? "(empty)" : "(#{kinds.join(", ")})"
         end
 
         def lines

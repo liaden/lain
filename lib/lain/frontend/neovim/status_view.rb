@@ -22,10 +22,6 @@ module Lain
       class StatusView
         NAME = "lain://status"
 
-        # {Buffers::TimelineView::NEWLINES}' reason: one rendered line is one
-        # buffer line, and the transport refuses a line that holds a newline.
-        NEWLINES = /\R+/
-
         # The event kinds that move the fleet listing; a
         # {Telemetry::ChildProgress} moves it too and is matched by class,
         # since it answers no `#kind`.
@@ -162,7 +158,7 @@ module Lain
         # session file torn mid-write -- is drawn into this buffer instead, and
         # the next trigger tries again.
         def folded
-          @epic.lines.map { |line| line.gsub(NEWLINES, " ") }
+          @epic.lines.map { |line| line.gsub(Text::NEWLINES, " ") }
         rescue StandardError => e
           unavailable("# epic status unavailable", e)
         end
@@ -171,7 +167,7 @@ module Lain
         # and this is the one place a raise has nowhere left to go.
         def unavailable(heading, error)
           message = Utf8.legible(error.message, "?")
-          [heading, "", "it failed with #{error.class}:", *message.split(NEWLINES).map { |line| "    #{line}" }]
+          [heading, "", "it failed with #{error.class}:", *message.split(Text::NEWLINES).map { |line| "    #{line}" }]
         end
 
         def refold?(event) = refold_types.any? { |type| event.is_a?(type) }

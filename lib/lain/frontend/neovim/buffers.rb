@@ -70,14 +70,6 @@ module Lain
           # {#digest_at}'s index, never off the rendered text.
           PIN_MARKER = "  [pinned]"
 
-          # Folded out of a preview so a turn is ONE line. `\R` is wider than the
-          # transport needs -- `nvim_buf_set_lines` rejects only `\n` and `\r\n`,
-          # measured; `\r`, `\v`, `\f`, U+0085 and U+2028 all pass -- and wider
-          # on purpose: a stray CR inside a projection's line renders as `^M` and
-          # reads as corruption. The transport's narrower refusal is
-          # {RenderQueue#checked_lines}.
-          NEWLINES = /\R+/
-
           # This touches neither nvim nor stdio, so "report the failure" can
           # only mean "hand it back". `digest` is nil exactly when the line
           # named no turn.
@@ -167,27 +159,13 @@ module Lain
           end
 
           def turn_line(turn)
-            "#{turn.role}: #{preview(turn.content)}#{pin_marker(turn.digest)}"
+            "#{turn.role}: #{Text.preview(turn.content)}#{pin_marker(turn.digest)}"
           end
 
           # Membership per line, never {Session#pins} -- that sorts the whole set
           # on every call.
           def pin_marker(digest)
             @session.pinned?(digest) ? PIN_MARKER : ""
-          end
-
-          # ONE line is a CONTRACT, not a description: {#render_chain} indexes
-          # digests by POSITION, the runtime's ]]/[[ and its folds both anchor a
-          # record at "^%a+:", and a model's prose is routinely multi-line -- so
-          # an un-flattened preview desynchronizes the pin index from what the
-          # human can see even in an editor that took the write. It also froze
-          # the whole view; {RenderQueue#checked_lines} is the editor half.
-          def preview(content)
-            text = Array(content).select { |block| block["type"] == "text" }.map { |block| block["text"] }.join(" ")
-            return text.gsub(NEWLINES, " ") unless text.empty?
-
-            kinds = Array(content).filter_map { |block| block["type"] }.uniq
-            kinds.empty? ? "(empty)" : "(#{kinds.join(", ")})"
           end
         end
 
