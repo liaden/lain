@@ -434,6 +434,28 @@ RSpec.describe Lain::CLI::EpicQueue do
       end
     end
 
+    describe "a parked row's test counts" do
+      def tests_line(passed:, failed:, errors:)
+        ran = Lain::Telemetry::TestsRan.from(Struct.new(:passed, :failed, :errors).new(passed, failed, errors),
+                                             issue_id: "a", sha: "8b6b677").to_journal
+        records = [decision(digest: digest_c, at: "2026-07-28T06:20:00.000000Z", policy: "deferred",
+                            answered_by: "deferred", stage: "implementation", issue_id: "a"),
+                   Lain::Telemetry::GateParked.new(artifact_digest: digest_c, epic_slug: "alpha", issue_id: "a",
+                                                   stage: "implementation", sha: "8b6b677", question: "q?")
+                                              .to_journal.merge("ts" => "2026-07-28T06:20:00.000000Z"),
+                   ran.merge("ts" => "2026-07-28T06:19:00.000000Z")]
+        described_class.const_get(:Review).new(records, now:).rows.join[/tests: .*/]
+      end
+
+      it "says each count with its word" do
+        expect(tests_line(passed: [1, 2, 3], failed: [4], errors: [5])).to eq("tests:     3 passed, 1 failed, 1 error")
+      end
+
+      it "pluralizes errors" do
+        expect(tests_line(passed: [1], failed: [], errors: [5, 6])).to eq("tests:     1 passed, 2 errors")
+      end
+    end
+
     it "shows the later deferral's reason when an artifact was deferred twice" do
       records = ["first try", second = "second try"].each_with_index.map do |reason, at|
         decision(digest: digest_c, at: "2026-07-28T06:2#{at}:00.000000Z", policy: "deferred",

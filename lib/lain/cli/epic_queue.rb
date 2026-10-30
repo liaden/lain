@@ -223,9 +223,10 @@ module Lain
       # could parse might BE the deferral, and a lost deferral reads as drained.
       def empty_listing(slug, counts)
         about = slug.to_s.empty? ? "" : " for epic #{slug.to_s.inspect}"
-        folded = counted(counts.files, "journal")
+        folded = "#{counts.files} #{"journal".pluralize(counts.files)}"
         "nothing parked for sign-off#{about} (folded #{folded} under #{Paths.listing(dirs)}: " \
-          "#{counted(counts.lines, "line")}, #{counted(counts.records, "gate record")})"
+          "#{counts.lines} #{"line".pluralize(counts.lines)}, " \
+          "#{counts.records} #{"gate record".pluralize(counts.records)})"
       end
 
       # REPORTED, not refused: this is the one reader that tolerates a torn
@@ -242,8 +243,8 @@ module Lain
         unreadable = counts.unreadable
         return nil unless unreadable.positive?
 
-        "WARNING: #{counted(unreadable, "line")} could not be parsed as journal records. A parked sign-off " \
-          "could be among them, so this listing is not proven complete."
+        "WARNING: #{unreadable} #{"line".pluralize(unreadable)} could not be parsed as journal records. " \
+          "A parked sign-off could be among them, so this listing is not proven complete."
       end
 
       # A misfiled record DID parse, so it gets its own sentence naming the type
@@ -252,12 +253,11 @@ module Lain
         misfiled = counts.misfiled
         return nil if misfiled.empty?
 
-        "WARNING: #{counted(misfiled.size, "record")} carrying a sign-off's fields #{misfiled.one? ? "has" : "have"} " \
+        "WARNING: #{misfiled.size} #{"record".pluralize(misfiled.size)} carrying a sign-off's fields " \
+          "#{misfiled.one? ? "has" : "have"} " \
           "an unknown type (#{misfiled.uniq.join(", ")}). A parked sign-off could be among them, so this listing " \
           "is not proven complete."
       end
-
-      def counted(count, noun) = "#{count} #{noun.pluralize(count)}"
 
       # One parked item joined to the two records that explain it: the deferral
       # that parked it and the spike evidence behind it. `spiked` is whether a
@@ -455,9 +455,10 @@ module Lain
         def tests_said(ran)
           return "not run (#{ran["why"]})" unless ran["ran"]
 
-          counts = [[ran["passed"], "passed"], [ran["failed"], "failed"], [ran["errors"], "error"]]
-          said = counts.select { |number, word| word == "passed" || number.to_i.positive? }
-          said.map { |number, word| "#{number} #{word == "error" ? "error".pluralize(number) : word}" }.join(", ")
+          counts = [[ran["passed"], "passed"], [ran["failed"], "failed"],
+                    [ran["errors"], "error".pluralize(ran["errors"])]]
+          counts.select { |number, word| word == "passed" || number.to_i.positive? }
+                .map { |number, word| "#{number} #{word}" }.join(", ")
         end
 
         # A deferral stamped AFTER now is refused here rather than downstream:
