@@ -1946,3 +1946,23 @@ Hook (`.pre-commit-config.yaml`), as commands an agent can run on its own paths:
 A commit takes about 90s. The suite takes `$XDG_STATE_HOME/lain/locks/suite.lock` and must run alone on the box;
 agent spec runs by path are not locked, so landings happen in quiet windows. No path needs user approval.
 Each worktree gets its own `TMPDIR` under `$HOME/tmp/lain/aa-T<n>`.
+
+Checkpoint 2026-10-29 21:50, `main` at `1d4762c0`. 15 cards landed: T19 `461fa39b`, T23 `59779c78`, T26 `03498d46`,
+T2 `dbdbefc4`, T29 `e7e59702`, T21 `75ec51c0`, T31 `57a4f5a9`, T12 `6c182b64`, T32 `3d888aa4`, T36 `a96af265`,
+T39 `de555ebd`, T27 `13b5be7e`, T33 `500e8394`, T11 `88a578d1`, T25 `1d4762c0`. In flight: T1 (review fixes, second
+review due), T18 (second review), T40 (implementing). Rulings made in-run, each recorded in its card's hand-back:
+- T2 widened to the 4 readers comparing `phase` to a Symbol.
+- T12 took its own fallbacks: `Landing.resolve` stays on `facts.realpath`; `Landing::Walk` is `(path, tail, hops)` with
+  the raw tail, and the 41st refused link is the last hop.
+- T25 took its fallback: `FileLock::Wait` owns the poll; the flocks and the EX-then-SH step stay in Residency; a passed
+  deadline still runs the block unheld as "proceeded".
+- T11 widened to `approval/judged.rb` so `Confined` has 1 constructor taking a `Roots`.
+- T31 put the table in `Decorators::Table`, a frozen constant in its own file, after a constant in `decorators.rb`'s
+  body failed the reverse-order census.
+- T1 widened to `tool_output`, `shell_arm`, `tests_ran`, `exec_record`, `sandbox` and `test_layout_refused`; reads go
+  through `klass.new`; a field JSON cannot rebuild is read by the class's `from_journal`; `Untyped`'s member is
+  `fields`; `TestsRan#errors` stays hand-cast.
+- T18: the trust prompt keeps escaping every invisible format character but U+200D.
+Flaky: T11's first hook run went red at load 26 on `todos_drain_spec` (2 examples) and `repo_as_fixture_spec:352`
+(watchdog); both green alone at load 3 and the base suite green (30,887 examples); T11 relanded green. Follow-up:
+`Provider::Admission#wait_for_slot` is a third copy of the wait loop `FileLock::Wait` now owns.
