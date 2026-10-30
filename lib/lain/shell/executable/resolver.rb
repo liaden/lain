@@ -49,9 +49,6 @@ module Lain
           # A word still holding an expansion was never a literal program name.
           EXPANSION = /[$`]/
 
-          # Linux's MAXSYMLINKS: the kernel gives up on a longer chain with ELOOP.
-          MAX_LINKS = 40
-
           # @param roots [Array<String>] the project root, as given and as its realpath
           # @param fresh [#fresh?]
           # @param stat [Stat]
@@ -183,7 +180,7 @@ module Lain
 
           def links(chain)
             last = chain.last
-            return chain unless chain.size < MAX_LINKS && @stat.lstat(last).symlink?
+            return chain unless chain.size < Landing::HOPS && @stat.lstat(last).symlink?
 
             # The kernel reads `..` after following a symlinked directory, so a
             # textual fold could name a different file than the one that runs.

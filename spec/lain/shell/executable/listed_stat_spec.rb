@@ -139,12 +139,12 @@ RSpec.describe Lain::Shell::Executable::ListedStat do
     end
 
     it "resolves at exactly the kernel limit" do
-      limit = Lain::Shell::Executable::Resolver::Bound::MAX_LINKS
+      limit = Lain::Landing::HOPS
       expect(chain(limit).realpath("/l1")).to eq("/usr/bin/ls")
     end
 
     it "raises ELOOP one past the limit" do
-      limit = Lain::Shell::Executable::Resolver::Bound::MAX_LINKS
+      limit = Lain::Landing::HOPS
       expect { chain(limit + 1).realpath("/l1") }.to raise_error(Errno::ELOOP)
     end
   end

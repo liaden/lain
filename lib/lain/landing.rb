@@ -27,6 +27,11 @@ module Lain
     # @return [String] the path with dot segments and doubled separators folded
     def lexical(path) = Pathname.new(path).cleanpath.to_s
 
+    # @param path [String] absolute
+    # @param facts [#symlink?, #exist?, #readlink] what the disk is asked through
+    # @return [Walk]
+    def walk(path, facts: FileFacts::LIVE) = Walk.of(path, facts)
+
     # @param path [String] as the call wrote it, uncleaned
     # @param cwd [String] absolute; what a relative path is joined to
     # @param home [String, nil] the lexical home, spelled as configured

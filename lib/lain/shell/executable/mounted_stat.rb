@@ -71,12 +71,6 @@ module Lain
           @host.readlink(path)
         end
 
-        # The walk hands over a path it has already resolved, which needs no second walk.
-        def link_at(parts)
-          full = "/#{parts.join("/")}"
-          resolved_readlink(full) if resolved_lstat(full).symlink?
-        end
-
         def side(path) = mounted?(path) ? @host : @image
 
         # The image has no entry for a directory that exists only to hold a mount, so the walk falls back to the host.

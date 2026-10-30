@@ -78,11 +78,9 @@ module Lain
 
         def entry_at(path) = @entries.fetch(path) { raise Errno::ENOENT, path }
 
-        # The walk hands over a path it has already resolved, which needs no second walk.
-        def link_at(parts)
-          entry = entry_at("/#{parts.join("/")}")
-          entry.link if entry.symlink?
-        end
+        def resolved_lstat(path) = entry_at(path)
+
+        def resolved_readlink(path) = entry_at(path).link
 
         def child_of?(key, prefix) = key != "/" && key.start_with?(prefix) && !key.delete_prefix(prefix).include?("/")
 

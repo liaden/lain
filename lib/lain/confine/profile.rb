@@ -689,8 +689,6 @@ module Lain
       # cannot be mounted, so it is sealed where it lands, absent there.
       # `hops` names each link on the way, so a repointed one is noticed.
       class Seal
-        LINK_HOPS = 40
-
         # Where git reads further object stores from: a call that repoints one makes an unsandboxed fetch out
         # of the checkout read objects from wherever it names.
         ALTERNATES = %w[alternates http-alternates].freeze
@@ -768,47 +766,27 @@ module Lain
         # the text spells today and remove the component again, so that is sealed too.
         def self.landings(path)
           seal = at(path)
-          spelled = seal.absent && parts(path).include?("..") ? [at(File.expand_path(path))].reject(&:absent) : []
+          climbs = seal.absent && Landing::Walk.parts(path).include?("..")
+          spelled = climbs ? [at(File.expand_path(path))].reject(&:absent) : []
           [seal, *spelled]
         end
 
-        def self.at(path) = walk(File::SEPARATOR, parts(path), [])
+        def self.at(path) = from(Landing.walk(path))
 
-        # One component at a time, as the kernel resolves it: a `..` after a link climbs from where the link
-        # lands, and a parent folder's link can be repointed as well as the named one.
-        def self.walk(dir, rest, hops)
-          return new(path: -dir, absent: false, hops:) if rest.empty?
+        # A loop is sealed at the link the kernel refused, and a missing component as {.missing} folds the rest.
+        def self.from(walk)
+          return new(path: walk.hops.last, absent: true, hops: walk.hops.take(Landing::HOPS)) if walk.looped?
+          return new(path: walk.path, absent: false, hops: walk.hops) unless walk.absent?
 
-          name, *rest = rest
-          return walk(File.dirname(dir), rest, hops) if name == ".."
-
-          place = File.join(dir, name)
-          stat = lstat(place)
-          return new(path: -missing(place, rest), absent: true, hops:) unless stat
-
-          stat.symlink? ? follow(dir, place, rest, hops) : walk(place, rest, hops)
-        end
-
-        # The kernel gives up past LINK_HOPS links with ELOOP, so git finds nothing there either.
-        def self.follow(dir, link, rest, hops)
-          return new(path: -link, absent: true, hops:) if hops.size >= LINK_HOPS
-
-          target = File.readlink(link)
-          walk(target.start_with?(File::SEPARATOR) ? File::SEPARATOR : dir, [*parts(target), *rest], [*hops, link])
+          name, *rest = walk.tail
+          new(path: -missing(File.join(walk.path, name), rest), absent: true, hops: walk.hops)
         end
 
         # A `..` after a missing component climbs from wherever the call makes it lead, so it is sealed itself.
         def self.missing(place, rest) = rest.include?("..") ? place : File.join(place, *rest)
 
-        def self.parts(path) = path.split(File::SEPARATOR).reject { _1.empty? || _1 == "." }
-
-        def self.lstat(path)
-          File.lstat(path)
-        rescue SystemCallError
-          nil
-        end
-        private_class_method :named, :in_git, :worktrees, :pointer, :refuse_link, :device?, :landings, :at, :walk,
-                             :follow, :missing, :parts, :lstat
+        private_class_method :named, :in_git, :worktrees, :pointer, :refuse_link, :device?, :landings, :at, :from,
+                             :missing
 
         # git answers core.hooksPath and a worktree's pointer itself, includes
         # and all, so this asks it once rather than parsing its config.

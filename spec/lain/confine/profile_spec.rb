@@ -417,6 +417,7 @@ RSpec.describe Lain::Confine::Profile do
         SeedRepo.git(root, "config", "core.hooksPath", links[41])
         expect(sealed_of(workspace)).to include(links[1] => true)
         expect(sealed_of(workspace)).not_to include(real)
+        expect(workspace.sealed.find { _1.path == links[1] }.hops).to eq(links[2..].reverse)
       end
 
       it "lists, for a start-up check, the seals a workspace call holds, and refuses the same links" do

@@ -8,12 +8,12 @@ require "pathname"
 module LandingCalls
   ROOT = Pathname.new(File.expand_path("../..", __dir__))
   SOURCES = Dir[ROOT.join("lib/lain/**/*.rb")].map { Pathname.new(_1) }.freeze
-  FACT_TAKING = %i[of eventual redirect].freeze
+  FACT_TAKING = %i[of eventual redirect walk].freeze
   OWN_FILE = "lib/lain/landing.rb"
 
   LIVE_BY_DESIGN = {
-    "lib/lain/confine/profile.rb" => [1,
-                                      "bounded? sizes a live sandbox build; the disk it reads is the one it confines"],
+    "lib/lain/confine/profile.rb" => [2, "bounded? sizes a live sandbox build, and the seal walks the disk " \
+                                         "the sandbox mounts; the disk each reads is the one it confines"],
     "lib/lain/session.rb" => [1, "the checkout scope is built from the live project; the replay bench runs UNSCOPED"]
   }.freeze
 
