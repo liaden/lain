@@ -7,7 +7,20 @@ RSpec.describe Lain::CLI::Export::Html do
 
   def text(string) = { "type" => "text", "text" => string }
 
-  def render(records, released: 0, **scrub) = described_class.new(records:, released:, **scrub).render
+  def redactions(masked, released)
+    counted = [(masked_read(masked) if masked.positive?), (released_read(released) if released.positive?)].compact
+    Lain::Journal::Projection::Redactions.over(counted)
+  end
+
+  def masked_read(regions) = Lain::Telemetry::SourceMasked.new(tool_use_id: "t1", kind: :file, key: ".env", regions:)
+
+  def released_read(regions)
+    Lain::Telemetry::ReadReleased.new(tool_use_id: "t2", path: ".env", regions:, requester: "agent", surface: "tty")
+  end
+
+  def render(records, masked: 0, released: 0, **scrub)
+    described_class.new(records:, redactions: redactions(masked, released), **scrub).render
+  end
 
   let(:chain) do
     [turn("d1", "user", [text("first")]),
@@ -101,11 +114,8 @@ RSpec.describe Lain::CLI::Export::Html do
     expect(html).to include("lone", "plain", "4")
   end
 
-  it "counts source, command and search redactions in the footer" do
-    redactions = [{ "type" => "source_masked", "regions" => 1 }, { "type" => "command_redacted", "regions" => 2 },
-                  { "type" => "search_redacted", "regions" => 4 }]
-
-    expect(render([*chain, *redactions])).to include("7 regions were masked")
+  it "prints the masked count the projection hands it" do
+    expect(render(chain, masked: 7)).to include("7 regions were masked")
   end
 
   it "puts the elision marker where the cut was recorded" do
@@ -117,16 +127,13 @@ RSpec.describe Lain::CLI::Export::Html do
   end
 
   it "counts masked regions in the footer and says nothing was re-scanned" do
-    masked = { "type" => "source_masked", "tool_use_id" => "t1", "kind" => "file", "key" => ".env", "regions" => 3 }
-    html = render([*chain, masked])
+    html = render(chain, masked: 3)
 
     expect(html).to include("3 regions", "&lt;redacted:n&gt;", "not re-scanned")
   end
 
   it "says region in the singular for a count of one" do
-    one = { "type" => "source_masked", "tool_use_id" => "t1", "kind" => "file", "key" => ".env", "regions" => 1 }
-
-    expect(render([*chain, one], released: 1)).to include("1 region was masked", "1 region was released")
+    expect(render(chain, masked: 1, released: 1)).to include("1 region was masked", "1 region was released")
   end
 
   it "says how many regions were released when there are any" do

@@ -11,15 +11,15 @@ module Lain
       # is shown as text.
       class Html
         TEMPLATE = File.join(__dir__, "template.html.erb")
-        REDACTIONS = %w[source_masked command_redacted search_redacted].freeze
 
         # @param records [Array<Hash>] applied records, in file order
-        # @param released [Integer] regions the model saw in clear
+        # @param redactions [Journal::Projection::Redactions] the counts the footer prints
         # @param home [String, nil] written as `~` wherever it appears
         # @param root [String, nil] the project root, written as `<project>`
-        def initialize(records:, released:, home: nil, root: nil)
+        def initialize(records:, redactions:, home: nil, root: nil)
           @records = records
-          @released = released
+          @redactions = redactions
+          @released = redactions.released
           @prefixes = prefixes([[root, "<project>"], [home, "~"]])
         end
 
@@ -55,7 +55,7 @@ module Lain
           digest.nil? ? [] : [digest, *follow(parents[digest], parents)]
         end
 
-        def masked = @records.sum { |r| REDACTIONS.include?(r["type"]) ? r.fetch("regions") : 0 }
+        def masked = @redactions.masked
 
         def regions(count) = "#{count} #{"region".pluralize(count)}"
         def were(count) = count == 1 ? "was" : "were"

@@ -38,12 +38,10 @@ module Lain
       end
 
       # @return [Integer] regions the model was shown in clear after a release
-      def released
-        applied.sum { |record| record["type"] == "read_released" ? record.fetch("regions") : 0 }
-      end
+      def released = redactions.released
 
       # @return [Integer] regions masked as placeholders, the count the html footer shows
-      def masked = applied.sum { |record| Html::REDACTIONS.include?(record["type"]) ? record.fetch("regions") : 0 }
+      def masked = redactions.masked
 
       private
 
@@ -60,7 +58,7 @@ module Lain
         raise Lain::Error, "#{out} exists; pass --force to overwrite it"
       end
 
-      def render_html = Html.new(records: applied, released:, home: Dir.home, root: @project.root.to_s).render
+      def render_html = Html.new(records: applied, redactions:, home: Dir.home, root: @project.root.to_s).render
 
       def render_jsonl
         kept = applied.to_h { |record| [record, true] }.compare_by_identity
@@ -74,6 +72,14 @@ module Lain
       end
 
       def parsed = @parsed ||= @records.call(lines).to_a
+
+      def redactions
+        @redactions ||= Journal::Projection::Redactions.over(applied.map { |record| counted(record) })
+      end
+
+      def counted(record)
+        Telemetry.read(record, strict: Journal::Projection::Redactions::COUNTED.include?(record["type"]))
+      end
 
       def applied = @applied ||= SessionRecord.applied(parsed)
     end

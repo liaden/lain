@@ -58,6 +58,24 @@ RSpec.describe Lain::CLI::Export do
     expect(export.masked).to eq(1)
   end
 
+  it "agrees with the html footer on the masked count when 3 reads masked 1, 2 and 4 regions" do
+    masked = [{ "type" => "source_masked", "tool_use_id" => "tu_a", "kind" => "file", "key" => "a", "regions" => 1,
+                "released" => 0 },
+              { "type" => "command_redacted", "tool_use_id" => "tu_b", "regions" => 2, "prior" => 0 },
+              { "type" => "search_redacted", "tool_use_id" => "tu_c", "path" => "a.rb", "regions" => 4,
+                "released" => 0 }]
+    File.write(File.join(sessions_dir, "three.ndjson"), "#{masked.map { |record| JSON.generate(record) }.join("\n")}\n")
+
+    expect([export("three").masked, export("three").call(format: :html)]).to match([7, include("7 regions")])
+  end
+
+  it "raises on a masked record that will not read instead of leaving it uncounted" do
+    broken = JSON.generate({ "type" => "source_masked", "tool_use_id" => "tu_a", "kind" => "file", "regions" => 1 })
+    File.write(File.join(sessions_dir, "broken.ndjson"), "#{broken}\n")
+
+    expect { export("broken").masked }.to raise_error(Lain::Telemetry::Unreadable, /source_masked/)
+  end
+
   it "refuses html while regions were released unless told to include them" do
     expect { export.call(format: :html) }.to raise_error(Lain::Error, /released/)
     expect(export.call(format: :html, include_released: true)).to include("2 regions were released")
