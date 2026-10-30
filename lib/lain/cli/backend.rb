@@ -835,7 +835,7 @@ module Lain
 
       # An unknown chat provider is refused by {#provider_name} in its own words,
       # so it must not also become the summarizer's default and be refused first.
-      def followed_provider = PROVIDERS.find { _1 == run_profile.provider } || DEFAULT_SUMMARIZER_PROVIDER
+      def followed_provider = PROVIDERS.include?(name = run_profile.provider) ? name : DEFAULT_SUMMARIZER_PROVIDER
 
       def validated(name, flag) = self.class.validated(name, flag)
 

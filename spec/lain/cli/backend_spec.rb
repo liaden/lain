@@ -133,6 +133,14 @@ RSpec.describe Lain::CLI::Backend do
       expect([backend.summarizer_name, backend.summarizer_model]).to eq(["anthropic", "claude-opus-4-8"])
     end
 
+    it "follows an ollama-cloud chat to ollama-cloud" do
+      expect(backend_for(provider: "ollama-cloud").summarizer_name).to eq("ollama-cloud")
+    end
+
+    it "falls to the default summarizer for a chat provider outside PROVIDERS" do
+      expect(backend_for(provider: "mystery").summarizer_name).to eq(Lain::CLI::Backend::DEFAULT_SUMMARIZER_PROVIDER)
+    end
+
     it "keeps the local tier when --summarizer-provider ollama is typed on an anthropic chat" do
       backend = backend_for(provider: "anthropic", summarizer_provider: "ollama")
 
