@@ -315,6 +315,19 @@ ledger, budget countdown. `Reminder` folds it into the request tail. It is never
 the `Timeline`, and that omission is the whole mechanism behind `CLAUDE.md`'s "Workspace is
 sent, not stored".
 
+**The request digest is the last state of a prefix chain.** `Request#digest` is computed 1 time, in
+`Request.new`, by walking `Request::PrefixChain`. The seed state digests model, tools and system;
+each message then digests `[previous state, marker-stripped message]` into the next state; and the
+request's digest is the digest of the last state together with `max_tokens`, `reasoning`, `effort`
+and the cache markers the walk stripped. So the digest extends the seed with the fields that are
+not messages, and 2 requests that differ only in where a cache marker sits share every state and
+differ in the final digest. The chain a caller passes is a memo, never a member: a position hits
+when the previous state is equal and the message is `Canonical::Equality.same?` (equal dumps; Ruby's
+`==` would hold `1` and `1.0` alike), and the digest is the same whichever chain built it.
+`Request::PrefixChain::NONE` is the Null Object for a caller with no memo. A walk that comes out
+with a different state drops the entries after it, so a long conversation digests only the
+messages it has not seen.
+
 ## Compaction, oracles, and memory
 
 Compaction is **on by default** on the live chat path, and it splits across 2 tiers that fail
@@ -1694,6 +1707,20 @@ committed `Event`, plus live-only record types (`Telemetry::Message`, `Telemetry
 both cite one, and no render-chain `turn` record can carry it (the fold re-commits every one of
 those onto a single chain), so it gets its own type and its own `render_parent` field.
 
+The header's `format` is `SessionRecord::FORMAT`, 4 today, and `Bench::Session::Loader` raises
+`Corrupt` on any other. Format 4 reads every line 1 time through `Telemetry.read`
+(`lib/lain/telemetry.rb`), which strips the Journal's envelope (the `ts` stamp and the chain link)
+and rebuilds the record a type claims. A claimed type that will not rebuild is damage to a record
+of ours, so the resume refuses it as `Bench::Session::Corrupt`, where format 3 skipped it. A type
+nobody claims comes back whole as `Telemetry::Untyped`, a frozen `fields` Hash: the session's own
+grammars (`turn`, `session`, `rewound` and the like) and anything foreign or torn read this way and
+are never dropped. `Telemetry.read(hash, strict: false)` is the lenient reading, which answers
+`Untyped` for a claimed type that will not rebuild. The same typed records feed the
+`Journal::Projection` folds (see the algebra section), whether the file is read whole or followed
+live. `Bench::Session::RequestReplay` rebuilds each recorded `request_sent` and raises `Corrupt`
+when its digest differs from the recorded one, so a session written under an earlier digest
+definition does not replay.
+
 `SessionRecord::Scribe` (`lib/lain/session_record/scribe.rb`) is the live writer attached to an
 already-open `Journal`. `SessionRecord::Replay` reloads a session. `SessionRecord::Salvage`
 (`lib/lain/session_record/salvage.rb`) recovers a paid-for-but-uncommitted response from the
@@ -1774,8 +1801,9 @@ include_examples "a monoid",
 
 The groups: `"a monoid"` and `"a commutative monoid"` (`monoid.rb`), `"a meet semilattice under
 ancestry"` (`meet_semilattice.rb`), `"an elementwise map"` (`elementwise.rb`), `"a pure operation"`
-(`pure.rb`), `"an attenuation"` (`attenuation.rb`), and `"a monoid homomorphism"` with its negative
-reading `"not a monoid homomorphism"` (`monoid_homomorphism.rb`). There is no registry and no
+(`pure.rb`), `"an attenuation"` (`attenuation.rb`), `"a monoid homomorphism"` with its negative
+reading `"not a monoid homomorphism"` (`monoid_homomorphism.rb`), `"an incremental fold"`
+(`incremental_fold.rb`) and `"a round trip"` (`round_trip.rb`). There is no registry and no
 declaration in `lib/`: the claim *is* the inclusion, so an operation nobody holds to a law makes no
 claim, and deleting the operation deletes the spec that proved it.
 
@@ -1790,7 +1818,8 @@ and checks every pair and triple, because the shared group samples ten draws per
 
 **A negative is an ordinary example.** RSpec has no "expect this group to fail", so the groups
 whose negative matters ship their laws as a *battery* the group itself runs (`AlgebraLaws::Pure`,
-`AlgebraLaws::Elementwise`, `AlgebraLaws::MonoidHomomorphism`, `AlgebraLaws::Attenuation`), and a
+`AlgebraLaws::Elementwise`, `AlgebraLaws::MonoidHomomorphism`, `AlgebraLaws::Attenuation`,
+`AlgebraLaws::IncrementalFold`, `AlgebraLaws::RoundTrip`), and a
 spec showing an operation is NOT the structure reads that battery directly, through
 `AlgebraLaws.outcomes` (`spec/support/shared_examples/law_outcomes.rb`) wherever a law might raise. Each law answers `:holds`, `:fails`, or the
 exception it raised, kept apart: the example requires the law it turns on to be `:fails` and no law
@@ -1809,7 +1838,7 @@ specs under `spec/lain/rust/` then include the Ruby group against `Ext::Timeline
 flowchart LR
   OP["operation, in lib/"] -.-> SPEC
   SPEC["its own spec, at the mirrored path<br/><i>include_examples 'a monoid', generator: ...</i>"] --> GROUPS
-  GROUPS["shared example groups<br/>monoid · meet_semilattice · elementwise ·<br/>pure · attenuation · monoid_homomorphism"]
+  GROUPS["shared example groups<br/>monoid · meet_semilattice · elementwise ·<br/>pure · attenuation · monoid_homomorphism ·<br/>incremental_fold · round_trip"]
   NEG["a negative, as an ordinary example<br/><i>AlgebraLaws.outcomes(battery)</i>"] --> BATTERY
   BATTERY["the group's battery: :holds / :fails / raised<br/>the named law :fails, nothing raised,<br/>the witness exhibited"]
   GROUPS -.->|"one object, two readings"| BATTERY
@@ -1822,7 +1851,7 @@ flowchart LR
 A [monoid](docs/GLOSSARY.md#monoid) is an associative operation with an identity: string
 concatenation with `""`, list append with `[]`, function composition with `id`. Associativity is
 the operationally interesting law: it says grouping is irrelevant, so a *pipeline is fully
-described by its sequence*. 4 operations are held to it, each in its own spec:
+described by its sequence*. 4 operations in the table below are held to it, and 3 more after it, each in its own spec:
 
 | Where | Operation | Unit | The bug the law rules out |
 |---|---|---|---|
@@ -1830,6 +1859,13 @@ described by its sequence*. 4 operations are held to it, each in its own spec:
 | `Usage` (`usage.rb`) | `+` | `Usage.zero` | a session total depending on fold order (commutative as well, so *no* order dependence at all) |
 | `Compaction::Strategy::Base` (`compaction/strategy/base.rb`) | `\|` | `Strategy::Identity` | 2 policies over one span deriving differently depending on which was written first (commutative as well: ranges fold in ascending index order regardless of operand order) |
 | `Mode::LayerSet` (`mode/layer.rb`) | `\|` | `LayerSet.empty` | the layers a human enabled depending on the order they were enabled in (commutative as well) |
+
+`Sensitivity::Roots` (`sensitivity/roots.rb`) is held to the commutative group as well, with `|` as
+the union of the directories a confined policy holds and `Roots.none` as the unit. It defines no
+`==`, so its spec supplies the equality a caller cares about: 2 values are equal when `held?`
+agrees over a fixed set of paths. Its `<=` is a preorder only, since a root beside its own child
+holds what the root alone does. `Budget::Spent` and `Sensitivity::Spans` are held to the same
+group in their own specs.
 
 `Middleware` is deliberately **not** in the table. A stack is composed by membership in a
 `Middleware::Stack`, an ordered list, rather than by an operator, so there is no bracketing for a
@@ -1918,6 +1954,45 @@ production. `#blocks` keeps its 1-argument shape, because an elementwise map is 
 message alone: a range is a parameter no elementwise map can use, and widening the hook would have
 put it in every one. `Elide`, `Summarizing` and `Identity` are untouched by the widening, which is
 the test of whether it was done at the right level.
+
+### Incremental folds: one answer whether the file is read whole or followed live
+
+An [incremental fold](docs/GLOSSARY.md#incremental-fold) reads a session's records one at a time and
+carries a state forward. `Journal::Projection` (`lib/lain/journal/projection.rb`) is that shape as a
+frozen value: a subclass names its `.unit` and its `#step`, `.over(records)` is the `inject`, and a
+step answers a new projection and leaves the receiver as it was. `Journal::Projections` steps
+several members together so a reader that wants 3 answers parses the file 1 time. The members are
+`Projection::Redactions` (the counts `lain export` and its html footer share), `Projection::SessionRow`
+(what `lain sessions` lists of one file), `Projection::Lineage` (which messages belong to each spawn),
+and the 6 `SessionRecord::Replay` projections. `Lineage` is read by `Bench::Session::Lineages` over a
+closed file and stepped by `lain watch`'s `LineageFilter` as records arrive, so the live view and the
+read-back agree because they run 1 fold.
+
+`"an incremental fold"` (`incremental_fold.rb`) holds a projection to 2 laws that every projection
+carries and a third that only some do:
+
+- **Persistence.** A projection and the one its step answers are both `Ractor.shareable?`. Shareable
+  means deeply frozen, so a step that moved its receiver would have had to find it unfrozen.
+- **Chunked equals whole.** The projection over a file's newline-terminated lines equals the one
+  stepped through a `Journal::Tail` fed the same bytes cut anywhere: byte by byte, at every 2-way
+  cut, with a multibyte character split and the last line left unterminated. That is what a
+  follower sees of a file still being written.
+- **Homomorphism, for a projection that declares `#combine`.** The group reuses `"a monoid
+  homomorphism"`, taking record lists as spans: 2 halves folded apart and combined equal the whole.
+  `Redactions` declares it (`+` on both counts). `Lineage` and `SessionRow` do not, and say why in
+  their doc comments: a record joins a lineage through one that landed before it, and a rewind and
+  the turn that lands it can fall on either side of a cut, so a fold of the halves loses the links
+  that cross the cut.
+
+The population is a list of record lists as `Telemetry.read` answers them, with `Untyped` among them,
+and the group checks that some list holds more than 1 record so a step follows a step.
+
+`"a round trip"` (`round_trip.rb`) states the law a writer and its reader hold together:
+`parse(render(x)) == x`. `spec/lain/telemetry/round_trip_spec.rb` holds every claimed
+`Telemetry` record to it through the Journal's bytes, so a field the writer drops or reshapes, or a
+String that comes back a Symbol, fails there. Its negative reads the group's battery directly, as
+the other groups do: a lossy pair under a lenient parse gives `:fails`, because a strict parse would
+surface the loss as an exception instead.
 
 ### Three orders, one lattice question
 
@@ -2073,6 +2148,17 @@ Purity is held the same way, by `"a pure operation"`: an operation that reaches 
 which is precisely why re-deriving their edges needs the journalled answer rather than the edge
 alone. The negative is a spec, not a runtime classification: nothing in `lib/` reads a purity
 claim back to classify a drifted edge.
+
+**A monoid action has no group, and the reason is a worked negative.** A fold looks like a monoid
+action: `act([], s) == s` and `act(L + R, s) == act(R, act(L, s))`, with a list of records
+acting on a state. There is no group for those 2 laws, because both are theorems of `inject`
+over any step function, mutating ones included. Folding
+`L + R` is folding `L` and then folding `R` from where `L` stopped, whatever the step does, so the
+battery could never read `:fails` and a law that cannot fail holds nothing. What a projection can
+get wrong is what `"an incremental fold"` checks instead: that a step leaves its receiver alone,
+that a cut file folds as the whole file, and, for a projection that can combine, that 2 halves
+folded apart equal the whole. The same test applies to a new group proposal: find an operation
+that violates the law, or the group is a restatement of the language.
 
 ### How to hold an operation to a law
 

@@ -325,8 +325,9 @@ one round trip, never a loop — Lain owns the loop, because the loop is the obj
   `meta`: a `:spawn` names the parent's head as `spawned_from`, its completion `:message` names
   that spawn and the child's final turn, and the session file holds each child turn as a
   `child_turn` record, once per digest. So lineage survives while a fresh child never inherits
-  the parent's prompt. `Bench::Session::Lineages` reads completed lineages back from the Store;
-  `lain watch`'s `LineageFilter` follows the same records as they arrive.
+  the parent's prompt. The 1 lineage projection, `Journal::Projection::Lineage`, reads them:
+  `Bench::Session::Lineages` folds a closed file through it and `lain watch`'s `LineageFilter`
+  steps it as the records arrive.
 - **`Project` splits root from cwd**: **root** is the authority boundary (what `.lain/` governs),
   **cwd** is where a relative path resolves. `$HOME` is never *inferred* as a root.
 - **Every human line arrives at one `Frontend::Intake`** — the `lain input` pane's socket and the

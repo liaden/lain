@@ -182,4 +182,40 @@ RSpec.describe "the living docs" do
       expect(doc).not_to match(/lain epic land \S+ SHA/)
     end
   end
+
+  # The names the algebra section and the glossary give the journal folds, the typed
+  # session reading and the request digest. Each is read off the constant, so a rename
+  # goes red here instead of leaving a sentence that points at nothing.
+  describe "the journal folds and the session format the docs describe" do
+    let(:architecture) { DocsNaming::ROOT.join("ARCHITECTURE.md").read }
+    let(:glossary) { DocsNaming::ROOT.join("docs/GLOSSARY.md").read }
+
+    [Lain::Journal::Projection, Lain::Journal::Projections, Lain::Journal::Projection::Lineage,
+     Lain::Journal::Projection::Redactions, Lain::Journal::Projection::SessionRow, Lain::Journal::Tail,
+     Lain::Telemetry::Untyped, Lain::Request::PrefixChain, Lain::Canonical::Equality,
+     Lain::Sensitivity::Roots, Lain::EventLog::Projection].each do |constant|
+      it "names #{constant.name} in ARCHITECTURE.md or the glossary" do
+        short = constant.name.delete_prefix("Lain::")
+        docs = architecture + glossary
+        named = [short, short.delete_prefix("Journal::")].any? { |name| docs.match?(/`#{Regexp.escape(name)}[`.]/) }
+
+        expect(named).to be(true), "no doc names #{short}"
+      end
+    end
+
+    it "names the law groups whose files exist" do
+      %w[incremental_fold round_trip].each do |file|
+        expect(DocsNaming::ROOT.join("spec/support/shared_examples/#{file}.rb")).to be_file
+        expect(architecture).to include("`#{file}.rb`")
+      end
+    end
+
+    it "tells the 2 projections apart" do
+      expect(glossary).to include("`Journal::Projection` and `EventLog::Projection`")
+    end
+
+    it "states the session format the code writes" do
+      expect(architecture).to include("`SessionRecord::FORMAT`, #{Lain::SessionRecord::FORMAT} today")
+    end
+  end
 end

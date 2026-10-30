@@ -76,6 +76,39 @@ The scoping is worth knowing: the plain law above is false on purpose for a comb
 every element an analysis of the whole span (splitting the span splits the analysis), so that family
 — `Context::DedupeToolCalls` — is judged by the conditional law in `elementwise.rb` instead.
 
+### Incremental fold
+
+> A fold that consumes its input one element at a time and carries a state forward, so the state after
+> a prefix of the input is a value that can be kept, handed on, and continued.
+
+`Journal::Projection` is one, over a session's records: `.unit` is the starting state, `#step`
+answers the next projection without touching the receiver, and `.over(records)` is the `inject`.
+The same projection folds a closed file, a file followed live through `Journal::Tail`, and a
+Channel, which is why `lain watch` and a read-back of the finished file agree. The shared group
+`"an incremental fold"` holds each one to persistence (a step leaves its receiver as it was),
+chunked equals whole (a file cut at any byte folds as the whole lines do), and, for a projection
+that declares `#combine`, the monoid homomorphism law.
+
+A **monoid action** (`act([], s) == s`, `act(L + R, s) == act(R, act(L, s))`) is the textbook name
+for this shape, and lain has no law group for it: both equations hold for `inject` over any step,
+so the group could never fail.
+
+`Journal::Projection` and `EventLog::Projection` share a word and nothing else. `EventLog::Projection`
+(`lib/lain/event_log/projection.rb`) is a read-only view over a log of `Ext::Event`s: one pure
+question per method (a workspace at a turn, a causal walk), recomputed from the log each time, with
+no step and no carried state. `Journal::Projection` folds the records of a session file and exists
+to be stepped. Neither is a subclass of the other.
+
+### Round trip
+
+> A pair of functions where the second undoes the first: `parse(render(x)) == x`.
+
+The 1 law, held by `spec/support/shared_examples/round_trip.rb` as `"a round trip"`. It is what
+`Telemetry.read` owes the Journal: every claimed record, written through the Journal and read back
+by its type, comes out equal to the value it was written from, with every String-versus-Symbol
+field under the law. A writer that drops a field, or a reader that reshapes one, fails it, and a
+spec shows a lossy pair by reading the group's battery directly.
+
 ### Endomorphism
 
 > A homomorphism from a mathematical object to itself.
