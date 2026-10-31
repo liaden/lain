@@ -91,6 +91,14 @@ RSpec.describe "the dogfood config tree" do
                                   "suite.lock", "LAIN_SPEC_WORKERS", "WHY", "Linus Torvalds", "Aaron Patterson")
     end
 
+    %w[research-epic plan-epic create-epic-issues iterate-epic].each do |skill|
+      it "keeps #{skill}'s conventions deferring to this repo's CLAUDE.md and the design plan" do
+        rendered = render_over_dogfood(skill)
+
+        expect(rendered).to include("CLAUDE.md", "design plan", "commit-grouping")
+      end
+    end
+
     it "gives create-plan the Ruby panel and the planning conventions" do
       rendered = render_over_dogfood("create-plan")
 

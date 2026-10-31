@@ -821,6 +821,30 @@ RSpec.describe "shipped skills" do
     end
   end
 
+  describe "the shipped conventions defaults are neutral" do
+    idioms = /design plan|commit-grouping|lib file and its spec|pre-commit|stash|\btraps?\b|\btoolchain\b/i
+    conventions_skills = %w[create-epic-issues create-plan execute-plan iterate-epic plan-epic research-epic]
+
+    it "keeps lain's own workflow idioms out of every shipped conventions.md" do
+      tree = File.expand_path("../../../lib/lain/prompt/templates/skill", __dir__)
+      files = Dir.glob("*/conventions.md", base: tree)
+
+      expect(files.map { |f| File.dirname(f) }).to match_array(conventions_skills)
+      files.each { |f| expect(File.read(File.join(tree, f))).not_to match(idioms), f }
+    end
+
+    conventions_skills.each do |skill|
+      it "renders #{skill} for a bare project naming its own contributor guide" do
+        with_empty_project do |renderer|
+          rendered = renderer.render(skill).squish
+
+          expect(rendered).to include("If the project has a contributor or agent guide",
+                                      "`CONTRIBUTING.md`, `AGENTS.md` or `CLAUDE.md`", "if not, apply")
+        end
+      end
+    end
+  end
+
   describe "a project override replaces an epic skill's conventions fill" do
     it "renders plan-epic with the project's override in place of the shipped default" do
       with_empty_project do |_renderer, root|
