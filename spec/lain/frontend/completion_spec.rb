@@ -185,7 +185,24 @@ RSpec.describe Lain::Frontend::Completion do
 
       described_class.install(installable)
 
-      expect(Lain::Frontend::LineEditor.bound?(described_class::KEY)).to be(true)
+      expect(described_class::KEYS.map { |key| Lain::Frontend::LineEditor.bound?(key) }).to eq([true, true])
+      expect(described_class::KEYS).to eq(%w[C-x Tab])
+    end
+
+    it "leaves C-x on and names Tab when only Tab is refused" do
+      Lain::Frontend::LineEditor.unbind_all
+      real = Lain::Frontend::LineEditor.method(:bind)
+      allow(Lain::Frontend::LineEditor).to receive(:bind) do |key, &handler|
+        raise Lain::Frontend::LineEditor::KeyTaken, "Tab is already bound" if key == "Tab"
+
+        real.call(key, &handler)
+      end
+      warnings = []
+
+      described_class.install(installable, notify: warnings.method(:<<))
+
+      expect([Lain::Frontend::LineEditor.bound?("C-x"), warnings.size]).to eq([true, 1])
+      expect(warnings.first).to include("Tab").and include("completion is off")
     end
 
     it "does not raise KeyTaken when a second completion is installed" do
@@ -271,7 +288,7 @@ RSpec.describe Lain::Frontend::TTY do
 
       Dir.mktmpdir { |dir| tty_over(dir) }
 
-      expect(Lain::Frontend::LineEditor.bound?(Lain::Frontend::Completion::KEY)).to be(false)
+      expect(Lain::Frontend::LineEditor.bound?(Lain::Frontend::Completion::KEYS.first)).to be(false)
     end
 
     it "claims the key when it takes the terminal" do
@@ -279,7 +296,7 @@ RSpec.describe Lain::Frontend::TTY do
 
       Dir.mktmpdir { |dir| prompting(dir) { channel.close } }
 
-      expect(Lain::Frontend::LineEditor.bound?(Lain::Frontend::Completion::KEY)).to be(true)
+      expect(Lain::Frontend::LineEditor.bound?(Lain::Frontend::Completion::KEYS.first)).to be(true)
     end
 
     it "still runs, and warns, when the human's inputrc has already claimed the key" do

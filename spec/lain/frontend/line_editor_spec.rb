@@ -716,6 +716,50 @@ RSpec.describe Lain::Frontend::LineEditor do
       expect([seen, editor.whole_buffer, editor.finished?]).to eq([["draft"], "draft", false])
     end
 
+    it "binds Tab, byte 9, because :complete does nothing while lain sets no completion_proc" do
+      described_class.load_inputrc
+      seen = []
+      described_class.bind("Tab") do |buffer|
+        seen << buffer
+        nil
+      end
+      editor = editor_typing("/app")
+
+      press(editor, [9])
+
+      expect([seen, editor.whole_buffer]).to eq([["/app"], "/app"])
+    end
+
+    context "with a real Completion installed" do
+      let(:drawn) { [] }
+
+      before do
+        sources = Lain::Frontend::Completion::Sources.new(
+          commands: %w[approve inbox].map { |name| double(name:) }
+        )
+        theme = Lain::Frontend::Theme.new(pastel: Pastel.new(enabled: false))
+        Lain::Frontend::Completion.install(
+          Lain::Frontend::Completion.new(sources:, theme:, screen: drawn.method(:<<))
+        )
+      end
+
+      it "completes a slash command on Tab" do
+        editor = editor_typing("/app")
+
+        press(editor, [9])
+
+        expect(editor.whole_buffer).to eq("/approve")
+      end
+
+      it "leaves a word with no sigil alone and draws no menu" do
+        editor = editor_typing("hello")
+
+        press(editor, [9])
+
+        expect([editor.whole_buffer, drawn]).to eq(["hello", []])
+      end
+    end
+
     it "binds over the gate's own Shift+Tab, a completion move lain never turns on" do
       described_class.load_inputrc
 
@@ -1090,14 +1134,14 @@ RSpec.describe Lain::Frontend::LineEditor do
     # The contract published to the two consuming features names exactly two
     # keys. This is the spec that fails if a reline bump changes that, rather
     # than two cards discovering it in a terminal.
-    it "still offers exactly C-g and C-x, free in all three keymaps" do
+    it "still offers exactly C-g, C-i and C-x, free in all three keymaps" do
       free = (1..26).select do |byte|
         described_class::Registry::KEYMAPS.each_value.all? do |mapping|
           described_class::Registry::NOT_A_CLAIM.include?(mapping[byte])
         end
       end
 
-      expect(free.map { |byte| "C-#{(96 + byte).chr}" }).to eq(%w[C-g C-x])
+      expect(free.map { |byte| "C-#{(96 + byte).chr}" }).to eq(%w[C-g C-i C-x])
     end
 
     it "still answers the buffer verbs the key-action seam drives" do
@@ -1281,6 +1325,12 @@ RSpec.describe Lain::Frontend::LineEditor do
         require "lain"
         Reline::HISTORY << "earlier"
         Lain::Frontend::LineEditor.bind("C-g") { |_buffer| nil } if ARGV[1] == "bind_first"
+        if ARGV[1] == "tab_key"
+          Lain::Frontend::LineEditor.bind("Tab") do |_buffer|
+            File.write(ARGV[2], "hit\n", mode: "a")
+            nil
+          end
+        end
         if ARGV[1] == "bound_keys"
           Lain::Frontend::LineEditor.bind("C-x") do |buffer|
             File.write(ARGV[2], "\#{Process.clock_gettime(Process::CLOCK_MONOTONIC)}\n", mode: "a")
@@ -1407,6 +1457,14 @@ RSpec.describe Lain::Frontend::LineEditor do
         expect(hits.first - started).to be < 0.3
         expect(hits.drop(1).size).to eq(2)
         expect([lines.last, File.readlines(File.join(dir, "shift_tab_hits")).size]).to eq(['"draft"', 1])
+      end
+    end
+
+    it "fires a Tab handler on byte 9 and leaves the draft as typed" do
+      Dir.mktmpdir do |dir|
+        lines = drive_child("xterm", [{ keys: "draft\t\r" }], dir, "tab_key")
+
+        expect([lines, File.readlines(File.join(dir, "hits")).size]).to eq([['"draft"'], 1])
       end
     end
 

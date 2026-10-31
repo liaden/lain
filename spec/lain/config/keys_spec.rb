@@ -14,6 +14,11 @@ RSpec.describe Lain::Config::Keys do
       .to raise_error(Lain::Config::Refusal, %r{\A/u/config\.rb:2: .*C-t .*line editor.*ed_transpose_chars})
   end
 
+  it "refuses Tab as lain's completion key" do
+    expect { described_class.from({ "approval_cycle" => "Tab" }, path: "/u/config.rb:4") }
+      .to raise_error(Lain::Config::Refusal, /Tab is lain's completion key/)
+  end
+
   it "refuses the completion key by name" do
     expect { described_class.from({ "approval_cycle" => "C-x" }, path: "/u/config.rb:4") }
       .to raise_error(Lain::Config::Refusal, %r{\A/u/config\.rb:4: .*C-x is lain's completion key})

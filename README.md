@@ -404,7 +404,7 @@ over a Unix socket. Two rows is `lain up`'s own arithmetic: six rows in the pane
 the rows, the `+N more` and the prompt all have to live in them, with a countdown still needing
 somewhere to draw. [`lain://status`](#the-cockpit) is where the whole tree is read. It is seated at a **floor** of 6 rows rather than a fixed height: grow it and
 it stays grown, and only a layout change that drove it under the floor puts it back. Every
-gesture works there — `[y/N]`, `human>`, `↑`/`↓` history, `C-g`, `C-x`, Ctrl-C's countdown and
+gesture works there — `[y/N]`, `human>`, `↑`/`↓` history, `C-g`, `C-x`, `Tab`, Ctrl-C's countdown and
 its `s` key — and the HUD stays live while an ask runs and while you type.
 
 `lain input` is an ordinary command, so a pane that dies can be restarted by hand:
@@ -474,7 +474,7 @@ chat`:
 |---|---|
 | `↑` / `↓` | walk **this session's** lines. The durable file at `$XDG_STATE_HOME/lain/history` is still appended per accepted line, but it is never read back: it is one pool shared by every project and every concurrent `lain up` pane, so recalling from it merged panes you were not sitting in |
 | `C-g` | hand the draft to `lain://compose` in the editor; `:w` there puts the composed text back at the prompt, where you press `<CR>` to send it |
-| `C-x` | completion menu for the token under the cursor |
+| `C-x` / `Tab` | completion menu for a `/` or `@` token under the cursor |
 | `Shift+Enter` / `Alt+Enter` | insert a newline instead of submitting, at every prompt. A hint row above the prompt says so once per `you>`. Under the cockpit, Shift+Enter needs tmux's `extended-keys`, which `lain up` turns on |
 | `\` at end of line | continue onto another line instead of submitting. Emacs and vi *insert* mode only — vi command mode submits on `<CR>` regardless, a Reline limitation |
 | `C-c` | open the grace window; a second `C-c` interrupts now |
@@ -484,8 +484,8 @@ chat`:
 With the cockpit's tmux mouse on, the wheel scrolls the chat pane's history and your terminal's
 native text selection needs Shift held while you drag.
 
-`C-g` and `C-x` are the only two control keys free across all three keymaps lain binds (emacs,
-vi_insert, vi_command), which is why there is no third.
+`C-g`, `C-i` (Tab) and `C-x` are the only control keys free across all three keymaps lain binds
+(emacs, vi_insert, vi_command); Tab is free because lain sets no Reline completion of its own.
 
 In the editor, one key is global, because a survey grows from whatever file you are reading and
 there is no buffer name to scope it to:

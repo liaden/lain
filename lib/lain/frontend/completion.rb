@@ -5,13 +5,13 @@ require "tty-cursor"
 module Lain
   module Frontend
     class Completion # rubocop:disable Style/Documentation -- doc lives on the reopen below; see .rubocop.yml's note
-      # The one key lain claims for completion. `C-g` is the only other control
-      # key free in ALL THREE keymaps lain binds -- emacs, vi_command and
-      # vi_insert -- and it is spoken for; see {LineEditor::Registry::KEYMAPS}
-      # for why the free space is exactly two keys wide. vi_insert is in that
-      # list, which is what makes this fire for a human whose inputrc says
-      # `editing-mode vi`; the cost is that C-x no longer self-inserts there.
-      KEY = "C-x"
+      # The keys lain claims for completion, each bound on its own so a refused
+      # one leaves the other working. `C-g` is the only other control key free
+      # in ALL THREE keymaps lain binds -- emacs, vi_command and vi_insert --
+      # and it is spoken for; see {LineEditor::Registry::KEYMAPS}. vi_insert is
+      # in that list, which is what makes this fire for a human whose inputrc
+      # says `editing-mode vi`; the cost is that C-x no longer self-inserts there.
+      KEYS = %w[C-x Tab].freeze
 
       # How many candidates a menu shows. Also the `limit:` handed to
       # {Lain::Ext::Fuzzy#match}, which is the point: without one, matching
@@ -70,16 +70,16 @@ module Lain
         # @param notify [#call] renders a warning line ({TTY#render_warning})
         def install(completion, notify: SILENT)
           @current = completion
-          claim_key(notify) unless LineEditor.bound?(KEY)
+          KEYS.each { |key| claim_key(key, notify) unless LineEditor.bound?(key) }
           completion
         end
 
         private
 
-        def claim_key(notify)
-          LineEditor.bind(KEY) { |buffer| @current&.call(buffer) }
+        def claim_key(key, notify)
+          LineEditor.bind(key) { |buffer| @current&.call(buffer) }
         rescue LineEditor::KeyTaken => e
-          notify.call("warning: completion is off -- #{e.message}")
+          notify.call("warning: completion is off on #{key} -- #{e.message}")
         end
       end
 

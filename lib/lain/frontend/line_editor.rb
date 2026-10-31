@@ -466,14 +466,16 @@ module Lain
         # :completion_journey_up is the ANSI gate's own default for Shift+Tab,
         # and it moves only through Reline's autocompletion menu, which lain
         # never turns on: the key does nothing for the human until lain binds it.
-        NOT_A_CLAIM = [nil, ACTION, :ed_insert, :completion_journey_up].freeze
+        #
+        # :complete is Tab's default, and it does nothing while lain sets no completion_proc.
+        NOT_A_CLAIM = [nil, ACTION, :ed_insert, :completion_journey_up, :complete].freeze
 
         # "C-g" and "c-G" name the same key, as do "S-Tab" and "s-tab";
         # nothing else names a key at all. Deliberately narrow -- a name lain
         # cannot translate must fail loudly rather than register a binding that
         # can never fire.
         CONTROL_NAME = /\AC-([a-z])\z/i
-        NAMED_SEQUENCES = { "s-tab" => "\e[Z".bytes.freeze }.freeze
+        NAMED_SEQUENCES = { "s-tab" => "\e[Z".bytes.freeze, "tab" => [9].freeze }.freeze
 
         # @return [Boolean] whether {#bind} can translate this key name
         def self.name?(name) = CONTROL_NAME.match?(name.to_s) || NAMED_SEQUENCES.key?(name.to_s.downcase)

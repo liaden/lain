@@ -603,7 +603,7 @@ the next prompt (a replay is the finding), and a flip redraws the open prompt's 
 it and do not fail it: after a paste containing Shift+Tab the pane row shows `^[[Z`.
 `S-Tab` is the one value `keys approval_cycle:` accepts today. A key the user declares is checked at launch and
 the launch is refused with the file and line, naming the holder: `keys approval_cycle: "C-x"` reads `approval_cycle
-C-x is lain's completion key`, `"C-g"` reads `... is lain's compose key`, and every other `"C-<letter>"` (`"C-t"`, say)
+C-x is lain's completion key`, `"Tab"` reads `... Tab is lain's completion key`, `"C-g"` reads `... is lain's compose key`, and every other `"C-<letter>"` (`"C-t"`, say)
 reads `... is held by the line editor ...`. Declaring `"S-Tab"` itself is refused the same way if your inputrc binds
 `\e[Z`. Leaving `keys` out never fails a launch: the default Shift+Tab is bound if it can be, and the chat says so
 when it cannot. A project `.lain/config.rb` naming `keys` is refused.

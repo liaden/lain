@@ -257,7 +257,8 @@ simply connects — and is redrawn with the prompt and HUD standing at that mome
 waiting for the next change.
 
 The pane draws the chat's HUD above the prompt and refreshes it without a keypress, completes
-`/command` names, and shows the mode's layer lighters beside the prompt. It holds no agent, so
+a `/` or `@` word with Tab or C-x, and shows the mode's layer lighters beside the prompt. It holds no
+agent, so
 Ctrl-C, Ctrl-\ and `/stop` there travel to the chat's own rail rather than being answered locally,
 except a Ctrl-C over a typed line (at `you>`, at `command>`, or a draft typed while a run is busy), which
 only clears that line.
@@ -875,7 +876,7 @@ The key is a property of your terminal, so it is set only in the **user-level** 
 `approval_cycle:`, as in `keys approval_cycle: "S-Tab"`. Its value is `"S-Tab"`, the only key that works today; the configured key drives the prompt, the
 typeahead sweep and the pane. A project's `.lain/config.rb` that says `keys` is refused as a verb only
 the user's file may use. A key you declare is checked at launch and refused with the file and line
-when lain holds it (`C-x` completion, `C-g` compose) or the line editor already holds it: every other
+when lain holds it (`C-x` and `Tab` completion, `C-g` compose) or the line editor already holds it: every other
 `C-<letter>`, and `S-Tab` itself if your inputrc binds `\e[Z`. Leaving `keys` out never fails: with no
 declaration the default `S-Tab` is bound if it can be, and the chat says so when it cannot.
 

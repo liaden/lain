@@ -15,7 +15,7 @@ module Lain
       # Reline claims every other control key's default, so a "C-<letter>" works only where no keymap holds it.
       # Keys lain binds itself, read from the constants that bind them so the two cannot drift.
       def self.held
-        { Frontend::Completion::KEY => "completion", CLI::ComposedPrompt::KEY => "compose" }
+        Frontend::Completion::KEYS.to_h { |key| [key, "completion"] }.merge(CLI::ComposedPrompt::KEY => "compose")
       end
       private_class_method :held
 
