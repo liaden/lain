@@ -1165,6 +1165,26 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
     end
   end
 
+  describe "DeclaredHarness" do
+    let(:layout_for) { ->(timeout) { Lain::TestLayout.preset("cargo").with(timeout:) } }
+
+    it "hands the layout's timeout to the harness it builds" do
+      allow(Lain::Grader::TestHarness).to receive(:new).and_call_original
+
+      Lain::CLI::EpicDriver::DeclaredHarness.for(layout_for.call(1800)).call(repo)
+
+      expect(Lain::Grader::TestHarness).to have_received(:new).with(repo, adapter: anything, timeout: 1800)
+    end
+
+    it "keeps the harness's 300 when the layout names none" do
+      allow(Lain::Grader::TestHarness).to receive(:new).and_call_original
+
+      Lain::CLI::EpicDriver::DeclaredHarness.for(Lain::TestLayout.preset("cargo")).call(repo)
+
+      expect(Lain::Grader::TestHarness).to have_received(:new).with(repo, adapter: anything, timeout: 300)
+    end
+  end
+
   # Two runs starting together after a crash both find the dead run's lock.
   # Taking it over has to be a compare-and-swap, or the one that judged it
   # second unlocks the first one's live lock and both merge in one checkout.

@@ -1331,7 +1331,7 @@ module Lain
 
           lambda do |root|
             adapter = Lain::Grader::TestHarness::Adapter.for(layout.preset.name).call(root)
-            Lain::Grader::TestHarness.new(root, adapter:)
+            Lain::Grader::TestHarness.new(root, adapter:, timeout: layout.timeout)
           end
         end
       end

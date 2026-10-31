@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module Lain
-  TestLayout = Data.define(:preset, :source_roots, :level_roots, :exempt, :default_level)
+  TestLayout = Data.define(:preset, :source_roots, :level_roots, :exempt, :default_level, :timeout)
 
   # Where a project keeps its tests: which directories hold source, which hold
   # each level's tests, and which test paths are exempt from the mirror.
@@ -35,7 +35,7 @@ module Lain
     DEFAULT_LEVEL = "unit"
 
     PRESET = "preset"
-    KEYS = [PRESET, "source_roots", "level_roots", "exempt", "default_level"].freeze
+    KEYS = [PRESET, "source_roots", "level_roots", "exempt", "default_level", "timeout"].freeze
     private_constant :PRESET, :KEYS
 
     # A test cannot be placed: no layout is in force, the level is not one the
@@ -146,11 +146,21 @@ module Lain
       rules = { "source_roots" => Shapes::Paths.new(minimum: 1, disjoint: true),
                 "level_roots" => Shapes::Levels.new(inline: !preset.mirrors),
                 "exempt" => Shapes::Paths.new(minimum: 0, disjoint: false) }
-      overrides.except("default_level").each do |key, value|
+      overrides.except("default_level", "timeout").each do |key, value|
         rule = rules.fetch(key)
         raise invalid_value(key, value, rule.describe(value), path:) unless rule.admits?(value)
       end
       declared!(overrides, preset, path:)
+      bounded!(overrides, path:)
+    end
+
+    def self.bounded!(overrides, path:)
+      return unless overrides.key?("timeout")
+
+      value = overrides.fetch("timeout")
+      return if value.is_a?(Numeric) && value.finite? && value.positive?
+
+      raise invalid_value("timeout", value, "a number of seconds above 0", path:)
     end
 
     # `default_level` is the one CROSS-FIELD rule -- it has to name a level the
@@ -187,18 +197,18 @@ module Lain
                                 path:, table: TABLE, key: DEFAULT_LEVEL, value: mirrored)
     end
 
-    private_class_method :detected, :shaped!, :preset_named, :admit!, :declared!, :settled!, :invalid_value
+    private_class_method :detected, :shaped!, :preset_named, :admit!, :declared!, :settled!, :bounded!, :invalid_value
 
     # Never the caller's own strings: the table arrives from a TOML parse the
     # caller still holds, and this value has to stay `Ractor.shareable?`.
     # {Freezable::Fields} is the one owner of that normalization -- interned,
     # with nil kept as the absence it signals, which is exactly what an
     # undeclared `default_level` is.
-    def initialize(preset:, source_roots:, level_roots:, exempt:, default_level: nil)
+    def initialize(preset:, source_roots:, level_roots:, exempt:, default_level: nil, timeout: Grader::TestHarness::DEFAULT_TIMEOUT)
       pin = Freezable::Fields
       super(preset:, source_roots: pin.pinned_each(source_roots), exempt: pin.pinned_each(exempt),
             level_roots: level_roots.to_h { |name, root| [pin.pinned(name), pin.pinned(root)] }.freeze,
-            default_level: pin.pinned(default_level))
+            default_level: pin.pinned(default_level), timeout:)
     end
 
     # @return [Boolean] false only for {None}, which guards nothing

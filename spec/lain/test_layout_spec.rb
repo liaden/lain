@@ -194,6 +194,21 @@ RSpec.describe Lain::TestLayout do
     end
   end
 
+  describe "the suite's time bound" do
+    it "defaults to 300 seconds when the table names none" do
+      expect(described_class.from({ "preset" => "cargo" }, path: config).timeout).to eq(300)
+    end
+
+    it "takes the table's timeout" do
+      expect(described_class.from({ "preset" => "cargo", "timeout" => 1800 }, path: config).timeout).to eq(1800)
+    end
+
+    it "refuses a timeout that is not above 0, naming the key" do
+      expect([0, -5, "300", nil].map { |bad| refusal({ "preset" => "cargo", "timeout" => bad }) })
+        .to all(be_a(Lain::Config::Refusal).and(have_attributes(key: "timeout", table: "`tests`")))
+    end
+  end
+
   describe "an inline level" do
     it "is refused for a preset whose levels mirror, since its tests would have nowhere to go" do
       table = { "preset" => "rspec", "level_roots" => { "unit" => "spec/unit", "integration" => "inline" } }

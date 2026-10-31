@@ -607,6 +607,23 @@ RSpec.describe Lain::Config do
       end
     end
 
+    it "reads the tests table's timeout" do
+      Dir.mktmpdir do |root|
+        write_config(root, "tests preset: :cargo, timeout: 1800\n")
+
+        expect(described_class.test_layout(root:).timeout).to eq(1800)
+      end
+    end
+
+    it "refuses a tests timeout of 0, naming the table and the key" do
+      Dir.mktmpdir do |root|
+        write_config(root, "tests preset: :cargo, timeout: 0\n")
+
+        expect { described_class.test_layout(root:) }
+          .to raise_error(Lain::Config::Refusal, /tests.*timeout/m)
+      end
+    end
+
     it "refuses a misspelt key, naming the key and the file" do
       Dir.mktmpdir do |root|
         write_config(root, "tests prest: :rspec\n")
