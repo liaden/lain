@@ -5,9 +5,10 @@ require "json"
 module Lain
   module Grader
     class TestHarness
-      # How a test framework is DRIVEN and READ, as a duck two methods wide:
+      # How a test framework is DRIVEN and READ, as a duck three methods wide:
       #
       #   command(out_path:, paths:) -> argv  # writes the machine-readable result to a FILE
+      #   stdout?                             # true: parse the child's stdout, not the FILE
       #   parse(document, exit_status)        # -> {passed:, failed:, errors:} name lists
       #
       # `paths` narrow the run to those roots or files and follow the adapter's
@@ -118,6 +119,8 @@ module Lain
           # error occurred ...", "While loading ... a `raise SyntaxError`"), and
           # whether or not it is coloured; its notes carry no such line.
           ERROR_MESSAGE = %r{^(?:\e\[[\d;]*m)*Failure/Error:}
+          def stdout? = false
+
           def command(out_path:, paths: [])
             ["rspec", "--format", "json", "--out", out_path, *paths]
           end
@@ -169,6 +172,8 @@ module Lain
           end
 
           def command(out_path:, paths: []) = @out_argv.call(out_path) + paths
+
+          def stdout? = false
 
           def parse(document, _exit_status)
             { passed: scan(document, @passed),

@@ -17,6 +17,14 @@ RSpec.describe Lain::Grader::TestHarness::Adapter do
     end
   end
 
+  describe "#stdout?" do
+    it "is false for the file-reading adapters" do
+      command = described_class::Command.new(out_argv: ->(out) { [out] }, passed: /P/, failed: /F/)
+
+      expect([described_class::Rspec.new.stdout?, command.stdout?]).to eq([false, false])
+    end
+  end
+
   # rspec's `messages` carries its notes beside its load errors, so only the
   # summary's count says how many errors there were.
   describe "Rspec#parse" do

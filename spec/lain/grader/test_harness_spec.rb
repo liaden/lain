@@ -208,6 +208,45 @@ RSpec.describe Lain::Grader::TestHarness do
     end
   end
 
+  describe "an adapter that reports on stdout" do
+    let(:stdout_adapter) do
+      Class.new do
+        attr_reader :parsed
+
+        def command(out_path:, paths:) = ["echo", out_path, *paths]
+        def stdout? = true
+
+        def parse(document, exit_status)
+          @parsed = [document, exit_status]
+          { passed: ["one"], failed: [], errors: [] }
+        end
+      end.new
+    end
+
+    it "parses the child's stdout and exit status, not a result file" do
+      Dir.mktmpdir do |dir|
+        shell = Struct.new(:stdout, :stderr, :exitstatus) { def run_command = self }.new("out text\n", "", 0)
+        harness = described_class.new(dir, adapter: stdout_adapter, shell_out_factory: ->(*, **) { shell })
+
+        harness.run(worker_env_for(dir, worker_env_class))
+
+        expect(stdout_adapter.parsed).to eq(["out text\n", 0])
+      end
+    end
+
+    it "reads stdout from the production runner" do
+      Dir.mktmpdir do |dir|
+        adapter = Class.new(stdout_adapter.class) do
+          def command(**) = %w[echo hello]
+        end.new
+
+        described_class.new(dir, adapter:).run(worker_env_for(dir, worker_env_class))
+
+        expect(adapter.parsed).to eq(["hello\n", 0])
+      end
+    end
+  end
+
   # The framework's NAME, for a caller building a test layout: it detects
   # without building an adapter, so a framework lain cannot run yet still
   # names its layout's preset.

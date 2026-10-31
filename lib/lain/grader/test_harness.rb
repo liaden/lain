@@ -8,15 +8,17 @@ module Lain
     # for a code-writing arm, where "how good was this?" is answered by the
     # subject's tests, not a rubric. `#grade` shells the suite out under the
     # subject's WorkerEnv (cwd = the checkout under test), reads the framework's
-    # machine-readable result FILE, and folds the pass/fail counts into a {Grade}:
-    # score is the passing fraction, it passes only when nothing failed or
-    # errored, and `#why` names the failing cases.
+    # machine-readable result (a file, or stdout for an adapter that says so), and
+    # folds the pass/fail counts into a {Grade}: score is the passing fraction,
+    # it passes only when nothing failed or errored, and `#why` names the
+    # failing cases.
     #
-    # Two hazards this class is built around. First, the result is read from a
-    # file, never stdout, so a child project's deprecation noise cannot corrupt
-    # the parse. Second, the child must not inherit the HOST's framework
-    # context: a Lain suite runs under `bundle exec`, whose
-    # BUNDLE_*/BUNDLER_*/RSPEC_* vars and RUBYOPT would make the child resolve
+    # Two hazards this class is built around. First, a file adapter reads its
+    # result from a file, so a child project's deprecation noise cannot corrupt
+    # the parse; an adapter that declares `stdout?` accepts
+    # that risk. Second, the child must not
+    # inherit the HOST's framework context: a Lain suite runs under
+    # `bundle exec`, whose BUNDLE_*/BUNDLER_*/RSPEC_* vars and RUBYOPT would make the child resolve
     # LAIN's Gemfile and config instead of the subject's. That scrub lives on
     # {Lain::Exec}, where every backend that spawns a child reads it.
     #
@@ -48,7 +50,7 @@ module Lain
       ERROR_DETAIL_LINES = 12
 
       # @param root [String] the project directory whose framework is detected
-      # @param adapter [#command,#parse, nil] an explicit adapter; nil auto-detects
+      # @param adapter [#command,#stdout?,#parse, nil] an explicit adapter; nil auto-detects
       # @param timeout [Numeric] seconds the child suite may run before {Timeout}
       # @param shell_out_factory [#call] the subprocess runner, injected as a
       #   factory as {Tools::Bash} and the isolation backends do
@@ -109,9 +111,11 @@ module Lain
       end
 
       def outcome(out_path, shell)
-        document = File.exist?(out_path) ? File.read(out_path) : ""
+        document = @adapter.stdout? ? shell.stdout.to_s : file_document(out_path)
         Run.new(**@adapter.parse(document, shell.exitstatus), stderr: shell.stderr)
       end
+
+      def file_document(out_path) = File.exist?(out_path) ? File.read(out_path) : ""
 
       def capture(shell, argv)
         shell.run_command
