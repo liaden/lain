@@ -1,4 +1,4 @@
-# nyotes trial fixes: wave 1 and cargo epics
+# nyotes trial fixes: wave 1, cargo epics and cockpit
 
 status: draft
 commit-mode: orchestrator-commits
@@ -7,7 +7,7 @@ panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron 
 
 ## Intent
 
-The 2026-10-30 nyotes trial (`lain up` on a greenfield Rust project, ollama-cloud `glm-5.3`, `--approval auto`) reached the research gate and stopped there. This plan has 2 streams. Wave 1 fixes what blocks trial steps 4 to 7 (T1 to T8). Today the gate denies after 300s whatever `approval timeout:` says, and it cannot hear a reason. A researcher's answer that is still over 16 KiB after its own summary is lost. Children learn their answer ceiling only after they break it. The judge's 30s runs while it queues for a cloud slot. The research skill fans out blind to the provider's width, and the shipped conventions cite lain's own workflow. The cargo stream (T9 to T16) makes `/implement-epic` drive a cargo project, which trial step 8 needs. Source: `planning/nyotes-trial-findings-research-2026-10.md`, findings A1, A2, A3, A5, B1, B2, C5, C7, F1, F2, F3 and F5. ROADMAP item 72.
+The 2026-10-30 nyotes trial (`lain up` on a greenfield Rust project, ollama-cloud `glm-5.3`, `--approval auto`) reached the research gate and stopped there. This plan has 2 streams. Wave 1 fixes what blocks trial steps 4 to 7 (T1 to T8). Today the gate denies after 300s whatever `approval timeout:` says, and it cannot hear a reason. A researcher's answer that is still over 16 KiB after its own summary is lost. Children learn their answer ceiling only after they break it. The judge's 30s runs while it queues for a cloud slot. The research skill fans out blind to the provider's width, and the shipped conventions cite lain's own workflow. The cargo stream (T9 to T16) makes `/implement-epic` drive a cargo project, which trial step 8 needs. The cockpit stream (T17 to T23, added at the user's request on 2026-10-31) takes the cheaper cockpit findings: fleet rows out of the input pane (the tmux status bar already counts the fleet), the spawn's label on a fleet row, pane titles, a status bar long enough for the HUD, approval and question splits that stop taking the cursor, and Tab completion of commands and skills in both prompts. Source: `planning/nyotes-trial-findings-research-2026-10.md`, findings A1, A2, A3, A5, B1, B2, C5, C7, E1, E4, E5, F1, F2, F3 and F5. ROADMAP item 72.
 
 ## Grounding
 
@@ -18,6 +18,7 @@ The 2026-10-30 nyotes trial (`lain up` on a greenfield Rust project, ollama-clou
 - Width and rendering: `lib/lain/cli/backend.rb:719,751,858`; `lib/lain/cli/backend/ollama_tier.rb`; `lib/lain/skill/library.rb:33-49`; `lib/lain/prompt/locked_binding.rb:80-115`.
 - Judge: `lib/lain/approval/judge.rb:18,117-150`; `lib/lain/provider/admitted.rb:69-78`; `lib/lain/provider/admission/journal.rb:73-83`; `lib/lain/provider/admission.rb:53-61,330-345`.
 - Conventions: the 6 `lib/lain/prompt/templates/skill/*/conventions.md`; `spec/lain/skill/shipped_skills_spec.rb:123-133`; `dogfood/lain/slots/skill/`; commit `fc362551`.
+- Cockpit: `lib/lain/status_feed/reading.rb:81-88,181-188`; `lib/lain/cli/input_socket.rb:47,364-403`; `lib/lain/frontend/input_pane.rb:109-112,260`; `lib/lain/cli/wiring.rb:369-374,436-455`; `lib/lain/tools/subagent.rb:249,312-353`; `lib/lain/tools/subagent/progress.rb:51`; `lib/lain/status_feed/fleet.rb:252-263`; `lib/lain/cli/up.rb:1228,1286-1297,1331,1352,1387,1408-1414`; `lib/lain/frontend/neovim/runtime/62_approval.lua:91-168`; `lib/lain/frontend/neovim/runtime/60_question.lua:157-200`; `lib/lain/frontend/completion.rb:14,73-80`; `lib/lain/frontend/completion/sources.rb:33`; `lib/lain/frontend/line_editor.rb:476-558`; `lib/lain/cli/human_replies.rb:763-858`.
 - Cargo: `lib/lain/grader/test_harness.rb:41,92-119`; `lib/lain/grader/test_harness/adapter.rb:20-189`; `lib/lain/cli/epic_driver/factory.rb:1325-1505`; `lib/lain/test_layout.rb:30-114`; `lib/lain/test_layout/mapping.rb:59-65`; `lib/lain/cli/epic_driver/issue_actor.rb:25,232-302`; `lib/lain/gherkin/test_generation.rb:106`.
 
 Where docs and code disagree, and which won:
@@ -26,6 +27,9 @@ Where docs and code disagree, and which won:
 - The report said the wrap-up note gives no iteration number. It says "N of M iterations remain" (`wrap_up.rb`); only the byte ceiling is missing. Code won, and T5 is narrower for it.
 - `docs/commands.md:1243-1251` and `lib/lain/config.rb:69` scope `approval timeout:` to parked tool calls. T1 widens the code, and the main session updates both docs.
 - ROADMAP item 41 and `planning/specs/chunk-qa-round16-identity-and-what-a-tool-may-return.md:29,868` rule "not to truncate and not to refuse" an oversized handback; the code's `floor` refuses. T4 brings the code back to the ruling: it neither truncates nor refuses.
+- The user read the fleet status as showing up "in the chat pane". No code writes fleet rows into the chat transcript: they are the input pane's header (`Reading#header`, 2 rows and `+N more`). The pane rewrites the header in place on every child turn, and reprints it whole (`InputPane#redrawn_whole`, `input_pane.rb:307,380,408`) whenever its row count changes, as when a child starts or ends or `+N more` appears. That whole reprint is the periodic block the user saw. T17 removes the rows.
+- There is no `/fleet` command (the nyotes notes typed one, and it was held as a prompt). The fleet is read through the tmux status bar, `lain://status` and `lain watch`.
+- Completion exists: fuzzy `/command` and `@path` on C-x (`completion.rb:14`), drawn by lain, not Reline. Tab is unbound and Reline offers nothing on it, because no `completion_proc` is set. Plain chat passes no command or skill names (`wiring.rb:369`), and the pane receives command names only (`wiring.rb:452`).
 - mempalace: the MCP server failed to connect and the CLI search for "cargo test adapter rust epic implement grader" and "epic gate timeout deny reason" returned nothing. The round-16 ruling was found in ROADMAP instead.
 
 ## Compatibility
@@ -60,6 +64,9 @@ Only the main session edits these. Cards hand back 1-line diffs.
 
 - `ROADMAP.md`: item 41 gets a 1-line note that an unsummarizable answer is now spilled to a file (from T4). Item 72 is added when this plan is committed. The user keeps uncommitted edits in this file, so the main session commits only its own hunks (`git apply --cached`).
 - `ARCHITECTURE.md`: 1 paragraph on the answer path (from T4), after the CEILINGS paragraph near line 836.
+- `README.md` (380-455), `docs/commands.md` (723-731) and `ARCHITECTURE.md` (about 1472): the input pane's header no longer shows fleet rows (from T17); a row names the spawn's label (from T18).
+- `docs/commands.md`: Tab completes a `/` or `@` word, as C-x does (from T22).
+- `plugin/tmux/README.md`: tell a plugin user to raise `status-right-length` for the HUD (from T20).
 - `docs/commands.md`: `approval timeout:` also bounds an epic gate (from T1); the kept research table names the answers dir (from T4); the `tests` table's `timeout:` key (from T13).
 - `.rubocop.yml`: any limit a card asks to raise, with the reason.
 
@@ -75,6 +82,12 @@ Only the main session edits these. Cards hand back 1-line diffs.
 - **Wrap `cargo test` in `sh -c '... > out'`.** T9 lets an adapter read the child's stdout instead, so no shell is spawned.
 - **Render the iteration ceiling into the role prompt.** The live ceiling is `ChildBuilder`'s clamped `@budget.iterations`, not the role's 60, and the wrap-up note already states it. The prompt states only the byte ceiling, which is fixed.
 - **A templated branch per framework in `gherkin-tests`.** `Purity.check!` allows only `render` and bare locals, so T14 states both rules in prose under the framework name the prompt already carries.
+
+- **Draw a `command>` prompt after every answered approval (E9).** The missing prompt is the design in `human_replies.rb:763-780`: a read is open only while something is outstanding. Changing it is a product call for wave 2.
+- **A switch to keep fleet rows in the input pane.** No caller wants them back; the status bar has the count and `lain://status` has the tree.
+- **Complete `@role` and `@role/skill`.** `@` already completes paths, so a role source needs a rule for which sigil wins. It's wave 2.
+- **Set `status-right-length` globally from the tmux plugin.** That changes the user's own tmux config; the plugin README says how instead.
+- **nvim tab labels (E10).** They need a lain tabline; wave 2.
 
 ## Open decisions
 
@@ -92,9 +105,15 @@ flowchart LR
   T9 --> T10 --> T11 --> T16 --> T13
   T1 --> T11
   T12 --> T13
+  T17
+  T5 --> T18
+  T19 --> T20
+  T21
+  T22 --> T23
+  T17 --> T23
 ```
 
-T3, T6, T8, T14 and T15 are chained because each adds examples to `spec/lain/skill/shipped_skills_spec.rb`. T1, T11, T16 and T13 share `lib/lain/cli/epic_driver/factory.rb`; T12 and T13 share `spec/lain/test_layout_spec.rb`. T2 and T1 share `lib/lain/cli/epic_submit.rb`. T4 and T5 share `lib/lain/tools/subagent.rb`. T3 and T6 share `lib/lain/cli/backend.rb`.
+T3, T6, T8, T14 and T15 are chained because each adds examples to `spec/lain/skill/shipped_skills_spec.rb`. T1, T11, T16 and T13 share `lib/lain/cli/epic_driver/factory.rb`; T12 and T13 share `spec/lain/test_layout_spec.rb`. T2 and T1 share `lib/lain/cli/epic_submit.rb`. T4, T5 and T18 share `lib/lain/tools/subagent.rb`. T19 and T20 share `lib/lain/cli/up.rb` and its spec. T23's scenarios press Tab, so it follows T22; T17 and T23 share `lib/lain/cli/wiring.rb`, its spec and the input pane seam spec. T3 and T6 share `lib/lain/cli/backend.rb`.
 
 ## Tasks
 
@@ -760,6 +779,275 @@ Spec files: `spec/lain/cli/epic_driver/issue_actor_spec.rb`, `spec/lain/skill/sh
 - A shipped skill directory is also listed as a user slash command, and `implement-issue` would appear in `/help`; say whether the catalog has a way to hide one.
 - `execute-plan` is seeded anywhere else as an actor brief (grep `SKILL` and `render(:"execute-plan")`).
 
+### T17: Draw only the HUD line in the input pane's header          [risk: low]
+
+**Depends on:** none
+**Files:** `lib/lain/status_feed/reading.rb` (delete `#header`, `fleet_rows`, `shown`, `admit`, `ancestors`, `parent_index`, `HEADER_ROWS`, `LEAD`, `.fitted`), `lib/lain/status_feed/fleet.rb` (delete `Row.undated` and `Row::PUBLISHED`, whose only reader is `fleet_rows`), `lib/lain/cli/wiring.rb` (`hud_line` calls `hud(now:)`, and its comment at 441-446), `lib/lain/frontend/input_pane.rb` (drop the `Reading.fitted` call near 251), `spec/lain/status_feed/reading_spec.rb` (the header examples near 286-392 go), `spec/lain/status_feed/fleet_spec.rb`, `spec/lain/frontend/input_pane_spec.rb`, `spec/lain/cli/wiring_spec.rb`, `spec/lain/seams/input_pane_socket_spec.rb`
+**Reuse:** `Reading#hud`; the `fleet:N` segment the tmux status bar already draws
+**Shared-file wiring:** `README.md:384-408,447-455`, `docs/commands.md:723-731`, `ARCHITECTURE.md:1472`: the input pane's header is the HUD line only; the tree is in `lain://status` and `lain watch`.
+**Reachable from:** `CLI::Wiring#hud_line` (`wiring.rb:446`) -> `StatusFeed::Reading#hud` -> `InputSocket#publishing`, every 0.25s while a pane is connected
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: The header is the HUD alone while children run
+  Given a status feed with 3 running children
+  When the wiring composes the input pane's header
+  Then it is 1 line, starting with the HUD and holding fleet:3
+  And no row names a child
+
+Scenario: A child starting or ending no longer reprints the header
+  Given a pane connected while children run
+  When a child ends and another starts
+  Then the header's row count stays at 1
+  And the pane rewrites the line in place and never takes redrawn_whole
+
+Scenario: lain://status keeps the tree
+  When the nvim status view draws the same feed
+  Then it still lists each child with its state and turns
+```
+Spec files: `spec/lain/status_feed/reading_spec.rb`, `spec/lain/cli/wiring_spec.rb`, `spec/lain/frontend/input_pane_spec.rb`
+
+**Stop and report if:**
+- `Fleet::Row.undated` or `Row::PUBLISHED` has a reader outside `Reading` (grep `lib/` and `bench/`); keep it then.
+- The pane's height (`INPUT_PANE_HEIGHT = 6`, `up.rb:124`) was sized for the rows and leaves blank lines; report it, since shrinking the pane is T19's file.
+- `input_pane.rb`'s header handling still needs a multi-line header for something other than fleet rows (a hint row, the mode line); keep the multi-line path then and say what uses it.
+
+### T18: Show the spawn's label on its fleet row          [risk: low]
+
+**Depends on:** T5
+**Files:** `lib/lain/tools/subagent.rb` (`builder_for`, `dispatched`, `spawn_one_shot`, `leased`, `reporting`), `spec/lain/tools/subagent_spec.rb`, `spec/lain/status_feed/fleet_spec.rb`
+**Reuse:** the per-call `Requester` `builder_for` already builds (`subagent.rb:312-316`); `Progress#dispatched(who:)`, which already writes `label:`; `Fleet::Entry#shown`, which already prefers the label
+**Shared-file wiring:** `ARCHITECTURE.md` about line 1480: a fleet row's `role` cell carries the spawn's label when the parent gave one.
+**Reachable from:** `Tools::Subagent#perform` (`subagent.rb:249`) -> `builder_for(input.name)` -> `reporting(who:)` -> `Progress#dispatched` -> `Telemetry::ChildProgress(label:)` -> `StatusFeed::Fleet`
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: A named spawn's row shows its name
+  Given the parent spawns a researcher named "asr-vad"
+  When the fleet tree is published
+  Then that child's row reads "asr-vad (researcher)"
+
+Scenario: 2 researchers with the same task are told apart
+  Given researchers named "capture" and "diarization" with the same task prefix
+  Then their rows differ by label
+
+Scenario: An unnamed spawn keeps its role
+  Given a spawn with no name
+  Then its row reads "researcher", as today
+```
+Spec files: `spec/lain/tools/subagent_spec.rb`, `spec/lain/status_feed/fleet_spec.rb`
+
+**Stop and report if:**
+- The denial key changes: approvals must keep keying deny memory on the wired name (`spec/lain/tools/subagent_spec.rb` near 385-420, "keeping the wired name as the denial key").
+- The fan-out and skill paths (`subagent.rb:162,195`) also take a name the card does not see.
+
+### T19: Title each cockpit pane          [risk: low]
+
+**Depends on:** none
+**Files:** `lib/lain/cli/up.rb` (`configure_session`), `spec/lain/cli/up_spec.rb`
+**Reuse:** the 3 ids `Panes#record` already holds (`@lain_chat_pane`, `@lain_input_pane`, `@lain_editor_pane`); `set_option`
+**Shared-file wiring:** none
+**Reachable from:** `CLI::Up#configure_session`, which runs on both create and reattach (`up.rb:1103-1104`), using the ids `Panes` recorded
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: A new cockpit titles its panes
+  When lain up creates a session
+  Then the chat window draws pane titles on the top border
+  And the panes are titled "chat", "input" and "editor"
+
+Scenario: A cockpit without nvim titles the 2 panes it has
+  When lain up runs with --no-nvim
+  Then the panes are titled "chat" and "input"
+
+Scenario: Reattaching keeps the titles
+  Given a running cockpit whose titles were cleared
+  When lain up reattaches
+  Then the titles are set again
+
+Scenario: A program cannot rename a pane
+  When nvim sets its terminal title
+  Then the editor pane is still titled "editor"
+```
+Spec file: `spec/lain/cli/up_spec.rb`
+
+**Stop and report if:**
+- `pane-border-status` costs a row in the input pane (6 rows high) that the prompt needs; say how many rows the prompt has left.
+- `allow-rename` or `allow-set-title` off would also stop nvim's own title, which the user's tmux config may rely on; they must be set on the chat window only.
+
+### T20: Give the status bar room for the whole HUD          [risk: low]
+
+**Depends on:** T19
+**Files:** `lib/lain/cli/up.rb` (`configure_session`), `spec/lain/cli/up_spec.rb`
+**Reuse:** `set_option`; `Hud#status_right`
+**Shared-file wiring:** `plugin/tmux/README.md`: a plugin user sets `status-right-length` (120 is enough for the HUD) themselves.
+**Reachable from:** `CLI::Up#configure_session` (`up.rb:1408`), on create and on reattach
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: The cockpit's status-right is long enough for the HUD
+  When lain up configures a session
+  Then the session's status-right-length is 120
+  And the user's global status-right-length is unchanged
+```
+Spec file: `spec/lain/cli/up_spec.rb`
+
+**Stop and report if:**
+- The HUD can grow past 120 characters (`StatusFeed::Reading#hud` with every segment present); size the length from the longest HUD instead.
+
+### T21: Open the approval and question splits without taking the cursor          [risk: medium]
+
+**Depends on:** none
+**Files:** `lib/lain/frontend/neovim/runtime/62_approval.lua` (`set_approval` and the comments at 120-147), `lib/lain/frontend/neovim/runtime/60_question.lua` (`set_question` and the comment at 130-139), `spec/lain/frontend/neovim/runtime/62_approval_spec.rb`, `spec/lain/frontend/neovim/runtime/60_question_spec.rb`, `spec/lain/frontend/neovim/approval_view_spec.rb`, `spec/lain/frontend/neovim/buffers_spec.rb`, `spec/lain/frontend/neovim_buffers_spec.rb`
+**Reuse:** `close_opened_windows` and `last_in_its_tab`; `vim.uv.new_timer`
+**Shared-file wiring:** `docs/neovim-protocol-history.md:86-112`: `set_approval` and `set_question` open below without entering, and an emptied approval split closes after a 5-second grace.
+**Reachable from:** `Frontend::Neovim::ApprovalView` -> `__lain.set_approval`; `Frontend::Neovim::QuestionView` -> `__lain.set_question`
+
+The decision: lain's windows are shown, never entered. The old reason for entering was that a parked call has a clock running and an editor showing nothing was the defect (`62_approval.lua:120-147`). A split that opens below keeps it visible, and the input pane answers the same call, which is where tmux focus usually is. The `y` and `n` keymaps stay buffer-local, so answering inside nvim means moving into the split, as for any other window. Both comments are rewritten to say this.
+
+"Cursor" here means the current window. Inside lain's own split, the line is set to 1 without entering it (`nvim_win_set_cursor` on that window id).
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: An arriving approval does not change the current window
+  Given the human's current window is the journal
+  When an approval parks
+  Then the approval split opens below, showing the call on its line 1
+  And the current window is still the journal
+
+Scenario: A stream of short approvals does not flap the split
+  Given an approval split showing 1 call
+  When that call settles and another parks within the grace
+  Then the same window shows the new call and no window was closed
+
+Scenario: An emptied split closes after its grace
+  When the last call settles and nothing parks for the grace
+  Then the window lain opened is closed
+
+Scenario: Only the latest empty starts the clock
+  Given the grace is armed by an empty list
+  When a call parks and settles before it fires
+  Then the split closes one grace after the second empty, not after the first
+
+Scenario: A first question opens without changing the current window
+  Given no question window is shown
+  When a question is set
+  Then a question split opens below and the current window is unchanged
+
+Scenario: A new question in a shown window does not change the current window
+  Given a question window already shown
+  When a new question is set
+  Then the current window is unchanged and the question window shows line 1
+```
+Spec files: `spec/lain/frontend/neovim/runtime/62_approval_spec.rb`, `spec/lain/frontend/neovim/runtime/60_question_spec.rb`, `spec/lain/frontend/neovim/approval_view_spec.rb`
+
+**Interface**
+
+```lua
+-- 62_approval.lua: 1 pending timer per approval buffer; rows arriving stop it,
+-- each empty restarts it, and when it fires it closes only if b:lain_approval_rows
+-- is still 0 and the window still carries w:lain_approval_opened
+lain_approval.close_grace_ms = 5000   -- a module value, so a spec can shorten it
+```
+
+**Stop and report if:**
+- `spec/lain/seams/cockpit_answer_surfaces_spec.rb:248,268` relies on focus being in the approval window to answer through nvim.
+- A spec needs a real 5-second wait; the grace must be injectable.
+
+### T22: Complete with Tab as well as C-x          [risk: low]
+
+**Depends on:** none
+**Files:** `lib/lain/frontend/completion.rb` (`KEY` becomes `KEYS`), `lib/lain/frontend/line_editor.rb` (`Registry::NOT_A_CLAIM`, `NAMED_SEQUENCES`), `lib/lain/config/keys.rb` (`Keys.held`), `spec/lain/frontend/completion_spec.rb`, `spec/lain/frontend/line_editor_spec.rb`, `spec/lain/config/keys_spec.rb`
+**Reuse:** `Completion#call`, `claim_key`, `LineEditor.bind`; the real-PTY key example near `line_editor_spec.rb:1395`
+**Shared-file wiring:** `docs/commands.md`: Tab completes a `/` or `@` word, as C-x does.
+**Reachable from:** `Frontend::TTY#run` (`tty.rb:162`) -> `Completion.install` -> `claim_key`, in plain chat and in the input pane's TTY (`input_pane.rb:109`)
+
+Today Reline 0.7.0 maps byte 9 to `:complete` in the emacs and vi_insert keymaps, so `Registry#bind("C-i")` raises `KeyTaken` and `"Tab"` is not a key name (panel probe). The design:
+- `:complete` joins `NOT_A_CLAIM`, because lain sets no `completion_proc` and `:complete` does nothing.
+- `"tab"` joins `NAMED_SEQUENCES` as byte 9, so a user writes `Tab`.
+- `Completion::KEYS = ["C-x", "Tab"]`, each bound on its own, so a refused Tab still leaves C-x working and says which key is off.
+- `Keys.held` refuses `Tab` as it refuses `C-x`.
+- The free-keys pin at `line_editor_spec.rb:719,1093-1100` becomes C-g, C-i and C-x.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: Tab completes a slash command
+  Given a prompt with the commands approve and inbox
+  When the human types "/app" and presses Tab
+  Then the line reads "/approve"
+
+Scenario: Tab on a word with no sigil does nothing
+  When the human types "hello" and presses Tab
+  Then the line is unchanged and no menu is drawn
+
+Scenario: C-x still completes
+  When the human types "/inb" and presses C-x
+  Then the line reads "/inbox"
+
+Scenario: A refused Tab leaves C-x on
+  Given Tab is already bound to another lain action
+  When completion installs
+  Then C-x completes and the notice names Tab as the key that is off
+
+Scenario: A user cannot rebind Tab away from completion
+  Given a keys config binding approval_cycle to "Tab"
+  Then loading it is refused with "Tab is lain's completion key"
+```
+Spec files: `spec/lain/frontend/completion_spec.rb`, `spec/lain/frontend/line_editor_spec.rb`, `spec/lain/config/keys_spec.rb`
+
+**Stop and report if:**
+- vi command mode has a Tab binding the human uses (Reline's table reads nil there; check a user inputrc is not read on top).
+- A real-PTY Tab press arrives as anything but byte 9 under tmux with `extended-keys on` (`up.rb:1408-1414` turns it on).
+
+### T23: Offer command and skill names in both prompts          [risk: low]
+
+**Depends on:** T22, T17
+**Files:** `lib/lain/cli/wiring.rb` (`terminal_keywords`, `open_terminal`, `command_names`), `lib/lain/frontend/completion/sources.rb` (names read lazily; no matcher kept from an empty list), `spec/lain/cli/wiring_spec.rb`, `spec/lain/seams/input_pane_socket_spec.rb`, `spec/lain/frontend/completion/sources_spec.rb`
+**Reuse:** `Completion::Sources.new(commands:, skills:)`; `backend.library.catalog.names`, which exists when `open_terminal` runs; the `context` frame (`input_socket.rb:324`), whose `commands` array the pane already feeds to `skills:`; `Help#skill_entries` as the enumeration to match
+**Shared-file wiring:** none
+**Reachable from:** `CLI::Wiring#run` (`wiring.rb:284`) -> `open_terminal` -> `terminal_keywords(backend:)` -> `Frontend::TTY.new(completion_sources:)`; `CLI::Wiring#command_names` -> `InputSocket#welcome` -> `InputPane` (`input_pane.rb:260`)
+
+`open_terminal` runs before `build_repl` sets `@command_surface` (`wiring.rb:948`), so plain chat reads command names through a lazy enumerable, as `command_names` already does, and skill names straight from `backend.library.catalog`. `Sources#for` keeps 1 matcher per sigil (`sources.rb:43`); it must not keep one built from an empty list, so a Tab pressed in the pane before the `context` frame arrives does not leave completion empty for good. Skills added mid-session are out of scope: the frame is sent once, at connect.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: Plain chat completes a built-in command
+  Given a plain chat session
+  When the human types "/inb" and presses Tab
+  Then the line reads "/inbox"
+
+Scenario: Plain chat completes a skill
+  When the human types "/crit" and presses Tab
+  Then the line reads "/critique"
+
+Scenario: The cockpit's input pane completes a skill
+  Given a real chat child and a real lain input pane
+  When the human types "/resea" in the pane and presses Tab
+  Then the pane's line reads "/research" or "/research-epic", and the menu shows both
+
+Scenario: A Tab before the names arrive does not stick
+  Given a pane that has not yet received its context frame
+  When the human presses Tab on "/app", and then the frame arrives
+  And the human presses Tab on "/app" again
+  Then the line reads "/approve"
+
+Scenario: A project skill is offered
+  Given a project skill in .lain/skills/deploy
+  Then "/depl" completes to "/deploy" in both prompts
+```
+Spec files: `spec/lain/cli/wiring_spec.rb`, `spec/lain/seams/input_pane_socket_spec.rb`, `spec/lain/frontend/completion/sources_spec.rb`
+
+**Stop and report if:**
+- `backend.library` is not built yet when `open_terminal` runs, or building it there loads the project config a second time on the startup path.
+- A skill and a command share a name; say which one completion offers and whether `/help` agrees.
+
 ## Integration checks
 
 - `bundle exec rake pspec` green, with the example count at or above the count before the plan.
@@ -769,6 +1057,7 @@ Spec files: `spec/lain/cli/epic_driver/issue_actor_spec.rb`, `spec/lain/skill/sh
 - Manual pass, by the user, in the nyotes cockpit after a relaunch:
   1. Resubmit research. The agent warns of a 900-second window. Reply `deny: <a reason>`; the agent's result shows the reason.
   2. Approve research, then run `/plan-epic`. During the fan-out, no more than 3 researchers run at once, and no judge parks with "the judge could not be asked" while researchers hold the slots.
-  3. Before step 8, nyotes' `.lain/config.rb` gets `tests preset: :cargo, source_roots: [<each crate's src>], timeout: 1800` and an `isolation verify` argv. Its scaffold issue adds `target/` to `.gitignore`. Then `/implement-epic --width 1` gets the first issue past its red step.
+  3. In the relaunched cockpit: the input pane shows the HUD line with no fleet rows; panes are titled; the status bar shows the whole HUD; an approval opens its nvim split without moving the cursor; `/c` plus Tab completes in the input pane.
+  4. Before step 8, nyotes' `.lain/config.rb` gets `tests preset: :cargo, source_roots: [<each crate's src>], timeout: 1800` and an `isolation verify` argv. Its scaffold issue adds `target/` to `.gitignore`. Then `/implement-epic --width 1` gets the first issue past its red step.
 
 ## Execution log
