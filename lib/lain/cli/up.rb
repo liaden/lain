@@ -1426,6 +1426,7 @@ module Lain
 
       def configure_session
         set_option("status-right", @hud.status_right)
+        set_option("status-right-length", "120")
         set_option("status-interval", @hud.interval.to_s)
         @tmux.act("set-window-option", "-t", chat_target, "monitor-bell", "on")
         set_option("mouse", "on")

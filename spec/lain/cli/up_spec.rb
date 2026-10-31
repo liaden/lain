@@ -128,6 +128,17 @@ RSpec.describe Lain::CLI::Up do
       expect(eval_status_job(status_right)).to eq("🔥 fleet:2 inbox:3")
     end
 
+    it "gives the session a status-right-length that holds the whole HUD, leaving the global one alone" do
+      system("tmux", "-L", socket, "-f", File::NULL,
+             "new-session", "-d", "-s", "control", "-x", "80", "-y", "24")
+      before = tmux("show-options", "-g", "status-right-length")
+
+      up.call
+
+      expect(tmux("show-options", "-v", "-t", session, "status-right-length")).to eq("120")
+      expect(tmux("show-options", "-g", "status-right-length")).to eq(before)
+    end
+
     it "shows a cold glyph once the cache deadline has passed" do
       write_state(cache_deadline: (Time.now - 300).utc.iso8601, fleet: [], inbox_count: 0)
 

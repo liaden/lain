@@ -41,6 +41,10 @@ set -g status-right "#{lain_status} | %H:%M"
 run-shell /path/to/lain/plugin/tmux/lain.tmux
 ```
 
+tmux cuts `status-right` at 40 columns by default, which hides most of the HUD. `lain up` raises
+it to 120 for its own session only; with the plugin, set it yourself:
+`set -g status-right-length 120`.
+
 `lain.tmux` rewrites every `#{lain_status}` placeholder in `status-left` /
 `status-right` into a `#('lain.tmux' status #{q:pane_current_path})` job —
 the tpm interpolation idiom, so it composes with any theme. The
