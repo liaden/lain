@@ -43,12 +43,18 @@ module Lain
           File.exist?(File.join(root, "pyproject.toml")) || File.exist?(File.join(root, "pytest.ini"))
         end
 
-        # rspec is the only implemented runtime; jest and pytest are recognized so
+        # A Cargo.toml sits beside an rspec project's Gemfile in a mixed repo, so
+        # matching it would make detection ambiguous; cargo is chosen by name only.
+        def self.declared_only?(_root) = false
+
+        # rspec and cargo are the implemented runtimes; jest and pytest are recognized so
         # a match on them fails LOUD ("detected but unimplemented") rather than
         # silently pretending an unwritten adapter exists.
         PROBES = [
           Probe.new(framework: "rspec", looks_for: "a Gemfile beside a spec/ directory",
                     match: method(:rspec_root?), build: ->(_root) { Rspec.new }),
+          Probe.new(framework: "cargo", looks_for: "nothing: a tests preset names it",
+                    match: method(:declared_only?), build: ->(root) { Cargo.new(root) }),
           Probe.new(framework: "jest", looks_for: %(a package.json declaring "jest"),
                     match: method(:jest_root?), build: nil),
           Probe.new(framework: "pytest", looks_for: "a pyproject.toml or a pytest.ini",

@@ -47,8 +47,6 @@ module ErrorTaxonomyDiscipline
       "carries a body that composes its sentence, so its name is not the only thing it holds",
     "Lain::CLI::Worktrees::NotARepository" =>
       "two raise sites in `lain worktrees gc`; the isolation backend's same-named sibling IS rescued",
-    "Lain::Grader::TestHarness::Adapter::Unparseable" =>
-      "one raise site inside the rspec adapter",
     "Lain::Provider::HTTP::ConfigurationError" =>
       "vendored from ruby_llm 1.16.0 -- deleting it forks the vendor, see the file header",
     "Lain::Review::Partition::Strategy::Incomplete" =>

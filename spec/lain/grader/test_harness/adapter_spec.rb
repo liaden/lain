@@ -8,6 +8,30 @@ RSpec.describe Lain::Grader::TestHarness::Adapter do
       end
     end
 
+    it "builds the cargo adapter by name, with no Cargo.toml to detect it from" do
+      Dir.mktmpdir do |dir|
+        expect(described_class.for("cargo").call(dir)).to be_a(described_class::Cargo)
+      end
+    end
+
+    it "still detects rspec in a directory that also holds a Cargo.toml" do
+      Dir.mktmpdir do |dir|
+        FileUtils.mkdir_p(File.join(dir, "spec"))
+        FileUtils.touch([File.join(dir, "Gemfile"), File.join(dir, "Cargo.toml")])
+
+        expect([described_class.detect(dir), described_class.framework(dir)])
+          .to match([an_instance_of(described_class::Rspec), "rspec"])
+      end
+    end
+
+    it "does not detect a Cargo.toml directory on its own" do
+      Dir.mktmpdir do |dir|
+        FileUtils.touch(File.join(dir, "Cargo.toml"))
+
+        expect { described_class.detect(dir) }.to raise_error(Lain::Error, /no test framework detected/)
+      end
+    end
+
     it "raises naming a preset the probes recognize but have no adapter for" do
       expect { described_class.for("pytest") }.to raise_error(Lain::Error, /pytest.*not implemented/)
     end

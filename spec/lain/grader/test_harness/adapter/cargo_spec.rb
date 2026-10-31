@@ -1,0 +1,125 @@
+# frozen_string_literal: true
+
+RSpec.describe Lain::Grader::TestHarness::Adapter::Cargo do
+  def fixture(name) = File.read(File.expand_path("../../../../fixtures/cargo/#{name}", __dir__))
+
+  let(:root) { "/work/nyotes" }
+  let(:adapter) { described_class.new(root, metadata: -> { fixture("workspace_metadata.json") }) }
+  let(:flags) { %w[--no-fail-fast --message-format=json] }
+
+  def argv(*paths) = adapter.command(out_path: "/unused", paths:)
+
+  it "reads cargo's stdout rather than a result file" do
+    expect(adapter.stdout?).to be(true)
+  end
+
+  describe "#parse" do
+    it "names the passing and the failing test" do
+      parsed = adapter.parse(fixture("pass_fail.stdout"), 101)
+
+      expect(parsed).to include(passed: ["tests::passes"], failed: ["tests::fails"], errors: [])
+    end
+
+    it "reports a compile error once, with its code, file and message" do
+      errors = adapter.parse(fixture("compile_error.stdout"), 101).fetch(:errors)
+
+      expect(errors.size).to eq(1)
+      expect(errors.first).to include("E0425", "src/lib.rs", "cannot find value `missing_value`")
+    end
+
+    it "leaves out an error with no code and a warning that has one" do
+      lines = [{ level: "error", code: nil, message: "aborting due to 1 previous error", spans: [] },
+               { level: "warning", code: { code: "unused" }, message: "unused variable", spans: [] }]
+      document = lines.map { |message| JSON.generate(reason: "compiler-message", message:) }.join("\n")
+
+      expect(adapter.parse(document, 101).fetch(:errors)).to eq([])
+    end
+
+    it "raises when cargo printed nothing to parse" do
+      expect { adapter.parse("", 127) }.to raise_error(Lain::Grader::TestHarness::Adapter::Unparseable, /exit 127/)
+    end
+  end
+
+  describe "#command" do
+    it "runs the whole workspace with no paths" do
+      expect(argv).to eq(%w[cargo test --workspace] + flags)
+    end
+
+    it "filters a module file to its package and module path" do
+      expect(argv("crates/capture/src/pipewire.rs")).to eq(%w[cargo test -p nyotes-capture] + flags + ["pipewire::"])
+    end
+
+    it "names a nested module by its whole path" do
+      expect(argv("crates/capture/src/a/b.rs").last).to eq("a::b::")
+    end
+
+    it "treats mod.rs as its directory's module" do
+      expect(argv("crates/capture/src/a/mod.rs").last).to eq("a::")
+    end
+
+    it "runs a crate root's whole package" do
+      expect(argv("crates/capture/src/lib.rs")).to eq(%w[cargo test -p nyotes-capture] + flags)
+    end
+
+    it "runs a tests/ file as its own test target" do
+      expected = %w[cargo test -p nyotes-capture --test end_to_end] + flags
+
+      expect(argv("crates/capture/tests/end_to_end.rs")).to eq(expected)
+    end
+
+    it "keeps one filter when 2 module paths are asked for" do
+      filters = argv("crates/capture/src/a.rs", "crates/capture/src/b.rs").grep(/::\z/)
+
+      expect(filters).to eq(["a::"])
+    end
+
+    it "runs the whole package when a module path comes with its crate root" do
+      whole = %w[cargo test -p nyotes-capture] + flags
+
+      expect(argv("crates/capture/src/a.rs", "crates/capture/src/lib.rs")).to eq(whole)
+    end
+
+    it "picks a nested crate over the package that contains it" do
+      nested = JSON.generate("packages" => [
+                               { "name" => "outer", "manifest_path" => "/work/nyotes/Cargo.toml" },
+                               { "name" => "inner", "manifest_path" => "/work/nyotes/crates/inner/Cargo.toml" }
+                             ])
+      cargo = described_class.new(root, metadata: -> { nested })
+
+      expect(cargo.command(paths: ["crates/inner/src/lib.rs"])).to include("inner")
+    end
+
+    it "names each package once for paths in two crates" do
+      expect(argv("crates/capture/src/lib.rs", "crates/other/src/lib.rs"))
+        .to eq(%w[cargo test -p nyotes-capture -p nyotes-other] + flags)
+    end
+
+    it "refuses a path no package owns" do
+      expect { argv("elsewhere/x.rs") }.to raise_error(Lain::Error, %r{elsewhere/x.rs.*no package})
+    end
+  end
+
+  describe "against real cargo", :seam do
+    it "counts the passing and the failing test of a scratch crate" do
+      skip "cargo is not on PATH" unless system("cargo", "--version", out: File::NULL, err: File::NULL)
+
+      Dir.mktmpdir do |dir|
+        File.write(File.join(dir, "Cargo.toml"), %([package]\nname = "scratch"\nversion = "0.1.0"\nedition = "2021"\n))
+        FileUtils.mkdir_p(File.join(dir, "src"))
+        File.write(File.join(dir, "src/lib.rs"), <<~RUST)
+          #[cfg(test)]
+          mod tests {
+              #[test] fn passes() {}
+              #[test] fn fails() { panic!("no"); }
+          }
+        RUST
+        env = Data.define(:cwd, :env).new(cwd: dir, env: ENV.to_h)
+        harness = Lain::Grader::TestHarness.new(dir, adapter: described_class.new(dir))
+
+        run = harness.run(env)
+
+        expect([run.passed.size, run.failed.size]).to eq([1, 1])
+      end
+    end
+  end
+end
