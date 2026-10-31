@@ -35,7 +35,7 @@ module Lain
     def self.load(root: Dir.pwd)
       built = built(root)
       new(epics: built.epics, approval: built.approval, isolation: built.isolation, env_pass: built.env_pass,
-          todos: built.todos)
+          todos: built.todos, approval_timeout: built.approval_timeout)
     end
 
     # What a project adds to the path classifier's built-in tables, and the
@@ -62,8 +62,8 @@ module Lain
     # @raise [Refusal] as {.load}
     def self.shell_exclusions(root:) = built(root).shell
 
-    # How long the chat's approval queue waits on an unanswered call before it
-    # denies. `root:` is REQUIRED, as {.sensitivity}'s is.
+    # How long an unanswered parked call or epic gate waits before it denies.
+    # `root:` is REQUIRED, as {.sensitivity}'s is.
     #
     # @param root [String] a project root; `.lain/config.rb` is resolved under it
     # @return [Numeric] seconds, above 0; {Approval::Parked::Queue::DEFAULT_TIMEOUT} when unset
@@ -182,6 +182,10 @@ module Lain
       EMPTY
     end
 
+    # A literal, not {Approval::Parked::Queue::DEFAULT_TIMEOUT}: naming that constant
+    # here would load the approval unit when this file loads (see {EMPTY}).
+    DEFAULT_APPROVAL_TIMEOUT = 300
+
     attr_reader :epics, :approval, :isolation
 
     # @return [Array<String>] the variables `env pass:` hands every child,
@@ -191,12 +195,17 @@ module Lain
     # @return [Todos] which file in the project root holds the chores
     attr_reader :todos
 
-    def initialize(epics:, approval: Answers.empty, isolation: Isolation.empty, env_pass: [], todos: Todos.empty)
+    # @return [Numeric] seconds an unanswered parked call or epic gate waits before it denies
+    attr_reader :approval_timeout
+
+    def initialize(epics:, approval: Answers.empty, isolation: Isolation.empty, env_pass: [], todos: Todos.empty,
+                   approval_timeout: DEFAULT_APPROVAL_TIMEOUT)
       @epics = epics
       @approval = Answers.coerce(approval)
       @isolation = Isolation.coerce(isolation)
       @env_pass = env_pass.map(&:-@).freeze
       @todos = todos
+      @approval_timeout = approval_timeout
       freeze
     end
 
@@ -213,12 +222,13 @@ module Lain
     # treat as distinct keys must not collide.
     def ==(other)
       other.instance_of?(self.class) && epics == other.epics && approval == other.approval &&
-        isolation == other.isolation && env_pass == other.env_pass && todos == other.todos
+        isolation == other.isolation && env_pass == other.env_pass && todos == other.todos &&
+        approval_timeout == other.approval_timeout
     end
     alias eql? ==
 
     def hash
-      [self.class, epics, approval, isolation, env_pass, todos].hash
+      [self.class, epics, approval, isolation, env_pass, todos, approval_timeout].hash
     end
 
     # The default `gates` table must stay EMPTY. {Epics::Gates.check!} reads

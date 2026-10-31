@@ -52,6 +52,20 @@ RSpec.describe Lain::Config do
     end
   end
 
+  describe "the approval timeout as a value" do
+    it "makes configs differing only in it unequal, with different hashes" do
+      epics = Lain::Config::Epics.new(home: :xdg)
+      plain = described_class.new(epics:)
+      other = described_class.new(epics:, approval_timeout: 7)
+
+      expect([plain == other, plain.hash == other.hash]).to eq([false, false])
+    end
+
+    it "has one default, shared with the approval queue" do
+      expect(described_class::DEFAULT_APPROVAL_TIMEOUT).to eq(Lain::Approval::Parked::Queue::DEFAULT_TIMEOUT)
+    end
+  end
+
   describe "the env table" do
     it "is read by .load" do
       Dir.mktmpdir do |root|
@@ -139,6 +153,16 @@ RSpec.describe Lain::Config do
 
         expect([described_class.approval_timeout(root:), described_class.load(root:).approval.deny_tools])
           .to eq([900, ["web_fetch"]])
+      end
+    end
+
+    it "is carried by the Config that load returns, and by one built directly" do
+      Dir.mktmpdir do |root|
+        write_config(root, "approval timeout: 900\n")
+
+        expect([described_class.load(root:).approval_timeout,
+                described_class.new(epics: Lain::Config::Epics.new(home: :xdg), approval_timeout: 7).approval_timeout,
+                described_class.empty.approval_timeout]).to eq([900, 7, 300])
       end
     end
 

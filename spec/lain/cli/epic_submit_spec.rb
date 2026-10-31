@@ -54,7 +54,9 @@ RSpec.describe Lain::CLI::EpicSubmit do
   def state_home = File.join(@tmp, "state")
   def paths = @paths ||= Lain::Paths.new(env: { "XDG_STATE_HOME" => state_home, "HOME" => state_home })
 
-  def config(gates = {}) = Lain::Config.new(epics: Lain::Config::Epics.new(home: :xdg, gates:))
+  def config(gates = {}, approval_timeout: Lain::Approval::Parked::Queue::DEFAULT_TIMEOUT)
+    Lain::Config.new(epics: Lain::Config::Epics.new(home: :xdg, gates:), approval_timeout:)
+  end
 
   # Every stage gated the same way, so an example that is about ONE stage does
   # not have to keep the other three buildable by hand. `for_all` resolves the
@@ -68,8 +70,8 @@ RSpec.describe Lain::CLI::EpicSubmit do
   # command asks before it decides it has an asker at all.
   def tty(reply = "y\n") = instance_double(IO, tty?: true, gets: reply)
 
-  def command(gates: hands_off, input: tty, output: StringIO.new)
-    described_class.new(root:, paths:, config: config(gates), input:, output:)
+  def command(gates: hands_off, input: tty, output: StringIO.new, approval_timeout: 300)
+    described_class.new(root:, paths:, config: config(gates, approval_timeout:), input:, output:)
   end
 
   def home(slug = "alpha") = Lain::Epic::Home.resolve(config:, paths:, root:, slug:)
@@ -842,9 +844,9 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
       def inbox_count = JSON.parse(File.read(feed_path)).fetch("inbox_count")
 
-      def seat
-        described_class.new(root:, paths:, config: config(hands_off.merge("research" => "interactive")), asker:,
-                            journal: chronicle.record_journal)
+      def seat(approval_timeout: Lain::Approval::Parked::Queue::DEFAULT_TIMEOUT)
+        described_class.new(root:, paths:, asker:, journal: chronicle.record_journal,
+                            config: config(hands_off.merge("research" => "interactive"), approval_timeout:))
       end
 
       # The human's side of the gate, run beside the submit the way the chat's
@@ -899,10 +901,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
         # The document as the editor was handed it, with the human's answer
         # written beneath the question the way a comment is: indented two spaces.
-        # A window short enough that a reply that never arrives fails the example
-        # rather than hanging it.
         def written_and_saved(reply)
-          stub_const("Lain::Epic::Gate::DEFAULT_TIMEOUT", 5)
           Sync do |task|
             surfaces = replies.session_surfaces(task)
             task.async do
@@ -966,8 +965,15 @@ RSpec.describe Lain::CLI::EpicSubmit do
         end
       end
 
+      it "waits 300 seconds for a chat's answer when the project sets no approval timeout" do
+        allow(Lain::Epic::Gate).to receive(:from_journal).and_call_original
+
+        submitted_while { |question| asker.reply("approve", question.digest) }
+
+        expect(Lain::Epic::Gate).to have_received(:from_journal).with(anything, hash_including(timeout: 300))
+      end
+
       it "counts the gate's question while it waits and none once its window closes" do
-        stub_const("Lain::Epic::Gate::DEFAULT_TIMEOUT", 0.2)
         while_waiting = nil
 
         said = Sync do |task|
@@ -975,7 +981,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
             task.yield until asker.pending?
             while_waiting = inbox_count
           end
-          seat.submit("research").text
+          seat(approval_timeout: 0.2).submit("research").text
         end
 
         expect(said).to include("nobody answered", "nothing advanced")
@@ -1298,19 +1304,17 @@ RSpec.describe Lain::CLI::EpicSubmit do
       expect(gate_decisions.first["latency"]).to be >= 0.2
     end
 
-    # Mentally revert to always answering `Epic::Gate::DEFAULT_TIMEOUT`
-    # and this fails: with the window shrunk small enough for the read to
-    # outlast it, a bounded gate would deny with `answered_by: "timeout"`
-    # before the human ever got to type.
-    it "keeps no timeout: a read that outlasts DEFAULT_TIMEOUT still answers" do
-      stub_const("Lain::Epic::Gate::DEFAULT_TIMEOUT", 0.05)
+    # A bounded gate would deny with `answered_by: "timeout"` before the human
+    # ever got to type, once the read outlasts the project's approval timeout.
+    it "keeps no timeout: a read that outlasts the approval timeout still answers" do
       slow = instance_double(IO, tty?: true)
       allow(slow).to receive(:gets) do
         sleep 0.2
         "y\n"
       end
 
-      said = command(gates: hands_off.merge("research" => "interactive"), input: slow).submit("research").text
+      said = command(gates: hands_off.merge("research" => "interactive"), input: slow, approval_timeout: 0.05)
+             .submit("research").text
 
       expect(said).to include("approved")
       expect(gate_decisions.map { |record| record["answered_by"] }).to eq(["human"])

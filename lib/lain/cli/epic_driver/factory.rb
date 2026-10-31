@@ -580,7 +580,7 @@ module Lain
 
         def earlier
           IssueActor::Earlier.new(slug:, repo_root: @root, asker: @optional.fetch(:asker) || IssueActor::Earlier::Unasked,
-                                  journal: record)
+                                  journal: record, timeout: config.approval_timeout)
         end
 
         # The landing runs in LAIN'S OWN checkout, never the human's -- see

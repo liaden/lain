@@ -36,6 +36,20 @@ class FactorySpecAsker
   def withdraw(_promise) = nil
 end
 
+# An asker that takes the question and never answers it.
+class FactorySpecSilentAsker
+  attr_reader :asked
+
+  def initialize = @asked = []
+
+  def ask(question)
+    @asked << question
+    Lain::Promise.new
+  end
+
+  def withdraw(_promise) = nil
+end
+
 # Scripted actors: each leases a real checkout from the epic's own supervisor,
 # makes a red commit there the way the red step does, and commits its work on
 # top -- which is what gives the loop something real to anchor, gate and land.
@@ -934,6 +948,31 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
       expect(git(repo, "rev-parse", "lain/issue/demo/a^")).to eq(epic_tip)
       expect(git(repo, "rev-parse", "refs/lain/owned/heads/lain/issue/demo/a")).to eq(epic_tip)
       expect(result.to_s).to include("deleted lain/issue/demo/a, its old tip kept at #{kept}")
+    end
+
+    context "when the config sets a short approval timeout" do
+      let(:config) do
+        Lain::Config.new(epics: Lain::Config::Epics.new(home: :xdg, gates: hands_off), approval_timeout: 0.2)
+      end
+
+      it "keeps the earlier branches once the question outlasts it" do
+        File.write(File.join(repo, "Gemfile"), "source \"https://rubygems.org\"\n")
+        git(repo, "add", "Gemfile")
+        ignore_config
+        write_epic([issue("a")])
+        approve_plan("a")
+        git(repo, "switch", "-q", "main")
+        old = earlier_branch
+
+        asker = FactorySpecSilentAsker.new
+
+        result = factory_over(mount, record: chronicle, asker:).run(width: 1)
+
+        expect(asker.asked.size).to eq(1)
+        expect(result.to_s).not_to include("deleted")
+        expect { git(repo, "merge-base", "--is-ancestor", old, "lain/issue/demo/a") }.not_to raise_error
+        expect(git(repo, "for-each-ref", "--points-at", old, "--format=%(refname)", "refs/lain/worker/")).to be_empty
+      end
     end
   end
 

@@ -180,7 +180,8 @@ module Lain
       INTERRUPTED_SURFACE = "interrupted"
 
       # Generous because the answerer is a human reading a plan: a bound, not
-      # a hurry.
+      # a hurry. A chat's interactive gate takes the project's `approval timeout:`
+      # instead; this is what the non-interactive policies and a bare Gate keep.
       DEFAULT_TIMEOUT = 300
 
       # HOW a wait ends when nothing answers it. {#await} needs a strategy

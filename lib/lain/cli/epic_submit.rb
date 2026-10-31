@@ -714,7 +714,7 @@ module Lain
       def gate_timeout(policy)
         return Lain::Epic::Gate::DEFAULT_TIMEOUT unless policy.name == Lain::Epic::Gate::DEFAULT_POLICY
 
-        @asker.respond_to?(:window) ? @asker.window : Lain::Epic::Gate::DEFAULT_TIMEOUT
+        @asker.respond_to?(:window) ? @asker.window : @config.approval_timeout
       end
 
       # Read BEFORE anything is decided, as the queue reads before it signs

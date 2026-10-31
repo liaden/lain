@@ -19,7 +19,10 @@ RSpec.describe Lain::Tools::EpicSubmit do
 
   let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@dir, "state"), "HOME" => @dir }) }
   let(:gates) { {} }
-  let(:config) { Lain::Config.new(epics: Lain::Config::Epics.new(home: :repo, gates:)) }
+  let(:approval_timeout) { Lain::Approval::Parked::Queue::DEFAULT_TIMEOUT }
+  let(:config) do
+    Lain::Config.new(epics: Lain::Config::Epics.new(home: :repo, gates:), approval_timeout:)
+  end
   let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
   let(:store) { Lain::Dag::Factory.store }
   let(:inbox) { Lain::Frontend::Neovim::InboxView.new(store:) }
@@ -145,12 +148,12 @@ RSpec.describe Lain::Tools::EpicSubmit do
   end
 
   context "when nobody answers within the gate's window" do
-    before { stub_const("Lain::Epic::Gate::DEFAULT_TIMEOUT", 0.2) }
+    let(:approval_timeout) { 0.3 }
 
-    it "says nobody answered in that time and nothing advanced, not that it was denied" do
+    it "says nobody answered in the project's approval timeout and nothing advanced, not that it was denied" do
       result = submit(stage: "research", slug: "frugirl-mvp")
 
-      expect(result.content).to include("nobody answered", "0.2 seconds", "nothing advanced")
+      expect(result.content).to include("nobody answered", "0.3 seconds", "nothing advanced")
       expect(result.content).not_to include("denied")
     end
   end

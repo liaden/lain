@@ -1256,6 +1256,7 @@ tests preset: :rspec
   input; `deny_tool "tool"` refuses a whole tool and takes no fields. `timeout:` is how many
   seconds a parked call waits for an answer before it is denied (300 by default); it must be a
   finite number above 0, and the prompt, `lain://approval` and the chat show the time left.
+  It also bounds how long an interactive epic gate waits for a sign-off.
 * `isolation`, `tests`: documented below.
 * `sensitivity`: `denied:`, `gated:` and `exempt:`, each a list of path globs, and `related:`, a
   list of directories (each starting with `~/` or `/`, and each must exist). A read under a related
