@@ -324,7 +324,7 @@ module Lain
                                     toolset: orchestrating(issue, isolation, supervisor: seam.supervisor),
                                     policy: backend.spawn_policy(ISSUE_ORCHESTRATOR), budget: ORCHESTRATOR_BUDGET,
                                     persona: persona(ISSUE_ORCHESTRATOR), mode: :actor,
-                                    announces_as: ISSUE_ORCHESTRATOR.to_s)
+                                    announces_as: ISSUE_ORCHESTRATOR.to_s, answer:)
         end
 
         # Journals what the box lacks and starts the sandbox's mask classification, when there is a
@@ -465,7 +465,7 @@ module Lain
         def role_spawn_seam(base)
           placed = { RESEARCHER => Lain::Skill::RoleSpawn::Placed.new(seam: researcher_seam, kept: research_leases) }
           Lain::Skill::RoleSpawn.new(seam:, toolset: base, slots: library.slots, compaction: @parent_view, placed:,
-                                     worker_env: @session.method(:worker_env))
+                                     worker_env: @session.method(:worker_env), answer:)
         end
 
         # The chat's held cuts, read by a child at its spawn, over a Source of
@@ -513,7 +513,8 @@ module Lain
         def research_subagent(base)
           Lain::Tools::Subagent.new(seam: researcher_seam, toolset: base, policy: backend.spawn_policy(RESEARCHER),
                                     persona: persona(RESEARCHER), announces_as: RESEARCHER.to_s,
-                                    budget: Lain::Role::Catalog.fetch(RESEARCHER).budget, kept: research_leases)
+                                    budget: Lain::Role::Catalog.fetch(RESEARCHER).budget, kept: research_leases,
+                                    answer:)
         end
 
         # Its kept lease names a checkout, so its own stack holds it there
@@ -561,7 +562,14 @@ module Lain
         def spawner(role, issue)
           Lain::Tools::Subagent.new(seam: announcing(role.to_s, over: issue), toolset: @floor,
                                     policy: backend.spawn_policy(role), persona: persona(role), announces_as: role.to_s,
-                                    budget: Lain::Role::Catalog.fetch(role).budget)
+                                    budget: Lain::Role::Catalog.fetch(role).budget, answer:)
+        end
+
+        # Every spawner keeps an answer that stays over the ceiling in the
+        # project's answers dir, which a leased parent's guard lets it read.
+        def answer
+          dir = Lain::Tools::Subagent::Spill.home(@in_chat.fetch(:paths), @root)
+          Lain::Tools::Subagent::Answer.new(spill: Lain::Tools::Subagent::Spill.new(dir:))
         end
 
         # What a child is told it is, in its own system prompt: the same role

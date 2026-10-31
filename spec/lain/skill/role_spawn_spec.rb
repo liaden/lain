@@ -690,4 +690,36 @@ RSpec.describe Lain::Skill::RoleSpawn do
       end
     end
   end
+
+  # ---- An answer that stays over the ceiling ---------------------------------
+
+  describe "a role's answer that stays over the ceiling" do
+    let(:oversized) { "o" * 30_000 }
+
+    def spilling(dir) = Lain::Tools::Subagent::Answer.new(spill: Lain::Tools::Subagent::Spill.new(dir:))
+
+    def provider = mock(text_response(oversized), text_response(oversized))
+
+    it "hands a fanned-out researcher's parent the spilled file, not the floor's refusal" do
+      Dir.mktmpdir do |dir|
+        searching = Lain::Toolset.new(union.to_a + [Lain::Tools::WebFetch.new, Lain::Tools::WebSearch.new])
+        result = seam(provider:, toolset: searching, answer: spilling(dir)).call(:researcher, :fresh, "go")
+
+        expect(result.content).to include(Dir.glob(File.join(dir, "*")).first)
+        expect(result.content).not_to include("answer, which could not be summarized")
+      end
+    end
+
+    it "keeps the answer it was built with through within and never_parking" do
+      Dir.mktmpdir do |dir|
+        spawn = seam(provider: mock(*Array.new(4) { text_response(oversized) }), answer: spilling(dir),
+                     tool_middleware: Lain::CLI::ToolGuard.detached(journal: Lain::Channel::Null.instance))
+
+        within = spawn.within(Lain::WorkerEnv.default).call(:dev, :fresh, "go")
+        judged = Sync { spawn.never_parking.call(:dev, :fresh, "go") }
+
+        expect([within, judged].map(&:content)).to all(include(dir))
+      end
+    end
+  end
 end

@@ -11,7 +11,7 @@ require "tmpdir"
 # ledger from a freshly constructed second one, which is exactly the mistake
 # this file exists to catch.
 class ToolGuardSpecBoard
-  attr_reader :ledger, :approvals, :sensitivity, :test_layout, :policy, :policy_for
+  attr_reader :ledger, :approvals, :sensitivity, :test_layout, :policy, :policy_for, :answers
 
   # `sensitivity` is a REAL {Lain::Sensitivity::Policy} over a REAL classifier
   # for this file's own reason, one slot over: the claim is that the listing
@@ -23,8 +23,9 @@ class ToolGuardSpecBoard
   # it was asked in, so an example can see WHO a call was asked for. A worker is
   # judged by that same policy unless `policy_for` answers another.
   def initialize(approvals: nil, sensitivity: nil, test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared,
-                 policy: ToolGuardSpecPolicy.new, policy_for: nil)
+                 policy: ToolGuardSpecPolicy.new, policy_for: nil, answers: [])
     @ledger = Lain::Sensitivity::Ledger.new
+    @answers = answers
     @approvals = approvals
     @test_layout = test_layout
     @policy = policy
@@ -38,7 +39,8 @@ class ToolGuardSpecBoard
   def guard_inputs
     @guard_inputs ||= Lain::CLI::ToolGuard::Inputs.new(ledger:, approvals:, sensitivity:, test_layout:, policy:,
                                                        policy_for:, denial: "the spec board refuses %<name>s",
-                                                       bar: Lain::Middleware::WithholdAutomaticOutput::Bar.new)
+                                                       bar: Lain::Middleware::WithholdAutomaticOutput::Bar.new,
+                                                       answers:)
   end
 end
 
@@ -1188,6 +1190,41 @@ RSpec.describe Lain::CLI::ToolGuard do
         read_through(child_stack(env_at(@checkout).with(read_roots: [lent])), File.join(lent, "plans", "a.md"))
 
         expect(board.policy.contexts.size).to eq(1)
+      end
+
+      it "reads a leased child's own child's spilled answer under the board's answers root, and asks elsewhere" do
+        ours = File.join(File.dirname(@project), "state", "answers", "ours")
+        theirs = File.join(File.dirname(@project), "state", "answers", "theirs")
+        answering = ToolGuardSpecBoard.new(test_layout: run, sensitivity:, answers: [ours])
+        child = described_class.child_stack(chronicle, answering, env_at(@checkout, checkout: @checkout),
+                                            requester: "subagent")
+
+        [ours, theirs].each { read_through(child, File.join(_1, "a.md")) }
+
+        expect(answering.policy.contexts.size).to eq(1)
+      end
+
+      it "holds no answers root for a board that names none" do
+        read_through(child_stack(env_at(@checkout, checkout: @checkout)),
+                     File.join(Lain::Tools::Subagent::Spill.home(Lain::Paths.new, @project), "a.md"))
+
+        expect(board.policy.contexts.size).to eq(1)
+      end
+
+      it "reads a slice of a spilled answer from the main agent without asking" do
+        spilled = Lain::Tools::Subagent::Spill.new(dir: Lain::Tools::Subagent::Spill.home(Lain::Paths.new, @project))
+                                              .call(answer: "line one\nline two\nline three\n").first
+        effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_s", name: "read_file",
+                                            input: { "path" => spilled, "offset" => 2, "limit" => 1 })
+
+        session = Lain::Session.new
+        result = described_class.stack(chronicle, board).call(
+          { effect:, tool: Lain::Tools::ReadFile.new, context: session }
+        ) { |passed| passed.merge(result: passed[:tool].call(effect.input, Lain::Tool::Invocation.new(context: session))) }
+
+        expect(board.policy.contexts).to be_empty
+        expect(result[:result].content).to include("line two")
+        expect(result[:result].content).not_to include("line three")
       end
 
       it "asks nothing for the main agent's read outside" do

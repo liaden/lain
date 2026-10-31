@@ -71,10 +71,14 @@ module Lain
       #   children each work in a kept directory of their own
       # @param worker_env [#call] answers, at each spawn, the {WorkerEnv} a
       #   never-parking child runs in: the chat's own, which a scope change moves
+      # @param answer [Tools::Subagent::Answer] what every child's answer is
+      #   bounded by, and kept through when it will not fit
       # @param spawn_over [Hash] the loose seam members, when no seam is given
       def initialize(toolset:, slots:, seam: nil, compaction: Tools::Subagent::ParentView::None,
-                     placed: {}, worker_env: WorkerEnv.method(:default), **spawn_over)
+                     placed: {}, worker_env: WorkerEnv.method(:default), answer: Tools::Subagent::ANSWER,
+                     **spawn_over)
         @seam = Tools::Subagent::Seam.resolve(seam, **spawn_over)
+        @answer = answer
         @placed = placed
         @worker_env = worker_env
         @toolset = toolset
@@ -113,7 +117,7 @@ module Lain
       # @raise [Isolation::Leases::Lane::Refused] when git would not accept the name
       def within(worker_env, lane: nil)
         self.class.new(seam: @seam.with(isolation: lent(worker_env, lane)), toolset: @toolset, slots: @slots,
-                       compaction: @compaction, placed: @placed, worker_env: @worker_env)
+                       compaction: @compaction, placed: @placed, worker_env: @worker_env, answer: @answer)
       end
 
       # This spawn, its children built through the seam guard's never-parking
@@ -127,7 +131,7 @@ module Lain
       def never_parking
         self.class.new(seam: @seam.with(tool_middleware: @seam.tool_middleware.never_parking, isolation: unleased),
                        toolset: @toolset, slots: @slots, placed: unplaceable,
-                       worker_env: @worker_env)
+                       worker_env: @worker_env, answer: @answer)
       end
 
       private
@@ -151,7 +155,7 @@ module Lain
         Tools::Subagent.new(
           seam: named_for(who, place.seam), toolset: @toolset, policy: role.spawn_policy(prefix: context_mode),
           persona: Role::Persona.new(role:, slots: @slots), model:, budget: role.budget,
-          name: role.name.to_s, announces_as: who, compaction: @compaction, kept: place.kept
+          name: role.name.to_s, announces_as: who, compaction: @compaction, kept: place.kept, answer: @answer
         )
       end
 

@@ -122,13 +122,15 @@ module Lain
       # project's sensitive paths hold in git history; a run with no project
       # reads the process default and no history. `stops` is who the tripwire
       # stopped, and `mode` the approval level a paused main is held under; a
-      # run with no tripwire stop stops no one.
+      # run with no tripwire stop stops no one. `answers` are the dirs a
+      # spawner spills an oversized answer into, which a leased child may read;
+      # a run with no project spills nowhere a child could reach.
       Inputs = Data.define(:ledger, :approvals, :sensitivity, :test_layout, :policy, :policy_for, :denial, :bar,
-                           :scope, :middleware, :secrets, :denied_tools, :stops, :mode) do
+                           :scope, :middleware, :secrets, :denied_tools, :stops, :mode, :answers) do
         def initialize(scope: UNSCOPED, middleware: Config::Middleware.empty,
                        secrets: Lain::Sensitivity::Secrets::Source::DEFAULT, denied_tools: Set[].freeze,
                        stops: Tripwire::Stops::None,
-                       mode: Middleware::TripwireStop::NoMode, **)
+                       mode: Middleware::TripwireStop::NoMode, answers: [].freeze, **)
           super
         end
       end
@@ -580,7 +582,7 @@ module Lain
       def named(policy, requester, task: nil) = requester ? Asking.new(policy:, requester:, task:) : policy
 
       def confined(inputs, worker_env)
-        roots = worker_env.checkout ? [worker_env.checkout, *worker_env.read_roots] : [worker_env.cwd]
+        roots = worker_env.checkout ? [worker_env.checkout, *worker_env.read_roots, *inputs.answers] : [worker_env.cwd]
         inputs.with(sensitivity: inputs.sensitivity.confined(roots:))
       end
 

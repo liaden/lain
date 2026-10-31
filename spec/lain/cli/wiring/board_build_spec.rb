@@ -1616,4 +1616,20 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
         .to all(have_attributes(reason: :named))
     end
   end
+
+  # The answers dir a spawner spills into, read off the session's own paths,
+  # so a leased parent's guard holds the same dir the spill was written to.
+  describe "the answers root the guard is built over" do
+    it "is the project's answers dir under the injected state home, not the process's" do
+      in_tree do |root, home|
+        state = File.join(File.dirname(home), "elsewhere-state")
+        paths = Lain::Paths.new(env: { "HOME" => home, "XDG_STATE_HOME" => state })
+        board = described_class.for(chronicle:, options: {}, judge: Lain::CLI::Switchboard::DEFERRING, model: "m",
+                                    toolset:, project: project_at(root), paths:)
+
+        expect(board.guard_inputs.answers).to eq([Lain::Tools::Subagent::Spill.home(paths, root)])
+        expect(board.guard_inputs.answers.first).to start_with(File.join(state, "lain", "answers"))
+      end
+    end
+  end
 end

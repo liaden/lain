@@ -83,7 +83,8 @@ module Lain
                           test_layout: test_layout(project:, file_facts: sensitivity.file_facts),
                           approval_timeout: Config.approval_timeout(root: project.root), judge:, display:, arms:,
                           request:, secrets: secrets(project:, sensitivity:, child_env:),
-                          denied_tools: config.approval.deny_tools, stops:)
+                          denied_tools: config.approval.deny_tools, stops:,
+                          answers: [Lain::Tools::Subagent::Spill.home(paths, project.root)])
         end
 
         # Where `/mode plan` confines this project's session: a spike worktree

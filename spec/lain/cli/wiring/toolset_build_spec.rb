@@ -1813,4 +1813,54 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
                                   [Lain::Isolation::WorkerId.spawned(role: "dev", ordinal: 2).to_s, true]])
     end
   end
+
+  # Every production spawner keeps an answer that stays over the ceiling in the
+  # project's answers dir; a site that forgot the Answer would floor instead.
+  describe "an answer whose summary stays over the ceiling" do
+    let(:provider) do
+      Lain::Provider::Mock.new(responses: [text_response("a" * 30_000), text_response("s" * 20_000)])
+    end
+    let(:answers) { Lain::Tools::Subagent::Spill.home(Lain::Paths.new, root) }
+    let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
+
+    def expect_spilled_into_answers(result)
+      kept = result.content[%r{is in (/\S+?\.md)}, 1]
+      expect(result.content).not_to include("answer, which could not be summarized")
+      expect(kept).to start_with("#{answers}/")
+      expect(File.size(kept)).to eq(30_000)
+    end
+
+    def orchestrator_over(build)
+      build.epic_subagent(isolation: Lain::Isolation::Null.new, handoff: ToolsetBuildHandoff.new,
+                          lane: "issue.demo.spill")
+    end
+
+    after { FileUtils.rm_rf(Dir.glob(File.join(Lain::Paths.new.state_home, "research", "*"))) }
+
+    it "spills through the chat's subagent tool" do
+      full = toolset_build.build(recorder, ask_human:)
+
+      expect_spilled_into_answers(full.fetch("subagent").call({ "prompt" => "look" }, invocation))
+    end
+
+    it "spills through the role_spawn seam a @researcher fan-out reaches" do
+      toolset_build.build(recorder, ask_human:)
+
+      expect_spilled_into_answers(toolset_build.role_spawn.call(:researcher, :fresh, "look"))
+    end
+
+    it "spills through the issue orchestrator" do
+      toolset_build.build(recorder, ask_human:)
+
+      expect_spilled_into_answers(orchestrator_over(toolset_build).run("plan it"))
+    end
+
+    it "spills through the spawner the orchestrator hands its dev children" do
+      toolset_build.build(recorder, ask_human:)
+
+      dev = orchestrator_over(toolset_build).attenuates_from.fetch("subagent")["dev"]
+
+      expect_spilled_into_answers(dev.run("implement it"))
+    end
+  end
 end

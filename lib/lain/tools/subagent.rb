@@ -612,20 +612,21 @@ module Lain
                        "ask it for the specific finding you need"].freeze
 
       # That a child's answer did not fit ("answer_bounded" on the wire):
-      # `outcome` is `summarized` when the child's own summary was delivered and
-      # `floor` when none could be, with `reason` naming which of the several
-      # ways that happened. Journaled for {Tool::SpawnPolicy}'s floor-note
+      # `outcome` is `summarized` when the child's own summary was delivered,
+      # `spilled` when the answer was kept in a file at `path` instead, and
+      # `floor` when neither could be, with `reason` naming which of the
+      # several ways that happened. Journaled for {Tool::SpawnPolicy}'s floor-note
       # reason, which this sits two lines away from at both spawn sites: a
       # decision this consequential must not be legible ONLY as English inside a
       # result the model consumes, or "how often does bounding fire, and how
       # often does it floor" costs a grep over prose.
-      AnswerBounded = Data.define(:size, :limit, :outcome, :reason) do
+      AnswerBounded = Data.define(:size, :limit, :outcome, :reason, :path) do
         include Telemetry::Journalable
 
         # `-@` and not `#freeze`, because interpolation hands back a MUTABLE
         # String and a record must stay `Ractor.shareable?`.
-        def initialize(size:, limit:, outcome:, reason: "")
-          super(size:, limit:, outcome: -outcome.to_s, reason: -reason.to_s)
+        def initialize(size:, limit:, outcome:, reason: "", path: "")
+          super(size:, limit:, outcome: -outcome.to_s, reason: -reason.to_s, path: -path.to_s)
         end
       end
 
@@ -648,8 +649,11 @@ module Lain
       # the record, keeps the value `Ractor.shareable?` (an interpolated String
       # on a bare Data is not), and leaves {ChildBuilder::Child#answered}'s
       # documented `[timeline, response]` seam a single type.
-      Answer = Data.define(:bounds) do
-        def initialize(bounds: ANSWER_BOUND)
+      #
+      # An answer whose summary is still over the ceiling is kept whole by
+      # `spill` and handed back as a pointer, for the same two reasons.
+      Answer = Data.define(:bounds, :spill) do
+        def initialize(bounds: ANSWER_BOUND, spill: Spill::Null)
           super
         end
 
@@ -751,10 +755,14 @@ module Lain
         def condensed(agent, response, size, journal)
           summary = agent.ask(request(size))
           reason = undeliverable(summary)
-          reason.nil? ? summarized(response, summary, size, journal) : floor(response, size, reason, journal)
+          return summarized(response, summary, size, journal) if reason.nil?
+
+          spilled(response, size, reason, journal, summary: finished_summary(summary))
         rescue StandardError => e
-          floor(response, size, "the summarizing ask itself failed -- #{failure(e)}", journal)
+          spilled(response, size, "the summarizing ask itself failed -- #{failure(e)}", journal)
         end
+
+        def finished_summary(summary) = (summary.text unless summary.text.empty? || summary.failure)
 
         # The class leads because it stays diagnostic when the message is cut,
         # and the message is cut because it is written by whatever raised and
@@ -798,6 +806,34 @@ module Lain
                               "#{bounds.unit}, over the ceiling of #{bounds.limit}]\n#{summary.text}")
         end
 
+        # The pointer names each file kept and its size and says none of it
+        # is shown, so a parent cannot mistake it for the answer itself.
+        def spilled(response, size, reason, journal, summary: nil)
+          outcomes = Spill::Outcomes.new(kept: ->(paths) { pointed(response, size, reason, paths, journal) },
+                                         unwritable: ->(why) { floor(response, size, unspilled(reason, why), journal) },
+                                         unkept: -> { floor(response, size, reason, journal) })
+          spill.keep(response.text, summary, outcomes)
+        end
+
+        def pointed(response, size, reason, paths, journal)
+          journal << AnswerBounded.new(size:, limit: bounds.limit, outcome: :spilled, reason:, path: paths.first)
+          delivered(response, pointer(size, reason, *paths))
+        end
+
+        # read_file windows by line and refuses a line over its own limit, so
+        # an answer written as one long line is reachable only by bytes.
+        def pointer(size, reason, answer, summary = nil)
+          kept = ["its full answer, #{size} #{bounds.unit}, is in #{answer}"]
+          kept << "its own summary, #{File.size(summary)} #{bounds.unit}, is in #{summary}" if summary
+          "[the subagent's answer was over the ceiling of #{bounds.limit} #{bounds.unit} and could not be " \
+            "summarized under it (#{reason}), so #{summary ? "neither is" : "it is not"} shown here: " \
+            "#{kept.join("; ")}. read_file reads a slice by line, from an offset for a limit of lines; it " \
+            "refuses a line over #{ReadFile::LINE_LIMIT} bytes, so take such a line by bytes with bash " \
+            "instead: tail -c +START FILE | head -c COUNT.]"
+        end
+
+        def unspilled(reason, why) = "#{reason}; keeping it in a file failed too -- #{why[0, MAX_FAILURE_REASON]}"
+
         # No summary could be delivered, so none is promised. The sentence is
         # {Tool::Bounds::Artifact}'s own refusal: it names the size and the
         # ceiling, says WHICH way the summarizing failed, and offers somewhere
@@ -808,10 +844,12 @@ module Lain
         # `subject:` is prose {Tool::Bounds} states it deliberately does not
         # police, and `reason` is the one part of it that is not a fixed string.
         # So every reason reaching here is bounded before it arrives -- four
-        # are literals, a fifth is a literal plus a byte count, and the sixth
-        # is clamped by {#failure}. A floor that blew through the ceiling it enforces would be
-        # the exact hazard {Tool::Bounds.ceiling} names: a message that echoes
-        # its argument hands the model the bytes a refusal exists to withhold.
+        # are literals, a fifth is a literal plus a byte count, the sixth is
+        # clamped by {#failure}, and the seventh is one of those six plus a
+        # spill failure clamped by {#unspilled}. A floor that blew through the
+        # ceiling it enforces would be the exact hazard {Tool::Bounds.ceiling}
+        # names: a message that echoes its argument hands the model the bytes
+        # a refusal exists to withhold.
         def floor(response, size, reason, journal)
           journal << AnswerBounded.new(size:, limit: bounds.limit, outcome: :floor, reason:)
           delivered(response, bounds.message(subject: "the subagent's answer, which could not be " \
@@ -835,8 +873,8 @@ module Lain
       end
 
       # ONE shared, frozen collaborator, not a fresh one per spawn: it holds
-      # only the ceiling, so there is no per-spawn state for one to carry. The
-      # default a tool takes, and injectable past it.
+      # the ceiling and a spill that keeps nothing, so there is no per-spawn
+      # state for one to carry. The default a tool takes, and injectable past it.
       ANSWER = Answer.new
 
       # One model-facing spawner over several roles, the role named PER CALL

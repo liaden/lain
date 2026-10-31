@@ -909,6 +909,7 @@ project's path, so it reads project files by absolute path.
 |---|---|
 | Scratch, the default | `$XDG_STATE_HOME/lain/research/<project_hash>/scratch/research-*` |
 | A spike, when the spawn names `extends` | `$XDG_STATE_HOME/lain/research/<project_hash>/worktrees/<hash>`, on branch `lain/plan/<key>` |
+| A spilled answer, from any child, when its answer is over 16 KiB and no summary of it can be delivered | `$XDG_STATE_HOME/lain/answers/<project_hash>/<stamp>-<hex>.md`, with `.summary.md` beside it when the child gave one |
 
 `$XDG_STATE_HOME` is `~/.local/state` when unset. A spike is cut from the project or one of its
 related directories, and commits there land on its branch. Under `plan` scope the researcher is

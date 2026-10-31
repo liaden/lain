@@ -1839,7 +1839,8 @@ XDG path relative, which put machine state back inside the user's repository)
     listed, so the ordinal design is decided in the plan instead; and the determinism AC could not
     reject the very design its own grounding rejected, because a nonce written into a body replays
     byte-identically — the real constraint is cross-run reproducibility, not replay. 12 cards,
-    3 waves.
+    3 waves. An answer whose summary is still over the ceiling is written whole to
+    `$XDG_STATE_HOME/lain/answers/<project>/` and handed back as a pointer (2026-10-31).
 
 42. **✅ Landed 2026-08-02, recorded late (2026-09-11)** — `planning/specs/chunk-modes-approval-undo.md`:
    interaction modes, approval triage, and workspace undo. 22 of 23 cards landed on 2026-08-02, but

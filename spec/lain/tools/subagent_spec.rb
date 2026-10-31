@@ -1260,6 +1260,95 @@ RSpec.describe Lain::Tools::Subagent do
     end
   end
 
+  # ---- Scenario: an answer that stays over the ceiling is spilled to a file ---
+
+  describe "an answer whose summary stays over the ceiling, with an answers dir" do
+    around do |example|
+      Dir.mktmpdir do |dir|
+        @answers = File.join(dir, "answers")
+        example.run
+      end
+    end
+
+    let(:answer) { Lain::Tools::Subagent::Answer.new(spill: Lain::Tools::Subagent::Spill.new(dir: @answers)) }
+    let(:full) { "a" * 30_000 }
+    let(:summary) { "s" * 20_000 }
+
+    def spilled_files = Dir.glob(File.join(@answers, "*")).sort_by { -File.size(_1) }
+
+    it "keeps the answer and its summary whole, and hands back a pointer naming both" do
+      journal = Lain::Channel.new
+      result = build_subagent(provider: mock(text_response(full), text_response(summary)), answer:, journal:)
+               .call({ "prompt" => "go" }, invocation)
+      kept, summarized = spilled_files
+
+      expect([File.read(kept), File.read(summarized)]).to eq([full, summary])
+      expect(result).to be_ok
+      expect(result.content).to include(kept, "30000", summarized, "20000")
+      expect(result.content).to include("neither is shown")
+      expect(result.content.bytesize).to be < Lain::Tools::Subagent::ANSWER_BOUND.limit
+      expect(journal.drain.map(&:to_journal).find { _1["type"] == "answer_bounded" })
+        .to include("outcome" => "spilled", "path" => kept)
+    end
+
+    # read_file windows by line, so an answer written as one long line cannot
+    # be sliced by offset and limit at all.
+    it "says the slices are by line, and how to take a line over read_file's limit by bytes" do
+      result = build_subagent(provider: mock(text_response(full), text_response(summary)), answer:)
+               .call({ "prompt" => "go" }, invocation)
+
+      expect(result.content).to include("by line", Lain::Tools::ReadFile::LINE_LIMIT.to_s, "head -c", "tail -c")
+    end
+
+    it "stays Ractor-shareable with a spill built over a caller's mutable dir" do
+      spill = Lain::Tools::Subagent::Spill.new(dir: +@answers)
+
+      expect(Ractor.shareable?(Lain::Tools::Subagent::Answer.new(spill:))).to be(true)
+    end
+
+    it "keeps the answer when the summarizing ask raises, and hands back its path" do
+      child = instance_double(Lain::Agent)
+      allow(child).to receive(:ask).and_raise(Lain::Error, "529 overloaded")
+
+      bounded = answer.bounded(child, text_response(full))
+
+      expect(spilled_files.map { File.read(_1) }).to eq([full])
+      expect(bounded.text).to include(spilled_files.first, "529 overloaded")
+    end
+
+    it "spills an actor's oversized reply the same way" do
+      log = Lain::Tools::Subagent::Log.new
+      tool = described_class.new(
+        tool_middleware: ToolRegistry::UNGUARDED, provider: mock(text_response(full), text_response(summary)),
+        context_factory: -> { child_context }, toolset: union, policy: spawn_policy, parent:, mode: :actor, log:,
+        answer:
+      )
+
+      Sync do
+        actor = tool.launch_actor("go", worker_env: Lain::WorkerEnv.default)
+        actor.settle
+        actor.stop
+      end
+
+      settled = log.to_a.find { |event| event.body["lifecycle"] == "settled" }
+      expect(settled.body.fetch("text")).to include(spilled_files.first)
+      expect(settled.body.fetch("text")).not_to include("answer, which could not be summarized")
+    end
+
+    it "falls back to the floor's refusal, naming why the spill failed, when the dir cannot be made" do
+      blocker = File.join(File.dirname(@answers), "blocker").tap { File.write(_1, "") }
+      unwritable = Lain::Tools::Subagent::Answer.new(
+        spill: Lain::Tools::Subagent::Spill.new(dir: File.join(blocker, "answers"))
+      )
+
+      result = build_subagent(provider: mock(text_response(full), text_response(summary)), answer: unwritable)
+               .call({ "prompt" => "go" }, invocation)
+
+      expect(result.content).to include("answer, which could not be summarized", "blocker")
+      expect(result.content).not_to include("aaaa")
+    end
+  end
+
   # ---- Provenance at correlation grain (panel ruling) -------------------------
 
   describe "provenance at correlation grain" do

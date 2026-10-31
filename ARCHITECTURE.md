@@ -830,6 +830,15 @@ to the smallest local window, not to a model: at the worst measured density one 
 human to decide). `web_fetch` is an `Artifact`, and it is measured on the **readable text** its
 nokogiri converter produces rather than on the markup; `raw: true` asks for the markup instead.
 
+A subagent's answer over the 16 KiB ceiling is first summarized by the child itself
+(`Tools::Subagent::Answer`). If the summary is also over the ceiling, empty or cut off, or the
+summarizing ask fails, `Tools::Subagent::Spill` writes the whole answer (and any finished summary)
+to `$XDG_STATE_HOME/lain/answers/<project_hash>/`, and the parent gets a pointer naming each path
+and size, with none of the text: a clipped head would read as complete. An `answer_bounded` record
+says `spilled` and gives the path. `BoardBuild` hands that dir, keyed by project, to
+`ToolGuard::Inputs#answers`, so a leased parent may read it. Only a spill that cannot be written
+falls back to the refusal floor.
+
 When an Agent is given one, a tool round's results are also bounded **as a whole**, by
 `Tool::RoundBudget` (`lib/lain/tool/round_budget.rb`): the policy builds a budget each round from a
 `Tool::Room` (the Agent's window, the last turn's usage and the reply ceiling), less
