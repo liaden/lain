@@ -435,6 +435,23 @@ Unproven; counting only the example's own thread would settle it.
   and the `--confine workspace` arms report reads a small seed checkout, where it had walked all of
   this one (about 3,100 files) once per sandboxed call, 73 times.
 
+  Added 2026-10-31, from landing suites in one plan run. Each went red once in a pre-commit suite and
+  passed alone and with its failing worker's seed on the base and on the card, on cards that do not
+  reach it:
+  `a stalled stream under an Async reactor two concurrent streams, one of them stalling raises the
+  stall in the fiber that owns the dead stream` (`Errno::ECONNRESET` in the streaming upstream, on a
+  quiet box); and `Lain::Ext::Fuzzy#match on another thread behaves like a GVL-releasing binding
+  raises the interrupt's error rather than returning a partial answer` (0.72s against a 0.32s bound,
+  load about 16 with 3 agents running specs beside the suite). `Lain::Tool::Offload keeps a sibling
+  fiber running while the work holds its thread`, from the 2026-10-21 entry, went red once more in a
+  plain `pspec` on the base commit.
+  `two cockpits on one machine` went red twice more the same day. All 4 examples failed once (a `you>`
+  line never held in the input pane within 15s), and once `keeps one status feed per project, each
+  with its own run's tokens` was STUCK and STARVED at a load of 28.5 with a game running beside the
+  suite. Each time the file passed 3 of 3 with the failing seed on the base and on the card. That is
+  4 recorded reds of one launch that outruns its waits under load, so it is a card, not a flake to
+  budget a retry for.
+
   Added 2026-10-18, a wall-clock count red once in a pre-commit suite (6 ticks against 15) and green
   alone and in a full suite on the base and on the change: `Lain::Tool::Offload keeps a sibling fiber
   running while the work never gives up the lock between threads`. Red again on 2026-10-19, 6 against
