@@ -81,7 +81,12 @@ module Lain
     # Joined as bytes: under LANG=C a directory name, and the role text too,
     # arrive as bytes, and either cannot join the other while it is UTF-8.
     def placed_tail(role_text, cwd)
-      String.new("#{role_text.b.chomp}\n\nWorking directory: #{cwd.b}", encoding: Encoding::UTF_8)
+      String.new("#{role_text.b.chomp}\n\n#{answer_ceiling_line.b}\n\nWorking directory: #{cwd.b}", encoding: Encoding::UTF_8)
+    end
+
+    def answer_ceiling_line
+      "Your final answer must stay under #{Tools::Subagent::ANSWER_BOUND.limit} bytes, " \
+        "or it is summarized and then saved to a file."
     end
   end
 

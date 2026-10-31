@@ -1862,7 +1862,7 @@ module Lain
         # middleware must exist before the Agent that runs it.
         def recorded_turns(chain, mailbox)
           Middleware::Stack.new([*@seam.middleware.members(:turn),
-                                 WrapUp.new(mailbox:, ceiling: @budget.iterations),
+                                 WrapUp.new(mailbox:, ceiling: @budget.iterations, answer_limit: ANSWER_BOUND.limit),
                                  Middleware::JournalTurns.new(scribe: chain.feed, timeline: chain.timeline)])
         end
 

@@ -14,7 +14,7 @@ RSpec.describe Lain::Tools::Subagent::WrapUp do
   end
 
   it "posts once, from lain, when 5 iterations remain" do
-    run(described_class.new(mailbox:, ceiling: 8), 8)
+    run(described_class.new(mailbox:, ceiling: 8, answer_limit: 16_384), 8)
 
     expect(posts.size).to eq(1)
     expect(posts.first).to include(from: "lain")
@@ -22,7 +22,7 @@ RSpec.describe Lain::Tools::Subagent::WrapUp do
   end
 
   it "posts on the 4th request of a ceiling of 8, before the step runs" do
-    wrap_up = described_class.new(mailbox:, ceiling: 8)
+    wrap_up = described_class.new(mailbox:, ceiling: 8, answer_limit: 16_384)
     run(wrap_up, 3)
     expect(posts).to be_empty
 
@@ -32,19 +32,27 @@ RSpec.describe Lain::Tools::Subagent::WrapUp do
   end
 
   it "posts on the first request when the ceiling is 5 or less" do
-    run(described_class.new(mailbox:, ceiling: 3), 1)
+    run(described_class.new(mailbox:, ceiling: 3, answer_limit: 16_384), 1)
 
     expect(posts.first.fetch(:text)).to include("3 of 3")
   end
 
   it "says what a stopped child hands back" do
-    run(described_class.new(mailbox:, ceiling: 8), 4)
+    run(described_class.new(mailbox:, ceiling: 8, answer_limit: 16_384), 4)
 
     expect(posts.first.fetch(:text)).to match(/files it read.*last text block/m)
   end
 
+  it "names the answer ceiling beside the iteration ceiling" do
+    run(described_class.new(mailbox:, ceiling: 60, answer_limit: 16_384), 56)
+
+    expect(posts.first.fetch(:text)).to include("5 of 60 iterations remain", "under 16384 bytes")
+  end
+
   it "hands the env through downstream untouched" do
-    env = described_class.new(mailbox:, ceiling: 8).call({ iteration: 0 }) { |inner| inner.merge(settled: true) }
+    env = described_class.new(mailbox:, ceiling: 8, answer_limit: 16_384).call({ iteration: 0 }) do |inner|
+      inner.merge(settled: true)
+    end
 
     expect(env).to include(iteration: 0, settled: true)
   end

@@ -2158,6 +2158,16 @@ RSpec.describe Lain::Tools::Subagent do
 
       expect(provider.requests.first.messages.to_s).to include("3 of 3 iterations remain")
     end
+
+    it "tells the child the byte ceiling on its final answer" do
+      provider = mock(text_response("done"))
+      tool = build_subagent(provider:, budget: Lain::Budget.ceilings(iterations: 3),
+                            holder: Lain::Budget.ceilings(iterations: 2).with(depth: 1))
+
+      tool.run("go")
+
+      expect(provider.requests.first.messages.to_s).to include("under #{described_class::ANSWER_BOUND.limit} bytes")
+    end
   end
 
   describe "a child's spend, rolled up into its spawner" do

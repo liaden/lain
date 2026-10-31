@@ -15,10 +15,12 @@ module Lain
 
         # @param mailbox [#post] the child's inbox
         # @param ceiling [Integer] the child's iteration ceiling
-        def initialize(mailbox:, ceiling:)
+        # @param answer_limit [Integer] the byte ceiling on the child's final answer
+        def initialize(mailbox:, ceiling:, answer_limit:)
           super()
           @mailbox = mailbox
           @ceiling = ceiling
+          @answer_limit = answer_limit
           @warned = false
         end
 
@@ -38,7 +40,8 @@ module Lain
 
         def note(left)
           "#{left} of #{@ceiling} iterations remain. A child stopped at its ceiling hands back only the " \
-            "files it read and its last text block, so write your findings as text now."
+            "files it read and its last text block, so write your findings as text now. " \
+            "Your final answer must stay under #{@answer_limit} bytes."
         end
       end
     end

@@ -150,7 +150,8 @@ RSpec.describe "a spawned role's persona" do
 
       expect(first[0]).to eq(second[0])
       expect(first[0]).not_to include("/state/leases/")
-      tail = slots.render_role(:researcher).chomp
+      tail = "#{slots.render_role(:researcher).chomp}\n\nYour final answer must stay under 16384 bytes, " \
+             "or it is summarized and then saved to a file."
       expect([first[1], second[1]])
         .to eq(["#{tail}\n\nWorking directory: /state/leases/r1", "#{tail}\n\nWorking directory: /state/leases/r2"])
     end

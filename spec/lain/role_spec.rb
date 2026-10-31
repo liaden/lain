@@ -173,6 +173,10 @@ RSpec.describe Lain::Role do
     # The persona replaces the system prompt and nothing else: a child that
     # rendered under the default while its parent ran a named pipeline would
     # be a different arm than the session record says.
+    let(:limit_line) do
+      "Your final answer must stay under 16384 bytes, or it is summarized and then saved to a file."
+    end
+
     it "reshapes the factory context without dropping its named pipeline" do
       with_project do |slots|
         parent = Lain::CLI::ContextPipeline.named("prune").context(model: "probe", max_tokens: 64)
@@ -196,7 +200,8 @@ RSpec.describe Lain::Role do
                         .system.map { _1["text"] }
 
         expect(bulk).to eq(slots.render_child)
-        expect(tail).to eq("#{slots.render_role(:reviewer_sre).chomp}\n\nWorking directory: /w/issue-1")
+        role_text = slots.render_role(:reviewer_sre).chomp
+        expect(tail).to eq("#{role_text}\n\n#{limit_line}\n\nWorking directory: /w/issue-1")
       end
     end
 
@@ -222,7 +227,7 @@ RSpec.describe Lain::Role do
       tail = researcher.child_context(Lain::Context.new(model: "probe", max_tokens: 64), slots:, worker_env:)
                        .system.last["text"]
 
-      expect(tail).to eq("Recherche \u2014 d\u00e9tail\n\nWorking directory: /w/caf\u00e9")
+      expect(tail).to eq("Recherche \u2014 d\u00e9tail\n\n#{limit_line}\n\nWorking directory: /w/caf\u00e9")
     end
 
     it "keeps today's render for a caller that names no worker environment" do
