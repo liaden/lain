@@ -1420,8 +1420,20 @@ module Lain
           record = generated(criteria, worker_env, guard, subject:, level:, lane:)
           harness = @harness.call(worker_env.cwd)
           stray!(dirty(worker_env.cwd) - before - [record.target], harness.adapter)
+          registered = register(harness.adapter, worker_env.cwd, subject)
           run = failing(record, worker_env, subject, harness)
-          Red.new(record:, run:, sha: commit(worker_env.cwd, record))
+          Red.new(record:, run:, sha: commit(worker_env.cwd, record, registered))
+        end
+
+        # After the stray check, so a child's own edit to the same file is still refused.
+        # @return [Array<String>] the paths it appended to
+        def register(adapter, root, subject)
+          adapter.registration(subject:, root:).map do |entry|
+            file = File.join(root, entry.path)
+            text = File.read(file)
+            File.write(file, "#{text}#{"\n" unless text.empty? || text.end_with?("\n")}#{entry.line}\n")
+            entry.path
+          end
         end
 
         def declared
@@ -1542,15 +1554,16 @@ module Lain
                                    .symbolic_head.delete_prefix("refs/heads/")
         end
 
-        # The target alone, even when the child left other files, so the red
+        # The target and the module registrations alone, even when the child left other files, so the red
         # commit holds the tests and nothing else. `--no-verify` because the
         # commit fails by design: a hook that runs the suite would refuse
         # exactly the state this step exists to record.
-        def commit(root, record)
+        def commit(root, record, registered = [])
           git = Lain::Isolation::Checkout.of(root, shell_out_factory: @shell_out_factory)
-          committed!(git.run("add", "--", record.target))
+          paths = [record.target, *registered]
+          committed!(git.run("add", "--", *paths))
           committed!(git.run("commit", "--no-verify", "-q", "-m", message(record.target, record.criteria_digest),
-                             "--", record.target))
+                             "--", *paths))
           git.head.stdout.strip
         end
 

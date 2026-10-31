@@ -364,6 +364,14 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
     before do
       File.write(File.join(repo, ".lain", "config.rb"), "tests preset: :cargo, source_roots: %w[src]\n")
       trust_project(repo)
+      seed_crate_root
+    end
+
+    def seed_crate_root
+      FileUtils.mkdir_p(File.join(held, "src"))
+      File.write(File.join(held, "src/lib.rs"), "pub fn old() {}\n")
+      git(held, "add", "--", "src/lib.rs")
+      git(held, "commit", "--no-verify", "-q", "-m", "crate root")
     end
 
     def diagnostic(code, file, message = "cannot find function `start`")
@@ -392,7 +400,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
     it "commits the tests as red when the only errors are missing items in the subject" do
       result = cargo_step(cargo_printing(diagnostic("E0425", meeting)))
 
-      expect(git(held, "show", "--name-only", "--format=", result.sha)).to eq(meeting)
+      expect(git(held, "show", "--name-only", "--format=", result.sha).split("\n").sort).to eq(["src/lib.rs", meeting])
     end
 
     it "refuses an error of another kind as not loading, and commits nothing" do
@@ -418,15 +426,116 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
 
       result = cargo_step(cargo_printing(diagnostic("E0425", meeting)), extra: "printf 'more\\n' >> Cargo.lock")
 
-      expect(git(held, "show", "--name-only", "--format=", result.sha)).to eq(meeting)
+      expect(git(held, "show", "--name-only", "--format=", result.sha).split("\n").sort).to eq(["src/lib.rs", meeting])
     end
 
     it "does not call an ungitignored target/ a stray write" do
       result = cargo_step(cargo_printing(diagnostic("E0425", meeting)),
                           extra: "mkdir -p target/debug && printf x > target/debug/out")
 
-      expect(git(held, "show", "--name-only", "--format=", result.sha)).to eq(meeting)
+      expect(git(held, "show", "--name-only", "--format=", result.sha).split("\n").sort).to eq(["src/lib.rs", meeting])
     end
+  end
+
+  context "with the cargo preset and a new subject" do
+    let(:meeting) { "src/meeting.rs" }
+    let(:body) { "#[cfg(test)]\nmod tests {\n    #[test] fn starts() { super::start(); }\n}\n" }
+    let(:nested) { "src/capture/pipewire.rs" }
+    let(:erring_file) { meeting }
+    let(:missing_item) do
+      JSON.generate(reason: "compiler-message",
+                    message: { level: "error", message: "cannot find function `start`", code: { code: "E0425" },
+                               spans: [{ is_primary: true, file_name: erring_file }] })
+    end
+
+    before do
+      File.write(File.join(repo, ".lain", "config.rb"), "tests preset: :cargo, source_roots: %w[src]\n")
+      trust_project(repo)
+      FileUtils.mkdir_p(File.join(held, "src"))
+    end
+
+    def commit_file(path, text)
+      FileUtils.mkdir_p(File.dirname(File.join(held, path)))
+      File.write(File.join(held, path), text)
+      git(held, "add", "--", path)
+      git(held, "commit", "--no-verify", "-q", "-m", "add #{path}")
+    end
+
+    def cargo_printing_missing_item
+      canned = File.join(@root, "cargo.out")
+      File.write(canned, missing_item)
+      adapter = Class.new(Lain::Grader::TestHarness::Adapter::Cargo) do
+        define_method(:command) { |**| ["cat", canned] }
+      end.new(held)
+      ->(root) { Lain::Grader::TestHarness.new(root, adapter:) }
+    end
+
+    def cargo_step(subject: meeting, path: subject, content: body)
+      FileUtils.mkdir_p(File.join(held, File.dirname(path)))
+      provider = mock(tool_response(["w1", "write_file", { "path" => path, "content" => content }]),
+                      text_response("done"))
+      step(provider, harness: cargo_printing_missing_item, subject:, level: "unit")
+    end
+
+    def committed_paths(result) = git(held, "show", "--name-only", "--format=", result.sha).split("\n").sort
+
+    it "declares the module in the crate root and commits it with the tests" do
+      commit_file("src/lib.rs", "pub fn old() {}\n")
+
+      result = cargo_step
+
+      expect(File.read(File.join(held, "src/lib.rs"))).to eq("pub fn old() {}\npub mod meeting;\n")
+      expect(committed_paths(result)).to eq(["src/lib.rs", meeting])
+      expect(git(held, "status", "--porcelain")).to eq("")
+    end
+
+    context "when the subject is nested" do
+      let(:erring_file) { nested }
+
+      it "declares a nested subject in its parent's mod.rs" do
+        commit_file("src/lib.rs", "")
+        commit_file("src/capture/mod.rs", "")
+
+        result = cargo_step(subject: nested, content: body)
+
+        expect(File.read(File.join(held, "src/capture/mod.rs"))).to eq("pub mod pipewire;\n")
+        expect(committed_paths(result)).to eq(["src/capture/mod.rs", nested])
+      end
+    end
+
+    it "changes no file but the target when the module is already declared" do
+      commit_file("src/lib.rs", "mod meeting;\n")
+
+      result = cargo_step
+
+      expect(committed_paths(result)).to eq([meeting])
+      expect(File.read(File.join(held, "src/lib.rs"))).to eq("mod meeting;\n")
+    end
+
+    it "refuses a subject whose parent module file is missing, and commits nothing" do
+      commit_file("src/lib.rs", "")
+      head = git(held, "rev-parse", "HEAD")
+
+      expect { cargo_step(subject: "src/capture/pipewire.rs") }.to raise_error(Lain::Error, %r{src/capture\.rs})
+      expect(git(held, "rev-parse", "HEAD")).to eq(head)
+    end
+
+    it "still calls the child's own write to the crate root a stray write" do
+      commit_file("src/lib.rs", "")
+      provider = mock(tool_response(["w1", "write_file", { "path" => meeting, "content" => body }]),
+                      tool_response(["b1", "bash", { "command" => "printf 'fn extra() {}\\n' >> src/lib.rs" }]),
+                      text_response("done"))
+
+      expect { step(provider, harness: cargo_printing_missing_item, subject: meeting, level: "unit") }
+        .to raise_error(Lain::Error, %r{also wrote src/lib\.rs})
+    end
+  end
+
+  it "registers nothing for the rspec or command adapters" do
+    command = Lain::Grader::TestHarness::Adapter::Command.new(out_argv: ->(out) { [out] }, passed: /P/, failed: /F/)
+    adapters = [Lain::Grader::TestHarness::Adapter::Rspec.new, command]
+
+    expect(adapters.map { |adapter| adapter.registration(subject: "app/models/order.rb", root: repo) }).to eq([[], []])
   end
 
   context "with a command adapter that reports errors inside tests" do

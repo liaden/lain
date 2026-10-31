@@ -15,6 +15,8 @@ module Lain
           FLAGS = %w[--no-fail-fast --message-format=json].freeze
           TEST_LINE = /\Atest (?<name>.+?) \.\.\. (?<outcome>ok|FAILED)\s*\z/
           CRATE_ROOTS = %w[lib main].freeze
+          CRATE_ROOT_FILES = %w[lib.rs main.rs].freeze
+          NOT_MODULES = %w[lib main mod].freeze
           # A test calling what the subject has not defined yet fails to resolve; any other code is a mistake.
           MISSING_ITEM = /\A(?:E0425|E0432|E0433|E0412|E0599) (?<file>\S+): /
 
@@ -44,6 +46,20 @@ module Lain
             errors.any? && errors.all? { |text| MISSING_ITEM.match(text)&.[](:file) == subject }
           end
 
+          # A new file is not compiled until its parent module declares it, so the filtered run would
+          # print "running 0 tests"; the harness appends this line, never the test_engineer child.
+          # @return [Array<Registration>]
+          # @raise [Error] when the parent module file does not exist
+          def registration(subject:, root:)
+            return [] unless new_module?(subject)
+
+            name = File.basename(subject, ".rs")
+            parent = parent_file(File.dirname(subject), root)
+            return [] if declared?(File.read(File.join(root, parent)), name)
+
+            [Registration.new(path: parent, line: "pub mod #{name};")]
+          end
+
           def command(paths: [], **)
             return ["cargo", "test", "--workspace", *FLAGS] if paths.empty?
 
@@ -60,6 +76,32 @@ module Lain
           end
 
           private
+
+          def new_module?(subject)
+            subject.end_with?(".rs") && !NOT_MODULES.include?(File.basename(subject, ".rs")) &&
+              File.dirname(subject).split("/").include?("src")
+          end
+
+          def parent_file(dir, root)
+            if bin?(dir)
+              raise Error,
+                    "a src/bin target is not supported by the red step: cargo discovers it with no mod line"
+            end
+
+            candidates = parent_candidates(dir)
+            candidates.find { |path| File.file?(File.join(root, path)) } ||
+              raise(Error, "no parent module file to declare the new file in: expected #{candidates.join(" or ")}")
+          end
+
+          def bin?(dir) = File.basename(dir) == "bin" && File.basename(File.dirname(dir)) == "src"
+
+          def parent_candidates(dir)
+            return ["#{dir}/mod.rs", "#{dir}.rs"] unless File.basename(dir) == "src"
+
+            CRATE_ROOT_FILES.map { |file| "#{dir}/#{file}" }
+          end
+
+          def declared?(source, name) = source.match?(/^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+#{Regexp.escape(name)}\s*;/)
 
           def named(tests, outcome) = tests.select { |m| m[:outcome] == outcome }.map { |m| m[:name] }
 

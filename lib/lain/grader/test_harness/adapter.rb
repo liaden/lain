@@ -10,6 +10,7 @@ module Lain
       #   command(out_path:, paths:) -> argv  # writes the machine-readable result to a FILE
       #   stdout?                             # true: parse the child's stdout, not the FILE
       #   parse(document, exit_status)        # -> {passed:, failed:, errors:} name lists
+      #   registration(subject:, root:)       # -> [Registration] edits the red step makes before its run
       #
       # `paths` narrow the run to those roots or files and follow the adapter's
       # own arguments; empty runs the whole suite.
@@ -24,6 +25,9 @@ module Lain
         # truncated document). Loud, because a silently-zeroed grade would read
         # as "everything failed" and hide the real breakage.
         class Unparseable < Lain::Error; end
+
+        # One line the red step appends to a file so a framework compiles the subject's new file.
+        Registration = Data.define(:path, :line)
 
         # One framework's fingerprint: what it is, what its presence looks like on
         # disk, the predicate that checks it, and how to build its adapter (nil
@@ -131,6 +135,8 @@ module Lain
 
           def build_dir = nil
 
+          def registration(**) = []
+
           # A test written before its subject describes a constant only the
           # subject will define; any other missing constant stays a load error.
           def awaiting_subject?(errors, subject:, root:, **)
@@ -203,6 +209,8 @@ module Lain
           def build_dir = nil
 
           def awaiting_subject?(*, **) = false
+
+          def registration(**) = []
 
           def parse(document, _exit_status)
             { passed: scan(document, @passed),

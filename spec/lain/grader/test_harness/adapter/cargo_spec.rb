@@ -136,6 +136,89 @@ RSpec.describe Lain::Grader::TestHarness::Adapter::Cargo do
     end
   end
 
+  describe "#registration" do
+    around do |example|
+      Dir.mktmpdir { |dir| @dir = dir and example.run }
+    end
+
+    let(:adapter) { described_class.new(@dir, metadata: -> { fixture("workspace_metadata.json") }) }
+
+    def write(path, text = "")
+      FileUtils.mkdir_p(File.dirname(File.join(@dir, path)))
+      File.write(File.join(@dir, path), text)
+    end
+
+    def registration(subject) = adapter.registration(subject:, root: @dir)
+
+    def entry(path, line) = Lain::Grader::TestHarness::Adapter::Registration.new(path:, line:)
+
+    it "declares a new top-level subject in the crate root" do
+      write("src/lib.rs", "pub fn old() {}\n")
+
+      expect(registration("src/meeting.rs")).to eq([entry("src/lib.rs", "pub mod meeting;")])
+    end
+
+    it "falls back to main.rs when the crate has no lib.rs" do
+      write("src/main.rs", "fn main() {}\n")
+
+      expect(registration("src/meeting.rs")).to eq([entry("src/main.rs", "pub mod meeting;")])
+    end
+
+    it "declares a nested subject in its parent's mod.rs" do
+      write("src/lib.rs")
+      write("src/capture/mod.rs")
+
+      expect(registration("src/capture/pipewire.rs")).to eq([entry("src/capture/mod.rs", "pub mod pipewire;")])
+    end
+
+    it "declares a nested subject in a sibling file named for the parent module" do
+      write("src/lib.rs")
+      write("src/capture.rs")
+
+      expect(registration("src/capture/pipewire.rs")).to eq([entry("src/capture.rs", "pub mod pipewire;")])
+    end
+
+    it "finds a workspace member's crate root" do
+      write("crates/app/src/lib.rs")
+
+      expect(registration("crates/app/src/meeting.rs")).to eq([entry("crates/app/src/lib.rs", "pub mod meeting;")])
+    end
+
+    it "registers nothing when the parent already declares the module, publicly or not" do
+      write("src/lib.rs", "mod meeting;\n")
+      write("src/capture/mod.rs", "pub(crate) mod pipewire ;\n")
+
+      expect([registration("src/meeting.rs"), registration("src/capture/pipewire.rs")]).to eq([[], []])
+    end
+
+    it "registers nothing for a crate root or a mod.rs" do
+      write("src/lib.rs")
+
+      expect(%w[src/main.rs src/lib.rs src/capture/mod.rs].map { |path| registration(path) }).to eq([[], [], []])
+    end
+
+    it "registers nothing for a subject outside src/" do
+      expect(registration("tests/meeting.rs")).to eq([])
+    end
+
+    it "refuses a subject whose parent module file does not exist, naming it" do
+      write("src/lib.rs")
+
+      expect { registration("src/capture/pipewire.rs") }
+        .to raise_error(Lain::Error, %r{src/capture\.rs.*src/capture/mod\.rs|src/capture/mod\.rs.*src/capture\.rs})
+    end
+
+    it "refuses a src/bin subject as unsupported, not as a missing mod file" do
+      write("src/lib.rs")
+
+      expect { registration("src/bin/tool.rs") }.to raise_error(Lain::Error, %r{src/bin.*not supported})
+    end
+
+    it "refuses a crate with no root file" do
+      expect { registration("src/meeting.rs") }.to raise_error(Lain::Error, %r{src/lib\.rs})
+    end
+  end
+
   it "names Cargo.lock as the lockfile and target/ as the build dir" do
     expect([adapter.lockfile, adapter.build_dir]).to eq(["Cargo.lock", "target/"])
   end
