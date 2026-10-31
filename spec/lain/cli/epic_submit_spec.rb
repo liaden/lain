@@ -791,6 +791,27 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
   # The driver runs this command in-process, so everything it would otherwise
   # build for itself can be handed in instead.
+  describe Lain::CLI::EpicSubmit::ReadBack do
+    def decided(answered_by, reason)
+      Lain::Epic::GateDecision.new(artifact_digest: "blake3:x", epic_slug: "alpha", stage: "research", approved: false,
+                                   answered_by:, policy: "deferred", latency: 1.0, reason:)
+    end
+
+    def reason_after(answered_by)
+      described_class.new(StringIO.new.then { Lain::Journal.new(io: _1) }, -> { [] })
+                     .tap { _1.record(decided(answered_by, "judge exploded: stack")) }
+                     .reason("blake3:x")
+    end
+
+    it "has no reason to show for a denial the adjudicator reached" do
+      expect(reason_after("adjudicator")).to be_nil
+    end
+
+    it "has the human's reason" do
+      expect(reason_after("human")).to eq("judge exploded: stack")
+    end
+  end
+
   describe "injected collaborators" do
     before do
       write_research
@@ -955,6 +976,21 @@ RSpec.describe Lain::CLI::EpicSubmit do
             expect(verdicts).to eq([[false, "unrecognised"]])
             expect(gate_decisions.first["reason"]).to include(reply.inspect)
           end
+        end
+
+        it "journals the words after a denial as the human's reason and shows them under denied" do
+          said = submitted_while { |question| asker.reply("deny: needs a benchmark first", question.digest) }
+
+          expect(said).to start_with("denied")
+          expect(said).to include("needs a benchmark first")
+          expect(verdicts).to eq([[false, "human"]])
+          expect(gate_decisions.first["reason"]).to eq("needs a benchmark first")
+        end
+
+        it "shows an unrecognised reply's reason under denied" do
+          said = submitted_while { |question| asker.reply("lgtm", question.digest) }
+
+          expect(said).to include("reason:", "lgtm")
         end
 
         # Scenario: end of input is not a human's answer

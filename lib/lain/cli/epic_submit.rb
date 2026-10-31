@@ -349,6 +349,14 @@ module Lain
         end
 
         # @param digest [String] the submitted artifact's address
+        # @return [String, nil] the human's own words behind this command's latest decision on the
+        #   digest; an adjudicator's evidence note is judge-side text and is not shown
+        def reason(digest)
+          decision = latest(digest)
+          decision.reason if [Prompt::SURFACE, Lain::Epic::GateReply::UNRECOGNISED].include?(decision&.answered_by)
+        end
+
+        # @param digest [String] the submitted artifact's address
         # @return [Boolean] whether this command's own latest decision on the digest deferred it
         def deferred?(digest)
           latest(digest)&.policy == Lain::Epic::SignoffQueue::DEFERRED_POLICY
@@ -440,7 +448,9 @@ module Lain
         def seconds(window) = window == 1 ? "1 second" : "#{format("%g", window)} seconds"
 
         def denied
-          ["denied #{@submission.digest}", "  #{@stage} for epic #{slug} -- nothing advanced"].join("\n")
+          reason = @journal.reason(@submission.digest)
+          ["denied #{@submission.digest}", "  #{@stage} for epic #{slug} -- nothing advanced",
+           *("  reason: #{reason}" if reason)].join("\n")
         end
       end
 

@@ -131,6 +131,7 @@ module Lain
       TRAILING_PUNCTUATION = /[.!]+\z/
 
       INSTRUCTION = "Reply #{APPROVALS.join(", ")} to approve, or #{DENIALS.join(", ")} to deny; " \
+                    "a reason may follow a denial word; " \
                     "any other reply is recorded as #{UNRECOGNISED} and denies.".freeze
 
       # @param words [String, nil] what the human wrote; nil when nothing was
@@ -141,13 +142,38 @@ module Lain
 
         word = words.to_s.strip.downcase.sub(TRAILING_PUNCTUATION, "")
         return Epic::Gate::Answer.approve(surface) if APPROVALS.include?(word)
-        return Epic::Gate::Answer.deny(surface) if DENIALS.include?(word)
+        return denial(words, surface) if denial_word?(words)
 
         Epic::Gate::Answer.new(approved: false, surface: UNRECOGNISED, reason: unrecognised(words))
       end
 
+      SEPARATOR = '[\s.!:,;\-]'
+      DENIAL = /\A\s*(?:#{DENIALS.join("|")})(?:#{SEPARATOR}*\z|#{SEPARATOR}+(?<reason>.*\S))/mi
+
+      # The reason is read back to the agent and journaled, so it is one
+      # bounded legible line: a reply cannot pose as a second result line or
+      # repaint the terminal.
+      REASON_LIMIT = 300
+
+      def self.denial_word?(words) = DENIAL.match?(words.to_s)
+      private_class_method :denial_word?
+
+      def self.denial(words, surface)
+        reason = DENIAL.match(words.to_s)[:reason]
+        Epic::Gate::Answer.new(approved: false, surface:, reason: reason && legible_line(reason))
+      end
+      private_class_method :denial
+
+      def self.legible_line(text)
+        clipped(Utf8.escaped(text.gsub(/\s+/, " ")))
+      end
+      private_class_method :legible_line
+
+      def self.clipped(text) = text.length > REASON_LIMIT ? "#{text[0, REASON_LIMIT - 3]}..." : text
+      private_class_method :clipped
+
       def self.unrecognised(words)
-        "the reply #{words.to_s.inspect} is none of #{(APPROVALS + DENIALS).join(", ")}, so the gate denied it"
+        "the reply #{clipped(words.to_s).inspect} is none of #{(APPROVALS + DENIALS).join(", ")}, so the gate denied it"
       end
       private_class_method :unrecognised
     end

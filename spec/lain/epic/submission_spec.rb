@@ -212,6 +212,81 @@ RSpec.describe Lain::Epic::Submission do
     end
   end
 
+  describe Lain::Epic::GateReply do
+    def answer(words) = described_class.answer(words, surface: "human")
+
+    ["deny: the summarizer question needs a benchmark first", "no, the summarizer question needs a benchmark first",
+     "n - the summarizer question needs a benchmark first"].each do |reply|
+      it "reads #{reply.inspect} as the human's denial carrying the words after the denial word" do
+        result = answer(reply)
+
+        expect([result.approved?, result.surface,
+                result.reason]).to eq([false, "human", "the summarizer question needs a benchmark first"])
+      end
+    end
+
+    it "keeps every word after the denial word, a leading because included" do
+      expect(answer("DENIED because X").reason).to eq("because X")
+    end
+
+    it "reads a denial word closed by a full stop as a denial with the words after it" do
+      expect(answer("No. too broad").reason).to eq("too broad")
+    end
+
+    ["deny:", "deny: ", "no -", "n,"].each do |reply|
+      it "reads #{reply.inspect}, a separator and nothing after it, as a reasonless denial" do
+        result = answer(reply)
+
+        expect([result.surface, result.reason]).to eq(["human", nil])
+      end
+    end
+
+    it "folds a multi-line reason onto one line so it cannot pose as a result line" do
+      expect(answer("deny:\nline2\n\napproved abc").reason).to eq("line2 approved abc")
+    end
+
+    it "writes control bytes out rather than passing them on" do
+      expect(answer("deny: red \e[31m and \u0000 nul").reason).to eq("red \\e[31m and \\x00 nul")
+    end
+
+    it "clips an over-long reason to a fixed length and marks the clip" do
+      reason = answer("deny: #{"x" * 100_000}").reason
+
+      expect(reason.length).to eq(described_class::REASON_LIMIT)
+      expect(reason).to end_with("...")
+    end
+
+    it "clips the quoted reply of an unrecognised long reply so the reason stays bounded" do
+      reason = answer("maybe #{"x" * 50_000}").reason
+
+      expect(reason.length).to be <= described_class::REASON_LIMIT + 100
+      expect(reason).to include("...").and end_with("so the gate denied it")
+    end
+
+    it "leaves a reason at the limit unclipped" do
+      expect(answer("deny: #{"x" * described_class::REASON_LIMIT}").reason).not_to end_with("...")
+    end
+
+    it "keeps a bare denial reasonless" do
+      expect(answer("Deny.").reason).to be_nil
+    end
+
+    it "keeps the reason's own case and punctuation" do
+      expect(answer("deny: Split M3.").reason).to eq("Split M3.")
+    end
+
+    it "still denies an approval word followed by words as unrecognised" do
+      result = answer("yes but trim the scope")
+
+      expect(result.surface).to eq("unrecognised")
+      expect(result.reason).to include("yes but trim the scope")
+    end
+
+    it "does not take a word merely starting with a denial word for one" do
+      expect(answer("nothing to add").surface).to eq("unrecognised")
+    end
+  end
+
   describe "gate_question" do
     # The question is the only place a human learns which replies decide, so it
     # names both vocabularies and says what becomes of anything else.
@@ -220,6 +295,12 @@ RSpec.describe Lain::Epic::Submission do
 
       expect(question).to include("approve", "approved", "y", "yes", "deny", "denied", "n", "no")
       expect(question).to include("any other reply is recorded as unrecognised and denies")
+    end
+
+    it "says a reason may follow a denial word" do
+      question = described_class.research(text: "notes", slug: "demo").gate_question
+
+      expect(question).to include("a reason may follow a denial word")
     end
 
     it "names the stage, the slug, and the issue count for an epic_plan" do

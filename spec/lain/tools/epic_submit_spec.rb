@@ -124,6 +124,21 @@ RSpec.describe Lain::Tools::EpicSubmit do
     end
   end
 
+  context "when the human denies with a reason" do
+    it "shows the agent that reason under denied" do
+      result = Sync do |task|
+        call = task.async { tool.call({ "stage" => "research", "slug" => "frugirl-mvp" }, invocation) }
+        task.yield until ask_human.pending?
+        ask_human.reply("deny: the summarizer question needs a benchmark first", ask_human.last_question.digest)
+        call.wait
+      end
+
+      expect(result.content).to start_with("denied").and include("the summarizer question needs a benchmark first")
+      expect(this_sessions_decisions.last).to include("approved" => false, "answered_by" => "human",
+                                                      "reason" => "the summarizer question needs a benchmark first")
+    end
+  end
+
   context "when the submitted stage is adjudicated" do
     let(:gates) { every_stage("hands_off").merge("research" => "adjudicated") }
 
