@@ -599,6 +599,50 @@ RSpec.describe Lain::CLI::Up do
         expect(below[1].to_i).to eq(6)
       end
 
+      describe "pane titles" do
+        # tmux's own format syntax, not Ruby interpolation.
+        # rubocop:disable-next Lint/InterpolationCheck
+        def titles = pane_rows('#{pane_title}').sort
+
+        def border_status = tmux("show-options", "-wv", "-t", "#{session}:chat", "pane-border-status")
+
+        it "titles chat and input on the top border when there is no editor" do
+          lay_out(nvim: nil)
+
+          expect([border_status, titles]).to eq(["top", %w[chat input]])
+        end
+
+        it "leaves the input pane its 6 rows" do
+          lay_out(nvim: nil)
+
+          expect(input_pane_height).to eq(6)
+        end
+
+        it "sets the titles again when a reattach finds them cleared" do
+          lay_out(nvim: nil)
+          pane_rows("\#{pane_id}").each { |id| tmux("select-pane", "-t", id, "-T", "") }
+          tmux("set-window-option", "-t", "#{session}:chat", "pane-border-status", "off")
+
+          described_class.new(session:, socket:, state_path:, chat_preflight: no_preflight).call
+
+          expect([border_status, titles]).to eq(["top", %w[chat input]])
+        end
+
+        it "keeps a title when the program in the pane sets its own" do
+          lay_out(nvim: nil, input_command: "printf '\\033]2;hijack\\033\\\\'; sleep 30")
+          sleep(0.5)
+
+          expect(titles).to eq(%w[chat input])
+        end
+
+        it "does not stop the title of a pane lain did not make" do
+          lay_out(nvim: nil)
+          human_splits_a_shell
+
+          expect(tmux("show-options", "-pv", "-t", "#{session}:chat.2", "allow-set-title")).not_to eq("off")
+        end
+      end
+
       it "records both pane ids on the session, in tmux's own spelling of them" do
         lay_out(nvim: nil)
 

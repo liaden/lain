@@ -374,6 +374,19 @@ module Lain
           enforce(chat:, input:)
         end
 
+        TITLES = { CHAT => "chat", INPUT => "input", EDITOR => "editor" }.freeze
+
+        # Pane scope, so a program in a pane lain made cannot retitle it while the
+        # user's other panes keep their own titles.
+        #
+        # @return [void]
+        def title
+          TITLES.each do |name, text|
+            id = option(name)
+            title_pane(id, text) unless id.empty?
+          end
+        end
+
         # The same two rules, re-asserted from what the session already
         # records -- {Up#keep_failed_pane}'s reason, and its argument
         # verbatim: a session `lain up` did not build this time, or built
@@ -443,6 +456,12 @@ module Lain
         def option(name)
           answer = @tmux.run("show-options", "-v", "-t", @session, name)
           Shell::Out.ok?(answer) ? answer.stdout.strip : ""
+        end
+
+        def title_pane(id, text)
+          @tmux.act("set-option", "-p", "-t", id, "allow-set-title", "off")
+          @tmux.act("set-option", "-p", "-t", id, "allow-rename", "off")
+          @tmux.act("select-pane", "-t", id, "-T", text)
         end
 
         def live = @tmux.run("list-panes", "-t", @window, "-F", PANE_ID).stdout.split
@@ -1410,6 +1429,8 @@ module Lain
         set_option("status-interval", @hud.interval.to_s)
         @tmux.act("set-window-option", "-t", chat_target, "monitor-bell", "on")
         set_option("mouse", "on")
+        @tmux.act("set-window-option", "-t", chat_target, "pane-border-status", "top")
+        @panes.title
         enable_extended_keys
       end
 
