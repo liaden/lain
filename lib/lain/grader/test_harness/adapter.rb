@@ -127,6 +127,19 @@ module Lain
           ERROR_MESSAGE = %r{^(?:\e\[[\d;]*m)*Failure/Error:}
           def stdout? = false
 
+          def lockfile = "Gemfile.lock"
+
+          def build_dir = nil
+
+          # A test written before its subject describes a constant only the
+          # subject will define; any other missing constant stays a load error.
+          def awaiting_subject?(errors, subject:, root:, **)
+            return false if File.exist?(File.join(root, subject))
+
+            wanted = File.basename(subject, ".rb").camelize
+            errors.all? { |text| missing_constants(text).then { |names| names.any? && names.all?(wanted) } }
+          end
+
           def command(out_path:, paths: [])
             ["rspec", "--format", "json", "--out", out_path, *paths]
           end
@@ -142,6 +155,10 @@ module Lain
           end
 
           private
+
+          def missing_constants(text)
+            text.scan(/uninitialized constant (\S+)/).flatten.map { |name| name.split("::").last }
+          end
 
           def names(examples, status)
             examples.select { |example| example["status"] == status }
@@ -180,6 +197,12 @@ module Lain
           def command(out_path:, paths: []) = @out_argv.call(out_path) + paths
 
           def stdout? = false
+
+          def lockfile = nil
+
+          def build_dir = nil
+
+          def awaiting_subject?(*, **) = false
 
           def parse(document, _exit_status)
             { passed: scan(document, @passed),

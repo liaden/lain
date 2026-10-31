@@ -49,6 +49,9 @@ module Lain
       # the very line that names the failure.
       ERROR_DETAIL_LINES = 12
 
+      # The framework adapter, for a caller that must ask it what a run's errors mean.
+      attr_reader :adapter
+
       # @param root [String] the project directory whose framework is detected
       # @param adapter [#command,#stdout?,#parse, nil] an explicit adapter; nil auto-detects
       # @param timeout [Numeric] seconds the child suite may run before {Timeout}

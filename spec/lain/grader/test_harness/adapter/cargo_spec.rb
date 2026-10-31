@@ -99,6 +99,47 @@ RSpec.describe Lain::Grader::TestHarness::Adapter::Cargo do
     end
   end
 
+  describe "#awaiting_subject?" do
+    def awaiting?(errors, subject: "src/meeting.rs")
+      adapter.awaiting_subject?(errors, subject:, target: subject, root:)
+    end
+
+    it "accepts only missing-item errors in the subject's own file" do
+      errors = ["E0425 src/meeting.rs: cannot find function `start`", "E0433 src/meeting.rs: failed to resolve",
+                "E0432 src/meeting.rs: unresolved import", "E0412 src/meeting.rs: cannot find type",
+                "E0599 src/meeting.rs: no method named `end`"]
+
+      expect(awaiting?(errors)).to be(true)
+    end
+
+    it "refuses an error of another kind beside a missing item" do
+      expect(awaiting?(["E0425 src/meeting.rs: x", "E0308 src/meeting.rs: mismatched types"])).to be(false)
+    end
+
+    it "refuses a missing item whose primary span is in another file" do
+      expect(awaiting?(["E0425 src/other.rs: cannot find value"])).to be(false)
+    end
+
+    it "cannot tell a typo in the subject's own inline tests from a missing item, so it accepts it" do
+      expect(awaiting?(["E0425 src/meeting.rs: cannot find value `expected_totl` in this scope"])).to be(true)
+    end
+
+    it "never accepts a split layout's test file importing a missing item, its span being in the test file" do
+      errors = ["E0432 tests/meeting.rs: unresolved import `app::meeting`"]
+
+      expect(adapter.awaiting_subject?(errors, subject: "src/meeting.rs", target: "tests/meeting.rs",
+                                               root:)).to be(false)
+    end
+
+    it "refuses no errors at all" do
+      expect(awaiting?([])).to be(false)
+    end
+  end
+
+  it "names Cargo.lock as the lockfile and target/ as the build dir" do
+    expect([adapter.lockfile, adapter.build_dir]).to eq(["Cargo.lock", "target/"])
+  end
+
   describe "against real cargo", :seam do
     it "counts the passing and the failing test of a scratch crate" do
       skip "cargo is not on PATH" unless system("cargo", "--version", out: File::NULL, err: File::NULL)

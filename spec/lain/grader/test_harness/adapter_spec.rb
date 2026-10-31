@@ -49,6 +49,45 @@ RSpec.describe Lain::Grader::TestHarness::Adapter do
     end
   end
 
+  describe "what an adapter says about an unwritten subject" do
+    let(:command) { described_class::Command.new(out_argv: ->(out) { [out] }, passed: /P/, failed: /F/) }
+    let(:rspec) { described_class::Rspec.new }
+
+    def awaiting?(adapter, errors, root: "/nowhere")
+      adapter.awaiting_subject?(errors, subject: "app/models/greeting.rb", target: "spec/x_spec.rb", root:)
+    end
+
+    it "has rspec accept a missing constant named for the subject while the subject is absent" do
+      expect(awaiting?(rspec, ["Failure/Error: uninitialized constant Billing::Greeting"])).to be(true)
+    end
+
+    it "has rspec refuse a missing constant the subject does not define" do
+      expect(awaiting?(rspec, ["Failure/Error: uninitialized constant Farewell"])).to be(false)
+    end
+
+    it "has rspec refuse a load error that names no missing constant" do
+      expect(awaiting?(rspec, ["Failure/Error: SyntaxError: unexpected end-of-input"])).to be(false)
+    end
+
+    it "has rspec refuse once the subject file exists" do
+      Dir.mktmpdir do |dir|
+        FileUtils.mkdir_p(File.join(dir, "app/models"))
+        File.write(File.join(dir, "app/models/greeting.rb"), "")
+
+        expect(awaiting?(rspec, ["uninitialized constant Greeting"], root: dir)).to be(false)
+      end
+    end
+
+    it "has a command adapter never accept an error as an unwritten subject" do
+      expect(awaiting?(command, ["uninitialized constant Greeting"])).to be(false)
+    end
+
+    it "names rspec's lockfile and no build dir, and a command adapter neither" do
+      expect([rspec.lockfile, rspec.build_dir, command.lockfile,
+              command.build_dir]).to eq(["Gemfile.lock", nil, nil, nil])
+    end
+  end
+
   # rspec's `messages` carries its notes beside its load errors, so only the
   # summary's count says how many errors there were.
   describe "Rspec#parse" do

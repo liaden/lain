@@ -1356,10 +1356,6 @@ module Lain
       # target and these criteria, is carried forward while its tests still
       # fail -- with or without the earlier run's work above it.
       class IssueTests
-        # Only presets with one lockfile name; a command adapter has none.
-        LOCKFILES = { "rspec" => "Gemfile.lock" }.freeze
-        private_constant :LOCKFILES
-
         # What the step left: the generation's record, the failing run, the
         # commit holding the tests, and whether an earlier run made that commit.
         Red = Data.define(:record, :run, :sha, :carried) do
@@ -1422,8 +1418,9 @@ module Lain
         def fresh(criteria, worker_env, guard, subject:, level:, lane:)
           before = dirty(worker_env.cwd)
           record = generated(criteria, worker_env, guard, subject:, level:, lane:)
-          stray!(dirty(worker_env.cwd) - before - [record.target])
-          run = failing(record, worker_env, subject)
+          harness = @harness.call(worker_env.cwd)
+          stray!(dirty(worker_env.cwd) - before - [record.target], harness.adapter)
+          run = failing(record, worker_env, subject, harness)
           Red.new(record:, run:, sha: commit(worker_env.cwd, record))
         end
 
@@ -1460,9 +1457,10 @@ module Lain
           "wrote tests at #{target} the layout does not accept (#{record.verdict})"
         end
 
-        def failing(record, worker_env, subject)
-          run = ran(record.target, worker_env)
-          unloaded!(record.target, run) if unloaded?(run) && !awaiting_subject?(run, worker_env.cwd, subject)
+        def failing(record, worker_env, subject, harness)
+          run = harness.run(worker_env, paths: [record.target])
+          awaited = unloaded?(run) && awaiting_subject?(run, record, worker_env, subject, harness)
+          unloaded!(record.target, run) if unloaded?(run) && !awaited
           return run unless run.clean?
 
           raise Error, "#{record.target} ran #{run.total} examples and none failed before any work was " \
@@ -1472,17 +1470,8 @@ module Lain
 
         def unloaded?(run) = run.total == run.errors.size && !run.errors.empty?
 
-        # A test written before its subject describes a constant only the
-        # subject will define; any other missing constant stays a load error.
-        def awaiting_subject?(run, root, subject)
-          return false if File.exist?(File.join(root, subject))
-
-          wanted = File.basename(subject, ".rb").camelize
-          run.errors.all? { |text| missing_constants(text).then { |names| names.any? && names.all?(wanted) } }
-        end
-
-        def missing_constants(text)
-          text.scan(/uninitialized constant (\S+)/).flatten.map { |name| name.split("::").last }
+        def awaiting_subject?(run, record, worker_env, subject, harness)
+          harness.adapter.awaiting_subject?(run.errors, subject:, target: record.target, root: worker_env.cwd)
         end
 
         def unloaded!(target, run)
@@ -1492,12 +1481,16 @@ module Lain
 
         # The red commit holds the tests alone. Running the suite is how the
         # step proves red, and Bundler rewrites a tracked lock while it does.
-        def stray!(changed)
-          changed -= changed.select { |path| tests_tree?(path) || path == LOCKFILES[@layout.preset.name] }
+        def stray!(changed, adapter)
+          changed -= changed.select { |path| tests_tree?(path) || written_by_the_run?(path, adapter) }
           return if changed.empty?
 
           raise Error, "the test_engineer child also wrote #{changed.join(", ")}, and the red step may write " \
                        "only the tests, so nothing was committed"
+        end
+
+        def written_by_the_run?(path, adapter)
+          path == adapter.lockfile || (!adapter.build_dir.nil? && path.start_with?(adapter.build_dir))
         end
 
         def tests_tree?(path)
@@ -1542,12 +1535,12 @@ module Lain
                        "`#{branch_of(worker_env)}` yourself"
         end
 
+        def ran(target, worker_env) = @harness.call(worker_env.cwd).run(worker_env, paths: [target])
+
         def branch_of(worker_env)
           Lain::Isolation::Checkout.of(worker_env.cwd, shell_out_factory: @shell_out_factory)
                                    .symbolic_head.delete_prefix("refs/heads/")
         end
-
-        def ran(target, worker_env) = @harness.call(worker_env.cwd).run(worker_env, paths: [target])
 
         # The target alone, even when the child left other files, so the red
         # commit holds the tests and nothing else. `--no-verify` because the

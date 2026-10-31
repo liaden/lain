@@ -119,11 +119,11 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
   # checkout was cut from -- never from the checkout, which a gitignored
   # config never reaches.
   def step(provider, harness: rspec, since: git(repo, "rev-parse", "HEAD"), lane: "issue.demo.a.1",
-           subject: "app/models/order.rb")
+           subject: "app/models/order.rb", level: nil)
     layout = Lain::Config.test_layout(root: repo)
     described_class.new(renderer:, role_spawn: role_spawn(provider), layout:, harness:,
                         test_layout: Lain::Middleware::GuardTestLayout::Run.new(layout:, root: repo))
-                   .call(criteria, worker_env, subject:, since:, lane:)
+                   .call(criteria, worker_env, subject:, since:, lane:, level:)
   end
 
   # What an earlier run's red step left on a kept branch: the tests, committed
@@ -355,6 +355,78 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
     FileUtils.mkdir_p(File.dirname(File.join(held, target)))
 
     expect { step(provider) }.to raise_error(Lain::Error, %r{app/models/moved\.rb})
+  end
+
+  context "with the cargo preset and an inline target" do
+    let(:meeting) { "src/meeting.rs" }
+    let(:body) { "#[cfg(test)]\nmod tests {\n    #[test] fn starts() { super::start(); }\n}\n" }
+
+    before do
+      File.write(File.join(repo, ".lain", "config.rb"), "tests preset: :cargo, source_roots: %w[src]\n")
+      trust_project(repo)
+    end
+
+    def diagnostic(code, file, message = "cannot find function `start`")
+      JSON.generate(reason: "compiler-message",
+                    message: { level: "error", message:, code: { code: },
+                               spans: [{ is_primary: true, file_name: file }] })
+    end
+
+    # Cargo's own parsing, lockfile and build dir, with the child process replaced by canned stdout.
+    def cargo_printing(*lines)
+      canned = File.join(@root, "cargo.out")
+      File.write(canned, lines.join("\n"))
+      adapter = Class.new(Lain::Grader::TestHarness::Adapter::Cargo) do
+        define_method(:command) { |**| ["cat", canned] }
+      end.new(held)
+      ->(root) { Lain::Grader::TestHarness.new(root, adapter:) }
+    end
+
+    def cargo_step(harness, extra: nil)
+      FileUtils.mkdir_p(File.join(held, "src"))
+      calls = [tool_response(["w1", "write_file", { "path" => meeting, "content" => body }])]
+      calls << tool_response(["b1", "bash", { "command" => extra }]) if extra
+      step(mock(*calls, text_response("done")), harness:, subject: meeting, level: "unit")
+    end
+
+    it "commits the tests as red when the only errors are missing items in the subject" do
+      result = cargo_step(cargo_printing(diagnostic("E0425", meeting)))
+
+      expect(git(held, "show", "--name-only", "--format=", result.sha)).to eq(meeting)
+    end
+
+    it "refuses an error of another kind as not loading, and commits nothing" do
+      head = git(held, "rev-parse", "HEAD")
+
+      expect { cargo_step(cargo_printing(diagnostic("E0308", meeting, "mismatched types"))) }
+        .to raise_error(Lain::Error, /did not load.*E0308/m)
+      expect(git(held, "rev-parse", "HEAD")).to eq(head)
+    end
+
+    it "refuses a missing item in another file, and commits nothing" do
+      head = git(held, "rev-parse", "HEAD")
+
+      expect { cargo_step(cargo_printing(diagnostic("E0425", "src/other.rs"))) }
+        .to raise_error(Lain::Error, /did not load/)
+      expect(git(held, "rev-parse", "HEAD")).to eq(head)
+    end
+
+    it "keeps a rewritten tracked Cargo.lock out of the red commit and does not call it stray" do
+      File.write(File.join(held, "Cargo.lock"), "# lock\n")
+      git(held, "add", "--", "Cargo.lock")
+      git(held, "commit", "--no-verify", "-q", "-m", "lock")
+
+      result = cargo_step(cargo_printing(diagnostic("E0425", meeting)), extra: "printf 'more\\n' >> Cargo.lock")
+
+      expect(git(held, "show", "--name-only", "--format=", result.sha)).to eq(meeting)
+    end
+
+    it "does not call an ungitignored target/ a stray write" do
+      result = cargo_step(cargo_printing(diagnostic("E0425", meeting)),
+                          extra: "mkdir -p target/debug && printf x > target/debug/out")
+
+      expect(git(held, "show", "--name-only", "--format=", result.sha)).to eq(meeting)
+    end
   end
 
   context "with a command adapter that reports errors inside tests" do

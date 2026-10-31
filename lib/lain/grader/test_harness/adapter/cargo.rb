@@ -15,6 +15,8 @@ module Lain
           FLAGS = %w[--no-fail-fast --message-format=json].freeze
           TEST_LINE = /\Atest (?<name>.+?) \.\.\. (?<outcome>ok|FAILED)\s*\z/
           CRATE_ROOTS = %w[lib main].freeze
+          # A test calling what the subject has not defined yet fails to resolve; any other code is a mistake.
+          MISSING_ITEM = /\A(?:E0425|E0432|E0433|E0412|E0599) (?<file>\S+): /
 
           # One path's place in its package: the package, plus the narrowing
           # that path asks for (a module filter, a test target, or neither).
@@ -29,6 +31,18 @@ module Lain
           end
 
           def stdout? = true
+
+          def lockfile = "Cargo.lock"
+
+          def build_dir = "target/"
+
+          # Any missing-item error in the target is accepted when the target is the subject: an inline
+          # test sits in the subject file, so a typo in a test-local name reads as the item the subject
+          # lacks. A split layout (tests/x.rs importing a missing item) is never awaiting, since its
+          # primary span is in the test file.
+          def awaiting_subject?(errors, subject:, **)
+            errors.any? && errors.all? { |text| MISSING_ITEM.match(text)&.[](:file) == subject }
+          end
 
           def command(paths: [], **)
             return ["cargo", "test", "--workspace", *FLAGS] if paths.empty?

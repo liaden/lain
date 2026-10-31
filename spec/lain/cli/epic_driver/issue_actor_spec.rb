@@ -98,7 +98,10 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
   # The suite, as the red step reads it: the generated tests fail.
   let(:failing) do
     red = Lain::Grader::TestHarness::Run.new(passed: [], failed: ["Order totals its lines"], errors: [], stderr: "")
-    suite = Object.new.tap { |runner| runner.define_singleton_method(:run) { |*, **| red } }
+    suite = Object.new.tap do |runner|
+      runner.define_singleton_method(:run) { |*, **| red }
+      runner.define_singleton_method(:adapter) { Lain::Grader::TestHarness::Adapter::Rspec.new }
+    end
     ->(_root) { suite }
   end
 
