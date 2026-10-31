@@ -107,6 +107,82 @@ module Lain
         def task_of(context) = context.task && Request.new(text: context.task, model_written: true)
       end
 
+      # Stops the judge's clock while its child queues for a provider slot, so
+      # a judge asked while other agents hold every slot is not faulted for
+      # their work. The clock stops only while some caller of the child queues
+      # and none holds a slot, since holding a slot is the judge's own work.
+      # One budget per call bounds every pause together; once spent, queueing
+      # counts again.
+      class Pause
+        # @param timer [Async::Timeout] the judge's bound
+        # @param budget [Numeric] seconds of queueing that may go uncounted
+        def initialize(timer, budget)
+          @timer = timer
+          @budget = budget
+          @thread = Thread.current
+          @queued = 0
+          @inside = 0
+          @since = nil
+          @closed = false
+        end
+
+        # @return [void]
+        def entering = shift { @queued += 1 }
+
+        # @return [void]
+        def admitted
+          shift do
+            @queued -= 1
+            @inside += 1
+          end
+        end
+
+        # @return [void]
+        def abandoned = shift { @queued -= 1 }
+
+        # @return [void]
+        def released = shift { @inside -= 1 }
+
+        # A caller still running after the judge returns must not reschedule its cancelled timer.
+        # @return [void]
+        def close
+          @closed = true
+        end
+
+        private
+
+        # Fiber storage reaches a thread the child starts, and an Async timer
+        # is not safe to move from another thread.
+        def live? = !@closed && Thread.current.equal?(@thread)
+
+        def shift
+          return unless live?
+
+          yield
+          # A fired timer re-armed while the judge unwinds would raise again into an ensure.
+          return unless @timer.duration.positive?
+
+          @queued.positive? && @inside.zero? ? stop : start
+        end
+
+        def stop
+          return if @since
+
+          @since = @timer.now
+          @timer.duration += @budget
+        end
+
+        def start
+          return unless @since
+
+          @budget = [@budget - (@timer.now - @since), 0].max
+          # What is left is the held time, less any queueing past the budget.
+          @timer.duration -= @budget
+          @since = nil
+        end
+      end
+      private_constant :Pause
+
       VERDICT = /\A(approve|deny|defer)\.?\z/i
       IGNORED = ->(_cause) {}
       private_constant :VERDICT, :IGNORED
@@ -114,9 +190,12 @@ module Lain
       # @param role_spawn [#never_parking] the
       #   `(role, context_mode, prompt) -> Tool::Result` seam ({Skill::RoleSpawn})
       # @param timeout [Numeric] seconds the judge may take
-      def initialize(role_spawn:, timeout: TIMEOUT)
+      # @param pause_budget [Numeric] seconds its child may spend queued for a
+      #   provider slot without them counting against `timeout`, summed over the call
+      def initialize(role_spawn:, timeout: TIMEOUT, pause_budget: Provider::Admission::DEFAULT_DEADLINE)
         @role_spawn = role_spawn.never_parking
         @timeout = timeout
+        @pause_budget = pause_budget
         freeze
       end
 
@@ -147,7 +226,18 @@ module Lain
 
       # `Sync` reuses the caller's reactor and makes one when there is none, so
       # the child always runs inside the timed task and the timeout unwinds it.
-      def bounded(&) = Sync { |task| task.with_timeout(@timeout, &) }
+      def bounded(&)
+        Sync do |task|
+          task.with_timeout(@timeout) do |timer|
+            pause = Pause.new(timer, @pause_budget)
+            Provider::Admission::Listener.with(pause, &)
+          ensure
+            pause&.close
+            # A paused timer was rescheduled onto a handle `with_timeout` does not cancel.
+            timer.cancel!
+          end
+        end
+      end
 
       def parse(result, on_fault)
         return faulted(on_fault, "the judge's child returned an error: #{result.text}") unless result.ok?

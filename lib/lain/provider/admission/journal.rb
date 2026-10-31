@@ -67,19 +67,24 @@ module Lain
         # one call. The flag is set before the emit, because the gate admitted
         # this caller the moment the block began.
         #
+        # A caller that never gets a slot is never told it was admitted.
+        #
         # @yieldparam waited [Float] seconds spent queued; {NO_WAIT} if it never was
         # @return the block's value
         # @raise [Busy] whatever the wrapped admission raised
-        def enter
+        def enter(&)
           admitted = false
+          listener = Listener.current
+          listener.entering
           @admission.enter do |waited|
             admitted = true
-            emit(kind: :waited, waited_seconds: waited) unless waited == NO_WAIT
-            yield waited
+            inside(listener, waited, &)
           end
         rescue Busy
           emit(kind: :refused) unless admitted
           raise
+        ensure
+          listener.abandoned unless admitted
         end
 
         # Forwarded untouched: a caller that declines to queue has no wait to
@@ -88,6 +93,14 @@ module Lain
         def try_enter(&block) = @admission.try_enter(&block)
 
         private
+
+        def inside(listener, waited)
+          listener.admitted
+          emit(kind: :waited, waited_seconds: waited) unless waited == NO_WAIT
+          yield waited
+        ensure
+          listener.released
+        end
 
         def emit(kind:, waited_seconds: nil)
           @journal << Telemetry::ProviderWait.new(

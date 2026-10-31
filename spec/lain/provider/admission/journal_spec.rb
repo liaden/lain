@@ -114,6 +114,73 @@ RSpec.describe Lain::Provider::Admission::Journal do
     end
   end
 
+  describe "the admission listener" do
+    let(:recording) do
+      Class.new do
+        attr_reader :heard
+
+        def initialize = @heard = []
+        def entering = @heard << :entering
+        def admitted = @heard << :admitted
+        def abandoned = @heard << :abandoned
+        def released = @heard << :released
+      end.new
+    end
+
+    def listened(&) = Lain::Provider::Admission::Listener.with(recording, &)
+
+    it "is told before the caller queues, once it is in, and when it lets go" do
+      holder, release = hold_the_slot
+      waiter = Thread.new { listened { decorator.enter { :done } } }
+      queued.pop
+      heard_while_queued = recording.heard.dup
+      release.call
+      [waiter, holder].each { |thread| thread.join(5) }
+
+      expect([heard_while_queued, recording.heard]).to eq([%i[entering], %i[entering admitted released]])
+    end
+
+    it "hears the caller is in before the admitted block runs" do
+      order = nil
+      listened { decorator.enter { order = recording.heard.dup } }
+
+      expect(order).to eq(%i[entering admitted])
+    end
+
+    it "is told the caller let go when the admitted block raises" do
+      listened { decorator.enter { raise IOError, "boom" } }
+    rescue IOError
+      expect(recording.heard).to eq(%i[entering admitted released])
+    end
+
+    it "is told the caller let go when hearing it was admitted raises" do
+      raising = recording
+      raising.define_singleton_method(:admitted) { (@heard << :admitted) && raise(IOError, "boom") }
+      listened { decorator.enter { :never } }
+    rescue IOError
+      expect(recording.heard).to eq(%i[entering admitted released])
+    end
+
+    context "when the gate refuses at the deadline" do
+      let(:admission) do
+        Lain::Provider::Admission.new(endpoint:, width: 1, deadline: 0.05, poll_interval:, clock:)
+      end
+
+      it "is told the caller abandoned the queue, never that it was admitted" do
+        holder, release = hold_the_slot
+        listened do
+          decorator.enter { :never }
+        rescue Lain::Provider::Admission::Busy
+          nil
+        end
+        release.call
+        holder.join(5)
+
+        expect(recording.heard).to eq(%i[entering abandoned])
+      end
+    end
+  end
+
   describe "#try_enter" do
     it "forwards to the wrapped admission and journals nothing -- a skip is not a wait" do
       expect(decorator.try_enter { :done }).to eq(:done)
