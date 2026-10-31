@@ -3439,6 +3439,45 @@ RSpec.describe Lain::CLI::Wiring do
       expect(transcripts).to eq([true, false])
     end
 
+    describe "the terminal's completion sources" do
+      def offered_after(typed, backend: self.backend)
+        sources = nil
+        factory = lambda do |channel:, completion_sources:, **|
+          sources = completion_sources
+          Lain::Frontend::TTY.new(channel:, output: StringIO.new, history_path: File::NULL)
+        end
+        wiring = new_wiring(options: { grace: 5 }, chronicle:, status_feed:, stdin: StringIO.new("quit\n"),
+                            tty_factory: factory, conductor_opener:)
+        wiring.run(backend:, resumed: nil, nvim: nil)
+        wiring.conductor.close(reason: :exit)
+        sources.for("/").match(typed).map { |match| match["candidate"] }
+      end
+
+      it "offers a built-in command" do
+        expect(offered_after("inb")).to include("inbox")
+      end
+
+      it "offers a shipped skill" do
+        expect(offered_after("crit")).to include("critique")
+      end
+
+      it "lists skills with the commands it tells an input pane" do
+        wiring = run_wiring
+
+        expect(wiring.send(:command_names)).to include("inbox", "critique")
+      end
+
+      it "offers a project skill" do
+        Dir.mktmpdir("lain-skill-root") do |root|
+          FileUtils.mkdir_p(File.join(root, ".lain", "skills", "deploy"))
+          File.write(File.join(root, ".lain", "skills", "deploy", "skill.md"), "# Deploy\nShip it.\n")
+          project_backend = Lain::CLI::Backend.new({ provider: "ollama", model: nil, max_tokens: 64 }, root:)
+
+          expect(offered_after("depl", backend: project_backend)).to include("deploy")
+        end
+      end
+    end
+
     it "hands the chat's Intake the approval key, which flips the board" do
       built = Hash.new { |hash, key| hash[key] = [] }
       [Lain::Frontend::Intake, Lain::CLI::Switchboard].each do |klass|

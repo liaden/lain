@@ -281,7 +281,7 @@ module Lain
         recorder, session = run_state(resumed)
         agent = wire_agent(channel: Lain::Channel.new, recorder:, session:, backend:, resumed:, views: nvim, notice:)
         startup = [*resumed&.notices, *memory_notices(recorder, resumed), *@observers.notices, *backend.startup_notices]
-        tty = open_terminal(agent, notice, startup)
+        tty = open_terminal(agent, notice, startup, backend)
         rail = Lain::Frontend::Intake.new(screen: tty, history: human.history_for(tty), notes:, on_cycle: approval_key)
         @conductor = open_conductor(tty, rail)
         @conductor.guard do
@@ -370,12 +370,17 @@ module Lain
         { channel:, input: Lain::Frontend::StdinPump.keys(@stdin), prompt_renderer: prompt_renderer(agent, notice),
           layers: @switchboard.mode_switch.method(:layers), alternate_screen: human.alternate_screen?,
           tmux: Frontend::TTY::Notifier.for_chat(@switchboard.guard_inputs.secrets, root),
+          completion_sources: Frontend::Completion::Sources.new(skills: typed_names),
           **Frontend::Theme.on_stdout(paths: @paths).terminal }
       end
 
+      # An Enumerator, so the names are read when completion is first asked, after the command surface exists.
+      def typed_names = Enumerator.new { |names| command_names.each { |name| names << name } }
+
       # The countdown reads its keys through the pump's terminal, so stdin keeps
       # its one reader.
-      def open_terminal(agent, notice, startup)
+      def open_terminal(agent, notice, startup, backend)
+        @skill_catalog = backend.library.catalog
         @tty_factory.call(**terminal_keywords(agent, notice)).then do |tty|
           @human_line = tty.method(:render_summons)
           startup.each(&(human.pane? ? tty.method(:render_warning) : notice))
@@ -447,12 +452,13 @@ module Lain
       def hud_line = Lain::StatusFeed::Reading.new(@status_feed.state).hud(now: Time.now)
 
       # Lazily: the command surface is assembled after the producer is built,
-      # and a pane asks only once it has connected. Through the bound registry's
-      # own registry, because what the Repl holds is the set curried over the
-      # session's Env and the names belong to the set, not to the currying.
+      # and a pane asks only once it has connected. A skill is typed as a command,
+      # so it is listed with them. Through the bound registry's own registry,
+      # because what the Repl holds is the set curried over the session's Env and
+      # the names belong to the set, not to the currying.
       def command_names
         bound = @command_surface&.commands
-        bound ? bound.registry.map { |command| command.name.to_s } : []
+        [*bound&.registry&.map { |command| command.name.to_s }, *@skill_catalog&.names&.map(&:to_s)]
       end
 
       def live_layers

@@ -134,6 +134,22 @@ RSpec.describe Lain::Frontend::Completion::Sources do
       expect(offered(sources.for(described_class::COMMAND))).to eq(["st[2Jatus"])
     end
 
+    it "offers a name once when a command and a skill share it" do
+      sources = described_class.new(commands: [command("qa")], skills: %i[qa critique])
+
+      expect(offered(sources.for(described_class::COMMAND))).to eq(%w[qa critique])
+    end
+
+    it "does not keep a matcher built from no names, so names that arrive later are offered" do
+      names = []
+      sources = described_class.new(skills: names)
+      sources.for(described_class::COMMAND)
+
+      names.replace(%w[approve])
+
+      expect(offered(sources.for(described_class::COMMAND))).to eq(["approve"])
+    end
+
     it "hands back the same matcher rather than rebuilding it" do
       sources = described_class.new(commands: [command("help")])
 

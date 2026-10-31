@@ -40,7 +40,14 @@ module Lain
         def sigil?(char) = SIGILS.include?(char)
 
         # @return [Lain::Ext::Fuzzy] the matcher for `sigil`, built on first ask
-        def for(sigil) = @matchers[sigil] ||= Ext::Fuzzy.new(candidates_for(sigil))
+        def for(sigil)
+          @matchers.fetch(sigil) do
+            candidates = candidates_for(sigil)
+            matcher = Ext::Fuzzy.new(candidates)
+            # A pane asks before the chat's names have arrived; keeping that empty matcher would leave completion dead.
+            candidates.empty? ? matcher : @matchers[sigil] = matcher
+          end
+        end
 
         private
 
@@ -57,7 +64,7 @@ module Lain
         # matched against nor stored a thousand times over.
         def command_names
           named = (@commands.map(&:name) + @skills.to_a).map { |name| Completion.printable(name.to_s) }
-          named.reject(&:empty?)
+          named.reject(&:empty?).uniq
         end
 
         # A plain directory walk, deliberately NOT {Tools::ListFiles} or

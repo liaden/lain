@@ -40,7 +40,7 @@ module InputPaneSocket
     header = lambda do
       File.exist?(hud) ? Lain::StatusFeed::Reading.new(JSON.parse(File.read(hud))).hud(now: Time.now) : ""
     end
-    socket = Lain::CLI::InputSocket.new(rail:, path:, commands: -> { %w[approve inbox] }, header:, tick: 0.05)
+    socket = Lain::CLI::InputSocket.new(rail:, path:, commands: -> { %w[approve inbox research research-epic] }, header:, tick: 0.05)
     begin
       socket.bind
     rescue Lain::CLI::InputSocket::InUse => e
@@ -346,6 +346,17 @@ RSpec.describe "a chat fed by an input pane", :seam do
 
     expect(cockpit.settles { cockpit.heard.find { |record| record["heard"] == "hello" } })
       .to eq({ "heard" => "hello" })
+  end
+
+  it "completes a skill named in the chat's context frame when Tab is pressed in the pane" do
+    cockpit_at("lines")
+
+    cockpit.type("/resea\t")
+
+    plain = -> { cockpit.screen.gsub(/\e\[[0-9;?<>]*[A-Za-z]|\e[78]/, "") }
+
+    expect(cockpit.settles { plain.call.include?("/research-epic") || nil }).to be(true)
+    expect(plain.call).to include("/research\r\r\n/research-epic").and end_with("/research")
   end
 
   # A published struct, as the chat's own header thunk composes one.
