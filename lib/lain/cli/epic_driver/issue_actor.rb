@@ -5,7 +5,7 @@ require "async"
 module Lain
   module CLI
     module EpicDriver
-      # One issue, launched as an actor running the `execute-plan` skill in a
+      # One issue, launched as an actor running the `implement-issue` skill in a
       # checkout of its own.
       #
       # The ORDER is the whole of it. A plan that is not approved stops the
@@ -22,7 +22,7 @@ module Lain
       class IssueActor
         ROLE = "issue_orchestrator"
 
-        SKILL = :"execute-plan"
+        SKILL = :"implement-issue"
 
         # What one launch left standing: the actor, the id its anchor will take,
         # the branch its work is on, and the red step that precedes it.

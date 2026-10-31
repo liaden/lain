@@ -255,6 +255,14 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
       .and end_with("Working directory: #{checkout}")
   end
 
+  it "opens its first prompt with the epic skill and none of execute-plan's orchestration" do
+    supervising { |supervisor| launch(supervisor, "a").actor.settle }
+
+    prompt = first_prompt(provider.requests.last)
+    expect(prompt).to start_with(backend.library.renderer.render(:"implement-issue"))
+    expect(prompt).not_to match(/commit-mode|panel roster|task card|lain land|handback file/i)
+  end
+
   context "when the orchestrator reads its own plan" do
     let(:script) do
       [*test_engineer, tool_response(["r1", "read_file", { "path" => home.plan("a").path }]), text_response("read it")]

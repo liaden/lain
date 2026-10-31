@@ -397,6 +397,35 @@ RSpec.describe "shipped skills" do
     end
   end
 
+  describe "implement-issue's scaffold is the epic driver's per-issue brief" do
+    it "says the tests are committed, the plan is read-only, and the actor commits and rebases but never merges" do
+      with_empty_project do |renderer|
+        scaffold = renderer.render("implement-issue").squish
+
+        expect(scaffold).to match(/failing tests are already committed/i)
+        expect(scaffold).to match(/never weaken|must not (be )?weaken/i)
+        expect(scaffold).to match(%r{plans/<id>\.md.{0,40}approved.{0,40}read-only}i)
+        expect(scaffold).to match(/project's own test command/i)
+        expect(scaffold).to match(/rebase/i).and match(/harness.{0,40}merg|merg.{0,60}harness/i)
+        expect(scaffold).to include("dev", "reviewer_code")
+      end
+    end
+
+    it "mentions none of execute-plan's orchestration vocabulary" do
+      with_empty_project do |renderer|
+        expect(renderer.render("implement-issue")).not_to match(/commit-mode|panel|task card|lain land|handback file/i)
+      end
+    end
+
+    it "describes itself as the epic driver's brief and carries none of lain's workflow idioms" do
+      skill = shipped_catalog.fetch(:"implement-issue")
+      idioms = /design plan|commit-grouping|lib file and its spec|pre-commit|stash|\btraps?\b|\btoolchain\b/i
+
+      expect(skill.description).to match(/epic/i)
+      expect(skill.scaffold).not_to match(idioms)
+    end
+  end
+
   describe "research's scaffold runs without a human and compares options" do
     it "asks no question, compares 3 options including doing nothing, and writes the dated report" do
       with_empty_project do |renderer|
