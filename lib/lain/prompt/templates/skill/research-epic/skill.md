@@ -76,6 +76,9 @@ Structure it so `plan-epic` can decompose from it alone:
 
 ## Phase 4 — Request the research gate
 
+Before you call `epic_submit`, tell the user that the gate waits <%= gate_window %> seconds for an answer
+and that a reply of `deny: <reason>` sends the reason back to you.
+
 Submit `research.md` with the `epic_submit` tool: `stage` is `research` and `slug` is the epic's
 slug. What happens next is the session's
 gate policy, not your choice:

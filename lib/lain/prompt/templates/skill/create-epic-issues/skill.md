@@ -98,6 +98,9 @@ not hold, and every id in a link line resolves.
 
 ## Phase 4 — Request the issue_plan gate
 
+Before you call `epic_submit`, tell the user that the gate waits <%= gate_window %> seconds for an answer
+and that a reply of `deny: <reason>` sends the reason back to you.
+
 Submit each issue's write-up with the `epic_submit` tool: `stage` is `issue_plan`, `slug` is the
 epic's slug, and `issue` is the id. The stage gates one
 issue's work, so it names the issue: the tool refuses an issue_plan submit that names no issue.

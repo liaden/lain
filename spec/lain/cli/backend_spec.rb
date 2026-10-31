@@ -1803,6 +1803,37 @@ RSpec.describe Lain::CLI::Backend do
       expect(backend.library).to be(backend.library)
     end
 
+    describe "the gate window the epic skills name" do
+      def render_epic_skills(project)
+        library = backend_for(provider: "ollama", max_tokens: 1024, root: project).library
+        %i[research-epic plan-epic create-epic-issues].to_h { |name| [name, library.renderer.render(name)] }
+      end
+
+      it "tells the agent, in each epic skill, the approval timeout and the denial form" do
+        Dir.mktmpdir("lain-gate-window") do |project|
+          write_config(project, "approval timeout: 900\n")
+
+          render_epic_skills(project).each_value do |rendered|
+            expect(rendered).to include("gate waits 900 seconds", "deny: <reason>")
+          end
+        end
+      end
+
+      it "names a fractional-looking timeout without its trailing zero" do
+        Dir.mktmpdir("lain-gate-window") do |project|
+          write_config(project, "approval timeout: 900.0\n")
+
+          expect(render_epic_skills(project)[:"research-epic"]).to include("gate waits 900 seconds")
+        end
+      end
+
+      it "names the default window when the project sets none" do
+        Dir.mktmpdir("lain-gate-window") do |project|
+          expect(render_epic_skills(project)[:"research-epic"]).to include("gate waits 300 seconds")
+        end
+      end
+    end
+
     it "answers #slots out of that library, so there is only one read of the tree" do
       expect(backend.slots).to be(backend.library.slots)
     end

@@ -716,8 +716,8 @@ module Lain
       # layering is unchanged -- Wiring still receives a loaded library, and the
       # root arrives from above rather than being resolved here.
       def library
-        @library ||= Skill::Library.load(root: @root, locals: { epic_home: method(:epic_home) },
-                                         environment: @environment)
+        vars = { epic_home: method(:epic_home), gate_window: -> { format("%g", Config.approval_timeout(root: @root)) } }
+        @library ||= Skill::Library.load(root: @root, environment: @environment, locals: vars)
       end
 
       # The loaded prompt slots -- exposed (not just the rendered String

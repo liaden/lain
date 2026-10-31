@@ -74,7 +74,9 @@ RSpec.describe "the dogfood config tree" do
     def render_over_dogfood(skill)
       Dir.mktmpdir do |root|
         File.symlink(File.join(repo, "dogfood/lain"), File.join(root, ".lain"))
-        Lain::Skill::Library.load(root:, locals: { epic_home: "/state/lain/epics/test" }).renderer.render(skill)
+        Lain::Skill::Library.load(root:,
+                                  locals: { epic_home: "/state/lain/epics/test",
+                                            gate_window: 900 }).renderer.render(skill)
       end
     end
 

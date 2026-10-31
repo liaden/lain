@@ -153,6 +153,9 @@ subject is approved along with the plan, and editing it reopens that gate.
 
 ## Phase 6 — Request the epic_plan gate
 
+Before you call `epic_submit`, tell the user that the gate waits <%= gate_window %> seconds for an answer
+and that a reply of `deny: <reason>` sends the reason back to you.
+
 Submit `epic.md` with the `epic_submit` tool: `stage` is `epic_plan`, `slug` is the epic's slug.
 Under `interactive` a human answers; under
 `hands_off` it approves itself audibly; under `deferred` it refuses now and parks the question

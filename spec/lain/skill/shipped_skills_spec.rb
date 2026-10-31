@@ -42,7 +42,9 @@ RSpec.describe "shipped skills" do
   # `.lain/` overrides live; default it at an empty tmpdir so no stray user skill
   # or slot leaks into the "as shipped" assertions.
   def shipped_renderer(root:)
-    Lain::Skill::Library.load(root:, locals: { epic_home: "/state/lain/epics/test" }).renderer
+    Lain::Skill::Library.load(root:,
+                              locals: { epic_home: "/state/lain/epics/test",
+                                        gate_window: 900 }).renderer
   end
 
   def with_empty_project
@@ -405,6 +407,16 @@ RSpec.describe "shipped skills" do
           expect(catalog.fetch(name).slots).to include(:conventions)
           expect { renderer.render(name) }.not_to raise_error
           expect(renderer.render(name).strip).not_to be_empty
+        end
+      end
+    end
+
+    it "warns the human about the gate window and the denial form in the three skills that submit a gate" do
+      with_empty_project do |renderer|
+        %i[research-epic plan-epic create-epic-issues].each do |name|
+          section = renderer.render(name)[/^## Phase \d+ . Request the .*?(?=^## |\z)/m]
+
+          expect(section).to include("Before you call `epic_submit`", "gate waits 900 seconds", "deny: <reason>")
         end
       end
     end
