@@ -97,8 +97,21 @@ RSpec.describe Lain::TestLayout::Mapping do
     end
   end
 
-  it "answers unit for a preset that mirrors, and nothing for cargo, which mirrors no level at all" do
-    expect([rspec.default_level.name, mapping({ "preset" => "cargo" }).default_level]).to eq(["unit", nil])
+  it "answers the unit level for a preset that mirrors, and the inline unit level for cargo" do
+    expect([rspec.default_level.name, mapping({ "preset" => "cargo" }).default_level])
+      .to eq(["unit", Lain::TestLayout::Mapping::Level.new(name: "unit", root: "inline", shape: :inline)])
+  end
+
+  it "places a cargo subject's tests in the subject itself through the default level" do
+    cargo = mapping({ "preset" => "cargo" })
+
+    expect(cargo.test_path("src/meeting.rs", level: cargo.default_level.name)).to eq("src/meeting.rs")
+  end
+
+  it "answers the inline level for a cargo layout that declares default_level unit" do
+    declared = mapping({ "preset" => "cargo", "default_level" => "unit" })
+
+    expect(declared.default_level.shape).to eq(:inline)
   end
 
   # The order the author typed the keys in must not decide this: see

@@ -54,14 +54,15 @@ module Lain
       # two lines of TOML silently moved both. A table that leaves the choice
       # open is refused at load instead ({TestLayout.settled!}),
       # which is why callers reached from a loaded table never see the nil.
-      # @return [Level, nil] nil when no level mirrors at all -- cargo, whose
-      #   unit tests are inline and whose `tests/` is answerable for no source
+      # With no mirrored level (cargo), the answer comes from the inline levels,
+      # since the tests live beside the source.
+      # @return [Level, nil] nil when the layout settles on no level
       def default_level
-        mirrored = @levels.select(&:mirrored?)
-        return mirrored.find { |level| level.name == @layout.default_level } if @layout.default_level
-        return mirrored.first if mirrored.one?
+        candidates = placing_levels
+        return candidates.find { |level| level.name == @layout.default_level } if @layout.default_level
+        return candidates.first if candidates.one?
 
-        mirrored.find { |level| level.name == TestLayout::DEFAULT_LEVEL }
+        candidates.find { |level| level.name == TestLayout::DEFAULT_LEVEL }
       end
 
       # A test file inside the test tree -- the top directory of a mirrored
@@ -112,6 +113,11 @@ module Lain
       end
 
       private
+
+      def placing_levels
+        mirrored = @levels.select(&:mirrored?)
+        mirrored.empty? ? @levels.select { |level| level.shape == :inline } : mirrored
+      end
 
       def shape_of(root)
         return :inline if root == INLINE
