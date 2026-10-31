@@ -44,7 +44,10 @@ RSpec.describe "shipped skills" do
   def shipped_renderer(root:)
     Lain::Skill::Library.load(root:,
                               locals: { epic_home: "/state/lain/epics/test",
-                                        gate_window: 900 }).renderer
+                                        gate_window: 900,
+                                        provider_width: "runs 3 requests at once, so spawn " \
+                                                        "at most 3 researchers at a time",
+                                        researcher_limits: "60 iterations and a 16384-byte answer" }).renderer
   end
 
   def with_empty_project
@@ -646,6 +649,26 @@ RSpec.describe "shipped skills" do
         expect(phase).to match(/paths the user (gave|named)/i)
         expect(phase).to match(/report/i)
         expect(phase).to match(/(not|never|do not) .{0,40}(search|look) above/i)
+      end
+    end
+
+    it "tells the parent how many researchers the provider runs at once, and each one's limits" do
+      with_empty_project do |renderer|
+        phase = renderer.render("research-epic")[/## Phase 2.*?(?=^## Phase 3)/m]
+
+        expect(phase).to include("runs 3 requests at once", "at most 3 researchers at a time",
+                                 "60 iterations and a 16384-byte answer")
+      end
+    end
+
+    it "says there is no concurrency limit when the provider declares no width" do
+      Dir.mktmpdir do |root|
+        renderer = Lain::Skill::Library.load(root:, locals: { epic_home: "/e", gate_window: 900,
+                                                              provider_width: "has no concurrency " \
+                                                                              "limit that lain enforces",
+                                                              researcher_limits: "x" }).renderer
+
+        expect(renderer.render("research-epic")).to include("no concurrency limit that lain enforces")
       end
     end
 

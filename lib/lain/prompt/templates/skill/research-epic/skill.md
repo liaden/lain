@@ -34,6 +34,9 @@ Now read, in the project and the paths the user gave you, and nowhere else. Fan 
 `researcher` sub-agents (`@researcher[/skill]` for a fresh-context probe) over every seam the
 answers named: the files, the utilities worth reusing, the specs that pin current behaviour.
 
+Your provider <%= provider_width %>.
+Each researcher has <%= researcher_limits %>.
+
 Researchers can run commands and write spikes, but only inside a working directory of their own: an
 empty scratch directory by default, or, when you pass `extends` naming a repository in the project or a
 related directory, a worktree of it on a branch of its own. A command outside the read-only set (a

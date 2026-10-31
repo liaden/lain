@@ -1834,6 +1834,55 @@ RSpec.describe Lain::CLI::Backend do
       end
     end
 
+    describe "the provider width the research-epic skill names" do
+      def phase_two(project, **options)
+        backend = backend_for(max_tokens: 1024, root: project, **options)
+        backend.library.renderer.render(:"research-epic")[/## Phase 2.*?(?=^## Phase 3)/m]
+      end
+
+      around do |example|
+        Lain::Provider::Admission.reset!
+        with_env("OLLAMA_API_KEY" => "sk-ollama-test", Lain::Provider::Admission::ENV_KEY => nil) { example.run }
+        Lain::Provider::Admission.reset!
+      end
+
+      it "says 3 concurrent requests on ollama-cloud, with the researcher's iterations and answer bound" do
+        Dir.mktmpdir("lain-width") do |project|
+          phase = phase_two(project, provider: "ollama-cloud")
+
+          expect(phase).to include("runs 3 requests at once", "at most 3 researchers at a time",
+                                   "60 iterations", "16384-byte answer")
+        end
+      end
+
+      it "says lain enforces no concurrency limit for a provider with no declared width" do
+        Dir.mktmpdir("lain-width") do |project|
+          expect(phase_two(project, provider: "anthropic")).to include("no concurrency limit that lain enforces")
+        end
+      end
+
+      it "reads the narrowed width when the skill renders next" do
+        Dir.mktmpdir("lain-width") do |project|
+          backend = backend_for(provider: "ollama-cloud", max_tokens: 1024, root: project)
+          render = -> { backend.library.renderer.render(:"research-epic") }
+          render.call
+          Lain::Provider::Admission.for(endpoint: Lain::Provider::Ollama::Deployment::CLOUD_API_BASE).narrow!(2)
+
+          expect(render.call).to include("runs 2 requests at once", "at most 2 researchers at a time")
+        end
+      end
+    end
+
+    it "reads the epic home only when a skill renders, so a refusing config does not fail the library" do
+      Dir.mktmpdir("lain-lazy-home") do |project|
+        FileUtils.mkdir_p(File.join(project, ".lain"))
+        File.write(File.join(project, ".lain", "config.rb"), "epics home: :repo\n")
+        library = backend_for(provider: "ollama", max_tokens: 1024, root: project).library
+
+        expect { library.renderer.render(:"research-epic") }.to raise_error(Lain::Project::Trust::Untrusted)
+      end
+    end
+
     it "answers #slots out of that library, so there is only one read of the tree" do
       expect(backend.slots).to be(backend.library.slots)
     end

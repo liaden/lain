@@ -176,6 +176,24 @@ module Lain
           [width_notice(gate.width), *retired_notice]
         end
 
+        # The width of the gate the provider enters, read live so a narrowing
+        # after a concurrency refusal shows. The local arm has no cloud gate to
+        # report, so it answers unbounded, as does a cloud endpoint whose limit
+        # the operator removed.
+        #
+        # @return [Integer, Float] Float::INFINITY when nothing limits it
+        def width = cloud? ? gate.width : Float::INFINITY
+
+        # What a fan-out may assume about this provider, in the words the skill
+        # hands the model.
+        #
+        # @return [String]
+        def concurrency
+          return "has no concurrency limit that lain enforces" if width.infinite?
+
+          "runs #{width} requests at once, so spawn at most #{width} researchers at a time"
+        end
+
         # @param channel [Lain::Channel] where retries and stalls are narrated
         # @param queue [Boolean] the caller's willingness to wait for a slot
         # @param journal [#<<] where a {Telemetry::ProviderWait} lands

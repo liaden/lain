@@ -716,8 +716,7 @@ module Lain
       # layering is unchanged -- Wiring still receives a loaded library, and the
       # root arrives from above rather than being resolved here.
       def library
-        vars = { epic_home: method(:epic_home), gate_window: -> { format("%g", Config.approval_timeout(root: @root)) } }
-        @library ||= Skill::Library.load(root: @root, environment: @environment, locals: vars)
+        @library ||= Skill::Library.load(root: @root, environment: @environment, locals: skill_locals)
       end
 
       # The loaded prompt slots -- exposed (not just the rendered String
@@ -747,6 +746,8 @@ module Lain
       rescue UnknownProvider, MissingAPIKey, URI::Error => e
         WindowBook::Unresolved.new(e)
       end
+
+      def skill_locals = SkillLocals.new(@root, method(:epic_home)) { ollama_tier(provider_name) }.to_h
 
       def epic_home
         @epic_home ||= ::Lain::Epic::Home.container(config: Config.load(root: @root), paths: @paths, root: @root)

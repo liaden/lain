@@ -76,7 +76,11 @@ RSpec.describe "the dogfood config tree" do
         File.symlink(File.join(repo, "dogfood/lain"), File.join(root, ".lain"))
         Lain::Skill::Library.load(root:,
                                   locals: { epic_home: "/state/lain/epics/test",
-                                            gate_window: 900 }).renderer.render(skill)
+                                            gate_window: 900,
+                                            provider_width: "runs 3 requests at once, so spawn " \
+                                                            "at most 3 researchers at a time",
+                                            researcher_limits: "60 iterations and a 16384-byte answer" })
+                            .renderer.render(skill)
       end
     end
 

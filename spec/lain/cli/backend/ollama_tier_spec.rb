@@ -512,4 +512,61 @@ RSpec.describe Lain::CLI::Backend::OllamaTier do
       expect(local.startup_notices).to eq([])
     end
   end
+
+  describe "#width" do
+    let(:provider_key) { Lain::Provider::Admission::ENV_KEY }
+
+    around do |example|
+      Lain::Provider::Admission.reset!
+      example.run
+      Lain::Provider::Admission.reset!
+    end
+
+    def width_with(vars, tier = :cloud)
+      with_env({ provider_key => nil, "OLLAMA_API_KEY" => "sk-ollama-test" }.merge(vars)) { send(tier).width }
+    end
+
+    it "is the cloud plan's declared width" do
+      expect(width_with({})).to eq(3)
+    end
+
+    it "is the width the provider-wide variable forces" do
+      expect(width_with(provider_key => "2")).to eq(2)
+    end
+
+    it "is unbounded when the variable removes the limit" do
+      expect(width_with(provider_key => "0")).to eq(Float::INFINITY)
+    end
+
+    it "reads the narrowed gate, not the declared width, once a refusal has narrowed it" do
+      with_key do
+        endpoint = Lain::Provider::Ollama::Deployment::CLOUD_API_BASE
+        cloud.width
+        Lain::Provider::Admission.for(endpoint:).narrow!(2)
+
+        expect(cloud.width).to eq(2)
+      end
+    end
+
+    it "is unbounded for the local arm, which no cloud gate governs" do
+      expect(local.width).to eq(Float::INFINITY)
+    end
+  end
+
+  describe "#concurrency" do
+    around do |example|
+      Lain::Provider::Admission.reset!
+      with_env("OLLAMA_API_KEY" => "sk-ollama-test", Lain::Provider::Admission::ENV_KEY => nil) { example.run }
+      Lain::Provider::Admission.reset!
+    end
+
+    it "tells a fan-out to stay within the cloud width" do
+      expect(cloud.concurrency).to eq("runs 3 requests at once, so spawn at most 3 researchers at a time")
+    end
+
+    it "says there is no limit for a tier no cloud gate governs, hosted providers included" do
+      expect([local.concurrency, described_class.new(name: "anthropic").concurrency])
+        .to all(eq("has no concurrency limit that lain enforces"))
+    end
+  end
 end
