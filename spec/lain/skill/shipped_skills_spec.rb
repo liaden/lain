@@ -113,6 +113,30 @@ RSpec.describe "shipped skills" do
     end
   end
 
+  describe "gherkin-tests names each framework's red rule" do
+    let(:scaffold) do
+      rendered = nil
+      with_empty_project { |renderer| rendered = renderer.render("gherkin-tests") }
+      rendered
+    end
+
+    it "counts the subject's own uninitialized constant as red for rspec" do
+      expect(scaffold).to match(/rspec.*`uninitialized constant`.*counts as red/mi)
+    end
+
+    it "limits the rspec rule to a subject file not written yet, with every error naming its constant" do
+      expect(scaffold).to match(/rspec.*does not exist yet.*every\s+error\s+names/mi)
+    end
+
+    it "counts an undefined function, type or method in the target file as red for cargo" do
+      expect(scaffold).to match(/cargo.*function, type or method.*counts as red.*inline.*subject file/mi)
+    end
+
+    it "says every other load or compile error is not red" do
+      expect(scaffold).to match(/every other load or compile error is not red/i)
+    end
+  end
+
   describe "create-plan's scaffold drives a plan, not code" do
     it "instructs grounding-before-planning, Gherkin acceptance criteria, and writing where the conventions name" do
       with_empty_project do |renderer|

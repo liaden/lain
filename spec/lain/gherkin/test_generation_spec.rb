@@ -120,6 +120,17 @@ RSpec.describe Lain::Gherkin::TestGeneration do
       expect(record.verdict.rule).to eq(:missing)
     end
 
+    it "tells a cargo test engineer the tests go in a cfg(test) module inside the subject, not a mirrored file" do
+      provider = mock(text_response("wrote the module"))
+      cargo = Lain::TestLayout::Guard.new(layout: Lain::TestLayout.preset("cargo"), root:)
+
+      described_class.new(renderer:, role_spawn: role_spawn(provider:), guard: cargo)
+                     .call(criteria, subject: "src/meeting.rs", level: "unit")
+
+      expect(prompt_of(provider)).to include("`#[cfg(test)]` module inside `src/meeting.rs`")
+      expect(prompt_of(provider)).not_to include("the file this project's test layout mirrors")
+    end
+
     it "refuses before spawning when the layout cannot place the subject's tests" do
       provider = mock(text_response("unused"))
 

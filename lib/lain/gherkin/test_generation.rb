@@ -99,6 +99,16 @@ module Lain
         File.file?(path) ? Digest::SHA256.file(path).hexdigest : nil
       end
 
+      def target_sentence(subject, level, target)
+        if target == subject
+          "Write every test below in a `#[cfg(test)]` module inside `#{subject}`, at the #{level} level. " \
+            "Not in a mirrored file, and not in another directory."
+        else
+          "Write every test below into `#{target}`: the file this project's test layout mirrors from\n" \
+            "`#{subject}` at the #{level} level. Not a sibling file, and not another directory."
+        end
+      end
+
       def prompt(mechanical_scenarios, subject, level, target)
         <<~PROMPT
           #{@renderer.render(SKILL)}
@@ -109,8 +119,7 @@ module Lain
 
           ## Target
 
-          Write every test below into `#{target}`: the file this project's test layout mirrors from
-          `#{subject}` at the #{level} level. Not a sibling file, and not another directory.
+          #{target_sentence(subject, level, target)}
 
           ## Scenarios
 
