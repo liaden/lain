@@ -589,6 +589,8 @@ RSpec.describe Lain::StatusFeed::Fleet do
   end
 
   describe Lain::StatusFeed::Fleet::Row do
+    def unaged(extra = {}) = described_class.at(published.merge("started" => "", **extra), now: Time.utc(2026, 9, 20))
+
     let(:published) do
       { "spawn" => "blake3:s", "role" => "dev", "task" => "port the parser", "worker" => "dev.1",
         "state" => "running", "turns" => 3, "depth" => 1, "started" => "2026-09-20T12:00:00Z" }
@@ -608,17 +610,10 @@ RSpec.describe Lain::StatusFeed::Fleet do
       expect(row.to_s).to eq("  dev  running  3t  port the parser")
     end
 
-    # The input pane's header IS the frame the chat publishes, and a pane
-    # redraws on a changed frame -- so a column that ticks costs a redraw a
-    # second. `lain://status` keeps the age, where a redraw is free.
-    it "leaves the age out for a surface that cannot afford to redraw" do
-      expect(described_class.undated(published).to_s).to eq("  dev  running  3t  port the parser")
-    end
-
     # The published struct is JSON read back off disk by a separate process,
     # so the record's own scrub is not the last word before a terminal.
     it "draws a published task holding an escape sequence inert" do
-      row = described_class.undated(published.merge("task" => "clean\e[1A\e[2KPWNED"))
+      row = unaged("task" => "clean\e[1A\e[2KPWNED")
 
       expect(row.to_s).to eq("  dev  running  3t  cleanPWNED")
     end
@@ -626,21 +621,21 @@ RSpec.describe Lain::StatusFeed::Fleet do
     # Ninety-six characters of CJK are 214 terminal columns, and the indent
     # and four columns are drawn beside them.
     it "clamps the whole drawn row to its column budget, not the task to a character count" do
-      row = described_class.undated(published.merge("task" => "\u65E5\u672C\u8A9E" * 40))
+      row = unaged("task" => "\u65E5\u672C\u8A9E" * 40)
 
       expect(Lain::Ext::Prompt.width(row.to_s)).to be <= described_class::COLUMNS
       expect(row.to_s).to end_with("\u2026")
     end
 
     it "clamps at the width a surface names, whole when it fits and cut when it does not" do
-      row = described_class.undated(published.merge("task" => "x" * 90))
+      row = unaged("task" => "x" * 90)
 
       expect(row.listed("", columns: 120)).to end_with("x" * 90)
       expect(Lain::Ext::Prompt.width(row.listed("", columns: 60))).to eq(60)
     end
 
     it "keeps eighty as the width it clamps at when none is named" do
-      row = described_class.undated(published.merge("task" => "x" * 90))
+      row = unaged("task" => "x" * 90)
 
       expect(Lain::Ext::Prompt.width(row.to_s)).to eq(80)
     end
@@ -652,7 +647,7 @@ RSpec.describe Lain::StatusFeed::Fleet do
     end
 
     it "leaves a row inside the budget exactly as composed" do
-      expect(described_class.undated(published).to_s).not_to end_with("\u2026")
+      expect(unaged.to_s).not_to end_with("\u2026")
     end
   end
 end

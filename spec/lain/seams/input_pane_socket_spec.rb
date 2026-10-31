@@ -35,10 +35,10 @@ module InputPaneSocket
                                   state_path: File.join(dir, "state.json"))
     rail = Lain::Frontend::Intake.new(screen: tty)
     # The real composition, not a canned line: the chat's own `hud_line` is
-    # `Reading#header` over the published struct, so the file holds the STRUCT
+    # `Reading#hud` over the published struct, so the file holds the STRUCT
     # and the header is derived here exactly as `CLI::Wiring` derives it.
     header = lambda do
-      File.exist?(hud) ? Lain::StatusFeed::Reading.new(JSON.parse(File.read(hud))).header(now: Time.now) : ""
+      File.exist?(hud) ? Lain::StatusFeed::Reading.new(JSON.parse(File.read(hud))).hud(now: Time.now) : ""
     end
     socket = Lain::CLI::InputSocket.new(rail:, path:, commands: -> { %w[approve inbox] }, header:, tick: 0.05)
     begin
@@ -354,12 +354,6 @@ RSpec.describe "a chat fed by an input pane", :seam do
     File.write(File.join(dir, "hud"), JSON.generate(struct))
   end
 
-  # One `fleet_tree` row, as `StatusFeed::Fleet#tree` publishes one.
-  def fleet_row(task: "port the parser", turns: 1)
-    { "spawn" => "blake3:dev", "role" => "dev", "task" => task, "worker" => "dev.1",
-      "state" => "running", "turns" => turns, "depth" => 0, "started" => Time.now.utc.iso8601 }
-  end
-
   it "shows the chat's header above the prompt, refreshed with no keypress" do
     cockpit_at("lines")
 
@@ -368,44 +362,24 @@ RSpec.describe "a chat fed by an input pane", :seam do
     expect(cockpit.settles { cockpit.screen.include?("fleet:2 inbox:1") || nil }).to be(true)
   end
 
-  # The fleet tree rides the header, so the header is no longer one line. A
-  # pane draws it whole above the prompt and republishes on every change, which
-  # is what makes a child's turn count live with nothing typed.
-  it "draws a multi-line header whole, and redraws it when a row moves" do
-    cockpit_at("lines")
-    publish(fleet: %w[a], fleet_tree: [fleet_row(turns: 1)])
-    first = cockpit.settles { cockpit.screen.include?("dev  running  1t") || nil }
-
-    # A header landing while the redraw's read has not reopened is dropped, and
-    # nothing republishes it, so each attempt publishes a row count of its own
-    # until one lands; a fixed pause only holds on a box with CPU to spare.
-    redrawn = (2..9).any? do |turns|
-      publish(fleet: %w[a], fleet_tree: [fleet_row(turns:)])
-      cockpit.settles(within: 3) { cockpit.screen.include?("dev  running  #{turns}t") || nil }
-    end
-
-    expect([first, redrawn]).to eq([true, true])
-  end
-
-  it "redraws a prompt's header whole when a child spawn adds a row, taking the old one back first" do
+  # A child starting or ending moves only the fleet count, so the header
+  # stays 1 row and the pane rewrites it in place, never taking the whole
+  # block back and reprinting it.
+  it "rewrites the header in place when the fleet count moves, never reprinting it whole" do
     cockpit_at("lines")
     publish(fleet: %w[a], inbox_count: 1)
     cockpit.settles(within: 5) { cockpit.screen.include?("fleet:1 inbox:1") || nil }
 
-    grown = (1..9).any? do |turns|
-      publish(fleet: %w[a], inbox_count: 1, fleet_tree: [fleet_row(turns:)])
-      cockpit.settles(within: 3) { cockpit.screen.include?("dev  running  #{turns}t") || nil }
+    grown = (2..9).any? do |size|
+      publish(fleet: Array.new(size, "a"), inbox_count: 1)
+      cockpit.settles(within: 3) { cockpit.screen.include?("fleet:#{size} inbox:1") || nil }
     end
 
-    expect([grown, cockpit.screen]).to match([true, /\e\[1A\r\e\[J\r\e\[K.{1,4}fleet:1 inbox:1 \r\n  dev  running/m])
+    expect([grown, cockpit.screen]).to match([true, satisfy { |screen| !screen.include?("\e[1A\r\e[J") }])
   end
 
-  # The header is the frame, and a pane redraws a changed frame at whatever
-  # column the line editor left the cursor on. Measured before the age left
-  # the header: seven redraws and seven header prints in eight seconds, and a
-  # six-row pane down to one row for its prompt.
   # While an ask runs the pane is idle, and its terminal holds no line the pane cannot see.
-  it "redraws the header whole while an ask runs when a spawn adds a row, keeping a draft Enter then sends" do
+  it "keeps a draft while an ask runs when the fleet count moves, and Enter then sends it" do
     cockpit_at("running")
     cockpit.type("go\r")
     cockpit.settles { File.exist?(File.join(dir, "asking")) || nil }
@@ -414,20 +388,19 @@ RSpec.describe "a chat fed by an input pane", :seam do
     cockpit.type("abc")
     cockpit.settles { cockpit.screen.end_with?("abc") || nil }
 
-    publish(fleet: %w[a], inbox_count: 1, fleet_tree: [fleet_row])
-    redrawn = cockpit.settles { cockpit.screen.include?("dev  running") || nil }
+    publish(fleet: %w[a b], inbox_count: 1)
+    redrawn = cockpit.settles { cockpit.screen.include?("fleet:2 inbox:1") || nil }
     cockpit.type("\r")
     FileUtils.touch(File.join(dir, "done"))
 
-    expect([redrawn, cockpit.settles { cockpit.heard.find { |record| record.key?("heard") } }, cockpit.screen])
-      .to match([true, { "heard" => "abc" },
-                 /\e\[1A\r\e\[J\r\e\[K.{1,4}fleet:1 inbox:1 \r\n  dev  running[^\n]*\r\nabc\r\n/m])
+    expect([redrawn, cockpit.settles { cockpit.heard.find { |record| record.key?("heard") } }])
+      .to eq([true, { "heard" => "abc" }])
   end
 
   it "redraws nothing while only the clock moves under a running fleet" do
     cockpit_at("lines")
-    publish(fleet: %w[a], fleet_tree: [fleet_row])
-    cockpit.settles { cockpit.screen.include?("dev  running  1t") || nil }
+    publish(fleet: %w[a])
+    cockpit.settles { cockpit.screen.include?("fleet:1 inbox:0") || nil }
     # The count is taken over a quiet window rather than across the change itself.
     prompts = -> { cockpit.screen.scan("you> ").size }
     settled = cockpit.quiet(&prompts)
@@ -445,8 +418,8 @@ RSpec.describe "a chat fed by an input pane", :seam do
   # the pane's own tty is what has to.
   it "draws the HUD again after its own pane is resized, with no keypress" do
     cockpit_at("lines")
-    publish(fleet: %w[a], fleet_tree: [fleet_row])
-    cockpit.settles { cockpit.screen.include?("dev  running  1t") || nil }
+    publish(fleet: %w[a])
+    cockpit.settles { cockpit.screen.include?("fleet:1 inbox:0") || nil }
     # The count is taken over a quiet window rather than across the change itself.
     shown = cockpit.quiet { cockpit.screen.scan("fleet:1 inbox:0").size }
 
@@ -461,8 +434,8 @@ RSpec.describe "a chat fed by an input pane", :seam do
   # prompt draws the header anyway.
   it "leaves a half-typed line alone when the pane is resized" do
     cockpit_at("lines")
-    publish(fleet: %w[a], fleet_tree: [fleet_row])
-    cockpit.settles { cockpit.screen.include?("dev  running  1t") || nil }
+    publish(fleet: %w[a])
+    cockpit.settles { cockpit.screen.include?("fleet:1 inbox:0") || nil }
     cockpit.type("half a line")
     cockpit.settles { cockpit.screen.include?("half a line") || nil }
     shown = cockpit.quiet { cockpit.screen.scan("fleet:1 inbox:0").size }
@@ -481,8 +454,8 @@ RSpec.describe "a chat fed by an input pane", :seam do
   # own latch suppresses an identical one either way. Ctrl-U, and no Enter.
   it "draws the HUD again once a half-typed line is discarded, with no submit" do
     cockpit_at("lines")
-    publish(fleet: %w[a], fleet_tree: [fleet_row])
-    cockpit.settles { cockpit.screen.include?("dev  running  1t") || nil }
+    publish(fleet: %w[a])
+    cockpit.settles { cockpit.screen.include?("fleet:1 inbox:0") || nil }
     cockpit.type("half a line")
     cockpit.settles { cockpit.screen.include?("half a line") || nil }
     shown = cockpit.quiet { cockpit.screen.scan("fleet:1 inbox:0").size }
@@ -492,20 +465,6 @@ RSpec.describe "a chat fed by an input pane", :seam do
     cockpit.type("\x15")
 
     expect(cockpit.settles { cockpit.screen.scan("fleet:1 inbox:0").size > shown || nil }).to be(true)
-  end
-
-  # The pane prints its header raw, so a model-written task line reaches a
-  # terminal as bytes: `\e[1A\e[2K` walks the cursor onto the HUD line and
-  # erases it. Captured off this very harness before the scrub moved to the
-  # row's owner.
-  it "draws a task line's terminal escape inert, leaving the HUD line where it was" do
-    cockpit_at("lines")
-
-    publish(fleet: %w[a], fleet_tree: [fleet_row(task: "clean\e[1A\e[2KPWNED THE HUD LINE")])
-
-    expect(cockpit.settles { cockpit.screen.include?("cleanPWNED THE HUD LINE") || nil }).to be(true)
-    expect(cockpit.screen).to include("fleet:1 inbox:0")
-    expect(cockpit.screen).not_to include("\e[2K")
   end
 
   it "decides a gated call from the pane, and the pane's surface signs the verdict" do

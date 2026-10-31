@@ -91,51 +91,29 @@ Checks:
    an ask that runs for a while, type a few characters into the input pane without submitting,
    and watch the header change under your draft. That is the whole reason for the split: the
    chat pane is a scrolling transcript and cannot hold a live line.
-4. **The header carries the top of the fleet tree under the HUD.** Spawn two subagents and
-   watch rows appear beneath the HUD line, each indented two spaces and nested a further two
-   per level, in the shape `role  state  Nt  task`:
-
-   ```
-   ❄ fleet:2 inbox:0
-     dev  running  2t  port the parser
-       test_engineer  running  0t  write the specs
-   ```
-
-   **Two rows, then `+N more`.** Spawn a third and the last header line must read `  +1 more`
-   rather than a third row — the pane is six rows and the HUD, the rows, the `+N more` and the
-   prompt all have to fit, with a countdown still needing somewhere to draw.
-   [`lain://status`](#1--every-view-is-alive-and-says-what-it-awaits) is where the whole tree is
-   read, and §1 drives it.
-
-   **Which two rows: running first, then the newest ended, and a child never shows without its
-   parent** (round 20's B-4: the header took the first two rows of an arrival-ordered tree, so the
-   newest failure sat under `+1 more`). Drive both shapes and read the header, not the tree:
-   with **3 ended children, the newest failed, none running**, the two rows are the newest two and the
-   last line is `  +1 more`, so the failure is on screen. With **1 running parent that has 1 running
-   child, plus 2 ended siblings**, the rows are the parent and its child. **Catches B-4 returning:** an
-   old success on screen with the newest `failed` row hidden under `+N more`. **A finished judge is not an ended
-   row.** Under `auto`, let the judge look at 10 calls so 10 `auto_approver` children finish after a researcher
-   has: the ended rows still show the researcher and none shows an `auto_approver`. A judge that is running is
-   shown while it runs (it ends within 30 seconds, so look during a slow call).
+4. **The header is the HUD line alone (2026-10-31).** Spawn 3 subagents and read the input pane:
+   1 line, the HUD, holding `fleet:3`, and no row naming a child. Let 1 end and another start: the
+   header stays 1 line and is rewritten in place, never reprinted whole. The tree is read in
+   [`lain://status`](#1--every-view-is-alive-and-says-what-it-awaits) and `lain watch`. **Wrong looks
+   like:** a child row under the HUD, or a header reprinted as a block when a child starts or ends.
 5. **The header carries NO age, and that is the check.** Leave the pane untouched with a child
    running and watch it for a minute: the header must not change, and the pane must not redraw.
    An age column here would make the frame differ from itself once a second — measured at seven
    redraws in eight seconds in a real six-row pane — so the age lives in `lain://status` only.
    A header that ticks is the regression, not a feature.
-6. **A long task line cannot wrap the pane.** Both surfaces clamp a drawn row to 80 terminal
+6. **A long task line cannot wrap `lain://status`.** It clamps a drawn row to 80 terminal
    columns — the *whole* line, its lead and indent included, measured by grapheme cluster rather
    than by character — and an over-long one ends in `…`. Ask for a subagent whose prompt opens
    with a long line of CJK, 96 characters of which draw 214 columns, and confirm the row still
-   occupies exactly one pane row. **Measure it rather than eyeballing it**: a lead added outside
+   occupies exactly one row. **Measure it rather than eyeballing it**: a lead added outside
    the clamp once put a header line at 82 columns, which looks right until the terminal is
-   exactly 80 wide and it wraps. Check the same row in `lain://status` too — the clamp is
-   shared, so a row that fits one surface and not the other is a finding. Round 28 measured two widths and that is correct: the input-pane header clamps to the pane's own width (97 and 98 columns in a 99-column pane), and only `lain://status` clamps at 80 (79 and 80 measured).
+   exactly 80 wide and it wraps. Round 28 measured 79 and 80 columns.
 7. **A task line cannot repaint the surface.** It is a model's words drawn on a terminal, so
    every cell of every row is scrubbed: newlines and tabs become spaces, then whole ANSI escape
    sequences are removed, then the control and format characters. Ask for a subagent whose task
    begins `clean\e[1A\e[2KPWNED` (send the real escape bytes) and confirm the row draws
    `cleanPWNED` — both sequences gone **whole**, with no `[1A` or `[2K` left behind as visible
-   junk, and **the HUD line above it untouched**. That exact task was measured putting its own
+   junk, and **the line above it untouched**. That exact task was measured putting its own
    words on the HUD line before the scrub landed: `\e[1A` walks the cursor up a row and `\e[2K`
    erases it. A bidi override (`U+202E`) in a task must likewise not reorder the row around it,
    and a tab inside one must become a space rather than vanish — deleting it would join two
@@ -226,17 +204,14 @@ Checks:
     write. In a non-tty capture (`tmux -L "$QA_SOCK" pipe-pane` output read as a file, or `lain chat < /dev/null`
     piped to a file) nothing is wrapped.
     *Wrong looks like:* `configur` on one row and `ation` on the next, or a code line cut mid-token.
-15. **The header redraws when its row count changes, and a draft is never clobbered.** With a child
-    running and nothing typed, spawn a subagent so the fleet grows by a row: the header goes from 1 row to 2 in
-    place, and exactly 2 header rows are on screen (count them with `capture-pane -p -t <input>` AFTER pressing `c`, or the close countdown's own row inflates the count; do not count by
-    eye). When the fleet shrinks back, exactly 1 header row is on screen and no stale row is left under it. Then
-    type `abc` without sending it and change the fleet again: `abc` stays on the input row and is what Enter
-    sends, and the new header is drawn whole at the next prompt. A header drawn twice, or a stale fleet row
-    left on screen, is the finding.
+15. **A fleet change never reprints the header, and a draft is never clobbered.** With a child
+    running and nothing typed, spawn a subagent: the header stays exactly 1 row, rewritten in place. Then type `abc`
+    without sending it and change the fleet again: `abc` stays on the input row and is what Enter sends. A header
+    drawn twice, or a child row on screen, is the finding.
 16. **While a child runs and the pane is idle, typing goes into a draft the pane keeps.** Start an ask that runs
     for 20 seconds or more, with no prompt parked. Type `abc` at the input row. The characters stay on the input
-    row, and a header redraw (spawn a child so the row count changes) leaves `abc` where it was and redraws
-    the header above it. Then each of these:
+    row, and a fleet change (spawn a child so `fleet:N` moves) leaves `abc` where it was and rewrites
+    the HUD line above it in place. Then each of these:
     - **Ctrl-C discards the draft.** (Round 25, b25-8, fixed by T16.) Ctrl-C over a draft clears it and sends nothing:
       no signal frame reaches the chat, so no close countdown opens and the ask keeps running. The input row is
       empty. A second Ctrl-C with nothing typed is the ordinary interrupt (`--grace`, the countdown above); answer
@@ -1368,12 +1343,10 @@ What is worth checking:
   header row, not 5, with the prompt line intact. After an answered line the first idle tick prints the header once below the
   echo and later changes rewrite it in place, so the in-flight segment and `fleet:N` now move during a typed ask (they froze
   for 68 s before). At a published prompt (a parked `[y/N]` or `command>`) the HUD holds still while the human has typed anything,
-  wrapped draft or not, and catches up at the next prompt. A header of another row count (a spawn adds a fleet row,
-  a child ends and one goes) is not left stale: with nothing typed the pane takes back the old rows and draws the
-  new header whole at once, so the screen holds exactly the new count of header rows; with a draft typed at such a
-  prompt the draft stays and the new header is drawn at the next prompt. While a child runs and the pane is idle, a
-  draft survives a row-count change (§0 check 16). A resize waits for the next whole draw. **Wrong looks like:**
-  stacked header rows, a stale fleet row, a draft or cursor disturbed by a redraw, or a HUD frozen for a whole ask
+  wrapped draft or not, and catches up at the next prompt. Since 2026-10-31 the header is the HUD line alone, so a
+  spawn rewrites it in place rather than changing its row count, and a draft survives it (§0 check 16). A resize
+  waits for the next whole draw. **Wrong looks like:**
+  stacked header rows, a child row under the HUD, a draft or cursor disturbed by a redraw, or a HUD frozen for a whole ask
   with an empty editor.
 - **`fleet:N` is an observation, not a check.** The trial read `fleet:0` after 2 one-shot subagents ran. The
   fix card found the count correct end to end (the spawn is journaled and published in one synchronous call) and

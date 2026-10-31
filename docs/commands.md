@@ -264,9 +264,9 @@ except a Ctrl-C over a typed line (at `you>`, at `command>`, or a draft typed wh
 only clears that line.
 HUP and TERM end only the pane: closing or killing it leaves the chat running, and a new
 `lain input` on the same socket picks the chat back up.
-While an ask runs, the input pane's header rows update in place; redraws stop once a line is
-sent, until the next prompt draws the header, and a header that gains or loses rows waits for the
-next prompt too. A typed line that wraps past the pane width can misplace an in-place redraw.
+While an ask runs, the input pane's HUD line updates in place; redraws stop once a line is
+sent, until the next prompt draws the header. A typed line that wraps past the pane width can
+misplace an in-place redraw.
 
 **The transcript reads as a conversation.** Because you type in a different pane from the one that
 scrolls, a chat started with an input socket (the `lain up` cockpit) says your side back, stamped
@@ -722,12 +722,10 @@ not two: warm, cold, and a feed that has published no deadline at all, which is 
 went cold.
 
 **`fleet` here is a count, deliberately.** The fleet's shape — one row per child, nested under
-the parent it was spawned from — is drawn in `lain://status` in the editor, and its top two rows
-sit in the input pane's header under the HUD. A row names the child's role, whether it is
-running, how many turns it has committed and the first line of its task; `lain://status` also
-shows the child's age, which the pane's header leaves out so that the header does not change
-once a second. Neither surface prints the spawn digest: that is the address
-[`lain watch`](#lain-watch) takes, and it is seventy columns of what a human reading a fleet is
+the parent it was spawned from — is drawn in `lain://status` in the editor and followed by
+`lain watch`; the input pane's header is the HUD line alone. A row names the child's role,
+whether it is running, how many turns it has committed, the first line of its task and its age.
+Neither surface prints the spawn digest: that is the address [`lain watch`](#lain-watch) takes, and it is seventy columns of what a human reading a fleet is
 not looking for.
 
 ### /sessions

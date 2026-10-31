@@ -440,10 +440,11 @@ module Lain
       end
 
       # What the input pane draws above its prompt: the one HUD line every
-      # surface shows, and the top of the fleet tree under it -- both composed
-      # from the same published struct the tmux bar and the editor's lualine
-      # read, so no surface carries a second derivation.
-      def hud_line = Lain::StatusFeed::Reading.new(@status_feed.state).header(now: Time.now)
+      # surface shows, composed from the same published struct the tmux bar and
+      # the editor's lualine read, so no surface carries a second derivation.
+      # The fleet tree is not drawn here: a row appearing would reprint the
+      # whole header under the cursor.
+      def hud_line = Lain::StatusFeed::Reading.new(@status_feed.state).hud(now: Time.now)
 
       # Lazily: the command surface is assembled after the producer is built,
       # and a pane asks only once it has connected. Through the bound registry's

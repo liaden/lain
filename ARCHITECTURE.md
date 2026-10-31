@@ -20,8 +20,8 @@ The window layer is a multiplexer concern, so the same tmux session renders unde
 
 The split exists because the chat pane is a **scrolling transcript**: anything drawn into it
 scrolls away, so a prompt and a live HUD cannot share it. The input pane runs `lain input`
-(`Frontend::InputPane`, `lib/lain/frontend/input_pane.rb`), which draws the HUD and the top of
-the fleet tree above the prompt and refreshes them without a keypress, and feeds what the human types back
+(`Frontend::InputPane`, `lib/lain/frontend/input_pane.rb`), which draws the HUD line above the prompt
+and refreshes it without a keypress, and feeds what the human types back
 to `lain chat --input socket:NAME` over a Unix socket (`CLI::InputSocket`,
 `lib/lain/cli/input_socket.rb`) at
 `${XDG_RUNTIME_DIR:-/tmp}/lain/input-<project-hash>-<name>.sock`. Both panes derive that path
@@ -48,7 +48,7 @@ call (Landlock and seccomp, no socket). `ext/lain` is in-process and built.
 flowchart LR
   subgraph sess["tmux session 'lain' (or iTerm2 tmux -CC)"]
     TTY["chat pane<br/>lain (Ruby) · TTY frontend · owns the loop<br/>scrolling transcript"]
-    IN["input pane<br/>lain input · HUD + top of the fleet tree, over the prompt<br/>seated at a 6-row floor"]
+    IN["input pane<br/>lain input · HUD line, over the prompt<br/>seated at a 6-row floor"]
     NVIM["nvim pane (lain up --nvim)<br/>nvim --listen"]
     WATCH["subagent viewer windows<br/>lain watch · read-only"]
   end
@@ -1470,7 +1470,7 @@ count) from the events it observes and republishes it for the tmux, TTY, and nvi
 ### The fleet is a tree, and the spawn body is why it is built from two records
 
 `StatusFeed::Fleet` (`lib/lain/status_feed/fleet.rb`) folds every spawn the feed has carried into
-the tree `lain://status` draws and the input pane's header shows the top of. **The tree is not
+the tree `lain://status` draws; the input pane's header shows only the HUD's count. **The tree is not
 built from the `:spawn` event's body**, and that is the ruling the rest of it rests on: a spawn's
 digest is an *address* — a bench arm joins two runs on it, `lain watch` follows it, an actor is
 told by it — so growing its body by a prompt's first line would re-address every spawn in the

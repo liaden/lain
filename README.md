@@ -388,9 +388,9 @@ nvim's own `stack traceback:` or does not arrive at all.
 │  asst   tool_use ×2     │   lain://approval       │
 ├─ lain://inbox ──────────┼─ input ─────────────────┤
 │  2m  which Store impl?  │ 🔥 fleet:2 inbox:1      │
-├─ lain://request ────────┤   researcher running 3t │
-│  system: You are...     │     docent running 1t   │
-│                         │ you> _                  │
+├─ lain://request ────────┤ you> _                  │
+│  system: You are...     │                         │
+│                         │                         │
 └─────────────────────────┴─────────────────────────┘
   🔥 fleet:2 inbox:1                          14:32
 ```
@@ -398,11 +398,10 @@ nvim's own `stack traceback:` or does not arrive at all.
 **The input pane is where you type**, and it is a separate pane because the chat pane is a
 scrolling transcript: a prompt drawn into it scrolls away, and a HUD drawn into it cannot be
 refreshed in place. So `lain up` runs `lain input` in a pane beneath the transcript, which draws
-the HUD above the prompt — with the **top two rows of the fleet tree** under it, and a `+N more`
-when there are others — refreshes them without a keypress, and feeds each line back to the chat
-over a Unix socket. Two rows is `lain up`'s own arithmetic: six rows in the pane, and the HUD,
-the rows, the `+N more` and the prompt all have to live in them, with a countdown still needing
-somewhere to draw. [`lain://status`](#the-cockpit) is where the whole tree is read. It is seated at a **floor** of 6 rows rather than a fixed height: grow it and
+the HUD on 1 line above the prompt, refreshes it in place without a keypress, and feeds each
+line back to the chat over a Unix socket. The HUD's `fleet:N` is the count; the tree itself is
+read in [`lain://status`](#the-cockpit) and `lain watch`, so a child starting or ending never
+reprints the pane. It is seated at a **floor** of 6 rows rather than a fixed height: grow it and
 it stays grown, and only a layout change that drove it under the floor puts it back. Every
 gesture works there — `[y/N]`, `human>`, `↑`/`↓` history, `C-g`, `C-x`, `Tab`, Ctrl-C's countdown and
 its `s` key — and the HUD stays live while an ask runs and while you type.
@@ -444,14 +443,11 @@ runtime buffers exist from attach, `lain://approval` is primed beside them (8 in
 | `lain://status` | the mounted epic's issue graph, as a list and as mermaid, over the live fleet — drawn as a **tree**, one row per child, nested under the parent it was spawned from | no |
 | `lain://epic/<slug>/<doc>` | an epic document the chat just wrote (`research.md`, `epic.md`, an issue or a plan), opened in a split below your window without taking focus. Created on the first write, so it is not among the buffers primed at attach; closing its window is respected on later writes | no |
 
-**The fleet is a tree in both places.** One row per child — its role, whether it is running,
+**The fleet is a tree in `lain://status`.** One row per child — its role, whether it is running,
 how many turns it has committed, and the first line of the task it was given — indented under the
-parent it was spawned from, so a grandchild reads as one. Both surfaces draw from the same row
-object, so they cannot come to disagree, and **both clamp** a drawn row to 80 terminal columns —
-measured by display width, not by character count — so a long task line cannot wrap the pane out
-of a row. The **one** deliberate difference is the age: `lain://status` shows it and the input
-pane's header does not, because an age that ticks would make the header differ from itself once
-a second and cost the pane a redraw a second.
+parent it was spawned from, so a grandchild reads as one, with the child's age beside it. A drawn
+row is clamped to 80 terminal columns, measured by display width, not by character count, so a
+long task line cannot wrap out of its row. The input pane shows only the HUD's `fleet:N` count.
 
 A task line is text a model wrote, so it is scrubbed before any terminal sees it: newlines and
 tabs become spaces, then whole ANSI escape sequences are removed, then the control and format

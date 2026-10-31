@@ -80,32 +80,6 @@ module Lain
       # @return [Integer] 0..100
       def self.percent(ratio) = (ratio * FULL_PERCENT).floor.clamp(0, FULL_PERCENT)
 
-      # How many fleet rows a header carries under the HUD line. Two, and the
-      # arithmetic is `lain up`'s: the input pane is six rows, and the HUD, the
-      # rows, the "+N more" and the prompt all live in them -- with a third row
-      # a countdown has nowhere of its own to draw. `lain://status` is where
-      # the whole tree is read.
-      HEADER_ROWS = 2
-
-      # What the tree is set in from, so the rows read as standing under the
-      # HUD rather than beside it. It is handed to the row and clamped with it.
-      LEAD = "  "
-
-      # A published frame with its fleet rows cut to a pane's width. The chat
-      # publishes rows wider than any pane may have because only the pane knows
-      # its window; the HUD line is not a row and is left whole.
-      #
-      # @param frame [Hash, nil] one decoded frame, with or without a header
-      # @param columns [Integer] the pane's width, zero when it cannot say
-      # @return [Hash, nil] the frame, its header cut
-      def self.fitted(frame, columns)
-        return frame unless frame&.key?("header")
-
-        width = columns.positive? ? columns : Fleet::Row::COLUMNS
-        hud, *rows = frame["header"].to_s.split("\n")
-        frame.merge("header" => [hud, *rows.map { |row| Fleet::Row.clamped(row, columns: width) }].join("\n"))
-      end
-
       # @param path [String] a published state file, absent or unreadable as
       #   often as not
       # @return [Reading] over whatever was there, or over nothing
@@ -158,35 +132,6 @@ module Lain
         [marker(now:), " fleet:#{fleet_size} inbox:#{inbox_count}", *optional_segments(now:, timed:), " "].join
       end
 
-      # The HUD with the fleet tree under it: what a surface with more than one
-      # line shows, which today is the input pane's header. The HUD line stays
-      # exactly what every one-line surface draws, so the two cannot drift.
-      #
-      # It takes the TOP of the tree and says what it left rather than growing
-      # with the fleet: this is drawn above a prompt a human is typing at, and a
-      # header that pushes the prompt off the bottom of the pane is worse than
-      # one that says there are more.
-      #
-      # NOTHING BELOW THE FIRST LINE READS A CLOCK, and that is a constraint
-      # rather than an omission. This string IS the frame the chat publishes to
-      # the pane, and a pane redraws whenever the frame changes: an age column
-      # would make it differ from itself once a second and cost a redraw a
-      # second, each printed where the line editor left the cursor. The rows
-      # are therefore {Fleet::Row.undated}; `lain://status` shows the age, where
-      # a redraw is a buffer rewrite nobody sees. `now:` still decides the HUD's
-      # own cache marker, which flips once rather than ticking.
-      #
-      # @param now [Time] the wall clock the HUD's marker is decided at
-      # @return [String] one line, or one line per row beneath it
-      def header(now:) = [hud(now:), *fleet_rows].join("\n")
-
-      # @return [Array<String>] the rows as drawn, indented under the HUD
-      def fleet_rows
-        rows = Array(@state["fleet_tree"])
-        drawn = shown(rows).map { |row| Fleet::Row.undated(row).listed("", under: LEAD, columns: Fleet::Row::PUBLISHED) }
-        rows.size > HEADER_ROWS ? [*drawn, "#{LEAD}+#{rows.size - HEADER_ROWS} more"] : drawn
-      end
-
       def fleet_size = Array(@state["fleet"]).size
 
       def inbox_count = @state.fetch("inbox_count").to_i
@@ -204,31 +149,6 @@ module Lain
       def guess_mark = window_guessed? ? GUESS : ""
 
       private
-
-      # Running rows first, then the newest ended: the tree is oldest-first, so
-      # a head-take would show the oldest ended rows and hide the newest failure.
-      def shown(rows)
-        ranked = rows.each_index.sort_by { |index| [rows[index]["state"] == "running" ? 0 : 1, -index] }
-        chosen = ranked.each_with_object([]) { |index, kept| admit(rows, index, kept) }
-        chosen.sort.map { |index| rows[index] }
-      end
-
-      # A row comes with its ancestors or not at all, so a child is never drawn
-      # without the parent it stands under.
-      def admit(rows, index, kept)
-        needed = [*ancestors(rows, index), index] - kept
-        kept.concat(needed) if kept.size + needed.size <= HEADER_ROWS
-      end
-
-      def ancestors(rows, index)
-        parent = parent_index(rows, index)
-        parent ? [*ancestors(rows, parent), parent] : []
-      end
-
-      def parent_index(rows, index)
-        depth = rows[index]["depth"].to_i
-        rows.each_index.first(index).reverse_each.find { |above| rows[above]["depth"].to_i < depth }
-      end
 
       def cache_deadline
         Stamp.iso8601(@state["cache_deadline"])

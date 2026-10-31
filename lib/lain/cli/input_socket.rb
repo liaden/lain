@@ -450,8 +450,7 @@ module Lain
         # What a pane may fall behind by: 64 KiB, about two socket buffers of
         # ordinary HUD frames. A pane that has not read that much is not slow,
         # it has stopped -- a Ctrl-Z'd `lain input` keeps its descriptor open.
-        # Measured tolerance is ~150 s of today's HUD at the production tick,
-        # and ~30 s once a header carries a multi-line fleet tree.
+        # Measured tolerance is ~150 s of today's HUD at the production tick.
         BACKLOG = 64 * 1024
 
         # What ONE frame from a pane may be, which is a DIFFERENT budget and

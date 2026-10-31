@@ -400,6 +400,27 @@ RSpec.describe Lain::CLI::Wiring do
                                                                                   root: backend_root)
   end
 
+  # The fleet tree is read through lain://status and lain watch; the pane's
+  # header is the HUD line alone, so a child starting or ending never changes
+  # its row count.
+  describe "the input pane's header" do
+    let(:running) do
+      Array.new(3) do |index|
+        { "spawn" => "blake3:c#{index}", "role" => "dev", "task" => "port the parser", "state" => "running",
+          "turns" => 1, "depth" => 0, "started" => "2026-09-20T12:00:00Z" }
+      end
+    end
+
+    it "is 1 line holding the HUD and the fleet count, naming no child, while children run" do
+      state = { "fleet" => %w[a b c], "fleet_tree" => running, "inbox_count" => 0 }
+      header = new_wiring(options: { grace: 5 }, chronicle:, status_feed: instance_double(Lain::StatusFeed, state:))
+               .send(:hud_line)
+
+      expect(header.lines.size).to eq(1)
+      expect(header).to include("fleet:3").and(satisfy { |line| !line.include?("dev") })
+    end
+  end
+
   describe "the bench arms" do
     let(:arm_options) { { grace: 5, confine: "reader", judge_facts: "facts", tripwire: "observe" } }
     let(:armed) { new_wiring(options: arm_options, chronicle:, status_feed:) }

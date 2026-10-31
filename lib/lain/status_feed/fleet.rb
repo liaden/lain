@@ -294,11 +294,6 @@ module Lain
         # minimum width, so a row inside it fits every terminal lain draws in.
         COLUMNS = 80
 
-        # What a surface that cannot know its reader's width publishes: the
-        # input pane's header crosses a socket, and the pane cuts it down to
-        # the window it has.
-        PUBLISHED = 200
-
         ELLIPSIS = "…"
 
         # A row with an AGE, for a surface where a redraw is free: nvim
@@ -308,18 +303,6 @@ module Lain
         # @param now [Time] the instant every row in one drawing is aged against
         # @return [Row]
         def self.at(published, now:) = composed(published, aged(published["started"], now))
-
-        # A row with NO age, for the input pane's header. The age is left out
-        # rather than rendered coarsely because the header IS the frame the
-        # chat publishes: an age that ticks makes that frame differ from itself
-        # once a second, and each fresh frame tears the pane's read down and
-        # redraws it. Measured in a real six-row pane: seven redraws in eight
-        # seconds against one. The instant is still published, so a surface
-        # that can afford the redraw shows it.
-        #
-        # @param published [Hash] one row of {Fleet#tree}
-        # @return [Row]
-        def self.undated(published) = composed(published, "")
 
         # Every cell is scrubbed here as well as at the record, and the second
         # pass is not redundant: this renders the PUBLISHED struct, which is
