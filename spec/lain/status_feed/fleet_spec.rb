@@ -356,6 +356,27 @@ RSpec.describe Lain::StatusFeed::Fleet do
                                   "started" => "2026-09-20T12:00:00Z" }])
     end
 
+    it "tells 2 spawns with the same role and task apart by their labels" do
+      fleet = described_class.new(clock: -> { now })
+      rows = %w[capture diarization].map do |label|
+        spawn_event(label).tap do |launch|
+          fleet.launched(launch)
+          fleet.progressed(progress(launch, label:, role: "researcher", task_line: "survey", turns: 0))
+        end
+      end
+
+      expect(rows.size).to eq(2)
+      expect(fleet.tree.map { |row| row["role"] }).to eq(["capture (researcher)", "diarization (researcher)"])
+    end
+
+    it "shows the bare role for a spawn that carries no label" do
+      fleet = described_class.new(clock: -> { now })
+      launch = spawn_event("a").tap { |event| fleet.launched(event) }
+      fleet.progressed(progress(launch, role: "researcher", task_line: "survey", turns: 0))
+
+      expect(fleet.tree.map { |row| row["role"] }).to eq(["researcher"])
+    end
+
     it "puts a grandchild under the child whose head it was spawned from, with each one's turns" do
       fleet = described_class.new(clock: -> { now })
       child = spawn_event("dev")

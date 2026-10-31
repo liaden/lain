@@ -4633,6 +4633,24 @@ RSpec.describe Lain::Tools::Subagent do
       expect(rows.map { |row| row["role"] }).to eq(["dev (gherkin-tests)"])
     end
 
+    it "shows a named spawn's label on its row, beside the role" do
+      tool = build_subagent(provider: mock(text_response("done")), announces_as: "researcher",
+                            observer: tee, telemetry: feed)
+
+      tool.call({ "prompt" => "survey vad", "name" => "asr-vad" }, invocation)
+
+      expect(rows.map { |row| row["role"] }).to eq(["asr-vad (researcher)"])
+    end
+
+    it "keeps the role alone on the row of a spawn the model did not name" do
+      tool = build_subagent(provider: mock(text_response("done")), announces_as: "researcher",
+                            observer: tee, telemetry: feed)
+
+      tool.call({ "prompt" => "survey vad" }, invocation)
+
+      expect(rows.map { |row| row["role"] }).to eq(["researcher"])
+    end
+
     # The row is keyed on the spawn digest, which is the address a watcher
     # names -- so the tree and the roster cannot come to disagree about which
     # child they are describing.

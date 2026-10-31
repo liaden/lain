@@ -1505,7 +1505,8 @@ one row, and the parent edge is resolved once, at launch.
 
 **Both surfaces render from one `StatusFeed::Fleet::Row`**, so the columns cannot come to differ
 between them; each keeps only its own lead, a bullet for the markdown buffer and none for the
-header.
+header. A row's role cell carries the spawn's label when the parent gave one, as
+`asr-vad (researcher)`, so 2 researchers in flight read apart; an unnamed spawn shows its role alone.
 
 **Clamping is shared, not one surface's habit.** `Row#listed` is what both call, and it clamps
 the whole drawn line — the lead, the indent and every column — to 80 terminal columns, measured

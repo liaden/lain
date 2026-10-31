@@ -254,7 +254,7 @@ module Lain
       def dispatched(input, builder)
         return adopt_actor(input) if @mode == :actor
 
-        spawn_one_shot(input.prompt, lease: kept_lease(input), builder:)
+        spawn_one_shot(input.prompt, lease: kept_lease(input), builder:, announced: announced_as(input.name))
       end
 
       # The Supervisor runs {#launch_actor} under its own reactor task, so the
@@ -297,23 +297,28 @@ module Lain
       # same scope: under plan, a child's writes land in the spike. Read here,
       # where every one-shot spawn passes -- a tool call, a role skill, a
       # fan-out -- and once, so the lease and the session agree.
-      def spawn_one_shot(prompt, on_stream_started: nil, lease: @kept.lease_for(nil), builder: @builder)
+      def spawn_one_shot(prompt, on_stream_started: nil, lease: @kept.lease_for(nil), builder: @builder,
+                         announced: @announces_as)
         # Per spawn, not per tool, so a fan-out's record shows WHICH spawns
         # ran un-cacheable.
         policy.prefix.journal_floor(journal)
         scope = @seam.scope.current
         Lineage::OneShot.new(lineage, parent_timeline, consumed: telemetry, journal:).recording do |record|
-          Tool::Result.ok(finished(record, leased(record, prompt, scope:, lease:, on_stream_started:, builder:)).text)
+          held = leased(record, prompt, scope:, lease:, on_stream_started:, builder:, announced:)
+          Tool::Result.ok(finished(record, held).text)
         end
       end
 
       # The key a remembered denial is held under stays the wired one: a name
       # the model picks for itself must not buy a fresh slate of denials.
       def builder_for(label)
-        return @builder if label.nil?
+        label.nil? ? @builder : @builder.named(labelled(label))
+      end
 
-        who = Requester.new(name: @announces_as.name, label:, role: @announces_as.name, skill: @announces_as.skill)
-        @builder.named(who)
+      def announced_as(label) = label.nil? ? @announces_as : labelled(label)
+
+      def labelled(label)
+        Requester.new(name: @announces_as.name, label:, role: @announces_as.name, skill: @announces_as.skill)
       end
 
       # The input is checked before any record is written, so a refused
@@ -326,10 +331,10 @@ module Lain
 
       # A child the scope did not lend to -- one its caller lent a checkout of
       # its own -- keeps that checkout, so its session is not the scope's.
-      def leased(record, prompt, scope:, lease:, on_stream_started:, builder:)
+      def leased(record, prompt, scope:, lease:, on_stream_started:, builder:, announced:)
         scope, lent = lending(scope, lease)
         lent.hold(@name, journal:) do |worker_env, sync, worker|
-          progress = reporting(record.spawned(prompt), prompt, worker)
+          progress = reporting(record.spawned(prompt), prompt, worker, announced)
           child = build_child(record.parent, worker_env, scope, progress:, task: prompt, builder:)
           run_child(record.built(child), prompt, sync, on_stream_started:)
         end
@@ -348,9 +353,9 @@ module Lain
       # The live views' half of the same dispatch. It goes out under the lease
       # and after the :spawn, which is what lets the row name both the worker
       # the child's writes land in and the spawn a watcher addresses it by.
-      def reporting(spawn, prompt, worker)
+      def reporting(spawn, prompt, worker, announced)
         Progress.new(spawn: spawn.digest, tee: telemetry)
-                .dispatched(who: @announces_as, task: prompt, worker:)
+                .dispatched(who: announced, task: prompt, worker:)
       end
 
       # The answer, with what the lease's handback owes the parent folded in,
