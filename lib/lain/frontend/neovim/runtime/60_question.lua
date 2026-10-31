@@ -127,16 +127,10 @@ local function question_buf(name)
   return buf
 end
 
--- Open lain://question on a pending set's rendered document, taking the
--- cursor for set_compose's reason: lain is handing the human something and
--- asking them to answer it.
---
--- FOCUSING an already-shown buffer is this function's job and not Ruby's.
--- QuestionView REFUSES to open a set while one is open, so the only
--- window-already-there case reaching here is a fresh set landing in a window the
--- human left open. set_compose merely declines to stack a second split; this one
--- also moves the cursor, because a document that appears off-screen reads as
--- nothing having happened.
+-- Open lain://question on a pending set's rendered document, SHOWN AND NEVER
+-- ENTERED: the split opens below and the human's current window stays theirs,
+-- because the input pane answers the same set. Line 1 is set on lain's window
+-- without entering it.
 --
 -- b:lain_question_digest is the set's CONTENT digest, not a counter: it stamps
 -- the buffer, rides back with every write and abandon, and is what lets a write
@@ -160,10 +154,8 @@ function _G.__lain.set_question(name, lines, digest)
   vim.bo[buf].modified = false
   local win = vim.fn.win_findbuf(buf)[1]
   if win == nil then
-    win = vim.api.nvim_open_win(buf, true, { split = "below", win = 0 })
+    win = vim.api.nvim_open_win(buf, false, { split = "below", win = 0 })
     vim.w[win].lain_question_opened = true
-  else
-    vim.api.nvim_set_current_win(win)
   end
   vim.api.nvim_win_set_cursor(win, { 1, 0 })
   announce_render(name, buf)

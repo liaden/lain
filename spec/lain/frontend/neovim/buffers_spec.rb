@@ -528,6 +528,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       inspector.exec_lua(<<~LUA, [lines, digest])
         local lines, digest = ...
         _G.__lain.set_question("lain://question", lines, digest)
+        vim.api.nvim_set_current_win(vim.fn.win_findbuf(vim.fn.bufnr("lain://question"))[1])
         vim.cmd("normal! zR")
         return true
       LUA

@@ -1402,6 +1402,7 @@ RSpec.describe Lain::Frontend::Neovim, "the thread pane's write refusal", :nvim 
       lua(<<~LUA, [])
         vim.rpcrequest = function() error("line 3 has no slot in this grammar", 0) end
         _G.__lain.set_question("lain://question", { "## Which?", "- [ ] `pg`" }, "blake3:c0ffee")
+        vim.api.nvim_set_current_win(vim.fn.win_findbuf(vim.fn.bufnr("lain://question"))[1])
         vim.api.nvim_buf_set_lines(vim.fn.bufnr("lain://question"), 0, -1, false,
           { "## Which?", "- [ ] `pg`", "stray" })
       LUA

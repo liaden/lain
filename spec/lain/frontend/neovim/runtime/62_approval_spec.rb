@@ -197,6 +197,206 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
+  describe "showing the list without taking the cursor" do
+    let(:frontend) { described_class.new(forks: no_forks, channel:, socket_path: @socket) }
+
+    def park(text, rows: 1) = park_lines([text], rows:)
+
+    def park_lines(lines, rows: lines.size)
+      inspector.exec_lua(<<~LUA, [lines, rows])
+        local lines, rows = ...
+        _G.__lain.set_approval(lines, 1, rows, { lines[1] }, { 1 })
+        return true
+      LUA
+    end
+
+    def empty = park("(no approvals pending)", rows: 0)
+
+    def move_cursor(win, row)
+      inspector.exec_lua("vim.api.nvim_win_set_cursor(..., { select(2, ...), 0 }); return true", [win, row])
+    end
+
+    def active_timers
+      inspector.exec_lua(<<~LUA, [])
+        local count = 0
+        vim.uv.walk(function(handle)
+          if handle:get_type() == "timer" and handle:is_active() then count = count + 1 end
+        end)
+        return count
+      LUA
+    end
+
+    def shorten_grace(milliseconds)
+      inspector.exec_lua("vim.g.lain_approval_close_grace_ms = ...; return true", [milliseconds])
+    end
+
+    def current_window = inspector.exec_lua("return vim.api.nvim_get_current_win()", [])
+
+    def approval_windows = inspector.exec_lua("return vim.fn.win_findbuf(vim.fn.bufnr('lain://approval'))", [])
+
+    def window_cursor(win) = inspector.exec_lua("return vim.api.nvim_win_get_cursor(...)", [win])
+
+    def primed
+      wait_until_editor { buffer_lines("lain://approval") == ["(no approvals pending)"] }
+    end
+
+    it "opens the split below with the call on line 1 and leaves the current window alone" do
+      frontend.run do
+        primed
+        before = current_window
+        park("pwd")
+
+        windows = approval_windows
+        expect(windows.size).to eq(1)
+        expect(window_cursor(windows.first)).to eq([1, 0])
+        expect(current_window).to eq(before)
+      end
+    end
+
+    it "shows the next call in the same window when it parks within the grace" do
+      frontend.run do
+        primed
+        park("pwd")
+        shown = approval_windows
+        shorten_grace(300)
+
+        park("(no approvals pending)", rows: 0)
+        park("ls")
+
+        sleep 0.6
+        expect(approval_windows).to eq(shown)
+        expect(buffer_lines("lain://approval")).to eq(["ls"])
+      end
+    end
+
+    it "closes the window lain opened once the grace passes with nothing parked" do
+      frontend.run do
+        primed
+        park("pwd")
+        shorten_grace(100)
+        park("(no approvals pending)", rows: 0)
+
+        wait_until_editor { approval_windows.empty? }
+      end
+    end
+
+    it "puts the cursor on line 1 of a window it opens, though the buffer remembers another line" do
+      frontend.run do
+        primed
+        park_lines(%w[one two three])
+        move_cursor(approval_windows.first, 3)
+        shorten_grace(100)
+        empty
+        wait_until_editor { approval_windows.empty? }
+
+        park_lines(%w[one two three])
+
+        expect(window_cursor(approval_windows.first)).to eq([1, 0])
+      end
+    end
+
+    it "puts the cursor back on line 1 when a call parks into the window an empty list left, and only then" do
+      frontend.run do
+        primed
+        park_lines(%w[one two three])
+        win = approval_windows.first
+        move_cursor(win, 3)
+        park_lines(%w[one two three])
+        expect(window_cursor(win)).to eq([3, 0])
+
+        park_lines(%w[one two three], rows: 0)
+        move_cursor(win, 2)
+        park_lines(%w[one two three])
+
+        expect(window_cursor(win)).to eq([1, 0])
+      end
+    end
+
+    it "holds one clock at a time, restarts it on each empty and drops it when a call parks" do
+      frontend.run do
+        primed
+        idle = active_timers
+        park("pwd")
+        empty
+        empty
+        expect(active_timers).to eq(idle + 1)
+
+        park("ls")
+        expect(active_timers).to eq(idle)
+      end
+    end
+
+    it "does not let the first empty's clock close the window after a second empty restarted it" do
+      frontend.run do
+        primed
+        park("pwd")
+        shorten_grace(600)
+        empty
+        sleep 0.4
+        empty
+        sleep 0.4
+
+        expect(approval_windows.size).to eq(1)
+        wait_until_editor { approval_windows.empty? }
+      end
+    end
+
+    # The timer has fired and its callback is queued but not yet run when the
+    # list is touched again, which only a single exec_lua can order.
+    def with_fired_clock(after_firing)
+      park("pwd")
+      inspector.exec_lua(<<~LUA, [after_firing])
+        vim.g.lain_approval_close_grace_ms = 0
+        _G.__lain.set_approval({ "(no approvals pending)" }, 2, 0, {}, {})
+        vim.uv.sleep(20)
+        vim.uv.run("nowait")
+        load(...)()
+        vim.wait(100)
+        return true
+      LUA
+      approval_windows.size
+    end
+
+    it "keeps the window when a clock that already fired is re-armed before its callback runs" do
+      frontend.run do
+        primed
+        kept = with_fired_clock(<<~LUA)
+          vim.g.lain_approval_close_grace_ms = 600000
+          _G.__lain.set_approval({ "(no approvals pending)" }, 3, 0, {}, {})
+        LUA
+
+        expect(kept).to eq(1)
+      end
+    end
+
+    it "keeps the window when a call parks before the fired clock's callback runs" do
+      frontend.run do
+        primed
+        kept = with_fired_clock(<<~LUA)
+          _G.__lain.set_approval({ "ls" }, 3, 1, { "ls" }, { 1 })
+        LUA
+
+        expect(kept).to eq(1)
+      end
+    end
+
+    it "counts the grace from the latest empty, not the first" do
+      frontend.run do
+        primed
+        park("pwd")
+        shorten_grace(600)
+        park("(no approvals pending)", rows: 0)
+        sleep 0.4
+        park("ls")
+        park("(no approvals pending)", rows: 0)
+        sleep 0.4
+
+        expect(approval_windows.size).to eq(1)
+        wait_until_editor { approval_windows.empty? }
+      end
+    end
+  end
+
   describe "the helpers that poll for lain://approval" do
     it "answers nil from every reader while the buffer does not exist yet" do
       expect([approval_state, approval_calls, approval_call_index, call_for_row(1)]).to all(be_nil)

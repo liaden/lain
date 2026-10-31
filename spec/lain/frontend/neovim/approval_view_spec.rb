@@ -1160,6 +1160,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
 
     def read_windows(handle)
       worker = Thread.new { park_answer_and_sweep(handle) }
+      inspector.exec_lua("vim.g.lain_approval_close_grace_ms = 100; return true", [])
       observed_windows { yield if block_given? }
     ensure
       @release.push(:done)
@@ -1174,6 +1175,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       taken = yield
       @empty.push(:now)
       waited_for { buffer_lines == described_class::EMPTY }
+      sleep 0.5
       { parked:, taken:, emptied: windows_showing }
     end
 

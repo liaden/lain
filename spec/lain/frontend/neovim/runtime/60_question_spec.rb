@@ -107,6 +107,39 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
+    it "opens the first set below without changing the current window" do
+      frontend.run do
+        wait_until_editor { buffer_lines("lain://journal").any? }
+        before = current_window
+        opened_question(asked)
+
+        expect(question_windows.size).to eq(1)
+        expect(current_window).to eq(before)
+      end
+    end
+
+    it "keeps the current window when a new set lands in a window already shown" do
+      frontend.run do
+        wait_until_editor { buffer_lines("lain://journal").any? }
+        opened_question(asked)
+        inspector.exec_lua("vim.cmd('wincmd t'); return true", [])
+        before = current_window
+        expect(question_windows).not_to include(before)
+        inspector.exec_lua(<<~LUA, [])
+          vim.api.nvim_win_set_cursor(vim.fn.win_findbuf(vim.fn.bufnr("lain://question"))[1], { 3, 0 })
+          return true
+        LUA
+        inspector.exec_lua(<<~LUA, [rendered(asked), digest])
+          local lines, digest = ...
+          _G.__lain.set_question("lain://question", lines, digest)
+          return true
+        LUA
+
+        expect(current_window).to eq(before)
+        expect(question_cursor).to eq([1, 0])
+      end
+    end
+
     it "hints at the answer slot of a free-text question until an indented answer is typed" do
       frontend.run do
         wait_until_editor { buffer_lines("lain://journal").any? }
@@ -577,6 +610,8 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       return win and vim.api.nvim_win_get_cursor(win) or nil
     LUA
   end
+
+  def current_window = inspector.exec_lua("return vim.api.nvim_get_current_win()", [])
 
   def question_windows
     inspector.exec_lua("return vim.fn.win_findbuf(vim.fn.bufnr('lain://question'))", [])

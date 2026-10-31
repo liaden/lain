@@ -93,6 +93,12 @@ neighbouring call in silence. ACKED, never answered -- a verdict resolves a prom
 happen on the reactor, so it rides the command inbox to the consumer fiber rather than being
 served on the RPC thread.
 
+Since 2026-10-31, with the wire unchanged, set_approval opens its split below WITHOUT entering it,
+so the human's current window stays where it was; an emptied split closes after a 5-second grace,
+and a call parked inside the grace reuses the window rather than flapping it. set_question opens
+below the same way. The `y` and `n` keymaps stay buffer-local, so answering in nvim means moving
+into the split; the input pane answers the same call.
+
 ## Protocol 13
 
 __lain.set_review gained a THIRD argument, `sides` -- which of {Lain::Review::SIDES} the round

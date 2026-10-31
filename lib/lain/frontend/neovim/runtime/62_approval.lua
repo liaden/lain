@@ -106,6 +106,28 @@ local function close_opened_windows(buf)
   end
 end
 
+function lain_approval.stop_grace()
+  if lain_approval.timer then
+    lain_approval.timer:stop()
+    lain_approval.timer:close()
+    lain_approval.timer = nil
+  end
+end
+
+function lain_approval.start_grace(buf)
+  lain_approval.stop_grace()
+  local timer = vim.uv.new_timer()
+  lain_approval.timer = timer
+  timer:start(vim.g.lain_approval_close_grace_ms or 5000, 0, vim.schedule_wrap(function()
+    if lain_approval.timer == timer then
+      lain_approval.stop_grace()
+      if vim.api.nvim_buf_is_valid(buf) then
+        close_opened_windows(buf)
+      end
+    end
+  end))
+end
+
 -- Whole-buffer replace for the parked list, stamped twice and carrying two
 -- more variables beside them.
 --
@@ -137,32 +159,41 @@ end
 -- one entry per PARKED CALL, `call_index` is b:lain_approval_rows-shaped
 -- (1-based), and `calls[call_index[N]]` is row N's command in full.
 --
--- IT TAKES THE WINDOW, and only on the way IN: lain is PARKED on the answer with
--- a clock running, and an editor showing nothing while the chat pane waited is
--- the defect this module exists to fix. Focus is taken only when no window is
--- already showing the buffer and there is something to answer, so a poll never
--- re-steals a cursor and an emptied list never opens a window on nothing.
+-- IT SHOWS THE WINDOW AND NEVER ENTERS IT. A parked call has a clock running and
+-- an editor showing nothing was the defect, but the split opening below keeps
+-- the call visible, and the input pane answers the same call, which is where
+-- focus usually is. The keys stay buffer-local, so answering inside nvim means
+-- moving into the split like any other window. A window it opens starts on
+-- line 1; one reused after an empty list is put back there without entering it.
 --
--- AND IT GIVES THE WINDOW BACK: a window opened BECAUSE rows appeared has no
--- claim on the screen once they are gone, and a session gated once would
--- otherwise carry a pane reading the empty projection for the rest of its life.
+-- AND IT GIVES THE WINDOW BACK, AFTER A GRACE (vim.g.lain_approval_close_grace_ms,
+-- default 5000): a window opened BECAUSE rows appeared has no claim on the
+-- screen once they are gone, but a stream of short calls would flap the split,
+-- so an empty list arms ONE timer per buffer, rows arriving stop it and each
+-- empty restarts it. A callback already queued
+-- when its clock was replaced does nothing.
 --
 -- Written BEFORE the placement (46_sidebar's ordering), so the window never
 -- shows a half-drawn buffer.
 function _G.__lain.set_approval(lines, gen, rows, calls, call_index)
   local buf = lain_approval.buf()
+  local was_empty = (vim.b[buf].lain_approval_rows or 0) == 0
   vim.b[buf].lain_view_generation = gen
   vim.b[buf].lain_approval_rows = rows
   vim.b[buf].lain_approval_calls = calls
   vim.b[buf].lain_approval_call_index = call_index
   local shown = vim.fn.win_findbuf(buf)[1]
   set_lines(buf, 0, -1, lines)
-  if rows > 0 and shown == nil then
-    local opened = vim.api.nvim_open_win(buf, true, { split = "below", win = 0 })
-    vim.w[opened].lain_approval_opened = true
-    vim.api.nvim_win_set_cursor(opened, { 1, 0 })
-  elseif rows == 0 then
-    close_opened_windows(buf)
+  if rows > 0 then
+    lain_approval.stop_grace()
+    if shown == nil then
+      local opened = vim.api.nvim_open_win(buf, false, { split = "below", win = 0 })
+      vim.w[opened].lain_approval_opened = true
+    elseif was_empty then
+      vim.api.nvim_win_set_cursor(shown, { 1, 0 })
+    end
+  elseif shown ~= nil then
+    lain_approval.start_grace(buf)
   end
   announce_render(lain_approval.NAME, buf)
 end
