@@ -18,7 +18,8 @@ module Lain
     # Runtime state is deliberately absent from the layout (`research.md`,
     # `epic.md`, `issues/<id>.md`, `plans/<id>.md`) -- an issue's current status
     # is the Journal fold, not a file here, so nothing in this directory can
-    # disagree with the run that produced it.
+    # disagree with the run that produced it. `issues/<id>.md` is likewise only
+    # the authored half of an issue; {IssueView} renders the rest from `epic.md`.
     class Home
       # Reopened rather than written as a `Data.define do ... end` block: a
       # constant or nested class defined THERE is lexically scoped to
@@ -200,9 +201,11 @@ module Lain
         # EACCES, ELOOP -- is one failure to a caller, and naming it here keeps a
         # raw `Errno::EISDIR: Is a directory @ io_fread` from reaching a user.
         # The ENOENT clause must come first: it is a subclass of SystemCallError.
+        # UTF-8 whatever the locale says, because a rendered view joins these
+        # bytes with UTF-8 text and a mismatched encoding raises there.
         def read
           contained!
-          File.read(path)
+          File.read(path, encoding: Encoding::UTF_8)
         rescue Errno::ENOENT
           raise MissingArtifact, "no epic artifact at #{path}"
         rescue SystemCallError => e

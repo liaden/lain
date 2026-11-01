@@ -50,7 +50,9 @@ module Lain
 
       def description
         "Writes one artifact of an epic (research, epic, issue or plan) into this project's epic home, " \
-          "replacing the file. Refuses while a review holds the file."
+          "replacing the file. Refuses while a review holds the file. An issue file is the authored half of " \
+          "the issue's view, so its link lines, its own header, a Links heading, a gherkin fence outside " \
+          "Acceptance criteria and restated scenarios are refused."
       end
 
       protected
@@ -59,6 +61,7 @@ module Lain
         parsed = parsed_issues(input)
         home = @homes.for(input.slug)
         artifact = ARTIFACTS.fetch(input.artifact).call(home, input.issue)
+        refuse_derived!(home, input)
         journaled_write(artifact, input.content)
         session_of(invocation).record_document(document_name(home, artifact))
         Tool::Result.ok("wrote #{input.content.bytesize} bytes to #{artifact.path}#{parsed}")
@@ -86,6 +89,15 @@ module Lain
         end
 
         ", #{count} #{count == 1 ? "issue" : "issues"} parsed"
+      end
+
+      # The issue file is only the authored half of the view, so a line lain
+      # renders from epic.md would be a second copy free to drift from it.
+      def refuse_derived!(home, input)
+        return unless input.artifact == "issue"
+
+        graph = home.read_epic
+        Epic::IssueView.new(issue: graph.fetch(input.issue), graph:, authored: input.content).refuse_derived!
       end
 
       # {Epic::Home::Artifact#write} raises every system error of its own as a

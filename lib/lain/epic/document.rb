@@ -171,6 +171,36 @@ module Lain
         "#{preamble}#{body.empty? ? body : "#{body}\n"}".freeze
       end
 
+      # An issue's link lines in the one order both renderings use. `Blocked by:`
+      # is never stored, so only a caller holding the graph can supply it, and
+      # epic.md's own {Writer} never does.
+      #
+      # @param issue [Issue] the issue whose edges and labels to write
+      # @param blocked_by [Array<String>] the derived ids that must finish first
+      # @return [Array<String>] one line per kind that has a value
+      def link_lines(issue, blocked_by: [])
+        stored = LINK_FIELDS.to_h { |kind, field| [kind, link_targets(issue, field)] }
+        edges = { "Blocks" => stored.fetch("Blocks"), "Blocked by" => blocked_by, **stored.except("Blocks") }
+        [*edges.reject { |_kind, ids| ids.empty? }.map { |kind, ids| "#{kind}: #{ids.map { "`#{_1}`" }.join(", ")}" },
+         *label_lines(issue)]
+      end
+
+      # SINGULAR_LINKS names which fields hold one id, so the arity question is
+      # answered by the same constant the parse consults rather than by asking
+      # the value what it looks like.
+      def link_targets(issue, field)
+        value = issue.public_send(field)
+        SINGULAR_LINKS.include?(field) ? [value].compact : value
+      end
+
+      def label_lines(issue)
+        LABEL_LINKS.filter_map do |kind, field|
+          value = issue.public_send(field)
+          "#{kind}: #{QUOTED_LABELS.include?(field) ? "`#{value}`" : value}" if value
+        end
+      end
+      private_class_method :link_targets, :label_lines
+
       # This grammar's verdict on a description and a criteria block, keyed by
       # field so {Writer#refuse!} -- reached through
       # {Epic::Issue#document_grammar_failures} -- can ask about one field at
@@ -477,27 +507,7 @@ module Lain
           issue.criteria.chomp
         end
 
-        def links = [*LINK_FIELDS.filter_map { |kind, field| link_line(kind, field) }, *label_lines].join("\n")
-
-        def label_lines
-          LABEL_LINKS.filter_map do |kind, field|
-            value = issue.public_send(field)
-            "#{kind}: #{QUOTED_LABELS.include?(field) ? "`#{value}`" : value}" if value
-          end
-        end
-
-        def link_line(kind, field)
-          ids = targets(field)
-          "#{kind}: #{ids.map { |id| "`#{id}`" }.join(", ")}" unless ids.empty?
-        end
-
-        # SINGULAR_LINKS names which fields hold one id, so the arity question is
-        # answered by the same constant the parse consults rather than by asking
-        # the value what it looks like.
-        def targets(field)
-          value = issue.public_send(field)
-          SINGULAR_LINKS.include?(field) ? [value].compact : value
-        end
+        def links = Document.link_lines(issue).join("\n")
 
         # Consults {Issue#document_grammar_failures} rather than walking
         # DESCRIPTION_RULES/CRITERIA_RULES itself: the same verdict backs

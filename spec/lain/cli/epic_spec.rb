@@ -1188,10 +1188,11 @@ RSpec.describe Lain::CLI::Epic do
       expect(command.show("plans/a1")).to eq("the a1 plan\n")
     end
 
-    it "prints an issue document by its home path" do
+    it "prints an issue document as its view, the graph's links included" do
+      home_for("frugirl").epic.write("### [ ] `a1` First\n\n### [ ] `b2` Second\n\nBlocks: `a1`\n")
       home_for("frugirl").issue("a1").write("the a1 issue\n")
 
-      expect(command.show("issues/a1")).to eq("the a1 issue\n")
+      expect(command.show("issues/a1")).to eq("# a1 -- First\n\nthe a1 issue\n\n## Links\n\nBlocked by: `b2`\n")
     end
 
     it "names the missing file and the epic home" do

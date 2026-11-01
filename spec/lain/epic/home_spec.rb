@@ -187,6 +187,19 @@ RSpec.describe Lain::Epic::Home do
       end
     end
 
+    it "reads a file as UTF-8 whatever the default external encoding" do
+      Dir.mktmpdir do |tmp|
+        home = described_class.resolve(config: config_for(:repo), paths: paths_for(tmp), root: tmp, slug: "alpha")
+        home.issue("a1").write("# a1 \u2014 the story\n")
+        original = Encoding.default_external
+        Encoding.default_external = Encoding::US_ASCII
+
+        expect(home.issue("a1").read).to eq("# a1 \u2014 the story\n")
+      ensure
+        Encoding.default_external = original
+      end
+    end
+
     it "round-trips issues/<id>.md" do
       Dir.mktmpdir do |tmp|
         home = described_class.resolve(config: config_for(:repo), paths: paths_for(tmp), root: tmp, slug: "alpha")

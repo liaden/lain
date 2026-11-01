@@ -298,6 +298,24 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
 
       expect(rpc.epic_docs).to be_empty
     end
+
+    it "posts epic.md and every issue view shown for that epic when epic.md is written" do
+      Dir.mktmpdir do |tmp|
+        homes = Lain::CLI::EpicMount::Homes.new(
+          journal: [], root: tmp, config: Lain::Config.new(epics: Lain::Config::Epics.new(home: :xdg)),
+          paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => tmp, "HOME" => tmp })
+        )
+        homes.for("frugirl").epic.write("### [ ] `a1` First\n")
+        homes.for("frugirl").issue("a1").write("prose\n")
+        surfaces = described_class.new(forks: no_forks, rpc:, approval_view:, epic_docs: homes)
+        doc = ->(kind, path) { Lain::Epic::DocWritten.new(epic_slug: "frugirl", kind:, path:, byte_digest: "b") }
+        surfaces.post(doc.call("issue", "issues/a1.md"))
+        surfaces.post(doc.call("epic", "epic.md"))
+
+        expect(rpc.epic_docs.map(&:first)).to eq(%w[lain://epic/frugirl/issues/a1.md lain://epic/frugirl/epic.md
+                                                    lain://epic/frugirl/issues/a1.md])
+      end
+    end
   end
 
   describe "a settled ask" do

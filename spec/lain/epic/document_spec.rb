@@ -39,6 +39,13 @@ RSpec.describe Lain::Epic::Document do
           issue("c", status: "done", criteria: criteria_source))
   end
 
+  describe ".link_lines" do
+    it "puts a derived Blocked by after Blocks and before Related" do
+      expect(described_class.link_lines(issue("a", blocks: ["b"], related: ["c"]), blocked_by: ["z"]))
+        .to eq(["Blocks: `b`", "Blocked by: `z`", "Related: `c`"])
+    end
+  end
+
   describe "the test subject and level lines" do
     let(:source) do
       "### [ ] `store-layout` Lay out the store\n\nSubject: `src/store/layout.rs`\nLevel: unit\n"

@@ -211,18 +211,19 @@ module Lain
         mermaid ? Lain::Epic::Mermaid.render(progress(resolved)) : report(resolved)
       end
 
-      # One of an epic's documents, verbatim.
+      # One of an epic's documents, verbatim, except an issue, which is shown
+      # as its {Lain::Epic::IssueView}.
       #
       # @param doc [String] `research`, `epic`, `issues/ID` or `plans/ID`
       # @param slug [String, nil] the epic; omitted resolves to the sole one
-      # @return [String] the document's bytes
+      # @return [String] the document's bytes, or an issue's rendered view
       # @raise [UnknownDocument] for any other name
       # @raise [Lain::Error] a missing document, an unresolvable epic, or an
       #   unwritable id
       def show(doc = "research", slug = nil)
         slugs = slugs_in(container)
         resolved = chosen(slug, slugs, container, remedy: "lain epic show SLUG")
-        document(home_for(resolved), doc).read
+        document(home_for(resolved), doc)
       end
 
       # WHICH epic a bare command means: the sole one in the home, or the named
@@ -433,10 +434,10 @@ module Lain
       def document(home, doc)
         kind, id = doc.split("/", 2)
         case [kind, id]
-        in ["research", nil] then home.research
-        in ["epic", nil] then home.epic
-        in ["issues", String] then home.issue(id)
-        in ["plans", String] then home.plan(id)
+        in ["research", nil] then home.research.read
+        in ["epic", nil] then home.epic.read
+        in ["issues", String] then Lain::Epic::IssueView.read(home, id).to_markdown
+        in ["plans", String] then home.plan(id).read
         else raise UnknownDocument, "no document #{doc.inspect} -- name one of research, epic, issues/ID or plans/ID"
         end
       end

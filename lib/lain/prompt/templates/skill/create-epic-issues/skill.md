@@ -1,13 +1,13 @@
 ---
-description: Walk an approved epic.md and write one self-contained issues/<id>.md per issue — description, Gherkin acceptance criteria, references, and links — so an implementer needs nothing but that file. Use after the epic_plan gate has approved the graph.
+description: Walk an approved epic.md and write one issues/<id>.md per issue — prose, added Gherkin scenarios, and references — so an implementer needs nothing but that issue's view, which lain renders from the file and the graph. Use after the epic_plan gate has approved the graph.
 slots:
   - conventions
 ---
 # create-epic-issues
 
 Write up every issue the approved `epic.md` declares, one file each. The property that matters:
-**an implementer opening `issues/<id>.md` needs nothing else** — not this conversation, not
-`research.md`, not the epic. If the file only makes sense next to the epic, it is not done.
+**an implementer reading the issue's view needs nothing else** — not this conversation, not
+`research.md`, not the rest of the epic. If the view only makes sense next to the epic, it is not done.
 
 You are writing issues, not implementing them and not changing the graph. If the walk shows the
 graph is wrong, stop and say so — restructuring is `iterate-epic`.
@@ -43,13 +43,16 @@ and every link line pointing at it would go stale.
 
 ## Phase 2 — Write each issue file
 
-`issues/<id>.md` is prose, not epic-markdown: the grammar governs `epic.md` only, so this file
-is yours to structure. Write it with the `epic_write` tool (`artifact` is `issue`, `issue` is the
-id), which lands it at `<%= epic_home %>/<slug>/issues/<id>.md`. Structure it like this:
+`issues/<id>.md` is only the authored half of the issue. lain renders the rest every time the issue
+is read: the `# <id> -- <title>` header, the issue's description from `epic.md` and the scenarios it
+carries for the issue, both verbatim, and the Links (`Blocks:`, `Blocked by:`, `Related:`,
+`Discovered from:`, `Subject:`, `Level:`) from the graph. So an edge edited in the graph shows in
+the view with no file rewritten, and the epic's signed-off scenarios cannot drift from a copy.
+
+Write the file with the `epic_write` tool (`artifact` is `issue`, `issue` is the id), which lands
+it at `<%= epic_home %>/<slug>/issues/<id>.md`. Structure it like this:
 
 ````text
-# <id> — <title>
-
 ## What and why
 
 Enough context to start cold. What the issue is for, what it touches, and what
@@ -58,7 +61,7 @@ about the current code makes it necessary. Name files by path.
 ## Acceptance criteria
 
 ```gherkin
-Scenario: <the observable behaviour, from outside the object>
+Scenario: <a behaviour the epic left implicit, observable from outside the object>
   Given <the starting state>
   When <the action>
   Then <what an observer can check>
@@ -68,33 +71,30 @@ Scenario: <the observable behaviour, from outside the object>
 
 Paths, specs, and docs the implementer should not have to re-find, each with a
 line on why it matters here.
-
-## Links
-
-Blocks: <ids this finishes before>
-Blocked by: <ids that must finish first — derived from the graph, stated here for the reader>
-Related: <ids worth knowing about>
-Discovered from: <the id this grew out of, if any>
 ````
 
-Write acceptance criteria as Gherkin, one scenario per behaviour, each observable from
-*outside* the object — behaviour, not structure. If the epic already carries criteria for the
-issue, carry them across verbatim rather than paraphrasing; the epic's copy is the one that was
-signed off. Add the scenarios the epic left implicit.
+Do not restate the epic's description: it was signed off at the epic gate and the view already opens
+with it, so your prose starts where it stops. Prose may take any `##` sections you like;
+`## Acceptance criteria` and `## References` are the two names lain places in the view, after the
+epic's scenarios and before the Links. Every added scenario goes under `## Acceptance criteria`;
+a gherkin fence anywhere else is refused.
 
-`Blocked by:` appears here and is refused in `epic.md`, and the difference is the whole point:
-in the epic it would be a second source of truth for a relation the graph already derives,
-while here it is a rendering of that derivation for a human who has only this file. Derive it,
-never invent it.
+Write the added scenarios as Gherkin, one per behaviour, each observable from *outside* the
+object — behaviour, not structure. Add only what the epic left implicit: lain renders the epic's
+own scenarios above yours, and `epic_write` refuses a file that restates one of them by name.
+It refuses a link line too, naming the graph as its source: change an edge in the graph, never
+in this file. A `# ` header or a `## Links` heading is refused the same way, since the view
+renders both.
 
-## Phase 3 — Check each file cold
+## Phase 3 — Check each view cold
 
-Before you gate anything, read one file back as if you had never seen the epic. If you have to
-reach for anything outside it to know where to start, that file is not self-contained yet — fix
-it rather than noting it.
+Before you gate anything, read each issue's view back with `lain epic show issues/<id>` (run it
+with `bash`), as if you had never seen the epic. That is the view an implementer will read: your
+file plus what lain renders around it. If you have to reach for anything outside it to know where
+to start, that issue is not self-contained yet — fix the file rather than noting it.
 
-Then check the set: every issue in the graph has a file, no file names an issue the graph does
-not hold, and every id in a link line resolves.
+Then check the set: every issue in the graph has a file, and no file names an issue the graph does
+not hold.
 
 ## Phase 4 — Request the issue_plan gate
 

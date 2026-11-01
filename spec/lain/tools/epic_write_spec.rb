@@ -44,6 +44,7 @@ RSpec.describe Lain::Tools::EpicWrite do
 
     it "names each document by its slug and home-relative path, outside the snapshot write-set" do
       write(slug: "frugirl-mvp", artifact: "research", content: "r\n")
+      home.epic.write(epic_md)
       write(slug: "frugirl-mvp", artifact: "issue", issue: "a1", content: "i\n")
 
       expect(session.round_writes).to eq(["frugirl-mvp/research.md", "frugirl-mvp/issues/a1.md"])
@@ -54,6 +55,39 @@ RSpec.describe Lain::Tools::EpicWrite do
       write(slug: "frugirl-mvp", artifact: "epic", content: "### a1: not a heading\n")
 
       expect(session.round_writes).to eq([])
+    end
+  end
+
+  describe "an authored issue file, checked against what lain renders" do
+    let(:epic_md) do
+      "### [ ] `a1` the first issue\n\n```gherkin\nScenario: the first thing works\n  Then it works\n```\n\n" \
+        "### [ ] `b2` the second issue\n\nBlocks: `a1`\n"
+    end
+
+    before { home.epic.write(epic_md) }
+
+    # Scenario: an authored file cannot carry derived lines
+    it "refuses a Blocked by line, naming the graph as the source, and writes nothing" do
+      result = write(slug: "frugirl-mvp", artifact: "issue", issue: "a1", content: "prose\n\nBlocked by: `b2`\n")
+
+      expect(result).to be_error
+      expect(result.content).to include("Blocked by:", "graph", "lain renders")
+      expect(home.issue("a1")).not_to exist
+    end
+
+    it "refuses a scenario restated from epic.md, naming it" do
+      content = "## Acceptance criteria\n\n```gherkin\nScenario: the first thing works\n  Then it works\n```\n"
+      result = write(slug: "frugirl-mvp", artifact: "issue", issue: "a1", content:)
+
+      expect(result).to be_error
+      expect(result.content).to include("the first thing works", "lain renders")
+    end
+
+    it "writes authored prose and an added scenario" do
+      content = "prose\n\n## Acceptance criteria\n\n```gherkin\nScenario: a second thing\n  Then it holds\n```\n"
+
+      expect(write(slug: "frugirl-mvp", artifact: "issue", issue: "a1", content:)).not_to be_error
+      expect(home.issue("a1").read).to eq(content)
     end
   end
 
@@ -110,6 +144,11 @@ RSpec.describe Lain::Tools::EpicWrite do
     expect(result).not_to be_error
     expect(result.content).to include(home.research.path)
     expect(io.string).to include('"type":"doc_written"', '"kind":"research"', '"path":"research.md"')
+  end
+
+  it "tells the model an issue file is the authored half, and what it refuses there" do
+    expect(tool.description).to include("authored half", "link lines", "header", "Links heading",
+                                        "gherkin fence", "restated scenarios")
   end
 
   it "asks no approval, since it names an artifact kind and never a path" do

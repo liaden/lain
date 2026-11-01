@@ -129,8 +129,7 @@ module Lain
         end
 
         def post_epic_doc(event)
-          doc = @epic_doc_view.update(event)
-          @rpc.set_epic_doc(*doc) if doc
+          @epic_doc_view.update(event).each { |name, lines| @rpc.set_epic_doc(name, lines) }
         end
 
         # The ONE place a rendering's stamp rides along:

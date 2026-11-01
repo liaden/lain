@@ -766,6 +766,17 @@ RSpec.describe "shipped skills" do
       end
     end
 
+    it "teaches create-epic-issues that lain renders the header, the epic's scenarios and the links" do
+      with_empty_project do |renderer|
+        text = renderer.render("create-epic-issues")
+
+        expect(text).to include("lain renders", "## Acceptance criteria", "## References")
+        expect(text).to match(/do not restate .{0,40}description/i)
+        expect(text[/^## Phase 3 .*?(?=^## )/m]).to include("lain epic show issues/<id>")
+        expect(text).not_to match(/^(Blocked by|Blocks|Related|Discovered from): </)
+      end
+    end
+
     it "says an issue's criteria are approved together with its plan" do
       with_empty_project do |renderer|
         expect(renderer.render("create-epic-issues")).to match(/approved (with|together with) .{0,40}plan/i)

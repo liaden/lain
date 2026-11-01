@@ -6,10 +6,12 @@ module Lain
       # A written epic document as the editor's read-only `lain://epic/<slug>/<path>`
       # buffer. The event only names the document; the bytes are read back here
       # through the chat's homes, because the journal record carries a digest and
-      # never the text.
+      # never the text. An issue is shown as its {Lain::Epic::IssueView}, the
+      # graph's links included, rather than as the authored half on disk.
       #
       # This runs on the drain thread, so a document that vanished or cannot be
-      # read costs the human that one refresh and never the thread.
+      # read costs the human that one refresh and never the thread. That one
+      # thread is also why the set of shown issues needs no lock.
       class EpicDocView
         # What a frontend wired with no epic homes reads through: it refuses in
         # the one way {#update} already answers.
@@ -22,28 +24,43 @@ module Lain
         # @param homes [#for] answers the journaled home of an epic slug
         def initialize(homes: NoHomes)
           @homes = homes
+          @shown = Hash.new { |shown, slug| shown[slug] = Set.new }
         end
 
+        # An issue's view renders its Links from epic.md, so an epic write also
+        # re-renders every issue this view has shown for that epic. Each document
+        # is read on its own: one that vanished costs only its own refresh.
+        #
         # @param event [Object] one Channel event
-        # @return [Array(String, Array<String>), nil] the buffer name and its
-        #   lines, nil for an event that wrote no document or whose file is gone
+        # @return [Array<Array(String, Array<String>)>] each buffer name and its
+        #   lines, empty for an event that wrote no document
         def update(event)
-          return unless event.is_a?(Lain::Epic::DocWritten)
+          return [] unless event.is_a?(Lain::Epic::DocWritten)
 
-          ["#{NAME_PREFIX}/#{event.epic_slug}/#{event.path}", read(event).lines(chomp: true)]
-        rescue Lain::Error, SystemCallError
-          nil
+          slug = event.epic_slug
+          [document(slug, event.kind, event.path), *reshown(slug, event.kind)].compact
         end
 
         private
 
-        def read(event)
-          home = @homes.for(event.epic_slug)
-          id = File.basename(event.path, ".md")
-          case event.kind
+        def document(slug, kind, path)
+          lines = read(@homes.for(slug), kind, path).lines(chomp: true)
+          @shown[slug] << path if kind == "issue"
+          ["#{NAME_PREFIX}/#{slug}/#{path}", lines]
+        rescue Lain::Error, SystemCallError
+          nil
+        end
+
+        def reshown(slug, kind)
+          kind == "epic" ? @shown[slug].map { |path| document(slug, "issue", path) } : []
+        end
+
+        def read(home, kind, path)
+          id = File.basename(path, ".md")
+          case kind
           when "research" then home.research.read
           when "epic" then home.epic.read
-          when "issue" then home.issue(id).read
+          when "issue" then Lain::Epic::IssueView.read(home, id).to_markdown
           else home.plan(id).read
           end
         end
