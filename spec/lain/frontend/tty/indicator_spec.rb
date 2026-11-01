@@ -6,13 +6,14 @@ RSpec.describe Lain::Frontend::TTY::Indicator do
   let(:now) { [100.0] }
   let(:clock) { -> { now.first } }
   let(:erase) { "\r#{TTY::Cursor.clear_line}" }
-  let!(:threads_before) { Thread.list.size }
+  let!(:threads_before) { Thread.list }
 
   def indicator(tty: true) = described_class.new(output:, theme:, clock:, tty:)
 
   after { @indicator&.stop }
 
-  def tickers = Thread.list.size - threads_before
+  # A thread an earlier example left behind can exit mid-example, so count only threads born in this one.
+  def tickers = (Thread.list - threads_before).count(&:alive?)
 
   it "draws nothing before 1 second has passed" do
     @indicator = indicator.tap(&:start)
