@@ -2188,6 +2188,13 @@ XDG path relative, which put machine state back inside the user's repository)
    Merkle shape measured slower and is rejected), 7 round trips held; then 1 escaper, 1 PATH search, `ProcessGroup`
    and `AtomicFile` in the chores, `Checkout.of` at 55 sites, and the small cleanups. No compatibility owed, sessions
    included (user ruling 2026-10-29).
+73. **Planned (2026-11-01, panel-reviewed)**: `planning/specs/nyotes-round2-fixes.md`, 48 cards in 5 waves from
+   `planning/nyotes-round2-research-2026-11.md`: the implementer handed the issue it was approved on (the issue file
+   becomes a projection of the issue, the graph and the authored prose, and `plans/` goes); one read-roots value per
+   session that lends the epic home to every agent; fewer opaque shell readings; digests read as digests; a quota 429
+   stopped and named; issue gates one per wave; a turn-ending `hold`; one window placement policy and a planning tab;
+   plan-scaled iteration ceilings; over-ceiling output spilled after the withhold decision; compaction gated on the
+   saving it pays for.
 
 
 ## Map of the documents
