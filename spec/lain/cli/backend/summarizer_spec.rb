@@ -159,12 +159,12 @@ RSpec.describe Lain::CLI::Backend::Summarizer do
       end
     end
 
-    it "leaves the attempt and its own failure, no answer, because the gate refuses after the record is cut" do
+    it "leaves the attempt and its own decline, no answer, because the gate refuses after the record is cut" do
       eager = Lain::Oracle::Eager.new(oracle:)
 
       fire_against_a_held_slot(eager)
 
-      expect(journal.events.map(&:class)).to eq([Lain::Telemetry::RequestSent, Lain::Telemetry::OracleFailed])
+      expect(journal.events.map(&:class)).to eq([Lain::Telemetry::RequestSent, Lain::Telemetry::OracleDeclined])
     end
 
     it "still holds no summary: the record is an attempt, never a result" do

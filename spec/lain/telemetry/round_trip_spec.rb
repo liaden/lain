@@ -74,6 +74,7 @@ RSpec.describe Lain::Telemetry, ".read over every journaled record" do
     OracleAnswer: { oracle_digest: d, question: "q", answer: "a", model: "m", usage: { "input_tokens" => 1 },
                     wall_clock: 0.5 },
     OracleFailed: { tier: :local, oracle_digest: d, error_class: "Timeout" },
+    OracleDeclined: { tier: :local, oracle_digest: d, reason: "busy" },
     PolicySwitch: { from: "a", to: "b", surface: "slash" },
     PriceTierCrossed: { model: "m", prompt_tokens: 200_001, boundary: 200_000, standard_cost: BigDecimal("1"),
                         tier_cost: BigDecimal("2"), decision: :approve },

@@ -109,8 +109,10 @@ module Lain
         #
         # @param inputs [Hash] the question's slot values
         # @return [Lain::Promise] the inner tier's own Promise, unchanged
-        # @raise [Exception] whatever the inner tier or the decode raised, AFTER
-        #   journaling it -- see the rescue below
+        # @raise [Provider::Admission::Busy] the local model's slot was taken;
+        #   journaled as {Telemetry::OracleDeclined}, then re-raised
+        # @raise [Exception] whatever else the inner tier or the decode raised,
+        #   AFTER journaling it -- see the rescue below
         def ask(inputs = {})
           question = @definition.render(inputs)
           started = @clock.call
@@ -121,6 +123,9 @@ module Lain
             model: @inner.model, usage: @inner.usage, wall_clock: @clock.call - started
           )
           promise
+        rescue Provider::Admission::Busy
+          journal_declined("busy")
+          raise
         rescue ScriptError, StandardError, SystemStackError => e
           # The same three families {Oracle::Eager#fire}'s task boundary
           # contains, because this sits directly inside it on the live path: a
@@ -131,9 +136,19 @@ module Lain
           # {Telemetry::OracleAnswer} carries. Re-raised so containment still
           # belongs to the caller: this object's job is to record what happened,
           # never to decide whether a failure is survivable.
-          @journal << Telemetry::OracleFailed.new(tier: @definition.tier, oracle_digest: @definition.digest,
-                                                  error_class: e.class.name)
+          journal_failed(e)
           raise
+        end
+
+        private
+
+        def journal_failed(error)
+          @journal << Telemetry::OracleFailed.new(tier: @definition.tier, oracle_digest: @definition.digest,
+                                                  error_class: error.class.name)
+        end
+
+        def journal_declined(reason)
+          @journal << Telemetry::OracleDeclined.new(tier: @definition.tier, oracle_digest: @definition.digest, reason:)
         end
       end
     end

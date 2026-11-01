@@ -234,6 +234,38 @@ RSpec.describe Lain::Oracle::Recorded do
     end
   end
 
+  describe "a busy oracle" do
+    let(:busy_tier) do
+      Class.new do
+        def ask(_inputs) = raise Lain::Provider::Admission::Busy, "ollama at 127.0.0.1:11434 is busy"
+        def model = nil
+        def usage = {}
+      end.new
+    end
+
+    let(:journaling) { described_class::Journaling.new(inner: busy_tier, definition:, journal:) }
+
+    def fire_and_swallow
+      Sync { journaling.ask(subject: "aspirin").await }
+    rescue Lain::Provider::Admission::Busy
+      nil
+    end
+
+    it "re-raises the refusal" do
+      expect { Sync { journaling.ask(subject: "aspirin").await } }
+        .to raise_error(Lain::Provider::Admission::Busy)
+    end
+
+    it "journals 1 oracle_declined with reason busy and no oracle_failed" do
+      fire_and_swallow
+
+      declines = Lain::Journal.records(journal_io.string.each_line, type: "oracle_declined").to_a
+      expect(declines.size).to eq(1)
+      expect(declines.first).to include("tier" => "model", "oracle_digest" => definition.digest, "reason" => "busy")
+      expect(Lain::Journal.records(journal_io.string.each_line, type: "oracle_failed").to_a).to be_empty
+    end
+  end
+
   # ---- Scenario: replaying a session with oracles is byte-identical ----------
 
   describe "DryReplay byte-identity with oracle substitution active" do
