@@ -685,7 +685,7 @@ end
 -- navigator is not currently safe to land in.
 --
 -- THE SLOT MARKER ALONE IS NOT ENOUGH, and that is the stray-`x` edit returning
--- by a side door. `vim.w[win].lain_review_slot` lives on the WINDOW, and the
+-- by a side door. `vim.w[win].lain_slot` lives on the WINDOW, and the
 -- buffer inside it is the human's to change: a `gf` on a row, a `:b#`, a
 -- quickfix jump or a plain `:edit` all leave the window still marked `sidebar`
 -- while it displays a real, writable file. Focusing it by its marker would then
@@ -723,7 +723,7 @@ end
 function review_diff.landing(old_win, new_win)
   local tab = vim.api.nvim_win_get_tabpage(new_win)
   for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
-    if vim.w[win].lain_review_slot == "sidebar" and review_diff.inert(win) then
+    if vim.w[win].lain_slot == "sidebar" and review_diff.inert(win) then
       return win
     end
   end

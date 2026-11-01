@@ -1,3 +1,8 @@
+-- One placement policy, `tab_layout`, for every lain window. In the session tab
+-- a view the human closed stays closed until the tab is rebuilt, while a new
+-- approval or question shows itself; the review tab rebuilds a closed window on
+-- the next render.
+--
 -- The review's own TABPAGE, and the two entry points every review capability
 -- renders through. An epic in flight already has the journal, timeline, inbox
 -- and request buffers laid out, so a review opens BESIDE the session layout
@@ -22,18 +27,135 @@
 -- later review modules render through, and a module sees only the locals
 -- declared above it.
 --
--- ONE new top-level name rather than five: the chunk shares one scope and the
--- binding cap is 60 UPVALUES per function, so each top-level local is a name
--- every later module pays for.
+-- TWO top-level names, the policy and its review instance, rather than one per
+-- function: the chunk shares one scope and the binding cap is 60 UPVALUES per
+-- function, so each top-level local is a name every later module pays for. The
+-- session instance hangs off the policy for the same reason.
 --
 -- The layout's own bookkeeping lives in VIM VARIABLES, not a lua table, which is
 -- what keeps the repair honest: `vim.t[tab].lain_review` dies with the tabpage
--- and `vim.w[win].lain_review_slot` dies with the window, so there is no
+-- and `vim.w[win].lain_slot` dies with the window, so there is no
 -- registry to leave stale. It also survives the one thing a lua table would get
 -- wrong: `:vsplit` copies window OPTIONS and NOT window variables (measured), so
 -- a human splitting the sidebar gets an ordinary window rather than a second
 -- window claiming to BE the sidebar.
---
+local tab_layout = {}
+
+-- Closing a tabpage's last window closes the TAB, throwing the human's focus
+-- into a tab they were not looking at because a queue drained, so that window
+-- is kept and the empty list left showing is the smaller surprise.
+function tab_layout.last_in_its_tab(win)
+  return #vim.api.nvim_tabpage_list_wins(vim.api.nvim_win_get_tabpage(win)) == 1
+end
+
+-- Hand back the windows lain opened for `buf` as `kind`. The buffer is checked as
+-- well as the mark, because the mark names the window and the human may have
+-- put another buffer in it.
+function tab_layout.give_back(buf, kind)
+  for _, win in ipairs(vim.fn.win_findbuf(buf)) do
+    if vim.w[win].lain_slot == kind and not tab_layout.last_in_its_tab(win) then
+      vim.api.nvim_win_close(win, false)
+    end
+  end
+end
+
+-- One layout: the tabpage variable that names its tabpage, and its slot
+-- vocabulary. Each instance defines its own `anchor(tab, found, slot)`, the one
+-- thing a row of review panes and a grid of session columns disagree on.
+function tab_layout.new(spec)
+  local layout = { VAR = spec.var, SLOTS = spec.SLOTS }
+
+  -- Slot order IS left-to-right window order for the review, which is what
+  -- makes "put the restored window back where it was" a comparison of indices
+  -- rather than a remembered geometry.
+  function layout.index_of(slot)
+    for i, name in ipairs(layout.SLOTS) do
+      if name == slot then
+        return i
+      end
+    end
+    return nil
+  end
+
+  function layout.tab()
+    for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
+      if vim.t[tab][layout.VAR] then
+        return tab
+      end
+    end
+    return nil
+  end
+
+  -- slot -> window, for the slots that are actually still there. Read fresh on
+  -- every call rather than cached: the human closing a window is the normal
+  -- case this module exists to absorb, not an exception.
+  function layout.map(tab)
+    local found = {}
+    for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
+      local slot = vim.w[win].lain_slot
+      if slot then
+        found[slot] = win
+      end
+    end
+    return found
+  end
+
+  -- What each slot last held, remembered on the TABPAGE so it outlives the
+  -- window (a window variable would die with the window that is precisely what
+  -- got closed). Read-modify-WRITE, because a vim variable answers a copy:
+  -- mutating the table `vim.t` hands back changes nothing.
+  function layout.remember(tab, slot, buf)
+    local key = layout.VAR .. "_buffers"
+    local held = vim.t[tab][key] or {}
+    held[slot] = buf
+    vim.t[tab][key] = held
+  end
+
+  -- The remembered buffer if it is STILL a buffer, else a fresh scratch
+  -- placeholder. Not defensive habit: the diff pair's buffers are wiped and
+  -- re-made per file, so restoring one blind hands `nvim_open_win` an invalid
+  -- buffer and the whole render raises. What a slot remembers is a HINT.
+  --
+  -- `bufhidden = "wipe"` on the placeholder is what keeps repeated repairs from
+  -- littering the buffer list: the moment a real render replaces it, it is gone.
+  function layout.buf_for(tab, slot)
+    local held = (vim.t[tab][layout.VAR .. "_buffers"] or {})[slot]
+    if held and vim.api.nvim_buf_is_valid(held) then
+      return held
+    end
+    local buf = vim.api.nvim_create_buf(false, true)
+    vim.bo[buf].bufhidden = "wipe"
+    return buf
+  end
+
+  -- nvim_open_win with a `split` config, never `:vsplit`: it names the window to
+  -- split and takes `enter = false`, so a repair can happen in a tabpage the
+  -- human is not looking at without moving them into it. An ex-command would
+  -- have to make the target window current first, and putting the cursor
+  -- somewhere the human did not ask for is the one thing a render must never do
+  -- (45_views).
+  --
+  -- A TOP-LEVEL split (`win = -1`) is what makes a new full-height column, and
+  -- it lands in the CURRENT tabpage, so it is made from inside a window of the
+  -- target tab; `nvim_win_call` puts the human back afterwards.
+  function layout.open(tab, found, slot, buf)
+    local anchor, side, top = layout.anchor(tab, found, slot)
+    local shown = buf or layout.buf_for(tab, slot)
+    local win
+    if top then
+      win = vim.api.nvim_win_call(anchor, function()
+        return vim.api.nvim_open_win(shown, false, { split = side, win = -1 })
+      end)
+    else
+      win = vim.api.nvim_open_win(shown, false, { split = side, win = anchor })
+    end
+    vim.w[win].lain_slot = slot
+    return win
+  end
+
+  return layout
+end
+
 -- "old" and "new" are {Lain::Review::SIDES}, restated here because a static
 -- chunk can derive nothing from Ruby. `layout_spec.rb` pins the two spellings
 -- equal by reading this file, the only defence a cross-language vocabulary has.
@@ -45,7 +167,7 @@
 -- `review_place` can still tell a MISSPELLED slot from one this round did not
 -- open, the cross-language pin still reads this literal, and `:LainThread` on a
 -- survey still has an `old` slot to put the docent's conversation in.
-local review_panes = { SLOTS = { "sidebar", "old", "new" } }
+local review_panes = tab_layout.new({ var = "lain_review", SLOTS = { "sidebar", "old", "new" } })
 
 -- THE ROUND'S SIDES, IN TRANSIT ONLY. `set_review` carries {Review::SIDES} here
 -- and `ensure` writes them through to `vim.t[tab]`, because on the FIRST sidebar
@@ -56,27 +178,6 @@ local review_panes = { SLOTS = { "sidebar", "old", "new" } }
 -- with the tabpage. `set_review` lands on EVERY redraw, so this is re-posted
 -- every paint and a value left here cannot drift from the round on screen.
 review_panes.sides = nil
-
--- Slot order IS left-to-right window order, which is what makes "put the
--- restored window back where it was" a comparison of indices rather than a
--- remembered geometry.
-function review_panes.index_of(slot)
-  for i, name in ipairs(review_panes.SLOTS) do
-    if name == slot then
-      return i
-    end
-  end
-  return nil
-end
-
-function review_panes.tab()
-  for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
-    if vim.t[tab].lain_review then
-      return tab
-    end
-  end
-  return nil
-end
 
 -- The sides off the wire, or nil for a round that said nothing.
 --
@@ -177,52 +278,13 @@ function review_panes.shed(tab, found)
     opens[slot] = true
   end
   for slot, win in pairs(found) do
-    if not opens[slot] and vim.api.nvim_win_is_valid(win) then
+    -- An approval or question placed in this tab wears the same mark, and is
+    -- not the review's to shed.
+    if review_panes.index_of(slot) ~= nil and not opens[slot] and vim.api.nvim_win_is_valid(win) then
       vim.api.nvim_win_close(win, true)
       found[slot] = nil
     end
   end
-end
-
--- slot -> window, for the slots that are actually still there. Read fresh on
--- every call rather than cached: the human closing a window is the normal case
--- this module exists to absorb, not an exception.
-function review_panes.map(tab)
-  local found = {}
-  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
-    local slot = vim.w[win].lain_review_slot
-    if slot then
-      found[slot] = win
-    end
-  end
-  return found
-end
-
--- What each slot last held, remembered on the TABPAGE so it outlives the window
--- (a window variable would die with the window that is precisely what got
--- closed). Read-modify-WRITE, because a vim variable answers a copy: mutating
--- the table `vim.t` hands back changes nothing.
-function review_panes.remember(tab, slot, buf)
-  local held = vim.t[tab].lain_review_buffers or {}
-  held[slot] = buf
-  vim.t[tab].lain_review_buffers = held
-end
-
--- The remembered buffer if it is STILL a buffer, else a fresh scratch
--- placeholder. Not defensive habit: the diff pair's buffers are wiped and
--- re-made per file, so restoring one blind hands `nvim_open_win` an invalid
--- buffer and the whole render raises. What a slot remembers is a HINT.
---
--- `bufhidden = "wipe"` on the placeholder is what keeps repeated repairs from
--- littering the buffer list: the moment a real render replaces it, it is gone.
-function review_panes.buf_for(tab, slot)
-  local held = (vim.t[tab].lain_review_buffers or {})[slot]
-  if held and vim.api.nvim_buf_is_valid(held) then
-    return held
-  end
-  local buf = vim.api.nvim_create_buf(false, true)
-  vim.bo[buf].bufhidden = "wipe"
-  return buf
 end
 
 -- Where a missing window goes back: beside the nearest slot that IS there, on
@@ -246,18 +308,6 @@ function review_panes.anchor(tab, found, slot)
     end
   end
   return vim.api.nvim_tabpage_get_win(tab), "right"
-end
-
--- nvim_open_win with a `split` config, never `:vsplit`: it names the window to
--- split and takes `enter = false`, so a repair can happen in a tabpage the
--- human is not looking at without moving them into it. An ex-command would have
--- to make the target window current first, and putting the cursor somewhere the
--- human did not ask for is the one thing a render must never do (45_views).
-function review_panes.open(tab, found, slot)
-  local anchor, side = review_panes.anchor(tab, found, slot)
-  local win = vim.api.nvim_open_win(review_panes.buf_for(tab, slot), false, { split = side, win = anchor })
-  vim.w[win].lain_review_slot = slot
-  return win
 end
 
 -- The sidebar is a navigator, not a third of the screen. Applied only to a
@@ -295,7 +345,7 @@ function review_panes.ensure()
     vim.t[tab].lain_review = true
     local win = vim.api.nvim_get_current_win()
     vim.api.nvim_win_set_buf(win, review_panes.buf_for(tab, "sidebar"))
-    vim.w[win].lain_review_slot = "sidebar"
+    vim.w[win].lain_slot = "sidebar"
     created.sidebar = true
   end
 
@@ -388,4 +438,264 @@ function _G.__lain.review_place(slot, buf)
   vim.api.nvim_win_set_buf(found[slot], buf)
   review_panes.remember(tab, slot, buf)
   return found[slot]
+end
+
+-- What lain places in the session tab besides the configured views.
+tab_layout.KINDS = { "approval", "question" }
+
+-- THE SESSION TAB: the plugin's `config.layout`, columns of lain:// view names,
+-- plus the KINDS placed beside them. Unlike the review tab, a window the human
+-- closed here is a decision rather than damage: its buffer is recorded closed on
+-- the tabpage. A view is not reopened until the tabpage is rebuilt; a kind hides
+-- only what it showed, and a new approval or question shows itself.
+--
+-- A `do` block, so the session's helpers cost later modules no top-level name.
+do
+  local session = tab_layout.new({ var = "lain_session", SLOTS = tab_layout.KINDS })
+  tab_layout.session = session
+
+  function session.mark(win, slot, buf)
+    vim.w[win].lain_slot = slot
+    vim.w[win].lain_slot_buf = buf
+  end
+
+  -- One line, so it never raises the hit-enter prompt, and only to a human who
+  -- is not already looking at the session tab.
+  function session.tell(text)
+    local tab = session.tab()
+    if tab ~= nil and tab ~= vim.api.nvim_get_current_tabpage() then
+      vim.notify("lain: " .. text .. " waiting in the session tab", vim.log.levels.INFO)
+    end
+  end
+
+  function session.columns(tab)
+    return vim.t[tab].lain_session_columns or {}
+  end
+
+  -- Exact, where `bufnr()` would read the name as a pattern.
+  function session.buf_named(name)
+    for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+      if vim.api.nvim_buf_get_name(buf) == name then
+        return buf
+      end
+    end
+    return nil
+  end
+
+  function session.cell(tab, slot)
+    for c, column in ipairs(session.columns(tab)) do
+      for r, name in ipairs(column) do
+        if name == slot then
+          return c, r
+        end
+      end
+    end
+    return nil
+  end
+
+  function session.column_wins(tab, found, c)
+    local wins = {}
+    for _, name in ipairs(session.columns(tab)[c] or {}) do
+      if found[name] then
+        wins[#wins + 1] = found[name]
+      end
+    end
+    return wins
+  end
+
+  function session.nearest_column(tab, found, from, to, step)
+    for c = from, to, step do
+      local win = session.column_wins(tab, found, c)[1]
+      if win then
+        return win
+      end
+    end
+    return nil
+  end
+
+  function session.bottom_of_last_column(tab, found)
+    for c = #session.columns(tab), 1, -1 do
+      local wins = session.column_wins(tab, found, c)
+      if #wins > 0 then
+        return wins[#wins]
+      end
+    end
+    return vim.api.nvim_tabpage_get_win(tab)
+  end
+
+  -- A kind goes under the rightmost column. A view goes beside its neighbour in
+  -- its own column, or, as the first of its column, into a new full-height
+  -- column on the side the configuration puts it. A whole column missing BETWEEN
+  -- two present ones cannot be inserted at full height by `nvim_open_win`, so it
+  -- splits beside its right neighbour instead.
+  function session.anchor(tab, found, slot)
+    local c, r = session.cell(tab, slot)
+    if c == nil then
+      return session.bottom_of_last_column(tab, found), "below"
+    end
+    local column = session.columns(tab)[c]
+    for j = r - 1, 1, -1 do
+      if found[column[j]] then
+        return found[column[j]], "below"
+      end
+    end
+    for j = r + 1, #column do
+      if found[column[j]] then
+        return found[column[j]], "above"
+      end
+    end
+    local left = session.nearest_column(tab, found, c - 1, 1, -1)
+    local right = session.nearest_column(tab, found, c + 1, #session.columns(tab), 1)
+    if right then
+      return right, "left", left == nil
+    end
+    return left or vim.api.nvim_tabpage_get_win(tab), "right", true
+  end
+
+  function session.closed(tab, buf)
+    return (vim.t[tab].lain_session_closed or {})[vim.api.nvim_buf_get_name(buf)] == true
+  end
+
+  function session.mark_closed(tab, buf)
+    local name = vim.api.nvim_buf_get_name(buf)
+    if name ~= "" then
+      local closed = vim.t[tab].lain_session_closed or {}
+      closed[name] = true
+      vim.t[tab].lain_session_closed = closed
+    end
+  end
+
+  -- `tabnew` takes focus, and this is reached only when the human asked for the
+  -- session layout. Its empty buffer is wiped the moment the first view replaces
+  -- it, so a rebuilt tab leaves nothing in the buffer list.
+  function session.build(columns)
+    for _, column in ipairs(columns) do
+      for _, name in ipairs(column) do
+        local buf = session.buf_named(name)
+        if buf then
+          vim.cmd("tabnew")
+          local tab = vim.api.nvim_get_current_tabpage()
+          vim.t[tab].lain_session = true
+          vim.bo[vim.api.nvim_get_current_buf()].bufhidden = "wipe"
+          vim.api.nvim_win_set_buf(0, buf)
+          session.mark(vim.api.nvim_get_current_win(), name, buf)
+          return tab
+        end
+      end
+    end
+    return nil
+  end
+
+  function session.fill(tab)
+    local found = session.map(tab)
+    for _, column in ipairs(session.columns(tab)) do
+      for _, name in ipairs(column) do
+        local buf = session.buf_named(name)
+        if buf and found[name] == nil and not session.closed(tab, buf) then
+          found[name] = session.open(tab, found, name, buf)
+          session.mark(found[name], name, buf)
+        end
+      end
+    end
+  end
+
+  -- `build` is the human asking for the layout. Without it a render only fills a
+  -- tab that is there, so a session tab the human closed is not rebuilt under
+  -- them by the next render.
+  function session.place(spec)
+    local tab = session.tab()
+    if tab == nil and spec.build then
+      tab = session.build(spec.layout)
+    elseif tab ~= nil and spec.build then
+      vim.api.nvim_set_current_tabpage(tab)
+    end
+    if tab ~= nil then
+      vim.t[tab].lain_session_columns = spec.layout
+      session.fill(tab)
+    end
+    return tab
+  end
+
+  -- With no session tab (a bare nvim, no plugin) a kind keeps the old placement,
+  -- a split under the current window, so the call is still on screen.
+  --
+  -- Closing a kind's window hides what it showed then, not what comes next: a
+  -- `fresh` buffer (a new call parked, a new question asked) shows itself even
+  -- in a slot the human closed.
+  function session.place_kind(kind, buf, fresh)
+    local shown = vim.fn.win_findbuf(buf)[1]
+    if shown ~= nil then
+      return shown
+    end
+    local tab = session.tab()
+    local win
+    if tab == nil then
+      win = vim.api.nvim_open_win(buf, false, { split = "below", win = 0 })
+    elseif fresh or not session.closed(tab, buf) then
+      session.reopen(tab, buf)
+      win = session.open(tab, session.map(tab), kind, buf)
+    end
+    if win ~= nil then
+      session.mark(win, kind, buf)
+    end
+    return win
+  end
+
+  function session.reopen(tab, buf)
+    local closed = vim.t[tab].lain_session_closed or {}
+    closed[vim.api.nvim_buf_get_name(buf)] = nil
+    vim.t[tab].lain_session_closed = closed
+  end
+end
+
+-- Place a lain window by kind: "session" lays out the configured views
+-- (`{ layout = columns, build = bool }`), and each of KINDS places its buffer,
+-- `fresh` when it holds something the human has not seen.
+-- MOVES NOBODY, except a session `build`, which the human asked for.
+--
+-- @return the window the buffer is in, the session tabpage, or nil when there is
+--   nowhere to put it: nothing primed yet, or a window the human closed
+function _G.__lain.place(kind, arg, fresh)
+  if kind == "session" then
+    return tab_layout.session.place(arg)
+  end
+  if tab_layout.session.index_of(kind) == nil then
+    error("lain: unknown placement " .. tostring(kind) .. " -- lain places session, " ..
+      table.concat(tab_layout.KINDS, ", "), 0)
+  end
+  return tab_layout.session.place_kind(kind, arg, fresh)
+end
+
+do
+  local layout_group = vim.api.nvim_create_augroup("lain_layout", { clear = true })
+
+  -- Every window close is recorded, lain's own included: lain closes only
+  -- approval and question windows, and a fresh one reopens its slot anyway.
+  vim.api.nvim_create_autocmd("WinClosed", {
+    group = layout_group,
+    callback = function(ev)
+      local win = tonumber(ev.match)
+      if vim.api.nvim_win_is_valid(win) and vim.w[win].lain_slot ~= nil then
+        local tab = vim.api.nvim_win_get_tabpage(win)
+        if vim.t[tab].lain_session then
+          tab_layout.session.mark_closed(tab, vim.api.nvim_win_get_buf(win))
+        end
+      end
+    end,
+  })
+
+  -- A session window the human sends to another buffer is theirs from then on,
+  -- so the mark goes, and bringing lain's buffer back later does not restore
+  -- it. Review panes carry no `lain_slot_buf`: their buffers change by design.
+  vim.api.nvim_create_autocmd("BufWinEnter", {
+    group = layout_group,
+    callback = function(ev)
+      local win = vim.api.nvim_get_current_win()
+      local placed = vim.w[win].lain_slot_buf
+      if placed ~= nil and placed ~= ev.buf then
+        vim.w[win].lain_slot = nil
+        vim.w[win].lain_slot_buf = nil
+      end
+    end,
+  })
 end

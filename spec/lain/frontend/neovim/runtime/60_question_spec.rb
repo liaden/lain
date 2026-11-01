@@ -632,7 +632,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     inspector.exec_lua(<<~LUA, [])
       vim.api.nvim_set_current_win(vim.fn.win_findbuf(vim.fn.bufnr("lain://question"))[1])
       vim.cmd("wincmd T")
-      vim.w.lain_question_opened = true
+      vim.w.lain_slot = "question"
       return true
     LUA
   end

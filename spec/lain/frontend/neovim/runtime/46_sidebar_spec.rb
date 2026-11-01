@@ -56,7 +56,7 @@ RSpec.describe "runtime/46_sidebar.lua", :nvim do
         for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
           if vim.t[tab].lain_review then
             for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
-              if vim.w[win].lain_review_slot == "sidebar" then return win end
+              if vim.w[win].lain_slot == "sidebar" then return win end
             end
           end
         end

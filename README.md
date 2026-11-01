@@ -530,7 +530,7 @@ about rather than acting on whatever sits on that line somewhere else:
 | `:LainAnnotate` | in an epic review document, prompt for a note and attach it to the current line |
 | `:LainReviewDone` | hand an epic review document back. Refuses while the buffer is modified |
 | `:LainVersion` | the runtime protocol version |
-| `:LainStart` | (the plugin, not the runtime) lay the buffers out in a new tab |
+| `:LainStart` | (the plugin, not the runtime) switch to the session tab of lain buffers, or rebuild it if you closed it |
 
 In tmux, the [plugin](plugin/tmux/README.md) binds `prefix + b` for a `/btw` popup and `prefix + F`
 to fork the session into a new window — `@lain_btw_key` and `@lain_fork_key` change them.

@@ -20,18 +20,13 @@
 --     (ported from the reference dotfiles autocmd -- see start_server)
 --   * lain.socket_path() / lain.state_path() / lain.status() / lain.hud() --
 --     read-only conveniences
---   * :LainStart -- a window layout over the runtime-injected buffers
+--   * :LainStart -- which lain:// views to lay out, placed by the runtime
 --
 -- doc/lain.txt documents the whole attach contract (User Lain* events, the
 -- lain:// buffers, lain* highlight groups) as this plugin's users consume it.
 local config = require("lain.config")
 
 local M = {}
-
--- The last User LainAttach payload, recorded by setup()'s listener; nil
--- before any attach (or when the attach predated setup -- see
--- attached_buffers' fallback).
-M._attach = nil
 
 -- The XDG base directory spec says a non-absolute XDG_RUNTIME_DIR is invalid
 -- and must be ignored -- the same rule the gem's Ruby side applies -- so a
@@ -245,124 +240,74 @@ function M.hud()
   return line
 end
 
--- The buffers eligible for layout: the LainAttach payload when our listener
--- saw the attach; otherwise (attach predates setup) the lain:// buffers that
--- actually exist -- READING names is fine, creating buffers would be the
--- runtime's job. nil when no attach has happened at all
--- (vim.g.lain_rpc_version is set by every attach, plugin or not).
-local function attached_buffers()
-  if M._attach then
-    return M._attach.buffers
+-- One request to the runtime's placement policy, the only
+-- runtime name this plugin uses: the runtime owns the windows, and this file
+-- owns only which lain:// views the human wants, in which columns. `build` is
+-- the human asking for the layout, which may open the session tab; without it a
+-- render fills only a tab that is already there, so a tab the human closed is
+-- not rebuilt under them.
+-- Whether a layout has been asked for and not yet opened, whether the human has
+-- been told it is waiting, and whether they have been told the attached runtime
+-- predates placement (a gem older than this plugin, or one left in place after
+-- a refused attach).
+local wanted = false
+local warned = false
+local stale = false
+
+local function place_session(build)
+  if type(_G.__lain) == "table" and type(_G.__lain.place) == "function" then
+    return _G.__lain.place("session", { layout = config.current().layout, build = build })
   end
-  if not vim.g.lain_rpc_version then
-    return nil
+  if not stale then
+    stale = true
+    vim.notify("lain: the attached runtime cannot place windows -- restart `lain chat --nvim` from this gem",
+      vim.log.levels.WARN)
   end
-  local names = {}
-  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-    local name = vim.api.nvim_buf_get_name(buf)
-    if name:match("^lain://") then
-      table.insert(names, name)
-    end
-  end
-  return names
+  return nil
 end
 
--- config.layout filtered to buffers the runtime has actually created: the
--- attach payload names buffers lazily, so a view that has not primed yet is
--- skipped, never conjured. Empty columns drop out entirely.
-local function existing_columns(buffer_names)
-  local present = {}
-  for _, name in ipairs(buffer_names) do
-    present[name] = true
-  end
-  local columns = {}
-  for _, column in ipairs(config.current().layout) do
-    local bufs = {}
-    for _, name in ipairs(column) do
-      local buf = vim.fn.bufnr(name)
-      if present[name] and buf ~= -1 then
-        table.insert(bufs, buf)
-      end
-    end
-    if #bufs > 0 then
-      table.insert(columns, bufs)
-    end
-  end
-  return columns
-end
-
--- A new tab, columns left to right (full-height vsplit), buffers within a
--- column top to bottom.
--- @return true when a layout was opened, false when there was nothing to place
--- yet. The caller armed on LainRender uses that to decide whether to stay
--- armed, which is why this reports rather than only warning.
-local function open_layout(buffer_names)
-  local columns = existing_columns(buffer_names)
-  if #columns == 0 then
-    vim.notify("lain: no lain:// buffers to lay out yet", vim.log.levels.WARN)
-    return false
-  end
-  vim.cmd("tabnew")
-  for i, column in ipairs(columns) do
-    if i > 1 then
-      vim.cmd("botright vsplit")
-    end
-    for j, buf in ipairs(column) do
-      if j > 1 then
-        vim.cmd("belowright split")
-      end
-      vim.api.nvim_win_set_buf(0, buf)
-    end
-  end
-  return true
-end
-
--- :LainStart. Attached already: lay out now. Not yet: arm a hook on the first
--- RENDER so the layout opens once `lain chat --nvim` has actually primed a
--- view (re-running :LainStart before that just re-arms the same hook -- the
--- cleared augroup keeps it single).
-function M.start()
-  local buffers = attached_buffers()
-  if buffers then
-    open_layout(buffers)
-    return
-  end
-  local group = vim.api.nvim_create_augroup("lain_plugin_start", { clear = true })
+-- A render is what MEANS a buffer now exists: the runtime creates the lain://
+-- buffers lazily, one per render, and a prime can arrive in more than one batch.
+-- So placement runs on EVERY render, scheduled so it comes after the current
+-- batch of RPC writes, with `pending` keeping one attempt in flight for a burst.
+local function follow_renders()
   local pending = false
-  -- LainRender, NOT LainAttach, and this is the whole of the fix for a layout
-  -- that never opened. The attach payload names buffers that do not exist yet
-  -- -- the runtime creates them lazily, per render -- so a hook armed on
-  -- LainAttach filters every column to empty and is spent before the first
-  -- view primes. LainRender is the event that MEANS a buffer now exists.
-  --
-  -- Not `once`, and scheduled: the first render is one buffer, and the layout
-  -- places only what exists, so firing on it would lay out a single column and
-  -- call the job done. `vim.schedule` defers to after the current batch of RPC
-  -- writes drains, and staying armed until a layout actually opens is what
-  -- covers a prime that arrives in more than one batch. `pending` keeps one
-  -- attempt in flight, so a burst of renders schedules one layout, not ten.
   vim.api.nvim_create_autocmd("User", {
     pattern = "LainRender",
-    group = group,
+    group = vim.api.nvim_create_augroup("lain_plugin_start", { clear = true }),
     callback = function()
-      if pending then
-        return
+      if not pending then
+        pending = true
+        vim.schedule(function()
+          pending = false
+          if place_session(wanted) ~= nil and wanted then
+            wanted = false
+            if warned then
+              vim.notify("lain: attached -- layout opened", vim.log.levels.INFO)
+            end
+          end
+        end)
       end
-      pending = true
-      vim.schedule(function()
-        pending = false
-        if open_layout(attached_buffers() or {}) then
-          pcall(vim.api.nvim_del_augroup_by_id, group)
-          -- Supersede the "not attached yet" notice below: without this, the
-          -- message line sits on the stale line for the whole session,
-          -- contradicting the live lain:// buffers now open beside it (UX1 --
-          -- nothing ever cleared or replaced it once attach succeeded).
-          vim.notify("lain: attached -- layout opened", vim.log.levels.INFO)
-        end
-      end)
     end,
   })
-  vim.notify("lain: not attached yet -- layout opens when `lain chat --nvim` attaches", vim.log.levels.INFO)
+end
+
+-- :LainStart. Lays out what has primed now, and every later render fills in the
+-- rest. Before anything has attached it waits for the first render, and says so
+-- once, only to a human who typed it: the cockpit runs it from `-c` before
+-- VimEnter, where the notice would only sit under the first view.
+function M.start()
+  wanted = true
+  follow_renders()
+  if vim.g.lain_rpc_version and place_session(true) ~= nil then
+    wanted = false
+    return
+  end
+  if vim.v.vim_did_enter == 1 and not warned and not stale then
+    warned = true
+    local waiting = vim.g.lain_rpc_version and "no lain:// view has rendered yet" or "not attached yet"
+    vim.notify("lain: " .. waiting .. " -- layout opens when `lain chat --nvim` renders", vim.log.levels.WARN)
+  end
 end
 
 -- Same delete-then-define convention as the runtime's own commands, so a
@@ -374,20 +319,10 @@ function M.define_commands()
   end, { desc = "lain: open a window layout over the attached lain:// buffers" })
 end
 
-local function install_attach_listener()
-  vim.api.nvim_create_autocmd("User", {
-    pattern = "LainAttach",
-    group = vim.api.nvim_create_augroup("lain_plugin_attach", { clear = true }),
-    callback = function(ev)
-      M._attach = ev.data
-    end,
-  })
-end
-
--- The entry point: record opts, define :LainStart, listen for attaches, and
--- serve the socket. Serving happens ON VimEnter -- or immediately when
--- VimEnter has already fired (a lazy-loading plugin manager calls setup
--- after startup), so "call setup, get a socket" holds either way.
+-- The entry point: record opts, define :LainStart, and serve the socket.
+-- Serving happens ON VimEnter -- or immediately when VimEnter has already fired
+-- (a lazy-loading plugin manager calls setup after startup), so "call setup,
+-- get a socket" holds either way.
 --
 -- Re-running setup with a DIFFERENT socket config serves the new path but
 -- keeps the old one listening (nvim's serverstart is additive and no
@@ -396,7 +331,6 @@ end
 function M.setup(setup_opts)
   config.set(setup_opts)
   M.define_commands()
-  install_attach_listener()
   if config.current().serverstart then
     if vim.v.vim_did_enter == 1 then
       start_server()

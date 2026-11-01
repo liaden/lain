@@ -32,7 +32,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     def in_file_pane(body)
       inspector.exec_lua(<<~LUA, [])
         for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-          if vim.w[win].lain_review_slot == "new" then vim.api.nvim_set_current_win(win) end
+          if vim.w[win].lain_slot == "new" then vim.api.nvim_set_current_win(win) end
         end
         #{body}
       LUA

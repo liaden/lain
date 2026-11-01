@@ -187,7 +187,7 @@ RSpec.describe Lain::Frontend::Neovim, "the review thread pane", :nvim do
     found = lua(<<~LUA)
       local found = {}
       for _, win in ipairs(vim.api.nvim_list_wins()) do
-        local slot = vim.w[win].lain_review_slot
+        local slot = vim.w[win].lain_slot
         if slot then found[slot] = win end
       end
       return found
@@ -1741,7 +1741,7 @@ RSpec.describe Lain::Frontend::Neovim, "the review thread pane", :nvim do
       @editor.command("LainThread")
 
       expect(lua("return vim.api.nvim_tabpage_list_wins(0)").map do |win|
-        lua("return vim.w[...].lain_review_slot", [win])
+        lua("return vim.w[...].lain_slot", [win])
       end).to eq(%w[sidebar old new])
     end
 

@@ -412,7 +412,7 @@ end
 -- state the repair below is for.
 function review_thread.pane(slot)
   for _, win in ipairs(vim.api.nvim_list_wins()) do
-    if vim.w[win].lain_review_slot == slot then
+    if vim.w[win].lain_slot == slot then
       return win
     end
   end

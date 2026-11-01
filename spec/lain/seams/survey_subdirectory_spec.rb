@@ -401,7 +401,7 @@ RSpec.describe "a survey of a subdirectory, from the walk to the editor's buffer
       @editor.exec_lua(<<~LUA, [review_tab])
         local slots = {}
         for _, win in ipairs(vim.api.nvim_tabpage_list_wins(...)) do
-          table.insert(slots, vim.w[win].lain_review_slot or "")
+          table.insert(slots, vim.w[win].lain_slot or "")
         end
         return slots
       LUA

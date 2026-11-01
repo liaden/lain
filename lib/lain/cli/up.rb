@@ -823,9 +823,9 @@ module Lain
 
         def requested? = !@option.nil?
 
-        # The whole of the layout wiring: `:LainStart` lays out now if lain has
-        # attached, else arms a one-shot so the views open when the sibling
-        # pane's `chat --nvim` lands. The rtp injection through `--cmd` is
+        # The whole of the layout wiring: `:LainStart` builds the session tab
+        # over whatever lain has rendered, and every later render fills in the
+        # views the sibling pane's `chat --nvim` primes after it. The rtp injection through `--cmd` is
         # evaluated before nvim sources rtp `plugin/` files, which makes
         # `:LainStart` exist on a bare nvim; a plugin manager that rewrites rtp
         # in `init.lua` drops it again, so {LOAD_PLUGIN} re-adds and sources it

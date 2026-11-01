@@ -78,32 +78,22 @@ function lain_approval.buf()
   return buf
 end
 
--- ONLY THE WINDOW THIS MODULE OPENED, and `w:lain_approval_opened` is what makes
--- that answerable. A window VARIABLE, because both alternatives get it wrong in
--- a way nothing here would notice: a window OPTION is copied by :vsplit, so a
--- human's split off lain's window would wear lain's mark and be taken from them,
--- while a lua table keyed by window id outlives the window it names and a
--- recycled id would hand a stranger's window to this loop.
---
--- THE BUFFER SURVIVES THE CLOSE: `bufhidden = "hide"` means nvim_win_close does
--- not unload it, so `:buffer lain://approval` is still the way back to a list
--- with nothing in it.
-local function last_in_its_tab(win)
-  return #vim.api.nvim_tabpage_list_wins(vim.api.nvim_win_get_tabpage(win)) == 1
-end
-
-local function close_opened_windows(buf)
-  for _, win in ipairs(vim.fn.win_findbuf(buf)) do
-    -- THE LAST WINDOW OF ITS TABPAGE IS KEPT, and the count has to be the
-    -- TABPAGE's: closing the last window of a tab closes the TAB, so a
-    -- whole-editor count says "there are others" while the human's focus is
-    -- thrown into a tab they were not looking at -- because a queue drained.
-    -- The cost of the exception is an empty list left on screen in that tab,
-    -- which is the smaller of the two surprises and is documented as such.
-    if vim.w[win].lain_approval_opened and not last_in_its_tab(win) then
-      vim.api.nvim_win_close(win, false)
+-- How many of `after`'s calls were not parked in `before`, counted as a
+-- multiset: the same command parked twice is two calls.
+function lain_approval.arrivals(before, after)
+  local held = {}
+  for _, call in ipairs(type(before) == "table" and before or {}) do
+    held[call] = (held[call] or 0) + 1
+  end
+  local arrived = 0
+  for _, call in ipairs(type(after) == "table" and after or {}) do
+    if (held[call] or 0) > 0 then
+      held[call] = held[call] - 1
+    else
+      arrived = arrived + 1
     end
   end
+  return arrived
 end
 
 function lain_approval.stop_grace()
@@ -121,8 +111,11 @@ function lain_approval.start_grace(buf)
   timer:start(vim.g.lain_approval_close_grace_ms or 5000, 0, vim.schedule_wrap(function()
     if lain_approval.timer == timer then
       lain_approval.stop_grace()
+      -- Only the window lain opened, the one still marked "approval". The buffer
+      -- survives the close (`bufhidden = "hide"`), so `:buffer lain://approval`
+      -- is still the way back to a list with nothing in it.
       if vim.api.nvim_buf_is_valid(buf) then
-        close_opened_windows(buf)
+        tab_layout.give_back(buf, "approval")
       end
     end
   end))
@@ -160,11 +153,12 @@ end
 -- (1-based), and `calls[call_index[N]]` is row N's command in full.
 --
 -- IT SHOWS THE WINDOW AND NEVER ENTERS IT. A parked call has a clock running and
--- an editor showing nothing was the defect, but the split opening below keeps
--- the call visible, and the input pane answers the same call, which is where
--- focus usually is. The keys stay buffer-local, so answering inside nvim means
--- moving into the split like any other window. A window it opens starts on
--- line 1; one reused after an empty list is put back there without entering it.
+-- an editor showing nothing was the defect, but the window `place` opens in the
+-- session tab keeps the call visible, and the input pane answers the same call,
+-- which is where focus usually is. The keys stay buffer-local, so answering
+-- inside nvim means moving into that window like any other. A window it opens
+-- starts on line 1; one reused after an empty list is put back there without
+-- entering it. A window the human closed stays closed until a new call parks.
 --
 -- AND IT GIVES THE WINDOW BACK, AFTER A GRACE (vim.g.lain_approval_close_grace_ms,
 -- default 5000): a window opened BECAUSE rows appeared has no claim on the
@@ -178,6 +172,7 @@ end
 function _G.__lain.set_approval(lines, gen, rows, calls, call_index)
   local buf = lain_approval.buf()
   local was_empty = (vim.b[buf].lain_approval_rows or 0) == 0
+  local arrived = lain_approval.arrivals(vim.b[buf].lain_approval_calls, calls)
   vim.b[buf].lain_view_generation = gen
   vim.b[buf].lain_approval_rows = rows
   vim.b[buf].lain_approval_calls = calls
@@ -187,10 +182,12 @@ function _G.__lain.set_approval(lines, gen, rows, calls, call_index)
   if rows > 0 then
     lain_approval.stop_grace()
     if shown == nil then
-      local opened = vim.api.nvim_open_win(buf, false, { split = "below", win = 0 })
-      vim.w[opened].lain_approval_opened = true
+      _G.__lain.place("approval", buf, arrived > 0)
     elseif was_empty then
       vim.api.nvim_win_set_cursor(shown, { 1, 0 })
+    end
+    if arrived > 0 then
+      tab_layout.session.tell(arrived == 1 and "1 approval" or arrived .. " approvals")
     end
   elseif shown ~= nil then
     lain_approval.start_grace(buf)
@@ -269,35 +266,8 @@ end, { nargs = "*" })
 -- it.
 local approval_group = vim.api.nvim_create_augroup("lain_approval", { clear = true })
 
--- THE MARK EXPIRES WITH WHAT IT DESCRIBES. `w:lain_approval_opened` says "lain
--- opened this window FOR THIS BUFFER", and a window that has since been sent to
--- another buffer no longer answers that -- so a human who navigates lain's
--- window away and later brings the list back into it themselves has taken the
--- window over, and lain must not close it out from under them on the next
--- drain. 10_folds' BufWinEnter is the precedent and the same shape for the same
--- reason: a window whose buffer stops being lain's is handed back right there.
--- Pattern "*" for that reason too -- the seam is the window acquiring ANOTHER
--- buffer, which no lain:// pattern can see.
---
--- ONE augroup, named once above: a second `clear = true` here would wipe the
--- keymap autocmd below rather than join it.
---
--- The gap, stated because it is real and small: BufWinEnter may not fire for a
--- buffer that is already displayed in some other window, so a marked window
--- sent to an already-visible buffer keeps its mark. It shows no approval list
--- while that is true, so nothing closes; only bringing the list back into that
--- same window reaches it, and lain did open that window.
-vim.api.nvim_create_autocmd("BufWinEnter", {
-  group = approval_group,
-  pattern = "*",
-  callback = function(ev)
-    local win = vim.api.nvim_get_current_win()
-    if vim.w[win].lain_approval_opened and vim.api.nvim_buf_get_name(ev.buf) ~= lain_approval.NAME then
-      vim.w[win].lain_approval_opened = nil
-    end
-  end,
-})
-
+-- The mark lain puts on its window expires when the human sends that window to
+-- another buffer; 41_layout's BufWinEnter owns that for every placed kind.
 vim.api.nvim_create_autocmd("BufEnter", {
   group = approval_group,
   pattern = lain_approval.NAME,

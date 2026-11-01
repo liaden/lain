@@ -116,7 +116,7 @@ RSpec.describe "the review annotation runtime", :nvim, :seam do
     lua(<<~LUA)
       local found = {}
       for _, win in ipairs(vim.api.nvim_list_wins()) do
-        local slot = vim.w[win].lain_review_slot
+        local slot = vim.w[win].lain_slot
         if slot then found[slot] = win end
       end
       return found

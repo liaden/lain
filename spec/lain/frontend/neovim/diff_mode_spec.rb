@@ -76,7 +76,7 @@ module DiffModeFixture
         if ev.event == "WinEnter" then
           world = { cursor = vim.api.nvim_win_get_cursor(win)[1], slots = {} }
           for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-            local slot = vim.w[w].lain_review_slot
+            local slot = vim.w[w].lain_slot
             if slot then
               world.slots[slot] = {
                 vim.api.nvim_win_get_buf(w), vim.wo[w].diff, vim.api.nvim_win_get_cursor(w)[1],
@@ -133,7 +133,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     lua(<<~LUA, [review_tab])
       local found = {}
       for _, win in ipairs(vim.api.nvim_tabpage_list_wins(...)) do
-        local slot = vim.w[win].lain_review_slot
+        local slot = vim.w[win].lain_slot
         if slot then found[slot] = win end
       end
       return found
@@ -972,7 +972,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     # The same fact, against the case the slot marker gets WRONG -- and the
-    # reason `landing` reads the buffer rather than trusting `lain_review_slot`.
+    # reason `landing` reads the buffer rather than trusting `lain_slot`.
     # The marker lives on the WINDOW and the buffer inside it is the human's to
     # change: `gf` on a sidebar row, a `:b#`, a quickfix jump or the plain
     # `:edit` used here all leave the window still marked `sidebar` while it
@@ -1311,7 +1311,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       lua("_G.__lain.open_changeset(...)", [path, [], line, revisions])
     end
 
-    def slot_names = windows(review_tab).map { |win| lua("return vim.w[...].lain_review_slot", [win]) }
+    def slot_names = windows(review_tab).map { |win| lua("return vim.w[...].lain_slot", [win]) }
 
     it "holds the sidebar and the file, and nothing else" do
       surveyed("docs/guide.txt")

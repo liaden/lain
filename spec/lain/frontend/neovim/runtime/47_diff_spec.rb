@@ -83,7 +83,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       inspector.exec_lua(<<~LUA, [File.join(dir, name)])
         local wanted = ...
         for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-          if vim.w[win].lain_review_slot == "new" then vim.api.nvim_set_current_win(win) end
+          if vim.w[win].lain_slot == "new" then vim.api.nvim_set_current_win(win) end
         end
         vim.cmd("edit " .. vim.fn.fnameescape(wanted))
       LUA
@@ -102,7 +102,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     def followed_the_filename
       inspector.exec_lua(<<~LUA, [])
         for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-          if vim.w[win].lain_review_slot == "new" then vim.api.nvim_set_current_win(win) end
+          if vim.w[win].lain_slot == "new" then vim.api.nvim_set_current_win(win) end
         end
         vim.api.nvim_win_set_cursor(0, { 2, 0 })
         vim.cmd("normal! gf")

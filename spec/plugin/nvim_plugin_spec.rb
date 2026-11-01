@@ -419,6 +419,94 @@ RSpec.describe "lain nvim plugin", :nvim do
       end
     end
 
+    # The runtime injected the way the frontend injects it, with no frontend
+    # behind it, so each prime below is its own batch rather than the
+    # frontend's single burst.
+    def inject_runtime
+      lua(Lain::Frontend::Neovim::RuntimeLoader.new.source,
+          Lain::VERSION, Lain::Frontend::Neovim.protocol, inspector.channel_id)
+    end
+
+    # The session tab's window tree with each leaf named for its buffer, which is
+    # what "in the configured columns" means: a row of columns, each a stack.
+    def session_layout
+      lua(<<~LUA)
+        local function named(node)
+          if node[1] == "leaf" then return vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(node[2])) end
+          local out = { node[1] }
+          for _, child in ipairs(node[2]) do table.insert(out, named(child)) end
+          return out
+        end
+        for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
+          if vim.t[tab].lain_session then
+            return named(vim.fn.winlayout(vim.api.nvim_tabpage_get_number(tab)))
+          end
+        end
+        return nil
+      LUA
+    end
+
+    def lain_messages = lua("return vim.api.nvim_exec2('messages', { output = true }).output").scan(/^lain: .*/)
+
+    it "fills the session layout in as each buffer arrives in a batch of its own" do
+      boot_nvim
+      setup!
+      inspector.command("LainStart")
+      inject_runtime
+
+      primes = ["_G.__lain.render({ 'journal' })",
+                "_G.__lain.set_view('lain://timeline', { 'timeline' })",
+                "_G.__lain.set_view('lain://inbox', { 'inbox' })",
+                "_G.__lain.set_request('lain://request', { 'request' })"]
+      primes.each_with_index do |prime, index|
+        lua(prime)
+        wait_until { session_layout.to_s.scan("lain://").size == index + 1 }
+      end
+
+      expect(session_layout).to eq(["row", "lain://journal",
+                                    ["col", "lain://timeline", "lain://inbox", "lain://request"]])
+    end
+
+    it "switches to the one session tab when :LainStart runs again, never opening a second" do
+      boot_nvim
+      setup!
+      inject_runtime
+      lua("_G.__lain.render({ 'journal' })")
+      inspector.command("LainStart")
+      inspector.command("tabfirst")
+
+      inspector.command("LainStart")
+
+      expect(lua("return { #vim.api.nvim_list_tabpages(), vim.t.lain_session == true }")).to eq([2, true])
+    end
+
+    # An attached runtime older than the placement policy: the plugin says so
+    # once rather than raising on every render.
+    it "says once that an attached runtime is too old to place windows" do
+      boot_nvim
+      setup!
+      lua("vim.g.lain_rpc_version = 9; _G.__lain = { protocol = 9 }")
+      inspector.command("LainStart")
+      2.times { lua("vim.api.nvim_exec_autocmds('User', { pattern = 'LainRender' }); vim.wait(50)") }
+
+      expect(lain_messages).to contain_exactly(a_string_including("runtime"))
+    end
+
+    it "warns once when :LainStart is typed before anything attached" do
+      boot_nvim
+      setup!
+      2.times { inspector.command("LainStart") }
+
+      expect(lain_messages.size).to eq(1)
+    end
+
+    it "says nothing when the cockpit runs :LainStart at startup" do
+      boot_nvim(extra_args: ["-c", "LainStart"])
+      wait_until { lua("return vim.v.vim_did_enter") == 1 }
+
+      expect(lain_messages).to be_empty
+    end
+
     # The card's discipline clause, pinned mechanically the way
     # output_discipline_spec.rb pins stdout: the plugin may READ buffer names,
     # never create or write buffers, and never speak RPC -- that all belongs
@@ -427,8 +515,16 @@ RSpec.describe "lain nvim plugin", :nvim do
       sources = Dir[File.join(plugin_root, "**", "*.lua")]
       expect(sources).not_to be_empty
       forbidden = %w[nvim_create_buf nvim_buf_set_lines rpcrequest rpcnotify __lain]
+      # The one runtime name the plugin may use is the placement call, and only
+      # inside the function that makes it.
+      placement = /^local function place_session\(.*?^end$/m
+      holders = sources.select { |path| File.read(path).match?(placement) }
+      expect(holders).to eq([File.join(plugin_root, "lua/lain/init.lua")])
+      expect(File.read(holders.first)[placement].scan("_G.__lain.place(").size).to eq(1)
+      named = File.read(holders.first)[placement].scan(/[\w.]*__lain[\w.]*/).uniq
+      expect(named).to all(satisfy { |name| ["_G.__lain", "_G.__lain.place"].include?(name) })
       sources.each do |path|
-        content = File.read(path)
+        content = File.read(path).sub(placement, "")
         forbidden.each do |token|
           expect(content).not_to include(token), "#{path} must not reference #{token}"
         end

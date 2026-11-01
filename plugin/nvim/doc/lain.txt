@@ -115,11 +115,19 @@ fails quietly and it simply serves no socket.
 5. COMMANDS AND FUNCTIONS                                           *lain-api*
 
                                                                   *:LainStart*
-:LainStart              Open a window layout (new tab) over the injected
-                        lain:// buffers, per the `layout` option. Only
-                        buffers the runtime has actually created are placed.
-                        If lain has not attached yet, the layout opens
-                        automatically the moment it does.
+:LainStart              Switch to the one session tab, laid out over the
+                        injected lain:// buffers per the `layout` option, or
+                        rebuild it if you closed it. It never opens a second
+                        session tab. Views fill in as lain renders them, and
+                        if lain has not attached yet the layout opens when it
+                        does.
+
+                        A view window you close stays closed until you close
+                        the session tab and run :LainStart again. Approvals
+                        and questions open in the session tab, and a new one
+                        shows itself even where you closed the last one. When
+                        you are in another tab, a one-line notice names what
+                        is waiting.
 
                                                           *lain.socket_path()*
 lain.socket_path()      The deterministic socket path for the current

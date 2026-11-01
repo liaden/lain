@@ -71,7 +71,7 @@
 -- IT TAKES NO REVIEW SLOT. `41_layout.lua` records that on a survey the thread
 -- pane already borrows the `old` slot, and a second borrower would need a rule
 -- about which of them wins. This needs none: the pane is an ordinary split under
--- the window the human pressed the key in, carrying no `w:lain_review_slot`, so
+-- the window the human pressed the key in, carrying no `w:lain_slot`, so
 -- `review_panes.map` does not see it, `shed` cannot close it and `review_place`
 -- cannot land a render in it. It is the human's window, opened by the human's
 -- gesture, closed by their `:q`.

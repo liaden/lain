@@ -17,8 +17,10 @@ installed. This plugin only owns the conventions around that contract:
   under `$XDG_STATE_HOME/lain` (or `$HOME/.local/state/lain`) and keyed by the
   same project hash as the socket, nothing created.
 - **`lain.status()`** — the decoded contents of `lain.state_path()`, or `nil`.
-- **`:LainStart`** — a window layout over the injected buffers (opens on
-  attach if lain isn't connected yet).
+- **`:LainStart`** — switch to the one session tab over the injected
+  buffers, or rebuild it if you closed it; views fill in as they render, and
+  a view you close stays closed until the tab is rebuilt. Approvals and
+  questions open there, with a notice when you are in another tab.
 
 No buffer logic, no RPC handling — that all stays in the gem.
 

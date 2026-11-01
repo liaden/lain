@@ -147,22 +147,20 @@ end
 -- is how a `dd` eats a question the human never read.
 function _G.__lain.set_question(name, lines, digest)
   local buf = question_buf(name)
+  local fresh = vim.b[buf].lain_question_digest ~= digest
   vim.b[buf].lain_question_digest = digest
   vim.b[buf].lain_question_rendered = lines
   vim.bo[buf].modifiable = true
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.bo[buf].modified = false
-  local win = vim.fn.win_findbuf(buf)[1]
-  if win == nil then
-    win = vim.api.nvim_open_win(buf, false, { split = "below", win = 0 })
-    vim.w[win].lain_question_opened = true
+  local win = _G.__lain.place("question", buf, fresh)
+  if win ~= nil then
+    vim.api.nvim_win_set_cursor(win, { 1, 0 })
   end
-  vim.api.nvim_win_set_cursor(win, { 1, 0 })
+  if fresh then
+    tab_layout.session.tell("a question is")
+  end
   announce_render(name, buf)
-end
-
-local function last_window_of_its_tab(win)
-  return #vim.api.nvim_tabpage_list_wins(vim.api.nvim_win_get_tabpage(win)) == 1
 end
 
 -- The submitted set was the last one: mark the buffer answered and read-only,
@@ -171,9 +169,6 @@ end
 -- and set_question drawn the next set before this rail ran. The buffer stays
 -- hidden with the answers in it, so `:buffer lain://question` shows them.
 -- A repeated rail is a no-op: the buffer is already read-only.
---
--- Counted per TABPAGE, for the reason close_opened_windows in
--- the approval view gives: closing a tab's last window closes the tab.
 function _G.__lain.set_question_settled(digest, at)
   local buf = vim.fn.bufnr(QUESTION)
   if buf == -1 or vim.b[buf].lain_question_digest ~= digest or not vim.bo[buf].modifiable then
@@ -185,11 +180,7 @@ function _G.__lain.set_question_settled(digest, at)
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.bo[buf].modified = false
   vim.bo[buf].modifiable = false
-  for _, win in ipairs(vim.fn.win_findbuf(buf)) do
-    if vim.w[win].lain_question_opened and not last_window_of_its_tab(win) then
-      vim.api.nvim_win_close(win, false)
-    end
-  end
+  tab_layout.give_back(buf, "question")
 end
 
 -- The question round trip's return leg. Same gesture as compose -- `:w`

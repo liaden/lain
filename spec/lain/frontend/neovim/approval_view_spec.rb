@@ -1209,7 +1209,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     end
 
     # How many windows show the buffer, how many of those lain opened for
-    # itself, and how many TABPAGES the editor still has. `w:lain_approval_opened`
+    # itself, and how many TABPAGES the editor still has. `w:lain_slot`
     # is the runtime's own mark, so a window answering false here is one lain
     # must leave alone; the tab count is what catches a close that took a whole
     # tabpage with it.
@@ -1219,7 +1219,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
         local wins = buf == -1 and {} or vim.fn.win_findbuf(buf)
         local opened = 0
         for _, win in ipairs(wins) do
-          if vim.w[win].lain_approval_opened then opened = opened + 1 end
+          if vim.w[win].lain_slot == "approval" then opened = opened + 1 end
         end
         return { showing = #wins, opened = opened, tabs = #vim.api.nvim_list_tabpages() }
       LUA
@@ -1263,7 +1263,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
           vim.cmd("enew")
           vim.cmd("buffer " .. name)
         end)
-        return vim.w[win].lain_approval_opened == true
+        return vim.w[win].lain_slot == "approval"
       LUA
     end
 

@@ -50,7 +50,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   end
 
   # An epic already in flight: two lain:// buffers side by side in the first
-  # tabpage, the shape `plugin/nvim/lua/lain/init.lua`'s `open_layout` leaves.
+  # tabpage, as a session layout leaves them.
   def open_session_layout
     lua(<<~LUA)
       for _, name in ipairs({ "lain://journal", "lain://timeline" }) do
@@ -369,7 +369,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # list of {Lain::Review::SIDES}, never a layout instruction.
     def set_review(lines, generation, sides) = lua("_G.__lain.set_review(...)", [lines, generation, sides])
 
-    def slot_of(win) = lua("return vim.w[...].lain_review_slot", [win])
+    def slot_of(win) = lua("return vim.w[...].lain_slot", [win])
 
     def slots_in(tab) = windows(tab).map { |win| slot_of(win) }
 
@@ -477,6 +477,241 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       set_review(%w[one], 1, nil)
 
       expect(slots_in(review_tab)).to eq(%w[sidebar old new])
+    end
+  end
+
+  # The session tab is the other instance of the same policy, and the one where a
+  # window the human closed is a decision rather than damage to repair.
+  describe "the session tab, where a window the human closed stays closed" do
+    def prime(name)
+      lua("local name = ...; if name == 'lain://journal' then _G.__lain.render({ 'journal' }) " \
+          "else _G.__lain.set_view(name, { name }) end", [name])
+    end
+
+    def session(build: true, layout: [["lain://journal"]])
+      layout.flatten.each { |name| prime(name) }
+      lua('local layout, build = ...; return _G.__lain.place("session", { layout = layout, build = build })',
+          [layout, build])
+    end
+
+    def session_tab_now
+      lua(<<~LUA)
+        for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
+          if vim.t[tab].lain_session then return tab end
+        end
+        return nil
+      LUA
+    end
+
+    def park(calls = ["pwd"])
+      lines = [*calls.map { |call| "bash: #{call}" }, "", "y approve"]
+      lua("_G.__lain.set_approval(...)", [lines, 1, calls.size, calls, (1..calls.size).to_a])
+    end
+
+    def drain = lua("_G.__lain.set_approval({ '(no approvals pending)' }, 2, 0, {}, {})")
+
+    def ask(digest) = lua("_G.__lain.set_question('lain://question', { '## which?' }, ...)", [digest])
+
+    def windows_of(name) = lua("return vim.fn.win_findbuf(vim.fn.bufnr(...))", [name])
+
+    def approval_windows = windows_of("lain://approval")
+
+    def tab_of(win) = lua("return vim.api.nvim_win_get_tabpage(...)", [win])
+
+    def session_names
+      lua(<<~LUA, [session_tab_now])
+        local out = {}
+        for _, win in ipairs(vim.api.nvim_tabpage_list_wins(...)) do
+          table.insert(out, vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(win)))
+        end
+        return out
+      LUA
+    end
+
+    def session_tree
+      lua(<<~LUA, [session_tab_now])
+        local function named(node)
+          if node[1] == "leaf" then return vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(node[2])) end
+          local out = { node[1] }
+          for _, child in ipairs(node[2]) do table.insert(out, named(child)) end
+          return out
+        end
+        return named(vim.fn.winlayout(vim.api.nvim_tabpage_get_number(...)))
+      LUA
+    end
+
+    def notices
+      lua("return vim.api.nvim_exec2('messages', { output = true }).output").scan("waiting in the session tab").size
+    end
+
+    def dismiss_session_tab
+      lua(<<~LUA, [session_tab_now])
+        vim.cmd("tabnew")
+        vim.cmd(vim.api.nvim_tabpage_get_number(...) .. "tabclose")
+        return true
+      LUA
+    end
+
+    it "opens a parked approval in the session tab, not in the tab the human is on" do
+      session
+      lua("vim.cmd('tabfirst')")
+      park
+
+      expect(approval_windows.map { |win| tab_of(win) }).to eq([session_tab_now])
+    end
+
+    it "keeps a closed approval hidden when the same call renders again" do
+      session
+      park
+      close(approval_windows.first)
+
+      park
+
+      expect(approval_windows).to be_empty
+    end
+
+    it "shows a newly parked approval even in the slot the human closed" do
+      session
+      park
+      close(approval_windows.first)
+
+      park(%w[pwd ls])
+
+      expect(approval_windows.map { |win| tab_of(win) }).to eq([session_tab_now])
+    end
+
+    it "shows a new question even in the slot the human closed" do
+      session
+      ask("one")
+      close(windows_of("lain://question").first)
+      ask("one")
+      hidden = windows_of("lain://question")
+
+      ask("two")
+
+      expect([hidden, windows_of("lain://question").size]).to eq([[], 1])
+    end
+
+    it "tells a human in another tab once for each newly parked approval" do
+      session
+      lua("vim.cmd('tabfirst')")
+      park
+      park
+      park(%w[pwd ls])
+
+      expect(notices).to eq(2)
+    end
+
+    it "counts the same command parked twice as a second call" do
+      session
+      lua("vim.cmd('tabfirst')")
+      park
+      close(approval_windows.first)
+      lua("vim.cmd('messages clear')")
+
+      park(%w[pwd pwd])
+
+      expect([approval_windows.size, notices]).to eq([1, 1])
+    end
+
+    it "tells a human in another tab once when a new question is asked" do
+      session
+      lua("vim.cmd('tabfirst')")
+      ask("one")
+      ask("one")
+
+      expect(notices).to eq(1)
+    end
+
+    it "says nothing to a human already in the session tab" do
+      session
+      park
+
+      expect(notices).to eq(0)
+    end
+
+    it "shows the approval again once the session tab is closed and rebuilt" do
+      session
+      park
+      close(approval_windows.first)
+      dismiss_session_tab
+
+      session
+      park
+
+      expect(approval_windows.map { |win| tab_of(win) }).to eq([session_tab_now])
+    end
+
+    it "shows the next approval after lain's own grace close" do
+      lua("vim.g.lain_approval_close_grace_ms = 10")
+      session
+      park
+      drain
+      lua("vim.wait(2000, function() return #vim.fn.win_findbuf(vim.fn.bufnr('lain://approval')) == 0 end)")
+
+      park
+
+      expect(approval_windows.size).to eq(1)
+    end
+
+    it "keeps a view the human closed closed on the next render" do
+      layout = [["lain://journal"], ["lain://timeline"]]
+      session(layout:)
+      close(windows_of("lain://journal").first)
+
+      session(layout:, build: false)
+
+      expect(session_names).to eq(["lain://timeline"])
+    end
+
+    it "does not rebuild a session tab the human closed when a view renders" do
+      session
+      dismiss_session_tab
+
+      session(build: false)
+
+      expect(session_tab_now).to be_nil
+    end
+
+    it "switches to the one session tab rather than opening a second" do
+      session
+      lua("vim.cmd('tabfirst')")
+
+      session
+
+      expect([tabpages.size, here.first]).to eq([2, session_tab_now])
+    end
+
+    it "opens a column that arrives late at full height beside a column of two" do
+      layout = [["lain://journal", "lain://inbox"], ["lain://timeline"]]
+      session(layout: [layout.first])
+
+      session(layout:, build: false)
+
+      expect(session_tree).to eq(["row", ["col", "lain://journal", "lain://inbox"], "lain://timeline"])
+    end
+
+    it "lets go of a view's window once the human puts another buffer in it" do
+      layout = [["lain://journal"], ["lain://timeline"]]
+      session(layout:)
+      win = windows_of("lain://journal").first
+      lua("vim.api.nvim_win_call(..., function() vim.cmd('enew') end)", [win])
+
+      expect(lua("return vim.w[...].lain_slot", [win])).to be_nil
+    end
+
+    # With no session tab, an approval opens under the human's window -- in the
+    # review tab, when that is where they are -- and the review's next round must
+    # not take it for a pane of its own.
+    it "leaves an approval in the review tab alone when the review's round changes" do
+      lua("_G.__lain.set_review({ 'sidebar' }, 1, { 'old', 'new' })")
+      lua("vim.api.nvim_set_current_tabpage(...)", [review_tab])
+      park
+      before = approval_windows
+
+      lua("_G.__lain.set_review({ 'sidebar' }, 2, { 'new' })")
+
+      expect(approval_windows).to eq(before)
     end
   end
 end
