@@ -909,9 +909,10 @@ module Lain
         OutputCeiling::PerModel.new(window: context_window)
       end
 
-      # The context window is not resolved PER TURN here: the Source asks
-      # {#context_window} about the live Context every turn, so a `/model`
-      # switch mid-session moves the threshold with it. What this method owns is
+      # The byte threshold is derived ONCE, from the starting model. The window
+      # is not resolved per turn here: the Source asks {#context_window} about
+      # the live Context every turn, so a `/model` switch mid-session moves
+      # window_tokens and `approaching_window` with it. What this method owns is
       # which BOOK answers -- the run's one provider-derived book, so the
       # threshold a journal reader sees fired and the occupancy a human reads
       # are the same division.
@@ -927,7 +928,7 @@ module Lain
       # session from a quiet one.
       def compaction_source(cache_profile:, journal:, sink:)
         Compaction::Source.new(
-          need: @compaction.need(DEFAULT_BYTE_THRESHOLD),
+          need: @compaction.need(DEFAULT_BYTE_THRESHOLD, book: context_window, model:),
           cold: Compaction::Cold.new(cache_profile:, journal:),
           hard_cap: @compaction.cap || DEFAULT_HARD_CAP, keep_last: @compaction.keep || DEFAULT_KEEP_LAST,
           eager:, journal:, model:, price_book: COMPACTION_PRICES, context_window:, sink:, fallback:,

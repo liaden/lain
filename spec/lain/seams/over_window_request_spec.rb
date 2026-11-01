@@ -37,9 +37,11 @@ RSpec.describe "a prompt that does not fit the served context", :seam do
 
   let(:backend) do
     provider = Lain::Provider::Ollama.new(config: zero_retry_config)
+    # The byte threshold is pinned out of reach: a probed window this small derives one that
+    # compacts before the over-window refusal this seam drives.
     Class.new(Lain::CLI::Backend) do
       define_method(:provider) { |**| provider }
-    end.new({ provider: "ollama", model:, max_tokens: 64, compact_keep: 2 }, root: Dir.pwd)
+    end.new({ provider: "ollama", model:, max_tokens: 64, compact_keep: 2, compact_bytes: 10_000_000 }, root: Dir.pwd)
   end
 
   around do |example|

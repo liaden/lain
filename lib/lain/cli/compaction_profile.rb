@@ -21,6 +21,7 @@ module Lain
       SCHEDULES = %w[idle turn].freeze
       DEFAULT_SCHEDULE = "idle"
       TRIGGERS = %w[head request].freeze
+      WINDOW_DIVISOR = 4
       WHOLE_REQUEST = "request"
 
       # Thor's enum refuses a typed trigger, so only an edited or foreign header reaches this.
@@ -91,10 +92,16 @@ module Lain
       # @return [Boolean] whether the byte threshold bounds the whole request rather than the droppable head
       def whole_request? = trigger == WHOLE_REQUEST
 
-      # @param default_bytes [Integer] the threshold when no --compact-bytes was said
+      # A share of the window is the threshold only when the window is not a guess, so a
+      # model whose size is unknown keeps the fixed default instead of a made-up quarter.
+      #
+      # @param default_bytes [Integer] the threshold when no --compact-bytes was said and the window is a guess
+      # @param book [#resolve, nil] the run's window book; nil derives nothing
+      # @param model [String, nil] the model whose window sizes the threshold
       # @return [Compaction::Need]
-      def need(default_bytes)
-        Compaction::Need.new(byte_threshold: bytes || default_bytes, whole_request: whole_request?)
+      def need(default_bytes, book: nil, model: nil)
+        Compaction::Need.new(byte_threshold: bytes || derived_bytes(book, model) || default_bytes,
+                             whole_request: whole_request?)
       end
 
       def initialize(compact:, strategy:, keep:, bytes:, cap:, fallback:, schedule:, provenance:, trigger:)
@@ -104,6 +111,20 @@ module Lain
       end
 
       UNSET = new(**FLAGS.keys.to_h { [_1, nil] })
+
+      private
+
+      # A blank model has no window here; the first turn refuses it, as it always has.
+      def derived_bytes(book, model)
+        window = resolve_window(book, model)
+        ProxyBytes::BYTES_PER_TOKEN * (window.window_tokens / WINDOW_DIVISOR) if window&.authoritative?
+      end
+
+      def resolve_window(book, model)
+        book&.resolve(model)
+      rescue ContextWindow::UnknownModel
+        nil
+      end
     end
   end
 end

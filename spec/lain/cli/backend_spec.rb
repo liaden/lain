@@ -2265,6 +2265,18 @@ RSpec.describe Lain::CLI::Backend do
       expect(decisions.last.signals).to include(:token_threshold)
     end
 
+    it "waits past the default threshold on a 1M-token model" do
+      decide(history(400), compact_keep: 1)
+
+      expect(decisions.last.signals).not_to include(:token_threshold)
+    end
+
+    it "still fires the default threshold on a model whose window is only a guess" do
+      decide(history(400), compact_keep: 1, provider: "ollama", model: "no-such-model", summarizer_provider: nil)
+
+      expect(decisions.last.signals).to include(:token_threshold)
+    end
+
     it "leaves the default threshold far above a short history, so a fresh chat does not compact" do
       decide(history(6), compact_keep: 1)
 

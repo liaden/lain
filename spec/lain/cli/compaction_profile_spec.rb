@@ -100,6 +100,46 @@ RSpec.describe Lain::CLI::CompactionProfile do
         .to be(false)
     end
 
+    describe "against the model's window" do
+      def resolution(tokens, provenance)
+        Struct.new(:resolution) { def resolve(_model) = resolution }.new(
+          Lain::ContextWindow::WindowResolution.new(window_tokens: tokens, provenance:)
+        )
+      end
+
+      def threshold_signal?(need, head_bytes)
+        need.check(window_tokens: 1_000_000, head_bytes:).signals.include?(:token_threshold)
+      end
+
+      it "fires at a quarter of an authoritative window, as proxy bytes" do
+        need = described_class::UNSET.need(10, book: resolution(1_000_000, :published), model: "m")
+
+        expect(threshold_signal?(need, 999_999)).to be(false)
+        expect(threshold_signal?(need, 1_000_000)).to be(true)
+      end
+
+      it "compacts a 128k window sooner than a 1M one" do
+        small = described_class::UNSET.need(10, book: resolution(128_000, :probed), model: "m")
+
+        expect(threshold_signal?(small, 128_000)).to be(true)
+      end
+
+      it "keeps the default for a guessed window" do
+        need = described_class::UNSET.need(5_000, book: resolution(1_000_000, :guessed), model: "m")
+
+        expect(threshold_signal?(need, 4_999)).to be(false)
+        expect(threshold_signal?(need, 5_000)).to be(true)
+      end
+
+      it "lets --compact-bytes win over a derived threshold" do
+        need = described_class.typed({ compact_bytes: 262_144 }).need(10, book: resolution(1_000_000, :published),
+                                                                          model: "m")
+
+        expect(threshold_signal?(need, 262_143)).to be(false)
+        expect(threshold_signal?(need, 262_144)).to be(true)
+      end
+    end
+
     it "reads a recorded --no-compact" do
       expect(described_class.from_header({ "compact" => false })).to have_attributes(compact: false)
     end
