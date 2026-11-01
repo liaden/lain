@@ -64,7 +64,14 @@ module Lain
       # is refused at parse and `Discovered from: `zz`` is not. A spec pins both,
       # since the difference is invisible to an author who typos an id.
       SINGULAR_LINKS = %i[discovered_from].freeze
-      WRITABLE_LINKS = LINK_FIELDS.keys.map { |kind| "#{kind}:" }.join(", ").freeze
+      # The two link lines that hold a label rather than issue ids: the one
+      # source file the issue's failing tests mirror, and the level root they
+      # sit under. The subject is a path, so it is written in backticks; the
+      # level is a bare name. Both read either way, but an author's file only
+      # round-trips unchanged when written the way {Writer} writes it.
+      LABEL_LINKS = { "Subject" => :subject, "Level" => :level }.freeze
+      QUOTED_LABELS = %i[subject].freeze
+      WRITABLE_LINKS = [*LINK_FIELDS.keys, *LABEL_LINKS.keys].map { |kind| "#{kind}:" }.join(", ").freeze
       # Kinds an author might reasonably write that this grammar refuses on
       # purpose, with the reason, so the message teaches rather than scolds.
       DERIVED_LINKS = { "Blocked by" => ", it is derived from the `blocks` edges of the issues that block it " \
@@ -376,9 +383,16 @@ module Lain
 
         def add_link(number, link)
           kind = link[:kind]
-          field = LINK_FIELDS.fetch(kind) { refuse_kind!(number, kind) }
+          field = LINK_FIELDS.merge(LABEL_LINKS).fetch(kind) { refuse_kind!(number, kind) }
           refuse_repeat!(number, kind) if @links.key?(field)
-          @links[field] = targets(number, link, field)
+          @links[field] = LABEL_LINKS.value?(field) ? label(number, link) : targets(number, link, field)
+        end
+
+        def label(number, link)
+          value = link[:value].delete("`").strip
+          return value unless value.empty?
+
+          raise MalformedDocument, "line #{number}: `#{link[:kind]}:` names nothing"
         end
 
         def targets(number, link, field)
@@ -463,7 +477,14 @@ module Lain
           issue.criteria.chomp
         end
 
-        def links = LINK_FIELDS.filter_map { |kind, field| link_line(kind, field) }.join("\n")
+        def links = [*LINK_FIELDS.filter_map { |kind, field| link_line(kind, field) }, *label_lines].join("\n")
+
+        def label_lines
+          LABEL_LINKS.filter_map do |kind, field|
+            value = issue.public_send(field)
+            "#{kind}: #{QUOTED_LABELS.include?(field) ? "`#{value}`" : value}" if value
+          end
+        end
 
         def link_line(kind, field)
           ids = targets(field)

@@ -52,6 +52,8 @@ Writes each record as the session produces it rather than buffering the whole tr
 
 Blocks: `export-subcommand`
 Related: `export-schema`
+Subject: `lib/exporter/stream.rb`
+Level: unit
 
 ```gherkin
 Scenario: a session larger than the write buffer still exports whole
@@ -93,6 +95,8 @@ What that example is showing:
 - **Link lines** start at the beginning of a line: `` Blocks: `a`, `b` ``, `` Related: `c` ``,
   `` Discovered from: `x` ``. Ids are backticked. `Blocks` and `Related` take a set;
   `Discovered from` takes exactly one id. One line per kind per issue.
+  `` Subject: `path` `` and `Level: name` are link lines too (see Phase 5); they follow the
+  edge lines.
 - **Acceptance criteria** are at most one ```gherkin fence per issue, and the fence delimiters
   are part of what is stored — they round-trip verbatim. A criteria block with no `Scenario:`
   in it is refused.
@@ -127,29 +131,24 @@ refused). Then read `<%= epic_home %>/<slug>/epic.md` back and look at what came
 `ready` (pending with every blocker done) and `waves` (each wave a maximal set that can run in
 parallel). If everything lands in one long chain, you cut the seams wrong; go back to Phase 2.
 
-## Phase 5 — Each issue's plan declares the file its tests mirror
+## Phase 5 — Each issue declares the file its tests mirror
 
-An issue is implemented from a plan — `plans/<id>.md` in the epic home — and that plan carries one
-line the driver cannot do without. Write it with `epic_write` (`artifact` is `plan`, `issue` is the
-id) to `<%= epic_home %>/<slug>/plans/<id>.md`:
-
-````text
-Subject: lib/exporter/stream.rb
-Level: unit
-````
+Every issue carries one line the driver cannot do without, in `epic.md` itself, under its other
+link lines: `` Subject: `lib/exporter/stream.rb` `` and, optionally, `Level: unit`.
 
 `Subject:` names the **one source file** this issue's generated failing tests mirror, relative to
 the project root. It is required, and the red step **refuses by name** without it: tests are placed
-by mirroring a source file, and an issue names none. `Level:` is optional and picks which level root
-the test lands in; omitted, the layout's default level is used.
+by mirroring a source file, and an issue names none otherwise. `Level:` picks which level root the
+test lands in; omitted, the layout's default level is used.
 
 A subject is a plain relative path — no `.` or `..` segment, no doubled or trailing slash, no
 leading `/`, `~` or `-` — and it need not exist yet, since a test written before its class is the
 normal case. Declare exactly one of each line; two of either is refused rather than guessed
 between.
 
-It lives in the plan rather than on the issue because the plan's digest already covers it: the
-subject is approved along with the plan, and editing it reopens that gate.
+It lives on the issue because the `epic_plan` gate covers `epic.md`: the subject is approved with
+the graph, and editing it reopens that gate. Add the lines to the issues you wrote in Phase 3 and
+write `epic.md` again.
 
 ## Phase 6 — Request the epic_plan gate
 

@@ -842,6 +842,39 @@ RSpec.describe Lain::CLI::Epic do
       expect(graph_revisions.map { |record| record["operation"] }).to eq(["split"])
     end
 
+    # Scenario: a split part must name its own subject
+    it "refuses to split an issue with a subject into parts that name none" do
+      write_epic("alpha", graph_of(issue("a", subject: "app/a.rb", level: "unit"), issue("b")))
+      before = epic_home.epic.read
+
+      expect { command.split("a", "a1,a2", "alpha") }
+        .to raise_error(Lain::Error, /subject.*a1, a2/m)
+      expect(epic_home.epic.read).to eq(before)
+    end
+
+    it "splits an issue with a subject when every part names its own" do
+      write_epic("alpha", graph_of(issue("a", subject: "app/a.rb"), issue("b")))
+
+      command.split("a", "a1,a2", "alpha", subjects: { "a1" => "app/a1.rb", "a2" => "app/a2.rb" })
+
+      expect(epic_home.read_epic.fetch("a2").subject).to eq("app/a2.rb")
+    end
+
+    it "names only the parts still lacking a subject" do
+      write_epic("alpha", graph_of(issue("a", subject: "app/a.rb"), issue("b")))
+
+      expect { command.split("a", "a1,a2", "alpha", subjects: { "a1" => "app/a1.rb" }) }
+        .to raise_error(Lain::Error, /a2/) { |error| expect(error.message).not_to include("a1") }
+    end
+
+    it "keeps the first issue's subject and level through a merge" do
+      write_epic("alpha", graph_of(issue("a", subject: "app/a.rb", level: "unit"), issue("b", subject: "app/b.rb")))
+
+      command.merge("a", "b", "alpha", as: "ab")
+
+      expect(epic_home.read_epic.fetch("ab")).to have_attributes(subject: "app/a.rb", level: "unit")
+    end
+
     it "replaces two issues with one, inheriting both sides' edges" do
       write_epic("alpha", chain)
 

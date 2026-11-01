@@ -66,8 +66,9 @@ class FactorySpecActors
     @idle = idle
   end
 
-  def call(issue_id, subject:, level: nil, attempt: 1) # rubocop:disable Lint/UnusedMethodArgument
+  def call(issue_id, subject:, level: nil, attempt: 1)
     @log << [:launched, issue_id, attempt, git(@repo, "rev-parse", "refs/heads/epic/#{@slug}")]
+    @log << [:subject, issue_id, subject, level] unless subject.empty?
     red = nil
     actor = @fleet.adopt(role: "factory-spec", worker_id: "issue.#{@slug}.#{issue_id}.#{attempt}") do |worker_env|
       @log << [:leased, issue_id, git(worker_env.cwd, "rev-parse", "HEAD")]
@@ -149,8 +150,8 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
     shell(repo, "merge-base", "--is-ancestor", sha, "refs/heads/epic/#{slug}").exitstatus.zero?
   end
 
-  def issue(id, blocks: [], status: "in_flight")
-    Lain::Epic::Issue.new(id:, title: "the #{id} issue", blocks:, status:,
+  def issue(id, blocks: [], status: "in_flight", subject: "app/models/order.rb", **carried)
+    Lain::Epic::Issue.new(id:, title: "the #{id} issue", blocks:, status:, subject:, **carried,
                           criteria: "```gherkin\nScenario: s\n  Given g\n  When w\n  Then t\n```\n")
   end
 
@@ -775,7 +776,7 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
     # checkout or a branch exists. The refusal is the issue's, and the run goes
     # on carrying whatever else it can.
     it "refuses an issue whose plan declares no subject, and spawns no actor for it" do
-      write_epic([issue("a")])
+      write_epic([issue("a", subject: nil)])
       home.plan("a").write("the plan for a, with no subject line\n")
       approve_plan("a")
       git(repo, "switch", "-q", "main")
@@ -788,10 +789,23 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
       expect(log).to be_empty
     end
 
+    # Scenario: the epic driver reads the subject from the issue
+    it "writes the tests against the subject the issue carries, with the plan declaring none" do
+      write_epic([issue("a", level: "seam")])
+      home.plan("a").write("the plan for a, with no subject line\n")
+      approve_plan("a")
+      git(repo, "switch", "-q", "main")
+
+      result = driven(width: 1)
+
+      expect(result.reported).to be_empty
+      expect(log).to include([:subject, "a", "app/models/order.rb", "seam"])
+    end
+
     # A refused launch holds no room at width 1, so the issue behind it is
     # launched in its place rather than the run ending with nothing live.
     it "launches the next issue when the first one's plan declares no subject" do
-      write_epic([issue("a"), issue("b")])
+      write_epic([issue("a", subject: nil), issue("b")])
       home.plan("a").write("the plan for a, with no subject line\n")
       %w[a b].each { |id| approve_plan(id) }
       git(repo, "switch", "-q", "main")

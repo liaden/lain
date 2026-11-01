@@ -162,6 +162,12 @@ RSpec.describe Lain::Epic::Intake do
       expect(delta.account.changes).to eq(edges_changed: %w[a])
     end
 
+    it "reads a rewritten Subject line as a change to what the tests are written from" do
+      delta = diff(written(issue("a", subject: "src/a.rs")), markdown(issue("a", subject: "src/b.rs")))
+
+      expect(delta.account.changes).to eq(criteria_changed: %w[a])
+    end
+
     # `discovered_from` is provenance rather than a graph edge, but it is a link
     # LINE in the document the human edited, so an edit to it must land in the
     # account rather than fall between the kinds.
@@ -187,7 +193,7 @@ RSpec.describe Lain::Epic::Intake do
     # `discovered_from` was pulled into edges_changed to prevent.
     it "compares every member an Issue carries" do
       compared = %i[id] + Lain::Epic::Document::LINK_FIELDS.each_value.to_a +
-                 %i[title description status criteria]
+                 %i[title description status criteria subject level]
 
       expect(Lain::Epic::Issue.members.sort).to eq(compared.sort)
     end

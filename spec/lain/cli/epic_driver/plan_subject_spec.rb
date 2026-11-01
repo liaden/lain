@@ -35,6 +35,36 @@ RSpec.describe Lain::CLI::EpicDriver::PlanSubject do
 
   def declared(text) = described_class.read(plan(text), layout:)
 
+  describe ".of" do
+    def carried(**fields) = Lain::Epic::Issue.new(id: "a", title: "A", **fields)
+
+    it "answers the subject and level the issue carries" do
+      result = described_class.of(carried(subject: "app/models/order.rb", level: "seam"), layout:)
+
+      expect([result.subject, result.level]).to eq(["app/models/order.rb", "seam"])
+    end
+
+    it "refuses an issue that carries no subject, naming the issue and the line to add" do
+      expect { described_class.of(carried, layout:) }
+        .to raise_error(described_class::Undeclared, /issue "a" declares no test subject.*Subject:/m)
+    end
+
+    it "refuses a subject that is not a plain relative path" do
+      expect { described_class.of(carried(subject: "app/../etc/passwd.rb"), layout:) }
+        .to raise_error(described_class::NotCanonical, /issue "a".*not a plain relative path/m)
+    end
+
+    it "refuses a subject under none of the declared source roots" do
+      expect { described_class.of(carried(subject: "vendor/x.rb"), layout:) }
+        .to raise_error(described_class::OutsideSourceRoots, /issue "a"/)
+    end
+
+    it "refuses a level the project does not declare" do
+      expect { described_class.of(carried(subject: "app/models/order.rb", level: "nope"), layout:) }
+        .to raise_error(described_class::Refusal, /issue "a".*level "nope"/m)
+    end
+  end
+
   it "reads the subject a plan declares, leaving the level to the layout's own default" do
     result = declared(<<~MD)
       # the a issue

@@ -30,6 +30,33 @@ RSpec.describe Lain::Epic::Issue do
     GHERKIN
   end
 
+  describe "the test subject and level" do
+    it "carries neither by default" do
+      expect(issue).to have_attributes(subject: nil, level: nil)
+    end
+
+    it "carries a subject and a level, and moves the digest with each" do
+      value = issue(subject: "src/store/layout.rs", level: "unit")
+
+      expect(value).to have_attributes(subject: "src/store/layout.rs", level: "unit")
+      expect(value).not_to have_same_digest_as(issue)
+      expect(value).not_to have_same_digest_as(issue(subject: "src/store/layout.rs", level: "seam"))
+    end
+
+    it "refuses a subject or level the markdown could not write back" do
+      ["", " a", "a`b", "a\nb"].each do |bad|
+        expect { issue(subject: bad) }.to raise_error(Lain::Epic::MalformedIssue, /issue subject/)
+        expect { issue(level: bad) }.to raise_error(Lain::Epic::MalformedIssue, /issue level/)
+      end
+    end
+
+    it "is rebuilt by its canonical form" do
+      value = issue(subject: "src/a.rs", level: "unit")
+
+      expect(described_class.new(**value.canonical.transform_keys(&:to_sym))).to eq(value)
+    end
+  end
+
   describe "defaults" do
     it "starts pending with no criteria, no edges, and no provenance" do
       value = issue
@@ -358,7 +385,7 @@ RSpec.describe Lain::Epic::Issue do
     it "is a String-keyed wire form with a stable shape" do
       expect(issue.canonical.keys)
         .to contain_exactly("id", "title", "description", "status", "criteria", "blocks", "related",
-                            "discovered_from")
+                            "discovered_from", "subject", "level")
     end
 
     it "carries the criteria source itself, not its digest" do

@@ -5,18 +5,11 @@ module Lain
     module EpicDriver
       PlanSubject = Data.define(:subject, :level)
 
-      # What an issue's plan declares about its failing tests: the one source
-      # file they are written for, and optionally the level root they sit
-      # under. Read from `plans/<id>.md`, because where an issue's tests go is
-      # a fact about how that issue is to be carried out -- it belongs with the
-      # plan, not on the {Epic::Issue}, whose every digest and whose markdown
-      # round-trip would change to carry it.
-      #
-      # WHAT IS DECLARED IS APPROVED. The `issue_plan` gate's digest covers the
-      # plan's content, so the subject line is approved along with the plan
-      # carrying it, and editing that line changes the digest and reopens the
-      # gate. Nothing here re-checks the approval; it reads a plan the caller
-      # has already had approved.
+      # What an issue declares about its failing tests: the one source file
+      # they are written for, and optionally the level root they sit under.
+      # {.of} reads them off the {Epic::Issue}, where `epic.md` carries them;
+      # {.read} reads the same two lines out of free text, for {Arm::PlanOnly},
+      # whose planner's answer has no issue to sit on.
       #
       # The path is never checked for existence. Tests are written before the
       # code they describe, so the file the layout mirrors from routinely does
@@ -51,12 +44,24 @@ module Lain
           new(subject: subject_in(text, plan, layout), level: level_in(text, plan, layout))
         end
 
+        # @param issue [Epic::Issue] the issue whose tests are to be written
+        # @param layout [TestLayout] the project's declared layout
+        # @return [PlanSubject]
+        # @raise [Refusal] naming the issue and what it must carry
+        def self.of(issue, layout:)
+          where = "issue #{issue.id.inspect}"
+          raise Undeclared, undeclared(where) if issue.subject.nil?
+
+          new(subject: placed(canonical!(issue.subject, where), where, layout),
+              level: issue.level&.then { |name| known(name, where, layout) })
+        end
+
         def self.subject_in(text, plan, layout)
           found = declarations(text, SUBJECT)
-          raise Undeclared, undeclared(plan) if found.empty?
+          raise Undeclared, undeclared(plan.path) if found.empty?
           raise Refusal, ambiguous(plan, SUBJECT, found) if found.size > 1
 
-          placed(canonical!(found.first, plan), plan, layout)
+          placed(canonical!(found.first, plan.path), plan.path, layout)
         end
 
         # Shape before placement, and refused the way a `tests` source root
@@ -64,10 +69,10 @@ module Lain
         # would then mirror a test file to a path outside the checkout
         # altogether -- which the write-time guard admits, since it lets a test
         # written before its class through by design.
-        def self.canonical!(subject, plan)
+        def self.canonical!(subject, where)
           return subject if TestLayout::Shapes::PathShape.canonical?(subject)
 
-          raise NotCanonical, "#{plan.path} names the subject #{subject.inspect}, which is not a plain relative " \
+          raise NotCanonical, "#{where} names the subject #{subject.inspect}, which is not a plain relative " \
                               "path inside the project: a subject carries no \".\" or \"..\" segment, no doubled " \
                               "or trailing slash, and no leading \"/\", \"~\" or \"-\""
         end
@@ -76,7 +81,7 @@ module Lain
           found = declarations(text, LEVEL)
           raise Refusal, ambiguous(plan, LEVEL, found) if found.size > 1
 
-          found.first&.then { |name| known(name, plan, layout) }
+          found.first&.then { |name| known(name, plan.path, layout) }
         end
 
         # A line whose first word is the keyword -- the markdown emphasis and
@@ -99,11 +104,11 @@ module Lain
 
         def self.clean(value) = value.delete("`").strip
 
-        def self.placed(subject, plan, layout)
+        def self.placed(subject, where, layout)
           return subject unless layout.in_force?
           return subject if layout.source_roots.any? { |root| subject == root || subject.start_with?("#{root}/") }
 
-          raise OutsideSourceRoots, "#{plan.path} names the subject #{subject.inspect}, which is under none of " \
+          raise OutsideSourceRoots, "#{where} names the subject #{subject.inspect}, which is under none of " \
                                     "this project's declared source roots (#{layout.source_roots.join(", ")}): " \
                                     "the layout mirrors a test path from a source under one of them"
         end
@@ -111,16 +116,16 @@ module Lain
         # Asked of the declared set rather than through `Mapping#level`, which
         # raises {TestLayout::Unplaceable} for a name it does not hold: a level
         # a plan misspelled is this object's refusal to make, by its own name.
-        def self.known(level, plan, layout)
+        def self.known(level, where, layout)
           return level unless layout.in_force?
           return level if layout.mapping.levels.any? { |declared| declared.name == level }
 
-          raise Refusal, "#{plan.path} names the level #{level.inspect}, which this project's `tests` config " \
+          raise Refusal, "#{where} names the level #{level.inspect}, which this project's `tests` config " \
                          "does not declare (#{layout.mapping.levels.map(&:name).join(", ")})"
         end
 
-        def self.undeclared(plan)
-          "#{plan.path} declares no test subject: add a line `Subject: <path>` naming the one source file this " \
+        def self.undeclared(where)
+          "#{where} declares no test subject: add a line `Subject: <path>` naming the one source file this " \
             "issue's failing tests are written for, relative to the project root"
         end
 

@@ -31,7 +31,13 @@ module Lain
           Document::LINK_FIELDS.each_value.any? { |field| before.public_send(field) != after.public_send(field) }
         },
         status_changed: ->(before, after) { before.status != after.status },
-        criteria_changed: ->(before, after) { before.criteria != after.criteria }
+        # The subject and level name the file the criteria's tests are written
+        # for, so an edit to either is a change to what those criteria mean.
+        criteria_changed: lambda { |before, after|
+          [:criteria, *Document::LABEL_LINKS.each_value].any? do |field|
+            before.public_send(field) != after.public_send(field)
+          end
+        }
       }.freeze
 
       KINDS = [:added, :removed, *CHANGED.keys].freeze

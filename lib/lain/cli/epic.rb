@@ -307,14 +307,17 @@ module Lain
       #   inherits `id`'s title, description and criteria; an author edits
       #   `epic.md` afterward to tell the parts apart
       # @param slug [String, nil] the epic; omitted resolves to the sole one
+      # @param subjects [Hash{String => String}] each part's own test subject; a
+      #   part not named here has none, and that is refused when `id` has one
       # @return [String] the applied edit, rendered
       # @raise [Error] naming `id`, before anything is written
       # @raise [Lain::Error] any other refusal from {Epic::Graph}, likewise
       #   before anything is written
-      def split(id, into, slug = nil)
+      def split(id, into, slug = nil, subjects: {})
         apply(slug, remedy: "lain epic split ISSUE_ID SLUG") do |graph|
           original = graph.fetch(id)
-          parts = Listed.comma(into).map { |part_id| original.with(id: part_id) }
+          parts = Listed.comma(into).map { |part_id| split_part(original, part_id, subjects) }
+          refuse_unplaced_parts!(original, parts)
           fiber = nil
           revised = graph.split(id, into: parts) { |cut| fiber = cut }
           [revised, fiber]
@@ -338,7 +341,8 @@ module Lain
           refuse_finished_side!(left_issue, right_issue)
           arrival = Lain::Epic::Issue.new(id: as, title: title || merged_title(left_issue, right_issue),
                                           description: merged_description(left_issue, right_issue),
-                                          criteria: merged_criteria(left_issue, right_issue))
+                                          criteria: merged_criteria(left_issue, right_issue),
+                                          subject: left_issue.subject, level: left_issue.level)
           fiber = nil
           revised = graph.merge(left, right, as: arrival) { |cut| fiber = cut }
           [revised, fiber]
@@ -346,6 +350,20 @@ module Lain
       end
 
       private
+
+      # A part never inherits the subject: two parts mirroring one source file
+      # would write their failing tests to the same path.
+      def split_part(original, part_id, subjects)
+        original.with(id: part_id, subject: subjects[part_id])
+      end
+
+      def refuse_unplaced_parts!(original, parts)
+        unplaced = parts.select { |part| part.subject.nil? }.map(&:id)
+        return if original.subject.nil? || unplaced.empty?
+
+        raise Lain::Error, "issue #{original.id.inspect} has a test subject, so each part must name its own: " \
+                           "#{unplaced.join(", ")} have none. Give each part a `Subject: <path>` line in epic.md"
+      end
 
       # Memoized: three of the four callers above ask for it in one invocation,
       # and it is pure path arithmetic over values this object already holds.

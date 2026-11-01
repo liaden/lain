@@ -39,6 +39,33 @@ RSpec.describe Lain::Epic::Document do
           issue("c", status: "done", criteria: criteria_source))
   end
 
+  describe "the test subject and level lines" do
+    let(:source) do
+      "### [ ] `store-layout` Lay out the store\n\nSubject: `src/store/layout.rs`\nLevel: unit\n"
+    end
+
+    # Scenario: an issue's test subject rides in epic.md
+    it "reads both lines onto the issue" do
+      expect(parse(source).fetch("store-layout")).to have_attributes(subject: "src/store/layout.rs", level: "unit")
+    end
+
+    it "writes both lines back unchanged" do
+      expect(described_class.to_markdown(parse(source))).to eq(source)
+    end
+
+    it "keeps a subject-less issue's text as it was" do
+      expect(described_class.to_markdown(graph(issue("a")))).not_to match(/Subject|Level/)
+    end
+
+    it "refuses a second Subject line" do
+      expect { parse("#{source}Subject: `x`\n") }.to raise_error(Lain::Epic::MalformedDocument, /second `Subject:`/)
+    end
+
+    it "refuses a Subject line naming nothing" do
+      expect { parse("### [ ] `a` A\n\nSubject: ``\n") }.to raise_error(Lain::Epic::MalformedDocument, /Subject/)
+    end
+  end
+
   # AC: the author-review loop round-trips, criteria fence included.
   describe "the author-review loop" do
     it "parses an emitted graph back to the same digest" do

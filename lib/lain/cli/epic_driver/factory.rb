@@ -610,11 +610,11 @@ module Lain
         # landing guard checked nothing.
         def layout = Lain::Config.test_layout(root: @root)
 
-        # The issue's plan, as it stands now: approved, and declaring the one
-        # source file its failing tests are written for.
+        # The issue's plan, as it stands now: approved. The one source file its
+        # failing tests are written for is read off the issue in `epic.md`.
         def plan_for(issue_id, layout)
           submit.ensure_plan_approved!(issue_id, slug)
-          PlanSubject.read(@mount.home.plan(issue_id), layout:)
+          PlanSubject.of(@mount.home.read_epic.fetch(issue_id), layout:)
         end
 
         def actors(fleet, layout)
@@ -986,7 +986,7 @@ module Lain
         #   per fold rather than cached -- a landing changes it, and the next
         #   issue's readiness is exactly that change
         # @param plans [#call] `issue_id ->` the issue's {PlanSubject}, raising
-        #   when its plan is not approved or declares no subject
+        #   when its plan is not approved or the issue carries no subject
         # @param actors [#call] an {IssueActor}
         # @param supervisor [Supervisor] the epic's own, already running
         # @param gate [#call] `call(issue_id, sha:)`, answering whether the
@@ -1197,7 +1197,7 @@ module Lain
         end
 
         # A refusal stops THIS issue and nothing else: the plan is not approved,
-        # or it declares no subject to write tests for, and either way a human
+        # or the issue carries no subject to write tests for, and either way a human
         # has to look. The rest of the run keeps moving.
         #
         # A session journal that cannot be read is not this issue's: every plan

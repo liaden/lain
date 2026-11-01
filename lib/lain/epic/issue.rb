@@ -46,6 +46,12 @@ module Lain
       ["cannot end in a ` {...}` group (it collides with the criteria-digest grammar)",
        ->(title) { title.match?(TITLE_BRACE_SUFFIX) }]
     ].freeze
+    LABEL_RULES = [
+      ["cannot be empty", ->(label) { label == "" }],
+      ["cannot have leading or trailing whitespace (the markdown grammar trims it)",
+       ->(label) { label != label.strip }],
+      ["is one line and cannot contain a line break or a backtick", ->(label) { label.match?(/[\r\n`]/) }]
+    ].freeze
     # Gherkin::Parse only sees scenarios inside a fence, so fence-less criteria
     # parse to zero scenarios and hash to one address that EVERY malformed issue
     # would share. That is the likeliest author mistake producing the least
@@ -70,14 +76,18 @@ module Lain
     # everything refused is refused as a MalformedIssue -- a Lain::Error, so
     # exe/lain renders it instead of crashing. Interned Strings, frozen edge
     # arrays, and nil-or-frozen optionals, so the value is Ractor-shareable.
-    Issue = Data.define(:id, :title, :description, :status, :criteria, :blocks, :related, :discovered_from) do
+    # `subject` and `level` ride in {#canonical}, so the digest moves with them.
+    Issue = Data.define(:id, :title, :description, :status, :criteria, :blocks, :related, :discovered_from,
+                        :subject, :level) do
       def initialize(id:, title:, description: "", status: "pending", criteria: nil,
-                     blocks: [], related: [], discovered_from: nil)
+                     blocks: [], related: [], discovered_from: nil, subject: nil, level: nil)
         super(id: clean_id(id, "issue id"), title: clean_title(title),
               description: text(description, "issue description"), status: stored_status(status),
               criteria: criteria && clean_criteria(criteria), blocks: clean_edges(blocks, "blocks"),
               related: clean_edges(related, "related"),
-              discovered_from: discovered_from && clean_id(discovered_from, "discovered_from"))
+              discovered_from: discovered_from && clean_id(discovered_from, "discovered_from"),
+              subject: subject && clean_label(subject, "issue subject"),
+              level: level && clean_label(level, "issue level"))
       end
 
       # A new issue at `status`, everything else preserved. Data#with re-enters
@@ -100,7 +110,7 @@ module Lain
       def canonical
         { "id" => id, "title" => title, "description" => description, "status" => status,
           "criteria" => criteria, "blocks" => blocks, "related" => related,
-          "discovered_from" => discovered_from }
+          "discovered_from" => discovered_from, "subject" => subject, "level" => level }
       end
 
       # Whether this issue reaches BOTH downstream artifacts: the document
@@ -144,6 +154,15 @@ module Lain
         rule_break!(ID_RULES, field, id)
         reserved!(id, field)
         id
+      end
+
+      # The test subject and level are one-line values the epic markdown writes
+      # after a `Subject:` or `Level:` label, so they carry no break, no backtick
+      # (the subject's delimiter) and no edge whitespace (the parse trims it).
+      def clean_label(value, field)
+        label = text(value, field)
+        rule_break!(LABEL_RULES, field, label)
+        label
       end
 
       def clean_title(title)

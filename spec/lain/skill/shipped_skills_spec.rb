@@ -757,6 +757,15 @@ RSpec.describe "shipped skills" do
       end
     end
 
+    it "teaches plan-epic to put Subject: and Level: in epic.md, not in a plan file" do
+      with_empty_project do |renderer|
+        text = renderer.render("plan-epic")
+
+        expect(text).to include("`Subject:`", "`Level:`")
+        expect(text).not_to include("plans/<id>.md")
+      end
+    end
+
     it "says an issue's criteria are approved together with its plan" do
       with_empty_project do |renderer|
         expect(renderer.render("create-epic-issues")).to match(/approved (with|together with) .{0,40}plan/i)
