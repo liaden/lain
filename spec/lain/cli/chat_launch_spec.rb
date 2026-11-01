@@ -1327,6 +1327,18 @@ RSpec.describe Lain::CLI::ChatLaunch, "the construction-only pre-flight" do
       expect(chronicle_factory).not_to have_received(:call)
     end
 
+    it "refuses a think level the model does not list before any journal is opened" do
+      stub_request(:post, %r{/api/show})
+        .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                   body: JSON.generate("thinking" => { "values" => %w[low high] }))
+      chronicle_factory = spy("chronicle_factory")
+      instance = described_class.new(offline(think: "medium", journal: true), chronicle_factory:)
+
+      expect { instance.call { |_notice| nil } }
+        .to raise_error(Lain::CLI::Backend::Thinking::Invalid, /"medium".*low, high/)
+      expect(chronicle_factory).not_to have_received(:call)
+    end
+
     # The same ordering against the other two things a launch leaves behind: a
     # resume may SALVAGE, committing a Timeline and writing the session file for
     # a torn recording, and the reap spawns a detached process. A refusal after

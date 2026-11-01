@@ -447,6 +447,7 @@ class LainCLI < Thor
       sampling(thor, max_tokens, ceiling)
       throughput(thor, recorded)
       residency(thor)
+      reasoning(thor)
       price_tier(thor)
       effort(thor)
     end
@@ -533,8 +534,8 @@ class LainCLI < Thor
       thor.method_option :num_ctx, type: :numeric,
                                    desc: "Ollama context length for the request; unset serves the model's own. " \
                                          "A local-SERVER knob: it is sent on ollama-cloud too, where its effect " \
-                                         "is unmeasured and nothing refuses a value above the model's trained " \
-                                         "maximum #{help("$LAIN_NUM_CTX", recorded)}"
+                                         "is unmeasured; a value above the model's trained maximum is " \
+                                         "refused there as well #{help("$LAIN_NUM_CTX", recorded)}"
     end
 
     # Residency rather than throughput: how long ollama keeps the runner loaded
@@ -558,6 +559,14 @@ class LainCLI < Thor
                                             "lain exits until `ollama stop` releases it -- and a resumed or " \
                                             "forked chat does not inherit it. A local-SERVER knob: it is sent on " \
                                             "ollama-cloud too, where its effect is unmeasured"
+    end
+
+    # Checked against the model's own `/api/show` list at launch, so no Thor
+    # `default:` or `enum:` names levels here; unset leaves the project's `think`.
+    def self.reasoning(thor)
+      thor.method_option :think, type: :string,
+                                 desc: "Reasoning level to send, such as low or high; refused at launch unless " \
+                                       "the model lists it. Unset uses the config.rb `think`, else the model's own"
     end
 
     # A flag's defaults, in the order they answer.

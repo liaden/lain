@@ -5,6 +5,24 @@ RSpec.describe Lain::Config::Builder do
 
   def build(source) = described_class.evaluate(source, path:)
 
+  describe "the think verb" do
+    it "builds the level it names" do
+      expect(build("think \"low\"\n").think).to eq("low")
+    end
+
+    it "is nil when the file names none" do
+      expect(build("").think).to be_nil
+    end
+
+    it "refuses a level that is not a non-blank string, at its line" do
+      expect { build("\nthink 3\n") }.to raise_error(Lain::Config::Refusal, /config\.rb:2.*think/)
+    end
+
+    it "refuses being declared twice" do
+      expect { build("think \"low\"\nthink \"high\"\n") }.to raise_error(Lain::Config::Refusal, /twice/)
+    end
+  end
+
   describe ".evaluate" do
     let(:source) do
       <<~RUBY
@@ -59,7 +77,8 @@ RSpec.describe Lain::Config::Builder do
                                                        env_pass: [],
                                                        approval_timeout: 300,
                                                        todos: Lain::Config::Todos.empty,
-                                                       theme: Lain::Config::Theme.empty)
+                                                       theme: Lain::Config::Theme.empty,
+                                                       think: nil)
     end
 
     it "builds the names env pass hands every child" do

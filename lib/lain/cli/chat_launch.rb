@@ -135,7 +135,9 @@ module Lain
       #
       # That rule costs this list one refusal: a `--num-ctx` above the trained
       # maximum can only be caught by asking, so {#call} refuses it and `lain
-      # up` learns of it from the pane rather than from here.
+      # up` learns of it from the pane rather than from here. A configured
+      # `think` is the second: the list of levels a model accepts is the
+      # server's to give, so {#call} refuses a level it lacks.
       # `--resume`/`--fork` are absent for a third reason:
       # resolving one reads the record and may repair it, and two processes
       # would put that repair in the history twice. The profile their header
@@ -301,6 +303,7 @@ module Lain
         # at construction: the probe behind it would make #preflight ask a
         # server, which is the one thing that method promises it never does.
         backend.num_ctx
+        backend.thinking.extra
         backend.refuse_compaction_flags!
       end
 

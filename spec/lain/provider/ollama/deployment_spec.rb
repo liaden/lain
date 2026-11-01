@@ -325,12 +325,10 @@ RSpec.describe Lain::Provider::Ollama::Deployment do
       expect(deployment.runner_status?).to be(false)
     end
 
-    # `CLI::ChatLaunch#call` forces `Backend#num_ctx`, and `NumCtx#tokens`
-    # reaches `trained_context_tokens` -> a POST to `/api/show`. Whether that
-    # endpoint answers on ollama.com at all is unverified, so `--num-ctx N` must
-    # not fire a live request to find out at launch.
-    it "claims no model-metadata endpoint either, and says so separately" do
-      expect(deployment.model_metadata?).to be(false)
+    # The thinking levels a configured `think` is checked against come off
+    # `/api/show`, which ollama.com answers.
+    it "claims the model-metadata endpoint, and still no loaded-runner endpoint" do
+      expect([deployment.runner_status?, deployment.model_metadata?]).to eq([false, true])
     end
 
     # ONE list, not two literals that happen to agree -- which is what the

@@ -85,12 +85,18 @@ RSpec.describe Lain::Provider::ModelCapabilities do
   # reason `Deployment#model_metadata?` already gates `#trained_context_tokens`.
   # A cloud model that really does have vision reads UNKNOWN here, which is why
   # unknown is a third answer rather than a no.
-  describe "the cloud arm" do
+  describe "an arm without model metadata" do
+    let(:no_metadata) do
+      instance_double(Lain::Provider::Ollama::Deployment, model_metadata?: false, runner_status?: false,
+                                                          capabilities: [], cache_profile: Lain::CacheProfile::NO_CACHING,
+                                                          apply: Lain::Provider::HTTP::Configuration.new)
+    end
+
     it "makes no /api/show request, and answers unknown" do
       refusing = Class.new do
         define_method(:model_details) { |_model| raise "the cloud arm must not ask /api/show" }
       end.new
-      cloud = Lain::Provider::Ollama.cloud(api_key: "sk-test", transport: refusing)
+      cloud = Lain::Provider::Ollama.new(deployment: no_metadata, transport: refusing, config: Lain::Provider::HTTP::Configuration.new)
 
       answer = cloud.model_capabilities("glm-5.3-flash:cloud")
 

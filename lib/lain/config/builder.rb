@@ -9,7 +9,7 @@ module Lain
     # the detected-framework fallback survives, without every caller comparing
     # against {TestLayout::None}.
     Built = Data.define(:epics, :approval, :isolation, :sensitivity, :shell, :search, :tests, :middleware,
-                        :env_pass, :approval_timeout, :keys, :todos, :theme) do
+                        :env_pass, :approval_timeout, :keys, :todos, :theme, :think) do
       # @param framework [String, nil] a detected test framework
       # @return [TestLayout] the declared layout, else what the framework implies
       def test_layout(framework: nil) = tests || TestLayout.from(nil, path: nil, framework:)
@@ -23,9 +23,11 @@ module Lain
     # A refusal names the line of the verb that caused it, because the user
     # wrote Ruby and a backtrace into this file points nowhere they can edit.
     class Builder
-      VERBS = %i[epics approval isolation sensitivity shell search tests middleware env todos].freeze
+      VERBS = %i[epics approval isolation sensitivity shell search tests middleware env todos think].freeze
 
       ENV_TABLE = "`env`"
+      THINK_TABLE = "`think`"
+      UNNAMED_LEVEL = "think takes a level name such as \"low\", got %s"
 
       SECRET_PASS = "pass names %<names>s, which match the secret shape #{Exec::ChildEnv::SECRET.source}; " \
                     "remove them from env pass".freeze
@@ -119,7 +121,7 @@ module Lain
                   tests: @tables[:tests],
                   middleware: @tables.fetch(:middleware, Middleware.empty),
                   env_pass: @tables.fetch(:env, []),
-                  approval_timeout: @approval_timeout, **small_tables)
+                  approval_timeout: @approval_timeout, think: @tables[:think], **small_tables)
       end
 
       def epics(**table, &block)
@@ -176,6 +178,19 @@ module Lain
       # What the bash output mask does with a passed value is {Sensitivity::Literals}' to say.
       def env(**table) = declare(:env, ENV_TABLE, table) { |at| env_pass_from(shaped(table), at) }
 
+      # `think "low"` names the reasoning level a chat asks for. Whether the
+      # model accepts it is the server's to say, so only the shape is checked here.
+      def think(level = nil)
+        declare(:think, THINK_TABLE) do |at|
+          unless named?(level)
+            raise Refusal.new(UNNAMED_LEVEL % level.inspect, path: at, table: THINK_TABLE,
+                                                             key: "think")
+          end
+
+          -level.strip
+        end
+      end
+
       def tests(**table) = declare(:tests, TestLayout::TABLE, table) { |at| TestLayout.from(shaped(table), path: at) }
 
       # Kernel#test answers the likeliest typo of `tests` with an unrelated TypeError.
@@ -214,6 +229,8 @@ module Lain
         twice = keywords.keys.map(&:to_s).tally.select { |_, count| count > 1 }.keys
         raise Refusal.new("gives #{twice.join(", ")} twice", path: at, table: label, key: twice) if twice.any?
       end
+
+      def named?(level) = level.is_a?(String) && !level.strip.empty?
 
       def env_pass_from(table, at)
         unknown = table.keys - %w[pass]

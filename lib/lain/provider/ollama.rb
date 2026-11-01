@@ -244,6 +244,7 @@ module Lain
         @residency = residency
         @residency_deadline = residency_deadline
         @model_capabilities = {}
+        @show_bodies = {}
         @retries = retries || RetryTap.new(channel:, journal:, spool: spool || Spool::Null.new)
         @config = journaled_retries(config || build_config(api_base:))
         @transport = transport || Transport.new(@config, sink:)
@@ -388,17 +389,7 @@ module Lain
       #
       # @param model [String]
       # @return [Integer, nil]
-      def trained_context_tokens(model)
-        return nil unless @deployment.model_metadata?
-
-        trained_context_length(wrapping_errors { @transport.model_details(model).body })
-      rescue APIError
-        nil
-      rescue NoMethodError => e
-        raise if e.receiver.equal?(@transport)
-
-        nil
-      end
+      def trained_context_tokens(model) = trained_context_length(show_body(model))
 
       # `/api/show` describes every model the server has, and answers 404 for
       # one it has not got, or has retired with a 410 -- the only answers here
@@ -441,6 +432,17 @@ module Lain
         @model_capabilities[model] ||= probe_capabilities(model)
       end
 
+      # The reasoning levels `/api/show` lists under `thinking.values`, kept per
+      # model for the same reason {#model_capabilities} is. nil is "the server did
+      # not say", which a caller must not read as "none accepted".
+      #
+      # @param model [String]
+      # @return [Array<String>, nil]
+      def thinking_levels(model)
+        values = show_body(model)&.dig("thinking", "values")
+        values.is_a?(Array) ? values.grep(String).freeze : nil
+      end
+
       # Which weights THIS server holds for `model`: the manifest digest of the
       # pulled model (`/api/tags`, which answers the same whether or not the model
       # is loaded) and the quant its model file declares. Residency is not
@@ -466,19 +468,24 @@ module Lain
       # {#trained_context_tokens}: `/api/show` is the deployment's to answer
       # for, and a transport that cannot answer at all stays loud.
       def probe_capabilities(model)
-        return ModelCapabilities::NOTHING_KNOWN unless @deployment.model_metadata?
+        body = show_body(model)
+        body.nil? ? ModelCapabilities::NOTHING_KNOWN : ModelCapabilities.of(body)
+      end
 
-        ModelCapabilities.of(wrapping_errors { @transport.model_details(model).body })
-      rescue APIError
-        ModelCapabilities::NOTHING_KNOWN
-      rescue NoMethodError => e
-        raise if e.receiver.equal?(@transport)
+      # ONE `/api/show` per model feeds the capabilities, the thinking levels,
+      # the identity and the trained maximum, so a launch asks the server once.
+      # A failed ask is kept like a good one (nil), for {#model_capabilities}'s
+      # reason. Gated by the deployment, and a transport that cannot answer at
+      # all stays loud.
+      def show_body(model)
+        return nil unless @deployment.model_metadata?
+        return @show_bodies[model] if @show_bodies.key?(model)
 
-        ModelCapabilities::NOTHING_KNOWN
+        @show_bodies[model] = asked(nil) { wrapping_errors { @transport.model_details(model).body } }
       end
 
       def declared_quant(model)
-        body = asked(nil) { wrapping_errors { @transport.model_details(model).body } }
+        body = show_body(model)
         details = body.is_a?(Hash) ? body["details"] : nil
         readable(details.is_a?(Hash) ? details["quantization_level"] : nil)
       end

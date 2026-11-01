@@ -25,9 +25,9 @@ module Lain
       # LOADED RUNNER listing and the only endpoint stating the window a model
       # is actually being served with; `model_metadata?` is `/api/show`, the
       # GGUF's TRAINED maximum, a different and larger number reached eagerly at
-      # launch. Both happen to follow locality today, and they are written as
-      # two definitions rather than one alias so a host that answers one and not
-      # the other needs no untangling first.
+      # launch. `runner_status?` follows locality and `model_metadata?` does
+      # not, and they are two definitions rather than one alias so a host that
+      # answers one and not the other needs no untangling first.
       #
       # == One key decides five answers
       #
@@ -309,11 +309,9 @@ module Lain
         # the request at all, rather than making it and rescuing it.
         def runner_status? = local?
 
-        # `/api/show` is reached eagerly at launch through `CLI::Backend#num_ctx`,
-        # before the chronicle is even open. Whether it answers on `ollama.com`
-        # is unverified, and a launch that fires a live request to find out is
-        # the wrong place to learn.
-        def model_metadata? = local?
+        # ollama.com answers `/api/show`, with `thinking.values` for a model that
+        # takes a reasoning level, which is what a configured `think` is checked against.
+        def model_metadata? = true
 
         # A COMPLETE POSITION, written unconditionally -- every field, every
         # time -- so a configuration always describes exactly one deployment no

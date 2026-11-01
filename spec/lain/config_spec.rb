@@ -124,6 +124,20 @@ RSpec.describe Lain::Config do
     end
   end
 
+  describe "the think level" do
+    it "is nil when no config declares one" do
+      Dir.mktmpdir { |root| expect(described_class.think(root:)).to be_nil }
+    end
+
+    it "reads the level the config names" do
+      Dir.mktmpdir do |root|
+        write_config(root, "think \"low\"\n")
+
+        expect(described_class.think(root:)).to eq("low")
+      end
+    end
+  end
+
   describe "the approval timeout" do
     it "is 300 seconds when no config declares one" do
       Dir.mktmpdir do |root|

@@ -71,6 +71,15 @@ module Lain
     # @raise [Refusal] as {.load}
     def self.approval_timeout(root:) = built(root).approval_timeout
 
+    # The reasoning level a project asks its chats to send, when the model accepts it.
+    # `root:` is REQUIRED, as {.sensitivity}'s is.
+    #
+    # @param root [String] a project root; `.lain/config.rb` is resolved under it
+    # @return [String, nil] nil when the file or the key is absent
+    # @raise [Project::Trust::Untrusted] as {.load}
+    # @raise [Refusal] as {.load}
+    def self.think(root:) = built(root).think
+
     # What a project searches beyond the files git shows, and how much one
     # walk may cost. `root:` is REQUIRED, as {.sensitivity}'s is.
     #

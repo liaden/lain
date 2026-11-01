@@ -138,19 +138,14 @@ RSpec.describe Lain::Provider::Ollama, :ollama_cloud do
       expect(retired).to be_empty
     end
 
-    # The gap this card was asked to establish the evidence for, pinned so the
-    # one-line follow-up that closes it has something to turn red. `/api/show`
-    # answers (above), but the deployment declares it does not, so the cloud arm
-    # performs NO `--num-ctx` refusal: a `--num-ctx 500000` against a 128k model
-    # is accepted in silence. Flipping `model_metadata?` is out of this spec's scope.
-    it "is not asked by the provider, because the deployment declares it absent" do
+    # `/api/show` answers, and the deployment says so, so the provider asks and a
+    # `--num-ctx` above the trained maximum is refused on this arm too.
+    it "is asked by the provider, because the deployment declares it present" do
       deployment = described_class::Deployment.cloud(api_key: ENV.fetch("OLLAMA_API_KEY"))
 
-      expect(deployment.model_metadata?).to be(false)
-      # nil WITHOUT a round trip -- #trained_context_tokens returns on the
-      # predicate before it reaches the transport.
-      expect(provider.trained_context_tokens(model)).to be_nil
-      # And the denominator stays nil too, for the separate and correct reason
+      expect(deployment.model_metadata?).to be(true)
+      expect(provider.trained_context_tokens(model)).to be_a(Integer)
+      # The denominator stays nil for the separate and correct reason
       # that a serverless host has no loaded-runner concept for /api/ps.
       expect(deployment.runner_status?).to be(false)
       expect(provider.context_window_tokens(model)).to be_nil

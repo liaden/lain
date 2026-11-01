@@ -522,6 +522,10 @@ module Lain
       # ACCEPTED window, that one the figure a REFUSED one is measured against.
       def num_ctx = @num_ctx ||= num_ctx_request.tokens
 
+      # The reasoning level this chat sends, `--think` over the project's `think`.
+      # @return [Thinking]
+      def thinking = @thinking ||= Thinking.new(level: @options[:think] || Config.think(root: @root), backend: self)
+
       # `--keep-alive`, COERCED here because its two legal spellings are two
       # JSON types: an integer becomes an Integer (seconds, -1 forever), a
       # duration stays the String Go will parse. Sending `"-1"` instead is an
@@ -1050,8 +1054,7 @@ module Lain
         runner = run_profile.to_options
         extra = keys.to_h { |key| [key, runner.fetch(key.to_sym) { @options[key.to_sym] }] }
         extra["num_batch"] = DEFAULT_NUM_BATCH if ollama_chat? && extra["num_batch"].nil?
-        extra[Provider::Ollama::Encoding::KEEP_ALIVE_KEY] = keep_alive if ollama_chat?
-        extra.compact
+        extra.merge(Provider::Ollama::Encoding::KEEP_ALIVE_KEY => keep_alive, **thinking.extra).compact
       end
 
       def duration(raw)

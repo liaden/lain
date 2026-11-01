@@ -3086,6 +3086,50 @@ RSpec.describe Lain::CLI::Backend do
   #
   # The subject of this describe is the wire TYPE: one knob, two JSON types,
   # decided once in {Lain::CLI::Backend} and forwarded unconverted from there.
+  describe "the think level" do
+    let(:store) { Lain::Dag::Factory.store }
+    let(:timeline) do
+      Lain::Dag::Factory.timeline(store:)
+                        .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+    end
+
+    before do
+      stub_request(:post, %r{/api/show})
+        .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                   body: JSON.generate("thinking" => { "values" => %w[low high max] }))
+    end
+
+    def sent_think(root: Dir.pwd, **options)
+      request = described_class.new({ max_tokens: 1024, provider: "ollama", model: "glm-5.3", **options }, root:)
+                               .context.render(timeline:, toolset: Lain::Toolset.new)
+      Lain::Provider::Ollama.new.encode(request)[:think]
+    end
+
+    it "puts the flag's level on the encoded ollama request" do
+      expect(sent_think(think: "low")).to eq("low")
+    end
+
+    it "sends none when neither the flag nor the config names one" do
+      Dir.mktmpdir { |root| expect(sent_think(root:)).to be_nil }
+    end
+
+    it "lets the flag beat the project's config" do
+      Dir.mktmpdir do |root|
+        write_config(root, "think \"high\"\n")
+
+        expect(sent_think(root:, think: "low")).to eq("low")
+      end
+    end
+
+    it "applies the project's config when there is no flag" do
+      Dir.mktmpdir do |root|
+        write_config(root, "think \"high\"\n")
+
+        expect(sent_think(root:)).to eq("high")
+      end
+    end
+  end
+
   describe "the residency knob" do
     let(:store) { Lain::Dag::Factory.store }
     let(:timeline) do

@@ -1647,7 +1647,9 @@ RSpec.describe Lain::Provider::Ollama do
         define_method(:model_details) { |_model| raise "the cloud arm must not ask /api/show" }
       end.new
 
-      expect(described_class.cloud(api_key: "sk-test", transport:).trained_context_tokens("qwen3-coder:30b")).to be_nil
+      deployment = instance_double(Lain::Provider::Ollama::Deployment, model_metadata?: false, apply: Lain::Provider::HTTP::Configuration.new)
+
+      expect(described_class.new(deployment:, transport:).trained_context_tokens("qwen3-coder:30b")).to be_nil
     end
 
     # The architecture key is not a constant: `general.architecture` names
@@ -1809,7 +1811,9 @@ RSpec.describe Lain::Provider::Ollama do
     end
 
     it "answers unknown, asking nothing, on an arm whose /api/show is unverified" do
-      expect(described_class.cloud(api_key: "sk-test").serves?("gpt-oss:120b")).to equal(serving::UNKNOWN)
+      deployment = instance_double(Lain::Provider::Ollama::Deployment, model_metadata?: false, apply: Lain::Provider::HTTP::Configuration.new)
+
+      expect(described_class.new(deployment:).serves?("gpt-oss:120b")).to equal(serving::UNKNOWN)
       expect(a_request(:post, %r{/api/show})).not_to have_been_made
     end
   end
@@ -1960,7 +1964,9 @@ RSpec.describe Lain::Provider::Ollama do
         define_method(:tags) { raise "cloud must not ask /api/tags" }
       end.new
 
-      expect(described_class.cloud(api_key: "sk-test", transport:).model_identity("qwen3:4b")).to be_nil
+      deployment = instance_double(Lain::Provider::Ollama::Deployment, model_metadata?: false, apply: Lain::Provider::HTTP::Configuration.new)
+
+      expect(described_class.new(deployment:, transport:).model_identity("qwen3:4b")).to be_nil
     end
   end
 end
