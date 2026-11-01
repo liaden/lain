@@ -280,7 +280,12 @@ module Lain
           def tool_call? = true
 
           # @return [String] the question a surface asks, in its own words
-          def call_face = "#{tool}(#{input.inspect})"
+          def call_face = ["#{tool}(#{input.inspect})", cwd_face].compact.join(" ")
+
+          # Where a relative path in the call lands, so a surface says it beside the call.
+          #
+          # @return [String, nil] nil when the call names no relative path
+          def cwd_face = ("in #{cwd.inspect}" if relative_path?)
 
           # @return [String] the rest of "asks ..." in a surface's sentence
           def ask_face = "to run #{call_face}"
@@ -334,6 +339,15 @@ module Lain
             value = field && @input.is_a?(Hash) && (@input[field] || @input[field.to_sym])
             value if value.is_a?(String)
           end
+
+          def relative_path?
+            return path.present? && !path.start_with?("/", "~") unless tool == BASH
+
+            ::Lain::Shell::Named.for_input(input, cwd:, home: Dir.home).paths.any? do |named|
+              !named.absolute? && !named.word.start_with?("-")
+            end
+          end
+          private :relative_path?
 
           def approve(surface:, authority: :automatic) = decide(true, surface:, authority:)
           def deny(surface:, authority: :automatic, reason: nil) = decide(false, surface:, authority:, reason:)

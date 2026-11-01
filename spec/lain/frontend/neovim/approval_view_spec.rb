@@ -480,6 +480,12 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       expect(rpc.last[:lines].first).to include("bash", { "command" => "pwd" }.inspect)
     end
 
+    it "names the directory a relative path lands in" do
+      gated(timeout: window, calls: [effect("bash", { "command" => "mkdir downloads" })]) { |_queue| nil }
+
+      expect(rpc.last[:lines].first).to include(%(in #{Dir.pwd.inspect}))
+    end
+
     # The literal this example used to assert -- "agent" for every row --
     # was the defect, not the contract. What the row has to carry is the ACTOR,
     # so two calls parked by two actors render two distinguishable rows.

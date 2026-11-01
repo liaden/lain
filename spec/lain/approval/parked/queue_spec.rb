@@ -1656,4 +1656,32 @@ RSpec.describe Lain::Approval::Parked::Queue do
       expect(described_class.new(path: "/repo/.env", regions: regions.to_a).regions).to be_frozen
     end
   end
+
+  describe "where a relative path in a call lands" do
+    def face_of(name, input)
+      call = Lain::Effect::ToolCall.new(tool_use_id: "tu_cwd", name:, input:)
+      described_class::Pending.new(effect: call, identity: Lain::Requester.main, clock: -> { 0.0 }, cwd: "/srv/scratch")
+    end
+
+    it "names the directory for a relative path on a file tool" do
+      expect(face_of("write_file", { "path" => "src/x.rb" }).call_face).to end_with('in "/srv/scratch"')
+    end
+
+    it "names nothing for an absolute or home path" do
+      faces = [{ "path" => "/srv/x.rb" }, { "path" => "~/x.rb" }].map { face_of("write_file", _1).cwd_face }
+
+      expect(faces).to eq([nil, nil])
+    end
+
+    it "does not count an option word as a relative path" do
+      expect(face_of("bash", { "command" => "ls -la /srv" }).cwd_face).to be_nil
+    end
+
+    it "names nothing for a decision that is not a tool call" do
+      decision = described_class::Decision.new(requester: "egress", kind: "egress", summary: "send", digest: "b3_abc")
+      held = described_class::DecisionPending.new(decision:, identity: Lain::Requester.main, clock: -> { 0.0 })
+
+      expect(held.call_face).to eq('egress: "send"')
+    end
+  end
 end

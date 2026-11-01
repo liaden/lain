@@ -30,6 +30,19 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     expect(output.string).to include("bash").and include("rm -rf /tmp/x")
   end
 
+  it "names the directory a relative path lands in, and stays quiet for an absolute one" do
+    relative = Lain::Effect::ToolCall.new(tool_use_id: "tu_2", name: "bash", input: { command: "mkdir downloads" })
+    absolute = Lain::Effect::ToolCall.new(tool_use_id: "tu_3", name: "bash",
+                                          input: { command: "mkdir /srv/x/downloads" })
+    [relative, absolute].each do |call|
+      queued = Lain::Approval::Parked::Queue::Pending.new(effect: call, identity: Lain::Requester.main,
+                                                          clock: -> { 0.0 }, cwd: "/srv/scratch")
+      policy_for("n\n").decide(queued)
+    end
+
+    expect(output.string.scan('in "/srv/scratch"').size).to eq(1)
+  end
+
   it "shows a decision's kind and summary, not a tool call, and takes y and n as an approval does" do
     decision = Lain::Approval::Parked::Queue::Decision.new(
       requester: "egress", kind: "egress", summary: "send 12 bytes to api.example.com", digest: "b3_abc"
