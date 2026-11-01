@@ -53,6 +53,58 @@ RSpec.describe Lain::Provider::HTTP::ErrorMiddleware do
       end.to raise_error(Lain::Provider::HTTP::RateLimitError)
     end
 
+    it "maps a usage-limit 429 to QuotaError, which is not a RateLimitError" do
+      message = "you have reached your session usage limit"
+      response = Struct.new(:status, :body).new(429, %({"error":"#{message}"}))
+      provider = instance_double(Lain::Provider::HTTP::Provider, parse_error: message)
+
+      expect { described_class.parse_error(provider:, response:) }
+        .to raise_error(Lain::Provider::HTTP::QuotaError, message) { |error|
+          expect(error).not_to be_a(Lain::Provider::HTTP::RateLimitError)
+        }
+    end
+
+    it "reads a quota ahead of the context-length patterns" do
+      message = "monthly quota: input tokens exhausted"
+      response = Struct.new(:status, :body).new(429, message)
+      provider = instance_double(Lain::Provider::HTTP::Provider, parse_error: message)
+
+      expect { described_class.parse_error(provider:, response:) }
+        .to raise_error(Lain::Provider::HTTP::QuotaError)
+    end
+
+    [
+      "rate limit: input tokens per minute",
+      "This request would exceed the rate limit for your organization of 30,000 input tokens per minute",
+      "Rate limit reached for gpt-4 in organization org-x on tokens per min (TPM): Limit 10000, Used 9000"
+    ].each do |message|
+      it "keeps the per-minute 429 #{message[0, 40].inspect} a retried RateLimitError" do
+        response = Struct.new(:status, :body).new(429, message)
+        provider = instance_double(Lain::Provider::HTTP::Provider, parse_error: message)
+
+        expect { described_class.parse_error(provider:, response:) }
+          .to raise_error(Lain::Provider::HTTP::RateLimitError)
+      end
+    end
+
+    it "reads a usage limit as a quota even when the text also says rate limit" do
+      message = "You've hit your usage limit. Rate limit resets in 3 hours"
+      response = Struct.new(:status, :body).new(429, message)
+      provider = instance_double(Lain::Provider::HTTP::Provider, parse_error: message)
+
+      expect { described_class.parse_error(provider:, response:) }
+        .to raise_error(Lain::Provider::HTTP::QuotaError)
+    end
+
+    it "keeps a concurrency 429 a RateLimitError" do
+      message = "too many concurrent requests"
+      response = Struct.new(:status, :body).new(429, message)
+      provider = instance_double(Lain::Provider::HTTP::Provider, parse_error: message)
+
+      expect { described_class.parse_error(provider:, response:) }
+        .to raise_error(Lain::Provider::HTTP::RateLimitError)
+    end
+
     it "maps context-length-like 400 errors to ContextLengthExceededError" do
       msg = "This model's maximum context length is 8192 tokens."
       response = Struct.new(:status, :body).new(400, %({"error":{"message":"#{msg}"}}))

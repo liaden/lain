@@ -42,6 +42,53 @@ RSpec.describe Lain::Agent::StopReason do
     expect(described_class.for(caused_by(Lain::Stopped.new("stopped"), Lain::Error.new("unwound")))).to eq(:stopped)
   end
 
+  describe "a provider quota" do
+    let(:quota) { Lain::Provider::HTTP::QuotaError.new("session usage limit reached") }
+
+    def wrapped_quota(response: nil)
+      error = response ? Lain::Provider::HTTP::QuotaError.new(response, "session usage limit reached") : quota
+      caused_by(error, status_error(429))
+    end
+
+    it "names a quota by its cause, ahead of the 429 transport reading" do
+      expect(described_class.for(wrapped_quota)).to eq(:quota)
+    end
+
+    it "still calls a plain 429 transport" do
+      expect(described_class.for(caused_by(Lain::Provider::HTTP::RateLimitError.new("slow"), status_error(429))))
+        .to eq(:transport)
+    end
+
+    it "gives the provider's words as the detail, bounded" do
+      expect(described_class.detail(wrapped_quota)).to eq("session usage limit reached")
+      long = caused_by(Lain::Provider::HTTP::QuotaError.new("x" * 5000), status_error(429))
+      expect(described_class.detail(long).length).to eq(described_class::DETAIL_LIMIT)
+    end
+
+    it "has no detail for an error that is not a quota" do
+      expect(described_class.detail(status_error(429))).to be_nil
+    end
+
+    it "reads the reset from Retry-After as a time" do
+      response = Struct.new(:status, :body, :headers).new(429, "", { "retry-after" => "120" })
+
+      reset = Time.iso8601(described_class.reset_at(wrapped_quota(response:)))
+
+      expect(reset).to be_within(5).of(Time.now + 120)
+    end
+
+    it "reads Retry-After off a real Faraday header set," do
+      headers = Faraday::Utils::Headers.new("Retry-After" => "120")
+      response = Struct.new(:status, :body, :headers).new(429, "", headers)
+
+      expect(Time.iso8601(described_class.reset_at(wrapped_quota(response:)))).to be_within(5).of(Time.now + 120)
+    end
+
+    it "has no reset when the response carries no header" do
+      expect(described_class.reset_at(wrapped_quota)).to be_nil
+    end
+  end
+
   describe "a transport failure" do
     it "names a round trip that never reached the wire" do
       expect(described_class.for(Lain::Provider::Ollama::PreWireError.new("refused"))).to eq(:transport)

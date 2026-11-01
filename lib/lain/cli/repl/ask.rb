@@ -130,12 +130,13 @@ module Lain
         # turn the Agent stepped back from, so it follows the Agent back first.
         def record_interruption(error)
           @unfold.call if error.is_a?(Lain::Withdrawal) && error.withdrawn?
-          anchor(reason: Agent::StopReason.for(error), status: Agent::StopReason.status(error))
+          anchor(reason: Agent::StopReason.for(error), status: Agent::StopReason.status(error),
+                 detail: Agent::StopReason.detail(error), reset_at: Agent::StopReason.reset_at(error))
         end
 
-        def anchor(reason:, status: nil)
+        def anchor(reason:, status: nil, detail: nil, reset_at: nil)
           @chronicle.catch_up(@agent.timeline)
-          @chronicle.interrupted(head: @agent.timeline.head_digest, **{ reason:, status: }.compact)
+          @chronicle.interrupted(head: @agent.timeline.head_digest, **{ reason:, status:, detail:, reset_at: }.compact)
         end
 
         # The Agent is about to send a turn cut from the stranded turn's parent.

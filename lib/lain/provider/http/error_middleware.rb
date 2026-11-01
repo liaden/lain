@@ -31,6 +31,14 @@ module Lain
         end
 
         class << self
+          STRONG_QUOTA = /usage limit|quota|credits/i
+
+          # Alone it is ambiguous: OpenAI words a per-minute limit "Rate limit reached".
+          WEAK_QUOTA = /limit reached/i
+
+          # A per-minute window is a rate limit however it words the tokens it counted.
+          RATE_WINDOW = /rate[\s_-]?limit|per[\s-]?min|\bTPM\b|\bRPM\b/i
+
           CONTEXT_LENGTH_PATTERNS = [
             /context length/i,
             /context window/i,
@@ -86,12 +94,17 @@ module Lain
           end
 
           def error_for(status, response, message)
+            return quota_error(response, message) if quota_exhausted?(status, message)
             return context_length_error(response, message) if context_length_exceeded?(status, message)
             return unavailable_error(response, message) if (502..504).cover?(status)
             return retired_error(response, message) if status == RETIRED_STATUS
 
             klass = STATUS_ERRORS.fetch(status, Error)
             klass.new(response, message || STATUS_MESSAGES[status] || "An unknown error occurred")
+          end
+
+          def quota_error(response, message)
+            QuotaError.new(response, message)
           end
 
           def context_length_error(response, message)
@@ -106,9 +119,17 @@ module Lain
             ServiceUnavailableError.new(response, message || "API server unavailable - please try again later")
           end
 
+          def quota_exhausted?(status, message)
+            text = message.to_s
+            return false unless status == 429
+
+            text.match?(STRONG_QUOTA) || (text.match?(WEAK_QUOTA) && !text.match?(RATE_WINDOW))
+          end
+
           def context_length_exceeded?(status, message)
             return false unless CONTEXT_SENSITIVE_STATUSES.include?(status)
             return false if message.to_s.empty?
+            return false if status == 429 && message.match?(RATE_WINDOW)
 
             CONTEXT_LENGTH_PATTERNS.any? { |pattern| message.match?(pattern) }
           end

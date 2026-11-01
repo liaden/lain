@@ -87,8 +87,8 @@ module Lain
           self
         end
 
-        def interrupted(head:, reason:, status: nil)
-          @live << Telemetry::RunInterrupted.new(head:, reason:, status:)
+        def interrupted(head:, reason:, status: nil, detail: nil, reset_at: nil)
+          @live << Telemetry::RunInterrupted.new(head:, reason:, status:, detail:, reset_at:)
           self
         end
 
@@ -411,9 +411,11 @@ module Lain
       # @param head [String, nil] the last committed turn the torn run ran from
       # @param reason [Symbol] one of {Telemetry::RunInterrupted::REASONS}
       # @param status [Integer, nil] the HTTP status a rejected request earned
+      # @param detail [String, nil] the provider's own words for a quota stop
+      # @param reset_at [String, nil] when that quota resets, ISO 8601
       # @return [self]
-      def interrupted(head:, reason:, status: nil)
-        scribe.interrupted(head:, reason:, status:)
+      def interrupted(head:, reason:, status: nil, detail: nil, reset_at: nil)
+        scribe.interrupted(head:, reason:, status:, detail:, reset_at:)
         self
       end
 

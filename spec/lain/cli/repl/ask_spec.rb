@@ -76,6 +76,27 @@ RSpec.describe Lain::CLI::Repl::Ask do
     let(:display) { [] }
     let(:records) { io.string.each_line.map { |line| JSON.parse(line) } }
 
+    it "journals a quota stop with the provider's words, through the real record_interruption" do
+      real_chronicle.start(context: real_context, toolset: real_agent.toolset, sections: SessionSections.complete)
+      quota = Lain::Provider::HTTP::QuotaError.new("you have reached your session usage limit")
+      wrapped = begin
+        raise quota
+      rescue StandardError
+        begin
+          raise Lain::Provider::Ollama::APIStatusError.new("429", status: 429)
+        rescue StandardError => e
+          e
+        end
+      end
+      allow(real_agent).to receive(:ask).and_raise(wrapped)
+      real_ask = described_class.new(agent: real_agent, tty:, chronicle: real_chronicle)
+
+      real_ask.settle(real_ask.attempt("hi"))
+
+      interrupted = records.find { |record| record["type"] == "run_interrupted" }
+      expect(interrupted).to include("reason" => "quota", "detail" => "you have reached your session usage limit")
+    end
+
     it "journals ask_settled once after the last turn record and tells the display channel" do
       real_chronicle.wrap_tee(display)
       real_chronicle.start(context: real_context, toolset: real_agent.toolset, sections: SessionSections.complete)

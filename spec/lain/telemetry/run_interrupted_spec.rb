@@ -21,6 +21,15 @@ RSpec.describe Lain::Telemetry::RunInterrupted do
     expect(described_class.new(head: nil, reason: :torn).status).to be_nil
   end
 
+  it "carries the provider's words and reset for a quota, and leaves both off a record without them" do
+    record = described_class.new(head: nil, reason: :quota, detail: "usage limit", reset_at: "2026-11-01T10:00:00Z")
+
+    expect(record.to_journal).to include("reason" => :quota, "detail" => "usage limit",
+                                         "reset_at" => "2026-11-01T10:00:00Z")
+    expect(record).to be_deeply_frozen
+    expect(described_class.new(head: nil, reason: :torn).to_journal).not_to include("detail", "reset_at")
+  end
+
   # Its own enum, NOT {SessionClosed}'s. That one has nowhere to put a
   # provider stall, and its `:exit`/`:salvaged` describe how a SESSION ended,
   # which no interrupted run can be. The overlap is exactly
@@ -28,7 +37,7 @@ RSpec.describe Lain::Telemetry::RunInterrupted do
   it "pins its own reason enum, distinct from a session's" do
     expect(described_class::REASONS)
       .to eq(%i[interrupted grace_expired stopped ceiling over_window transport rejected stalled_stream torn
-                middleware max_tokens context_full refusal truncated malformed unknown])
+                middleware max_tokens context_full refusal truncated malformed unknown quota])
     expect(described_class::REASONS).not_to eq(Lain::Telemetry::SessionClosed::REASONS)
     expect(described_class::REASONS).to include(*Lain::CLI::Conductor::INTERRUPT_REASONS)
   end
@@ -38,7 +47,7 @@ RSpec.describe Lain::Telemetry::RunInterrupted do
       .to raise_error(ArgumentError,
                       "reason must be one of [:interrupted, :grace_expired, :stopped, :ceiling, :over_window, " \
                       ":transport, :rejected, :stalled_stream, :torn, :middleware, :max_tokens, :context_full, " \
-                      ":refusal, :truncated, :malformed, :unknown], " \
+                      ":refusal, :truncated, :malformed, :unknown, :quota], " \
                       "got :nonsense")
   end
 
@@ -47,7 +56,7 @@ RSpec.describe Lain::Telemetry::RunInterrupted do
       .to raise_error(ArgumentError,
                       "reason must be one of [:interrupted, :grace_expired, :stopped, :ceiling, :over_window, " \
                       ":transport, :rejected, :stalled_stream, :torn, :middleware, :max_tokens, :context_full, " \
-                      ":refusal, :truncated, :malformed, :unknown], " \
+                      ":refusal, :truncated, :malformed, :unknown, :quota], " \
                       "got nil")
   end
 

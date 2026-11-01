@@ -176,6 +176,7 @@ module Lain
             faraday.proxy = @config.http_proxy
           end
 
+          # QuotaError is deliberately absent: it is not a RateLimitError.
           def retry_exceptions
             [
               Errno::ETIMEDOUT, Timeout::Error, Faraday::TimeoutError, Faraday::ConnectionFailed,

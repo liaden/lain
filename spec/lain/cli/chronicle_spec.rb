@@ -565,6 +565,18 @@ RSpec.describe Lain::CLI::Chronicle do
         .to eq(%w[rewound rewound run_interrupted])
     end
 
+    it "writes a quota stop with the provider's words and tells the views the same record" do
+      views = []
+      started(views)
+
+      chronicle.interrupted(head: line.head_digest, reason: :quota, detail: "usage limit",
+                            reset_at: "2026-11-01T10:00:00Z")
+
+      expect(of_type("run_interrupted").last).to include("reason" => "quota", "detail" => "usage limit",
+                                                         "reset_at" => "2026-11-01T10:00:00Z")
+      expect(views.last.detail).to eq("usage limit")
+    end
+
     it "writes a settled ask to the file once and tells the views" do
       views = []
       started(views)

@@ -30,6 +30,26 @@ RSpec.describe Lain::Provider::HTTP::Connection::MiddlewareStack do
     expect(seen.size).to eq(3)
   end
 
+  it "sends a usage-quota 429 once, however many retries are allowed" do
+    stub_request(:post, url).to_return(status: 429, body: { error: { message: "session usage limit reached" } }.to_json,
+                                       headers: { "Content-Type" => "application/json" })
+
+    expect { build_connection(http_middleware: [], max_retries: 2).post("/v1/messages", { a: 1 }) }
+      .to raise_error(Lain::Provider::HTTP::QuotaError, /usage limit/)
+    expect(a_request(:post, url)).to have_been_made.once
+  end
+
+  it "retries a per-minute rate limit and completes" do
+    limited = { status: 429, body: { error: { message: "rate limit: input tokens per minute" } }.to_json,
+                headers: { "Content-Type" => "application/json" } }
+    stub_request(:post, url).to_return(limited,
+                                       { status: 200, body: "{}", headers: { "Content-Type" => "application/json" } })
+
+    build_connection(http_middleware: [], max_retries: 2).post("/v1/messages", { a: 1 })
+
+    expect(a_request(:post, url)).to have_been_made.twice
+  end
+
   it "shows entries the body before JSON encoding" do
     stub_request(:post, url).to_return(status: 200, body: "{}", headers: { "Content-Type" => "application/json" })
 

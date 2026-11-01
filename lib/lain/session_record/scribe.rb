@@ -276,9 +276,11 @@ module Lain
       # @param head [String, nil]
       # @param reason [Symbol] one of {Telemetry::RunInterrupted::REASONS}
       # @param status [Integer, nil] the HTTP status a rejected request earned
+      # @param detail [String, nil] the provider's own words for a quota stop
+      # @param reset_at [String, nil] when that quota resets, ISO 8601
       # @return [self]
-      def interrupted(reason:, head: @written.head, status: nil)
-        record = Telemetry::RunInterrupted.new(head:, reason:, status:)
+      def interrupted(reason:, head: @written.head, status: nil, detail: nil, reset_at: nil)
+        record = Telemetry::RunInterrupted.new(head:, reason:, status:, detail:, reset_at:)
         @journal << record
         @live << record
         self

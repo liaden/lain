@@ -22,6 +22,7 @@ module Lain
         ceiling: ->(chain) { chain.first.is_a?(Budget::Exceeded) },
         over_window: ->(chain) { chain.first.is_a?(WindowExceeded) },
         stalled_stream: ->(chain) { chain.any?(Provider::HTTP::Streaming::StalledStreamError) },
+        quota: ->(chain) { chain.any?(Provider::HTTP::QuotaError) },
         transport: ->(chain) { StopReason.transport?(chain.first) },
         rejected: ->(chain) { chain.first.is_a?(Provider::ErrorWrapping::Status) }
       }.freeze
@@ -43,6 +44,29 @@ module Lain
       def self.status(error)
         error.status if error.is_a?(Provider::ErrorWrapping::Status)
       end
+
+      DETAIL_LIMIT = 500
+
+      # @param error [Exception]
+      # @return [String, nil] the provider's own words for a quota stop, bounded
+      def self.detail(error)
+        quota_in_chain(error)&.message&.slice(0, DETAIL_LIMIT)
+      end
+
+      # @param error [Exception]
+      # @return [String, nil] an ISO 8601 time the quota resets, when the response says
+      def self.reset_at(error)
+        headers = quota_in_chain(error)&.response&.then do |response|
+          response.respond_to?(:headers) ? response.headers : nil
+        end
+        seconds = Provider::AnthropicWire::RESET_HEADER_PARSER.call(headers&.[]("retry-after"))
+        (Time.now + seconds).utc.iso8601 if seconds
+      end
+
+      def self.quota_in_chain(error)
+        Enumerator.produce(error, &:cause).take_while(&:itself).find { |e| e.is_a?(Provider::HTTP::QuotaError) }
+      end
+      private_class_method :quota_in_chain
 
       # The two client statuses that fail for the moment rather than for the
       # request: a timeout and a rate limit answer differently a little later.

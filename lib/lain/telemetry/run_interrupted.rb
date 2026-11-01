@@ -8,6 +8,8 @@ module Lain
         attribute :head, default: nil
         attribute :reason, default: :torn
         attribute :status, default: nil
+        attribute :detail, default: nil
+        attribute :reset_at, default: nil
       end
     end
 
@@ -20,15 +22,16 @@ module Lain
     # human interrupted, a fleet the shutdown window closed on, and a stream the
     # model stopped feeding all leave the identical hole, and only the first two
     # are anybody's decision.
-    RunInterrupted = Data.define(:head, :reason, :status) do
+    RunInterrupted = Data.define(:head, :reason, :status, :detail, :reset_at) do
       include Journalable
 
-      def initialize(head:, reason: :torn, status: nil)
-        super(**Carriers::RunInterrupted.settle!(head:, reason: self.class.reason!(reason), status:))
+      def initialize(head:, reason: :torn, status: nil, detail: nil, reset_at: nil)
+        super(**Carriers::RunInterrupted.settle!(head:, reason: self.class.reason!(reason), status:, detail:,
+                                                 reset_at:))
       end
 
       # Left off at their nil default, so a record with no status or head is the line it always was.
-      def to_journal = omitting_defaults(super, Carriers::RunInterrupted, :head, :status)
+      def to_journal = omitting_defaults(super, Carriers::RunInterrupted, :head, :status, :detail, :reset_at)
     end
 
     class RunInterrupted
@@ -50,7 +53,7 @@ module Lain
       #
       # The tail is the stops a reply itself ended on, named by {Response#failure}'s stop_reason.
       REASONS = %i[interrupted grace_expired stopped ceiling over_window transport rejected stalled_stream torn
-                   middleware max_tokens context_full refusal truncated malformed unknown].freeze
+                   middleware max_tokens context_full refusal truncated malformed unknown quota].freeze
 
       # Mirrors {SessionClosed.reason!}, nil-tolerance included: a guard that
       # refuses differently from its sibling is one a reader has to check
