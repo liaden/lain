@@ -13,16 +13,27 @@ RSpec.describe Lain::OutputCeiling do
 
   it "gives a local ollama model with no table entry its served window" do
     expect(ceiling("qwen3-coder:30b", window(32_768, :probed)))
-      .to eq(described_class.new(tokens: 32_768, source: :served_window))
+      .to eq(described_class.new(tokens: 32_768, source: :published_window))
   end
 
-  it "gives an ollama cloud model with no table entry the fallback" do
+  it "caps an ollama cloud model's published window at 131,072" do
     expect(ceiling("glm-5.3:cloud", window(1_000_000, :published)))
-      .to eq(described_class.new(tokens: 32_768, source: :fallback))
+      .to eq(described_class.new(tokens: 131_072, source: :published_window))
   end
 
-  it "gives a first-party model the table does not carry the same fallback" do
-    expect(ceiling("claude-fable-5")).to eq(described_class.new(tokens: 32_768, source: :fallback))
+  it "gives a published window under the cap its own size" do
+    expect(ceiling("some-model", window(65_536, :published)))
+      .to eq(described_class.new(tokens: 65_536, source: :published_window))
+  end
+
+  it "caps a probed window at 131,072 too" do
+    expect(ceiling("qwen3-coder:30b", window(262_144, :probed)))
+      .to eq(described_class.new(tokens: 131_072, source: :published_window))
+  end
+
+  it "gives a model with a guessed window the fallback" do
+    expect(ceiling("claude-fable-5", window(200_000, :guessed)))
+      .to eq(described_class.new(tokens: 32_768, source: :fallback))
   end
 
   it "never clamps the ceiling to a guessed window" do

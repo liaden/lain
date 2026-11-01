@@ -8,7 +8,8 @@ module Lain
     def self.for(model:, window:)
       table = OutputCeiling.table_tokens(model)
       return new(tokens: table, source: :table) if table
-      return new(tokens: window.window_tokens, source: :served_window) if window.provenance == ContextWindow::PROBED
+      return new(tokens: [window.window_tokens, OutputCeiling::PUBLISHED_CAP].min, source: :published_window) \
+        if window.authoritative?
 
       new(tokens: OutputCeiling::FALLBACK_TOKENS, source: :fallback)
     end
@@ -39,9 +40,9 @@ module Lain
   # enforce the window apart from it, so a generous value breaks nothing on a
   # current model.
   #
-  # Source is one of `:typed`, `:command_default`, `:table`, `:served_window`
+  # Source is one of `:typed`, `:command_default`, `:table`, `:published_window`
   # and `:fallback`, or nil for a bare number nobody resolved. A guessed window
-  # never sets it: clamping to an 8,192 guess would cut replies on a runner
+  # never sets `:published_window`: clamping to an 8,192 guess would cut replies on a runner
   # serving far more.
   #
   # @!attribute [r] tokens
@@ -80,6 +81,9 @@ module Lain
     # cloud model, a local one whose window was only guessed, or a first-party
     # id the table has no row for yet.
     FALLBACK_TOKENS = 32_768
+
+    # Past this a reply is not worth the bill of a runaway, whatever the window.
+    PUBLISHED_CAP = 131_072
 
     # @param model [String]
     # @return [Integer, nil]

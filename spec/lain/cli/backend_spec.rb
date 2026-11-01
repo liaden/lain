@@ -1609,15 +1609,15 @@ RSpec.describe Lain::CLI::Backend do
         served(32_768)
         context = backend_for(provider: "ollama", model: "qwen3-coder:30b").context
 
-        expect([request_of(context).max_tokens, context.output_ceiling.source]).to eq([32_768, :served_window])
+        expect([request_of(context).max_tokens, context.output_ceiling.source]).to eq([32_768, :published_window])
       end
 
-      it "sends an ollama cloud model with no table entry the fallback" do
+      it "sends an ollama cloud model with no table entry its published window, capped" do
         context = with_env("OLLAMA_API_KEY" => "sk-ollama-test") do
           backend_for(provider: "ollama-cloud", model: "glm-5.3").context
         end
 
-        expect([request_of(context).max_tokens, context.output_ceiling.source]).to eq([32_768, :fallback])
+        expect([request_of(context).max_tokens, context.output_ceiling.source]).to eq([131_072, :published_window])
       end
 
       it "names a command's own default ceiling for what it is, not a typed value" do
