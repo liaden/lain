@@ -224,7 +224,11 @@ module Lain
     # shape of `content`. `content` is either a String or an Array of provider
     # content blocks, matching what a `tool_result` block accepts on the wire.
     # Defined in a reopened `Tool` to keep the behavioral core measurably small.
-    Result = Data.define(:content, :is_error) do
+    #
+    # `ends_turn` is the one way a tool stops its agent's loop without failing:
+    # the round's results are committed and the agent waits for the next human
+    # line rather than asking the model again. Only {.held} sets it.
+    Result = Data.define(:content, :is_error, :ends_turn) do
       include Declarative
 
       # `content` is either a String or an Array of provider content blocks --
@@ -260,13 +264,26 @@ module Lain
         new(content:, is_error: true)
       end
 
-      def initialize(content:, is_error: false)
+      # A successful result that ends the agent's turn once its round is
+      # committed.
+      def self.held(content)
+        new(content:, ends_turn: true)
+      end
+
+      def initialize(content:, is_error: false, ends_turn: false)
         self.class.check!(content:)
 
         # Coerce to a strict Boolean so `is_error` is never a truthy-but-not-true
         # value that a `== true` check downstream would miss.
-        super(content:, is_error: is_error ? true : false)
+        super(content:, is_error: is_error ? true : false, ends_turn: ends_turn ? true : false)
       end
+
+      # What a middleware answers in place of a tool's own result, still ending
+      # the turn the tool's result ended.
+      #
+      # @param prior [Result, nil] the result this one replaces
+      # @return [Result]
+      def replacing(prior) = prior&.ends_turn && !ends_turn ? with(ends_turn: true) : self
 
       def error?
         is_error

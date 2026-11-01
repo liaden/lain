@@ -41,6 +41,20 @@ RSpec.describe Lain::Tool::ResultBlock do
       expect(block.to_h.keys).to eq(%w[type tool_use_id content is_error])
     end
 
+    it "carries a held Result's end of turn beside the block, never on the wire" do
+      held = described_class.of(Lain::Tool::Result.held("wait"), tool_use_id: "tu_1")
+
+      expect(held).to be_ends_turn
+      expect(held.to_h.keys).to eq(%w[type tool_use_id content is_error])
+      expect(block).not_to be_ends_turn
+    end
+
+    it "keeps a held Result held when its bytes are refused" do
+      refused = described_class.of(Lain::Tool::Result.held("caf\xE9".b), tool_use_id: "tu_1")
+
+      expect(refused).to have_attributes(error?: true, ends_turn?: true)
+    end
+
     it "reads is_error off the Result, never off the shape of the content" do
       expect(described_class.of(Lain::Tool::Result.error("boom"), tool_use_id: "tu_1").to_h["is_error"]).to be(true)
       expect(described_class.of(Lain::Tool::Result.ok("Error: not really"), tool_use_id: "tu_1")

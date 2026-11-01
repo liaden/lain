@@ -23,7 +23,7 @@ module Lain
     end
 
     # A tool-calling turn the run was interrupted in the middle of, written by
-    # {Agent#perform_tools} at the tear -- inside the same `defer_stop` region
+    # {Agent::Transition} at the tear -- inside the same `defer_stop` region
     # as the Timeline commit it describes, so a record can never survive a
     # commit that did not happen, or vice versa.
     #

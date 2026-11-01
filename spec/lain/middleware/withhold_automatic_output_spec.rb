@@ -60,6 +60,13 @@ RSpec.describe Lain::Middleware::WithholdAutomaticOutput do
       expect(env.fetch(:result).content).to include("/mode ask")
     end
 
+    it "keeps a held result held when it withholds the output" do
+      held = Lain::Tool::Result.held(printed.content)
+      env, = run(call_of("cat notes.txt"), result: held, authority: :automatic)
+
+      expect(env.fetch(:result)).to have_attributes(is_error: true, ends_turn: true)
+    end
+
     it "bars the command string from automatic approval" do
       run(call_of("cat notes.txt"), authority: :automatic)
 

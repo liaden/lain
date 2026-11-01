@@ -218,7 +218,7 @@ RSpec.describe Lain::Compaction::Source do
   # content address, so a fixture that exercises a HIT has to carry a real tool
   # exchange rather than a loose tool_result: an `assistant` tool_use answered
   # by the `user` tool_result immediately after it, which is the only shape
-  # `Agent#perform_tools` commits (Correctness gate 2, agent.rb:326-328).
+  # `Agent::Transition` commits (Correctness gate 2).
   #
   # The pair sits at indices 1-2, wholly inside the droppable span at
   # `keep_last: 2`, so {Lain::Compaction::Boundary} never has to move the cut

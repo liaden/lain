@@ -1634,6 +1634,19 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       expect(result.content).to start_with("command timed out after 1s: <redacted:1>")
     end
 
+    it "keeps a held result held when it masks the output" do
+      result = bash(tool: ->(_input, _invocation) { Lain::Tool::Result.held("waiting: #{token}") })
+
+      expect(result).to have_attributes(content: start_with("waiting: <redacted:1>"), ends_turn: true)
+    end
+
+    it "keeps a held result held when the check itself fails" do
+      allow(Lain::Sensitivity::TextMask).to receive(:new).and_raise(IOError, "mask died")
+      result = bash(tool: ->(_input, _invocation) { Lain::Tool::Result.held("waiting: #{token}") })
+
+      expect(result).to have_attributes(error?: true, ends_turn: true)
+    end
+
     describe "a session secret no pattern matches" do
       let(:value) { "abc123lowentropyvalue" }
       let(:environment) { { "OLLAMA_API_KEY" => value } }

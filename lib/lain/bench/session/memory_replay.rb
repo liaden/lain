@@ -172,8 +172,9 @@ module Lain
 
         # A turn's root is snapshotted BEFORE its own writes apply, because
         # TurnUsage -- which the memory_root record pairs with -- journals after
-        # the assistant commit and strictly before perform_tools. A parent this
-        # file does not carry is its resume boundary, whose view IS the seed.
+        # the assistant commit and strictly before Agent::Transition runs the
+        # tools. A parent this file does not carry is its resume boundary, whose
+        # view IS the seed.
         #
         # @return [Memory::ProjectStore::Loaded] what this file ended holding
         def folded_segment(segment, seed, state)

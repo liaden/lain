@@ -75,7 +75,7 @@ RSpec.describe Lain::Context::Compact do
     end
 
     # An assistant tool_use turn answered by a user tool_result turn, which is
-    # the only shape {Agent#perform_tools} commits (Correctness gate 2).
+    # the only shape {Agent::Transition} commits (Correctness gate 2).
     def tool_heavy(rounds)
       [message("user", "start")] + (1..rounds).flat_map do |round|
         [{ "role" => "assistant",

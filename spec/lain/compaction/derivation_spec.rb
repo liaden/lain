@@ -49,7 +49,7 @@ module DerivationFixtures
   # The declining shape: the message at index 2 carries a `tool_result` for the
   # `tool_use` before it AND a `tool_use` answered by the one after it, so the
   # naive cut and the single move off it both split a pair. Nothing in `lib/`
-  # emits this -- `Agent#perform_tools` commits one user message per assistant
+  # emits this -- `Agent::Transition` commits one user message per assistant
   # turn's results -- which is exactly why it takes a hand-built history.
   def entangled_history(store: Lain::Dag::Factory.store)
     blocks = [["user", [text("ask")]],

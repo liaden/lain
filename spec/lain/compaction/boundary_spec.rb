@@ -104,8 +104,8 @@ RSpec.describe Lain::Compaction::Boundary do
       expect(messages[boundary.index + 1]["content"].first["type"]).to eq("tool_result")
     end
 
-    # The pair is exactly two adjacent messages (Correctness gate 2,
-    # `agent.rb:326-328`), so ONE position always clears it. This is also the
+    # The pair is exactly two adjacent messages (Correctness gate 2),
+    # so ONE position always clears it. This is also the
     # card's "if landing needs more than two positions, stop" trigger, which the
     # old role rule was quietly violating -- `probe_t2_collapse.rb` measured
     # walks of 8, and the near-decline case walked 28.
@@ -149,7 +149,7 @@ RSpec.describe Lain::Compaction::Boundary do
     #
     # It needs a message carrying BOTH a `tool_result` answering the turn before
     # it and a `tool_use` answered by the turn after. That is legal on the wire
-    # and nothing in `lib/` emits it (`Agent#perform_tools` commits one user
+    # and nothing in `lib/` emits it (`Agent::Transition` commits one user
     # message per assistant turn's results), which is exactly why it must be
     # pinned rather than assumed away. This is the emergent-safety nit one
     # level down: a branch whose safety was emergent from the fixtures rather

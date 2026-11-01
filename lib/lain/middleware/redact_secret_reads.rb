@@ -257,7 +257,7 @@ module Lain
         carried = downstream(env, &app)
         return carried unless SCANNED_TOOLS.any? { _1.include?(effect.name) }
 
-        guarded(carried, effect)
+        holding(guarded(carried, effect), carried)
       end
 
       private

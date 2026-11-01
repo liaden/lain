@@ -95,9 +95,9 @@ RSpec.describe Lain::Middleware::WithholdSecretPaths, :seam do
 
   # A grep result this file WRITES rather than one a real grep produced: the row
   # below is a shape the parser has to survive, not output the tool emits.
-  def grepping(listing)
+  def grepping(listing, result: Lain::Tool::Result.ok(listing))
     stack.call({ effect: effect("grep", { "pattern" => "x", "path" => "." }), context: session }) do |inner|
-      inner.merge(result: Lain::Tool::Result.ok(listing))
+      inner.merge(result:)
     end
   end
 
@@ -783,6 +783,21 @@ RSpec.describe Lain::Middleware::WithholdSecretPaths, :seam do
 
       expect(env.fetch(:result)).not_to be_error
       expect(content(env).split("\n")).to eq(["keep.rb:1:zzzmarker", "1 match withheld (malformed)"])
+    end
+  end
+
+  describe "a result that ended the turn" do
+    it "still ends it once a row is withheld" do
+      env = grepping(nil, result: Lain::Tool::Result.held("app.rb:1:API_KEY\n.env:1:API_KEY"))
+
+      expect(content(env).split("\n")).to match([eq("app.rb:1:API_KEY"), start_with("1 match withheld")])
+      expect(env.fetch(:result).ends_turn).to be(true)
+    end
+
+    it "still ends it when the listing cannot be read as rows" do
+      env = grepping(nil, result: Lain::Tool::Result.held([{ "type" => "text", "text" => ".env:1:API_KEY" }]))
+
+      expect(env.fetch(:result)).to have_attributes(error?: true, ends_turn: true)
     end
   end
 

@@ -28,6 +28,9 @@ module Lain
   # for a filled window alike, and only the provider that knows the ceiling it sent
   # can tell them apart; Anthropic names the window stop itself.
   #
+  # `:held` is the loop's own: a tool's answer asked to end the turn, so the
+  # run settles on the tool round and no wire is ever asked why.
+  #
   # So two entry points. {.normalize} reads a WIRE value and can only ever
   # answer from `KNOWN`, `:unknown`, or the one `WIRE_ALIASES` entry, so no provider
   # string spells its way into another machine-only reason. {.admit} is what {Response} runs: a Symbol already in
@@ -48,9 +51,10 @@ module Lain
     MALFORMED = :malformed
     TRUNCATED = :truncated
     CONTEXT_FULL = :context_full
+    HELD = :held
 
     KNOWN = [END_TURN, TOOL_USE, MAX_TOKENS, STOP_SEQUENCE, PAUSE_TURN, REFUSAL].freeze
-    ALL = (KNOWN + [UNKNOWN, MALFORMED, TRUNCATED, CONTEXT_FULL]).freeze
+    ALL = (KNOWN + [UNKNOWN, MALFORMED, TRUNCATED, CONTEXT_FULL, HELD]).freeze
 
     # Beta-only on the wire, so absent from KNOWN.
     WIRE_ALIASES = { model_context_window_exceeded: CONTEXT_FULL }.freeze

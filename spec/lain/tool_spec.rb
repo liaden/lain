@@ -39,6 +39,28 @@ RSpec.describe Lain::Tool do
       expect { described_class.ok(42) }.to raise_error(Lain::Tool::InvalidResult, /String or an Array/)
     end
 
+    describe ".held" do
+      it "is a successful result that ends the agent's turn" do
+        expect(described_class.held("wait")).to have_attributes(content: "wait", ok?: true, ends_turn: true)
+      end
+
+      it "is the one constructor that ends a turn" do
+        expect([described_class.ok("x"), described_class.error("x")].map(&:ends_turn)).to eq([false, false])
+      end
+    end
+
+    describe "#replacing" do
+      it "ends the turn when the result it replaces did" do
+        expect(described_class.error("withheld").replacing(described_class.held("wait")).ends_turn).to be(true)
+      end
+
+      it "leaves a replacement of an ordinary result as it is" do
+        replacement = described_class.ok("masked")
+
+        expect(replacement.replacing(described_class.ok("raw"))).to equal(replacement)
+      end
+    end
+
     describe "#text" do
       it "is a String content whole" do
         expect(described_class.ok("done").text).to eq("done")

@@ -100,7 +100,7 @@ RSpec.describe "Free summarizer tier seam", :seam do
 
   def text_block(index) = { "type" => "text", "text" => "the quick brown fox, message #{index}. " * 15 }
 
-  # The only shape `Agent#perform_tools` commits: an assistant `tool_use`
+  # The only shape `Agent::Transition` commits: an assistant `tool_use`
   # answered by the `user` tool_result immediately after it. The pair sits
   # wholly inside the droppable span at `compact_keep: 2`.
   def timeline_carrying(content, tool_name)

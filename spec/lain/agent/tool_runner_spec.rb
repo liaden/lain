@@ -143,6 +143,46 @@ RSpec.describe Lain::Agent::ToolRunner do
     expect(block["content"]).to eq("boom")
   end
 
+  describe "a held answer" do
+    let(:response) { tool_response(["tu_1", "echo", {}], ["tu_2", "hold", {}]) }
+    let(:answers) { described_class::Answers.for(response) }
+    let(:handler) do
+      Lain::Effect::Handler::Mock.new do |effect, _context|
+        effect.name == "hold" ? Lain::Tool::Result.held("wait") : Lain::Tool::Result.ok("ran")
+      end
+    end
+
+    it "marks the round's answers held, with the wire blocks unchanged" do
+      blocks = described_class.new(handler:).run(response, context: nil, answers:)
+
+      expect(answers).to be_ends_turn
+      expect(answers.ends_turn_text).to eq("wait")
+      expect(blocks.map(&:keys).uniq).to eq([%w[type tool_use_id content is_error]])
+    end
+
+    it "keeps a held answer out of the round budget, so its text is the block the model is sent" do
+      tiny = Lain::Tool::RoundBudget.new(:tiny) { |_room| Lain::Tool::RoundBudget::Limit.new(bytes: 2, scope: "tiny") }
+      rerunnable = Class.new(EchoTool) do
+        def name = "hold"
+        def rerunnable? = true
+      end
+      runner = described_class.new(handler:, round_budget: tiny, toolset: Lain::Toolset.new([rerunnable.new]))
+      held = tool_response(["tu_1", "hold", {}])
+      single = described_class::Answers.for(held)
+
+      blocks = runner.run(held, context: nil, answers: single)
+
+      expect(blocks.first).to include("content" => single.ends_turn_text, "is_error" => false)
+    end
+
+    it "leaves a round with no held answer unheld" do
+      plain = described_class::Answers.for(tool_response(["tu_1", "echo", {}]))
+      described_class.new(handler:).run(tool_response(["tu_1", "echo", {}]), context: nil, answers: plain)
+
+      expect(plain).not_to be_ends_turn
+    end
+  end
+
   it "names the tool whose output was not text in the refusal it answers with" do
     handler = Lain::Effect::Handler::Mock.new do |_effect, _context|
       Lain::Tool::Result.ok("caf\xE9".b)

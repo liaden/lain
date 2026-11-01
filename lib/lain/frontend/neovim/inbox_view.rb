@@ -12,7 +12,7 @@ module Lain
       #   question),
       # * a {Telemetry::TurnUsage} retires whatever the named head's chain has
       #   cited among its turns' causal_parents -- the delivery commit's edge
-      #   ({Agent#perform_tools}), which is the ONLY consumption the pending
+      #   ({Agent::Transition}), which is the ONLY consumption the pending
       #   projection counts. A REPLY :message alone never retires an item;
       #   that pinned rule is what keeps this view and {StatusFeed}'s
       #   inbox_count in agreement (the parity spec holds them to it), and

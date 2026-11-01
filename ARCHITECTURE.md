@@ -677,6 +677,11 @@ before the round's first tool starts, all inside the same cancellation-shielded 
 session killed while a tool runs therefore resumes, and no later record can cite a turn the file
 lacks. That is what retired the child-only settle handles and `Bench::Session::Lineages::InFlight`.
 
+**A tool can end the turn.** A result built with `Tool::Result.held` commits its round and settles the
+run as `held` (`Lain::StopReason::HELD`), with the held text after the model's own, instead of asking
+the model again. Every middleware that rebuilds a result forwards the flag through `Result#replacing`,
+so a redaction or a withholding cannot turn a hold back into another request.
+
 ## Modes: a mode is scope × approval
 
 `Lain::Mode` (`lib/lain/mode.rb`) is `Data.define(:scope, :approval, :layers)`, and the first two

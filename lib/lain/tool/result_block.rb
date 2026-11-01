@@ -57,16 +57,19 @@ module Lain
       # refuse at commit -- after the tool ran and after its tool_use turn
       # committed -- become a refusal the ask can carry on past instead of a
       # raise that tears it. `tool` is the name that refusal gives the output.
+      #
+      # A held result's end of turn rides on the lens and never in the hash: the
+      # hash is what the provider is sent, and the wire has no such key.
       def self.of(result, tool_use_id:, tool: "this tool")
         refuse_unpaired(tool_use_id)
-        committable = Text.committable(result, subject: "#{tool}'s output")
+        committable = Text.committable(result, subject: "#{tool}'s output").replacing(result)
 
         new({
           "type" => "tool_result",
           "tool_use_id" => tool_use_id,
           "content" => committable.content,
           "is_error" => committable.error?
-        }.freeze)
+        }.freeze, ends_turn: committable.ends_turn)
       end
 
       # Re-lenses a block that has already been built (or has come back through
@@ -104,8 +107,9 @@ module Lain
       end
       private_class_method :refuse_unpaired
 
-      def initialize(hash)
+      def initialize(hash, ends_turn: false)
         @hash = hash
+        @ends_turn = ends_turn
         freeze
       end
       private_class_method :new
@@ -132,6 +136,10 @@ module Lain
       def content = field("content")
 
       def error? = field("is_error")
+
+      # Whether the agent's turn ends once this round is committed. Known only
+      # to a lens {.of} built: a block read back off the wire never ends one.
+      def ends_turn? = @ends_turn
 
       private
 

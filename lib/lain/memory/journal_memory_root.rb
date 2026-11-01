@@ -19,8 +19,8 @@ module Lain
     # reader scanning forward sees a turn before its snapshot. The root is read
     # from the recorder at the INSTANT `#<<` runs, never cached -- because
     # {Agent::Accounting#observe} journals TurnUsage right after the assistant
-    # commit and strictly BEFORE `perform_tools`, that instant's root is the
-    # pre-write snapshot the render actually saw.
+    # commit and strictly BEFORE {Agent::Transition} runs the tools, that
+    # instant's root is the pre-write snapshot the render actually saw.
     #
     # The match is deliberately a CLASS check, not a journal_type/shape check: a
     # raw Hash with "type" => "turn_usage" -- which {Journal#record} accepts --

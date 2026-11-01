@@ -379,7 +379,7 @@ RSpec.describe Lain::Provider::Ollama do
       expect(provider.complete(request)).to stop_with(:end_turn)
     end
 
-    # The whole road: decode -> Response -> Agent#transition -> LoopMachine ->
+    # The whole road: decode -> Response -> Agent::Transition -> LoopMachine ->
     # the failure diagnostic, with nothing doubled but the socket.
     describe "when an agent transitions on it" do
       def agent_over(body, journal)
@@ -566,7 +566,7 @@ RSpec.describe Lain::Provider::Ollama do
     end
 
     # The whole road, nothing doubled but the socket: decode -> Response ->
-    # Agent#transition -> LoopMachine -> the failure diagnostic, with the record
+    # Agent::Transition -> LoopMachine -> the failure diagnostic, with the record
     # the diagnostic names actually on the file it points at.
     it "fails an agent's run under a reason naming the malformed record, and journals that record" do
       io = StringIO.new

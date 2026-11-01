@@ -493,7 +493,8 @@ module Lain
       loop do
         env = @instrumentation.turn_middleware.call({ iteration: @iterations, timeline: @timeline }) do |inner|
           response = step(on_stream_started)
-          inner.merge(response:, settled: transition(response) == :settled)
+          settled = @transition.call(response, timeline: @timeline, session: @session) { |turn| @timeline = turn }
+          inner.merge(response: settled || response, settled: !settled.nil?)
         end
         return env.fetch(:response) if env.fetch(:settled)
       end
@@ -617,8 +618,9 @@ module Lain
     def seed_run_state(session, snapshot_slot, budget, progress, display:, display_as:)
       @transition_listener = @instrumentation.transition_listener
       @session = session
-      @deliveries = ToolDelivery.new(runner: tool_runner, journal: @instrumentation.journal, snapshots: snapshot_slot,
-                                     display:, display_as:)
+      deliveries = ToolDelivery.new(runner: tool_runner, journal: @instrumentation.journal, snapshots: snapshot_slot,
+                                    display:, display_as:)
+      @transition = Transition.new(machine: self, deliveries:)
       @budget = budget
       @progress = progress
       @iterations = 0
@@ -740,29 +742,6 @@ module Lain
       nil
     end
 
-    # Fire the machine event named for the (already-admitted) stop_reason and
-    # let the machine, not a `case`, decide the resulting state.
-    # {Response} has closed the wire's open enum to `StopReason::ALL` before we
-    # get here and {LoopMachine} declares one event per member, so the send
-    # always names a real event -- an unrecognized wire value arrives as
-    # `:unknown`, which fails to `:failed`. The only loud arm left is structural: firing from an
-    # illegal state raises `StateMachines::InvalidTransition`. Coupling the
-    # event names to `StopReason::ALL`, the machine vocabulary rather than the
-    # wire enum, is deliberate; a totality spec pins it.
-    #
-    # The side effects that follow are keyed off the state the machine just
-    # reached: the machine owns the state, the Agent owns the run context. A
-    # paused turn needs nothing -- it stays in `:awaiting_model` and
-    # re-dispatches, counting against the iteration ceiling so a provider that pauses
-    # forever still stops.
-    #
-    # @return [Symbol] :settled when the loop is finished, :continue otherwise
-    def transition(response)
-      __send__(:"#{response.stop_reason}!")
-      perform_tools(response) if awaiting_tools?
-      done? || failed? ? :settled : :continue
-    end
-
     # The override resolves HERE, before {ModelCaller}'s middleware phase, so
     # middleware and provider both see the edited Request as an ordinary one and
     # ModelCaller stays untouched. The render rides a callable, so an overridden
@@ -880,18 +859,5 @@ module Lain
     def budget_spent? = ledger.exceeded?(:tokens)
 
     def ledger = Budget::Account.new(ceilings: @budget, spent:)
-
-    # Every tool_result for one assistant turn goes back in ONE user message.
-    # Splitting them across messages silently teaches Claude to stop making
-    # parallel tool calls -- a regression with no error attached.
-    #
-    # This class decides WHEN tools run; {ToolDelivery} decides how what they
-    # produced lands. The Timeline comes back through the block rather than as a
-    # return value because the torn path commits AND re-raises, and a return
-    # value would be discarded by the very interrupt the commit exists to
-    # survive.
-    def perform_tools(response)
-      @deliveries.perform(response, timeline: @timeline, session: @session) { |turn| @timeline = turn }
-    end
   end
 end

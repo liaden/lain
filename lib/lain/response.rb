@@ -53,6 +53,13 @@ module Lain
       blocks_of_type("text").map { |block| block["text"] }.join
     end
 
+    # The tool's words a held turn ended on, kept apart from {#text}: a chat
+    # has already shown the model's own text beside the call, while a parent
+    # reading a child wants both.
+    #
+    # @return [String] the last block's text on a held turn, else empty
+    def held_text = stop_reason == StopReason::HELD ? content.last&.then { _1["text"] }.to_s : ""
+
     # Nil for a turn that finished or is still mid-loop. Reads the admitted
     # stop_reason, so a wire value {StopReason.normalize} rewrote is reported
     # as the :unknown it became.

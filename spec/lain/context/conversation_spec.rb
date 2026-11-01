@@ -37,8 +37,8 @@ RSpec.describe Lain::Context::Conversation do
     end
 
     # The Agent's own shape (spec/lain/agent_spec.rb:407 pins %w[user assistant
-    # user user]): perform_tools commits ONE user message of tool_results, and
-    # the human's next ask is the user message right after it. Adjacent user
+    # user user]): Agent::Transition commits ONE user message of tool_results,
+    # and the human's next ask is the user message right after it. Adjacent user
     # messages are therefore ordinary, and only adjacent ASSISTANT messages are
     # refused -- the rule the ruling in the class doc records.
     it "permits adjacent user messages, which is what the Agent commits every tool round" do

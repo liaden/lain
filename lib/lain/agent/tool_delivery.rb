@@ -6,11 +6,11 @@ module Lain
   class Agent
     # Where ONE tool-calling turn's results land on the Timeline.
     #
-    # Third in the split this class already makes: the {Agent} decides *when*
-    # tools run, {ToolRunner} decides *how* they run, and this decides how what
+    # Third in the split this class already makes: {Agent::Transition} decides
+    # *when* tools run, {ToolRunner} decides *how* they run, and this decides how what
     # they produced becomes a commit -- settled, or torn by an interrupt that
     # arrived mid-dispatch. Its own object because the torn case is not one more
-    # line in {Agent#perform_tools}: it is a rescue arm, an uninterruptible
+    # line in {Agent::Transition}: it is a rescue arm, an uninterruptible
     # commit, a journal record and a re-raise, over answers that have to outlive
     # the unwind.
     #
@@ -60,6 +60,8 @@ module Lain
       # @param timeline [Lain::Ext::Timeline] the timeline as of the assistant commit
       # @param session [Lain::Session] the tools' context, and the snapshot's paths
       # @yieldparam committed [Lain::Ext::Timeline] the commit this delivery produced
+      # @return [String, nil] the held answers' text when a call asked the turn
+      #   to end, else nil
       # @raise [Async::Stop] re-raised after the cancellation commit, so an
       #   interrupt still ends the run it was asked to end
       # @raise [StandardError] whatever refused the settled commit, re-raised
@@ -75,6 +77,7 @@ module Lain
         raise e
       else
         settle(delivery, timeline, session, &commit)
+        answers.ends_turn_text if answers.ends_turn?
       end
 
       private
@@ -117,6 +120,10 @@ module Lain
         @display << record
       end
 
+      # Every tool_result for one assistant turn goes back in this ONE user
+      # message. Splitting them across messages silently teaches Claude to stop
+      # making parallel tool calls -- a regression with no error attached.
+      #
       # Only the commit is covered, never the yield or the snapshot after it:
       # once this commit lands the calls ARE answered, and a failure past it
       # repaired here would answer them twice.

@@ -203,6 +203,33 @@ RSpec.describe Lain::Tool::RoundBudget do
     expect(delivered.last).to eq(blocks.last)
   end
 
+  describe "a result that ends the turn" do
+    let(:tiny) { described_class.new(:tiny) { |_room| described_class::Limit.new(bytes: 50, scope: "tiny") } }
+
+    def held(id) = described_class::Call.new(id:, tool: read_file, ends_turn: true)
+
+    it "is delivered whole past a 50-byte budget, so the human and the model read the same bytes" do
+      block = result("tu_1", "x" * 400)
+
+      delivered, records = bounded(tiny.for(head: nil) { room(window: 1) }, [block], [held("tu_1")])
+
+      expect(delivered).to eq([block])
+      expect(records).to be_empty
+    end
+
+    it "is never answered by naming an identical result before it" do
+      blocks = [result("tu_1", "same"), result("tu_2", "same")]
+
+      delivered, = bounded(described_class.dedup_only.for(head: nil), blocks, [held("tu_1"), held("tu_2")])
+
+      expect(delivered).to eq(blocks)
+    end
+
+    it "leaves an ordinary call ending no turn" do
+      expect(call("tu_1").ends_turn).to be(false)
+    end
+  end
+
   it "holds a static budget to twice the per-result ceiling whatever the window" do
     budget = described_class.static.for(head: nil) { room(window: 1_000_000) }
     blocks = [result("tu_1", "a" * 20_000), result("tu_2", "b" * 20_000)]

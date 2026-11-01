@@ -74,6 +74,16 @@ module Lain
       def downstream(env, &app)
         app ? yield(env) : env
       end
+
+      # A result a member answers in place of the tool's own still ends the
+      # turn the tool's result ended.
+      #
+      # @param checked [Env] what the member answers
+      # @param ran [Env] what the downstream answered
+      # @return [Env]
+      def holding(checked, ran)
+        checked.equal?(ran) ? checked : checked.merge(result: checked.fetch(:result).replacing(ran[:result]))
+      end
     end
 
     # An ordered, INSPECTABLE, MUTABLE list of middlewares that is itself a

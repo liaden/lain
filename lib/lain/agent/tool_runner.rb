@@ -74,6 +74,7 @@ module Lain
           @blocks = {}
           @dispatched = {}
           @awaiting = {}
+          @ending = {}
         end
 
         # The call reached the gate. A stop from here until {#dispatching}
@@ -83,7 +84,25 @@ module Lain
         # The call passed the gate and is about to reach the interpreter.
         def dispatching(tool_use) = @dispatched[tool_use] = true
 
-        def answered(tool_use, block) = @blocks[tool_use] = block
+        # @param tool_use [Response::ToolUse] the call answered
+        # @param block [Hash] the tool_result that answers it
+        # @param ends_turn [Boolean] whether the answer asked the agent's turn to end
+        def answered(tool_use, block, ends_turn: false)
+          @ending[tool_use] = true if ends_turn
+          @blocks[tool_use] = block
+        end
+
+        # @return [Boolean] whether any call's answer asked the turn to end
+        def ends_turn? = @ending.any?
+
+        # @return [Boolean] whether this call's answer asked the turn to end
+        def ends_turn_at?(tool_use) = @ending.key?(tool_use)
+
+        # @return [String] the text of the answers that asked the turn to end, in wire order
+        def ends_turn_text
+          @uses.select { |tool_use| ends_turn_at?(tool_use) }
+               .map { |tool_use| Tool::Result.new(content: @blocks.fetch(tool_use).fetch("content")).text }.join("\n")
+        end
 
         # @return [Array<Hash>] one tool_result block per call, in wire order:
         #   the tool's own output where it returned, a cancellation notice where
@@ -316,7 +335,10 @@ module Lain
       end
 
       def bounded(answers)
-        calls = answers.uses.map { |tool_use| Tool::RoundBudget::Call.new(id: tool_use.id, tool: resolved(tool_use.name)) }
+        calls = answers.uses.map do |tool_use|
+          Tool::RoundBudget::Call.new(id: tool_use.id, tool: resolved(tool_use.name),
+                                      ends_turn: answers.ends_turn_at?(tool_use))
+        end
         budget = @round_budget.for(head: @head.call) { @room.call(answers.usage) }
         budget.call(answers.blocks, calls) { |record| @journal << record }
       end
@@ -440,7 +462,7 @@ module Lain
         answers.awaiting(tool_use)
         block = Tool::ResultBlock.of(dispatch(tool_use, context, answers), tool_use_id: tool_use.id,
                                                                            tool: tool_use.name)
-        answers.answered(tool_use, block.to_h)
+        answers.answered(tool_use, block.to_h, ends_turn: block.ends_turn?)
         call.finish(block)
       ensure
         call&.abandon

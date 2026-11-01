@@ -234,7 +234,7 @@ module Lain
         shape = GUARDED_TOOLS[effect.name]
         return carried unless shape
 
-        guarded(carried, effect, shape, spelled)
+        holding(guarded(carried, effect, shape, spelled), carried)
       end
 
       private

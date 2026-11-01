@@ -154,9 +154,9 @@ module Lain
       def withhold(env, effect, count)
         @bar.add(effect.input[COMMAND])
         record(AutomaticOutputWithheld.new(tool_use_id: effect.tool_use_id, regions: count))
-        env.merge(result: Tool::Result.error(format(WITHHELD, name: effect.name,
-                                                              count: "#{count} credential-shaped " \
-                                                                     "#{"region".pluralize(count)}")))
+        regions = "#{count} credential-shaped #{"region".pluralize(count)}"
+        withheld = Tool::Result.error(format(WITHHELD, name: effect.name, count: regions))
+        env.merge(result: withheld.replacing(env.fetch(:result)))
       end
 
       # Swallowed, {RedactSecretReads#record}'s way: the tool has already run,

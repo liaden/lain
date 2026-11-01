@@ -18,8 +18,11 @@ module Lain
       NARROWER = { "read_file" => "narrower with offset and limit" }.freeze
       private_constant :NARROWER
 
-      # One call of the round: its id, and the tool that answered it.
-      Call = Data.define(:id, :tool) do
+      # One call of the round: its id, the tool that answered it, and whether
+      # its answer ends the agent's turn.
+      Call = Data.define(:id, :tool, :ends_turn) do
+        def initialize(id:, tool:, ends_turn: false) = super
+
         def rerunnable? = tool.rerunnable?
         def narrower = NARROWER.fetch(tool.name, "narrower")
       end
@@ -161,9 +164,11 @@ module Lain
         end
 
         # An error result carries no content worth a budget's judgment and is
-        # never matched as a duplicate, so its error mark always survives.
+        # never matched as a duplicate, so its error mark always survives. A
+        # result that ends the turn is delivered whole too, because the human is
+        # shown its text and the model must be sent the same bytes.
         def answer(block, call)
-          return deliver(block, call) if block["is_error"]
+          return deliver(block, call) if block["is_error"] || call.ends_turn
 
           digest = Canonical.digest(block["content"])
           return deduplicate(block, call, @seen.fetch(digest)) if duplicate?(block, digest)

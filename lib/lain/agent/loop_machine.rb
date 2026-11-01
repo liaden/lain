@@ -11,7 +11,7 @@ module Lain
     # Two invariants ride on this being a real machine and not a bag of
     # `@state =` assignments. An undeclared move RAISES, where `@state =
     # :nonsense` sailed through. And the wire-facing events are named for the
-    # normalized {::Lain::StopReason} vocabulary itself, so {Agent#transition} fires the
+    # normalized {::Lain::StopReason} vocabulary itself, so {Agent::Transition} fires the
     # reason directly (`send("#{stop_reason}!")`) with no `case` to re-parse it
     # -- safe because a {Response} admits only a member of `StopReason::ALL`,
     # closing the wire's open enum to a fixed set before the machine sees it,
@@ -40,7 +40,7 @@ module Lain
         event(:reopen) { transition any => :awaiting_user }
 
         # One event per stop reason in StopReason::ALL -- fired by name from
-        # Agent#transition. `:malformed` is the one no wire sends: a provider's
+        # Agent::Transition. `:malformed` is the one no wire sends: a provider's
         # reading that a cleanly decoded turn is unusable, which fails it by
         # name rather than letting it settle as an ordinary answer.
         event(:tool_use) { transition awaiting_model: :awaiting_tools }
@@ -53,6 +53,10 @@ module Lain
         event(:malformed) { transition awaiting_model: :failed }
         event(:truncated) { transition awaiting_model: :failed }
         event(:context_full) { transition awaiting_model: :failed }
+
+        # Fired after a tool round, never off a reply: a tool answered that the
+        # turn ends here, so the run settles with its results committed.
+        event(:held) { transition awaiting_tools: :done }
 
         # The dual-ledger outer loop's stall->replan pair, purely ADDITIVE: both
         # move to or from the new `:stalled` state, so no previously legal move

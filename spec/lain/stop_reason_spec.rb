@@ -47,6 +47,12 @@ RSpec.describe Lain::StopReason do
       expect(described_class.normalize("context_full")).to eq(:unknown)
     end
 
+    it "routes a held tool round, which the loop reads off a tool result and no wire sends" do
+      expect(described_class::ALL).to include(:held)
+      expect(described_class::KNOWN).not_to include(:held)
+      expect(described_class.normalize("held")).to eq(:unknown)
+    end
+
     it "reads Anthropic's beta window stop as a full context" do
       expect(described_class.normalize("model_context_window_exceeded")).to eq(:context_full)
       expect(described_class.normalize(:model_context_window_exceeded)).to eq(:context_full)

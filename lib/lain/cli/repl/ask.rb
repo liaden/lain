@@ -61,14 +61,17 @@ module Lain
         # different kinds of answer arrive on one return.
         #
         # @param outcome [Lain::Response, Lain::Error, nil]
-        # @return [Lain::Response, nil] nil for a refusal or a failed stop, both
-        #   already said
+        # @return [Lain::Response, nil] what is left to render: nil for a refusal
+        #   or a failed stop, both already said
         def settle(outcome)
           return refuse(outcome) if outcome.is_a?(Lain::Error)
 
           return say_failure(outcome) if outcome&.failure
 
-          outcome&.tap { |response| record_settled(response) }
+          return if outcome.nil?
+
+          record_settled(outcome)
+          unshown(outcome)
         end
 
         RESENDING = "the prompt at the head has no answer on this chain, so this ask carries it too -- " \
@@ -94,6 +97,14 @@ module Lain
           @tty.render_error(failure.message)
           remedy_for(response).each { |line| @tty.render_error(line) }
           nil
+        end
+
+        # A held turn's own text was shown beside its call as the tools ran, so
+        # only what the tool said is left to render.
+        def unshown(response)
+          return response unless response.stop_reason == ::Lain::StopReason::HELD
+
+          response.with(content: [{ "type" => "text", "text" => response.held_text }])
         end
 
         def record_settled(response)

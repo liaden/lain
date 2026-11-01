@@ -25,6 +25,15 @@ class SubagentDepthProbe < Lain::Tool
   def perform(_input, _context) = Lain::Tool::Result.ok(Lain.live(@holder).depth.to_s)
 end
 
+# Answers that its agent's turn ends here, as a gate the human asked to wait on does.
+class SubagentHoldProbe < Lain::Tool
+  def name = "hold"
+  def description = "Waits for the human."
+  def input_schema = { type: :object, properties: {} }
+
+  def perform(_input, _context) = Lain::Tool::Result.held("the human asked you to wait")
+end
+
 # A REAL isolation backend, small enough to live beside the examples that drive
 # it: every acquire provisions an actual directory named for the worker and
 # hands back a lease whose cwd points there, and release removes it. Not a
@@ -466,6 +475,21 @@ RSpec.describe Lain::Tools::Subagent do
   end
 
   # ---- Scenario: fresh root over the shared Store (5-1.1) --------------------
+
+  describe "a child whose tool holds" do
+    it "hands back its last text with the held tool text after it" do
+      provider = mock(Lain::Response.new(content: [{ "type" => "text", "text" => "submitted" },
+                                                   { "type" => "tool_use", "id" => "h1", "name" => "hold",
+                                                     "input" => {} }], stop_reason: :tool_use))
+      tool = build_subagent(provider:, toolset: Lain::Toolset.new([SubagentHoldProbe.new]),
+                            policy: spawn_policy(only: %w[hold]))
+
+      result = tool.call({ "prompt" => "go" }, invocation)
+
+      expect(result).to have_attributes(ok?: true, content: "submitted\n\nthe human asked you to wait")
+      expect(provider.call_count).to eq(1)
+    end
+  end
 
   describe "fresh-root spawn" do
     it "gives the child no parent turn, an empty meet, and a :spawn event with a causal edge to H" do

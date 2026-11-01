@@ -255,6 +255,19 @@ module T6Interrupts
   end
 end
 
+# In a module body for the reason the fixtures above are.
+module HeldTurns
+  # A tool whose answer ends the agent's turn, the shape a gate the human has
+  # asked to wait on hands back.
+  class Holding < Lain::Tool
+    def name = "hold"
+    def description = "Waits for the human."
+    def input_schema = { type: :object, properties: {} }
+
+    def perform(_input, _context) = Lain::Tool::Result.held("waiting for the human")
+  end
+end
+
 RSpec.describe Lain::Agent do
   # ---- fixtures -------------------------------------------------------------
 
@@ -403,6 +416,63 @@ RSpec.describe Lain::Agent do
       expect(results_turn.role).to eq("user")
       expect(results_turn.content.map { |b| b["type"] }).to eq(%w[tool_result tool_result])
       expect(a.timeline.to_a.map(&:role)).to eq(%w[user assistant user assistant])
+    end
+  end
+
+  describe "a tool result that ends the turn" do
+    let(:toolset) { CoreGraph.toolset([EchoTool.new, HeldTurns::Holding.new]) }
+    let(:provider) do
+      Lain::Provider::Mock.new(responses: [tool_response(["tu_1", "hold", {}]), text_response("going on")])
+    end
+    let(:held) { described_class.new(provider:, toolset:, context:) }
+
+    def roles_and_types(message)
+      [message["role"], message["content"].map { |block| block["type"] }]
+    end
+
+    it "sends no further request and leaves the tool result as the head" do
+      held.ask("submit it")
+
+      expect(provider.call_count).to eq(1)
+      expect(held.timeline.head.role).to eq("user")
+      expect(held.timeline.head.content.map { |block| block["content"] }).to eq(["waiting for the human"])
+      expect(held).to be_done
+    end
+
+    it "answers the held stop, carrying the held tool text after the model's own" do
+      response = held.ask("submit it")
+
+      expect(response.stop_reason).to eq(:held)
+      expect(response.text).to end_with("waiting for the human")
+      expect(response.failure).to be_nil
+    end
+
+    it "moves from awaiting_tools to done on the held event" do
+      transitions = T22Instrumentation::Transitions.new
+      described_class.new(provider:, toolset:, context:, transition_listener: transitions).ask("submit it")
+
+      expect(transitions.events.last).to eq(%i[awaiting_tools done held])
+    end
+
+    it "answers every call of the turn before it ends" do
+      provider = Lain::Provider::Mock.new(responses: [tool_response(["tu_1", "hold", {}],
+                                                                    ["tu_2", "echo", { "text" => "a" }])])
+      a = described_class.new(provider:, toolset:, context:)
+      a.ask("submit it")
+
+      expect(a.timeline.head.content.map { |block| block["content"] }).to eq(["waiting for the human", "a"])
+      expect(provider.call_count).to eq(1)
+    end
+
+    it "continues the same conversation on the next human line" do
+      held.ask("submit it")
+      held.ask("go on")
+
+      messages = provider.last_request.messages
+      expect(messages.last(2).map { |message| roles_and_types(message) })
+        .to eq([["user", ["tool_result"]], ["user", ["text"]]])
+      expect(messages.last["content"].first["text"]).to eq("go on")
+      expect(held.timeline.head.content.first["text"]).to eq("going on")
     end
   end
 
@@ -578,7 +648,7 @@ RSpec.describe Lain::Agent do
     end
   end
 
-  # The window a tear strands a tool_use in is #perform_tools: the
+  # The window a tear strands a tool_use in is the tool round: the
   # assistant turn is committed and its results are not. What the Agent owns
   # here is WHEN the cancellation is committed, not what it says -- the block
   # shape belongs to ToolRunner::Answers, and the end-to-end tear (a real cancel

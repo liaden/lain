@@ -30,6 +30,14 @@ RSpec.describe Lain::CLI::Repl::Outcome do
       expect(outcome.exit_status).to eq(described_class::COMPLETED)
     end
 
+    # A tool asked the agent to wait for the human, so the ask ended where it
+    # was meant to.
+    it "takes a turn a tool held" do
+      outcome.note(answered(:held))
+
+      expect(outcome.exit_status).to eq(described_class::COMPLETED)
+    end
+
     it "hands the value straight back, so a call site stays one expression" do
       response = answered(:end_turn)
 

@@ -92,7 +92,7 @@ RSpec.describe Lain::Agent do
     end
   end
 
-  # The drift guard. `Agent#transition` fires `send("#{stop_reason}!")` after
+  # The drift guard. `Agent::Transition` fires `send("#{stop_reason}!")` after
   # `StopReason.normalize` has closed the wire's open enum, so every value in the
   # normalized vocabulary must name a declared event -- otherwise the send hits a
   # missing method on a live run instead of failing here. Adding a StopReason

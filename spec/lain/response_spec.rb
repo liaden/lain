@@ -68,6 +68,21 @@ RSpec.describe Lain::Response do
     end
   end
 
+  describe "#held_text" do
+    it "is the last block of a held turn, which the human has not yet been shown" do
+      held = described_class.new(content: [{ "type" => "text", "text" => "submitted" },
+                                           { "type" => "text", "text" => "\n\n" },
+                                           { "type" => "text", "text" => "wait for me" }], stop_reason: :held)
+
+      expect(held.held_text).to eq("wait for me")
+    end
+
+    it "is empty for any other stop" do
+      expect(described_class.new(content: [{ "type" => "text", "text" => "hi" }], stop_reason: :end_turn).held_text)
+        .to eq("")
+    end
+  end
+
   describe "stop_details" do
     def refused(details) = described_class.new(content: [], stop_reason: :refusal, stop_details: details)
 

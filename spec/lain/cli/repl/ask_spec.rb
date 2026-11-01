@@ -34,6 +34,35 @@ RSpec.describe Lain::CLI::Repl::Ask do
     e
   end
 
+  describe "#settle of a held ask, through a real agent" do
+    let(:holding) do
+      Class.new(Lain::Tool) do
+        def name = "hold"
+        def description = "Waits for the human."
+        def input_schema = { type: :object, properties: {} }
+        def perform(_input, _context) = Lain::Tool::Result.held("wait for me")
+      end
+    end
+    let(:display) { [] }
+    let(:real) do
+      reply = Lain::Response.new(content: [{ "type" => "text", "text" => "submitted" },
+                                           { "type" => "tool_use", "id" => "h1", "name" => "hold", "input" => {} }],
+                                 stop_reason: :tool_use)
+      Lain::Agent.new(provider: Lain::Provider::Mock.new(responses: [reply]), toolset: Lain::Toolset.new([holding.new]),
+                      context: Lain::Context.new(model: "m", max_tokens: 100), display:)
+    end
+
+    it "shows the model's text once, beside the call, and hands back only the held text to render" do
+      asked = described_class.new(agent: real, tty:, chronicle: Lain::CLI::Chronicle::Null.new)
+
+      shown = asked.settle(asked.attempt("go"))
+
+      painted = display.grep(Lain::Telemetry::AssistantText).map(&:text)
+      expect([*painted, shown.text]).to eq(["submitted", "wait for me"])
+      expect(real.timeline.head.content.first["content"]).to eq("wait for me")
+    end
+  end
+
   describe "#settle of a finished ask" do
     it "journals ask_settled after the turns are caught up" do
       allow(agent).to receive(:ask).and_return(response)
@@ -44,6 +73,14 @@ RSpec.describe Lain::CLI::Repl::Ask do
       expect(journal.map(&:class)).to eq([Lain::Telemetry::AskSettled])
       expect(journal.first).to have_attributes(head: "sha-head", stop_reason: "end_turn", turns: 3)
       expect(journal.first.seconds).to be_a(Float).and be >= 0
+    end
+
+    it "journals a held ask as settled, saying held" do
+      held = Lain::Response.new(content: [{ "type" => "text", "text" => "waiting" }], stop_reason: :held)
+      allow(agent).to receive(:ask).and_return(held)
+
+      expect(ask.settle(ask.attempt("go"))).to eq(held)
+      expect(journal.first).to have_attributes(stop_reason: "held")
     end
 
     it "journals nothing for a refusal" do

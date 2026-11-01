@@ -72,6 +72,20 @@ RSpec.describe Lain::Agent::LoopMachine do
     end
   end
 
+  describe "the held event" do
+    before { machine.__send__(:dispatch!) }
+
+    it "settles a tool round as done" do
+      machine.__send__(:tool_use!)
+
+      expect { machine.__send__(:held!) }.to change(machine, :state).from(:awaiting_tools).to(:done)
+    end
+
+    it "raises from awaiting_model, where no tool has answered" do
+      expect { machine.__send__(:held!) }.to raise_error(StateMachines::InvalidTransition, /from :awaiting_model/)
+    end
+  end
+
   describe "the stall -> replan pair" do
     before { machine.__send__(:dispatch!) } # reach :awaiting_model
 

@@ -13,7 +13,7 @@ module Lain
       # A refusal is the obvious torn turn and not the only one: a `max_tokens`
       # turn is a sentence cut in half, a `refusal` stop reason is the model
       # declining, a `pause_turn` has not ended at all. All three render text to
-      # the terminal, and all three used to exit 0. So {SETTLED} names the two
+      # the terminal, and all three used to exit 0. So {SETTLED} names the
       # reasons that mean COMPLETE and everything else is unfinished by default.
       # The wire enums are non-exhaustive ({Lain::StopReason} normalizes the
       # rest to `:unknown`), so a deny-list would silently welcome every reason
@@ -33,11 +33,11 @@ module Lain
         # so a caller with neither -- a script -- can tell the two apart.
         UNFINISHED = 1
 
-        # The stop reasons that mean the model said everything it had to say.
+        # The stop reasons that mean the ask ended where it was meant to.
         # `stop_sequence` belongs beside `end_turn`: the generation stopped
         # where the CALLER asked it to, a completed answer and not an
-        # interruption.
-        SETTLED = [Lain::StopReason::END_TURN, Lain::StopReason::STOP_SEQUENCE].freeze
+        # interruption. `held` is a tool asking the agent to wait for the human.
+        SETTLED = [Lain::StopReason::END_TURN, Lain::StopReason::STOP_SEQUENCE, Lain::StopReason::HELD].freeze
 
         # Records whatever one line produced, and hands it straight back so a
         # call site reads as the single expression it was. {SETTLED} stays its own
