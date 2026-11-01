@@ -108,6 +108,50 @@ RSpec.describe Lain::CLI::Wiring::Observers do
         .to include("requester" => "agent", "signal" => "remembered_reask")
     end
 
+    describe "a rustup proxy exec'ing into the real home's toolchain root" do
+      let(:launcher) { File.join(@state, ".cargo/bin/rustc") }
+      let(:target) { File.join(@state, ".rustup/toolchains/stable/bin/rustc") }
+
+      def proxy_call
+        stage = Lain::Shell::Executable.new(name: "rustc", resolved: launcher, realpath: launcher, chain: [],
+                                            shadowed: [], anomalies: [], klass: :user, fresh: false, run_files: [],
+                                            wrappers: [], skipped: [])
+        ran = ->(path) { { path:, argv0: File.basename(path), rc: 0 } }
+        [{ "type" => "escalation", "tool" => "bash", "tool_use_id" => "tu_1", "requester" => "agent",
+           "verdict" => "allow", "rung" => "rules", "reason" => "", "final" => false },
+         Lain::Telemetry::ExecResolution.new(tool_use_id: "tu_1", stages: [stage.to_journal]),
+         Lain::Telemetry::ExecRecord.new(tool_use_id: "tu_1", profile: :reader, fd_execs: [], refusals: [],
+                                         truncated: false, incomplete: false, connects: [],
+                                         execs: [ran.call("/elsewhere/lain-fence"), ran.call(launcher),
+                                                 ran.call(target)])]
+      end
+
+      it "counts no unresolved exec under --tripwire observe" do
+        [launcher, target].each do |path|
+          FileUtils.mkdir_p(File.dirname(path))
+          FileUtils.touch(path)
+        end
+        described_class.register(chronicle:, paths:, project:, resumed: nil,
+                                 arms: Lain::CLI::Arms::OFF.with(tripwire: :observe))
+        proxy_call.each { chronicle.durable_journal << _1 }
+
+        expect(journal_records(io).select { _1["type"] == "tripwire" }).to be_empty
+      end
+
+      it "counts it once the tool under the root is written during the session" do
+        [launcher, target].each do |path|
+          FileUtils.mkdir_p(File.dirname(path))
+          FileUtils.touch(path)
+        end
+        described_class.register(chronicle:, paths:, project:, resumed: nil,
+                                 arms: Lain::CLI::Arms::OFF.with(tripwire: :observe))
+        chronicle.durable_journal << { "type" => "file_written", "path" => target }
+        proxy_call.each { chronicle.durable_journal << _1 }
+
+        expect(journal_records(io).select { _1["type"] == "tripwire" }.map { _1["signal"] }).to eq(["unresolved_exec"])
+      end
+    end
+
     it "registers no ledger when the arm is off" do
       expect(tripwires_after_a_remembered_deny(Lain::CLI::Arms::OFF)).to be_empty
     end

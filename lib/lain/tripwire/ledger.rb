@@ -87,7 +87,11 @@ module Lain
       # @param journal [#<<] where each `tripwire` record is written
       # @param rules [Rules]
       # @param stops [Stops, Stops::None] with {Stops::None} a hard stop crossed stops no one
-      def initialize(journal:, rules: Rules::DEFAULT, stops: Stops::None)
+      # @param fresh [#fresh?] which files changed this lineage
+      # @param home [String] the home whose toolchain roots a launcher may exec into
+      def initialize(journal:, rules: Rules::DEFAULT, stops: Stops::None, fresh: Resolution::AllFresh, home: Dir.home)
+        @fresh = fresh
+        @home = home
         @journal = journal
         @rules = rules
         @stopping = stops.stopping(rules:)
@@ -139,7 +143,9 @@ module Lain
         when "escalation" then escalated(record, id)
         when "exec_resolution" then attributed(id, Hit.of_resolution(record, keep(@resolutions, id, resolved(record))))
         when "sandbox" then attributed(id, Hit.of_sandbox(record))
-        else attributed(id, Hit.of_exec_record(record, @resolutions.delete(id) || Resolution.new(nil)))
+        else attributed(id,
+                        Hit.of_exec_record(record,
+                                           @resolutions.delete(id) || Resolution.new(nil, fresh: @fresh, home: @home)))
         end
       end
 
@@ -149,7 +155,7 @@ module Lain
         Hit.of_escalation(record).map { [requester || requester_of(id), _1] }
       end
 
-      def resolved(record) = Resolution.new(record["stages"])
+      def resolved(record) = Resolution.new(record["stages"], fresh: @fresh, home: @home)
 
       def keep(calls, id, value)
         calls.delete(id)

@@ -675,4 +675,77 @@ RSpec.describe Lain::Tripwire::Ledger do
     expect(journal_records(io).map { _1["type"] }).to eq(%w[exec_record journal_error])
     expect(journal_records(io).last).to include("observer" => described_class.name)
   end
+
+  describe "a granted launcher exec'ing into its toolchain root" do
+    around do |example|
+      Dir.mktmpdir("l") do |dir|
+        @home = File.realpath(dir)
+        example.run
+      end
+    end
+
+    let(:launcher) { File.join(@home, ".cargo/bin/rustc") }
+    let(:toolchains) { File.join(@home, ".rustup/toolchains") }
+    let(:target) { File.join(toolchains, "stable/bin/rustc") }
+    let(:written) { [] }
+    let(:fresh) do
+      Lain::Shell::Executable::Fresh.new(start: Time.now + 60, written:, stat: Lain::Shell::Executable::Stat.new)
+    end
+    let(:ledger) { described_class.new(journal:, fresh:, home: @home).tap { journal.observe(_1) } }
+
+    before do
+      ledger
+      [launcher, target].each do |path|
+        FileUtils.mkdir_p(File.dirname(path))
+        FileUtils.touch(path)
+      end
+    end
+
+    def proxy_exec(*stages, exec: target)
+      write(escalation(rung: "rules", verdict: "allow"), resolution(*stages),
+            exec_record(execs: [ran(fence), ran(launcher), ran(exec)]))
+    end
+
+    it "counts nothing for an unchanged rustc under the root" do
+      proxy_exec(program("rustc", launcher, klass: :user))
+
+      expect(tripwires).to be_empty
+    end
+
+    it "counts a toolchain symlinked into the root from outside it as an unresolved exec" do
+      elsewhere = File.join(@home, "outside")
+      FileUtils.mkdir_p("#{elsewhere}/bin")
+      FileUtils.touch("#{elsewhere}/bin/rustc")
+      File.symlink(elsewhere, File.join(toolchains, "evil"))
+      proxy_exec(program("rustc", launcher, klass: :user), exec: File.join(toolchains, "evil/bin/rustc"))
+
+      expect(signals).to eq(["unresolved_exec"])
+    end
+
+    context "when a write record names the rustc under the root" do
+      let(:written) { [target] }
+
+      it "counts the unresolved exec, which no resolution lists" do
+        proxy_exec(program("rustc", launcher, klass: :user))
+
+        expect(signals).to eq(["unresolved_exec"])
+      end
+
+      it "counts a fresh_program, and no unresolved exec, when the resolution lists it" do
+        proxy_exec(program("rustc", launcher, klass: :user), program("rustc", target, klass: :user, fresh: true))
+
+        expect(signals).to eq(["fresh_program"])
+      end
+    end
+
+    context "when no fresh rule is wired" do
+      let(:ledger) { described_class.new(journal:).tap { journal.observe(_1) } }
+
+      it "excuses nothing, as before" do
+        proxy_exec(program("rustc", launcher, klass: :user))
+
+        expect(signals).to eq(["unresolved_exec"])
+      end
+    end
+  end
 end

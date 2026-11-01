@@ -5,8 +5,20 @@ module Lain
     # Every program a call's stages resolved, its wrappers included, read from
     # the stages of an `exec_resolution` record.
     class Resolution
+      # A launcher's own path is only a claim; it names a home that {#launched_from_toolchain?} then checks.
+      HOME_OF = %r{\A(.+?)/(?:\.cargo/bin|\.rustup|\.local/share/mise)/}
+
+      # Answers every path fresh, so an unwired resolution excuses no exec.
+      module AllFresh
+        def self.fresh?(_path) = true
+      end
+
       # @param stages [Array<Hash{String=>Object}>, nil] nil when the call journalled none
-      def initialize(stages)
+      # @param fresh [#fresh?] whether a file changed during this lineage
+      # @param home [String] the home whose toolchain roots a launcher may exec into
+      def initialize(stages, fresh: AllFresh, home: Dir.home)
+        @fresh = fresh
+        @home = real(home)
         @programs = Array(stages).flat_map { programs(_1) }
       end
 
@@ -17,6 +29,14 @@ module Lain
       # @param path [String]
       # @return [Boolean] whether an unchanged program a reader profile may grant resolved to it
       def toolchain?(path) = @programs.any? { unchanged?(_1) && paths(_1).include?(path) }
+
+      # @param path [String] a program the call exec'd
+      # @return [Boolean] whether an unchanged granted launcher exec'd it, unchanged, out of its own toolchain root
+      def launched_from_toolchain?(path)
+        real = real(path)
+        !real.nil? && @programs.any? { unchanged?(_1) && roots(_1).any? { |root| real.start_with?("#{root}/") } } &&
+          !@fresh.fresh?(path)
+      end
 
       # @param path [String]
       # @return [Boolean] whether the PATH search met it, not executable, before what it resolved
@@ -33,6 +53,19 @@ module Lain
       def programs(stage) = [*Array(stage["wrappers"]).flat_map { programs(_1) }, stage]
 
       def paths(program) = [program["resolved"], program["realpath"], *program["chain"]].compact
+
+      def roots(program)
+        claimed = paths(program).filter_map { _1[HOME_OF, 1] }.first
+        return [] unless @home && claimed && real(claimed) == @home
+
+        [*Confine::Profile::HOME_EXEC, Confine::Profile::INSTALLS].filter_map { real(File.join(@home, _1)) }
+      end
+
+      def real(path)
+        File.realpath(path)
+      rescue SystemCallError
+        nil
+      end
 
       def unchanged?(program)
         Confine::Profile::GRANTED_CLASSES.map(&:to_s).include?(program["klass"]) &&

@@ -108,4 +108,79 @@ RSpec.describe Lain::Tripwire::Hit, :seam do
     expect(folded(record, "/usr/bin/sh")).to include("refused_exec")
     expect(stops.standing(Lain::Requester.main)).to eq(:stopped)
   end
+
+  describe "a granted launcher's exec into its own toolchain root" do
+    let(:launcher) { executable(File.join(home, ".cargo/bin/rustc")) }
+    let(:toolchains) { File.join(home, ".rustup/toolchains") }
+    let(:target) { executable(File.join(toolchains, "stable/bin/rustc")) }
+    let(:launcher_fresh) { false }
+    let(:resolution) do
+      Lain::Tripwire::Resolution.new(
+        [{ "name" => "rustc", "resolved" => launcher, "realpath" => launcher, "chain" => [], "klass" => "user",
+           "fresh" => launcher_fresh }],
+        fresh: Lain::Shell::Executable::Fresh.new(start: Time.now + 60, written: [],
+                                                  stat: Lain::Shell::Executable::Stat.new),
+        home:
+      )
+    end
+
+    def scored(exec)
+      record = { "tool_use_id" => "tu_1", "profile" => "reader", "truncated" => false, "refusals" => [],
+                 "fd_execs" => [],
+                 "execs" => [{ "path" => launcher, "rc" => 0 }, { "path" => exec, "rc" => 0 }] }
+      described_class.of_exec_record(record, resolution).map(&:name)
+    end
+
+    it "scores nothing for the proxy exec'ing the toolchain's own tool" do
+      expect(scored(target)).to be_empty
+    end
+
+    it "still scores a launcher exec'ing outside its root" do
+      expect(scored(executable(File.join(mkdir("elsewhere"), "x")))).to eq(["unresolved_exec"])
+    end
+
+    it "still scores a toolchain linked into the root from outside it" do
+      evil = executable(File.join(mkdir("evil"), "bin/rustc"))
+      FileUtils.mkdir_p(toolchains)
+      File.symlink(File.dirname(evil, 2), File.join(toolchains, "evil"))
+
+      expect(scored(File.join(toolchains, "evil/bin/rustc"))).to eq(["unresolved_exec"])
+    end
+
+    it "still scores a launcher claiming a home that is not the real one" do
+      planted = mkdir("planted")
+      launcher_path = executable(File.join(planted, ".cargo/bin/rustc"))
+      tool = executable(File.join(planted, ".rustup/toolchains/evil/bin/x"))
+      allow(self).to receive(:launcher).and_return(launcher_path)
+
+      expect(scored(tool)).to eq(["unresolved_exec"])
+    end
+
+    it "still scores a path under the root that cannot be resolved" do
+      target
+      expect(scored("#{toolchains}/stable/bin/../../../../etc/gone")).to eq(["unresolved_exec"])
+    end
+
+    it "still scores a link under the root deleted after the call ran it" do
+      target
+      link = File.join(toolchains, "stable/bin/lnk")
+      File.symlink("/usr/bin/true", link)
+      File.delete(link)
+
+      expect(scored(link)).to eq(["unresolved_exec"])
+    end
+
+    it "still scores a sibling directory sharing the root's name as a prefix" do
+      target
+      expect(scored(executable(File.join(home, ".rustup/toolchains-evil/x")))).to eq(["unresolved_exec"])
+    end
+
+    context "when the launcher is itself fresh" do
+      let(:launcher_fresh) { true }
+
+      it "still scores the exec" do
+        expect(scored(target)).to eq(["unresolved_exec"])
+      end
+    end
+  end
 end

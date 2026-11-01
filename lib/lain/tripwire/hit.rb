@@ -125,8 +125,12 @@ module Lain
         expected = [execs.first&.fetch("path"), Exec::Local::SHELL, *loaders]
         ran = execs.select { _1["rc"].zero? }.map { _1["path"] } - expected
         [strong("refused_exec", record["tool_use_id"], refused),
-         strong("unresolved_exec", record["tool_use_id"], ran.reject { resolution.ran?(_1) }),
+         strong("unresolved_exec", record["tool_use_id"], ran.reject { unresolved_excused?(resolution, _1) }),
          *network_hits(record)]
+      end
+
+      def self.unresolved_excused?(resolution, path)
+        resolution.ran?(path) || resolution.launched_from_toolchain?(path)
       end
 
       # A confined call holds no network grant it did not name, so a refused
@@ -170,6 +174,7 @@ module Lain
       end
 
       private_class_method :escalation_hit, :escalated_deny, :protected?, :confined_hits, :network_hits,
+                           :unresolved_excused?,
                            :refused_connects, :datagram_sends, :inet, :named, :refused, :hit, :strong, :present
     end
   end

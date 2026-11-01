@@ -81,8 +81,10 @@ module Lain
           new(fresh: lineage_fresh(paths, project, resumed, chronicle.durable_journal),
               unsealed: Unsealed.for(arms:, project:), stops:).tap do |observers|
             observers.register(chronicle)
-            chronicle.observe(Tripwire::Ledger.new(journal: chronicle.durable_journal, stops:)) unless
-              arms.tripwire_off?
+            unless arms.tripwire_off?
+              chronicle.observe(Tripwire::Ledger.new(journal: chronicle.durable_journal, stops:,
+                                                     fresh: observers.fresh, home: paths.home))
+            end
           end
         end
 
