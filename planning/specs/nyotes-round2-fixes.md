@@ -1,6 +1,6 @@
 # nyotes round 2 fixes, by shape
 
-status: draft
+status: in-progress
 commit-mode: orchestrator-commits
 language: ruby (plus the nvim Lua runtime under `lib/lain/frontend/neovim/runtime/` and `plugin/nvim/`)
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson
@@ -2658,3 +2658,23 @@ Run after the last card lands:
    - A quota 429 stops with its message.
 
 ## Execution log
+
+Run start 2026-11-01: base `main` at `7184d6b9`. `git worktree list` at start: the main checkout plus 82 stale
+`card/*` worktrees from earlier plans under `tmp/worktrees/` (BD, EXT, FLK, HARNESS, T4 to T89, TIM), all merged; they
+reuse this plan's card names, so this run cuts `tmp/worktrees/r2-T<n>` on branch `card/r2-T<n>` and leaves those alone.
+Extra branches at start: `flake/review`, `spike/combined`, `spike/combined2`. The 3 staged submodule entries in the main
+index (`.gitmodules`, `references/repos/cliffcompaction`, `references/repos/pi`) were unstaged so no commit sweeps them
+in; they are re-staged at close. Code has not moved since the Grounding sha: `37121062..7184d6b9` touches only this plan
+and `ROADMAP.md`.
+
+Hook (`.pre-commit-config.yaml`), as commands an agent can run on its own paths:
+- whitespace, end of file, shebang, yaml and merge-conflict checks on staged files
+- `bundle exec rubocop <paths>` and the full suite: the hook runs `bundle exec rake compile check`, which is
+  `rake pspec` (about 74s at 12 workers, takes the suite lock) beside a whole-repo rubocop
+- `bundle exec yard-lint <lib paths>` (the hook runs `--staged`)
+- `bin/lint-gherkin-docs <plan>` for a staged plan doc; `bin/lint-commit-msg` at commit-msg
+- Rust (fmt, clippy, cargo test) only when a `.rs` file is staged
+- repo ratchet specs an agent runs by path: `bundle exec rspec spec/*_spec.rb`
+A commit takes about 90s. The suite takes `$XDG_STATE_HOME/lain/locks/suite.lock` and must run alone on the box;
+agent spec runs by path are not locked, so landings happen in quiet windows. No path needs user approval.
+Each worktree gets its own `TMPDIR` under `$HOME/tmp/lain/r2-T<n>`.
