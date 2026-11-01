@@ -17,7 +17,9 @@ module Lain
     # {Telemetry::CompactionCut} folds into {Session#record_compaction_cut} in
     # recorded order too, which is how a resumed session renders a committed
     # cut's replacement byte for byte instead of asking a model for it again,
-    # and does not fire a plan step a recorded commit already consumed. Every
+    # and does not fire a plan step a recorded commit already consumed. Each
+    # spawn-less `turn_usage` adds to the count of the session's own answered
+    # requests, {Session#requests_sent}. Every
     # cut is folded, the superseded ones included: which of them a chain
     # renders is the compaction source's question, and a rewind below a
     # collapse holds the cuts it re-wrote.
@@ -170,8 +172,8 @@ module Lain
       #   list is the newest one written on it
       # @return [Session] a fresh Session carrying the recorded read-set, the
       #   pin-set the recorded transitions fold to, the turn labels, the todo list, every
-      #   committed compaction cut, and the manifest reminders the recorded
-      #   memory chain reconstructs
+      #   committed compaction cut, the count of the session's own answered requests,
+      #   and the manifest reminders the recorded memory chain reconstructs
       def session(on:)
         Session.new.tap do |fresh|
           restore_reads(fresh)
@@ -179,6 +181,7 @@ module Lain
           restore_labels(fresh)
           restore_todos(fresh, on)
           restore_cuts(fresh)
+          restore_requests(fresh)
         end.watch_memory(memory)
       end
 
@@ -304,6 +307,11 @@ module Lain
       rescue Session::UnrecordedParent => e
         raise Bench::Session::Corrupt, "the compaction_cut record chain is incomplete: #{e.message}; " \
                                        "a cut's parent record is missing from the session file"
+      end
+
+      def restore_requests(fresh)
+        sent = @records.count { |record| record["type"] == "turn_usage" && record["spawn"].nil? }
+        sent.times { fresh.record_request }
       end
 
       # A collapse carries the seam it re-wrote and names the cuts whose ranges

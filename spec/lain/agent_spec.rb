@@ -1658,6 +1658,18 @@ RSpec.describe Lain::Agent do
 
     def agent_over(*outcomes) = described_class.new(provider: scripted(*outcomes), toolset:, context:)
 
+    it "counts each answered request on its session, and a refused prompt as none" do
+      session = Lain::Session.new
+      a = described_class.new(provider: scripted(tool_response(["t1", "echo", { "text" => "hi" }]),
+                                                 text_response("after the tool"), refusal, text_response("plain")),
+                              toolset:, context:, session:)
+      a.ask("use the tool")
+      expect { a.ask("a prompt that does not fit") }.to raise_error(refusal_class)
+      a.ask("a plain one")
+
+      expect(session.requests_sent).to eq(3)
+    end
+
     it "refuses the ask with the provider's refusal, so the caller can say it" do
       a = agent_over(text_response("hello"), refusal)
       a.ask("hi")
@@ -2176,6 +2188,7 @@ RSpec.describe Lain::Agent do
     # of Workspace; the Agent composes them per render.
     it "carries a session reminder into the request tail without appending it to the Timeline" do
       reminding = instance_double(Lain::Session, reminders: ["ping the model"])
+      allow(reminding).to receive(:record_request).and_return(reminding)
       provider = CoreGraph.provider(text_response)
       a = described_class.new(provider:, toolset:, context:, session: reminding)
       a.ask("hi")

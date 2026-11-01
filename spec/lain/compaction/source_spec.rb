@@ -151,7 +151,7 @@ RSpec.describe Lain::Compaction::Source do
   # examples using it are about. A cut that sticks is a real Session's, and
   # the group that holds one builds one (see {#recording_session}).
   def session_pinning(*digests, plan_step_completed: false)
-    instance_double(Lain::Session, compaction_cuts: [],
+    instance_double(Lain::Session, compaction_cuts: [], open_todos: 0, completed_todos: 0, requests_sent: 0,
                                    plan_step_completions: plan_step_completed ? 1 : 0).tap do |double|
       allow(double).to receive(:pinned?) { |digest| digests.include?(digest) }
       allow(double).to receive(:record_compaction_cut).and_return(double)
@@ -1122,6 +1122,106 @@ RSpec.describe Lain::Compaction::Source do
     end
   end
 
+  describe "whether the saving pays for itself" do
+    def planning(*statuses, requests: 5)
+      recording_session.tap do |planned|
+        planned.write_todos(statuses.each_with_index.map { |status, index| todo("step #{index}", status) })
+        requests.times { planned.record_request }
+      end
+    end
+
+    def starved(line, usage:, session: self.session, base: self.base, **overrides)
+      built = source(need: build_need(approaching_ratio: 0.9), context_window: window_book(32_768), **overrides)
+      context_for(built, line, usage:, session:, base:)
+      decisions.last
+    end
+
+    def one_request_a_step(requests: 5) = planning(*Array.new(5, "completed"), "pending", requests:)
+
+    def unlisted = context_naming("qwen3:4b")
+
+    def qwen_book = Lain::ContextWindow.new(windows: { "claude" => 32_768, "qwen3" => 32_768 })
+
+    it "lets an approaching window compact a rewrite below the floor" do
+      line = crossover_timeline(neutral_pad + 1)
+
+      expect(rewrite_delta(line)).to eq(-1)
+      expect(starved(line, usage: 30_000)).to include("compacted" => true, "refused" => nil)
+    end
+
+    it "refuses the same rewrite below the floor when only a cold cache warrants it" do
+      line = crossover_timeline(neutral_pad + 1)
+      built = source(need: build_need(byte_threshold: 100))
+      clock.advance(600)
+      context_for(built, line)
+      built << turn_usage(cache_read: 0)
+
+      context_for(built, line)
+
+      expect(decisions.last).to include("compacted" => false, "refused" => "below_floor")
+    end
+
+    it "still reads a rewrite refused below the floor as one there is room to make" do
+      line = crossover_timeline(neutral_pad + 1)
+      built = source(need: build_need(byte_threshold: 100))
+      clock.advance(600)
+      context_for(built, line)
+      built << turn_usage(cache_read: 0)
+      context_for(built, line)
+
+      expect(built.droppable?).to be(true)
+    end
+
+    it "applies the floor only on a cold cache, whatever a live plan has left" do
+      line = timeline(12)
+      planned = one_request_a_step
+      built = source(need: build_need(byte_threshold: 100))
+      clock.advance(600)
+      context_for(built, line, session: planned)
+      built << turn_usage(cache_read: 0)
+
+      context_for(built, line, session: planned)
+
+      expect(decisions.last).to include("compacted" => true, "refused" => nil)
+    end
+
+    it "keeps a warm cache whose break the plan's 1 open step, at 1 request a step, cannot pay back" do
+      expect(starved(timeline(12), usage: 28_500, session: one_request_a_step))
+        .to include("compacted" => false, "refused" => "cache_break_unpaid")
+    end
+
+    it "breaks the same warm cache once the session has sent 10 requests a completed todo" do
+      expect(starved(timeline(12), usage: 28_500, session: one_request_a_step(requests: 50)))
+        .to include("compacted" => true, "refused" => nil)
+    end
+
+    it "breaks a warm cache when the plan's open steps, at its observed request rate, pay it back" do
+      expect(starved(timeline(12), usage: 28_500, session: planning("completed", "pending", "pending")))
+        .to include("compacted" => true, "refused" => nil)
+    end
+
+    it "applies the floor only on a warm cache before any todo has completed" do
+      expect(starved(timeline(12), usage: 28_500, session: planning("pending")))
+        .to include("compacted" => true, "refused" => nil)
+    end
+
+    it "applies the floor only to a model the price book cannot price" do
+      expect(starved(timeline(12), usage: 28_500, session: one_request_a_step, base: unlisted,
+                                   context_window: qwen_book))
+        .to include("compacted" => true, "refused" => nil)
+    end
+
+    it "applies the floor only to an unlisted model in a live chat, whose book prices it at zero" do
+      expect(starved(timeline(12), usage: 28_500, session: one_request_a_step, base: unlisted,
+                                   context_window: qwen_book, price_book: Lain::CLI::Backend::COMPACTION_PRICES))
+        .to include("compacted" => true, "refused" => nil)
+    end
+
+    it "applies the floor only on a warm cache with no live plan" do
+      expect(starved(timeline(12), usage: 28_500)).to include("compacted" => true, "refused" => nil)
+    end
+  end
+
   describe "a history with nothing droppable" do
     let(:session) { session_pinning(plan_step_completed: true) }
 
@@ -1152,7 +1252,7 @@ RSpec.describe Lain::Compaction::Source do
 
       context_for(built, line)
 
-      expect(decisions.first).to include("compacted" => false, "would_not_shrink" => true)
+      expect(decisions.first).to include("compacted" => false, "refused" => "inflates")
       expect(compactions).to be_empty
     end
 
@@ -1162,7 +1262,7 @@ RSpec.describe Lain::Compaction::Source do
       returned = context_for(built, line)
 
       expect(returned).not_to equal(base)
-      expect(decisions.first).to include("compacted" => true, "would_not_shrink" => false)
+      expect(decisions.first).to include("compacted" => true, "refused" => nil)
     end
 
     # The floor answers "is this rewrite worth making", which is only a question
@@ -1175,7 +1275,7 @@ RSpec.describe Lain::Compaction::Source do
 
       context_for(built, small_timeline)
 
-      expect(decisions.first).to include("compacted" => false, "would_not_shrink" => false)
+      expect(decisions.first).to include("compacted" => false, "refused" => nil)
     end
 
     it "declines a rewrite that is exactly byte-neutral" do
@@ -1183,7 +1283,7 @@ RSpec.describe Lain::Compaction::Source do
 
       expect(rewrite_delta(line)).to eq(0)
       expect(context_for(built, line)).to equal(base)
-      expect(decisions.first).to include("would_not_shrink" => true)
+      expect(decisions.first).to include("refused" => "inflates")
     end
 
     # The frame is bytes the prompt really carries, so a summary that saves less
@@ -1195,7 +1295,7 @@ RSpec.describe Lain::Compaction::Source do
 
       expect(rewrite_delta(line) - frame).to be < 0
       expect(context_for(built, line)).to equal(base)
-      expect(decisions.first).to include("would_not_shrink" => true)
+      expect(decisions.first).to include("refused" => "inflates")
     end
 
     it "takes a rewrite that saves a single byte" do
@@ -1319,7 +1419,7 @@ RSpec.describe Lain::Compaction::Source do
       built = source(need: build_need(byte_threshold: 1_000_000), hard_cap: 1)
 
       expect(context_for(built, line, session: pinning)).to equal(base)
-      expect(decisions.first).to include("compacted" => false, "would_not_shrink" => true)
+      expect(decisions.first).to include("compacted" => false, "refused" => "inflates")
     end
 
     # Scenario: Compact's own threshold measures the same set the Head measured.
@@ -2288,7 +2388,7 @@ RSpec.describe Lain::Compaction::Source do
 
       expect(verbose.asks).to eq(5)
       expect(cuts.size).to eq(4)
-      expect(decisions.last).to include("compacted" => false, "would_not_shrink" => true)
+      expect(decisions.last).to include("compacted" => false, "refused" => "inflates")
     end
 
     # Pins are cut points in a collapse as in an advance: a turn pinned
@@ -2492,7 +2592,7 @@ RSpec.describe Lain::Compaction::Source do
     it "is still journalled as a plain defer on the turn's own decision record" do
       context_for(stranding, timeline)
 
-      expect(decisions.first).to include("compacted" => false, "would_not_shrink" => false)
+      expect(decisions.first).to include("compacted" => false, "refused" => nil)
     end
 
     # FOLLOW-UP 14, REPAIRED. A pin whose tool counterpart is inside a
@@ -2886,7 +2986,7 @@ RSpec.describe Lain::Compaction::Source do
     def decision(signals:, nothing_droppable: true, used: 7_500, window: 8_192, compacted: false)
       Lain::Compaction::Source::CompactionDecision.new(
         compacted:, signals:, head_bytes: 2, summary_hits: 0, summary_misses: 0, misses_all_size_declined: false,
-        cold: false, would_not_shrink: false, window_tokens: window, used_tokens: used,
+        cold: false, window_tokens: window, used_tokens: used,
         provenance: :published, nothing_droppable:
       )
     end
@@ -3299,7 +3399,7 @@ RSpec.describe Lain::Compaction::Source do
     end
 
     # One droppable turn is too small for a summary to beat: the derivation
-    # reported would_not_shrink, so an advance is not a move left to make.
+    # reported an inflating rewrite, so an advance is not a move left to make.
     describe "when the one droppable turn would not shrink" do
       let(:keep_last) { 4 }
 

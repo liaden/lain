@@ -194,6 +194,10 @@ module Lain
         pipeline_for(decision, base)
       end
 
+      # @param history_size [Integer] measured in {#initialize}'s hard_cap unit
+      # @return [Boolean] whether the history has crossed the cap that forces a rewrite even warm
+      def capped?(history_size) = history_size >= @hard_cap
+
       # What rewriting `messages` through this scheduler's Compact would cost.
       # PUBLIC, and the one place the measurement is taken: this object holds
       # the Compact, and a caller deciding whether the rewrite is worth making
@@ -242,7 +246,7 @@ module Lain
       private
 
       def forced?(need, history_size)
-        history_size >= @hard_cap || need.signals.intersect?([Need::ApproachingWindow::KIND, Need::ReadStarved::KIND])
+        capped?(history_size) || need.signals.intersect?([Need::ApproachingWindow::KIND, Need::ReadStarved::KIND])
       end
 
       def pipeline_for(decision, base)

@@ -425,11 +425,21 @@ past them used to have nowhere to go, and the summaries accumulated one per adva
 `Source::Derived#collapsed` offers the strategy the `HeldCut::Stretch` — the held replacements
 plus whatever was retained between them, as this chain renders it — and commits one `collapse`
 superseding them all. Readers fold the superseded cuts out; a `collapse` that would not shrink is
-declined and journaled as `would_not_shrink` like any other; and replay refuses a `collapse`
+declined and journaled as `refused: inflates` like any other; and replay refuses a `collapse`
 naming an address its file lacks. A pin placed inside a range a held cut already collapsed still
 does not bring that turn back, and that one remains an open decision.
 Every cut keeps the running ask's prompt as well. Once that ask ends, a later cut may fold the
 prompt, and a prompt that sits before the first held range stays verbatim until a handoff.
+
+**A rewrite must pay for itself.** `Compaction::Worth` refuses one that drops less than a tenth of
+what it measures (`below_floor`). When the cache is warm, a live plan gives a horizon, and the
+model's price list charges for a cache write, it also refuses one whose read saving over that
+horizon does not cover the cache write it breaks (`cache_break_unpaid`). The horizon is the open
+todos times the answered model requests per completed todo, both counted over the whole session,
+and it is unknown until a todo completes. The floor alone decides when there is no horizon, no
+warm cache, or no priced cache write. An approaching window or the hard cap skips the check,
+because the over-window request a cut prevents costs more than any rewrite. Each refusal is
+journaled in the decision's `refused` field as `inflates`, `below_floor` or `cache_break_unpaid`.
 
 **When no cut can make room at all, the fallback is a handoff.** `Compaction::Source::Fallback`
 (`lib/lain/compaction/source/fallback.rb`) fires only after a provider has refused a prompt whole

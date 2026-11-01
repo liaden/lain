@@ -315,7 +315,7 @@ history. Measured on this branch at `keep_last: 20`, it crosses under that proje
 between 100 and 150 messages (1.6 ms vs 1.0 ms at 100; 2.5 ms vs 10.2 ms at 800), with 22 objects at
 every size. A **deferring** turn — no signal, bad timing, an empty head — writes zero store objects,
 journals no edge, asks the strategy nothing, and returns the base `Context` itself. Two defers are not
-free, and both are reached only after the strategy has been asked: `would_not_shrink`, where the
+free, and both are reached only after the strategy has been asked: a `refused` decision, where the
 derivation has already run and journalled its edge by the time the rewrite is measured and declined,
 and a **refusal**, which under `--compact-strategy summarizing` has already paid a live model call for
 a summary it then throws away.
@@ -326,7 +326,8 @@ a summary it then throws away.
 |---|---|
 | `derivation_refused` | This turn rendered **uncompacted**. One is an awkward history. |
 | a rising `consecutive` on it | The session has **stopped compacting**. A deterministic strategy over a stable history refuses identically every turn, so the streak is the only thing that tells one awkward turn from forty. Under `--compact-strategy summarizing` it is also a **running bill**: the memo is keyed by span content address, so a session that keeps chatting asks for — and discards — a fresh summary every turn. Watch the `oracle_answer` records beside it. |
-| `compaction_decision` with `would_not_shrink: true` | The rewrite was declined because it would not have made the prompt strictly smaller. A byte-neutral rewrite is declined too — it buys nothing and still breaks the cache prefix. |
+| `compaction_decision` with `refused: "inflates"` | The rewrite was declined because it would not have made the prompt strictly smaller. A byte-neutral rewrite is declined too — it buys nothing and still breaks the cache prefix. |
+| `compaction_decision` with `refused: "below_floor"` or `"cache_break_unpaid"` | The rewrite would have saved under 10% of its own size, or, on a warm cache with a live plan, less than the cache break costs over the plan's remaining requests. An approaching window or the hard cap skips both. |
 | a `stderr` line attributed to `lain:compaction` | A `--compact-strategy summarizing` tier was unreachable, so that span was left **uncollapsed**. It costs the span, never the turn. The id is namespaced so a journal or nvim reader can filter it from real tool output. |
 
 **What is deliberately not here.** Derivation is **non-recursive**: every chain is a function of the

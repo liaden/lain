@@ -217,6 +217,20 @@ RSpec.describe Lain::SessionRecord::Replay do
     end
   end
 
+  describe "the requests a session has sent" do
+    def turn_usage(digest, spawn: nil)
+      Lain::Telemetry::TurnUsage.new(digest:, model: "claude-opus-4-8", stop_reason: :end_turn,
+                                     usage: { "input_tokens" => 10 }, spawn:)
+    end
+
+    it "counts each of the session's own turn_usage records on resume, and no spawned child's" do
+      [turn_usage("blake3:one"), turn_usage("blake3:child", spawn: "blake3:spawn"), turn_usage("blake3:two")]
+        .each { |record| journal << record }
+
+      expect(described_class.new(journal_io.string.each_line).session(on: empty_chain).requests_sent).to eq(2)
+    end
+  end
+
   # A read counts on a resumed chain exactly when it counted on the recorded
   # one: the record carries each read's call, the recorded turns say which turn
   # delivered it, and the resumed agent asks about the chain it resumed onto.

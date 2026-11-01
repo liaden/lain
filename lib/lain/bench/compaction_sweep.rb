@@ -5,8 +5,11 @@ module Lain
     # Recorded sessions replayed under each compaction arm, offline. Every recorded model call
     # is re-rendered through the arm's own derived chain: a cut fires when the droppable head past
     # the cut that holds passes a byte budget, and it is kept only when it shrinks what the turn
-    # would otherwise send, as a live chat keeps one. The cache cost is simulated from the
-    # re-rendered prefixes, since the recorded usage belongs to the prefixes that were sent.
+    # would otherwise send by at least {Compaction::Worth}'s floor, as a live chat keeps one. The
+    # `today` arm is the control: the eager tier under the old rule, which kept any cut that shrank
+    # the turn at all. The sweep knows neither cache warmth nor a plan's horizon, so it prices no
+    # cache break. The cache cost is simulated from the re-rendered prefixes, since the recorded
+    # usage belongs to the prefixes that were sent.
     #
     # Model arms never invent an answer. Under the recorded summarizer they answer from the
     # journal's own `oracle_answer` records, and an arm missing any answer it needs is reported
@@ -17,8 +20,9 @@ module Lain
     # this measures is what each arm would have sent, never how the model would then behave.
     class CompactionSweep
       DEFAULT_ARMS = %w[eager elide elide-tools summarizing summarize-conversation truncate-cumulative
-                        summarizing-flat].freeze
+                        summarizing-flat today].freeze
       EAGER = Telemetry::Compaction::EAGER_CONTROL_ARM
+      TODAY = "today"
       MODEL_ARMS = %w[summarizing summarize-conversation summarizing-flat].freeze
       DEFAULT_PRICE_AS = "claude-haiku-5-5"
       DEFAULT_BUDGET = ::Lain::CLI::Backend::DEFAULT_BYTE_THRESHOLD
@@ -40,6 +44,10 @@ module Lain
       # window decides nothing.
       UNREAD_WINDOW = ContextWindow::CONSERVATIVE_FALLBACK
       private_constant :UNREAD_WINDOW
+
+      ANY_SAVING = Compaction::Worth.new(floor: 0)
+      FLOORED = Compaction::Worth.new
+      private_constant :ANY_SAVING, :FLOORED
 
       # A module-scope lambda for {Compaction::Source}'s reason: one built in a method would carry
       # this object into a pipeline that must be shareable.
@@ -166,7 +174,8 @@ module Lain
 
       def cutter(journal, arm, placement)
         policy = Policy.for(arm, journal, @summarizer, @journal)
-        Cutter.new(policy:, need: @need, keep_last: @keep_last, placement: Compaction::Recap.for(placement))
+        Cutter.new(policy:, need: @need, keep_last: @keep_last, placement: Compaction::Recap.for(placement),
+                   worth: arm == TODAY ? ANY_SAVING : FLOORED)
       end
 
       def measure(journal, requests, cutter)
@@ -308,13 +317,14 @@ module Lain
 
       # One arm over one journal, carrying the cut that holds from one model call to the next as a
       # live chat holds it. A cut fires when the droppable head past the held cut passes the byte
-      # budget, and is kept only when it shrinks what the call would otherwise send.
+      # budget, and is kept only when its arm's {Compaction::Worth} says the saving is enough.
       class Cutter
         attr_reader :cuts, :mid_task_cuts
 
-        def initialize(policy:, need:, keep_last:, placement:)
+        def initialize(policy:, need:, keep_last:, placement:, worth:)
           @policy = policy
           @need = need
+          @worth = worth
           @keep_last = keep_last
           @edges = Edges.new
           @derived = Compaction::Source::Derived.new(keep_last:, strategy: policy.strategy, placement:,
@@ -367,16 +377,19 @@ module Lain
 
           outcome = @derived.over(timeline, walk: walked, pins: Context::PinnedMessages::NONE, cut: seam,
                                             snapshot: @policy.snapshot(head.messages))
-          outcome unless outcome.refused? || outcome.seam.equal?(seam) || !shrinks?(outcome, held, walked)
+          outcome unless outcome.refused? || outcome.seam.equal?(seam) || !pays?(outcome, held, walked)
         end
 
         def floor(walked, seam)
           seam.digest.nil? ? 0 : walked.turns.index { |turn| turn.digest == seam.digest } + 1
         end
 
-        def shrinks?(outcome, held, walked)
+        def pays?(outcome, held, walked)
           before = held.refused? ? walked.messages : held.messages
-          Canonical.dump(outcome.messages).bytesize < Canonical.dump(before).bytesize
+          rewrite = Compaction::Scheduler::Rewrite.new(before: Canonical.dump(before).bytesize,
+                                                       after: Canonical.dump(outcome.messages).bytesize)
+          rewrite.shrinks? && @worth.call(rewrite:, ttl: nil, prices: nil,
+                                          steps_left: nil) == Compaction::Worth::COMPACT
         end
 
         def through(base, outcome)
@@ -392,7 +405,7 @@ module Lain
 
         def self.for(arm, journal, summarizer, answers_to)
           case arm
-          when EAGER then eager(journal, summarizer, answers_to)
+          when EAGER, TODAY then eager(journal, summarizer, answers_to)
           when *MODEL_ARMS then modelled(arm, journal, summarizer, answers_to)
           else new(strategy: ::Lain::CLI::CompactionStrategy.resolve(arm))
           end

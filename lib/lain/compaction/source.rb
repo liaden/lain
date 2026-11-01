@@ -63,12 +63,12 @@ module Lain
       # refusal's own figures and counts no summaries, because the render
       # before it already journaled its own and a tally sums every decision.
       #
-      # `would_not_shrink` names the one refusal a reader could not otherwise
-      # tell from a plain defer: the signals fired, the scheduler said now, and
-      # the rewrite would not have made the prompt smaller. Not `would_inflate`
-      # -- {Scheduler::Rewrite#shrinks?} asks for a strict saving, so a
-      # byte-NEUTRAL rewrite is declined too, and calling that inflation would
-      # be a claim the measurement never made.
+      # `refused` names the refusals a reader could not otherwise tell from a
+      # plain defer: the signals fired, the scheduler said now, and the rewrite
+      # was measured and turned down. `inflates` covers a byte-NEUTRAL rewrite
+      # too, since {Scheduler::Rewrite#shrinks?} asks for a strict saving;
+      # `below_floor` and `cache_break_unpaid` are {Worth}'s. nil on every
+      # decision that refused nothing.
       #
       # `nothing_droppable` names the other unreadable defer: `#decide` returns
       # before {Need} is even consulted when {Head#empty?}, so a signal that
@@ -115,11 +115,11 @@ module Lain
       # same turn while compaction can never fire.
       CompactionDecision = Data.define(:compacted, :signals, :head_bytes,
                                        :summary_hits, :summary_misses, :misses_all_size_declined, :cold,
-                                       :would_not_shrink, :window_tokens, :used_tokens, :provenance,
+                                       :refused, :window_tokens, :used_tokens, :provenance,
                                        :nothing_droppable, :handoff, :kept_tokens) do
         include Telemetry::Journalable
 
-        def initialize(handoff: nil, kept_tokens: nil, **) = super
+        def initialize(handoff: nil, kept_tokens: nil, refused: nil, **) = super
       end
 
       # Null Object for the summary store: a run with no oracle wired takes a
@@ -247,6 +247,14 @@ module Lain
         # @return [Scheduler]
         def call(compact)
           Scheduler.new(compact:, hard_cap: @hard_cap, journal: @journal, model: @model, price_book: @price_book)
+        end
+
+        # @param model [String] the model in force on this turn
+        # @return [Price, nil] nil for a model the book cannot price
+        def price(model)
+          @price_book.price(model)
+        rescue PriceBook::UnknownModel
+          nil
         end
       end
       private_constant :Scheduling
@@ -436,7 +444,7 @@ module Lain
         def record(diagnosis)
           @journal << diagnosis.decision
           decision = diagnosis.decision
-          @droppable = !decision.nothing_droppable && !decision.would_not_shrink && !decision.compacted
+          @droppable = !decision.nothing_droppable && decision.refused != INFLATES && !decision.compacted
           quiet = !@made_room_for.nil? && @made_room_for == @rendering
           @made_room_for = nil if quiet
           stalled = diagnosis.stalled? && !quiet
@@ -766,7 +774,7 @@ module Lain
 
       def early_decision(usage, resolution)
         CompactionDecision.new(compacted: true, signals: [], head_bytes: 0, summary_hits: 0, summary_misses: 0,
-                               misses_all_size_declined: false, cold: @cold.cold?, would_not_shrink: false,
+                               misses_all_size_declined: false, cold: @cold.cold?,
                                window_tokens: resolution.window_tokens, used_tokens: usage,
                                provenance: resolution.provenance, nothing_droppable: false, handoff: "early")
       end
@@ -790,8 +798,8 @@ module Lain
         head = Head.new(messages: held_cut.remaining, keep_last: @derived.keep_last, pins:)
         CompactionDecision.new(compacted: false, signals: [], head_bytes: head.bytesize, summary_hits: 0,
                                summary_misses: 0, misses_all_size_declined: false, cold: @cold.cold?,
-                               would_not_shrink: false, window_tokens: refusal.window_tokens,
-                               used_tokens: refusal.prompt_tokens, provenance: ContextWindow::PROBED,
+                               window_tokens: refusal.window_tokens, used_tokens: refusal.prompt_tokens,
+                               provenance: ContextWindow::PROBED,
                                nothing_droppable: head.empty?, handoff: HANDOFF_DECLINED, kept_tokens:)
       end
 
@@ -875,8 +883,8 @@ module Lain
         turn = { base:, held_cut:, need:, head:, occupancy:, provenance:, cold: }
         return defer(**turn) unless movable?(need, head, held_cut)
 
-        weigh(**turn, pins:, room: Room.new(left_tokens: room_left(usage, resolution, base.max_tokens),
-                                            window_tokens: resolution.window_tokens))
+        weigh(**turn, pins:, session:, room: Room.new(left_tokens: room_left(usage, resolution, base.max_tokens),
+                                                      window_tokens: resolution.window_tokens))
       end
 
       # Is there a move at all: something droppable past the cuts that hold,
@@ -948,9 +956,11 @@ module Lain
       #
       # THE FLOOR is the last of the three questions: a rewrite that would not
       # SHRINK the rendered history is refused however loudly the signals
-      # fired. It measures the DERIVED chain's own projection -- the very array
-      # a render will send -- through the scheduler that would journal it, so
-      # the refusal and the accounting read one {Scheduler::Rewrite}.
+      # fired, and one that shrinks it too little to pay for itself is refused
+      # by {Worth} unless the window or the hard cap forces it. It measures the
+      # DERIVED chain's own projection -- the very array a render will send --
+      # through the scheduler that would journal it, so the refusal and the
+      # accounting read one {Scheduler::Rewrite}.
       #
       # Measured 2026-07-25: {SummarySnapshot}'s per-message attestation (role,
       # digest, byte counts, a line per block) costs ~230 bytes, so over small
@@ -966,7 +976,7 @@ module Lain
       # shrink what the turn would otherwise send. The held render is taken
       # FIRST, so on a turn that advances, the last edge journaled is the chain
       # the turn actually sends.
-      def weigh(base:, held_cut:, head:, need:, pins:, occupancy:, provenance:, cold:, room:)
+      def weigh(base:, held_cut:, head:, need:, pins:, occupancy:, provenance:, cold:, room:, session:)
         turn = { base:, held_cut:, need:, head:, occupancy:, provenance:, cold: }
         return defer(**turn) unless timely?(need, head, cold)
 
@@ -976,10 +986,32 @@ module Lain
 
         scheduler = scheduler_for(outcome.replay)
         rewrite = scheduler.measure(unadvanced)
-        return defer(**turn, outcome:, would_not_shrink: true) unless rewrite.shrinks?
+        refused = refusal(rewrite, need, head, cold, scheduler:, model: base.model, session:)
+        return defer(**turn, outcome:, refused:) if refused
         return defer(**turn, outcome:) unless worth_forcing?(need, head, cold, room, rewrite)
 
         commit(**turn, outcome:, scheduler:, rewrite:)
+      end
+
+      INFLATES = :inflates
+      WORTH = Worth.new
+      private_constant :INFLATES, :WORTH
+
+      # An approaching window or a crossed hard cap is never weighed: it forces the rewrite
+      # whatever it saves, because what it heads off, an over-window request or a history past
+      # its ceiling, costs more than any rewrite. A cold cache has no prefix left to break, so
+      # it weighs as no cache at all.
+      def refusal(rewrite, need, head, cold, scheduler:, model:, session:)
+        return INFLATES unless rewrite.shrinks?
+        return if need.signals.include?(Need::ApproachingWindow::KIND) || scheduler.capped?(head.bytesize)
+
+        verdict = WORTH.call(rewrite:, ttl: cold ? nil : @cold.ttl, prices: @scheduling.price(model),
+                             steps_left: horizon(session))
+        verdict unless verdict == Worth::COMPACT
+      end
+
+      def horizon(session)
+        Worth.horizon(open: session.open_todos, completed: session.completed_todos, requests: session.requests_sent)
       end
 
       # A warm cache is broken only for a rewrite that ends the starvation; one that leaves reads
@@ -1026,8 +1058,8 @@ module Lain
       # A turn that compacts no FURTHER still renders the cut that holds: the
       # base itself only while none does.
       def defer(base:, held_cut:, need:, head:, occupancy:, provenance:, cold:, outcome: Derived::Outcome::NOTHING,
-                would_not_shrink: false)
-        record(need:, head:, compacted: false, outcome:, occupancy:, provenance:, cold:, would_not_shrink:)
+                refused: nil)
+        record(need:, head:, compacted: false, outcome:, occupancy:, provenance:, cold:, refused:)
         held_cut.render(base)
       end
 
@@ -1080,11 +1112,11 @@ module Lain
       # number that never rises. `misses_all_size_declined` is derived off the
       # same `outcome` for the same reason: the two counts it compares already
       # arrive on the value that carries `hits`/`misses`.
-      def record(need:, head:, compacted:, outcome:, occupancy:, provenance:, cold:, would_not_shrink: false)
+      def record(need:, head:, compacted:, outcome:, occupancy:, provenance:, cold:, refused: nil)
         decision = CompactionDecision.new(compacted:, signals: need.signals, head_bytes: head.bytesize,
                                           summary_hits: outcome.hits, summary_misses: outcome.misses,
                                           misses_all_size_declined: misses_all_size_declined?(outcome),
-                                          cold:, would_not_shrink:,
+                                          cold:, refused:,
                                           window_tokens: occupancy.window_tokens,
                                           used_tokens: occupancy.used_tokens, provenance:,
                                           nothing_droppable: head.empty?)

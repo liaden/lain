@@ -891,6 +891,42 @@ RSpec.describe Lain::Session do
     end
   end
 
+  describe "#open_todos and #completed_todos" do
+    def todo(content, status) = Struct.new(:content, :status).new(content, status)
+
+    it "counts the current list by whether each todo has completed" do
+      session.write_todos([todo("a", "pending"), todo("b", "in_progress"), todo("c", "completed")])
+
+      expect([session.open_todos, session.completed_todos]).to eq([2, 1])
+    end
+
+    it "counts nothing open once every todo has completed" do
+      session.write_todos([todo("a", "completed"), todo("b", "completed")])
+
+      expect([session.open_todos, session.completed_todos]).to eq([0, 2])
+    end
+
+    it "keeps counting todos completed earlier in the session after a new list replaces the old" do
+      session.write_todos([todo("a", "completed"), todo("b", "completed")])
+      session.write_todos([todo("c", "completed"), todo("d", "pending")])
+      session.write_todos([todo("c", "completed"), todo("d", "completed"), todo("e", "pending")])
+
+      expect([session.open_todos, session.completed_todos]).to eq([1, 3])
+    end
+
+    it "counts nothing on the null session" do
+      null = Lain::Session::Null.instance
+
+      expect([null.open_todos, null.completed_todos, null.record_request.requests_sent]).to eq([0, 0, 0])
+    end
+
+    it "counts each model request the session sends" do
+      2.times { session.record_request }
+
+      expect(session.requests_sent).to eq(2)
+    end
+  end
+
   # The edge a compaction source latches on: a LEVEL stays up until the next
   # write, so a reader polling it every render would see one completed step as
   # a completion on every turn until the model writes its list again.

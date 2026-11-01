@@ -987,9 +987,9 @@ ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next; next unless r["t
 ruby -rjson -e 'c=Hash.new(0); ARGF.each_line{|l| r=JSON.parse(l) rescue next;
   c[r["type"]]+=1 if %w[compaction_decision compaction context_derived oracle_answer].include?(r["type"])}; p c' "$J"
 
-# why a decision did NOT compact -- would_not_shrink is the field a short-output run pegs true
+# why a decision did NOT compact -- refused is the field a short-output run pegs to "inflates"
 ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next; next unless r["type"]=="compaction_decision";
-  puts "compacted=#{r["compacted"]} shrink_refused=#{r["would_not_shrink"]} hits=#{r["summary_hits"]} " \
+  puts "compacted=#{r["compacted"]} refused=#{r["refused"]} hits=#{r["summary_hits"]} " \
        "misses=#{r["summary_misses"]} head=#{r["head_bytes"]}"}' "$J"
 
 # what a compaction actually moved -- the proxy is BYTES and now says so

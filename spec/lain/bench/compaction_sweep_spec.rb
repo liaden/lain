@@ -82,6 +82,10 @@ RSpec.describe Lain::Bench::CompactionSweep do
     described_class.new(journals:, price_as: "claude-haiku-5-5", budget:, **options)
   end
 
+  # A truncating cut under the default 20-message tail saves about 5% of these sessions, under
+  # the floor, so the specs about what a cut costs keep a 10-message tail instead.
+  def truncating(**) = sweep(keep_last: 10, **)
+
   def row(rows, arm, placement = "framed") = rows.find { |each| each.arm == arm && each.placement == placement }
 
   # The summarizer the caller would hand in for --summarizer local. It keeps each question it was
@@ -140,7 +144,7 @@ RSpec.describe Lain::Bench::CompactionSweep do
     end
 
     it "measures each deterministic arm over every journal" do
-      rows = sweep(arms:).rows
+      rows = truncating(arms:).rows
 
       expect(rows.map(&:arm)).to eq(arms)
       expect(row(rows, "truncate-cumulative")).to have_attributes(n: 2, cuts: 2, note: nil)
@@ -310,6 +314,37 @@ RSpec.describe Lain::Bench::CompactionSweep do
     end
   end
 
+  describe "the today arm" do
+    let(:path) { large_session }
+    let(:definition) { Lain::Oracle::Summarize.definition }
+
+    def answered(path)
+      blocks = Lain::EventLog::Messages.project(Lain::Bench::Session.load(path).timeline.to_a)
+                                       .flat_map { |message| Array(message["content"]) }
+      results = blocks.select { |block| block["type"] == "tool_result" }.map { |block| block["content"] }
+      append(path, results.uniq.map do |text|
+        oracle_answer(definition, definition.render(source: text), "a lookup with nothing notable")
+      end)
+      path
+    end
+
+    # The first eager cut here saves about 8% of what the turn would send, under the 10% floor;
+    # the eager arm waits for a larger head and cuts once.
+    it "keeps an eager cut under the floor that the eager arm refuses" do
+      rows = sweep(journals: [answered(path)], arms: %w[today eager]).rows
+
+      expect([row(rows, "today").cuts, row(rows, "eager").cuts]).to eq([2, 1])
+    end
+
+    it "says no recorded answers when the journal holds none, as the eager arm does" do
+      expect(row(sweep(journals: [path], arms: %w[today]).rows, "today").note).to eq("no recorded answers")
+    end
+
+    it "is one of the default arms" do
+      expect(described_class::DEFAULT_ARMS).to include("today")
+    end
+  end
+
   describe "planted-claim survival" do
     let(:paths) { fixtures.map(&:path) }
 
@@ -321,8 +356,8 @@ RSpec.describe Lain::Bench::CompactionSweep do
 
     it "counts a claim carried only inside the recap as kept in recap, not verbatim" do
       one = fixtures.select { |fixture| File.basename(fixture.path) == "one.ndjson" }
-      rows = sweep(journals: one.map(&:path), planted: one, arms: %w[truncate-cumulative],
-                   placements: %w[bare framed]).rows
+      rows = truncating(journals: one.map(&:path), planted: one, arms: %w[truncate-cumulative],
+                        placements: %w[bare framed]).rows
 
       expect(rows.map { [_1.kept_verbatim, _1.kept_in_recap] }).to eq([[0, 1], [0, 1]])
     end
@@ -372,12 +407,12 @@ RSpec.describe Lain::Bench::CompactionSweep do
   end
 
   describe "cache cost" do
-    let(:truncated) { row(sweep(arms: %w[truncate-cumulative]).rows, "truncate-cumulative") }
+    let(:truncated) { row(truncating(arms: %w[truncate-cumulative]).rows, "truncate-cumulative") }
 
     it "charges each cut that rewrites the prefix as earlier messages edited" do
       expect(truncated.rebilled_tokens).to be_positive
       expect(truncated.causes).to eq(history_edited: truncated.cuts)
-      expect(sweep(arms: %w[truncate-cumulative]).report).to include("earlier messages edited")
+      expect(truncating(arms: %w[truncate-cumulative]).report).to include("earlier messages edited")
     end
 
     it "prices the rebilled tokens as cache writes of the named model" do
@@ -397,7 +432,8 @@ RSpec.describe Lain::Bench::CompactionSweep do
     end
 
     describe "for a cut at a known request" do
-      let(:path) { large_session(rounds: 11) }
+      let(:keep_last) { 10 }
+      let(:path) { large_session(rounds: 6) }
       let(:recording) { Lain::Bench::Session.load(path) }
       let(:timelines) { recording.dry_replay.each_step.map(&:timeline) }
 
@@ -405,7 +441,7 @@ RSpec.describe Lain::Bench::CompactionSweep do
         recording.context.render(timeline:, toolset: recording.toolset, workspace: recording.workspace)
       end
 
-      # Request 11, the last, is the first whose droppable head passes the budget, and a truncating
+      # Request 6, the last, is the first whose droppable head passes the budget, and a truncating
       # cut there rewrites the prefix the requests before it built.
       it "rebills exactly the rewritten prefix after the first difference" do
         cut_at = timelines.index do |timeline|
@@ -417,9 +453,9 @@ RSpec.describe Lain::Bench::CompactionSweep do
         before = prefix_bytes(rendered(timelines.fetch(cut_at - 1)))
         after = prefix_bytes(rendered(derived))
 
-        swept = row(sweep(journals: [path], arms: %w[truncate-cumulative]).rows, "truncate-cumulative")
+        swept = row(truncating(journals: [path], arms: %w[truncate-cumulative]).rows, "truncate-cumulative")
 
-        expect(cut_at).to eq(11)
+        expect(cut_at).to eq(6)
         expect(swept).to have_attributes(cuts: 1, causes: { history_edited: 1 },
                                          rebilled_tokens: (after.bytesize - first_difference(before, after)) / 4)
       end
@@ -427,8 +463,14 @@ RSpec.describe Lain::Bench::CompactionSweep do
   end
 
   it "refuses an arm it does not know, naming the ones it does" do
-    expect { sweep(arms: %w[truncate]) }
-      .to raise_error(ArgumentError, /truncate.*eager, elide, elide-tools, summarizing/)
+    message = begin
+      sweep(arms: %w[truncate])
+    rescue ArgumentError => e
+      e.message
+    end
+
+    expect(message).to start_with('unknown arm "truncate"')
+    expect(message.to_s.split("the arms are ").last.split(", ")).to match_array(described_class::DEFAULT_ARMS)
   end
 
   it "refuses an empty arm list" do

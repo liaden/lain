@@ -192,6 +192,7 @@ RSpec.describe Lain::Bench::CompactionSweep::Live do
 
   describe "a compaction arm run live" do
     let(:arms) { %w[truncate-cumulative] }
+    let(:sweep) { Lain::Bench::CompactionSweep.new(journals: two, arms:, price_as: model, budget: 1_000, keep_last: 10) }
 
     it "sends the derived chains the preflight counted, cuts included" do
       provider = counting.new(responses: replies_for(1))

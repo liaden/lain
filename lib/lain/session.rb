@@ -482,7 +482,11 @@ module Lain
     # @return [self]
     def write_todos(todos)
       list = todos.to_a
-      @plan_step_completions += 1 if completed_count(list) > completed_count(@todo_items)
+      risen = completed_count(list) - completed_count(@todo_items)
+      if risen.positive?
+        @plan_step_completions += 1
+        @completed_todos += risen
+      end
       head = @reads.head
       @todo_lists << [head, list]
       show_todos(list)
@@ -493,6 +497,26 @@ module Lain
     # @return [Array<Hash{String=>String}>] the current list as `"content"` and
     #   `"status"` hashes, frozen
     def todos = @todo_items.map { |todo| { "content" => todo.content, "status" => todo.status }.freeze }.freeze
+
+    # @return [Integer] todos on the current list not yet completed
+    def open_todos = @todo_items.size - completed_count(@todo_items)
+
+    # A new list replaces the old one, so each write adds only its rise in completed todos.
+    #
+    # @return [Integer] todos completed so far in this session
+    attr_reader :completed_todos
+
+    # Answered requests only: a prompt the provider refused or a call that failed before the wire
+    # is not counted.
+    #
+    # @return [Integer] answered model requests so far in this session, the span {#completed_todos} covers
+    attr_reader :requests_sent
+
+    # @return [self] after counting one answered model request
+    def record_request
+      @requests_sent += 1
+      self
+    end
 
     # How many {#write_todos} calls have raised the count of `"completed"`
     # items, ever: {Compaction::Need::PlanStepCompletion}'s signal. Monotone, so
@@ -796,6 +820,8 @@ module Lain
 
     def start_todos
       @todo_lists = []
+      @completed_todos = 0
+      @requests_sent = 0
       show_todos([])
     end
 
@@ -1155,6 +1181,18 @@ module Lain
 
       # @return [Array] never any
       def todos = [].freeze
+
+      # @return [Integer]
+      def open_todos = 0
+
+      # @return [Integer]
+      def completed_todos = 0
+
+      # @return [Integer]
+      def requests_sent = 0
+
+      # @return [self]
+      def record_request = self
 
       # Accepted and discarded: {CLI::Chronicle#wrap_session} must be able to
       # hand a journal to whatever Session the run holds, without asking first.
