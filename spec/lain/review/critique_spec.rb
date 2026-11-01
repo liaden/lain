@@ -114,8 +114,12 @@ RSpec.describe Lain::Review::Critique do
     end
   end
 
+  # A held changeset as the critique reads one, which is how the skill dispatch hands it over.
+  def diffed(changeset) = described_class::Diff.new(changeset)
+
   def critique(changeset, window: window(32_768), instructions: "# critique\nReview it.", spawn: self.spawn)
-    described_class.new(changeset:, spawn:, window:, checkouts:, journal:, slots: @slots, instructions:)
+    described_class.new(subject: diffed(changeset), spawn:, window:, checkouts:, journal:, slots: @slots,
+                        instructions:)
   end
 
   # What a child's own request budget raises when its provider refuses the
@@ -188,8 +192,8 @@ RSpec.describe Lain::Review::Critique do
 
     it "keeps critiquing the other chunks when one child fails, and says which one did" do
       failing = CritiqueSpecSpawn.new(fails: { 1 => Lain::Error.new("the provider fell over") })
-      findings = described_class.new(changeset:, spawn: failing, window: window(32_768), checkouts:, journal:,
-                                     slots: @slots, instructions: "# critique").call
+      findings = described_class.new(subject: diffed(changeset), spawn: failing, window: window(32_768),
+                                     checkouts:, journal:, slots: @slots, instructions: "# critique").call
 
       expect(failing.calls.size).to eq(2)
       expect(findings).to include("the provider fell over", "findings from child 2")
@@ -203,8 +207,8 @@ RSpec.describe Lain::Review::Critique do
     # line earlier.
     it "names the chunk in a refused record's text, and once only in the merged prose" do
       failing = CritiqueSpecSpawn.new(fails: { 1 => Lain::Error.new("the provider fell over") })
-      findings = described_class.new(changeset:, spawn: failing, window: window(32_768), checkouts:, journal:,
-                                     slots: @slots, instructions: "# critique").call
+      findings = described_class.new(subject: diffed(changeset), spawn: failing, window: window(32_768),
+                                     checkouts:, journal:, slots: @slots, instructions: "# critique").call
 
       expect(journal.first.text).to start_with("chunk 1 of 2")
       expect(journal.first.text).to include("the provider fell over")
@@ -216,7 +220,7 @@ RSpec.describe Lain::Review::Critique do
     # sentence serves the raise path as well as the answer path.
     it "says the critic came back with nothing when a failure carries no message" do
       failing = CritiqueSpecSpawn.new(fails: { 1 => Lain::Error.new("  ") })
-      described_class.new(changeset:, spawn: failing, window: window(32_768), checkouts:, journal:,
+      described_class.new(subject: diffed(changeset), spawn: failing, window: window(32_768), checkouts:, journal:,
                           slots: @slots, instructions: "# critique").call
 
       expect(journal.first.text).to eq("chunk 1 of 2 (#{journal.first.label}) was not critiqued: " \
@@ -228,8 +232,8 @@ RSpec.describe Lain::Review::Critique do
     # the chunk nor anything a human can do.
     it "carries the child's worded over-window refusal, and no provider payload" do
       failing = CritiqueSpecSpawn.new(fails: { 1 => over_window })
-      findings = described_class.new(changeset:, spawn: failing, window: window(32_768), checkouts:, journal:,
-                                     slots: @slots, instructions: "# critique").call
+      findings = described_class.new(subject: diffed(changeset), spawn: failing, window: window(32_768),
+                                     checkouts:, journal:, slots: @slots, instructions: "# critique").call
 
       expect(journal.first.text).to start_with("chunk 1 of 2")
       expect(journal.first.text).to include("32768-token context")
@@ -408,7 +412,7 @@ RSpec.describe Lain::Review::Critique do
     let(:changeset) { changeset_of({ "lib/a.rb" => 4, "lib/b.rb" => 4 }, commits: 2) }
 
     def critics(count, **)
-      described_class.new(changeset:, spawn:, window: window(32_768), checkouts:, journal:,
+      described_class.new(subject: diffed(changeset), spawn:, window: window(32_768), checkouts:, journal:,
                           slots: @slots, instructions: "# critique", critics: count, **)
     end
 
@@ -481,7 +485,7 @@ RSpec.describe Lain::Review::Critique do
     end
 
     def cross_lab(**)
-      described_class.new(changeset:, spawn:, window: cross_lab_window, checkouts:, journal:,
+      described_class.new(subject: diffed(changeset), spawn:, window: cross_lab_window, checkouts:, journal:,
                           slots: @slots, instructions: "# critique", model: "glm-5.3:cloud", **)
     end
 
@@ -503,9 +507,9 @@ RSpec.describe Lain::Review::Critique do
 
     it "sizes chunks to the reviewer's window rather than the chat model's" do
       small = changeset_of(many_files(70, 100))
-      reviewer = described_class.new(changeset: small, spawn:, window: cross_lab_window, checkouts:, journal:,
+      reviewer = described_class.new(subject: diffed(small), spawn:, window: cross_lab_window, checkouts:, journal:,
                                      slots: @slots, instructions: "# critique", model: "glm-5.3:cloud")
-      chat = described_class.new(changeset: small, spawn:, window: window(131_072), checkouts:, journal:,
+      chat = described_class.new(subject: diffed(small), spawn:, window: window(131_072), checkouts:, journal:,
                                  slots: @slots, instructions: "# critique")
 
       reviewer.call
@@ -522,8 +526,9 @@ RSpec.describe Lain::Review::Critique do
       refusing = CritiqueSpecSpawn.new(provider: unserved)
 
       expect do
-        described_class.new(changeset:, spawn: refusing, window: cross_lab_window, checkouts:, journal:,
-                            slots: @slots, instructions: "# critique", critics: 3, model: "glm-5.3:cloud").call
+        described_class.new(subject: diffed(changeset), spawn: refusing, window: cross_lab_window,
+                            checkouts:, journal:, slots: @slots, instructions: "# critique",
+                            critics: 3, model: "glm-5.3:cloud").call
       end.to raise_error(Lain::Tools::Subagent::ModelChoice::Unserved, /glm-5\.3:cloud/)
       expect(refusing.calls).to be_empty
       expect(checkouts.held).to be_empty
@@ -534,7 +539,7 @@ RSpec.describe Lain::Review::Critique do
       blind = Struct.new(:x) { def resolve(model) = raise(Lain::ContextWindow::UnknownModel, "no #{model}") }.new(0)
 
       expect do
-        described_class.new(changeset:, spawn:, window: blind, checkouts:, journal:, slots: @slots,
+        described_class.new(subject: diffed(changeset), spawn:, window: blind, checkouts:, journal:, slots: @slots,
                             instructions: "# critique", model: "glm-5.3:cloud").call
       end.to raise_error(described_class::Refused, /glm-5\.3:cloud/)
       expect(spawn.calls).to be_empty
@@ -546,8 +551,9 @@ RSpec.describe Lain::Review::Critique do
         define_method(:spawned) { |*args| super(*args) && Lain::Tool::Result.ok(odd) }
       end.new
 
-      findings = described_class.new(changeset:, spawn: verbatim, window: cross_lab_window, checkouts:, journal:,
-                                     slots: @slots, instructions: "# critique", model: "glm-5.3:cloud").call
+      findings = described_class.new(subject: diffed(changeset), spawn: verbatim, window: cross_lab_window,
+                                     checkouts:, journal:, slots: @slots, instructions: "# critique",
+                                     model: "glm-5.3:cloud").call
 
       expect(findings).to include(odd)
       expect(journal.first.text).to eq(odd)
@@ -557,7 +563,7 @@ RSpec.describe Lain::Review::Critique do
       guessed = Lain::CLI::Backend::WindowBook::Served.new(model: "glm-5.3:cloud", window_tokens: 16_384,
                                                            provenance: Lain::ContextWindow::GUESSED)
       expect do
-        described_class.new(changeset:, spawn:, window: guessed, checkouts:, journal:, slots: @slots,
+        described_class.new(subject: diffed(changeset), spawn:, window: guessed, checkouts:, journal:, slots: @slots,
                             instructions: "# critique", model: "glm-5.3:cloud").call
       end.to raise_error(described_class::Refused, /glm-5\.3:cloud/)
       expect(spawn.calls).to be_empty

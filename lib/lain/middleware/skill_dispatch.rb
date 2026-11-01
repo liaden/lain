@@ -133,7 +133,7 @@ module Lain
       # reaches the dispatch boundary exactly as an unknown role does.
       def report_critique(env, invocation)
         options, focus = CritiqueOptions.split(invocation.args)
-        critique = Review::Critique.new(changeset: @outbox.held_changeset,
+        critique = Review::Critique.new(subject: Review::Critique::Diff.new(@outbox.held_changeset),
                                         instructions: expand(invocation.with(args: focus)), **@critique, **options)
         short_circuit(env, critique.call)
       end

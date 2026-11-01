@@ -262,12 +262,23 @@ module Lain
           @walk = walk
           @projection = projection
           @chunker = chunker
-          @prefix = Prefix.between(named_from || walk.root, walk.root)
+          @named_from = File.expand_path(named_from || walk.root)
+          @prefix = Prefix.between(@named_from, walk.root)
           refuse_oversized!(bounds)
         end
 
         # @return [String] {BASE_REF}, always
         def base_ref = BASE_REF
+
+        # The surveyed tree, which `named_from:` renames but never moves: a
+        # reader lent access to this corpus's files is lent this directory.
+        #
+        # @return [String] absolute
+        def root = @walk.root
+
+        # @return [String] absolute: the directory every path in {#files} is
+        #   named from, which is {#root} unless `named_from:` said otherwise
+        attr_reader :named_from
 
         # The corpus's own content address, worn as a revision: the hex half of
         # {#identity}'s digest, so it reads and truncates like the shas every
@@ -319,6 +330,13 @@ module Lain
 
           reading&.content
         end
+
+        # What the walk's classifier made of one listed file, so a reader with
+        # nobody to ask can refuse a file a chat would have asked about.
+        #
+        # @param path [String] one of {#files}' paths
+        # @return [Sensitivity::Verdict, nil] nil for a path this corpus does not carry
+        def verdict_at(path) = readings[path.to_s]&.listing&.verdict
 
         # One line of one file as the head holds it, numbered as the file on
         # disk numbers it -- the buffer a note is placed in -- and masked as the

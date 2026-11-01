@@ -259,6 +259,14 @@ RSpec.describe Lain::Review::Source::Corpus do
       expect(rooted(root).files.map(&:path)).to eq(["lib/greeter.rb"])
     end
 
+    it "answers the walked tree as the root its files are read under, whichever root names them" do
+      expect([corpus.root, rooted(root).root]).to eq([subtree, subtree])
+    end
+
+    it "answers the directory its names are read from, the walked tree when nobody names one" do
+      expect([corpus.named_from, rooted(root).named_from]).to eq([subtree, root])
+    end
+
     # A survey may point anywhere -- {Lain::CLI::Command::Survey} says so of the
     # tree it walks -- so one BESIDE the naming root still has to answer a name
     # that resolves from it. An absolute one cannot: `47_diff.lua` refuses one
@@ -378,6 +386,13 @@ RSpec.describe Lain::Review::Source::Corpus do
 
     it "reads masked through #file_at too, so no renderer sees what a unit does not" do
       expect(corpus.file_at(corpus.head_ref, ".env")).not_to include(api_key)
+    end
+
+    it "answers the verdict it was listed under, and none for a path it does not carry" do
+      write("plain.txt", "plain\n")
+
+      expect([corpus.verdict_at(".env").gated?, corpus.verdict_at("plain.txt").gated?, corpus.verdict_at("nope")])
+        .to eq([true, false, nil])
     end
 
     it "addresses the PROJECTION, so a release legitimately re-opens the file" do

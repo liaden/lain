@@ -4,7 +4,8 @@ module Lain
   module Review
     # `/critique` over the review a chat is holding: the critique skill's
     # instructions, run by one fresh role child per chunk of the changeset, and
-    # the findings merged back in chunk order.
+    # the findings merged back in chunk order. A set of {Documents} is
+    # critiqued the same way, one child per cluster; what follows is the diff.
     #
     # == Why not the skill inline
     #
@@ -39,8 +40,8 @@ module Lain
       # A critique that cannot run as asked, said before anything was spent.
       class Refused < Error; end
 
-      # The catalog role each chunk is read by, unless whoever constructs a
-      # critique names another through `role:`.
+      # The catalog role each chunk of a diff is read by, unless whoever
+      # constructs a critique names another through `role:`.
       ROLE = :diff_critic
 
       # A FRESH root: a child conditioned on the chat's own conversation about
@@ -95,6 +96,11 @@ module Lain
                    "chunker packs by line count and cannot split a file, so a file of many short lines sets a " \
                    "line ceiling its wider-lined neighbours pack past; critique a narrower range of this change"
 
+      CLUSTER_OVER = "the document critique refused before spawning anything: cluster %<chunk>s (%<paths>s) " \
+                     "estimates %<estimate>d tokens, over the %<room>d a cluster may take in %<model>s's " \
+                     "%<window>d-token window -- one critic reads a cluster whole, so split it into smaller " \
+                     "clusters or run against a model with a larger window"
+
       NOTHING_SAID = "the critic came back with nothing to say"
 
       # What a chunk nobody critiqued leaves in the RECORD. The record travels
@@ -135,30 +141,32 @@ module Lain
       # @return [Integer]
       def self.tokens(text) = (bytes(text) + BYTES_PER_TOKEN - 1) / BYTES_PER_TOKEN
 
-      # @param changeset [Review::Changeset] the held round's diff
+      # @param subject [Diff, Documents] what is critiqued: a held round's diff, or a set of documents
       # @param spawn [#within, #seam] {Skill::RoleSpawn}: `within(worker_env)`
       #   lends a checkout and answers `call(role, mode, prompt)`; `seam` names
-      #   the child's context, for its model and its response ceiling
+      #   the child's context, for its model and its response ceiling. The
+      #   subject decides which copy of it spawns ({Documents#spawned})
       # @param window [#resolve] the run's window book, asked about the reviewer's model when one is named
-      # @param checkouts [#hold] cuts the checkout of the reviewed head; {Checkouts}
+      # @param checkouts [#hold] cuts the checkout of the reviewed head ({Checkouts}), or lends
+      #   the documents' read root ({Documents::ReadRoots})
       # @param journal [#<<] where each chunk's record lands
       # @param slots [Prompt::Slots] renders the role's prelude, which is measured
       # @param instructions [String] the rendered critique skill, with any focus
-      # @param role [Symbol] a {Role::Catalog} name
+      # @param role [Symbol, nil] a {Role::Catalog} name; nil takes the changeset's own default
       # @param critics [Integer] how many independent children read each chunk,
       #   one after another
       # @param model [String, nil] a model to read the diff on in place of the
       #   run's own; chunks are then sized to ITS window
-      def initialize(changeset:, spawn:, window:, checkouts:, journal:, slots:, instructions:, role: ROLE,
+      def initialize(subject:, spawn:, window:, checkouts:, journal:, slots:, instructions:, role: nil,
                      critics: 1, model: nil)
-        @changeset = changeset
-        @spawn = spawn
+        @subject = subject
+        @spawn = subject.spawned(spawn)
         @window = window
         @checkouts = checkouts
         @journal = journal
         @slots = slots
         @instructions = instructions
-        @role = role
+        @role = role || @subject.role
         @critics = critics
         @model = Tools::Subagent::ModelChoice.of(model, declared_by: "/critique")
       end
@@ -166,13 +174,12 @@ module Lain
       # @return [String] the merged findings
       # @raise [Refused] before any checkout or spawn
       def call
-        raise Refused, NO_REVISION unless @changeset.sides == Source::BOTH_SIDES
-        raise Refused, NOTHING_CHANGED if @changeset.files.empty?
+        @subject.refuse_unreadable!
         raise Refused, format(BAD_CRITICS, max: MAX_CRITICS, critics: @critics.inspect) unless critics?
 
         refuse_unserved_model!
-        chunks = Packing.new(changeset: @changeset, budget:, brief: method(:brief)).chunks
-        answers = @checkouts.hold(@changeset.head_ref) { |worker_env| answered(chunks, @spawn.within(worker_env)) }
+        chunks = @subject.chunks(budget:, brief: method(:brief))
+        answers = @checkouts.hold(@subject.head_ref) { |worker_env| answered(chunks, @spawn.within(worker_env)) }
         rendered(answers)
       end
 
@@ -194,10 +201,7 @@ module Lain
 
       def reviewer(context) = @model.model.empty? ? context.model : @model.model
 
-      def brief(chunk, ordinal, count)
-        Brief.new(instructions: @instructions, chunk:, ordinal:, count:, base_ref: @changeset.base_ref,
-                  head_ref: @changeset.head_ref)
-      end
+      def brief(chunk, ordinal, count) = @subject.brief(instructions: @instructions, chunk:, ordinal:, count:)
 
       # One child at a time: the lent checkout serves one dispatch at once, and
       # the findings are merged in chunk order anyway.
@@ -250,10 +254,7 @@ module Lain
       end
 
       def rendered(answers)
-        head = @changeset.head_ref[0, 12]
-        count = answers.size
-        headline = format(HEADLINE, base: @changeset.base_ref[0, 12], head:, count:, plural: count == 1 ? "" : "s",
-                                    role: @role) + on_model
+        headline = @subject.headline(count: answers.size, role: @role) + on_model
         [headline, *answers.map { |brief, readings| "#{brief.heading}\n\n#{findings(readings)}" }].join("\n\n")
       end
 
@@ -272,6 +273,51 @@ module Lain
     end
 
     class Critique
+      # A held diff as a critique reads it: refused without a reviewed
+      # revision, packed by line, and read from a checkout of its head.
+      class Diff
+        # @param changeset [Review::Changeset]
+        def initialize(changeset)
+          @changeset = changeset
+          freeze
+        end
+
+        # @return [Symbol] the catalog role a diff critique defaults to
+        def role = ROLE
+
+        # A diff's children are confined by the checkout they are lent, and may
+        # still ask a human, so the spawn is the caller's own.
+        #
+        # @param spawn [Skill::RoleSpawn]
+        # @return [Skill::RoleSpawn] the same spawn
+        def spawned(spawn) = spawn
+
+        # @return [String] the reviewed head's sha
+        def head_ref = @changeset.head_ref
+
+        # @raise [Refused] for a round with no reviewed revision, or one that changes nothing
+        def refuse_unreadable!
+          raise Refused, NO_REVISION unless @changeset.sides == Source::BOTH_SIDES
+          raise Refused, NOTHING_CHANGED if @changeset.files.empty?
+        end
+
+        # @param budget [Budget]
+        # @param brief [#call] `(chunk, ordinal, count) -> Brief`
+        # @return [Array<Partition>]
+        def chunks(budget:, brief:) = Packing.new(changeset: @changeset, budget:, brief:).chunks
+
+        # @return [Brief]
+        def brief(instructions:, chunk:, ordinal:, count:)
+          Brief.new(instructions:, chunk:, ordinal:, count:, base_ref: @changeset.base_ref, head_ref:)
+        end
+
+        # @return [String]
+        def headline(count:, role:)
+          format(HEADLINE, base: @changeset.base_ref[0, 12], head: head_ref[0, 12], count:,
+                           plural: count == 1 ? "" : "s", role:)
+        end
+      end
+
       Budget = Data.define(:model, :window_tokens, :response_tokens, :reserved_tokens)
 
       # What a chunk may spend, in tokens of the child's served window.
@@ -379,33 +425,24 @@ module Lain
         private_class_method :hunk_text
       end
 
-      # The chunks a critique spends on, every one measured against the budget
-      # before any is returned.
-      class Packing
-        # @param changeset [Review::Changeset]
+      # How much of a child's window a chunk's brief takes, against the
+      # budget: what {Packing} and {Clusters} both measure by.
+      class Measure
         # @param budget [Budget]
         # @param brief [#call] `(chunk, ordinal, count) -> Brief`
-        def initialize(changeset:, budget:, brief:)
-          @changeset = changeset
+        def initialize(budget:, brief:)
           @budget = budget
           @brief = brief
         end
 
-        # @return [Array<Review::Partition>]
-        # @raise [Refused] naming the reserve, the file or the chunk no packing fits
-        def chunks
-          raise Refused, format(RESERVE_OVER, **figures) unless room.positive?
-
-          files.each { |file| refuse_file!(file) }
-          packed(initial_ceiling)
-        end
-
         private
 
-        def files = @changeset.files
+        def refuse_reserve!
+          raise Refused, format(RESERVE_OVER, **figures) unless room.positive?
+        end
 
-        # What a chunk's hunks add to a brief, apart from the text every brief
-        # carries.
+        # What a chunk's content adds to a brief, apart from the text every
+        # brief carries.
         def content(chunk, ordinal = 1, count = 1)
           Critique.tokens(@brief.call(chunk, ordinal, count).to_s) - skeleton
         end
@@ -415,6 +452,41 @@ module Lain
         def room = @budget.room(skeleton)
 
         def figures = @budget.figures(skeleton)
+
+        def overflowing(chunks)
+          count = chunks.size
+          chunks.each_with_index.lazy
+                .map { |chunk, index| [chunk, content(chunk, index + 1, count)] }
+                .find { |_chunk, estimate| estimate > room }
+        end
+
+        def over_figures(chunk, estimate)
+          { chunk: chunk.detail.named(chunk.label), paths: chunk.files.map(&:path).join(", "), estimate:, **figures }
+        end
+      end
+
+      # The chunks a diff critique spends on, packed by line and every one
+      # measured against the budget before any is returned.
+      class Packing < Measure
+        # @param changeset [Review::Changeset]
+        # @param budget [Budget]
+        # @param brief [#call] `(chunk, ordinal, count) -> Brief`
+        def initialize(changeset:, budget:, brief:)
+          @changeset = changeset
+          super(budget:, brief:)
+        end
+
+        # @return [Array<Review::Partition>]
+        # @raise [Refused] naming the reserve, the file or the chunk no packing fits
+        def chunks
+          refuse_reserve!
+          files.each { |file| refuse_file!(file) }
+          packed(initial_ceiling)
+        end
+
+        private
+
+        def files = @changeset.files
 
         def refuse_file!(file)
           estimate = content(Partition.new(label: file.path, files: [file]))
@@ -448,16 +520,21 @@ module Lain
           packed(narrower)
         end
 
-        def overflowing(chunks)
-          count = chunks.size
-          chunks.each_with_index.lazy
-                .map { |chunk, index| [chunk, content(chunk, index + 1, count)] }
-                .find { |_chunk, estimate| estimate > room }
-        end
+        def chunk_over(chunk, estimate) = format(CHUNK_OVER, **over_figures(chunk, estimate))
+      end
 
-        def chunk_over(chunk, estimate)
-          format(CHUNK_OVER, chunk: chunk.detail.named(chunk.label), paths: chunk.files.map(&:path).join(", "),
-                             estimate:, **figures)
+      # Chunks that are already cut, as a document set's clusters are: each is
+      # measured, and none can be narrowed.
+      class Clusters < Measure
+        # @param chunks [Array<Review::Partition>]
+        # @return [Array<Review::Partition>] the same chunks
+        # @raise [Refused] naming the reserve, or the first chunk over its room
+        def fitted(chunks)
+          refuse_reserve!
+          over = overflowing(chunks)
+          raise Refused, format(CLUSTER_OVER, **over_figures(*over)) if over
+
+          chunks
         end
       end
 
