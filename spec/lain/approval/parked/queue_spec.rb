@@ -1064,6 +1064,22 @@ RSpec.describe Lain::Approval::Parked::Queue do
       expect(reasons.map(&:own?)).to eq([false, true])
     end
 
+    it "bounds a long reason to its first 400 characters and says how much was cut" do
+      reason = described_class::Reason.of("x" * 900)
+
+      expect(reason.text).to eq("#{"x" * 400}[cut at 400 of 900 characters; the full call is in lain://approval]")
+    end
+
+    it "cuts a reason once however often it is rebuilt" do
+      cut = described_class::Reason.of("x" * 900)
+
+      expect([described_class::Reason.new(**cut.to_h).text, cut.with(own: true).text]).to all(eq(cut.text))
+    end
+
+    it "leaves a reason of 400 characters whole" do
+      expect(described_class::Reason.own("y" * 400).text).to eq("y" * 400)
+    end
+
     it "journals the deferral in the pending record's notes" do
       deferred = Lain::Approval::Judged::Deferred.new(noted)
       Sync do |task|

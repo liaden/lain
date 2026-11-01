@@ -58,6 +58,12 @@ module Lain
 
         Outstanding = Data.define(:path, :regions)
 
+        REASON_LIMIT = 400
+        REASON_POINTER = "the full call is in lain://approval]"
+        CUT_TAIL = Regexp.escape(REASON_POINTER)
+        REASON_CUT = /\A.{#{REASON_LIMIT}}\[cut at #{REASON_LIMIT} of \d+ characters; #{CUT_TAIL}\z/m
+        private_constant :REASON_LIMIT, :REASON_POINTER, :CUT_TAIL, :REASON_CUT
+
         # One line of why a call was parked. `own` marks lain's words, which a
         # surface shows plain; any other may carry a model-influenced path, so it
         # shows `inspect`ed and cannot open a line of its own.
@@ -66,11 +72,19 @@ module Lain
 
           def self.of(note) = note.is_a?(self) ? note : new(text: note, own: false)
 
-          def initialize(text:, own: false) = super(text: -text.to_s, own: own == true)
+          def initialize(text:, own: false) = super(text: -bounded(text.to_s), own: own == true)
 
           def own? = own
 
           def to_s = own? ? text : text.inspect
+
+          private
+
+          def bounded(text)
+            return text if text.length <= REASON_LIMIT || REASON_CUT.match?(text)
+
+            "#{text[0, REASON_LIMIT]}[cut at #{REASON_LIMIT} of #{text.length} characters; #{REASON_POINTER}"
+          end
         end
 
         # The sensitive regions of one file that approving a {Pending} would
