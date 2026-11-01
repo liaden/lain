@@ -9,7 +9,7 @@ module Lain
     # the detected-framework fallback survives, without every caller comparing
     # against {TestLayout::None}.
     Built = Data.define(:epics, :approval, :isolation, :sensitivity, :shell, :search, :tests, :middleware,
-                        :env_pass, :approval_timeout, :keys, :todos, :theme, :think) do
+                        :env_pass, :approval_timeout, :judge_timeout, :keys, :todos, :theme, :think) do
       # @param framework [String, nil] a detected test framework
       # @return [TestLayout] the declared layout, else what the framework implies
       def test_layout(framework: nil) = tests || TestLayout.from(nil, path: nil, framework:)
@@ -108,6 +108,7 @@ module Lain
         @verbs = verbs
         @tables = {}
         @approval_timeout = Config::DEFAULT_APPROVAL_TIMEOUT
+        @judge_timeout = Config::DEFAULT_JUDGE_TIMEOUT
       end
 
       # @return [Built] every table not declared at its default
@@ -121,7 +122,8 @@ module Lain
                   tests: @tables[:tests],
                   middleware: @tables.fetch(:middleware, Middleware.empty),
                   env_pass: @tables.fetch(:env, []),
-                  approval_timeout: @approval_timeout, think: @tables[:think], **small_tables)
+                  approval_timeout: @approval_timeout, judge_timeout: @judge_timeout,
+                  think: @tables[:think], **small_tables)
       end
 
       def epics(**table, &block)
@@ -131,9 +133,10 @@ module Lain
         end
       end
 
-      def approval(timeout: nil, &block)
+      def approval(timeout: nil, judge_timeout: nil, &block)
         declare(:approval, Answers::TABLE) do |at|
           @approval_timeout = timeout_from(timeout, at)
+          @judge_timeout = timeout_from(judge_timeout, at, key: "judge_timeout", current: @judge_timeout)
           calls = collect(block, %i[allow deny deny_tool])
           calls.each { |call| Answers.from({ call.verb.to_s => [entry(call)] }, path: located_at(call.line)) }
           Answers.from(calls.group_by(&:verb).to_h { |verb, group| [verb.to_s, group.map { |call| entry(call) }] },
@@ -252,12 +255,12 @@ module Lain
 
       def refuse_env(detail, at) = raise(Refusal.new(detail, path: at, table: ENV_TABLE, key: "pass"))
 
-      def timeout_from(timeout, at)
-        return @approval_timeout if timeout.nil?
+      def timeout_from(timeout, at, key: "timeout", current: @approval_timeout)
+        return current if timeout.nil?
         return timeout if timeout.is_a?(Numeric) && timeout.finite? && timeout.positive?
 
-        detail = "timeout must be above 0 seconds, got #{timeout.inspect}"
-        raise Refusal.new(detail, path: at, table: Answers::TABLE, key: "timeout")
+        detail = "#{key} must be above 0 seconds, got #{timeout.inspect}"
+        raise Refusal.new(detail, path: at, table: Answers::TABLE, key:)
       end
 
       def located_at(line) = self.class.located(@path, line)

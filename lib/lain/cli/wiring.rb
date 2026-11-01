@@ -920,9 +920,9 @@ module Lain
       def switchboard(backend, toolset)
         @switchboard ||= BoardBuild.for(chronicle:, options:, model: backend.context.model, toolset:, project:,
                                         verdict:, middleware: backend.middleware, config:, paths: @paths,
-                                        judge: JudgeSource.new(method(:role_spawn)), display: @channel, arms:,
-                                        request: heard, resolver: exec_resolver, worker_env: chat_env,
-                                        child_env: exec_backend.child_env, stops: observers.stops)
+                                        judge: JudgeSource.new(method(:role_spawn), timeout: config.judge_timeout),
+                                        display: @channel, arms:, request: heard, resolver: exec_resolver,
+                                        worker_env: chat_env, child_env: exec_backend.child_env, stops: observers.stops)
       end
 
       # What the judge is told the human asked for under `--judge-facts request`. One for the run,

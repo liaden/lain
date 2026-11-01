@@ -66,6 +66,28 @@ RSpec.describe Lain::Config do
     end
   end
 
+  describe "the judge timeout" do
+    it "is 30 seconds unset, and read from the approval table" do
+      Dir.mktmpdir do |root|
+        write_config(root, "approval judge_timeout: 90\n")
+
+        expect([described_class.load(root:).judge_timeout, described_class.empty.judge_timeout]).to eq([90, 30])
+      end
+    end
+
+    it "makes configs differing only in it unequal, with different hashes" do
+      epics = Lain::Config::Epics.new(home: :xdg)
+      plain = described_class.new(epics:)
+      other = described_class.new(epics:, judge_timeout: 90)
+
+      expect([plain == other, plain.hash == other.hash]).to eq([false, false])
+    end
+
+    it "has one default, shared with the judge" do
+      expect(described_class::DEFAULT_JUDGE_TIMEOUT).to eq(Lain::Approval::Judge::TIMEOUT)
+    end
+  end
+
   describe "the env table" do
     it "is read by .load" do
       Dir.mktmpdir do |root|

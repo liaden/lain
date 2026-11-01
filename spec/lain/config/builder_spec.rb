@@ -76,9 +76,24 @@ RSpec.describe Lain::Config::Builder do
                                                        tests: nil,
                                                        env_pass: [],
                                                        approval_timeout: 300,
+                                                       judge_timeout: 30,
                                                        todos: Lain::Config::Todos.empty,
                                                        theme: Lain::Config::Theme.empty,
                                                        think: nil)
+    end
+
+    it "reads the judge's timeout from the approval table" do
+      expect(build("approval judge_timeout: 90\n").judge_timeout).to eq(90)
+    end
+
+    it "refuses a judge timeout of 0 at its line" do
+      expect { build("\napproval judge_timeout: 0\n") }
+        .to raise_error(Lain::Config::Refusal, /config\.rb:2.*judge_timeout.*must be above 0/)
+    end
+
+    it "refuses a judge timeout that is not a number" do
+      expect { build("approval judge_timeout: \"soon\"\n") }
+        .to raise_error(Lain::Config::Refusal, /judge_timeout.*must be above 0/)
     end
 
     it "builds the names env pass hands every child" do

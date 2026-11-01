@@ -5142,6 +5142,21 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
+    it "builds the auto judge with the timeout the project's approval table sets" do
+      in_tree(config: "approval judge_timeout: 90\n") do |root|
+        built = Struct.new(:timeout).new
+        allow(Lain::Approval::Judge).to receive(:new) { |**kw| built.timeout = kw[:timeout] and instance_double(Lain::Approval::Judge, call: :approve) }
+        allow(Lain::CLI::Wiring::BoardBuild).to receive(:for).and_wrap_original do |original, **kwargs|
+          kwargs[:judge].call(tool: "bash", input: {}, place: nil)
+          original.call(**kwargs)
+        end
+
+        board_for(root:)
+
+        expect(built.timeout).to eq(90)
+      end
+    end
+
     it "gates what the project's [sensitivity] table merely gates" do
       in_tree(config: "sensitivity gated: %w[*.private]\n") do |root|
         board = board_for(root:)

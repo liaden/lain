@@ -35,7 +35,7 @@ module Lain
     def self.load(root: Dir.pwd)
       built = built(root)
       new(epics: built.epics, approval: built.approval, isolation: built.isolation, env_pass: built.env_pass,
-          todos: built.todos, approval_timeout: built.approval_timeout)
+          todos: built.todos, approval_timeout: built.approval_timeout, judge_timeout: built.judge_timeout)
     end
 
     # What a project adds to the path classifier's built-in tables, and the
@@ -195,6 +195,9 @@ module Lain
     # here would load the approval unit when this file loads (see {EMPTY}).
     DEFAULT_APPROVAL_TIMEOUT = 300
 
+    # Spelled as a literal for the same reason; a spec pins it to {Approval::Judge::TIMEOUT}.
+    DEFAULT_JUDGE_TIMEOUT = 30
+
     attr_reader :epics, :approval, :isolation
 
     # @return [Array<String>] the variables `env pass:` hands every child,
@@ -207,14 +210,18 @@ module Lain
     # @return [Numeric] seconds an unanswered parked call or epic gate waits before it denies
     attr_reader :approval_timeout
 
+    # @return [Numeric] seconds the `auto` approval judge may take before its call goes to a human
+    attr_reader :judge_timeout
+
     def initialize(epics:, approval: Answers.empty, isolation: Isolation.empty, env_pass: [], todos: Todos.empty,
-                   approval_timeout: DEFAULT_APPROVAL_TIMEOUT)
+                   approval_timeout: DEFAULT_APPROVAL_TIMEOUT, judge_timeout: DEFAULT_JUDGE_TIMEOUT)
       @epics = epics
       @approval = Answers.coerce(approval)
       @isolation = Isolation.coerce(isolation)
       @env_pass = env_pass.map(&:-@).freeze
       @todos = todos
       @approval_timeout = approval_timeout
+      @judge_timeout = judge_timeout
       freeze
     end
 
@@ -232,12 +239,12 @@ module Lain
     def ==(other)
       other.instance_of?(self.class) && epics == other.epics && approval == other.approval &&
         isolation == other.isolation && env_pass == other.env_pass && todos == other.todos &&
-        approval_timeout == other.approval_timeout
+        approval_timeout == other.approval_timeout && judge_timeout == other.judge_timeout
     end
     alias eql? ==
 
     def hash
-      [self.class, epics, approval, isolation, env_pass, todos, approval_timeout].hash
+      [self.class, epics, approval, isolation, env_pass, todos, approval_timeout, judge_timeout].hash
     end
 
     # The default `gates` table must stay EMPTY. {Epics::Gates.check!} reads

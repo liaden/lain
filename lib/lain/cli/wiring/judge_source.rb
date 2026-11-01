@@ -8,8 +8,10 @@ module Lain
       # `build_agent`'s spec seam reaches the board with no build behind it.
       class JudgeSource
         # @param role_spawn [#call] answers the run's role-spawn seam
-        def initialize(role_spawn)
+        # @param timeout [Numeric] seconds the judge may take
+        def initialize(role_spawn, timeout: Config::DEFAULT_JUDGE_TIMEOUT)
           @role_spawn = role_spawn
+          @timeout = timeout
         end
 
         # A judge that cannot be built is a fault like any other the judge has,
@@ -19,7 +21,7 @@ module Lain
         # @yieldparam why [String] what went wrong, when the judge faults
         # @return [Symbol] the judge's verdict, or `:fault`
         def call(**question, &on_fault)
-          @judge ||= Approval::Judge.new(role_spawn: @role_spawn.call)
+          @judge ||= Approval::Judge.new(role_spawn: @role_spawn.call, timeout: @timeout)
           @judge.call(**question, &on_fault)
         rescue StandardError => e
           on_fault&.call("#{e.class}: #{e.message}")

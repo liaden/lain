@@ -12,10 +12,19 @@ RSpec.describe Lain::CLI::Wiring::JudgeSource do
     expect(reads).to eq(0)
   end
 
+  it "builds the judge with the timeout the project configured" do
+    spawn = instance_double(Lain::Skill::RoleSpawn)
+    allow(Lain::Approval::Judge).to receive(:new).and_return(judge)
+
+    described_class.new(-> { spawn }, timeout: 90).call(**question)
+
+    expect(Lain::Approval::Judge).to have_received(:new).with(role_spawn: spawn, timeout: 90)
+  end
+
   it "builds the judge once across two judged calls, and answers its verdict" do
     spawn = instance_double(Lain::Skill::RoleSpawn)
-    allow(Lain::Approval::Judge).to receive(:new).with(role_spawn: spawn).and_return(judge)
-    source = described_class.new(-> { spawn })
+    allow(Lain::Approval::Judge).to receive(:new).with(role_spawn: spawn, timeout: 30).and_return(judge)
+    source = described_class.new(-> { spawn }, timeout: 30)
 
     expect(Array.new(2) { source.call(**question) }).to eq(%i[approve approve])
     expect(Lain::Approval::Judge).to have_received(:new).once

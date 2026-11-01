@@ -1240,7 +1240,7 @@ is never refused: every table is then at its default.
 epics home: :repo, width: 3 do
   gate :research, :hands_off
 end
-approval timeout: 900 do
+approval timeout: 900, judge_timeout: 60 do      # the auto judge's own limit; 30 when unset
   allow "bash", command: "bundle exec rspec"
   deny_tool "web_fetch"                         # refuses the tool whatever its tier; no approval lifts it
 end
