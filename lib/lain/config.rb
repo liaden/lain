@@ -35,7 +35,8 @@ module Lain
     def self.load(root: Dir.pwd)
       built = built(root)
       new(epics: built.epics, approval: built.approval, isolation: built.isolation, env_pass: built.env_pass,
-          todos: built.todos, approval_timeout: built.approval_timeout, judge_timeout: built.judge_timeout)
+          todos: built.todos, approval_timeout: built.approval_timeout, judge_timeout: built.judge_timeout,
+          review: built.review)
     end
 
     # What a project adds to the path classifier's built-in tables, and the
@@ -79,6 +80,14 @@ module Lain
     # @raise [Project::Trust::Untrusted] as {.load}
     # @raise [Refusal] as {.load}
     def self.think(root:) = built(root).think
+
+    # The model a project reviews documents with. `root:` is REQUIRED, as {.sensitivity}'s is.
+    #
+    # @param root [String] a project root; `.lain/config.rb` is resolved under it
+    # @return [Review] naming no model when the file or the table is absent
+    # @raise [Project::Trust::Untrusted] as {.load}
+    # @raise [Refusal] as {.load}
+    def self.review(root:) = built(root).review
 
     # What a project searches beyond the files git shows, and how much one
     # walk may cost. `root:` is REQUIRED, as {.sensitivity}'s is.
@@ -213,8 +222,12 @@ module Lain
     # @return [Numeric] seconds the `auto` approval judge may take before its call goes to a human
     attr_reader :judge_timeout
 
+    # @return [Review] the model a document review runs under
+    attr_reader :review
+
     def initialize(epics:, approval: Answers.empty, isolation: Isolation.empty, env_pass: [], todos: Todos.empty,
-                   approval_timeout: DEFAULT_APPROVAL_TIMEOUT, judge_timeout: DEFAULT_JUDGE_TIMEOUT)
+                   approval_timeout: DEFAULT_APPROVAL_TIMEOUT, judge_timeout: DEFAULT_JUDGE_TIMEOUT,
+                   review: Review.empty)
       @epics = epics
       @approval = Answers.coerce(approval)
       @isolation = Isolation.coerce(isolation)
@@ -222,6 +235,7 @@ module Lain
       @todos = todos
       @approval_timeout = approval_timeout
       @judge_timeout = judge_timeout
+      @review = review
       freeze
     end
 
@@ -236,16 +250,14 @@ module Lain
     # `is_a?` its parent while a parent is never `is_a?` its subclass. `#hash`
     # mixes in `self.class` for the same reason -- two values a Hash should
     # treat as distinct keys must not collide.
-    def ==(other)
-      other.instance_of?(self.class) && epics == other.epics && approval == other.approval &&
-        isolation == other.isolation && env_pass == other.env_pass && todos == other.todos &&
-        approval_timeout == other.approval_timeout && judge_timeout == other.judge_timeout
-    end
+    def ==(other) = other.instance_of?(self.class) && state == other.state
     alias eql? ==
 
-    def hash
-      [self.class, epics, approval, isolation, env_pass, todos, approval_timeout, judge_timeout].hash
-    end
+    def hash = [self.class, *state].hash
+
+    protected
+
+    def state = [epics, approval, isolation, env_pass, todos, approval_timeout, judge_timeout, review]
 
     # The default `gates` table must stay EMPTY. {Epics::Gates.check!} reads
     # `Epic::STAGES` and {Epic::Gate::Policies}, so a non-empty default

@@ -23,6 +23,32 @@ RSpec.describe Lain::Config::Builder do
     end
   end
 
+  describe "the review verb" do
+    it "resolves the configured model beside the author's" do
+      choice = build("review model: \"claude-sonnet-5-5\"\n").review.choose(author: "glm-5.3")
+
+      expect([choice.model, choice.author]).to eq(%w[claude-sonnet-5-5 glm-5.3])
+    end
+
+    it "falls back to the author's model when none is configured" do
+      choice = build("").review.choose(author: "glm-5.3")
+
+      expect([choice.model, choice.author]).to eq(%w[glm-5.3 glm-5.3])
+    end
+
+    it "refuses a model that is not a non-blank string, at its line" do
+      expect { build("\nreview model: 3\n") }.to raise_error(Lain::Config::Refusal, /config\.rb:2.*model/)
+    end
+
+    it "refuses an unknown key" do
+      expect { build("review modle: \"x\"\n") }.to raise_error(Lain::Config::Refusal, /modle/)
+    end
+
+    it "refuses being declared twice" do
+      expect { build("review model: \"a\"\nreview model: \"b\"\n") }.to raise_error(Lain::Config::Refusal, /twice/)
+    end
+  end
+
   describe ".evaluate" do
     let(:source) do
       <<~RUBY
@@ -79,7 +105,8 @@ RSpec.describe Lain::Config::Builder do
                                                        judge_timeout: 30,
                                                        todos: Lain::Config::Todos.empty,
                                                        theme: Lain::Config::Theme.empty,
-                                                       think: nil)
+                                                       think: nil,
+                                                       review: Lain::Config::Review.empty)
     end
 
     it "reads the judge's timeout from the approval table" do

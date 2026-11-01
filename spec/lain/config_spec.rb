@@ -160,6 +160,28 @@ RSpec.describe Lain::Config do
     end
   end
 
+  describe "the review model" do
+    it "makes configs differing only in review unequal, with different hashes" do
+      epics = Lain::Config::Epics.new(home: :xdg)
+      plain = described_class.new(epics:)
+      other = described_class.new(epics:, review: Lain::Config::Review.new(model: "claude-sonnet-5-5"))
+
+      expect([plain == other, plain.hash == other.hash]).to eq([false, false])
+    end
+
+    it "is the author's when no config declares one" do
+      Dir.mktmpdir { |root| expect(described_class.review(root:).choose(author: "glm-5.3").model).to eq("glm-5.3") }
+    end
+
+    it "reads the model the config names" do
+      Dir.mktmpdir do |root|
+        write_config(root, "review model: \"claude-sonnet-5-5\"\n")
+
+        expect(described_class.load(root:).review.choose(author: "glm-5.3").model).to eq("claude-sonnet-5-5")
+      end
+    end
+  end
+
   describe "the approval timeout" do
     it "is 300 seconds when no config declares one" do
       Dir.mktmpdir do |root|
