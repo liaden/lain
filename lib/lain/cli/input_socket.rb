@@ -297,11 +297,11 @@ module Lain
 
       # Registered under the lock as it is started, so {#stop} owns every thread
       # this object ever began -- including the per-connection readers, which
-      # start on the accept thread and remove themselves as they end.
+      # start on the accept thread and remove themselves as they end. Started
+      # INSIDE the lock: a reader whose pane closed at once would otherwise
+      # remove itself before it was added, and stay in the registry dead.
       def spawn(&body)
-        thread = Thread.new(&body)
-        @lock.synchronize { @threads << thread }
-        thread
+        @lock.synchronize { Thread.new(&body).tap { @threads << _1 } }
       end
 
       def connected = @lock.synchronize { @clients.dup }

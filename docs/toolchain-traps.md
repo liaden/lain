@@ -388,7 +388,9 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
 
   Added 2026-10-21, a thread count red once in a pre-commit suite at load 11 beside another rspec run
   (5 threads against 4), green alone (37 of 37) and green in a full suite on the base and on the change:
-  `Lain::CLI::InputSocket serving a pane reaps a closed pane's reader, so it owns every thread it started`.
+  `Lain::CLI::InputSocket serving a pane reaps a closed pane's reader, so it owns every thread it started`. Retired 2026-11-01 on
+  its second red: a reader whose pane closed at once removed itself before `spawn` added it, and stayed in
+  the registry dead. `spawn` now starts the thread inside the lock.
 
   Added 2026-10-21, from 5 back-to-back full `pspec` runs at 12 workers on an otherwise quiet box (each run
   at the load the previous one left, 9 to 15). Every run reached all 26,464 examples; 2 runs had 1 red each,
