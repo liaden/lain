@@ -81,10 +81,13 @@ module Lain
                         :subject, :level) do
       def initialize(id:, title:, description: "", status: "pending", criteria: nil,
                      blocks: [], related: [], discovered_from: nil, subject: nil, level: nil)
-        super(id: clean_id(id, "issue id"), title: clean_title(title),
+        id = clean_id(id, "issue id")
+        blocks = clean_edges(blocks, "blocks")
+        related = clean_edges(related, "related")
+        refuse_double_edge!(id, blocks, related)
+        super(id:, title: clean_title(title),
               description: text(description, "issue description"), status: stored_status(status),
-              criteria: criteria && clean_criteria(criteria), blocks: clean_edges(blocks, "blocks"),
-              related: clean_edges(related, "related"),
+              criteria: criteria && clean_criteria(criteria), blocks:, related:,
               discovered_from: discovered_from && clean_id(discovered_from, "discovered_from"),
               subject: subject && clean_label(subject, "issue subject"),
               level: level && clean_label(level, "issue level"))
@@ -181,6 +184,14 @@ module Lain
         raise MalformedIssue, "#{field} must be an Array of issue ids (got #{ids.inspect})" unless ids.is_a?(Array)
 
         ids.map { |id| clean_id(id, "#{field} edge") }.uniq.sort.freeze
+      end
+
+      def refuse_double_edge!(id, blocks, related)
+        both = blocks & related
+        return if both.empty?
+
+        raise MalformedIssue, "issue #{id.inspect} lists #{both.map(&:inspect).join(", ")} under both Blocks and " \
+                              "Related; remove the Related line"
       end
 
       def clean_criteria(source)

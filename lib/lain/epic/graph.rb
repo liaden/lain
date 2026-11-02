@@ -63,7 +63,9 @@ module Lain
       # The one place the edge kinds are enumerated, so a third kind cannot be
       # forgotten at one of the two call sites below.
       def rebuild(issue, **overrides, &edges)
-        issue.with(**EDGE_FIELDS.to_h { |field| [field, yield(field)] }, **overrides)
+        # A rewrite can point a related edge at the same issue a blocks edge now names.
+        kinds = EDGE_FIELDS.to_h { |field| [field, yield(field)] }
+        issue.with(**kinds, related: kinds.fetch(:related) - kinds.fetch(:blocks), **overrides)
       end
 
       # Carrying the departing issues' edges alongside the arrival's own is what

@@ -158,6 +158,11 @@ RSpec.describe Lain::Epic::Issue do
       expect(value.related).to eq(%w[b q])
     end
 
+    it "refuses an edge held under both blocks and related, naming it" do
+      expect { issue(blocks: %w[b], related: %w[b]) }
+        .to raise_error(Lain::Epic::MalformedIssue, /issue "a" lists "b" under both Blocks and Related/)
+    end
+
     it "leaves the array the caller passed alone" do
       edges = %w[z a]
       issue(blocks: edges)

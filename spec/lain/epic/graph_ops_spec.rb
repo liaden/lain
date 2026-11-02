@@ -131,7 +131,7 @@ RSpec.describe Lain::Epic::Graph do
     end
 
     it "leaves no edge anywhere naming the id it split" do
-      value = graph(issue("x", blocks: %w[y], related: %w[y]), issue("y")).split("y", into: [issue("y1")])
+      value = graph(issue("x", blocks: %w[y]), issue("w", related: %w[y]), issue("y")).split("y", into: [issue("y1")])
 
       expect(edge_ids(value)).to eq(%w[y1])
     end
@@ -242,6 +242,13 @@ RSpec.describe Lain::Epic::Graph do
       value = graph(issue("x", related: %w[a b]), issue("a"), issue("b")).merge("a", "b", as: issue("c"))
 
       expect(value.fetch("x").related).to eq(%w[c])
+    end
+
+    it "drops a related edge that the merge makes equal to a blocks edge" do
+      value = graph(issue("a", blocks: %w[n], related: %w[m]), issue("m"), issue("n"))
+              .merge("m", "n", as: issue("c"))
+
+      expect([value.fetch("a").blocks, value.fetch("a").related]).to eq([%w[c], []])
     end
 
     it "removes both merged issues" do

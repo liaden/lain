@@ -51,8 +51,9 @@ RSpec.describe Lain::Epic::Graph do
   end
 
   def generated_issue(id, later, source)
-    issue(id, status: %w[pending pending pending in_flight done abandoned].sample(random: source),
-              blocks: later.select { source.rand < 0.4 }, related: later.select { source.rand < 0.2 })
+    status = %w[pending pending pending in_flight done abandoned].sample(random: source)
+    blocks = later.select { source.rand < 0.4 }
+    issue(id, status:, blocks:, related: (later - blocks).select { source.rand < 0.2 })
   end
 
   def issue(id, **overrides) = Lain::Epic::Issue.new(id:, title: "Issue #{id}", **overrides)
@@ -324,6 +325,12 @@ RSpec.describe Lain::Epic::Graph do
       pairs = revised.sum { |before, _after, _map| blocker_closure(before).sum { |_id, set| set.size } }
 
       expect([revised.size, refused.size, pairs]).to all(be > 20)
+    end
+
+    it "is read over graphs that carry related edges, which a merge must keep apart from blocks" do
+      related = graphs.sum { |value| value.sum { |member| member.related.size } }
+
+      expect(related).to be > 20
     end
   end
 

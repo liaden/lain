@@ -34,7 +34,7 @@ RSpec.describe Lain::Epic::Document do
 
   let(:original) do
     graph(issue("a", description: "The first thing needs doing.\n\nIt has two paragraphs.",
-                     blocks: %w[b c], related: %w[c]),
+                     blocks: %w[b], related: %w[c]),
           issue("b", status: "in_flight", discovered_from: "a"),
           issue("c", status: "done", criteria: criteria_source))
   end
@@ -158,6 +158,14 @@ RSpec.describe Lain::Epic::Document do
 
       expect(once.fetch("a").description).to eq("Above.\n\n\nBelow.")
       expect(parse(described_class.to_markdown(once)).digest).to eq(once.digest)
+    end
+
+    it "refuses an issue that lists one id under both Blocks and Related, on its heading line" do
+      source = "### [ ] `a` Issue a\n\nBlocks: `b`\n\nRelated: `b`\n\n### [ ] `b` Issue b\n"
+
+      expect { parse(source) }
+        .to raise_error(Lain::Epic::MalformedDocument,
+                        /line 1:.*"a" lists "b" under both Blocks and Related; remove the Related line/)
     end
 
     # Stated by the grammar rather than left to chance: a closing note under the
@@ -515,11 +523,12 @@ RSpec.describe Lain::Epic::Document do
     # cannot spend its runs on cycles the Graph refuses before Document is
     # reached.
     def random_issue(id, later, rng, corpus)
+      blocks = later.sample(rng.rand(0..later.size), random: rng)
+      rest = later - blocks
       issue(id, description: corpus.fetch(:prose).sample(random: rng),
                 criteria: corpus.fetch(:criteria).sample(random: rng),
                 status: Lain::Epic::STORED_STATUSES.sample(random: rng),
-                blocks: later.sample(rng.rand(0..later.size), random: rng),
-                related: later.sample(rng.rand(0..later.size), random: rng),
+                blocks:, related: rest.sample(rng.rand(0..rest.size), random: rng),
                 discovered_from: later.sample(random: rng))
     end
 
