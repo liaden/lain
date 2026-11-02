@@ -196,6 +196,35 @@ module Lain
                [fetch(left), fetch(right)], [arrival], discovered_from: provenance, &fiber)
       end
 
+      # +from+ gains an edge of +kind+ to +to+. Both ends are the edit's
+      # preimage even though only +from+ changes: the rendered view of +to+ lists
+      # its inbound edge, so a gate held on either end is invalidated by it.
+      def link(kind, from, to, &fiber)
+        source = fetch(from)
+        refuse_edge_present!(source, kind, to)
+        amend("link", edge_arguments(kind, from, to), [from, to],
+              source.with(kind.to_sym => source.public_send(kind) + [to]), &fiber)
+      end
+
+      def unlink(kind, from, to, &fiber)
+        source = fetch(from)
+        refuse_edge_absent!(source, kind, to)
+        amend("unlink", edge_arguments(kind, from, to), [from, to],
+              source.with(kind.to_sym => source.public_send(kind) - [to]), &fiber)
+      end
+
+      def retitle(id, title, &fiber)
+        amend("retitle", { "id" => id, "title" => title }, [id], fetch(id).with(title:), &fiber)
+      end
+
+      def describe(id, description, &fiber)
+        amend("describe", { "description" => description, "id" => id }, [id], fetch(id).with(description:), &fiber)
+      end
+
+      def subject(id, subject, &fiber)
+        amend("subject", { "id" => id, "subject" => subject }, [id], fetch(id).with(subject:), &fiber)
+      end
+
       def digest = Canonical.digest(canonical)
 
       def canonical = { "issues" => issues.map(&:canonical) }
@@ -257,6 +286,42 @@ module Lain
         revised = Graph.new(issues: Revision.new(removed, arriving, **overrides).apply(issues))
         yield GraphFiber.cut(operation:, arguments:, removed:, arriving:, from: self, to: revised) if block_given?
         revised
+      end
+
+      # An edit that changes issues in place and removes none, so it bypasses
+      # Revision: there is no edge to rewrite, and Graph.new re-runs every
+      # refusal over the result. +touched+ is what a gate check must cover.
+      def amend(operation, arguments, touched, edited, &fiber)
+        revised = Graph.new(issues: issues.map { |issue| issue.id == edited.id ? edited : issue })
+        offer_amendment(operation, arguments, touched, revised, &fiber)
+        revised
+      end
+
+      def offer_amendment(operation, arguments, touched, revised)
+        return unless block_given?
+
+        held = touched.map { |id| fetch(id) }
+        yield GraphFiber.cut(operation:, arguments:, removed: held, arriving: held, from: self, to: revised)
+      end
+
+      def edge_arguments(kind, from, to) = { "from" => from, "kind" => kind, "to" => to }
+
+      def refuse_edge_present!(source, kind, target)
+        return unless edges_of(source, kind).include?(target)
+
+        raise MalformedGraph, "issue #{source.id.inspect} already has a #{kind} edge to #{target.inspect}"
+      end
+
+      def refuse_edge_absent!(source, kind, target)
+        return if edges_of(source, kind).include?(target)
+
+        raise MalformedGraph, "issue #{source.id.inspect} has no #{kind} edge to #{target.inspect}"
+      end
+
+      def edges_of(issue, kind)
+        return issue.public_send(kind) if EDGE_FIELDS.map(&:to_s).include?(kind.to_s)
+
+        raise MalformedGraph, "an edge kind must be one of #{EDGE_FIELDS.join("/")} (got #{kind.inspect})"
       end
 
       # An id is the graph's join key, so two issues sharing one make every

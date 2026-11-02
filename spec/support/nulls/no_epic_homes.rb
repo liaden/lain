@@ -9,7 +9,7 @@ module SpecNulls
     # What epic_graph edits through, refusing as {.for} does.
     def self.epics = self
 
-    %i[add split merge].each do |verb|
+    %i[add split merge link unlink retitle describe subject].each do |verb|
       define_singleton_method(verb) { |*, **| raise(Lain::Error, "this spec wired no epic home") }
     end
   end

@@ -58,7 +58,9 @@ module Lain
     # Hash over mutable Arrays is not `Ractor.shareable?`, which is this
     # codebase's mechanical statement of "no reachable mutable state".
     REVISION_OPS = { "add" => %w[discovered_from issue], "split" => %w[id into],
-                     "merge" => %w[as left right] }.transform_values(&:freeze).freeze
+                     "merge" => %w[as left right], "link" => %w[from kind to], "unlink" => %w[from kind to],
+                     "retitle" => %w[id title], "describe" => %w[description id],
+                     "subject" => %w[id subject] }.transform_values(&:freeze).freeze
 
     # The three ways bytes an author wrote can fail to be an epic, gathered
     # here rather than beside the parsers that raise them because {Intake}'s

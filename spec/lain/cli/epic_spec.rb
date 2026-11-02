@@ -956,6 +956,71 @@ RSpec.describe Lain::CLI::Epic do
       expect { command.add("d", "the d issue", "alpha") }.not_to raise_error
     end
 
+    describe "the edge and text verbs" do
+      # Scenario: an edge is added without rewriting epic.md
+      it "links an edge, rewriting only that issue's line and journaling one link revision" do
+        write_epic("alpha", chain)
+        before = epic_home.epic.read.lines
+
+        told = command.link("blocks", "a", "c", "alpha")
+        changed = epic_home.epic.read.lines - before
+
+        expect(epic_home.read_epic.blocked_by("c")).to contain_exactly("a", "b")
+        expect(changed.size).to eq(1)
+        expect(told).to include("linked `a` blocks `c`")
+        expect(graph_revisions.map { |record| record["operation"] }).to eq(%w[link])
+      end
+
+      it "unlinks an edge and says so" do
+        write_epic("alpha", chain)
+
+        told = command.unlink("blocks", "a", "b", "alpha")
+
+        expect(epic_home.read_epic.fetch("a").blocks).to be_empty
+        expect(told).to include("unlinked `a` blocks `b`")
+      end
+
+      # Scenario: a link that makes a cycle is refused
+      it "refuses a link that closes a cycle through 2 hops, naming it and writing nothing" do
+        write_epic("alpha", chain)
+        before = epic_home.epic.read
+
+        expect { command.link("blocks", "c", "a", "alpha") }
+          .to raise_error(Lain::Epic::MalformedGraph, /a.*b.*c/m)
+        expect(epic_home.epic.read).to eq(before)
+        expect(graph_revisions).to be_empty
+      end
+
+      it "retitles, describes and sets the subject through the one write path" do
+        write_epic("alpha", chain)
+
+        command.retitle("a", "renamed", "alpha")
+        command.describe("a", "the new body", "alpha")
+        command.subject("a", "lib/a.rb", "alpha")
+
+        expect(epic_home.read_epic.fetch("a")).to have_attributes(title: "renamed", description: "the new body",
+                                                                  subject: "lib/a.rb")
+        expect(graph_revisions.map { |record| record["operation"] }).to eq(%w[retitle describe subject])
+      end
+
+      it "names the epics and asks for the slug when a link meets 2 epics, advising no command that does not exist" do
+        write_epic("alpha", chain)
+        write_epic("beta", graph_of(issue("z")))
+
+        expect { command.link("blocks", "a", "c") }
+          .to raise_error(Lain::CLI::Epic::Ambiguous, /`alpha`, `beta`.*name one: pass the epic's slug/m)
+      end
+
+      it "refuses a link while the far end holds a gate, since both ends are in the digest" do
+        write_epic("alpha", chain)
+        session("gates.ndjson", gate_decision(stage: "issue_plan", issue_id: "c", approved: true))
+
+        expect { command.link("blocks", "a", "c", "alpha") }
+          .to raise_error(Lain::CLI::Epic::GatedIssue, /"c".*approved.*issue_plan/m)
+        expect(graph_revisions).to be_empty
+      end
+    end
+
     it "lets an edit through once a parked gate is denied rather than left standing" do
       write_epic("alpha", chain)
       session("park.ndjson", gate_decision(stage: "implementation", issue_id: "a", approved: false),

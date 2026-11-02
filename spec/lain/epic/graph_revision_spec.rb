@@ -66,6 +66,15 @@ RSpec.describe Lain::Epic::GraphRevision do
     expect { revision(operation: "rename") }.to raise_error(ArgumentError, /operation/)
   end
 
+  it "journals an edge edit with the kind and both ends it replays from" do
+    edge = nil
+    graph(issue("x"), issue("a")).link("blocks", "x", "a") { |cut| edge = cut }
+
+    expect(described_class.new(epic_slug: "alpha", **edge.to_h).to_journal)
+      .to include("operation" => "link", "arguments" => { "from" => "x", "kind" => "blocks", "to" => "a" },
+                  "preimage" => %w[a x], "results" => %w[a x])
+  end
+
   it "is a deeply frozen, shareable value" do
     expect(revision).to be_deeply_frozen
   end

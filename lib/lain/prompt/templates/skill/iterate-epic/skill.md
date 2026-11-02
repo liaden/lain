@@ -43,6 +43,11 @@ takes the epic's `slug` and a `verb`:
 - `verb: split` with `id` (the issue to split) and `into` (the parts' ids, comma-separated).
 - `verb: merge` with `left`, `right`, `as` (the merged id) and optionally `title`.
 - `verb: add` with `id`, `title` and optionally `discovered_from`.
+- `verb: link` or `verb: unlink` with `kind` (`blocks` or `related`), `from` and `to`: add or
+  drop one edge without touching anything else. A link that would close a cycle is refused,
+  and a gate held on either end refuses it.
+- `verb: retitle` with `id` and `title`; `verb: describe` with `id` and `description`;
+  `verb: subject` with `id` and `subject`.
 
 The tool refuses while a review holds `epic.md`; wait for the user to answer it.
 

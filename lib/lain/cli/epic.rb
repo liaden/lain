@@ -350,7 +350,50 @@ module Lain
         end
       end
 
+      # @param kind [String] `blocks` or `related`
+      # @param from [String] the issue that gains the edge
+      # @param to [String] the issue the edge names
+      # @param slug [String, nil] the epic; omitted resolves to the sole one
+      # @return [String] the applied edit, rendered
+      # @raise [Lain::Error] a cycle, a repeated edge or an unknown issue, before anything is written
+      def link(kind, from, to, slug = nil)
+        amended(slug) { |graph, cut| graph.link(kind, from, to, &cut) }
+      end
+
+      # {#link}'s inverse, with the same parameters.
+      def unlink(kind, from, to, slug = nil)
+        amended(slug) { |graph, cut| graph.unlink(kind, from, to, &cut) }
+      end
+
+      # @param id [String] the issue to retitle
+      # @param title [String] its new title
+      # @param slug [String, nil] the epic; omitted resolves to the sole one
+      # @return [String] the applied edit, rendered
+      def retitle(id, title, slug = nil)
+        amended(slug) { |graph, cut| graph.retitle(id, title, &cut) }
+      end
+
+      # {#retitle} for the description.
+      def describe(id, description, slug = nil)
+        amended(slug) { |graph, cut| graph.describe(id, description, &cut) }
+      end
+
+      # {#retitle} for the test subject.
+      def subject(id, subject, slug = nil)
+        amended(slug) { |graph, cut| graph.subject(id, subject, &cut) }
+      end
+
       private
+
+      # The in-place edits' shape: the graph op takes the callback that catches
+      # its fiber, and {#apply} wants graph and fiber back together.
+      def amended(slug)
+        apply(slug, remedy: "pass the epic's slug") do |graph|
+          fiber = nil
+          revised = yield(graph, ->(cut) { fiber = cut })
+          [revised, fiber]
+        end
+      end
 
       # A part never inherits the subject: two parts mirroring one source file
       # would write their failing tests to the same path.
@@ -633,17 +676,28 @@ module Lain
       # `write_epic` and `graph_revised`, before either runs -- so this class
       # only ever renders a fiber that already named a graph on disk.
       class Applied
+        EDGE_OPERATIONS = %w[link unlink].freeze
+
         def initialize(slug, fiber)
           @slug = slug
           @fiber = fiber
         end
 
         def to_s
+          return edge_sentence if EDGE_OPERATIONS.include?(@fiber.operation)
+
           ["#{@fiber.operation} applied to epic `#{@slug}`: #{ids(@fiber.preimage)} -> #{ids(@fiber.results)}",
            "  epic.md written; graph #{@fiber.before} -> #{@fiber.after}"].join("\n")
         end
 
         private
+
+        def edge_sentence
+          args = @fiber.arguments
+          verb = @fiber.operation == "link" ? "linked" : "unlinked"
+          ["#{verb} `#{args["from"]}` #{args["kind"]} `#{args["to"]}` in epic `#{@slug}`",
+           "  epic.md written; graph #{@fiber.before} -> #{@fiber.after}"].join("\n")
+        end
 
         def ids(list) = list.empty? ? "(none)" : list.map { |id| "`#{id}`" }.join(", ")
       end

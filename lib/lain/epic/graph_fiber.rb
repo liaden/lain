@@ -106,6 +106,16 @@ module Lain
 
       def replay_merge(graph) = graph.merge(argument("left"), argument("right"), as: arriving("as"))
 
+      def replay_link(graph) = graph.link(argument("kind"), argument("from"), argument("to"))
+
+      def replay_unlink(graph) = graph.unlink(argument("kind"), argument("from"), argument("to"))
+
+      def replay_retitle(graph) = graph.retitle(argument("id"), argument("title"))
+
+      def replay_describe(graph) = graph.describe(argument("id"), argument("description"))
+
+      def replay_subject(graph) = graph.subject(argument("id"), argument("subject"))
+
       def arriving(key) = issue_of(argument(key))
 
       # {Issue#canonical}'s wire form has the constructor's own keywords for keys,

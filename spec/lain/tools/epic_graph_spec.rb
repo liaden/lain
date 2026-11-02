@@ -50,13 +50,63 @@ RSpec.describe Lain::Tools::EpicGraph do
     expect(io.string).to include('"operation":"add"')
   end
 
+  it "links a blocks edge, writing it to epic.md and journaling a link" do
+    result = run(verb: "link", slug: "frugirl-mvp", kind: "blocks", from: "scaffold", to: "docs")
+
+    expect(result).not_to be_error
+    expect(result.content).to include("linked `scaffold` blocks `docs`")
+    expect(home.read_epic.blocked_by("docs")).to eq(["scaffold"])
+    expect(io.string).to include('"operation":"link"')
+  end
+
+  it "unlinks it again" do
+    run(verb: "link", slug: "frugirl-mvp", kind: "blocks", from: "scaffold", to: "docs")
+    result = run(verb: "unlink", slug: "frugirl-mvp", kind: "blocks", from: "scaffold", to: "docs")
+
+    expect(result.content).to include("unlinked `scaffold` blocks `docs`")
+    expect(home.read_epic.blocked_by("docs")).to be_empty
+  end
+
+  it "returns a cycle as an error result naming the path" do
+    run(verb: "link", slug: "frugirl-mvp", kind: "blocks", from: "scaffold", to: "docs")
+    result = run(verb: "link", slug: "frugirl-mvp", kind: "blocks", from: "docs", to: "scaffold")
+
+    expect(result).to be_error
+    expect(result.content).to match(/scaffold.*docs/m)
+  end
+
+  it "retitles, describes and sets the subject of an issue" do
+    run(verb: "retitle", slug: "frugirl-mvp", id: "docs", title: "write the docs")
+    run(verb: "describe", slug: "frugirl-mvp", id: "docs", description: "all of them")
+    result = run(verb: "subject", slug: "frugirl-mvp", id: "docs", subject: "lib/docs.rb")
+
+    expect(result).not_to be_error
+    expect(home.read_epic.fetch("docs")).to have_attributes(title: "write the docs", description: "all of them",
+                                                            subject: "lib/docs.rb")
+  end
+
+  it "refuses an edge kind other than blocks or related as a shape error, and lists both in the schema" do
+    expect { run(verb: "link", slug: "frugirl-mvp", kind: "depends", from: "scaffold", to: "docs") }
+      .to raise_error(Lain::Tool::InvalidInput, /blocks or related/)
+    expect(tool.input_schema.dig("properties", "kind", "enum")).to eq(%w[blocks related])
+  end
+
+  it "says in its description that retitle, describe and subject cannot blank a field" do
+    expect(tool.description).to include("cannot blank")
+  end
+
+  it "refuses an edge verb missing its kind, naming the field" do
+    expect { run(verb: "link", slug: "frugirl-mvp", from: "scaffold", to: "docs") }
+      .to raise_error(Lain::Tool::InvalidInput, /Kind is required/)
+  end
+
   it "refuses a merge with no as field, naming it" do
     expect { run(verb: "merge", slug: "frugirl-mvp", left: "scaffold", right: "docs") }
       .to raise_error(Lain::Tool::InvalidInput, /As is required/)
     expect(home.read_epic.ids).to contain_exactly("scaffold", "docs")
   end
 
-  it "refuses an unknown verb, listing the 3 it takes" do
+  it "refuses an unknown verb, listing the verbs it takes" do
     expect { run(verb: "rename", slug: "frugirl-mvp", id: "scaffold") }
       .to raise_error(Lain::Tool::InvalidInput, /add, split, merge/)
   end

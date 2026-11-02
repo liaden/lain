@@ -299,6 +299,87 @@ RSpec.describe Lain::Epic::Graph do
     end
   end
 
+  describe "the edge and text edits" do
+    def caught(&edit)
+      fiber = nil
+      edit.call { |cut| fiber = cut }
+      fiber
+    end
+
+    it "links a blocks edge from one issue to another" do
+      expect(chain.link("blocks", "x", "z").fetch("x").blocks).to eq(%w[y z])
+    end
+
+    it "links a related edge" do
+      expect(chain.link("related", "x", "z").fetch("x").related).to eq(%w[z])
+    end
+
+    it "unlinks an edge it holds" do
+      expect(chain.unlink("blocks", "x", "y").fetch("x").blocks).to be_empty
+    end
+
+    it "refuses a link that closes a cycle, naming the path" do
+      expect { chain.link("blocks", "z", "x") }.to raise_error(Lain::Epic::MalformedGraph, /x.*y.*z/m)
+    end
+
+    it "refuses a link the graph already holds, rather than reporting a no-op as an edit" do
+      expect { chain.link("blocks", "x", "y") }.to raise_error(Lain::Epic::MalformedGraph, /already/)
+    end
+
+    it "refuses an unlink of an edge it does not hold" do
+      expect { chain.unlink("blocks", "x", "z") }.to raise_error(Lain::Epic::MalformedGraph, /no blocks edge/)
+    end
+
+    it "refuses an unknown edge kind" do
+      expect { chain.link("discovered_from", "x", "z") }.to raise_error(Lain::Epic::MalformedGraph, /kind/)
+    end
+
+    it "refuses an edge to an issue it does not hold" do
+      expect { chain.link("blocks", "x", "nobody") }.to raise_error(Lain::Error, /nobody/)
+    end
+
+    it "retitles, describes and sets the subject of one issue" do
+      value = chain.retitle("x", "new title").describe("x", "new body").subject("x", "lib/x.rb")
+
+      expect(value.fetch("x")).to have_attributes(title: "new title", description: "new body", subject: "lib/x.rb")
+    end
+
+    it "names both ends of an edge as the fiber's preimage and results" do
+      fiber = caught { |&block| chain.link("blocks", "x", "z", &block) }
+
+      expect(fiber).to have_attributes(operation: "link", preimage: %w[x z], results: %w[x z])
+    end
+
+    it "names the one issue a text edit touched" do
+      fiber = caught { |&block| chain.retitle("x", "other", &block) }
+
+      expect(fiber).to have_attributes(operation: "retitle", preimage: %w[x], results: %w[x])
+    end
+
+    it "yields no fiber for an edit the graph refuses" do
+      yielded = false
+
+      expect { chain.link("blocks", "z", "x") { yielded = true } }.to raise_error(Lain::Epic::MalformedGraph)
+      expect(yielded).to be(false)
+    end
+
+    {
+      "link" => ->(value, &fiber) { value.link("blocks", "x", "z", &fiber) },
+      "unlink" => ->(value, &fiber) { value.unlink("blocks", "x", "y", &fiber) },
+      "retitle" => ->(value, &fiber) { value.retitle("x", "other", &fiber) },
+      "describe" => ->(value, &fiber) { value.describe("x", "other body", &fiber) },
+      "subject" => ->(value, &fiber) { value.subject("x", "lib/x.rb", &fiber) }
+    }.each do |operation, edit|
+      it "replays a #{operation} from its fiber and proves it reproduces" do
+        start = chain
+        fiber = nil
+        edit.call(start) { |cut| fiber = cut }
+
+        expect(fiber.reproduces?(start)).to be(true)
+      end
+    end
+  end
+
   # The three operations are one object with different arguments, and that object
   # is Graph's, not the unit's: a Revision applied to issues Graph did not fetch
   # answers for an edit the graph never agreed to, exactly as Blocking would.
