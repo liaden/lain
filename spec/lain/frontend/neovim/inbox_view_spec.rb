@@ -845,9 +845,8 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
     def body_of(lines) = item_of(lines).drop(1)
 
     # The body as a human reads a wrapped paragraph -- indent off, lines
-    # rejoined. The wrap is HARD, so a break can land mid-word and an
-    # assertion on contiguous bytes has to read it back this way.
-    def unwrapped(lines) = body_of(lines).map { |line| line.delete_prefix(described_class::INDENT) }.join
+    # rejoined at the word boundaries the wrap broke on.
+    def unwrapped(lines) = body_of(lines).map(&:strip).join(" ")
 
     # THE FIXTURE GUARD, and it is not ceremony: every example below is about a
     # CUT, so a fixture that stopped eliding would leave them all passing over
@@ -862,6 +861,24 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
       expect(lines.first.length).to eq(described_class::WIDTH)
     end
 
+    it "reads a five-question ask question by question, no word broken across lines" do
+      bodies = { "db" => "which database should the migration target, given the replica lag we saw this morning?",
+                 "when" => "should it run before or after the deploy window closes tonight, or wait for friday?",
+                 "who" => "who signs off on the rollback plan if the migration stalls part way through?",
+                 "size" => "how many rows may the backfill touch per batch before the primary starts to lag?",
+                 "tell" => "which channel should hear about it when the whole thing is done and verified?" }
+      set = Lain::Question::Set.new(questions: bodies.map { |id, body| Lain::Question.new(id:, body:) })
+
+      body = body_of(view.update(record(asked(set, agent: "researcher"))))
+
+      expect(body).to all(start_with(described_class::INDENT))
+      bodies.each do |id, text|
+        group = body.slice_before { |line| line.match?(/\A  \S/) }.find { |rows| rows.first.start_with?("  #{id}. ") }
+        expect(group.map(&:strip).join(" ")).to eq("#{id}. #{text}")
+      end
+      expect(body.grep(/\A  \S/).size).to eq(5)
+    end
+
     it "carries the question in full under its summary line" do
       lines = rendered(long_question)
 
@@ -870,10 +887,7 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
       expect(unwrapped(lines)).to include(long_question)
     end
 
-    # THE SAFETY PROPERTY, which is the one {Row#whole} claims and the one this
-    # card's AC needs: the body is the item VERBATIM, so nothing the summary
-    # elided is missing. Asserted against the ITEM rather than against the
-    # summary's bytes, because this is what stays true of every shape below.
+    # Nothing the summary elided is missing from the groups under it.
     it "puts the whole item under the summary, so nothing the cut removed goes missing" do
       question = listing(long_question)
       lines = view.update(record(question))
@@ -883,18 +897,7 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
       expect(unwrapped(lines)).to include(headline)
     end
 
-    # The PREFIX relation is the COMMON case and not the guarantee, which is why
-    # this example's title says which row it is about. An earlier draft of
-    # {Row#whole} named it as THE invariant; a review found two shapes where it
-    # is false, both pinned below. An over-claimed invariant is worse than a
-    # narrow one -- a reader relies on exactly the sentence that is written down.
-    it "is a cut prefix of its body for the COMMON row: one question, headline first" do
-      lines = rendered(long_question)
-
-      expect(unwrapped(lines)).to start_with(lines.first.delete_suffix(described_class::ELISION))
-    end
-
-    # Counterexample 1: any set of more than one question. `(+1 more)` is the
+    # Any set of more than one question. `(+1 more)` is the
     # announcement's own arithmetic and appears NOWHERE in the body, so the
     # summary cannot be a prefix of it -- while every question's text is still
     # under the fold, which is the property that matters.
@@ -908,30 +911,14 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
       expect(unwrapped(lines)).to include(long_question).and include("deploy now?")
     end
 
-    # Counterexample 2: a body whose headline is not where the collapsed body
-    # starts, and the shape is not the one to guess. A FENCED body does not do
-    # it -- the fence is the first line, so it heads the summary and the body
-    # alike, and the prefix survives (measured, not assumed: that fixture was
-    # written first and came out green). What does it is the two definitions of
-    # "nothing".
-    # {Announcement#headline} skips a first line of U+00A0 because {Blankness}
-    # counts it blank; {Row#prose}'s `String#strip` does NOT remove it, because
-    # Ruby strips ASCII whitespace. So the summary names the SECOND line while
-    # the body still opens with the first. The safety property holds; the prefix
-    # relation is not asserted here, because it is not owed.
-    #
-    # THE CHARACTER CHANGED AND THE SHAPE DID NOT. This was U+200B until
-    # {Lain::Tools::AskHuman::InboxRow.one_line} began removing the format
-    # characters a terminal obeys; the space-separator half of
-    # {Blankness::NOTHING_AT_ALL} -- U+00A0 here, U+2007, U+202F, U+3000 -- is
-    # `Zs`, survives that scrub, and is still not what `strip` removes. Picking
-    # the surviving half keeps the counterexample rather than the codepoint.
-    it "is NOT a prefix when the headline is not where the body starts" do
+    # {Announcement#headline} skips a first line {Blankness} counts blank
+    # (U+00A0 is `Zs`, which `String#strip` keeps), so the summary names the
+    # SECOND line while the group still carries the whole body.
+    it "keeps the whole body when the summary headline skips a blank first line" do
       lines = view.update(record(asked(one_question("db", "\u00A0\n#{long_question}"), agent: "researcher")))
 
       expect(lines.first).to include(long_question[0, 40])
       expect(unwrapped(lines)).to include(long_question)
-      expect(unwrapped(lines)).not_to start_with(lines.first.delete_suffix(described_class::ELISION))
     end
 
     it "lists every question of a set under the summary that only counts them" do

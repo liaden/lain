@@ -20,28 +20,18 @@ module Lain
             @now = now
           end
 
-          # ONE LINE EXACTLY WHEN THAT LINE IS THE WHOLE ITEM. Anything else --
-          # a question the announcement already cut, a set whose further
-          # questions the summary only COUNTS, a row wider than {WIDTH} -- draws
-          # the summary with its cut marked and the whole row underneath it,
-          # indented, folded away at rest.
+          # ONE LINE EXACTLY WHEN THAT LINE IS THE WHOLE ITEM. Anything else
+          # draws the summary with its cut marked and one indented group per
+          # question underneath it, folded away at rest.
           #
-          # NOTHING BOUNDS THE FOLD. {#whole} is built on EVERY render just to
-          # decide this height, and it is the whole set: a 60KB question draws
-          # ~655 indented lines, and {Question::Set::MAX_SET} permits roughly
-          # 2800. {ApprovalView}'s precedent does not cover it, because a
-          # command's `input.inspect` is incidentally short while
-          # {Tools::AskHuman}'s own docstring INVITES tables and fenced diffs into
-          # a question body. Three ways out, none free: clamp the body (loses the
-          # verbatim guarantee {#whole} rests on), clamp only what is DRAWN while
-          # the document keeps everything (two truths on one screen), or leave it
-          # unbounded and let the fold hide it -- today, tolerable only because
-          # the fold is closed at rest.
+          # NOTHING BOUNDS THE FOLD: a 60KB question draws ~655 indented lines,
+          # and {Question::Set::MAX_SET} permits roughly 2800. Clamping what is
+          # drawn would leave two truths on one screen, so it is left whole.
           # @return [Array<String>]
           def lines
             return [summary] if summary == whole && summary.length <= WIDTH
 
-            [elided] + body
+            [elided] + groups
           end
 
           private
@@ -56,31 +46,7 @@ module Lain
           # would then answer that item's set.
           def summary = @summary ||= drawn(@item.question)
 
-          # THE WHOLE ITEM, as one line before it is wrapped: the same sender
-          # and age columns the summary shows, and every question the set asks
-          # VERBATIM, rather than the announcement's one-line summary of them.
-          #
-          # THE INVARIANT, STATED AS NARROWLY AS IT IS TRUE: nothing the summary
-          # elided is missing from the ITEM, because this line carries the whole
-          # of it and {#lines} always draws this line when {#summary} is not it.
-          # That is the safety property, and the only one worth relying on.
-          #
-          # It is NOT the stronger claim that the summary is a cut PREFIX of the
-          # body. That holds for the common row and fails on two shapes. First,
-          # any set of more than one question: the summary ends in
-          # {Announcement}'s `(+N more)`, arithmetic that appears nowhere in the
-          # body. Second, a body whose headline is not where the collapsed body
-          # starts -- and a FENCED body is NOT that case, since the fence is the
-          # first line and heads both renderings. What does it is the gap between
-          # two definitions of "nothing": {Blankness} counts U+200B blank, so
-          # {Announcement#headline} skips a line of it, while `String#strip`
-          # removes only ASCII whitespace, so {#prose} keeps it. inbox_view_spec
-          # pins both shapes, asserting the safety property AND asserting the
-          # prefix relation is absent.
-          #
-          # THE SENDER AND AGE ARE REPEATED UNDER THE SUMMARY DELIBERATELY: the
-          # body is the same row drawn the same way, so a reader comparing the
-          # two lines is comparing like with like.
+          # The item as one line, only to decide whether the summary already is it.
           def whole = @whole ||= drawn(questions)
 
           # EVERY FIELD THE RECORD SUPPLIES IS SCRUBBED, sender included: nvim
@@ -123,7 +89,14 @@ module Lain
 
           def elided = Fold.cut(summary)
 
-          def body = Fold.wrap(whole)
+          def groups
+            listed = asked.select { |question| question.is_a?(Hash) && question["body"] }
+            return Fold.prose_wrap(@item.question) if listed.empty?
+
+            listed.flat_map { |question| Fold.prose_wrap(group(question)) }
+          end
+
+          def group(question) = "#{question["id"]}. #{prose(question["body"])}"
         end
       end
     end

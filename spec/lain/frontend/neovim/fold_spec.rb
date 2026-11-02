@@ -47,6 +47,23 @@ RSpec.describe Lain::Frontend::Neovim::Fold do
     end
   end
 
+  describe ".prose_wrap" do
+    it "wraps at word boundaries and indents every row" do
+      text = "id. #{"word " * 40}".strip
+
+      rows = described_class.prose_wrap(text)
+
+      expect(rows.size).to be > 1
+      expect(rows).to all(start_with(described_class::INDENT))
+      expect(rows.map(&:length).max).to be <= described_class::WIDTH
+      expect(rows.map(&:strip).join(" ")).to eq(text)
+    end
+
+    it "leaves a short line as one indented row" do
+      expect(described_class.prose_wrap("db. which db?")).to eq(["  db. which db?"])
+    end
+  end
+
   # A DRIFT GUARD, not a claim that anything folds -- that claim is
   # behavioural and belongs to `neovim_runtime_spec.rb`'s "folds" group,
   # against a real editor. This reads source on both sides because "the two

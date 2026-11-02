@@ -352,7 +352,10 @@ module Lain
       # tmux message are how the human hears of it while they type.
       def render_arrival(question, from: nil)
         note = @inbox.arrival(question, from:)
-        noted { @inbox.announce(note) }
+        noted do
+          @inbox.announce(note)
+          @inbox.headlines(question)
+        end
         @bell.ring_wait(note)
       end
 
@@ -758,6 +761,8 @@ module Lain
         # A chat with no editor answers a question at its next prompt.
         BELOW = "answer below, or /inbox"
 
+        MAX_HEADLINES = 6
+
         # What a human can do HERE, said once above the prompt. The document
         # below renders the same checkboxes the editor ticks and a terminal
         # has no gesture for them, so prose is the only answer this surface
@@ -803,6 +808,19 @@ module Lain
 
         def announce(note)
           @output.puts(@fit.call(@pastel.yellow(@stamp.call(note))))
+          @output.flush
+        end
+
+        # A human answering from the chat should not have to open the inbox to
+        # learn what was asked.
+        def headlines(question)
+          return unless listed?(question)
+
+          shown = question.headlines
+          if shown.size > MAX_HEADLINES + 1
+            shown = shown.first(MAX_HEADLINES) << "... #{shown.size - MAX_HEADLINES} more in /inbox"
+          end
+          shown.each { |line| @output.puts(@fit.call(@pastel.yellow("  #{line}"))) }
           @output.flush
         end
 
@@ -956,8 +974,12 @@ module Lain
         # {Announcement} to under 200. A genuinely bare String is still its own
         # summary: that is what a caller announcing prose meant.
         def summarized(question)
+          return "#{question.set.size} questions" if listed?(question)
+
           question.respond_to?(:summary) ? question.summary : question
         end
+
+        def listed?(question) = question.is_a?(Tools::AskHuman::Announcement) && question.set.size > 1
 
         # "" for an arrival nobody attributed, so the note concatenates back to
         # the unattributed line rather than branching on a missing name.

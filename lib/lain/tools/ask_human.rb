@@ -485,6 +485,9 @@ module Lain
         def set = carried!(@set, "question set")
         def summary = carried!(@summary, "summary line")
 
+        # @return [Array<String>] `id. headline` for each question, in set order
+        def headlines = set.map { |question| "#{question.id}. #{InboxRow.one_line(headline(question.body))}" }
+
         # The third rendering: the block a surface shows BELOW its one-line
         # row, and the same markdown the editor opens the set in, so the two
         # never drift. Asked for by message rather than assembled by whoever is

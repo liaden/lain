@@ -55,6 +55,11 @@ module Lain
         # runtime's `CONTINUATION` test finds every line of it.
         # @return [Array<String>]
         def wrap(text) = text.scan(BODY).map { |part| INDENT + part }
+
+        # The wrap repeats the indent on every continuation row, which is what
+        # keeps the runtime's `CONTINUATION` test true for a wrapped group.
+        # @return [Array<String>]
+        def prose_wrap(text) = Wrap.call(INDENT + text, width: WIDTH).split("\n")
       end
     end
   end

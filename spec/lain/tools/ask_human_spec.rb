@@ -843,6 +843,14 @@ RSpec.describe Lain::Tools::AskHuman do
       expect(summary).to include("+1 more")
     end
 
+    it "names each question's id and one-line headline, in set order" do
+      listed = announced(set).headlines
+
+      expect(listed.size).to eq(set.size)
+      expect(listed).to all(match(/\A\S+\. \S/)).and all(satisfy { |line| !line.match?(/[\r\n]/) })
+      expect(listed.map { |line| line.split(".").first }).to eq(set.ids)
+    end
+
     it "summarises a lone question without a count" do
       Sync { tool.ask(announced(Lain::Question::Set.new(questions: [database]))) }
 

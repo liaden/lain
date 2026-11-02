@@ -887,13 +887,53 @@ RSpec.describe Lain::Frontend::TTY do
       expect(output.string.chomp).not_to match(line_break)
     end
 
-    it "stays one line for a five-question set of multi-line bodies" do
+    it "lists each question's headline under the note, capped at 6 lines" do
+      tty.render_arrival(announced("db", "region", "budget", "deploy", "owner"), from: "orchestrator")
+
+      expect(output.string.lines.first).to include("5 questions").and include("orchestrator")
+      expect(output.string).not_to include("more)")
+      expect(output.string.lines.drop(1).map(&:strip)).to eq(["db. which db?", "region. which region?",
+                                                              "budget. which budget?", "deploy. which deploy?",
+                                                              "owner. which owner?"])
+    end
+
+    it "caps the listed headlines at 6 lines for a larger set" do
+      tty.render_arrival(announced(*%w[a b c d e f g h]), from: "orchestrator")
+
+      expect(output.string.lines.drop(1).first(6).map(&:strip)).to eq(%w[a b c d e f].map { |id|
+        "#{id}. which #{id}?"
+      })
+      expect(output.string.lines.last).to include("2 more in /inbox")
+      expect(output.string.lines.size).to eq(8)
+    end
+
+    it "prints all 7 headlines rather than 6 plus a line saying 1 more" do
+      tty.render_arrival(announced(*%w[a b c d e f g]), from: "orchestrator")
+
+      expect(output.string.lines.drop(1).map(&:strip)).to eq(%w[a b c d e f g].map { |id| "#{id}. which #{id}?" })
+    end
+
+    it "scrubs terminal escapes and carriage returns out of each listed headline" do
+      tty.render_arrival(announced("db", "region", body: "pick one\e[2J\rATTACKER"), from: "orchestrator")
+
+      listed = output.string.lines.drop(1).join
+      expect(listed).to include("db. pick one").and include("ATTACKER")
+      expect(listed).not_to match(/\e\[2J|\r/)
+    end
+
+    it "stays one note line, with no listing, for a lone question" do
+      tty.render_arrival(announced("db"), from: "researcher")
+
+      expect(output.string.lines.size).to eq(1)
+    end
+
+    it "stays one note line for a five-question set of multi-line bodies" do
       tty.render_arrival(announced("db", "region", "budget", "deploy", "owner",
                                    body: "which database?\n\n| a | b |\n| - | - |"),
                          from: "orchestrator")
 
-      expect(output.string).to include("which database?").and include("(+4 more)")
-      expect(output.string.chomp).not_to match(line_break)
+      expect(output.string).to include("which database?").and include("5 questions")
+      expect(output.string.lines).to all(satisfy { |line| !line.chomp.match?(line_break) })
     end
 
     # One line on the TERMINAL, which is what the property is actually about:
