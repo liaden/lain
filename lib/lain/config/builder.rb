@@ -9,7 +9,8 @@ module Lain
     # the detected-framework fallback survives, without every caller comparing
     # against {TestLayout::None}.
     Built = Data.define(:epics, :approval, :isolation, :sensitivity, :shell, :search, :tests, :middleware,
-                        :env_pass, :approval_timeout, :judge_timeout, :keys, :todos, :theme, :think, :review) do
+                        :env_pass, :approval_timeout, :judge_timeout, :keys, :todos, :theme, :think, :review,
+                        :budget) do
       # @param framework [String, nil] a detected test framework
       # @return [TestLayout] the declared layout, else what the framework implies
       def test_layout(framework: nil) = tests || TestLayout.from(nil, path: nil, framework:)
@@ -23,10 +24,12 @@ module Lain
     # A refusal names the line of the verb that caused it, because the user
     # wrote Ruby and a backtrace into this file points nowhere they can edit.
     class Builder
-      VERBS = %i[epics approval isolation sensitivity shell search tests middleware env todos think review].freeze
+      VERBS = %i[epics approval isolation sensitivity shell search tests middleware env todos think review
+                 budget].freeze
 
       ENV_TABLE = "`env`"
       THINK_TABLE = "`think`"
+      BUDGET_TABLE = "`budget`"
       UNNAMED_LEVEL = "think takes a level name such as \"low\", got %s"
 
       SECRET_PASS = "pass names %<names>s, which match the secret shape #{Exec::ChildEnv::SECRET.source}; " \
@@ -73,11 +76,12 @@ module Lain
       # @param source [String] the text of a `.lain/config.rb`
       # @param path [String] what backtraces and refusals name
       # @param verbs [Array<Symbol>] the tables this file may declare
+      # @param skills [Array<String>, nil] the skill names a `budget` row may name; nil reads the project's catalog
       # @return [Built]
       # @raise [Refusal] naming the path and line of what the file got wrong,
       #   whether that is a refused value or Ruby itself failing
-      def self.evaluate(source, path:, verbs: VERBS)
-        builder = new(path, verbs)
+      def self.evaluate(source, path:, verbs: VERBS, skills: nil)
+        builder = new(path, verbs, skills)
         # A String read under LC_ALL=C is US-ASCII, and `load` would assume UTF-8 here.
         builder.instance_eval(source.dup.force_encoding(Encoding::UTF_8), path, 1)
         builder.built
@@ -103,9 +107,14 @@ module Lain
                     path: located(path, line), key: name.to_s)
       end
 
-      def initialize(path, verbs = VERBS)
+      # @param path [String] what backtraces and refusals name
+      # @param verbs [Array<Symbol>] the tables this file may declare
+      # @param skills [Array<String>, nil] the skill names a `budget` row may name; the catalog is read
+      #   only when a row names something else
+      def initialize(path, verbs = VERBS, skills = nil)
         @path = path
         @verbs = verbs
+        @skills = skills
         @tables = {}
         @approval_timeout = Config::DEFAULT_APPROVAL_TIMEOUT
         @judge_timeout = Config::DEFAULT_JUDGE_TIMEOUT
@@ -168,6 +177,11 @@ module Lain
 
       def review(**table) = declare(:review, Review::TABLE, table) { |at| Review.from(shaped(table), path: at) }
 
+      # `budget iterations: { "plan-epic" => 80 }` replaces the default row of that name.
+      def budget(**table)
+        declare(:budget, BUDGET_TABLE, table) { |at| budget_from(shaped(table), at) }
+      end
+
       def keys(**table) = declare(:keys, Keys::TABLE, table) { |at| Keys.from(shaped(table), path: at) }
 
       def theme(**table) = declare(:theme, Theme::TABLE, table) { |at| Theme.from(shaped(table), path: at) }
@@ -213,7 +227,8 @@ module Lain
 
       def small_tables
         { keys: @tables.fetch(:keys) { Keys.empty }, todos: @tables.fetch(:todos) { Todos.empty },
-          theme: @tables.fetch(:theme) { Theme.empty }, review: @tables.fetch(:review) { Review.empty } }
+          theme: @tables.fetch(:theme) { Theme.empty }, review: @tables.fetch(:review) { Review.empty },
+          budget: @tables.fetch(:budget) { Lain::Budget::Table.new } }
       end
 
       def declare(table, label, keywords = {})
@@ -236,6 +251,33 @@ module Lain
       end
 
       def named?(level) = level.is_a?(String) && !level.strip.empty?
+
+      def budget_from(table, at)
+        unknown = table.keys - %w[iterations]
+        raise Refusal.unknown_keys(unknown, known: %w[iterations], path: at, table: BUDGET_TABLE) if unknown.any?
+
+        rows = table.fetch("iterations", {})
+        refuse_unknown_rows(rows.keys.map(&:to_s), at)
+        Lain::Budget::Table.new(rows:)
+      rescue ArgumentError => e
+        raise Refusal.new(e.message, path: at, table: BUDGET_TABLE, key: "iterations")
+      end
+
+      def refuse_unknown_rows(names, at)
+        unknown = names - known_rows
+        unknown -= skill_names if unknown.any?
+        return if unknown.empty?
+
+        detail = "iterations names #{unknown.map(&:inspect).join(", ")}, which is no skill, role or default; " \
+                 "known: #{(known_rows + skill_names).uniq.join(", ")}"
+        raise Refusal.new(detail, path: at, table: BUDGET_TABLE, key: "iterations")
+      end
+
+      def known_rows = [*Lain::Budget::Table::ROWS.keys, *Lain::Role::Catalog.names.map(&:to_s)].uniq
+
+      def skill_names
+        @skill_names ||= @skills || Lain::Skill::Catalog.load(root: File.expand_path("../..", @path)).names.map(&:to_s)
+      end
 
       def env_pass_from(table, at)
         unknown = table.keys - %w[pass]

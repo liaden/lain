@@ -413,6 +413,27 @@ RSpec.describe Lain::CLI::Command::Surface do
     end
   end
 
+  it "marks an epic skill's line with iterations scaled to the issues of the mounted epic" do
+    with_project do |root|
+      graph = Lain::Epic::Graph.new(issues: Array.new(33) { |i| Lain::Epic::Issue.new(id: "i#{i}", title: "t#{i}") })
+      home = instance_double(Lain::Epic::Home::Journaled, read_epic: graph)
+      mount = instance_double(Lain::CLI::EpicMount, mounted?: true, home:)
+      seams = instance_double(Lain::CLI::EpicDriver::Seams, mount:, driver: Lain::CLI::EpicDriver::Factory::Unmounted)
+      skill = File.join(root, ".lain", "skills", "create-epic-issues", "skill.md")
+      FileUtils.mkdir_p(File.dirname(skill))
+      File.write(skill, "# Issues\n")
+      surface = build_surface(root, epic: seams)
+
+      seen = nil
+      surface.middleware.call({ text: "/create-epic-issues", agent: :the_agent }) do |env|
+        seen = env
+        env.merge(response: "ran")
+      end
+
+      expect(seen.fetch(:iterations)).to eq(124)
+    end
+  end
+
   it "refuses to construct without the run's window book, rather than sizing a critique to a guess" do
     with_project do |root|
       windowless = lambda do

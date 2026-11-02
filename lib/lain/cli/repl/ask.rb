@@ -46,12 +46,14 @@ module Lain
           @started = @clock.call
         end
 
+        # @param text [String] the line to ask
+        # @param iterations [Integer, nil] this line's iteration ceiling; nil leaves the agent's own
         # @return [Lain::Response, Lain::Error] the model's answer, or the
         #   refusal as a value -- never a raise, so the task that ran this ENDS
         #   rather than dying.
-        def attempt(text)
+        def attempt(text, iterations: nil)
           @unfold = NOTHING_FOLDED
-          @agent.ask(text, on_fold: method(:resending))
+          @agent.ask(text, on_fold: method(:resending), **{ iterations: }.compact)
         rescue Lain::Error => e
           e
         end

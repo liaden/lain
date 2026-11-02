@@ -14,6 +14,27 @@ module Lain
     # Finite so an actor pair cannot chatter forever; a role that needs more asks for it.
     DEFAULT_MESSAGES = 64
 
+    # What a skill's line is allowed, read when the skill starts. The issue
+    # count is a thunk because the epic's graph changes between lines.
+    class Allowance
+      # @param table [Table]
+      # @param issues [#call] the mounted epic's issue count right now
+      def initialize(table:, issues: -> { 0 })
+        @table = table
+        @issues = issues
+        freeze
+      end
+
+      # @param skill [String, nil] the skill the line invokes; nil for a plain line
+      # @return [Hash{Symbol => Integer}] `{iterations:}`: the skill's row, else the default row
+      def grant(skill = nil)
+        { iterations: @table.iterations(skill:, issues: @table.named?(skill) ? @issues.call : 0) }
+      end
+
+      # Grants nothing, so a line keeps its agent's own ceiling.
+      NONE = Class.new { def grant(_skill = nil) = {} }.new.freeze
+    end
+
     # A ceiling was passed; `kind` names which one.
     class Exceeded < Error
       attr_reader :kind

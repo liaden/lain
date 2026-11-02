@@ -29,11 +29,15 @@ module Lain
     # than being wrapped by it. An extra that short-circuits without setting
     # `env[:response]` gets no help here: `repl.rb`'s dispatch boundary already
     # renders that fault loudly, for every phase alike.
+    #
+    # `allowance:` defaults to granting nothing, so a stack built without one
+    # leaves every line its agent's own iteration ceiling.
     module ReplMiddleware
-      def self.build(role_spawn:, library:, outbox:, window:, checkouts:, journal:, extras: [])
+      def self.build(role_spawn:, library:, outbox:, window:, checkouts:, journal:, extras: [],
+                     allowance: Budget::Allowance::NONE)
         skill_dispatch = Middleware::SkillDispatch.new(catalog: library.catalog, renderer: library.renderer,
                                                        role_spawn:, outbox:, window:, checkouts:, journal:,
-                                                       slots: library.slots)
+                                                       slots: library.slots, allowance:)
         Middleware::Stack.new([*extras, skill_dispatch])
       end
     end

@@ -1874,6 +1874,17 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       expect(full.fetch("subagent")[:researcher].budget.iterations).to eq(60)
     end
 
+    it "reads the researcher and orchestrator ceilings from the configured budget table" do
+      table = Lain::Budget::Table.new(rows: { "researcher" => 80, "issue_orchestrator" => 150 })
+      config = Lain::Config.new(epics: Lain::Config::Epics.new(home: :xdg), budget: table)
+      configured = build_with(options, config:)
+
+      full = configured.build(recorder, ask_human:)
+
+      expect([issued(configured).budget.iterations, full.fetch("subagent")[:researcher].budget.iterations])
+        .to eq([150, 80])
+    end
+
     it "holds each orchestrator child to its role's own ceiling" do
       toolset_build.build(recorder, ask_human:)
       allow(Lain::Role::Catalog).to receive(:fetch).and_wrap_original do |original, name|

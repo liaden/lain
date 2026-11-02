@@ -87,8 +87,13 @@ module Lain
       # `slots:` are what {Review::Critique} reads through, records to and
       # renders its role's prelude from. All required, for the reason every
       # keyword here is: a defaulted book would size chunks to a guess.
-      def initialize(catalog:, renderer:, role_spawn:, outbox:, window:, checkouts:, journal:, slots:)
+      #
+      # `allowance:` says how many iterations a skill's line may run; the
+      # default grants none, so a line keeps its agent's own ceiling.
+      def initialize(catalog:, renderer:, role_spawn:, outbox:, window:, checkouts:, journal:, slots:,
+                     allowance: Budget::Allowance::NONE)
         @catalog = catalog
+        @allowance = allowance
         @renderer = renderer
         @role_spawn = role_spawn
         @outbox = outbox
@@ -99,14 +104,14 @@ module Lain
 
       def call(env, &app)
         invocation = Skill::Invocation.parse(env.fetch(:text))
-        return downstream(env, &app) if invocation.nil?
+        return downstream(env.merge(@allowance.grant), &app) if invocation.nil?
         return report_role_bound(env, invocation) unless invocation.inline?
         return report_unknown(env, invocation) unless known?(invocation)
 
         refuse_unspawned_model!(invocation)
         return report_critique(env, invocation) if held_critique?(invocation)
 
-        downstream(env.merge(text: expand(invocation)), &app)
+        downstream(env.merge(text: expand(invocation), **@allowance.grant(invocation.skill)), &app)
       end
 
       private

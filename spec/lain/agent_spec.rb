@@ -1092,6 +1092,33 @@ RSpec.describe Lain::Agent do
     # exhausted it, and every prompt after that was committed as a user turn and
     # then raised on before the provider was ever asked -- a session that keeps
     # accepting input and can no longer answer any of it.
+    describe "an ask that names its own iteration ceiling" do
+      def calls(count) = Array.new(count) { |i| tool_response(["tu_#{i}", "echo", { "text" => "loop #{i}" }]) }
+
+      it "runs past the agent's ceiling for that ask only, keeping its own budget" do
+        a = agent([*calls(3), text_response("done"), *calls(3)], budget: Lain::Budget.ceilings(iterations: 2))
+
+        expect(a.ask("long", iterations: 4).text).to eq("done")
+        expect { a.ask("plain") }.to raise_error(Lain::Budget::Exceeded, /ceiling is 2/)
+        expect(a.budget.iterations).to eq(2)
+      end
+
+      it "keeps the agent's token and dollar ceilings" do
+        a = agent([text_response("x")], budget: Lain::Budget.ceilings(iterations: 2, tokens: 100).with(dollars: 1.5))
+
+        a.ask("go", iterations: 9)
+
+        expect([a.budget.tokens, a.budget.dollars]).to eq([100, 1.5])
+      end
+
+      it "restores the agent's budget when the raised ask is refused" do
+        a = agent(calls(3), budget: Lain::Budget.ceilings(iterations: 2))
+
+        expect { a.ask("go", iterations: 3) }.to raise_error(Lain::Budget::Exceeded)
+        expect(a.budget.iterations).to eq(2)
+      end
+    end
+
     describe "the ceiling bounds ONE ask, not the session" do
       # Two iterations per ask: the tool call, then the text that settles it.
       def settling_pair(text) = [tool_response(["tu_1", "echo", { "text" => "loop" }]), text_response(text)]
@@ -1159,6 +1186,20 @@ RSpec.describe Lain::Agent do
       a.ask("go")
 
       expect(seen.map { |room| [room.iterations, room.tokens, room.depth] }).to eq([[9, 70, 2]])
+    end
+
+    it "answers a child's room from the raised ceiling while it works, and the agent's own after" do
+      seen = []
+      a = nil
+      call = { "type" => "tool_use", "id" => "r1", "name" => "room", "input" => {} }
+      a = described_class.new(provider: CoreGraph.provider(Lain::Response.new(content: [call], stop_reason: :tool_use),
+                                                           text_response("done")),
+                              context:, toolset: CoreGraph.toolset([room_reader(seen, -> { a })]),
+                              budget: Lain::Budget.ceilings(iterations: 2))
+
+      a.ask("go", iterations: 50)
+
+      expect([seen.map(&:iterations), a.room.iterations]).to eq([[49], 2])
     end
 
     # A role spawn between asks must not inherit the count of the ask that

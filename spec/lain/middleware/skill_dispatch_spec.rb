@@ -82,7 +82,7 @@ RSpec.describe Lain::Middleware::SkillDispatch do
   # the injected role-spawn seam (a fake by default; the real seam is exercised
   # in its own block below).
   def with_dispatch(shipped: {}, role_spawn: SkillDispatchFakeRoleSpawn.new, outbox: SkillDispatchRound.new(nil),
-                    &block)
+                    allowance: Lain::Budget::Allowance::NONE, &block)
     Dir.mktmpdir do |root|
       shipped_dir = File.join(root, "shipped")
       shipped.each { |path, body| write(File.join(shipped_dir, path), body) }
@@ -90,7 +90,7 @@ RSpec.describe Lain::Middleware::SkillDispatch do
       slots = Lain::Prompt::Slots.load(root:, skill_shipped_dir: shipped_dir)
       renderer = Lain::Skill::Renderer.new(catalog:, slots:)
       yield(described_class.new(catalog:, renderer:, role_spawn:, outbox:, window: served_window,
-                                checkouts:, journal:, slots:), role_spawn)
+                                checkouts:, journal:, slots:, allowance:), role_spawn)
     end
   end
 
@@ -135,6 +135,42 @@ RSpec.describe Lain::Middleware::SkillDispatch do
         _result, seen = run(dispatch, "/create-plan")
 
         expect(seen.fetch(:text)).to eq("# Create plan\nDo the planning.\n")
+      end
+    end
+  end
+
+  describe "an in-line skill the allowance grants iterations" do
+    let(:allowance) { Lain::Budget::Allowance.new(table: Lain::Budget::Table.new, issues: -> { 33 }) }
+
+    it "marks the env downstream sees with that ask's ceiling" do
+      with_dispatch(shipped: { "create-epic-issues/skill.md" => "# Issues\n" }, allowance:) do |dispatch|
+        _result, seen = run(dispatch, "/create-epic-issues")
+
+        expect(seen.fetch(:iterations)).to eq(124)
+      end
+    end
+
+    it "marks a skill the table has no row for with the default row" do
+      with_dispatch(shipped: create_plan, allowance:) do |dispatch|
+        _result, seen = run(dispatch, "/create-plan")
+
+        expect(seen.fetch(:iterations)).to eq(25)
+      end
+    end
+
+    it "marks a plain line with the default row" do
+      with_dispatch(allowance:) do |dispatch|
+        _result, seen = run(dispatch, "just talk")
+
+        expect(seen.fetch(:iterations)).to eq(25)
+      end
+    end
+
+    it "marks nothing when no allowance is wired" do
+      with_dispatch(shipped: create_plan) do |dispatch|
+        _result, seen = run(dispatch, "just talk")
+
+        expect(seen.to_h).not_to have_key(:iterations)
       end
     end
   end

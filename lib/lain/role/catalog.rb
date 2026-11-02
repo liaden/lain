@@ -34,7 +34,7 @@ module Lain
         # Its shell and writer reach only its own kept lease, whether the chat's
         # `subagent` tool or a role skill spawned it.
         Role.new(name: :researcher, only: %i[read_file list_files glob grep web_fetch web_search bash write_file],
-                 max_iterations: 60),
+                 max_iterations: Budget::Table::ROWS.fetch("researcher")),
         # {Epic::Gate::Adjudicator}'s evidence spike: the researcher's old
         # read-only set, unattended because the gate waits on its answer and
         # nobody could answer a parked call.

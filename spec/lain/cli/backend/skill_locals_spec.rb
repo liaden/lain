@@ -34,11 +34,16 @@ RSpec.describe Lain::CLI::Backend::SkillLocals do
     end
   end
 
-  it "follows the researcher role's iterations and the answer bound, not a literal" do
-    role = Lain::Role.new(name: :researcher, only: %i[read_file], max_iterations: 7)
-    allow(Lain::Role::Catalog).to receive(:fetch).with(:researcher).and_return(role)
+  it "follows the configured researcher iterations and the answer bound, not a literal" do
     stub_const("Lain::Tools::Subagent::ANSWER_BOUND", Lain::Tool::Bounds::Artifact.new(limit: 2048))
+    Dir.mktmpdir do |root|
+      write_config(root, "budget iterations: { \"researcher\" => 80 }\n")
 
-    expect(locals.fetch(:researcher_limits).call).to eq("7 iterations and a 2048-byte answer")
+      expect(locals(root:).fetch(:researcher_limits).call).to eq("80 iterations and a 2048-byte answer")
+    end
+  end
+
+  it "says the built-in researcher figure when the project configures none" do
+    expect(locals.fetch(:researcher_limits).call).to start_with("60 iterations")
   end
 end

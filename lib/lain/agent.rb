@@ -258,16 +258,18 @@ module Lain
     #   fold and the chain after it -- under the dispatch lock and before the
     #   request is sent, so a caller keeping a record can make the folded turn
     #   durable ahead of the wire
+    # @param iterations [Integer, nil] this ask's iteration ceiling, in place of
+    #   the budget's; the token and dollar ceilings stay the budget's
     # @return [Lain::Response] the final assistant response
     # @raise [Tool::Cancellation::Unpairable] when the stranded call names no
     #   id, so nothing can answer it and nothing is committed over it
-    def ask(text, on_stream_started: nil, on_fold: NO_FOLD)
+    def ask(text, on_stream_started: nil, on_fold: NO_FOLD, iterations: nil)
       @dispatch_lock.synchronize do
         reopen! unless awaiting_user?
         answer_stranded(:unknown)
         before = @timeline
         @timeline = asked = prompted([{ "type" => "text", "text" => text }], on_fold)
-        withdrawing(before, asked) { run(on_stream_started:) }
+        withdrawing(before, asked) { ceilinged(iterations) { run(on_stream_started:) } }
       end
     end
 
@@ -630,6 +632,13 @@ module Lain
       @prefix_chain = Request::PrefixChain.new
     end
 
+    def ceilinged(iterations, kept = @budget)
+      @budget = kept.with(iterations:) if iterations
+      yield
+    ensure
+      @budget = kept
+    end
+
     def summarizing
       @preparing = true
       yield
@@ -855,9 +864,7 @@ module Lain
 
     def fixed_size = @fixed_size ||= FixedSize.new
 
-    def preparable? = QUIESCENT.include?(state) && !budget_spent?
-
-    def budget_spent? = ledger.exceeded?(:tokens)
+    def preparable? = QUIESCENT.include?(state) && !ledger.exceeded?(:tokens)
 
     def ledger = Budget::Account.new(ceilings: @budget, spent:)
   end

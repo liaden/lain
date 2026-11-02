@@ -3,7 +3,7 @@
 RSpec.describe Lain::Config::Builder do
   let(:path) { ".lain/config.rb" }
 
-  def build(source) = described_class.evaluate(source, path:)
+  def build(source, **over) = described_class.evaluate(source, path:, **over)
 
   describe "the think verb" do
     it "builds the level it names" do
@@ -20,6 +20,54 @@ RSpec.describe Lain::Config::Builder do
 
     it "refuses being declared twice" do
       expect { build("think \"low\"\nthink \"high\"\n") }.to raise_error(Lain::Config::Refusal, /twice/)
+    end
+  end
+
+  describe "the budget verb" do
+    it "builds a table whose rows replace the defaults it names" do
+      table = build("budget iterations: { \"plan-epic\" => 80, default: 30 }\n").budget
+
+      expect([table.iterations(skill: "plan-epic"), table.iterations(skill: "greet"),
+              table.iterations(skill: "iterate-epic", issues: 1)]).to eq([80, 30, 28])
+    end
+
+    it "reads a base and a per-issue figure" do
+      table = build("budget iterations: { \"implement-epic\" => { base: 10, per_issue: 2 } }\n").budget
+
+      expect(table.iterations(skill: "implement-epic", issues: 4)).to eq(18)
+    end
+
+    it "builds the default table when the file declares none" do
+      expect(build("").budget.iterations(skill: "create-epic-issues", issues: 33)).to eq(124)
+    end
+
+    it "refuses a row that is not a positive whole number, at its line" do
+      expect { build("\nbudget iterations: { \"plan-epic\" => 0 }\n") }
+        .to raise_error(Lain::Config::Refusal, /config\.rb:2.*plan-epic/)
+    end
+
+    it "refuses a row named for no skill, role or default, listing the known names, at its line" do
+      expect { build("\nbudget iterations: { \"plan-epc\" => 80 }\n", skills: %w[plan-epic]) }
+        .to raise_error(Lain::Config::Refusal, /config\.rb:2.*"plan-epc".*known: default.*plan-epic/)
+    end
+
+    it "accepts a role name, a skill name and default" do
+      table = build("budget iterations: { researcher: 70, \"plan-epic\" => 80, default: 30 }\n",
+                    skills: %w[plan-epic]).budget
+
+      expect([table.iterations(role: :researcher), table.iterations(skill: "plan-epic"),
+              table.iterations]).to eq([70, 80, 30])
+    end
+
+    it "refuses a per-issue row with a key beyond base and per_issue" do
+      source = "budget iterations: { \"implement-epic\" => { base: 10, per_issue: 2, extra: 1 } }\n"
+
+      expect { build(source) }.to raise_error(Lain::Config::Refusal, /implement-epic.*extra/)
+    end
+
+    it "refuses an unknown key and a repeated declaration" do
+      expect { build("budget turns: 3\n") }.to raise_error(Lain::Config::Refusal, /turns/)
+      expect { build("budget iterations: {}\nbudget iterations: {}\n") }.to raise_error(Lain::Config::Refusal, /twice/)
     end
   end
 
@@ -106,7 +154,8 @@ RSpec.describe Lain::Config::Builder do
                                                        todos: Lain::Config::Todos.empty,
                                                        theme: Lain::Config::Theme.empty,
                                                        think: nil,
-                                                       review: Lain::Config::Review.empty)
+                                                       review: Lain::Config::Review.empty,
+                                                       budget: Lain::Budget::Table.new)
     end
 
     it "reads the judge's timeout from the approval table" do

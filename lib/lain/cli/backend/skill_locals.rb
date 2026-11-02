@@ -29,7 +29,7 @@ module Lain
         def provider_width = @tier.call.concurrency
 
         def researcher_limits
-          "#{Role::Catalog.fetch(:researcher).max_iterations} iterations and a " \
+          "#{Config.budget(root: @root).iterations(role: :researcher)} iterations and a " \
             "#{Tools::Subagent::ANSWER_BOUND.limit}-byte answer"
         end
       end

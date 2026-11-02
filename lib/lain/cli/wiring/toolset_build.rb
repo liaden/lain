@@ -47,7 +47,6 @@ module Lain
         # The role a reviewing child takes: it reads and searches the code it
         # judges, and holds nothing that writes or reaches the network.
         REVIEWER = :reviewer_code
-        ORCHESTRATOR_BUDGET = Lain::Budget.ceilings(iterations: 200)
 
         # The orchestrator, and one level of children under it: the room the
         # epic's spawn is held to, since no agent stands above it.
@@ -342,7 +341,7 @@ module Lain
           issue = seam.with(isolation: issue_leases(isolation, handoff, lane), holder: EPIC_ROOM)
           Lain::Tools::Subagent.new(seam: announcing(ISSUE_ORCHESTRATOR.to_s, over: issue),
                                     toolset: orchestrating(issue, isolation, supervisor: seam.supervisor),
-                                    policy: backend.spawn_policy(ISSUE_ORCHESTRATOR), budget: ORCHESTRATOR_BUDGET,
+                                    policy: backend.spawn_policy(ISSUE_ORCHESTRATOR), budget: orchestrator_budget,
                                     persona: persona(ISSUE_ORCHESTRATOR), mode: :actor,
                                     announces_as: ISSUE_ORCHESTRATOR.to_s, answer:)
         end
@@ -539,7 +538,7 @@ module Lain
         def research_subagent(base)
           Lain::Tools::Subagent.new(seam: researcher_seam, toolset: base, policy: backend.spawn_policy(RESEARCHER),
                                     persona: persona(RESEARCHER), announces_as: RESEARCHER.to_s,
-                                    budget: Lain::Role::Catalog.fetch(RESEARCHER).budget, kept: research_leases,
+                                    budget: role_budget(RESEARCHER), kept: research_leases,
                                     answer:)
         end
 
@@ -588,7 +587,7 @@ module Lain
         def spawner(role, issue)
           Lain::Tools::Subagent.new(seam: announcing(role.to_s, over: issue), toolset: @floor,
                                     policy: backend.spawn_policy(role), persona: persona(role), announces_as: role.to_s,
-                                    budget: Lain::Role::Catalog.fetch(role).budget, answer:)
+                                    budget: role_budget(role), answer:)
         end
 
         # Every spawner keeps an answer that stays over the ceiling in the
@@ -596,6 +595,14 @@ module Lain
         def answer
           dir = Lain::Tools::Subagent::Spill.home(@in_chat.fetch(:paths), @root)
           Lain::Tools::Subagent::Answer.new(spill: Lain::Tools::Subagent::Spill.new(dir:))
+        end
+
+        # The ceilings come from the configured table, so a `budget` override
+        # reaches every child and the table stays the one source.
+        def role_budget(role) = Lain::Role::Catalog.fetch(role).budget(table: @in_chat.fetch(:config).budget)
+
+        def orchestrator_budget
+          Lain::Budget.ceilings(iterations: @in_chat.fetch(:config).budget.iterations(role: ISSUE_ORCHESTRATOR))
         end
 
         # What a child is told it is, in its own system prompt: the same role

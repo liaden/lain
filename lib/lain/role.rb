@@ -24,7 +24,11 @@ module Lain
 
     # The ceiling a child of this role runs under, handed to the spawn beside
     # the policy because the policy carries capabilities, not limits.
-    def budget = Budget.ceilings(iterations: max_iterations)
+    #
+    # @param table [Budget::Table] a row it names for this role replaces the role's own figure
+    def budget(table: Budget::Table.new)
+      Budget.ceilings(iterations: table.named?(name) ? table.iterations(role: name) : max_iterations)
+    end
 
     # The spawn policy the {Tools::Subagent} tool reads: this role's `only`-set
     # and its unattended declaration, under the caller's chosen prefix/posture

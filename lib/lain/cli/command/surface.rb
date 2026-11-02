@@ -52,6 +52,7 @@ module Lain
                        approvals: nil, root: Dir.pwd, cwd: Dir.pwd, approval_prompt: nil, goal_driver: GoalDriver::Null,
                        epic: nil, middleware: Lain::Config::Middleware.empty)
           @role_spawn = role_spawn
+          @epic = epic
           @configured = middleware
           @window = window
           @goal_driver = goal_driver
@@ -93,10 +94,24 @@ module Lain
         def middleware
           @middleware ||= ReplMiddleware.build(role_spawn: @role_spawn, library: @library, outbox:, window: @window,
                                                checkouts: critique_checkouts, journal: @env.chronicle.record_journal,
-                                               extras: @configured.members(:repl))
+                                               extras: @configured.members(:repl), allowance:)
         end
 
         private
+
+        # An epic skill's room grows with the epic it drives, so the count is
+        # read when the line starts. A chat in no epic has no issues to count,
+        # and an epic file that cannot be read yet is an epic with none.
+        def allowance
+          Budget::Allowance.new(table: Lain::Config.budget(root: @root), issues: -> { mounted_issues })
+        end
+
+        def mounted_issues
+          mount = @epic&.mount
+          mount&.mounted? ? mount.home.read_epic.count : 0
+        rescue Lain::Error, SystemCallError
+          0
+        end
 
         # Where a critique's children read: checkouts of this project, in the
         # container every other lain checkout of it lives in, so `lain worktrees

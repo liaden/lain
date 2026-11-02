@@ -106,6 +106,20 @@ RSpec.describe Lain::Role do
     end
   end
 
+  describe "a role's budget under a configured table" do
+    it "takes a configured row over the role's own figure" do
+      table = Lain::Budget::Table.new(rows: { "researcher" => 80 })
+
+      expect(Lain::Role::Catalog.fetch(:researcher).budget(table:).iterations).to eq(80)
+    end
+
+    it "keeps the role's own figure where the table has no row for it" do
+      table = Lain::Budget::Table.new(rows: { "default" => 30 })
+
+      expect(Lain::Role::Catalog.fetch(:evidence_researcher).budget(table:).iterations).to eq(60)
+    end
+  end
+
   describe "a role declares its iteration ceiling" do
     it "gives the researcher 60 iterations" do
       expect(Lain::Role::Catalog.fetch(:researcher).max_iterations).to eq(60)

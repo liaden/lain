@@ -346,7 +346,7 @@ module Lain
       # renders it as it always has.
       def middleware_env(text)
         @middleware.call({ text:, agent: @agent }) do |inner|
-          inner.merge(response: respond(inner.fetch(:text)))
+          inner.merge(response: respond(inner.fetch(:text), iterations: inner.fetch(:iterations, nil)))
         end
       rescue Lain::Error => e
         e
@@ -374,9 +374,9 @@ module Lain
       # because that reason is measured and is not visible from here. A stopped
       # ask never returns here at all: the stop unwinds the whole line, and
       # {#middleware_turn} settles it.
-      def respond(text)
+      def respond(text, iterations: nil)
         ask = Ask.new(agent: @agent, tty: @tty, chronicle: @chronicle)
-        ask.settle(outcome.note(ask.attempt(text)))
+        ask.settle(outcome.note(ask.attempt(text, iterations:)))
       end
 
       # Turns durable before the reply renders: the belt over the chronicle's

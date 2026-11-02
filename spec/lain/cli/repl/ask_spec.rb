@@ -36,6 +36,48 @@ RSpec.describe Lain::CLI::Repl::Ask do
     e
   end
 
+  describe "#attempt with an iteration ceiling for this ask" do
+    it "hands the ceiling to the agent's ask" do
+      allow(agent).to receive(:ask).and_return(response)
+
+      ask.attempt("go", iterations: 124)
+
+      expect(agent).to have_received(:ask).with("go", on_fold: anything, iterations: 124)
+    end
+
+    it "asks the agent exactly as before when no ceiling is named" do
+      allow(agent).to receive(:ask).and_return(response)
+
+      ask.attempt("go")
+
+      expect(agent).to have_received(:ask).with("go", on_fold: anything)
+    end
+
+    it "raises the ceiling of one ask on a real agent and not of the next" do
+      call = { "type" => "tool_use", "id" => "t1", "name" => "noop", "input" => {} }
+      calls = Array.new(3) do |i|
+        Lain::Response.new(content: [call.merge("id" => "t#{i}", "input" => { "n" => i })], stop_reason: :tool_use)
+      end
+      noop = Class.new(Lain::Tool) do
+        def name = "noop"
+        def description = "Does nothing."
+        def input_schema = { type: :object, properties: {} }
+        def perform(_input, _context) = Lain::Tool::Result.ok("ok")
+      end
+      done = Lain::Response.new(content: [{ "type" => "text", "text" => "done" }], stop_reason: :end_turn)
+      real = Lain::Agent.new(provider: Lain::Provider::Mock.new(responses: [*calls, done, *calls]),
+                             toolset: Lain::Toolset.new([noop.new]),
+                             context: Lain::Context.new(model: "m", max_tokens: 100),
+                             budget: Lain::Budget.ceilings(iterations: 2))
+      asked = described_class.new(agent: real, tty:, chronicle: Lain::CLI::Chronicle::Null.new)
+
+      raised = asked.attempt("long", iterations: 4)
+      plain = asked.attempt("again")
+
+      expect([raised.text, plain.class, real.budget.iterations]).to eq(["done", Lain::Budget::Exceeded, 2])
+    end
+  end
+
   describe "#settle of a held ask, through a real agent" do
     let(:holding) do
       Class.new(Lain::Tool) do

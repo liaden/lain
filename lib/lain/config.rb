@@ -36,7 +36,7 @@ module Lain
       built = built(root)
       new(epics: built.epics, approval: built.approval, isolation: built.isolation, env_pass: built.env_pass,
           todos: built.todos, approval_timeout: built.approval_timeout, judge_timeout: built.judge_timeout,
-          review: built.review)
+          review: built.review, budget: built.budget)
     end
 
     # What a project adds to the path classifier's built-in tables, and the
@@ -88,6 +88,14 @@ module Lain
     # @raise [Project::Trust::Untrusted] as {.load}
     # @raise [Refusal] as {.load}
     def self.review(root:) = built(root).review
+
+    # How many iterations an ask may run, by skill and role. `root:` is REQUIRED, as {.sensitivity}'s is.
+    #
+    # @param root [String] a project root; `.lain/config.rb` is resolved under it
+    # @return [Budget::Table] the defaults, with any row the file's `budget` verb replaces
+    # @raise [Project::Trust::Untrusted] as {.load}
+    # @raise [Refusal] as {.load}
+    def self.budget(root:) = built(root).budget
 
     # What a project searches beyond the files git shows, and how much one
     # walk may cost. `root:` is REQUIRED, as {.sensitivity}'s is.
@@ -225,9 +233,12 @@ module Lain
     # @return [Review] the model a document review runs under
     attr_reader :review
 
+    # @return [Budget::Table] how many iterations an ask may run, by skill and role
+    attr_reader :budget
+
     def initialize(epics:, approval: Answers.empty, isolation: Isolation.empty, env_pass: [], todos: Todos.empty,
                    approval_timeout: DEFAULT_APPROVAL_TIMEOUT, judge_timeout: DEFAULT_JUDGE_TIMEOUT,
-                   review: Review.empty)
+                   review: Review.empty, budget: Budget::Table.new)
       @epics = epics
       @approval = Answers.coerce(approval)
       @isolation = Isolation.coerce(isolation)
@@ -236,6 +247,7 @@ module Lain
       @approval_timeout = approval_timeout
       @judge_timeout = judge_timeout
       @review = review
+      @budget = budget
       freeze
     end
 
@@ -257,7 +269,7 @@ module Lain
 
     protected
 
-    def state = [epics, approval, isolation, env_pass, todos, approval_timeout, judge_timeout, review]
+    def state = [epics, approval, isolation, env_pass, todos, approval_timeout, judge_timeout, review, budget]
 
     # The default `gates` table must stay EMPTY. {Epics::Gates.check!} reads
     # `Epic::STAGES` and {Epic::Gate::Policies}, so a non-empty default
