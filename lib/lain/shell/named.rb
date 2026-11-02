@@ -135,7 +135,7 @@ module Lain
       def self.from(result, cwd:, home:)
         return UNREADABLE unless cwd.is_a?(String) && cwd.start_with?("/")
 
-        Walk.new(result, cwd:, home:).named
+        Walk.new(LoopReading.unrolled(result) || result, cwd:, home:).named
       end
 
       # Read by the same walk that binds each `cd`, so a stage is placed only
@@ -179,17 +179,23 @@ module Lain
 
       # One word's quoting undone, when every span of it is literal: a
       # single-quoted span as written, a double-quoted one only when it holds
-      # nothing bash would interpret, and bare text with no backslash, expansion
-      # or brace. A quoted `*` is a file name and a bare one is not, so the
-      # pattern escapes what was quoted.
+      # nothing bash would interpret but `$?`, `$$` or `$#`, and bare text with
+      # no backslash, expansion or brace. A quoted `*` is a file name and a bare
+      # one is not, so the pattern escapes what was quoted.
       class Word
         SINGLE = /'([^'\0]*)'/
-        DOUBLE = /"([^"$`\\!\0]*)"/
+        DIGITS = /\$[?$#]/
+        DOUBLE = /"((?:[^"$`\\!\0]|#{DIGITS})*)"/
+        DOUBLE_PARTS = /(#{DIGITS})/
         BARE = /[^'"\\$`{\0]+/
         GLOB = /[*?\[]/
         GLOB_CHARACTER = /[*?\[\]\\{}]/
+        OPEN_WILDCARD = /(?<!\\)(?:\\\\)*\*\z/
+        LEADING_WILDCARDS = /\A\*+/
 
-        Literal = Data.define(:text, :glob_at, :tilde, :pattern) do
+        # @!attribute filled [Boolean] the shell fills in digits the text
+        #   only names, so the word is known as a pattern and not as text
+        Literal = Data.define(:text, :glob_at, :tilde, :pattern, :filled) do
           def glob? = !glob_at.nil?
 
           # The literal after its first `count` characters, as an option's
@@ -204,24 +210,47 @@ module Lain
         # @return [Literal, nil] nil when any span cannot be read for certain
         def self.read(raw)
           scanner = StringScanner.new(raw)
-          literal = Literal.new(text: "", glob_at: nil, tilde: raw.start_with?("~"), pattern: "")
+          literal = Literal.new(text: "", glob_at: nil, tilde: raw.start_with?("~"), pattern: "", filled: false)
           literal = span(scanner, literal) until literal.nil? || scanner.eos?
           literal
         end
 
         def self.span(scanner, literal)
-          if scanner.scan(SINGLE) || scanner.scan(DOUBLE)
-            quoted = scanner[1]
-            literal.with(text: literal.text + quoted,
-                         pattern: literal.pattern + quoted.gsub(GLOB_CHARACTER) { "\\#{_1}" })
+          if scanner.scan(SINGLE)
+            quoted(literal, scanner[1])
+          elsif scanner.scan(DOUBLE)
+            double(literal, scanner[1])
           elsif scanner.scan(BARE)
             bare = scanner.matched
             glob = bare =~ GLOB
-            literal.with(text: literal.text + bare, pattern: literal.pattern + bare,
+            literal.with(text: literal.text + bare, pattern: wildcard_joined(literal.pattern, bare),
                          glob_at: literal.glob_at || (glob && (literal.text.size + glob)))
           end
         end
-        private_class_method :span
+
+        # A fill beside another wildcard matches what one does, and the `**`
+        # they would spell reads as recursive.
+        def self.wildcard_joined(pattern, addition)
+          pattern.match?(OPEN_WILDCARD) ? pattern + addition.sub(LEADING_WILDCARDS, "") : pattern + addition
+        end
+
+        def self.double(literal, quoted)
+          quoted.split(DOUBLE_PARTS).inject(literal) do |read, part|
+            part.match?(DIGITS) ? filled(read, part) : quoted(read, part)
+          end
+        end
+
+        def self.quoted(literal, text)
+          literal.with(text: literal.text + text, pattern: literal.pattern + text.gsub(GLOB_CHARACTER) { "\\#{_1}" })
+        end
+
+        # An exit status, a process id or an argument count names no file of
+        # its own, but it can finish a word that does, so it matches as `*`.
+        def self.filled(literal, parameter)
+          literal.with(text: literal.text + parameter, pattern: wildcard_joined(literal.pattern, "*"), filled: true,
+                       glob_at: literal.glob_at || literal.text.size)
+        end
+        private_class_method :span, :wildcard_joined, :double, :quoted, :filled
       end
 
       # A program's words read as options, option values and operands, from the
@@ -558,6 +587,8 @@ module Lain
         FROM_A_FILE = (Programs::INTERPRETERS - %w[sed] - Programs::AWKS).freeze
         STDIN_SCRIPT = %r{\A(-|/dev/stdin|/dev/fd/\d+|/proc/[^/]+/fd/\d+)\z}
         ASKS_FOR_HELP = %w[--version -v -V --help -h -version -help].freeze
+        # gawk's other options load, include, dump or profile to files the words do not show.
+        AWK_OPTION = /\A(--\z|-[Fv]|--(field-separator|assign)(=|\z))/
 
         TARS = %w[bsdtar gtar].freeze
 
@@ -631,11 +662,13 @@ module Lain
         #   so only a reading that makes it opaque applies, never one that
         #   claims to know what it reads, writes or where it runs
         def initialize(texts, untrusted: false)
-          @name = texts.first.to_s.rpartition("/").last
+          @written_name = texts.first.to_s
+          @name = @written_name.rpartition("/").last
           @command = TARS.include?(@name) ? "tar" : Programs.canonical(@name)
           @untrusted = untrusted
           @argv = Argv.new(texts.drop(1), @command)
-          @git_write = GitWrite.of(@argv.words) if git?
+          @git_from = git? ? subcommand_at : 0
+          @git_write = GitWrite.of(@argv.words.drop(@git_from)) if git?
         end
 
         def git? = @command == "git" && !@untrusted
@@ -654,7 +687,7 @@ module Lain
 
           return @argv.words[index].size if @command == "find"
 
-          @git_write&.file_offset(index) || @argv.value_offset(index)
+          @git_write&.file_offset(index - @git_from) || @argv.value_offset(index)
         end
 
         # `dd if=x` opens `x`; the whole word names no file.
@@ -684,7 +717,7 @@ module Lain
 
           case @command
           when "find" then find_roots
-          when "git" then @git_write ? @git_write.pathspecs : []
+          when "git" then @git_write ? from_subcommand(@git_write.pathspecs) : []
           when *ALWAYS_RECURSES then searched
           when *RECURSES.keys then recursive_roots
           when "tar" then tar_creates? ? operands : []
@@ -715,15 +748,20 @@ module Lain
           end
         end
 
-        # A read-only git's one `-C`, written before the subcommand, names the
-        # directory it runs in, so its stage can be read from there.
+        # A git's one `-C`, written before the subcommand, names the directory
+        # it runs in, so its stage can be read from there. A writing
+        # subcommand is read only where the `-C` leads it alone, because its
+        # write is read from the subcommand on, and another global option
+        # could move where that write lands.
         #
         # @return [Integer, nil] the word, among those after the program, that holds the directory
         def git_directory
-          return unless @command == "git" && !@untrusted && GIT_READ_ONLY.include?(word(operands.first))
+          subcommand = operands.first
+          return unless @command == "git" && !@untrusted && subcommand
 
           found = @argv.values("C", [])
-          found.first if found.one? && found.first < operands.first && directory_option?(found.first)
+          entered = found.first if found.one? && found.first < subcommand && directory_option?(found.first)
+          entered if entered && (GIT_READ_ONLY.include?(word(subcommand)) || leads_subcommand?(entered))
         end
 
         private
@@ -733,7 +771,7 @@ module Lain
         def operands = @argv.operands
 
         def runs_others?
-          [@name, @command].intersect?(RUNS_OTHERS) || ALWAYS_OPAQUE.include?(@command) ||
+          ([@name, @command].intersect?(RUNS_OTHERS) && !bare_env?) || ALWAYS_OPAQUE.include?(@command) ||
             (@command == "find" && @argv.words.intersect?(FIND_ACTIONS)) ||
             (PROGRAM_OPTIONS.key?(@command) && @argv.flag?(*PROGRAM_OPTIONS[@command], before: global_end)) ||
             (@command == "bundle" && @argv.words.first != "install") || runs_code? || sed_runs?
@@ -741,6 +779,19 @@ module Lain
 
         # git's own options come before its subcommand; `git log -c` is log's.
         def global_end = @command == "git" ? operands.first : nil
+
+        # With nothing to run, env prints the environment the child was lent.
+        def bare_env? = @written_name == "env" && !@untrusted && @argv.words.empty?
+
+        def subcommand_at
+          entered = git_directory
+          entered && leads_subcommand?(entered) ? operands.first : 0
+        end
+
+        # @param entered [Integer] the word holding the `-C` directory
+        def leads_subcommand?(entered) = entered + 1 == operands.first && word(0).start_with?("-C")
+
+        def from_subcommand(indexes) = indexes.map { _1 + @git_from }
 
         # Each of these may write a name the archive or patch chose, anywhere.
         def extracts_outside?
@@ -757,13 +808,18 @@ module Lain
           if Programs::SHELLS.include?(@command)
             @argv.flag?("cs", %w[--command]) || stdin_script?
           elsif Programs::AWKS.include?(@command)
-            !@argv.flag?("f", %w[--file]) || @argv.flag?("eE", %w[--source --exec]) ||
-              @argv.value_texts("f", %w[--file]).any? { STDIN_SCRIPT.match?(_1) }
+            !awk_reads_only?
           elsif FROM_A_FILE.include?(@command)
             @argv.flag?(*Programs::INLINE_CODE.fetch(@command, Argv::NONE)) || stdin_script?
           else
             false
           end
+        end
+
+        # A program file could hold any command, so only an inline one is read.
+        def awk_reads_only?
+          program = operands.first
+          !program.nil? && @argv.options.all? { AWK_OPTION.match?(word(_1)) } && AwkScript.reads_only?(word(program))
         end
 
         # No script operand reads the program from stdin, unless all it asked
@@ -825,7 +881,7 @@ module Lain
 
         def git_written
           subcommand, *rest = operands
-          return @git_write.written if @git_write
+          return from_subcommand(@git_write.written) if @git_write
 
           case word(subcommand)
           when "clone" then rest.size >= 2 ? rest.last(1) : []
@@ -897,6 +953,24 @@ module Lain
         end
       end
 
+      # An inline awk program read for what reaches past the files it is given:
+      # `system` and a pipe run a command, `getline` reads a file or a command,
+      # `ARGV` and `ARGC` choose the files read, `@` loads, includes or calls
+      # code by name, and a `>` after a `print` may be its output redirect.
+      # Matched anywhere in the text, a string or regex included, so nothing
+      # can hide inside one; the cost is a false positive.
+      module AwkScript
+        REACHES_OUT = /system|getline|ARGV|ARGC|@|\|/
+        PRINT_REDIRECT = /print.*>/m
+        OR = "||"
+
+        # @param program [String]
+        # @return [Boolean]
+        def self.reads_only?(program)
+          !program.gsub(OR, "").match?(REACHES_OUT) && !program.match?(PRINT_REDIRECT)
+        end
+      end
+
       # A sed script read for the commands that reach outside sed: `e` runs one,
       # `r` and `R` read a file in, `w` and `W` write one, and an `s` command
       # flagged `e` or `w` does the same. Letters inside a regex, an `s` body, a
@@ -948,10 +1022,12 @@ module Lain
       # `cd` moved to. Mutable while it walks; what it hands back is frozen.
       class Walk
         # Literal structure only. Anything else -- an assignment, an expansion,
-        # a heredoc, a compound statement -- is read as opaque.
+        # a heredoc, a compound statement -- is read as opaque. A simple
+        # expansion is here only because {Word} reads the few it can and
+        # refuses every other.
         READABLE_KINDS = %w[
           program list pipeline command command_name word number concatenation
-          raw_string string file_redirect redirected_statement comment
+          raw_string string simple_expansion file_redirect redirected_statement comment
         ].freeze
 
         DIRECTORY_CHANGERS = %w[cd pushd popd].freeze
@@ -1034,7 +1110,7 @@ module Lain
         def argv_of(stage, directory)
           literals = words_of(stage).literals
           literals.flat_map { |literal| literal.glob? ? expanded(literal, directory) : [bash_text(literal)] } unless
-            literals.any?(&:nil?)
+            literals.any? { _1.nil? || _1.filled }
         end
 
         def expanded(literal, directory)
@@ -1089,10 +1165,14 @@ module Lain
         def name(stage, words)
           inner = unbundled(words)
           program = Program.new(inner.texts, untrusted: !inner.equal?(words))
-          named = program.opaque? ? [:opaque] : stage_paths(stage, inner, program)
+          named = program.opaque? || filled_option?(inner) ? [:opaque] : stage_paths(stage, inner, program)
           @opaque ||= named.include?(:opaque)
           @paths.concat(named.grep(Path))
         end
+
+        # Argv reads an option's letters from its text, but bash hands the
+        # program digits where a fill sits, so the cluster it runs is unknown.
+        def filled_option?(words) = words.literals.any? { _1&.filled && _1.text.start_with?("-") }
 
         # `bundle exec X` runs X as the bundle resolves it -- a binstub, or a
         # gem's code loaded first -- so X may not be the program its name says,
@@ -1167,7 +1247,7 @@ module Lain
 
         def program_path(words)
           literal = words.literals.first
-          return :opaque if literal.nil?
+          return :opaque if literal.nil? || literal.filled
 
           path(words.raws.first, literal, written: false) if literal.text.include?("/")
         end
@@ -1301,7 +1381,7 @@ module Lain
         def stage_end(stage) = [stage.byte_range.end, *stage.redirects.map { _1.byte_range.end }].max
       end
 
-      private_constant :Word, :Argv, :GitWrite, :Program, :SedScript, :Walk
+      private_constant :Word, :Argv, :GitWrite, :Program, :AwkScript, :SedScript, :Walk
     end
   end
 end

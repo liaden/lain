@@ -55,8 +55,8 @@ module Lain
       # target and each path it writes. An opaque command still names what
       # came before the point it turned opaque, resolved where it runs, so
       # `echo x > /out && cd - && ls` is held to its first stage; what follows
-      # is the ladder's. An expansion anywhere leaves the whole command to the
-      # ladder, since the parse is then read as a whole and names nothing.
+      # is the ladder's. An expansion Named cannot read leaves the whole command
+      # to the ladder, since the parse is then read as a whole and names nothing.
       Reach = Data.define(:home) do
         # @param command [String, nil] as the model wrote it
         # @param cwd [String] absolute, where the command starts

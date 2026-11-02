@@ -106,13 +106,13 @@ RSpec.describe Lain::Shell::Named do
 
     it "makes an interpreter running inline code or a module opaque" do
       ["ruby -e x", "python3 -c x", "perl -pe x f", "node -e x", "node --eval x", "python -m http.server",
-       "awk '{print}' f", "echo 1 | ruby"].each do |command|
+       "echo 1 | ruby"].each do |command|
         expect(named(command)).to be_opaque, command
       end
     end
 
     it "names a script a shell or an interpreter runs from a file" do
-      ["bash script.sh", "ruby script.rb", "awk -f prog.awk f"].each do |command|
+      ["bash script.sh", "ruby script.rb"].each do |command|
         expect(named(command)).not_to be_opaque, command
       end
       expect(resolved("ruby script.rb")).to eq(%w[/p/script.rb])
@@ -358,7 +358,7 @@ RSpec.describe Lain::Shell::Named do
       end
 
       it "stays opaque where git points elsewhere or runs code it was handed" do
-        ["git -C ../other commit -m x", "git --work-tree=/y commit", "GIT_DIR=/z git commit",
+        ["git --work-tree=/y commit", "GIT_DIR=/z git commit",
          "git -c core.fsmonitor=cmd status", "git -c alias.x=!sh x", "git --exec-path=/x commit -m x"]
           .each { expect(named(_1)).to be_opaque, _1 }
       end
@@ -477,11 +477,7 @@ RSpec.describe Lain::Shell::Named do
   end
 
   describe "a -C option" do
-    it "makes its stage opaque" do
-      expect(named("git -C ../other commit -m x")).to be_opaque
-    end
-
-    describe "of a read-only git" do
+    describe "of git, before its subcommand" do
       def directories(command) = named(command).paths.select(&:directory).map(&:resolved)
 
       it "names its directory instead of turning opaque" do
@@ -514,9 +510,18 @@ RSpec.describe Lain::Shell::Named do
         expect(resolved("git -C sibling log > out")).to include("/p/out")
       end
 
-      it "stays opaque for a writing subcommand" do
+      it "reads a writing subcommand in that directory, whatever the subcommand" do
         ["git -C sibling commit -m x", "git -C sibling checkout .", "git -C sibling add -A",
-         "git -C sibling clone url", "git -C sibling"].each { expect(named(_1)).to be_opaque, _1 }
+         "git -C sibling clone url", "git -C sibling remote -v", "git -C sibling branch"].each do |command|
+          expect(named(command)).not_to be_opaque, command
+          expect(directories(command)).to eq(%w[/p/sibling]), command
+        end
+        expect(named("git -C sibling commit -m x").written.map(&:resolved)).to eq(%w[/p/sibling/.git])
+        expect(named("git -C sibling add -A").written.map(&:resolved)).to eq(%w[/p/sibling/.git])
+      end
+
+      it "stays opaque with no subcommand after it" do
+        expect(named("git -C sibling")).to be_opaque
       end
 
       it "stays opaque when the directory is not one literal, or another option also moves" do
@@ -896,6 +901,127 @@ RSpec.describe Lain::Shell::Named do
 
     it "names the directory it runs in when the first segment globs" do
       expect(resolved("cat *.key")).to eq(%w[/p])
+    end
+  end
+
+  describe "the probes a session runs to look around" do
+    it "reads each one, naming its paths" do
+      probes = {
+        'ls src; echo "exit=$?"' => "/p/src",
+        "git -C /p/n remote -v" => "/p/n",
+        "env | grep XDG" => "/p/XDG",
+        "awk '/Blocked/ {print FILENAME}' issues/a.md" => "/p/issues/a.md",
+        "for f in a.md b.md; do cat $f; done" => "/p/b.md"
+      }
+
+      expect(probes.keys.to_h { [_1, [named(_1).opaque?, resolved(_1).include?(probes[_1])]] })
+        .to eq(probes.keys.to_h { [_1, [false, true]] })
+    end
+
+    it "reads $?, $$ and $# inside double quotes as digits, so the word names its fixed directory and a pattern" do
+      result = named('cat "x$?" "$$" "logs/$#.txt"')
+      expect(result).not_to be_opaque
+      expect(result.paths.map { [_1.resolved, _1.pattern] })
+        .to eq([%w[/p /p/x*], %w[/p /p/*], %w[/p/logs /p/logs/*.txt]])
+    end
+
+    it "matches adjacent fills, or a fill beside a bare *, as one wildcard, never a recursive **" do
+      expect(['cat "$?$?"', 'cat "$?"*', 'cat *"$$"', 'cat "a$?$#b"'].map { named(_1).paths.sole.pattern })
+        .to eq(%w[/p/* /p/* /p/* /p/a*b])
+    end
+
+    it "hands no argv for a word the shell finishes, since none is known before it runs" do
+      expect(described_class.stages(Lain::Shell::Parse.new.call('echo "exit=$?"'), cwd: "/p", home: nil)).to be_nil
+    end
+
+    it "reads a git -C before the subcommand as git's own, naming a write at its directory" do
+      result = named("git -C /outside commit -m x")
+      expect(result).not_to be_opaque
+      expect(result.written.map(&:resolved)).to eq(%w[/outside/.git])
+    end
+
+    it "reads a bare env as a reader naming nothing" do
+      expect([named("env").opaque?, resolved("env")]).to eq([false, []])
+    end
+
+    it "reads only the word env as a bare env, not a program of that name elsewhere" do
+      ["./env", "bin/env", "/usr/bin/env"].each { expect(named(_1)).to be_opaque, _1 }
+    end
+
+    it "reads an awk program that only reads, as filters and reports" do
+      ["awk '{print}' f", "awk -F: '$3 > 100 {print $1}' f", "awk -v n=2 'NR == n || /x/' f",
+       "gawk '{ printf \"%s\\n\", $1 }' f", "awk 'END {print NR}' f"].each do |command|
+        expect(named(command)).not_to be_opaque, command
+        expect(resolved(command)).to include("/p/f"), command
+      end
+    end
+
+    it "unrolls a for loop over literal paths, reading its body once per word" do
+      expect(resolved("for f in a.md b.md; do cat $f; done")).to eq(%w[/p/a.md /p/b.md])
+      expect(resolved("for f in a b\ndo\n  wc -l \"$f\" ${f}.txt\ndone")).to eq(%w[/p/a /p/a.txt /p/b /p/b.txt])
+      expect(named("for f in a b; do sed -n 1p $f > $f.out; done").written.map(&:resolved))
+        .to eq(%w[/p/a.out /p/b.out])
+      expect(resolved("for f in a; do cat '$f'; done")).to eq(%w[/p/$f])
+    end
+  end
+
+  describe "what stays opaque" do
+    it "keeps an option word a fill finishes opaque, since its letters are not known until bash runs it" do
+      ['rsync -"$?"e "sh -c id" a h:b', 'curl -"$?"o /tmp/x https://e', 'false; grep -"$?"r TOKEN ~',
+       'false; ls -"$?"R ~', 'tar -x"$?"Cf /outside a.tar', 'sh -"$?"c id', 'make -"$?"C /x',
+       'sed -"$?"i s/a/b/ f', 'cat --"$#"x=y f'].each { expect(named(_1)).to be_opaque, _1 }
+    end
+
+    it "keeps a git -C opaque for a writing subcommand when another global option sits between or before them" do
+      ["git -C /outside --no-pager commit -m x", "git --no-pager -C /outside commit -m x",
+       "git --no-pager -C/outside commit -m x", "git -C a --git-dir=/z/.git commit -m x"]
+        .each { expect(named(_1)).to be_opaque, _1 }
+    end
+
+    it "keeps every other expansion opaque, quoted or not" do
+      ['echo "$(id)"', 'echo "$x"', 'echo "$1"', 'echo "${?}"', "echo $?", 'echo "$$$x"', 'echo "$?`id`"',
+       'echo "$?\\n"', 'echo "$!"', 'echo "$@"', 'echo "$-"'].each { expect(named(_1)).to be_opaque, _1 }
+    end
+
+    it "keeps a git -C opaque that another option moves, that names no literal directory, or that runs code" do
+      ["git -C a -C b commit -m x", "git -C $D commit -m x", "git -C a --work-tree=/y commit -m x",
+       "git -C a -c core.fsmonitor=id status", "git -c alias.x=!sh -C a x",
+       "git -C a* commit -m x"].each { expect(named(_1)).to be_opaque, _1 }
+    end
+
+    it "keeps an env opaque that runs, changes or splits anything" do
+      ["env sh -c id", "env cat .env", "env FOO=1 cat f", "env -i cat f", "env -S 'cat f'", "env -u X sh",
+       "env --chdir=/tmp", "/usr/bin/env sh"].each { expect(named(_1)).to be_opaque, _1 }
+    end
+
+    it "keeps an awk opaque that runs, reads or writes beyond its operands, or loads code" do
+      ["awk 'BEGIN{system(\"id\")}'", "awk -f prog.awk a.md", "gawk '@load \"x\"; {print}' a.md",
+       "gawk '@include \"x\"'", "awk '{print > \"out\"}' f", "awk '{printf \"%s\", $0 > \"/tmp/x\"}' f",
+       "awk '{print >> \"out\"}' f", "awk '{print | \"sh\"}' f", "awk '{print |& \"sh\"}' f",
+       "awk '{\"date\" | getline d}' f", "awk 'BEGIN{while ((getline l < \"/etc/shadow\") > 0) print l}'",
+       "awk 'BEGIN{ARGV[1]=\"/etc/shadow\"; ARGC=2} {print}' f", "gawk '{@f()}' f",
+       "gawk -l filefuncs '{print}' f", "gawk --load=x '{print}' f", "gawk -i inc '{print}' f",
+       "gawk --include=inc '{print}' f", "gawk -o out '{print}' f", "gawk --pretty-print=out '{print}' f",
+       "gawk -p prof '{print}' f", "gawk --dump-variables=d '{print}' f", "gawk -D '{print}' f",
+       "awk -E p f", "awk"].each do |command|
+        expect(named(command)).to be_opaque, command
+      end
+    end
+
+    it "keeps a for loop opaque unless it is the whole command, over plain literal words, into a readable body" do
+      ["for f in $(ls); do cat $f; done", "for f in *.md; do cat $f; done", "for f in \"a b\"; do cat $f; done",
+       "for f in ~/x; do cat $f; done", "for f in a; do cat $f; done; rm x", "for f in a; do cat $f; done | sh",
+       "for f in a; do cat $f; done > out", "for f in a; do sh -c $f; done", "for f; do cat $f; done",
+       "for PATH in /tmp/bin; do ls; done", "for f in a; do cat $f; done; rm -rf /x;\ndone",
+       "for f in a; do cat ${f%.md}; done", "for f in a; do cat $f; done & cat .env",
+       "for f in a; do for g in b; do cat $g; done; done", "time for f in a; do cat $f; done",
+       "for f in a; do cat $f; done; done", "for f in a\\; b; do cat $f; done",
+       "for f in x; do cat \"'\" '$f'; done", "for f in p/src/a; do touch \"'\" '/home/u/$f'; done",
+       "for f in x; do cat $f # it's\ndone", "for f in x; do cat $f # c\ndone",
+       "for f in a; do cat $f; done>out; rm -rf /x;\ndone", "for f in a; do cat $f; done<in; rm -rf /x;\ndone"]
+        .each do |command|
+        expect(named(command)).to be_opaque, command
+      end
     end
   end
 
