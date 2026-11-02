@@ -80,9 +80,10 @@ module Lain
       # stream beside the one the prompt was drawn on; so the prompt carries the
       # sentence and the terminal asks for it on the way out.
       class Asked < String
-        def initialize(text, pending, wall_clock: -> { Time.now })
+        def initialize(text, pending, wall_clock: -> { Time.now }, parts: Intake::NoParts)
           super(text)
           @pending = pending
+          @parts = parts
           @wall_clock = wall_clock
           freeze
         end
@@ -90,6 +91,12 @@ module Lain
         # The text as drawn, asked when the prompt reaches the head: one queued
         # behind another would otherwise carry the time it began to wait.
         def stamped = "#{@wall_clock.call.strftime("%H:%M:%S")} #{self}"
+
+        # What the {Intake} publishes beside the text, for a pane that fits it
+        # to its own rows.
+        #
+        # @return [Intake::Parts, Intake::NoParts]
+        attr_reader :parts
 
         # Yields the sentence ending this prompt's line when its call was
         # decided anywhere else -- a timeout, an oracle, the editor, or another
@@ -220,7 +227,8 @@ module Lain
       # called with no reactor under it.
       def read_until_decided(pending)
         Sync do |task|
-          asked = Asked.new(@pastel.yellow.bold(prompt_for(pending)), pending, wall_clock: @wall_clock)
+          asked = Asked.new(@pastel.yellow.bold(prompt_for(pending)), pending, wall_clock: @wall_clock,
+                                                                               parts: prompt_parts(pending))
           reading = task.async(finished: false) { @reader.call(asked) }
           letting_go = task.async { let_go(pending, reading) }
           reading.wait
@@ -290,6 +298,12 @@ module Lain
         "#{pending.outstanding.preamble}#{landing(pending)}#{pending.label} " \
           "asks (auto-denies in #{pending.window_face}#{judged(pending)}): " \
           "approve #{pending.call_face}? [y/N] "
+      end
+
+      def prompt_parts(pending)
+        Intake::Parts.new(lead: "#{pending.outstanding.preamble}#{landing(pending)}#{pending.label} asks:",
+                          call: pending.call_face, reasons: pending.reasons,
+                          tail: "auto-denies in #{pending.window_face}, approve? [y/N] ")
       end
 
       def judged(pending)

@@ -136,6 +136,17 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     expect(seen.stamped).to start_with("13:14:01 agent asks")
   end
 
+  it "hands the rail the prompt's parts as a deeply frozen value" do
+    seen = nil
+    described_class.new(output:, pastel: Pastel.new(enabled: false),
+                        reader: ->(prompt) { (seen = prompt) && "n\n" }).decide(pending)
+
+    expect([seen.parts.to_h, seen.parts.frame.keys, Ractor.shareable?(seen.parts)]).to eq(
+      [{ lead: "agent asks:", call: "bash(#{effect.input.inspect})", reasons: [],
+         tail: "auto-denies in 5:00, approve? [y/N] " }, ["parts"], true]
+    )
+  end
+
   it "names a skill child by its label in the line a closed prompt leaves behind" do
     skilled = Lain::Requester.new(name: "dev", skill: "gherkin-tests")
     labelled = Lain::Approval::Parked::Queue::Pending.new(effect:, identity: skilled,

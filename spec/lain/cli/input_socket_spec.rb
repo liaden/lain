@@ -208,6 +208,24 @@ RSpec.describe Lain::CLI::InputSocket do
       expect(frame.values_at("kind", "text", "header")).to eq(["you", "you> ", "fleet:0 inbox:0"])
     end
 
+    it "carries a prompt's parts beside its one-string text" do
+      client = connect
+      parts = Lain::Frontend::Intake::Parts.new(lead: "agent asks:", call: "bash(ls)", reasons: ["r"], tail: "[y/N] ")
+      publish(:approval, Struct.new(:stamped, :parts).new("approve? [y/N] ", parts))
+      frame = next_frame(client, of: "prompt")
+
+      expect(frame.values_at("text", "parts")).to eq(
+        ["approve? [y/N] ", { "lead" => "agent asks:", "call" => "bash(ls)", "reasons" => ["r"], "tail" => "[y/N] " }]
+      )
+    end
+
+    it "carries no parts for a prompt that has none" do
+      client = connect
+      publish(:you, "you> ")
+
+      expect(next_frame(client, of: "prompt")).not_to have_key("parts")
+    end
+
     it "tells a pane the command names it completes against, since the pane holds no registry" do
       expect(next_frame(connect, of: "context")["commands"]).to eq(%w[approve inbox])
     end

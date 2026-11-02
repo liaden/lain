@@ -1145,4 +1145,38 @@ RSpec.describe Lain::Frontend::Intake do
       expect(verdict).to eq(:passed)
     end
   end
+
+  describe "Parts" do
+    subject(:parts) do
+      Lain::Frontend::Intake::Parts.new(lead: "agent asks:", call: "bash(ls)", reasons: [reason], tail: "[y/N] ")
+    end
+
+    let(:reason) { Lain::Approval::Parked::Queue::Reason.own("the judge deferred this") }
+
+    it "is the frame's own field, with string keys" do
+      expect(parts.frame).to eq({ "parts" => { "lead" => "agent asks:", "call" => "bash(ls)",
+                                               "reasons" => [reason.to_s], "tail" => "[y/N] " } })
+    end
+
+    it "holds each reason as a frozen string, so a real Reason does not break sharing" do
+      expect([parts.reasons.map(&:class), Ractor.shareable?(parts)]).to eq([[String], true])
+    end
+  end
+
+  describe "NoParts" do
+    it "puts nothing on the wire and is shareable" do
+      expect([Lain::Frontend::Intake::NoParts.frame, Ractor.shareable?(Lain::Frontend::Intake::NoParts)])
+        .to eq([{}, true])
+    end
+
+    it "is what a prompt has when its text brought none" do
+      Sync do |task|
+        task.async { rail.read(:you, "you> ") }
+        pumped_until(task) { rail.published.kind == :you }
+
+        expect(rail.published.parts).to be(Lain::Frontend::Intake::NoParts)
+        task.stop
+      end
+    end
+  end
 end

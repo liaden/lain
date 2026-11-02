@@ -168,6 +168,46 @@ RSpec.describe Lain::Frontend::InputPane do
     expect(screen.string).to include("🔥 fleet:1 inbox:0")
   end
 
+  describe "an approval prompt too long for the pane's rows" do
+    let(:call) { "FIRST #{"x" * 2600} LAST" }
+    let(:parts) do
+      { "lead" => "agent asks:", "call" => call, "reasons" => [], "tail" => "auto-denies in 5:00, approve? [y/N] " }
+    end
+
+    def ask(chat, parts: self.parts, text: "agent asks: approve #{call}? [y/N] ")
+      publish(chat, { "kind" => "approval", "text" => text, "parts" => parts, "header" => "hud" })
+    end
+
+    it "draws the call's two ends, the hidden-bytes row and the tail, and not the middle" do
+      chat = open_pane
+      ask(chat)
+
+      expect(settles { screen.string.include?("[y/N]") || nil }).to be(true)
+      expect(screen.string).to include("FIRST", "LAST",
+                                       "bytes of the call are hidden; the full call is in lain://approval")
+        .and(satisfy { |drawn| drawn.scan("x").size < 2600 })
+    end
+
+    it "draws the whole line as the chat sent it when it fits" do
+      chat = open_pane
+      ask(chat, parts: parts.merge("call" => "bash(ls)"), text: "agent asks: approve bash(ls)? [y/N] ")
+
+      expect(settles { screen.string.include?("agent asks: approve bash(ls)? [y/N] ") || nil }).to be(true)
+      expect(screen.string).not_to include("bytes of the call are hidden")
+    end
+
+    it "fits again to the new rows when the window changes" do
+      chat = open_pane
+      ask(chat)
+      hidden = -> { screen.string.scan(/(\d+) bytes of the call are hidden/).flatten.uniq }
+      settles { hidden.call.size == 1 || nil }
+
+      window.script([12, 80])
+
+      expect(settles { hidden.call.size == 2 || nil }).to be(true)
+    end
+  end
+
   it "tells the human at an empty you> prompt how to write more than 1 line" do
     chat = open_pane
     publish(chat, {})

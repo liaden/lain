@@ -56,12 +56,12 @@ module InputPaneSocket
                 .take_while { |line| !line.nil? }.each { |line| log.puts(JSON.generate({ "heard" => line })) }
     end
 
-    approval = lambda do |task|
+    approval = lambda do |task, command = "rm -rf build"|
       queue = Lain::Approval::Parked::Queue.new(journal: Lain::Journal.new(io: out), timeout: 30)
       policy = Lain::Frontend::ApprovalPolicy.new(reader: ->(asked) { conductor.read_reply(asked) },
                                                  output: out, pastel: Pastel.new(enabled: false))
       watching = task.async { policy.watch(queue) }
-      call = Lain::Effect::ToolCall.new(tool_use_id: "c1", name: "bash", input: { "command" => "rm -rf build" })
+      call = Lain::Effect::ToolCall.new(tool_use_id: "c1", name: "bash", input: { "command" => command })
       settled = queue.adjudicate(call, nil)
       log.puts(JSON.generate({ "approved" => settled.approved?, "surface" => settled.surface }))
       watching.stop
@@ -104,7 +104,8 @@ module InputPaneSocket
       Sync do |task|
         socket.start(task)
         { "lines" => lines, "approval" => approval, "countdown" => countdown,
-          "parked" => parked, "running" => running }.fetch(shape).call(task)
+          "parked" => parked, "running" => running,
+          "long_approval" => ->(inner) { approval.call(inner, "FIRSTWORD " + ("x" * 2600) + " LASTWORD") } }.fetch(shape).call(task)
       end
     end
     socket.stop
@@ -485,6 +486,19 @@ RSpec.describe "a chat fed by an input pane", :seam do
 
     expect(cockpit.settles { cockpit.heard.find { |record| record.key?("approved") } })
       .to include({ "approved" => true })
+  end
+
+  it "keeps the y/N and the deadline on the last row of a 2600-character call at 26 rows, and says what is hidden" do
+    cockpit.resize(26)
+    cockpit_at("long_approval", prompt: "[y/N]")
+
+    plain = cockpit.screen.gsub(/\e\[[0-9;?<>]*[A-Za-z]|\e[78]/, "").tr("\r", "")
+    rows = plain.lines.map(&:chomp)
+    note = rows.rindex { |row| row.include?("bytes of the call are hidden") }
+
+    expect([rows[note].include?("lain://approval"), rows[note + 1].include?("[y/N]"),
+            rows[note + 1].include?("auto-denies in 0:30"), plain.include?("FIRSTWORD"), plain.include?("LASTWORD")])
+      .to eq([true, true, true, true, true])
   end
 
   it "draws the countdown in the pane on Ctrl-C, and cancels it from there" do

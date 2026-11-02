@@ -38,6 +38,13 @@ module Lain
           @tty.print_prompt("#{CLEAR_ROW}#{header}\n")
         end
 
+        # @param rows [Array<String>] the prompt's own rows above the editor's line
+        def under(rows)
+          return if rows.empty?
+
+          @tty.print_prompt(rows.map { |row| "#{CLEAR_ROW}#{row}\n" }.join)
+        end
+
         # @param frame [Hash] the chat's prompt frame; only a `you` prompt not yet hinted is
         def hint(frame)
           return unless frame["kind"] == "you" && frame["generation"] != @hinted

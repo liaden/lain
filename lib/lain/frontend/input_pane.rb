@@ -377,7 +377,8 @@ module Lain
       def reheaded(task, client, frame)
         header = frame["header"].to_s
         return @held.hold(frame) if holding?
-        return redrawn_whole(task, client, frame) unless HeaderRows.same_count?(@drawn["header"].to_s, header)
+        return redrawn_whole(task, client, frame) unless HeaderRows.same_count?(@drawn["header"].to_s,
+                                                                                header) && @above.to_i.zero?
 
         @rows.rewrite(header)
         @drawn = frame
@@ -406,7 +407,7 @@ module Lain
       # rather than fed a kill key, because a fresh read is the one thing known
       # to start from an empty buffer; `above` is the rows of that line over the cursor.
       def redrawn_whole(task, client, frame = @held.over(@drawn), above: 0)
-        @replaced = header_rows(@drawn) + above
+        @replaced = header_rows(@drawn) + @above.to_i + above
         redraw(task, client, frame)
       end
 
@@ -444,7 +445,10 @@ module Lain
 
         @rows.hint(frame)
         @rows.over(frame["header"])
-        line = @rail.read(frame["kind"].to_sym, frame["text"].to_s, header: frame["header"].to_s)
+        *above, text = PromptFit.rows(frame, @geometry, header_rows: header_rows(frame))
+        @rows.under(above)
+        @above = above.size
+        line = @rail.read(frame["kind"].to_sym, text, header: frame["header"].to_s)
         # The answer's echoed newline moved the cursor off the input row.
         @answered = !line.nil?
         emit(client, line.nil? ? { "v" => "eof" } : answer(line, frame))
@@ -581,6 +585,7 @@ module Lain
         module Blind
           def self.moved! = nil
           def self.painted = nil
+          def self.window = nil
         end
 
         # @param io [IO] the pane's terminal
@@ -612,6 +617,9 @@ module Lain
 
         # The pane painted, so whatever the window did is on the screen now.
         def painted = @moved = false
+
+        # @return [Array<Integer>, nil] `[rows, columns]`, or nil when it cannot be read
+        def window = size
 
         private
 

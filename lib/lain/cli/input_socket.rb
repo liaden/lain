@@ -399,7 +399,7 @@ module Lain
 
         { "v" => "prompt", "kind" => prompt.kind.to_s, "text" => prompt.text.to_s,
           "header" => asked(@header, "").to_s, "keys" => prompt.keys.transform_values(&:to_s),
-          "layers" => asked(@layers, []).map(&:to_s), "generation" => prompt.generation }
+          "layers" => asked(@layers, []).map(&:to_s), "generation" => prompt.generation }.merge(prompt.parts.frame)
       end
 
       # A thunk is the caller's code, read on this object's own thread, and a

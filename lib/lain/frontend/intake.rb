@@ -70,7 +70,16 @@ module Lain
       # of that name is what tells the human nothing was running.
       STOP = "/stop"
 
-      Prompt = Data.define(:kind, :text, :header, :keys, :generation)
+      Prompt = Data.define(:kind, :text, :header, :keys, :generation, :parts)
+
+      Parts = Data.define(:lead, :call, :reasons, :tail) do
+        def frame = { "parts" => to_h.transform_keys(&:to_s) }
+      end
+
+      # A prompt with no structure: nothing for a pane to fit, nothing on the wire.
+      module NoParts
+        def self.frame = {}
+      end
       Line = Data.define(:text, :generation)
       Signal = Data.define(:name)
       Eof = Data.define
@@ -275,7 +284,8 @@ module Lain
       def read(kind, text, header: "", keys: {})
         turn = Turn.new(Thread::Queue.new, kind, text, false, false)
         enter(turn)
-        asked = Prompt.new(kind:, text: text.respond_to?(:stamped) ? text.stamped : text, header:, keys:, generation: 0)
+        asked = Prompt.new(kind:, text: text.respond_to?(:stamped) ? text.stamped : text, header:, keys:, generation: 0,
+                           parts: text.respond_to?(:parts) ? text.parts : NoParts)
         kind == RECALLED ? recalled(held_line || answered(turn, asked, text)) : answered(turn, asked, text)
       ensure
         unwinding do
@@ -460,14 +470,23 @@ module Lain
       # Reopened for the values' validation, since a constant defined inside a
       # `Data.define` block belongs to the enclosing class instead.
       class Prompt
-        def initialize(kind:, text:, generation:, header: "", keys: {})
+        def initialize(kind:, text:, generation:, header: "", keys: {}, parts: NoParts)
           raise ArgumentError, "#{kind.inspect} is not a prompt kind (#{KINDS.join(", ")})" unless KINDS.include?(kind)
 
           super(kind:, text: String.new(text).freeze, header: String.new(header).freeze,
-                keys: keys.to_h { |key, name| [String.new(key.to_s).freeze, name.to_sym] }.freeze, generation:)
+                keys: keys.to_h { |key, name| [String.new(key.to_s).freeze, name.to_sym] }.freeze, generation:, parts:)
         end
 
         def answer? = ANSWERS.include?(kind)
+      end
+
+      # The pieces of an approval prompt a pane fits to its rows; `text` stays
+      # the one joined string every other reader takes.
+      class Parts
+        def initialize(lead:, call:, reasons:, tail:)
+          super(lead: String.new(lead).freeze, call: String.new(call).freeze,
+                reasons: reasons.map { String.new(_1.to_s).freeze }.freeze, tail: String.new(tail).freeze)
+        end
       end
 
       # What was typed, and the generation of the prompt drawn when typing began.
