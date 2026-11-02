@@ -39,7 +39,7 @@ RSpec.describe Lain::CLI::EpicMount do
 
       def submit(stage, slug = nil, issue: nil, digest: nil)
         (@asked ||= []) << [stage, slug, issue, digest]
-        "approved #{stage}"
+        Lain::Tool::Result.ok("approved #{stage}")
       end
     end.new
   end

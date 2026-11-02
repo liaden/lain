@@ -139,6 +139,40 @@ RSpec.describe Lain::Tools::EpicSubmit do
     end
   end
 
+  context "when the human answers hold" do
+    def held_with(reply)
+      Sync do |task|
+        call = task.async { tool.call({ "stage" => "research", "slug" => "frugirl-mvp" }, invocation) }
+        task.yield until ask_human.pending?
+        ask_human.reply(reply, ask_human.last_question.digest)
+        call.wait
+      end
+    end
+
+    it "ends the agent's turn, saying the human asked it to wait and why" do
+      result = held_with("hold, I'll run the review myself")
+
+      expect([result.ends_turn, result.error?]).to eq([true, false])
+      expect(result.content).to eq("the human asked you to wait: I'll run the review myself")
+      expect(this_sessions_decisions.last).to include("approved" => false, "answered_by" => "held")
+    end
+
+    it "says only that the human asked it to wait when no note came with the hold" do
+      expect(held_with("wait").content).to eq("the human asked you to wait")
+    end
+
+    it "cuts a long note to 300 bytes, since the chat shows the human only these words" do
+      expect(held_with("stop: #{"x" * 5000}").content).to eq("the human asked you to wait: #{"x" * 300}...")
+    end
+
+    it "cuts a multibyte note on a character boundary" do
+      note = held_with("stop: a#{"日" * 200}").content.delete_prefix("the human asked you to wait: ")
+
+      expect(note).to be_valid_encoding
+      expect(note).to eq("a#{"日" * 99}...")
+    end
+  end
+
   context "when the submitted stage is adjudicated" do
     let(:gates) { every_stage("hands_off").merge("research" => "adjudicated") }
 

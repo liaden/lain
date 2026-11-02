@@ -358,6 +358,9 @@ module Lain
       # A decision whose `approved` is neither true nor false is refused, not
       # read as a denial: "not approved" sends a human to approve a commit
       # their journal may already hold a decision on.
+      #
+      # A hold is no verdict, as in {Epic::SignoffQueue#apply}: it neither
+      # refuses a commit nor withdraws an approval the commit already carries.
       class Approvals
         # @param entries [Enumerable<Hash, String>] journal records or lines
         # @raise [Epic::SignoffQueue::UnreadableRecord] naming a decision
@@ -366,6 +369,7 @@ module Lain
           new(Journal.records(entries, type: Epic::SignoffQueue::JOURNAL_TYPE)
                      .map { |decision| readable!(decision) }
                      .select { |decision| implementation?(decision) }
+                     .reject { |decision| Epic::GateReply.held?(decision["answered_by"]) }
                      .to_h { |decision| [[decision["issue_id"], decision["artifact_digest"]], verdict(decision)] })
         end
 

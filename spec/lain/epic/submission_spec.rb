@@ -332,6 +332,24 @@ RSpec.describe Lain::Epic::Submission do
     it "does not take a word merely starting with a denial word for one" do
       expect(answer("nothing to add").surface).to eq("unrecognised")
     end
+
+    ["hold", "wait", "stop", "Hold.", "  WAIT! \n"].each do |reply|
+      it "reads #{reply.inspect} as a held answer, approving nothing and carrying no note" do
+        result = answer(reply)
+
+        expect([result.approved?, result.surface, result.reason]).to eq([false, "held", nil])
+      end
+    end
+
+    it "carries the words after a hold word as the human's note" do
+      expect(answer("hold, I'll run the review myself").reason).to eq("I'll run the review myself")
+    end
+
+    ["holding on", "stop?", "waiter"].each do |reply|
+      it "reads #{reply.inspect}, no hold word standing alone, as unrecognised" do
+        expect(answer(reply).surface).to eq("unrecognised")
+      end
+    end
   end
 
   describe "gate_question" do
@@ -348,6 +366,12 @@ RSpec.describe Lain::Epic::Submission do
       question = described_class.research(text: "notes", slug: "demo").gate_question
 
       expect(question).to include("a reason may follow a denial word")
+    end
+
+    it "names the words that hold the agent until the human speaks" do
+      question = described_class.research(text: "notes", slug: "demo").gate_question
+
+      expect(question).to include("hold, wait, stop")
     end
 
     it "names the stage, the slug, and the issue count for an epic_plan" do

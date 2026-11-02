@@ -371,7 +371,9 @@ module Lain
 
       # A deferral parks; anything else is terminal and drains the address it
       # answers -- a DENIAL included, since a refused artifact is not awaiting
-      # anyone's sign-off either.
+      # anyone's sign-off either. A hold is neither: the human asked the agent
+      # to wait, so it parks nothing, drains nothing, and leaves a standing
+      # approval standing.
       #
       # PUBLIC, and therefore guarded on its own rather than trusting
       # {.from_journal}'s type filter: this is the seam a live session folds its
@@ -386,11 +388,15 @@ module Lain
       def apply(decision)
         Contracts::Decision.check!(type: decision["type"], stage: decision["stage"], policy: decision["policy"],
                                    approved: decision["approved"])
-        deferred?(decision) ? park(**parked_attributes(decision)) : settle(decision)
+        fold(decision) unless held?(decision)
         self
       end
 
       private
+
+      def fold(decision) = deferred?(decision) ? park(**parked_attributes(decision)) : settle(decision)
+
+      def held?(decision) = GateReply.held?(decision["answered_by"])
 
       def settle(decision)
         address = address_attributes(decision)

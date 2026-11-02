@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "stringio"
+require "tmpdir"
 
 # The unit half of the value-path rule. `repl_spec.rb` drives the whole thing --
 # a real Agent, a real Conductor, a real Async task -- and measures what reaches
@@ -146,6 +148,75 @@ RSpec.describe Lain::CLI::Repl::Ask do
       expect(types.last).to eq("ask_settled")
       expect(types.rindex("turn")).to be < types.index("ask_settled")
       expect(display.map(&:class)).to include(Lain::Telemetry::AskSettled)
+    end
+  end
+
+  # Scenario: hold stops the agent until the human speaks
+  #
+  # The one-shot ask over the chat's own epic_submit tool, its in-chat
+  # submitter, the interactive gate and ask_human, with nothing doubled but the
+  # model: the human's hold is the last thing the turn hears.
+  describe "a hold answered at an epic gate the agent submitted", :seam do
+    around do |example|
+      Dir.mktmpdir do |dir|
+        @dir = dir
+        example.run
+      ensure
+        @chronicle&.close
+      end
+    end
+
+    let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@dir, "state"), "HOME" => @dir }) }
+    let(:config) { Lain::Config.new(epics: Lain::Config::Epics.new(home: :repo, gates: {})) }
+    let(:ask_human) { Lain::Tools::AskHuman.new(parent: CoreGraph.timeline) }
+    let(:submit_call) do
+      Lain::Response.new(content: [{ "type" => "tool_use", "id" => "s1", "name" => "epic_submit",
+                                     "input" => { "stage" => "epic_plan", "slug" => "frugirl-mvp" } }],
+                         stop_reason: :tool_use)
+    end
+    let(:provider) { Lain::Provider::Mock.new(responses: [submit_call, text_response("carried on")]) }
+    let(:real_context) { Lain::Context.new(model: "m", max_tokens: 256) }
+    let(:chronicle) { @chronicle ||= Lain::CLI::Chronicle.for(enabled: true, paths:, root: @dir) }
+    let(:agent) do
+      submitter = Lain::CLI::EpicSubmit.in_chat(chronicle:, root: @dir, paths:, config:, asker: ask_human,
+                                                role_spawn: nil)
+      Lain::Agent.new(provider:, toolset: Lain::Toolset.new([Lain::Tools::EpicSubmit.new(submitter:)]),
+                      context: real_context)
+    end
+
+    def records(type) = Lain::Journal.records(File.foreach(chronicle.journal_path), type:).to_a
+
+    before do
+      home = Lain::Epic::Home.resolve(config:, paths:, root: @dir, slug: "frugirl-mvp")
+      home.write_epic(Lain::Epic::Graph.new(issues: [Lain::Epic::Issue.new(id: "a", title: "the a issue")]))
+      research = Lain::Epic::Submission.research(text: "notes\n", slug: "frugirl-mvp")
+      home.research.write("notes\n")
+      approved = Lain::Epic::GateDecision.new(artifact_digest: research.digest, epic_slug: "frugirl-mvp",
+                                              stage: "research", approved: true, answered_by: "human",
+                                              policy: "interactive", latency: 1.0)
+      FileUtils.mkdir_p(paths.filing_dir(root: @dir))
+      File.open(File.join(paths.filing_dir(root: @dir), "earlier.ndjson"), "w") do |io|
+        Lain::Journal.new(io:).record(approved)
+      end
+      chronicle.start(context: real_context, toolset: agent.toolset, sections: SessionSections.complete)
+    end
+
+    it "ends the turn with no further provider request and journals the gate as held, not a denial" do
+      asked = described_class.new(agent:, tty:, chronicle:)
+
+      shown = Sync do |task|
+        task.async do
+          task.yield until ask_human.pending?
+          ask_human.reply("hold, I'll run the review myself", ask_human.last_question.digest)
+        end
+        asked.settle(asked.attempt("submit the epic plan"))
+      end
+
+      expect(provider.requests.size).to eq(1)
+      expect(shown.text).to eq("the human asked you to wait: I'll run the review myself")
+      expect(records("ask_settled").map { _1["stop_reason"] }).to eq(["held"])
+      expect(records("gate_decision").last).to include("stage" => "epic_plan", "approved" => false,
+                                                       "answered_by" => "held")
     end
   end
 

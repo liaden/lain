@@ -132,12 +132,19 @@ module Lain
     # journaled as {UNRECOGNISED} with the reply in its reason, because
     # "the human denied this" would be a claim nobody made. End of input is
     # {EOF} for the same reason.
+    #
+    # A hold word is no verdict either: the human asked for the work to wait
+    # for them, so it is journaled as {HELD}, approving nothing and revoking
+    # nothing. Like a denial word it only has to stand alone at the start, so
+    # "hold on" holds, with "on" as its note.
     module GateReply
       APPROVALS = %w[approve approved y yes].freeze
       DENIALS = %w[deny denied n no].freeze
+      HOLDS = %w[hold wait stop].freeze
 
       UNRECOGNISED = "unrecognised"
       EOF = "eof"
+      HELD = "held"
 
       # How a reply is spoken, as opposed to what it says: case, surrounding
       # space and a closing full stop or exclamation mark. Only those two: a
@@ -145,9 +152,20 @@ module Lain
       # a hesitation, and neither is a verdict anybody gave.
       TRAILING_PUNCTUATION = /[.!]+\z/
 
-      INSTRUCTION = "Reply #{APPROVALS.join(", ")} to approve, or #{DENIALS.join(", ")} to deny; " \
-                    "a reason may follow a denial word; " \
+      INSTRUCTION = "Reply #{APPROVALS.join(", ")} to approve, #{DENIALS.join(", ")} to deny, " \
+                    "or #{HOLDS.join(", ")} to pause the work until you speak again; " \
+                    "a reason may follow a denial word, and a note a hold word; " \
                     "any other reply is recorded as #{UNRECOGNISED} and denies.".freeze
+
+      SEPARATOR = '[\s.!:,;\-]'
+
+      def self.word_then_reason(words) = /\A\s*(?:#{words.join("|")})(?:#{SEPARATOR}*\z|#{SEPARATOR}+(?<reason>.*\S))/mi
+      private_class_method :word_then_reason
+
+      DENIAL = word_then_reason(DENIALS)
+      HOLD = word_then_reason(HOLDS)
+
+      UNRECOGNISED_CLIP = 300
 
       # @param words [String, nil] what the human wrote; nil when nothing was
       # @param surface [String] who is credited with a recognised verdict
@@ -157,24 +175,21 @@ module Lain
 
         word = words.to_s.strip.downcase.sub(TRAILING_PUNCTUATION, "")
         return Epic::Gate::Answer.approve(surface) if APPROVALS.include?(word)
-        return denial(words, surface) if denial_word?(words)
+        return led(DENIAL, words, surface) if DENIAL.match?(words.to_s)
+        return led(HOLD, words, HELD) if HOLD.match?(words.to_s)
 
         Epic::Gate::Answer.new(approved: false, surface: UNRECOGNISED, reason: unrecognised(words))
       end
 
-      SEPARATOR = '[\s.!:,;\-]'
-      DENIAL = /\A\s*(?:#{DENIALS.join("|")})(?:#{SEPARATOR}*\z|#{SEPARATOR}+(?<reason>.*\S))/mi
+      # @param answered_by [#to_s, nil] a decision's surface
+      # @return [Boolean] whether the human held the gate rather than deciding it
+      def self.held?(answered_by) = answered_by.to_s == HELD
 
-      UNRECOGNISED_CLIP = 300
-
-      def self.denial_word?(words) = DENIAL.match?(words.to_s)
-      private_class_method :denial_word?
-
-      def self.denial(words, surface)
-        reason = DENIAL.match(words.to_s)[:reason]
+      def self.led(pattern, words, surface)
+        reason = pattern.match(words.to_s)[:reason]
         Epic::Gate::Answer.new(approved: false, surface:, reason: reason && legible_text(reason))
       end
-      private_class_method :denial
+      private_class_method :led
 
       # A reply cannot pose as a second result line: control bytes are written
       # out, and the reader indents every continuation line.
@@ -187,16 +202,19 @@ module Lain
       end
       private_class_method :legible_text
 
-      def self.clipped(text)
+      # @param text [String] what the human wrote
+      # @param limit [Integer] the most bytes kept
+      # @return [String] the text on one line, control bytes written out, cut to `limit` bytes with `...`
+      def self.clipped(text, limit: UNRECOGNISED_CLIP)
         escaped = Utf8.escaped(text.gsub(/\s+/, " "))
-        return escaped if escaped.bytesize <= UNRECOGNISED_CLIP
+        return escaped if escaped.bytesize <= limit
 
-        "#{escaped.byteslice(0, UNRECOGNISED_CLIP).scrub("")}..."
+        "#{escaped.byteslice(0, limit).scrub("")}..."
       end
-      private_class_method :clipped
 
       def self.unrecognised(words)
-        "the reply #{clipped(words.to_s).inspect} is none of #{(APPROVALS + DENIALS).join(", ")}, so the gate denied it"
+        "the reply #{clipped(words.to_s).inspect} is none of #{(APPROVALS + DENIALS + HOLDS).join(", ")}, " \
+          "so the gate denied it"
       end
       private_class_method :unrecognised
     end

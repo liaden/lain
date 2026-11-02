@@ -101,12 +101,14 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
     sha
   end
 
-  def approve(issue_id, sha, approved: true, policy: "hands_off")
+  def approve(issue_id, sha, approved: true, policy: "hands_off", answered_by: "human")
     digest = Lain::Epic::Submission.implementation(slug: "demo", issue_id:, digest: sha).digest
     decisions << Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: "demo", stage: "implementation",
-                                              approved:, answered_by: "human", policy:,
+                                              approved:, answered_by:, policy:,
                                               latency: 0.0, issue_id:)
   end
+
+  def hold(issue_id, sha) = approve(issue_id, sha, approved: false, policy: "interactive", answered_by: "held")
 
   def deny(issue_id, sha) = approve(issue_id, sha, approved: false, policy: "signoff")
 
@@ -388,6 +390,30 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
       landing.admit("a", sha:, ref:)
 
       expect(calls.count { |argv| argv.include?("--format=%s") }).to eq(1)
+    end
+
+    # A hold is no verdict: the human asked the agent to wait, so it neither
+    # refuses the commit nor withdraws an approval it already carries.
+    context "when the human answered the implementation gate hold" do
+      it "offers the held commit for approval through lain epic submit, not a re-run" do
+        sha, = worker("a", "README" => "a's work\n")
+        hold("a", sha)
+
+        expect { landing.anchored("a") }.to raise_error(Lain::Epic::Gate::NotApproved) { |error|
+          expect(error.message).to include(sha, "lain epic submit implementation demo --issue a --digest #{sha}")
+          expect(error.message).not_to include("re-run the issue", "no worker commit is anchored")
+        }
+      end
+
+      it "still lands a commit approved before the hold on the same digest" do
+        sha, ref = worker("a", "README" => "a's work\n")
+        approve("a", sha)
+        hold("a", sha)
+
+        landing.call("a", sha:, ref:)
+
+        expect(contains?(sha)).to be(true)
+      end
     end
 
     context "when the implementation gate parked the commit for sign-off" do

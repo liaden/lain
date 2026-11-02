@@ -352,8 +352,13 @@ module Lain
         #   digest; an adjudicator's evidence note is judge-side text and is not shown
         def reason(digest)
           decision = latest(digest)
-          decision.reason if [Prompt::SURFACE, Lain::Epic::GateReply::UNRECOGNISED].include?(decision&.answered_by)
+          decision.reason if [Prompt::SURFACE, Lain::Epic::GateReply::UNRECOGNISED,
+                              Lain::Epic::GateReply::HELD].include?(decision&.answered_by)
         end
+
+        # @param digest [String] the submitted artifact's address
+        # @return [Boolean] whether the human answered this command's latest decision on the digest with a hold
+        def held?(digest) = Lain::Epic::GateReply.held?(latest(digest)&.answered_by)
 
         # @param digest [String] the submitted artifact's address
         # @return [Boolean] whether this command's own latest decision on the digest deferred it
@@ -366,6 +371,32 @@ module Lain
         private
 
         def latest(digest) = @decided.reverse.find { |decided| decided.artifact_digest == digest }
+      end
+
+      HELD_NOTE_BYTES = 300
+
+      # A hold, said like any verdict for a shell, and carrying the shorter words a
+      # chat's agent is handed as the result that ends its turn.
+      #
+      # @!attribute [r] text
+      #   @return [String] the words to print
+      # @!attribute [r] status
+      #   @return [Integer] the process exit status
+      # @!attribute [r] wait
+      #   @return [String] what the agent is told
+      Held = Data.define(:text, :status, :wait) do
+        # The chat shows the human only this line, and the human wrote the note,
+        # so it is cut short; the whole note stays in the journal and in `text`.
+        #
+        # @param note [String, nil] the words after the hold word
+        # @return [String]
+        def self.waiting(note)
+          return "the human asked you to wait" if note.nil?
+
+          "the human asked you to wait: #{Lain::Epic::GateReply.clipped(note, limit: HELD_NOTE_BYTES)}"
+        end
+
+        def initialize(text:, status:, wait:) = super(text: -text, status:, wait: -wait)
       end
 
       # One submission, decided and reported. Its own object because reaching a
@@ -393,8 +424,8 @@ module Lain
         # one every other command's `render` meets, not a translation only this
         # one command's caller would need to know to rescue.
         #
-        # @return [Said] status 1 for a denial or a closed window, 0 otherwise:
-        #   a deferral parks the artifact for a human and is not a failure
+        # @return [Said, Held] status 1 for a denial, a hold or a closed window,
+        #   0 otherwise: a deferral parks the artifact for a human and is not a failure
         # @raise [Epic::StageBlocked] before anything is journaled, when an
         #   earlier stage of this epic (or of this issue) still holds sign-offs
         #   parked
@@ -421,6 +452,7 @@ module Lain
         def refused
           window = @journal.expired(@submission.digest)
           return failed { unanswered(window) } if window
+          return held if @journal.held?(@submission.digest)
 
           parked = @journal.deferred?(@submission.digest) && parked_item
           parked ? deferred(parked) : failed { denied }
@@ -450,6 +482,15 @@ module Lain
           reason = @journal.reason(@submission.digest)
           ["denied #{@submission.digest}", "  #{@stage} for epic #{slug} -- nothing advanced",
            *("  reason: #{reason.gsub("\n", "\n    ")}" if reason)].join("\n")
+        end
+
+        # Status 1 as for a denial: nothing advanced, and a script must not read on.
+        def held
+          note = @journal.reason(@submission.digest)
+          Held.new(text: ["held #{@submission.digest}",
+                          "  the human asked to wait at the #{@stage} gate for epic #{slug} -- nothing advanced",
+                          *("  note: #{note.gsub("\n", "\n    ")}" if note)].join("\n"),
+                   status: 1, wait: Held.waiting(note))
         end
       end
 
@@ -591,12 +632,15 @@ module Lain
           @command = command
         end
 
-        # @return [String] the verdict's words, as {EpicSubmit#submit} says them;
-        #   a chat's tool result has no exit status to carry
+        # @return [Tool::Result] the verdict's words, as {EpicSubmit#submit} says
+        #   them, with no exit status to carry; a hold ends the agent's turn
         # @raise [Lain::Error] when the session would not keep the decision
         def submit(stage, slug = nil, issue: nil, digest: nil, tests: nil)
           refuse_unkept!
-          @command.submit(stage, slug, issue:, digest:, tests:).text
+          case @command.submit(stage, slug, issue:, digest:, tests:)
+          in Held => held then Tool::Result.held(held.wait)
+          in said then Tool::Result.ok(said.text)
+          end
         end
 
         private
@@ -644,7 +688,7 @@ module Lain
       # @param issue [String, nil] which issue, for the issue-scoped stages
       # @param digest [String, nil] the changeset address, for `implementation`
       # @param tests [Telemetry::TestsRan, nil] what the suite did on that changeset, for `implementation`
-      # @return [Said] the verdict, rendered
+      # @return [Said, Held] the verdict, rendered
       # @raise [Lain::Error] every refusal on this path: an unknown stage, an
       #   ambiguous home, a missing artifact, an unbuildable policy, or the
       #   stage boundary

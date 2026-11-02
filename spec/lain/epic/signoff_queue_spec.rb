@@ -457,6 +457,25 @@ RSpec.describe Lain::Epic::SignoffQueue do
       expect(queue.drained?("alpha", "research")).to be(false)
     end
 
+    # Scenario: a hold does not revoke a standing approval
+    it "keeps issue a approved when a later issue_plan gate for a is answered hold" do
+      held = Lain::Epic::GateDecision.new(artifact_digest: "blake3:v2", epic_slug: "alpha", stage: "issue_plan",
+                                          issue_id: "a", approved: false, answered_by: Lain::Epic::GateReply::HELD,
+                                          policy: "interactive", latency: 0.1)
+      queue = described_class.from_journal(journaled(approval(digest: "blake3:v1", stage: "issue_plan", issue_id: "a"),
+                                                     held))
+
+      expect(queue.approved?("alpha", "issue_plan", issue_id: "a")).to be(true)
+      expect(queue.standing?("blake3:v1", "alpha", "issue_plan", issue_id: "a")).to be(true)
+    end
+
+    it "leaves a parked sign-off parked when its digest is answered hold" do
+      held = decision(policy: "interactive").to_h.merge(answered_by: Lain::Epic::GateReply::HELD)
+      queue = described_class.from_journal(journaled(deferral, Lain::Epic::GateDecision.new(**held)))
+
+      expect(queue.drained?("alpha", "research")).to be(false)
+    end
+
     it "keys on the whole partition: another epic, stage or issue vouches for nothing" do
       queue = described_class.from_journal(journaled(approval(epic_slug: "beta"),
                                                      approval(stage: "issue_plan", issue_id: "a")))

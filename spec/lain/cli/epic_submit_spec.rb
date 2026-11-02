@@ -1007,6 +1007,16 @@ RSpec.describe Lain::CLI::EpicSubmit do
           expect(said).to include("\n    approved blake3:abc")
         end
 
+        # Scenario: hold stops the agent until the human speaks
+        it "journals a hold as surface held, not a denial, and says it held with the human's note" do
+          said = submitted_while { |question| asker.reply("hold, I'll run the review myself", question.digest) }
+
+          expect(said).to start_with("held").and include("I'll run the review myself", "nothing advanced")
+          expect(said).not_to include("denied")
+          expect(verdicts).to eq([[false, "held"]])
+          expect(gate_decisions.first["reason"]).to eq("I'll run the review myself")
+        end
+
         # Scenario: end of input is not a human's answer
         it "records end of input at the reply prompt as eof" do
           submitted_while { |question| asker.reply(Lain::Tools::AskHuman::Unanswered.new, question.digest) }
@@ -1069,7 +1079,8 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
       expect { submitter.submit("research", "alpha") }.to raise_error(Lain::Error, %r{--btw.*/keep}m)
       chronicle.promote!
-      expect(submitter.submit("research", "alpha")).to start_with("approved")
+      expect(submitter.submit("research", "alpha")).to have_attributes(ends_turn: false)
+        .and(have_attributes(text: start_with("approved")))
     ensure
       chronicle&.close
     end
@@ -1299,6 +1310,13 @@ RSpec.describe Lain::CLI::EpicSubmit do
       approved = command(gates: hands_off.merge("research" => "interactive"), input: tty("y\n")).submit("research")
 
       expect([denied.status, approved.status]).to eq([1, 0])
+    end
+
+    it "exits 1 on a hold typed at the terminal, which advanced nothing" do
+      held = command(gates: hands_off.merge("research" => "interactive"), input: tty("hold\n")).submit("research")
+
+      expect([held.status, held.text]).to match([1, start_with("held")])
+      expect(stage_transitions).to be_empty
     end
 
     it "prints denied, not parked, when a human denies over an earlier deferral of the same digest" do

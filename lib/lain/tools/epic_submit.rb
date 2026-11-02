@@ -29,7 +29,8 @@ module Lain
       input_model Input
 
       # @param submitter [#submit] answers `submit(stage, slug, issue:)` with
-      #   the verdict as a String, as {CLI::EpicSubmit#submit} does
+      #   the verdict as a {Tool::Result}, held when the human asked the agent
+      #   to wait, as {CLI::EpicSubmit::InChat#submit} does
       def initialize(submitter:)
         super()
         @submitter = submitter
@@ -46,7 +47,7 @@ module Lain
       protected
 
       def perform(input, _invocation)
-        Tool::Result.ok(@submitter.submit(input.stage, input.slug, issue: input.issue))
+        @submitter.submit(input.stage, input.slug, issue: input.issue)
       rescue Epic::Gate::Policies::Refusal => e
         Tool::Result.error("#{unwirable(e)}; ask the user to run `#{shell_command(input)}` from a shell")
       rescue Lain::Error, SystemCallError => e

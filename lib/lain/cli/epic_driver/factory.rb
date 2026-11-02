@@ -126,7 +126,7 @@ module Lain
         # retirement anchored.
         #
         # It ASKS THE RECORD rather than reading the verdict's prose: a submit
-        # answers a rendered String, and a policy that parked has journaled a
+        # answers a rendered Said or Held, and a policy that parked has journaled a
         # deferral whose shape the landing reads back the same way. So the
         # question "may this land" is answered by the same records that will
         # answer it at the queue, and the two cannot disagree.
