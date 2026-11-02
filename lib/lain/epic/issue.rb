@@ -134,7 +134,9 @@ module Lain
       # {Document} owns DESCRIPTION_RULES/CRITERIA_RULES, so it is asked
       # rather than walked again here -- the field-keyed Hash lets
       # {Document::Writer} consult one field at a time.
-      def document_grammar_failures = Document.grammar_failures(description:, criteria:)
+      def document_grammar_failures
+        Document.grammar_failures(description:, criteria:, linked: Document.link_lines(self).any?)
+      end
 
       private
 

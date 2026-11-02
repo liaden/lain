@@ -147,21 +147,49 @@ RSpec.describe Lain::Epic::Document do
         .to eq("First paragraph.\n\nSecond paragraph.")
     end
 
-    # The grammar lifts link lines out of the prose stream and leaves the blank
-    # lines that surrounded them behind, rather than squeezing blank runs -- a
-    # squeeze would silently edit an author's deliberate paragraph spacing. The
-    # result is stable under a second pass, which is what the round trip needs.
-    it "keeps prose from both sides of a link line, and the blank lines it left behind" do
+    it "keeps a Kind: value line in the middle of the prose as prose" do
       source = "### [ ] `a` Issue a\n\nAbove.\n\nRelated: `b`\n\nBelow.\n\n### [ ] `b` Issue b\n"
 
       once = parse(source)
 
-      expect(once.fetch("a").description).to eq("Above.\n\n\nBelow.")
+      expect(once.fetch("a")).to have_attributes(description: "Above.\n\nRelated: `b`\n\nBelow.", related: [])
       expect(parse(described_class.to_markdown(once)).digest).to eq(once.digest)
     end
 
-    it "refuses an issue that lists one id under both Blocks and Related, on its heading line" do
+    it "reads a prose line ending in a colon-led list as prose" do
+      source = "### [ ] `a` Issue a\n\nMeasure records per candidate: rows, bytes\nThen compare.\n"
+
+      expect(parse(source).fetch("a").description).to eq("Measure records per candidate: rows, bytes\nThen compare.")
+    end
+
+    it "reads only the run directly before the fence as links" do
+      source = "### [ ] `a` Issue a\n\nNote: kept\nMore prose.\n\nRelated: `b`\n\n" \
+               "```gherkin\nScenario: x\n  Given y\n  Then z\n```\n\n### [ ] `b` Issue b\n"
+
+      expect(parse(source).fetch("a")).to have_attributes(description: "Note: kept\nMore prose.", related: ["b"])
+    end
+
+    it "refuses a known link line parted from the link block by a blank line, naming the line" do
       source = "### [ ] `a` Issue a\n\nBlocks: `b`\n\nRelated: `b`\n\n### [ ] `b` Issue b\n"
+
+      expect { parse(source) }
+        .to raise_error(Lain::Epic::MalformedDocument, /line 3.*contiguous.*remove the blank line/m)
+    end
+
+    it "keeps a known link line in the middle of prose as prose even when a link block follows" do
+      source = "### [ ] `a` Issue a\n\nRelated: `b`\nthen prose.\n\nBlocks: `b`\n\n### [ ] `b` Issue b\n"
+
+      expect(parse(source).fetch("a")).to have_attributes(description: "Related: `b`\nthen prose.", blocks: ["b"])
+    end
+
+    it "refuses an unknown kind in the link block, naming the line" do
+      source = "### [ ] `a` Issue a\n\nProse.\n\nBlockd by: `b`\n"
+
+      expect { parse(source) }.to raise_error(Lain::Epic::MalformedDocument, /line 5.*Blockd by/m)
+    end
+
+    it "refuses an issue that lists one id under both Blocks and Related, on its heading line" do
+      source = "### [ ] `a` Issue a\n\nBlocks: `b`\nRelated: `b`\n\n### [ ] `b` Issue b\n"
 
       expect { parse(source) }
         .to raise_error(Lain::Epic::MalformedDocument,
@@ -364,6 +392,30 @@ RSpec.describe Lain::Epic::Document do
         .to raise_error(Lain::Epic::MalformedDocument, /"a" description.*link line/m)
     end
 
+    it "refuses a description ending in a link-shaped line, though mid-prose ones are allowed" do
+      expect { emit(description: "Above.\nNote: x") }
+        .to raise_error(Lain::Epic::MalformedDocument, /"a" description.*link line/m)
+      expect { emit(description: "Measure: rows\nthen more") }.not_to raise_error
+    end
+
+    it "writes a description ending in a link-shaped line when links follow, and reads it back unchanged" do
+      linked = graph(issue("a", description: "intro\n\nNote: remember the cache", blocks: ["b"]), issue("b"))
+
+      expect(parse(described_class.to_markdown(linked)).digest).to eq(linked.digest)
+    end
+
+    it "refuses a description ending in a link-shaped line when only a fence follows" do
+      expect { emit(description: "intro\nNote: x", criteria: criteria_source) }
+        .to raise_error(Lain::Epic::MalformedDocument, /"a" description.*link line/m)
+    end
+
+    it "refuses a description ending in a known link kind even when links follow" do
+      linked = graph(issue("a", description: "intro\n\nRelated: `c`", blocks: ["b"]), issue("b"), issue("c"))
+
+      expect { described_class.to_markdown(linked) }
+        .to raise_error(Lain::Epic::MalformedDocument, /"a" description.*link line/m)
+    end
+
     it "refuses a description holding a fence the parse would read as criteria" do
       expect { emit(description: "See below.\n```gherkin\nScenario: x\n```") }
         .to raise_error(Lain::Epic::MalformedDocument, /"a" description.*fence/m)
@@ -493,7 +545,8 @@ RSpec.describe Lain::Epic::Document do
       "Line with `backticks`.", "-", "- a list\n- of items", "héllo — ✨ 日本語 👩‍👩‍👧‍👦",
       "A\tB tabbed", "Above.\n\n\nBelow.", "note: lowercase kind", "A\rB bare CR",
       "Above.\r\nBelow.", "Trailing space.  \nAnd more.", "  leading spaces",
-      "See ### below", "Blocked by: `x`", "Warning: careful", "```\nbare fence\n```",
+      "See ### below", "Blocked by: `x`", "Warning: careful", "Note: x", "Measure: rows, bytes\nthen more",
+      "```\nbare fence\n```",
       "### [ ] `x` looks like a heading", "Ends in a period.", "a" * 300
     ].freeze
     criteria = [
@@ -543,7 +596,7 @@ RSpec.describe Lain::Epic::Document do
     # grammar accepts round-trips" is the property actually worth pinning, and it
     # is what stops a Writer that refuses everything from passing.
     clean_prose = prose - ["Above.\r\nBelow.", "Trailing space.  \nAnd more.", "Blocked by: `x`",
-                           "Warning: careful", "```\nbare fence\n```", "### [ ] `x` looks like a heading"]
+                           "Warning: careful", "Note: x", "```\nbare fence\n```", "### [ ] `x` looks like a heading"]
     clean_criteria = criteria - ["```gherkin\nScenario: trailing ws  \n  Given y\n```\n",
                                  "```gherkin\r\nScenario: crlf\r\n  Given y\r\n```\r\n",
                                  "```gherkin\nScenario: x\n  Given y\n```",

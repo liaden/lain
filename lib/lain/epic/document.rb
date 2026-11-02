@@ -117,8 +117,18 @@ module Lain
          ->(text) { text.each_line.any? { |line| HEADING_LEVEL.match?(line) } }],
         ["cannot hold a ``` fence (the grammar reads it as the acceptance-criteria block)",
          ->(text) { text.each_line.any? { |line| line.strip.start_with?(FENCE) } }],
-        ["cannot hold a `Kind: value` link line (the grammar reads it as an edge declaration)",
-         ->(text) { text.each_line.any? { |line| LINK_LINE.match?(line.delete_suffix("\n")) } }]
+        ["cannot end in a known link line (`Blocks:`, `Related:` ... -- the grammar reads it as an edge or refuses " \
+         "it as parted from the link block)",
+         ->(text) { Document.known_link_line?(text.lines.last.to_s.delete_suffix("\n")) }]
+      ].freeze
+
+      # Only an issue with no link lines can absorb a final `Kind: value`
+      # description line into a link run; a blank line parts it from any link
+      # block that follows, but not from a bare fence.
+      UNLINKED_DESCRIPTION_RULES = [
+        ["cannot end in a `Kind: value` link line when no link lines follow (the grammar reads a final run of " \
+         "them as edge declarations)",
+         ->(text) { LINK_LINE.match?(text.lines.last.to_s.delete_suffix("\n")) }]
       ].freeze
 
       # The same statement for the criteria source. The fence DELIMITERS are part
@@ -144,6 +154,11 @@ module Lain
       # same rule -- two lists that had to agree, and did not, is exactly what
       # let a CR through.
       def normalize_line(line) = line.rstrip
+
+      def known_link_line?(line)
+        match = LINK_LINE.match(line)
+        !match.nil? && LINK_FIELDS.merge(LABEL_LINKS).key?(match[:kind])
+      end
 
       # The author-editable document read back into the value. Everything above
       # the first heading is preamble and is dropped from the graph, so the
@@ -206,8 +221,9 @@ module Lain
       # {Epic::Issue#document_grammar_failures} -- can ask about one field at
       # a time. DESCRIPTION_RULES/CRITERIA_RULES belong to this module, so the
       # walk lives here too rather than as a private copy on Issue.
-      def grammar_failures(description:, criteria:)
-        { "description" => rule_break(DESCRIPTION_RULES, description),
+      def grammar_failures(description:, criteria:, linked: false)
+        rules = linked ? DESCRIPTION_RULES : [*DESCRIPTION_RULES, *UNLINKED_DESCRIPTION_RULES]
+        { "description" => rule_break(rules, description),
           "criteria" => criteria && rule_break(CRITERIA_RULES, criteria) }.compact
       end
 
@@ -359,20 +375,21 @@ module Lain
           @number = number
           @heading = heading
           @prose = []
+          @fence_at = nil
           @links = {}
           @criteria = nil
           @criteria_line = nil
         end
 
         def line(number, text)
-          link = LINK_LINE.match(text)
-          link ? add_link(number, link) : @prose << text
+          @prose << [number, text]
         end
 
         def criteria(number, source)
           refuse_second_fence!(number)
           refuse_foreign_fence!(number, source)
           @criteria = source
+          @fence_at = @prose.size
           @criteria_line = number
         end
 
@@ -381,6 +398,7 @@ module Lain
         # because an author fixing this is looking at a line number rather than at
         # a value object.
         def to_issue
+          read_links
           Issue.new(id: @heading[:id], title: @heading[:title], status:, description:, criteria: @criteria, **@links)
         rescue MalformedIssue => e
           raise MalformedDocument, "line #{@number}: #{e.message}"
@@ -402,13 +420,33 @@ module Lain
         # that shape, which is what makes this normalization one the round trip
         # cannot lose bytes to.
         #
-        # A link line lifted out of the middle of the prose leaves the blank lines
-        # that surrounded it behind, so prose either side of one comes back with a
-        # blank run one longer. Squeezing blank runs would fix the cosmetics and
-        # silently edit an author's deliberate paragraph spacing; leaving them is
-        # stable under a second pass, which is what the round trip actually needs.
+        # Only the run of link-shaped lines directly before the fence (or the
+        # end of the body) is the link block; a `Kind: value` line anywhere else
+        # is the author's prose and stays in it.
         def description
-          @prose.drop_while(&:empty?).reverse.drop_while(&:empty?).reverse.join("\n")
+          [*before_block.map(&:last), *@prose.drop(fence_index).map(&:last)]
+            .drop_while(&:empty?).reverse.drop_while(&:empty?).reverse.join("\n")
+        end
+
+        def fence_index = @fence_at || @prose.size
+
+        def head = @prose.first(fence_index).reverse.drop_while { |_n, text| text.empty? }.reverse
+
+        def link_block = head.reverse.take_while { |_n, text| LINK_LINE.match?(text) }.reverse
+
+        def before_block = head.first(head.size - link_block.size)
+
+        def read_links
+          refuse_spaced_link!(before_block.reverse.find { |_n, text| !text.empty? }) if link_block.any?
+          link_block.each { |number, text| add_link(number, LINK_LINE.match(text)) }
+        end
+
+        def refuse_spaced_link!(above)
+          number, text = above
+          return unless Document.known_link_line?(text.to_s)
+
+          raise MalformedDocument, "line #{number}: `#{text}` is parted from the link lines below it by a blank " \
+                                   "line -- link lines must be contiguous, so remove the blank line"
         end
 
         def add_link(number, link)
@@ -514,7 +552,8 @@ module Lain
         # {Issue#emittable?}, so a graph operation can ask before this method
         # ever gets the chance to raise.
         def refuse!(field)
-          failure = issue.document_grammar_failures[field]
+          failure = Document.grammar_failures(description: issue.description, criteria: issue.criteria,
+                                              linked: Document.link_lines(issue).any?)[field]
           raise MalformedDocument, "issue #{issue.id.inspect} #{field} #{failure}" if failure
         end
       end

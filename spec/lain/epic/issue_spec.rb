@@ -415,6 +415,14 @@ RSpec.describe Lain::Epic::Issue do
     end
 
     # AC: a filesystem-hostile id is named at the issue.
+    it "is emittable with a description ending in a link-shaped line when link lines follow it" do
+      expect(issue(description: "intro\n\nNote: x", blocks: ["b"])).to be_emittable
+    end
+
+    it "is not emittable with that description when no link lines follow it" do
+      expect(issue(description: "intro\n\nNote: x")).not_to be_emittable
+    end
+
     it "is not emittable when the id is valid for the document grammar but invalid for Home::NAME" do
       value = issue(id: "Upper-Case")
 
