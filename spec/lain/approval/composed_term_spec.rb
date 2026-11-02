@@ -940,7 +940,7 @@ RSpec.describe Lain::Approval::ComposedTerm do
     # "None known" is a claim somebody made after reading the flags; a blank is
     # a claim nobody made. Every entry therefore HAS an entry, even an empty one.
     it "gives every allowlisted program a disqualifying-flag entry" do
-      expect(described_class::PROGRAMS.values).to all(be_a(described_class::Flags))
+      expect(described_class::PROGRAMS.values).to all(respond_to(:admits?))
     end
   end
 
@@ -951,6 +951,35 @@ RSpec.describe Lain::Approval::ComposedTerm do
       Lain::Shell::Term::Pipeline.new(stages: stages.map { |argv| Lain::Shell::Term::Stage.new(argv:, discards: []) })
     end)
     ->(_command) { Lain::Shell::Verdict::Decision.new(name: :allow, reason: "sequence", term:) }
+  end
+
+  describe "lain's own read-only subcommands" do
+    it "approves epic status and epic show with no model, and lain --version" do
+      in_tree do |root, home|
+        commands = ["lain epic status nyotes", "lain epic status", "lain epic status --mermaid nyotes",
+                    "lain epic show research nyotes", "lain --version"]
+        expect_allowed_by_the_verdict(*commands)
+
+        rule = rule_for(home, root)
+        expect(commands.map { |command| rule.decide(call_of(command, cwd: root)) }).to all(be_allow)
+      end
+    end
+
+    it "leaves a writing subcommand, an unlisted one and a bare lain asking" do
+      in_tree do |root, home|
+        asking = ["lain epic submit nyotes", "lain epic add a title", "lain watch", "lain", "lain epic",
+                  "lain --version extra", "lain status", "lain chat", "lain -V"]
+        rule = rule_for(home, root)
+
+        expect(asking.map { |command| rule.decide(call_of(command, cwd: root)) }).to all(be_nil)
+      end
+    end
+
+    it "does not match a qualified lain" do
+      in_tree do |root, home|
+        expect(rule_for(home, root).decide(call_of("./lain epic status", cwd: root))).to be_nil
+      end
+    end
   end
 
   describe "a read-only probe of where the agent is and what is installed" do

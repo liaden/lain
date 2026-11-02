@@ -349,8 +349,23 @@ module Lain
       end
       private_constant :Unlisted
 
+      VERSION = "--version"
+
       UNLISTED = Unlisted.new.freeze
       private_constant :UNLISTED
+
+      # A program approved only for named leading words, or for `--version`
+      # alone. The named words must come first, so a writing verb of the same
+      # program never rides in behind a reading one.
+      class Subcommands
+        # @param allowed [Array<Array<String>>] the leading words that are reads
+        def initialize(allowed)
+          @allowed = allowed.map(&:freeze).freeze
+        end
+
+        def admits?(arguments) = arguments == [VERSION] || @allowed.any? { |lead| arguments.first(lead.size) == lead }
+      end
+      private_constant :Subcommands
 
       # THE ALLOWLIST, derived from what each program does with the argv it is
       # GIVEN: reads only, writes nothing, fetches nothing, executes nothing.
@@ -423,10 +438,12 @@ module Lain
         "pwd" => Flags.new,
         # Searches PATH for program names. `-i` and the two `--read-*` flags
         # read alias and function definitions from stdin.
-        "which" => Flags.new(short: %w[i], long: %w[--read-alias --read-functions])
+        "which" => Flags.new(short: %w[i], long: %w[--read-alias --read-functions]),
+        # `epic status` and `epic show` print only progress derived from the epic
+        # home and its journals. `watch` is left out: it shows raw stored output,
+        # which can hold secrets.
+        "lain" => Subcommands.new([%w[epic status], %w[epic show]])
       }.freeze
-
-      VERSION = "--version"
 
       # Programs whose stage is approved only as exactly `[name, "--version"]`.
       # Closed, because `--version` is a convention and not a contract: a tool

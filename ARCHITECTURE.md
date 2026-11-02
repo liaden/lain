@@ -745,8 +745,8 @@ are a `Sensitivity` rule anchored at the filesystem root (`Rule.absolute`), deni
 and level, and a child's reads of `/etc/passwd` and `/etc/group` are refused in
 `Sensitivity::Policy::Confined`. `Middleware::RememberedDenials` refuses a requester the paths a
 human denied it, for the session. `Approval::ComposedTerm` approves a bare allowlisted reader (`cat`, `grep`, `ls`,
-`wc`, `pwd` and the like) over ordinary words, and a named program's `--version`, with no human or model,
-and an interpreter is never one of those. What a bare name resolves to is a separate question, below.
+`wc`, `pwd` and the like) over ordinary words, a named program's `--version`, and lain's own `epic status`
+and `epic show`, with no human or model; `lain watch` still asks, and an interpreter is never one of those. What a bare name resolves to is a separate question, below.
 
 Shift+Tab (`Switchboard#cycle_approval`) flips `ask` and `auto` through `mode_switch`, from the
 chat's own prompt (only at its prompts; a key typed ahead mid-run is dropped) or the `lain input`
