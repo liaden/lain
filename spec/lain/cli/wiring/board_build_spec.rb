@@ -164,6 +164,17 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       end
     end
 
+    it "refuses a raw write into the XDG epic home, naming epic_write and epic_graph" do
+      in_tree do |root, home|
+        container = Lain::Epic::Home.container(config: Lain::Config.load(root:), paths: paths_at(home), root:)
+        write = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "write_file",
+                                           input: { "path" => File.join(container, "k", "epic.md"), "content" => "x" })
+
+        expect(board_for(root, home).sensitivity.denial(write, cwd: root))
+          .to have_attributes(advice: /epic_write and epic_graph/)
+      end
+    end
+
     it "lends no epic home when epics live in the repository, which the project root already holds" do
       in_tree(config: "epics home: :repo\n") do |root, home|
         expect(board_for(root, home).sensitivity.read_roots)
@@ -782,6 +793,17 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
         ruling = board.ladder.rule(bash_of("cat #{epic}/epic.md", "cwd" => root), nil)
 
         expect([ruling.allow?, ruling.rule]).to eq([true, "composed_term"])
+      end
+    end
+
+    it "does not approve a bash write into the XDG epic home, which parks for a human" do
+      in_tree do |root, home|
+        board = board_over(root, home)
+        epic = File.join(board.sensitivity.read_roots.last, "demo").tap { FileUtils.mkdir_p(_1) }
+
+        while_parked(board, bash_of("tee #{epic}/epic.md", "cwd" => root)) do
+          expect(rulings.map { |ruling| ruling["verdict"] }).not_to include("allow")
+        end
       end
     end
 

@@ -1086,6 +1086,77 @@ RSpec.describe Lain::Sensitivity::Policy do
     end
   end
 
+  describe "the epic home" do
+    around do |example|
+      Dir.mktmpdir("lain-policy-epic-home") do |dir|
+        @base = File.realpath(dir)
+        FileUtils.mkdir_p(%w[project state/epics/key/nyotes].map { File.join(@base, _1) })
+        example.run
+      end
+    end
+
+    let(:root) { File.join(@base, "project") }
+    let(:epic_home) { File.join(@base, "state", "epics") }
+    let(:epic_md) { File.join(epic_home, "key", "nyotes", "epic.md") }
+    let(:homed) do
+      described_class.new(sensitivity: Lain::Sensitivity.new(home: @base, cwd: root, root:), home: @base, root:,
+                          read_roots: [epic_home], epic_home:)
+    end
+
+    def write_to(name, path)
+      call(name, { "path" => path, "content" => "x", "old_string" => "a", "new_string" => "b" })
+    end
+
+    it "refuses a write_file or edit_file into it, naming epic_write and epic_graph" do
+      denials = %w[write_file edit_file].map { homed.denial(write_to(_1, epic_md), cwd: root) }
+
+      expect(denials).to all(have_attributes(path: epic_md, advice: a_string_matching(/epic_write and epic_graph/)))
+      expect(denials.map { _1.verdict.denied? }).to eq([true, true])
+    end
+
+    it "refuses a relative spelling and one wrapped in an approval" do
+      relative = homed.denial(write_to("edit_file", "../state/epics/key/nyotes/epic.md"), cwd: root)
+      wrapped = homed.denial(Lain::Effect::Approval.new(effect: write_to("write_file", epic_md)), cwd: root)
+
+      expect([relative, wrapped].map { _1&.advice }).to all(include("epic_write"))
+    end
+
+    it "refuses a link in the project that lands in it" do
+      File.symlink(epic_md, File.join(root, "board.md"))
+
+      expect(homed.denial(write_to("write_file", "board.md"), cwd: root)).to have_attributes(advice: /epic_graph/)
+    end
+
+    it "refuses a write to a file not yet there through a link that dangles into it" do
+      File.symlink(File.join(epic_home, "key", "new.md"), File.join(root, "board.md"))
+
+      expect(homed.denial(write_to("write_file", "board.md"), cwd: root)).to have_attributes(advice: /epic_write/)
+    end
+
+    it "still lets the same session read it, and write elsewhere" do
+      other = File.join(root, "a.rb")
+
+      expect([call("read_file", { "path" => epic_md }), write_to("write_file", other)]
+        .map { homed.denial(_1, cwd: root) }).to eq([nil, nil])
+    end
+
+    it "refuses it through a confined child too" do
+      expect(homed.confined(roots: [root]).denial(write_to("write_file", epic_md), cwd: root))
+        .to have_attributes(advice: /epic_write/)
+    end
+
+    it "refuses nothing when the epics live in the repository, which names no epic home" do
+      repo = described_class.new(sensitivity: Lain::Sensitivity.new(home: @base, cwd: root, root:), home: @base, root:)
+
+      expect(repo.denial(write_to("write_file", epic_md), cwd: root)).to be_nil
+    end
+
+    it "refuses a relative epic home" do
+      expect { described_class.new(sensitivity:, epic_home: "state/epics") }
+        .to raise_error(ArgumentError, %r{an epic home must be absolute: "state/epics"})
+    end
+  end
+
   # A child's reads stay in its project, its related directories and its own
   # tree; anything else parks for a human, whatever its name.
   describe "#confined" do

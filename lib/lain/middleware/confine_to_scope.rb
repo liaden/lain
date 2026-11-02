@@ -29,8 +29,9 @@ module Lain
     class ConfineToScope < Base
       # tool name => the input field naming where it acts, and what the
       # refusal says did not happen. `epic_write` is left out by name: an epic's
-      # artifacts are planning documents the epic home owns, and planning is
-      # what plan scope exists for.
+      # artifacts are planning documents, and planning is what plan scope exists for. A raw
+      # write into the epic home is refused by {Sensitivity::Policy#denial}, so this
+      # exemption never opens a path around that rule.
       CONFINED = { "write_file" => %w[path written], "edit_file" => %w[path written],
                    "bash" => %w[cwd run] }.freeze
 

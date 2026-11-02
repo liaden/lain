@@ -72,7 +72,7 @@ module Lain
           # The SAME factory reaches both the triage rung and the approving
           # rule, so the two rungs cannot disagree about where a relative word
           # in one command's argv lands.
-          sensitivity = policy(project:, paths:, table:, read_roots: read_roots(project:, paths:, config:))
+          sensitivity = session_policy(project:, paths:, table:, config:)
           factory = classifiers(project:, paths:, table:, facts: sensitivity.file_facts,
                                 reads: sensitivity.read_roots, **identity)
           classes = arms.classes?
@@ -95,11 +95,28 @@ module Lain
         #
         # @param project [Lain::Project]
         # @param paths [Paths]
-        # @param config [Config] whose `epics` home says where the epics live
+        # @param epics [String, nil] see {.epic_home}
         # @return [Array<String>] absolute
-        def read_roots(project:, paths:, config:)
-          epics = config.epics_home == :xdg ? [Lain::Epic::Home.container(config:, paths:, root: project.root)] : []
+        def read_roots(project:, paths:, epics:)
           [Lain::Tools::Subagent::Spill.home(paths, project.root), *epics]
+        end
+
+        # @param project [Lain::Project]
+        # @param paths [Paths]
+        # @param table [Lain::Sensitivity::Rules]
+        # @param config [Config] whose `epics` home says where the epics live
+        # @return [Lain::Sensitivity::Policy] the session's, reading the epic home and never writing it
+        def session_policy(project:, paths:, table:, config:)
+          epics = epic_home(project:, paths:, config:)
+          policy(project:, paths:, table:, epic_home: epics, read_roots: read_roots(project:, paths:, epics:))
+        end
+
+        # @param project [Lain::Project]
+        # @param paths [Paths]
+        # @param config [Config] whose `epics` home says where the epics live
+        # @return [String, nil] absolute; nil when the epics live in the repository
+        def epic_home(project:, paths:, config:)
+          config.epics_home == :xdg ? Lain::Epic::Home.container(config:, paths:, root: project.root) : nil
         end
 
         # Where `/mode plan` confines this project's session: a spike worktree
@@ -231,10 +248,11 @@ module Lain
         #   table. REQUIRED, and it is {.for} that compiles it: three readers
         #   need the same one.
         # @param read_roots [Array<String>] absolute; see {.read_roots}
+        # @param epic_home [String, nil] see {.epic_home}
         # @return [Lain::Sensitivity::Policy]
-        def policy(project:, paths:, table:, read_roots: [])
+        def policy(project:, paths:, table:, read_roots: [], epic_home: nil)
           Lain::Sensitivity::Policy.new(sensitivity: classifier(project:, paths:, table:), home: paths.home,
-                                        root: project.root, read_roots:)
+                                        root: project.root, read_roots:, epic_home:)
         end
 
         # {Lain::Sensitivity} takes no `Dir.pwd` default: a relative path

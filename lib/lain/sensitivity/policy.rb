@@ -114,6 +114,11 @@ module Lain
 
       OUTSIDE_PROJECT = Verdict.new(level: :gated, reason: :outside_project)
       ACCOUNT_DATABASE = Verdict.new(level: :denied, reason: :account_database)
+      EPIC_HOME_WRITE = Verdict.new(level: :denied, reason: :protected)
+      EPIC_HOME_ADVICE = "the epic home changes through epic_write and epic_graph"
+      # Bash is not here on purpose: a shell write into the epic home parks as an outside-project
+      # write, and an approved one skips epic_write's journaling.
+      EPIC_HOME_WRITERS = %w[write_file edit_file].freeze
 
       # Gates nothing, so a chat that wired no classifier behaves byte-for-byte
       # as it did before this boundary existed and no gate writes `if
@@ -364,11 +369,14 @@ module Lain
       # @param file_facts [FileFacts::Live, FileFacts::Recorded] what a landing is judged by
       # @param read_roots [Array<String>] absolute; the session's directories
       #   outside the project that a confined child reads without asking, and never writes
-      # @raise [ArgumentError] when a read root is not absolute
-      def initialize(sensitivity:, home: nil, root: nil, file_facts: FileFacts::LIVE, read_roots: [])
+      # @param epic_home [String, nil] absolute; the epic home outside the project, which only
+      #   the epic tools write; nil when epics live in the repository
+      # @raise [ArgumentError] when a read root or the epic home is not absolute
+      def initialize(sensitivity:, home: nil, root: nil, file_facts: FileFacts::LIVE, read_roots: [], epic_home: nil)
         @sensitivity = sensitivity
         @file_facts = file_facts
         @read_roots = read_roots.map { absolute!(_1) }.freeze
+        @epic_roots = Roots.of(*epic_home && absolute!(epic_home, "an epic home"), facts: file_facts)
         @anchors = { home:, root: }.freeze
         @landing_anchors = @anchors.transform_values { self.class.text_of(_1) }.freeze
         # Built HERE, not memoized in the reader: this object freezes itself, so
@@ -563,7 +571,7 @@ module Lain
 
         path = self.class.path_in(call)
         verdict = path && judge(path, cwd:)
-        return nil unless verdict&.denied?
+        return epic_home_denial(call, path, cwd) unless verdict&.denied?
 
         Denial.new(tool_use_id: call.tool_use_id, tool: call.name, path:, verdict:)
       end
@@ -637,10 +645,26 @@ module Lain
       private
 
       # A relative root would resolve against whatever directory the process sits in.
-      def absolute!(dir)
-        raise ArgumentError, "a read root must be absolute: #{dir.inspect}" unless dir.start_with?(File::SEPARATOR)
+      def absolute!(dir, what = "a read root")
+        raise ArgumentError, "#{what} must be absolute: #{dir.inspect}" unless dir.start_with?(File::SEPARATOR)
 
         -File.expand_path(dir)
+      end
+
+      def epic_home_denial(call, path, cwd)
+        return nil unless EPIC_HOME_WRITERS.include?(call.name) && lands_in_epic_home?(path, cwd)
+
+        Denial.new(tool_use_id: call.tool_use_id, tool: call.name, path:, verdict: EPIC_HOME_WRITE,
+                   advice: EPIC_HOME_ADVICE)
+      end
+
+      def lands_in_epic_home?(path, cwd)
+        named = File.expand_path(self.class.text_of(path), cwd)
+        [named, *Landing.of(named, cwd:, **@landing_anchors, facts: @file_facts)].any? { @epic_roots.held?(_1) }
+      rescue Landing::Dangling
+        Landing.eventual(named, cwd:, **@landing_anchors, facts: @file_facts).any? { @epic_roots.held?(_1) }
+      rescue SystemCallError, ArgumentError, EncodingError
+        @epic_roots.held?(named)
       end
 
       # On the resolved path, because bwrap aborts on a symlink mask target,

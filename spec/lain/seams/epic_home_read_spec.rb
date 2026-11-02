@@ -125,11 +125,11 @@ RSpec.describe "A spawned child in the XDG epic home", :seam do
     expect(untouched?).to be(true)
   end
 
-  it "gates the main agent's raw write and each shell write into the epic home as outside the project" do
+  it "refuses the main agent's raw write, and gates each shell write into the epic home as outside the project" do
     seen = by_the_agent([raw_write, *shell_writes])
 
-    expect(seen.map { [_1.tool, _1.notes.join] })
-      .to match([["write_file", include(outside_note)], *Array.new(4) { ["bash", include(outside_note)] }])
+    expect(seen.map { [_1.tool, _1.notes.join] }).to match(Array.new(4) { ["bash", include(outside_note)] })
+    expect(result_of("tu_agent0")).to include("epic_write and epic_graph")
     expect(untouched?).to be(true)
   end
 
