@@ -37,8 +37,8 @@ RSpec.describe Lain::CLI::EpicMount do
     Class.new do
       attr_reader :asked
 
-      def submit(stage, slug = nil, issue: nil, digest: nil)
-        (@asked ||= []) << [stage, slug, issue, digest]
+      def submit(stage, slug = nil, issue: nil, digest: nil, wave: nil)
+        (@asked ||= []) << [stage, slug, issue, digest, wave]
         Lain::Tool::Result.ok("approved #{stage}")
       end
     end.new
@@ -194,7 +194,7 @@ RSpec.describe Lain::CLI::EpicMount do
       create_epic("alpha")
 
       expect(submit_through(mount_for).content).to eq("approved research")
-      expect(submitter.asked).to eq([["research", "alpha", nil, nil]])
+      expect(submitter.asked).to eq([["research", "alpha", nil, nil, nil]])
     end
 
     it "submits through the same submitter in a chat that mounted no epic" do
@@ -202,7 +202,7 @@ RSpec.describe Lain::CLI::EpicMount do
 
       expect(mount).not_to be_mounted
       expect(submit_through(mount).content).to eq("approved research")
-      expect(submitter.asked).to eq([["research", "alpha", nil, nil]])
+      expect(submitter.asked).to eq([["research", "alpha", nil, nil, nil]])
     end
   end
 

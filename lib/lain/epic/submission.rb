@@ -42,9 +42,9 @@ module Lain
         # `#digest` canonicalizes `slug`, and `Canonical.normalize` raises on a
         # String that cannot be re-encoded to UTF-8. Unchecked, that turns
         # `#digest` -- relied on as TOTAL over every constructible Submission --
-        # into a method that raises deep inside `Epic::Gate#call`, whose
-        # first line is `artifact.digest`, three frames before the asker is ever
-        # reached. A slug plausibly arrives via a Linux directory name
+        # into a method that raises deep inside `Epic::Gate#call`, after the
+        # human has answered and before the verdict is journaled. A slug
+        # plausibly arrives via a Linux directory name
         # ({Epic::Home}), which is arbitrary bytes and not guaranteed UTF-8.
         def slug_is_canonicalizable
           return if slug.nil? # presence: above already reports this
@@ -156,6 +156,13 @@ module Lain
                     "or #{HOLDS.join(", ")} to pause the work until you speak again; " \
                     "a reason may follow a denial word, and a note a hold word; " \
                     "any other reply is recorded as #{UNRECOGNISED} and denies.".freeze
+
+      # A wave names its issues by id, so a denial may name the ones it means.
+      WAVE_INSTRUCTION = "Reply #{APPROVALS.first} to approve every issue in the wave, #{DENIALS.first} to deny " \
+                         "every one, or #{DENIALS.first} <id>: <reason> to deny only the issues named, starting " \
+                         "each further one with ; <id>: or on a new line; the issues not named are approved. " \
+                         "Reply #{HOLDS.join(", ")} to pause the whole wave; any other reply, or an id not in " \
+                         "the wave, is recorded as #{UNRECOGNISED} and denies every issue.".freeze
 
       SEPARATOR = '[\s.!:,;\-]'
 
@@ -292,8 +299,9 @@ module Lain
         new(stage: "epic_plan", slug:, content_digest: graph.digest, fact: issue_count(graph.issues.size))
       end
 
+      # @param size [Integer]
+      # @return [String] the count, in the singular for 1
       def self.issue_count(size) = size == 1 ? "1 issue" : "#{size} issues"
-      private_class_method :issue_count
 
       # @param view [IssueView] the issue as it renders now
       # @param slug [String] the epic
@@ -325,6 +333,17 @@ module Lain
          "read lain://epic/#{slug}/issues/#{id}.md"].join("; ")
       end
       private_class_method :viewed
+
+      # @param slug [String] the epic
+      # @param views [Array<IssueView>] the wave's issues as they render now
+      # @param number [Integer] the wave's place in {Graph#waves}, counted from 1
+      # @return [Wave]
+      def self.wave(slug:, views:, number:)
+        raise ArgumentError, "wave #{number} holds no issues, so there is nothing to ask about" if views.empty?
+
+        Submission::Wave.new(slug: -slug.to_s, number:,
+                             submissions: views.map { |view| issue_plan(view:, slug:, issue_id: view.issue.id) }.freeze)
+      end
 
       # The changeset address is checked as given, before it is composed: a
       # Hash would otherwise canonicalize into a real gate identity.
@@ -400,6 +419,96 @@ module Lain
         # be the one thing on it that hands back a mutable String, or a caller
         # mutating the return value would read as this record's state changing.
         -"Approve the #{stage} stage for #{slug.inspect}? (#{fact}) #{GateReply::INSTRUCTION}"
+      end
+    end
+
+    class Submission
+      # One wave's issue plans put to the human as one question. Each issue is
+      # still decided under its own {Submission}, so the wave adds a question
+      # and a reading of the reply, and no gate identity of its own.
+      #
+      # A denial is read against the wave's ids only once they are known: a
+      # clause opens only at the start, at `; <id>:` or at a line opening
+      # `<id>:`, so a semicolon or newline inside a reason stays in it. Any
+      # clause naming an id outside the wave denies every issue, because the
+      # issue it meant to deny is otherwise the one it approves.
+      #
+      # `standing` names the wave's issues left out of this question because
+      # their approval stands, so a deny naming one is told so, not called a typo.
+      Wave = Data.define(:slug, :number, :submissions, :standing) do
+        def initialize(slug:, number:, submissions:, standing: [])
+          super(slug:, number:, submissions:, standing: standing.map { -_1.to_s }.freeze)
+        end
+
+        def stage = "issue_plan"
+
+        def ids = submissions.map(&:issue_id)
+
+        def gate_question
+          count = Submission.issue_count(submissions.size)
+          -["Approve the #{stage} stage for #{slug.inspect}, wave #{number} (#{count})?",
+            *submissions.map { |submission| "  #{submission.fact}" }, GateReply::WAVE_INSTRUCTION].join("\n")
+        end
+
+        # @param answer [Gate::Answer] the reply as {GateReply.answer} read it
+        # @return [Gate::Answer] the same reply, or an unrecognised denial when
+        #   any clause names an id outside this question
+        def heard(answer)
+          stray = named(answer).find { |id| !ids.include?(id) }
+          return answer if stray.nil?
+
+          Gate::Answer.new(approved: false, surface: GateReply::UNRECOGNISED,
+                           reason: "#{unasked(stray)}, so the gate denied the whole wave: #{answer.reason}")
+        end
+
+        # @param answer [Gate::Answer] a reply {#heard} has read
+        # @return [Gate::Outcome]
+        def outcome(answer)
+          return Gate::Outcome.new(approved: ids, denied: {}, held: false) if answer.approved?
+          return Gate::Outcome.new(approved: [], denied: {}, held: true) if GateReply.held?(answer.surface)
+
+          denied = clauses(answer) || ids.to_h { |id| [id, answer.reason] }
+          Gate::Outcome.new(approved: ids - denied.keys, denied:, held: false)
+        end
+
+        private
+
+        def worded?(answer)
+          !answer.approved? && !answer.reason.nil? && answer.surface != GateReply::UNRECOGNISED &&
+            !GateReply.held?(answer.surface)
+        end
+
+        # Wider than an id on purpose: a word in another case or with an
+        # underscore is not the wave id it resembles, and must fail closed.
+        def named(answer)
+          return [] unless worded?(answer)
+
+          answer.reason.scan(/(?:\A|[;\n])\s*([A-Za-z0-9][\w-]*)[ \t]*:/).flatten
+        end
+
+        def unasked(stray)
+          return "#{stray} is in wave #{number} but was not asked this time: its approval stands" if
+            standing.include?(stray)
+
+          "#{stray} is not in wave #{number} (#{(ids + standing).join(", ")})"
+        end
+
+        def clauses(answer)
+          return unless worded?(answer) && ids.include?(named(answer).first)
+
+          answer.reason.split(/[;\n](?=[ \t]*(?:#{opener})[ \t]*:)/).each_with_object({}) do |clause, denied|
+            id, why = clause.match(/\A\s*(#{opener})[ \t]*:(.*)\z/m).captures
+            denied[id] = joined(denied[id], why.strip)
+          end
+        end
+
+        # Longest first, so an id that prefixes another cannot claim its clause.
+        def opener = ids.sort_by { -_1.size }.map { Regexp.escape(_1) }.join("|")
+
+        def joined(earlier, why)
+          said = [earlier, why].compact.reject(&:empty?).join("; ")
+          said unless said.empty?
+        end
       end
     end
   end

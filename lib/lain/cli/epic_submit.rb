@@ -67,6 +67,10 @@ module Lain
         # For a caller that handed over working streams and no asker anyway.
         NO_ASKER = "this session wired no asker"
 
+        # Said after every question, a wave's included, so it promises no
+        # grammar of its own: the question names its words, and a blank denies.
+        CUE = "[reply; blank denies]"
+
         # nil for a session with no terminal, and the nil is the CONTRACT rather
         # than a missing Null Object: {Lain::Epic::Gate::Policies::Deps} reads a nil
         # asker as "this session cannot ask anybody", which turns a stage
@@ -102,7 +106,7 @@ module Lain
           task = Async::Task.current
           promise = Promise.new
           cancelled = drawn_whole(task) do
-            @output.write("#{question} [y/N] ")
+            @output.write("#{question} #{CUE} ")
             task.async { promise.resolve(answer(@input.gets)) }
           end
           task.stop(true) if cancelled
@@ -502,6 +506,88 @@ module Lain
         end
       end
 
+      # One wave of issue plans, decided with one question and reported issue by
+      # issue. The wave holds only the issues whose plans carry no standing
+      # approval; the others arrive already reported, in `standing`.
+      class WaveVerdict
+        def initialize(wave:, stage:, policy:, gate:, queue:, advances:, journal:, standing:)
+          @wave = wave
+          @stage = stage
+          @policy = policy
+          @gate = gate
+          @queue = queue
+          @advances = advances
+          @journal = journal
+          @standing = standing
+        end
+
+        # @return [Said, Held] status 1 when any issue was denied, held or unanswered
+        def call
+          outcome = Sync { @policy.decide(@wave, gate: @gate, stage: @stage.name, epic_slug: @wave.slug) }
+          window = @journal.expired(first)
+          return unanswered(window) if window
+          return held if outcome.held
+
+          reported = @wave.submissions.map { |submission| report(submission, outcome) }
+          Said.new(text: [heading(outcome), *@standing, *reported.map(&:first)].join("\n"),
+                   status: reported.all? { _2 } ? 0 : 1)
+        end
+
+        private
+
+        def first = @wave.submissions.first.digest
+
+        def resubmit = Lain::Epic::Remedy.resubmit(@stage.name, @wave.slug, wave: @wave.number)
+
+        def named = "wave #{@wave.number} of epic #{@wave.slug}"
+
+        def heading(outcome)
+          "#{@stage} for #{named}: #{outcome.approved.size} approved, #{outcome.denied.size} not, " \
+            "by policy #{@policy.name}"
+        end
+
+        # @return [Array(String, Boolean)] the issue's lines, and whether it passed or parked
+        def report(submission, outcome)
+          id = submission.issue_id
+          return ["approved #{id} #{submission.digest}\n  #{@advances.fetch(id).call}", true] if
+            outcome.approved.include?(id)
+
+          parked = @journal.deferred?(submission.digest) && parked_item(submission)
+          return ["deferred #{id} #{submission.digest}\n  parked in #{parked.partition} -- nothing advanced", true] if
+            parked
+
+          [denied(submission), false]
+        end
+
+        def parked_item(submission)
+          @queue.parked(@wave.slug, @stage.name, issue_id: submission.issue_id)
+                .find { |item| item.artifact_digest == submission.digest }
+        end
+
+        def denied(submission)
+          reason = @journal.reason(submission.digest)
+          ["denied #{submission.issue_id} #{submission.digest} -- nothing advanced",
+           *("  reason: #{reason.gsub("\n", "\n    ")}" if reason)].join("\n")
+        end
+
+        def held
+          note = @journal.reason(first)
+          Held.new(text: ["held #{named}", "  the human asked to wait at the #{@stage} gate -- nothing advanced",
+                          *("  note: #{note.gsub("\n", "\n    ")}" if note), *@standing].join("\n"),
+                   status: 1, wait: Held.waiting(note))
+        end
+
+        def unanswered(window)
+          seconds = window == 1 ? "1 second" : "#{format("%g", window)} seconds"
+          Held.new(text: "unanswered #{named}\n  nobody answered the #{@stage} gate within #{seconds} -- " \
+                         "nothing advanced",
+                   status: 1,
+                   wait: "the human was asked and did not answer in #{seconds}. The stage has not advanced. To " \
+                         "reopen the gate, #{resubmit}. Stop and tell the user; do not read lain's state to " \
+                         "work out what happened.")
+        end
+      end
+
       # `root:` defaults to the RESOLVED project's, not to `Dir.pwd`, for the
       # reason {CLI::Epic#initialize} states -- and asking `epics` is not enough
       # on its own, because this default is what that collaborator is BUILT with:
@@ -643,9 +729,9 @@ module Lain
         # @return [Tool::Result] the verdict's words, as {EpicSubmit#submit} says
         #   them, with no exit status to carry; a hold ends the agent's turn
         # @raise [Lain::Error] when the session would not keep the decision
-        def submit(stage, slug = nil, issue: nil, digest: nil, tests: nil)
+        def submit(stage, slug = nil, issue: nil, digest: nil, tests: nil, wave: nil)
           refuse_unkept!
-          case @command.submit(stage, slug, issue:, digest:, tests:)
+          case @command.submit(stage, slug, issue:, digest:, tests:, wave:)
           in Held => held then Tool::Result.held(held.wait)
           in said then Tool::Result.ok(said.text)
           end
@@ -696,13 +782,17 @@ module Lain
       # @param issue [String, nil] which issue, for the issue-scoped stages
       # @param digest [String, nil] the changeset address, for `implementation`
       # @param tests [Telemetry::TestsRan, nil] what the suite did on that changeset, for `implementation`
+      # @param wave [Integer, nil] a wave of {Lain::Epic::Graph#waves}, counted
+      #   from 1, whose issue plans are asked about together; issue_plan only
       # @return [Said, Held] the verdict, rendered
       # @raise [Lain::Error] every refusal on this path: an unknown stage, an
       #   ambiguous home, a missing artifact, an unbuildable policy, or the
       #   stage boundary
-      def submit(stage, slug = nil, issue: nil, digest: nil, tests: nil)
+      def submit(stage, slug = nil, issue: nil, digest: nil, tests: nil, wave: nil)
         staged = Lain::Epic::Stage.new(stage)
         epic_home = home(slug)
+        return decide_wave(staged, epic_home, wave_of(staged, epic_home, wave, issue)) if wave
+
         decide(staged, epic_home, Artifacts.new(home: epic_home, root: @root, issue:, digest:, tests:))
       end
 
@@ -733,22 +823,77 @@ module Lain
       def decide(stage, epic_home, artifacts)
         submission = artifacts.submission(stage)
         required = artifacts.required(stage)
+        recorded(epic_home) { |records, journal| settled(stage, submission, required, records, journal) }
+      end
+
+      def decide_wave(stage, epic_home, wave)
+        recorded(epic_home) { |records, journal| settled_wave(stage, wave, records, journal) }
+      end
+
+      def recorded(epic_home)
         records = journals.to_a
         @journal.hold do |journal|
           @spike_journal.within(journal) do
-            @tool_guard.within(epic_home) do
-              settled(stage, submission, required, records,
-                      ReadBack.new(journal, -> { journals }))
-            end
+            @tool_guard.within(epic_home) { yield records, ReadBack.new(journal, -> { journals }) }
           end
         end
+      end
+
+      def wave_of(stage, epic_home, number, issue)
+        raise Error, "only the issue_plan stage is submitted a wave at a time, not #{stage}" unless
+          stage.name == "issue_plan"
+        raise Error, "name an issue or a wave, not both" unless issue.to_s.strip.empty?
+
+        Lain::Epic::Submission.wave(slug: epic_home.slug, number:,
+                                    views: layer!(epic_home, number).map do |each|
+                                      Lain::Epic::IssueView.read(epic_home, each.id)
+                                    end)
+      end
+
+      def layer!(epic_home, number)
+        waves = epic_home.read_epic.waves
+        return waves[number - 1] if number.is_a?(Integer) && number.between?(1, waves.size)
+
+        raise Error, "there is no wave #{number} -- epic #{epic_home.slug} has #{waves.size} waves"
+      end
+
+      # Only the issues without a standing approval are asked; the others are
+      # reported already approved, and repaired as a lone re-submit is. So an
+      # edit that reopens one issue's gate asks about that issue alone.
+      def settled_wave(stage, wave, records, journal)
+        queue = Lain::Epic::SignoffQueue.from_journal(records)
+        standing, pending = wave.submissions.partition { |submission| standing?(queue, submission) }
+        advances = wave_advances(stage, wave, journal)
+        already = standing.map { |submission| repaired(stage, submission, queue, advances) }
+        return Said.new(text: already.join("\n"), status: 0) if pending.empty?
+
+        policy = policy_for(stage, queue, journal) { pending.each { ensure_open!(stage, _1, queue) } }
+        asked = wave.with(submissions: pending.freeze, standing: standing.map(&:issue_id))
+        WaveVerdict.new(wave: asked, stage:, policy:, queue:, advances:, journal:, standing: already,
+                        gate: gate_for(records, journal, policy)).call
+      end
+
+      def gate_for(records, journal, policy)
+        Lain::Epic::Gate.from_journal(records, journal:, timeout: gate_timeout(policy))
+      end
+
+      def wave_advances(stage, wave, journal)
+        wave.submissions.to_h do |submission|
+          advance = Lain::Epic::Advance.new(epic_slug: submission.slug, stage:, issue_id: submission.issue_id)
+          [submission.issue_id, advance_for(advance, journal)]
+        end
+      end
+
+      def repaired(stage, submission, queue, advances)
+        ensure_open!(stage, submission, queue)
+        "already approved #{submission.issue_id} #{submission.digest}\n  #{advances.fetch(submission.issue_id).call}"
       end
 
       def settled(stage, submission, required, records, journal)
         queue = Lain::Epic::SignoffQueue.from_journal(records)
         open = -> { ensure_open!(stage, submission, queue) }
         policy = policy_for(stage, queue, journal, &open)
-        gate = Lain::Epic::Gate.from_journal(records, journal:, timeout: gate_timeout(policy))
+        gate = gate_for(records, journal, policy)
         advance = Lain::Epic::Advance.new(epic_slug: submission.slug, stage:, issue_id: submission.issue_id)
         ready = advance_for(advance, journal)
         return standing(submission, ready) { open.call if advance.moves? } if standing?(queue, submission)

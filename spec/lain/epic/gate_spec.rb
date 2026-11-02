@@ -622,6 +622,144 @@ RSpec.describe Lain::Epic::Gate do
     end
   end
 
+  # One question for a wave's issue plans, and one decision per issue, each
+  # under that issue's own digest so a later implementation still asks for it.
+  describe "a wave" do
+    def wave_graph
+      Lain::Epic::Graph.new(issues: [Lain::Epic::Issue.new(id: "a", title: "the a issue", blocks: %w[b c d]),
+                                     *%w[b c d].map { |id| Lain::Epic::Issue.new(id:, title: "the #{id} issue") }])
+    end
+
+    def wave
+      graph = wave_graph
+      views = %w[b c d].map { |id| Lain::Epic::IssueView.new(issue: graph.fetch(id), graph:, authored: "") }
+      Lain::Epic::Submission.wave(slug: "frugirl", views:, number: 2)
+    end
+
+    def words_asker(words)
+      scripted_asker { |promise, _q| promise.resolve(Lain::Epic::GateReply.answer(words, surface: "human")) }
+    end
+
+    def decide(words, subject_gate = gate)
+      Sync { subject_gate.call(wave, asker: words_asker(words), stage: "issue_plan", epic_slug: "frugirl") }
+    end
+
+    def by_issue = decisions.to_h { |record| [record["issue_id"], record.values_at("approved", "reason")] }
+
+    def digest_of(id) = wave.submissions.find { |submission| submission.issue_id == id }.digest
+
+    it "asks one question naming each issue's title, blockers and view path" do
+      asked = []
+      asker = scripted_asker do |promise, question|
+        asked << question
+        promise.resolve(described_class::Answer.approve("human"))
+      end
+      Sync { gate.call(wave, asker:, stage: "issue_plan", epic_slug: "frugirl") }
+
+      expect(asked.size).to eq(1)
+      expect(asked.first).to include("wave 2", '"the b issue"', '"the c issue"', '"the d issue"', "blocked by a",
+                                     "lain://epic/frugirl/issues/c.md")
+    end
+
+    it "approves every issue on approve, each under its own digest" do
+      subject_gate = gate
+      outcome = decide("approve", subject_gate)
+
+      expect(outcome).to eq(described_class::Outcome.new(approved: %w[b c d], denied: {}, held: false))
+      expect(decisions.map { |record| record.values_at("issue_id", "artifact_digest", "approved") })
+        .to eq(%w[b c d].map { |id| [id, digest_of(id), true] })
+      expect(%w[b c d].map { |id| subject_gate.approved?(digest_of(id)) }).to all(be(true))
+    end
+
+    # Scenario: a wave is approved but for one issue
+    it "denies only the issue a deny names, with that reason, and approves the rest" do
+      subject_gate = gate
+      outcome = decide("deny c: the end time is missing", subject_gate)
+
+      expect(outcome).to eq(described_class::Outcome.new(approved: %w[b d],
+                                                         denied: { "c" => "the end time is missing" }, held: false))
+      expect(by_issue).to eq("b" => [true, nil], "c" => [false, "the end time is missing"], "d" => [true, nil])
+      expect(subject_gate.approved?(digest_of("c"))).to be(false)
+    end
+
+    # Scenario: a mistyped id denies the whole wave
+    it "denies the whole wave when the reply names an id outside it, saying which" do
+      outcome = decide("deny cc: the end time is missing")
+
+      expect(outcome.approved).to be_empty
+      expect(outcome.denied.keys).to eq(%w[b c d])
+      expect(decisions.map { |record| record["approved"] }).to eq([false, false, false])
+      expect(decisions.map { |record| record["reason"] }).to all(include("cc is not in wave 2"))
+      expect(decisions.map { |record| record["answered_by"] }.uniq).to eq([Lain::Epic::GateReply::UNRECOGNISED])
+    end
+
+    it "denies the whole wave when a later clause names an id outside it" do
+      outcome = decide("deny b: too big; cc: rename it")
+
+      expect(outcome.approved).to be_empty
+      expect(decisions.map { |record| record["reason"] }).to all(include("cc is not in wave 2", "rename it"))
+    end
+
+    it "denies the whole wave when a new line opens with an id outside it" do
+      outcome = decide("deny b: too big\ncc: rename it")
+
+      expect(outcome.approved).to be_empty
+      expect(decisions.map { |record| record["reason"] }).to all(include("cc is not in wave 2"))
+    end
+
+    {
+      "a capitalised id on a new line" => "deny b: x\nC: y",
+      "a capitalised id after a semicolon" => "deny b: x; C: y",
+      "a mixed-case word after a semicolon" => "deny b: x; Cc: y",
+      "an underscored word after a semicolon" => "deny b: x; c_d: y"
+    }.each do |shape, reply|
+      it "denies the whole wave when a later clause opens with #{shape}" do
+        outcome = decide(reply)
+
+        expect(outcome.approved).to be_empty
+        expect(decisions.map { |record| record["answered_by"] }.uniq).to eq([Lain::Epic::GateReply::UNRECOGNISED])
+      end
+    end
+
+    # Scenario: a bare deny denies everything
+    it "denies every issue with a bare deny's reason" do
+      outcome = decide("deny: not yet")
+
+      expect(outcome.denied).to eq("b" => "not yet", "c" => "not yet", "d" => "not yet")
+      expect(by_issue.values).to all(eq([false, "not yet"]))
+    end
+
+    # Scenario: a semicolon inside a reason is not a new clause
+    it "starts a clause only at a semicolon or line that opens with an id in the wave" do
+      outcome = decide("deny c: keep the WAV; add the end time; d: rename it")
+
+      expect(outcome.denied).to eq("c" => "keep the WAV; add the end time", "d" => "rename it")
+      expect(outcome.approved).to eq(%w[b])
+    end
+
+    it "starts a clause at a line that opens with an id in the wave" do
+      outcome = decide("deny c: keep the WAV\nadd the end time\nd: rename it")
+
+      expect(outcome.denied).to eq("c" => "keep the WAV\nadd the end time", "d" => "rename it")
+    end
+
+    it "holds the whole wave on hold, approving and denying nothing" do
+      subject_gate = gate
+      outcome = decide("hold on", subject_gate)
+
+      expect(outcome).to eq(described_class::Outcome.new(approved: [], denied: {}, held: true))
+      expect(decisions.map { |record| record["answered_by"] }).to eq([Lain::Epic::GateReply::HELD] * 3)
+      expect(%w[b c d].map { |id| subject_gate.approved?(digest_of(id)) }).to all(be(false))
+    end
+
+    it "denies the whole wave when the window closes" do
+      outcome = Sync { gate(timeout: 0.02).call(wave, asker: silent_asker, stage: "issue_plan", epic_slug: "frugirl") }
+
+      expect(outcome.denied.keys).to eq(%w[b c d])
+      expect(decisions.map { |record| record["answered_by"] }).to eq([described_class::TIMEOUT_SURFACE] * 3)
+    end
+  end
+
   # Scenario: the old approval is gone. It gated a bare Criteria and was
   # constructed nowhere; an issue's criteria now ride its plan through this
   # gate instead, so the two could only ever have drifted apart.

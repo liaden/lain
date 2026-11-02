@@ -269,6 +269,25 @@ module Lain
         def approved? = approved
       end
 
+      # What a wave's one answer decided, issue by issue: the ids approved,
+      # the ids denied (each to its reason, nil when none was given), and
+      # whether the human held the whole wave instead.
+      Outcome = Data.define(:approved, :denied, :held) do
+        def initialize(approved:, denied:, held:)
+          super(approved: approved.map { -_1.to_s }.freeze,
+                denied: denied.to_h { |id, why| [-id.to_s, why&.dup&.freeze] }.freeze, held:)
+        end
+
+        # @param issue_id [String] one issue of the wave
+        # @param heard [Answer] the wave's answer, which names who gave it
+        # @return [Answer] the verdict journaled for that one issue
+        def answer(issue_id, heard)
+          return Answer.new(approved: true, surface: heard.surface) if approved.include?(issue_id)
+
+          Answer.new(approved: false, surface: heard.surface, reason: held ? heard.reason : denied[issue_id])
+        end
+      end
+
       # @param journal [#record] where verdicts land as evidence; required, not
       #   defaulted, because a silently unjournaled approval would be a hole in
       #   the experiment record
@@ -313,14 +332,14 @@ module Lain
       #   deferred gate parks with, or why a denial denied
       # @param issue_id [String, nil] the issue an issue-scoped gate is about
       # @param criteria_digest [String, nil] the criteria the artifact carries
-      # @return [Boolean] whether the artifact was approved
+      # @return [Boolean, Outcome] whether the artifact was approved, or for a
+      #   wave (an artifact answering `#submissions`) which of its issues were
       def call(artifact, asker:, stage:, epic_slug:, policy: DEFAULT_POLICY, evidence_digest: nil, reason: nil,
                issue_id: nil, criteria_digest: nil)
-        digest = artifact.digest
+        decided = { epic_slug:, stage:, policy:, evidence_digest:, reason:, issue_id:, criteria_digest: }
         started = @clock.call
         asked = asker.ask(artifact.gate_question)
-        answer, latency = awaited(asked, started, digest, epic_slug:, stage:, policy:, evidence_digest:, reason:,
-                                                          issue_id:, criteria_digest:)
+        answer, latency = awaited(asked, started, artifact, **decided)
 
         # Journal FIRST, register second, never the other way round: a journal
         # that raises -- a full disk, or a contract refusing a nil digest --
@@ -336,12 +355,7 @@ module Lain
         # rescue already guards against. Deferral holds the cancellation off
         # until this block runs to completion, THEN raises it; it does not
         # swallow it.
-        task.defer_stop do
-          record(answer, artifact_digest: digest, epic_slug:, stage:, policy:, latency:, evidence_digest:, reason:,
-                         issue_id:, criteria_digest:)
-          @approved << digest if answer.approved?
-        end
-        answer.approved?
+        task.defer_stop { settle(artifact, answer, latency:, **decided) }
       ensure
         withdrawn(asker, asked)
         retired(asked)
@@ -428,6 +442,30 @@ module Lain
         self
       end
 
+      # One record per decision, each journaled before its digest registers. A
+      # wave is one question and one decision per issue, under that issue's own
+      # digest, so `ensure_approved!` and the per-issue sign-off partitions
+      # never learn that a wave asked it.
+      def settle(artifact, answer, **decided)
+        result, ballots = ballot(artifact, answer)
+        ballots.each do |digest, verdict, scope|
+          record(verdict, artifact_digest: digest, **decided, **scope)
+          @approved << digest if verdict.approved?
+        end
+        result
+      end
+
+      def ballot(artifact, answer)
+        return [answer.approved?, [[artifact.digest, answer, {}]]] unless artifact.respond_to?(:submissions)
+
+        heard = artifact.heard(answer)
+        outcome = artifact.outcome(heard)
+        [outcome, artifact.submissions.map do |submission|
+          [submission.digest, outcome.answer(submission.issue_id, heard),
+           { issue_id: submission.issue_id, criteria_digest: submission.criteria_digest }]
+        end]
+      end
+
       def register(decision)
         Contracts::RegistryEntry.check!(artifact_digest: decision["artifact_digest"], approved: decision["approved"])
         @approved << decision["artifact_digest"] if decision["approved"]
@@ -450,10 +488,10 @@ module Lain
       # `record`; catching it here too would write a second, contradictory
       # decision -- a human's "y" quietly withdrawn by an "interrupted" that
       # followed it -- for one question.
-      def awaited(asked, started, digest, **decided)
+      def awaited(asked, started, artifact, **decided)
         await(asked, started)
       rescue Async::Cancel
-        interrupted(digest, started, **decided)
+        interrupted(artifact, started, **decided)
         raise
       end
 
@@ -465,8 +503,8 @@ module Lain
       # re-raises right after this returns: swallowing the cancellation
       # instead would leave the reactor's shutdown sweep waiting on a task
       # that never finishes.
-      def interrupted(digest, started, **decided)
-        record(Answer.deny(INTERRUPTED_SURFACE), artifact_digest: digest, latency: @clock.call - started, **decided)
+      def interrupted(artifact, started, **decided)
+        settle(artifact, Answer.deny(INTERRUPTED_SURFACE), latency: @clock.call - started, **decided)
       end
 
       # A WAIT THAT ENDED STOPS BEING OUTSTANDING, HOWEVER IT ENDED. The window

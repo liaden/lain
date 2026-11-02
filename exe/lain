@@ -623,6 +623,7 @@ class LainCLI < Thor
 
     method_option :issue, type: :string, desc: "Which issue -- issue_plan and implementation gate one issue"
     method_option :digest, type: :string, desc: "The changeset content address -- implementation only"
+    method_option :wave, type: :numeric, desc: "A wave of issue plans, asked about together -- issue_plan only"
     # The adjudication pair's backend, built only when some stage is configured adjudicated.
     ModelFlags.declare(self)
     desc "submit STAGE [SLUG]", "Put a stage's artifact in front of its gate and journal the verdict"
@@ -631,7 +632,9 @@ class LainCLI < Thor
         Lain::CLI::EpicSubmit.from_options(options, profile: ModelFlags.profile(options),
                                                     input: $stdin, output: $stdout)
       end
-      render_failing(build) { |command| command.submit(stage, slug, issue: options[:issue], digest: options[:digest]) }
+      render_failing(build) do |command|
+        command.submit(stage, slug, issue: options[:issue], digest: options[:digest], wave: options[:wave])
+      end
     end
 
     method_option :resume, type: :boolean, default: false, desc: "Finish a landing that merged and then stopped"

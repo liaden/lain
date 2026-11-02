@@ -374,8 +374,7 @@ peek(){ ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next;
 
 ### 5a — `interactive` (the default)
 
-A `y/N` prompt on the command's terminal. `y`, `yes` and `approve` are affirmative; **everything
-else is a refusal**, which is the fail-closed default. The prompt lists the words (`Reply approve, approved, y, yes to approve, or deny, denied, n, no to deny; any other reply is recorded as unrecognised and denies. [y/N]`), so a gate approval cannot carry a reason: a reply with one is `unrecognised` and denies. This is the epic gate's own grammar, not the chat `[y/N]` of `cockpit-surfaces.md` §5, which holds prose instead of denying on it.
+A prompt on the command's terminal, ending in the cue `[reply; blank denies]`. `y`, `yes` and `approve` are affirmative, a hold word pauses the work, and **every other reply is a refusal**, which is the fail-closed default. The prompt lists the words (`Reply approve, approved, y, yes to approve, deny, denied, n, no to deny, or hold, wait, stop to pause the work until you speak again; a reason may follow a denial word, and a note a hold word; any other reply is recorded as unrecognised and denies. [reply; blank denies]`), so a gate approval cannot carry a reason: a reply with one is `unrecognised` and denies. This is the epic gate's own grammar, not the chat `[y/N]` of `cockpit-surfaces.md` §5, which holds prose instead of denying on it.
 
 **Corrected by round 17: the answers cannot be piped.** This section used to drive `printf 'y\n' |
 lain epic submit research`; an interactive gate refuses a stdin that is not a terminal before it
@@ -446,6 +445,48 @@ made, not the queue: with an earlier submit of the same artifact left parked (`p
 
 What §9 CAN check is that a second terminal verdict on the same address is refused. Drive `approve`
 twice on one digest.
+
+### 5e — `interactive` over a wave of issue plans
+
+One question decides a whole wave of issue plans, and each issue is still journaled as its own
+`gate_decision` under its own digest. Use an epic where `a` blocks `b`, `c` and `d`, so wave 2 is
+`b, c, d` (`lain epic status` lists the waves), with research and epic_plan approved and an issue file
+for each. In a tmux pane, one submit per case:
+
+```bash
+lain epic submit issue_plan --wave 2
+```
+
+The question names the wave and the count (`wave 2 (3 issues)`), lists each issue on its own line
+with its title, blockers and view path, and ends:
+
+```
+Reply approve to approve every issue in the wave, deny to deny every one, or deny <id>: <reason> to deny only the issues named, starting each further one with ; <id>: or on a new line; the issues not named are approved. Reply hold, wait, stop to pause the whole wave; any other reply, or an id not in the wave, is recorded as unrecognised and denies every issue. [reply; blank denies]
+```
+
+1. **Approve all.** Answer `approve`. Expect 3 `gate_decision` records, `approved: true` for `b`, `c`
+   and `d`, each with its own `issue_id` and `artifact_digest`, and all 3 issues `in_flight`.
+2. **`deny <id>: reason`.** Answer `deny c: the end time is missing`. Expect `b` and `d` approved and
+   `c` denied with that reason; the result names all 3 outcomes and exits 1. `c`'s implementation still
+   refuses, naming `c`'s issue_plan gate.
+3. **A semicolon in a reason.** Answer `deny c: keep the WAV; add the end time; d: rename it`. Expect `c`
+   denied with `keep the WAV; add the end time`, `d` with `rename it`, and `b` approved.
+4. **A typo id in a later clause, lower case.** Answer `deny b: too big; cc: rename it`. Expect **every** issue denied, `answered_by:
+   unrecognised`, and a reason saying `cc is not in wave 2` that keeps the human's words.
+   **Wrong looks like:** `c` approved because the clause meant for it named a typo.
+5. **A typo id in a later clause, upper case.** Answer `deny b: x; C: y`, then (fresh epic)
+   `deny b: x; c_d: y`. Expect the whole wave denied each time: `C` is not the id `c`,
+   and a word with an underscore is not a wave id. A typo id on a new line is covered by `gate_spec`
+   only: the pane's prompt reads 1 line, so Enter sends the first line alone.
+6. **Hold.** Answer `hold`. Expect 3 decisions with `answered_by: held`, nothing approved or denied, and
+   the result `held wave 2 of epic …`, exit 1.
+7. **A re-ask after one issue changed.** Approve the wave, then edit `issues/c.md` (or add an edge
+   touching `c`), and submit wave 2 again. Expect the question to list **only** `c`; the result says
+   `already approved b …` and `already approved d …`, and their approvals stand. Answering `deny b: x`
+   to that re-ask denies `c` and says `b is in wave 2 but was not asked this time: its approval stands`.
+
+`lain epic submit issue_plan --wave 1.5` refuses with `there is no wave 1.5`, and `--wave` beside
+`--issue` refuses with `name an issue or a wave, not both`.
 
 ## 6 — The stage boundary, which is the ruling this tier turns on
 

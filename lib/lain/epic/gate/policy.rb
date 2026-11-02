@@ -85,7 +85,8 @@ module Lain
         #   the third member of that key, nil for an epic-wide stage
         # @param criteria_digest [String, nil] the acceptance criteria the
         #   artifact carries, journaled as the join key a grader reads
-        # @return [Boolean] whether the artifact was approved
+        # @return [Boolean, Outcome] whether the artifact was approved, or for a
+        #   wave which of its issues were
         # @raise [Epic::StageBlocked] when an earlier stage of this epic still
         #   holds sign-offs parked, or was never approved
         def decide(artifact, gate:, stage:, epic_slug:, issue_id: nil, criteria_digest: nil)
@@ -93,8 +94,11 @@ module Lain
           # through -- a rule only {Epic::Stage} could invoke would be a safety
           # spine nothing walks. BEFORE `gate.call`, so a refusal journals
           # nothing and approves nothing: an epic must not reach implementation
-          # on a plan nobody signed off.
-          @boundary.ensure_open!(stage, epic_slug:, issue_id:)
+          # on a plan nobody signed off. A wave is checked issue by issue,
+          # before any of them is asked.
+          decided(artifact, issue_id, criteria_digest).each do |_item, id, _criteria|
+            @boundary.ensure_open!(stage, epic_slug:, issue_id: id)
+          end
           gate.call(artifact, asker: surface, stage:, epic_slug:, policy: name, issue_id:, criteria_digest:)
         end
 
@@ -110,6 +114,13 @@ module Lain
         def name = self.class::NAME
 
         private
+
+        # @return [Array<Array(#digest, String, String)>] item, issue and criteria
+        def decided(artifact, issue_id, criteria_digest)
+          return [[artifact, issue_id, criteria_digest]] unless artifact.respond_to?(:submissions)
+
+          artifact.submissions.map { |submission| [submission, submission.issue_id, submission.criteria_digest] }
+        end
 
         # @return [#ask] an `ask_human`-shaped duck
         def surface
@@ -190,12 +201,17 @@ module Lain
           # The same queue the inherited stage-boundary check reads, because a
           # deferral parks into the very partition a later stage must find
           # drained.
+          #
+          # A wave parks one item per issue, each with that issue's own question.
           def decide(artifact, gate:, stage:, epic_slug:, issue_id: nil, criteria_digest: nil)
-            Epic::Stage.new(stage).ensure_parkable!(issue_id:)
+            parked = decided(artifact, issue_id, criteria_digest)
+            parked.each { |_item, id, _criteria| Epic::Stage.new(stage).ensure_parkable!(issue_id: id) }
             approved = super
-            @queue.park(artifact_digest: artifact.digest, epic_slug:, stage:, issue_id:, criteria_digest:,
-                        question: artifact.gate_question)
-            journal_park(artifact, stage:, epic_slug:, issue_id:)
+            parked.each do |item, id, criteria|
+              @queue.park(artifact_digest: item.digest, epic_slug:, stage:, issue_id: id, criteria_digest: criteria,
+                          question: item.gate_question)
+              journal_park(item, stage:, epic_slug:, issue_id: id)
+            end
             approved
           end
 
@@ -282,8 +298,16 @@ module Lain
             @journal = journal
           end
 
+          # A wave is adjudicated issue by issue, one spike each, since each
+          # issue's verdict is reached on its own evidence.
           def decide(artifact, gate:, stage:, epic_slug:, issue_id: nil, criteria_digest: nil)
-            adjudicator(gate).call(artifact, stage:, epic_slug:, issue_id:, criteria_digest:)
+            verdicts = decided(artifact, issue_id, criteria_digest).to_h do |item, id, criteria|
+              [id, adjudicator(gate).call(item, stage:, epic_slug:, issue_id: id, criteria_digest: criteria)]
+            end
+            return verdicts.values.first unless artifact.respond_to?(:submissions)
+
+            Outcome.new(approved: verdicts.select { _2 }.keys, denied: verdicts.reject { _2 }.transform_values { nil },
+                        held: false)
           end
 
           private

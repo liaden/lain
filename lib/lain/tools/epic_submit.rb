@@ -20,15 +20,26 @@ module Lain
                                description: "Which stage to submit: research (research.md), epic_plan (epic.md) " \
                                             "or issue_plan (issues/<issue>.md)."
         field :slug, :string, required: true, description: "The epic's slug, for example frugirl-mvp."
-        field :issue, :string, description: "The issue id. Required for stage issue_plan, ignored otherwise."
+        field :issue, :string, description: "The issue id. For stage issue_plan, name an issue or a wave."
+        field :wave, :integer, description: "For stage issue_plan: a wave number from `lain epic status`. Every " \
+                                            "issue in the wave is asked about in one question."
 
         validates :stage, inclusion: { in: STAGES, message: "must be one of #{STAGES.join(", ")}" }
-        validates :issue, presence: true, if: -> { stage == "issue_plan" }
+        validates :issue, presence: true, if: -> { stage == "issue_plan" && wave.nil? }
+        validates :wave, numericality: { only_integer: true, greater_than_or_equal_to: 1 }, allow_nil: true
+        validate :issue_or_wave
+
+        private
+
+        def issue_or_wave
+          errors.add(:wave, "names an issue or a wave, not both") if wave && issue.present?
+          errors.add(:wave, "is for stage issue_plan only") if wave && stage != "issue_plan"
+        end
       end
 
       input_model Input
 
-      # @param submitter [#submit] answers `submit(stage, slug, issue:)` with
+      # @param submitter [#submit] answers `submit(stage, slug, issue:, wave:)` with
       #   the verdict as a {Tool::Result}, held when the human asked the agent
       #   to wait, as {CLI::EpicSubmit::InChat#submit} does
       def initialize(submitter:)
@@ -48,7 +59,7 @@ module Lain
       protected
 
       def perform(input, _invocation)
-        @submitter.submit(input.stage, input.slug, issue: input.issue)
+        @submitter.submit(input.stage, input.slug, issue: input.issue, wave: input.wave)
       rescue Epic::Gate::Policies::Refusal => e
         Tool::Result.error("#{unwirable(e)}; ask the user to run `#{shell_command(input)}` from a shell")
       rescue Lain::Error, SystemCallError => e
@@ -64,7 +75,8 @@ module Lain
       end
 
       def shell_command(input)
-        Lain::Epic::Remedy.submit(input.stage, input.slug, issue: (input.issue if input.stage == "issue_plan"))
+        Lain::Epic::Remedy.submit(input.stage, input.slug, issue: (input.issue if input.stage == "issue_plan"),
+                                                           wave: input.wave)
       end
     end
   end

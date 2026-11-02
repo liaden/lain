@@ -101,9 +101,17 @@ not hold.
 Before you call `epic_submit`, tell the user that the gate waits <%= gate_window %> seconds for an answer
 and that a reply of `deny: <reason>` sends the reason back to you.
 
-Submit each issue's write-up with the `epic_submit` tool: `stage` is `issue_plan`, `slug` is the
-epic's slug, and `issue` is the id. The stage gates one
-issue's work, so it names the issue: the tool refuses an issue_plan submit that names no issue.
+Submit the write-ups wave by wave with the `epic_submit` tool: `stage` is `issue_plan`, `slug` is the
+epic's slug, and `wave` is the wave's number: wave 1 holds the issues nothing blocks, and each later
+wave the issues whose blockers sit in earlier waves, the numbering the user sees in
+`lain epic status <slug>`. One
+question asks about every issue in the wave, and each issue is still approved or denied on its own.
+The human may answer `approve` for the whole wave, `deny: <reason>` to deny all of it, or
+`deny <id>: <reason>` to deny only the issues named; the result names each issue's outcome. Fix a
+denied issue's file and submit its wave again: only the issues without a standing approval are asked.
+To submit one issue alone, pass `issue` (its id) instead of `wave`. The stage gates each
+issue's work, so it names the issues: the tool refuses an issue_plan submit that names no issue and
+no wave.
 
 **An issue's acceptance criteria are approved together with its plan, in this one gate.** They
 are not signed off separately and there is no later criteria gate: the `issue_plan` digest covers
@@ -136,8 +144,9 @@ spike itself came back empty, the reason it did rather than evidence. Expect it 
 spike is there to make the morning review cheaper, not to sign off for you.
 
 `epic_submit` cannot run an adjudicated stage in the chat: it refuses, and an adjudicated stage
-cannot be submitted from the chat at all. When it refuses, relay the shell command
-`lain epic submit issue_plan <slug> --issue <id>` to the user and stop. The policy descriptions above are
+cannot be submitted from the chat at all. When it refuses, relay the shell command the refusal names
+(`lain epic submit issue_plan <slug>` with `--wave N` or `--issue <id>`, whichever you submitted) to
+the user and stop. The policy descriptions above are
 background for the user, not something you run. An interactive gate the user leaves unanswered
 reads as no answer, and nothing advanced. A `--btw` chat cannot submit at all.
 

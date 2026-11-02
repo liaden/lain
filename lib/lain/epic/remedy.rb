@@ -22,18 +22,20 @@ module Lain
       # @param slug [String]
       # @param issue [String, nil]
       # @param digest [String, nil]
+      # @param wave [Integer, nil]
       # @return [String]
-      def submit(stage, slug, issue: nil, digest: nil)
-        ["lain epic submit #{stage} #{slug}", issue && "--issue #{issue}", digest && "--digest #{digest}"]
-          .compact.join(" ")
+      def submit(stage, slug, issue: nil, digest: nil, wave: nil)
+        ["lain epic submit #{stage} #{slug}", issue && "--issue #{issue}", digest && "--digest #{digest}",
+         wave && "--wave #{wave}"].compact.join(" ")
       end
 
       # @param stage [String]
       # @param slug [String]
       # @param issue [String, nil]
+      # @param wave [Integer, nil]
       # @return [String]
-      def resubmit(stage, slug, issue: nil)
-        arguments = ["stage #{stage}", "slug #{slug}", issue && "issue #{issue}"].compact
+      def resubmit(stage, slug, issue: nil, wave: nil)
+        arguments = ["stage #{stage}", "slug #{slug}", issue && "issue #{issue}", wave && "wave #{wave}"].compact
         "call epic_submit again with #{arguments[..-2].join(", ")} and #{arguments.last}"
       end
 

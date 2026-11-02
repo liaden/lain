@@ -786,6 +786,24 @@ RSpec.describe "shipped skills" do
       end
     end
 
+    it "teaches create-epic-issues to submit the issue plans one wave at a time" do
+      with_empty_project do |renderer|
+        phase = renderer.render("create-epic-issues")[/^## Phase 4 .*?(?=^## )/m]
+
+        expect(phase).to include("`wave`", "lain epic status", "deny <id>: <reason>")
+        expect(phase).to match(/wave by wave|one wave at a time/i)
+      end
+    end
+
+    it "tells create-epic-issues to relay the shell command the refusal names" do
+      with_empty_project do |renderer|
+        text = renderer.render("create-epic-issues")
+
+        expect(text).not_to include("relay the shell command\n`lain epic submit issue_plan <slug> --issue <id>`")
+        expect(text).to match(/relay the shell\s+command the refusal names/)
+      end
+    end
+
     it "says an issue's criteria are approved together with its plan" do
       with_empty_project do |renderer|
         expect(renderer.render("create-epic-issues")).to match(/approved (with|together with) .{0,40}plan/i)

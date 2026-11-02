@@ -355,6 +355,189 @@ RSpec.describe Lain::CLI::EpicSubmit do
     end
   end
 
+  # One question per wave of issue plans, one decision per issue.
+  describe "a wave of issue plans" do
+    def wave_graph = Lain::Epic::Graph.new(issues: [issue("a", blocks: %w[b c d]), issue("b"), issue("c"), issue("d")])
+
+    before do
+      home.write_epic(wave_graph)
+      session("started.ndjson", *epic_approved, stage_event("issue_plan"))
+      %w[a b c d].each { |id| home.issue(id).write("the prose for #{id}\n") }
+    end
+
+    def asking(reply, output: StringIO.new)
+      command(gates: hands_off.merge("issue_plan" => "interactive"), input: tty("#{reply}\n"), output:)
+    end
+
+    def plan_digest(id)
+      Lain::Epic::Submission.issue_plan(view: Lain::Epic::IssueView.read(home, id), slug: "alpha", issue_id: id).digest
+    end
+
+    def verdicts = submitted_decisions.to_h { |record| [record["issue_id"], record.values_at("approved", "reason")] }
+
+    # Scenario: a wave is approved but for one issue
+    it "approves the wave but for the issue a deny names, and names all 3 outcomes" do
+      said = asking("deny c: the end time is missing").submit("issue_plan", wave: 2)
+
+      expect(verdicts).to eq("b" => [true, nil], "c" => [false, "the end time is missing"], "d" => [true, nil])
+      expect(said.status).to eq(1)
+      expect(said.text).to include("approved b #{plan_digest("b")}", "approved d #{plan_digest("d")}",
+                                   "denied c #{plan_digest("c")}", "reason: the end time is missing")
+    end
+
+    # Scenario: implementation still needs each issue's own approval
+    it "still refuses c's implementation, naming c's issue_plan gate, while b's plan stands" do
+      asking("deny c: the end time is missing").submit("issue_plan", wave: 2)
+
+      expect(command.ensure_plan_approved!("b")).to eq(plan_digest("b"))
+      expect { command.ensure_plan_approved!("c") }
+        .to raise_error(described_class::PlanNotApproved, /"c".*issue_plan #{plan_digest("c")}/m)
+    end
+
+    # Scenario: a mistyped id denies the whole wave
+    it "denies b, c and d when the reply names an id outside the wave, saying so" do
+      said = asking("deny cc: the end time is missing").submit("issue_plan", wave: 2)
+
+      expect(verdicts.values.map(&:first)).to eq([false, false, false])
+      expect(said.text).to include("cc is not in wave 2")
+    end
+
+    # Scenario: a bare deny denies everything
+    it "denies b, c and d with a bare deny's reason" do
+      asking("deny: not yet").submit("issue_plan", wave: 2)
+
+      expect(verdicts).to eq(%w[b c d].to_h { |id| [id, [false, "not yet"]] })
+    end
+
+    # Scenario: a semicolon inside a reason is not a new clause
+    it "keeps a semicolon inside a reason, and starts a clause at the next id in the wave" do
+      asking("deny c: keep the WAV; add the end time; d: rename it").submit("issue_plan", wave: 2)
+
+      expect(verdicts).to eq("b" => [true, nil], "c" => [false, "keep the WAV; add the end time"],
+                             "d" => [false, "rename it"])
+    end
+
+    it "puts every approved issue in flight" do
+      said = asking("approve").submit("issue_plan", wave: 2)
+
+      expect(said.status).to eq(0)
+      expect(%w[b c d].map { |id| progress.status(id) }).to eq(%w[in_flight in_flight in_flight])
+    end
+
+    it "asks one question, listing each issue's title, blockers and view path" do
+      screen = StringIO.new
+      asking("approve", output: screen).submit("issue_plan", wave: 2)
+
+      expect(screen.string.scan(described_class::Prompt::CUE).size).to eq(1)
+      expect(screen.string).not_to include("[y/N]")
+      expect(screen.string).to include("wave 2", '"the b issue"', "blocked by a", "lain://epic/alpha/issues/d.md")
+    end
+
+    it "holds the whole wave on hold, telling the agent to wait" do
+      held = asking("hold").submit("issue_plan", wave: 2)
+
+      expect(held).to be_a(described_class::Held)
+      expect(submitted_decisions.map { |record| record["answered_by"] }).to eq([Lain::Epic::GateReply::HELD] * 3)
+    end
+
+    it "parks one item per issue under the deferred policy" do
+      said = command(gates: hands_off.merge("issue_plan" => "deferred")).submit("issue_plan", wave: 2)
+
+      parked = Lain::Epic::SignoffQueue.from_journal(session_records).parked("alpha", "issue_plan")
+      expect(parked.map(&:issue_id)).to contain_exactly("b", "c", "d")
+      expect(said.text).to include("parked in alpha/issue_plan/c")
+    end
+
+    it "runs one evidence spike per issue under the adjudicated policy" do
+      spawn = EpicSubmitSpecSupport::ScriptedRoleSpawn.new(evidence_researcher: "the plan names its files",
+                                                           gate_adjudicator: "APPROVE")
+      adjudicating = described_class.new(root:, paths:, config: config(hands_off.merge("issue_plan" => "adjudicated")),
+                                         role_spawn: spawn, brief: ->(artifact) { "read #{artifact.issue_id}" })
+
+      said = adjudicating.submit("issue_plan", wave: 2)
+
+      expect(session_records.select { |record| record["type"] == "gate_evidence" }.map { |record| record["stage"] })
+        .to eq(%w[issue_plan issue_plan issue_plan])
+      expect(verdicts.values.map(&:first)).to eq([true, true, true])
+      expect(said.status).to eq(0)
+    end
+
+    # A new edge or a status mark reopens one issue's gate; its approved
+    # siblings stand, so only the reopened issue is asked again.
+    it "asks again only about an issue whose plan changed since the wave was approved" do
+      asking("approve").submit("issue_plan", wave: 2)
+      home.issue("c").write("the prose for c, revised\n")
+      screen = StringIO.new
+
+      said = asking("approve", output: screen).submit("issue_plan", wave: 2)
+
+      expect(screen.string).to include('"the c issue"')
+      expect(screen.string).not_to include('"the b issue"')
+      expect(said.text).to include("already approved b", "approved c #{plan_digest("c")}")
+    end
+
+    it "reaches the wave path from `lain epic submit --wave`" do
+      load File.expand_path("../../../exe/lain", __dir__) unless defined?(LainCLI)
+      gates = Lain::Epic::STAGES.map { |stage| "  gate :#{stage}, :hands_off\n" }.join
+      write_config(root, "epics home: :xdg do\n#{gates}end\n", paths:)
+      submitting = lambda do
+        with_env("XDG_STATE_HOME" => state_home, "HOME" => state_home) do
+          Dir.chdir(root) { LainCLI.start(%w[epic submit issue_plan alpha --wave 2], debug: true) }
+        end
+      end
+
+      expect(&submitting).to output(/wave 2.*approved b.*approved c.*approved d/m).to_stdout
+      expect(submitted_decisions.map { |record| record["issue_id"] }).to eq(%w[b c d])
+    end
+
+    it "refuses a wave number that is not a whole number from `lain epic submit --wave`" do
+      load File.expand_path("../../../exe/lain", __dir__) unless defined?(LainCLI)
+      gates = Lain::Epic::STAGES.map { |stage| "  gate :#{stage}, :hands_off\n" }.join
+      write_config(root, "epics home: :xdg do\n#{gates}end\n", paths:)
+
+      expect do
+        with_env("XDG_STATE_HOME" => state_home, "HOME" => state_home) do
+          Dir.chdir(root) { LainCLI.start(%w[epic submit issue_plan alpha --wave 1.5], debug: true) }
+        end
+      end.to raise_error(Thor::Error, /no wave 1\.5/)
+      expect(submitted_decisions).to be_empty
+    end
+
+    # The re-asked wave holds only the issues still pending, so a standing
+    # issue named in a deny is not a typo, and is not said to be one.
+    it "says an issue whose approval stands was not asked this time, rather than not in the wave" do
+      asking("approve").submit("issue_plan", wave: 2)
+      home.issue("c").write("the prose for c, revised\n")
+
+      said = asking("deny b: x").submit("issue_plan", wave: 2)
+
+      expect(said.text).to include("b is in wave 2 but was not asked this time: its approval stands")
+      expect(said.text).not_to include("b is not in wave 2")
+      expect(command.ensure_plan_approved!("b")).to eq(plan_digest("b"))
+    end
+
+    it "lists the siblings whose approval stands when a re-asked wave is held" do
+      asking("approve").submit("issue_plan", wave: 2)
+      home.issue("c").write("the prose for c, revised\n")
+
+      held = asking("hold").submit("issue_plan", wave: 2)
+
+      expect(held.text).to include("already approved b", "already approved d")
+    end
+
+    it "refuses a wave the epic does not have" do
+      expect { command.submit("issue_plan", wave: 3) }.to raise_error(Lain::Error, /wave 3.*2 waves/)
+    end
+
+    it "refuses a wave named beside an issue" do
+      expect { command.submit("issue_plan", issue: "b", wave: 2) }.to raise_error(Lain::Error, /issue or a wave/)
+    end
+
+    it "refuses a wave for a stage other than issue_plan" do
+      expect { command.submit("research", wave: 2) }.to raise_error(Lain::Error, /issue_plan/)
+    end
+  end
+
   # Scenario: a deferred submit parks and does not advance
   describe "a deferred submit" do
     before do
@@ -1495,7 +1678,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     # from a background reader so the deadline poll never itself blocks on
     # the child's own output.
     def await_prompt(screen, mutex, deadline_at)
-      sleep 0.02 until mutex.synchronize { screen.include?("[y/N]") } ||
+      sleep 0.02 until mutex.synchronize { screen.include?(described_class::Prompt::CUE) } ||
                        Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline_at
     end
 
@@ -1532,8 +1715,8 @@ RSpec.describe Lain::CLI::EpicSubmit do
         end
 
         await_prompt(screen, mutex, Process.clock_gettime(Process::CLOCK_MONOTONIC) + 10)
-        raise "timed out waiting for the [y/N] prompt; got: #{mutex.synchronize { screen }.inspect}" \
-          unless mutex.synchronize { screen.include?("[y/N]") }
+        raise "timed out waiting for the gate's prompt; got: #{mutex.synchronize { screen }.inspect}" \
+          unless mutex.synchronize { screen.include?(described_class::Prompt::CUE) }
 
         inp.write("\x03")
         _, status = Process.wait2(pid)

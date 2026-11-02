@@ -22,6 +22,15 @@ RSpec.describe Lain::Epic::Remedy do
       .to eq("call epic_submit again with stage issue_plan, slug demo and issue a")
   end
 
+  it "spells a submit of a wave" do
+    expect(described_class.submit("issue_plan", slug, wave: 2)).to eq("lain epic submit issue_plan demo --wave 2")
+  end
+
+  it "spells the tool call that reopens a wave's gate, naming the wave" do
+    expect(described_class.resubmit("issue_plan", slug, wave: 2))
+      .to eq("call epic_submit again with stage issue_plan, slug demo and wave 2")
+  end
+
   it "spells a finish, local or not" do
     expect(described_class.finish(slug)).to eq("lain epic finish demo")
     expect(described_class.finish(slug, local: true)).to eq("lain epic finish demo --local")

@@ -414,6 +414,37 @@ RSpec.describe Lain::Epic::Submission do
       expect(described_class.issue_plan(view:, slug: "demo", issue_id: "a").fact).not_to match(/\d+ bytes/)
     end
 
+    describe "a wave" do
+      def wave_views
+        graph = Lain::Epic::Graph.new(issues: [issue("a", blocks: %w[b c]), issue("b"), issue("c")])
+        %w[b c].map { |id| Lain::Epic::IssueView.new(issue: graph.fetch(id), graph:, authored: "") }
+      end
+
+      let(:wave) { described_class.wave(slug: "demo", views: wave_views, number: 2) }
+
+      it "holds one issue_plan submission per issue, each the one a lone issue would submit" do
+        expect(wave.submissions).to eq(wave_views.map do |each|
+          described_class.issue_plan(view: each, slug: "demo", issue_id: each.issue.id)
+        end)
+      end
+
+      it "asks about each issue on its own line, naming the wave and the per-issue deny" do
+        expect(wave.gate_question).to include("issue_plan", "wave 2", "\n  issue b \"Issue b\"; blocked by a",
+                                              "\n  issue c \"Issue c\"", "lain://epic/demo/issues/c.md",
+                                              "deny <id>: <reason>")
+      end
+
+      it "counts a lone issue in the singular" do
+        one = described_class.wave(slug: "demo", views: wave_views.take(1), number: 2)
+
+        expect(one.gate_question).to include("(1 issue)")
+      end
+
+      it "refuses a wave with no issues in it" do
+        expect { described_class.wave(slug: "demo", views: [], number: 1) }.to raise_error(ArgumentError, /no issues/)
+      end
+    end
+
     it "composes an implementation's content_digest from the changeset address and its issue" do
       submission = described_class.implementation(slug: "demo", issue_id: "T7", digest: "blake3:impl")
 
@@ -560,8 +591,8 @@ RSpec.describe Lain::Epic::Submission do
   # header), and Canonical.normalize raises on a String that cannot round-trip
   # to UTF-8. Unchecked, that turned #digest from TOTAL (a stored, validated
   # String, same as every other Submission field) into a method that raises
-  # deep inside Epic::Gate#call -- its first line is `artifact.digest`,
-  # three frames before the asker is ever reached. A slug plausibly arrives
+  # deep inside Epic::Gate#call, after the human has answered and before the
+  # verdict is journaled. A slug plausibly arrives
   # via a Linux directory name (Epic::Home), which is arbitrary bytes, not
   # guaranteed UTF-8. Refusing it at construction restores totality and moves
   # the failure to a named ArgumentError where every other bad input in this
@@ -574,7 +605,7 @@ RSpec.describe Lain::Epic::Submission do
 
     it "never reaches Gate#call with a slug #digest cannot hash" do
       # Before this fix, .research(text:, slug: "\xff".b) constructed fine and
-      # only raised later, three frames inside Gate#call's `artifact.digest`.
+      # only raised later, inside Gate#call's `artifact.digest`.
       # Now the bad slug never survives construction to reach the Gate at all.
       expect { described_class.epic_plan(graph: three_issue_graph, slug: "\xff".b) }
         .to raise_error(ArgumentError, /slug/)

@@ -239,4 +239,61 @@ RSpec.describe Lain::Tools::EpicSubmit do
     expect { submit(stage: "issue_plan", slug: "frugirl-mvp") }
       .to raise_error(Lain::Tool::InvalidInput, /Issue can't be blank/)
   end
+
+  it "refuses an issue_plan naming both an issue and a wave" do
+    expect { submit(stage: "issue_plan", slug: "frugirl-mvp", issue: "b", wave: 2) }
+      .to raise_error(Lain::Tool::InvalidInput, /issue or a wave/)
+  end
+
+  context "when the issue plans are submitted a wave at a time" do
+    let(:gates) { every_stage("hands_off") }
+
+    before do
+      issues = [Lain::Epic::Issue.new(id: "a", title: "a", blocks: %w[b c]), Lain::Epic::Issue.new(id: "b", title: "b"),
+                Lain::Epic::Issue.new(id: "c", title: "c")]
+      home.write_epic(Lain::Epic::Graph.new(issues:))
+      %w[a b c].each { |id| home.issue(id).write("prose for #{id}\n") }
+      earlier = %w[research epic_plan].map do |stage|
+        Lain::Epic::GateDecision.new(artifact_digest: "blake3:#{stage}", epic_slug: "frugirl-mvp", stage:,
+                                     approved: true, answered_by: "hands_off", policy: "hands_off", latency: 1.0)
+      end
+      FileUtils.mkdir_p(paths.filing_dir(root: @dir))
+      File.open(File.join(paths.filing_dir(root: @dir), "earlier.ndjson"), "w") do |io|
+        journal = Lain::Journal.new(io:)
+        [*earlier, Lain::Epic::StageTransition.new(epic_slug: "frugirl-mvp", stage: "issue_plan", event: "started")]
+          .each { |record| journal.record(record) }
+      end
+    end
+
+    context "when the issue_plan gate is adjudicated" do
+      let(:gates) { every_stage("hands_off").merge("issue_plan" => "adjudicated") }
+
+      it "relays the shell command for the same wave" do
+        result = submit(stage: "issue_plan", slug: "frugirl-mvp", wave: 2)
+
+        expect(result).to be_error
+        expect(result.content).to include("lain epic submit issue_plan frugirl-mvp --wave 2")
+      end
+    end
+
+    context "when nobody answers the wave's question within the window" do
+      let(:gates) { every_stage("hands_off").merge("issue_plan" => "interactive") }
+      let(:approval_timeout) { 0.3 }
+
+      it "tells the agent to resubmit the same wave" do
+        result = submit(stage: "issue_plan", slug: "frugirl-mvp", wave: 2)
+
+        expect(result.content).to include(Lain::Epic::Remedy.resubmit("issue_plan", "frugirl-mvp", wave: 2))
+      end
+    end
+
+    it "decides every issue in the wave in one call, one decision per issue" do
+      result = submit(stage: "issue_plan", slug: "frugirl-mvp", wave: 2)
+
+      expect(result).not_to be_error
+      expect(result.content).to include("approved b", "approved c")
+      expect(this_sessions_decisions.map { |record| record.values_at("issue_id", "approved") })
+        .to eq([["b", true], ["c", true]])
+    end
+  end
 end
