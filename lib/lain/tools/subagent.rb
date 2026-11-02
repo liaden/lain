@@ -1894,8 +1894,17 @@ module Lain
         # middleware must exist before the Agent that runs it.
         def recorded_turns(chain, mailbox)
           Middleware::Stack.new([*@seam.middleware.members(:turn),
-                                 WrapUp.new(mailbox:, ceiling: @budget.iterations, answer_limit: ANSWER_BOUND.limit),
+                                 Middleware::WrapUp.new(mailbox:, ceiling: -> { @budget.iterations },
+                                                        note: method(:wrap_up_note)),
                                  Middleware::JournalTurns.new(scribe: chain.feed, timeline: chain.timeline)])
+        end
+
+        # A stopped child hands its parent only the files it read and its last
+        # text block, so the child is told to write its findings down as text.
+        def wrap_up_note(left:, ceiling:)
+          "#{left} of #{ceiling} iterations remain. A child stopped at its ceiling hands back only the " \
+            "files it read and its last text block, so write your findings as text now. " \
+            "Your final answer must stay under #{ANSWER_BOUND.limit} bytes."
         end
 
         # Three composed reshapes over the factory's Context: PERSONA first, then

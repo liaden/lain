@@ -250,9 +250,9 @@ RSpec.describe LainCLI do
     # something first.
     #
     # The run's OWN member sits ahead of the chronicle's, so the Null
-    # chronicle's contribution is now "nothing after the window refresh" rather
-    # than an empty stack. The reading is the same one: what the chronicle
-    # added, isolated by dropping the member this wiring always adds.
+    # chronicle's contribution is now "nothing after the run's own members" (the
+    # window refresh and the wrap-up warning) rather than an empty stack. Naming
+    # both keeps the claim exact: a chronicle member would show as a third.
     it "wires the chronicle's (empty, for Null) turn middleware into build_agent" do
       agent = wiring.send(:build_agent, toolset:, channel:, session: Lain::Session.new,
                                         backend: backend(provider: "ollama", model: nil, max_tokens: 4096))
@@ -261,7 +261,7 @@ RSpec.describe LainCLI do
       instrumentation = agent.instance_variable_get(:@instrumentation)
 
       expect(instrumentation).to be_a(Lain::Agent::Instrumentation)
-      expect(instrumentation.turn_middleware.to_a.map(&:class)).to eq([Lain::Middleware::ResolveWindow])
+      expect(instrumentation.turn_middleware.to_a.map(&:class)).to eq([Lain::Middleware::ResolveWindow, Lain::Middleware::WrapUp])
       # The tool phase over the SAME chronicle is NOT empty, so "empty" above is
       # a reading of the Null chronicle and not of an unwired instrumentation.
       expect(instrumentation.tool_middleware.to_a.map(&:class)).to eq(guarded)

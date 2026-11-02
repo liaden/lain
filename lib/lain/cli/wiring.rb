@@ -696,7 +696,7 @@ module Lain
       # window must see the refreshed one. A {Middleware::Stack}, because the
       # ordering is the footgun and a Stack is the shape that stays inspectable.
       def turn_phase(timeline, window, configured)
-        Middleware::Stack.new([*configured.members(:turn), Middleware::ResolveWindow.new(book: window),
+        Middleware::Stack.new([*configured.members(:turn), *TurnPhase.members(window, notes.mailbox, -> { @agent }),
                                *chronicle.turn_middleware(timeline).to_a])
       end
 

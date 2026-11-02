@@ -1116,6 +1116,58 @@ RSpec.describe Lain::CLI::Wiring do
       expect(mock_provider.call_count).to eq(1)
     end
 
+    it "warns the chat in its mailbox when its ask is 5 iterations from the ceiling it was given" do
+      turns = nil
+      probing = Class.new(Lain::Provider::Mock) do
+        define_method(:complete) do |request, **|
+          turns.call({ iteration: 20 }) { |env| env }
+          super(request)
+        end
+      end.new(responses: [Lain::Response.new(content: [{ "type" => "text", "text" => "settled" }],
+                                             stop_reason: :end_turn)])
+      recorder, session = wiring.run_state(nil)
+      agent = wiring.wire_agent(channel:, recorder:, session:, backend: offline_backend_class.new(
+        { provider: "ollama", model: nil, max_tokens: 64 }, mock: probing, root: backend_root
+      ))
+      turns = agent.instance_variable_get(:@instrumentation).turn_middleware
+
+      agent.ask("ping", iterations: 25)
+
+      queued = wiring.send(:notes).mailbox.send(:first_queued)
+      expect(queued).to include(from: "lain")
+      expect(queued.fetch(:body).fetch("text")).to include("5 of 25 iterations remain")
+    end
+
+    it "warns at the point of a raised ceiling, not the default one, and again on the next ask" do
+      turns = nil
+      probing = Class.new(Lain::Provider::Mock) do
+        define_method(:complete) do |request, **|
+          [0, 10, 20].each { |iteration| turns.call({ iteration: }) { |env| env } }
+          super(request)
+        end
+      end.new(responses: [Lain::Response.new(content: [{ "type" => "text", "text" => "settled" }],
+                                             stop_reason: :end_turn)])
+      recorder, session = wiring.run_state(nil)
+      agent = wiring.wire_agent(channel:, recorder:, session:, backend: offline_backend_class.new(
+        { provider: "ollama", model: nil, max_tokens: 64 }, mock: probing, root: backend_root
+      ))
+      turns = agent.instance_variable_get(:@instrumentation).turn_middleware
+      posted = []
+      mailbox = wiring.send(:notes).mailbox
+      allow(mailbox).to receive(:post).and_wrap_original do |post, **note|
+        posted << note.fetch(:text)
+        post.call(**note)
+      end
+
+      agent.ask("one", iterations: 100)
+      expect(posted).to be_empty
+      agent.ask("two", iterations: 25)
+      agent.ask("three", iterations: 25)
+
+      expect(posted.size).to eq(2)
+      expect(posted).to all(include("5 of 25 iterations remain"))
+    end
+
     # The parent handle is ONE Proc, equal?-shared by AskHuman and
     # Subagent::Seam, and it is read at CALL time -- so nothing observes it until
     # the first question is asked or the first child is spawned, which is why it
@@ -5829,7 +5881,7 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
     # refresh alone.
     it "takes the turn phase from the chronicle, ahead of which it puts the window refresh" do
       expect(backing[:instrumentation].turn_middleware.to_a.map(&:class))
-        .to eq([Lain::Middleware::ResolveWindow])
+        .to eq([Lain::Middleware::ResolveWindow, Lain::Middleware::WrapUp])
     end
 
     # The OWNER of the re-resolution trigger, named here because the book
@@ -5849,15 +5901,15 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
       )
       stack = journalling.send(:backing, backend, channel, -> {}, board:)[:instrumentation].turn_middleware
 
-      stack.call({}) { |env| env }
+      stack.call({ iteration: 0 }) { |env| env }
 
       expect(stack.to_a.map(&:class))
-        .to eq([Lain::Middleware::ResolveWindow, WiringAgentSpecJournallingChronicle::Member])
+        .to eq([Lain::Middleware::ResolveWindow, Lain::Middleware::WrapUp, WiringAgentSpecJournallingChronicle::Member])
       expect(trail).to eq(%i[window chronicle])
     end
 
     it "refreshes the very book the Agent is handed, once per turn" do
-      backing[:instrumentation].turn_middleware.call({}) { |env| env }
+      backing[:instrumentation].turn_middleware.call({ iteration: 0 }) { |env| env }
 
       expect(backing[:context_window]).to be(backend.context_window)
       expect(backend.context_window.refreshes).to eq(1)

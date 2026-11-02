@@ -814,13 +814,13 @@ RSpec.describe Lain::Tools::Subagent do
         provider.requests.each_index.select { |i| provider.requests[i].messages.to_s.include?("<mailbox>") }
       end
 
-      it "carries one note naming the remaining iterations, on the 4th request only" do
+      it "carries one note naming the remaining iterations, on the 6th request only" do
         provider = mock(*readings)
         warned(provider)
 
         expect(provider.requests.size).to eq(8)
-        expect(mailbox_requests(provider)).to eq([3])
-        expect(provider.requests[3].messages.to_s).to include("5 of 8")
+        expect(mailbox_requests(provider)).to eq([5])
+        expect(provider.requests[5].messages.to_s).to include("3 of 8")
       end
 
       it "journals the note as a message to the child's spawn digest" do
@@ -4756,7 +4756,7 @@ RSpec.describe Lain::Tools::Subagent do
     it "starts a child's turn stack with the configured middleware" do
       stack = children_built(middleware: configured).first[:turn_middleware]
 
-      expect(stack.to_a.map(&:class)).to eq([stamp, described_class::WrapUp, Lain::Middleware::JournalTurns])
+      expect(stack.to_a.map(&:class)).to eq([stamp, Lain::Middleware::WrapUp, Lain::Middleware::JournalTurns])
     end
 
     it "builds a new member for every child" do
@@ -4783,7 +4783,7 @@ RSpec.describe Lain::Tools::Subagent do
 
       expect([built[:model_middleware].to_a.map(&:class), built[:turn_middleware].to_a.map(&:class)])
         .to eq([[Lain::Middleware::RequestBudget, Lain::Middleware::ResolveAttachments],
-                [described_class::WrapUp, Lain::Middleware::JournalTurns]])
+                [Lain::Middleware::WrapUp, Lain::Middleware::JournalTurns]])
     end
   end
 end
