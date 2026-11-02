@@ -5,8 +5,9 @@
 # the other two here, and a signature that drifts fails the class that drifted.
 #
 # `own:` names state a wrapper holds that the policies it wraps do not (Confined's
-# roots, policy and outside?), and `lacks:` names that same state in the specs of
-# the classes that must not answer it. Neither is a place to park a message.
+# roots, write roots, policy and both outside questions), and `lacks:` names that
+# same state in the specs of the classes that must not answer it. Neither is a
+# place to park a message.
 #
 # A `delegate` is resolved to its target's signature. `swallows: true` is for the
 # Null alone: its `**` stands for the contract's keywords, and any other class
@@ -31,6 +32,7 @@ RSpec.shared_examples "a sensitivity policy" do |config|
     confined: [[], { roots: :keyreq }],
     home: [[], {}],
     root: [[], {}],
+    read_roots: [[], {}],
     file_facts: [[], {}],
     related?: [%i[req], {}],
     checksums?: [%i[req], { within: :keyreq }],

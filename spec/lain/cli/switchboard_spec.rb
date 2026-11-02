@@ -122,13 +122,6 @@ RSpec.describe Lain::CLI::Switchboard do
         expect(board.guard_inputs.secrets).to be(secrets)
       end
 
-      it "carries the answers roots it is given among the guard's inputs, and none by default" do
-        board = described_class.for(chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base,
-                                    test_layout: layout_run, answers: ["/state/lain/answers/abc"])
-
-        expect([board.guard_inputs.answers, board_for.guard_inputs.answers]).to eq([["/state/lain/answers/abc"], []])
-      end
-
       it "carries the default secrets source when none is given" do
         expect(board_for.guard_inputs.secrets).to be(Lain::Sensitivity::Secrets::Source::DEFAULT)
       end

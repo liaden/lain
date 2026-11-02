@@ -1096,6 +1096,8 @@ the rule.
 Such a file enters a survey masked whole and stays masked there; a file gated by its shape
 (`.env`, `*.pem`) keeps region masking and release.
 
+**A session has one set of read roots**: the answers dir, and the epic home when `epics_home` is `:xdg`. `CLI::Wiring::BoardBuild.read_roots` builds them once, and `Sensitivity::Policy.new(read_roots:)` lends them to every agent of the session, children included. So a read there needs no approval, while a write there still counts as outside the project. The reader sandbox mounts them read-only and masks nothing inside them, which is safe only because of what reaches it: a command runs there only once `ComposedTerm` has approved it, and that rule checks the bytes of every file the command names. The shell verdict abstains on a glob, and `ComposedTerm` approves neither `find` nor `grep -r`, so each of them parks; measured with a planted `.env` and `id_rsa` in both roots, nothing leaked.
+
 `Policy` judges a path twice before the call runs: as the call wrote it, and where it lands
 (`Landing.of`, resolved against the call's own worker cwd, so a worktree or `/mode plan` moves the
 base with it), and the stricter verdict wins. A link's name says nothing about what it opens, so

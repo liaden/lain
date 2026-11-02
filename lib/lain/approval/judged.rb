@@ -377,11 +377,12 @@ module Lain
       # judge is told that checkout as the project root.
       def own_tree(context) = ::Lain::Sensitivity::Policy.checkout_of(context)
 
-      # The human's checkout is read-only to a session in its own tree, as its
-      # confined policy keeps the project root, so only a write there is outside.
+      # The human's checkout and the session's read roots are read-only to a
+      # session in its own tree, as its confined policy keeps them, so only a
+      # write there is outside.
       def outside(effect, context, cwd, held)
         writable = held_to(held)
-        readable = held_to([*held, *@policy.root])
+        readable = held_to([*held, *@policy.root, *@policy.read_roots])
         named_paths(effect, context, cwd).select { |path, writes| (writes ? writable : readable).outside?(path, cwd:) }
                                          .map(&:first).uniq
       end

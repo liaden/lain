@@ -113,8 +113,6 @@ module Lain
       # @param denied_tools [Enumerable<String>] the tools the trusted config refuses with `deny_tool`; none by default
       # @param stops [Tripwire::Stops, Tripwire::Stops::None] who the tripwire stopped, which every tool
       #   stack refuses or holds; no one by default
-      # @param answers [Array<String>] the dirs a spawner spills an oversized answer into, which a leased
-      #   child's guard lets it read; none by default
       # @option options [Boolean] :non_interactive no human is at this
       #   session's terminal
       # @option options [String] :approval the session starts at this approval
@@ -127,10 +125,10 @@ module Lain
                    verdict: Lain::Shell::Verdict.new, spike: Scoping::NOWHERE, middleware: Config::Middleware.empty,
                    approval_timeout: Approval::Parked::Queue::DEFAULT_TIMEOUT, display: Channel::Null.instance, arms: Arms::OFF,
                    request: Approval::Judge::Unrequested, secrets: Sensitivity::Secrets::Source::DEFAULT,
-                   denied_tools: Set[].freeze, stops: Tripwire::Stops::None, answers: [].freeze)
+                   denied_tools: Set[].freeze, stops: Tripwire::Stops::None)
         new(journal: chronicle.record_journal, model:, toolset:, rules:, approving:, sensitivity:, classifiers:,
             verdict:, test_layout:, spike:, middleware:, approval_timeout:, judge:, display:, arms:, request:,
-            secrets:, denied_tools:, stops:, answers:,
+            secrets:, denied_tools:, stops:,
             # A resumed session starts at the launch flag's approval, not its last recorded mode.
             attended: !options[:non_interactive], approval: options.fetch(:approval, :ask))
       end
@@ -239,7 +237,6 @@ module Lain
       # @param secrets [Sensitivity::Secrets::Source] as on {.for}; the process default by default
       # @param denied_tools [Enumerable<String>] as on {.for}; none by default
       # @param stops [Tripwire::Stops, Tripwire::Stops::None] as on {.for}; no one by default
-      # @param answers [Array<String>] as on {.for}; none by default
       def initialize(journal:, model:, toolset:, rules: [], approving: REMEMBERED,
                      sensitivity: Sensitivity::Policy::Null.instance,
                      classifiers: Approval::Escalation::Triage::AnyPath.new,
@@ -248,7 +245,7 @@ module Lain
                      approval_timeout: Approval::Parked::Queue::DEFAULT_TIMEOUT, judge: DEFERRING,
                      display: Channel::Null.instance, arms: Arms::OFF, request: Approval::Judge::Unrequested,
                      secrets: Sensitivity::Secrets::Source::DEFAULT, denied_tools: Set[].freeze,
-                     stops: Tripwire::Stops::None, answers: [].freeze)
+                     stops: Tripwire::Stops::None)
         @attended = attended
         @display = display
         @journal = journal
@@ -265,7 +262,7 @@ module Lain
                                               test_layout:, policy: @policy_switch, policy_for: method(:policy_for),
                                               denial:, bar: Middleware::WithholdAutomaticOutput::Bar.new,
                                               scope: @scoping, middleware:, secrets:, denied_tools:,
-                                              stops:, mode: @mode_switch, answers:)
+                                              stops:, mode: @mode_switch)
       end
 
       # The main agent's context grafted over the live model slot -- the ONLY

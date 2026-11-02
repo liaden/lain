@@ -88,6 +88,18 @@ RSpec.describe Lain::Confine::Profiles do
       expect(profile.masks).to eq([File.join(root, ".env"), hidden])
     end
 
+    it "reads each read root the classifier names, read-only and with no listing behind it" do
+      epics = File.join(@base, "state", "epics").tap { FileUtils.mkdir_p(_1) }
+      answer = Lain::Confine::MaskList::Related.new(roots: [], masks: [], reads: [epics])
+      classifier = Struct.new(:related) { def classify(_) = Lain::Sensitivity::ORDINARY.verdict }.new(answer)
+
+      profile = described_class.new(masks:, probe:, home:, root:, classifier:).for(composed)
+
+      expect(profile.read_dirs.first(2)).to eq([root, epics])
+      expect(profile.write_dirs).not_to include(epics)
+      expect(Lain::Confine::MaskList::Related::NONE.reads).to eq([])
+    end
+
     it "traces a judge's approval without confining it" do
       expect(profiles.for(request(ruling("judge")))).to eq(Lain::Confine::Profile::TRACED)
     end

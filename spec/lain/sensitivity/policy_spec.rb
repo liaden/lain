@@ -1267,6 +1267,60 @@ RSpec.describe Lain::Sensitivity::Policy do
                .map { again.gates?(_1, cwd: root) }).to eq([false, false, false])
     end
 
+    # The session's read roots widen what a child reads, never where it writes.
+    context "with read roots" do
+      let(:lent) { File.join(@base, "elsewhere") }
+      let(:reading) do
+        described_class.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root, root:, rules:), home:, root:,
+                            read_roots: [lent])
+      end
+
+      it "answers the read roots it was built with, and none by default" do
+        expect([reading.read_roots, policy.read_roots, described_class::Null.instance.read_roots])
+          .to eq([[lent], [], []])
+        expect(reading.confined(roots: [worker]).read_roots).to eq([lent])
+      end
+
+      it "refuses a read root that is not absolute, which would resolve against the process's directory" do
+        expect { described_class.new(sensitivity:, read_roots: ["state/epics"]) }
+          .to raise_error(ArgumentError, %r{read root must be absolute: "state/epics"})
+      end
+
+      it "answers a read root expanded, so a dotted spelling is held as the directory it names" do
+        expect(described_class.new(sensitivity:, read_roots: ["/a/../b/"]).read_roots).to eq(["/b"])
+      end
+
+      it "reads under a read root ungated, and still gates a read beyond it" do
+        held = reading.confined(roots: [worker])
+
+        expect([read(File.join(lent, "epic.md")), read(File.join(home, "a.md"))].map { held.gates?(_1, cwd: root) })
+          .to eq([false, true])
+        expect(held.judge(File.join(lent, "epic.md"), cwd: root)).to be_ordinary
+      end
+
+      it "answers outside? by the read roots and writes_outside? by the write roots alone" do
+        held = reading.confined(roots: [worker])
+        paths = [File.join(lent, "epic.md"), File.join(worker, "a.rb"), File.join(root, "lib", "a.rb"),
+                 File.join(home, "notes", "n.md"), File.join(home, "a.md")]
+
+        expect(paths.map { held.outside?(_1, cwd: root) }).to eq([false, false, false, false, true])
+        expect(paths.map { held.writes_outside?(_1, cwd: root) }).to eq([true, false, false, false, true])
+      end
+
+      it "joins further roots to both reads and writes when confined again" do
+        again = reading.confined(roots: [worker]).confined(roots: [File.join(@base, "home")])
+
+        expect(again.writes_outside?(File.join(home, "a.md"), cwd: root)).to be(false)
+        expect(again.writes_outside?(File.join(lent, "epic.md"), cwd: root)).to be(true)
+      end
+
+      it "writes only where it reads when built over one Roots value" do
+        built = described_class::Confined.new(policy:, roots: Lain::Sensitivity::Roots.of(worker), anchors: {})
+
+        expect(built.writes_outside?(File.join(worker, "a.rb"), cwd: worker)).to be(false)
+      end
+    end
+
     it "answers ordinary over the Null for a path inside its roots, and outside the project beyond them" do
       null = described_class::Null.instance.confined(roots: [worker])
 
@@ -1390,20 +1444,21 @@ RSpec.describe "the sensitivity policy contract" do
   end
 
   context "with Policy" do
-    include_examples "a sensitivity policy", lacks: %i[roots policy outside?],
+    include_examples "a sensitivity policy", lacks: %i[roots write_roots policy outside? writes_outside?],
                                              policy_factory: -> { Lain::Sensitivity::Policy.new(sensitivity: contract_sensitivity) }
   end
 
   context "with Confined" do
     include_examples "a sensitivity policy",
-                     own: %i[roots policy outside?],
+                     own: %i[roots write_roots policy outside? writes_outside?],
                      policy_factory: lambda {
                        Lain::Sensitivity::Policy.new(sensitivity: contract_sensitivity).confined(roots: [Dir.pwd])
                      }
   end
 
   context "with Null" do
-    include_examples "a sensitivity policy", swallows: true, lacks: %i[roots policy outside?],
+    include_examples "a sensitivity policy", swallows: true,
+                                             lacks: %i[roots write_roots policy outside? writes_outside?],
                                              policy_factory: -> { Lain::Sensitivity::Policy::Null.instance }
   end
 end

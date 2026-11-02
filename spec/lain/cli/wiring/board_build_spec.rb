@@ -152,6 +152,25 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       end
     end
 
+    it "reads the answers dir and the XDG epic home as the session's read roots, and writes neither" do
+      in_tree do |root, home|
+        paths = paths_at(home)
+        container = Lain::Epic::Home.container(config: Lain::Config.load(root:), paths:, root:)
+        policy = board_for(root, home).sensitivity
+
+        expect(policy.read_roots).to eq([Lain::Tools::Subagent::Spill.home(paths, root), container])
+        expect(policy.confined(roots: [root]).writes_outside?(File.join(container, "a", "epic.md"), cwd: root))
+          .to be(true)
+      end
+    end
+
+    it "lends no epic home when epics live in the repository, which the project root already holds" do
+      in_tree(config: "epics home: :repo\n") do |root, home|
+        expect(board_for(root, home).sensitivity.read_roots)
+          .to eq([Lain::Tools::Subagent::Spill.home(paths_at(home), root)])
+      end
+    end
+
     it "hands the board's guard stack the child env it is given" do
       in_tree do |root, home|
         child_env = Lain::Exec::ChildEnv.new(env: { "API_TOKEN" => "tok-abc123lowentropy" })
@@ -751,6 +770,18 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
 
         expect(rules.map(&:name)).to eq(%w[composed_term])
         expect(rules.last.instance_variable_get(:@sensitivity)).to be_a(described_class::Classifiers)
+      end
+    end
+
+    it "approves a reader of a file in the XDG epic home, a read root of the session" do
+      in_tree do |root, home|
+        board = board_over(root, home)
+        epic = File.join(board.sensitivity.read_roots.last, "demo").tap { FileUtils.mkdir_p(_1) }
+        File.write(File.join(epic, "epic.md"), "an epic\n")
+
+        ruling = board.ladder.rule(bash_of("cat #{epic}/epic.md", "cwd" => root), nil)
+
+        expect([ruling.allow?, ruling.rule]).to eq([true, "composed_term"])
       end
     end
 
@@ -1627,8 +1658,8 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
         board = described_class.for(chronicle:, options: {}, judge: Lain::CLI::Switchboard::DEFERRING, model: "m",
                                     toolset:, project: project_at(root), paths:)
 
-        expect(board.guard_inputs.answers).to eq([Lain::Tools::Subagent::Spill.home(paths, root)])
-        expect(board.guard_inputs.answers.first).to start_with(File.join(state, "lain", "answers"))
+        expect(board.sensitivity.read_roots.first).to eq(Lain::Tools::Subagent::Spill.home(paths, root))
+        expect(board.sensitivity.read_roots.first).to start_with(File.join(state, "lain", "answers"))
       end
     end
   end

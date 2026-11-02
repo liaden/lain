@@ -122,15 +122,13 @@ module Lain
       # project's sensitive paths hold in git history; a run with no project
       # reads the process default and no history. `stops` is who the tripwire
       # stopped, and `mode` the approval level a paused main is held under; a
-      # run with no tripwire stop stops no one. `answers` are the dirs a
-      # spawner spills an oversized answer into, which a leased child may read;
-      # a run with no project spills nowhere a child could reach.
+      # run with no tripwire stop stops no one.
       Inputs = Data.define(:ledger, :approvals, :sensitivity, :test_layout, :policy, :policy_for, :denial, :bar,
-                           :scope, :middleware, :secrets, :denied_tools, :stops, :mode, :answers) do
+                           :scope, :middleware, :secrets, :denied_tools, :stops, :mode) do
         def initialize(scope: UNSCOPED, middleware: Config::Middleware.empty,
                        secrets: Lain::Sensitivity::Secrets::Source::DEFAULT, denied_tools: Set[].freeze,
                        stops: Tripwire::Stops::None,
-                       mode: Middleware::TripwireStop::NoMode, answers: [].freeze, **)
+                       mode: Middleware::TripwireStop::NoMode, **)
           super
         end
       end
@@ -542,9 +540,10 @@ module Lain
       # environment names if its lease cut one, the policy its gate asks, and
       # the child a release is asked for -- nil for a worker nobody named.
       #
-      # Its path policy is confined to the project, its related directories
-      # and the worker's own tree, so a read anywhere else asks first. The main
-      # agent's stack is built by {.stack} and reads where it likes.
+      # Its path policy is confined to the project, its related directories,
+      # the session's read roots and the worker's own tree, so a read anywhere
+      # else asks first. The main agent's stack is built by {.stack} and reads
+      # where it likes.
       def working(chronicle, inputs, worker_env, policy = inputs.policy, requester: nil, held: [])
         layered(chronicle, confined(inputs, worker_env), inputs.test_layout.roots_for(worker_env), policy,
                 requester:, held:)
@@ -582,7 +581,7 @@ module Lain
       def named(policy, requester, task: nil) = requester ? Asking.new(policy:, requester:, task:) : policy
 
       def confined(inputs, worker_env)
-        roots = worker_env.checkout ? [worker_env.checkout, *worker_env.read_roots, *inputs.answers] : [worker_env.cwd]
+        roots = [worker_env.checkout || worker_env.cwd]
         inputs.with(sensitivity: inputs.sensitivity.confined(roots:))
       end
 

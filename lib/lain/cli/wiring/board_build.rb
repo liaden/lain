@@ -72,8 +72,9 @@ module Lain
           # The SAME factory reaches both the triage rung and the approving
           # rule, so the two rungs cannot disagree about where a relative word
           # in one command's argv lands.
-          sensitivity = policy(project:, paths:, table:)
-          factory = classifiers(project:, paths:, table:, facts: sensitivity.file_facts, **identity)
+          sensitivity = policy(project:, paths:, table:, read_roots: read_roots(project:, paths:, config:))
+          factory = classifiers(project:, paths:, table:, facts: sensitivity.file_facts,
+                                reads: sensitivity.read_roots, **identity)
           classes = arms.classes?
           Switchboard.for(chronicle:, options:, model:, toolset:, verdict:,
                           rules: [Lain::Approval::Remembered.from(config)].reject(&:empty?),
@@ -83,8 +84,22 @@ module Lain
                           test_layout: test_layout(project:, file_facts: sensitivity.file_facts),
                           approval_timeout: Config.approval_timeout(root: project.root), judge:, display:, arms:,
                           request:, secrets: secrets(project:, sensitivity:, child_env:),
-                          denied_tools: config.approval.deny_tools, stops:,
-                          answers: [Lain::Tools::Subagent::Spill.home(paths, project.root)])
+                          denied_tools: config.approval.deny_tools, stops:)
+        end
+
+        # What every agent of the session reads outside the project without
+        # asking and never writes: where a spawner spills an oversized answer,
+        # and the epic home when it lives outside the repository. A config
+        # `related` directory masks a flagged region silently, and a read root
+        # does not, so a secret here still parks.
+        #
+        # @param project [Lain::Project]
+        # @param paths [Paths]
+        # @param config [Config] whose `epics` home says where the epics live
+        # @return [Array<String>] absolute
+        def read_roots(project:, paths:, config:)
+          epics = config.epics_home == :xdg ? [Lain::Epic::Home.container(config:, paths:, root: project.root)] : []
+          [Lain::Tools::Subagent::Spill.home(paths, project.root), *epics]
         end
 
         # Where `/mode plan` confines this project's session: a spike worktree
@@ -215,10 +230,11 @@ module Lain
         # @param table [Lain::Sensitivity::Rules] the compiled `sensitivity`
         #   table. REQUIRED, and it is {.for} that compiles it: three readers
         #   need the same one.
+        # @param read_roots [Array<String>] absolute; see {.read_roots}
         # @return [Lain::Sensitivity::Policy]
-        def policy(project:, paths:, table:)
+        def policy(project:, paths:, table:, read_roots: [])
           Lain::Sensitivity::Policy.new(sensitivity: classifier(project:, paths:, table:), home: paths.home,
-                                        root: project.root)
+                                        root: project.root, read_roots:)
         end
 
         # {Lain::Sensitivity} takes no `Dir.pwd` default: a relative path
@@ -248,11 +264,12 @@ module Lain
         # @param paths [Paths]
         # @param table [Lain::Sensitivity::Rules] as on {.policy}
         # @param facts [Lain::FileFacts::Live, Lain::FileFacts::Recorded] what the confinement resolves through
+        # @param reads [Array<String>] absolute; the session's read roots, which an approved word may also name
         # @param identity [Hash] as on {.for}
         # @return [Classifiers]
-        def classifiers(project:, paths:, table:, facts: Lain::FileFacts::LIVE, **identity)
+        def classifiers(project:, paths:, table:, facts: Lain::FileFacts::LIVE, reads: [], **identity)
           Classifiers.new(home: paths.home, cwd: project.cwd, rules: table, root: project.root,
-                          confinement: confinement(project:, paths:), facts:, **identity)
+                          confinement: confinement(project:, paths:), facts:, reads:, **identity)
         end
 
         # The boundary an automatic approval reads inside. A root holding the
@@ -382,18 +399,26 @@ module Lain
             #   the unresolved spelling for a confinement that contains nothing
             #   and will never be asked
             # @param facts [Lain::FileFacts::Live, Lain::FileFacts::Recorded] what a word is resolved through
+            # @param reads [Array<Array(#contains?, #contains?)>] each read root
+            #   as the session spells it and as its real path, which a word may
+            #   name as it names the root
             def initialize(root, cwd, landing: cwd, real_root: root, real_landing: landing,
-                           facts: Lain::FileFacts::LIVE)
+                           facts: Lain::FileFacts::LIVE, reads: [])
               @root = root
               @cwd = cwd.dup.freeze
               @landing = landing.dup.freeze
               @real_root = real_root
               @real_landing = real_landing.dup.freeze
               @facts = facts
+              @reads = reads.freeze
               freeze
             end
 
-            def contains?(path) = @root.contains?(path, from: @cwd) && really?(path)
+            def contains?(path)
+              [[@root, @real_root], *@reads].any? do |lexical, real|
+                lexical.contains?(path, from: @cwd) && really?(real, path)
+              end
+            end
 
             # @param path [String] a word as the call wrote it
             # @return [String] the path the kernel will open for it
@@ -402,8 +427,8 @@ module Lain
 
             private
 
-            def really?(path)
-              @real_root.contains?(landing_of(path))
+            def really?(real, path)
+              real.contains?(landing_of(path))
             rescue StandardError
               false
             end
@@ -509,14 +534,18 @@ module Lain
           #   replaced by `cwd`, so the two cannot disagree
           # @param facts [Lain::FileFacts::Live, Lain::FileFacts::Recorded] what the
           #   confinement resolves the root and the cwd through
+          # @param reads [Array<String>] absolute; the session's read roots, which
+          #   an approved word may name as it names the root, though the call's
+          #   cwd must still lie under the root
           # @raise [ArgumentError] from {Lain::Sensitivity}, when `home`, `cwd`
           #   or a root is not something a classifier can be anchored on
           def initialize(home:, cwd:, rules: Lain::Sensitivity::Rules.empty, root: nil, also_rooted: [],
                          confinement: Lain::Approval::Root::NOWHERE,
                          resolver: Lain::Shell::Executable::Resolver::NULL,
-                         worker_env: Lain::WorkerEnv.new(cwd:, env: {}), facts: Lain::FileFacts::LIVE)
+                         worker_env: Lain::WorkerEnv.new(cwd:, env: {}), facts: Lain::FileFacts::LIVE, reads: [])
             @home = home
             @facts = facts
+            @reads = reads.map { Lain::Approval::Root.new(_1) }.freeze
             @rules = rules
             @roots = [root, *also_rooted].uniq.freeze
             @confinement = confinement
@@ -558,7 +587,8 @@ module Lain
             real_landing = Lain::Landing.of(landing, cwd: landing, facts: @facts).first
             return @nowhere unless real_root.contains?(real_landing)
 
-            Confinement.new(@confinement, landing, landing:, real_root:, real_landing:, facts: @facts)
+            Confinement.new(@confinement, landing, landing:, real_root:, real_landing:, facts: @facts,
+                                                   reads: real_reads)
           rescue StandardError
             @nowhere
           end
@@ -604,10 +634,19 @@ module Lain
 
             Classifiers.new(home: @home, cwd: worker_env.cwd, rules: @rules, root: checkout,
                             also_rooted: @roots.compact, confinement: leased_confinement(checkout),
-                            resolver: @resolver, worker_env:)
+                            resolver: @resolver, worker_env:, reads: @reads.map(&:to_path))
           end
 
           private
+
+          # A read root that does not resolve is left out, so no word lands in it.
+          def real_reads
+            @reads.filter_map do |read|
+              [read, Lain::Approval::Root.new(@facts.realpath(read))]
+            rescue StandardError
+              nil
+            end
+          end
 
           def classifier(cwd)
             Strictest.of(@roots.map { |root| Lain::Sensitivity.new(home: @home, cwd:, rules: @rules, root:) })

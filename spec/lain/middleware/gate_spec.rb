@@ -719,6 +719,20 @@ RSpec.describe Lain::Middleware::Gate do
       expect(asked(write(File.join(elsewhere, "a.rb")), context: leased).asked).not_to be_empty
     end
 
+    # A read root widens what is read without asking, never where a write may land.
+    it "notes a write into a read root as outside the project, and leaves a read there unasked" do
+      reading = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root, root:), home:,
+                                              root:, read_roots: [elsewhere])
+      writes = [write(File.join(elsewhere, "epic.md")), runs("echo x >> #{elsewhere}/epic.md"),
+                runs("sed -i s/a/b/ #{elsewhere}/epic.md"), runs("rm #{elsewhere}/a.md"),
+                runs("cp /tmp/x #{elsewhere}/a.md")]
+
+      expect(writes.map { notes(_1, sensitivity: reading) })
+        .to all(eq([Lain::Sensitivity::Policy::OUTSIDE_PROJECT.explanation]))
+      expect(asked(tool_call("read_file", { "path" => File.join(elsewhere, "a.md") }), sensitivity: reading).asked)
+        .to be_empty
+    end
+
     it "asks nothing of a policy that holds no project root" do
       rootless = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root))
 

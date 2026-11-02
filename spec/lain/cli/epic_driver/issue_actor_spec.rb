@@ -223,7 +223,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
   end
 
   def child_lanes
-    described_class::Lanes.new(root: File.join(@root, "children"), role_spawn: build.role_spawn, home:)
+    described_class::Lanes.new(root: File.join(@root, "children"), role_spawn: build.role_spawn)
   end
 
   # The epic's supervisor, as the driver builds it: its checkouts are cut from
@@ -376,16 +376,50 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
       [*test_engineer, tool_response(["r1", "read_file", { "path" => home.issue("a").path }]), text_response("read it")]
     end
 
-    it "is lent its epic home to read, and the read returns the issue" do
-      supervising do |supervisor|
-        actor = launch(supervisor, "a").actor.tap(&:settle)
-
-        expect(actor.session.worker_env.read_roots).to eq([home.path])
-      end
+    it "returns the issue" do
+      supervising { |supervisor| launch(supervisor, "a").actor.settle }
 
       sent = provider.requests.last.messages.flat_map { Array(_1["content"]) }.grep(Hash)
       result = sent.find { |block| block["type"] == "tool_result" && block["tool_use_id"] == "r1" }
       expect(Array(result["content"]).to_s).to include("writes meta.json with the end time")
+    end
+  end
+
+  # The session's read roots lend the epic home to every agent, so an actor's
+  # lease, guarded over the board a chat builds for this project, reads its
+  # issue file unasked and still may not write beside it.
+  context "when a lease is guarded over the board the session builds" do
+    let(:toolset) { Lain::Toolset.new(ToolRegistry.names.map { |name| ToolRegistry.build(name) }) }
+    let(:chronicle) do
+      instance_double(Lain::CLI::Chronicle, record_journal: Lain::Channel::Null.instance,
+                                            instrumentation: Lain::CLI::Chronicle::Null.new.instrumentation)
+    end
+
+    def leased_stack(checkout)
+      project = Lain::Project.new(root: repo, cwd: repo, kind: :project, detected_by: :flag)
+      board = Lain::CLI::Wiring::BoardBuild.for(chronicle:, options: {}, judge: Lain::CLI::Switchboard::DEFERRING,
+                                                model: "m", toolset:, project:, paths:)
+      Lain::CLI::ToolGuard.leased(chronicle, board.guard_inputs, Lain::WorkerEnv.new(cwd: checkout, env: {}, checkout:),
+                                  fresh: Lain::Shell::Executable::Resolver::NeverFresh,
+                                  resolver: Lain::Shell::Executable::Resolver::NULL, requester: "issue_orchestrator")
+    end
+
+    def through(stack, checkout, name, input)
+      session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: checkout, env: {}, checkout:))
+      layers = stack.to_a
+      Sync { |task| task.with_timeout(10) { dispatch_call(name, input, toolset:, layers:, context: session) } }
+    end
+
+    it "reads the issue file without asking, and refuses a write into the epic home" do
+      checkout = File.join(@root, "lease").tap { FileUtils.mkdir_p(_1) }
+      stack = leased_stack(checkout)
+
+      read = through(stack, checkout, "read_file", { "path" => home.issue("a").path })
+      write = through(stack, checkout, "write_file", { "path" => File.join(home.path, "x.md"), "content" => "x" })
+
+      expect([read.error?, read.content.to_s]).to match([false, include("writes meta.json with the end time")])
+      expect(write).to be_error
+      expect(File).not_to exist(File.join(home.path, "x.md"))
     end
   end
 

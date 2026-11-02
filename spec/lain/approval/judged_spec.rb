@@ -448,6 +448,23 @@ RSpec.describe Lain::Approval::Judged do
       end
     end
 
+    context "when the session lends a read root" do
+      let(:epics) { "/home/tester/.local/state/lain/epics/abc" }
+      let(:policy) do
+        Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root, root:), home:, root:,
+                                      read_roots: [epics])
+      end
+
+      it "does not show a read there as outside" do
+        expect(prompt_for(bash("grep -rn TODO #{epics}/demo"))).to include("outside the project root: none")
+      end
+
+      it "shows a write there as outside" do
+        expect(prompt_for(bash("echo x > #{epics}/demo/epic.md")))
+          .to include("outside the project root: #{"#{epics}/demo/epic.md".inspect}")
+      end
+    end
+
     it "names the main agent's plan-scope spike as the project root, and the human's checkout" do
       spike = Lain::WorkerEnv.new(cwd: "/state/spikes/s1", env: {}, checkout: "/state/spikes/s1")
 

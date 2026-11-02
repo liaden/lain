@@ -11,7 +11,7 @@ require "tmpdir"
 # ledger from a freshly constructed second one, which is exactly the mistake
 # this file exists to catch.
 class ToolGuardSpecBoard
-  attr_reader :ledger, :approvals, :sensitivity, :test_layout, :policy, :policy_for, :answers
+  attr_reader :ledger, :approvals, :sensitivity, :test_layout, :policy, :policy_for
 
   # `sensitivity` is a REAL {Lain::Sensitivity::Policy} over a REAL classifier
   # for this file's own reason, one slot over: the claim is that the listing
@@ -23,9 +23,8 @@ class ToolGuardSpecBoard
   # it was asked in, so an example can see WHO a call was asked for. A worker is
   # judged by that same policy unless `policy_for` answers another.
   def initialize(approvals: nil, sensitivity: nil, test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared,
-                 policy: ToolGuardSpecPolicy.new, policy_for: nil, answers: [])
+                 policy: ToolGuardSpecPolicy.new, policy_for: nil)
     @ledger = Lain::Sensitivity::Ledger.new
-    @answers = answers
     @approvals = approvals
     @test_layout = test_layout
     @policy = policy
@@ -39,8 +38,7 @@ class ToolGuardSpecBoard
   def guard_inputs
     @guard_inputs ||= Lain::CLI::ToolGuard::Inputs.new(ledger:, approvals:, sensitivity:, test_layout:, policy:,
                                                        policy_for:, denial: "the spec board refuses %<name>s",
-                                                       bar: Lain::Middleware::WithholdAutomaticOutput::Bar.new,
-                                                       answers:)
+                                                       bar: Lain::Middleware::WithholdAutomaticOutput::Bar.new)
   end
 end
 
@@ -1148,63 +1146,24 @@ RSpec.describe Lain::CLI::ToolGuard do
         expect(board.policy.contexts).to be_empty
       end
 
-      it "reads a root the environment lends it without asking, and another directory still asks" do
-        lent = File.join(File.dirname(@project), "epics", "demo").tap { FileUtils.mkdir_p(_1) }
-        other = File.join(File.dirname(@project), "epics", "other")
-        child = child_stack(env_at(@checkout, checkout: @checkout).with(read_roots: [lent]))
-
-        [File.join(lent, "plans", "a.md"), File.join(other, "plans", "a.md")].each { read_through(child, _1) }
-
-        expect(board.policy.contexts.size).to eq(1)
-        confined = sensitivity.confined(roots: [@checkout, lent])
-        expect([lent, other].map { confined.judge(File.join(_1, "plans", "a.md"), cwd: @checkout).reason })
-          .to eq(%i[none outside_project])
-      end
-
-      it "holds a leased child to the parent's roots joined with its checkout and read roots, and nothing else" do
-        lent = File.join(File.dirname(@project), "epics", "demo").tap { FileUtils.mkdir_p(_1) }
-        child = child_stack(env_at(@checkout, checkout: @checkout).with(read_roots: [lent]))
-        held = child.to_a.grep(Lain::Middleware::RedactSecretReads).first.related
-        paths = [File.join(@project, "lib"), File.join(@checkout, "a.rb"), File.join(lent, "a.md"),
-                 File.join(File.dirname(lent), "other"), File.dirname(@project)]
-
-        expect(paths.map { held.roots.held?(_1) }).to eq([true, true, true, false, false])
-      end
-
-      it "holds a lent root to reads: a write there is still refused" do
-        lent = File.join(File.dirname(@project), "epics", "demo").tap { FileUtils.mkdir_p(_1) }
-        child = child_stack(env_at(@checkout, checkout: @checkout).with(read_roots: [lent]))
-        effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_w", name: "write_file",
-                                            input: { "path" => File.join(lent, "x.md"), "content" => "x" })
-
-        result = child.call({ effect:, tool: Lain::Tools::WriteFile.new, context: :the_session }) do |passed|
-          passed.merge(result: Lain::Tool::Result.ok("wrote"))
-        end
-
-        expect(result[:result]).to be_error
-      end
-
-      it "lends nothing to an unleased environment: a read in the lent root still asks" do
-        lent = File.join(File.dirname(@project), "epics", "demo").tap { FileUtils.mkdir_p(_1) }
-
-        read_through(child_stack(env_at(@checkout).with(read_roots: [lent])), File.join(lent, "plans", "a.md"))
-
-        expect(board.policy.contexts.size).to eq(1)
-      end
-
-      it "reads a leased child's own child's spilled answer under the board's answers root, and asks elsewhere" do
+      # The session's read roots ride the board's own policy, so every child is
+      # lent them whether or not a lease cut it a checkout.
+      it "reads under the board policy's read roots without asking, leased or not, and asks elsewhere" do
         ours = File.join(File.dirname(@project), "state", "answers", "ours")
         theirs = File.join(File.dirname(@project), "state", "answers", "theirs")
-        answering = ToolGuardSpecBoard.new(test_layout: run, sensitivity:, answers: [ours])
-        child = described_class.child_stack(chronicle, answering, env_at(@checkout, checkout: @checkout),
-                                            requester: "subagent")
+        classifier = Lain::Sensitivity.new(home: "/home/tester", cwd: @project, root: @project)
+        reading = Lain::Sensitivity::Policy.new(sensitivity: classifier, root: @project, read_roots: [ours])
+        lending = ToolGuardSpecBoard.new(test_layout: run, sensitivity: reading)
+        children = [env_at(@checkout, checkout: @checkout), env_at(@project)].map do |worker_env|
+          described_class.child_stack(chronicle, lending, worker_env, requester: "subagent")
+        end
 
-        [ours, theirs].each { read_through(child, File.join(_1, "a.md")) }
+        children.each { |child| [ours, theirs].each { read_through(child, File.join(_1, "a.md")) } }
 
-        expect(answering.policy.contexts.size).to eq(1)
+        expect(lending.policy.contexts.size).to eq(2)
       end
 
-      it "holds no answers root for a board that names none" do
+      it "holds no read root for a board whose policy names none" do
         read_through(child_stack(env_at(@checkout, checkout: @checkout)),
                      File.join(Lain::Tools::Subagent::Spill.home(Lain::Paths.new, @project), "a.md"))
 

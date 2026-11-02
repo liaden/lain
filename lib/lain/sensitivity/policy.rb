@@ -133,13 +133,19 @@ module Lain
         #
         # @param roots [Array<String>] absolute
         # @return [Confined]
-        def confined(roots:) = Confined.new(policy: self, roots: Roots.of(*roots, facts: file_facts), anchors: {})
+        def confined(roots:)
+          held = Roots.of(*roots, facts: file_facts)
+          Confined.new(policy: self, roots: held, write_roots: held, anchors: {})
+        end
 
         # @return [nil] no home was configured
         def home = nil
 
         # @return [nil] no root was configured
         def root = nil
+
+        # @return [Array] none, frozen
+        def read_roots = NONE
 
         # @return [FileFacts::Live] the live disk, which a policy confined over this one reads
         def file_facts = FileFacts::LIVE
@@ -197,24 +203,31 @@ module Lain
 
         attr_reader :policy
 
-        # @return [Roots] a path under one is in scope
+        # @return [Roots] a path under one is in scope for a read
         attr_reader :roots
 
+        # @return [Roots] a path under one is in scope for a write
+        attr_reader :write_roots
+
         # @param policy [Policy] what every other answer is
-        # @param roots [Roots] a path under one is in scope
+        # @param roots [Roots] a path under one is in scope for a read
+        # @param write_roots [Roots] a path under one is in scope for a write;
+        #   by default where it reads
         # @param anchors [Hash] the policy's home and root as configured, so a
         #   landing is also spelled under them
-        def initialize(policy:, roots:, anchors:)
+        def initialize(policy:, roots:, anchors:, write_roots: roots)
           @policy = policy
           @anchors = anchors
           @roots = roots
+          @write_roots = write_roots
           freeze
         end
 
-        # @param roots [Array<String>] absolute; joined to the ones held
+        # @param roots [Array<String>] absolute; joined to the ones held, for reads and writes alike
         # @return [Confined]
         def confined(roots:)
-          Confined.new(policy: @policy, roots: @roots | Roots.of(*roots, facts: file_facts), anchors: @anchors)
+          added = Roots.of(*roots, facts: file_facts)
+          Confined.new(policy: @policy, roots: @roots | added, write_roots: @write_roots | added, anchors: @anchors)
         end
 
         # @return [String, nil] the policy's home as configured
@@ -237,7 +250,7 @@ module Lain
 
         def classify(path, within: nil) = @policy.classify(path, within:)
         delegate :related?, :in_related_tree?, :related_directories, :filter, :mask_paths, :marks, :lifts,
-                 :checksums?, to: :@policy
+                 :checksums?, :read_roots, to: :@policy
 
         # Asked by where a path lands, never by the reason its name is judged
         # for: a home directory gated by name is still outside every root.
@@ -246,6 +259,13 @@ module Lain
         # @param cwd [String] absolute
         # @return [Boolean] whether it lands outside every root and related directory
         def outside?(path, cwd:) = !held?(File.expand_path(path, cwd))
+
+        # {#outside?} for a write, which a read root does not hold.
+        #
+        # @param path [String] as the call wrote it
+        # @param cwd [String] absolute
+        # @return [Boolean] whether it lands outside every write root and related directory
+        def writes_outside?(path, cwd:) = !held?(File.expand_path(path, cwd), @write_roots)
 
         # @param effect [Lain::Effect]
         # @param cwd [String] absolute; the call's own base
@@ -319,8 +339,8 @@ module Lain
 
         # Every spelling is of where the path lands, so a link that leaves is
         # judged at its target; a related directory is matched as configured.
-        def held?(named)
-          landings(named).any? { @roots.held?(_1) || @policy.in_related_tree?(_1) }
+        def held?(named, roots = @roots)
+          landings(named).any? { roots.held?(_1) || @policy.in_related_tree?(_1) }
         end
       end
 
@@ -342,9 +362,13 @@ module Lain
       #   landing under its real path is judged under this spelling too
       # @param root [String, nil] the project root as configured, likewise
       # @param file_facts [FileFacts::Live, FileFacts::Recorded] what a landing is judged by
-      def initialize(sensitivity:, home: nil, root: nil, file_facts: FileFacts::LIVE)
+      # @param read_roots [Array<String>] absolute; the session's directories
+      #   outside the project that a confined child reads without asking, and never writes
+      # @raise [ArgumentError] when a read root is not absolute
+      def initialize(sensitivity:, home: nil, root: nil, file_facts: FileFacts::LIVE, read_roots: [])
         @sensitivity = sensitivity
         @file_facts = file_facts
+        @read_roots = read_roots.map { absolute!(_1) }.freeze
         @anchors = { home:, root: }.freeze
         @landing_anchors = @anchors.transform_values { self.class.text_of(_1) }.freeze
         # Built HERE, not memoized in the reader: this object freezes itself, so
@@ -359,6 +383,11 @@ module Lain
 
       # @return [String, nil] the project root as configured, nil when none was
       def root = @anchors[:root]
+
+      # Asked by {Confine::MaskList}, so the reader sandbox mounts what a child reads.
+      #
+      # @return [Array<String>] absolute and expanded, frozen
+      attr_reader :read_roots
 
       # What every landing this boundary judges is read through: the live disk, or a session's
       # record of it in a replay. Triage, the judge's rung and the queue read the same one.
@@ -456,12 +485,15 @@ module Lain
       def self.checkout_of(context) = ::Lain::Session.worker_env_of(context).checkout
 
       # The same boundary for a spawned child, which also asks before it reads
-      # outside the project, its related directories and `roots`.
+      # outside the project, its related directories, `roots` and the read
+      # roots, and before it writes anywhere but the first three.
       #
       # @param roots [Array<String>] absolute; the child's own trees
       # @return [Confined]
       def confined(roots:)
-        Confined.new(policy: self, roots: Roots.of(*@anchors[:root], *roots, facts: file_facts), anchors: @anchors)
+        writes = Roots.of(*@anchors[:root], *roots, facts: file_facts)
+        Confined.new(policy: self, roots: writes | Roots.of(*@read_roots, facts: file_facts), write_roots: writes,
+                     anchors: @anchors)
       end
 
       # The path a call names, read off {PATH_FIELDS}, and nil for a call that
@@ -603,6 +635,13 @@ module Lain
       def self.masks?(verdict) = !verdict.ordinary? && !LOCATIONS.include?(verdict.reason)
 
       private
+
+      # A relative root would resolve against whatever directory the process sits in.
+      def absolute!(dir)
+        raise ArgumentError, "a read root must be absolute: #{dir.inspect}" unless dir.start_with?(File::SEPARATOR)
+
+        -File.expand_path(dir)
+      end
 
       # On the resolved path, because bwrap aborts on a symlink mask target,
       # and only where the file exists, since bwrap creates a missing mask

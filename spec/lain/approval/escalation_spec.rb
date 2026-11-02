@@ -1224,8 +1224,9 @@ RSpec.describe Lain::Approval::Escalation do
       end
     end
 
-    def ruled(command, cwd: nil, root: @project, home: "/home/tester", checkout: nil, below: [])
-      policy = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root, root:), home:, root:)
+    def ruled(command, cwd: nil, root: @project, home: "/home/tester", checkout: nil, below: [], read_roots: [])
+      policy = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root, root:), home:, root:,
+                                             read_roots:)
       rung = described_class::Triage.new(sensitivity: EscalationSpecSupport::Classifiers.new(home:, base: root),
                                          policy:)
       session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: checkout || root, env: {}, checkout:))
@@ -1372,6 +1373,20 @@ RSpec.describe Lain::Approval::Escalation do
       ["grep -rn .netrc lib", "grep -rn Cookies lib"].each { ruled(_1, root:, home:, checkout: lease) }
 
       expect(rulings.select { _1["rung"] == "triage" }.map { _1["verdict"] }).to eq(%w[abstain abstain])
+    end
+
+    # The session's read roots are read as the project is, so a file there that
+    # shares a protected name is not refused for its name alone.
+    it "counts a read root as inside the project, and refuses the same word beside it" do
+      home = File.join(@project, "home")
+      root = File.join(home, "dev", "proj").tap { FileUtils.mkdir_p(_1) }
+      epics = File.join(home, "state", "epics").tap { FileUtils.mkdir_p(File.join(_1, "demo", "issues")) }
+      other = File.join(home, "state", "other").tap { FileUtils.mkdir_p(File.join(_1, "issues")) }
+
+      ruled("grep -rn .netrc issues", cwd: File.join(epics, "demo"), root:, home:, read_roots: [epics])
+      ruled("grep -rn .netrc issues", cwd: other, root:, home:, read_roots: [epics])
+
+      expect(rulings.select { _1["rung"] == "triage" }.map { _1["verdict"] }).to eq(%w[abstain deny])
     end
 
     it "counts a directory denied in its own right as outside the project" do

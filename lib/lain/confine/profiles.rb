@@ -128,7 +128,8 @@ module Lain
         masks = mask_paths(root)
         related = @classifier.related
         profile = Profile.reader(root:, home: @home, masks: [*masks, *related.masks.map(&:path)].uniq,
-                                 related: related.roots, exec_files: exec_files(placed(request.executables)),
+                                 related: [*related.roots, *related.reads],
+                                 exec_files: exec_files(placed(request.executables)),
                                  trace: traceable?)
         granted(profile.with(read_dirs: [*profile.read_dirs, *git_configs(root)]))
       end

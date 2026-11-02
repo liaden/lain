@@ -753,8 +753,8 @@ module Lain
         # absolute, which no `cd` or unresolved directory can move.
         def vouched(named, allowed) = named.opaque? && !allowed ? named.paths.select(&:absolute?) : named.paths
 
-        # The board's root, and the checkout this call's worker or spike runs in,
-        # whose own files share the names a project's do.
+        # The board's root, the checkout this call's worker or spike runs in and
+        # the session's read roots, whose own files share the names a project's do.
         def project(context) = @policy.confined(roots: [Sensitivity::Policy.base_of(context)])
 
         # The landing first: a link named `.netrc` that opens `/etc/shadow` is
