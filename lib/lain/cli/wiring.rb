@@ -144,16 +144,19 @@ module Lain
         #   for the headless callers, which run over lain's own state.
         # @param resolver [#for] names what each stage of a bash call runs; the null
         #   one resolves nothing, for a floor built with no session
+        # @param spill [Lain::Tool::Spill, Lain::Tool::Spill::Null] where bash and
+        #   web_fetch keep a result over the ceiling; the null one keeps nothing
         def build(recorder, exec: Lain::Exec::Local.new, verdict: Lain::Shell::Verdict.new,
                   journal: Lain::Channel::Null.instance, search: Lain::SearchRules.empty,
-                  resolver: Lain::Shell::Executable::Resolver::NULL)
+                  resolver: Lain::Shell::Executable::Resolver::NULL, spill: Lain::Tool::Spill::Null)
           walking = { walk_limit: search.limit, include: search.include }
           [Lain::Tools::ReadFile.new, Lain::Tools::ListFiles.new(**walking), Lain::Tools::Glob.new(**walking),
            Lain::Tools::Grep.new(**walking),
            Lain::Tools::EditFile.new(journal:), Lain::Tools::WriteFile.new(journal:), Lain::Tools::TodoWrite.new,
            Lain::Tools::MemoryWrite.new(recorder:, author: Lain::Memory::Author.chat),
            Lain::Tools::MemoryRead.new(index: recorder),
-           Lain::Tools::Bash.new(exec:, verdict:, journal:, resolver:), Lain::Tools::WebFetch.new, Lain::Tools::WebSearch.new,
+           Lain::Tools::Bash.new(exec:, verdict:, journal:, resolver:, spill:), Lain::Tools::WebFetch.new(spill:),
+           Lain::Tools::WebSearch.new,
            Lain::Tools::AstDump.new, Lain::Tools::TestPattern.new, Lain::Tools::AstSearch.new(**walking),
            Lain::Tools::FileSymbols.new]
         end

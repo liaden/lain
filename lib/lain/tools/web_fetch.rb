@@ -552,12 +552,17 @@ module Lain
       # connection) so specs substitute a stub and never touch the network. The
       # caps and allowlist are constructor config, not model input: the model
       # must not be able to widen its own bounds.
-      def initialize(connection: nil, byte_cap: DEFAULT_BYTE_CAP, redirect_cap: DEFAULT_REDIRECT_CAP, allowlist: nil)
+      #
+      # A result over {BOUND} is kept whole in `spill` and handed back as its
+      # head and where the rest is; the Null keeps nothing, so it is refused.
+      def initialize(connection: nil, byte_cap: DEFAULT_BYTE_CAP, redirect_cap: DEFAULT_REDIRECT_CAP, allowlist: nil,
+                     spill: Tool::Spill::Null)
         super()
         @connection = connection || default_connection
         @byte_cap = byte_cap
         @redirect_cap = redirect_cap
         @allowlist = allowlist
+        @spilled = Tool::Bounds::Spilled.new(limit: BOUND.limit, spill:)
       end
 
       def name = "web_fetch"
@@ -607,6 +612,9 @@ module Lain
 
       def bounded(url, cap, type, raw)
         rendering = Rendering.of(type, raw)
+        pending = @spilled.pending
+        return kept(url, cap, type, rendering, pending) if pending.keeps?
+
         text = rendered(url, cap, type, rendering)
         return Tool::Result.ok(text) if BOUND.admits?(text.bytesize)
 
@@ -615,6 +623,26 @@ module Lain
         BOUND.refusal_over(subject: rendering.subject(url), narrower: rendering.narrower)
       rescue Readable::Unparseable, Readable::TooMany, Readable::Unanchored => e
         Tool::Result.error("web_fetch: #{url}: #{e.message}")
+      ensure
+        pending&.discard
+      end
+
+      # The text is written into the spill as it is rendered, so only its head
+      # is ever held; nothing here decides whether it may be kept, so a spill
+      # is kept at once.
+      def kept(url, cap, type, rendering, pending)
+        pending << rendered(url, cap, type, rendering, into: pending)
+        return Tool::Result.ok(pending.head.force_encoding(Encoding::UTF_8)) if BOUND.admits?(pending.size)
+        return refused(url, rendering, pending.size) unless pending.spilled?
+
+        path = pending.commit
+        Tool::Result.ok(@spilled.handback(head: pending.head, size: pending.size, kept: pending.kept, path:))
+      rescue Tool::Spill::Unwritable
+        refused(url, rendering, pending.size)
+      end
+
+      def refused(url, rendering, size)
+        BOUND.refusal(subject: rendering.subject(url), size:, narrower: rendering.narrower)
       end
 
       def redirect(from, headers, budget, raw)
@@ -657,17 +685,24 @@ module Lain
       # down to a character boundary means the body is <= the cap, and telling
       # the model "truncated at 4 bytes" beside a three-byte body is a small lie
       # in the one sentence explaining why the page is short.
-      def rendered(url, cap, type, rendering)
+      #
+      # Handed `into`, only what is left to write is answered, so a spilled
+      # page is never held whole in memory.
+      def rendered(url, cap, type, rendering, into: nil)
         bytes = cap.bytes
-        text = body(url, Text.decode(bytes, charset(type, bytes)), rendering)
+        text = body(url, Text.decode(bytes, charset(type, bytes)), rendering, into)
         return text unless cap.truncated?
 
         label = "[web_fetch: truncated at #{cap.bytesize} bytes]"
-        text.empty? ? label : "#{text}\n\n#{label}"
+        text.empty? && into&.size.to_i.zero? ? label : "#{text}\n\n#{label}"
       end
 
-      def body(url, decoded, rendering)
-        rendering.readable ? Readable.call(decoded, url, limit: BOUND.limit) : decoded
+      def body(url, decoded, rendering, into)
+        return Readable.call(decoded, url, limit: BOUND.limit, into:) if rendering.readable
+        return decoded unless into
+
+        into << decoded
+        ""
       end
 
       # A page that names its charset only in its own markup is read by that

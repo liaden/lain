@@ -158,7 +158,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
         container = Lain::Epic::Home.container(config: Lain::Config.load(root:), paths:, root:)
         policy = board_for(root, home).sensitivity
 
-        expect(policy.read_roots).to eq([Lain::Tools::Subagent::Spill.home(paths, root), container])
+        expect(policy.read_roots).to eq([Lain::Tool::Spill.home(paths, root), container])
         expect(policy.confined(roots: [root]).writes_outside?(File.join(container, "a", "epic.md"), cwd: root))
           .to be(true)
       end
@@ -178,7 +178,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     it "lends no epic home when epics live in the repository, which the project root already holds" do
       in_tree(config: "epics home: :repo\n") do |root, home|
         expect(board_for(root, home).sensitivity.read_roots)
-          .to eq([Lain::Tools::Subagent::Spill.home(paths_at(home), root)])
+          .to eq([Lain::Tool::Spill.home(paths_at(home), root)])
       end
     end
 
@@ -1758,7 +1758,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
         board = described_class.for(chronicle:, options: {}, judge: Lain::CLI::Switchboard::DEFERRING, model: "m",
                                     toolset:, project: project_at(root), paths:)
 
-        expect(board.sensitivity.read_roots.first).to eq(Lain::Tools::Subagent::Spill.home(paths, root))
+        expect(board.sensitivity.read_roots.first).to eq(Lain::Tool::Spill.home(paths, root))
         expect(board.sensitivity.read_roots.first).to start_with(File.join(state, "lain", "answers"))
       end
     end

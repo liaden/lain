@@ -101,7 +101,8 @@ module ToolBoundsDiscipline
   # {Lain::Tool::Bounds::CEILINGS} sizes. An {Lain::Tool::Bounds::Enumeration}
   # caps rows, a unit a byte figure cannot be compared against, so a tool whose
   # only bound counts rows has no byte ceiling at all.
-  BYTE_SHAPES = [Lain::Tool::Bounds::Artifact, Lain::Tool::Bounds::Handback, Lain::Tool::Bounds::Fill].freeze
+  BYTE_SHAPES = [Lain::Tool::Bounds::Artifact, Lain::Tool::Bounds::Handback, Lain::Tool::Bounds::Fill,
+                 Lain::Tool::Bounds::Spilled].freeze
 
   # @return [Array<Integer>] the limit of every byte-counting bound the tool
   #   declares or inherits, own constants and one level of nesting
@@ -400,7 +401,8 @@ RSpec.describe "tool bounds discipline" do
     expect(ToolBoundsDiscipline.shapes).to contain_exactly(Lain::Tool::Bounds::Enumeration,
                                                            Lain::Tool::Bounds::Artifact,
                                                            Lain::Tool::Bounds::Handback,
-                                                           Lain::Tool::Bounds::Fill)
+                                                           Lain::Tool::Bounds::Fill,
+                                                           Lain::Tool::Bounds::Spilled)
   end
 
   it "has every tool either declaring a bound or named on the exempt list" do

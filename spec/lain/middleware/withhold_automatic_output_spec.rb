@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "stringio"
+require "tmpdir"
 
 RSpec.describe Lain::Middleware::WithholdAutomaticOutput do
   subject(:guard) { described_class.new(bar:, journal:) }
@@ -186,6 +187,105 @@ RSpec.describe Lain::Middleware::WithholdAutomaticOutput do
 
       expect(env.fetch(:result)).to be(printed)
       expect(seen).to be(:the_session)
+    end
+  end
+
+  # Scenario: a withheld output leaves no readable spill
+  describe "a command whose output was kept in a spill" do
+    around do |example|
+      Dir.mktmpdir do |dir|
+        @tmp = dir
+        example.run
+      end
+    end
+
+    let(:answers) { File.join(@tmp, "answers", "abc") }
+    let(:bash) { Lain::Tools::Bash.new(spill: Lain::Tool::Spill.new(dir: answers)) }
+    let(:token) { "Zk3vQ9xT7mW2pL8nR5cY1bH6dF4gJ0sA" }
+
+    # 20,000 bytes, a token at byte 18,000: past any head the result can show.
+    def printing(secret: true)
+      body = "filler line\n" * 2000
+      body[18_000, token.size] = token if secret
+      File.join(@tmp, "out.txt").tap { File.write(_1, body.byteslice(0, 20_000)) }
+    end
+
+    def ran(command, authority:)
+      guard.call({ effect: call_of(command), context: Lain::Session::Null.instance, tool: bash }) do |inner|
+        inner.fetch(:context).ruled(ruling(authority))
+        invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: inner.fetch(:context))
+        inner.merge(result: bash.call({ command: }, invocation))
+      end.fetch(:result)
+    end
+
+    def left = Dir.exist?(answers) ? Dir.children(answers) : []
+
+    # Waits, inside the command, until the tee has opened the pending file:
+    # output can sit in the pipe after the command printed it.
+    def settled = "until ls #{answers}/*.pending >/dev/null 2>&1; do sleep 0.05; done"
+
+    it "withholds the output and leaves no spill and no pending file" do
+      result = ran("cat #{printing}", authority: :automatic)
+
+      expect(result).to have_attributes(is_error: true)
+      expect(result.content).to include("1 credential-shaped region")
+      expect(left).to be_empty
+    end
+
+    it "keeps ordinary output approved automatically, naming the kept file and leaving nothing pending" do
+      result = ran("cat #{printing(secret: false)}", authority: :automatic)
+      kept = result.content[/the full output is at (\S+); read it/, 1]
+
+      expect(result).to be_ok
+      expect(kept).to end_with(".txt")
+      expect(File.size(kept)).to eq(20_000)
+      expect(left).to eq([File.basename(kept)])
+    end
+
+    it "keeps a human-approved command's spill, credential and all, for the read side to mask" do
+      result = ran("cat #{printing}", authority: :human)
+      kept = result.content[/the full output is at (\S+); read it/, 1]
+
+      expect(result).to be_ok
+      expect(File.read(kept)).to include(token)
+      expect(left).to eq([File.basename(kept)])
+    end
+
+    # The command can reach the answers dir, so what is scanned and kept is
+    # read from the descriptor the output was written to, never by its name.
+    it "keeps the true bytes of a command that deletes its own pending file, raising nothing" do
+      result = ran("head -c 20000 /dev/zero | tr '\\0' x; #{settled}; rm -f #{answers}/*.pending",
+                   authority: :automatic)
+      kept = result.content[/the full output is at (\S+); read it/, 1]
+
+      expect(result).to be_ok
+      expect(File.binread(kept)).to eq("x" * 20_000)
+    end
+
+    it "withholds a token a command hid by swapping its pending file for a clean one" do
+      swap = "for f in #{answers}/*.pending; do rm -f \"$f\"; echo clean > \"$f\"; done"
+      result = ran("head -c 20000 /dev/zero | tr '\\0' x; printf '\\n%s\\n' '#{token}'; #{settled}; #{swap}",
+                   authority: :automatic)
+
+      expect(result).to have_attributes(is_error: true)
+      expect(result.content).to include("1 credential-shaped region")
+      expect(left.map { File.read(File.join(answers, _1)) }).to all(eq("clean\n"))
+    end
+
+    it "withholds, raising nothing, a spill it cannot read back" do
+      unreadable = Class.new do
+        def whole(_env) = raise(IOError, "closed stream")
+        def kept_in(env) = env
+        def discard = nil
+      end.new
+      env = guard.call({ effect: call_of("cat big.txt"), context: Lain::Session::Null.instance }) do |inner|
+        inner.fetch(:context).ruled(ruling(:automatic)).spilled(unreadable)
+        inner.merge(result: Lain::Tool::Result.ok("exit status: 0\nhead"))
+      end
+
+      expect(env.fetch(:result)).to have_attributes(is_error: true)
+      expect(env.fetch(:result).content).to include("could not be read back")
+      expect(bar.include?("cat big.txt")).to be(true)
     end
   end
 

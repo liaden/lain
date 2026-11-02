@@ -602,11 +602,12 @@ module Lain
       ANSWER_BOUND = Tool::Bounds::Artifact.new(limit: 16 * 1024)
 
       # How much of a failure's own message may ride into a refusal sentence and
-      # an NDJSON line. An exception message is unbounded and is written by
-      # whatever raised: a provider error carrying a response body, a
-      # `JSON::ParserError` echoing its document, a `NoMethodError` inspecting a
-      # large receiver. {Epic::Gate::Adjudicator}'s `note` clamps for this
-      # reason and at this size -- the head is where the diagnosis is.
+      # an NDJSON line, its notice included. An exception message is unbounded
+      # and is written by whatever raised: a provider error carrying a response
+      # body, a `JSON::ParserError` echoing its document, a `NoMethodError`
+      # inspecting a large receiver. {Epic::Gate::Adjudicator}'s `note` clamps
+      # for this reason and at this size -- the head is where the diagnosis is,
+      # and the rest is kept in the spill when there is one.
       MAX_FAILURE_REASON = 500
 
       # Where a parent can go instead when no summary could be delivered.
@@ -658,7 +659,7 @@ module Lain
       # An answer whose summary is still over the ceiling is kept whole by
       # `spill` and handed back as a pointer, for the same two reasons.
       Answer = Data.define(:bounds, :spill) do
-        def initialize(bounds: ANSWER_BOUND, spill: Spill::Null)
+        def initialize(bounds: ANSWER_BOUND, spill: Tool::Spill::Null)
           super
         end
 
@@ -772,7 +773,20 @@ module Lain
         # The class leads because it stays diagnostic when the message is cut,
         # and the message is cut because it is written by whatever raised and
         # lands in both a model-facing sentence and a journal line.
-        def failure(error) = "#{error.class}: #{error.message.to_s[0, MAX_FAILURE_REASON]}"
+        def failure(error) = clamped("#{error.class}: #{error.message}")
+
+        # A cut reason says it was cut, how much of how much it shows, and
+        # where the whole is, so its head never reads as the whole of it.
+        def clamped(reason)
+          size = reason.bytesize
+          return reason if size <= MAX_FAILURE_REASON
+
+          outcomes = Tool::Spill::Outcomes.new(kept: ->(paths) { [paths.first, nil] },
+                                               unwritable: ->(why) { [nil, why] }, unkept: -> { [nil, nil] })
+          path, unkept = spill.keep(reason, nil, outcomes)
+          Tool::Bounds::Spilled.new(limit: MAX_FAILURE_REASON, spill:)
+                               .handback(head: reason, size:, kept: size, path:, unkept:)
+        end
 
         # Why this summary cannot be delivered, or nil when it can. Ways a second
         # ask succeeds and still has nothing to deliver, each of which would
@@ -814,9 +828,11 @@ module Lain
         # The pointer names each file kept and its size and says none of it
         # is shown, so a parent cannot mistake it for the answer itself.
         def spilled(response, size, reason, journal, summary: nil)
-          outcomes = Spill::Outcomes.new(kept: ->(paths) { pointed(response, size, reason, paths, journal) },
-                                         unwritable: ->(why) { floor(response, size, unspilled(reason, why), journal) },
-                                         unkept: -> { floor(response, size, reason, journal) })
+          outcomes = Tool::Spill::Outcomes.new(
+            kept: ->(paths) { pointed(response, size, reason, paths, journal) },
+            unwritable: ->(why) { floor(response, size, unspilled(reason, why), journal) },
+            unkept: -> { floor(response, size, reason, journal) }
+          )
           spill.keep(response.text, summary, outcomes)
         end
 
@@ -837,7 +853,7 @@ module Lain
             "instead: tail -c +START FILE | head -c COUNT.]"
         end
 
-        def unspilled(reason, why) = "#{reason}; keeping it in a file failed too -- #{why[0, MAX_FAILURE_REASON]}"
+        def unspilled(reason, why) = "#{reason}; keeping it in a file failed too -- #{clamped(why)}"
 
         # No summary could be delivered, so none is promised. The sentence is
         # {Tool::Bounds::Artifact}'s own refusal: it names the size and the

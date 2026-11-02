@@ -839,18 +839,30 @@ main agent's render is unchanged.
 per tool: `Tool::Bounds::CEILINGS` (`lib/lain/tool/bounds.rb`) maps all 16 result-returning tools
 to the same `RESULT_BYTES` of 16 KiB, measured on the bytes the model sees. The number is sized
 to the smallest local window, not to a model: at the worst measured density one result is about
-40% of a 32k window. The same file holds the four bound *shapes* a tool chooses between —
+40% of a 32k window. The same file holds the five bound *shapes* a tool chooses between —
 `Enumeration` (a row cap with an in-band notice), `Fill` (byte-bounded rows with a trailer),
-`Artifact` (refuses whole, no payload) and `Handback` (hands the overrun back for a caller or a
-human to decide). `web_fetch` is an `Artifact`, and it is measured on the **readable text** its
-nokogiri converter produces rather than on the markup; `raw: true` asks for the markup instead.
+`Artifact` (refuses whole, no payload), `Handback` (hands the overrun back for a caller or a
+human to decide) and `Spilled` (keeps the whole in a file and hands back a head that says how
+much of how many bytes it shows and where the rest is). A clipped head alone reads as complete;
+one whose last line names the whole and its path cannot, so `Spilled` is the one shape that
+shows part of a whole artifact. `web_fetch` is measured on the **readable text** its nokogiri
+converter produces rather than on the markup; `raw: true` asks for the markup instead.
+
+`Tool::Spill` (`lib/lain/tool/spill.rb`) keeps those files under
+`$XDG_STATE_HOME/lain/answers/<project_hash>/`, built once per session by `ToolsetBuild` and
+swept when a session starts: files over 7 days old, and any `.pending` file whose writer no
+longer holds its lock. `bash` tees both streams into a pending file (mode 0600, flocked, capped
+at 5 MiB) through its live sinks, and `web_fetch` streams its readable text into one, lifting
+the converter's 16 KiB stop only when a spill is wired. A `bash` spill is kept only after
+`Middleware::WithholdAutomaticOutput` has scanned the whole of it, read from the descriptor the
+tee wrote to rather than by name; a withheld or unreadable spill is deleted. With no spill
+(`Spill::Null`) both tools refuse over the ceiling as before.
 
 A subagent's answer over the 16 KiB ceiling is first summarized by the child itself
 (`Tools::Subagent::Answer`). If the summary is also over the ceiling, empty or cut off, or the
-summarizing ask fails, `Tools::Subagent::Spill` writes the whole answer (and any finished summary)
-to `$XDG_STATE_HOME/lain/answers/<project_hash>/`, and the parent gets a pointer naming each path
-and size, with none of the text: a clipped head would read as complete. An `answer_bounded` record
-says `spilled` and gives the path. `BoardBuild` hands that dir, keyed by project, to
+summarizing ask fails, the same `Tool::Spill` writes the whole answer (and any finished summary)
+to the answers dir, and the parent gets a pointer naming each path and size. An `answer_bounded`
+record says `spilled` and gives the path. `BoardBuild` hands that dir, keyed by project, to
 `ToolGuard::Inputs#answers`, so a leased parent may read it. Only a spill that cannot be written
 falls back to the refusal floor.
 

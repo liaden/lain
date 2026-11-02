@@ -191,8 +191,9 @@ module Lain
         raise unless in_flight
       end
 
-      # The tool refuses an over-ceiling result whole, so the line replaces the
-      # output rather than being cut with it.
+      # Over the ceiling the line replaces the output rather than being cut
+      # with it: the line is what the model must see, and the bash tool's
+      # spill, fed from the live sinks, never carries it.
       def worded(capture, record, profile, cwd)
         line = notice(capture, record, profile, cwd)
         return capture if line.empty?

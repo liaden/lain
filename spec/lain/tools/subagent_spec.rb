@@ -1294,7 +1294,7 @@ RSpec.describe Lain::Tools::Subagent do
       end
     end
 
-    let(:answer) { Lain::Tools::Subagent::Answer.new(spill: Lain::Tools::Subagent::Spill.new(dir: @answers)) }
+    let(:answer) { Lain::Tools::Subagent::Answer.new(spill: Lain::Tool::Spill.new(dir: @answers)) }
     let(:full) { "a" * 30_000 }
     let(:summary) { "s" * 20_000 }
 
@@ -1325,7 +1325,7 @@ RSpec.describe Lain::Tools::Subagent do
     end
 
     it "stays Ractor-shareable with a spill built over a caller's mutable dir" do
-      spill = Lain::Tools::Subagent::Spill.new(dir: +@answers)
+      spill = Lain::Tool::Spill.new(dir: +@answers)
 
       expect(Ractor.shareable?(Lain::Tools::Subagent::Answer.new(spill:))).to be(true)
     end
@@ -1338,6 +1338,39 @@ RSpec.describe Lain::Tools::Subagent do
 
       expect(spilled_files.map { File.read(_1) }).to eq([full])
       expect(bounded.text).to include(spilled_files.first, "529 overloaded")
+    end
+
+    it "keeps a long failure message whole, and says how much of it the reason shows" do
+      child = instance_double(Lain::Agent)
+      allow(child).to receive(:ask).and_raise(Lain::Error, "e" * 2000)
+
+      text = answer.bounded(child, text_response(full)).text
+      kept = text[/the full output is at (\S+); read it/, 1]
+
+      expect(File.read(kept)).to eq("Lain::Error: #{"e" * 2000}")
+      expect(text).to include("of 2013 bytes")
+      expect(text).not_to include("e" * Lain::Tools::Subagent::MAX_FAILURE_REASON)
+    end
+
+    it "says a long failure message was cut, and that the rest was not kept, with no spill" do
+      child = instance_double(Lain::Agent)
+      allow(child).to receive(:ask).and_raise(Lain::Error, "e" * 2000)
+
+      text = Lain::Tools::Subagent::Answer.new.bounded(child, text_response(full)).text
+
+      expect(text).to match(/\d+ of 2013 bytes; the rest could not be kept/)
+      expect(text).not_to include("e" * Lain::Tools::Subagent::MAX_FAILURE_REASON)
+    end
+
+    it "names why a long failure message could not be kept when the spill cannot be written" do
+      blocker = File.join(File.dirname(@answers), "blocker").tap { File.write(_1, "") }
+      unwritable = Lain::Tools::Subagent::Answer.new(spill: Lain::Tool::Spill.new(dir: File.join(blocker, "answers")))
+      child = instance_double(Lain::Agent)
+      allow(child).to receive(:ask).and_raise(Lain::Error, "e" * 2000)
+
+      text = unwritable.bounded(child, text_response(full)).text
+
+      expect(text).to match(/\d+ of 2013 bytes; the rest could not be kept: [^;]*blocker/)
     end
 
     it "spills an actor's oversized reply the same way" do
@@ -1362,7 +1395,7 @@ RSpec.describe Lain::Tools::Subagent do
     it "falls back to the floor's refusal, naming why the spill failed, when the dir cannot be made" do
       blocker = File.join(File.dirname(@answers), "blocker").tap { File.write(_1, "") }
       unwritable = Lain::Tools::Subagent::Answer.new(
-        spill: Lain::Tools::Subagent::Spill.new(dir: File.join(blocker, "answers"))
+        spill: Lain::Tool::Spill.new(dir: File.join(blocker, "answers"))
       )
 
       result = build_subagent(provider: mock(text_response(full), text_response(summary)), answer: unwritable)

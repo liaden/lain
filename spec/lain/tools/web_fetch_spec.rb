@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "async"
+require "tmpdir"
 
 # A minimal Faraday-response duck: status, headers, body -- what the tool reads
 # for redirect detection. Specs never hit the network; the connection injected.
@@ -601,6 +602,74 @@ RSpec.describe Lain::Tools::WebFetch do
       body = "x" * ceiling
 
       expect(fetching(body, headers: { "content-type" => "text/plain" }).content).to eq(body)
+    end
+
+    describe "with a spill to keep the whole in" do
+      around do |example|
+        Dir.mktmpdir do |dir|
+          @answers = File.join(dir, "answers")
+          example.run
+        end
+      end
+
+      let(:url) { "https://example.com/big" }
+
+      def spilling(body, headers:, **input)
+        connection = WebFetchStubConnection.new(chunk_size: 65_536) do |_url|
+          WebFetchStubResponse.new(status: 200, headers:, body:)
+        end
+        tool = described_class.new(connection:, spill: Lain::Tool::Spill.new(dir: @answers))
+        tool.call({ url:, **input }, nil)
+      end
+
+      def kept_path(result) = result.content[/the full output is at (\S+); read it/, 1]
+
+      def expect_kept(result, whole)
+        kept = kept_path(result)
+
+        expect(result).to be_ok
+        expect(result.content).to include(" of #{whole.bytesize} bytes")
+        expect(result.content.bytesize).to be <= ceiling
+        expect([File.read(kept), Dir.children(@answers)]).to eq([whole, [File.basename(kept)]])
+      end
+
+      it "keeps the whole readable text of an article over the ceiling" do
+        page = "<article>#{paragraphs(60 * 1024)}</article>"
+        whole = Lain::Tools::WebFetch::Readable.call(page, url, limit: 1024 * 1024)
+
+        result = spilling(page, headers: html)
+
+        expect_kept(result, whole)
+        expect(result.content).to start_with(whole.byteslice(0, 64))
+      end
+
+      # One block longer than the ceiling is a line still being written when
+      # it passes it, which a held walk refuses there and a streamed one keeps.
+      it "keeps the whole readable text of one paragraph longer than the ceiling" do
+        page = "<article><p>#{"word " * 5000}</p></article>"
+        whole = Lain::Tools::WebFetch::Readable.call(page, url, limit: 1024 * 1024)
+
+        expect_kept(spilling(page, headers: html), whole)
+      end
+
+      it "keeps the whole markup of a raw fetch over the ceiling" do
+        page = "<article>#{paragraphs(20 * 1024)}</article>"
+
+        expect_kept(spilling(page, headers: html, raw: true), page)
+      end
+
+      it "keeps the whole of a non-HTML body over the ceiling" do
+        body = "y" * (ceiling + 1)
+
+        expect_kept(spilling(body, headers: { "content-type" => "text/plain" }), body)
+      end
+
+      it "keeps nothing for a page under the ceiling" do
+        result = spilling("<article><p>short</p></article>", headers: html)
+
+        expect(result.content).to eq("short")
+        expect(Dir.exist?(@answers) ? Dir.children(@answers) : []).to be_empty
+      end
     end
   end
 

@@ -282,7 +282,11 @@ module Lain
         #   {Wiring} wired, appended here rather than built here -- the Repl's
         #   replier fiber parks on the same object
         # @return [Lain::Toolset]
+        #
+        # A build is a session starting, so it is where the spills an earlier
+        # session left are swept.
         def build(recorder, ask_human:)
+          spill.sweep
           base = capability_floor(recorder)
           @role_spawn = role_spawn_seam(base)
           @docent = Lain::Review::Docent::Answerer.new(spawn: @role_spawn)
@@ -379,7 +383,7 @@ module Lain
         # constructor, so a second ivar would be a second thing to keep in step.
         def capability_floor(recorder)
           Lain::Toolset.new(BaseTools.build(recorder, exec: bash_exec, verdict: @verdict, journal: seam.journal,
-                                                      resolver: @resolver,
+                                                      resolver: @resolver, spill:,
                                                       search: Lain::Config.search(root: @root)))
         end
 
@@ -592,10 +596,10 @@ module Lain
 
         # Every spawner keeps an answer that stays over the ceiling in the
         # project's answers dir, which a leased parent's guard lets it read.
-        def answer
-          dir = Lain::Tools::Subagent::Spill.home(@in_chat.fetch(:paths), @root)
-          Lain::Tools::Subagent::Answer.new(spill: Lain::Tools::Subagent::Spill.new(dir:))
-        end
+        def answer = Lain::Tools::Subagent::Answer.new(spill:)
+
+        # The project's one spill, shared by every tool that keeps an oversized result.
+        def spill = @spill ||= Lain::Tool::Spill.new(dir: Lain::Tool::Spill.home(@in_chat.fetch(:paths), @root))
 
         # The ceilings come from the configured table, so a `budget` override
         # reaches every child and the table stays the one source.

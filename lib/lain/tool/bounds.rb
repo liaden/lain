@@ -26,6 +26,13 @@ module Lain
     # the model always has a better move available and a refusal that does not
     # say so is a dead end.
     #
+    # **Unless the whole is kept.** What made a head wrong was that it read as
+    # the whole, and what made a refusal right was that nothing else was on
+    # offer. A tool handed a {Spill} keeps every byte in a file, so {Spilled}
+    # hands back a head that says in its own last line how much of how many it
+    # is and where the rest is: a head that names the whole never reads as it.
+    # A tool with no spill still refuses.
+    #
     # **What was authored elsewhere hands back.** A human's own message and a
     # skill's expansion are written by somebody other than the loop and are still
     # theirs after a bound has measured them, so the question is not "does this
@@ -389,6 +396,60 @@ module Lain
 
           "instead, #{narrower.join(", or ")}"
         end
+      end
+
+      # The keeping shape: the whole is in a file, and the result is as much of
+      # its head as fits beside one line naming the file. That line counts
+      # against the ceiling with the head, so the result never passes it.
+      Spilled = Data.define(:limit, :spill) do
+        def initialize(limit:, spill:) = super(limit: Bounds.ceiling(limit), spill:)
+
+        # @param size [Integer] a byte count
+        # @return [Boolean] whether it fits under the ceiling
+        def admits?(size) = size <= limit
+
+        # @return [Tool::Spill::Pending, Tool::Spill::Pending::None] where a
+        #   result is written while it is produced
+        def pending = spill.pending(threshold: limit)
+
+        # The head is cut to whole characters, and dropped when it is not text,
+        # since bytes the result block would refuse are still in the file.
+        #
+        # @param head [String] the first bytes of the whole, as many as the ceiling
+        # @param size [Integer] the whole's size
+        # @param kept [Integer] the bytes the file holds
+        # @param path [String, nil] the file, or nil when nothing could be kept
+        # @param beside [String] what leads the result, such as an exit status
+        # @param unkept [String, nil] why nothing could be kept, when it is known
+        # @return [String] `beside`, the head, and the {#notice}, within {#limit}
+        def handback(head:, size:, kept:, path:, beside: "", unkept: nil)
+          widest = notice(shown: size, size:, kept:, path:, unkept:)
+          shown = Bounds.whole(head, limit - beside.bytesize - widest.bytesize - 1)
+          "#{beside}#{shown}\n#{notice(shown: shown.bytesize, size:, kept:, path:, unkept:)}"
+        end
+
+        # @param shown [Integer] the bytes of the head the result shows
+        # @param size [Integer] the whole's size
+        # @param kept [Integer] the bytes the file holds
+        # @param path [String, nil] the file, or nil when nothing could be kept
+        # @param unkept [String, nil] why nothing could be kept, when it is known
+        # @return [String]
+        def notice(shown:, size:, kept:, path:, unkept: nil)
+          return "#{shown} of #{size} bytes; the rest could not be kept#{": #{unkept}" if unkept}" unless path
+
+          where = kept < size ? "its first #{kept} bytes are at #{path}" : "the full output is at #{path}"
+          "#{shown} of #{size} bytes; #{where}; read it in slices with read_file, and a line too long for " \
+            "read_file by bytes: tail -c +START #{path} | head -c COUNT"
+        end
+      end
+
+      # @param bytes [String]
+      # @param budget [Integer] the most bytes to keep
+      # @return [String] the longest leading run of whole UTF-8 characters
+      #   within the budget, or empty when that run is not text
+      def self.whole(bytes, budget)
+        cut = bytes.byteslice(0, [budget, 0].max).force_encoding(Encoding::UTF_8)
+        (0..3).map { |drop| cut.byteslice(0, [cut.bytesize - drop, 0].max) }.find(&:valid_encoding?).to_s
       end
 
       # The handing-back shape: measure it, keep every byte, leave the choice to

@@ -98,7 +98,7 @@ module Lain
         # @param epics [String, nil] see {.epic_home}
         # @return [Array<String>] absolute
         def read_roots(project:, paths:, epics:)
-          [Lain::Tools::Subagent::Spill.home(paths, project.root), *epics]
+          [Lain::Tool::Spill.home(paths, project.root), *epics]
         end
 
         # @param project [Lain::Project]

@@ -58,6 +58,12 @@ module Lain
                  "so a respelling does not help. " \
                  "If approval is bypass, no approval is possible, so a human must first switch to /mode ask."
 
+      # A spill that cannot be read back cannot be vouched for, so it is
+      # withheld as one that held a credential would be.
+      UNREADABLE = "%<name>s output withheld: its kept output could not be read back to check it, and the " \
+                   "command was approved automatically, so it now needs a human's approval. " \
+                   "If approval is bypass, no approval is possible, so a human must first switch to /mode ask."
+
       # Counts, never bytes: a record that quoted the output would write the
       # credential into the journal this layer keeps it out of.
       AutomaticOutputWithheld = Data.define(:tool_use_id, :regions) do
@@ -88,9 +94,11 @@ module Lain
 
       # The context a guarded call runs under: the caller's own, answering
       # every message it answers, plus the two the ladder duck-types on --
-      # whether this command is barred, and the ruling it settled on.
+      # whether this command is barred, and the ruling it settled on -- and
+      # the one the tool duck-types on, the spill it hands on for this layer
+      # to keep or delete.
       #
-      # Mutable for exactly one write, and built per call, so parallel calls
+      # Mutable for one write from each, and built per call, so parallel calls
       # never share one.
       class Carried < SimpleDelegator
         # The ruling of a call no ladder ruled on, which allowed nothing.
@@ -100,12 +108,18 @@ module Lain
           def self.rule = nil
         end
 
-        attr_reader :ruling
+        attr_reader :ruling, :held
 
         def initialize(context, barred:)
           super(context)
           @barred = barred
           @ruling = Unruled
+          @held = Tool::Spill::Held::None
+        end
+
+        def spilled(held)
+          @held = held
+          self
         end
 
         def automatic_approval_barred? = @barred
@@ -130,13 +144,18 @@ module Lain
         freeze
       end
 
+      # A spill is kept only once nothing here withheld it, and deleted
+      # however else the call ends, so a withheld credential never stays on
+      # disk and a spill never gets around this layer.
       def call(env, &app)
         effect = env.fetch(:effect)
         return downstream(env, &app) unless guarded?(effect)
 
         carried = Carried.new(env[:context] || Session::Null.instance, barred: @bar.include?(command(effect)))
         ran = downstream(env.merge(context: carried), &app).merge(context: env[:context])
-        carried.automatically_allowed? ? scanned(ran, effect) : ran
+        decided(ran, effect, carried)
+      ensure
+        carried&.held&.discard
       end
 
       private
@@ -147,18 +166,33 @@ module Lain
 
       def command(effect) = called(effect).input[COMMAND]
 
-      def scanned(env, effect)
-        found = RedactSecretReads::Scan.new(env.fetch(:result).content).regions
-        found.empty? ? env : withhold(env, called(effect), found)
+      def decided(env, effect, carried)
+        held = carried.held
+        found = carried.automatically_allowed? ? scanned(env, held) : []
+        return withheld(env, called(effect), 0, format(UNREADABLE, name: called(effect).name)) if found.nil?
+        return withhold(env, called(effect), found) unless found.empty?
+
+        held.kept_in(env)
+      end
+
+      # The whole spill rather than the result, since the result holds only
+      # its head; nil when the spill cannot be read back.
+      def scanned(env, held)
+        RedactSecretReads::Scan.new(held.whole(env)).regions
+      rescue SystemCallError, IOError
+        nil
       end
 
       def withhold(env, effect, found)
         count = found.size
+        regions = "#{count} credential-shaped #{"region".pluralize(count)} (#{shapes(found)})"
+        withheld(env, effect, count, format(WITHHELD, name: effect.name, count: regions))
+      end
+
+      def withheld(env, effect, count, sentence)
         @bar.add(effect.input[COMMAND])
         record(AutomaticOutputWithheld.new(tool_use_id: effect.tool_use_id, regions: count))
-        regions = "#{count} credential-shaped #{"region".pluralize(count)} (#{shapes(found)})"
-        withheld = Tool::Result.error(format(WITHHELD, name: effect.name, count: regions))
-        env.merge(result: withheld.replacing(env.fetch(:result)))
+        env.merge(result: Tool::Result.error(sentence).replacing(env.fetch(:result)))
       end
 
       # Reasons are pattern names, never bytes.

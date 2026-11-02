@@ -1165,14 +1165,14 @@ RSpec.describe Lain::CLI::ToolGuard do
 
       it "holds no read root for a board whose policy names none" do
         read_through(child_stack(env_at(@checkout, checkout: @checkout)),
-                     File.join(Lain::Tools::Subagent::Spill.home(Lain::Paths.new, @project), "a.md"))
+                     File.join(Lain::Tool::Spill.home(Lain::Paths.new, @project), "a.md"))
 
         expect(board.policy.contexts.size).to eq(1)
       end
 
       it "reads a slice of a spilled answer from the main agent without asking" do
-        spilled = Lain::Tools::Subagent::Spill.new(dir: Lain::Tools::Subagent::Spill.home(Lain::Paths.new, @project))
-                                              .call(answer: "line one\nline two\nline three\n").first
+        spilled = Lain::Tool::Spill.new(dir: Lain::Tool::Spill.home(Lain::Paths.new, @project))
+                                   .call(answer: "line one\nline two\nline three\n").first
         effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_s", name: "read_file",
                                             input: { "path" => spilled, "offset" => 2, "limit" => 1 })
 

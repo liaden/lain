@@ -2017,7 +2017,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     let(:provider) do
       Lain::Provider::Mock.new(responses: [text_response("a" * 30_000), text_response("s" * 20_000)])
     end
-    let(:answers) { Lain::Tools::Subagent::Spill.home(Lain::Paths.new, root) }
+    let(:answers) { Lain::Tool::Spill.home(Lain::Paths.new, root) }
     let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
 
     def expect_spilled_into_answers(result)
@@ -2059,6 +2059,48 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       dev = orchestrator_over(toolset_build).attenuates_from.fetch("subagent")["dev"]
 
       expect_spilled_into_answers(dev.run("implement it"))
+    end
+  end
+
+  # Scenario: old spills are swept, and a command's output past the ceiling is kept
+  describe "the spill a session's content tools keep an oversized result in" do
+    let(:answers) { Lain::Tool::Spill.home(Lain::Paths.new, root) }
+
+    it "keeps an oversized bash output in the project's answers dir" do
+      full = toolset_build.build(recorder, ask_human:)
+      result = full.fetch("bash").call({ "command" => "head -c 20000 /dev/zero | tr '\\0' x" },
+                                       Lain::Tool::Invocation.new(tool_use_id: "tu_1"))
+      kept = result.content[/the full output is at (\S+); read it/, 1]
+
+      expect(kept).to start_with("#{answers}/")
+      expect(File.size(kept)).to eq(20_000)
+    ensure
+      FileUtils.rm_f(kept) if kept
+    end
+
+    it "keeps an oversized web_fetch body in the project's answers dir" do
+      stub_request(:get, "https://example.com/big")
+        .to_return(status: 200, headers: { "content-type" => "text/plain" }, body: "y" * 20_000)
+      full = toolset_build.build(recorder, ask_human:)
+      result = full.fetch("web_fetch").call({ "url" => "https://example.com/big" }, Lain::Tool::Invocation.new)
+      kept = result.content[/the full output is at (\S+); read it/, 1]
+
+      expect(kept).to start_with("#{answers}/")
+      expect(File.size(kept)).to eq(20_000)
+    ensure
+      FileUtils.rm_f(kept) if kept
+    end
+
+    it "sweeps a spill 8 days old when the session's toolset is built" do
+      FileUtils.mkdir_p(answers)
+      old = File.join(answers, "toolset-build-spec-old.txt").tap { File.write(_1, "old") }
+      File.utime(Time.now - (8 * 24 * 60 * 60), Time.now - (8 * 24 * 60 * 60), old)
+
+      toolset_build.build(recorder, ask_human:)
+
+      expect(File.exist?(old)).to be(false)
+    ensure
+      FileUtils.rm_f(old) if old
     end
   end
 end

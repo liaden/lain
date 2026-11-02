@@ -672,6 +672,108 @@ RSpec.describe Lain::Tools::Bash do
       expect(described_class.render_output(held).content).to include("is 200000000 bytes")
     end
 
+    describe "with a spill to keep the whole in" do
+      let(:answers) { File.join(@tmpdir, "answers", "abc") }
+      let(:spill) { Lain::Tool::Spill.new(dir: answers) }
+      let(:api_key) { "sk-ant-api03-QZ9vK2mR7xT4wL8nB3jH6yD1sA5fG0pE" }
+      let(:printed) do
+        tail = "API_KEY=#{api_key}\n"
+        filler = 20_028 - tail.bytesize
+        ("line\n" * (filler / 5)) + ("\n" * (filler % 5)) + tail
+      end
+      let(:script) { File.join(@tmpdir, "out.txt").tap { File.write(_1, printed) } }
+      let(:beside) { "exit status: 0\n--- stdout and stderr, as they arrived ---\n" }
+
+      def kept_path(content) = content[/the full output is at (\S+); read it/, 1]
+
+      # The ceiling holds the result whole, so the head is what is left once the
+      # exit status, the separator line and the notice are counted.
+      def shown_for(path)
+        notice = "20028 of 20028 bytes; the full output is at #{path}; read it in slices with read_file, " \
+                 "and a line too long for read_file by bytes: tail -c +START #{path} | head -c COUNT"
+        ceiling - beside.bytesize - 1 - notice.bytesize
+      end
+
+      it "keeps a 20,028-byte output whole and says how much of it the result shows" do
+        result = described_class.new(spill:).call({ command: "cat #{script}" }, invocation)
+        path = kept_path(result.content)
+
+        expect(result).to be_ok
+        expect(File.binread(path)).to eq(printed)
+        expect(result.content).to include("#{shown_for(path)} of 20028 bytes")
+        expect(result.content).to start_with(beside + printed.byteslice(0, shown_for(path)))
+        expect(result.content.bytesize).to be <= ceiling
+      end
+
+      it "names a kept file, leaving no pending one, when no layer decides on it" do
+        path = kept_path(described_class.new(spill:).call({ command: "cat #{script}" }, invocation).content)
+
+        expect(path).to end_with(".txt")
+        expect(Dir.children(answers)).to eq([File.basename(path)])
+      end
+
+      it "reads back through read_file with its credential masked" do
+        path = kept_path(described_class.new(spill:).call({ command: "cat #{script}" }, invocation).content)
+        session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: @tmpdir, env: {}))
+        queue = Lain::Approval::Parked::Queue.new(journal: Lain::Journal.new(io: StringIO.new), timeout: 0.1)
+        stack = Lain::Middleware::Stack.new([
+                                              Lain::Middleware::RedactSecretReads.new(
+                                                ledger: Lain::Sensitivity::Ledger.new, queue:, journal: []
+                                              )
+                                            ])
+        effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_2", name: "read_file",
+                                            input: { "path" => path, "offset" => 3990 })
+
+        read = Sync do
+          stack.call({ effect:, context: session }) do |inner|
+            through = Lain::Tool::Invocation.new(tool_use_id: "tu_2", context: inner.fetch(:context))
+            inner.merge(result: Lain::Tools::ReadFile.new.call(inner.fetch(:effect).input, through))
+          end.fetch(:result)
+        end
+
+        expect(read.content).to include("line", "API_KEY=")
+        expect(read.content).not_to include(api_key)
+      end
+
+      it "still refuses through its Null, keeping nothing" do
+        result = described_class.new.call({ command: "cat #{script}" }, invocation)
+
+        expect(result).to have_attributes(is_error: true)
+        expect(result.content).to include("is 20028 bytes")
+        expect(Dir.exist?(answers)).to be(false)
+      end
+
+      it "spills nothing for output under the ceiling" do
+        result = described_class.new(spill:).call({ command: flooding(1024) }, invocation)
+
+        expect(result.content).not_to include("full output")
+        expect(Dir.exist?(answers) ? Dir.children(answers) : []).to be_empty
+      end
+
+      it "leaves no file behind a command that timed out" do
+        exec = Lain::Exec::Local.new(pipeline: Lain::Shell::Pipeline.new(grace: 0.1))
+        result = described_class.new(exec:, spill:).call({ command: "#{flooding(40_000)}; sleep 5", timeout: 1 },
+                                                         invocation)
+
+        expect(result).to be_error
+        expect(Dir.exist?(answers) ? Dir.children(answers) : []).to be_empty
+      end
+
+      it "hands a layer that decides the pending file, naming it until the layer settles" do
+        decided = []
+        context = Class.new(SimpleDelegator) { define_method(:spilled) { |held| decided << held } }
+                       .new(Lain::Session::Null.instance)
+        through = Lain::Tool::Invocation.new(tool_use_id: "tu_1", context:)
+
+        result = described_class.new(spill:).call({ command: "cat #{script}" }, through)
+        settled = decided.first.commit
+
+        expect(result.content).to include(".pending")
+        expect(kept_path(settled.content)).to end_with(".txt")
+        expect(File.binread(kept_path(settled.content))).to eq(printed)
+      end
+    end
+
     describe "while the output is being captured" do
       # A real backend whose every capture, and every timeout report, is kept,
       # so an example reads how much of a flood was held without measuring memory.

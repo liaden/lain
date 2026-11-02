@@ -83,6 +83,31 @@ module Lain
 
         def held_bytes = @held.values.sum(&:bytesize)
       end
+
+      # A live sink that also writes every chunk to a file-backed capture, so
+      # output too large to hand back is kept whole in the order it arrived.
+      # It wraps the sinks rather than the capture because every backend feeds
+      # those from this process, a sandboxed one included, so the file is
+      # written outside any sandbox.
+      class Tee
+        # @param sink [#<<, #flush] the live sink the chunk still reaches
+        # @param file [#<<] where every chunk is kept, from both streams
+        def initialize(sink, file)
+          @sink = sink
+          @file = file
+        end
+
+        # @param chunk [String]
+        # @return [self]
+        def <<(chunk)
+          @file << chunk
+          @sink << chunk
+          self
+        end
+
+        # @return [Object] what the live sink's flush answers
+        def flush = @sink.flush
+      end
     end
   end
 end

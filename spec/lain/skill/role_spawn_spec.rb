@@ -696,7 +696,7 @@ RSpec.describe Lain::Skill::RoleSpawn do
   describe "a role's answer that stays over the ceiling" do
     let(:oversized) { "o" * 30_000 }
 
-    def spilling(dir) = Lain::Tools::Subagent::Answer.new(spill: Lain::Tools::Subagent::Spill.new(dir:))
+    def spilling(dir) = Lain::Tools::Subagent::Answer.new(spill: Lain::Tool::Spill.new(dir:))
 
     def provider = mock(text_response(oversized), text_response(oversized))
 

@@ -80,6 +80,10 @@ module Lain
         "narrow its output through head, tail or grep"
       ].freeze
 
+      # A spill keeps both streams in one file in the order they arrived, so
+      # its head is not split into the two sections a whole result has.
+      SPILLED_STREAMS = "--- stdout and stderr, as they arrived ---\n"
+
       # What a timeout reports in place of captured output that was not text.
       TIMEOUT_OUTPUT_NOT_TEXT = "what it printed before then was not valid UTF-8 text, so none of it is " \
                                 "recorded -- re-run it with the output narrowed through `| head -c`, " \
@@ -222,13 +226,16 @@ module Lain
       #   tool alone -- writes nowhere and no caller guards on nil.
       # @param resolver [#for] names what each stage resolves to before it runs;
       #   the null default resolves every stage unresolved
+      # @param spill [Tool::Spill, Tool::Spill::Null] where output over the
+      #   ceiling is kept whole; the Null keeps nothing, so such output is refused
       def initialize(exec: Exec::Local.new, verdict: Shell::Verdict.new, journal: Channel::Null.instance,
-                     resolver: Shell::Executable::Resolver::NULL)
+                     resolver: Shell::Executable::Resolver::NULL, spill: Tool::Spill::Null)
         super()
         @exec = exec
         @verdict = verdict
         @journal = journal
         @resolver = resolver
+        @spilled = Tool::Bounds::Spilled.new(limit: OUTPUT_BOUND.limit, spill:)
       end
 
       def name = "bash"
@@ -279,21 +286,55 @@ module Lain
       # exit is frequently what the model asked to observe. `is_error` means
       # the tool itself could not produce a result -- a timeout, or output too
       # large to hand back -- never a subprocess's own exit code.
+      #
+      # The pending spill is deleted however the call ends unless it was kept
+      # or handed on, so a timeout or a raise never leaves output on disk.
       def perform(input, invocation)
-        decision = @verdict.call(input.command)
-        arm = arm_for(decision)
-        journal_arm(decision, arm, invocation)
-        options = runtime(input, invocation)
-        confinement = journalled_confinement(input.command, decision, invocation, options[:cwd], arm)
-        capture = run_journalling_writes(input.command, options, invocation) do
-          executed(on_arm(arm, input.command, decision), confinement, options)
-        end
-        self.class.render_output(capture)
+        pending = @spilled.pending
+        kept = false
+        result, kept = output(ran(input, invocation, pending), pending, invocation)
+        result
       rescue Exec::Timeout => e
         timed_out(input, e)
+      ensure
+        pending.discard unless kept
       end
 
       private
+
+      def ran(input, invocation, pending)
+        decision = @verdict.call(input.command)
+        arm = arm_for(decision)
+        journal_arm(decision, arm, invocation)
+        options = runtime(input, invocation, pending)
+        confinement = journalled_confinement(input.command, decision, invocation, options[:cwd], arm)
+        run_journalling_writes(input.command, options, invocation) do
+          executed(on_arm(arm, input.command, decision), confinement, options)
+        end
+      end
+
+      # A layer that decides whether a spill may be kept is handed it, and the
+      # result names the pending file until that layer settles it; with no
+      # such layer nothing decides, so the file is kept at once.
+      #
+      # @return [Array(Tool::Result, Boolean)] the result, and whether the
+      #   pending file was kept or handed on
+      def output(capture, pending, invocation)
+        return [self.class.render_output(capture), false] if OUTPUT_BOUND.admits?(capture.size) || !pending.spilled?
+
+        held = Tool::Spill::Held.new(pending:, render: ->(path) { spilled(capture, pending, path) },
+                                     refusal: -> { self.class.render_output(capture) })
+        context = session_of(invocation)
+        return [held.commit, true] unless context.respond_to?(:spilled)
+
+        context.spilled(held)
+        [held.provisional, true]
+      end
+
+      def spilled(capture, pending, path)
+        Tool::Result.ok(@spilled.handback(head: pending.head, size: pending.size, kept: pending.kept, path:,
+                                          beside: "exit status: #{capture.exit_status}\n#{SPILLED_STREAMS}"))
+      end
 
       # The Journal's only account of arm selection when no ladder ran: the
       # approval gate journals a `shell verdict` line from inside its escalation
@@ -457,10 +498,10 @@ module Lain
 
       # Cwd resolution lives on {WorkerEnv#resolve} -- one rule, so no exec
       # backend can resolve a relative path differently.
-      def runtime(input, invocation)
+      def runtime(input, invocation, pending)
         worker_env = session_of(invocation).worker_env
         { cwd: worker_env.resolve(input.cwd), env: worker_env.env, timeout: seconds(input),
-          **invocation.live_display.sinks(invocation) }
+          **pending.tee(invocation.live_display.sinks(invocation)) }
       end
 
       # A live sink may hold bytes until the command stops, so it is flushed

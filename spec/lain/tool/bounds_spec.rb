@@ -621,6 +621,65 @@ RSpec.describe Lain::Tool::Bounds do
     end
   end
 
+  describe "Spilled, the shape that keeps the whole in a file" do
+    let(:spill) { Lain::Tool::Spill.new(dir: "/state/answers/abc") }
+    let(:bound) { Lain::Tool::Bounds::Spilled.new(limit: 100, spill:) }
+    let(:path) { "/state/answers/abc/out.txt" }
+
+    it "admits a size at the ceiling and not one past it" do
+      expect([bound.admits?(100), bound.admits?(101)]).to eq([true, false])
+    end
+
+    it "says how much of how many bytes it shows, and where the whole is" do
+      expect(bound.notice(shown: 40, size: 500, kept: 500, path:))
+        .to eq("40 of 500 bytes; the full output is at #{path}; read it in slices with read_file, and a line " \
+               "too long for read_file by bytes: tail -c +START #{path} | head -c COUNT")
+    end
+
+    it "says the file holds only the first part when the whole passed the stream cap" do
+      expect(bound.notice(shown: 40, size: 500, kept: 300, path:)).to include("its first 300 bytes are at #{path}")
+    end
+
+    it "shrinks the head by what leads it and by its notice, so the result stays within the ceiling" do
+      wide = Lain::Tool::Bounds::Spilled.new(limit: 300, spill:)
+      text = wide.handback(head: "q" * 300, size: 500, kept: 500, path:, beside: "exit status: 0\n")
+      shown = text.count("q")
+
+      expect(shown).to be_positive
+      expect(text.bytesize).to be <= 300
+      expect(text).to start_with("exit status: 0\n#{"q" * shown}\n")
+      expect(text).to end_with("#{shown} of 500 bytes; the full output is at #{path}; read it in slices with " \
+                               "read_file, and a line too long for read_file by bytes: " \
+                               "tail -c +START #{path} | head -c COUNT")
+    end
+
+    it "cuts the head between characters, never inside one" do
+      wide = Lain::Tool::Bounds::Spilled.new(limit: 300, spill:)
+      text = wide.handback(head: ("é" * 150).b, size: 500, kept: 500, path:)
+
+      expect(text).to be_valid_encoding
+      expect(text.count("é")).to be_positive
+    end
+
+    it "shows no head that is not text, since the file still holds it" do
+      text = Lain::Tool::Bounds::Spilled.new(limit: 300, spill:).handback(head: "\xFF\xFE".b * 150, size: 500,
+                                                                          kept: 500, path:)
+
+      expect(text).to start_with("\n0 of 500 bytes")
+    end
+
+    it "hands out the spill's pending stream, holding a head of its own ceiling" do
+      pending = Lain::Tool::Bounds::Spilled.new(limit: 3, spill: Lain::Tool::Spill::Null).pending
+      pending << "abcdef"
+
+      expect(pending).to have_attributes(head: "abc", size: 6, spilled?: false)
+    end
+
+    it "is Ractor-shareable over a spill" do
+      expect(Ractor.shareable?(bound)).to be(true)
+    end
+  end
+
   # One table rather than a constant per tool, so the figure a result may cost
   # is read in one place and moved in one place.
   describe "CEILINGS" do

@@ -58,17 +58,21 @@ module Lain
           # @param base_url [String] the url the page was fetched from; links
           #   resolve against it, and its fragment narrows the page
           # @param limit [Integer] bytes of text past which the walk stops
-          # @return [String] frozen; a bracketed notice when there is no text
+          # @param into [#<<, nil] where the text is written as it is walked,
+          #   with no limit; nil holds it and stops at `limit`
+          # @return [String] frozen; a bracketed notice when there is no text.
+          #   Handed `into`, only what was not written there: empty, or that notice
           # @raise [Unparseable] when the page is past a limit the parser keeps
           # @raise [TooMany] when the page has more nodes than the walk visits
-          # @raise [Overflow] once the text passes `limit`
+          # @raise [Overflow] once the text passes `limit`, when not handed `into`
           # @raise [Unanchored] when the fragment names nothing on the page
-          def call(html, base_url, limit:)
+          def call(html, base_url, limit:, into: nil)
             document = parse(html)
             fragment = fragment(base_url)
             roots, owner = scope(document, fragment)
-            text = Page.new(link_base(document, base_url), Writer.new(limit), exempt: owner).render(roots)
-            text.empty? ? empty(fragment) : text
+            writer = Writer.new(limit, into:)
+            text = Page.new(link_base(document, base_url), writer, exempt: owner).render(roots)
+            text.empty? && !writer.streamed? ? empty(fragment) : text
           end
 
           # The charset a page declares in its own markup, read from its first
@@ -198,8 +202,16 @@ module Lain
         end
 
         # The text as it is written: blocks a blank line apart, lines within a
-        # block one apart, and a raise the moment the text passes the limit, so
-        # a page far over the ceiling costs a walk to the ceiling and no more.
+        # block one apart.
+        #
+        # Held, it raises the moment the text passes the limit, so a page far
+        # over the ceiling costs a walk to the ceiling and no more: past it
+        # the text is refused, and bytes nobody reads should cost nothing.
+        #
+        # Handed `into`, it writes each finished block there and never stops,
+        # because a spill keeps the whole text and the bytes past the ceiling
+        # are then read, through read_file. What bounds that walk is the
+        # fetch's stream cap on the page and the walk's own node limit.
         class Writer
           # Bidi overrides and isolates, zero-width spaces and marks, and the
           # byte-order mark: they change what a human reading the result sees
@@ -210,8 +222,11 @@ module Lain
           SEPARATORS_ONLY = /\A[|\s]*\z/
 
           # @param limit [Integer] bytes of text past which {Overflow} is raised
-          def initialize(limit)
+          # @param into [#<<, nil] where finished blocks are written, never raising
+          def initialize(limit, into: nil)
             @limit = limit
+            @into = into
+            @streamed = false
             @out = +""
             @lines = []
             @lines_bytes = 0
@@ -228,7 +243,7 @@ module Lain
           #   the same one-space rule where it meets the line
           def literal(content)
             @line << (@line.empty? || @line.end_with?(" ") ? content.lstrip : content)
-            overflow! if pending > @limit + 1
+            overflow! if !@into && pending > @limit + 1
           end
 
           def space = text(" ")
@@ -267,6 +282,9 @@ module Lain
             @out.dup.freeze
           end
 
+          # @return [Boolean] whether any text was written to `into`
+          def streamed? = @streamed
+
           # Prose with the invisible characters gone and whitespace collapsed.
           def self.clean(string) = verbatim(string).gsub(/[[:space:]]+/, " ")
 
@@ -287,9 +305,17 @@ module Lain
           end
 
           def commit(content)
+            return stream(content) if @into
+
             @out << "\n\n" unless @out.empty?
             @out << content
             overflow! if @out.bytesize > @limit
+          end
+
+          def stream(content)
+            @into << "\n\n" if @streamed
+            @into << content
+            @streamed = true
           end
 
           # What the finished text holds at least, give or take the one trailing
