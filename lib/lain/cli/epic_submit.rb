@@ -228,12 +228,11 @@ module Lain
 
         def issue_plan(stage) = plan_for(issue!(stage))
 
-        # The criteria come from the issue in epic.md, which is also what
-        # refuses an issue the epic does not hold -- before anything is decided.
+        # The view refuses an issue the epic does not hold -- before anything
+        # is decided.
         def plan_for(id)
-          criteria_digest = @home.read_epic.fetch(id).criteria_digest
-          Lain::Epic::Submission.issue_plan(text: @home.plan(id).read, slug: @home.slug, issue_id: id,
-                                            criteria_digest:)
+          Lain::Epic::Submission.issue_plan(view: Lain::Epic::IssueView.read(@home, id), slug: @home.slug,
+                                            issue_id: id)
         end
 
         def implementation(stage)
@@ -751,7 +750,7 @@ module Lain
 
         raise PlanNotApproved, "issue #{plan.issue_id.inspect} cannot open its implementation gate -- its " \
                                "issue_plan #{plan.digest} is not approved (never approved, still parked, " \
-                               "denied since, or its plan or criteria changed since): " \
+                               "denied since, or the issue, its file or its links changed since): " \
                                "#{Lain::Epic::Remedy.submit("issue_plan", plan.slug, issue: plan.issue_id)}"
       end
 
@@ -963,12 +962,12 @@ module Lain
           end
 
           def issue_plan_sources(home, id)
-            [home.plan(id).path, "#{home.epic.path} (issue #{id}'s acceptance criteria)"]
+            [home.issue(id).path, "#{home.epic.path} (issue #{id}'s acceptance criteria and links)"]
           end
 
           def implementation_sources(home, artifact)
             ["the changeset #{artifact.changeset} in this project's git history",
-             home.plan(artifact.issue_id).path]
+             home.issue(artifact.issue_id).path]
           end
         end
       end

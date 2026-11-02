@@ -177,6 +177,13 @@ RSpec.describe Lain::Tools::EpicSubmit do
     expect(tool.description).to include("nobody answers", "denies")
   end
 
+  it "names the issue file, never a plans/ path, as what an issue_plan submits" do
+    stage = tool.input_schema.dig("properties", "stage", "description")
+
+    expect(stage).to include("issue_plan (issues/<issue>.md)")
+    expect(stage).not_to include("plans/")
+  end
+
   context "when the chat keeps no journal" do
     let(:chronicle) { Lain::CLI::Chronicle::Null.new }
 

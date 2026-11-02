@@ -226,11 +226,10 @@ module Lain
         end
 
         # What the actor is seeded with: the skill that runs a plan, then this
-        # issue's own contract -- where its approved plan is, what it must
-        # satisfy, the failing tests it must turn green, and where its work has
-        # to end up.
-        Brief = Data.define(:renderer, :home, :slug, :issue, :cut, :tests) do
-          def to_s = [renderer.render(SKILL), carrying, planned, satisfying, failing, settling].join("\n\n")
+        # issue's own contract -- the issue as it was approved, the failing
+        # tests it must turn green, and where its work has to end up.
+        Brief = Data.define(:renderer, :slug, :view, :cut, :tests) do
+          def to_s = [renderer.render(SKILL), carrying, viewed, failing, settling].join("\n\n")
 
           def working_branch = Lain::Isolation::WorkingBranch.epic_name(slug)
 
@@ -242,7 +241,7 @@ module Lain
             <<~SECTION.strip
               ## The issue you are carrying
 
-              Issue `#{issue.id}` of epic `#{slug}`: #{issue.title}. #{standing}
+              Issue `#{view.issue.id}` of epic `#{slug}`: #{view.issue.title}. #{standing}
             SECTION
           end
 
@@ -253,20 +252,22 @@ module Lain
               "than cut from the tip of `#{working_branch}`."
           end
 
-          def planned
+          # Embedded rather than pointed at, because these are the bytes the
+          # approval was checked against; the file may have moved on since.
+          # Fenced, so the view's own headings do not read as the brief's, in
+          # 1 more backtick than any run inside it, so no content closes it early.
+          def viewed
+            markdown = view.to_markdown.strip
+            fence = "`" * [4, markdown.scan(/`+/).map(&:size).max.to_i + 1].max
             <<~SECTION.strip
-              ## Its plan
+              ## The issue
 
-              Read `#{home.plan(issue.id).path}` before anything else. It is approved, and it is this
-              run's contract: follow its steps, its scope and its escalation triggers.
-            SECTION
-          end
+              This is the issue as it was approved, and it is this run's contract: what it must do,
+              every scenario it must satisfy, and its links.
 
-          def satisfying
-            <<~SECTION.strip
-              ## What it must satisfy
-
-              #{issue.criteria}
+              #{fence}markdown
+              #{markdown}
+              #{fence}
             SECTION
           end
 
@@ -317,9 +318,9 @@ module Lain
         # @param subagent [#call] `epic_subagent(isolation:, handoff:, lane:)`
         # @param tests [IssueTests] the red step, run in the held checkout
         # @param renderer [Skill::Renderer] renders the plan-running skill
-        # @param home [Epic::Home] where the issue and its plan are read
-        # @param plan [#call] `issue_id ->` the approved plan's digest, raising
-        #   when that plan is not approved
+        # @param home [Epic::Home] where the issue is read
+        # @param plan [#call] `issue_id ->` the approved issue_plan's digest,
+        #   raising when the issue as it stands is not approved
         # @param repo_root [String] the repository the worker anchors live in
         # @param lanes [Lanes] builds the issue's own isolation and handoff
         # @param shell_out_factory [#call] builds the git subprocess runner
@@ -339,12 +340,14 @@ module Lain
 
         # @param issue_id [String] the issue to launch
         # @param subject [String] the source file its tests are for, relative to
-        #   the checkout, as its plan declares ({PlanSubject})
+        #   the checkout, as its issue declares ({PlanSubject})
         # @param level [String, nil] the layout level to generate them at
         # @param attempt [Integer] which attempt this is. It names the worker AND
         #   its children's lane, so a retry anchors apart from the attempt
         #   before it.
         # @return [Launch]
+        # @raise [EpicSubmit::PlanNotApproved] unless the issue as it renders
+        #   now is the one its issue_plan approval holds
         # @raise [Error] for an issue that declares no acceptance criteria, so
         #   there are no failing tests to write
         # @raise [Error] when this attempt's anchor is already written, so the
@@ -354,11 +357,10 @@ module Lain
         # @raise [Isolation::WorkingBranch::Refused] when its branch is
         #   unholdable, nested against, or one lain did not create
         def call(issue_id, subject:, level: nil, attempt: 1)
-          @plan.call(issue_id)
-          issue = @home.read_epic.fetch(issue_id)
-          lane = lane_for(issue.id, attempt)
+          view = approved!(Lain::Epic::IssueView.read(@home, issue_id))
+          lane = lane_for(view.issue.id, attempt)
           unanchored!(lane)
-          adopted(issue, lane, subject:, level:)
+          adopted(view, lane, subject:, level:)
         end
 
         private
@@ -368,15 +370,15 @@ module Lain
         # then the launch. The actor's worker id and its children's lane are ONE
         # string, so a second attempt's children cannot compare-and-swap the
         # first attempt's anchors away.
-        def adopted(issue, lane, subject:, level:)
-          criteria = criteria_of(issue)
+        def adopted(view, lane, subject:, level:)
+          criteria = criteria_of(view)
           red = nil
           held = nil
           actor = @supervisor.adopt(role: ROLE, worker_id: lane) do |worker_env|
-            held = cut(worker_env, issue.id)
+            held = cut(worker_env, view.issue.id)
             red = @tests.call(criteria, worker_env, subject:, level:, since: held.from, lane:)
             lent = @lanes.reading(worker_env)
-            spawner(lent, held.branch, lane).launch_actor(brief(issue, held, red), worker_env: lent)
+            spawner(lent, held.branch, lane).launch_actor(brief(view, held, red), worker_env: lent)
           end
           Launch.new(actor:, worker_id: lane, branch: held.branch.name, tests: red)
         end
@@ -412,10 +414,22 @@ module Lain
         # dies of Encoding::CompatibilityError rather than naming itself.
         def said(shell) = Utf8.legible(shell.stderr).strip
 
-        def criteria_of(issue)
-          return Lain::Gherkin::Criteria.parse(issue.criteria) unless issue.criteria.nil?
+        # The view rendered once is the one checked, briefed and tested, so an
+        # edit after the check cannot reach the implementer.
+        def approved!(view)
+          id = view.issue.id
+          approved = @plan.call(id)
+          return view if Lain::Epic::Submission.issue_plan(view:, slug: @slug, issue_id: id).digest == approved
 
-          raise Error, "issue #{issue.id} declares no acceptance criteria, so there are no failing tests " \
+          raise EpicSubmit::PlanNotApproved,
+                "issue #{id.inspect} changed while its issue_plan approval #{approved} was checked, so the " \
+                "issue as it now reads is not approved: #{Lain::Epic::Remedy.submit("issue_plan", @slug, issue: id)}"
+        end
+
+        def criteria_of(view)
+          return view.criteria if view.criteria.any?
+
+          raise Error, "issue #{view.issue.id} declares no acceptance criteria, so there are no failing tests " \
                        "to write before its plan runs"
         end
 
@@ -436,8 +450,8 @@ module Lain
           @subagent.call(**@lanes.over(worker_env, branch.name), lane:)
         end
 
-        def brief(issue, cut, red)
-          Brief.new(renderer: @renderer, home: @home, slug: @slug, issue:, cut:, tests: red).to_s
+        def brief(view, cut, red)
+          Brief.new(renderer: @renderer, slug: @slug, view:, cut:, tests: red).to_s
         end
       end
     end

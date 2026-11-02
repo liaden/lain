@@ -57,7 +57,7 @@ module Lain
       REVIEWABLE = {
         "research" => [->(home, _id) { home.research }, PROSE],
         "epic_plan" => [->(home, _id) { home.epic }, GRAPH],
-        "issue_plan" => [->(home, id) { home.plan(id) }, PROSE]
+        "issue_plan" => [->(home, id) { home.issue(id) }, PROSE]
       }.freeze
 
       # The one stage {REVIEWABLE} does not hold, because the artifact behind it
@@ -95,7 +95,7 @@ module Lain
                                             "epic_plan or issue_plan hands over a document; implementation " \
                                             "opens a changeset review over the diff."
         field :issue_id, :string,
-              description: "The issue whose plan to review. Required for stage issue_plan, ignored otherwise."
+              description: "The issue whose file to review. Required for stage issue_plan, ignored otherwise."
         field :base, :string,
               description: "The ref the changeset is reviewed against. Required for stage implementation, " \
                            "ignored otherwise; the head is always the working tree's own HEAD."
@@ -211,7 +211,9 @@ module Lain
       def description
         "Hands one of this epic's stages to the human and waits until they are " \
           "done with it. Takes `stage`; for research, epic_plan and issue_plan " \
-          "that is a document to read and edit (issue_plan also needs `issue_id`) " \
+          "that is a document to read and edit (issue_plan also needs `issue_id`, " \
+          "and opens the authored issue file, while its approval covers the whole " \
+          "rendered view, its criteria and Links included) " \
           "and the result says what changed -- bytes, structure, and any notes " \
           "they left in the margin. For implementation it is a changeset review " \
           "over the diff (needs `base`, the ref to review against) and the result " \
@@ -601,7 +603,7 @@ module Lain
                       "against and no review was opened: %<reason>s. The file is untouched and nothing is " \
                       "under review, so lain may still regenerate it -- or repair it by hand."
 
-        NEEDS_ID = "%<reason>s. An issue_plan review needs an issue_id naming the issue whose plan to review."
+        NEEDS_ID = "%<reason>s. An issue_plan review needs an issue_id naming the issue whose file to review."
 
         def no_changeset = Tool::Result.error(NO_CHANGESET)
 

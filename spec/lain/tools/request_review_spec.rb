@@ -1299,14 +1299,19 @@ RSpec.describe Lain::Tools::RequestReview do
   # ---- The issue_plan artifact, and the id it needs --------------------------
 
   describe "an issue_plan review" do
-    before { home.plan("b2").write("the plan for b2, in prose\n") }
+    before { home.issue("b2").write("the prose for b2\n") }
 
-    it "reviews the plan document, which is what the issue_plan submission reads" do
+    it "reviews the authored issue file, which is what the issue_plan submission renders" do
       result = review_round_trip({ "stage" => "issue_plan", "issue_id" => "b2" },
-                                 disk: "the plan for b2, rewritten\n", path: bare_home.plan("b2").path)
+                                 disk: "the prose for b2, rewritten\n", path: bare_home.issue("b2").path)
 
       expect(result).to be_ok
-      expect(result.content).to include(bare_home.plan("b2").path)
+      expect(result.content).to include(bare_home.issue("b2").path)
+    end
+
+    it "says the review opens the authored issue file while the approval covers the whole rendered view" do
+      expect(tool.description).to include("authored issue file", "the whole rendered view",
+                                          "its criteria and Links included")
     end
 
     it "refuses without an issue id rather than guessing one" do

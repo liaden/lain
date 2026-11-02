@@ -109,6 +109,24 @@ RSpec.describe Lain::Epic::IssueView do
     it "moves when the authored file gains a sentence" do
       expect(view_of("#{authored}\nOne more line.\n").digest).not_to eq(view_of.digest)
     end
+
+    it "moves when a new edge blocks the issue, because its Links are part of the plan" do
+      blocked = graph(*epic, Lain::Epic::Issue.new(id: "config", title: "Config", blocks: ["ingest"]))
+
+      expect(view_of(within: blocked).digest).not_to eq(view_of.digest)
+    end
+  end
+
+  describe "#issue" do
+    it "is the issue as epic.md holds it" do
+      expect(view_of.issue).to eq(epic.fetch("ingest"))
+    end
+  end
+
+  describe "#blocked_by" do
+    it "names the issues whose Blocks edges point at this one, from the graph" do
+      expect(view_of.blocked_by).to eq(["schema"])
+    end
   end
 
   describe ".read" do

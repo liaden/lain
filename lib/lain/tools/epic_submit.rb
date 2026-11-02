@@ -18,7 +18,7 @@ module Lain
       class Input < Tool::Input
         field :stage, :string, required: true,
                                description: "Which stage to submit: research (research.md), epic_plan (epic.md) " \
-                                            "or issue_plan (plans/<issue>.md)."
+                                            "or issue_plan (issues/<issue>.md)."
         field :slug, :string, required: true, description: "The epic's slug, for example frugirl-mvp."
         field :issue, :string, description: "The issue id. Required for stage issue_plan, ignored otherwise."
 

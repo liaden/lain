@@ -4,9 +4,9 @@ require "stringio"
 
 # Epic::Submission binds one artifact to one stage of an epic's pipeline: the
 # gate's whole duck (#digest, #gate_question), spelled out for the four shapes
-# the pipeline actually produces. Prose artifacts (research, issue_plan) digest
-# their bytes through Canonical.digest, so an edited word is a different,
-# un-approved address. epic_plan reuses Epic::Graph#digest instead, so a
+# the pipeline actually produces. Research digests its bytes and an issue_plan
+# its rendered issue view, so an edited word is a different, un-approved
+# address. epic_plan reuses Epic::Graph#digest instead, so a
 # reformatted-but-unchanged plan keeps its standing approval.
 #
 # #digest is (stage, slug, artifact) composed together (Joel's ruling on the
@@ -21,6 +21,27 @@ RSpec.describe Lain::Epic::Submission do
 
   def three_issue_graph
     Lain::Epic::Graph.new(issues: [issue("a"), issue("b"), issue("c")])
+  end
+
+  def epic_scenario
+    <<~GHERKIN
+      ```gherkin
+      Scenario: lists every note
+        Given 2 notes
+        When the list runs
+        Then it prints 2 lines
+      ```
+    GHERKIN
+  end
+
+  def added_scenario(name = "lists none when empty")
+    "## Acceptance criteria\n\n```gherkin\nScenario: #{name}\n  Given no notes\n  When the list runs\n  " \
+      "Then it prints nothing\n```\n"
+  end
+
+  def view(id = "a", authored: "Prose for #{id}.\n", criteria: epic_scenario, others: [issue("z", blocks: [id])])
+    graph = Lain::Epic::Graph.new(issues: [issue(id, criteria:), *others])
+    Lain::Epic::IssueView.new(issue: graph.fetch(id), graph:, authored:)
   end
 
   describe "a submission answers the gate duck" do
@@ -82,8 +103,8 @@ RSpec.describe Lain::Epic::Submission do
     end
 
     it "differs for the same text submitted as research versus as an issue_plan" do
-      research = described_class.research(text: "same words", slug: "demo")
-      plan = described_class.issue_plan(text: "same words", slug: "demo", issue_id: "T1", criteria_digest: nil)
+      research = described_class.research(text: view("T1").to_markdown, slug: "demo")
+      plan = described_class.issue_plan(view: view("T1"), slug: "demo", issue_id: "T1")
 
       expect(research).not_to have_same_digest_as(plan)
     end
@@ -110,8 +131,8 @@ RSpec.describe Lain::Epic::Submission do
       end
 
       it "does not let approving research open an issue_plan resubmitting the same words" do
-        research = described_class.research(text: "same words", slug: "demo")
-        plan = described_class.issue_plan(text: "same words", slug: "demo", issue_id: "T1", criteria_digest: nil)
+        research = described_class.research(text: view("T1").to_markdown, slug: "demo")
+        plan = described_class.issue_plan(view: view("T1"), slug: "demo", issue_id: "T1")
         Sync { gate.call(research, asker: approve_asker, stage: "research", epic_slug: "demo") }
 
         expect(gate.approved?(plan.digest)).to be(false)
@@ -135,43 +156,49 @@ RSpec.describe Lain::Epic::Submission do
     end
   end
 
-  # An issue's plan is approved together with that issue's acceptance
-  # criteria: the plan is written to satisfy them, so a sign-off on the plan is
-  # a sign-off on both, and editing either is a different, un-approved address.
-  # The issue is composed in too, so two issues that happen to share a plan and
-  # criteria are still two approvals.
-  describe "an issue plan carries its issue's criteria" do
-    def plan(text: "the plan", issue_id: "a", criteria_digest: "blake3:criteria")
-      described_class.issue_plan(text:, slug: "demo", issue_id:, criteria_digest:)
+  # An issue's plan is the issue as its view renders it: the issue in epic.md,
+  # the authored file and the Links the graph derives. Approving it approves
+  # all three, so an edit to any is a different, un-approved address.
+  describe "an issue plan is the issue's view" do
+    def plan(of = view)
+      described_class.issue_plan(view: of, slug: "demo", issue_id: of.issue.id)
     end
 
-    it "moves its address when the criteria change, with the plan untouched" do
-      expect(plan.digest).not_to eq(plan(criteria_digest: "blake3:criteria-edited").digest)
+    it "composes its content address from the issue's digest and the view's" do
+      expect(plan.content_digest).to eq(Lain::Canonical.digest("issue" => view.issue.digest, "view" => view.digest))
+    end
+
+    # Scenario: editing the authored issue file reopens its gate
+    it "moves its address when the authored file gains a scenario" do
+      expect(plan.digest).not_to eq(plan(view(authored: "Prose for a.\n\n#{added_scenario}")).digest)
+    end
+
+    it "moves its address when a new edge blocks the issue" do
+      expect(plan.digest).not_to eq(plan(view(others: [issue("z", blocks: ["a"]), issue("y", blocks: ["a"])])).digest)
     end
 
     it "moves its address when only the issue differs" do
-      expect(plan.digest).not_to eq(plan(issue_id: "b").digest)
+      expect(plan.digest).not_to eq(plan(view("b")).digest)
     end
 
-    it "keeps its address for the same plan, issue and criteria" do
-      expect(plan).to have_same_digest_as(plan)
+    it "keeps its address for two renders of the same issue" do
+      expect(plan).to have_same_digest_as(plan(view))
     end
 
-    it "carries the issue and the criteria digest for the gate decision" do
-      expect(plan).to have_attributes(issue_id: "a", criteria_digest: "blake3:criteria")
+    it "carries the issue and the view's criteria digest for the gate decision" do
+      added = view(authored: "Prose.\n\n#{added_scenario}")
+
+      expect(plan(added)).to have_attributes(issue_id: "a", criteria_digest: added.criteria.digest)
+      expect(plan(added).criteria_digest).not_to eq(added.issue.criteria_digest)
     end
 
-    it "accepts an issue with no criteria, stated rather than forgotten" do
-      expect(plan(criteria_digest: nil).criteria_digest).to be_nil
+    it "refuses an issue_id that is not the view's issue" do
+      expect { described_class.issue_plan(view:, slug: "demo", issue_id: "b") }
+        .to raise_error(ArgumentError, /issue_id "b".*issue "a"/)
     end
 
-    it "refuses to be built without saying what the criteria are" do
-      expect { described_class.issue_plan(text: "the plan", slug: "demo", issue_id: "a") }
-        .to raise_error(ArgumentError, /criteria_digest/)
-    end
-
-    it "stays deeply frozen with the criteria on it" do
-      expect(plan(criteria_digest: +"blake3:criteria")).to be_deeply_frozen
+    it "stays deeply frozen" do
+      expect(plan).to be_deeply_frozen
     end
 
     it "leaves the epic's own documents with neither" do
@@ -322,11 +349,25 @@ RSpec.describe Lain::Epic::Submission do
       expect(submission.gate_question).to include("research", "demo", text.bytesize.to_s)
     end
 
-    it "names the issue for an issue_plan, plus its byte size" do
-      text = "as a user I want..."
-      submission = described_class.issue_plan(text:, slug: "demo", issue_id: "T7", criteria_digest: nil)
+    # Scenario: the gate prompt shows what is judged
+    it "names an issue_plan's title, its blockers, its scenario names and its view path" do
+      listed = view("list-cmd", authored: "Prose.\n\n#{added_scenario}",
+                                others: [issue("store", blocks: ["list-cmd"]), issue("config", blocks: ["list-cmd"])])
+      question = described_class.issue_plan(view: listed, slug: "demo", issue_id: "list-cmd").gate_question
 
-      expect(submission.gate_question).to include("issue_plan", "T7", text.bytesize.to_s)
+      expect(question).to include("issue_plan", '"Issue list-cmd"', "blocked by config, store",
+                                  '"lists every note", "lists none when empty"', "lain://epic/demo/issues/list-cmd.md")
+    end
+
+    it "says an issue_plan's issue has no blockers and no scenarios" do
+      bare = view(criteria: nil, others: [])
+
+      expect(described_class.issue_plan(view: bare, slug: "demo", issue_id: "a").fact)
+        .to include("blocked by nothing", "no scenarios")
+    end
+
+    it "names no byte count for an issue_plan" do
+      expect(described_class.issue_plan(view:, slug: "demo", issue_id: "a").fact).not_to match(/\d+ bytes/)
     end
 
     it "composes an implementation's content_digest from the changeset address and its issue" do
@@ -425,12 +466,12 @@ RSpec.describe Lain::Epic::Submission do
   # to approve an unnamed issue. Found by probe_t1.rb.
   describe "issue_id validation" do
     it "refuses a nil issue_id on issue_plan, naming the field" do
-      expect { described_class.issue_plan(text: "x", slug: "demo", issue_id: nil, criteria_digest: nil) }
+      expect { described_class.issue_plan(view:, slug: "demo", issue_id: nil) }
         .to raise_error(ArgumentError, /issue_id/)
     end
 
     it "refuses a blank issue_id on issue_plan" do
-      expect { described_class.issue_plan(text: "x", slug: "demo", issue_id: "", criteria_digest: nil) }
+      expect { described_class.issue_plan(view:, slug: "demo", issue_id: "") }
         .to raise_error(ArgumentError, /issue_id/)
     end
 
@@ -455,9 +496,9 @@ RSpec.describe Lain::Epic::Submission do
         .to raise_error(ArgumentError, /text/)
     end
 
-    it "refuses nil text on issue_plan" do
-      expect { described_class.issue_plan(text: nil, slug: "demo", issue_id: "T7", criteria_digest: nil) }
-        .to raise_error(ArgumentError, /text/)
+    it "refuses a nil view on issue_plan, naming the field" do
+      expect { described_class.issue_plan(view: nil, slug: "demo", issue_id: "T7") }
+        .to raise_error(ArgumentError, /view/)
     end
 
     it "refuses nil graph on epic_plan, naming the field rather than raising NoMethodError" do

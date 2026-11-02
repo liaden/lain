@@ -191,7 +191,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     # the epic's other issues, so it moves no epic-wide stage.
     it "moves no epic-wide stage when one issue's implementation is approved" do
       session("started.ndjson", *epic_approved, stage_event("issue_plan"))
-      home.plan("a").write("the plan for a\n")
+      home.issue("a").write("the prose for a\n")
       command.submit("issue_plan", issue: "a")
 
       command.submit("implementation", issue: "a", digest: commit_sha)
@@ -262,8 +262,8 @@ RSpec.describe Lain::CLI::EpicSubmit do
     before do
       write_epic
       session("started.ndjson", *epic_approved, stage_event("issue_plan"))
-      home.plan("a").write("the plan for a\n")
-      home.plan("b").write("the plan for b\n")
+      home.issue("a").write("the prose for a\n")
+      home.issue("b").write("the prose for b\n")
     end
 
     def deferring = command(gates: hands_off.merge("issue_plan" => "deferred"))
@@ -315,7 +315,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
     it "moves an issue only once -- re-approving a revised plan for an issue in flight moves nothing" do
       command.submit("issue_plan", issue: "a")
-      home.plan("a").write("the plan for a, revised\n")
+      home.issue("a").write("the prose for a, revised\n")
 
       command.submit("issue_plan", issue: "a")
 
@@ -449,7 +449,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     before do
       write_research(slug: "plans")
       write_epic(slug: "plans")
-      home("plans").plan("a").write("the plan for a\n")
+      home("plans").issue("a").write("the prose for a\n")
     end
 
     # Scenario: a stage never approved blocks the next
@@ -542,7 +542,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     it "refuses a gate_decision whose approved field is \"maybe\" in one line naming the record" do
       write_research
       write_epic
-      home.plan("a").write("the plan for a\n")
+      home.issue("a").write("the prose for a\n")
       File.write(File.join(sessions_dir, "damaged.ndjson"),
                  "#{JSON.generate(decision(digest: "blake3:damaged", stage: "issue_plan").to_journal
                                     .merge("ts" => "2026-01-01T00:00:00Z", "approved" => "maybe"))}\n")
@@ -739,10 +739,10 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
       def read_result = @wire.requests[1].messages.to_json
 
-      it "reads its own epic's plan under epics home :xdg" do
-        home("alpha").plan("a").write("PLAN-ALPHA-TEXT\n")
+      it "reads its own epic's issue under epics home :xdg" do
+        home("alpha").issue("a").write("PLAN-ALPHA-TEXT\n")
 
-        from_options(adjudicating, backend: -> { reading(home("alpha").plan("a").path) }).submit("research", "alpha")
+        from_options(adjudicating, backend: -> { reading(home("alpha").issue("a").path) }).submit("research", "alpha")
 
         expect(read_result).to include("PLAN-ALPHA-TEXT")
         expect(gate_evidence.fetch("text")).to eq("the evidence")
@@ -1154,7 +1154,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     before do
       write_epic
       session("started.ndjson", *epic_approved, stage_event("issue_plan"))
-      home.plan("a").write("the plan for a\n")
+      home.issue("a").write("the prose for a\n")
       command.submit("issue_plan", issue: "a")
     end
 
@@ -1226,7 +1226,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
     it "writes what the tip's tests did into an implementation's question" do
       session("started.ndjson", *epic_approved, stage_event("issue_plan"))
-      home.plan("a").write("the plan for a\n")
+      home.issue("a").write("the prose for a\n")
       command.submit("issue_plan", issue: "a")
       screen = StringIO.new
       tests = Lain::Telemetry::TestsRan.new(issue_id: "a", sha: tip, ran: true, passed: 3, errors: 1)
@@ -1239,7 +1239,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
     it "carries the tests through a chat's guarded submit" do
       session("started.ndjson", *epic_approved, stage_event("issue_plan"))
-      home.plan("a").write("the plan for a\n")
+      home.issue("a").write("the prose for a\n")
       command.submit("issue_plan", issue: "a")
       screen = StringIO.new
       tests = Lain::Telemetry::TestsRan.new(issue_id: "a", sha: tip, ran: true, passed: 4)
@@ -1254,7 +1254,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
     it "says nothing ran for a hand submit given no tests" do
       session("started.ndjson", *epic_approved, stage_event("issue_plan"))
-      home.plan("a").write("the plan for a\n")
+      home.issue("a").write("the prose for a\n")
       command.submit("issue_plan", issue: "a")
       screen = StringIO.new
 
@@ -1563,14 +1563,15 @@ RSpec.describe Lain::CLI::EpicSubmit do
     def changeset = commit_sha
 
     def plan_digest(outcome)
-      Lain::Epic::Submission.issue_plan(text: "the plan for a\n", slug: "alpha", issue_id: "a",
-                                        criteria_digest: criteria_digest_of(outcome)).digest
+      graph = graph_with(outcome)
+      view = Lain::Epic::IssueView.new(issue: graph.fetch("a"), graph:, authored: home.issue("a").read)
+      Lain::Epic::Submission.issue_plan(view:, slug: "alpha", issue_id: "a").digest
     end
 
     before do
       home.write_epic(graph_with("it works"))
       session("started.ndjson", *epic_approved, stage_event("issue_plan"))
-      home.plan("a").write("the plan for a\n")
+      home.issue("a").write("the prose for a\n")
     end
 
     # An implementation's repair writes nothing, so it has no boundary to
@@ -1610,6 +1611,39 @@ RSpec.describe Lain::CLI::EpicSubmit do
       expect(session_records).to eq(before_records)
     end
 
+    # Scenario: editing the authored issue file reopens its gate
+    it "refuses ensure_plan_approved! once the authored file gains a scenario, naming the gate" do
+      command.submit("issue_plan", issue: "a")
+      home.issue("a").write("the prose for a\n\n## Acceptance criteria\n\n```gherkin\nScenario: it also logs\n  " \
+                            "Given a run\n  When it ends\n  Then it logs\n```\n")
+
+      expect { command.ensure_plan_approved!("a") }
+        .to raise_error(described_class::PlanNotApproved, /"a".*issue_plan.*#{plan_digest("it works")}/m)
+    end
+
+    it "refuses ensure_plan_approved! once a new edge blocks the issue" do
+      command.submit("issue_plan", issue: "a")
+      home.write_epic(Lain::Epic::Graph.new(issues: [*graph_with("it works"), issue("c", blocks: ["a"])]))
+
+      expect { command.ensure_plan_approved!("a") }.to raise_error(described_class::PlanNotApproved, /issue_plan/)
+    end
+
+    it "passes ensure_plan_approved! for the issue as it was approved, read twice" do
+      command.submit("issue_plan", issue: "a")
+
+      expect(command.ensure_plan_approved!("a")).to eq(command.ensure_plan_approved!("a"))
+    end
+
+    # Scenario: the gate prompt shows what is judged
+    it "asks an issue_plan's gate with the issue's title, blockers, scenario names and view path" do
+      home.issue("b").write("## Acceptance criteria\n\n```gherkin\nScenario: b lists\n  Given a\n  Then a list\n```\n")
+      screen = StringIO.new
+      command(gates: hands_off.merge("issue_plan" => "interactive"), output: screen).submit("issue_plan", issue: "b")
+
+      expect(screen.string).to include('"the b issue"', "blocked by a", '"b lists"', "lain://epic/alpha/issues/b.md")
+      expect(screen.string).not_to match(/\d+ bytes/)
+    end
+
     it "opens the implementation again once the edited plan is approved" do
       command.submit("issue_plan", issue: "a")
       home.write_epic(graph_with("it works, and says so"))
@@ -1634,7 +1668,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     end
 
     it "refuses a plan for an issue the epic does not hold, before anything is journaled" do
-      home.plan("ghost").write("a plan for nothing\n")
+      home.issue("ghost").write("prose for nothing\n")
 
       expect { command.submit("issue_plan", issue: "ghost") }.to raise_error(Lain::Error, /issue "ghost"/)
       expect(submitted_decisions).to be_empty
@@ -1650,8 +1684,8 @@ RSpec.describe Lain::CLI::EpicSubmit do
       session("started.ndjson", *epic_approved, stage_event("issue_plan"))
     end
 
-    it "submits the plan written for one issue" do
-      home.plan("a").write("the plan for a\n")
+    it "submits the issue file written for one issue" do
+      home.issue("a").write("the prose for a\n")
 
       said = command.submit("issue_plan", issue: "a").text
 
@@ -1685,7 +1719,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     end
 
     def seeded_on(branch)
-      home.plan("a").write("the plan for a\n")
+      home.issue("a").write("the prose for a\n")
       command.submit("issue_plan", issue: "a")
       SeedRepo.git(root, "init", "-q", "-b", branch)
       commit_on_branch("chore: seed")
@@ -1883,17 +1917,18 @@ RSpec.describe Lain::CLI::EpicSubmit do
         expect(prompt).to include("research", "\"demo\"", home.research.path)
       end
 
-      it "sends an issue plan's spike to the plan and to the epic that holds its criteria" do
-        submission = Lain::Epic::Submission.issue_plan(text: "plan\n", slug: "demo", issue_id: "a",
-                                                       criteria_digest: nil)
+      it "sends an issue plan's spike to the authored issue file and to the epic that holds its criteria" do
+        graph = Lain::Epic::Graph.new(issues: [issue("a")])
+        view = Lain::Epic::IssueView.new(issue: graph.fetch("a"), graph:, authored: "prose\n")
+        submission = Lain::Epic::Submission.issue_plan(view:, slug: "demo", issue_id: "a")
 
-        expect(brief.call(submission)).to include("issue a", home.plan("a").path, home.epic.path)
+        expect(brief.call(submission)).to include("issue a", home.issue("a").path, home.epic.path)
       end
 
-      it "names an implementation's changeset by its address, beside the plan it was built to" do
+      it "names an implementation's changeset by its address, beside the issue it was built to" do
         submission = Lain::Epic::Submission.implementation(slug: "demo", issue_id: "a", digest: "blake3:change")
 
-        expect(brief.call(submission)).to include("blake3:change", home.plan("a").path)
+        expect(brief.call(submission)).to include("blake3:change", home.issue("a").path)
       end
 
       it "tells the spike to gather rather than judge" do

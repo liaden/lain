@@ -84,6 +84,17 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
       ```
     MD
   end
+  let(:added_a) do
+    <<~MD.chomp
+      ```gherkin
+      Scenario: an order records when it closed
+        Given a totalled order
+        When it is closed
+        Then meta.json holds the end time
+      ```
+    MD
+  end
+  let(:authored_a) { "This issue writes meta.json with the end time.\n\n## Acceptance criteria\n\n#{added_a}\n" }
   let(:criteria_b) do
     <<~MD
       ```gherkin
@@ -170,12 +181,12 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
 
   def write_epic
     home.write_epic(Lain::Epic::Graph.new(issues: [issue("a", criteria_a), issue("b", criteria_b), issue("c")]))
-    %w[a b c].each { |id| home.plan(id).write("the plan for #{id}\n") }
+    home.issue("a").write(authored_a)
+    %w[b c].each { |id| home.issue(id).write("The prose for #{id}.\n") }
   end
 
   def approve_plan(id)
-    plan = Lain::Epic::Submission.issue_plan(text: "the plan for #{id}\n", slug: "demo", issue_id: id,
-                                             criteria_digest: home.read_epic.fetch(id).criteria_digest)
+    plan = Lain::Epic::Submission.issue_plan(view: Lain::Epic::IssueView.read(home, id), slug: "demo", issue_id: id)
     decision = Lain::Epic::GateDecision.new(artifact_digest: plan.digest, epic_slug: "demo", stage: "issue_plan",
                                             approved: true, answered_by: "human", policy: "hands_off",
                                             latency: 0.0, issue_id: id)
@@ -231,6 +242,8 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
 
   def first_prompt(request) = request.messages.first["content"].first["text"]
 
+  def criteria_digest_a = Lain::Epic::IssueView.read(home, "a").criteria.digest
+
   it "starts on epic/demo's tip, on a branch of its own, with its plan and criteria, after its tests are committed" do
     checkout = nil
     supervising do |supervisor|
@@ -249,10 +262,91 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
     expect(standing.first).to eq("epic work")
     expect(standing.last).to start_with("test: failing tests at #{target}")
     orchestrator = provider.requests.last
-    expect(first_prompt(orchestrator)).to include(home.plan("a").path, "an order totals its lines",
-                                                  "an order can be refunded", target, "epic/demo")
+    expect(first_prompt(orchestrator)).to include("an order totals its lines", "an order can be refunded",
+                                                  target, "epic/demo")
     expect(orchestrator.system.last["text"]).to start_with(backend.library.slots.render_role(:issue_orchestrator))
       .and end_with("Working directory: #{checkout}")
+  end
+
+  # Scenario: the implementer is handed the issue it was approved on
+  it "hands the implementer the approved issue's prose and added scenarios, and names no plans/ path" do
+    supervising { |supervisor| launch(supervisor, "a").actor.settle }
+
+    prompt = first_prompt(provider.requests.last)
+    expect(prompt).to include("## The issue\n", "This issue writes meta.json with the end time.",
+                              "an order records when it closed")
+    expect(prompt).not_to include("plans/")
+  end
+
+  it "fences the embedded issue, so its headings are not sections of the brief" do
+    supervising { |supervisor| launch(supervisor, "a").actor.settle }
+
+    prompt = first_prompt(provider.requests.last)
+    expect(prompt).to include("````markdown\n# a -- the a issue\n")
+    expect(prompt[/^````markdown\n.*?^````$/m]).to include("## Acceptance criteria", "an order records when it closed")
+  end
+
+  it "writes a failing test for each added scenario as well as the epic's" do
+    supervising { |supervisor| launch(supervisor, "a").actor.settle }
+
+    expect(first_prompt(provider.requests.first))
+      .to include("an order totals its lines", "an order can be refunded", "an order records when it closed")
+    expect(standing.last).to end_with(Lain::Epic::IssueView.read(home, "a").criteria.digest)
+  end
+
+  # Scenario: an edit after approval does not reach the implementer
+  it "refuses an issue whose authored file was edited after approval, naming the issue_plan gate" do
+    home.issue("a").write("#{authored_a}\nAnd one more sentence.\n")
+
+    supervising do |supervisor|
+      expect { launch(supervisor, "a") }
+        .to raise_error(Lain::CLI::EpicSubmit::PlanNotApproved, /issue "a".*issue_plan/m)
+      expect(supervisor.to_a).to be_empty
+    end
+  end
+
+  context "when the authored file is edited once its approval is checked" do
+    let(:plan) do
+      lambda do |id|
+        Lain::CLI::EpicSubmit.new(root: repo, paths:, config:).ensure_plan_approved!(id, "demo").tap do
+          home.issue(id).write("#{authored_a}\nAn edit nobody approved.\n")
+        end
+      end
+    end
+
+    it "hands the implementer the view it checked, never the edit" do
+      supervising { |supervisor| launch(supervisor, "a").actor.settle }
+
+      prompt = first_prompt(provider.requests.last)
+      expect(prompt).to include("This issue writes meta.json with the end time.")
+      expect(prompt).not_to include("An edit nobody approved.")
+    end
+  end
+
+  context "when the approved digest is not the digest of the view the actor rendered" do
+    let(:plan) { ->(_id) { "blake3:#{"0" * 64}" } }
+
+    it "refuses, naming the issue_plan gate, and leases nothing" do
+      supervising do |supervisor|
+        expect { launch(supervisor, "a") }.to raise_error(Lain::CLI::EpicSubmit::PlanNotApproved, /"a".*issue_plan/m)
+        expect(supervisor.to_a).to be_empty
+      end
+    end
+  end
+
+  context "when the authored file is edited before its approval is checked" do
+    let(:plan) do
+      lambda do |id|
+        home.issue(id).write("#{authored_a}\nAn edit nobody approved.\n")
+        Lain::CLI::EpicSubmit.new(root: repo, paths:, config:).ensure_plan_approved!(id, "demo")
+      end
+    end
+
+    it "refuses, naming the issue_plan gate" do
+      supervising do |supervisor|
+        expect { launch(supervisor, "a") }.to raise_error(Lain::CLI::EpicSubmit::PlanNotApproved, /issue_plan/)
+      end
+    end
   end
 
   it "opens its first prompt with the epic skill and none of execute-plan's orchestration" do
@@ -263,12 +357,26 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
     expect(prompt).not_to match(/commit-mode|panel roster|task card|lain land|handback file/i)
   end
 
-  context "when the orchestrator reads its own plan" do
-    let(:script) do
-      [*test_engineer, tool_response(["r1", "read_file", { "path" => home.plan("a").path }]), text_response("read it")]
+  context "when the authored file holds a 4-backtick fence" do
+    let(:authored_a) do
+      "This issue writes meta.json with the end time.\n\n````text\nan example\n````\n\n" \
+        "## Acceptance criteria\n\n#{added_a}\n"
     end
 
-    it "is lent its epic home to read, and the read returns the plan" do
+    it "fences the embedded issue in 1 more backtick, keeping the inner fence intact" do
+      supervising { |supervisor| launch(supervisor, "a").actor.settle }
+
+      fenced = first_prompt(provider.requests.last)[/^`````markdown\n.*?^`````$/m]
+      expect(fenced).to include("\n````text\nan example\n````\n", "an order records when it closed")
+    end
+  end
+
+  context "when the orchestrator reads its own issue file" do
+    let(:script) do
+      [*test_engineer, tool_response(["r1", "read_file", { "path" => home.issue("a").path }]), text_response("read it")]
+    end
+
+    it "is lent its epic home to read, and the read returns the issue" do
       supervising do |supervisor|
         actor = launch(supervisor, "a").actor.tap(&:settle)
 
@@ -277,7 +385,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
 
       sent = provider.requests.last.messages.flat_map { Array(_1["content"]) }.grep(Hash)
       result = sent.find { |block| block["type"] == "tool_result" && block["tool_use_id"] == "r1" }
-      expect(Array(result["content"]).to_s).to include("the plan for a")
+      expect(Array(result["content"]).to_s).to include("writes meta.json with the end time")
     end
   end
 
@@ -302,7 +410,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
 
         expect(git(checkout, "log", "-3", "--format=%s").split("\n").first(2))
           .to eq(["dev work", "test: failing tests at #{target}, from criteria " \
-                              "#{Lain::Gherkin::Criteria.parse(criteria_a).digest}"])
+                              "#{criteria_digest_a}"])
         expect(git(checkout, "show", "lain/issue/demo/a:refund.txt")).to eq("refund")
         # The children's lane carries the attempt, as the actor's own id does,
         # so a later attempt's children cannot swap this one's anchors away.
@@ -510,7 +618,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
       File.write(File.join(repo, target), "RSpec.describe Order do\nend\n")
       git(repo, "add", "--", target)
       git(repo, "commit", "--no-verify", "-q", "-m",
-          "test: failing tests at #{target}, from criteria #{Lain::Gherkin::Criteria.parse(criteria_a).digest}")
+          "test: failing tests at #{target}, from criteria #{criteria_digest_a}")
     end
 
     def anchors_at(commit)

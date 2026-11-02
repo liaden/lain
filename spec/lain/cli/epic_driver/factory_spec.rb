@@ -158,7 +158,7 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
   def write_epic(issues, slug: "demo")
     home(slug).write_epic(Lain::Epic::Graph.new(issues:))
     approve_epic(slug)
-    issues.each { |each| home(slug).plan(each.id).write("Subject: app/models/order.rb\n\nthe plan for #{each.id}\n") }
+    issues.each { |each| home(slug).issue(each.id).write("the prose for #{each.id}\n") }
   end
 
   # The stage boundary opens only over approved earlier stages. A file of its
@@ -181,8 +181,7 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
   end
 
   def approved_plan(id, slug = "demo")
-    Lain::Epic::Submission.issue_plan(text: home(slug).plan(id).read, slug:, issue_id: id,
-                                      criteria_digest: home(slug).read_epic.fetch(id).criteria_digest)
+    Lain::Epic::Submission.issue_plan(view: Lain::Epic::IssueView.read(home(slug), id), slug:, issue_id: id)
   end
 
   def journaled(decision)
@@ -777,7 +776,7 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
     # on carrying whatever else it can.
     it "refuses an issue whose plan declares no subject, and spawns no actor for it" do
       write_epic([issue("a", subject: nil)])
-      home.plan("a").write("the plan for a, with no subject line\n")
+      home.issue("a").write("the prose for a, with no subject line\n")
       approve_plan("a")
       git(repo, "switch", "-q", "main")
 
@@ -792,7 +791,7 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
     # Scenario: the epic driver reads the subject from the issue
     it "writes the tests against the subject the issue carries, with the plan declaring none" do
       write_epic([issue("a", level: "seam")])
-      home.plan("a").write("the plan for a, with no subject line\n")
+      home.issue("a").write("the prose for a, with no subject line\n")
       approve_plan("a")
       git(repo, "switch", "-q", "main")
 
@@ -806,7 +805,7 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
     # launched in its place rather than the run ending with nothing live.
     it "launches the next issue when the first one's plan declares no subject" do
       write_epic([issue("a", subject: nil), issue("b")])
-      home.plan("a").write("the plan for a, with no subject line\n")
+      home.issue("a").write("the prose for a, with no subject line\n")
       %w[a b].each { |id| approve_plan(id) }
       git(repo, "switch", "-q", "main")
 
@@ -844,12 +843,12 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
     it "refuses a reverted plan whose revision was denied until it is submitted again, then lands it" do
       write_epic([issue("a")])
       approve_plan("a")
-      original = home.plan("a").read
-      home.plan("a").write("#{original}revised\n")
+      original = home.issue("a").read
+      home.issue("a").write("#{original}revised\n")
       journaled(Lain::Epic::GateDecision.new(artifact_digest: approved_plan("a").digest, epic_slug: "demo",
                                              stage: "issue_plan", approved: false, answered_by: "human",
                                              policy: "signoff", latency: 0.0, issue_id: "a"))
-      home.plan("a").write(original)
+      home.issue("a").write(original)
       git(repo, "switch", "-q", "main")
 
       refused = driven(width: 1)

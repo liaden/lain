@@ -45,7 +45,7 @@ RSpec.describe Lain::CLI::EpicLand, :seam do
 
   def write_epic
     home.write_epic(graph)
-    %w[a b c].each { |id| home.plan(id).write("the plan for #{id}\n") }
+    %w[a b c].each { |id| home.issue(id).write("the prose for #{id}\n") }
   end
 
   # Untracked, so the parent checkout stays clean for the merge.
@@ -111,8 +111,8 @@ RSpec.describe Lain::CLI::EpicLand, :seam do
   end
 
   def plan_approval(issue_id)
-    plan = Lain::Epic::Submission.issue_plan(text: "the plan for #{issue_id}\n", slug: "demo", issue_id:,
-                                             criteria_digest: nil)
+    view = Lain::Epic::IssueView.new(issue: graph.fetch(issue_id), graph:, authored: "the prose for #{issue_id}\n")
+    plan = Lain::Epic::Submission.issue_plan(view:, slug: "demo", issue_id:)
     decision("issue_plan", issue_id, plan.digest)
   end
 

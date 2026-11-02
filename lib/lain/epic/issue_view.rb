@@ -45,6 +45,12 @@ module Lain
         @authored = Authored.new(authored)
       end
 
+      # @return [Issue] the issue as `epic.md` holds it
+      attr_reader :issue
+
+      # @return [Array<String>] the ids whose Blocks edges name this issue
+      def blocked_by = @graph.blocked_by(@issue.id)
+
       # @return [String] the whole view, ending in one line break
       def to_markdown
         sections = ["# #{@issue.id} -- #{@issue.title}", @issue.description, @authored.prose,
@@ -61,6 +67,8 @@ module Lain
 
       # The rendered bytes' address, through the same blob framing a journaled
       # write uses, so a view and a file of the same bytes share one address.
+      # The Links are inside it on purpose: a changed blocker set is a changed
+      # plan, so a new edge reopens the issue's issue_plan gate.
       #
       # @return [String] a `blake3:` digest
       def digest = Workspace::Snapshot::Blob.new(bytes: to_markdown).digest

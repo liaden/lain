@@ -398,13 +398,14 @@ RSpec.describe "shipped skills" do
   end
 
   describe "implement-issue's scaffold is the epic driver's per-issue brief" do
-    it "says the tests are committed, the plan is read-only, and the actor commits and rebases but never merges" do
+    it "says the tests are committed, the issue is in the brief, and the actor rebases but never merges" do
       with_empty_project do |renderer|
         scaffold = renderer.render("implement-issue").squish
 
         expect(scaffold).to match(/failing tests are already committed/i)
         expect(scaffold).to match(/never weaken|must not (be )?weaken/i)
-        expect(scaffold).to match(%r{plans/<id>\.md.{0,40}approved.{0,40}read-only}i)
+        expect(scaffold).to match(/approved issue.{0,40}in the brief/i)
+        expect(scaffold).not_to include("plans/")
         expect(scaffold).to match(/project's own test command/i)
         expect(scaffold).to match(/rebase/i).and match(/harness.{0,40}merg|merg.{0,60}harness/i)
         expect(scaffold).to include("dev", "reviewer_code")

@@ -55,7 +55,7 @@ module Lain
         end
       end
 
-      # The raw prose handed to `.research`/`.issue_plan`, checked BEFORE
+      # The raw prose handed to `.research`, checked BEFORE
       # `Canonical.digest`/`#bytesize` ever touch it. Without this, nil text
       # raises `NoMethodError` three frames down naming neither the constructor
       # nor the field, and a Hash/Integer/Symbol sails through `Canonical.digest`
@@ -95,6 +95,21 @@ module Lain
           return errors.add(:graph, "must be an Epic::Graph, got nil") if graph.nil?
 
           errors.add(:graph, "must be an Epic::Graph, got #{graph.class}") unless graph.is_a?(Graph)
+        end
+      end
+
+      # The rendered issue handed to `.issue_plan`, checked before its digest
+      # is asked for, for {GraphArtifact}'s reason.
+      class ViewArtifact < Declarative::Carrier
+        attribute :view
+        validate :must_be_a_view
+
+        private
+
+        def must_be_a_view
+          return errors.add(:view, "must be an Epic::IssueView, got nil") if view.nil?
+
+          errors.add(:view, "must be an Epic::IssueView, got #{view.class}") unless view.is_a?(IssueView)
         end
       end
 
@@ -216,11 +231,11 @@ module Lain
     #
     # Which address each stage digests is a decision per stage. Prose digests its
     # BYTES: two renderings of the same words are two approvals, because a human
-    # signed off on THOSE words. An `issue_plan` composes its bytes with the
-    # issue it is for and that issue's {Gherkin::Criteria#digest}: a plan is
-    # written to satisfy its criteria, so approving one approves both, and an
-    # edited criterion is a different, un-approved plan -- which is what keeps
-    # an implementation from passing against criteria nobody signed off.
+    # signed off on THOSE words. An `issue_plan` composes the issue's own digest
+    # with its rendered {IssueView}: the epic's criteria, the authored file and
+    # the Links all reach the view, so an edit to any is a different,
+    # un-approved plan -- which is what keeps an implementation from passing
+    # against criteria nobody signed off.
     # `epic_plan` reuses {Epic::Graph#digest} -- over
     # the normalized issue set rather than the markdown -- so re-rendering an
     # unchanged graph costs no fresh sign-off. `implementation` composes the
@@ -254,19 +269,36 @@ module Lain
       def self.issue_count(size) = size == 1 ? "1 issue" : "#{size} issues"
       private_class_method :issue_count
 
-      # `criteria_digest` is REQUIRED and may be nil: an issue with no criteria
-      # says so, where a forgotten keyword would gate a plan as if it had none.
-      def self.issue_plan(text:, slug:, issue_id:, criteria_digest:)
-        Contracts::Prose.check!(text:)
-        issue_id = clean_issue_id(issue_id)
-        new(stage: "issue_plan", slug:, content_digest: planned(text, issue_id, criteria_digest),
-            fact: "issue #{issue_id}, #{text.bytesize} bytes", issue_id:, criteria_digest:)
+      # @param view [IssueView] the issue as it renders now
+      # @param slug [String] the epic
+      # @param issue_id [String] the issue, refused unless it is the view's
+      # @return [Submission]
+      def self.issue_plan(view:, slug:, issue_id:)
+        Contracts::ViewArtifact.check!(view:)
+        issue_id = viewed_issue!(clean_issue_id(issue_id), view)
+        new(stage: "issue_plan", slug:, issue_id:, criteria_digest: view.criteria.digest,
+            content_digest: Canonical.digest("issue" => view.issue.digest, "view" => view.digest),
+            fact: viewed(view, slug))
       end
 
-      def self.planned(text, issue_id, criteria_digest)
-        Canonical.digest("plan" => Canonical.digest(text), "issue" => issue_id, "criteria" => criteria_digest)
+      def self.viewed_issue!(issue_id, view)
+        return issue_id if issue_id == view.issue.id
+
+        raise ArgumentError, "issue_id #{issue_id.inspect} is not the viewed issue #{view.issue.id.inspect}"
       end
-      private_class_method :planned
+      private_class_method :viewed_issue!
+
+      # Quoted where the text is authored, so a title or scenario name cannot
+      # break the journaled line the question lands on.
+      def self.viewed(view, slug)
+        id = view.issue.id
+        names = view.criteria.map { _1.name.inspect }
+        ["issue #{id} #{view.issue.title.inspect}",
+         "blocked by #{view.blocked_by.empty? ? "nothing" : view.blocked_by.join(", ")}",
+         names.empty? ? "no scenarios" : "scenarios #{names.join(", ")}",
+         "read lain://epic/#{slug}/issues/#{id}.md"].join("; ")
+      end
+      private_class_method :viewed
 
       # The changeset address is checked as given, before it is composed: a
       # Hash would otherwise canonicalize into a real gate identity.
