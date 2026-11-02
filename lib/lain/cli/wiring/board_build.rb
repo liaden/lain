@@ -201,11 +201,17 @@ module Lain
         # OPEN, and a session quietly running without a project's refusals is
         # the worst outcome available.
         #
+        # A word-leading tilde expands to the HOME every bash child is lent:
+        # {Wiring#chat_env} is the same snapshot, and {Lain::Exec::ChildEnv}
+        # keeps it by name. Never `Dir.home`, whose passwd fallback would hand
+        # a child with no HOME a home it does not have.
+        #
         # @param project [Lain::Project]
+        # @param home [String, nil] the HOME the session's bash children run with
         # @return [Lain::Shell::Verdict]
         # @raise [Lain::Config::Refusal] when the file or the table is malformed
-        def shell_verdict(project:)
-          Lain::Shell::Verdict.new(capability_set: Config.shell_exclusions(root: project.root))
+        def shell_verdict(project:, home: Lain::WorkerEnv.default.env["HOME"])
+          Lain::Shell::Verdict.new(capability_set: Config.shell_exclusions(root: project.root), home:)
         end
 
         # The session's ONE layout guard, which the parent's tool phase and

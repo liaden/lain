@@ -106,6 +106,30 @@ module Lain
       # text is the entire signal.
       EXPANDING = /[*?\[\]{}~]/
 
+      # The one expansion a term performs itself, because bash's answer for it
+      # needs nothing but the HOME the child is lent: a word that is `~`, or
+      # starts `~/`, with nothing else in it that would expand. `~user` and
+      # `~+` stay out, since they need a passwd lookup or the shell's own state,
+      # and so does a `~` anywhere but the word's start, which bash expands only
+      # in an assignment. Expanded here rather than at exec, so the term every
+      # approving rung judges is the argv a backend that takes the term runs.
+      class Tilde
+        # @param home [String, nil] the HOME the bash child is lent; a missing
+        #   or relative one expands nothing, so every tilde abstains
+        def initialize(home)
+          @home = (-home if home.is_a?(String) && home.start_with?(File::SEPARATOR))
+          freeze
+        end
+
+        # @param word [String]
+        # @return [Boolean]
+        def expands?(word) = !@home.nil? && word.match?(Named::HOMED) && !word.delete_prefix("~").match?(EXPANDING)
+
+        # @param word [String]
+        # @return [String] the word with its tilde replaced, else the word
+        def expand(word) = expands?(word) ? -"#{@home}#{word.delete_prefix("~")}" : word
+      end
+
       # The third quoting form, and the one with no node kind: `echo foo\ bar` is
       # ONE `word`, and {Parse} hands back `"foo\\ bar"` where bash gives
       # `"foo bar"`. Same reasoning as the quote kinds -- unescaping is
@@ -141,9 +165,12 @@ module Lain
       # @param parse [#call] `String -> Parse::Result`
       # @param capability_set [#permits?] answers `permits?(program_name)` for
       #   the session; the basename is what it is asked about.
-      def initialize(parse: Parse.new, capability_set: AnyProgram.new)
+      # @param home [String, nil] the HOME every bash child is lent, which a
+      #   word-leading tilde expands to; with none, every tilde abstains
+      def initialize(parse: Parse.new, capability_set: AnyProgram.new, home: nil)
         @parse = parse
         @capability_set = capability_set
+        @tilde = Tilde.new(home)
         freeze
       end
 
@@ -170,7 +197,7 @@ module Lain
       # than "I did not understand this". Every command it does not fire on still
       # faces the whole ladder.
       def judge(result)
-        doubts = Doubts.new(result)
+        doubts = Doubts.new(result, @tilde)
         excluded = excluded_programs(result, doubts)
         return deny(excluded) unless excluded.empty?
 
@@ -205,7 +232,8 @@ module Lain
       def joins?(range, left, right) = range.begin.between?(left.byte_range.end, right.byte_range.begin)
 
       def term_stage(stage)
-        Term::Stage.new(argv: stage.argv, discards: stage.redirects.flat_map { |redirect| Verdict.discarded(redirect) })
+        Term::Stage.new(argv: stage.argv.map { @tilde.expand(_1) },
+                        discards: stage.redirects.flat_map { |redirect| Verdict.discarded(redirect) })
       end
 
       def deny(excluded)
@@ -232,8 +260,9 @@ module Lain
           "#{label}: #{offenders.map { |offender| offender.to_s.inspect }.uniq.join(", ")}".freeze
         end
 
-        def initialize(result)
+        def initialize(result, tilde)
           @result = result
+          @tilde = tilde
           freeze
         end
 
@@ -341,7 +370,7 @@ module Lain
         end
 
         def expanding_words
-          sentences("words a shell would expand", terms.grep(EXPANDING)) +
+          sentences("words a shell would expand", terms.grep(EXPANDING).reject { @tilde.expands?(_1) }) +
             sentences("words carrying an escape this layer does not unescape", terms.grep(ESCAPING))
         end
 

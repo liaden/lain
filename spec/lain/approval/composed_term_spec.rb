@@ -18,6 +18,12 @@ module ComposedTermSpecSupport
       super
     end
   end
+
+  # A factory whose classifier passes every path, so only the root, content
+  # and landing answers of the real one it wraps can refuse a word.
+  class PassingClassifier < SimpleDelegator
+    def call(_cwd) = Lain::Approval::Escalation::Triage::AnyPath.new
+  end
 end
 
 # The one rule in `lib/` that can APPROVE, so most of this file is a question
@@ -415,6 +421,70 @@ RSpec.describe Lain::Approval::ComposedTerm do
   # read stops at the project. Every word and the call's own cwd resolve
   # LEXICALLY under the root, on {Approval::Root}'s terms -- no
   # stat, no realpath, and a leading `~` refused rather than expanded.
+  describe "a home-relative word, expanded by the verdict" do
+    def homed(home) = Lain::Shell::Verdict.new(home:)
+
+    def with_epic(home)
+      epics = File.join(home, ".local", "state", "lain", "epics", "k")
+      on_disk(epics, "nyotes/epic.md", "Blocked: nothing\n")
+      epics
+    end
+
+    def reading(home, root, reads)
+      described_class.new(sensitivity: Lain::CLI::Wiring::BoardBuild::Classifiers.new(
+        home:, cwd: root, root:, confinement: Lain::Approval::Root.new(root), reads:
+      ))
+    end
+
+    it "approves a reader of a file under a read root, spelled from the HOME" do
+      in_tree do |root, home|
+        rule = reading(home, root, [with_epic(home)])
+        call = call_of("grep -n Blocked ~/.local/state/lain/epics/k/nyotes/epic.md", cwd: root, verdict: homed(home))
+
+        expect(rule.decide(call)).to be_allow
+      end
+    end
+
+    it "refuses another user's home before any term exists" do
+      in_tree do |root, home|
+        rule = reading(home, root, [with_epic(home)])
+        verdict = homed(home)
+        commands = ["cat ~other/secret", "cat ~root/x"]
+
+        expect(commands.map { verdict.call(_1).name }).to eq(%i[abstain abstain])
+        expect(commands.map { rule.decide(call_of(_1, cwd: root, verdict:)) }).to eq([nil, nil])
+      end
+    end
+
+    # The classifier passes every path here, because its outside-the-project
+    # verdict would refuse both words first and hide a root predicate that let them through.
+    it "refuses the HOME itself and a climb out of it at the root, whatever the classifier says" do
+      in_tree do |root, home|
+        factory = Lain::CLI::Wiring::BoardBuild::Classifiers.new(
+          home:, cwd: root, root:, confinement: Lain::Approval::Root.new(root), reads: [with_epic(home)]
+        )
+        rule = described_class.new(sensitivity: ComposedTermSpecSupport::PassingClassifier.new(factory))
+        verdict = homed(home)
+        commands = ["cat ~", "cat ~/../../etc/passwd"]
+
+        expect(commands.map { verdict.call(_1).name }).to eq(%i[allow allow])
+        expect(rule.decide(call_of("cat ~/.local/state/lain/epics/k/nyotes/epic.md", cwd: root, verdict:))).to be_allow
+        expect(commands.map { rule.decide(call_of(_1, cwd: root, verdict:)) }).to eq([nil, nil])
+      end
+    end
+
+    it "refuses a write into a read root" do
+      in_tree do |root, home|
+        rule = reading(home, root, [with_epic(home)])
+        epic = "~/.local/state/lain/epics/k/nyotes/epic.md"
+        commands = ["sed -i s/a/b/ #{epic}", "sort -o #{epic} #{epic}"]
+
+        expect(commands.map { homed(home).call(_1).name }).to eq(%i[abstain allow])
+        expect(commands.map { rule.decide(call_of(_1, cwd: root, verdict: homed(home))) }).to eq([nil, nil])
+      end
+    end
+  end
+
   describe "the project root" do
     it "refuses a reader of a path under home but outside the root" do
       in_tree do |root, home|

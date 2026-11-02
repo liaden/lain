@@ -942,7 +942,7 @@ module Lain
       # Reached first from #build_toolset, which is ahead of `chronicle.start`:
       # the same refusal-before-journal ordering #switchboard keeps, and it
       # matters because a config that will not load refuses the launch.
-      def verdict = @verdict ||= BoardBuild.shell_verdict(project:)
+      def verdict = @verdict ||= BoardBuild.shell_verdict(project:, home: chat_env.env["HOME"])
 
       # What the drain is handed is the DIRECTORY, not the run's one asker:
       # "which asker holds the set this answer names" is a question only the

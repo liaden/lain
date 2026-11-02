@@ -195,9 +195,12 @@ module Lain
     # private key, which {Escalation::Triage} records nothing lifts: not a
     # policy, not `/mode bypass`, not `ApproveAll`, not `sensitivity exempt:`.
     # Predicate 4 cannot save it. So each entry carries the flags that
-    # disqualify it, and a stage naming one is refused. (The `~/.ssh` spelling of
-    # the same command abstains earlier, at the parser, because a leading `~`
-    # expands -- which is the parser's accident and not a second guard.)
+    # disqualify it, and a stage naming one is refused. The `~/.ssh` spelling
+    # of the same command reaches here too: {Shell::Verdict} expands a leading
+    # `~/` to the child's HOME, so the term carries the absolute path. That
+    # argv is what runs, except under {Exec::Docker} for a pipe or a discard:
+    # it refuses that term, so the string runs under `sh -c` in a container
+    # that is not lent the host HOME and holds no host file outside its mounts.
     #
     # == A BARE name only, and this is the opposite of the exclusion set
     #

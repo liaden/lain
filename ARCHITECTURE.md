@@ -923,6 +923,15 @@ names, and **word text** — a glob, a tilde, a brace and a backslash have no no
 newline as whitespace, so `echo hi\nrm -rf /tmp/x` arrives as two stages and an EMPTY separator
 list. Reading separator texts cannot see it; N stages against N−1 pipes can.
 
+The one expansion a term performs itself is a word that is `~` or starts `~/` with nothing else
+that expands. It becomes the HOME the chat lends every bash child, and the term runs that argv
+with no shell, so the path every approving rung judges is the path that runs. The exception is
+`--exec docker` for a pipe or a discard: the docker arm refuses the term, so the model's string
+runs as `sh -c` in the container, whose HOME is its own; the container keeps host files out, so
+nothing leaks. `~user`, `~+`, `~-`, a quoted `~`, and a `~` past a word's start or after `=` still
+abstain. An expanded word gets no pass of its own: a bare `~` and `~/../../etc/passwd` are still
+refused by the root check, and `~/.ssh` by triage.
+
 `Shell::Named` reads the same parse for a different question: which paths a command names. It resolves each one
 against the directory its stage runs in, so an approval rung can ask about the files a `bash` call touches rather
 than about its `cwd`; `Named.from` takes a parse a caller already holds. It names every word past the program

@@ -99,6 +99,41 @@ RSpec.describe Lain::Shell::Verdict do
     end
   end
 
+  describe "a word-leading tilde, given the HOME the bash child runs with" do
+    let(:verdict) { described_class.new(home: "/home/u") }
+
+    it "allows a word starting `~/`, with the tilde expanded in the term" do
+      expect(decide("grep -n Blocked ~/.local/epic.md").term)
+        .to eq(Lain::Shell::Term.of(%w[grep -n Blocked /home/u/.local/epic.md]))
+    end
+
+    it "allows a word that is exactly `~`, as the HOME itself" do
+      expect(decide("ls ~").term).to eq(Lain::Shell::Term.of(%w[ls /home/u]))
+    end
+
+    it "keeps a climb out of the HOME as written, for the approving rules to place" do
+      expect(decide("cat ~/../../etc/passwd").term).to eq(Lain::Shell::Term.of(%w[cat /home/u/../../etc/passwd]))
+    end
+
+    it "hands over a term a Ractor can share" do
+      expect(Ractor.shareable?(decide("cat ~/notes.txt"))).to be(true)
+    end
+
+    ["cat ~other/secret", "cat ~root/x", "cat ~+/x", "cat ~-", "cat a~/b", "grep --file=~/x y", "X=~/y cat z",
+     "cat ~/*.md", "cat ~/a?", "cat ~/[ab]", "cat ~/{a,b}", "cat ~/a~b", "cat ~/a\\ b",
+     %(cat "~/x"), "cat '~/x'", "cat ~/$VAR"].each do |command|
+      it "still abstains on #{command.inspect}" do
+        expect(decide(command)).to be_abstain
+      end
+    end
+
+    it "abstains on every tilde when the child has no HOME, or one that is not absolute" do
+      [nil, "", "home/u"].each do |home|
+        expect(described_class.new(home:).call("cat ~/x")).to be_abstain, home.inspect
+      end
+    end
+  end
+
   # The third quoting form, and the only one with no node kind: a backslash
   # survives into the term exactly as the two quote kinds do, so allowing it
   # would exec literal quoting characters and diverge from what bash runs.

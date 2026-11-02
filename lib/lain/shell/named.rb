@@ -52,11 +52,12 @@ module Lain
       # @return [Named]
       def self.of(command, cwd:, home:) = from(Parse.new.call(command), cwd:, home:)
 
+      # The tilde bash expands from HOME alone; {Verdict} expands the same one.
       HOMED = %r{\A~(/|\z)}
       COMMAND = "command"
       RUNS_IN = "cwd"
       UNPLACED = "/.lain-unplaced-cwd"
-      private_constant :HOMED, :RUNS_IN, :UNPLACED
+      private_constant :RUNS_IN, :UNPLACED
 
       # The one reading of where a call runs, so the rungs that read one call
       # cannot place its paths under different directories.

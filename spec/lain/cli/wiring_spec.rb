@@ -5279,6 +5279,15 @@ RSpec.describe Lain::CLI::Wiring do
           expect(verdict_of_tool(board).call("curl http://example.com")).to be_deny
         end
       end
+
+      it "expands a word-leading tilde to the HOME the chat's bash children are lent" do
+        in_tree do |root|
+          wiring = wired(root:)
+          home = wiring.send(:chat_env).env.fetch("HOME")
+
+          expect(wiring.send(:verdict).call("cat ~/x").term).to eq(Lain::Shell::Term.of(["cat", "#{home}/x"]))
+        end
+      end
     end
 
     # The TOOL phase, from the production board. Two independent things had to

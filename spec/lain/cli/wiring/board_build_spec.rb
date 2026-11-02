@@ -370,6 +370,13 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       end
     end
 
+    it "expands a word-leading tilde to the HOME every bash child is lent" do
+      in_tree do |root, _home|
+        home = Lain::WorkerEnv.default.env.fetch("HOME")
+        expect(verdict_at(root).call("cat ~/x").term).to eq(Lain::Shell::Term.of(["cat", "#{home}/x"]))
+      end
+    end
+
     # Loud, and unrescued, on `.rules`' argument for the `[sensitivity]` table:
     # this one RESTRICTS, so a session running with it silently un-parsed would
     # be running with the project's refusals off.
@@ -803,6 +810,77 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
 
         while_parked(board, bash_of("tee #{epic}/epic.md", "cwd" => root)) do
           expect(rulings.map { |ruling| ruling["verdict"] }).not_to include("allow")
+        end
+      end
+    end
+
+    describe "a home-relative word, with the HOME the bash child is lent", :seam do
+      # The bash tool holds the board's verdict, as {Lain::CLI::Wiring} hands it,
+      # because the term rule reads the term off the tool it would dispatch.
+      def homed_board(root, home)
+        verdict = described_class.shell_verdict(project: project_at(root), home:)
+        tools = toolset.to_a.map { _1.name == "bash" ? Lain::Tools::Bash.new(verdict:) : _1 }
+        board_for(root, home, verdict:, toolset: Lain::Toolset.new(tools))
+      end
+
+      def epic_under(board, home)
+        epic = File.join(board.sensitivity.read_roots.last, "nyotes").tap { FileUtils.mkdir_p(_1) }
+        File.write(File.join(epic, "epic.md"), "Blocked: nothing\n")
+        "~/#{Pathname.new(epic).relative_path_from(home)}/epic.md"
+      end
+
+      def expect_left_by_the_rules(board, command, root)
+        while_parked(board, bash_of(command, "cwd" => root)) do
+          expect(rulings.last).to include("rung" => "rules", "verdict" => "abstain"), command
+        end
+      end
+
+      it "approves a reader of the XDG epic home with no model asked" do
+        in_tree do |root, home|
+          board = homed_board(root, home)
+          epic = epic_under(board, home)
+
+          ruling = board.ladder.rule(bash_of("grep -n Blocked #{epic}", "cwd" => root), nil)
+
+          expect([ruling.allow?, ruling.rule]).to eq([true, "composed_term"])
+        end
+      end
+
+      it "still denies a home-relative private key at triage" do
+        in_tree do |root, home|
+          board = homed_board(root, home)
+
+          expect(board.policy_switch.call(bash_of("cat ~/.ssh/id_rsa", "cwd" => root), nil)).to be(false)
+          expect(rulings.last).to include("rung" => "triage", "verdict" => "deny", "final" => true)
+        end
+      end
+
+      it "leaves a home-relative credential parking for a human" do
+        in_tree do |root, home|
+          board = homed_board(root, home)
+
+          while_parked(board, bash_of("cat ~/.env", "cwd" => root)) do
+            expect(rulings.last).to include("rung" => "rules", "verdict" => "abstain")
+          end
+        end
+      end
+
+      it "does not approve a write into the epic home" do
+        in_tree do |root, home|
+          board = homed_board(root, home)
+          epic = epic_under(board, home)
+
+          ["sed -i s/a/b/ #{epic}", "sort -o #{epic} #{epic}"].each { expect_left_by_the_rules(board, _1, root) }
+        end
+      end
+
+      it "does not approve another user's home, the HOME itself, or a climb out of it" do
+        in_tree do |root, home|
+          board = homed_board(root, home)
+          epic_under(board, home)
+
+          ["cat ~other/secret", "cat ~root/x", "cat ~", "cat ~/../../etc/passwd"]
+            .each { expect_left_by_the_rules(board, _1, root) }
         end
       end
     end
