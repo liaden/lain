@@ -199,16 +199,17 @@ RSpec.describe Lain::Tools::EpicSubmit do
   context "when nobody answers within the gate's window" do
     let(:approval_timeout) { 0.3 }
 
-    it "says nobody answered in the project's approval timeout and nothing advanced, not that it was denied" do
+    it "says the human did not answer in the approval timeout and to tell the user, not that it was denied" do
       result = submit(stage: "research", slug: "frugirl-mvp")
 
-      expect(result.content).to include("nobody answered", "0.3 seconds", "nothing advanced")
+      expect(result.content).to include("did not answer", "0.3 seconds", "has not advanced", "tell the user")
       expect(result.content).not_to include("denied")
     end
   end
 
-  it "says in its description that silence denies once the window closes" do
-    expect(tool.description).to include("nobody answers", "denies")
+  it "says in its description that silence holds the stage and ends the turn once the window closes" do
+    expect(tool.description).to include("nobody answers", "holds", "does not advance", "turn ends", "epic_submit again")
+    expect(tool.description).not_to include("denies")
   end
 
   it "names the issue file, never a plans/ path, as what an issue_plan submits" do

@@ -41,7 +41,8 @@ module Lain
       def description
         "Submits an epic stage (research, epic_plan or issue_plan) to its approval gate and returns the verdict. " \
           "An interactive gate asks the human and waits for their answer; if nobody answers within the gate's " \
-          "window, the gate denies and nothing advances."
+          "window, the gate holds, the stage does not advance, and your turn ends; tell the user, and call " \
+          "epic_submit again to reopen."
       end
 
       protected

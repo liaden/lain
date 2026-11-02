@@ -1033,6 +1033,22 @@ RSpec.describe Lain::CLI::EpicSubmit do
         expect(Lain::Epic::Gate).to have_received(:from_journal).with(anything, hash_including(timeout: 300))
       end
 
+      # Scenario: an unanswered gate hands the agent a next step and waits
+      it "hands the chat's agent the resubmit and the wait when the window closes unanswered" do
+        chronicle_path = File.join(sessions_dir, "chat.ndjson")
+        stub_chronicle = instance_double(Lain::CLI::Chronicle, journal_path: chronicle_path)
+
+        result = Sync do
+          described_class::InChat.new(chronicle: stub_chronicle, command: seat(approval_timeout: 0.2))
+                                 .submit("research", "alpha")
+        end
+
+        expect(result.ends_turn).to be(true)
+        expect(result.content).to include("did not answer", "0.2 seconds", "epic_submit again", "research",
+                                          "has not advanced", "tell the user")
+        expect(result.content).not_to include("lain epic submit")
+      end
+
       it "counts the gate's question while it waits and none once its window closes" do
         while_waiting = nil
 

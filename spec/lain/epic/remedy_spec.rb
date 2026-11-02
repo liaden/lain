@@ -16,6 +16,12 @@ RSpec.describe Lain::Epic::Remedy do
       .to eq("lain epic submit implementation demo --issue a --digest abc")
   end
 
+  it "spells the tool call that reopens a gate, naming the issue only when given" do
+    expect(described_class.resubmit("research", slug)).to eq("call epic_submit again with stage research and slug demo")
+    expect(described_class.resubmit("issue_plan", slug, issue: "a"))
+      .to eq("call epic_submit again with stage issue_plan, slug demo and issue a")
+  end
+
   it "spells a finish, local or not" do
     expect(described_class.finish(slug)).to eq("lain epic finish demo")
     expect(described_class.finish(slug, local: true)).to eq("lain epic finish demo --local")

@@ -451,7 +451,7 @@ module Lain
         # call's own decision says whether it deferred; the queue only supplies the item.
         def refused
           window = @journal.expired(@submission.digest)
-          return failed { unanswered(window) } if window
+          return unanswered(window) if window
           return held if @journal.held?(@submission.digest)
 
           parked = @journal.deferred?(@submission.digest) && parked_item
@@ -469,11 +469,19 @@ module Lain
                    status: 0)
         end
 
-        # A closed window denies, but nobody decided it, so it is not said as a denial.
+        # A closed window denies, but nobody decided it, so it is not said as a
+        # denial; a chat's agent is told to resubmit and to tell the user.
         def unanswered(window)
-          ["unanswered #{@submission.digest}",
-           "  nobody answered the #{@stage} gate for epic #{slug} within #{seconds(window)} -- " \
-           "nothing advanced"].join("\n")
+          Held.new(text: ["unanswered #{@submission.digest}",
+                          "  nobody answered the #{@stage} gate for epic #{slug} within #{seconds(window)} -- " \
+                          "nothing advanced"].join("\n"),
+                   status: 1, wait: unanswered_wait(window))
+        end
+
+        def unanswered_wait(window)
+          "the human was asked and did not answer in #{seconds(window)}. The stage has not advanced. " \
+            "To reopen the gate, #{Lain::Epic::Remedy.resubmit(@stage.name, slug, issue: @submission.issue_id)}. " \
+            "Stop and tell the user; do not read lain's state to work out what happened."
         end
 
         def seconds(window) = window == 1 ? "1 second" : "#{format("%g", window)} seconds"

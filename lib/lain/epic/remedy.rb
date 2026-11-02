@@ -28,6 +28,15 @@ module Lain
           .compact.join(" ")
       end
 
+      # @param stage [String]
+      # @param slug [String]
+      # @param issue [String, nil]
+      # @return [String]
+      def resubmit(stage, slug, issue: nil)
+        arguments = ["stage #{stage}", "slug #{slug}", issue && "issue #{issue}"].compact
+        "call epic_submit again with #{arguments[..-2].join(", ")} and #{arguments.last}"
+      end
+
       # @param slug [String]
       # @param local [Boolean]
       # @return [String]
