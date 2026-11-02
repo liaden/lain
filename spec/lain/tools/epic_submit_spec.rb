@@ -66,6 +66,18 @@ RSpec.describe Lain::Tools::EpicSubmit do
       .to eq([["research", true, "interactive"]])
   end
 
+  it "puts the agent's quoted review into the question the human is asked" do
+    Sync do |task|
+      call = task.async do
+        tool.call({ "stage" => "research", "slug" => "frugirl-mvp", "review" => "VERDICT: approve" }, invocation)
+      end
+      task.yield until ask_human.pending?
+      expect(drawn.join("\n").delete("\n ")).to include("Reviewverdict(quotedbytheagent):", "VERDICT:approve")
+      ask_human.reply("deny", ask_human.last_question.digest)
+      call.wait
+    end
+  end
+
   context "when the research gate is hands_off" do
     let(:gates) { every_stage("hands_off") }
 

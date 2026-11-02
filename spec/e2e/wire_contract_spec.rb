@@ -14,7 +14,8 @@ RSpec.describe "the wire contract of a recorded plain chat", :e2e do
     ---
     Answer the request in one short sentence. Do not call any tools.
   MD
-  flags = %w[--provider ollama --model qwen3:4b --num-batch 1024 --seed 1 --temperature 0 --no-nvim].freeze
+  flags = %w[--provider ollama --model qwen3:4b --num-batch 1024 --num-ctx 16384 --seed 1 --temperature 0
+             --no-nvim].freeze
 
   once(:journey) do
     E2E::Cassette.serve("wire_contract") do |upstream, _cassette|
@@ -47,6 +48,14 @@ RSpec.describe "the wire contract of a recorded plain chat", :e2e do
     expect(bodies).not_to be_empty
     expect(bodies.map { |body| body.dig("options", "num_predict") }).to all(be_an(Integer))
     expect(bodies.map { |body| body.dig("options", "num_batch") }).to all(eq(1024))
+  end
+
+  it "delivers the read file's content to the model rather than withholding it" do
+    told = bodies.flat_map { |body| body.fetch("messages") }.select { |message| message["role"] == "tool" }
+                 .map { |message| message["content"].to_s }
+
+    expect(told).to include(a_string_including("The build bell rings twice"))
+    expect(told).not_to include(a_string_including("not delivered"))
   end
 
   it "names the parent's model on the parent's calls and the skill's model on the child's" do

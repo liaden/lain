@@ -10,6 +10,12 @@ require "tmpdir"
 # "Every" is meant literally -- the roster below is derived from the catalog
 # rather than listed, so this spec cannot fall behind the directory it guards.
 RSpec.describe "shipped skills" do
+  # The sentences that make the human's gate question show the review: the
+  # verdict line travels in epic_submit's `review` field, so deleting one turns
+  # a spec red.
+  def quote_per_wave = "pass that wave's verdict line, verbatim, as `review` on the `epic_submit` call for the wave"
+  def quote_once = "pass its verdict line, verbatim, as `review` on the `epic_submit` call"
+
   # The roster is DERIVED from the shipped tree, never written down. The catalog
   # is a directory scan ({Skill::Catalog.read_dir}), so a hand-maintained list
   # can only lag it -- a newly shipped skill would be unpinned by exactly the
@@ -792,6 +798,26 @@ RSpec.describe "shipped skills" do
 
         expect(phase).to include("`wave`", "lain epic status", "deny <id>: <reason>")
         expect(phase).to match(/wave by wave|one wave at a time/i)
+      end
+    end
+
+    it "has create-epic-issues review each wave with epic_review before it submits, and quote the verdict" do
+      with_empty_project do |renderer|
+        phase = renderer.render("create-epic-issues")[/^## Phase 4 .*?(?=^## )/m]
+
+        expect(phase).to include("epic_review", "`issue_plan`", "`wave`")
+        expect(phase.index("epic_review")).to be < phase.index("epic_submit")
+        expect(phase.split.join(" ")).to include(quote_per_wave)
+      end
+    end
+
+    it "has plan-epic review the graph with epic_review before it submits, and quote the verdict" do
+      with_empty_project do |renderer|
+        phase = renderer.render("plan-epic")[/^## Phase 6 .*?(?=^## |\z)/m]
+
+        expect(phase).to include("epic_review", "`epic_plan`")
+        expect(phase.index("epic_review")).to be < phase.index("epic_submit")
+        expect(phase.split.join(" ")).to include(quote_once)
       end
     end
 

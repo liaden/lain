@@ -127,6 +127,7 @@ module ToolRegistry
     "epic_write" => -> { Lain::Tools::EpicWrite.new(homes: nil) },
     "epic_graph" => -> { Lain::Tools::EpicGraph.new(epics: nil) },
     "epic_submit" => -> { Lain::Tools::EpicSubmit.new(submitter: nil) },
+    "epic_review" => -> { Lain::Tools::EpicReview.new(homes: nil, critique: nil) },
     "web_fetch" => -> { Lain::Tools::WebFetch.new },
     "web_search" => -> { Lain::Tools::WebSearch.new },
     "tool_search" => -> { Lain::Tools::ToolSearch.new(toolset: -> { Lain::Toolset.new([]) }) },

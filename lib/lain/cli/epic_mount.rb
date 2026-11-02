@@ -19,8 +19,8 @@ module Lain
     # == A chat never fails to start over an epic
     #
     # Every refusal from the epic tier answers {NoEpic}, whose whole surface is
-    # `tools` and `mounted?`: its tools are epic_write, epic_graph and epic_submit, which
-    # need no mounted epic. `home` and `review` have no honest null (which epic this is
+    # `tools` and `mounted?`: its tools are epic_write, epic_graph, epic_review and epic_submit,
+    # which need no mounted epic. `home` and `review` have no honest null (which epic this is
     # cannot be defaulted), so answering them would be a lie rather than a Null
     # Object.
     #
@@ -36,7 +36,7 @@ module Lain
 
       # No epic resolved. `tools` and `mounted?` are the entire duck its
       # callers depend on; the class comment says why `home` and `review` are
-      # absent. Its tools are the epic_write, epic_graph and epic_submit a chat
+      # absent. Its tools are the epic_write, epic_graph, epic_review and epic_submit a chat
       # needs to start its first epic, reshape it and put it before its gates.
       class NoEpic
         # @param homes [Homes] where epic_write resolves a home per call, and
@@ -49,8 +49,12 @@ module Lain
         end
 
         # @param submitter [#submit] the chat's in-process gate submitter
+        # @param critique [#call, nil] `(subject:, instructions:) -> String`; nil leaves out epic_review
         # @return [Array<Lain::Tool>]
-        def tools(submitter:) = [@epic_write, @epic_graph, Lain::Tools::EpicSubmit.new(submitter:)]
+        def tools(submitter:, critique: nil)
+          [@epic_write, @epic_graph, *EpicMount.review_tool(homes, critique),
+           Lain::Tools::EpicSubmit.new(submitter:)]
+        end
 
         def mounted? = false
 
@@ -207,6 +211,11 @@ module Lain
                                    Lain::Epic::ReviewClosed::JOURNAL_TYPE]).to_a
       end
 
+      # A collection, like {#tools}, so a chat with no critique seam carries no nil.
+      def self.review_tool(homes, critique)
+        critique ? [Lain::Tools::EpicReview.new(homes:, critique:)] : []
+      end
+
       private_class_method :mount, :worth_saying?, :unwired
 
       attr_reader :slug, :review, :notes
@@ -263,9 +272,12 @@ module Lain
       #
       # @param submitter [#submit] the chat's in-process gate submitter, which
       #   needs the ask_human the toolset is built with
+      # @param critique [#call, nil] `(subject:, instructions:) -> String`, which
+      #   the chat's spawn runs a document critique through; nil leaves out epic_review
       # @return [Array<Lain::Tool>]
-      def tools(submitter:)
-        [*(@tools ||= [request_review, epic_write, epic_graph]), Lain::Tools::EpicSubmit.new(submitter:)]
+      def tools(submitter:, critique: nil)
+        [*(@tools ||= [request_review, epic_write, epic_graph]), *EpicMount.review_tool(homes, critique),
+         Lain::Tools::EpicSubmit.new(submitter:)]
       end
 
       def mounted? = true

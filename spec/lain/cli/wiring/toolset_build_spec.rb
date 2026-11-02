@@ -1,5 +1,28 @@
 # frozen_string_literal: true
 
+# The role spawn a document critique asks for its children, recording the
+# model and prompt each was asked for.
+class ToolsetBuildSpecCritiqueSpawn
+  Seam = Struct.new(:context_factory, :provider)
+
+  attr_reader :calls
+
+  def initialize = @calls = []
+
+  def seam
+    Seam.new(-> { Lain::Context.new(model: "author-model", max_tokens: 64) }, Lain::Provider::Mock.new)
+  end
+
+  def within(_worker_env) = self
+
+  def never_parking = self
+
+  def call(role, mode, prompt, model:)
+    @calls << { role:, mode:, prompt:, model: model.model }
+    Lain::Tool::Result.ok("VERDICT: approve")
+  end
+end
+
 # {Lain::CLI::Chronicle::Null#observer} answers a FRESH Null chain writer on
 # every call, which cannot tell a forwarded observer from a discarded one -- the
 # assertion would pass against `observer: EventLog::ChainWriter::Null.new`. This one
@@ -300,6 +323,99 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
 
         expect(names).to include("epic_write", "epic_graph", "epic_submit")
         expect(names).not_to include("request_review")
+      end
+    end
+
+    context "when a chat resolved a mounted epic" do
+      around do |example|
+        Dir.mktmpdir do |dir|
+          @project = dir
+          example.run
+        end
+      end
+
+      let(:root) { @project }
+      let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@project, "state"), "HOME" => @project }) }
+      let(:config) { Lain::Config.new(epics: Lain::Config::Epics.new(home: :repo), review:) }
+      let(:epic) do
+        home = Lain::Epic::Home.resolve(config:, paths:, root:, slug: "alpha")
+        graph = Lain::Epic::Graph.new(issues: [Lain::Epic::Issue.new(id: "a1", title: "t")])
+        home.epic.write(Lain::Epic::Document.to_markdown(graph))
+        Lain::CLI::EpicMount.for(chronicle: Lain::CLI::Chronicle::Null.new, options: {}, root:, config:, paths:,
+                                 told: ->(_line) {})
+      end
+
+      # A served window for any model, so the critique sizes its children without a live provider.
+      let(:served_window) do
+        Class.new do
+          def resolve(model)
+            Lain::CLI::Backend::WindowBook::Served.new(model:, window_tokens: 32_768,
+                                                       provenance: Lain::ContextWindow::PROBED).resolve(model)
+          end
+        end.new
+      end
+      let(:reviewer) { nil }
+      let(:review) { Lain::Config::Review.from({ "model" => reviewer }, path: nil) }
+      # Records what the document critique spawns: the model each child is
+      # asked to run on and the prompt it was shown.
+      let(:spawn) { ToolsetBuildSpecCritiqueSpawn.new }
+
+      let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
+
+      it "offers epic_review beside epic_graph" do
+        names = build_with(options, paths:, config:).build(recorder, ask_human:).names
+
+        expect(names).to include("epic_review")
+        expect(names.index("epic_review")).to be > names.index("epic_graph")
+      end
+
+      def write_issue_file
+        home = Lain::Epic::Home.resolve(config:, paths:, root:, slug: "alpha")
+        FileUtils.mkdir_p(File.join(home.path, "issues"))
+        File.write(File.join(home.path, "issues", "a1.md"), "ISSUE-A1\n")
+      end
+
+      def review_with_spawn
+        write_issue_file
+        allow(Lain::Skill::RoleSpawn).to receive(:new).and_return(spawn)
+        allow(backend).to receive(:context_window).and_return(served_window)
+        epic_review_tool.call({ "stage" => "issue_plan", "slug" => "alpha" }, invocation)
+      end
+
+      def epic_review_tool = build_with(options, paths:, config:).build(recorder, ask_human:).fetch("epic_review")
+
+      it "runs the author's own model fresh when no review model is configured" do
+        result = review_with_spawn
+
+        expect(result).not_to be_error
+        expect(spawn.calls.map { _1[:model] }).to eq([""])
+      end
+
+      it "shows each child its issue file and epic.md as shared context" do
+        review_with_spawn
+
+        expect(spawn.calls.first[:prompt]).to include("ISSUE-A1", "Shared context", "## epic.md")
+        expect(spawn.calls.first.values_at(:role, :mode)).to eq(%i[reviewer_code fresh])
+      end
+
+      context "when the review model differs from the author's" do
+        let(:reviewer) { "reviewer-model" }
+
+        it "runs the children on it" do
+          review_with_spawn
+
+          expect(spawn.calls.map { _1[:model] }).to eq(["reviewer-model"])
+        end
+      end
+
+      context "when the review model is the author's" do
+        let(:reviewer) { backend.model }
+
+        it "passes none, so the author's own runs fresh" do
+          review_with_spawn
+
+          expect(spawn.calls.map { _1[:model] }).to eq([""])
+        end
       end
     end
 

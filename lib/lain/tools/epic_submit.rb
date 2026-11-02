@@ -23,6 +23,8 @@ module Lain
         field :issue, :string, description: "The issue id. For stage issue_plan, name an issue or a wave."
         field :wave, :integer, description: "For stage issue_plan: a wave number from `lain epic status`. Every " \
                                             "issue in the wave is asked about in one question."
+        field :review, :string, description: "The verdict line(s) of the epic_review you ran for this gate, quoted " \
+                                             "verbatim; the human sees it labelled as your quote."
 
         validates :stage, inclusion: { in: STAGES, message: "must be one of #{STAGES.join(", ")}" }
         validates :issue, presence: true, if: -> { stage == "issue_plan" && wave.nil? }
@@ -39,7 +41,7 @@ module Lain
 
       input_model Input
 
-      # @param submitter [#submit] answers `submit(stage, slug, issue:, wave:)` with
+      # @param submitter [#submit] answers `submit(stage, slug, issue:, wave:, review:)` with
       #   the verdict as a {Tool::Result}, held when the human asked the agent
       #   to wait, as {CLI::EpicSubmit::InChat#submit} does
       def initialize(submitter:)
@@ -59,7 +61,7 @@ module Lain
       protected
 
       def perform(input, _invocation)
-        @submitter.submit(input.stage, input.slug, issue: input.issue, wave: input.wave)
+        @submitter.submit(input.stage, input.slug, issue: input.issue, wave: input.wave, review: input.review)
       rescue Epic::Gate::Policies::Refusal => e
         Tool::Result.error("#{unwirable(e)}; ask the user to run `#{shell_command(input)}` from a shell")
       rescue Lain::Error, SystemCallError => e

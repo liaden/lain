@@ -218,7 +218,8 @@ module Lain
         "web_search" => RESULT_BYTES,
         "ast_search" => RESULT_BYTES,
         "ast_dump" => RESULT_BYTES,
-        "web_fetch" => RESULT_BYTES
+        "web_fetch" => RESULT_BYTES,
+        "epic_review" => RESULT_BYTES
       }.freeze
 
       # The disclosing shape: cap the rows, say so in the rows.

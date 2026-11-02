@@ -5,7 +5,7 @@ http_interactions:
     uri: http://localhost:11434/api/chat
     body:
       encoding: UTF-8
-      string: '{"model":"lfm2.5:latest","tools":["ask_human","ast_dump","ast_search","bash","edit_file","epic_graph","epic_submit","epic_write","file_symbols","glob","grep","list_files","memory_read","memory_write","read_file","run_skill","session_usage","subagent","test_pattern","todo_write","web_fetch","web_search","write_file"],"option_keys":["num_batch","num_ctx","num_predict","seed","temperature"],"last_message":["user","Do
+      string: '{"model":"lfm2.5:latest","tools":["ask_human","ast_dump","ast_search","bash","edit_file","epic_graph","epic_review","epic_submit","epic_write","file_symbols","glob","grep","list_files","memory_read","memory_write","read_file","run_skill","session_usage","subagent","test_pattern","todo_write","web_fetch","web_search","write_file"],"option_keys":["num_batch","num_ctx","num_predict","seed","temperature"],"last_message":["user","Do
         this one chore in this checkout, then commit it with a short message that
         says what changed:\n\nCall write_file with path set to exactly hello.txt and
         content set to hi, then run this bash command: git add hello.txt && git commit
@@ -33,7 +33,7 @@ http_interactions:
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" order"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":":"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" first"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" write"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" create"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" a"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" file"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" named"},"done":false}
@@ -45,80 +45,96 @@ http_interactions:
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"hi"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"\""},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" using"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" the"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" `"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"write"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" write"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"_file"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"`"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" tool"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":","},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" then"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" run"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" a"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" git"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" command"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" to"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" add"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" and"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" git"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" commit"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" that"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" file"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"."},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" The"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" request"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" explicitly"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" says"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" to"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" change"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" only"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" what"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" the"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" chore"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" asks"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" for"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":","},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" which"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" is"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" exactly"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" those"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" steps"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"."},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" No"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" additional"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" information"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" or"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" prior"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" context"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" is"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" needed"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":";"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" I"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" can"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" construct"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" the"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" required"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" arguments"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" directly"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":".\n\n"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"I"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" will"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" start"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" by"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" calling"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" `"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"write"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"_file"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"`"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" with"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" the"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" specified"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" path"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" and"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" content"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" command"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"."},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" After"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" that"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" completes"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":","},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" they"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" want"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" me"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" to"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" stop"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" once"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" the"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" commit"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" is"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" made"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"."},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" Since"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" these"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" are"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" sequential"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" steps"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":","},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" I"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" need"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" to"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" execute"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" them"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" one"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" after"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" another"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"."},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" The"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" first"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" step"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" is"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" to"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" write"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" the"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" file"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"."},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" According"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" to"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" the"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" instructions"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":","},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" I"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" must"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" use"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" the"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" write"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"_file"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" tool"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" with"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" the"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" exact"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" path"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" \""},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"hello"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":".txt"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"\""},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" and"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" content"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" \""},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"hi"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"\"."},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" No"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" prior"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" reading"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" is"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" needed"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" because"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" this"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" is"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" a"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" new"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" file"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"."},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" After"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" writing"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":","},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" I"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" will"},"done":false}
@@ -130,18 +146,33 @@ http_interactions:
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" a"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" subsequent"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" step"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":".\n\n"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"So"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" the"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" immediate"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" next"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" action"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" is"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" to"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" call"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" write"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"_file"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" with"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" the"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" specified"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" arguments"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":".\n"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"\u003c/think\u003e"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"\n"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"","tool_calls":[{"id":"call_adtfiu7e","function":{"index":0,"name":"write_file","arguments":{"path":"hello.txt","content":"hi"}}}]},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","total_duration":1682513584,"load_duration":2531411,"prompt_eval_count":6046,"prompt_eval_cached_count":0,"prompt_eval_duration":632200000,"eval_count":130,"eval_duration":1002145000}
-  recorded_at: Thu, 29 Oct 2026 08:02:28 GMT
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"","tool_calls":[{"id":"call_trbkdfcf","function":{"index":0,"name":"write_file","arguments":{"path":"hello.txt","content":"hi"}}}]},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","total_duration":1912856410,"load_duration":1968720,"prompt_eval_count":6619,"prompt_eval_cached_count":0,"prompt_eval_duration":718207000,"eval_count":161,"eval_duration":1144476000}
+  recorded_at: Mon, 02 Nov 2026 11:30:14 GMT
 - request:
     method: post
     uri: http://localhost:11434/api/chat
     body:
       encoding: UTF-8
-      string: '{"model":"lfm2.5:latest","tools":["ask_human","ast_dump","ast_search","bash","edit_file","epic_graph","epic_submit","epic_write","file_symbols","glob","grep","list_files","memory_read","memory_write","read_file","run_skill","session_usage","subagent","test_pattern","todo_write","web_fetch","web_search","write_file"],"option_keys":["num_batch","num_ctx","num_predict","seed","temperature"],"last_message":["tool","wrote
+      string: '{"model":"lfm2.5:latest","tools":["ask_human","ast_dump","ast_search","bash","edit_file","epic_graph","epic_review","epic_submit","epic_write","file_symbols","glob","grep","list_files","memory_read","memory_write","read_file","run_skill","session_usage","subagent","test_pattern","todo_write","web_fetch","web_search","write_file"],"option_keys":["num_batch","num_ctx","num_predict","seed","temperature"],"last_message":["tool","wrote
         2 bytes to <LEASE1>/hello.txt"]}'
   response:
     status:
@@ -153,26 +184,27 @@ http_interactions:
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"\u003cthink\u003e"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"\n"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"The"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" write"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"_file"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" tool"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" reported"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" that"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" "},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"2"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" bytes"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" were"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" written"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" user"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" wants"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" me"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" to"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" run"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" a"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" bash"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" command"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" after"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" writing"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" the"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" file"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"."},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" The"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" previous"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" step"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" wrote"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" hello"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":".txt"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":","},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" which"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" is"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" the"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" expected"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" size"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" for"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" with"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" content"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" \""},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"hi"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"\"."},"done":false}
@@ -180,91 +212,9 @@ http_interactions:
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" I"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" need"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" to"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" run"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" the"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" git"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" commands"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" as"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" specified"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"."},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" I"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"'ll"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" execute"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" them"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" in"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" a"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" single"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" bash"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" command"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":".\n"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"\u003c/think\u003e"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"\n"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"","tool_calls":[{"id":"call_ioevfdsj","function":{"index":0,"name":"bash","arguments":{"command":"git add hello.txt \u0026\u0026 git commit -q -m add-hello"}}}]},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","total_duration":624317379,"load_duration":1664424,"prompt_eval_count":6253,"prompt_eval_cached_count":6042,"prompt_eval_duration":74123000,"eval_count":72,"eval_duration":539723000}
-  recorded_at: Thu, 29 Oct 2026 08:02:28 GMT
-- request:
-    method: post
-    uri: http://localhost:11434/api/chat
-    body:
-      encoding: UTF-8
-      string: '{"model":"lfm2.5:latest","tools":["ask_human","ast_dump","ast_search","bash","edit_file","epic_graph","epic_submit","epic_write","file_symbols","glob","grep","list_files","memory_read","memory_write","read_file","run_skill","session_usage","subagent","test_pattern","todo_write","web_fetch","web_search","write_file"],"option_keys":["num_batch","num_ctx","num_predict","seed","temperature"],"last_message":["tool","exit
-        status: 0\n--- stdout ---\n--- stderr ---\n"]}'
-  response:
-    status:
-      code: 200
-      message: OK
-    body:
-      encoding: UTF-8
-      string: |
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"{\n"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" "},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" \""},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"todo"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"_write"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"\":"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" [\n"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"   "},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" {\n"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"     "},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" \""},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"content"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"\":"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" \""},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"Call"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" write"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"_file"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" with"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" path"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" set"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" to"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" exactly"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" hello"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":".txt"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" and"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" content"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" set"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" to"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" hi"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"\",\n"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"     "},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" \""},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"status"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"\":"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" \""},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"com"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"pleted"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"\"\n"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"   "},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" },\n"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"   "},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" {\n"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"     "},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" \""},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"content"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"\":"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" \""},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"run"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" git"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" `"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"git"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" add"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" hello"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":".txt"},"done":false}
@@ -278,20 +228,244 @@ http_interactions:
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" add"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"-he"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"llo"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"\",\n"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"     "},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"`."},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" This"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" is"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" a"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" simple"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" shell"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" command"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":","},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" so"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" I"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" will"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" use"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" the"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" bash"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" tool"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":".\n"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"\u003c/think\u003e"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"\n"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"","tool_calls":[{"id":"call_lfcyotil","function":{"index":0,"name":"bash","arguments":{"command":"git add hello.txt \u0026\u0026 git commit -q -m add-hello"}}}]},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","total_duration":784567476,"load_duration":1863665,"prompt_eval_count":6862,"prompt_eval_cached_count":6615,"prompt_eval_duration":77419000,"eval_count":88,"eval_duration":696241000}
+  recorded_at: Mon, 02 Nov 2026 11:30:15 GMT
+- request:
+    method: post
+    uri: http://localhost:11434/api/chat
+    body:
+      encoding: UTF-8
+      string: '{"model":"lfm2.5:latest","tools":["ask_human","ast_dump","ast_search","bash","edit_file","epic_graph","epic_review","epic_submit","epic_write","file_symbols","glob","grep","list_files","memory_read","memory_write","read_file","run_skill","session_usage","subagent","test_pattern","todo_write","web_fetch","web_search","write_file"],"option_keys":["num_batch","num_ctx","num_predict","seed","temperature"],"last_message":["tool","exit
+        status: 0\n--- stdout ---\n--- stderr ---\n"]}'
+  response:
+    status:
+      code: 200
+      message: OK
+    body:
+      encoding: UTF-8
+      string: |
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"\u003cthink\u003e"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"\n"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"The"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" user"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" asked"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" to"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" write"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" hello"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":".txt"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" with"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" content"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" \""},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"status"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"\":"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" \""},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"com"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"pleted"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"\"\n"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"   "},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" }\n"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"hi"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"\""},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" and"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" then"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" commit"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" it"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"."},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" The"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" assistant"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" wrote"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" the"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" file"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" using"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" write"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"_file"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":","},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" which"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" succeeded"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" ("},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"2"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" bytes"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" written"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":")."},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" Then"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" ran"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" the"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" git"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" add"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" and"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" commit"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" command"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":","},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" which"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" completed"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" with"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" exit"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" status"},"done":false}
         {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" "},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" ]\n"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"}"},"done":false}
-        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","total_duration":643349111,"load_duration":1734975,"prompt_eval_count":6230,"prompt_eval_cached_count":6042,"prompt_eval_duration":73114000,"eval_count":77,"eval_duration":560252000}
-  recorded_at: Thu, 29 Oct 2026 08:02:29 GMT
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"0"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":","},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" indicating"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" success"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"."},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" The"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" task"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" is"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" complete"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":":"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" the"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" file"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" was"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" created"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" and"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" committed"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" as"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" requested"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":".\n\n"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"Now"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" I"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" need"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" to"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" respond"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" according"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" to"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" the"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" required"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" format"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"."},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" Since"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" the"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" task"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" is"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" done"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":","},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" I"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" should"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" indicate"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" completion"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"."},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" However"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":","},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" there"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" are"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" no"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" further"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" actions"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" needed"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":";"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" I"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" can"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" simply"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" state"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" that"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" the"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" commit"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" was"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" made"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" successfully"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"."},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" According"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" to"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" the"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" instructions"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":","},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" if"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" there"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"'s"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" nothing"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" else"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" to"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" do"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":","},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" I"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" can"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" provide"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" a"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" final"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" statement"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"."},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" There"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"'s"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" no"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" explicit"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" requirement"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" for"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" a"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" specific"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" response"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" format"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" beyond"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" what"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"'s"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" given"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"."},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" The"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" user"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" said"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" \""},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"Stop"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" once"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" the"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" commit"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" is"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" made"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":".\""},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" So"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" we"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" stop"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":".\n\n"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"Thus"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":","},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" I"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" will"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" output"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" a"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" final"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" message"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" indicating"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" success"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":".\n"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"\u003c/think\u003e"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"\n\n"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"The"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" file"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" `"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"hello"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":".txt"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"`"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" has"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" been"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" created"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" with"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" content"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" \""},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"hi"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"\""},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" and"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" committed"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" with"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" the"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" message"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" \""},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"add"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"-he"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"llo"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"\"."},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" Comm"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"it"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" completed"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":" successfully"},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":"."},"done":false}
+        {"model":"lfm2.5:latest","created_at":"<RECORDED>","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","total_duration":1659569881,"load_duration":1820053,"prompt_eval_count":6824,"prompt_eval_cached_count":6615,"prompt_eval_duration":74621000,"eval_count":204,"eval_duration":1574314000}
+  recorded_at: Mon, 02 Nov 2026 11:30:17 GMT
 recorded_with: VCR 6.4.0

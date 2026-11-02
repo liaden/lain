@@ -68,7 +68,7 @@ module ParallelSafetySpecSupport
   # web tools, tool_search) -- none opted in without a deliberate audit of
   # its own.
   FALSE_TOOLS = %w[bash edit_file write_file todo_write memory_write improvement_write
-                   run_skill ask_human request_review epic_write epic_graph epic_submit
+                   run_skill ask_human request_review epic_write epic_graph epic_submit epic_review
                    web_fetch web_search tool_search send_message].freeze
 
   # The builder table moved to spec/support/tool_registry.rb once a second

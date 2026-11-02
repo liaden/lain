@@ -729,9 +729,9 @@ module Lain
         # @return [Tool::Result] the verdict's words, as {EpicSubmit#submit} says
         #   them, with no exit status to carry; a hold ends the agent's turn
         # @raise [Lain::Error] when the session would not keep the decision
-        def submit(stage, slug = nil, issue: nil, digest: nil, tests: nil, wave: nil)
+        def submit(stage, slug = nil, issue: nil, digest: nil, tests: nil, wave: nil, review: nil)
           refuse_unkept!
-          case @command.submit(stage, slug, issue:, digest:, tests:, wave:)
+          case @command.submit(stage, slug, issue:, digest:, tests:, wave:, review:)
           in Held => held then Tool::Result.held(held.wait)
           in said then Tool::Result.ok(said.text)
           end
@@ -784,16 +784,18 @@ module Lain
       # @param tests [Telemetry::TestsRan, nil] what the suite did on that changeset, for `implementation`
       # @param wave [Integer, nil] a wave of {Lain::Epic::Graph#waves}, counted
       #   from 1, whose issue plans are asked about together; issue_plan only
+      # @param review [String, nil] the agent's quote of a review, shown to the
+      #   human beside the question and never part of the gate's identity
       # @return [Said, Held] the verdict, rendered
       # @raise [Lain::Error] every refusal on this path: an unknown stage, an
       #   ambiguous home, a missing artifact, an unbuildable policy, or the
       #   stage boundary
-      def submit(stage, slug = nil, issue: nil, digest: nil, tests: nil, wave: nil)
+      def submit(stage, slug = nil, issue: nil, digest: nil, tests: nil, wave: nil, review: nil)
         staged = Lain::Epic::Stage.new(stage)
         epic_home = home(slug)
-        return decide_wave(staged, epic_home, wave_of(staged, epic_home, wave, issue)) if wave
+        return decide_wave(staged, epic_home, wave_of(staged, epic_home, wave, issue).with(review:)) if wave
 
-        decide(staged, epic_home, Artifacts.new(home: epic_home, root: @root, issue:, digest:, tests:))
+        decide(staged, epic_home, Artifacts.new(home: epic_home, root: @root, issue:, digest:, tests:), review:)
       end
 
       # The question an issue's launch asks before any work starts: is this
@@ -820,8 +822,8 @@ module Lain
       # Held around the WHOLE decision, wiring refusal included, because
       # {Lain::Epic::Gate::Policies::Deps} carries a `journal` seam an adjudicating
       # policy needs before it is built.
-      def decide(stage, epic_home, artifacts)
-        submission = artifacts.submission(stage)
+      def decide(stage, epic_home, artifacts, review: nil)
+        submission = artifacts.submission(stage).with(review:)
         required = artifacts.required(stage)
         recorded(epic_home) { |records, journal| settled(stage, submission, required, records, journal) }
       end

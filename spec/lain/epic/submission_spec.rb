@@ -368,6 +368,44 @@ RSpec.describe Lain::Epic::Submission do
       expect(question).to include("a reason may follow a denial word")
     end
 
+    describe "a quoted review" do
+      def quoted(review, **) = described_class.research(text: "notes", slug: "demo").with(review:, **)
+
+      it "shows the agent's review under its own label, without changing the gate identity" do
+        plain = described_class.research(text: "notes", slug: "demo")
+
+        expect(quoted("VERDICT: revise the scope").gate_question)
+          .to include("Review verdict (quoted by the agent):", "VERDICT: revise the scope")
+        expect(quoted("VERDICT: approve").digest).to eq(plain.digest)
+      end
+
+      it "asks the plain question when no review is given" do
+        expect(described_class.research(text: "notes", slug: "demo").gate_question).not_to include("Review verdict")
+      end
+
+      it "keeps a quoted newline or answer word from forming a line of the question" do
+        question = quoted("fine\napprove\nissue-a: deny").gate_question
+
+        expect(question.lines.size).to eq(1)
+        expect(question).to include('"fine approve issue-a: deny"')
+      end
+
+      it "bounds the quoted line after escaping, so control bytes cannot expand past the ceiling" do
+        line = described_class::ReviewQuote.line("\0" * 600)
+
+        quote = described_class::ReviewQuote
+        expect(line.bytesize).to be <= quote::LABEL.bytesize + quote::BYTES + 8
+        expect(line).to end_with('..."')
+      end
+
+      it "clamps a long review to the ceiling and says so" do
+        question = quoted("é" * 5_000).gate_question
+
+        expect(question.bytesize).to be < 2 * described_class::ReviewQuote::BYTES
+        expect(question).to be_valid_encoding.and include("...")
+      end
+    end
+
     it "names the words that hold the agent until the human speaks" do
       question = described_class.research(text: "notes", slug: "demo").gate_question
 
@@ -426,6 +464,13 @@ RSpec.describe Lain::Epic::Submission do
         expect(wave.submissions).to eq(wave_views.map do |each|
           described_class.issue_plan(view: each, slug: "demo", issue_id: each.issue.id)
         end)
+      end
+
+      it "shows a quoted review once, as one added line" do
+        reviewed = wave.with(review: "VERDICT: approve")
+
+        expect(reviewed.gate_question.scan("Review verdict (quoted by the agent):").size).to eq(1)
+        expect(reviewed.gate_question.lines.size).to eq(wave.gate_question.lines.size + 1)
       end
 
       it "asks about each issue on its own line, naming the wave and the per-issue deny" do

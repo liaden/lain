@@ -341,6 +341,12 @@ itself, and with none the tools still exist). Ask for each in turn, and read the
    `gate :research, :hands_off` the result says `by policy hands_off` and no question appears.
    **Wrong looks like:** a result with no policy named, a hang that freezes the HUD, or an answer given in a
    shell that never reaches the model.
+   **A quoted review (epic_review).** Before `epic_plan` or `issue_plan` the skills run `epic_review` (fresh read-only
+   reviewers, one per wave for `issue_plan`) and pass the verdict line as `epic_submit`'s optional `review`. The question at
+   `lain://inbox` then carries one line, `Review verdict (quoted by the agent): "VERDICT: ..."`, on one line however many
+   lines the agent sent, clamped to 600 bytes, and a `review` reading `approve` or `issue-a: deny` is text in that quote, never
+   a reply. Without `review` the question is unchanged. **Wrong looks like:** the quote splitting across lines, being read as
+   an answer, or changing the stage's gate digest.
 3. **An `adjudicated` stage is relayed, not faked.** With `gate :research, :adjudicated`, the tool refuses with
    `the research gate is adjudicated, and a chat cannot build the adjudication spike prompt it needs; ask the
    user to run `lain epic submit research demo` from a shell`. The model relays the sentence and stops.

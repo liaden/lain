@@ -37,7 +37,7 @@ RSpec.describe Lain::CLI::EpicMount do
     Class.new do
       attr_reader :asked
 
-      def submit(stage, slug = nil, issue: nil, digest: nil, wave: nil)
+      def submit(stage, slug = nil, issue: nil, digest: nil, wave: nil, **)
         (@asked ||= []) << [stage, slug, issue, digest, wave]
         Lain::Tool::Result.ok("approved #{stage}")
       end
@@ -109,6 +109,17 @@ RSpec.describe Lain::CLI::EpicMount do
 
       expect(mount.slug).to eq("alpha")
       expect(tools_of(mount).map(&:name)).to eq(%w[request_review epic_write epic_graph epic_submit])
+    end
+
+    it "adds epic_review beside epic_graph when the chat can run a critique" do
+      create_epic("alpha")
+      critique = ->(subject:, instructions:) { [subject, instructions] }
+
+      mounted = mount_for.tools(submitter:, critique:)
+      unmounted = mount_for(options: { epic: "nope" }).tools(submitter:, critique:)
+
+      expect(mounted.map(&:name)).to eq(%w[request_review epic_write epic_graph epic_review epic_submit])
+      expect(unmounted.map(&:name)).to eq(%w[epic_write epic_graph epic_review epic_submit])
     end
 
     it "exposes the homes a document read resolves through, mounted or not" do

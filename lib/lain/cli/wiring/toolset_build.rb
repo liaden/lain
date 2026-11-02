@@ -290,7 +290,27 @@ module Lain
           @floor = base
           submitter = EpicSubmit.in_chat(**@in_chat, asker: ask_human, role_spawn: @role_spawn)
           Lain::Toolset.new(base.to_a + [chat_subagent(base), ask_human, run_skill, session_usage] +
-                            epic.tools(submitter:))
+                            epic.tools(submitter:, critique: document_critique))
+        end
+
+        # A document critique over the chat's own role spawn, read late so the
+        # window book, journal and session are the live ones when a review runs.
+        def document_critique
+          lambda do |subject:, instructions:|
+            Lain::Review::Critique.new(
+              subject:, spawn: @role_spawn, window: backend.context_window, journal: seam.journal,
+              slots: library.slots, instructions:, model: review_model,
+              checkouts: Lain::Review::Critique::Documents::ReadRoots.new(root: subject.root,
+                                                                          worker_env: @session.worker_env)
+            ).call
+          end
+        end
+
+        # Nil when the configured model is the author's, so the author's own runs fresh.
+        def review_model
+          author = seam.context_factory.call.model
+          chosen = @in_chat.fetch(:config).review.choose(author:).model
+          chosen unless chosen == author
         end
 
         # The one Subagent that grants {ISSUE_ORCHESTRATOR}: the floor {#build}
