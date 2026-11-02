@@ -1904,6 +1904,13 @@ RSpec.describe Lain::Tools::Subagent do
              .find { |block| block.is_a?(Hash) && block["type"] == "tool_result" }
     end
 
+    it "describes the roles in words that fit a chat as well as an orchestrator" do
+      description = offering(reader: build_subagent(provider: mock(text_response("x")))).description
+
+      expect(description).to include("reader").and include("research").and include("review")
+      expect(description).not_to include("the implementing to one role")
+    end
+
     it "spawns the role the call names, through that role's own spawner" do
       reading = mock(text_response("read it"))
       other = mock(text_response("unused"))
@@ -1913,6 +1920,28 @@ RSpec.describe Lain::Tools::Subagent do
 
       expect(result.content).to eq("read it")
       expect([reading.call_count, other.call_count]).to eq([1, 0])
+    end
+
+    it "forwards the call's name to the chosen role's spawner" do
+      tool = offering(reader: build_subagent(provider: mock(text_response("read it"))))
+
+      expect(tool.call({ "prompt" => "look", "role" => "reader", "name" => "scout" }, invocation).content)
+        .to eq("read it")
+      expect(tool.input_schema.fetch("properties").keys).to include("name").and(satisfy { |keys|
+        keys.exclude?("extends")
+      })
+    end
+
+    it "refuses extends for a role that keeps no lease, naming the role, and spawns nothing" do
+      provider = mock(text_response("unused"))
+      keeper = instance_double(described_class, input_model: described_class::Kept::Input)
+      tool = offering(researcher: keeper, reviewer: build_subagent(provider:))
+
+      result = tool.call({ "prompt" => "look", "role" => "reviewer", "extends" => "." }, invocation)
+
+      expect(result).to be_error
+      expect(result.content).to include("reviewer", "extends")
+      expect(provider.call_count).to eq(0)
     end
 
     it "refuses a role it does not offer, naming the ones it does, and spawns nothing" do

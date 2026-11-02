@@ -897,9 +897,7 @@ module Lain
         # The task, and which role is to carry it out. Both are the model's to
         # write; which roles exist is not. {Tasked} comes first so `prompt`
         # still precedes `role` in the rendered schema.
-        class Input < Tool::Input
-          include Tasked
-
+        class Input < Subagent::Input
           field :role, :string, required: true,
                                 description: "Which of the roles on offer the subagent takes."
         end
@@ -923,9 +921,17 @@ module Lain
         def description
           "Spawns a subagent in the role you name (#{roles.join(" or ")}) to carry out `prompt` on " \
             "its own, with that role's tools and its own conversation, and returns only its final " \
-            "answer. Use it to fan out a self-contained subtask: the implementing to one role, the " \
-            "reviewing to another."
+            "answer. Use it to fan out a self-contained subtask to the role that fits it: research, " \
+            "implementing or review.#{role_tools_note}"
         end
+
+        # Every member attenuates from the same floor.
+        def attenuates_from = @spawners.each_value.first.attenuates_from
+
+        # The first member's seam; another member's can differ in the requester its tools ask under.
+        def seam = @spawners.each_value.first.seam
+
+        def input_model = @spawners.each_value.any? { |spawner| keeps?(spawner) } ? Keeping : Input
 
         # @return [Array<String>] the roles on offer, in the order they were given
         def roles = @spawners.keys
@@ -958,11 +964,26 @@ module Lain
 
         def perform(input, invocation)
           return refused(input.role) unless @spawners.key?(input.role)
+          return no_lease(input.role) if input.attributes["extends"] && !keeps?(@spawners.fetch(input.role))
 
-          @spawners.fetch(input.role).call({ "prompt" => input.prompt }, invocation)
+          @spawners.fetch(input.role).call(input.attributes.except("role").compact, invocation)
         end
 
         private
+
+        def role_tools_note
+          notes = @spawners.filter_map do |role, spawner|
+            "#{role} can use only #{spawner.policy.only.join(", ")}" unless spawner.policy.only.empty?
+          end
+          notes.empty? ? "" : " #{notes.join("; ")}."
+        end
+
+        def keeps?(spawner) = spawner.input_model <= Subagent::Kept::Input
+
+        def no_lease(role)
+          keepers = @spawners.select { |_, spawner| keeps?(spawner) }.keys
+          Tool::Result.error("role #{role} takes no extends; only #{keepers.join(", ")} keeps a lease")
+        end
 
         def refused(role)
           Tool::Result.error("no #{role.inspect} role is on offer here; name one of #{roles.join(", ")}")
@@ -1081,6 +1102,12 @@ module Lain
         # A subclass rather than a field on the shared one: the schema is a cache
         # key, and only a spawner that leases its child a place takes `extends`.
         class Input < Subagent::Input
+          field :extends, :string, description: EXTENDS
+        end
+
+        # The {Choice} input when a member keeps its child's lease: defined here
+        # because EXTENDS is, and only such a choice takes `extends`.
+        Choice::Keeping = Class.new(Choice::Input) do
           field :extends, :string, description: EXTENDS
         end
 

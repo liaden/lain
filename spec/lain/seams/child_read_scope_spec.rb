@@ -89,7 +89,8 @@ RSpec.describe "A spawned child's read outside its scope", :seam do
   end
 
   def child_calls(name, input)
-    script.push(calls("tu_spawn", "subagent", { "prompt" => "look around" }), calls("tu_child", name, input),
+    spawn = calls("tu_spawn", "subagent", { "prompt" => "look around", "role" => "researcher" })
+    script.push(spawn, calls("tu_child", name, input),
                 text_response("child done"), text_response("parent done"))
   end
 

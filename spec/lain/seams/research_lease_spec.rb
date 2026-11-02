@@ -69,7 +69,9 @@ RSpec.describe "A researcher spawn leases its own kept, confined directory", :se
     toolset.fetch(Lain::Tools::Subagent::NAME)
   end
 
-  def spawn(provider, input) = researcher(provider).call({ "prompt" => "survey it" }.merge(input), invocation)
+  def spawn(provider, input)
+    researcher(provider).call({ "prompt" => "survey it", "role" => "researcher" }.merge(input), invocation)
+  end
 
   def first_request(provider) = provider.requests.first.then { [_1.system, _1.messages].to_s }
 
@@ -211,7 +213,8 @@ RSpec.describe "A researcher spawn leases its own kept, confined directory", :se
       tool = researcher(provider)
 
       Sync do |task|
-        Array.new(2) { task.async { tool.call({ "prompt" => "survey it", "extends" => @other }, invocation) } }
+        input = { "prompt" => "survey it", "role" => "researcher", "extends" => @other }
+        Array.new(2) { task.async { tool.call(input, invocation) } }
              .each(&:wait)
       end
 

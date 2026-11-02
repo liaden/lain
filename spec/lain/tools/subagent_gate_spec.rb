@@ -515,7 +515,9 @@ RSpec.describe "Subagent gating" do
       asked = Sync do |task|
         parent_call = task.async { parent_dispatch("read_file", read) }
         parent_park = task.with_timeout(1) { board.approvals.dequeue }.tap { |pending| pending.deny(surface: "spec") }
-        child_call = task.async { toolset.fetch("subagent").call({ "prompt" => "go" }, invocation) }
+        child_call = task.async do
+          toolset.fetch("subagent").call({ "prompt" => "go", "role" => "researcher" }, invocation)
+        end
         child_park = task.with_timeout(1) { board.approvals.dequeue }.tap { |pending| pending.deny(surface: "spec") }
         parent_call.wait
         child_call.wait
@@ -553,7 +555,10 @@ RSpec.describe "Subagent gating" do
       _, toolset = wired(scripted("read_file", read))
 
       asked = Sync do |task|
-        call = task.async { toolset.fetch("subagent").call({ "prompt" => "go", "name" => "parser-check" }, invocation) }
+        call = task.async do
+          toolset.fetch("subagent").call({ "prompt" => "go", "role" => "researcher", "name" => "parser-check" },
+                                         invocation)
+        end
         pending = task.with_timeout(1) { board.approvals.dequeue }
         pending.deny(surface: "spec")
         call.wait

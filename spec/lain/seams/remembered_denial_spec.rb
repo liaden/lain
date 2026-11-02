@@ -80,7 +80,7 @@ RSpec.describe "A human's deny on a gated path, remembered for its requester", :
   # The chat's own `subagent` tool spawns the researcher, which makes `child`
   # calls in turn, then the parent makes its own.
   def scripted(child:, parent: [])
-    script.push(calls("tu_spawn", "subagent", { "prompt" => "look around" }),
+    script.push(calls("tu_spawn", "subagent", { "prompt" => "look around", "role" => "researcher" }),
                 *child.map { |id, name, input| calls(id, name, input) }, text_response("child done"),
                 *parent.map { |id, name, input| calls(id, name, input) }, text_response("parent done"))
   end

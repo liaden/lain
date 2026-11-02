@@ -710,7 +710,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         def leases = Dir.glob(File.join(Lain::Tools::Subagent::Kept.home(paths, project_root), "scratch", "*"))
 
         def dispatch(subagent)
-          subagent.call({ "prompt" => "go" }, Lain::Tool::Invocation.new(context: Lain::Session::Null.instance))
+          subagent.call({ "prompt" => "go", "role" => "researcher" }, Lain::Tool::Invocation.new(context: Lain::Session::Null.instance))
         end
 
         # Parks forever when no human answers, so the run is stopped once the
@@ -763,6 +763,76 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
 
           expect(result).to match(/refused.*outside|outside.*refused/m)
           expect(File.exist?(outside)).to be(false)
+        end
+      end
+
+      # The chat offers a reviewer beside the researcher: read-only, no lease,
+      # so it sees the working tree and the session's read roots.
+      describe "the chat's reviewer child" do
+        let(:store) { Lain::Dag::Factory.store }
+        let(:parent) { -> { Lain::Dag::Factory.timeline(store:) } }
+        let(:project_root) { File.realpath(Dir.mktmpdir("review-project")) }
+        let(:project) { Lain::Project.new(root: project_root, cwd: project_root, kind: :project, detected_by: :flag) }
+        let(:switchboard) do
+          Lain::CLI::Wiring::BoardBuild.for(
+            chronicle:, options: {}, judge: Lain::CLI::Switchboard::DEFERRING, model: "test-model", project:,
+            paths:, toolset: Lain::Toolset.new(ToolRegistry.names.map { |name| ToolRegistry.build(name) })
+          )
+        end
+        let(:state) { File.realpath(Dir.mktmpdir("review-state")) }
+        let(:paths) do
+          Lain::Paths.new(env: { "HOME" => File.join(File.realpath(Dir.mktmpdir("review-home")), "h"),
+                                 "XDG_STATE_HOME" => state })
+        end
+        let(:epic_home) do
+          Lain::Epic::Home.container(config: Lain::Config.load(root: project_root), paths:, root: project_root)
+        end
+        let(:issue_file) { File.join(epic_home, "demo", "issues", "a.md") }
+        let(:provider) do
+          Lain::Provider::Mock.new(responses: [tool_response(["c1", "read_file", { "path" => issue_file }]),
+                                               text_response("reviewed")])
+        end
+        let(:chat_subagent) do
+          build_with(options, switchboard: -> { switchboard }, root: project_root, paths:)
+            .build(recorder, ask_human:).fetch("subagent")
+        end
+
+        before do
+          FileUtils.mkdir_p(File.dirname(issue_file))
+          File.write(issue_file, "REVIEW-ME-MARKER\n")
+        end
+
+        after { FileUtils.rm_rf([state, project_root]) }
+
+        def spawn_reviewer
+          Sync do
+            chat_subagent.call({ "prompt" => "review it", "role" => "reviewer_code" },
+                               Lain::Tool::Invocation.new(context: Lain::Session::Null.instance))
+          end
+        end
+
+        it "offers the researcher and the reviewer under the one subagent name" do
+          expect(chat_subagent.name).to eq("subagent")
+          expect(chat_subagent.roles).to eq(%w[researcher reviewer_code])
+        end
+
+        it "gives the reviewer only the four read tools" do
+          spawn_reviewer
+
+          # ask_human is the question channel every attended child is given, not a capability of the role
+          expect(provider.requests.first.tools.map { |tool| tool.fetch("name") } - %w[ask_human])
+            .to match_array(%w[read_file list_files glob grep])
+        end
+
+        it "reads a file in the epic home with no approval asked" do
+          spawn_reviewer
+
+          expect(switchboard.approvals.to_a).to be_empty
+          expect(Lain::Canonical.dump(provider.last_request.messages)).to include("REVIEW-ME-MARKER")
+        end
+
+        it "describes the reviewer in the chat's own words" do
+          expect(chat_subagent.description).to include("research").and include("review")
         end
       end
 
@@ -890,7 +960,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         end
 
         def dispatch(subagent)
-          subagent.call({ "prompt" => "go" }, Lain::Tool::Invocation.new(context: Lain::Session::Null.instance))
+          subagent.call({ "prompt" => "go", "role" => "researcher" }, Lain::Tool::Invocation.new(context: Lain::Session::Null.instance))
         end
 
         def arrival(task, timeout: 3)
@@ -944,7 +1014,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         it "frames its child with the researcher persona, working in its own kept scratch directory" do
           kept = File.join(Lain::Paths.new.state_home, "research", "*", "scratch", "research-*")
           before = Dir.glob(kept)
-          subagent.call({ "prompt" => "go" }, Lain::Tool::Invocation.new(context: Lain::Session::Null.instance))
+          subagent.call({ "prompt" => "go", "role" => "researcher" }, Lain::Tool::Invocation.new(context: Lain::Session::Null.instance))
           made = Dir.glob(kept) - before
           FileUtils.rm_rf(made)
 
@@ -1492,7 +1562,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       kept = File.join(Lain::Paths.new.state_home, "research", "*", "scratch", "research-*")
       before = Dir.glob(kept)
 
-      full.fetch("subagent").call({ "prompt" => "look" }, Lain::Tool::Invocation.new(context: Lain::Session::Null.instance))
+      full.fetch("subagent").call({ "prompt" => "look", "role" => "researcher" }, Lain::Tool::Invocation.new(context: Lain::Session::Null.instance))
       made = Dir.glob(kept) - before
       FileUtils.rm_rf(made)
 
@@ -1685,7 +1755,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       full = toolset_build.build(recorder, ask_human:)
 
       expect(issue_epic.budget.iterations).to eq(200)
-      expect(full.fetch("subagent").budget.iterations).to eq(60)
+      expect(full.fetch("subagent")[:researcher].budget.iterations).to eq(60)
     end
 
     it "holds each orchestrator child to its role's own ceiling" do
@@ -1756,7 +1826,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
 
       it "constructs the epic Subagent, and the chat's own research Subagent still grants only researcher" do
         agent, build = wired
-        research = agent.toolset.fetch("subagent")
+        research = agent.toolset.fetch("subagent")[:researcher]
 
         expect(issued(build).policy.only).to eq(orchestrator.spawn_policy.only)
         expect(Lain.live(issued(build).seam.holder).depth).to eq(2)
@@ -1771,7 +1841,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         agent, build = wired
         invocation = Lain::Tool::Invocation.new(context: Lain::Session::Null.instance)
 
-        result = agent.toolset.fetch("subagent").call({ "prompt" => "look" }, invocation)
+        result = agent.toolset.fetch("subagent").call({ "prompt" => "look", "role" => "researcher" }, invocation)
 
         blocks = wired_provider.requests[1].messages.flat_map { |message| message["content"] }
         refusal = blocks.find { |block| block.is_a?(Hash) && block["type"] == "tool_result" }
@@ -1840,7 +1910,8 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     it "spills through the chat's subagent tool" do
       full = toolset_build.build(recorder, ask_human:)
 
-      expect_spilled_into_answers(full.fetch("subagent").call({ "prompt" => "look" }, invocation))
+      expect_spilled_into_answers(full.fetch("subagent").call({ "prompt" => "look", "role" => "researcher" },
+                                                              invocation))
     end
 
     it "spills through the role_spawn seam a @researcher fan-out reaches" do

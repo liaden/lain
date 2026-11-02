@@ -289,7 +289,7 @@ module Lain
           @docent = Lain::Review::Docent::Answerer.new(spawn: @role_spawn)
           @floor = base
           submitter = EpicSubmit.in_chat(**@in_chat, asker: ask_human, role_spawn: @role_spawn)
-          Lain::Toolset.new(base.to_a + [research_subagent(base), ask_human, run_skill, session_usage] +
+          Lain::Toolset.new(base.to_a + [chat_subagent(base), ask_human, run_skill, session_usage] +
                             epic.tools(submitter:))
         end
 
@@ -503,6 +503,12 @@ module Lain
           return { holder: Lain::Tools::Subagent::Holder::ROOT } unless agent
 
           { holder: Lain::Tools::Subagent::Holder.of(agent), spend: -> { agent.call.spend } }
+        end
+
+        # The chat's one subagent tool: the researcher, and a reviewer that reads the
+        # working tree and the session's read roots with no lease of its own.
+        def chat_subagent(base)
+          Lain::Tools::Subagent::Choice.new(RESEARCHER => research_subagent(base), REVIEWER => spawner(REVIEWER, seam))
         end
 
         # The chat default: an attenuated read-only child (schema posture,

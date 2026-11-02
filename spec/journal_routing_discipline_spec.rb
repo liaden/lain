@@ -43,7 +43,8 @@ RSpec.describe Lain::CLI::Wiring, "the journal routing discipline" do
   let(:provider) do
     Lain::Provider::Mock.new(responses: [
                                tool_response(["tu_bash", "bash", { "command" => "printf hello" }]),
-                               tool_response(["tu_spawn", "subagent", { "prompt" => "look around" }]),
+                               tool_response(["tu_spawn", "subagent",
+                                              { "prompt" => "look around", "role" => "researcher" }]),
                                text_response("child done"),
                                text_response("parent done")
                              ])
@@ -131,7 +132,8 @@ RSpec.describe Lain::CLI::Wiring, "the journal routing discipline" do
     let(:provider) do
       Lain::Provider::Mock.new(responses: [
                                  tool_response(["tu_bash", "bash", { "command" => "printf hello" }]),
-                                 tool_response(["tu_spawn", "subagent", { "prompt" => "look around" }]),
+                                 tool_response(["tu_spawn", "subagent",
+                                                { "prompt" => "look around", "role" => "researcher" }]),
                                  text_response("child done"),
                                  text_response("parent done"),
                                  text_response("dev done")

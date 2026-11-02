@@ -81,7 +81,7 @@ RSpec.describe "A spawned child in the XDG epic home", :seam do
 
   # The chat's own `subagent` tool spawns the researcher, as the model would.
   def researching(calls)
-    answering([tool_response(["tu_spawn", "subagent", { "prompt" => "read the epic" }]),
+    answering([tool_response(["tu_spawn", "subagent", { "prompt" => "read the epic", "role" => "researcher" }]),
                *numbered("tu_child", calls), text_response("child done"), text_response("parent done")])
   end
 

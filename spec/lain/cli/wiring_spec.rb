@@ -2350,7 +2350,8 @@ RSpec.describe Lain::CLI::Wiring do
 
     context "when the model spawns a one-shot subagent" do
       let(:mock_provider) do
-        Lain::Provider::Mock.new(responses: [tool_response(["s1", "subagent", { "prompt" => "look around" }]),
+        spawn_call = ["s1", "subagent", { "prompt" => "look around", "role" => "researcher" }]
+        Lain::Provider::Mock.new(responses: [tool_response(spawn_call),
                                              text_response("child done"), text_response("parent done")])
       end
 
@@ -2361,7 +2362,8 @@ RSpec.describe Lain::CLI::Wiring do
       context "when the chat's child asks for more iterations than the chat has left" do
         let(:mock_provider) do
           reads = Array.new(60) { |i| tool_response(["c#{i}", "read_file", { "path" => "missing-#{i}.txt" }]) }
-          Lain::Provider::Mock.new(responses: [tool_response(["s1", "subagent", { "prompt" => "look around" }]),
+          spawn_call = ["s1", "subagent", { "prompt" => "look around", "role" => "researcher" }]
+          Lain::Provider::Mock.new(responses: [tool_response(spawn_call),
                                                *reads, text_response("parent done")])
         end
 
@@ -2380,8 +2382,9 @@ RSpec.describe Lain::CLI::Wiring do
 
       context "when the parent and its child both pay" do
         let(:mock_provider) do
+          spawn_call = ["s1", "subagent", { "prompt" => "look around", "role" => "researcher" }]
           Lain::Provider::Mock.new(responses: [
-                                     tool_response(["s1", "subagent", { "prompt" => "look around" }],
+                                     tool_response(spawn_call,
                                                    usage: Lain::Usage.new(input_tokens: 20)),
                                      text_response("child done", usage: Lain::Usage.new(input_tokens: 700)),
                                      text_response("parent done", usage: Lain::Usage.new(input_tokens: 5))
@@ -2999,7 +3002,8 @@ RSpec.describe Lain::CLI::Wiring do
       context "when the MODEL dispatches a subagent" do
         let(:mock_provider) do
           Lain::Provider::Mock.new(responses: [
-                                     tool_response(["s1", "subagent", { "prompt" => "look around" }]),
+                                     tool_response(["s1", "subagent",
+                                                    { "prompt" => "look around", "role" => "researcher" }]),
                                      tool_response(["l1", "list_files", { "path" => "no-such-dir" }]),
                                      text_response("child done"),
                                      text_response("parent done")
@@ -5025,7 +5029,8 @@ RSpec.describe Lain::CLI::Wiring do
     it "gives a spawned child its own instance of the configured model middleware" do
       in_tree do |root|
         WiringSpecInstanceStamp::SEEN.clear
-        spawning = Lain::Provider::Mock.new(responses: [tool_response(["s1", "subagent", { "prompt" => "look" }]),
+        spawn_call = ["s1", "subagent", { "prompt" => "look", "role" => "researcher" }]
+        spawning = Lain::Provider::Mock.new(responses: [tool_response(spawn_call),
                                                         text_response("child done"), text_response("parent done")])
         middleware = configured_middleware(model: WiringSpecInstanceStamp)
         backend = offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 },

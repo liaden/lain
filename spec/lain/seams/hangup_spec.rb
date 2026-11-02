@@ -31,7 +31,7 @@ module Hangup
         Async::Task.current.sleep
       end
     end
-    call = { "type" => "tool_use", "id" => "tu_spawn", "name" => "subagent", "input" => { "prompt" => "work" } }
+    call = { "type" => "tool_use", "id" => "tu_spawn", "name" => "subagent", "input" => { "prompt" => "work", "role" => "researcher" } }
     provider = hanging.new(responses: [Lain::Response.new(content: [call], stop_reason: :tool_use)])
 
     backend_class = Class.new(Lain::CLI::Backend) do
