@@ -195,8 +195,14 @@ module Lain
 
         # @!attribute filled [Boolean] the shell fills in digits the text
         #   only names, so the word is known as a pattern and not as text
-        Literal = Data.define(:text, :glob_at, :tilde, :pattern, :filled) do
+        # @!attribute wild [Boolean] it holds a bare glob character, not only a fill
+        Literal = Data.define(:text, :glob_at, :tilde, :pattern, :filled, :wild) do
           def glob? = !glob_at.nil?
+
+          def take(count)
+            with(text: text[...count], glob_at: (glob_at if glob_at && glob_at < count),
+                 pattern: pattern.scan(/\\.|./m).take(count).join)
+          end
 
           # The literal after its first `count` characters, as an option's
           # value is read. A `~` there is not at the start of a word.
@@ -210,7 +216,8 @@ module Lain
         # @return [Literal, nil] nil when any span cannot be read for certain
         def self.read(raw)
           scanner = StringScanner.new(raw)
-          literal = Literal.new(text: "", glob_at: nil, tilde: raw.start_with?("~"), pattern: "", filled: false)
+          literal = Literal.new(text: "", glob_at: nil, tilde: raw.start_with?("~"), pattern: "", filled: false,
+                                wild: false)
           literal = span(scanner, literal) until literal.nil? || scanner.eos?
           literal
         end
@@ -224,7 +231,8 @@ module Lain
             bare = scanner.matched
             glob = bare =~ GLOB
             literal.with(text: literal.text + bare, pattern: wildcard_joined(literal.pattern, bare),
-                         glob_at: literal.glob_at || (glob && (literal.text.size + glob)))
+                         glob_at: literal.glob_at || (glob && (literal.text.size + glob)),
+                         wild: literal.wild || !glob.nil?)
           end
         end
 
@@ -264,6 +272,25 @@ module Lain
         ]].freeze
         CC = ["DILo", %w[--output]].freeze
         AWK = ["fvFeE", %w[--file --assign --field-separator --source --exec]].freeze
+        CURL_DATA = ["dFHXAue", %w[
+          --data --data-ascii --data-raw --data-binary --data-urlencode --json --form --header --request
+          --user-agent --user --referer
+        ]].freeze
+
+        CURL_FILES = ["KTbcEDrmwxyYzCUQtP", %w[
+          --config --upload-file --cookie --cookie-jar --cert --dump-header --range --max-time --write-out --proxy
+          --speed-time --speed-limit --time-cond --continue-at --proxy-user --quote --telnet-option --ftp-port
+        ]].freeze
+
+        # Values a program sends rather than opens. A commit's message is read
+        # by {GitWrite}, which knows that subcommand's clusters.
+        DATA_OPTIONS = { "curl" => CURL_DATA, "gh api" => ["f", %w[--raw-field]] }.freeze
+        SHORT_NAMES = { "F" => "--form" }.freeze
+        # curl reads the file after an `@`; a URL-encoded field's `@` counts
+        # only before any `=`, and a form field is read by {CurlForm}.
+        FILE_AT = /\A@/
+        FILE_FORMS = { "--data-urlencode" => /\A[^=@]*@/ }.freeze
+        FORM = "--form"
 
         # Without these a value reads as an operand or as a cluster of flags:
         # `-e s/a/b/` is sed's script, not its file, and `-Ispec` is not ruby's
@@ -280,7 +307,8 @@ module Lain
           "git" => ["Cco", %w[--output --output-directory --git-dir --namespace --work-tree]],
           "bundle" => ["", %w[--path --gemfile --jobs --retry --without --with]],
           "sort" => ["oTSkt", %w[--output --temporary-directory --buffer-size --key --field-separator]],
-          "curl" => ["o", %w[--output]], "wget" => ["OP", %w[--output-document --directory-prefix]],
+          "curl" => ["o#{CURL_DATA.first}#{CURL_FILES.first}", ["--output", *CURL_DATA.last, *CURL_FILES.last]],
+          "wget" => ["OP", %w[--output-document --directory-prefix]],
           "rg" => ["efgmABCtTjMr", %w[--regexp --file --glob --max-count --type --type-not --threads --replace]],
           "ag" => ["GgmABC", []], "ack" => ["mABC", []],
           **Programs::AWKS.to_h { [_1, AWK] },
@@ -369,9 +397,52 @@ module Lain
           at ? at + 2 : @words[index].size
         end
 
+        # @return [Hash{Integer=>Array<Range>, nil}] each data option's value
+        #   word, to the spans of its text that name a file it reads, or nil
+        #   when they cannot be told
+        def data_files
+          letters, longs = DATA_OPTIONS[data_key]
+          return {} unless letters
+
+          options.filter_map { data_value(_1, letters, longs) }.to_h
+        end
+
+        # @param index [Integer] the word holding the value
+        # @param start [Integer] where the value starts in it
+        # @param name [String] the option's long name, or its letter
+        # @return [Array(Integer, Array<Range>), Array(Integer, nil)]
+        def data_at(index, start, name)
+          text = @words[index].to_s[start..].to_s
+          long = SHORT_NAMES.fetch(name, name)
+          spans = long == FORM ? CurlForm.files(text) : at_file(FILE_FORMS.fetch(long, FILE_AT).match(text), text)
+          [index, spans&.map { (_1.begin + start)...(_1.end + start) }]
+        end
+
         private
 
         def value_letters = VALUES.fetch(@command, NONE).first
+
+        def data_key = DATA_OPTIONS.key?(@command) ? @command : "#{@command} #{operands.first&.then { @words[_1] }}"
+
+        def data_value(index, letters, longs)
+          name, start = data_option(index, letters, longs)
+          data_at(start ? index : index + 1, start || 0, name) if name
+        end
+
+        def at_file(match, text) = match ? [match.end(0)...text.size] : []
+
+        # @return [Array(String, Integer), Array(String, nil), nil] the option's
+        #   name, and where its value starts when attached
+        def data_option(index, letters, longs)
+          word = @words[index]
+          if word.start_with?("--")
+            name = word.partition("=").first
+            [name, (name.size + 1 if word.include?("="))] if longs.include?(name)
+          else
+            at = letter_at(index, letters)
+            [word[at + 1], (at + 2 if at + 2 < word.size)] if at
+          end
+        end
 
         def value_text(index)
           word = @words[index]
@@ -390,12 +461,17 @@ module Lain
         def short_value(index, letters)
           return old_tar_values(letters) if @old_tar && index.zero?
 
+          at = letter_at(index, letters)
+          return [] if at.nil?
+
+          [at == @words[index].size - 2 ? index + 1 : index]
+        end
+
+        def letter_at(index, letters)
           all = value_letters + letters
           run = @words[index][1..]
           at = run[LETTERS].index(/[#{all}]/) unless all.empty?
-          return [] if at.nil? || !letters.include?(run[at])
-
-          [at == run.size - 1 ? index + 1 : index]
+          at if at && letters.include?(run[at])
         end
 
         def old_tar_values(letters)
@@ -429,6 +505,10 @@ module Lain
           end
 
           def plain = flags + refused.first + whole.first
+
+          # A letter that takes a value ends the cluster even where it is also
+          # refused, as commit's `-c` is.
+          def stops?(letter) = valued.include?(letter) || attached.include?(letter) || !plain.include?(letter)
         end
 
         # A stash, a tag and every other branch are shared with the main
@@ -442,7 +522,7 @@ module Lain
             flags: "qvsizo", valued: "mFtCc", attached: "uS", files: "Ft",
             long_values: %w[
               --author --date --message --file --template --reuse-message --reedit-message --fixup --squash --cleanup
-              --trailer
+              --trailer --pathspec-from-file
             ].freeze,
             refused: ["nepc", %w[--edit --patch --interactive --reedit-message].freeze], whole: ["a", %w[--all].freeze],
             message: ["mF", %w[--message --file --no-edit --reuse-message].freeze]
@@ -464,6 +544,7 @@ module Lain
                                   refused: ["cCt", %w[--create --force-create --orphan --track].freeze],
                                   whole: ["d", %w[--detach].freeze], paths: :none, rewrites: true)
         }.freeze
+        MESSAGE = "--message"
         # git expands these itself, so the files they match are known only to it.
         MAGIC = /\A:|[*?\[]/
 
@@ -480,7 +561,7 @@ module Lain
           @reading = reading
           @separator = nil
           @shorts = {}
-          @longs = []
+          @longs = {}
           @taken = Set.new
           @unknown = false
           (1...words.size).each { scan(_1) }
@@ -517,6 +598,14 @@ module Lain
           [:git, writes ? :written : :root]
         end
 
+        # @return [Hash{Integer=>Integer}] each `-m` or `--message` value's word,
+        #   to where the message starts in it
+        def messages
+          shorts = @shorts.filter_map { |index, letters| value_at(index, letters.size + 1) if letters.end_with?("m") }
+          longs = @longs.filter_map { |index, name| value_at(index, name.size + 1) if message_long?(name) }
+          (shorts + longs).to_h
+        end
+
         # @return [Integer, nil] where an attached message or template file starts
         def file_offset(index)
           letters = @shorts[index]
@@ -527,6 +616,13 @@ module Lain
 
         def option?(index) = @words[index].start_with?("-") && @words[index] != "-"
 
+        def message_long?(name) = name.size > 2 && MESSAGE.start_with?(name)
+
+        def value_at(index, start)
+          word = @words[index]
+          word.size > start || word.include?("=") ? [index, start] : [index + 1, 0]
+        end
+
         def outside?(text) = text.start_with?("/", "~") || text.split("/").include?("..")
 
         def separated = @separator ? ((@separator + 1)...@words.size).to_a : []
@@ -536,7 +632,7 @@ module Lain
         # git takes any unambiguous prefix of a long option, so a prefix counts as the option.
         def has?(letters, longs)
           @shorts.each_value.any? { _1.count(letters).positive? } ||
-            @longs.any? { |name| name.size > 2 && longs.any? { _1.start_with?(name) } }
+            @longs.each_value.any? { |name| name.size > 2 && longs.any? { _1.start_with?(name) } }
         end
 
         # A `--` ends the options only where it is not the value an option before it takes.
@@ -556,12 +652,12 @@ module Lain
 
         def read_long(index, text)
           name, equals, = text.partition("=")
-          @longs << name
+          @longs[index] = name
           @taken << (index + 1) if equals.empty? && @reading.long_values.include?(name)
         end
 
         def read_short(index, run)
-          at = run.each_char.find_index { !@reading.plain.include?(_1) } || run.size
+          at = run.each_char.find_index { @reading.stops?(_1) } || run.size
           @shorts[index] = run[0..at]
           read_stop(index, run[at], last: at == run.size - 1)
         end
@@ -690,6 +786,9 @@ module Lain
           @git_write&.file_offset(index - @git_from) || @argv.value_offset(index)
         end
 
+        # @return [Hash{Integer=>Array<Range>, nil}] see {Argv#data_files}
+        def data_files = @untrusted ? {} : @argv.data_files.merge(commit_messages)
+
         # `dd if=x` opens `x`; the whole word names no file.
         def assignments? = @command == "dd" && !@untrusted
 
@@ -792,6 +891,14 @@ module Lain
         def leads_subcommand?(entered) = entered + 1 == operands.first && word(0).start_with?("-C")
 
         def from_subcommand(indexes) = indexes.map { _1 + @git_from }
+
+        def commit_messages
+          subcommand = operands.first
+          return {} unless git? && word(subcommand) == "commit"
+
+          write = GitWrite.new(@argv.words.drop(subcommand), GitWrite::READINGS["commit"])
+          write.messages.to_h { |index, start| @argv.data_at(index + subcommand, start, GitWrite::MESSAGE) }
+        end
 
         # Each of these may write a name the archive or patch chose, anywhere.
         def extracts_outside?
@@ -969,6 +1076,68 @@ module Lain
         def self.reads_only?(program)
           !program.gsub(OR, "").match?(REACHES_OUT) && !program.match?(PRINT_REDIRECT)
         end
+      end
+
+      # A curl form field's value read for the files curl opens, as curl's
+      # own parser reads them: an `@` file and each one after a `,`, or one
+      # `<` file, then a `headers=@` or `headers=<` file after any `;`. A name
+      # ends at a `;`, and among `@` uploads at a `,` too; blanks around an
+      # unquoted name are not part of it. A quoted name is read when it holds
+      # no backslash, which curl unescapes.
+      module CurlForm
+        BLANKS = /[ \t\n\v\f\r]*/
+        HEADERS = /headers=[@<]/i
+        QUOTED = /"([^"\\]*)"/
+        ESCAPED = /"(?:[^"\\]|\\.)*"/m
+        UPLOAD_NAME = /[^;,]*/
+        FIELD_NAME = /[^;]*/
+
+        # @param text [String] the field, `name=value`
+        # @return [Array<Range>, nil] nil when a name cannot be read for certain
+        def self.files(text)
+          equals = text.index("=")
+          return [] if equals.nil?
+
+          scanner = StringScanner.new(text)
+          scanner.pos = equals + 1
+          upload = !scanner.skip(/@/).nil?
+          found = part(scanner, upload, upload || !scanner.skip(/</).nil?)
+          found.concat(part(scanner, upload, true)) while upload && scanner.skip(/,/)
+          found.include?(:unread) ? nil : found
+        end
+
+        def self.part(scanner, upload, read)
+          name = word(scanner, upload)
+          found = read ? [name] : []
+          found.concat(parameter(scanner, upload)) while scanner.skip(/;/)
+          found
+        end
+
+        def self.parameter(scanner, upload)
+          scanner.skip(BLANKS)
+          headers = scanner.skip(HEADERS)
+          name = word(scanner, upload)
+          headers ? [name] : []
+        end
+
+        # @return [Range, Symbol] the name's span, or `:unread`
+        def self.word(scanner, upload)
+          scanner.skip(BLANKS)
+          start = scanner.pos
+          return quoted(scanner, upload, start) if scanner.check(ESCAPED)
+
+          scanner.skip(upload ? UPLOAD_NAME : FIELD_NAME)
+          start...(start + scanner.matched.rstrip.size)
+        end
+
+        # curl ignores what follows a closing quote, up to the name's end.
+        def self.quoted(scanner, upload, start)
+          name = scanner.scan(QUOTED) ? (start + 1)...(scanner.pos - 1) : :unread
+          scanner.skip(ESCAPED) if name == :unread
+          scanner.skip(upload ? UPLOAD_NAME : FIELD_NAME)
+          name
+        end
+        private_class_method :part, :parameter, :word, :quoted
       end
 
       # A sed script read for the commands that reach outside sed: `e` runs one,
@@ -1255,18 +1424,22 @@ module Lain
         def word_paths(words, program, only: nil, except: nil)
           written = program.written
           roots = program.roots
+          data = program.data_files
           chosen(words, only, except).flat_map do |index|
-            raw = words.raws[index + 1]
             literal = words.literals[index + 1]
-            if literal.nil?
-              [:opaque]
-            elsif program.option?(index)
-              option_paths(raw, literal, program.value_offset(index), written.include?(index))
-            else
-              operand_paths(raw, literal, written: written.include?(index), root: roots.include?(index),
-                                          assignment: program.assignments?, git: program.git?)
+            if literal.nil? then [:opaque]
+            elsif data.key?(index) then data_paths(words.raws[index + 1], literal, data[index])
+            else argument_paths(words, index, program, written: written.include?(index), root: roots.include?(index))
             end
           end
+        end
+
+        def argument_paths(words, index, program, written:, root:)
+          raw = words.raws[index + 1]
+          literal = words.literals[index + 1]
+          return option_paths(raw, literal, program.value_offset(index), written) if program.option?(index)
+
+          operand_paths(raw, literal, written:, root:, assignment: program.assignments?, git: program.git?)
         end
 
         def chosen(words, only, except)
@@ -1298,6 +1471,19 @@ module Lain
           return [whole] if match.nil?
 
           [*(whole unless assignment), *value_paths(raw, literal, match.end(0), written:)]
+        end
+
+        # A value bash would glob may expand to more words, or to an `@` name,
+        # so it is known only where its one file runs to its end.
+        def data_paths(raw, literal, files)
+          return [:opaque] if files.nil? || (literal.wild && !(files.one? && files.first.end == literal.text.size))
+
+          files.map { file_path(raw, literal, _1) }
+        end
+
+        def file_path(raw, literal, span)
+          file = literal.take(span.end).drop(span.begin)
+          file.glob_at&.negative? ? :opaque : path(raw, file, written: false)
         end
 
         # Bash expands a `~` after the `=` of an argument shaped like an

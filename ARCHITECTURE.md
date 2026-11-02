@@ -936,7 +936,15 @@ refused by the root check, and `~/.ssh` by triage.
 against the directory its stage runs in, so an approval rung can ask about the files a `bash` call touches rather
 than about its `cwd`; `Named.from` takes a parse a caller already holds. It names every word past the program
 (and the program when written as a path), an option's attached or `=` value, a `name=value` operand's value,
-and each redirect target, but not `/dev/null` or a descriptor duplication. A glob is named by its fixed
+and each redirect target, but not `/dev/null` or a descriptor duplication. curl reads the
+file after an `@` in the value of `-d`, `--data`, `--data-ascii`, `--data-binary`, `--json`, `-H` and `--header`,
+after `name@` in `--data-urlencode`, and in `-F`/`--form` after `name=@` (more uploads follow each `,`) or
+`name=<`, and in a `headers=@` or `headers=<` parameter after a `;`. A form name ends at a `;`, and among `@`
+uploads at a `,` too; curl trims the blanks around an unquoted name. Those files are named as reads and the rest
+of each value names nothing. `--data-raw`, `-X`, `--request`, `-A`, `--user-agent`, `-u`, `--user`, `-e`,
+`--referer`, `git commit -m`/`--message` and `gh api -f`/`--raw-field` are data only, and an `@` that starts
+their value is still named. A data value bash would glob, a glob beside a `$?` fill included, is opaque unless
+its one file runs to the word's end. A glob is named by its fixed
 directory and carries its absolute pattern. A recursive reader carries `<root>/**` on each root, or on the cwd
 when it names none: grep `-r`, rg, ag, ack, `cp -r`, `diff -r`, `tar c`, `zip -r`, find, and git's diff,
 log, show, grep, stash, blame and `add -A`. A git `<rev>:<path>` operand carries `<cwd>/**/<path>`.

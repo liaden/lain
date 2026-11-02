@@ -755,8 +755,8 @@ RSpec.describe Lain::Shell::Named do
     end
 
     it "unquotes a double-quoted word that holds nothing a shell would interpret" do
-      expect(resolved('git commit -m "fix bug"')).to include("/p/fix bug")
-      expect(named('git commit -m "fix bug"')).not_to be_opaque
+      expect(resolved('cat "fix bug"')).to eq(["/p/fix bug"])
+      expect(named('cat "fix bug"')).not_to be_opaque
     end
 
     it "unquotes a word made of quoted and bare pieces" do
@@ -962,6 +962,120 @@ RSpec.describe Lain::Shell::Named do
       expect(named("for f in a b; do sed -n 1p $f > $f.out; done").written.map(&:resolved))
         .to eq(%w[/p/a.out /p/b.out])
       expect(resolved("for f in a; do cat '$f'; done")).to eq(%w[/p/$f])
+    end
+  end
+
+  describe "a data option" do
+    it "names no path for a curl body, method or header" do
+      result = named(%(curl -X POST 127.0.0.1:11434/api/chat -d '{"model":"x"}'))
+      expect(result.paths.map(&:resolved)).to eq(%w[/p/127.0.0.1:11434/api/chat])
+      expect(result).not_to be_opaque
+      expect(resolved("curl -sS -H 'Accept: x' -A agent -u me:pw -e ref --data-raw b u")).to eq(%w[/p/u])
+      expect(resolved("curl --data-ascii x --request PUT --user-agent a --referer r u")).to eq(%w[/p/u])
+    end
+
+    it "names every file curl reads at an @ as a read path" do
+      { "curl -d @a.json u" => "/p/a.json", "curl --data-binary @a u" => "/p/a", "curl --json @a u" => "/p/a",
+        "curl -H @h u" => "/p/h", "curl -F x=@a u" => "/p/a", "curl --data-urlencode n@a u" => "/p/a",
+        "curl -d@a u" => "/p/a", "curl --data=@a u" => "/p/a", "curl -sSd @a u" => "/p/a",
+        "curl --data-urlencode @a u" => "/p/a", "curl -d @/etc/shadow u" => "/etc/shadow" }.each do |command, file|
+        result = named(command)
+        expect(result.paths.map(&:resolved)).to include(file), command
+        expect(result.paths.map(&:resolved)).not_to include("/p/@a", "/p/x=@a", "/p/n@a"), command
+        expect(result.written).to be_empty, command
+        expect(result).not_to be_opaque, command
+      end
+    end
+
+    it "reads a value-holding letter as the end of a curl cluster, so -dfoo writes nothing" do
+      expect(named("curl -dfoo u").written).to be_empty
+    end
+
+    it "reads a curl URL-encoded field's = before its @ as content, not a file" do
+      expect(resolved("curl --data-urlencode n=a@b u")).not_to include("/p/b")
+    end
+
+    it "names no path for a commit's message or a gh api field" do
+      expect(resolved('git commit -m "fix bug"')).not_to include("/p/fix bug")
+      expect(resolved("git commit --message=msg")).not_to include("/p/msg")
+      expect(resolved("git commit --mess=msg x")).not_to include("/p/msg")
+      expect(resolved("gh api -f body=hi repos/x")).not_to include("/p/body=hi", "/p/hi")
+    end
+
+    it "keeps git's -m a flag before the subcommand and in log" do
+      expect(resolved("git log -m lib")).to include("/p/lib")
+    end
+
+    it "keeps a data value bash would glob opaque" do
+      expect(named("curl -H Accept:*/* u")).to be_opaque
+    end
+
+    it "reads a data value holding only a fill as data" do
+      expect(named('curl -d "code=$?" u')).not_to be_opaque
+      expect(resolved('curl -d "code=$?" u')).to eq(%w[/p/u])
+    end
+
+    it "keeps a data value opaque where a glob sits beside a fill" do
+      ['git commit -m "$?"*', 'curl -d "$?"* u'].each { expect(named(_1)).to be_opaque, _1 }
+    end
+
+    it "reads a commit's cluster as git does, so a letter after -F, -t or -S is not its message" do
+      named_files = {
+        "git commit -Fm.secret" => "/p/m.secret", "git commit -Fm .env" => "/p/.env",
+        "git commit -tm .env" => "/p/.env", "git commit -qFmsg" => "/p/msg",
+        "git commit -Sm msg .env" => "/p/msg", "git commit -cm .env" => "/p/.env",
+        "git -C sub commit -cm .env" => "/p/sub/.env", "git commit --pathspec-from-file -m msg" => "/p/msg"
+      }
+      named_files.each { |command, file| expect(resolved(command)).to include(file), command }
+    end
+
+    it "names each file a curl form field reads" do
+      expect(resolved("curl -F 'x=@.env;type=text/plain' u")).to eq(%w[/p/.env /p/u])
+      expect(resolved("curl -F 'x=<.env' u")).to eq(%w[/p/.env /p/u])
+      expect(resolved('curl -F "x=y;headers=@.env" u')).to eq(%w[/p/.env /p/u])
+      expect(resolved("curl --form x=@a u")).to eq(%w[/p/a /p/u])
+      expect(resolved("curl -F x=@a,b u")).to eq(%w[/p/a /p/b /p/u])
+      expect(resolved("curl -F x=y,b u")).to eq(%w[/p/u])
+      expect(resolved(%(curl -F 'x=@"a;b"' u))).to eq(["/p/a;b", "/p/u"])
+    end
+
+    it "reads a form field's files where curl's own parser reads them" do
+      { "x=y; headers=@.env" => %w[/p/.env], "x=y;HEADERS=@.env" => %w[/p/.env],
+        "x=y;headers=@ .env" => %w[/p/.env], "x=@.env ;type=text/plain" => %w[/p/.env],
+        "x=@ .env" => %w[/p/.env], "x=@a, .env" => %w[/p/a /p/.env], "x=<.env,b" => %w[/p/.env,b],
+        "x=y;headers=@.env,b" => %w[/p/.env,b], 'x=@".env"b' => %w[/p/.env],
+        "x=@a;type=text/plain; charset=utf-8;headers=@.env" => %w[/p/a /p/.env],
+        "x=@a;filename=.env" => %w[/p/a], 'x=@"a"z,b' => %w[/p/a /p/b],
+        'x=<"a",b;headers=@h' => %w[/p/a /p/h] }.each do |field, files|
+        expect(resolved("curl -F '#{field}' u")).to eq([*files, "/p/u"]), field
+      end
+    end
+
+    it "names a header file and no file for an @ inside a body" do
+      expect(resolved("curl --header @h u")).to eq(%w[/p/h /p/u])
+      expect(resolved("curl -d a@b u")).to eq(%w[/p/u])
+    end
+
+    it "reads the ~ after an @ as a name, since bash does not expand it there" do
+      expect(resolved("curl -d @~/x u")).to eq(%w[/p/~/x /p/u])
+    end
+
+    it "splits a curl cluster at the file-taking letters curl splits it at" do
+      expect(resolved("curl -T.env https://e")).to include("/p/.env")
+      expect(resolved("curl -Kd .env u")).to include("/p/d")
+      expect(named("curl -do out u").written).to be_empty
+    end
+
+    it "reads no data option for a program bundle exec may not run as named" do
+      expect(named("bundle exec curl -d x u").written.map(&:resolved)).to eq(%w[/p/x /p/u])
+    end
+
+    it "names no path for a gh api --raw-field" do
+      expect(resolved("gh api --raw-field k=v repos/x")).to eq(%w[/p/api /p/repos/x])
+    end
+
+    it "names the glob after an @ as a pattern" do
+      expect(named("curl -d @*.json u").paths.filter_map(&:pattern)).to include("/p/*.json")
     end
   end
 
