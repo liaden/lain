@@ -53,7 +53,7 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
   def turn_usage = Lain::Telemetry::TurnUsage.new(digest: "blake3:x", model: "m", stop_reason: :end_turn, usage: {})
 
   # The epic duck lain://status draws from, reduced to the lines it answers.
-  def epic_lines(*lines) = Struct.new(:lines).new(lines)
+  def epic_lines(*lines) = Struct.new(:lines, :roadmap).new(lines, [])
 
   # The lines of the LAST post to one buffer, which is what the editor shows.
   def posted(name) = rpc.views.reverse.find { |view| view.first == name }&.at(1)
@@ -75,6 +75,36 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
                                            Lain::Frontend::Neovim::StatusView::NAME,
                                            Lain::Frontend::Neovim::TodoView::NAME,
                                            Lain::Frontend::Neovim::RequestBuffer::REQUEST)
+    end
+
+    it "primes no lain://planning when no epic was handed" do
+      surfaces.prime
+
+      expect(rpc.names).not_to include(Lain::Frontend::Neovim::PlanningView::NAME)
+    end
+
+    it "primes lain://planning with the roadmap of a mounted epic" do
+      row = Lain::Frontend::Neovim::PlanningView::Row.new(id: "a", title: "A", mark: " ", stage: "-", gate: "draft",
+                                                          blockers: [])
+      epic = Struct.new(:lines, :roadmap).new([], [row])
+      described_class.new(forks: no_forks, rpc:, approval_view:, epic:).prime
+
+      expect(posted(Lain::Frontend::Neovim::PlanningView::NAME)).to include(a_string_matching(/`a`.*draft/))
+    end
+
+    it "redraws lain://planning when a gate decision lands" do
+      rows = []
+      epic = Struct.new(:lines, :roadmap).new([], rows)
+      surfaces = described_class.new(forks: no_forks, rpc:, approval_view:, epic:)
+      surfaces.prime
+      rows << Lain::Frontend::Neovim::PlanningView::Row.new(id: "a", title: "A", mark: " ", stage: "issue_plan",
+                                                            gate: "approved", blockers: [])
+
+      surfaces.post(Lain::Epic::GateDecision.new(artifact_digest: "blake3:x", epic_slug: "demo", stage: "issue_plan",
+                                                 approved: true, answered_by: "cli", policy: "interactive", latency: 1,
+                                                 issue_id: "a"))
+
+      expect(posted(Lain::Frontend::Neovim::PlanningView::NAME)).to include(a_string_matching(/`a`.*approved/))
     end
 
     it "primes lain://status with the epic it was handed" do

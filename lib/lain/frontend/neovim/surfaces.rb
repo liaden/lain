@@ -34,8 +34,8 @@ module Lain
         #   here and rendered from its own watch fiber thereafter. REQUIRED --
         #   see below.
         #
-        # @param epic [#lines] what lain://status draws ({StatusView}),
-        #   {StatusView::Unmounted} by default
+        # @param epic [#lines, #roadmap] what lain://status draws ({StatusView}) and
+        #   lain://planning lists ({PlanningView}), {StatusView::Unmounted} by default
         #
         # @param epic_docs [#for] the chat's epic homes, which {EpicDocView} reads a
         #   written document through; {EpicDocView::NoHomes} by default
@@ -63,6 +63,7 @@ module Lain
           @request_buffer = request_buffer || RequestBuffer.new(journal:)
           @approval_view = approval_view
           @epic_doc_view = EpicDocView.new(homes: epic_docs)
+          @planning_view = PlanningView.new(epic:)
         end
 
         # The read-only view set, and the line -> digest indexes the editor's
@@ -91,6 +92,7 @@ module Lain
         def prime
           [@journal_view, @buffers].each { |view| post_views(view.initial) }
           @request_buffer.initial.each { |name, lines| @rpc.post_view(name, lines, editable: true) }
+          prime_planning
           @approval_view.prime
         rescue ClosedQueueError
           nil
@@ -107,6 +109,7 @@ module Lain
           lines = @journal_view.lines(event)
           @rpc.post_render(lines) unless lines.empty?
           post_views(@buffers.updates(event))
+          post_planning(event)
           post_epic_doc(event)
           post_notice(event)
           # The editable view is posted with editable: true, so the runtime leaves
@@ -126,6 +129,17 @@ module Lain
 
         def post_notice(event)
           @rpc.notice(Decorators::AskSettled.new(event).note) if event.is_a?(Telemetry::AskSettled)
+        end
+
+        # A chat in no epic has no roadmap to list, so it gets no buffer for one.
+        def prime_planning
+          lines = @planning_view.initial
+          @rpc.post_view(PlanningView::NAME, lines) unless lines.empty?
+        end
+
+        def post_planning(event)
+          lines = @planning_view.update(event)
+          @rpc.post_view(PlanningView::NAME, lines) if lines
         end
 
         def post_epic_doc(event)

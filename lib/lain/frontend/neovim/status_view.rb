@@ -34,6 +34,8 @@ module Lain
                    "no epic is mounted -- start the chat with `--epic SLUG` to see one here"].freeze
 
           def self.lines = LINES
+
+          def self.roadmap = []
         end
 
         # A chat seated in an epic, read through {CLI::Epic#progress}: the same
@@ -42,10 +44,17 @@ module Lain
         class Mounted
           # @param slug [String] the epic the chat is mounted into, already resolved
           # @param status [#progress] folds that slug from disk ({CLI::Epic})
-          def initialize(slug:, status:)
+          # @param records [#call] answers a slug with the journal records the
+          #   gates of its issues are read from; none by default, so every issue reads as a draft
+          def initialize(slug:, status:, records: ->(_slug) { [] })
             @slug = slug
             @status = status
+            @records = records
           end
+
+          # @return [Array<PlanningView::Row>] one row per issue, in graph order
+          # @raise [StandardError] whatever the fold raises; {PlanningView} draws it
+          def roadmap = PlanningView::Roadmap.rows(@status.progress(@slug), @records.call(@slug))
 
           # @return [Array<String>] the progress text and the mermaid fence
           # @raise [StandardError] whatever the fold raises; {StatusView} draws it
@@ -170,8 +179,6 @@ module Lain
           [heading, "", "it failed with #{error.class}:", *message.split(Text::NEWLINES).map { |line| "    #{line}" }]
         end
 
-        def refold?(event) = refold_types.any? { |type| event.is_a?(type) }
-
         # Matched by class, as {StatusFeed}'s own arms are. Memoized, so the
         # list costs one Array per view rather than a fresh four-element one per
         # event.
@@ -179,6 +186,8 @@ module Lain
           @refold_types ||= [Telemetry::TurnUsage, Lain::Epic::IssueTransition,
                              Lain::Epic::StageTransition, Lain::Epic::GateDecision].freeze
         end
+
+        def refold?(event) = refold_types.any? { |type| event.is_a?(type) }
 
         # The two kinds that start and end a spawn, and the record that says
         # how far one has got; nothing else rebuilds the listing.

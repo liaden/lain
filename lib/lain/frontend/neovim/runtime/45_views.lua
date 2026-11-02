@@ -40,5 +40,8 @@ function _G.__lain.set_view(name, lines, gen)
     shared = shared + 1
   end
   set_lines(buf, shared, -1, vim.list_slice(lines, shared + 1, #lines))
+  if name == "lain://planning" then
+    _G.__lain.planning_sidebar(buf)
+  end
   announce_render(name, buf)
 end

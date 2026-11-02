@@ -885,7 +885,7 @@ module Lain
       def epic_status
         return Frontend::Neovim::StatusView::Unmounted unless epic_mount.mounted?
 
-        Frontend::Neovim::StatusView::Mounted.new(slug: epic_mount.slug, status: Epic.new(root:))
+        PlanningBuild.mounted(slug: epic_mount.slug, root:, paths: @paths)
       end
 
       # The run's ONE live {HumanReplies}, late: it is built in #build_repl,

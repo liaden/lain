@@ -166,6 +166,26 @@ RSpec.describe Lain::Frontend::Neovim::StatusView do
     end
   end
 
+  describe "the roadmap a chat's epic hands the planning tab" do
+    it "is empty for a chat with no epic" do
+      expect(described_class::Unmounted.roadmap).to eq([])
+    end
+
+    it "folds the records the injected handle answers for the mounted slug" do
+      write_demo
+      asked = []
+      handle = lambda do |slug|
+        asked << slug
+        [{ "type" => "gate_decision", "epic_slug" => "demo", "stage" => "issue_plan", "issue_id" => "a",
+           "approved" => true }]
+      end
+      epic = described_class::Mounted.new(slug: "demo", status:, records: handle)
+
+      expect(epic.roadmap.map { |row| [row.id, row.gate] }).to eq([%w[a approved], %w[b draft]])
+      expect(asked).to eq(["demo"])
+    end
+  end
+
   describe "the fleet" do
     def progress(spawn, **) = Lain::Telemetry::ChildProgress.new(spawn: spawn.digest, **)
 
