@@ -781,9 +781,9 @@ RSpec.describe Lain::Frontend::TTY do
 
     it "gives a timeout its own time, read when it lapses" do
       times = [Time.new(2026, 10, 8, 13, 14, 1), Time.new(2026, 10, 8, 13, 19, 1)].each
-      clocked = described_class.new(channel:, output:, pastel: Pastel.new(enabled: false), wall_clock: lambda {
-        times.next
-      })
+      clocked = described_class.new(channel:, output:, pastel: Pastel.new(enabled: false),
+                                    layers: -> { Lain::Mode::LayerSet.new([:quiet]) },
+                                    wall_clock: -> { times.next })
 
       clocked.queue_prompt(speaking)
       clocked.close_prompt(speaking)
@@ -866,6 +866,8 @@ RSpec.describe Lain::Frontend::TTY do
   # render_question prints -- so the human keeps their prompt and drains at
   # their own pace (/inbox, or the nvim buffer).
   describe "#render_arrival" do
+    let(:tty) { described_class.new(channel:, output:, input:, layers: -> { Lain::Mode::LayerSet.new([:quiet]) }) }
+
     it "renders exactly one line naming the question and pointing at /inbox" do
       tty.render_arrival("which database should staging use?")
 
@@ -942,7 +944,7 @@ RSpec.describe Lain::Frontend::TTY do
   # says so, and the questions themselves are printed above it -- a set cut to
   # its first line is one a human cannot answer.
   describe "#render_asked" do
-    let(:plain) { described_class.new(channel:, output:, pastel: Pastel.new(enabled: false)) }
+    let(:plain) { described_class.new(channel:, output:, pastel: Pastel.new(enabled: false), layers: -> { Lain::Mode::LayerSet.new([:quiet]) }) }
 
     it "points below rather than at a buffer this chat has no editor for, and prints the document" do
       plain.render_asked(announced("db", "region", body: "which one?\n\n| a | b |"), from: "researcher")
@@ -985,9 +987,7 @@ RSpec.describe Lain::Frontend::TTY do
       end.new("[y/N] ")
     end
 
-    it "announces a queued prompt as a summons, ringing while the notify layer is up" do
-      raised << :notify
-
+    it "announces a queued prompt as a summons, ringing unless the human asked for quiet" do
       plain.queue_prompt(speaking)
 
       expect(output.string).to include("! agent asks to run bash(\"ls\")").and include("\a")
@@ -1801,22 +1801,49 @@ RSpec.describe Lain::Frontend::TTY do
         expect(output.string.index("\a")).to be > output.string.index("explorer")
       end
 
-      it "writes no bell and runs no tmux command while the layer is down" do
+      it "rings once and names the asker with no layer set, because the ask is a wait on the human" do
+        layered.render_arrival(announced("db"), from: "explorer")
+
+        expect(output.string.count("\a")).to eq(1)
+        expect(displayed).to contain_exactly(a_string_including("explorer"))
+      end
+
+      it "writes no bell and runs no tmux command once the human has asked for quiet" do
+        raised << :quiet
         layered.render_arrival(announced("db"), from: "explorer")
 
         expect(output.string).not_to include("\a")
         expect(displayed).to be_empty
       end
 
-      it "reads the layer at the arrival, so lowering it silences the next one" do
-        raised << :notify
+      it "reads the layer at the arrival, so raising quiet silences the next one" do
         layered.render_arrival(announced("db"), from: "explorer")
-        raised.clear
+        raised << :quiet
 
         layered.render_arrival(announced("region"), from: "explorer")
 
         expect(output.string.count("\a")).to eq(1)
         expect(displayed.size).to eq(1)
+      end
+    end
+
+    describe "#render_wait" do
+      it "rings once and names the gate with no layer set" do
+        layered.render_wait("! agent asks to run bash(\"ls\")")
+
+        expect(output.string).to include("agent asks to run").and include("\a")
+        expect(output.string.count("\a")).to eq(1)
+        expect(displayed).to eq(["! agent asks to run bash(\"ls\")"])
+      end
+
+      it "renders the line and rings nothing under quiet" do
+        raised << :quiet
+
+        layered.render_wait("! agent asks to run bash(\"ls\")")
+
+        expect(output.string).to include("agent asks to run")
+        expect(output.string).not_to include("\a")
+        expect(displayed).to be_empty
       end
     end
 
@@ -1861,11 +1888,13 @@ RSpec.describe Lain::Frontend::TTY do
       expect(shelled.size).to eq(1)
     end
 
-    it "rings for nothing when built with no layers at all" do
-      tty.render_arrival(announced("db"), from: "explorer")
+    it "rings for an ask but not for an informational summons when built with no layers at all" do
+      tty = described_class.new(channel:, output:, input:)
       tty.render_summons("epic.md is open for review")
-
       expect(output.string).not_to include("\a")
+
+      tty.render_arrival(announced("db"), from: "explorer")
+      expect(output.string.count("\a")).to eq(1)
     end
   end
 

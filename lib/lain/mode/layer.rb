@@ -59,10 +59,12 @@ module Lain
       # permitted: `vi` reads the prompt in vi mode, and `notify` rings the
       # terminal's bell when something arrives for the human, with a tmux
       # message inside tmux and nothing anywhere else -- which is why its lighter
-      # says BELL and not something a desktop notifier would answer to.
+      # says BELL and not something a desktop notifier would answer to. A wait on
+      # the human rings without it; `quiet` is how the human turns that off.
       DECLARED = {
         goal: new(name: :goal, lighter: "GOAL"),
         notify: new(name: :notify, lighter: "BELL"),
+        quiet: new(name: :quiet, lighter: "QUIET"),
         vi: new(name: :vi, lighter: "VI")
       }.freeze
       private_constant :DECLARED

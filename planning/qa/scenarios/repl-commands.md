@@ -106,16 +106,16 @@ fabrication this was written against. The `scope` row is the same discipline app
 totals: this run only, every model it called.
 
 **A mode is scope × approval.** `/mode` reports the scope, the approval level and the active layers.
-Scope is `checkout` or `plan`; approval is `ask`, `auto` or `bypass`; the layers are `goal`, `notify`
-and `vi`. A launched chat is `checkout auto`, and `--approval ask|auto|bypass` seeds another. The old
+Scope is `checkout` or `plan`; approval is `ask`, `auto` or `bypass`; the layers are `goal`, `notify`,
+`quiet` and `vi`. A launched chat is `checkout auto`, and `--approval ask|auto|bypass` seeds another. The old
 posture ladder is gone, and `manual` and `accept_edits` are no longer words at all, so each is refused
 as an unknown token and the answer names the whole grammar:
 
 | typed | answered |
 |---|---|
-| `/mode manual` | `error: unknown /mode token "manual" -- /mode takes ask, auto, bypass, checkout, plan, !, +layer and -layer (layers: goal, notify, vi)` |
+| `/mode manual` | `error: unknown /mode token "manual" -- /mode takes ask, auto, bypass, checkout, plan, !, +layer and -layer (layers: goal, notify, quiet, vi)` |
 | `/mode accept_edits` | the same, naming `"accept_edits"` |
-| `/mode +auto_approve` | `error: unknown mode layer "auto_approve", expected one of [:goal, :notify, :vi]` |
+| `/mode +auto_approve` | `error: unknown mode layer "auto_approve", expected one of [:goal, :notify, :quiet, :vi]` |
 
 The `auto_approve` layer and the `--auto-approve` flag are **gone**: asking a model first is approval
 `auto` now, in front of the human rather than racing them. `lain chat --auto-approve` must be refused
@@ -243,7 +243,7 @@ f28-2, open: `/pin` of a turn that is already pinned answers `pinned ...` again 
 *Driven 2026-09-14:* `/mode +nosuchlayer` → `error: unknown mode layer "nosuchlayer", expected one
 of [:goal, :notify, :vi]`. The bare-token refusal names the whole grammar rather than one roster:
 `/mode nosuchmode` → `error: unknown /mode token "nosuchmode" -- /mode takes ask, auto, bypass,
-checkout, plan, !, +layer and -layer (layers: goal, notify, vi)`. The two retired words get that same
+checkout, plan, !, +layer and -layer (layers: goal, notify, quiet, vi)`. The two retired words get that same
 answer. **A typo in the third token abandons the first two**: the fold is guarded whole, nothing is
 written, and the mode in force is still the one on the prompt — check that after
 `/mode plan +notify nosuchmode`.

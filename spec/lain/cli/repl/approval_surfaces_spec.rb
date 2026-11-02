@@ -284,7 +284,6 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
     end
 
     it "rings once for a parked call and not again when the clock denies it" do
-      raised << :notify
       Sync do |task|
         watched = surfaces(attached: editor).watch(task)
         task.with_timeout(2) { task.async { queue.call(effect, nil) }.wait }
@@ -296,7 +295,6 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
     end
 
     it "rings again for a second call that parks" do
-      raised << :notify
       Sync do |task|
         watched = surfaces(attached: editor).watch(task)
         2.times { task.with_timeout(2) { task.async { queue.call(effect, nil) }.wait } }
@@ -339,12 +337,14 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
     end
 
     it "starts the announcement with the time it was made" do
+      raised << :quiet
       fan_out(attached: editor)
 
       expect(notes).to contain_exactly(match(/\A\d\d:\d\d:\d\d ! agent asks to run/))
     end
 
     it "starts the lapse line with the time too" do
+      raised << :quiet
       Sync do |task|
         watched = surfaces(attached: editor).watch(task)
         task.with_timeout(2) { task.async { queue.call(effect, nil) }.wait }
@@ -356,6 +356,7 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
     end
 
     it "says a call closed because its requester was stopped, not that someone decided it" do
+      raised << :quiet
       Sync do |task|
         watched = surfaces(attached: editor).watch(task)
         gated = task.async { queue.call(effect, nil) }
@@ -408,7 +409,7 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
     # die of it, or leave Async's own warning in the chat pane instead.
     it "reports a note that failed to render once, and keeps announcing later calls" do
       notes = 0
-      allow(tty).to receive(:render_summons).and_wrap_original do |original, *args|
+      allow(tty).to receive(:render_wait).and_wrap_original do |original, *args|
         notes += 1
         raise Errno::EPIPE if notes == 1
 
@@ -428,11 +429,9 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
       expect(output.string.lines.grep(/could not announce/).size).to eq(1)
     end
 
-    # The note is a summons: the human is being asked for something, so the
-    # `notify` layer rings with it, naming the call.
-    it "rings the terminal with the note while the notify layer is up" do
-      raised << :notify
-
+    # The note is a wait on the human, so it rings with no layer set and names
+    # the call.
+    it "rings the terminal with the note with no layer set" do
       Sync do |task|
         watched = surfaces(attached: editor).watch(task)
         gated = task.async { queue.call(effect, nil) }
@@ -446,7 +445,8 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
       expect(displayed).to contain_exactly(a_string_including("asks to run bash(", "/approve"))
     end
 
-    it "announces without ringing while the notify layer is down" do
+    it "announces without ringing under quiet" do
+      raised << :quiet
       fan_out(attached: editor)
 
       expect(notes.size).to eq(1)
@@ -464,9 +464,9 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
 
   # A plain chat's parked call is the inline `[y/N]` itself, drawn where the
   # human is already typing -- an arrival line would be a second announcement
-  # of the prompt in front of them, so the notify layer has nothing to ring on.
-  it "keeps the inline [y/N] silent with the notify layer up" do
-    raised << :notify
+  # of the prompt in front of them, so a quiet human is not rung either.
+  it "keeps the inline [y/N] silent under quiet" do
+    raised << :quiet
 
     fan_out
 

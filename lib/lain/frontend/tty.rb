@@ -100,10 +100,10 @@ module Lain
       #   WALL constant to pair with it -- see {RunClock::MONOTONIC}
       # @param layers [#call] answers the chat's {Mode::LayerSet} in force right
       #   now -- read, never kept, so a `/mode` flip reaches the next read (`vi`)
-      #   and the next arrival (`notify`). No layers by default, in which case
-      #   {LineEditor} leaves Reline as it found it and nothing rings
-      # @param tmux [#call] takes the note an arrival rings with, while the
-      #   `notify` layer is up ({TmuxMessage})
+      #   and the next arrival. No layers by default, in which case
+      #   {LineEditor} leaves Reline as it found it; a wait on the human rings
+      #   unless `quiet` is up, and an informational arrival rings under `notify`
+      # @param tmux [#call] takes the note an arrival rings with ({TmuxMessage})
       # @param completion_sources [Completion::Sources] where a `/command` or
       #   `@path` candidate comes from -- injectable so a caller that HAS the
       #   command registry and the skill catalog can hand them over, and so a
@@ -128,7 +128,7 @@ module Lain
         build_prompt_stack(prompt_renderer:, history_path:)
         @countdown = Countdown.new(output:, input:, pastel:, clock:)
         @indicator = indicator_on(@countdown, clock:)
-        @bell = Bell.new(output:, raised: -> { layers.call.include?(:notify) }, tmux: written_by(@countdown, tmux))
+        @bell = Bell.new(output:, layers:, tmux: written_by(@countdown, tmux))
         @wall_clock = wall_clock
         @warmth = Warmth.new(path: state_path, clock: wall_clock)
         @inbox = Inbox.new(output:, pastel:, clock: wall_clock, stamp: method(:stamp), fit: method(:wrapped))
@@ -290,7 +290,7 @@ module Lain
       # A prompt waiting its turn behind another ({Intake#read}) is announced
       # as a summons, when it has words for it ({ApprovalPolicy::Asked}).
       def queue_prompt(text)
-        text.queued { |note| render_summons(stamp(note)) } if text.respond_to?(:queued)
+        text.queued { |note| render_wait(stamp(note)) } if text.respond_to?(:queued)
       end
 
       # A waiting prompt that left without drawing says so in a line of its own,
@@ -345,14 +345,15 @@ module Lain
       #   Absent, the note is today's unattributed line rather than a
       #   placeholder standing in for a name nobody supplied.
       #
-      # While the `notify` layer is up the arrival also rings ({Bell}).
+      # The arrival is a wait on the human, so it rings ({Bell}) unless the
+      # `quiet` layer is up.
       #
       # A note held behind a drawn prompt still rings at once: the bell and the
       # tmux message are how the human hears of it while they type.
       def render_arrival(question, from: nil)
         note = @inbox.arrival(question, from:)
         noted { @inbox.announce(note) }
-        @bell.ring(note)
+        @bell.ring_wait(note)
       end
 
       # A plain chat's question, whose answer is the next line typed: the
@@ -365,7 +366,7 @@ module Lain
           @inbox.announce(note)
           @inbox.document(question)
         end
-        @bell.ring(note)
+        @bell.ring_wait(note)
       end
 
       # A line that summons the human rather than informs them -- a cockpit's
@@ -374,6 +375,13 @@ module Lain
       def render_summons(line)
         render_warning(line)
         @bell.ring(line)
+      end
+
+      # A line for a gate or a parked call the human must answer: rendered like
+      # a summons, but rung unless the `quiet` layer is up.
+      def render_wait(line)
+        render_warning(line)
+        @bell.ring_wait(line)
       end
 
       # The TTY-only drain. Lists every pending item (sender, age,
@@ -959,24 +967,33 @@ module Lain
         end
       end
 
-      # The `notify` mode layer: while it is up, an arrival rings the terminal's
-      # bell and hands its note to tmux. That is the whole of it -- no desktop
-      # notifier exists, and this is not one.
+      # The terminal's bell and tmux's message for what arrives for the human.
+      # Informational arrivals ring only while the `notify` layer is up; a wait
+      # on the human rings unless the `quiet` layer is. No desktop notifier
+      # exists, and this is not one.
       class Bell
         BEL = "\a"
 
         # @param output [#print, #flush] the terminal the arrival was written to
-        # @param raised [#call] answers whether the layer is up, at each arrival
+        # @param layers [#call] answers the {Mode::LayerSet} in force, at each arrival
         # @param tmux [#call] takes the note ({TmuxMessage})
-        def initialize(output:, raised:, tmux:)
+        def initialize(output:, layers:, tmux:)
           @output = output
-          @raised = raised
+          @layers = layers
           @tmux = tmux
         end
 
         def ring(note)
-          return unless @raised.call
+          sound(note) if @layers.call.include?(:notify)
+        end
 
+        def ring_wait(note)
+          sound(note) unless @layers.call.include?(:quiet)
+        end
+
+        private
+
+        def sound(note)
           @output.print(BEL)
           @output.flush
           @tmux.call(note)

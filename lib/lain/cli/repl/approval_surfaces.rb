@@ -88,7 +88,7 @@ module Lain
 
         # Memoized for {Arrivals}' reason: it remembers what it has announced.
         def arrivals
-          @arrivals ||= Arrivals.new(notice: @tty.method(:render_summons), lapsed: @tty.method(:render_warning))
+          @arrivals ||= Arrivals.new(notice: @tty.method(:render_wait), lapsed: @tty.method(:render_warning))
         end
       end
 
@@ -106,9 +106,9 @@ module Lain
         # A call is announced ONCE, and forgotten the moment it leaves the parked
         # set, so the memory is bounded by what is parked right now.
         #
-        # `notice:` is the frontend's summons line ({Frontend::TTY#render_summons},
-        # reached as {CLI::Wiring} reaches it for the run's line to the human),
-        # so a parked call rings while the `notify` layer is up. `lapsed:` takes
+        # `notice:` is the frontend's wait line ({Frontend::TTY#render_wait}), so a
+        # parked call rings unless the `quiet` layer is up: a blocked run is the
+        # one thing the human must hear about. `lapsed:` takes
         # the lapse line, which only informs: the human was already summoned.
         class Arrivals
           TICK = 0.05

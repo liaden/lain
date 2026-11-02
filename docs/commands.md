@@ -753,16 +753,17 @@ Bare `/mode` reports and changes nothing.
 | `ask` | approval | A gated call parks for you (or the secret oracle) to answer. |
 | `auto` | approval | A model judge decides first; only a call it is unsure of parks. **The default at launch.** |
 | `bypass` | approval | A gated call the rules left open is approved, with no judge and no prompt. |
-| `+layer` / `-layer` | layers | Enable or disable one of `goal`, `notify`, `vi`. |
+| `+layer` / `-layer` | layers | Enable or disable one of `goal`, `notify`, `quiet`, `vi`. |
 | `!` | none | Reset: `ask` approval, no layers, and then `plan` scope. |
 
 Tokens **fold over one mode and switch once**, so `/mode bypass +notify -goal` journals a single
 flip naming where the session started and where it ended. An axis holds one value, so two tokens
 naming the same axis refuse whole and name both: taking the last would hand a typo the gate.
 
-With `notify` up, a settled run or a waiting question rings the bell and sends the terminal a
-desktop notification (OSC 9, 99 or 777 by terminal), and writes a feed record. Under tmux 3.3 and
-later the notification sequence is dropped unless `set -g allow-passthrough on`.
+A run that blocks on the human (a question, a parked approval, a gated prompt) rings the bell by
+default; `quiet` turns that off. With `notify` up, a settled run also rings the bell and sends the
+terminal a desktop notification (OSC 9, 99 or 777 by terminal), and writes a feed record. Under tmux 3.3 and later the notification sequence is dropped unless
+`set -g allow-passthrough on`.
 
 `--approval ask|auto|bypass` picks the level a chat starts in. A launched chat starts in `auto`,
 and the HUD shows no approval lighter for it; `ask` shows `ASK` and `bypass` shows `BYPASS`.

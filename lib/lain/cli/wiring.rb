@@ -382,7 +382,7 @@ module Lain
       def open_terminal(agent, notice, startup, backend)
         @skill_catalog = backend.library.catalog
         @tty_factory.call(**terminal_keywords(agent, notice)).then do |tty|
-          @human_line = tty.method(:render_summons)
+          @human_line = tty.method(:render_wait)
           startup.each(&(human.pane? ? tty.method(:render_warning) : notice))
           human.alternate_screen? && Lain::Frontend::StdinPump.terminal?(@stdin) ? ScreenNotices.new(tty, startup) : tty
         end

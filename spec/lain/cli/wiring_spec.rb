@@ -4423,19 +4423,27 @@ RSpec.describe Lain::CLI::Wiring do
         expect(fed.sole.last).to eq("key <redacted:1> is open")
       end
 
-      # The review half of the notify layer: `request_review`'s line to the
-      # human is a summons, so it rings while the layer is up.
-      it "rings the terminal with the run's line to the human once /mode +notify is typed" do
+      # `request_review`'s line to the human is a wait on them, so it rings
+      # unless the human typed /mode +quiet.
+      it "rings the terminal with the run's line to the human with no layer set" do
         rendered = StringIO.new
 
-        run_layered(rendered) do |wiring|
-          wiring.told.call("quiet before the layer")
-          type_mode(wiring, "+notify")
-          wiring.told.call("epic.md is open for review")
-        end
+        run_layered(rendered) { |wiring| wiring.told.call("epic.md is open for review") }
 
         expect(rendered.string.count("\a")).to eq(1)
         expect(rendered.string.index("\a")).to be > rendered.string.index("epic.md is open for review")
+      end
+
+      it "rings nothing for the run's line to the human once /mode +quiet is typed" do
+        rendered = StringIO.new
+
+        run_layered(rendered) do |wiring|
+          type_mode(wiring, "+quiet")
+          wiring.told.call("epic.md is open for review")
+        end
+
+        expect(rendered.string).to include("epic.md is open for review")
+        expect(rendered.string).not_to include("\a")
       end
     end
 
