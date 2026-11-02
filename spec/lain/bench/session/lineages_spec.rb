@@ -162,6 +162,69 @@ RSpec.describe Lain::Bench::Session::Lineages do
         .to eq([["investigate the login bug", "the token TTL was zero"]])
     end
 
+    # The stopped child answered nothing, so its resume is the lineage that finished, and it
+    # reads as one child: spawned from the stopped child's parent turn, with the turns of both.
+    it "reads a resumed child as the continuation of the one its ceiling stopped" do
+      rounds = Array.new(Lain::Budget::DEFAULT_ITERATIONS) { |i| tool_response(["e#{i}", "echo", { "text" => "r#{i}" }]) }
+      session = RecordedSpawnSession.new(
+        parent_responses: [tool_response(["tu_1", "subagent", { "prompt" => "survey the licenses" }]),
+                           tool_response(["tu_2", "subagent", { "resume" => "subagent", "iterations" => 2 }]),
+                           text_response("parent done")],
+        child_responses: [*rounds, text_response("the licenses, firmed up")]
+      ).run
+      stopped, resumed = session.records.select { |record| record["type"] == "message" && record["kind"] == "spawn" }
+
+      lineages = lineages_of(session).to_a
+      expect(lineages.size).to eq(1)
+      lineage = lineages.first
+      expect(lineage.spawn.digest).to eq(resumed.fetch("digest"))
+      expect(lineage.spawn.body).to include("resumed_from" => stopped.fetch("digest"))
+      expect(lineage.spawned_from).to eq(stopped.dig("payload", "spawned_from"))
+      expect(texts(lineage.child_turns).compact.values_at(0, -1))
+        .to eq(["survey the licenses", "the licenses, firmed up"])
+    end
+
+    # A resume can stop at its own ceiling and be resumed in turn, and the child is still one child.
+    it "reads a child resumed twice as one, from its first spawn's parent turn" do
+      rounds = Array.new(Lain::Budget::DEFAULT_ITERATIONS + 2) do |i|
+        tool_response(["e#{i}", "echo", { "text" => "r#{i}" }])
+      end
+      resume = { "resume" => "subagent", "iterations" => 2 }
+      session = RecordedSpawnSession.new(
+        parent_responses: [tool_response(["tu_1", "subagent", { "prompt" => "survey the licenses" }]),
+                           tool_response(["tu_2", "subagent", resume]), tool_response(["tu_3", "subagent", resume]),
+                           text_response("parent done")],
+        child_responses: [*rounds, text_response("the licenses, firmed up")]
+      ).run
+      first, = session.records.select { |record| record["type"] == "message" && record["kind"] == "spawn" }
+
+      lineages = lineages_of(session).to_a
+      expect(lineages.size).to eq(1)
+      lineage = lineages.first
+      expect(lineage.spawned_from).to eq(first.dig("payload", "spawned_from"))
+      expect(texts(lineage.child_turns).compact.values_at(0, -1))
+        .to eq(["survey the licenses", "the licenses, firmed up"])
+    end
+
+    # A grandchild the stopped run spawned hangs off a turn the continued child's lineage holds.
+    it "keeps a grandchild the stopped child spawned under the child its resume continues" do
+      rounds = Array.new(Lain::Budget::DEFAULT_ITERATIONS - 1) do |i|
+        tool_response(["e#{i}", "echo", { "text" => "r#{i}" }])
+      end
+      session = RecordedSpawnSession.new(
+        parent_responses: [tool_response(["tu_1", "subagent", { "prompt" => "survey the licenses" }]),
+                           tool_response(["tu_2", "subagent", { "resume" => "subagent", "iterations" => 2 }]),
+                           text_response("parent done")],
+        child_responses: [tool_response(["tu_g", "subagent", { "prompt" => "read the NOTICE file" }]), *rounds,
+                          text_response("the licenses, firmed up")],
+        grandchild_responses: [text_response("NOTICE read")]
+      ).run
+
+      grandchild, child = lineages_of(session).to_a
+      expect(texts(grandchild.child_turns)).to eq(["read the NOTICE file", "NOTICE read"])
+      expect(child.child_turns.map(&:digest)).to include(grandchild.spawned_from)
+    end
+
     it "reads a file whose only completion failed, yielding nothing and refusing nothing" do
       session = RecordedSpawnSession.new(
         parent_responses: [tool_response(["tu_1", "subagent", { "prompt" => "go" }]), text_response("parent done")],

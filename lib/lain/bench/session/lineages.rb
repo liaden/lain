@@ -30,13 +30,16 @@ module Lain
         include Enumerable
 
         # One completed lineage. `spawned_from` is the parent turn the spawn
-        # ran from -- for a one-shot, the assistant turn that called it.
-        Lineage = Data.define(:spawn, :completion, :child_turns) do
-          def initialize(spawn:, completion:, child_turns:)
-            super(spawn:, completion:, child_turns: child_turns.freeze)
+        # ran from -- for a one-shot, the assistant turn that called it. A
+        # resumed child's `origin` is the first spawn of the child it carries
+        # on, so it reads from that spawn's parent turn rather than from the
+        # head its ceiling stopped it at.
+        Lineage = Data.define(:spawn, :completion, :child_turns, :origin) do
+          def initialize(spawn:, completion:, child_turns:, origin: spawn)
+            super(spawn:, completion:, child_turns: child_turns.freeze, origin:)
           end
 
-          def spawned_from = spawn.body.fetch("spawned_from")
+          def spawned_from = origin.body.fetch("spawned_from")
         end
 
         # A slice that resumes from another file carries no directory to find
@@ -191,7 +194,15 @@ module Lain
         end
 
         def lineage(completion, spawn)
-          Lineage.new(spawn:, completion:, child_turns: child_turns(completion, spawn))
+          origin = origin_of(spawn)
+          Lineage.new(spawn:, completion:, child_turns: child_turns(completion, origin), origin:)
+        end
+
+        # Recursive because each resume names only the spawn just before it, and a resumed child can
+        # stop at its ceiling and be resumed again.
+        def origin_of(spawn)
+          resumed_from = spawn.body["resumed_from"]
+          resumed_from ? origin_of(@store.fetch(resumed_from)) : spawn
         end
 
         # The Store holds the spawn's body, which the lineage's `spawned_from` and role are read from.

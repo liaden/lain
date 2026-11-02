@@ -116,6 +116,20 @@ RSpec.describe Lain::Tools::Subagent::Lineage do
       expect(lineage.spawn(parent, prompt: "go").body).not_to have_key("lifecycle")
     end
 
+    # A resume continues a stopped child: it starts at that child's head, and
+    # names the spawn it continues, so a lineage reader joins the two.
+    it "starts a resume at the stopped head and names the spawn it continues" do
+      first = lineage.spawn(parent, prompt: "go")
+      stopped = Data.define(:spawn, :head).new(spawn: first.digest, head: child.head_digest)
+
+      resumed = lineage.spawn(parent, prompt: "go", resumed: stopped)
+
+      expect(resumed.body).to include("spawned_from" => child.head_digest, "resumed_from" => first.digest)
+      expect(resumed.causal_parents).to contain_exactly(child.head_digest, first.digest)
+      expect(resumed.from).to eq(lineage.correlation_of(parent))
+      expect(first.body).not_to have_key("resumed_from")
+    end
+
     it "writes the mark an actor asks for" do
       expect(lineage.spawn(parent, prompt: "go", lifecycle: "launched").body)
         .to include("lifecycle" => Lain::StatusFeed::SpawnLifecycle::LAUNCHED)

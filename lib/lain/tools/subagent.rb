@@ -28,8 +28,10 @@ module Lain
       # the schema.
       TASK = "The task for the subagent to carry out on its own."
 
+      # Not required in the schema, because a resume carries on a task already given; the input
+      # that includes this refuses a call with neither.
       included do
-        field :prompt, :string, required: true, description: TASK
+        field :prompt, :string, description: TASK
       end
     end
 
@@ -59,6 +61,15 @@ module Lain
             input.errors.add(attribute, "must be one bare word of letters, digits, _ or -")
           end
         end
+
+        field :resume, :string, description: "The label a subagent stopped at its iteration ceiling was given. " \
+                                             "It carries on from where it stopped, so no prompt is needed."
+        field :iterations, :integer, description: "With resume: how many more iterations the subagent may run."
+        validates :prompt, presence: true, unless: :resuming?
+        validates :iterations, absence: { message: "applies only to a resume" }, unless: :resuming?
+        validates :iterations, numericality: { only_integer: true, greater_than: 0 }, allow_nil: true
+
+        def resuming? = !resume.nil?
       end
 
       input_model Input
@@ -236,6 +247,15 @@ module Lain
         self.class.new(**config, name: @name, announces_as: @announces_as, mode: @mode, log: @log, answer: @answer)
       end
 
+      # Told by the {Choice} that offers it, so a stop tells the parent which role to resume under.
+      #
+      # @param role [String] the role this spawner is offered as
+      # @return [self]
+      def offered_as(role)
+        @stops = Stops.new(role:)
+        self
+      end
+
       protected
 
       # A model-dispatched `:actor` is refused UNLESS a running {Supervisor} is
@@ -246,6 +266,8 @@ module Lain
       # that outlives the ask. Like a child with no room, the refusal emits no
       # event and touches no Store.
       def perform(input, _invocation)
+        return resumed(input) if input.resuming?
+
         admitted(builder_for(input.name)) { |builder| dispatched(input, builder) }
       end
 
@@ -254,7 +276,37 @@ module Lain
       def dispatched(input, builder)
         return adopt_actor(input) if @mode == :actor
 
-        spawn_one_shot(input.prompt, lease: kept_lease(input), builder:, announced: announced_as(input.name))
+        spawn_one_shot(input.prompt, lease: kept_lease(input), builder:, announced: announced_as(input.name),
+                                     stops: @stops)
+      end
+
+      # The stopped child is taken only once it has room to run, so a resume refused for room can
+      # be asked again.
+      def resumed(input)
+        stopped = resumable(input)
+        lease = relet(stopped)
+        admitted(stopped.builder, budget.with(iterations: resume_ceiling(input.iterations))) do |builder|
+          @stops.take(stopped.label)
+          spawn_one_shot(stopped.prompt, lease:, builder:, announced: stopped.announced, opening: stopped,
+                                         stops: @stops)
+        end
+      end
+
+      def resumable(input)
+        if input.prompt || input.name || input.attributes["extends"]
+          invalid!("a resume carries on the child's own task, name and directory, so it takes no prompt, name " \
+                   "or extends")
+        end
+        @stops.fetch(input.resume) { |held| invalid!(Stops.unknown(input.resume, held)) }
+      end
+
+      # A resume is a fresh run of the same role, so the role's ceiling bounds it as it bounds a spawn.
+      def resume_ceiling(asked) = [asked, budget.iterations].compact.min
+
+      def relet(stopped)
+        stopped.relet
+      rescue Kept::Refused => e
+        invalid!(e.message)
       end
 
       # The Supervisor runs {#launch_actor} under its own reactor task, so the
@@ -298,13 +350,13 @@ module Lain
       # where every one-shot spawn passes -- a tool call, a role skill, a
       # fan-out -- and once, so the lease and the session agree.
       def spawn_one_shot(prompt, on_stream_started: nil, lease: @kept.lease_for(nil), builder: @builder,
-                         announced: @announces_as)
+                         announced: @announces_as, opening: Fresh.new(prompt:), stops: Stops::None)
         # Per spawn, not per tool, so a fan-out's record shows WHICH spawns
         # ran un-cacheable.
         policy.prefix.journal_floor(journal)
         scope = @seam.scope.current
         Lineage::OneShot.new(lineage, parent_timeline, consumed: telemetry, journal:).recording do |record|
-          held = leased(record, prompt, scope:, lease:, on_stream_started:, builder:, announced:)
+          held = leased(record, prompt, scope:, lease:, on_stream_started:, builder:, announced:, opening:, stops:)
           Tool::Result.ok(finished(record, held).text)
         end
       end
@@ -331,12 +383,18 @@ module Lain
 
       # A child the scope did not lend to -- one its caller lent a checkout of
       # its own -- keeps that checkout, so its session is not the scope's.
-      def leased(record, prompt, scope:, lease:, on_stream_started:, builder:, announced:)
+      #
+      # What a ceiling stop keeps for a resume is the scope and lease as lent here, so a resumed
+      # researcher goes back to the directory it stopped in.
+      def leased(record, prompt, scope:, lease:, on_stream_started:, builder:, announced:, opening:, stops:)
         scope, lent = lending(scope, lease)
         lent.hold(@name, journal:) do |worker_env, sync, worker|
-          progress = reporting(record.spawned(prompt), prompt, worker, announced)
-          child = build_child(record.parent, worker_env, scope, progress:, task: prompt, builder:)
-          run_child(record.built(child), prompt, sync, on_stream_started:)
+          spawn = record.spawned(prompt, resumed: opening.resumed)
+          progress = reporting(spawn, prompt, worker, announced)
+          child = build_child(record.parent, worker_env, scope, progress:, task: prompt, builder:, opening:)
+          stopped = Stopped.new(label: announced.label, spawn: spawn.digest, head: nil, prompt:, builder:,
+                                announced:, scope:, lease:)
+          run_child(record.built(child), opening, sync, on_stream_started:, stopping: stops.keeping(stopped))
         end
       end
 
@@ -393,19 +451,26 @@ module Lain
       # to the child that made the commits, and only this block still holds
       # it live. A child that raised never reaches it, and its lease syncs the
       # checkout with nobody to ask before surrendering it.
-      def run_child(child, prompt, sync, on_stream_started: nil)
+      def run_child(child, opening, sync, on_stream_started:, stopping:)
         child.answered do |agent, tools|
-          @answer.bounded(agent, refusing_malformed(asked(agent, prompt, on_stream_started)), journal:)
+          @answer.bounded(agent, refusing_malformed(asked(agent, opening, on_stream_started, stopping)), journal:)
                  .tap { sync.call(Isolation::SelfSync.worker(agent, tools:)) }
         end
       end
 
       # Only the child's own run is rescued: a ceiling hit later, in the
       # self-sync ask, follows a complete answer and must not read as a stop.
-      def asked(agent, prompt, on_stream_started)
-        agent.ask(prompt, on_stream_started:)
+      def asked(agent, opening, on_stream_started, stopping)
+        opening.run(agent, on_stream_started)
       rescue Budget::Exceeded => e
-        raise Budget::Exceeded, @answer.partial(agent, e.message)
+        raise Budget::Exceeded.new(@answer.partial(agent, stopped_message(e, agent, stopping)), kind: e.kind)
+      end
+
+      # Only an iteration ceiling is offered a resume: more iterations are what a resume grants.
+      def stopped_message(error, agent, stopping)
+        return error.message unless error.kind == :iterations
+
+        [error.message, stopping.call(agent.timeline.head_digest)].reject(&:empty?).join("\n\n")
       end
 
       # Checked before the bounding, so an envelope too large to deliver is not
@@ -420,14 +485,14 @@ module Lain
       end
 
       def build_child(parent, worker_env, scope = @seam.scope.current, progress: Progress::Null, task: nil,
-                      builder: @builder)
-        builder.build(parent, worker_env:, scope:, progress:, task:)
+                      builder: @builder, opening: Fresh.new(prompt: task))
+        builder.build(parent, worker_env:, scope:, progress:, task:, opening:)
       end
 
       # Checked before any record is written, so a spawn with no room leaves
       # no :spawn behind, and the model is told which room ran out.
-      def admitted(builder)
-        child = granted(builder)
+      def admitted(builder, ceilings = budget)
+        child = granted(builder, ceilings)
       rescue Budget::Ceilings::Unrunnable => e
         Tool::Result.error("subagent spawn refused: #{e.message}. Do the task yourself instead.")
       else
@@ -439,8 +504,8 @@ module Lain
       end
 
       # @raise [Lain::Budget::Ceilings::Unrunnable] when the holder has no room for a child
-      def granted(builder)
-        builder.granting(Lain.live(@seam.spend).reserve { Lain.live(@seam.holder).attenuate(budget) })
+      def granted(builder, ceilings = budget)
+        builder.granting(Lain.live(@seam.spend).reserve { Lain.live(@seam.holder).attenuate(ceilings) })
       end
 
       def too_wide(prompt, width)
@@ -473,6 +538,7 @@ module Lain
         @name = name
         @mode = MODES.include?(mode.to_sym) ? mode.to_sym : raise(ArgumentError, "bad subagent mode #{mode.inspect}")
         @log = log
+        @stops = Stops.new
       end
 
       def actor_refused
@@ -898,6 +964,72 @@ module Lain
       # state for one to carry. The default a tool takes, and injectable past it.
       ANSWER = Answer.new
 
+      # Where a one-shot child starts: a new conversation over its task.
+      Fresh = Data.define(:prompt) do
+        def base(prefix, parent) = prefix.base_timeline(parent:, store: parent.store)
+        def run(agent, on_stream_started) = agent.ask(prompt, on_stream_started:)
+        def resumed = nil
+      end
+
+      # A one-shot child its iteration ceiling stopped, kept so a resume can carry it on: the head
+      # it stopped at, the spawn it ran under, and what it was built and lent with. Its conversation
+      # is already on the shared Store, so a resume sends nothing of it again.
+      Stopped = Data.define(:label, :spawn, :head, :prompt, :builder, :announced, :scope, :lease) do
+        def base(_prefix, parent) = Dag::Factory.timeline(head_digest: head, store: parent.store)
+        def run(agent, on_stream_started) = agent.run(on_stream_started:)
+        def resumed = self
+
+        # A kept directory is lent again; any other child leases as a fresh spawn would.
+        #
+        # @raise [Kept::Refused] when the kept directory is gone
+        def relet = scope.respond_to?(:relet) ? scope.relet : lease
+      end
+
+      # The children a ceiling stopped, each under the label a resume names it by. Fan-out
+      # siblings are fibers under one reactor, and nothing here suspends, so no lock is taken.
+      class Stops
+        RESUMABLE = "It can be resumed from where it stopped: call subagent with %<call>s and " \
+                    "iterations set to how many more iterations it may run."
+
+        # @param label [String] what the parent asked to resume
+        # @param held [Array<String>] the labels it could have named
+        # @return [String] why the resume was refused
+        def self.unknown(label, held)
+          known = held.empty? ? "none is held" : "these are: #{held.map(&:inspect).join(", ")}"
+          "no stopped child is labelled #{label.inspect}; #{known}"
+        end
+
+        # @param role [String, nil] the role a {Choice} offers this spawner as, which a resume names
+        def initialize(role: nil)
+          @role = role
+          @held = {}
+        end
+
+        # @param stopped [Stopped] the child, its head not yet known
+        # @return [#call] keeps the child at the head it is called with, and answers the sentence
+        #   that tells the parent how to resume it
+        def keeping(stopped) = ->(head) { keep(stopped.with(head:)) }
+
+        # @yieldparam held [Array<String>] the labels held, when `label` is not one
+        def fetch(label) = @held.fetch(label) { yield @held.keys }
+
+        def take(label) = @held.delete(label)
+
+        # A spawn nobody can resume, since only a model-dispatched call can name a label.
+        module None
+          def self.keeping(_stopped) = ->(_head) { "" }
+        end
+
+        private
+
+        # A second stop under one label takes a numbered one, so neither child shadows the other.
+        def keep(stopped)
+          label = (1..).lazy.map { |n| n == 1 ? stopped.label : "#{stopped.label}-#{n}" }.find { !@held.key?(_1) }
+          @held[label] = stopped.with(label:)
+          format(RESUMABLE, call: [("role: #{@role.inspect}" if @role), "resume: #{label.inspect}"].compact.join(", "))
+        end
+      end
+
       # One model-facing spawner over several roles, the role named PER CALL
       # from a set fixed where this is built. {Subagent} fixes one role at
       # construction, which is what keeps a capability out of the model's
@@ -928,6 +1060,7 @@ module Lain
         def initialize(spawners)
           super()
           @spawners = spawners.to_h { |role, spawner| [role.to_s, spawner] }.freeze
+          @spawners.each { |role, spawner| spawner.offered_as(role) }
         end
 
         # The model calls this "subagent" whatever roles it offers, so a role
@@ -1086,13 +1219,28 @@ module Lain
           # @param reminder [String] what the model is told about where it is
           # @param kept [#call] records the lease kept
           # @param listing [#call] the files the child wrote, as text; empty for none
-          def initialize(worker_env:, reminder:, kept:, listing: -> { "" })
+          # @param acquired [#call] records the lease acquired again, for a resume
+          def initialize(worker_env:, reminder:, kept:, listing: -> { "" }, acquired: -> {})
             @kept = kept
             @listing = listing
+            @acquired = acquired
             super(worker_env:, reminder:)
           end
 
           def lend(leases) = Lent.new(lent: super, kept: @kept, listing: @listing)
+
+          # This directory, for a resume of the child that stopped in it. Checked now, as an
+          # `extends` is, so a resume whose directory is gone starts no child.
+          #
+          # @return [#call] answering this scope, its lease recorded acquired again
+          # @raise [Refused] when the directory is gone
+          def relet
+            unless File.directory?(root)
+              raise Refused, "the directory the stopped child worked in, #{root}, is gone, so it cannot be resumed"
+            end
+
+            -> { tap { @acquired.call } }
+          end
         end
 
         # What the parent is told beside the handback: the files the child left.
@@ -1175,7 +1323,7 @@ module Lain
           record = Recorded.new(journal: @journal, origin: lease.origin, backend: from.class.name)
           record.call(:acquired)
           Confined.new(worker_env: lease.worker_env, reminder: yield(lease.worker_env), listing:,
-                       kept: -> { record.call(:kept) })
+                       kept: -> { record.call(:kept) }, acquired: -> { record.call(:acquired) })
         end
 
         def scratched
@@ -1694,10 +1842,10 @@ module Lain
         # The task is handed to the tool guard, so an approval the child asks
         # for can be weighed against what it was spawned to do.
         def build(parent, worker_env: WorkerEnv.default, scope: @seam.scope.current,
-                  progress: Progress::Null, task: nil)
+                  progress: Progress::Null, task: nil, opening: Fresh.new(prompt: task))
           child = nil
           spend = Budget::Shared.new
-          chain = own_chain(parent, progress) { child.timeline }
+          chain = own_chain(parent, progress, opening) { child.timeline }
           union = child_union(chain.timeline, chain.escalation, Holder.of(-> { child }), spend)
           view = @compaction.call(base: chain.base, worker_env: scope.env_over(worker_env), scope:)
           spawned(@seam.askers.enrol(chain.asking_handle, agent: @name), chain, union, view, task:, spend:)
@@ -1729,8 +1877,8 @@ module Lain
         # inside {Chain#asking_handle} because that method's receiver is the
         # CHILD's own chain, which has no way back to the parent it was
         # spawned under.
-        def own_chain(parent, progress, &timeline)
-          base = @policy.prefix.base_timeline(parent:, store: parent.store)
+        def own_chain(parent, progress, opening, &timeline)
+          base = opening.base(@policy.prefix, parent)
           Chain.new(base:, timeline:, escalation: Chain.escalation_road(base, parent, @seam.escalation),
                     feed: TurnFeed.new(observer: progress.watching(@seam.observer), base: base.head_digest),
                     spawn: progress.spawn)

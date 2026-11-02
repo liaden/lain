@@ -68,6 +68,8 @@ module Lain
         @clock = clock
         @seen = Set.new
         @members = {}
+        @dormant = {}
+        @renamed = {}
         @heads = {}
         @tree = nil
       end
@@ -83,7 +85,8 @@ module Lain
         return if @seen.include?(digest)
 
         @seen << digest
-        @members[digest] = Member.new(spawn: digest, parent: @heads[spawned_from(event)], started: @clock.call)
+        @members[digest] = resumed(event, digest) ||
+                           Member.new(spawn: digest, parent: @heads[spawned_from(event)], started: @clock.call)
         @tree = nil
       end
 
@@ -161,6 +164,22 @@ module Lain
 
       def live = @members.each_value.select(&:running?)
 
+      # A resume carries on the child its ceiling stopped, so that child's row runs again under
+      # the resume's spawn, moved to the end as the newest arrival.
+      #
+      # The old digest is kept as a name for the new one, so a child the stopped run spawned
+      # stays under the row.
+      def resumed(event, digest)
+        from = read(event, "resumed_from")
+        stopped = @members.delete(from) || @dormant.delete(from)
+        return if stopped.nil?
+
+        @renamed[from] = digest
+        stopped.resumed(digest)
+      end
+
+      def current(digest) = @renamed.key?(digest) ? current(@renamed[digest]) : digest
+
       # Depth-first, arrival order within a level, so a child is drawn under the
       # parent it was spawned from. A member whose parent has been pruned is
       # reached as a root rather than lost.
@@ -173,7 +192,10 @@ module Lain
       # One pass, not one scan per member.
       def children_by_owner = @members.each_value.group_by { |member| owner(member) }
 
-      def owner(member) = @members.key?(member.parent) ? member.parent : nil
+      def owner(member)
+        parent = current(member.parent)
+        @members.key?(parent) ? parent : nil
+      end
 
       def state_of(lifecycle)
         return FAILED if lifecycle.failed?
@@ -184,30 +206,38 @@ module Lain
       # A judge runs once per gated call, so its ended rows would evict the
       # researcher a human is waiting on; a running one is still shown.
       def forget_finished_judges
-        finished = @members.each_value.reject(&:running?).select(&:judge?)
-        finished.each do |member|
-          @members.delete(member.spawn)
-          @heads.delete(member.head)
-        end
+        @members.each_value.reject(&:running?).select(&:judge?).each { |member| forget(member) }
       end
 
       # The ended rows beyond the budget, oldest first. Insertion order is
       # arrival order, so the Hash itself says which those are.
+      #
+      # A failed row leaves the tree but is kept off it, since a ceiling stop can still be resumed;
+      # like `@seen`, that is one entry per failed spawn for the session.
       def prune
         ended = @members.each_value.reject(&:running?)
         ended.take([ended.size - ENDED_SHOWN, 0].max).each do |member|
-          @members.delete(member.spawn)
-          @heads.delete(member.head)
+          @dormant[member.spawn] = member if member.failed?
+          forget(member)
         end
+      end
+
+      # Its old names go with it, so a renamed row leaves nothing behind.
+      def forget(member)
+        @members.delete(member.spawn)
+        @heads.delete(member.head)
+        @renamed.keys.select { |from| current(from) == member.spawn }.each { |from| @renamed.delete(from) }
       end
 
       # Read the way {SpawnLifecycle} reads a body, and for its reason: this
       # runs on a per-turn status sink riding `CLI::JournalTee`, where a raised
       # sink is a lost turn, and a `:spawn` carrying no readable body is an
       # ordinary root rather than a failure.
-      def spawned_from(event)
+      def spawned_from(event) = read(event, "spawned_from")
+
+      def read(event, key)
         body = event.body if event.respond_to?(:body)
-        body["spawned_from"] if body.is_a?(Hash)
+        body[key] if body.is_a?(Hash)
       rescue StandardError
         nil
       end
@@ -234,17 +264,35 @@ module Lain
           @task = ""
           @worker = nil
           @turns = 0
+          @carried = 0
+          @resumed_from = nil
           @head = nil
           @rows = nil
         end
 
         def running? = @state == RUNNING
 
+        def failed? = @state == FAILED
+
         def judge? = @role == Approval::Judge::ROLE.to_s
 
         def ended(state)
           @state = state
           @rows = nil
+        end
+
+        # The resume's own count starts again from nought, so the turns already taken are carried.
+        #
+        # @param spawn [String] the resume's spawn digest, which the row now answers to
+        # @return [self]
+        def resumed(spawn)
+          @resumed_from = @spawn
+          @spawn = spawn
+          @carried += @turns
+          @turns = 0
+          @state = RUNNING
+          @rows = nil
+          self
         end
 
         # Only what the record carries: a turn record names no role and no
@@ -263,10 +311,18 @@ module Lain
         def shown = Requester.shown(label: @label || @role, role: @role, skill: @skill)
 
         # Memoised per depth: the iso8601 string dominated a rebuild's cost.
+        #
+        # `resumed_from` is written only on a resumed row, so every other row keeps its shape.
         def published(depth)
-          (@rows ||= {})[depth] ||= { "spawn" => @spawn, "role" => shown, "task" => @task, "worker" => @worker,
-                                      "state" => @state, "turns" => @turns, "depth" => depth,
-                                      "started" => @started.utc.iso8601 }.freeze
+          (@rows ||= {})[depth] ||= row(depth).freeze
+        end
+
+        private
+
+        def row(depth)
+          row = { "spawn" => @spawn, "role" => shown, "task" => @task, "worker" => @worker,
+                  "state" => @state, "turns" => @carried + @turns, "depth" => depth, "started" => @started.utc.iso8601 }
+          @resumed_from ? row.merge("resumed_from" => @resumed_from) : row
         end
       end
 
@@ -312,7 +368,8 @@ module Lain
         # than over the joined line, because the scrub strips leading space and
         # the indent is leading space that means something.
         def self.composed(published, age)
-          cells = [published["role"], published["state"], "#{published["turns"].to_i}t", age, published["task"]]
+          cells = [published["role"], published["state"], (published["resumed_from"] ? "resumed" : ""),
+                   "#{published["turns"].to_i}t", age, published["task"]]
           new(indent: INDENT * published["depth"].to_i,
               columns: cells.map { |cell| Tools::AskHuman::InboxRow.one_line(cell) }.reject(&:empty?))
         end

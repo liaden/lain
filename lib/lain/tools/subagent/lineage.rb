@@ -50,6 +50,11 @@ module Lain
         # ordinal k, so the 1st keeps the address a lone spawn takes and a
         # replay by a new writer, over the same Store, resolves the same digests.
         #
+        # A `resumed` spawn carries on a child its ceiling stopped: it starts at
+        # that child's head, so `spawned_from` names it, and it cites the stopped
+        # spawn as `resumed_from` and as a causal parent, which is the edge a
+        # lineage reader joins the two by.
+        #
         # `lifecycle`, `adoption`, `unattended` and `role` are written CONDITIONALLY.
         # `role` is what lets a lineage reader tell a judge's spawn from a worker's:
         # `unattended` is shared by several roles and names none.
@@ -71,12 +76,9 @@ module Lain
         # A one-shot in a named lane is adopted too, with no lifecycle mark: a
         # retry of the same work from the same head is a new attempt the fleet
         # has not retired.
-        def spawn(parent, prompt:, lifecycle: nil)
-          head = parent.head_digest
-          body = { "prefix" => @policy.prefix.label, "posture" => @policy.posture.label,
-                   "only" => @policy.only, "spawned_from" => head, "task" => Canonical.digest(prompt) }
-          body["unattended"] = true if @policy.unattended
-          body["role"] = @role if @role
+        def spawn(parent, prompt:, lifecycle: nil, resumed: nil)
+          head = resumed ? resumed.head : parent.head_digest
+          body = spawn_body(head, prompt, resumed)
           if adoptable?(lifecycle)
             body.merge!(adopted(head, lifecycle, body, parent.store))
           else
@@ -84,7 +86,7 @@ module Lain
             body["adoption"] = twin if twin > 1
           end
           put(parent, kind: :spawn, from: correlation_of(parent), to: nil,
-                      causal_parents: [head].compact, body:)
+                      causal_parents: [head, resumed&.spawn].compact, body:)
         end
 
         # The return as a first-class event -- the schema has no `:result`
@@ -167,6 +169,15 @@ module Lain
         end
 
         private
+
+        def spawn_body(head, prompt, resumed)
+          body = { "prefix" => @policy.prefix.label, "posture" => @policy.posture.label,
+                   "only" => @policy.only, "spawned_from" => head, "task" => Canonical.digest(prompt) }
+          body["resumed_from"] = resumed.spawn if resumed
+          body["unattended"] = true if @policy.unattended
+          body["role"] = @role if @role
+          body
+        end
 
         # Keyed by the head, the scope a collision lives in: two adoptions from
         # ONE head. Different heads already differ in `spawned_from`, and a
@@ -262,7 +273,9 @@ module Lain
             ended(StatusFeed::SpawnLifecycle::STOPPED)
           end
 
-          def spawned(prompt) = @spawn = @lineage.spawn(@parent, prompt:)
+          # @param prompt [String] the child's task
+          # @param resumed [#head, #spawn, nil] the stopped child a resume carries on
+          def spawned(prompt, resumed: nil) = @spawn = @lineage.spawn(@parent, prompt:, resumed:)
 
           # @param child [#settled, #asked] the child this spawn built
           # @return the child, so a build reads as one expression

@@ -406,7 +406,7 @@ RSpec.describe Lain::Tools::Subagent do
       schema = build_subagent(provider: mock(text_response)).input_schema
 
       expect(schema["properties"]["name"]).to include("type" => "string", "maxLength" => 24)
-      expect(schema["required"]).to eq(["prompt"])
+      expect(Array(schema["required"])).not_to include("name")
     end
 
     it "names the child's requester by it, keeping the wired name as the denial key" do
@@ -969,6 +969,145 @@ RSpec.describe Lain::Tools::Subagent do
       expect(result).to include("is_error" => true, "content" => "no checkout for this worker")
       expect(record.spawns).to be_empty
       expect(record.messages).to be_empty
+    end
+  end
+
+  # A child its iteration ceiling stopped one step short of its report has
+  # already paid for everything in its conversation, so a resume carries on
+  # from its stopped head rather than starting the task again.
+  describe "resuming a child its ceiling stopped" do
+    let(:noted) do
+      Lain::Response.new(content: [{ "type" => "text", "text" => "let me firm up the license notes" },
+                                   { "type" => "tool_use", "id" => "e1", "name" => "echo",
+                                     "input" => { "text" => "b" } }],
+                         stop_reason: :tool_use)
+    end
+    let(:provider) do
+      mock(tool_response(["e0", "echo", { "text" => "a" }]), noted, text_response("the license notes, firmed up"))
+    end
+    let(:tool) do
+      build_subagent(provider:, budget: Lain::Budget.ceilings(iterations: 2), announces_as: "researcher")
+    end
+
+    def stopped
+      tool.call({ "prompt" => "go" }, invocation)
+    rescue Lain::Budget::Exceeded => e
+      e
+    end
+
+    def resumed(label = "researcher", iterations: 3)
+      tool.call({ "resume" => label, "iterations" => iterations }, invocation)
+    end
+
+    def texts(message) = Array(message[:content] || message["content"]).filter_map { |b| b["text"] }
+
+    it "names the stopped child's label and says it can be resumed" do
+      error = stopped
+
+      expect(error).to be_a(Lain::Budget::Exceeded).and(having_attributes(kind: :iterations))
+      expect(error.message).to start_with("loop ran 2 iterations, ceiling is 2")
+      expect(error.message).to include('resume: "researcher"', "let me firm up the license notes")
+    end
+
+    it "carries on from the stopped conversation and hands back an answer" do
+      stopped
+
+      expect(resumed.text).to eq("the license notes, firmed up")
+      sent = provider.requests.last.messages
+      expect(sent.flat_map { |message| texts(message) }.count("go")).to eq(1)
+      expect(sent.flat_map { |message| texts(message) }).to include("let me firm up the license notes")
+      expect(sent.size).to eq(provider.requests[1].messages.size + 2)
+    end
+
+    def rounds(prefix, count)
+      Array.new(count) { |i| tool_response(["#{prefix}#{i}", "echo", { "text" => "#{prefix}#{i}" }]) }
+    end
+
+    def stopped_at(ceiling, provider)
+      build_subagent(provider:, budget: Lain::Budget.ceilings(iterations: ceiling),
+                     announces_as: "researcher").tap do |tool|
+        expect { tool.call({ "prompt" => "go" }, invocation) }.to raise_error(Lain::Budget::Exceeded)
+      end
+    end
+
+    it "holds a resume to the role's own ceiling, however many iterations it asks for" do
+      tool = stopped_at(2, mock(*rounds("e", 2), *rounds("r", 3), text_response("done at last")))
+
+      expect { tool.call({ "resume" => "researcher", "iterations" => 30 }, invocation) }
+        .to raise_error(Lain::Budget::Exceeded, /ceiling is 2/)
+    end
+
+    it "runs a resume under fewer iterations than the role's when it asks for fewer" do
+      tool = stopped_at(3, mock(*rounds("e", 3), *rounds("r", 2), text_response("done at last")))
+
+      expect { tool.call({ "resume" => "researcher", "iterations" => 1 }, invocation) }
+        .to raise_error(Lain::Budget::Exceeded, /ceiling is 1/)
+    end
+
+    it "records the resumed spawn as a continuation of the stopped one, starting at its final head" do
+      stopped
+      resumed
+      first, second = record.spawns
+      stopped_final = record.messages.find { |message| message.body["lifecycle"] == "failed" }.body.fetch("final")
+
+      expect(second.body).to include("resumed_from" => first.digest, "spawned_from" => stopped_final,
+                                     "task" => first.body.fetch("task"))
+      expect(second.causal_parents).to include(first.digest, stopped_final)
+      expect(Lain::Dag::Factory.timeline(head_digest: record.message.body.fetch("final"), store:)
+                               .ancestors.map(&:digest)).to include(stopped_final)
+    end
+
+    it "folds the resume into the stopped spawn's lineage while only its own completion ends it" do
+      stopped
+      resumed
+      first, second = record.spawns
+      lineages = Lain::Journal::Projection::Lineage.over(
+        record.events.grep(Lain::Ext::Event).map { |event| Lain::Telemetry::Message.from_event(event) }
+      )
+
+      expect(lineages.member?(first.digest, second.digest)).to be(true)
+      expect(lineages.completing(record.message.digest) { nil }).to eq(second.digest)
+    end
+
+    it "refuses a label no stopped child holds, naming the ones that can be resumed" do
+      stopped
+
+      expect { resumed("nobody") }.to raise_error(Lain::Tool::InvalidInput, /"nobody".*"researcher"/)
+    end
+
+    it "takes a stopped child once, so a second resume of the same label is refused" do
+      stopped
+      resumed
+
+      expect { resumed }.to raise_error(Lain::Tool::InvalidInput, /"researcher"/)
+    end
+
+    it "gives a second stopped child of the same label a label of its own" do
+      twice = mock(*echo_rounds)
+      tool = build_subagent(provider: twice, budget: Lain::Budget.ceilings(iterations: 2), announces_as: "researcher")
+      messages = Array.new(2) do
+        tool.call({ "prompt" => "go" }, invocation)
+      rescue Lain::Budget::Exceeded => e
+        e.message
+      end
+
+      expect(messages).to match([include('resume: "researcher"'), include('resume: "researcher-2"')])
+    end
+
+    it "offers no resume for a child stopped for repeating itself" do
+      repeat = tool_response(["e", "echo", { "text" => "same" }])
+      same = mock(repeat, repeat, repeat)
+      tool = build_subagent(provider: same, budget: Lain::Budget.ceilings(iterations: 5), announces_as: "researcher")
+
+      expect { tool.call({ "prompt" => "go" }, invocation) }
+        .to raise_error(Lain::Budget::Exceeded) { |error| expect(error.message).not_to include("resume") }
+    end
+
+    it "refuses iterations without a resume, and a prompt-less call that resumes nothing" do
+      expect { tool.call({ "prompt" => "go", "iterations" => 3 }, invocation) }
+        .to raise_error(Lain::Tool::InvalidInput, /iterations/i)
+      expect { tool.call({}, invocation) }.to raise_error(Lain::Tool::InvalidInput, /prompt/i)
+      expect(provider.requests).to be_empty
     end
   end
 
@@ -1967,7 +2106,7 @@ RSpec.describe Lain::Tools::Subagent do
 
     it "refuses extends for a role that keeps no lease, naming the role, and spawns nothing" do
       provider = mock(text_response("unused"))
-      keeper = instance_double(described_class, input_model: described_class::Kept::Input)
+      keeper = instance_double(described_class, input_model: described_class::Kept::Input, offered_as: nil)
       tool = offering(researcher: keeper, reviewer: build_subagent(provider:))
 
       result = tool.call({ "prompt" => "look", "role" => "reviewer", "extends" => "." }, invocation)
@@ -1987,13 +2126,22 @@ RSpec.describe Lain::Tools::Subagent do
       expect(provider.call_count).to eq(0)
     end
 
+    it "names the role a stopped child must be resumed under" do
+      stopping = build_subagent(provider: mock(*echo_rounds), budget: Lain::Budget.ceilings(iterations: 2),
+                                announces_as: "reader")
+      tool = offering(reader: stopping, other: build_subagent(provider: mock))
+
+      expect { tool.call({ "role" => "reader", "prompt" => "go" }, invocation) }
+        .to raise_error(Lain::Budget::Exceeded, /role: "reader", resume: "reader"/)
+    end
+
     it "is shown as the subagent tool, with the roles on offer as the role's enum" do
       tool = offering(reader: build_subagent(provider: mock), other: build_subagent(provider: mock))
 
       expect(tool.name).to eq("subagent")
       expect(tool.roles).to eq(%w[reader other])
       expect(tool.input_schema["properties"]["role"]["enum"]).to eq(%w[reader other])
-      expect(tool.input_schema["required"]).to contain_exactly("prompt", "role")
+      expect(tool.input_schema["required"]).to contain_exactly("role")
     end
 
     # A child's union holding the offer gets a descended copy, so every role
@@ -2697,6 +2845,7 @@ RSpec.describe Lain::Tools::Subagent do
           end
         end.new
       end
+      let(:leasing) { Lain::Channel.new }
 
       def reports_both = mock(tool_response(["c1", "cwd", {}], ["c2", "scope", {}]), text_response("done"))
 
@@ -2706,8 +2855,8 @@ RSpec.describe Lain::Tools::Subagent do
       end
 
       it "offers extends in its schema, where a spawner with none does not" do
-        expect(kept_tool.input_schema["properties"].keys).to eq(%w[prompt name extends])
-        expect(build_subagent(provider: mock).input_schema["properties"].keys).to eq(%w[prompt name])
+        expect(kept_tool.input_schema["properties"].keys).to eq(%w[prompt name resume iterations extends])
+        expect(build_subagent(provider: mock).input_schema["properties"].keys).to eq(%w[prompt name resume iterations])
       end
 
       it "runs the child in a fresh scratch directory it confines it to, leasing nothing of the run's" do
@@ -2807,6 +2956,55 @@ RSpec.describe Lain::Tools::Subagent do
         kept_tool.call({ "prompt" => "go" }, invocation)
 
         expect(File.directory?(seen.first)).to be(true)
+      end
+
+      def stopped_researcher
+        looping = mock(tool_response(["c0", "cwd", {}]), tool_response(["c1", "cwd", {}]),
+                       tool_response(["c2", "cwd", {}], ["c3", "scope", {}]), text_response("done"))
+        recorded = described_class::Kept.new(root: project, paths:, related: ->(_path) { false }, journal: leasing,
+                                             scratch: Lain::Isolation::Scratch.new(root: scratch_root,
+                                                                                   prefix: "research-"))
+        kept_tool(looping, kept: recorded, budget: Lain::Budget.ceilings(iterations: 2),
+                           announces_as: "researcher").tap do |tool|
+          expect { tool.call({ "prompt" => "go" }, invocation) }.to raise_error(Lain::Budget::Exceeded, /resume/)
+        end
+      end
+
+      it "resumes a stopped researcher in the directory it stopped in" do
+        tool = stopped_researcher
+
+        expect(tool.call({ "resume" => "researcher", "iterations" => 2 }, invocation).text).to start_with("done")
+        expect([seen.size, seen.uniq.size]).to eq([3, 1])
+      end
+
+      it "records the kept directory acquired again for the resume, and kept again after it" do
+        tool = stopped_researcher
+        tool.call({ "resume" => "researcher", "iterations" => 2 }, invocation)
+
+        leases = leasing.drain.grep(Lain::Telemetry::IsolationLease)
+        expect(leases.map(&:kind)).to eq(%i[acquired kept acquired kept])
+        expect(leases.map(&:path).uniq).to eq([seen.first])
+      end
+
+      it "refuses a resume that names a prompt, a name or an extends, starting no child" do
+        tool = stopped_researcher
+        refusals = [{ "prompt" => "start over" }, { "name" => "other" }, { "extends" => project }].map do |extra|
+          tool.call({ "resume" => "researcher", "iterations" => 2, **extra }, invocation)
+        rescue Lain::Tool::InvalidInput => e
+          e.message
+        end
+
+        expect(refusals).to all(include("a resume carries on"))
+        expect(seen.size).to eq(2)
+      end
+
+      it "refuses to resume a researcher whose directory is gone, starting no child" do
+        tool = stopped_researcher
+        FileUtils.rm_rf(seen.first)
+
+        expect { tool.call({ "resume" => "researcher", "iterations" => 3 }, invocation) }
+          .to raise_error(Lain::Tool::InvalidInput, /#{Regexp.escape(seen.first)}.*gone/)
+        expect(seen.size).to eq(2)
       end
 
       it "refuses an extends outside the project and its related directories, starting no child" do

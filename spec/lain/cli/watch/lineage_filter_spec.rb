@@ -35,6 +35,32 @@ RSpec.describe Lain::CLI::Watch::LineageFilter do
     expect(watched.anchor).to eq(spawn_s)
   end
 
+  # A resume carries on the child its ceiling stopped, so watching that child follows it on.
+  it "follows a watched child that stopped into its resume, through to the resume's answer" do
+    watched = filter("5", shadowed)
+    final = address.call("f")
+    resumed = address.call("6")
+    records = [spawn.call(spawn_s),
+               message.call(digest: address.call("3"), from: "child", causal_parents: [spawn_s, final]),
+               message.call(digest: resumed, kind: :spawn, from: parent, to: nil, causal_parents: [final, spawn_s]),
+               message.call(digest: address.call("7"), from: "child", causal_parents: [resumed, address.call("e")])]
+
+    expect([records.map { watched.admit?(_1) }, shadowed]).to eq([[true, true, true, true], []])
+  end
+
+  # A grandchild of the stopped run, and one of its resume, both chain to the watched child.
+  it "admits a grandchild spawned before the stop and one spawned by the resume" do
+    watched = filter("5")
+    resumed = address.call("6")
+    records = [spawn.call(spawn_s),
+               message.call(digest: address.call("8"), kind: :spawn, from: spawn_s, to: nil, causal_parents: [head]),
+               message.call(digest: resumed, kind: :spawn, from: parent, to: nil,
+                            causal_parents: [address.call("f"), spawn_s]),
+               message.call(digest: address.call("9"), kind: :spawn, from: resumed, to: nil, causal_parents: [head])]
+
+    expect(records.map { watched.admit?(_1) }).to eq([true, true, true, true])
+  end
+
   it "names a later matching spawn once and admits nothing that chains only to it" do
     watched = filter("5", shadowed)
     admitted = [spawn.call(spawn_s), spawn.call(spawn_shadow),

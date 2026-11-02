@@ -406,6 +406,53 @@ RSpec.describe Lain::StatusFeed::Fleet do
       expect(fleet.tree.map { |row| row["depth"] }).to eq([0, 1])
     end
 
+    # A resume carries on the child its ceiling stopped, so the row it stopped on runs again,
+    # counting the turns of both, rather than a fresh row appearing under it.
+    it "reopens a stopped child's row for its resume, with the turns of both and the resume shown" do
+      fleet = described_class.new(clock: -> { now })
+      stopped = spawn_event("researcher")
+      fleet.launched(stopped)
+      fleet.progressed(progress(stopped, role: "researcher", task_line: "survey", turns: 0))
+      fleet.progressed(progress(stopped, turns: 2, head: "blake3:stopped-head"))
+      fleet.completed(message_event("stop", body: { "lifecycle" => Lain::StatusFeed::SpawnLifecycle::FAILED,
+                                                    "error" => "Lain::Budget::Exceeded",
+                                                    "final" => "blake3:stopped-head" },
+                                            causal_parents: [stopped.digest, "blake3:stopped-head"]))
+      resume = Lain::Ext::Event.new(kind: :spawn, from: "parent", to: nil,
+                                    causal_parents: ["blake3:stopped-head", stopped.digest],
+                                    body: { "spawned_from" => "blake3:stopped-head",
+                                            "resumed_from" => stopped.digest })
+      fleet.launched(resume)
+      fleet.progressed(progress(resume, role: "researcher", task_line: "survey", turns: 0))
+      fleet.progressed(progress(resume, turns: 1, head: "blake3:resumed-head"))
+
+      expect(fleet.tree.map { |row| row.values_at("spawn", "state", "turns", "depth", "resumed_from") })
+        .to eq([[resume.digest, "running", 3, 0, stopped.digest]])
+      expect(fleet.digests).to eq([resume.digest])
+      expect(described_class::Row.at(fleet.tree.first, now:).columns).to include("resumed")
+
+      fleet.completed(completion(resume))
+      expect(fleet.tree.map { |row| row["state"] }).to eq(["done"])
+    end
+
+    it "keeps a child the stopped run spawned under the row its resume continues" do
+      fleet = described_class.new(clock: -> { now })
+      stopped = spawn_event("researcher")
+      fleet.launched(stopped)
+      fleet.progressed(progress(stopped, turns: 1, head: "blake3:stopped-t1"))
+      grandchild = spawn_from("notice", "blake3:stopped-t1")
+      fleet.launched(grandchild)
+      fleet.completed(message_event("stop", body: { "lifecycle" => Lain::StatusFeed::SpawnLifecycle::FAILED,
+                                                    "final" => "blake3:stopped-t1" },
+                                            causal_parents: [stopped.digest, "blake3:stopped-t1"]))
+      resume = Lain::Ext::Event.new(kind: :spawn, from: "parent", to: nil,
+                                    body: { "spawned_from" => "blake3:stopped-t1", "resumed_from" => stopped.digest })
+      fleet.launched(resume)
+
+      expect(fleet.tree.map { |row| row.values_at("spawn", "depth") })
+        .to eq([[resume.digest, 0], [grandchild.digest, 1]])
+    end
+
     # A spawn whose head nobody reported is nobody's child: the run's own chain
     # spawns from a head no progress record ever names.
     it "roots a spawn whose head no child ever reported" do
@@ -452,6 +499,31 @@ RSpec.describe Lain::StatusFeed::Fleet do
       launches.each { |launch| fleet.completed(completion(launch, id: launch.digest)) }
 
       expect(fleet.tree.size).to eq(described_class::ENDED_SHOWN)
+    end
+
+    # A stopped row the ended budget pushed out is still the child its resume carries on.
+    it "brings a pruned stopped row back as the resumed child, with its turns and its resume shown" do
+      fleet = described_class.new(clock: -> { now })
+      stopped = spawn_event("researcher")
+      fleet.launched(stopped)
+      fleet.progressed(progress(stopped, role: "researcher", task_line: "survey", turns: 2, head: "blake3:t2"))
+      fleet.completed(message_event("stop", body: { "lifecycle" => Lain::StatusFeed::SpawnLifecycle::FAILED },
+                                            causal_parents: [stopped.digest, "blake3:t2"]))
+      described_class::ENDED_SHOWN.succ.times do |index|
+        spawn_event("s#{index}").tap do |launch|
+          fleet.launched(launch)
+          fleet.completed(completion(launch, id: launch.digest))
+        end
+      end
+      expect(fleet.tree.map { |row| row["spawn"] }).not_to include(stopped.digest)
+
+      resume = Lain::Ext::Event.new(kind: :spawn, from: "parent", to: nil,
+                                    body: { "spawned_from" => "blake3:t2", "resumed_from" => stopped.digest })
+      fleet.launched(resume)
+
+      row = fleet.tree.find { |published| published["spawn"] == resume.digest }
+      expect(row.values_at("role", "state", "turns", "resumed_from"))
+        .to eq(["researcher", "running", 2, stopped.digest])
     end
 
     describe "a judge child" do

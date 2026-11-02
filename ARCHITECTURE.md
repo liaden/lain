@@ -1618,6 +1618,11 @@ walk are untouched by spawning. A child's tool stack is its parent's, built by t
 `CLI::ToolGuard` over the parent's board, so a child is guarded and gated as its parent is, and a
 child's refused path lands in the same session journal. A child's token budget is attenuated from the room its parent has left,
 and its iteration ceiling is its role's own, whatever iterations the parent's ask has left.
+A one-shot `subagent` child stopped at its iteration ceiling, and only that stop, can be resumed by
+label (`subagent` with `resume:` and `iterations:`, capped at the role's ceiling): a new `:spawn`
+starts at the stopped child's final head, names it in `spawned_from`, and cites the stopped spawn
+as `resumed_from`, so `Bench::Session::Lineages` and the fleet's row read it as the same child
+continuing.
 
 Those two events are the **record**, and they are deliberately not the whole of what a watching
 human needs. What a child is *for* and how far it has got ride beside them in

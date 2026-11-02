@@ -95,4 +95,30 @@ RSpec.describe Lain::Journal::Projection::Lineage do
       expect(lineages.completing(ended.digest) { nil }).to eq(grandchild)
     end
   end
+
+  # A child its ceiling stopped, resumed: the resume's spawn starts at the stopped child's final
+  # head and cites the stopped spawn, so it continues that lineage rather than opening a fresh one.
+  describe "a resumed child" do
+    resumed = address.call("4")
+    final_r = address.call("e")
+    stopped = message.call(digest: address.call("3"), from: "childchain", causal_parents: [spawn_s, final_s],
+                           payload: { "lifecycle" => "failed", "error" => "Lain::Budget::Exceeded",
+                                      "final" => final_s })
+    resume = message.call(digest: resumed, kind: :spawn, from: parent, to: nil, causal_parents: [final_s, spawn_s],
+                          payload: { "prefix" => "fresh", "posture" => "schema", "spawned_from" => final_s,
+                                     "resumed_from" => spawn_s })
+    answered = message.call(digest: address.call("8"), from: "childchain", causal_parents: [resumed, final_r],
+                            payload: { "result" => "licenses ✓", "final" => final_r, "lifecycle" => "stopped" })
+    subject(:lineages) { described_class.over([spawn.call(spawn_s), stopped, resume, answered]) }
+
+    it "is in the stopped spawn's lineage, with its answer" do
+      expect(lineages[spawn_s].records).to eq([spawn.call(spawn_s), stopped, resume, answered])
+      expect(lineages.member?(spawn_s, resumed)).to be(true)
+    end
+
+    it "is ended by its own answer, which ends the stopped spawn no further" do
+      expect(lineages.completing(answered.digest) { nil }).to eq(resumed)
+      expect(lineages[spawn_s].completions).to eq([stopped.digest])
+    end
+  end
 end
