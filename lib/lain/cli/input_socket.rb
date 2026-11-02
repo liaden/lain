@@ -169,6 +169,7 @@ module Lain
         @lock = Mutex.new
         @threads = []
         @sent = nil
+        @attending = Frontend::Intake::Unattended
       end
 
       # Take the path, replacing whatever a killed chat left on it.
@@ -191,11 +192,12 @@ module Lain
         raise
       end
 
-      # @param _task [Async::Task] the conversation's task, which this producer
-      #   does not use: see the class comment on threads
+      # @param task [Async::Task] the conversation's task, which this producer reads on no thread
+      #   of its own (see the class comment on threads) but whose reactor drains the commands it queues
       # @return [InputSocket] what {CLI::Repl} stops at the end of the conversation
-      def start(_task)
+      def start(task)
         @told = @rail.attach(self)
+        @attending = @rail.attend(task)
         spawn { accepting }
         spawn { publishing }
         self
@@ -220,6 +222,7 @@ module Lain
       # chat's own exit path, and a pane that stopped reading must not be able
       # to keep the chat alive.
       def stop
+        @attending.stop
         broadcast(Codec.dump({ "v" => "closed" }))
         @rail.detach(self)
         @lock.synchronize { @threads.dup }.each(&:kill)

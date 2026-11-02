@@ -440,6 +440,34 @@ RSpec.describe Lain::Frontend::StdinPump do
     end
   end
 
+  describe "a perishable command finished at a prompt withdrawn under it" do
+    let(:commands) do
+      Struct.new(:said) do
+        def perishable?(text) = text == "/approve"
+        def refusal(_text) = "no pending approvals"
+        def run_now(_text) = nil
+      end.new
+    end
+    let(:rail) { Lain::Frontend::Intake.new(screen:, commands:) }
+
+    it "is refused, not held" do
+      entered = false
+      allow(rail).to(receive(:open?).and_wrap_original { |open, prompt| !entered && open.call(prompt) })
+      allow(Reline).to receive(:readmultiline) do
+        entered = true
+        "/approve"
+      end
+
+      pumped(terminal) do
+        approval = Async::Task.current.async { rail.read(:approval, "[y/N] ") }
+        pumped_until(Async::Task.current, reason: "the line refused") { output.string.include?("no pending approvals") }
+        approval.stop
+      end
+
+      expect(rail.take_held).to be_nil
+    end
+  end
+
   # The same window over a real terminal: Enter pressed at a `[y/N]` in the
   # instant another surface decides its call. Either the pump had the line --
   # then it is held and said to be -- or the stop reached the editor first and
@@ -941,6 +969,42 @@ RSpec.describe Lain::Frontend::StdinPump do
       typed_mid_run("prefer Syncthing\r/model\r")
 
       expect([rail.take_held, rail.take_held, noted]).to eq(["/model", nil, ["prefer Syncthing"]])
+    end
+  end
+
+  describe "a perishable command typed mid-run while an ask is in flight" do
+    let(:pipe) { IO.pipe }
+    let(:console) do
+      Class.new do
+        def initialize(io) = @io = io
+        def tty? = true
+        def echo? = true
+        def read_nonblock(*args, **opts) = @io.read_nonblock(*args, **opts)
+        def wait_readable = @io.wait_readable
+      end.new(pipe.first)
+    end
+    let(:commands) do
+      Struct.new(:ran) do
+        def perishable?(text) = text == "/approve"
+        def refusal(_text) = "no pending approvals"
+        def run_now(text) = ran << text
+      end.new([])
+    end
+    let(:rail) { Lain::Frontend::Intake.new(screen:, commands:) }
+
+    after { pipe.each(&:close) }
+
+    it "is refused at once and not put back as typeahead" do
+      Sync do |task|
+        pumping = described_class.new(rail:, screen:, input: console).start(task)
+        pipe.last.write("/approve\r/model\r")
+        pumped_until(task, reason: "the line taken off the terminal") { output.string.include?("no pending approvals") }
+        rail.gather
+      ensure
+        pumping&.stop
+      end
+
+      expect([rail.take_held, rail.take_held]).to eq(["/model", nil])
     end
   end
 

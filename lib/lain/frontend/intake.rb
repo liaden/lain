@@ -113,6 +113,19 @@ module Lain
         def self.remember(_line) = nil
       end
 
+      # So no caller asks whether a command probe was wired.
+      module NoCommands
+        def self.perishable?(_text) = false
+        def self.refusal(_text) = nil
+        def self.run_now(_text) = nil
+        def self.attend(_task) = Unattended
+      end
+
+      # What a producer stops when no command probe was wired to drain for it.
+      module Unattended
+        def self.stop = nil
+      end
+
       UNCYCLED = -> {}
 
       # An answer, including the answer nobody gave -- a `nil` text -- which is
@@ -142,10 +155,14 @@ module Lain
       #   {Discretion} in a chat someone types into
       # @param notes [#take?] offered each line that arrives with nothing published, before it is held
       # @param on_cycle [#call] what the approval key does, called on the producer's own stack
-      def initialize(screen: Unseen, history: Unrecorded, notes: CLI::HumanNotes::Null, on_cycle: UNCYCLED)
+      # @param commands [#perishable?, #refusal, #run_now] asked about each line that arrives with nothing published;
+      #   `run_now` answers nil when it could not run the line, which is then held
+      def initialize(screen: Unseen, history: Unrecorded, notes: CLI::HumanNotes::Null, on_cycle: UNCYCLED,
+                     commands: NoCommands)
         @screen = screen
         @history = history
         @notes = notes
+        @commands = commands
         @on_cycle = on_cycle
         @inbound = Thread::Queue.new
         @lock = Thread::Mutex.new
@@ -238,11 +255,28 @@ module Lain
       def gather = @lock.synchronize { @producers.keys }.each(&:sweep)
 
       # Keep a line for `you>`, and say so: a line nobody was told about reads as
-      # swallowed.
+      # swallowed. A perishable command is acted on instead, because by the time
+      # `you>` returns what it would answer is gone; a note is not, since a line
+      # held here was refused by a prompt and is not an aside to the agent.
       def hold(text)
-        @lock.synchronize { @held << text }
-        @screen.render_held(text)
+        placed?(text, CLI::HumanNotes::Null) || keep(text)
       end
+
+      # The held lines in the order typed, left held.
+      def held_lines = @lock.synchronize { @held.dup }
+
+      def clear_held = @lock.synchronize { @held.slice!(0..) }
+
+      # A producer on threads of its own has the chat's reactor drain the commands it queues.
+      #
+      # @param task [Async::Task] the conversation's
+      # @return [#stop]
+      def attend(task) = @commands.attend(task)
+
+      # A producer that holds lines itself asks first, so a line this settles is never also held.
+      #
+      # @return [Boolean] false when the line is to be held, which this leaves to the caller
+      def settled?(text) = placed?(text, @notes)
 
       # The oldest held line, taken for `you>`, or nil.
       def take_held = recalled(held_line)
@@ -305,7 +339,26 @@ module Lain
       def deliver(sent)
         return @inbound.push(sent) unless unread?(sent)
 
-        @notes.take?(sent.text) ? @screen.render_human_note(sent.text) : hold(sent.text)
+        settled?(sent.text) || keep(sent.text)
+      end
+
+      def placed?(text, notes)
+        disposition = Disposition.of(text, notes:, commands: @commands)
+        case disposition.kind
+        when :note
+          @screen.render_human_note(text)
+          true
+        when :refuse
+          @screen.render_note(disposition.said)
+          true
+        when :run_now then @commands.run_now(text)
+        else false
+        end
+      end
+
+      def keep(text)
+        @lock.synchronize { @held << text }
+        @screen.render_held(text)
       end
 
       def unread?(value) = value.is_a?(Line) && glimpse.kind.nil?

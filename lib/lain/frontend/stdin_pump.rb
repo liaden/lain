@@ -287,7 +287,8 @@ module Lain
       # The reader also runs between a prompt's read ending and its withdrawal,
       # when that prompt is still the one a line answers.
       def noted?(line)
-        return false unless @rail.published.kind.nil? && @notes.take?(line)
+        return false unless @rail.published.kind.nil?
+        return @rail.settled?(line) unless @notes.take?(line)
 
         @screen.render_human_note(line)
         true

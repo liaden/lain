@@ -302,6 +302,25 @@ RSpec.describe Lain::Frontend::Intake do
     end
   end
 
+  describe "a line an approval prompt refuses, in a chat that takes notes" do
+    it "is held and never posted as a note" do
+      taking = Struct.new(:taken) { def take?(line) = taken << line }.new([])
+      noting = described_class.new(screen:, notes: taking)
+      asked = Class.new(String) { def takes?(line) = line == "n" }.new("[y/N] ")
+      Sync do |task|
+        task.async do
+          pumped_until(task) { noting.published.generation == 1 }
+          noting << line("prefer Syncthing", 1)
+          pumped_until(task) { noting.published.generation == 2 }
+          noting << line("n", 2)
+        end
+        noting.read(:approval, asked)
+      end
+
+      expect([taking.taken, screen.said.map(&:first)]).to eq([[], [:held]])
+    end
+  end
+
   describe "a prompt that explains why it refused a line" do
     it "has the explanation said right after the held line" do
       asked = Class.new(String) do
@@ -974,6 +993,87 @@ RSpec.describe Lain::Frontend::Intake do
 
         expect([answer, noted]).to eq(["Syncthing", []])
       end
+    end
+  end
+
+  describe "a line typed with nothing published and a command probe" do
+    let(:probe_class) do
+      Struct.new(:names, :reason, :ran) do
+        def perishable?(text) = names.include?(text)
+        def refusal(_text) = reason
+        def run_now(text) = ran << text
+      end
+    end
+    let(:refusal) { "no pending approvals" }
+    let(:probe) { probe_class.new(["/approve"], refusal, []) }
+    let(:rail) { described_class.new(screen:, commands: probe) }
+
+    it "refuses a perishable command with nothing to answer, 13 times, and holds none" do
+      13.times { rail << line("/approve", 0) }
+
+      expect([screen.said.count { _1 == [:note, refusal] }, rail.held_lines]).to eq([13, []])
+    end
+
+    context "when there is something to answer" do
+      let(:refusal) { nil }
+
+      it "runs the command now and holds nothing" do
+        rail << line("/approve", 0)
+
+        expect([probe.ran, rail.held_lines, screen.said]).to eq([["/approve"], [], []])
+      end
+    end
+
+    it "holds prose and any command that is not perishable" do
+      rail << line("fix the bug", 0)
+      rail << line("/model", 0)
+
+      expect([rail.held_lines, probe.ran]).to eq([["fix the bug", "/model"], []])
+    end
+
+    it "acts on a perishable command a producer holds itself, instead of keeping it" do
+      rail.hold("/approve")
+      rail.hold("later")
+
+      expect([screen.said, rail.held_lines]).to eq([[[:note, refusal], [:held, "later"]], ["later"]])
+    end
+
+    context "when something is waiting to be answered" do
+      let(:refusal) { nil }
+
+      it "runs a perishable command typed at an approval prompt that does not take it, and holds nothing" do
+        asked = Class.new(String) { def takes?(line) = %w[y n].include?(line) }.new("[y/N] ")
+        answer = Sync do |task|
+          task.async do
+            pumped_until(task) { rail.published.generation == 1 }
+            rail << line("/approve", 1)
+            pumped_until(task) { rail.published.generation == 2 }
+            rail << line("n", 2)
+          end
+          rail.read(:approval, asked)
+        end
+
+        expect([answer, probe.ran, rail.held_lines]).to eq(["n", ["/approve"], []])
+      end
+    end
+
+    it "takes a note before it asks the probe" do
+      notes = instance_double(Lain::CLI::HumanNotes, take?: true)
+      noting = described_class.new(screen:, notes:, commands: probe)
+      noting << line("/approve", 0)
+
+      expect([screen.said, probe.ran]).to eq([[[:human_note, "/approve"]], []])
+    end
+  end
+
+  describe "#held_lines and #clear_held" do
+    it "lists what is held without taking it, and clears all of it" do
+      rail << line("one", 0)
+      rail << line("two", 0)
+      listed = rail.held_lines
+      rail.clear_held
+
+      expect([listed, rail.held_lines, rail.take_held]).to eq([%w[one two], [], nil])
     end
   end
 

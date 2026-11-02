@@ -4853,6 +4853,29 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
+    # The rail the chat built is the one that asks the registry and the one /held lists, so
+    # a bare Intake in its place, or a surface built without it, reads here.
+    it "refuses /approve with nothing pending and lists what was held, through the chat's own rail" do
+      in_project_tree do |root, cwd|
+        output = StringIO.new
+        Dir.mktmpdir("lain-held-tty") do |dir|
+          factory = lambda do |channel:, **|
+            Lain::Frontend::TTY.new(channel:, output:, history_path: File.join(dir, "history"))
+          end
+          wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:, project: project_at(root, cwd),
+                                       tty_factory: factory, stdin: StringIO.new("quit\n"))
+          wiring.run(backend:, resumed: nil, nvim: nil)
+          wiring.conductor.hold("/approve")
+          wiring.conductor.hold("do this later")
+          listing = wiring.command_surface.commands.dispatch("/held") { raise "unmatched" }
+          wiring.conductor.close(reason: :exit)
+
+          expect([output.string.scan("no pending approvals").size, listing])
+            .to eq([1, "held for you>:\n  1. do this later"])
+        end
+      end
+    end
+
     # The surface's own trace, so the spy above is not the only witness: `/meta`,
     # `/review` and `/review-submit` are each constructed with this root.
     it "leaves that root where /meta and the two review commands read it" do

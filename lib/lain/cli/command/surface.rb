@@ -50,7 +50,7 @@ module Lain
         def initialize(agent:, replies:, supervisor:, role_spawn:, chronicle:, status_feed:,
                        model_switch:, mode_switch:, library:, ledger:, sensitivity:, snapshots:, window:,
                        approvals: nil, root: Dir.pwd, cwd: Dir.pwd, approval_prompt: nil, goal_driver: GoalDriver::Null,
-                       epic: nil, middleware: Lain::Config::Middleware.empty)
+                       epic: nil, middleware: Lain::Config::Middleware.empty, rail: Held::NoRail)
           @role_spawn = role_spawn
           @epic = epic
           @configured = middleware
@@ -58,6 +58,7 @@ module Lain
           @goal_driver = goal_driver
           @root = root
           @cwd = cwd
+          @rail = rail
           @library = library
           @ledger = ledger
           @sensitivity = sensitivity
@@ -162,6 +163,7 @@ module Lain
             registry.register(Help.new(registry:, catalog: @library.catalog))
             registry.register(Approve.new(prompt: @approval_prompt))
             registry.register(Model.new)
+            registry.register(Held.new(rail: @rail))
           end
         end
 

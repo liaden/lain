@@ -22,7 +22,12 @@ module TypedDuringAsk
     tty = Lain::Frontend::TTY.new(channel: Lain::Channel.new, output: $stdout,
                                   pastel: Pastel.new(enabled: false), history_path: File.join(dir, "history"),
                                   state_path: File.join(dir, "state.json"))
-    rail = Lain::Frontend::Intake.new(screen: tty)
+    approve = Lain::CLI::Command::Approve.new(prompt: nil)
+    env = Struct.new(:approvals).new(Lain::CLI::Command::Env::NoApprovals)
+    bound = Lain::CLI::Command::Registry.new([approve]).bind(env)
+    human = Struct.new(:unused) { def history_for(_tty) = Lain::Frontend::Intake::Unrecorded }.new
+    rail = Lain::CLI::Wiring::IntakeBuild.rail(tty:, human:, notes: Lain::CLI::HumanNotes::Null, on_cycle: -> {},
+                                               surface: -> { Struct.new(:commands).new(bound) })
     producer = Lain::Frontend::StdinPump.new(rail:, screen: tty)
     chronicle = Lain::CLI::Chronicle.new(
       journal: Lain::Journal.new(io: File.open(session, "ab").tap { |io| io.sync = true }), journal_path: session
@@ -163,6 +168,15 @@ RSpec.describe "a line typed while an ask is in flight", :seam do
 
       expect(cockpit.settles { cockpit.heard.first }).to eq({ "stopped" => true })
       expect(cockpit.records("run_interrupted").map { |record| record["reason"] }).to eq(["stopped"])
+    end
+
+    it "refuses /approve 13 times with nothing pending, through the real command, and holds none" do
+      cockpit.ask("held")
+
+      13.times { cockpit.type("/approve\r") }
+      cockpit.settles { cockpit.screen.scan("no pending approvals").size >= 13 || nil }
+
+      expect([cockpit.screen.scan("no pending approvals").size, held_after_the_ask]).to eq([13, [nil] * 4])
     end
 
     it "keeps a line typed mid-ask for the next prompt, once" do

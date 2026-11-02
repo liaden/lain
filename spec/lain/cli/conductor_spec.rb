@@ -1330,4 +1330,24 @@ RSpec.describe Lain::CLI::Conductor do
       signals.uninstall
     end
   end
+
+  describe "#hold of a perishable command" do
+    let(:commands) do
+      Struct.new(:unused) do
+        def perishable?(text) = text == "/approve"
+        def refusal(_text) = "no pending approvals"
+        def run_now(_text) = nil
+      end.new
+    end
+    let(:noted) { [] }
+    let(:screen) { Struct.new(:noted) { def render_note(text) = noted << text }.new(noted) }
+    let(:rail) { Lain::Frontend::Intake.new(screen:, commands:) }
+
+    it "is refused through the rail, not held for you>" do
+      conductor = build_conductor(grace: 1, clock: -> { 0.0 }, signals: Lain::CLI::Signals.new)
+      conductor.hold("/approve")
+
+      expect([noted, conductor.take_held]).to eq([["no pending approvals"], nil])
+    end
+  end
 end

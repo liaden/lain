@@ -285,10 +285,10 @@ module Lain
         agent = wire_agent(channel: Lain::Channel.new, recorder:, session:, backend:, resumed:, views: nvim, notice:)
         startup = [*resumed&.notices, *memory_notices(recorder, resumed), *@observers.notices, *backend.startup_notices]
         tty = open_terminal(agent, notice, startup, backend)
-        rail = Lain::Frontend::Intake.new(screen: tty, history: human.history_for(tty), notes:, on_cycle: approval_key)
-        @conductor = open_conductor(tty, rail)
+        @rail = IntakeBuild.rail(tty:, human:, notes:, on_cycle: approval_key, surface: -> { @command_surface })
+        @conductor = open_conductor(tty, @rail)
         @conductor.guard do
-          build_repl(tty:, agent:, backend:, input: input_for(rail, tty))
+          build_repl(tty:, agent:, backend:, input: input_for(@rail, tty))
             .run(**editor_seams(nvim, agent, session), first_prompt: @options[:prompt])
         end
       end
@@ -996,7 +996,7 @@ module Lain
       def assemble_surface(agent:, library:, window:, endpoint:, middleware:)
         Command::Surface.new(agent:, replies: @replies, supervisor:, role_spawn:, approvals:, goal_driver:, library:,
                              window:, chronicle: @chronicle, status_feed: @status_feed, root: project.root,
-                             cwd: project.cwd, middleware:,
+                             cwd: project.cwd, middleware:, rail: @rail,
                              epic: EpicDriver::Seams.new(mount: epic_mount, paths: @paths, journal: durable_journal,
                                                          toolset_build:, asker: @ask_human, conductor: @conductor,
                                                          endpoint:),

@@ -146,6 +146,40 @@ RSpec.describe Lain::CLI::Command::Registry do
     end
   end
 
+  # A command whose answer goes stale -- `/approve` with nothing parked -- says
+  # so, which lets a line typed while nothing reads it be refused at once.
+  describe "#perishable? and #refusal" do
+    let(:perishing) do
+      Struct.new(:name) do
+        def usage = "/#{name} -- probe"
+        def call(_args, _env) = nil
+        def perishable? = true
+        def refusal(_env) = "nothing to #{name}"
+      end.new("approve")
+    end
+    let(:perishable_registry) { described_class.new([perishing, probe]) }
+
+    it "is false for a command that never says otherwise, for prose and for a skill" do
+      expect(["/help", "hello there", "@researcher/help go"].map { perishable_registry.perishable?(_1) })
+        .to eq([false, false, false])
+    end
+
+    it "is true for one that declares it, and names its refusal against the env" do
+      expect([perishable_registry.perishable?("/approve"), perishable_registry.refusal("/approve", env)])
+        .to eq([true, "nothing to approve"])
+    end
+
+    it "has no refusal for a command that is not perishable" do
+      expect(perishable_registry.refusal("/help", env)).to be_nil
+    end
+
+    it "answers both through the bound registry, which holds the env" do
+      bound = perishable_registry.bind(env)
+
+      expect([bound.perishable?("/approve"), bound.refusal("/approve")]).to eq([true, "nothing to approve"])
+    end
+  end
+
   describe "the command interface" do
     it "is one message -- call(args, env) -- plus a name and a one-line usage" do
       help = Lain::CLI::Command::Help.new(registry:, catalog: Lain::Skill::Catalog.new({}))

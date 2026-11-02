@@ -47,6 +47,25 @@ RSpec.describe Lain::CLI::Command::Surface do
                         status_feed:, model_switch:, mode_switch:, ledger:, sensitivity:, snapshots:, window:, **rest)
   end
 
+  describe "/held" do
+    def held_over(rail)
+      with_project { |root| return build_surface(root, rail:).commands.dispatch("/held", &:itself) }
+    end
+
+    it "lists the lines the rail it was built with holds" do
+      rail = Lain::Frontend::Intake.new
+      rail.hold("later")
+
+      expect(held_over(rail)).to eq("held for you>:\n  1. later")
+    end
+
+    it "is registered without a rail, listing nothing" do
+      with_project do |root|
+        expect(build_surface(root).commands.dispatch("/held", &:itself)).to eq("nothing held")
+      end
+    end
+  end
+
   describe "the session readers a chat started with --root hands its commands" do
     around do |example|
       with_project do |root|
@@ -217,7 +236,7 @@ RSpec.describe Lain::CLI::Command::Surface do
       expect(surface.commands.registry.map(&:name)).to contain_exactly(
         "quit", "rewind", "undo", "pin", "unpin", "fork", "btw", "keep", "label", "status", "sessions",
         "inbox", "ruby", "mode", "goal", "meta", "introspect", "review", "review-submit", "survey",
-        "implement-epic", "qa", "stop", "help", "approve", "model", "release", "share"
+        "implement-epic", "qa", "stop", "help", "approve", "model", "release", "share", "held"
       )
     end
   end

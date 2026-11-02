@@ -198,6 +198,47 @@ RSpec.describe Lain::CLI::InputSocket do
     end
   end
 
+  describe "a pane's /approve in a chat with something to approve" do
+    let(:effect) { Struct.new(:name, :input, :tool_use_id).new("bash", { "command" => "ls" }, "tu") }
+    let(:pending) do
+      Lain::Approval::Parked::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 })
+    end
+    let(:rail) do
+      Lain::CLI::Wiring::IntakeBuild.rail(
+        tty: Lain::Frontend::Intake::Unseen, human: Struct.new(:unused) do
+          def history_for(_tty)
+            Lain::Frontend::Intake::Unrecorded
+          end
+        end.new,
+        notes: Lain::CLI::HumanNotes::Null, on_cycle: -> {}, surface: -> { surface }
+      )
+    end
+    let(:surface) do
+      policy = Lain::Frontend::ApprovalPolicy.new(output: StringIO.new, reader: lambda { |asked|
+        rail.read(:approval, asked)
+      })
+      env = instance_double(Lain::CLI::Command::Env, approvals: [pending])
+      registry = Lain::CLI::Command::Registry.new([Lain::CLI::Command::Approve.new(prompt: policy)])
+      Struct.new(:commands).new(registry.bind(env))
+    end
+
+    it "acts on a /approve a pane sends from its own thread, and the pane's y then decides it" do
+      outcome = Sync do |task|
+        socket.bind.start(task)
+        client = connect
+        send_frame(client, { "v" => "line", "text" => "/approve", "generation" => 0 })
+        pumped_until(task, reason: "the approval asked") { rail.published.kind == :approval }
+        send_frame(client, { "v" => "line", "text" => "y", "generation" => rail.published.generation })
+        pumped_until(task, reason: "the approval decided") { pending.decided? }
+        [pending.approved?, rail.held_lines]
+      ensure
+        socket.stop
+      end
+
+      expect(outcome).to eq([true, []])
+    end
+  end
+
   describe "serving a pane" do
     before { socket.bind.start(nil) }
 
@@ -236,6 +277,28 @@ RSpec.describe Lain::CLI::InputSocket do
       generation = next_frame(client, of: "prompt")["generation"]
       send_frame(client, { "v" => "line", "text" => "hello", "generation" => generation })
       expect(answered.pop).to eq("hello")
+    end
+
+    context "with a rail whose commands go stale" do
+      let(:said) { Thread::Queue.new }
+      let(:screen) { Struct.new(:said) { def render_note(text) = said << text }.new(said) }
+      let(:commands) do
+        Struct.new(:ran) do
+          def perishable?(text) = text == "/approve"
+          def refusal(_text) = "no pending approvals"
+          def run_now(text) = ran << text
+          def attend(_task) = Lain::Frontend::Intake::Unattended
+        end.new([])
+      end
+      let(:rail) { Lain::Frontend::Intake.new(screen:, commands:) }
+
+      it "refuses a line the pane sent with no generation, so the pane's probe is the chat's" do
+        client = connect
+        next_frame(client, of: "context")
+        send_frame(client, { "v" => "line", "text" => "/approve", "generation" => 0 })
+
+        expect([said.pop(timeout: 5), rail.held_lines]).to eq(["no pending approvals", []])
+      end
     end
 
     it "routes a signal the pane sends where an OS signal would go" do

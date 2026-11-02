@@ -11,6 +11,8 @@ module Lain
       # terminal question (its reader routes through the conductor); this
       # command only walks the queue and RETURNS the outcome as text.
       class Approve
+        NOTHING_PENDING = "no pending approvals"
+
         # @param prompt [#decide] answers one pending y/N; injected so the
         #   wiring's conductor-routed reader -- not a bare gets -- owns stdin
         def initialize(prompt:)
@@ -28,15 +30,24 @@ module Lain
         # command it is, not this.
         def serves_replies? = true
 
+        # Held behind a run, a line of this goes stale: what it would approve
+        # is decided or gone by the time `you>` returns.
+        def perishable? = true
+
+        # @return [String, nil] why there is nothing to approve now
+        def refusal(env) = (NOTHING_PENDING if undecided(env).empty?)
+
         def call(_args, env)
-          undecided = env.approvals.each.reject(&:decided?)
-          return "no pending approvals" if undecided.empty?
+          undecided = undecided(env)
+          return NOTHING_PENDING if undecided.empty?
 
           undecided.each { |pending| @prompt.decide(pending) }
           undecided.map { |pending| outcome_line(pending) }.join("\n")
         end
 
         private
+
+        def undecided(env) = env.approvals.each.reject(&:decided?)
 
         # A surface other than ours can win a pending mid-drain (first answer
         # wins is the queue's own doctrine); the line then NAMES the deciding

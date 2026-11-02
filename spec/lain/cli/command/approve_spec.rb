@@ -36,6 +36,27 @@ RSpec.describe Lain::CLI::Command::Approve do
     expect(approve.usage).to include("/approve")
   end
 
+  describe "as a perishable command" do
+    it "declares itself perishable, so a line typed while nothing reads it is not held" do
+      expect(approve.perishable?).to be(true)
+    end
+
+    it "refuses with nothing to approve" do
+      expect(approve.refusal(env_over([]))).to eq("no pending approvals")
+    end
+
+    it "refuses when every pending is already decided" do
+      done = pending
+      done.approve(surface: "tty")
+
+      expect(approve.refusal(env_over([done]))).to eq("no pending approvals")
+    end
+
+    it "has no refusal while something is undecided" do
+      expect(approve.refusal(env_over([pending]))).to be_nil
+    end
+  end
+
   describe "draining three parked pendings inline" do
     let(:parked) { [pending("bash"), pending("edit_file", { "path" => "/etc/passwd" }), pending("bash")] }
     let(:answers) { %w[y n y] }

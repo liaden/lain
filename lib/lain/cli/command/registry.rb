@@ -65,6 +65,21 @@ module Lain
           command.respond_to?(:serves_replies?) && command.serves_replies?
         end
 
+        # Whether the command +text+ names loses its point if it waits behind a
+        # run, as `/approve` does: typed with nothing parked, it should be said
+        # so now rather than held until nothing is left to approve.
+        def perishable?(text)
+          command = named(text)
+          command.respond_to?(:perishable?) && command.perishable?
+        end
+
+        # Why the perishable command +text+ names has nothing to answer, or nil
+        # when it has something or is not perishable.
+        def refusal(text, env)
+          command = named(text)
+          command.refusal(env) if perishable?(text)
+        end
+
         # The registry curried over the session's one {Env} -- what Wiring hands
         # the Repl, so the Repl dispatches with text alone and never holds (or
         # reaches into) the Env.
@@ -74,6 +89,10 @@ module Lain
           # Env-free, unlike {#dispatch}: whether a line serves replies is a fact
           # about the COMMAND, decided before anything is called.
           def serves_replies?(text) = registry.serves_replies?(text)
+
+          def perishable?(text) = registry.perishable?(text)
+
+          def refusal(text) = registry.refusal(text, env)
         end
 
         def bind(env) = Bound.new(registry: self, env:)
@@ -99,6 +118,11 @@ module Lain
         # `@role/skill` never is. A {Skill::Invocation::Malformed} raise
         # propagates exactly as SkillDispatch's own parse of the same line
         # would.
+        def named(text)
+          invocation = command_invocation(text)
+          invocation && @commands.fetch(invocation.skill)
+        end
+
         def command_invocation(text)
           invocation = Skill::Invocation.parse(text)
           invocation if invocation&.inline? && @commands.key?(invocation.skill)
