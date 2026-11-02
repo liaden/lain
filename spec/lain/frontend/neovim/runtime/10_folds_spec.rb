@@ -168,6 +168,45 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         expect(fold_closes(4)).to eq([-1, -1, -1, -1])
       end
     end
+
+    # The plugin's :LainStart is the human's entry, so the layout is driven
+    # through it; any fold command that fails under `silent!` must not leave
+    # E490 in v:errmsg for the human's next command to trip over.
+    it "leaves no fold error in v:errmsg when :LainStart lays out a just-primed buffer" do
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
+
+      frontend.run do
+        channel.push(Lain::Telemetry::ToolOutput.new(tool_use_id: "t1", stream: :stdout, bytes: "a\nb"))
+        wait_until_editor { buffer_lines("lain://journal").size == 2 }
+
+        errmsg = inspector.exec_lua(<<~LUA, [File.expand_path("../../../../../plugin/nvim", __dir__)])
+          vim.opt.rtp:append((...))
+          require("lain").setup({ serverstart = false })
+          vim.v.errmsg = ""
+          vim.cmd("LainStart")
+          return vim.v.errmsg
+        LUA
+        expect(errmsg).to eq("")
+      end
+    end
+
+    it "keeps an error already pending in v:errmsg when :LainStart lays out a just-primed buffer" do
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
+
+      frontend.run do
+        channel.push(Lain::Telemetry::ToolOutput.new(tool_use_id: "t1", stream: :stdout, bytes: "a\nb"))
+        wait_until_editor { buffer_lines("lain://journal").size == 2 }
+
+        errmsg = inspector.exec_lua(<<~LUA, [File.expand_path("../../../../../plugin/nvim", __dir__)])
+          vim.opt.rtp:append((...))
+          require("lain").setup({ serverstart = false })
+          vim.v.errmsg = "E121: pending from the human"
+          vim.cmd("LainStart")
+          return vim.v.errmsg
+        LUA
+        expect(errmsg).to eq("E121: pending from the human")
+      end
+    end
   end
 
   # The operational half of

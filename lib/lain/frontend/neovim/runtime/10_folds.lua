@@ -7,6 +7,13 @@
 -- Folds are opt-out, not opt-in: vim.g.lain_fold = false disables the whole
 -- surface, checked per fold event so a human can flip it live -- flipping it
 -- UN-installs any window still carrying the surface (see uninstall_folds).
+local function quiet_fold(cmd)
+  local pending = vim.v.errmsg
+  vim.cmd("silent! " .. cmd)
+  -- silent! still leaves E490 in v:errmsg for the next reader.
+  vim.v.errmsg = pending
+end
+
 local function fold_enabled()
   return vim.g.lain_fold ~= false
 end
@@ -41,7 +48,7 @@ local function uninstall_folds(win)
   -- method recomputes its own folds and drops lain's for free.
   if saved.method == "manual" then
     vim.api.nvim_win_call(win, function()
-      vim.cmd("silent! normal! zE")
+      quiet_fold("normal! zE")
     end)
   end
 end
@@ -80,9 +87,9 @@ local function default_folds(win, buf)
   vim.wo[win][0].foldlevel = level
   vim.api.nvim_win_call(win, function()
     if level == 0 then
-      vim.cmd("silent! %foldclose!")
+      quiet_fold("%foldclose!")
     end
-    vim.cmd(("silent! %dfoldopen!"):format(open_at_rest(buf)))
+    quiet_fold(("%dfoldopen!"):format(open_at_rest(buf)))
   end)
 end
 
@@ -124,7 +131,7 @@ local function refresh_folds(buf)
     if vim.w[win].lain_fold_saved ~= nil then
       if fold_enabled() then
         vim.api.nvim_win_call(win, function()
-          vim.cmd(("silent! %dfoldopen!"):format(open_at_rest(buf)))
+          quiet_fold(("%dfoldopen!"):format(open_at_rest(buf)))
         end)
       else
         uninstall_folds(win)

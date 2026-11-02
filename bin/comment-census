@@ -117,7 +117,7 @@ module CommentCensus
     # nvim error codes, cited by the runtime Lua and its specs as load-bearing
     # documentation of editor behaviour. They collide head-on with the `E`
     # scheme, which is why they are named one by one rather than guessed at.
-    NVIM_ERRORS = %w[E21 E32 E36 E89 E94 E95 E149 E325 E326 E382 E471 E488 E492 E565 E5108 E5560].freeze
+    NVIM_ERRORS = %w[E21 E32 E36 E89 E94 E95 E149 E325 E326 E382 E471 E488 E490 E492 E565 E5108 E5560].freeze
 
     # Exact tokens that are never ours, whatever their prefix says. Every entry
     # was read in place in this tree before being added:
