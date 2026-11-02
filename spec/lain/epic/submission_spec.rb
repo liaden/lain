@@ -268,30 +268,50 @@ RSpec.describe Lain::Epic::Submission do
       end
     end
 
-    it "folds a multi-line reason onto one line so it cannot pose as a result line" do
-      expect(answer("deny:\nline2\n\napproved abc").reason).to eq("line2 approved abc")
+    it "keeps a multi-line reason's newlines" do
+      expect(answer("deny:\nline2\n\napproved abc").reason).to eq("line2\n\napproved abc")
     end
 
     it "writes control bytes out rather than passing them on" do
       expect(answer("deny: red \e[31m and \u0000 nul").reason).to eq("red \\e[31m and \\x00 nul")
     end
 
-    it "clips an over-long reason to a fixed length and marks the clip" do
+    it "keeps a reason of several hundred characters whole" do
+      text = Array.new(4) { |i| "#{i + 1}. #{"x" * 170}" }.join("\n")
+
+      expect(answer("deny: #{text}").reason).to eq(text)
+    end
+
+    it "cuts a reason over the result ceiling and says how much was cut" do
+      limit = Lain::Tool::Bounds::RESULT_BYTES
       reason = answer("deny: #{"x" * 100_000}").reason
 
-      expect(reason.length).to eq(described_class::REASON_LIMIT)
-      expect(reason).to end_with("...")
+      expect(reason).to eq("#{"x" * limit}\n[reason cut at #{limit} of 100000 bytes]")
+    end
+
+    it "cuts a multibyte reason on a character boundary and counts bytes in the notice" do
+      limit = Lain::Tool::Bounds::RESULT_BYTES
+      total = ((limit / 3) + 10) * 3
+      reason = answer("deny: #{"日" * (total / 3)}").reason
+      kept, notice = reason.split("\n[reason cut at ")
+
+      expect(reason).to be_valid_encoding
+      expect([kept.bytesize <= limit, notice]).to eq([true, "#{kept.bytesize} of #{total} bytes]"])
+    end
+
+    it "clips a multibyte unrecognised reply at 300 bytes without splitting a character" do
+      reason = answer("maybe #{"日" * 200}").reason
+      quoted = reason[/the reply "(.*)\.\.\." is none/m, 1]
+
+      expect(reason).to be_valid_encoding
+      expect(quoted.bytesize).to be <= 300
     end
 
     it "clips the quoted reply of an unrecognised long reply so the reason stays bounded" do
       reason = answer("maybe #{"x" * 50_000}").reason
 
-      expect(reason.length).to be <= described_class::REASON_LIMIT + 100
+      expect(reason.length).to be < 500
       expect(reason).to include("...").and end_with("so the gate denied it")
-    end
-
-    it "leaves a reason at the limit unclipped" do
-      expect(answer("deny: #{"x" * described_class::REASON_LIMIT}").reason).not_to end_with("...")
     end
 
     it "keeps a bare denial reasonless" do

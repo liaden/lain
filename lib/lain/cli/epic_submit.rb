@@ -449,7 +449,7 @@ module Lain
         def denied
           reason = @journal.reason(@submission.digest)
           ["denied #{@submission.digest}", "  #{@stage} for epic #{slug} -- nothing advanced",
-           *("  reason: #{reason}" if reason)].join("\n")
+           *("  reason: #{reason.gsub("\n", "\n    ")}" if reason)].join("\n")
         end
       end
 

@@ -165,26 +165,34 @@ module Lain
       SEPARATOR = '[\s.!:,;\-]'
       DENIAL = /\A\s*(?:#{DENIALS.join("|")})(?:#{SEPARATOR}*\z|#{SEPARATOR}+(?<reason>.*\S))/mi
 
-      # The reason is read back to the agent and journaled, so it is one
-      # bounded legible line: a reply cannot pose as a second result line or
-      # repaint the terminal.
-      REASON_LIMIT = 300
+      UNRECOGNISED_CLIP = 300
 
       def self.denial_word?(words) = DENIAL.match?(words.to_s)
       private_class_method :denial_word?
 
       def self.denial(words, surface)
         reason = DENIAL.match(words.to_s)[:reason]
-        Epic::Gate::Answer.new(approved: false, surface:, reason: reason && legible_line(reason))
+        Epic::Gate::Answer.new(approved: false, surface:, reason: reason && legible_text(reason))
       end
       private_class_method :denial
 
-      def self.legible_line(text)
-        clipped(Utf8.escaped(text.gsub(/\s+/, " ")))
-      end
-      private_class_method :legible_line
+      # A reply cannot pose as a second result line: control bytes are written
+      # out, and the reader indents every continuation line.
+      def self.legible_text(text)
+        escaped = Utf8.escaped(text, keep: "\n")
+        return escaped if escaped.bytesize <= Tool::Bounds::RESULT_BYTES
 
-      def self.clipped(text) = text.length > REASON_LIMIT ? "#{text[0, REASON_LIMIT - 3]}..." : text
+        kept = escaped.byteslice(0, Tool::Bounds::RESULT_BYTES).scrub("")
+        "#{kept}\n[reason cut at #{kept.bytesize} of #{escaped.bytesize} bytes]"
+      end
+      private_class_method :legible_text
+
+      def self.clipped(text)
+        escaped = Utf8.escaped(text.gsub(/\s+/, " "))
+        return escaped if escaped.bytesize <= UNRECOGNISED_CLIP
+
+        "#{escaped.byteslice(0, UNRECOGNISED_CLIP).scrub("")}..."
+      end
       private_class_method :clipped
 
       def self.unrecognised(words)
