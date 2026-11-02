@@ -86,6 +86,23 @@ RSpec.describe Lain::Middleware::WithholdAutomaticOutput do
       expect(record).to be_deeply_frozen
     end
 
+    it "names the shape that matched, and that a human's approval shows it masked" do
+      env, = run(call_of("cat notes.txt"), authority: :automatic)
+
+      expect(env.fetch(:result).content).to include("1 pem private key block")
+      expect(env.fetch(:result).content).to include("a human's approval shows it masked")
+      expect(env.fetch(:result).content).to include("a respelling does not help")
+    end
+
+    it "names an entropy-only match as a high-entropy token" do
+      token = "Zk3vQ9xT7mW2pL8nR5cY1bH6dF4gJ0sA"
+      env, = run(call_of("cat notes.txt"), authority: :automatic,
+                                           result: Lain::Tool::Result.ok("hello #{token}\n"))
+
+      expect(env.fetch(:result).content).to include("1 credential-shaped region (1 high-entropy token)")
+      expect(env.fetch(:result).content).not_to include(token)
+    end
+
     it "counts every region the output held" do
       env, = run(call_of("cat notes.txt"), authority: :automatic,
                                            result: Lain::Tool::Result.ok("#{key}\nfiller line\n\n#{key}"))

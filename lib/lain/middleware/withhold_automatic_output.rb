@@ -54,8 +54,9 @@ module Lain
       # Mode-neutral, and conditional on `bypass`: `/mode` switches at runtime,
       # so which mode is in force when this is read cannot be known here.
       WITHHELD = "%<name>s output withheld: it held %<count>s, and the command was approved automatically, " \
-                 "so it now needs a human's approval. If approval is bypass, no approval is possible, " \
-                 "so a human must first switch to /mode ask."
+                 "so it now needs a human's approval; a human's approval shows it masked, " \
+                 "so a respelling does not help. " \
+                 "If approval is bypass, no approval is possible, so a human must first switch to /mode ask."
 
       # Counts, never bytes: a record that quoted the output would write the
       # credential into the journal this layer keeps it out of.
@@ -147,17 +148,21 @@ module Lain
       def command(effect) = called(effect).input[COMMAND]
 
       def scanned(env, effect)
-        count = RedactSecretReads::Scan.new(env.fetch(:result).content).regions.size
-        count.zero? ? env : withhold(env, called(effect), count)
+        found = RedactSecretReads::Scan.new(env.fetch(:result).content).regions
+        found.empty? ? env : withhold(env, called(effect), found)
       end
 
-      def withhold(env, effect, count)
+      def withhold(env, effect, found)
+        count = found.size
         @bar.add(effect.input[COMMAND])
         record(AutomaticOutputWithheld.new(tool_use_id: effect.tool_use_id, regions: count))
-        regions = "#{count} credential-shaped #{"region".pluralize(count)}"
+        regions = "#{count} credential-shaped #{"region".pluralize(count)} (#{shapes(found)})"
         withheld = Tool::Result.error(format(WITHHELD, name: effect.name, count: regions))
         env.merge(result: withheld.replacing(env.fetch(:result)))
       end
+
+      # Reasons are pattern names, never bytes.
+      def shapes(found) = found.map(&:reason).tally.map { |reason, n| "#{n} #{reason}" }.join(", ")
 
       # Swallowed, {RedactSecretReads#record}'s way: the tool has already run,
       # and a raise here would leave its `tool_use` with no answer.
