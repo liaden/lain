@@ -44,6 +44,13 @@ module Lain
     # layouts the path came from; another spelling would join to nothing.
     DOC_KINDS = %w[research epic issue source].freeze
 
+    # The issue fields that name issues in THIS graph, and so must resolve.
+    # `discovered_from` is deliberately absent: it is provenance, not an edge.
+    # A split removes the issue its parts grew out of, and Progress folds that
+    # id's transitions as inert history, so a `discovered_from` pointing outside
+    # the current issue set is the designed state rather than drift.
+    EDGE_FIELDS = %i[blocks related].freeze
+
     # The structural edits a revision may name, keyed by the operation it
     # journals and valued by the arguments that operation replays FROM. Sorted,
     # because {Canonical.normalize} sorts the keys a fiber carries. ONE

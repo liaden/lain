@@ -2,13 +2,6 @@
 
 module Lain
   module Epic
-    # The issue fields that name issues in THIS graph, and so must resolve.
-    # `discovered_from` is deliberately absent: it is provenance, not an edge.
-    # A split removes the issue its parts grew out of, and Progress folds that
-    # id's transitions as inert history, so a `discovered_from` pointing outside
-    # the current issue set is the designed state rather than drift.
-    EDGE_FIELDS = %i[blocks related].freeze
-
     # One wording for "this edge names an id the graph does not hold", shared by
     # Graph's edge validation and by Blocking's inverse index -- the same failure
     # reached from two directions, and a message worth not drifting.
