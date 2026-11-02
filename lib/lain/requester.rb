@@ -15,7 +15,7 @@ module Lain
   # forges a whole second approval question in front of the real one, and in
   # {Frontend::Neovim::ApprovalView} it splits one row across two lines, so a
   # cursor resolves to the wrong pending. A blank one deletes the
-  # approval_pending record downstream, where the presence check's raise is
+  # awaiting_human record downstream, where the presence check's raise is
   # rescued and degraded. A whitelist, since the escapes worth refusing are
   # not a set anyone can finish enumerating.
   #

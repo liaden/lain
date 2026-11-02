@@ -143,6 +143,8 @@ module Lain
           end
 
           def ask(_question) = Promise.new.tap { |promise| promise.resolve(@answer) }
+
+          def standing? = true
         end
 
         # The asker-delegating path {Gate} already ships, named. It adds
@@ -191,7 +193,7 @@ module Lain
           SURFACE = StandingAnswer.new(Answer.deny(NAME)).freeze
 
           # @param queue [#park] see {Policy#initialize}
-          # @param journal [#record] where `gate_parked` lands; required, and it must be
+          # @param journal [#record] where the deferred `awaiting_human` lands; required, and it must be
           #   the journal the gate decides into, so the two records sit together
           def initialize(queue:, journal:)
             super(queue:)
@@ -221,8 +223,9 @@ module Lain
 
           def journal_park(artifact, stage:, epic_slug:, issue_id:)
             sha = artifact.changeset if artifact.respond_to?(:changeset)
-            @journal.record(Telemetry::GateParked.new(artifact_digest: artifact.digest, epic_slug:, issue_id:, stage:,
-                                                      sha:, question: artifact.gate_question))
+            @journal.record(Telemetry::AwaitingHuman.new(kind: "gate", ref: artifact.digest, deferred: true,
+                                                         summary: artifact.gate_question, epic_slug:, stage:,
+                                                         issue_id:, sha:))
           end
         end
 

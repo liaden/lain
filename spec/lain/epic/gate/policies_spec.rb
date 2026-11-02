@@ -80,8 +80,8 @@ RSpec.describe Lain::Epic::Gate::Policies do
     it "hands the Deferred the deps' journal -- the park is journaled where the gate writes" do
       decide(described_class.for(stage: "epic_plan", config:, deps:), stage: "epic_plan")
 
-      expect(journal_records(journal_io, "gate_parked")).to contain_exactly(
-        include("artifact_digest" => plan.digest, "stage" => "epic_plan", "question" => plan.gate_question)
+      expect(journal_records(journal_io, "awaiting_human")).to contain_exactly(
+        include("ref" => plan.digest, "stage" => "epic_plan", "summary" => plan.gate_question, "deferred" => true)
       )
     end
 

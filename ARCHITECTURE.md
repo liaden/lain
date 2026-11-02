@@ -2284,7 +2284,7 @@ and is the one a grep for `include` misses). That is **53** classes, each with a
 first two for the bench), `journal_error` (`journal.rb:276`, `approval/parked/queue.rb:364`),
 `approval_decision` (a hand-written `#to_journal` at `approval/parked/queue.rb:203`, over
 `tool_use_id`, `requester`, `tool`, `surface`, `verdict`, `timed_out` and `latency` — the
-`tool_use_id` is what pairs a decision with its `approval_pending`, and because one call can park
+`tool_use_id` is what pairs a decision with its `awaiting_human`, and because one call can park
 twice, at the path gate and again at the release, records within an id pair **in order**),
 `goal_iteration` / `goal_iteration_dropped` / `goal_pin` / `goal_pin_missed` (`cli/goal_driver.rb`;
 an iteration a late human line withdrew before dispatch writes a `goal_iteration_dropped`, so the

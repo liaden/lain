@@ -321,6 +321,9 @@ module Lain
           # @return [String] HH:MM:SS on the injected wall clock
           def fires_at_face = (@wall.call + remaining).strftime("%H:%M:%S")
 
+          # @return [String] {#fires_at_face}'s moment, whole, for the journal
+          def deadline = ::Lain::Telemetry::AwaitingHuman.deadline(remaining, from: @wall.call)
+
           # @return [String] the whole window, in {#remaining_face}'s spelling
           def window_face = Queue.face(@timeout)
 
@@ -373,9 +376,9 @@ module Lain
           # hand-maintained list does not name them. Adding the field writes real
           # credentials into the Journal with no test to notice, since every test
           # here asserts the fields that ARE listed.
-          # {Telemetry::ApprovalPending.from} carries the identical note.
+          # {Telemetry::AwaitingHuman.approval} carries the identical note.
           #
-          # `tool_use_id` is what pairs this decision with its `approval_pending`:
+          # `tool_use_id` is what pairs this decision with its `awaiting_human`:
           # parallel calls park together and are decided in any order, so a count
           # pairs the wrong ones. It is not unique: one `read_file` can park twice
           # under one id, at the path gate and again at the release, one after the
@@ -594,7 +597,7 @@ module Lain
         end
 
         def park(pending)
-          record_evidence(Telemetry::ApprovalPending) { Telemetry::ApprovalPending.from(pending) }
+          record_evidence(Telemetry::AwaitingHuman) { Telemetry::AwaitingHuman.approval(pending) }
           @parked << pending
           @arrivals.enqueue(pending)
           pending

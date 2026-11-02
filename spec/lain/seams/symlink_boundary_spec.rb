@@ -77,7 +77,7 @@ RSpec.describe "A symlink is judged where it lands", :seam do
     expect(result.content).not_to include("PRIVATE KEY")
     expect(journal_records(journal_io,
                            "read_refused")).to contain_exactly(include("path" => "notes.txt", "reason" => "protected"))
-    expect(journal_records(journal_io, "approval_pending")).to be_empty
+    expect(journal_records(journal_io, "awaiting_human")).to be_empty
   end
 
   it "asks a human before reading through a link to a gated file" do
@@ -132,8 +132,8 @@ RSpec.describe "A symlink is judged where it lands", :seam do
 
     expect(pending.tool).to eq("read_file")
     expect(journal_records(journal_io,
-                           "approval_pending")).to contain_exactly(include("tool" => "read_file",
-                                                                           "tool_use_id" => "tu_1"))
+                           "awaiting_human")).to contain_exactly(include("tool" => "read_file",
+                                                                         "tool_use_id" => "tu_1"))
   end
 
   # Under /mode bypass a gated call is approved with nobody asked, so a dangling

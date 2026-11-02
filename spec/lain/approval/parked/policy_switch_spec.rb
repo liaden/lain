@@ -202,10 +202,10 @@ RSpec.describe Lain::Approval::Parked::PolicySwitch do
       expect(case wrapped("researcher") when Lain::Session then :matched else :did_not end).to be(:did_not)
     end
 
-    # A blank requester cannot be left to {Telemetry::Carriers::ApprovalPending}:
+    # A blank requester cannot be left to {Telemetry::Carriers::AwaitingHuman}:
     # its raise lands inside {Approval::Parked::Queue#record_evidence}, which RESCUES
     # and degrades. Measured end-to-end, a blank one therefore deletes the
-    # approval_pending record -- "something is WAITING", the one state a human
+    # awaiting_human record -- "something is WAITING", the one state a human
     # is asked to act on -- journals a decision naming nobody, and renders
     # " asks: approve ..." at the terminal. The invariant has to hold where it
     # cannot be degraded away, which is construction.

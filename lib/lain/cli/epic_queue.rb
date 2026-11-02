@@ -63,7 +63,7 @@ module Lain
       # against a real record's `#journal_type`, so the two cannot drift.
       EVIDENCE_TYPE = "gate_evidence"
 
-      PARKED_TYPE = "gate_parked"
+      PARKED_TYPE = "awaiting_human"
       TESTS_TYPE = "tests_ran"
 
       DEFAULT_CLOCK = -> { Time.now.utc }
@@ -390,8 +390,15 @@ module Lain
           def admits?(record) = super && record["policy"].to_s == Lain::Epic::SignoffQueue::DEFERRED_POLICY
         end
 
+        # Only a deferred gate's wait: a live gate's is closed by its own decision.
         class Parks < LatestBy
           TYPE = PARKED_TYPE
+
+          private
+
+          def admits?(record) = super && record["kind"] == "gate" && record["deferred"] == true
+
+          def key_of(record) = [record["ref"].to_s, record["epic_slug"].to_s, record["stage"].to_s]
         end
 
         class Evidence < LatestBy
@@ -444,7 +451,7 @@ module Lain
                   question: question_of(item), spiked: evidence.key?(address(item)), tests: tests_of(item))
         end
 
-        def question_of(item) = evidence.dig(address(item), "question") || parks.dig(address(item), "question")
+        def question_of(item) = evidence.dig(address(item), "question") || parks.dig(address(item), "summary")
 
         def tests_of(item)
           sha = parks.dig(address(item), "sha")

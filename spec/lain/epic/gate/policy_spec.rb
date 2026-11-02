@@ -238,7 +238,7 @@ RSpec.describe Lain::Epic::Gate::Policy do
       expect(queue.first.question).to eq(plan.gate_question)
     end
 
-    it "journals gate_parked beside the gate_decision, with the address, sha and question" do
+    it "journals a deferred gate wait beside the gate_decision, with the address, sha and question" do
       parked_policy = described_class::Deferred.new(queue:, journal:)
       commit = Data.define(:digest, :gate_question, :changeset).new(digest: "blake3:impl", changeset: "8b6b677",
                                                                     gate_question: "Approve the commit?")
@@ -247,9 +247,9 @@ RSpec.describe Lain::Epic::Gate::Policy do
       end
 
       expect(approved).to be(false)
-      expect(journal_records(journal_io, "gate_parked")).to contain_exactly(
-        include("artifact_digest" => "blake3:impl", "epic_slug" => "alpha", "issue_id" => nil,
-                "stage" => "epic_plan", "sha" => "8b6b677", "question" => "Approve the commit?")
+      expect(journal_records(journal_io, "awaiting_human")).to contain_exactly(
+        include("kind" => "gate", "deferred" => true, "ref" => "blake3:impl", "epic_slug" => "alpha",
+                "stage" => "epic_plan", "sha" => "8b6b677", "summary" => "Approve the commit?")
       )
       expect(decisions.size).to eq(1)
     end
@@ -259,7 +259,7 @@ RSpec.describe Lain::Epic::Gate::Policy do
         described_class::Deferred.new(queue:, journal:).decide(plan, gate:, stage: "epic_plan", epic_slug: "alpha")
       end
 
-      expect(journal_records(journal_io, "gate_parked")).to contain_exactly(include("sha" => nil))
+      expect(journal_records(journal_io, "awaiting_human")).to contain_exactly(satisfy { !_1.key?("sha") })
     end
 
     it "still refuses ensure_approved!, so an irreversible caller cannot proceed" do

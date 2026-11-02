@@ -148,7 +148,7 @@ was already being `instance_eval`ed with no consent. Drive it in the subject rep
    its files with no second consent (trust is keyed on the digest of the `*.rb` set, not on the root).
 5. **A project with no `.lain/*.rb` needs no trust**: `lain chat` starts with no mark, and `lain trust`
    says there is nothing to trust.
-6. **The agent cannot grant it.** Ask the model to `write_file .lain/config.rb`: an `approval_pending` parks
+6. **The agent cannot grant it.** Ask the model to `write_file .lain/config.rb`: an `awaiting_human` parks
    for a human (`secret-boundary.md` §2), and even an approved write leaves the file untrusted until a human
    runs `lain trust`.
 

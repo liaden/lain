@@ -732,7 +732,7 @@ wrong surface returns plausible text rather than an error.
   2026-09-14 a cockpit draws no inline `[y/N]` to go stale, and a `--no-nvim` chat ends a decided
   prompt's line with `-- decided by <surface>: <verdict>` *(prediction, not yet driven)*. Before
   answering a `[y/N]` by hand, still confirm it is parked: the line does not end in `decided by`,
-  and the journal's last `approval_pending` has no later `approval_decision` for the same
+  and the journal's last `awaiting_human` has no later `approval_decision` for the same
   `tool_use_id` (or `b:lain_approval_calls` still lists it).
 - **A helper that refuses only on `[y/N]` still types into `human>`.** In a `--no-nvim` chat a line
   sent while the model has parked an `ask_human` is taken as the answer. A line sent while a turn is

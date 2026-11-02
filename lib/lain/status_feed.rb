@@ -120,6 +120,9 @@ module Lain
   #   heals. So the degrade record is counted too
   #   ({#observe_degraded_approval}), and the floor at zero is a backstop for a
   #   stream that was never paired, not the primary defence.
+  # * `waiting` -- `approvals_pending` plus each gate and model question whose
+  #   `awaiting_human` no `gate_decision` or `questions_consumed` has closed. A
+  #   wave is one question asked about several issues, so it counts once.
   # * `scope` / `approval` / `layers` / `mode_lighter` -- derived from a
   #   {Telemetry::ModeSwitch} by {ModeState}, whose doc holds the reasoning. All
   #   absent until the first switch, and forced to be: {Mode::Switch} journals
@@ -234,6 +237,7 @@ module Lain
       @run_tokens = nil
       @mode = ModeState::NONE
       @approvals_pending = 0
+      @open_waits = {}
       @compactions = 0
       @derivation_refusal_streak = 0
       @fleet = Fleet.new(clock: @clock)
@@ -311,7 +315,7 @@ module Lain
       # Matched by class rather than on `#to`/`#to_layers`, which would also
       # catch an {Ext::Event}, whose `#to` is a message recipient.
       @mode = ModeState.of(event) if event.is_a?(Telemetry::ModeSwitch)
-      observe_approval(event)
+      observe_wait(event)
       publish_if_changed
       self
     end
@@ -547,14 +551,36 @@ module Lain
       nil
     end
 
-    # See the class doc for why this pair is counted rather than joined by id,
-    # and which half failing costs what.
-    def observe_approval(event)
+    # See the class doc for why an approval is counted rather than joined by
+    # id, and which half failing costs what. A gate and a question close on
+    # `ref`, which their closing records name.
+    def observe_wait(event)
       case event
-      when Telemetry::ApprovalPending then @approvals_pending += 1
+      when Telemetry::AwaitingHuman then opened(event)
       when Approval::Parked::Queue::Pending then release_approval
+      when Epic::GateDecision then closed("gate", event.artifact_digest)
+      when Telemetry::QuestionsConsumed then event.digests.each { |digest| closed("question", digest) }
       when Hash then observe_degraded_approval(event)
       end
+    end
+
+    # A deferred gate is journaled after the denial that closed it, so nothing
+    # later in this run closes it again: it waits on the morning review.
+    def opened(event)
+      return @approvals_pending += 1 if event.kind == "approval"
+
+      return if event.deferred
+
+      (@open_waits[[event.kind, event.question_key || event.ref]] ||= Set.new) << event.ref
+    end
+
+    # A wave's question stays open until every issue it asked about is decided.
+    def closed(kind, ref)
+      key, refs = @open_waits.find { |(open_kind, _), open| open_kind == kind && open.include?(ref) }
+      return unless key
+
+      refs.delete(ref)
+      @open_waits.delete(key) if refs.empty?
     end
 
     # {Approval::Parked::Queue#degrade}'s stand-in record. The park (or the decision)
@@ -566,7 +592,7 @@ module Lain
       return unless event["type"] == JOURNAL_ERROR
 
       case event["entry_class"]
-      when Telemetry::ApprovalPending.name then @approvals_pending += 1
+      when Telemetry::AwaitingHuman.name then @approvals_pending += 1
       when Approval::Parked::Queue::Pending.name then release_approval
       end
     end
@@ -651,7 +677,8 @@ module Lain
     def observed
       { "cache_deadline" => @cache_deadline, "fleet" => @fleet.digests, "fleet_tree" => @fleet.tree,
         "inbox_count" => @inbox.pending_size,
-        "approvals_pending" => @approvals_pending, "occupancy" => @occupancy,
+        "approvals_pending" => @approvals_pending, "waiting" => @approvals_pending + @open_waits.size,
+        "occupancy" => @occupancy,
         "window_guessed" => @window_guessed, "unmeasured_turns" => @unmeasured_turns,
         "compactions" => @compactions, "derivation_refusal_streak" => @derivation_refusal_streak,
         "run_tokens" => @run_tokens, "in_flight" => in_flight_slot }

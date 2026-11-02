@@ -638,7 +638,7 @@ capability every rule has, since no rule *but* `ComposedTerm` reads a term.
 
 - **The positive is `shell-terms.md` §5's headline claim** — `cat README.md | head -20` running
   with no prompt and the journal showing a `rules` rung `allow` is driven there, over the real
-  local model, and the journal's missing `approval_pending` is its negative. (The `dunstctl`
+  local model, and the journal's missing `awaiting_human` is its negative. (The `dunstctl`
   check that used to sit beside it read a desktop notifier deleted in `c40ab419`.) Do not
   redrive it here; `/approve` answering `no pending approvals` afterward is the one addition
   worth confirming if this section is driven standalone. **Since 2026-09-14 the rule approves

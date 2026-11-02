@@ -320,10 +320,10 @@ RSpec.describe Lain::Approval::Escalation do
         expect(parked_notes(noting)).to eq([note])
       end
 
-      it "reaches the approval_pending record" do
+      it "reaches the awaiting_human record" do
         parked_notes(noting)
 
-        expect(Lain::Journal.records(journal_io.string.lines, type: "approval_pending").sole["notes"]).to eq([note])
+        expect(Lain::Journal.records(journal_io.string.lines, type: "awaiting_human").sole["notes"]).to eq([note])
       end
 
       it "gathers the notes of every abstaining rung, in order" do
@@ -338,7 +338,7 @@ RSpec.describe Lain::Approval::Escalation do
 
       it "leaves a park with no note carrying none, and journals no notes key" do
         expect(parked_notes(EscalationSpecSupport::Silent.new)).to eq([])
-        expect(Lain::Journal.records(journal_io.string.lines, type: "approval_pending").sole).not_to have_key("notes")
+        expect(Lain::Journal.records(journal_io.string.lines, type: "awaiting_human").sole).not_to have_key("notes")
       end
 
       it "never reaches the model's refusal text" do

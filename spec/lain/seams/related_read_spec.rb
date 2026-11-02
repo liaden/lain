@@ -57,7 +57,7 @@ RSpec.describe "A read under a related directory", :seam do
 
     expect(result.content).not_to include(api_key)
     expect(result.content).to include("<redacted:1>")
-    expect(journal_records(journal_io, "approval_pending")).to be_empty
+    expect(journal_records(journal_io, "awaiting_human")).to be_empty
     masks = journal_records(journal_io, "source_masked")
     expect(masks).to contain_exactly(include("kind" => "file", "key" => path, "released" => 0))
   end
@@ -72,7 +72,7 @@ RSpec.describe "A read under a related directory", :seam do
       call.wait
     end
 
-    expect(journal_records(journal_io, "approval_pending").length).to eq(1)
+    expect(journal_records(journal_io, "awaiting_human").length).to eq(1)
   end
 
   it "still parks a built-in gated name under a related directory at the read gate" do
@@ -85,7 +85,7 @@ RSpec.describe "A read under a related directory", :seam do
       call.wait
     end
 
-    expect(journal_records(journal_io, "approval_pending").length).to eq(1)
+    expect(journal_records(journal_io, "awaiting_human").length).to eq(1)
     expect(result.content).not_to include(api_key)
   end
 

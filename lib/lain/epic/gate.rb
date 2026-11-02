@@ -301,10 +301,12 @@ module Lain
       #   make the timeout fire sooner, so a spec exercising the timeout still
       #   waits real seconds. Where the two clocks would contradict each other
       #   is settled in {#await}.
-      def initialize(journal:, timeout: DEFAULT_TIMEOUT, clock: RunClock::MONOTONIC)
+      # @param wall [#call] the time of day, as a Time, for naming when a wait is denied
+      def initialize(journal:, timeout: DEFAULT_TIMEOUT, clock: RunClock::MONOTONIC, wall: -> { Time.now })
         @journal = journal
         @window = timeout.is_a?(Numeric) ? Window.bounded(timeout) : timeout
         @clock = clock
+        @wall = wall
         @approved = Set.new
       end
 
@@ -339,7 +341,7 @@ module Lain
         decided = { epic_slug:, stage:, policy:, evidence_digest:, reason:, issue_id:, criteria_digest: }
         started = @clock.call
         asked = asker.ask(artifact.gate_question)
-        answer, latency = awaited(asked, started, artifact, **decided)
+        answer, latency = awaited(asked, asker, started, artifact, **decided)
 
         # Journal FIRST, register second, never the other way round: a journal
         # that raises -- a full disk, or a contract refusing a nil digest --
@@ -410,6 +412,35 @@ module Lain
       end
 
       private
+
+      # Journaled once the question is out rather than before it, so an asker
+      # that refuses to ask leaves no wait that no decision will ever close.
+      # A wave journals 1 wait per issue, because each issue's decision closes
+      # its own, under 1 question key, because the human is asked once.
+      # A standing answer is no human's, so nothing is waited on. TOTAL, for
+      # {#retired}'s reason: the record of a wait must not replace the verdict,
+      # or the refusal of one, that the decision record is about to give.
+      def waiting(artifact, asker, epic_slug:, stage:, issue_id:, **)
+        return if asker.respond_to?(:standing?) && asker.standing?
+
+        deadline = Telemetry::AwaitingHuman.deadline(@window.seconds, from: @wall.call)
+        items = asked_items(artifact, issue_id)
+        question_key = Canonical.digest(items.map { |item, _id| item.digest }) if items.size > 1
+        items.each do |item, id|
+          @journal.record(Telemetry::AwaitingHuman.new(kind: "gate", ref: item.digest, deadline:, epic_slug:, stage:,
+                                                       summary: Telemetry::AwaitingHuman.lead(item.gate_question),
+                                                       issue_id: id, question_key:,
+                                                       sha: (item.changeset if item.respond_to?(:changeset))))
+        end
+      rescue StandardError
+        nil
+      end
+
+      def asked_items(artifact, issue_id)
+        return [[artifact, issue_id]] unless artifact.respond_to?(:submissions)
+
+        artifact.submissions.map { |submission| [submission, submission.issue_id] }
+      end
 
       # An approval registers its digest, a denial does not -- {#call}'s live
       # rule replayed against records already on disk.
@@ -488,7 +519,11 @@ module Lain
       # `record`; catching it here too would write a second, contradictory
       # decision -- a human's "y" quietly withdrawn by an "interrupted" that
       # followed it -- for one question.
-      def awaited(asked, started, artifact, **decided)
+      #
+      # The wait is journaled inside the same scope, so a cancellation landing
+      # while that record is written still closes it with a decision.
+      def awaited(asked, asker, started, artifact, **decided)
+        waiting(artifact, asker, **decided)
         await(asked, started)
       rescue Async::Cancel
         interrupted(artifact, started, **decided)

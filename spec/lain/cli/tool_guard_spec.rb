@@ -384,7 +384,7 @@ RSpec.describe Lain::CLI::ToolGuard do
       end
 
       expect(later).to have_attributes(is_error: true, content: end_with("not your business"))
-      parked = Lain::Journal.records(journal_io.string.lines, type: "approval_pending").map { |r| r["requester"] }
+      parked = Lain::Journal.records(journal_io.string.lines, type: "awaiting_human").map { |r| r["requester"] }
       expect(parked.to_a).to eq(["researcher"])
       expect(journal_records(journal_io, "escalation"))
         .to include(a_hash_including("rung" => "remembered", "requester" => "researcher", "verdict" => "deny"))
@@ -528,7 +528,7 @@ RSpec.describe Lain::CLI::ToolGuard do
 
       records = Lain::Journal.records(journal_io.string.lines).select { |record| record["requester"] }.to_a
       expect(records.map { |record| [record["type"], record["requester"]] })
-        .to eq([%w[approval_pending researcher], %w[approval_decision researcher], %w[read_released researcher]])
+        .to eq([%w[awaiting_human researcher], %w[approval_decision researcher], %w[read_released researcher]])
     end
 
     it "asks the board's policy from the chat's stack and from a child's" do
@@ -687,7 +687,7 @@ RSpec.describe Lain::CLI::ToolGuard do
       expect(refused).to have_attributes(is_error: true, content: start_with("write_file refused"))
       expect(refused.content).to include(@lease)
       expect(refused.content).not_to include("plan scope", "/mode")
-      expect(journal_records(journal_io, "approval_pending")).to be_empty
+      expect(journal_records(journal_io, "awaiting_human")).to be_empty
     end
 
     it "lets a write inside it through to the gate" do

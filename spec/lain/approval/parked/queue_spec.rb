@@ -44,15 +44,16 @@ RSpec.describe Lain::Approval::Parked::Queue do
   end
 
   def pending_records
-    journal_records(journal_io, "approval_pending")
+    journal_records(journal_io, "awaiting_human")
   end
 
   # The approval records in the order they were written, so "announced before
   # decided" is read off the journal itself rather than inferred.
   def approval_types
+    approval = %w[awaiting_human approval_decision]
     Lain::Journal.records(journal_io.string.lines)
                  .map { |record| record["type"] }
-                 .select { |type| type.start_with?("approval_") }
+                 .select { |type| approval.include?(type) }
                  .to_a
   end
 
@@ -439,7 +440,7 @@ RSpec.describe Lain::Approval::Parked::Queue do
   # an approval's life was the post-hoc decision, so nothing could render "a
   # call is waiting on you" -- the state a human is actually asked to act on.
   describe "parking announces itself" do
-    it "journals an approval_pending record naming the requester and the tool" do
+    it "journals an awaiting_human approval naming the requester and the tool" do
       queue = described_class.new(journal:, requester: "the-agent")
 
       Sync do |task|
@@ -449,20 +450,34 @@ RSpec.describe Lain::Approval::Parked::Queue do
       end
 
       expect(pending_records).to contain_exactly(
-        a_hash_including("type" => "approval_pending", "requester" => "the-agent", "tool" => "dangerous")
+        a_hash_including("type" => "awaiting_human", "kind" => "approval", "requester" => "the-agent",
+                         "tool" => "dangerous")
       )
+    end
+
+    it "names the moment the queue denies the call unasked" do
+      queue = described_class.new(journal:, timeout: 300, wall: -> { Time.utc(2026, 11, 2, 9, 0, 0) })
+
+      Sync do |task|
+        run = task.async { queue.call(tool_call, nil) }
+        queue.dequeue.approve(surface: "tty")
+        run.wait
+      end
+
+      expect(pending_records)
+        .to contain_exactly(a_hash_including("ref" => "tu_1", "deadline" => "2026-11-02T09:05:00Z"))
     end
 
     it "announces the park BEFORE any decision is made" do
       Sync do |task|
         run = task.async { queue.call(tool_call, nil) }
-        expect(approval_types).to eq(%w[approval_pending])
+        expect(approval_types).to eq(%w[awaiting_human])
 
         queue.dequeue.approve(surface: "tty")
         run.wait
       end
 
-      expect(approval_types).to eq(%w[approval_pending approval_decision])
+      expect(approval_types).to eq(%w[awaiting_human approval_decision])
     end
 
     it "leaves the decision record exactly as it was" do
@@ -527,7 +542,7 @@ RSpec.describe Lain::Approval::Parked::Queue do
         runs.each(&:wait)
       end
 
-      expect(pending_records.map { |record| record.fetch("humans_only") }).to eq([true, false])
+      expect(pending_records.map { |record| record.fetch("humans_only", false) }).to eq([true, false])
     end
 
     it "keeps the announcement when the requester is abandoned before deciding" do
@@ -537,7 +552,7 @@ RSpec.describe Lain::Approval::Parked::Queue do
 
       expect(pending_records).to contain_exactly(a_hash_including("tool" => "dangerous"))
       expect(decision_records).to contain_exactly(a_hash_including("surface" => "abandoned", "verdict" => "deny"))
-      expect(approval_types).to eq(%w[approval_pending approval_decision])
+      expect(approval_types).to eq(%w[awaiting_human approval_decision])
     end
   end
 
@@ -1110,7 +1125,7 @@ RSpec.describe Lain::Approval::Parked::Queue do
     end
 
     it "still denies -- and does not raise -- when the announcement cannot be written" do
-      queue = queue_over(ApprovalSpecSupport::BrittleJournal.new(journal, fails_on: Lain::Telemetry::ApprovalPending))
+      queue = queue_over(ApprovalSpecSupport::BrittleJournal.new(journal, fails_on: Lain::Telemetry::AwaitingHuman))
       verdict = nil
 
       expect { verdict = Sync { queue.call(tool_call, nil) } }.not_to raise_error
@@ -1118,12 +1133,12 @@ RSpec.describe Lain::Approval::Parked::Queue do
     end
 
     it "records the unwritable announcement as the Journal's own journal_error, and still parks" do
-      queue = queue_over(ApprovalSpecSupport::BrittleJournal.new(journal, fails_on: Lain::Telemetry::ApprovalPending))
+      queue = queue_over(ApprovalSpecSupport::BrittleJournal.new(journal, fails_on: Lain::Telemetry::AwaitingHuman))
 
       Sync { queue.call(tool_call, nil) }
 
       expect(error_records).to contain_exactly(
-        a_hash_including("entry_class" => "Lain::Telemetry::ApprovalPending",
+        a_hash_including("entry_class" => "Lain::Telemetry::AwaitingHuman",
                          "error" => "IOError: no space left on device")
       )
       expect(decision_records).to contain_exactly(a_hash_including("verdict" => "deny", "surface" => "timeout"))
@@ -1158,7 +1173,7 @@ RSpec.describe Lain::Approval::Parked::Queue do
       expect(verdict).to be(false)
       expect(approval_types).to eq(%w[approval_decision])
       expect(error_records).to contain_exactly(
-        a_hash_including("entry_class" => "Lain::Telemetry::ApprovalPending",
+        a_hash_including("entry_class" => "Lain::Telemetry::AwaitingHuman",
                          "error" => /\AArgumentError: tool_use_id must name the gated call/)
       )
     end
@@ -1444,7 +1459,7 @@ RSpec.describe Lain::Approval::Parked::Queue do
       expect(verdict).to be(true)
     end
 
-    # Telemetry::ApprovalPending leaves the Pending's `input` off because tool
+    # Telemetry::AwaitingHuman leaves the Pending's `input` off because tool
     # arguments may carry credential bytes; regions ARE those bytes, so the same
     # rule binds harder. The whole journal is searched, not one record type.
     it "keeps the regions' bytes out of the journal entirely" do
@@ -1559,20 +1574,20 @@ RSpec.describe Lain::Approval::Parked::Queue do
       expect(pending.call_face).to include("egress").and include("send 12 bytes to api.example.com")
     end
 
-    it "journals approval_pending and approval_decision with the kind and the digest, and nothing tool shaped" do
+    it "journals the wait and approval_decision with the kind and the digest, and nothing tool shaped" do
       asked { |pending| pending.approve(surface: "tty", authority: :human) }
 
-      expect(pending_records).to contain_exactly(a_hash_including("kind" => "egress", "tool_use_id" => "b3_abc"))
+      expect(pending_records).to contain_exactly(a_hash_including("tool" => "egress", "tool_use_id" => "b3_abc"))
       expect(decision_records).to contain_exactly(a_hash_including("kind" => "egress", "tool_use_id" => "b3_abc"))
     end
 
-    it "keeps tool records as they were, with no kind" do
+    it "journals a tool call's wait as an approval, and its decision with no kind" do
       Sync do |task|
         task.async { queue.call(tool_call, nil) }
         queue.dequeue.approve(surface: "spec")
       end
 
-      expect(pending_records.first).not_to have_key("kind")
+      expect(pending_records.first).to include("kind" => "approval", "tool" => "dangerous")
       expect(decision_records.first).not_to have_key("kind")
     end
 

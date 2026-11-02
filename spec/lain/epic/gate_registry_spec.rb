@@ -41,7 +41,7 @@ RSpec.describe "Lain::Epic::Gate.from_journal" do
 
       expect { Sync { rebuilt.call(artifact("x"), asker: silent_asker, stage: "s", epic_slug: "e") } }
         .not_to raise_error
-      expect(JSON.parse(journal_io.string.lines.first))
+      expect(JSON.parse(journal_io.string.lines.last))
         .to include("approved" => false, "answered_by" => "timeout", "latency" => 0.01)
     end
   end
@@ -157,8 +157,8 @@ RSpec.describe "Lain::Epic::Gate.from_journal" do
 
       expect(rebuilt.to_a.sort).to eq(%w[new old])
       expect(rebuilt.ensure_approved!(artifact("old"))).to eq("old")
-      expect(journal_io.string.lines.size).to eq(1)
-      expect(JSON.parse(journal_io.string.lines.first)).to include("artifact_digest" => "new")
+      expect(journal_io.string.lines.size).to eq(2)
+      expect(JSON.parse(journal_io.string.lines.last)).to include("artifact_digest" => "new")
     end
 
     it "still raises NoReactor outside a reactor" do

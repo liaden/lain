@@ -62,6 +62,11 @@ RSpec.describe Lain::CLI::EpicQueue do
                                                .to_journal.merge("ts" => at)
   end
 
+  def deferred_wait(digest:, stage:, sha:, question:, at: "2026-07-28T06:20:00.000000Z", issue_id: "a", slug: "alpha")
+    Lain::Telemetry::AwaitingHuman.new(kind: "gate", ref: digest, summary: question, deferred: true, epic_slug: slug,
+                                       stage:, issue_id:, sha:).to_journal.merge("ts" => at)
+  end
+
   # A String goes down verbatim, so a fixture can write a genuinely damaged line
   # (truncated, or never JSON at all) rather than a JSON-encoded String.
   def write_journal(name, records)
@@ -79,6 +84,55 @@ RSpec.describe Lain::CLI::EpicQueue do
   def gate_decisions = journal_records.select { |record| record["type"] == "gate_decision" }
 
   def refolded = Lain::Epic::SignoffQueue.from_journal(journal_records)
+
+  # Scenario: the overnight queue still finds parked gates
+  describe "a gate the deferred policy parked overnight" do
+    subject(:queue) { described_class.new(paths:, clock: -> { Time.now.utc + 3600 }, root:) }
+
+    let(:artifact) do
+      Data.define(:digest, :gate_question).new(digest: digest_b, gate_question: "Approve the research for alpha?")
+    end
+
+    before do
+      journal = Lain::Journal.open(paths:, root:)
+      gate = Lain::Epic::Gate.new(journal:, timeout: 1)
+      policy = Lain::Epic::Gate::Policy::Deferred.new(queue: Lain::Epic::SignoffQueue.new, journal:)
+      Sync { policy.decide(artifact, gate:, stage: "research", epic_slug: "alpha") }
+      journal.close
+    end
+
+    context "when the question carries its reply instructions" do
+      let(:artifact) do
+        Data.define(:digest, :gate_question).new(digest: digest_b,
+                                                 gate_question: "Approve the research for alpha? Reply y or n.")
+      end
+
+      it "lists the whole question, not just its lead sentence" do
+        row = queue.listing("alpha").split("\n\n").find { |block| block.include?(digest_b) }
+
+        expect(row).to include("Reply y or n.")
+      end
+    end
+
+    it "lists it with the question the gate asked" do
+      row = queue.listing("alpha").split("\n\n").find { |block| block.include?(digest_b) }
+
+      expect(row).to include("question:  Approve the research for alpha?")
+      expect(row).not_to include("not recoverable")
+    end
+  end
+
+  # An interactive gate's wait is closed by its own decision, and parks nothing.
+  it "takes no question from a gate that was waiting on a human rather than parked" do
+    open_wait = Lain::Telemetry::AwaitingHuman.new(kind: "gate", ref: digest_c, summary: "the live question",
+                                                   epic_slug: "alpha", stage: "research").to_journal
+    records = [decision(digest: digest_c, at: "2026-07-28T06:20:00.000000Z", policy: "deferred",
+                        answered_by: "deferred"), open_wait.merge("ts" => "2026-07-28T06:20:00.000000Z")]
+
+    rows = described_class.const_get(:Review).new(records, now:).rows
+
+    expect(rows.join).not_to include("the live question")
+  end
 
   # An approved issue plan puts its issue in flight whichever surface approved
   # it: the epic driver launches only issues in flight, so a plan signed off
@@ -418,9 +472,7 @@ RSpec.describe Lain::CLI::EpicQueue do
                       [*approvals("research", "epic_plan", "issue_plan"),
                        decision(digest: digest_c, at: "2026-07-28T06:20:00.000000Z", policy: "deferred",
                                 answered_by: "deferred", stage: "implementation", issue_id: "a"),
-                       Lain::Telemetry::GateParked.new(artifact_digest: digest_c, epic_slug: "alpha", issue_id: "a",
-                                                       stage: "implementation", sha: commit, question:)
-                                                  .to_journal.merge("ts" => "2026-07-28T06:20:00.000000Z"),
+                       deferred_wait(digest: digest_c, stage: "implementation", sha: commit, question:),
                        Lain::Telemetry::TestsRan.from(Struct.new(:passed, :failed, :errors).new([], [], [3]),
                                                       issue_id: "a", sha: commit)
                                                 .to_journal.merge("ts" => "2026-07-28T06:19:00.000000Z")])
@@ -440,9 +492,7 @@ RSpec.describe Lain::CLI::EpicQueue do
                                              issue_id: "a", sha: "8b6b677").to_journal
         records = [decision(digest: digest_c, at: "2026-07-28T06:20:00.000000Z", policy: "deferred",
                             answered_by: "deferred", stage: "implementation", issue_id: "a"),
-                   Lain::Telemetry::GateParked.new(artifact_digest: digest_c, epic_slug: "alpha", issue_id: "a",
-                                                   stage: "implementation", sha: "8b6b677", question: "q?")
-                                              .to_journal.merge("ts" => "2026-07-28T06:20:00.000000Z"),
+                   deferred_wait(digest: digest_c, stage: "implementation", sha: "8b6b677", question: "q?"),
                    ran.merge("ts" => "2026-07-28T06:19:00.000000Z")]
         described_class.const_get(:Review).new(records, now:).rows.join[/tests: .*/]
       end
@@ -472,9 +522,7 @@ RSpec.describe Lain::CLI::EpicQueue do
       records = [*approvals("research", "epic_plan", "issue_plan"),
                  decision(digest: digest_c, at: "2026-07-28T06:20:00.000000Z", policy: "deferred",
                           answered_by: "deferred", stage: "implementation", issue_id: "a"),
-                 Lain::Telemetry::GateParked.new(artifact_digest: digest_c, epic_slug: "alpha", issue_id: "a",
-                                                 stage: "implementation", sha: commit, question: "q?")
-                                            .to_journal.merge("ts" => "2026-07-28T06:20:00.000000Z"),
+                 deferred_wait(digest: digest_c, stage: "implementation", sha: commit, question: "q?"),
                  Lain::Telemetry::TestsRan.from(Struct.new(:passed, :failed, :errors).new([1], [], []),
                                                 issue_id: "a", sha: commit)
                                           .to_journal.merge("ts" => "2026-07-28T06:19:00.000000Z")]

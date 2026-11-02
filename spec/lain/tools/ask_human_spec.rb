@@ -1485,6 +1485,29 @@ RSpec.describe Lain::Tools::AskHuman do
       end
     end
 
+    def waits = journal.grep(Lain::Telemetry::AwaitingHuman)
+
+    it "journals the model's question as a wait before it is answered, naming the set and no deadline" do
+      Sync do |task|
+        run = task.async { tool.call({ "question" => "which db?" }, invocation) }
+        task.yield
+        digest = tool.last_question.digest
+
+        expect(waits).to contain_exactly(have_attributes(kind: "question", ref: digest, deadline: nil,
+                                                         summary: include("which db?")))
+        expect(consumed).to be_empty
+        answered(tool, "postgres")
+        run.wait
+      end
+    end
+
+    # A gate asks through #ask and journals its own wait, of kind gate.
+    it "journals no wait for a question asked through #ask" do
+      Sync { tool.withdraw(tool.ask("Approve the plan?")) }
+
+      expect(waits).to be_empty
+    end
+
     it "reports whether a named set is still awaited" do
       Sync do |task|
         run = task.async { tool.call({ "question" => "which db?" }, invocation) }

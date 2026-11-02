@@ -56,10 +56,11 @@ RSpec.describe Lain::StatusFeed do
   end
 
   # The two records Approval::Parked::Queue writes around one gated call: the park
-  # (the Telemetry::ApprovalPending) and the decision (the Pending itself,
-  # whose #to_journal is the id-less "approval_decision" record).
+  # (an approval's Telemetry::AwaitingHuman) and the decision (the Pending itself,
+  # whose #to_journal is the "approval_decision" record).
   def approval_park(tool: "bash", tool_use_id: "tu_1")
-    Lain::Telemetry::ApprovalPending.new(requester: "agent", tool:, tool_use_id:)
+    Lain::Telemetry::AwaitingHuman.new(kind: "approval", ref: tool_use_id, summary: tool, requester: "agent", tool:,
+                                       tool_use_id:)
   end
 
   def approval_decision(tool: "bash", tool_use_id: "tu_1", verdict: true)
@@ -561,6 +562,68 @@ RSpec.describe Lain::StatusFeed do
     end
   end
 
+  # Scenario: the waiting count falls when each wait closes
+  describe "waiting" do
+    def gate_wait(digest) = Lain::Telemetry::AwaitingHuman.new(kind: "gate", ref: digest, summary: "Approve?")
+
+    def question_wait(digest) = Lain::Telemetry::AwaitingHuman.new(kind: "question", ref: digest, summary: "Which?")
+
+    def gate_decision(digest)
+      Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: "alpha", stage: "research", approved: true,
+                                   answered_by: "human", policy: "interactive", latency: 1.0)
+    end
+
+    it "counts an open approval, gate and question, and falls by one as each is answered" do
+      feed = described_class.new(path:)
+      feed << approval_park(tool_use_id: "tu_1") << gate_wait("blake3:plan") << question_wait("blake3:q")
+      counts = [published["waiting"]]
+
+      [approval_decision(tool_use_id: "tu_1"), gate_decision("blake3:plan"),
+       Lain::Telemetry::QuestionsConsumed.new(turn: nil, digests: ["blake3:q"])].each do |closing|
+        feed << closing
+        counts << published["waiting"]
+      end
+
+      expect(counts).to eq([3, 2, 1, 0])
+    end
+
+    it "counts a wave's waits as the one question they share" do
+      feed = described_class.new(path:)
+      %w[b c d].each do |id|
+        feed << Lain::Telemetry::AwaitingHuman.new(kind: "gate", ref: "blake3:#{id}", summary: "Approve the wave?",
+                                                   question_key: "blake3:wave", issue_id: id)
+      end
+      feed << approval_park(tool_use_id: "tu_1")
+      counts = [published["waiting"]]
+
+      %w[b c d].each do |id|
+        feed << gate_decision("blake3:#{id}")
+        counts << published["waiting"]
+      end
+
+      expect(counts).to eq([2, 2, 2, 1])
+    end
+
+    it "is not moved by a decision on a gate nobody waited on" do
+      feed = described_class.new(path:)
+      feed << gate_wait("blake3:plan")
+
+      feed << gate_decision("blake3:other")
+
+      expect(published["waiting"]).to eq(1)
+    end
+
+    # A deferred park is journaled after the denial that closed its gate, so
+    # nothing later in this run would ever close it.
+    it "does not count a gate parked for the morning review" do
+      feed = described_class.new(path:)
+
+      feed << Lain::Telemetry::AwaitingHuman.new(kind: "gate", ref: "blake3:plan", summary: "Approve?", deferred: true)
+
+      expect(published["waiting"]).to eq(0)
+    end
+  end
+
   # The one state a human is actually asked to ACT on. The park record and
   # the decision record are written by Approval::Parked::Queue around the same gated
   # call and both ride the tee this sink sits in -- but the decision carries
@@ -616,7 +679,7 @@ RSpec.describe Lain::StatusFeed do
     it "counts a park whose announcement could not be journaled" do
       feed = described_class.new(path:)
 
-      feed << degraded(Lain::Telemetry::ApprovalPending)
+      feed << degraded(Lain::Telemetry::AwaitingHuman)
 
       expect(published["approvals_pending"]).to eq(1)
     end
@@ -1869,7 +1932,7 @@ RSpec.describe Lain::StatusFeed do
       feed << turn_usage(cache_read: 1)
 
       expect(published.keys).to contain_exactly("cache_deadline", "fleet", "fleet_tree", "inbox_count",
-                                                "approvals_pending",
+                                                "approvals_pending", "waiting",
                                                 "occupancy", "window_guessed", "unmeasured_turns", "compactions",
                                                 "derivation_refusal_streak",
                                                 "run_tokens", "in_flight", "scope", "approval", "layers",

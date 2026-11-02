@@ -1759,7 +1759,7 @@ RSpec.describe Lain::CLI::Wiring do
       end
 
       expect(sent).to have_been_requested.once
-      expect(journal.events.grep(Lain::Telemetry::ApprovalPending)).to be_empty
+      expect(journal.events.grep(Lain::Telemetry::AwaitingHuman)).to be_empty
     end
 
     it "sends a secret once a human releases it through the board's read path", :seam do
@@ -1838,7 +1838,7 @@ RSpec.describe Lain::CLI::Wiring do
           end
         end
 
-        def egress_pendings = journal.events.grep(Lain::Telemetry::ApprovalPending).select { _1.kind == "egress" }
+        def egress_pendings = journal.events.grep(Lain::Telemetry::AwaitingHuman).select { _1.tool == "egress" }
 
         it "parks the secret oracle's request for the human, and sends nothing it denies" do
           judged = stub_request(:post, "http://localhost:11434/api/chat")
@@ -1888,7 +1888,7 @@ RSpec.describe Lain::CLI::Wiring do
         end
       end
 
-      def egress_pendings = journal.events.grep(Lain::Telemetry::ApprovalPending).select { _1.kind == "egress" }
+      def egress_pendings = journal.events.grep(Lain::Telemetry::AwaitingHuman).select { _1.tool == "egress" }
 
       it "journals the egress decision before any request, and sends exactly one once the human approves" do
         sent = stub_request(:post, messages_url)

@@ -169,7 +169,7 @@ RSpec.describe "auto approval asks the judge before a human", :seam do
       wiring.wire_agent(channel: Lain::Channel.new, recorder:, session:, backend:)
     end
 
-    def parks = Lain::Journal.records(journal_io.string.lines, type: "approval_pending").count
+    def parks = Lain::Journal.records(journal_io.string.lines, type: "awaiting_human").count
 
     def parks_denying(reason)
       agent = chat_agent

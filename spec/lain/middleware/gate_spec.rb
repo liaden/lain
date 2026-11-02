@@ -567,7 +567,7 @@ RSpec.describe Lain::Middleware::Gate do
           .to eq(["earlier", "a credential-shaped name"])
       end
 
-      it "reaches the parked Pending and its approval_pending record", :seam do
+      it "reaches the parked Pending and its awaiting_human record", :seam do
         journal = StringIO.new
         queue = Lain::Approval::Parked::Queue.new(journal: Lain::Journal.new(io: journal), timeout: 0.05)
         gate = described_class.new(policy: asking_ladder(queue), sensitivity:)
@@ -577,7 +577,7 @@ RSpec.describe Lain::Middleware::Gate do
         end
 
         expect(result).to have_attributes(is_error: true)
-        expect(journal.string).to include("approval_pending").and include("a credential-shaped name")
+        expect(journal.string).to include("awaiting_human").and include("a credential-shaped name")
       end
 
       it "adds nothing for a tier-gated call that names no gated path" do

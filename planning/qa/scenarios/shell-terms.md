@@ -313,7 +313,7 @@ Four properties to drive, all free:
   nothing.
 
   The **live** form of the same claim — a real `escalation` record with
-  `"rung": "triage", "verdict": "deny"` and no `approval_pending` beside it — needs the model
+  `"rung": "triage", "verdict": "deny"` and no `awaiting_human` beside it — needs the model
   to emit `curl` and so costs one local completion. **Optional, and outside this section's
   budget**: take it if the round has a session up with this `shell` verb in force, and say
   in the findings whether you did. What the live form adds is that the gate really consulted
@@ -491,7 +491,7 @@ In a real local-model session, in a scratch tree holding a `README.md`, ask for
 
 ```bash
 ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next;
-  puts r.to_json if %w[escalation approval_pending shell_arm].include?(r["type"])}' "$LAIN_QA_JOURNAL"
+  puts r.to_json if %w[escalation awaiting_human shell_arm].include?(r["type"])}' "$LAIN_QA_JOURNAL"
 ```
 
 Expected for the approved call:
@@ -499,22 +499,22 @@ Expected for the approved call:
 - an `escalation` record with `"rung": "rules"`, `"verdict": "allow"`,
   `"authority": "automatic"`, and reason
   `composed_term: every stage is a bare allowlisted reader over ordinary words: cat at /usr/bin/cat (system), head at /usr/bin/head (system)` (round 26: the reason names the resolved binaries);
-- **no `approval_pending` record for that `tool_use_id`** — nobody was asked;
+- **no `awaiting_human` record for that `tool_use_id`** — nobody was asked;
 - one `shell_arm` record for it, `"verdict":"allow","arm":"term"` (§6);
 - the approved call also writes a `sandbox profile:"reader"` record and an `exec_record` (round 26).
 
 *Driven 2026-09-14* in a `--no-nvim` chat on a scratch git tree: exactly those three records —
 `escalation rung=triage verdict=abstain`, `escalation rung=rules verdict=allow
 authority=automatic` with the reason above, and `shell_arm verdict=allow arm=term` — and no
-`approval_pending`. (This bullet used to add a `dunstctl count displayed` negative. The desktop
+`awaiting_human`. (This bullet used to add a `dunstctl count displayed` negative. The desktop
 notifier it read was deleted in `c40ab419`, so there is no popup to count; the journal's missing
-`approval_pending` is the whole negative.)
+`awaiting_human` is the whole negative.)
 
 Then the controls, **each in the same session**. The property they share is that **none is
 auto-approved**; they do not all end the same way, and conflating the two endings is its own
 false finding:
 
-- **most park for a human** — an `approval_pending` record, and the call waiting;
+- **most park for a human** — an `awaiting_human` record, and the call waiting;
 - **`cat ./.netrc`, and any argv word naming a protected path, is refused outright at triage**
   and never parks at all, which is *stricter*, not weaker. Since 2026-09-14 the model is told why:
   *driven 2026-09-14* with a planted `backup/root/.ssh/id_rsa` (denied wherever it sits), the

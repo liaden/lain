@@ -302,7 +302,7 @@ RSpec.describe "A researcher spawn leases its own kept, confined directory", :se
       end
 
       expect(seen).to eq(["researcher"])
-      expect(Lain::Journal.records(journal_io.string.lines, type: "approval_pending").map { _1["requester"] }.to_a)
+      expect(Lain::Journal.records(journal_io.string.lines, type: "awaiting_human").map { _1["requester"] }.to_a)
         .to eq(["researcher"])
     end
   end

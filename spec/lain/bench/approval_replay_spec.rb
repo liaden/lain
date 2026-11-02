@@ -25,9 +25,11 @@ RSpec.describe Lain::Bench::ApprovalReplay do
 
   def calls(path) = described_class::Call.joined(Lain::Journal.records(File.foreach(path)).to_a, session: path)
 
-  # A decision's latency is read off the monotonic clock as the fixture was written, the one field
-  # that differs between two writes of the same session.
-  def unclocked(path) = File.foreach(path).map { JSON.parse(_1).except("latency") }
+  # A decision's latency and a wait's deadline are read off the clock as the fixture was written,
+  # the fields that differ between two writes of the same session. The committed deadlines are
+  # synthetic, 5 minutes past the fixed epoch the records are stamped at, because Switchboard.for
+  # hands its queue no wall clock and a write here reads the real one.
+  def unclocked(path) = File.foreach(path).map { JSON.parse(_1).except("latency", "deadline") }
 
   def tree_digest(dir)
     files = Find.find(dir).select { File.file?(_1) }.sort

@@ -208,6 +208,8 @@ RSpec.describe Lain::Epic::Gate do
       # means to catch a cancellation landing.
       slow_journal.define_singleton_method(:record) do |event|
         real_journal.record(event)
+        return unless event.is_a?(Lain::Epic::GateDecision)
+
         written = true
         sleep 0.2
       end
@@ -244,8 +246,10 @@ RSpec.describe Lain::Epic::Gate do
       # to land the cancellation before any byte is written, which a flag set
       # only after the write (as the sibling example uses) could never catch.
       slow_journal.define_singleton_method(:record) do |event|
-        entered_record = true
-        sleep 0.2
+        if event.is_a?(Lain::Epic::GateDecision)
+          entered_record = true
+          sleep 0.2
+        end
         real_journal.record(event)
       end
       subject_gate = described_class.new(journal: slow_journal, timeout: 30)
@@ -450,7 +454,7 @@ RSpec.describe Lain::Epic::Gate do
       call(gate(timeout: 0.02), asker:, stage: "implementation")
 
       expect(Lain::Journal.records(journal_io.string.lines).map { |record| record["type"] }.to_a)
-        .to eq(%w[gate_decision questions_consumed])
+        .to eq(%w[awaiting_human gate_decision questions_consumed])
     end
 
     # The CLI's own prompt and every standing answer write no question into any
@@ -459,6 +463,93 @@ RSpec.describe Lain::Epic::Gate do
       call(gate, asker: approve_asker)
 
       expect(consumptions).to be_empty
+    end
+  end
+
+  # Scenario: a gate opening is journaled with its deadline
+  describe "a gate that asks a human journals the wait it opens" do
+    let(:opened_at) { Time.utc(2026, 11, 2, 9, 0, 0) }
+
+    def waits = journal_records(journal_io, "awaiting_human")
+
+    it "journals an awaiting_human of kind gate with the deadline before the answer" do
+      issue = Data.define(:digest, :gate_question, :changeset)
+                  .new(digest: "blake3:issue-a", gate_question: "Approve the issue_plan?", changeset: nil)
+      answered = []
+      asker = scripted_asker { |promise, _q| answered << promise }
+      subject_gate = gate(timeout: 900, wall: -> { opened_at })
+
+      Sync do |task|
+        deciding = task.async do
+          subject_gate.call(issue, asker:, stage: "issue_plan", epic_slug: "alpha", issue_id: "a")
+        end
+        task.yield until answered.any?
+        expect(waits).to contain_exactly(
+          include("kind" => "gate", "ref" => "blake3:issue-a", "deadline" => "2026-11-02T09:15:00Z",
+                  "summary" => "Approve the issue_plan?", "epic_slug" => "alpha", "stage" => "issue_plan",
+                  "issue_id" => "a")
+        )
+        expect(decisions).to be_empty
+        answered.first.resolve(described_class::Answer.approve("human"))
+        deciding.wait
+      end
+
+      expect(Lain::Journal.records(journal_io.string.lines).map { |record| record["type"] }.to_a)
+        .to eq(%w[awaiting_human gate_decision])
+    end
+
+    it "journals a null deadline for a window only a cancellation ends" do
+      call(gate(timeout: described_class::Window::Unbounded), asker: approve_asker)
+
+      expect(waits.map { |record| record["deadline"] }).to eq([nil])
+    end
+
+    it "journals one wait per issue of a wave, each under the digest its decision closes" do
+      graph = Lain::Epic::Graph.new(issues: %w[b c].map { |id| Lain::Epic::Issue.new(id:, title: "the #{id} issue") })
+      views = %w[b c].map { |id| Lain::Epic::IssueView.new(issue: graph.fetch(id), graph:, authored: "") }
+      wave = Lain::Epic::Submission.wave(slug: "frugirl", views:, number: 1)
+
+      Sync { gate.call(wave, asker: approve_asker, stage: "issue_plan", epic_slug: "frugirl") }
+
+      expect(waits.map { |record| record.values_at("ref", "issue_id") })
+        .to eq(decisions.map { |record| record.values_at("artifact_digest", "issue_id") })
+    end
+
+    it "journals the waits of one wave under one question key" do
+      graph = Lain::Epic::Graph.new(issues: %w[b c].map { |id| Lain::Epic::Issue.new(id:, title: "the #{id} issue") })
+      views = %w[b c].map { |id| Lain::Epic::IssueView.new(issue: graph.fetch(id), graph:, authored: "") }
+      wave = Lain::Epic::Submission.wave(slug: "frugirl", views:, number: 1)
+
+      Sync { gate.call(wave, asker: approve_asker, stage: "issue_plan", epic_slug: "frugirl") }
+
+      expect(waits.map { |record| record["question_key"] }.uniq).to contain_exactly(a_string_starting_with("blake3:"))
+    end
+
+    it "summarizes a submission's question by its first sentence, without the reply instructions" do
+      submission = Lain::Epic::Submission.new(stage: "research", slug: "alpha", content_digest: "blake3:doc",
+                                              fact: "research.md")
+
+      Sync { gate.call(submission, asker: approve_asker, stage: "research", epic_slug: "alpha") }
+
+      expect(waits.last["summary"]).to eq('Approve the research stage for "alpha"?')
+    end
+
+    it "bounds a summary whose first sentence runs long" do
+      long = artifact(digest: "blake3:long", question: "#{"word " * 60}? Reply approve.")
+
+      Sync { gate.call(long, asker: approve_asker, stage: "research", epic_slug: "alpha") }
+
+      expect(waits.last["summary"].length).to be <= 120
+      expect(waits.last["summary"]).to end_with("...")
+    end
+
+    it "journals no wait for a standing answer, which no human gives" do
+      standing = Lain::Epic::Gate::Policy::StandingAnswer.new(described_class::Answer.approve("hands_off"))
+
+      call(gate, asker: standing)
+
+      expect(waits).to be_empty
+      expect(decisions.size).to eq(1)
     end
   end
 

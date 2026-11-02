@@ -131,7 +131,7 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
 
   def decisions = journal_records(journal_io, "approval_decision")
 
-  def parks = journal_records(journal_io, "approval_pending")
+  def parks = journal_records(journal_io, "awaiting_human")
 
   describe "masking what nobody has released" do
     it "removes the region's bytes and stands a placeholder in their place" do
@@ -584,7 +584,7 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
 
       approvals = Lain::Journal.records(journal_io.string.lines).select { _1["tool_use_id"] == "tu_env" }.to_a
       expect(approvals.map { |record| record["type"] })
-        .to eq(%w[approval_pending approval_decision approval_pending approval_decision])
+        .to eq(%w[awaiting_human approval_decision awaiting_human approval_decision])
       expect(releases).to contain_exactly(an_object_having_attributes(tool_use_id: "tu_env", surface: "spec"))
     end
 

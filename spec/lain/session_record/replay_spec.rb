@@ -345,7 +345,7 @@ RSpec.describe Lain::SessionRecord::Replay do
 
         through(guard(queue), "read_file", { "path" => path }, Lain::Tools::ReadFile.new, resumed)
 
-        expect(journal_records(approvals_io, "approval_pending").length).to eq(1)
+        expect(journal_records(approvals_io, "awaiting_human").length).to eq(1)
       end
     end
 

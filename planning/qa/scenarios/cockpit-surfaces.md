@@ -823,7 +823,7 @@ Compare the surfaces:
 | chat pane | the prompt becomes `command>`; a `/`-command runs there, prose does not answer anything |
 | `lain://approval` | the `y approve, n deny` affordance, and the full command — read from `b:lain_approval_calls`, **not** from the rendered rows, which are elided and wrapped on purpose (see *Reading a long command back*, below) |
 | the status feed (`$XDG_STATE_HOME/lain/status/<hash>/state.json`, **not** `.lain/state.json` since round 13) | `approvals_pending` |
-| journal | `approval_pending` with `requester` |
+| journal | `awaiting_human` of kind `approval` with `requester` |
 | journal | the `escalation` ladder — see below; it is the surface that says WHICH surface answered |
 
 **Automated by** `spec/e2e/cockpit_approval_spec.rb`, "runs the call in the project and journals an nvim approval", "clears the approval buffer and shows the model's final reply in the chat pane", "does not run the call and journals an nvim denial" and "tells the model the approval was denied": a gated `bash` call parks with `approvals_pending` in the status feed, `:LainApprove` runs it and `:LainDeny` does not, each journals 1 `approval_decision` with `surface: nvim`, and `lain://approval` goes back to `(no approvals pending)`. **Still needs a human:** the arrival line and the absent `[y/N]`, the `command>` table, the bell, 3 calls at once, the `escalation` and pairing reads, the requester name, the plain-chat guards and the long-command read below.
@@ -913,7 +913,7 @@ ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next
 # -> call_dpm11x9y allow a surface approved this call (tty)  human
 ```
 
-Check the `approval_pending` and `approval_decision` COUNTS match too — round 9 read **12 and 12**,
+Check the `awaiting_human` and `approval_decision` COUNTS match too — round 9 read **12 and 12**,
 both surfaces represented, no pending left unanswered. That is the shape F40's
 eleven-pendings-to-one-prompt violated, and it is cheaper to read than the panes.
 
@@ -926,12 +926,12 @@ calls, which is why the field is there:
 
 ```bash
 ruby -rjson -e 'seen=Hash.new{|h,k| h[k]=[]}; ARGF.each_line{|l| r=JSON.parse(l) rescue next
-  next unless %w[approval_pending approval_decision].include?(r["type"])
+  next unless r["type"] == "approval_decision" || (r["type"] == "awaiting_human" && r["kind"] == "approval")
   seen[r["tool_use_id"]] << r["type"]}
   seen.each { |id, kinds| puts "#{id} #{kinds.join(" ")}" }' "$LAIN_QA_JOURNAL"
 ```
 
-Every id must read `approval_pending approval_decision` (twice over for a gated-and-released
+Every id must read `awaiting_human approval_decision` (twice over for a gated-and-released
 read), in that order. A decision with no pending before it, or a pending with no id at all, is a
 finding. A pending carrying `"humans_only": true` is the withheld-output case
 (`shell-term-approval.md`): it may only be settled by a person, so a decision on it from

@@ -809,13 +809,25 @@ module Lain
       # committed :turn may cite this question as one the human retired. The
       # record {#recorded_reply} writes is what says what became of the Q.
       def perform(input, _invocation)
-        pending = ask(Announcement.new(requested_set(input)))
+        announcement = Announcement.new(requested_set(input))
+        pending = ask(announcement)
+        waiting(announcement, pending)
         settled(awaited(pending), pending)
       ensure
         retired(pending)
       end
 
       private
+
+      # Here and not in {#ask}, because a gate asks through {#ask} and
+      # journals its own wait. Total, as {#retired} is: the set is already
+      # claimed, and a raise here would skip the park that releases it.
+      def waiting(announcement, pending)
+        @journal << Telemetry::AwaitingHuman.new(kind: "question", ref: pending.digest, summary: announcement.summary,
+                                                 requester: @agent)
+      rescue StandardError
+        nil
+      end
 
       # A wait that ended by any road leaves the question listed until
       # something names it consumed, and a stop has no committed turn to do it.
