@@ -16,7 +16,7 @@ module Lain
     # `$XDG_STATE_HOME`.
     #
     # Runtime state is deliberately absent from the layout (`research.md`,
-    # `epic.md`, `issues/<id>.md`) -- an issue's current status
+    # `epic.md`, `issues/<id>.md`, `sources/<name>.md`) -- an issue's current status
     # is the Journal fold, not a file here, so nothing in this directory can
     # disagree with the run that produced it. `issues/<id>.md` is likewise only
     # the authored half of an issue; {IssueView} renders the rest from `epic.md`.
@@ -139,6 +139,13 @@ module Lain
       def research = artifact("research.md")
       def epic = artifact("epic.md")
       def issue(id) = artifact(File.join("issues", filename(id)))
+      def source(name) = artifact(File.join("sources", "#{Home.checked_name(name, "source name")}.md"))
+
+      # Every source's text by name; empty before the first source is written.
+      def sources = source_names.to_h { |name| [name, source(name).read] }
+
+      # Sorted, for the reviewer's list of what an approval covers.
+      def source_paths = source_names.map { |name| source(name).path }
 
       # {Document.to_markdown} refuses issues it cannot write back verbatim, and
       # that render happens while this argument is evaluated -- before
@@ -168,6 +175,19 @@ module Lain
       private
 
       def artifact(relative) = Artifact.new(self, relative)
+
+      # A file that is not a valid source name is refused, never skipped: a
+      # skipped file could hold a fact the approval would then not cover.
+      def source_names
+        files = Dir.glob(File.join(path, "sources", "*.md")).map { |file| File.basename(file) }
+        odd = files.find { |file| !Home.filesystem_name?(File.basename(file, ".md")) }
+        if odd
+          raise MalformedName, "#{File.join(path, "sources", odd)} is not a valid source name (#{NAME_RULE}): " \
+                               "rename or remove it"
+        end
+
+        files.map { |file| File.basename(file, ".md") }
+      end
 
       def filename(id) = "#{Home.checked_name(id, "issue id")}.md"
 

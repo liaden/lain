@@ -210,7 +210,8 @@ module Lain
         # else's artifact.
         def submission(stage)
           case stage.name
-          when "research" then Lain::Epic::Submission.research(text: @home.research.read, slug: @home.slug)
+          when "research"
+            Lain::Epic::Submission.research(text: @home.research.read, slug: @home.slug, sources: @home.sources)
           when "epic_plan" then Lain::Epic::Submission.epic_plan(graph: @home.read_epic, slug: @home.slug)
           when "issue_plan" then issue_plan(stage)
           when "implementation" then implementation(stage)
@@ -1152,7 +1153,7 @@ module Lain
           def sources(artifact)
             home = Lain::Epic::Home.resolve(config: @config, paths: @paths, root: @root, slug: artifact.slug)
             case artifact.stage
-            when "research" then [home.research.path]
+            when "research" then [home.research.path, *home.source_paths]
             when "epic_plan" then [home.epic.path, home.research.path]
             when "issue_plan" then issue_plan_sources(home, artifact.issue_id)
             when "implementation" then implementation_sources(home, artifact)

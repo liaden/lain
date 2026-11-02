@@ -1258,6 +1258,12 @@ RSpec.describe Lain::CLI::Epic do
       expect(command.show("issues/a1")).to eq("# a1 -- First\n\nthe a1 issue\n\n## Links\n\nBlocked by: `b2`\n")
     end
 
+    it "prints a research source through the command line" do
+      home_for("frugirl").source("asr-ecosystem").write("the cited fact\n")
+
+      expect(show_via_cli("sources/asr-ecosystem")).to eq("the cited fact\n")
+    end
+
     it "names the missing file and the epic home" do
       expect { command.show("epic", "frugirl") }
         .to raise_error(Lain::Error, /epic\.md.*#{Regexp.escape(container)}|#{Regexp.escape(container)}.*epic\.md/)
@@ -1265,7 +1271,7 @@ RSpec.describe Lain::CLI::Epic do
 
     it "lists the document names it accepts when given an unknown one" do
       expect { command.show("notes") }
-        .to raise_error(Lain::CLI::Epic::UnknownDocument, %r{research, epic or issues/ID\z})
+        .to raise_error(Lain::CLI::Epic::UnknownDocument, %r{research, epic, issues/ID or sources/NAME\z})
     end
   end
 end

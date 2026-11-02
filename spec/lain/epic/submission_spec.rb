@@ -223,6 +223,44 @@ RSpec.describe Lain::Epic::Submission do
     end
   end
 
+  describe "research sources" do
+    let(:journal) { Lain::Journal.new(io: StringIO.new) }
+    let(:gate) { Lain::Epic::Gate.new(journal:) }
+    let(:approve) do
+      Object.new.tap do |asker|
+        asker.define_singleton_method(:ask) do |_question|
+          Lain::Promise.new.tap { |promise| promise.resolve(Lain::Epic::Gate::Answer.approve("human")) }
+        end
+      end
+    end
+
+    def research(sources) = described_class.research(text: "the research", slug: "demo", sources:)
+
+    def approve!(submission) = Sync { gate.call(submission, asker: approve, stage: "research", epic_slug: "demo") }
+
+    it "no longer stands once a source is edited after the approval" do
+      approve!(research("asr" => "the fact"))
+
+      expect(gate.approved?(research("asr" => "the fact, revised").digest)).to be(false)
+    end
+
+    it "no longer stands once a source is added after the approval" do
+      approve!(research("asr" => "the fact"))
+
+      expect(gate.approved?(research("asr" => "the fact", "tts" => "another").digest)).to be(false)
+    end
+
+    it "still stands when the same sources are submitted in another order" do
+      approve!(research("asr" => "a", "tts" => "b"))
+
+      expect(gate.approved?(research("tts" => "b", "asr" => "a").digest)).to be(true)
+    end
+
+    it "keeps the digest the research text alone always had when there are no sources" do
+      expect(research({}).content_digest).to eq(Lain::Canonical.digest("the research"))
+    end
+  end
+
   describe "research digest sensitivity" do
     # One changed word moves the digest.
     it "differs when one word of the research text changes" do

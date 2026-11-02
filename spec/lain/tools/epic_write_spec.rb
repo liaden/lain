@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "stringio"
 require "tmpdir"
 
@@ -159,9 +160,9 @@ RSpec.describe Lain::Tools::EpicWrite do
     expect(File).not_to exist(File.join(home.path, "plans"))
   end
 
-  it "refuses an artifact kind it does not know, naming the three it does" do
+  it "refuses an artifact kind it does not know, naming the four it does" do
     expect { write(slug: "frugirl-mvp", artifact: "notes", content: "n\n") }
-      .to raise_error(Lain::Tool::InvalidInput, /research, epic, issue\z/)
+      .to raise_error(Lain::Tool::InvalidInput, /research, epic, issue, source\z/)
   end
 
   it "refuses a malformed slug, quoting the slug rule, and writes nothing" do
@@ -170,6 +171,39 @@ RSpec.describe Lain::Tools::EpicWrite do
     expect(result).to be_error
     expect(result.content).to include('"Frugirl MVP"', Lain::Epic::Home::NAME_RULE)
     expect(Dir.children(@dir)).to eq(["state"]).or eq([])
+  end
+
+  describe "a research source" do
+    let(:show) do
+      ignores = instance_double(Lain::CLI::Epic::GitIgnores, reason: "")
+      Lain::CLI::Epic.new(root: @dir, paths:, config:, ignores:)
+    end
+
+    it "outlives the session scratch and is printed by lain epic show" do
+      write(slug: "nyotes", artifact: "source", name: "asr-ecosystem", content: "the cited fact\n")
+      FileUtils.rm_rf(File.join(@dir, "scratch"))
+
+      expect(show.show("sources/asr-ecosystem", "nyotes")).to eq("the cited fact\n")
+    end
+
+    it "lands under sources/ in the epic home and journals a source record" do
+      write(slug: "nyotes", artifact: "source", name: "asr-ecosystem", content: "fact\n")
+
+      expect(File.read(File.join(home("nyotes").path, "sources", "asr-ecosystem.md"))).to eq("fact\n")
+      expect(io.string).to include('"kind":"source"')
+    end
+
+    it "refuses a source with no name" do
+      expect { write(slug: "nyotes", artifact: "source", content: "fact\n") }
+        .to raise_error(Lain::Tool::InvalidInput, /Name can't be blank/)
+    end
+
+    it "refuses a name that is not a filesystem name" do
+      result = write(slug: "nyotes", artifact: "source", name: "../escape", content: "fact\n")
+
+      expect(result).to be_error
+      expect(result.content).to include(Lain::Epic::Home::NAME_RULE)
+    end
   end
 
   context "when a review holds the artifact" do

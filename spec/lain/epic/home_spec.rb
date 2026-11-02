@@ -211,6 +211,56 @@ RSpec.describe Lain::Epic::Home do
       end
     end
 
+    it "round-trips sources/<name>.md" do
+      Dir.mktmpdir do |tmp|
+        home = described_class.resolve(config: config_for(:repo), paths: paths_for(tmp), root: tmp, slug: "alpha")
+
+        home.source("asr-ecosystem").write("a fact\n")
+
+        expect(home.source("asr-ecosystem").read).to eq("a fact\n")
+        expect(File).to exist(File.join(home.path, "sources", "asr-ecosystem.md"))
+      end
+    end
+
+    it "lists every source by name in sorted order, with its text" do
+      Dir.mktmpdir do |tmp|
+        home = described_class.resolve(config: config_for(:repo), paths: paths_for(tmp), root: tmp, slug: "alpha")
+        home.source("tts").write("b\n")
+        home.source("asr").write("a\n")
+
+        expect(home.sources).to eq({ "asr" => "a\n", "tts" => "b\n" })
+      end
+    end
+
+    it "refuses a hand-placed file whose name is not a source name, rather than skip a fact" do
+      Dir.mktmpdir do |tmp|
+        home = described_class.resolve(config: config_for(:repo), paths: paths_for(tmp), root: tmp, slug: "alpha")
+        FileUtils.mkdir_p(File.join(home.path, "sources"))
+        File.write(File.join(home.path, "sources", "Odd.md"), "a fact\n")
+
+        expect { home.sources }
+          .to raise_error(described_class::MalformedName,
+                          /#{Regexp.escape(File.join(home.path, "sources",
+                                                     "Odd.md"))}.*not a valid source name.*rename or remove/)
+      end
+    end
+
+    it "lists no sources for a home with no sources directory" do
+      Dir.mktmpdir do |tmp|
+        home = described_class.resolve(config: config_for(:repo), paths: paths_for(tmp), root: tmp, slug: "alpha")
+
+        expect(home.sources).to eq({})
+      end
+    end
+
+    it "refuses a source name that is not a filesystem name" do
+      Dir.mktmpdir do |tmp|
+        home = described_class.resolve(config: config_for(:repo), paths: paths_for(tmp), root: tmp, slug: "alpha")
+
+        expect { home.source("../escape") }.to raise_error(described_class::MalformedName, /source name/)
+      end
+    end
+
     it "answers whether an artifact is there without raising" do
       Dir.mktmpdir do |tmp|
         home = described_class.resolve(config: config_for(:repo), paths: paths_for(tmp), root: tmp, slug: "alpha")

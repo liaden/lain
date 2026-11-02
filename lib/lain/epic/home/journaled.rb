@@ -59,11 +59,12 @@ module Lain
 
         # What this decorator does NOT acknowledge: a read answers no DocWritten,
         # and the home's own identity is not a write at all.
-        delegate :slug, :path, :read_epic, to: :@home
+        delegate :slug, :path, :read_epic, :sources, to: :@home
 
         def research = written(@home.research, "research")
         def epic = written(@home.epic, "epic")
         def issue(id) = written(@home.issue(id), "issue")
+        def source(name) = written(@home.source(name), "source")
 
         # The graph's own content address rides along with the bytes', because
         # the two answer different questions: `byte_digest` says what is on disk,

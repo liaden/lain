@@ -198,12 +198,13 @@ The epic home sits under `$XDG_STATE_HOME`, so `research.md` had no reader outsi
 lain epic show                      # research.md of the sole epic, byte for byte
 lain epic show epic                 # epic.md
 lain epic show issues/greet         # one issue file
+lain epic show sources/asr-ecosystem # a research source, after epic_write wrote one
 lain epic show research demo        # a named epic, when the home holds several
 lain epic show notes                # UnknownDocument
 ```
 
 Diff each output against the file under the home: they must be identical, and the command writes nothing. `notes` is refused with the
-three names `research, epic, issues/ID`. A document that has not been written (`issues/nope`, an issue with no file) fails naming the file and the
+names `research, epic, issues/ID or sources/NAME`. A document that has not been written (`issues/nope`, an issue with no file) fails naming the file and the
 epic home, not an empty print. With two epics in the home and no slug it is `Ambiguous`, as `status` is (§2), and with an empty home it
 refuses `no epics yet in <home> -- there is nothing to name` (unlike `status`, which answers with guidance and exits 0).
 *Wrong looks like:* an empty print for a missing document.

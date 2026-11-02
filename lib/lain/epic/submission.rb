@@ -290,10 +290,22 @@ module Lain
     # sign-off queue partition on the issue, and a grader joins on the criteria.
     Submission = Data.define(:stage, :slug, :content_digest, :fact, :issue_id, :criteria_digest, :changeset,
                              :review) do
-      def self.research(text:, slug:)
+      # `sources` maps each source name to its text, so an approval of the
+      # research is an approval of the facts it cites. With none the digest is
+      # the text's alone, as it was before sources existed.
+      def self.research(text:, slug:, sources: {})
         Contracts::Prose.check!(text:)
-        new(stage: "research", slug:, content_digest: Canonical.digest(text), fact: "#{text.bytesize} bytes")
+        new(stage: "research", slug:, content_digest: research_digest(text, sources),
+            fact: "#{text.bytesize} bytes")
       end
+
+      def self.research_digest(text, sources)
+        return Canonical.digest(text) if sources.empty?
+
+        cited = sources.sort.map { |name, source| [name, Canonical.digest(source)] }
+        Canonical.digest("research" => Canonical.digest(text), "sources" => cited)
+      end
+      private_class_method :research_digest
 
       def self.epic_plan(graph:, slug:)
         Contracts::GraphArtifact.check!(graph:)

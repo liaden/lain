@@ -60,10 +60,16 @@ The epic home for this project is `<%= epic_home %>`, and the epic lives at
 `<%= epic_home %>/<slug>/`. You can read anything there with `read_file` at that absolute path,
 for example `<%= epic_home %>/<slug>/research.md`.
 
-An epic home holds exactly three kinds of artifact: `research.md`, `epic.md` and `issues/<id>.md`.
+An epic home holds four kinds of artifact: `research.md`, `epic.md`, `issues/<id>.md` and
+`sources/<name>.md`.
 By default it lives under XDG state, so an epic never shows up in
 `git status`; a project opts in-repo with `epics home: :repo` in `.lain/config.rb`, which
 puts it at `.lain/epics/<slug>/` where a team can review it in a pull request.
+
+Write each fact you cite to its own file with `epic_write`: `artifact` is `source` and `name` is a short
+name in the same grammar as the slug. Your scratch space is deleted when the session ends, so a fact
+that lives only there is lost; a source outlives it and `lain epic show SLUG sources/<name>` prints it.
+Cite each one from `research.md` as `sources/<name>.md`.
 
 Nothing else belongs in `research.md`. In particular there is no status field: an issue's live
 status is the Journal fold, not a file, so nothing in this directory can disagree with the run
@@ -75,7 +81,8 @@ Structure it so `plan-epic` can decompose from it alone:
 - **What the code does today** — per seam, with file paths, and what each is already good for.
 - **What is missing** — the gap between the two, which is the material the issues get cut from.
 - **Open questions** — everything unsettled, each one named rather than averaged away.
-- **References** — the paths, specs, and docs a later reader should not have to re-find.
+- **References** — the paths, specs, and docs a later reader should not have to re-find, and each
+  `sources/<name>.md` you wrote.
 
 ## Phase 4 — Request the research gate
 

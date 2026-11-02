@@ -503,6 +503,14 @@ RSpec.describe "shipped skills" do
       end
     end
 
+    it "tells research-epic to keep cited facts as sources and cite them from research.md" do
+      with_empty_project do |renderer|
+        text = renderer.render("research-epic")
+
+        expect(text).to include("`source`", "sources/<name>.md")
+      end
+    end
+
     it "teaches the filename grammar as a refusal rather than a guarantee, and agrees across skills" do
       with_empty_project do |renderer|
         plan = renderer.render("plan-epic")

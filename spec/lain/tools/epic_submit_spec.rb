@@ -78,6 +78,22 @@ RSpec.describe Lain::Tools::EpicSubmit do
     end
   end
 
+  context "when sources/ holds a hand-made file that is not a source name" do
+    let(:gates) { every_stage("hands_off") }
+
+    it "refuses naming the full path, and journals no gate decision" do
+      FileUtils.mkdir_p(File.join(home.path, "sources"))
+      File.write(File.join(home.path, "sources", "Odd.md"), "a cited fact\n")
+
+      result = submit(stage: "research", slug: "frugirl-mvp")
+
+      expect(result).to be_error
+      expect(result.content).to include(File.join(home.path, "sources", "Odd.md"), "not a valid source name",
+                                        "rename or remove it")
+      expect(this_sessions_decisions).to be_empty
+    end
+  end
+
   context "when the research gate is hands_off" do
     let(:gates) { every_stage("hands_off") }
 

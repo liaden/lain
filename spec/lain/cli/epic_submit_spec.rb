@@ -237,6 +237,22 @@ RSpec.describe Lain::CLI::EpicSubmit do
     end
   end
 
+  describe "a hand-placed file in sources/ that is not a source name" do
+    before do
+      write_research
+      FileUtils.mkdir_p(File.join(home("alpha").path, "sources"))
+      File.write(File.join(home("alpha").path, "sources", "Odd.md"), "a cited fact\n")
+    end
+
+    it "refuses the submit naming the file, and journals no gate_decision" do
+      expect { command(gates: { "research" => "hands_off" }).submit("research") }
+        .to raise_error(Lain::Error,
+                        /#{Regexp.escape(File.join(home("alpha").path, "sources",
+                                                   "Odd.md"))}.*not a valid source name.*rename or remove/)
+      expect(gate_decisions).to be_empty
+    end
+  end
+
   # Where the epic stands is read BEFORE the verdict is journaled, so a stage
   # record the fold cannot read refuses the submit with nothing recorded. Read
   # after, it left an approval on the record and an epic that never moved.
@@ -2146,6 +2162,15 @@ RSpec.describe Lain::CLI::EpicSubmit do
         prompt = brief.call(Lain::Epic::Submission.research(text: "notes\n", slug: "demo"))
 
         expect(prompt).to include("research", "\"demo\"", home.research.path)
+      end
+
+      it "lists every research source, in sorted order, beside the research document" do
+        home.source("tts").write("b\n")
+        home.source("asr").write("a\n")
+        prompt = brief.call(Lain::Epic::Submission.research(text: "notes\n", slug: "demo"))
+        paths = [home.research.path, home.source("asr").path, home.source("tts").path]
+
+        expect(paths.map { prompt.index(_1) }).to all(be_a(Integer)).and eq(paths.map { prompt.index(_1) }.sort)
       end
 
       it "sends an issue plan's spike to the authored issue file and to the epic that holds its criteria" do

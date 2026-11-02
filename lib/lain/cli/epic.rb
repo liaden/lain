@@ -214,7 +214,7 @@ module Lain
       # One of an epic's documents, verbatim, except an issue, which is shown
       # as its {Lain::Epic::IssueView}.
       #
-      # @param doc [String] `research`, `epic` or `issues/ID`
+      # @param doc [String] `research`, `epic`, `issues/ID` or `sources/NAME`
       # @param slug [String, nil] the epic; omitted resolves to the sole one
       # @return [String] the document's bytes, or an issue's rendered view
       # @raise [UnknownDocument] for any other name
@@ -480,7 +480,9 @@ module Lain
         in ["research", nil] then home.research.read
         in ["epic", nil] then home.epic.read
         in ["issues", String] then Lain::Epic::IssueView.read(home, id).to_markdown
-        else raise UnknownDocument, "no document #{doc.inspect} -- name one of research, epic or issues/ID"
+        in ["sources", String] then home.source(id).read
+        else raise UnknownDocument,
+                   "no document #{doc.inspect} -- name one of research, epic, issues/ID or sources/NAME"
         end
       end
 
