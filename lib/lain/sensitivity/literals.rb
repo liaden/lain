@@ -59,7 +59,8 @@ module Lain
 
       def hinted_tokens = passed.flat_map { |name, value| hinted(name, value.to_s) }
 
-      def regions(value) = Regions.detect(value).map(&:bytes)
+      # Every passed variable is read as hinted, so a digest-width value in one stays a secret.
+      def regions(value) = Regions.detect(value, hinted: true).map(&:bytes)
 
       def hinted(name, value)
         return [] unless HINTED.match?(name)

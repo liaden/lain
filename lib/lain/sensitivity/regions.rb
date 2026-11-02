@@ -52,15 +52,29 @@ module Lain
 
       ALPHANUMERIC_RUN = /[A-Za-z0-9]/
 
-      # A count, a short content digest or a filesystem path under a name that
+      # A count, a content digest or a filesystem path under a name that
       # only hints (`token_count`, `session_id`) is not a secret. A name that
       # NAMES one never gets this: a password can be all digits or look like a path.
       # The test reads the name the assignment captured, so a dotted key such as
       # `db.password` takes the whole-match path and is never exempt.
-      ORDINARY_VALUE = %r{\A(?:\d+|(?:blake3|sha\d+|md5):[0-9a-f]{4,40}|/[\w.@+-]+(?:/[\w.@+-]+)*/?)\z}i
+      ORDINARY_VALUE = %r{\A(?:\d+|(?:blake3|sha\d+|md5):[0-9a-f]{4,128}|/[\w.@+-]+(?:/[\w.@+-]+)*/?)\z}i
       SECRET_WORDS = /pass(?!port)|secret|(?:\A|[_-])(?:credentials?|private|pwd)(?:[_-]|\z)/i
-      SECRET_NOUN_LAST = /(?:\A|[_-]|(?<=[a-z]))(?:key|token)\z/i
+      # Glued in any case, since `PRIVKEY` and `licensekey` name a secret and the
+      # egress refusal reads this too. The ordinary words that end in `key` are
+      # enumerated because no letter rule tells `monkey` from `masterkey`; each is
+      # anchored to a word start, so `DaemonKey` and `commonKey` still name one.
+      SECRET_NOUN_LAST = /(?:
+        (?:\A|[_-]|(?<=[a-z0-9]))token
+        | (?:\A|[_-]|(?<=[a-z0-9])(?<!\bmon|\btur|\bdon|\bjoc|\bhoc|\bwhis|\blac|\bmalar))key
+      )\z/ix
       SECRET_NAMING = Regexp.union(SECRET_WORDS, SECRET_NOUN_LAST)
+      HINTING_NAME = Regexp.union(NAME_HINT, SECRET_NOUN_LAST)
+
+      # A bare token's key is sought only this far back, so a long line stays linear.
+      KEY_WINDOW = 96
+      # The prefix names the algorithm, so only a key that names a secret outweighs it.
+      ALGORITHM_PREFIX = /(?:blake3|sha\d+|md5)[:=]\z/i
+      USER_PASSWORD = /(?:\A|\s)(?:-u|--user)[ \t]*[^\s:]+:\z/
 
       # `yaml assignment` needs only a colon and a space, so its name arm admits
       # any `word: text` line in prose or code -- it is the shape that floods.
@@ -93,16 +107,17 @@ module Lain
       # policy calls checksums a value in one of these shapes leaves both the
       # entropy arm and the value-shape half of an assignment: hex sha1 or sha256,
       # an SRI sha256 or sha512 digest, go.sum's `h1:`. Only behind a key that
-      # names a checksum, though, never by shape alone: the same hex under
-      # `token:` or `_authToken=` is a secret, and no hint list is complete
-      # enough to tell them apart the other way round.
+      # names a checksum, because the same hex under `token:` or `_authToken=` is
+      # a secret. Lowercase hex at a digest's width is let through by shape
+      # anywhere unless its nearest key hints, so this field matters for the
+      # rest: SRI, `h1:`, uppercase hex.
       CHECKSUM = %r{sha256-[A-Za-z0-9+/]{43}=|sha512-[A-Za-z0-9+/]{86}==|h1:[A-Za-z0-9+/]{43}=|\h{64}|\h{40}}
       CHECKSUM_ALGORITHM = /sha(?:1|256|512)[:=]/
       # A key counts only where a field starts -- a line's indent, after `{`, or
       # after a `, ` -- so a checksum word inside a hinted value, a longer key or
       # a URL query names nothing.
       FIELD_START = /(?:^[ \t]*|\{[ \t]*|,[ \t]+)/
-      CHECKSUM_WORD = /integrity|checksum|content-hash|shasum|hash|sha256|reference|revision/
+      CHECKSUM_WORD = /integrity|checksum|content-hash|shasum|hash|sha256|sha1|md5|digest|commit|reference|revision/
       CHECKSUM_KEY = /"?(?:#{CHECKSUM_WORD})"?[ \t]*[:=][ \t]*["']?/
       # yarn v1 writes `integrity <digest>` with no separator.
       YARN_INTEGRITY = /[ \t]+integrity[ \t]+/
@@ -174,8 +189,10 @@ module Lain
         #   names: a value in {CHECKSUM} shape behind a checksum key is no longer
         #   found by its entropy or value shape alone, while a name hint, an issuer
         #   shape and every other pattern still find it
+        # @param hinted [Boolean] true when the content is a value a hinting name
+        #   holds whole, so no token in it is excused for its digest shape
         # @return [Array<Region>] frozen, ascending by offset, no two overlapping
-        def detect(content, checksums: false)
+        def detect(content, checksums: false, hinted: false)
           bytes = content.b
           skip = bytes.start_with?(BOM) ? BOM.bytesize : 0
           scanned = skip.zero? ? bytes : bytes.byteslice(skip..)
@@ -185,7 +202,7 @@ module Lain
           # by rank anyway -- but `sort_by` is not stable, and without it the
           # fold's intermediate order is arbitrary. Deliberately unpinnable: no
           # mutant can kill it, which is the honest reason there is no spec.
-          merge(candidates(scanned, checksums).sort_by { [_1[:start], _1[:rank]] }, bytes, skip)
+          merge(candidates(scanned, checksums, hinted).sort_by { [_1[:start], _1[:rank]] }, bytes, skip)
         end
 
         # @param text [String]
@@ -263,11 +280,11 @@ module Lain
                      reason: candidate[:reason], detector: candidate[:detector])
         end
 
-        def candidates(scanned, checksums)
+        def candidates(scanned, checksums, hinted)
           public, disguised = matches(scanned, PEM_PUBLIC).partition { |block| PublicKey.pem?(block[1], block[2]) }
           fields = checksums ? checksum_spans(scanned) : []
 
-          outside(pattern_candidates(scanned, fields) + outside(entropy_candidates(scanned), fields),
+          outside(pattern_candidates(scanned, fields) + outside(entropy_candidates(scanned, hinted), fields),
                   public_spans(scanned, public)) +
             disguised.map { span(_1.begin(0), _1[0], DISGUISED_KEY, :pattern) }
         end
@@ -346,9 +363,21 @@ module Lain
           token.bytesize >= CredentialPatterns::SUBSTANCE_LENGTH && token.match?(ALPHANUMERIC_RUN)
         end
 
-        def entropy_candidates(scanned)
-          matches(scanned, TOKEN).select { secret_shaped?(_1[0]) && !Entropy.predictable?(_1[0]) }
+        def entropy_candidates(scanned, hinted)
+          matches(scanned, TOKEN).select { secret_shaped?(_1[0], hinted: hinted || digest_hinted?(scanned, _1)) }
                                  .map { span(_1.begin(0), _1[0], ENTROPY_REASON, :entropy) }
+        end
+
+        # The key changes the answer only for a digest-width token, and finding it costs a walk.
+        def digest_hinted?(scanned, match) = match[0].match?(Entropy::DIGEST_HEX) && hinted_at?(scanned, match.begin(0))
+
+        def hinted_at?(scanned, start)
+          lead = scanned.byteslice([start - KEY_WINDOW, 0].max...start)
+          return true if lead.match?(USER_PASSWORD)
+
+          prefix = lead.match(ALGORITHM_PREFIX)
+          key = NearestKey.of(prefix ? prefix.pre_match : lead)
+          !key.nil? && key.match?(prefix ? SECRET_NAMING : HINTING_NAME)
         end
 
         def span(start, text, reason, detector)
@@ -356,10 +385,10 @@ module Lain
             rank: detector == :entropy ? PATTERNS.size : PATTERNS.fetch(reason) }
         end
 
-        def secret_shaped?(value)
+        def secret_shaped?(value, hinted: false)
           token = unquote(value)
 
-          issuer_fixed?(token) || Entropy.high?(token)
+          issuer_fixed?(token) || (Entropy.high?(token) && !Entropy.predictable?(token, hinted:))
         end
 
         # Quotes belong to the file's syntax, not to the secret. Left on, a short
@@ -446,6 +475,37 @@ module Lain
         end
       end
       private_constant :PublicKey
+
+      # The name a bare token sits under. A value often sits away from its key: on
+      # the line after it, inside brackets, a call or a nested object, behind a YAML
+      # tag, or after an earlier value in the same list. So the walk back passes
+      # punctuation, earlier values and the generic words `value` and `bearer`, and
+      # stops at the first other word. A line break counts only with a separator
+      # beside it, or the last word of the line before would name the token. A word
+      # holding `/` is a path a digest tool printed, so it names nothing.
+      module NearestKey
+        PIECE = %r{[A-Za-z0-9_][\w.+/-]*|[^A-Za-z0-9_]+}
+        GAP = /\A[\s"'`>|\-\[\](){},=!:]+\z/
+        GENERIC = /\A(?:value|bearer)\z/i
+
+        module_function
+
+        # @param lead [String] the bytes before a token, already bounded
+        # @return [String, nil] the nearest name, or nil when none stands there
+        def of(lead)
+          pieces = lead.scan(PIECE).reverse
+          stop = pieces.each_index.find { |at| !passable?(pieces[at], pieces[at + 1]) }
+          key = stop && pieces[stop]
+          key if key && !key.include?("/") && separated?(pieces.first(stop).join)
+        end
+
+        def passable?(piece, before)
+          piece.match?(GAP) || piece.match?(GENERIC) || before.to_s.end_with?("!") || Entropy.high?(piece)
+        end
+
+        def separated?(gap) = !gap.include?("\n") || gap.match?(/[:=]/)
+      end
+      private_constant :NearestKey
 
       Region = Data.define(:start, :bytes, :reason, :detector, :digest)
 

@@ -186,8 +186,9 @@ RSpec.describe Lain::Sensitivity::Regions do
     # 4.2 -- it needs its own branch, and before these examples that branch had
     # negative controls only. Nothing made it fire in the affirmative, so both of
     # its constants could be moved out of reach with the suite still green.
+    # Uppercase, because lowercase hex of a digest's width is read as a digest.
     context "when a bare hex token is long and unpredictable" do
-      let(:hex_key) { "9f8e7d6c5b4a39281706f5e4d3c2b1a0" }
+      let(:hex_key) { "9F8E7D6C5B4A39281706F5E4D3C2B1A0" }
 
       it "reports a 32-character hex key" do
         expect(detect("the value is #{hex_key} and that was it\n").map(&:bytes)).to eq([hex_key])
@@ -224,6 +225,61 @@ RSpec.describe Lain::Sensitivity::Regions do
       # makes this line report a region; nothing else in the file covers that.
       it "ignores a short hex assignment value, which no token filter guards" do
         expect(detect("blob = 3f5a9c2e1d7b\n")).to be_empty
+      end
+    end
+
+    context "when a line holds a digest or a secret beside one" do
+      corpus = YAML.load_file(File.expand_path("../../fixtures/sensitivity/digest_corpus.yml", __dir__))
+
+      corpus.each do |row|
+        it "reports #{row.fetch("regions")} for #{row.fetch("label")}#{" (a known miss)" if row["known_miss"]}" do
+          expect(detect(Array(row.fetch("line")).join).size).to eq(row.fetch("regions"))
+        end
+      end
+
+      it "reports none across a digest list" do
+        lines = ["b56e5bab6e1d0e3a1f0c4d2a9b8e7f6c5d4a3b2c1e0f9a8b7c6d5e4f3a7a1d43  downloads/ami.zip",
+                 "{\"digest\":\"0a30b9c6b180dc54cd7b937fb534e1cfb45c88a1ffab0b461ad2e62089c8f108\"}",
+                 "turn: blake3:519dec41a9ed05ce825112a2dd6969722af81c09b239272ff8b876cfb3474b81"]
+
+        expect(detect(lines.join("\n"))).to be_empty
+      end
+
+      digest = "87a760f0e59750fc3c04a887a562c415784bdd55fd442b604230dea3587eb2ce"
+      contexts = {
+        "after a space" => ->(name) { "the #{name} #{digest}" },
+        "after export" => ->(name) { "export #{name}=#{digest}" },
+        "as an indented YAML key" => ->(name) { "  #{name}: #{digest}" },
+        "as a JSON key" => ->(name) { "{\"#{name}\": \"#{digest}\"}" }
+      }
+
+      ordinary = %w[monkey turkey]
+      keys = %w[DaemonKey commonKey saturKey]
+
+      contexts.each do |where, line|
+        ordinary.each do |word|
+          it "reads #{word} #{where} as an ordinary word" do
+            expect(detect(line.call(word))).to be_empty
+          end
+        end
+      end
+
+      contexts.except("after a space").each do |where, line|
+        keys.each do |name|
+          it "reads #{name} #{where} as a key" do
+            expect(detect(line.call(name)).size).to eq(1)
+          end
+        end
+      end
+
+      %w[monkey turkey donkey jockey hockey whiskey lackey malarkey].each do |word|
+        it "reads #{word} as an ordinary word, not a key" do
+          expect(detect("#{word}: 87a760f0e59750fc3c04a887a562c415784bdd55fd442b604230dea3587eb2ce")).to be_empty
+        end
+      end
+
+      it "reports one region for a keyed 64-hex secret" do
+        expect(detect('api_key = "28e89f0b9fca089cc2c6396a4ccfa0e37f639d263349669a581a6936df935634"').size).to eq(1)
       end
     end
 
@@ -1094,13 +1150,27 @@ RSpec.describe Lain::Sensitivity::Regions do
       }
     }
 
+    # Lowercase hex of a digest's width with no hint before it reads as a digest by its shape alone.
+    digest_shaped = ["a Gemfile.lock checksum", "a Cargo.lock checksum", "a poetry.lock content hash",
+                     "a Pipfile.lock hash", "a composer.lock shasum", "a yarn.lock resolved commit",
+                     "a poetry.lock file hash", "a Pipfile.lock meta hash", "a composer.lock reference",
+                     "a Gemfile.lock git revision", "a Cargo.lock git source", "a gem whose name holds a hint word"]
+
     lockfile_lines.each do |label, line|
       it "reports no region for #{label}" do
         expect(checksummed(line.call(self))).to be_empty
       end
+    end
 
+    lockfile_lines.except(*digest_shaped).each do |label, line|
       it "still reports #{label} without checksums" do
         expect(detect(line.call(self))).not_to be_empty
+      end
+    end
+
+    lockfile_lines.slice(*digest_shaped).each do |label, line|
+      it "reports no region for #{label} without checksums either" do
+        expect(detect(line.call(self))).to be_empty
       end
     end
 
@@ -1124,7 +1194,8 @@ RSpec.describe Lain::Sensitivity::Regions do
     end
 
     # A checksum word or algorithm prefix counts only where a field starts, so it
-    # cannot be smuggled in inside a hinted value or a longer key.
+    # cannot be smuggled in inside a hinted value or a longer key. Uppercase, so a
+    # digest's lowercase shape is not what lets a line through.
     {
       "an algorithm prefix under a YAML private_key" => ->(h, _) { "  private_key: sha256:#{h}\n" },
       "a sha1 prefix under a JSON _authToken" => ->(_, h40) { "  \"_authToken\": \"sha1:#{h40}\"\n" },
@@ -1143,6 +1214,27 @@ RSpec.describe Lain::Sensitivity::Regions do
       "an integrity word after another word" => ->(h, _) { "  token integrity #{h}\n" }
     }.each do |label, line|
       it "still masks #{label}" do
+        value40 = hex(label, 20).upcase
+        value64 = hex(label, 32).upcase
+        regions = checksummed(line.call(value64, value40)).map(&:bytes).join(" ")
+
+        expect([value64, value40].any? { regions.include?(_1) }).to be(true)
+      end
+    end
+
+    # The rows whose nearest key names a secret, or hints at one with no algorithm
+    # prefix between, so the lowercase digest shape does not excuse them either.
+    {
+      "an algorithm prefix under a YAML private_key" => ->(h, _) { "  private_key: sha256:#{h}\n" },
+      "a sha1 prefix under a JSON _authToken" => ->(_, h40) { "  \"_authToken\": \"sha1:#{h40}\"\n" },
+      "a sha256= prefix under a JSON token" => ->(h, _) { "  \"token\": \"sha256=#{h}\"\n" },
+      "a sha1= prefix under an npmrc _authToken" => ->(_, h40) { "//registry/:_authToken=sha1=#{h40}\n" },
+      "a dotted auth.hash key" => ->(h, _) { "auth.hash = \"#{h}\"\n" },
+      "a JSON api_token_sha256 key" => ->(h, _) { "  \"api_token_sha256\": \"#{h}\"\n" },
+      "a JSON auth-hash key" => ->(h, _) { "  \"auth-hash\": \"#{h}\"\n" },
+      "a JSON session_checksum key" => ->(h, _) { "  \"session_checksum\": \"#{h}\"\n" }
+    }.each do |label, line|
+      it "still masks #{label} in lowercase" do
         value40 = hex(label, 20)
         value64 = hex(label, 32)
         regions = checksummed(line.call(value64, value40)).map(&:bytes).join(" ")
@@ -1151,8 +1243,16 @@ RSpec.describe Lain::Sensitivity::Regions do
       end
     end
 
-    it "still masks a hex64 value no checksum key names" do
-      value = hex("bare", 32)
+    %w[digest sha1 md5 commit].each do |word|
+      it "reads a #{word} key as a checksum key" do
+        value = hex(word, 32).upcase
+
+        expect([checksummed("  #{word}: #{value}\n"), detect("  #{word}: #{value}\n").size]).to eq([[], 1])
+      end
+    end
+
+    it "still masks an uppercase hex64 value no checksum key names" do
+      value = hex("bare", 32).upcase
 
       expect(checksummed("  #{value}\n").map(&:bytes)).to eq([value])
     end

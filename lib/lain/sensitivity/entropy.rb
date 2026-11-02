@@ -6,8 +6,8 @@ module Lain
     # entropy plus the shapes that are varied but wholly predictable.
     module Entropy
       # Hex maxes out at 4.0 bits/char, so it needs its own floor; a random
-      # 32-char hex key sits at ~3.9 and a sha1 at ~3.74, and catching the second
-      # to keep the first is the trade this asymmetry is worth. Base64 runs need
+      # 32-char hex key sits at ~3.9 and a sha1 at ~3.74, so the floor cannot
+      # part them and {DIGEST_HEX} does it by width and case instead. Base64 runs need
       # the higher floor because paths and URLs are base64url-legal and sit at
       # 4.0-4.2 -- at 4.0 the detector reported 41 `lib/` file paths as secrets.
       #
@@ -33,6 +33,10 @@ module Lain
       # runs must cover most of the token, or a key glued onto one goes too.
       ALPHABET_RUN = 16
       HEX = /\A[0-9a-fA-F]+\z/
+      # md5, sha1, sha256 and sha512 widths, printed lowercase by every tool
+      # that prints one. The trade: a generated hex key at those widths with no
+      # hinting name beside it is let through, so a digest list reads whole.
+      DIGEST_HEX = /\A(?:[0-9a-f]{32}|[0-9a-f]{40}|[0-9a-f]{64}|[0-9a-f]{128})\z/
       BASE64 = %r{\A[A-Za-z0-9+/=_-]+\z}
 
       # The relaxed bar for a value passed under a name that hints at a
@@ -56,10 +60,15 @@ module Lain
           token.length >= BASE64_LENGTH && token.match?(BASE64) && shannon(token) >= BASE64_ENTROPY
         end
 
-        def predictable?(token) = slash_joined_words?(token) || alphabet_run?(token)
+        # @param token [String]
+        # @param hinted [Boolean] true when a name beside the token hints at a
+        #   secret, which is the evidence a digest-width run otherwise lacks
+        def predictable?(token, hinted: false)
+          slash_joined_words?(token) || alphabet_run?(token) || (!hinted && token.match?(DIGEST_HEX))
+        end
 
         def hinted?(token)
-          return false if token.include?("/") || predictable?(token)
+          return false if token.include?("/") || predictable?(token, hinted: true)
           return shannon(token) >= HINTED_HEX_ENTROPY if token.match?(HINTED_HEX)
 
           token.length >= HINTED_LENGTH && HINTED_CLASSES.all? { token.match?(_1) } &&

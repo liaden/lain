@@ -207,6 +207,24 @@ RSpec.describe Lain::Sensitivity::HistoryLiterals, :seam do
       expect(described_class.new(root:, policy:).refusable).to eq(["plainword99"])
     end
 
+    it "answers a low-entropy value under an all-caps name glued to KEY" do
+      seed_deleted("MASTERKEY=plainword99\n")
+
+      expect(described_class.new(root:, policy:).refusable).to eq(["plainword99"])
+    end
+
+    it "answers a low-entropy value under a name whose last word ends in an ordinary word's letters" do
+      seed_deleted("DaemonKey=plainword99\n")
+
+      expect(described_class.new(root:, policy:).refusable).to eq(["plainword99"])
+    end
+
+    it "answers a low-entropy value under a name glued to Token after an ordinary word's letters" do
+      seed_deleted("summonToken=plainword99\n")
+
+      expect(described_class.new(root:, policy:).refusable).to eq(["plainword99"])
+    end
+
     it "answers a whole value the detector shapes, under a plain key" do
       url = "postgres://app:fakeS3cretPw@db.internal:5432/app"
       seed_deleted("DB_URL=#{url}\n")

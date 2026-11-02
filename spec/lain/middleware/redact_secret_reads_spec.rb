@@ -609,6 +609,15 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       expect(queue.to_a).to be_empty
     end
 
+    it "passes a digest listing through raw, with no release asked" do
+      sums = "87a760f0e59750fc3c04a887a562c415784bdd55fd442b604230dea3587eb2ce  downloads/ami.zip\n" \
+             "fa39a630d203fd86c87d4a1f5d1e88a4  downloads/ami.zip\n"
+      path = write("SHA256SUMS", sums)
+
+      expect(read(path).fetch(:result).content).to eq(sums)
+      expect(parks).to be_empty
+    end
+
     # The failing path is SECRET-SHAPED on purpose. A failed read carries a
     # message, not file bytes -- but the message quotes the path, so a
     # middleware that scanned error results would detect a region in its own
@@ -1083,12 +1092,13 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       expect(parks.size).to eq(1)
     end
 
-    it "still masks a 64-hex value in a file the policy does not call checksums" do
-      path = write("notes.txt", "build #{hex("notes")}\n")
+    it "still masks an uppercase 64-hex value in a file the policy does not call checksums" do
+      # Uppercase, because lowercase hex of a digest's width with no hint reads as a digest.
+      path = write("notes.txt", "build #{hex("notes").upcase}\n")
 
       content = read(path).fetch(:result).content
 
-      expect(content).not_to include(hex("notes"))
+      expect(content).not_to include(hex("notes").upcase)
       expect(parks.size).to eq(1)
     end
 
@@ -1195,11 +1205,13 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
 
       it "keeps the entropy arm, as the gate keeps the file gated" do
         FileUtils.mkdir_p(File.join(other, "secrets"))
-        path = File.join(other, "secrets", "Cargo.lock").tap { File.write(_1, "checksum = \"#{hex("serde")}\"\n") }
+        # Uppercase, so the digest shape is not what decides; the checksum field rule is.
+        value = hex("serde").upcase
+        path = File.join(other, "secrets", "Cargo.lock").tap { File.write(_1, "checksum = \"#{value}\"\n") }
 
         content = read(path).fetch(:result).content
 
-        expect(content).not_to include(hex("serde"))
+        expect(content).not_to include(value)
         expect(parks.size).to eq(1)
       end
     end

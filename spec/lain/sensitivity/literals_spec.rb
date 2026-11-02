@@ -50,6 +50,13 @@ RSpec.describe Lain::Sensitivity::Literals do
     it "lists nothing from a DSN whose name is not passed" do
       expect(literals({ "DATABASE_URL" => dsn })).to be_empty
     end
+
+    it "keeps a whole value of lowercase digest-width hex among the detected values" do
+      value = "5b0e0267408bd14703458e1b66c5906b4a7ffb28751ed6e4af3365d55a5168ce"
+      env = Lain::Exec::ChildEnv.new(pass: %w[WEBHOOK_HMAC], env: { "WEBHOOK_HMAC" => value })
+
+      expect(described_class.new(child_env: env).detected_values).to eq([value])
+    end
   end
 
   describe "a value passed under a name that hints at a connection string" do

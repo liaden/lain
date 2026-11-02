@@ -89,7 +89,7 @@ RSpec.describe Lain::Sensitivity::Masking do
     end
 
     it "refuses regions out of order instead of emitting a masked byte raw" do
-      content = "a=#{secret}\nb=3f5a9c2e1d7b4a6f8c0e2d4b6a8f0c1e\n"
+      content = "a=#{secret}\nb=3F5A9C2E1D7B4A6F8C0E2D4B6A8F0C1E\n"
 
       expect { described_class.render(content, detect(content).reverse) }
         .to raise_error(Lain::Sensitivity::Spans::OutOfOrder, /start \d+/)

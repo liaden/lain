@@ -1229,6 +1229,8 @@ byte-for-byte what `read_file` returns.
 prefix names. Entropy is TRIAGE, not a verdict. A region is the assignment's **value alone**, so
 masking leaves a `.env` still legible as a `.env` and partial approval falls out for free.
 
+**A digest is not a secret unless a key says so.** A digest-width hex run (sha1, sha256, blake3 and their kin) is what `git log`, a lockfile, a `sha256sum` listing and a journal print by the thousand, so it is a region only when hinted: an `ALGORITHM_PREFIX` (`sha256:`, `blake3:`) marks it a digest outright, and otherwise `NearestKey` walks back at most `KEY_WINDOW` bytes over punctuation, earlier values and generic words to the nearest key, which must name a secret. The walk crosses a line break only when the gap also holds `:` or `=`, and a key holding `/` is a path, never a key. Over this repo the change took 4255 digest-width regions in a real journal to 0 and masked nothing new, so the walk runs only for digest-width tokens; anything else keeps the old rule. The residual, measured: a hint after the token, a key more than `KEY_WINDOW` bytes back, and a `value:` nested under a secret-named parent all stay raw.
+
 The gate exists because the patterns alone were unusable: measured over this repo before it
 (`**/*.md` less `references/repos/` and `.claude/`, plus `lib/**/*.rb` and `spec/**/*.rb`) they
 matched **70.9%, 86.0% and 95.4%** of files — `^ident = value` IS Ruby assignment syntax, so a

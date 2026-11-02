@@ -1,0 +1,209 @@
+# Lines labelled by how many regions each must report. The digests are the shapes a trial
+# read back as secrets; the secrets are the shapes that must survive the digest rule. Hex
+# values are slices of sha512 over a fixed word, frozen here.
+# A vendor-shaped value is written as parts the spec joins, because a push scanner matches the
+# whole token and refuses a push that carries one, fake or not.
+- label: a sha256sum line
+  line: "87a760f0e59750fc3c04a887a562c415784bdd55fd442b604230dea3587eb2ce  downloads/ami.zip"
+  regions: 0
+- label: an md5sum line
+  line: "fa39a630d203fd86c87d4a1f5d1e88a4  downloads/ami.zip"
+  regions: 0
+- label: a sha512sum line
+  line: "6e0cc266de6456cfe7bbe6345a519cb93a014aea55962d6fcd7d23e224c7172a14c4fc7f162ffa8b13f164f262cea6efb905a518a11caa6216e4dd8ab2350b61  ami.zip"
+  regions: 0
+- label: a JSON digest
+  line: '{"digest":"0a30b9c6b180dc54cd7b937fb534e1cfb45c88a1ffab0b461ad2e62089c8f108"}'
+  regions: 0
+- label: an ollama digest
+  line: '"digest": "sha256:cc5222fe1d6ee168c818c9910aa2f0bf7afda5ac0349946ec594721029bbed37",'
+  regions: 0
+- label: a git commit line
+  line: "commit a060eea4645974845f4617573851fef55b484d89"
+  regions: 0
+- label: a commit-hash field
+  line: "commit-hash: 44b4903711e914939f0038ee426b33c55e628b8e"
+  regions: 0
+- label: lain's own blake3 digest
+  line: "turn: blake3:519dec41a9ed05ce825112a2dd6969722af81c09b239272ff8b876cfb3474b81"
+  regions: 0
+- label: an aws access key id
+  line: ["aws_access_key_id = ", AKIA, PEZWDTXH4ZOXIZOK]
+  regions: 1
+- label: a github token
+  line: ["the token is ", ghp_, aq2FDSC8hxkPJa9hxC3GvKJHd7BHtBetH7E5]
+  regions: 1
+- label: a mixed-case 40-character key
+  line: "value Xk3Pq9LmZr2Tv8NbWc5Hy1Jd7Fg4Sa6Qe0Ru2Ko8 end"
+  regions: 1
+- label: an api_key assignment of 64 hex
+  line: 'api_key = "28e89f0b9fca089cc2c6396a4ccfa0e37f639d263349669a581a6936df935634"'
+  regions: 1
+- label: an exported webhook secret of 64 hex
+  line: "export GITHUB_WEBHOOK_SECRET=5b0e0267408bd14703458e1b66c5906b4a7ffb28751ed6e4af3365d55a5168ce"
+  regions: 1
+- label: a JSON client_secret of 32 hex
+  line: '"client_secret": "85d7741af27f18cbefc7fdc96d4465f6"'
+  regions: 1
+- label: a bearer header of 64 hex
+  line: "Authorization: Bearer 9a7cbb9c295bd76909b476916269d2b13eff92914f9e8e7f4eba410d292ab640"
+  regions: 1
+- label: a dotenv line whose name carries no hint
+  line: "X=3126822aa8fa62cde1cb9c715decf89111c29ea950b51b20e32e4ddf6da00a50"
+  regions: 0
+  known_miss: true
+- label: a blake3 digest under a name that only hints
+  line: "session: blake3:519dec41a9ed05ce825112a2dd6969722af81c09b239272ff8b876cfb3474b81"
+  regions: 0
+- label: a blake3 digest assigned to a name that only hints
+  line: "SESSION_DIGEST=blake3:519dec41a9ed05ce825112a2dd6969722af81c09b239272ff8b876cfb3474b81"
+  regions: 0
+- label: a dotenv encryption key of 64 hex
+  line: "ENCRYPTION_KEY=0a30b9c6b180dc54cd7b937fb534e1cfb45c88a1ffab0b461ad2e62089c8f108"
+  regions: 1
+- label: a JSON signingKey of 64 hex
+  line: '{"signingKey": "cc5222fe1d6ee168c818c9910aa2f0bf7afda5ac0349946ec594721029bbed37"}'
+  regions: 1
+- label: a YAML key under a vendor name
+  line: "stripe:\n  key: 87a760f0e59750fc3c04a887a562c415784bdd55fd442b604230dea3587eb2ce\n"
+  regions: 1
+- label: a curl user and 64-hex password
+  line: "curl -u admin:9a7cbb9c295bd76909b476916269d2b13eff92914f9e8e7f4eba410d292ab640 https://x"
+  regions: 1
+- label: a JSON client_secret on the line after its key
+  line: "{\"client_secret\":\n  \"85d7741af27f18cbefc7fdc96d4465f6\"}\n"
+  regions: 1
+- label: a YAML list under secrets
+  line: "secrets:\n  - 28e89f0b9fca089cc2c6396a4ccfa0e37f639d263349669a581a6936df935634\n"
+  regions: 1
+- label: a folded YAML api_key
+  line: "api_key: >\n  5b0e0267408bd14703458e1b66c5906b4a7ffb28751ed6e4af3365d55a5168ce\n"
+  regions: 1
+- label: a key further back than the window the nearest key is sought in
+  line: "session                                                                                                                                                                                                         a060eea4645974845f4617573851fef55b484d89"
+  regions: 0
+- label: a key further back than a short window but within the real one
+  line: '{"signingKey":                                        "28e89f0b9fca089cc2c6396a4ccfa0e37f639d263349669a581a6936df935634"}'
+  regions: 1
+- label: a Rails config[] secret_key_base of 128 hex
+  line: config[:secret_key_base] = "af18f2bef918853cf7251a3f83b374034bb50ba26cafdec924011b64df2ab0ebe164d41bbc5b5b2364abadd3250529257763ba4627d225c1ed98aecd9d52495b"
+  regions: 1
+- label: an ENV.fetch block default for SECRET_KEY_BASE
+  line: ENV.fetch("SECRET_KEY_BASE") { "d791521cb2c5688ea9bd28c3fde7e4ea52174688854a333890c0fd5752eb032015b7fb7221e76d119dcfc0ee3d626b83223d7e46469afc92347caaee2be40b5d"
+    }
+  regions: 1
+- label: an ENV.fetch default for API_KEY
+  line: ENV.fetch("API_KEY", "16553232c21ff46c0af54224c242523e0301b1a43adb1e729321e117c14df78b")
+  regions: 1
+- label: an os.getenv default for WEBHOOK_SECRET
+  line: os.getenv("WEBHOOK_SECRET", "b28776bf06e73447331bd7d15b12721868e165d943b8de0ec07422098b72110c")
+  regions: 1
+- label: an os.environ[] assignment to API_KEY
+  line: os.environ["API_KEY"] = "ee908c639f10986b74d771685d0538116cc3609efefe45b3bde10bbc5ed3d1dd"
+  regions: 1
+- label: an ENV[] ||= assignment to API_KEY
+  line: ENV["API_KEY"] ||= "5645df37eb01bc0fb668dd59e3b17e8c5b5d42bed4e31466fe921a6a90aa8fe6"
+  regions: 1
+- label: a headers[] assignment to X-Api-Key
+  line: headers["X-Api-Key"] = "a305ccc448852d089ab82b289794712ba382a401eaccf7e7ca86bfb690f9cb9a"
+  regions: 1
+- label: a set_secret call
+  line: client.set_secret("a3f6e9b76206292532240aeaa0fb5b81ad4a972c720dbc04c57ed6c03ba6f597")
+  regions: 1
+- label: a JSON array of 2 keys under api_keys
+  line: '{"api_keys": ["9da3887320ef61d468803335fd1436819879fa8abc582eb1b3073ad1292b84ec",
+    "8a30c4a46f49f997b647517a77ba6befbc37b47add485e89b8fc205f120255c8"]}'
+  regions: 2
+- label: a JSON value nested under token
+  line: '{"token": {"value": "e317673edfbcbeccb03bc3cb84269746b0c4a3dbbc4e526ac6b63dec082ddc4b"}}'
+  regions: 1
+- label: an XML add element with key ApiKey
+  line: <add key="ApiKey" value="381a52cff4c8ed031ec9e835fdb0ddcb394ea5b8b633d489955dda0850bdfd33"/>
+  regions: 1
+- label: a YAML password behind a !!str tag
+  line: 'password: !!str 7bff58df1d6d14043d610bc2fc9813cc3d22712083a9f0b98973fca750747d73'
+  regions: 1
+- label: a JS template literal holding a bearer value
+  line: 'headers: { Authorization: `Bearer 1034d33e7252e58946230e42ed3173de959593eb920ed18da39db937db313aa4`
+    }'
+  regions: 1
+- label: a sha256sum listing under a file named session.rb
+  line: |
+    affdea7b9b3439bdc4421217a14e1931cde9a145f1daad39cd3888763fe8bddc  lib/session.rb
+    802afa4d447a84e47834a5b27eb3646950295588fb24035b8beb46647aa8c979  lib/other.rb
+  regions: 0
+- label: a git log line whose subject ends in secret
+  line: |
+    669100e255bb966d85fabd48e5594d2dce2d0c36 rotate the webhook secret
+    882a8a0ab9362356c4f045ab969da566dd7edef2 bump version
+  regions: 0
+- label: a YAML monkey key
+  line: 'monkey: 515f04d757ad24ca8a39c60d1043855712b42e7a0fa17b12df6f998c0162dedf'
+  regions: 0
+- label: a turkey assignment
+  line: turkey = "aefdfaf7f59086e9579f48e7998b48c0e5c4615cccb8f85505023a0cafe7a077"
+  regions: 0
+- label: a curl --user= password
+  line: curl --user=admin:16553232c21ff46c0af54224c242523e0301b1a43adb1e729321e117c14df78b
+    https://x
+  regions: 1
+- label: an uppercase algorithm prefix under a name that only hints
+  line: 'session: SHA256:b28776bf06e73447331bd7d15b12721868e165d943b8de0ec07422098b72110c'
+  regions: 0
+- label: a key 60 bytes back, inside the window
+  line: '"api_key":                                                 "ee908c639f10986b74d771685d0538116cc3609efefe45b3bde10bbc5ed3d1dd"'
+  regions: 1
+- label: a key 110 bytes back, outside the window
+  line: '"api_key":                                                                                                   "5645df37eb01bc0fb668dd59e3b17e8c5b5d42bed4e31466fe921a6a90aa8fe6"'
+  regions: 0
+- label: an uppercase algorithm prefix under a key that names a secret
+  line: '"_authToken": "SHA256:bce70536b64ee7651c4c66803fa37647c8d72322c0fc4ee82e62a322c0bd8408"'
+  regions: 1
+- label: a camel-case key after an acronym
+  line: '"PGPKey": "0409a53ac965018dc40e14e827880621152f749c79587bc7fbec85a0ce933e87"'
+  regions: 1
+- label: a key that starts with a digit
+  line: '"2fa_token": "91cf7aa430793925e00787c2430408e143038de5d9ff01402bf694f136e28f48"'
+  regions: 1
+- label: a PRIVKEY assignment of 64 hex
+  line: PRIVKEY=28e89f0b9fca089cc2c6396a4ccfa0e37f639d263349669a581a6936df935634
+  regions: 1
+- label: a sha256sum --tag line under a path naming secrets
+  line: SHA256 (lib/lain/sensitivity/secrets.rb) = 87a760f0e59750fc3c04a887a562c415784bdd55fd442b604230dea3587eb2ce
+  regions: 0
+- label: a macOS md5 line under a path naming session
+  line: MD5 (app/models/session.rb) = fa39a630d203fd86c87d4a1f5d1e88a4
+  regions: 0
+- label: an openssl dgst line under a path naming auth
+  line: SHA2-256(config/auth.yml)= 87a760f0e59750fc3c04a887a562c415784bdd55fd442b604230dea3587eb2ce
+  regions: 0
+- label: a path key ending in a colon
+  line: 'lib/lain/auth/token_store.rb: 87a760f0e59750fc3c04a887a562c415784bdd55fd442b604230dea3587eb2ce'
+  regions: 0
+- label: a git decoration naming a token branch
+  line: "(origin/token) a060eea4645974845f4617573851fef55b484d89"
+  regions: 0
+- label: a dotted key naming a secret
+  line: 'a.secret_key_base: 87a760f0e59750fc3c04a887a562c415784bdd55fd442b604230dea3587eb2ce'
+  regions: 1
+- label: a DaemonKey JSON key
+  line: '{"DaemonKey": "6282286a0019fec30379c998b0d65b04c8bd11eb294ecf58a7b88a7864dd0829"}'
+  regions: 1
+- label: a commonKey JSON key
+  line: '{"commonKey": "b8193bf597c80fbce550ba8e82faf3ab6578255f58856f68a0581db35b2027fa"}'
+  regions: 1
+- label: a pokemonKey JSON key
+  line: '{"pokemonKey": "485cf1378af805ff005f6be202e5d991b364549a8066176d8c47746f948ce50d"}'
+  regions: 1
+- label: a summonToken JSON key
+  line: '{"summonToken": "b2256a0360a425989b058f6aafc65c171af54010c76848d8aa4bfa13075b497d"}'
+  regions: 1
+- label: a monkey assignment after export
+  line: export monkey=6209fa3f919a6ff4446937c94dccaf6cce1658aa6b1b9999e4f1b94444c307ac
+  regions: 0
+- label: an indented turkey YAML key
+  line: "  turkey: 0ed366e320982f8c0c4b9b962ef1fa9a7a9d141a3f7a1eef066a414d94048b3b"
+  regions: 0
+- label: a digit value under Token glued to an ordinary word's letters
+  line: donToken=48291377
+  regions: 1

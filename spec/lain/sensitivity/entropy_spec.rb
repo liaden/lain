@@ -75,6 +75,10 @@ RSpec.describe Lain::Sensitivity::Entropy do
     it "rejects an alphabet run" do
       expect(described_class.hinted?("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef0123")).to be(false)
     end
+
+    it "accepts lowercase hex of a digest's width, since the name is the evidence" do
+      expect(described_class.hinted?("28e89f0b9fca089cc2c6396a4ccfa0e37f639d263349669a581a6936df935634")).to be(true)
+    end
   end
 
   describe ".predictable?" do
@@ -88,6 +92,31 @@ RSpec.describe Lain::Sensitivity::Entropy do
 
     it "is false for a random token" do
       expect(described_class.predictable?("Qm9vT2s3x9ZpL1aBc7Yw2RtUv5NhGd8E")).to be(false)
+    end
+
+    {
+      "md5" => "fa39a630d203fd86c87d4a1f5d1e88a4",
+      "sha1" => "a060eea4645974845f4617573851fef55b484d89",
+      "sha256" => "87a760f0e59750fc3c04a887a562c415784bdd55fd442b604230dea3587eb2ce",
+      "sha512" => "6e0cc266de6456cfe7bbe6345a519cb93a014aea55962d6fcd7d23e224c7172a" \
+                  "14c4fc7f162ffa8b13f164f262cea6efb905a518a11caa6216e4dd8ab2350b61"
+    }.each do |algorithm, hex|
+      it "is true for lowercase hex of #{algorithm}'s width" do
+        expect(described_class.predictable?(hex)).to be(true)
+      end
+    end
+
+    it "is false for uppercase hex of a digest's width" do
+      upper = "87A760F0E59750FC3C04A887A562C415784BDD55FD442B604230DEA3587EB2CE"
+
+      expect(described_class.predictable?(upper)).to be(false)
+    end
+
+    it "is false for lowercase hex one character off a digest's width" do
+      widths = %w[87a760f0e59750fc3c04a887a562c415784bdd55fd442b604230dea3587eb2c
+                  87a760f0e59750fc3c04a887a562c415784bdd55fd442b604230dea3587eb2ce8]
+
+      expect(widths.map { described_class.predictable?(_1) }).to eq([false, false])
     end
   end
 
