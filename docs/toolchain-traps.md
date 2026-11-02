@@ -523,6 +523,13 @@ Unproven; counting only the example's own thread would settle it.
   its 60s window once beside about 20 agents. It passed alone and 3 of 3 with its worker's seed, on a
   card that does not touch the supervisor.
 
+  Added 2026-11-02, from the nyotes round 2 landing windows. Each passed alone and 3 of 3 on the base
+  commit. `Lain::Shell::Pipeline a stop from outside kills a stopped term-arm command's group and unwinds
+  promptly` raised ENOENT reading `/proc/self/task/<tid>/children` while a thread exited; it reddened in 2
+  landings, so it is also a follow-up card. `A project's own tests inside the workspace profile passes one
+  spec file with the example count an unconfined run reports` hit its 30s watchdog (0.4s CPU, 30.4s wall)
+  at load 23 on 16 cores.
+
   **Retired, with the fix that ended each.** Keep a retired name here so a later red under it reads
   as a regression, not as a known flake.
   - 2026-10-30: `draining one chore through a lease, a headless chat and lain land lands the chat's commit
