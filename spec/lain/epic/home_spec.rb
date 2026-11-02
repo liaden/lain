@@ -211,17 +211,6 @@ RSpec.describe Lain::Epic::Home do
       end
     end
 
-    it "round-trips plans/<id>.md" do
-      Dir.mktmpdir do |tmp|
-        home = described_class.resolve(config: config_for(:repo), paths: paths_for(tmp), root: tmp, slug: "alpha")
-
-        home.plan("a1").write("the plan\n")
-
-        expect(home.plan("a1").read).to eq("the plan\n")
-        expect(File).to exist(File.join(home.path, "plans", "a1.md"))
-      end
-    end
-
     it "answers whether an artifact is there without raising" do
       Dir.mktmpdir do |tmp|
         home = described_class.resolve(config: config_for(:repo), paths: paths_for(tmp), root: tmp, slug: "alpha")
@@ -311,7 +300,7 @@ RSpec.describe Lain::Epic::Home do
       Dir.mktmpdir do |tmp|
         home = described_class.resolve(config: config_for(:repo), paths: paths_for(tmp), root: tmp, slug: "alpha")
 
-        expect { home.plan("../../etc/passwd") }.to raise_error(Lain::Epic::Home::MalformedName)
+        expect { home.issue("../../etc/passwd") }.to raise_error(Lain::Epic::Home::MalformedName)
       end
     end
   end

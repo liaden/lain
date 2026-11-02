@@ -60,8 +60,7 @@ module Lain
           case kind
           when "research" then home.research.read
           when "epic" then home.epic.read
-          when "issue" then Lain::Epic::IssueView.read(home, id).to_markdown
-          else home.plan(id).read
+          else Lain::Epic::IssueView.read(home, id).to_markdown
           end
         end
       end

@@ -57,15 +57,4 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       expect(state_of(name)).to include("windows" => 1, "total_windows" => before["total_windows"])
     end
   end
-
-  it "names an issue plan by its home path" do
-    frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
-
-    frontend.run do
-      wait_until_editor { buffer_lines("lain://status").any? }
-      set_epic_doc("lain://epic/frugirl/plans/a1.md", ["# plan"])
-
-      wait_until_editor { buffer_lines("lain://epic/frugirl/plans/a1.md") == ["# plan"] }
-    end
-  end
 end

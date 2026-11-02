@@ -205,17 +205,15 @@ RSpec.describe Lain::Epic::Home::Journaled do
   end
 
   describe "the Home duck, answered whole" do
-    it "journals research, issue and plan writes under their own kinds and relative paths" do
+    it "journals research and issue writes under their own kinds and relative paths" do
       Dir.mktmpdir do |tmp|
         decorator = described_class.new(home_in(tmp), journal:)
 
         decorator.research.write("what we learned")
         decorator.issue("a1").write("the story")
-        decorator.plan("a1").write("the plan")
 
         expect(records.map { |record| record.values_at("kind", "path") })
-          .to eq([%w[research research.md], ["issue", File.join("issues", "a1.md")],
-                  ["plan", File.join("plans", "a1.md")]])
+          .to eq([%w[research research.md], ["issue", File.join("issues", "a1.md")]])
       end
     end
 

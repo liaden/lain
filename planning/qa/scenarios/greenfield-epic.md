@@ -485,7 +485,7 @@ Checks:
     `cockpit-surfaces.md` §1. Have the model write it again: the buffer refreshes in place. Close its window
     (`:close` in it) and write again: the buffer refreshes **and no window reopens**; `:buffer lain://epic/<slug>/research.md`
     brings it back. From a shell, `lain epic show` prints the same text (it adds no trailing newline of its own since T49, k26-10 fixed: the bytes are the file's), `lain epic show epic` names the missing
-    `epic.md` and the home, and `lain epic show notes` lists `research`, `epic`, `issues/ID` and `plans/ID`.
+    `epic.md` and the home, and `lain epic show notes` lists `research`, `epic` and `issues/ID`.
     *Wrong looks like:* a document nobody can read without knowing the XDG path, a window that grabs focus mid-typing, or one
     that reopens at every rewrite.
 14. **The answered question buffer is closed, not left open (2026-10-09 trial fixes).** After you answer the interview's last set

@@ -14,8 +14,12 @@ RSpec.describe Lain::Epic::DocWritten do
     expect(described_class::JOURNAL_TYPE).to eq("doc_written")
   end
 
-  it "refuses a kind outside the four artifacts a home holds" do
+  it "refuses a kind outside the three artifacts a home holds" do
     expect { written(kind: "notes") }.to raise_error(ArgumentError, /kind/)
+  end
+
+  it "refuses the retired plan kind" do
+    expect { written(kind: "plan", path: "plans/a.md") }.to raise_error(ArgumentError, /kind/)
   end
 
   it "refuses an unnamed epic, an unnamed path, and undigested bytes" do

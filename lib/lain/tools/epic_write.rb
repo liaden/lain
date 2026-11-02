@@ -2,7 +2,7 @@
 
 module Lain
   module Tools
-    # Writes one of an epic's 4 markdown artifacts into the project's epic home,
+    # Writes one of an epic's 3 markdown artifacts into the project's epic home,
     # so a skill can land `research.md` without knowing where that home is.
     #
     # It asks no approval: the model names a slug and an artifact kind, never a
@@ -15,10 +15,13 @@ module Lain
       ARTIFACTS = {
         "research" => ->(home, _issue) { home.research },
         "epic" => ->(home, _issue) { home.epic },
-        "issue" => ->(home, issue) { home.issue(issue) },
-        "plan" => ->(home, issue) { home.plan(issue) }
+        "issue" => ->(home, issue) { home.issue(issue) }
       }.freeze
-      NEEDS_ISSUE = %w[issue plan].freeze
+      NEEDS_ISSUE = %w[issue].freeze
+
+      # Told to a model that still asks for the retired plan file.
+      PLAN_GONE = "a plan file no longer exists: put an issue's test subject on a `Subject:` line " \
+                  "in its section of epic.md"
 
       # The heading form an issue takes in epic.md, quoted when none parsed.
       ISSUE_HEADING = "### [ ] `a1` title"
@@ -29,12 +32,14 @@ module Lain
         field :slug, :string, required: true,
                               description: "The epic's slug: #{Epic::Home::NAME_RULE}, for example frugirl-mvp."
         field :artifact, :string, required: true,
-                                  description: "Which artifact to write: research (research.md), epic (epic.md), " \
-                                               "issue (issues/<issue>.md) or plan (plans/<issue>.md)."
-        field :issue, :string, description: "The issue id. Required for artifact issue and plan, ignored otherwise."
+                                  description: "Which artifact to write: research (research.md), epic (epic.md) " \
+                                               "or issue (issues/<issue>.md)."
+        field :issue, :string, description: "The issue id. Required for artifact issue, ignored otherwise."
         field :content, :string, required: true, description: "The whole markdown file; it replaces what is there."
 
-        validates :artifact, inclusion: { in: ARTIFACTS.keys, message: "must be one of #{ARTIFACTS.keys.join(", ")}" }
+        validates :artifact, inclusion: { in: ARTIFACTS.keys, message: lambda { |_record, data|
+          data[:value] == "plan" ? PLAN_GONE : "must be one of #{ARTIFACTS.keys.join(", ")}"
+        } }
         validates :issue, presence: true, if: -> { NEEDS_ISSUE.include?(artifact) }
       end
 
@@ -49,7 +54,7 @@ module Lain
       def name = "epic_write"
 
       def description
-        "Writes one artifact of an epic (research, epic, issue or plan) into this project's epic home, " \
+        "Writes one artifact of an epic (research, epic or issue) into this project's epic home, " \
           "replacing the file. Refuses while a review holds the file. An issue file is the authored half of " \
           "the issue's view, so its link lines, its own header, a Links heading, a gherkin fence outside " \
           "Acceptance criteria and restated scenarios are refused."

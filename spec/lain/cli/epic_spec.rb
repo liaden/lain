@@ -1182,10 +1182,8 @@ RSpec.describe Lain::CLI::Epic do
       expect(show_via_cli).to eq("# Research\nno newline")
     end
 
-    it "prints an issue plan by its home path" do
-      home_for("frugirl").plan("a1").write("the a1 plan\n")
-
-      expect(command.show("plans/a1")).to eq("the a1 plan\n")
+    it "no longer prints a plans/ document" do
+      expect { command.show("plans/a1") }.to raise_error(Lain::CLI::Epic::UnknownDocument, %r{plans/a1})
     end
 
     it "prints an issue document as its view, the graph's links included" do
@@ -1202,7 +1200,7 @@ RSpec.describe Lain::CLI::Epic do
 
     it "lists the document names it accepts when given an unknown one" do
       expect { command.show("notes") }
-        .to raise_error(Lain::CLI::Epic::UnknownDocument, %r{research.*epic.*issues/ID.*plans/ID})
+        .to raise_error(Lain::CLI::Epic::UnknownDocument, %r{research, epic or issues/ID\z})
     end
   end
 end

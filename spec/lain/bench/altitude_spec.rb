@@ -578,7 +578,7 @@ RSpec.describe Lain::Bench::Altitude do
   end
 
   # The committed fixtures are DATA, and data rots quietly: a subject project
-  # whose `[tests]` table was dropped, or an epic whose plans lost their
+  # whose `[tests]` table was dropped, or an epic whose issues lost their
   # `Subject:` line, would leave the bench measuring nothing while every example
   # here still passed. Each of these pins a coupling that nothing else holds.
   describe "the committed fixtures" do
@@ -627,20 +627,20 @@ RSpec.describe Lain::Bench::Altitude do
       end
     end
 
-    # An issue actor places its failing tests by mirroring the subject its PLAN
-    # declares. Without that line the epic arms refuse before they start, which
-    # is the gap this fixture was built to close.
-    it "gives every issue a plan declaring the subject its tests mirror" do
-      artifact = Struct.new(:read, :path)
-
-      declared = demo_epic.ids.to_h do |id|
-        plan = File.join(fixtures, "epic/demo/plans/#{id}.md")
-        [id, Lain::CLI::EpicDriver::PlanSubject.read(artifact.new(File.read(plan), plan),
-                                                     layout: Lain::TestLayout::None)]
+    # An issue actor places its failing tests by mirroring the subject its issue
+    # declares in epic.md. Without that line the epic arms refuse before they
+    # start, which is the gap this fixture was built to close.
+    it "gives every issue a Subject line declaring the subject its tests mirror" do
+      declared = demo_epic.to_h do |issue|
+        [issue.id, Lain::CLI::EpicDriver::PlanSubject.of(issue, layout: Lain::TestLayout::None)]
       end
 
       expect(declared.transform_values(&:subject)).to eq("ledger" => "lib/ledger.rb", "report" => "lib/report.rb")
       expect(declared.values.map(&:level).uniq).to eq(["unit"])
+    end
+
+    it "keeps no plans directory beside the epic" do
+      expect(File).not_to exist(File.join(fixtures, "epic/demo/plans"))
     end
   end
 

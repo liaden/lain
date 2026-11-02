@@ -5,7 +5,7 @@ require "tmpdir"
 
 # What an issue's plan declares about where its failing tests go: the one source
 # file they are written for, and optionally the level root they sit under. Read
-# from `plans/<id>.md`, over a project declaring the rspec layout on `app`.
+# from a plan's text, over a project declaring the rspec layout on `app`.
 RSpec.describe Lain::CLI::EpicDriver::PlanSubject do
   let(:layout_mini) { File.expand_path("../../../fixtures/projects/layout_mini", __dir__) }
   let(:layout) { Lain::Config.test_layout(root: @root) }
@@ -19,7 +19,7 @@ RSpec.describe Lain::CLI::EpicDriver::PlanSubject do
     end
   end
 
-  # The artifact duck {Epic::Home#plan} answers: its bytes and where they live.
+  # The in-memory stand-in {Arm::PlanOnly} passes: its text and a name to cite.
   def plan(text)
     Class.new do
       attr_reader :path
@@ -30,7 +30,7 @@ RSpec.describe Lain::CLI::EpicDriver::PlanSubject do
       end
 
       def read = @text
-    end.new(text, "/state/epics/demo/plans/a.md")
+    end.new(text, "plan a")
   end
 
   def declared(text) = described_class.read(plan(text), layout:)
@@ -87,7 +87,7 @@ RSpec.describe Lain::CLI::EpicDriver::PlanSubject do
 
   it "refuses a plan that declares no subject, naming the file and the line it must carry" do
     expect { declared("# the a issue\n\nDo the work.\n") }
-      .to raise_error(described_class::Undeclared, %r{plans/a\.md.*Subject:}m)
+      .to raise_error(described_class::Undeclared, /plan a.*Subject:/m)
   end
 
   it "refuses a plan declaring more than one subject, naming them" do

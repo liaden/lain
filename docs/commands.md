@@ -417,7 +417,7 @@ lain epic finish --local                           # ...or one merge commit in m
 | Command | What it does |
 |---|---|
 | `lain epic status [SLUG]` | Ready issues and remaining waves, folded from the Journal. `--mermaid` renders the graph as mermaid flowchart source instead of the text report. Read-only and deterministic. |
-| `lain epic show [DOC] [SLUG]` | Print one document of the epic, verbatim: `research` (the default), `epic`, `issues/ID` or `plans/ID`. The epic home sits under `$XDG_STATE_HOME`, so this is how you read `research.md` outside a chat. A missing file names itself and the epic home; any other `DOC` is refused with the four names. Read-only. |
+| `lain epic show [DOC] [SLUG]` | Print one document of the epic, verbatim: `research` (the default), `epic` or `issues/ID`. The epic home sits under `$XDG_STATE_HOME`, so this is how you read `research.md` outside a chat. A missing file names itself and the epic home; any other `DOC` is refused with the three names. Read-only. |
 | `lain epic submit STAGE [SLUG]` | Submit an artifact to a stage's gate. `--issue` names the issue for the per-issue stages, `--digest` the changeset for `implementation`; `--provider`/`--model` wire the adjudicating spike. A denied or unanswered gate exits 1; a deferred one exits 0. |
 | `lain epic queue [SLUG]` | The parked sign-offs, folded from the journals rather than read from a file. |
 | `lain epic approve DIGEST` / `lain epic deny DIGEST` | Append a terminal decision, draining the partition. Both take `--reason`. |

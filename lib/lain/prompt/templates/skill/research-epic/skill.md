@@ -60,8 +60,8 @@ The epic home for this project is `<%= epic_home %>`, and the epic lives at
 `<%= epic_home %>/<slug>/`. You can read anything there with `read_file` at that absolute path,
 for example `<%= epic_home %>/<slug>/research.md`.
 
-An epic home holds exactly four kinds of artifact: `research.md`, `epic.md`, `issues/<id>.md`,
-`plans/<id>.md`. By default it lives under XDG state, so an epic never shows up in
+An epic home holds exactly three kinds of artifact: `research.md`, `epic.md` and `issues/<id>.md`.
+By default it lives under XDG state, so an epic never shows up in
 `git status`; a project opts in-repo with `epics home: :repo` in `.lain/config.rb`, which
 puts it at `.lain/epics/<slug>/` where a team can review it in a pull request.
 

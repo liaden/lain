@@ -34,8 +34,8 @@ module Lain
           super(subject: -subject.to_s, level: level&.then { |name| -name.to_s })
         end
 
-        # @param plan [#read, #path] the issue's plan artifact, as
-        #   {Epic::Home#plan} answers
+        # @param plan [#read, #path] the planner's plan text and a
+        #   name to cite in a refusal, as {Arm::PlanOnly} holds them in memory
         # @param layout [TestLayout] the project's declared layout
         # @return [PlanSubject]
         # @raise [Refusal] naming the plan and what it must say

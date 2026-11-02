@@ -79,6 +79,14 @@ RSpec.describe "shipped skills" do
       end
     end
 
+    it "never mentions a plans/ path in any shipped skill" do
+      with_empty_project do |renderer|
+        mentioning = shipped_names.select { |name| renderer.render(name).include?("plans/") }
+
+        expect(mentioning).to be_empty
+      end
+    end
+
     # "Lain ships this" and "a project may extend this" are different facts, and
     # conflating them is what made the roster un-derivable. `gherkin-tests`
     # correctly declares NO slots -- it is dispatched by Gherkin::TestGeneration

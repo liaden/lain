@@ -64,7 +64,6 @@ module Lain
         def research = written(@home.research, "research")
         def epic = written(@home.epic, "epic")
         def issue(id) = written(@home.issue(id), "issue")
-        def plan(id) = written(@home.plan(id), "plan")
 
         # The graph's own content address rides along with the bytes', because
         # the two answer different questions: `byte_digest` says what is on disk,
@@ -91,7 +90,7 @@ module Lain
 
         # `graph_digest` is a property of the RESOLVED artifact, never an
         # argument to its write: passed the other way it would be reachable from
-        # `research`/`issue`/`plan`, putting a graph address on a prose record,
+        # `research`/`issue`, putting a graph address on a prose record,
         # and would widen the write duck past the {Home::Artifact#write} this
         # wraps.
         def written(artifact, kind, graph_digest: nil)

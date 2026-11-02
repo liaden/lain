@@ -105,13 +105,13 @@ Submit each issue's write-up with the `epic_submit` tool: `stage` is `issue_plan
 epic's slug, and `issue` is the id. The stage gates one
 issue's work, so it names the issue: the tool refuses an issue_plan submit that names no issue.
 
-**An issue's acceptance criteria are approved together with its plan, in this one gate.** They are
-not signed off separately and there is no later criteria gate: the `issue_plan` digest covers the
-plan's whole content, so editing the criteria — or the `Subject:` line below — reopens this gate
-rather than slipping past an approval that was given for different words.
+**An issue's acceptance criteria are approved together with its plan, in this one gate.** They
+are not signed off separately and there is no later criteria gate: the `issue_plan` digest covers
+the issue's whole rendered view, so editing the criteria — or the `Subject:` line — reopens this
+gate rather than slipping past an approval that was given for different words.
 
-That plan, `plans/<id>.md`, is written with `epic_write` (`artifact` is `plan`) to
-`<%= epic_home %>/<slug>/plans/<id>.md`, and carries the line the implementation step cannot start without:
+The line the implementation step cannot start without lives in `epic.md`, on the issue's own
+section, not in a file of its own:
 
 ````text
 Subject: lib/exporter/stream.rb

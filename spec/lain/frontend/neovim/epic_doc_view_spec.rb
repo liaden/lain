@@ -28,12 +28,6 @@ RSpec.describe Lain::Frontend::Neovim::EpicDocView do
       .to eq([["lain://epic/frugirl/research.md", ["# Research", "findings"]]])
   end
 
-  it "names an issue plan by its home path" do
-    homes.for("frugirl").plan("a1").write("# plan\n")
-
-    expect(view.update(written("plans/a1.md", "plan"))).to eq([["lain://epic/frugirl/plans/a1.md", ["# plan"]]])
-  end
-
   it "names epic.md by its home path" do
     homes.for("frugirl").epic.write("# Epic\n")
 

@@ -32,10 +32,8 @@ RSpec.describe Lain::Tools::EpicWrite do
     write(slug: "frugirl-mvp", artifact: "research", content: "r\n")
     write(slug: "frugirl-mvp", artifact: "epic", content: epic_md)
     write(slug: "frugirl-mvp", artifact: "issue", issue: "a1", content: "i\n")
-    write(slug: "frugirl-mvp", artifact: "plan", issue: "a1", content: "p\n")
 
-    expect([home.research, home.epic, home.issue("a1"), home.plan("a1")].map(&:read))
-      .to eq(["r\n", epic_md, "i\n", "p\n"])
+    expect([home.research, home.epic, home.issue("a1")].map(&:read)).to eq(["r\n", epic_md, "i\n"])
   end
 
   describe "the round's write report" do
@@ -155,14 +153,15 @@ RSpec.describe Lain::Tools::EpicWrite do
     expect(tool).not_to be_requires_approval
   end
 
-  it "refuses an issue plan with no issue id, naming the missing field" do
-    expect { write(slug: "frugirl-mvp", artifact: "plan", content: "p\n") }
-      .to raise_error(Lain::Tool::InvalidInput, /Issue can't be blank/)
+  it "refuses a plan artifact, naming the Subject line in epic.md as the place for a test subject" do
+    expect { write(slug: "frugirl-mvp", artifact: "plan", issue: "a1", content: "p\n") }
+      .to raise_error(Lain::Tool::InvalidInput, /`Subject:` line.*epic\.md/)
+    expect(File).not_to exist(File.join(home.path, "plans"))
   end
 
-  it "refuses an artifact kind it does not know, naming the four it does" do
+  it "refuses an artifact kind it does not know, naming the three it does" do
     expect { write(slug: "frugirl-mvp", artifact: "notes", content: "n\n") }
-      .to raise_error(Lain::Tool::InvalidInput, /research, epic, issue, plan/)
+      .to raise_error(Lain::Tool::InvalidInput, /research, epic, issue\z/)
   end
 
   it "refuses a malformed slug, quoting the slug rule, and writes nothing" do

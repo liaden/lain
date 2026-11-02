@@ -1,6 +1,8 @@
 ### [~] `ledger` a ledger totals its entries
 
 Blocks: `report`
+Subject: `lib/ledger.rb`
+Level: unit
 
 ```gherkin
 Scenario: a ledger totals its entries
@@ -10,6 +12,9 @@ Scenario: a ledger totals its entries
 ```
 
 ### [~] `report` a report renders the ledger's total
+
+Subject: `lib/report.rb`
+Level: unit
 
 ```gherkin
 Scenario: a report renders the ledger's total

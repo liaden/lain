@@ -16,7 +16,7 @@ module Lain
     # `$XDG_STATE_HOME`.
     #
     # Runtime state is deliberately absent from the layout (`research.md`,
-    # `epic.md`, `issues/<id>.md`, `plans/<id>.md`) -- an issue's current status
+    # `epic.md`, `issues/<id>.md`) -- an issue's current status
     # is the Journal fold, not a file here, so nothing in this directory can
     # disagree with the run that produced it. `issues/<id>.md` is likewise only
     # the authored half of an issue; {IssueView} renders the rest from `epic.md`.
@@ -139,7 +139,6 @@ module Lain
       def research = artifact("research.md")
       def epic = artifact("epic.md")
       def issue(id) = artifact(File.join("issues", filename(id)))
-      def plan(id) = artifact(File.join("plans", filename(id)))
 
       # {Document.to_markdown} refuses issues it cannot write back verbatim, and
       # that render happens while this argument is evaluated -- before

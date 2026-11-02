@@ -39,10 +39,10 @@ module Lain
     # would read as neither started nor completed and contribute nothing.
     STAGE_EVENTS = %w[started completed].freeze
 
-    # The four artifacts a {Home} holds, as the journal names them. Closed so a
+    # The three artifacts a {Home} holds, as the journal names them. Closed so a
     # reader joining a `doc_written` record back to a file knows which of the
-    # four layouts the path came from; a fifth spelling would join to nothing.
-    DOC_KINDS = %w[research epic issue plan].freeze
+    # three layouts the path came from; a fourth spelling would join to nothing.
+    DOC_KINDS = %w[research epic issue].freeze
 
     # The structural edits a revision may name, keyed by the operation it
     # journals and valued by the arguments that operation replays FROM. Sorted,

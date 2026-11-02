@@ -14,7 +14,7 @@ module Lain
     # THE PLAN DECLARES THE SUBJECT. An issue actor places its failing tests by
     # mirroring a source file through the project's layout, and there is no
     # {Epic::Issue} here to carry one -- so the planner's own output is read for
-    # the `Subject:` line, exactly as the epic driver reads `plans/<id>.md`. A
+    # the `Subject:` line, exactly as the epic driver reads it off an issue in `epic.md`. A
     # plan that declares none refuses by name rather than inventing a path.
     class PlanOnly < Arm
       # Where it joins {Ladder}: the first rung an epic would gate, entered with
@@ -26,9 +26,8 @@ module Lain
       ISSUE = "plan-only"
 
       # What a refusal about the plan NAMES. A plan-only run has no epic home to
-      # write a plan into, so it is held in memory -- and a refusal naming
-      # `plans/plan-only.md` would send a reader looking for a file that was
-      # never written. It says what it is instead.
+      # write a plan into, so it is held in memory -- and a refusal naming a
+      # file path would send a reader looking for a file that was never written. It says what it is instead.
       PLAN_SOURCE = "the plan-only arm's plan, held in memory"
 
       # The planner's answer, shaped as the artifact {CLI::EpicDriver::PlanSubject}

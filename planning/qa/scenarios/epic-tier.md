@@ -171,7 +171,7 @@ lain epic status                  # with TWO epics in the home: Ambiguous, never
 chmod 000 "$HOME_DIR" && lain epic status   # UnreadableHome -- not "no epics yet"
 ```
 
-b28-5, open: a home holding only `plans/x.md` counts as an epic (`holds 3 epics (demo, graph, half)`, and `lain epic show plans/x half` prints it), so Ambiguous can name a half-made directory.
+b28-5, retired with `plans/`: `lain epic show plans/x half` is now refused as an unknown document. Whether a home holding only a stray file still counts as an epic, so Ambiguous can name a half-made directory, is unchecked since.
 
 `Ambiguous` matters more than it looks: picking the alphabetically-first would report on work the
 caller never asked about, **in the one command whose entire job is telling the truth about which
@@ -198,13 +198,12 @@ The epic home sits under `$XDG_STATE_HOME`, so `research.md` had no reader outsi
 lain epic show                      # research.md of the sole epic, byte for byte
 lain epic show epic                 # epic.md
 lain epic show issues/greet         # one issue file
-lain epic show plans/greet          # one issue plan
 lain epic show research demo        # a named epic, when the home holds several
 lain epic show notes                # UnknownDocument
 ```
 
 Diff each output against the file under the home: they must be identical, and the command writes nothing. `notes` is refused with the
-four names `research, epic, issues/ID, plans/ID`. A document that has not been written (`plans/greet` before the plan stage) fails naming the file and the
+three names `research, epic, issues/ID`. A document that has not been written (`issues/nope`, an issue with no file) fails naming the file and the
 epic home, not an empty print. With two epics in the home and no slug it is `Ambiguous`, as `status` is (§2), and with an empty home it
 refuses `no epics yet in <home> -- there is nothing to name` (unlike `status`, which answers with guidance and exits 0).
 *Wrong looks like:* an empty print for a missing document.
@@ -663,7 +662,7 @@ issue's worktree and blocked every issue for want of a file git never checked ou
 
 ### 10a — what an issue needs before it can start
 
-Each issue is implemented from `plans/<id>.md` in the epic home, and that plan declares the one
+Each issue is implemented from its rendered issue view, and its entry in `epic.md` declares the one
 source file its generated failing tests mirror:
 
 ```
@@ -671,7 +670,7 @@ Subject: lib/exporter/stream.rb
 Level: unit
 ```
 
-Drive each refusal — every one names the plan path:
+Drive each refusal — every one names the issue:
 
 - **no `Subject:` line at all** — refused, telling you to add one;
 - **two `Subject:` lines** — refused as ambiguous rather than picking the first;
@@ -724,7 +723,7 @@ What to watch for:
 - **each worker is told its own place.** The first request of an issue's orchestrator, test engineer and dev
   worker ends its role instructions with `Working directory: <that issue's worktree>`, not the human's checkout;
 - **an issue orchestrator reads its own epic's home without parking.** Under `epics_home :xdg`, its
-  `read_file` of `plans/<id>.md` in its epic home returns the plan and nothing parks. The same read of a
+  `read_file` of `epic.md` or `issues/<id>.md` in its epic home returns the file and nothing parks. The same read of a
   different epic's home still parks as `outside_project`, and a write there is still refused;
 - **the red step commits with `--no-verify`**, because the commit is red by design and a target
   project's own pre-commit hook would refuse exactly the state the step exists to record. Confirm
