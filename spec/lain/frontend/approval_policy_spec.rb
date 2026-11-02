@@ -182,6 +182,19 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     expect(seen.stamped).to match(/\A\d\d:\d\d:\d\d /)
   end
 
+  it "yields no decision sentence while its call is undecided, and the surface's once another decided it" do
+    parked = Lain::Approval::Parked::Queue::Pending.new(effect:, identity: Lain::Requester.main,
+                                                        clock: -> { 0.0 }, timeout: 300)
+    asked = described_class::Asked.new("approve? ", parked)
+    before = []
+    asked.decision { |sentence| before << sentence }
+    parked.deny(surface: "editor")
+    after = []
+    asked.decision { |sentence| after << sentence }
+
+    expect([before, after]).to eq([[], ["decided by editor: denied"]])
+  end
+
   it "closes a prompt the clock denied with the full window and no mention of a surface" do
     lapsed = Lain::Approval::Parked::Queue::Pending.new(effect:, identity: Lain::Requester.main,
                                                         clock: -> { 0.0 }, timeout: 300)

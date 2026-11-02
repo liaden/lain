@@ -290,6 +290,22 @@ RSpec.describe Lain::CLI::InputSocket do
         .to eq(["fleet:0 inbox:0", "fleet:3 inbox:0"])
     end
 
+    it "tells a pane the sentence of a prompt another surface decided" do
+      client = connect
+      decided = Class.new(String) { def decision = yield("decided by editor: denied") }.new("[y/N] ")
+      answered = publish(:approval, decided)
+      next_frame(client, of: "prompt")
+      send_frame(client, { "v" => "eof" })
+      answered.pop
+      withdrawn = next_frame(client, of: "unpublished")
+
+      expect(withdrawn["closed"]).to eq("decided by editor: denied")
+    end
+
+    it "sends an empty closed sentence before anything was published" do
+      expect(next_frame(connect, of: "unpublished")["closed"]).to eq("")
+    end
+
     it "sends nothing more while the header stays the same" do
       client = connect
       next_frame(client, of: "unpublished")

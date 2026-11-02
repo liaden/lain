@@ -188,6 +188,19 @@ RSpec.describe Lain::Frontend::InputPane do
         .and(satisfy { |drawn| drawn.scan("x").size < 2600 })
     end
 
+    it "takes back the fitted rows with the header when another surface decided the prompt" do
+      chat = open_pane
+      ask(chat)
+      settles { screen.string.include?("[y/N]") || nil }
+      fitted = screen.string.scan("\n").size
+      screen.truncate(0) && screen.rewind
+
+      say(chat, { "v" => "unpublished", "header" => "hud", "closed" => "decided by editor: denied" })
+
+      expect(settles { screen.string.include?("decided by editor") ? screen.string : nil })
+        .to start_with("\e[#{fitted}A\r\e[J")
+    end
+
     it "draws the whole line as the chat sent it when it fits" do
       chat = open_pane
       ask(chat, parts: parts.merge("call" => "bash(ls)"), text: "agent asks: approve bash(ls)? [y/N] ")
@@ -434,6 +447,21 @@ RSpec.describe Lain::Frontend::InputPane do
     expect(settles { commands == %w[stop] || nil }).to be(true)
   end
 
+  it "takes nothing back of a prompt this pane answered, whatever the chat reports" do
+    chat = open_pane
+    publish(chat, { "kind" => "human", "text" => "[y/N] run bash? ", "header" => "fleet:1" })
+    settles { screen.string.include?("[y/N] run bash?") || nil }
+    keyboard.write("y\n")
+    next_frame(chat, of: "line")
+    screen.truncate(0) && screen.rewind
+
+    say(chat, { "v" => "unpublished", "header" => "fleet:1", "closed" => "decided by editor: denied" })
+    say(chat, { "v" => "context", "commands" => ["idle"] })
+    settles { commands == ["idle"] || nil }
+
+    expect(screen.string).not_to include("decided by editor")
+  end
+
   # `/stop` leaves the pane as the LINE the human typed. Nothing behind this
   # rail is running an ask -- the pane holds no agent and no session -- so the
   # chat's own rail is the one that knows whether there is a run to stop, and
@@ -573,6 +601,40 @@ RSpec.describe Lain::Frontend::InputPane do
     # The pane echoes what its idle reader took, so the echo is the read.
     def taken(typed)
       settles { screen.string.end_with?(typed) || nil } || raise("the idle reader read nothing")
+    end
+
+    it "takes back the drawn prompt rows and says who decided it when the chat reports another surface did" do
+      chat = open_pane
+      publish(chat, { "kind" => "approval", "text" => "[y/N] ", "header" => "fleet:1" })
+      settles { screen.string.include?("fleet:1") || nil }
+      screen.truncate(0) && screen.rewind
+
+      say(chat, { "v" => "unpublished", "header" => "fleet:1", "closed" => "decided by editor: denied" })
+
+      expect(settles { screen.string.include?("decided by editor: denied") ? screen.string : nil })
+        .to start_with("\e[1A\r\e[J").and include("\r\e[Kdecided by editor: denied\n")
+    end
+
+    it "takes nothing back when nothing was ever drawn" do
+      chat = open_pane
+
+      say(chat, { "v" => "unpublished", "header" => "fleet:2", "closed" => "decided by editor: denied" })
+      say(chat, { "v" => "context", "commands" => ["idle"] })
+      settles { commands == ["idle"] || nil }
+
+      expect(screen.string).not_to include("decided by editor")
+    end
+
+    it "takes nothing back when the chat reports no other surface decided" do
+      chat = open_pane
+      publish(chat, { "kind" => "approval", "text" => "[y/N] ", "header" => "fleet:1" })
+      settles { screen.string.include?("fleet:1") || nil }
+      screen.truncate(0) && screen.rewind
+
+      say(chat, { "v" => "unpublished", "header" => "fleet:1", "closed" => "" })
+      say(chat, { "v" => "unpublished", "header" => "fleet:2" })
+
+      expect(settles { screen.string.include?("fleet:2") ? screen.string : nil }).not_to include("\e[J")
     end
 
     it "redraws a changed header over its own rows and returns the cursor, without touching the input row" do

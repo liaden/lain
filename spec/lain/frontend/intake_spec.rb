@@ -231,6 +231,32 @@ RSpec.describe Lain::Frontend::Intake do
     end
   end
 
+  describe "what is published once a prompt is withdrawn" do
+    let(:decided_elsewhere) do
+      Class.new(String) { def decision = yield("decided by editor: denied") }.new("[y/N] ")
+    end
+
+    def closed_after_withdrawal(text)
+      Sync do |task|
+        reading = task.async { rail.read(:approval, text) }
+        pumped_until(task, reason: "a prompt published") { rail.published.kind == :approval }
+        reading.stop
+        rail.published
+      end
+    end
+
+    it "holds the sentence of a prompt another surface decided, as a frozen value" do
+      withdrawn = closed_after_withdrawal(decided_elsewhere)
+
+      expect([withdrawn.kind, withdrawn.closed, Ractor.shareable?(withdrawn)])
+        .to eq([nil, "decided by editor: denied", true])
+    end
+
+    it "holds nothing for a prompt nobody else decided, and before any prompt" do
+      expect([closed_after_withdrawal("[y/N] ").closed, rail.published.closed]).to eq(["", ""])
+    end
+  end
+
   describe "an attached producer" do
     it "is told at once when a prompt is published and when it is withdrawn" do
       producer = Object.new

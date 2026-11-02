@@ -256,21 +256,33 @@ module Lain
       def received(task, client, frame)
         case frame["v"]
         when "prompt" then prompted(task, client, frame)
-        when "unpublished" then idle(task, client, frame["header"].to_s)
+        when "unpublished" then idle(task, client, frame["header"].to_s, frame["closed"].to_s)
         when "context" then @commands.replace(Array(frame["commands"]))
         when "closed" then :closed
         end
       end
 
-      def idle(task, client, header)
+      def idle(task, client, header, closed = "")
         @wanted = header
         return headed if @idle
 
         @shown = @answered ? "" : @drawn["header"].to_s
+        decided_elsewhere(closed)
         stop_drawing
         @idle = true
         @below_echo = @answered
         @drawing = task.async { unprompted(client) }
+      end
+
+      # The prompt's rows stay on screen when another surface answered it, so
+      # they are taken back and replaced by the sentence saying who did.
+      def decided_elsewhere(closed)
+        return if closed.empty? || @answered || @drawn.equal?(NOTHING_DRAWN)
+
+        up = header_rows(@drawn) + @above.to_i
+        @tty.print_prompt("#{"\e[#{up}A" if up.positive?}\r\e[J#{CLEAR_ROW}#{closed}\n")
+        @shown = ""
+        @answered = true
       end
 
       # The header rows sit a known distance above the input row, so they are

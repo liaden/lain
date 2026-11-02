@@ -85,13 +85,17 @@ module Lain
       Eof = Data.define
 
       # The rail with nothing published. Generation 0 is before every prompt.
-      module Unpublished
-        def self.generation = 0
-        def self.kind = nil
-        def self.text = ""
-        def self.header = ""
-        def self.keys = {}
+      # `closed` is the sentence of a prompt another surface decided as it was
+      # withdrawn, and empty otherwise, so a producer reads one value either way.
+      Withdrawn = Data.define(:closed) do
+        def generation = 0
+        def kind = nil
+        def text = ""
+        def header = ""
+        def keys = {}
       end
+
+      Unpublished = Withdrawn.new(closed: "")
 
       # The rail nobody is watching: holds and closings are told to no one.
       module Unseen
@@ -330,7 +334,7 @@ module Lain
         heard.lazy.grep(Heard).first.text
       ensure
         unwinding do
-          withdraw(prompt)
+          withdraw(prompt, decision(text))
           @screen.close_prompt(text)
         end
       end
@@ -376,9 +380,15 @@ module Lain
         published
       end
 
-      def withdraw(prompt)
-        @lock.synchronize { @published = Unpublished if @published == prompt }
+      def withdraw(prompt, closed = "")
+        @lock.synchronize { @published = Withdrawn.new(closed: String.new(closed).freeze) if @published == prompt }
         tell
+      end
+
+      def decision(text)
+        sentence = +""
+        text.decision { |said| sentence = said } if text.respond_to?(:decision)
+        sentence
       end
 
       def tell = @lock.synchronize { @producers.values }.each { |told| nudge(told) }

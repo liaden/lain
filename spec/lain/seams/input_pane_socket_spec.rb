@@ -56,15 +56,23 @@ module InputPaneSocket
                 .take_while { |line| !line.nil? }.each { |line| log.puts(JSON.generate({ "heard" => line })) }
     end
 
-    approval = lambda do |task, command = "rm -rf build"|
+    approval = lambda do |task, command = "rm -rf build", elsewhere: false|
       queue = Lain::Approval::Parked::Queue.new(journal: Lain::Journal.new(io: out), timeout: 30)
       policy = Lain::Frontend::ApprovalPolicy.new(reader: ->(asked) { conductor.read_reply(asked) },
                                                  output: out, pastel: Pastel.new(enabled: false))
       watching = task.async { policy.watch(queue) }
+      if elsewhere
+        task.async do
+          Async::Task.current.sleep(0.05) until File.exist?(File.join(dir, "decide"))
+          queue.each { |pending| pending.deny(surface: "editor") }
+        end
+      end
       call = Lain::Effect::ToolCall.new(tool_use_id: "c1", name: "bash", input: { "command" => command })
       settled = queue.adjudicate(call, nil)
       log.puts(JSON.generate({ "approved" => settled.approved?, "surface" => settled.surface }))
       watching.stop
+      # The pane is told the withdrawal only if the chat outlives it by a tick.
+      Async::Task.current.sleep(0.05) until !elsewhere || File.exist?(File.join(dir, "done"))
     end
 
     countdown = lambda do |task|
@@ -103,7 +111,8 @@ module InputPaneSocket
     conductor.guard do
       Sync do |task|
         socket.start(task)
-        { "lines" => lines, "approval" => approval, "countdown" => countdown,
+        { "lines" => lines, "approval" => approval,
+          "decided_elsewhere" => ->(inner) { approval.call(inner, elsewhere: true) }, "countdown" => countdown,
           "parked" => parked, "running" => running,
           "long_approval" => ->(inner) { approval.call(inner, "FIRSTWORD " + ("x" * 2600) + " LASTWORD") } }.fetch(shape).call(task)
       end
@@ -486,6 +495,24 @@ RSpec.describe "a chat fed by an input pane", :seam do
 
     expect(cockpit.settles { cockpit.heard.find { |record| record.key?("approved") } })
       .to include({ "approved" => true })
+  end
+
+  it "retracts a prompt another surface decided and says who" do
+    cockpit_at("decided_elsewhere", prompt: "[y/N]")
+    File.write(File.join(dir, "decide"), "")
+
+    said = cockpit.settles { cockpit.screen[%r{\[y/N\].*\r\e\[J.*decided by editor: denied}m] }
+    File.write(File.join(dir, "done"), "")
+
+    expect(said).to be_a(String)
+  end
+
+  it "leaves a prompt answered in the pane as typed" do
+    cockpit_at("approval", prompt: "[y/N]")
+    cockpit.type("y\r")
+    cockpit.settles { cockpit.heard.find { |record| record.key?("approved") } }
+
+    expect(cockpit.quiet { cockpit.screen.include?("decided by") }).to be(false)
   end
 
   it "keeps the y/N and the deadline on the last row of a 2600-character call at 26 rows, and says what is hidden" do

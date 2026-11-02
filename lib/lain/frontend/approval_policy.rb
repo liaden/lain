@@ -107,6 +107,12 @@ module Lain
           yield "-- #{closing}" if decided_elsewhere?
         end
 
+        # Yields the sentence a pane prints in place of the prompt when its call
+        # was decided anywhere else, and nothing while it is undecided.
+        def decision
+          yield closing if decided_elsewhere?
+        end
+
         # Yields the one line announcing this prompt while it waits its turn.
         def queued = yield format(QUEUED, call:)
 
