@@ -1396,28 +1396,30 @@ module Lain
         #   level when nil
         # @param lane [String] the attempt's lane, so a retried step's test_engineer
         #   spawn is not the failed attempt's
+        # @param name [String, nil] the issue, which names the test file at a
+        #   level whose tests mirror no source
         # @return [Red]
         # @raise [Error] when the project declares no test layout, or declares
         #   no level whose tests mirror their sources; when the test_engineer
         #   child leaves no tests the layout accepts; when the subject's tests
         #   already pass before any work is done, or a carried commit's no
         #   longer fail; or when git refuses the failing tests' commit
-        def call(criteria, worker_env, subject:, since:, lane:, level: nil)
+        def call(criteria, worker_env, subject:, since:, lane:, level: nil, name: nil)
           guard = Lain::TestLayout::Guard.new(layout: declared, root: worker_env.cwd)
           level ||= default_level(guard.layout)
-          target = guard.layout.mapping.test_path(subject, level:)
+          target = guard.layout.mapping.test_path(subject, level:, name:)
           carried = earlier(worker_env.cwd, target, criteria.digest, since)
           return carry(criteria, worker_env, target, carried) unless carried.nil?
 
           @test_layout.declare(root: worker_env.cwd, path: target)
-          fresh(criteria, worker_env, guard, subject:, level:, lane:)
+          fresh(criteria, worker_env, guard, subject:, level:, lane:, name:)
         end
 
         private
 
-        def fresh(criteria, worker_env, guard, subject:, level:, lane:)
+        def fresh(criteria, worker_env, guard, subject:, level:, lane:, name:)
           before = dirty(worker_env.cwd)
-          record = generated(criteria, worker_env, guard, subject:, level:, lane:)
+          record = generated(criteria, worker_env, guard, subject:, level:, lane:, name:)
           harness = @harness.call(worker_env.cwd)
           stray!(dirty(worker_env.cwd) - before - [record.target], harness.adapter)
           registered = register(harness.adapter, worker_env.cwd, subject)
@@ -1452,10 +1454,10 @@ module Lain
                        "no level to generate the issue's tests at"
         end
 
-        def generated(criteria, worker_env, guard, subject:, level:, lane:)
+        def generated(criteria, worker_env, guard, subject:, level:, lane:, name:)
           lent = @role_spawn.within(worker_env, lane:)
           record = Lain::Gherkin::TestGeneration.new(renderer: @renderer, role_spawn: lent, guard:)
-                                                .call(criteria, subject:, level:)
+                                                .call(criteria, subject:, level:, name:)
           return record if record.generated?
 
           raise Error, "the test_engineer child #{ungenerated(record)}, so nothing was committed"
@@ -1505,10 +1507,7 @@ module Lain
           path == adapter.lockfile || (!adapter.build_dir.nil? && path.start_with?(adapter.build_dir))
         end
 
-        def tests_tree?(path)
-          roots = @layout.level_roots.values.reject { |root| root == Lain::TestLayout::INLINE }
-          roots.any? { |root| path.start_with?("#{root.split("/").first}/") }
-        end
+        def tests_tree?(path) = @layout.mapping.test_trees.any? { |tree| path.start_with?("#{tree}/") }
 
         def dirty(root)
           Lain::Isolation::Checkout.of(root, shell_out_factory: @shell_out_factory)

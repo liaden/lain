@@ -14,6 +14,7 @@ module Lain
       Level = Data.define(:name, :root, :shape) do
         def holds?(path) = shape != :inline && (path == root || path.start_with?("#{root}/"))
         def mirrored? = shape == :mirrored
+        def flat? = shape == :flat
       end
 
       attr_reader :levels
@@ -91,25 +92,38 @@ module Lain
         @layout.source_roots.map { |root| joined(root, File.dirname(relative), name) }
       end
 
+      # A flat level's root is resolved against the source's package, the
+      # directory its source root sits in, so each member of a workspace keeps
+      # its own `tests/`, as cargo runs them.
+      #
       # @param source [String] a source file under one of the source roots
       # @param level [String] a level the layout declares
+      # @param name [String, nil] what a flat level's test file is named for;
+      #   a mirrored or inline level takes its name from the source
       # @return [String] where that source's tests at that level belong
-      # @raise [Unplaceable] when no layout is in force, the level mirrors no
-      #   source, or the source is outside every source root
-      def test_path(source, level:)
+      # @raise [Unplaceable] when no layout is in force, a flat level is given
+      #   no name, or the source is outside every source root
+      def test_path(source, level:, name: nil)
         unless @layout.in_force?
           raise Unplaceable, "no test layout is in force, so a test for #{source} has nowhere to go"
         end
 
         target = self.level(level)
-        relative = relative_to_source_root(source)
+        root = source_root_of(source)
         return source if target.shape == :inline
+        return flat_path(target, root, name) if target.flat?
 
-        unless target.mirrored?
-          raise Unplaceable, "the #{target.name} level's tests under #{target.root} do not mirror a source file"
-        end
-
+        relative = source.delete_prefix("#{root}/")
         joined(target.root, File.dirname(relative), @test_file.test_name(File.basename(relative)))
+      end
+
+      # Where a red step may leave helpers beside its tests: the top of each
+      # mirrored root, and each package's own flat root.
+      # @return [Array<String>]
+      def test_trees
+        flat = @levels.select(&:flat?).product(@layout.source_roots)
+                      .map { |level, root| joined(File.dirname(root), level.root) }
+        (@trees + flat).uniq
       end
 
       private
@@ -125,14 +139,21 @@ module Lain
         @layout.preset.mirrors ? :mirrored : :flat
       end
 
-      def relative_to_source_root(source)
+      def source_root_of(source)
         root = @layout.source_roots.select { |candidate| source.start_with?("#{candidate}/") }.max_by(&:length)
-        unless root && source.end_with?(@test_file.extension)
-          raise Unplaceable, "#{source} is not a #{@test_file.extension} file under a source root " \
-                             "(#{@layout.source_roots.join(", ")})"
+        return root if root && source.end_with?(@test_file.extension)
+
+        raise Unplaceable, "#{source} is not a #{@test_file.extension} file under a source root " \
+                           "(#{@layout.source_roots.join(", ")})"
+      end
+
+      def flat_path(level, source_root, name)
+        if name.nil?
+          raise Unplaceable, "the #{level.name} level's tests under #{level.root} mirror no source file, " \
+                             "so its test file needs a name and none was given"
         end
 
-        source.delete_prefix("#{root}/")
+        joined(File.dirname(source_root), level.root, @test_file.test_name("#{name}#{@test_file.extension}"))
       end
 
       # `File.dirname` answers "." for a file at a root's top, which must not

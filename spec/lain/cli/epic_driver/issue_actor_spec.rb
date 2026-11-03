@@ -268,6 +268,36 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
       .and end_with("Working directory: #{checkout}")
   end
 
+  context "with a red step that records what it was asked" do
+    let(:script) { [text_response("plan done")] }
+    let(:asked) { [] }
+    let(:recording) do
+      seen = asked
+      red = Lain::CLI::EpicDriver::IssueTests::Red.new(
+        record: Lain::CLI::EpicDriver::IssueTests::Carried.new(target:, criteria_digest: "blake3:recorded"),
+        run: nil, sha: "0" * 40
+      )
+      Object.new.tap do |step|
+        step.define_singleton_method(:call) do |_criteria, _worker_env, **options|
+          seen << options
+          red
+        end
+      end
+    end
+
+    it "names the red step's tests for the issue, so a flat level's file is the issue's own" do
+      supervising do |supervisor|
+        described_class.new(slug: "demo", supervisor:, subagent: build.method(:epic_subagent),
+                            renderer: backend.library.renderer, home:, plan:, repo_root: repo, tests: recording,
+                            lanes: child_lanes)
+                       .call("a", subject: "app/models/order.rb", level: "integration").actor.settle
+      end
+
+      expect(asked.map { |options| options.slice(:subject, :level, :name) })
+        .to eq([{ subject: "app/models/order.rb", level: "integration", name: "a" }])
+    end
+  end
+
   # Scenario: the implementer is handed the issue it was approved on
   it "hands the implementer the approved issue's prose and added scenarios, and names no plans/ path" do
     supervising { |supervisor| launch(supervisor, "a").actor.settle }

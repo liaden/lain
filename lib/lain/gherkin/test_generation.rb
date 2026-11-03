@@ -68,10 +68,12 @@ module Lain
       # @param criteria [Criteria] an approved Criteria
       # @param subject [String] the source file the tests are for, relative to the root
       # @param level [String] a level the layout declares
+      # @param name [String, nil] names the test file at a level whose tests
+      #   mirror no source
       # @return [Record]
       # @raise [TestLayout::Unplaceable] before anything is spawned, when the
       #   layout has nowhere to put the subject's tests
-      def call(criteria, subject:, level:)
+      def call(criteria, subject:, level:, name: nil)
         mechanical, rubric_scenarios = criteria.partition(&:mechanical)
         if mechanical.empty?
           # Raised by {#call} when EVERY scenario in the Criteria is rubric-flagged
@@ -85,7 +87,7 @@ module Lain
                        "tests for -- every scenario is rubric-flagged"
         end
 
-        target = @guard.layout.mapping.test_path(subject, level:)
+        target = @guard.layout.mapping.test_path(subject, level:, name:)
         before = digest(target)
         result = @role_spawn.call(:test_engineer, :fresh, prompt(mechanical, subject, level, target))
         Record.new(result:, criteria_digest: criteria.digest, rubric_scenarios:, target:, before:,
@@ -103,6 +105,9 @@ module Lain
         if target == subject
           "Write every test below in a `#[cfg(test)]` module inside `#{subject}`, at the #{level} level. " \
             "Not in a mirrored file, and not in another directory."
+        elsif @guard.layout.mapping.level(level).flat?
+          "Write every test below into `#{target}`: this issue's integration test file at the #{level} " \
+            "level, exercising `#{subject}` through its public interface. Not another file."
         else
           "Write every test below into `#{target}`: the file this project's test layout mirrors from\n" \
             "`#{subject}` at the #{level} level. Not a sibling file, and not another directory."

@@ -131,6 +131,20 @@ RSpec.describe Lain::Gherkin::TestGeneration do
       expect(prompt_of(provider)).not_to include("the file this project's test layout mirrors")
     end
 
+    it "tells a cargo test engineer an integration test goes in the named file of the subject's package" do
+      provider = mock(text_response("wrote the test"))
+      layout = Lain::TestLayout.from({ "preset" => "cargo", "source_roots" => %w[crates/store/src] }, path: nil)
+      workspace = Lain::TestLayout::Guard.new(layout:, root:)
+
+      record = described_class.new(renderer:, role_spawn: role_spawn(provider:), guard: workspace)
+                              .call(criteria, subject: "crates/store/src/lib.rs", level: "integration",
+                                              name: "store-crate")
+
+      expect(record.target).to eq("crates/store/tests/store-crate.rs")
+      expect(prompt_of(provider)).to include("`crates/store/tests/store-crate.rs`", "`crates/store/src/lib.rs`")
+      expect(prompt_of(provider)).not_to include("mirrors")
+    end
+
     it "refuses before spawning when the layout cannot place the subject's tests" do
       provider = mock(text_response("unused"))
 

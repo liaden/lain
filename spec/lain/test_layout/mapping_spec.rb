@@ -34,9 +34,29 @@ RSpec.describe Lain::TestLayout::Mapping do
       expect(mapping({ "preset" => "cargo" }).test_path("src/order.rs", level: "unit")).to eq("src/order.rs")
     end
 
-    it "refuses to place a test at a level that mirrors no source" do
-      expect { mapping({ "preset" => "cargo" }).test_path("src/order.rs", level: "integration") }
-        .to raise_error(Lain::TestLayout::Unplaceable, /integration.*tests/)
+    context "with a flat level, whose tests mirror no source file" do
+      let(:workspace) { mapping({ "preset" => "cargo", "source_roots" => %w[src crates/store/src] }) }
+
+      it "names the test file for the caller, under the flat root of the subject's own package" do
+        expect(workspace.test_path("crates/store/src/lib.rs", level: "integration", name: "store-crate"))
+          .to eq("crates/store/tests/store-crate.rs")
+      end
+
+      it "puts a subject under a top-level source root in the flat root at the project top" do
+        expect(workspace.test_path("src/order.rs", level: "integration", name: "orders"))
+          .to eq("tests/orders.rs")
+      end
+
+      it "refuses a placement given no name, saying why one is needed" do
+        expect { workspace.test_path("src/order.rs", level: "integration") }
+          .to raise_error(Lain::TestLayout::Unplaceable, /integration.*tests.*name/)
+      end
+    end
+
+    it "lists the flat root in each source root's package among the test trees" do
+      workspace = mapping({ "preset" => "cargo", "source_roots" => %w[src crates/store/src] })
+
+      expect([workspace.test_trees, rspec.test_trees]).to eq([%w[tests crates/store/tests], %w[spec]])
     end
 
     it "refuses a source outside every source root, naming the roots" do

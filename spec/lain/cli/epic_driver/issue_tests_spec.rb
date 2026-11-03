@@ -119,11 +119,11 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
   # checkout was cut from -- never from the checkout, which a gitignored
   # config never reaches.
   def step(provider, harness: rspec, since: git(repo, "rev-parse", "HEAD"), lane: "issue.demo.a.1",
-           subject: "app/models/order.rb", level: nil)
+           subject: "app/models/order.rb", level: nil, name: nil)
     layout = Lain::Config.test_layout(root: repo)
     described_class.new(renderer:, role_spawn: role_spawn(provider), layout:, harness:,
                         test_layout: Lain::Middleware::GuardTestLayout::Run.new(layout:, root: repo))
-                   .call(criteria, worker_env, subject:, since:, lane:, level:)
+                   .call(criteria, worker_env, subject:, since:, lane:, level:, name:)
   end
 
   # What an earlier run's red step left on a kept branch: the tests, committed
@@ -434,6 +434,54 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
                           extra: "mkdir -p target/debug && printf x > target/debug/out")
 
       expect(git(held, "show", "--name-only", "--format=", result.sha).split("\n").sort).to eq(["src/lib.rs", meeting])
+    end
+  end
+
+  context "with the cargo preset and an integration level in a workspace member" do
+    let(:subject_file) { "crates/store/src/lib.rs" }
+    let(:integration) { "crates/store/tests/store-crate.rs" }
+    let(:helper) { "crates/store/tests/common/mod.rs" }
+
+    before do
+      File.write(File.join(repo, ".lain", "config.rb"),
+                 "tests preset: :cargo, source_roots: %w[src crates/store/src]\n")
+      trust_project(repo)
+      FileUtils.mkdir_p(File.join(held, "crates/store/tests/common"))
+    end
+
+    def cargo_failing
+      canned = File.join(@root, "cargo.out")
+      File.write(canned, "test round_trips ... FAILED\n")
+      adapter = Class.new(Lain::Grader::TestHarness::Adapter::Cargo) do
+        define_method(:command) { |**| ["cat", canned] }
+      end.new(held)
+      ->(root) { Lain::Grader::TestHarness.new(root, adapter:) }
+    end
+
+    def integration_step(since: git(repo, "rev-parse", "HEAD"))
+      test = "#[test]\nfn round_trips() {}\n"
+      provider = mock(tool_response(["w1", "write_file", { "path" => integration, "content" => test }]),
+                      tool_response(["w2", "write_file", { "path" => helper, "content" => "pub fn seed() {}\n" }]),
+                      text_response("done"))
+      step(provider, harness: cargo_failing, subject: subject_file, level: "integration", name: "store-crate", since:)
+    end
+
+    it "writes the tests into the member's own tests/ file named for the issue, helper beside it, and commits them" do
+      result = integration_step
+
+      expect(result.record.target).to eq(integration)
+      expect(git(held, "show", "--name-only", "--format=", result.sha).split("\n")).to eq([integration])
+    end
+
+    it "carries an earlier run's commit of the same integration file forward" do
+      since = git(repo, "rev-parse", "HEAD")
+      earlier = integration_step(since:).sha
+      provider = mock
+
+      result = step(provider, harness: cargo_failing, subject: subject_file, level: "integration",
+                              name: "store-crate", since:)
+
+      expect([result.sha, result.carried, provider.call_count]).to eq([earlier, true, 0])
     end
   end
 
