@@ -93,6 +93,21 @@ RSpec.describe Lain::TestLayout::Mapping do
       expect(rspec.level_of("spec/seam/models/order_spec.rb").name).to eq("seam")
     end
 
+    context "with a flat level in a workspace of packages" do
+      let(:workspace) { mapping({ "preset" => "cargo", "source_roots" => %w[crates/store/src crates/asr/src] }) }
+
+      it "answers the level test_path placed a package's test at" do
+        placed = workspace.test_path("crates/store/src/lib.rs", level: "integration", name: "store-crate")
+
+        expect([placed, workspace.level_of(placed)&.name]).to eq(["crates/store/tests/store-crate.rs", "integration"])
+      end
+
+      it "answers the level for every package's own flat root, and nil for another package's lookalike" do
+        expect([workspace.level_of("crates/asr/tests/x.rs")&.name, workspace.level_of("crates/other/tests/x.rs")])
+          .to eq(["integration", nil])
+      end
+    end
+
     it "is nil for a path under no level root, including one that merely shares a prefix" do
       expect([rspec.level_of("app/order.rb"), rspec.level_of("spec/unitary/order_spec.rb")]).to eq([nil, nil])
     end

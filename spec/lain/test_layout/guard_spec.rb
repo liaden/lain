@@ -354,6 +354,14 @@ RSpec.describe Lain::TestLayout::Guard do
     end
   end
 
+  it "labels a package's own flat test as unmirrored, not outside the test tree" do
+    layout = Lain::TestLayout.from({ "preset" => "cargo", "source_roots" => %w[crates/store/src crates/asr/src] },
+                                   path: nil)
+    cargo = described_class.new(layout:, root: layout_mini)
+
+    expect(cargo.check_path("crates/asr/tests/x.rs")).to have_attributes(outcome: :unguarded, rule: :unmirrored)
+  end
+
   it "hands back a deeply frozen verdict" do
     expect(guard.check("spec/unit/models/order_extra_spec.rb", spec_for("Order"))).to be_deeply_frozen
   end

@@ -24,6 +24,7 @@ module Lain
         @layout = layout
         @test_file = layout.preset.test_file
         @levels = layout.level_roots.map { |name, root| Level.new(name:, root:, shape: shape_of(root)) }.freeze
+        @package_roots = package_roots_by_level
         @trees = @levels.select(&:mirrored?).map { |level| level.root.split("/").first }.uniq.freeze
         freeze
       end
@@ -38,9 +39,14 @@ module Lain
       end
 
       # Level roots never nest (the `tests` reader refuses it), so at most
-      # one holds a path.
+      # one holds a path. A flat level holds the root of every package, the
+      # same ones {#test_path} places into.
       # @return [Level, nil] nil for a path under no level root
-      def level_of(path) = @levels.find { |level| level.holds?(path) }
+      def level_of(path)
+        @levels.find do |level|
+          level.holds?(path) || @package_roots.fetch(level.name, []).any? { |root| path.start_with?("#{root}/") }
+        end
+      end
 
       # The level a test that names none belongs to, in the order the answer is
       # settled: what the table DECLARES; else the only level that mirrors, if
@@ -121,12 +127,16 @@ module Lain
       # mirrored root, and each package's own flat root.
       # @return [Array<String>]
       def test_trees
-        flat = @levels.select(&:flat?).product(@layout.source_roots)
-                      .map { |level, root| joined(File.dirname(root), level.root) }
-        (@trees + flat).uniq
+        (@trees + @package_roots.values.flatten).uniq
       end
 
       private
+
+      def package_roots_by_level
+        @levels.select(&:flat?).to_h do |level|
+          [level.name, @layout.source_roots.map { |root| joined(File.dirname(root), level.root) }.uniq]
+        end
+      end
 
       def placing_levels
         mirrored = @levels.select(&:mirrored?)
