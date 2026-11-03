@@ -46,33 +46,10 @@ RSpec.describe Lain::Project::Resolver do
     path
   end
 
-  # Every variable that can point git at a repository other than the one named
-  # on the command line, mapped to nil so `spawn` unsets it in the child.
-  #
-  # **Scrub by reflex when you build a git fixture in this repo.** `git` exports
-  # these into the environment of every HOOK it runs, so under `pre-commit` a
-  # fixture repo inherits `GIT_INDEX_FILE` and commits against LAIN'S index --
-  # observed as `error: invalid object … / error: Error building trees` while
-  # committing an empty tree in a tmpdir. Outside a hook the variables are
-  # unset, so the example passes everywhere except the one moment that matters.
-  #
-  # This card's own subject, turned on itself: the resolver exists to stop
-  # inherited git environment from deciding a project root, and its spec was
-  # itself being decided by inherited git environment.
-  #
-  # `GIT_INDEX_FILE`, `GIT_COMMON_DIR`, `GIT_WORK_TREE`, `GIT_CONFIG_COUNT` and
-  # `GIT_CONFIG_PARAMETERS` are the ones measured to actually redirect git (a
-  # command-line `--git-dir` already defeats `GIT_DIR`); the rest cost nothing.
-  def git_env
-    %w[
-      GIT_INDEX_FILE GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_CEILING_DIRECTORIES
-      GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
-      GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_PREFIX GIT_NAMESPACE
-    ].to_h { |name| [name, nil] }
-  end
-
+  # Scrub by reflex when you build a git fixture: a hook exports GIT_INDEX_FILE and kin, and
+  # `SeedRepo::SCRUB` is the one list of them.
   def git(*args, chdir:)
-    out, err, status = Open3.capture3(git_env, "git", *args, chdir:)
+    out, err, status = Open3.capture3(SeedRepo::SCRUB, "git", *args, chdir:)
     raise "git #{args.join(" ")} failed: #{err}" unless status.success?
 
     out.strip
@@ -425,7 +402,7 @@ RSpec.describe Lain::Project::Resolver do
     # the child's git environment is exactly what the example says it is and
     # nothing the parent happened to be carrying.
     def shell_toplevel(cwd, overrides)
-      Open3.capture3(git_env.merge(overrides), "git", "rev-parse", "--show-toplevel", chdir: cwd).first.strip
+      Open3.capture3(SeedRepo::SCRUB.merge(overrides), "git", "rev-parse", "--show-toplevel", chdir: cwd).first.strip
     end
   end
 

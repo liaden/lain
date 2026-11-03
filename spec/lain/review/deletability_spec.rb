@@ -594,7 +594,8 @@ RSpec.describe "the deletion map", :seam do
       # A leading dot is a scratch artifact (a handback note), never a tree path.
       cited = section.scan(%r{`(\w[\w./-]*\.(?:rb|lua|md|txt))`}).flatten.uniq
       # One listing, not a `**` glob per path: the glob walked tmp/worktrees, 15.0s against 0.03s.
-      tree = IO.popen(["git", "-C", DeletionMap::ROOT.to_s, "ls-files", "-co", "--exclude-standard"], &:readlines)
+      tree = IO.popen(SeedRepo::SCRUB, ["git", "-C", DeletionMap::ROOT.to_s, "ls-files", "-co", "--exclude-standard"],
+                      &:readlines)
                .map(&:chomp).select { |file| DeletionMap::ROOT.join(file).exist? }
       missing = cited.reject { |path| tree.any? { |file| file == path || file.end_with?("/#{path}") } }
 

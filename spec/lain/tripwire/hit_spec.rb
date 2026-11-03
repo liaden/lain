@@ -24,8 +24,8 @@ RSpec.describe Lain::Tripwire::Hit, :seam do
   let(:profile) { Lain::Confine::Profile.workspace(root: project, home:, tmpdir: mkdir("tmp")) }
   # Spec git reads no user config, and a hook run must not build against an outer index.
   let(:env) do
-    { "GIT_CONFIG_GLOBAL" => File::NULL, "GIT_CONFIG_NOSYSTEM" => "1", "HOME" => home, "LC_ALL" => "C",
-      "GIT_INDEX_FILE" => nil, "GIT_DIR" => nil, "GIT_WORK_TREE" => nil }
+    SeedRepo::SCRUB.merge("GIT_CONFIG_GLOBAL" => File::NULL, "GIT_CONFIG_NOSYSTEM" => "1", "HOME" => home,
+                          "LC_ALL" => "C")
   end
   let(:stops) { Lain::Tripwire::Stops.new }
   let(:journal) { [] }
@@ -45,7 +45,8 @@ RSpec.describe Lain::Tripwire::Hit, :seam do
     path
   end
 
-  def git(*args) = system(env, "git", *args, chdir: project, exception: true, out: File::NULL)
+  # The scrub guard reads the constant at the call site.
+  def git(*args) = system(env.merge(SeedRepo::SCRUB), "git", *args, chdir: project, exception: true, out: File::NULL)
 
   def sandboxed(argv, extra = {})
     command = Lain::Confine::Bwrap.new(fence:).wrap(Lain::Shell::Term.of(argv), profile, trace_fd: 3)
