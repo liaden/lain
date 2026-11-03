@@ -391,6 +391,7 @@ Headlines only. Every one is verified, and the full account of each is in
   enclosing namespace. Root-qualify (`::Lain::Sensitivity`) at such a site.
 - **`pre-commit` exports `GIT_INDEX_FILE`** into every hook, so a fixture that shells to `git`
   without scrubbing builds against lain's index — passes every normal run, fails at commit time.
+  A linked worktree's hook also exports `GIT_DIR`, so scrub both.
 - **Mutation harnesses lie by default here.** Same-size mutants collide with bootsnap's
   `(mtime-seconds, size)` key and run against stale bytecode. Stamp mtimes, wrap the run in
   `ensure`, and score on **the count EQUALLING the captured baseline** — a mutant that does not

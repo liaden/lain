@@ -1423,11 +1423,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       commit_sha
       bodies = colliding_prefix
       bodies.each do |body|
-        IO.popen(["git", "-C", root.to_s, "hash-object", "-t", "commit", "-w", "--stdin", "--literally"], "r+") do |io|
-          io.write(body)
-          io.close_write
-          io.read
-        end
+        SeedRepo.git(root.to_s, "hash-object", "-t", "commit", "-w", "--stdin", "--literally", input: body)
       end
       prefix = Digest::SHA1.hexdigest("commit #{bodies.first.bytesize}\0#{bodies.first}")[0, 4]
 
