@@ -1347,7 +1347,7 @@ module Lain
           return ->(_root) { raise Lain::Error, UNDECLARED } unless layout.in_force?
 
           lambda do |root|
-            adapter = Lain::Grader::TestHarness::Adapter.for(layout.preset.name).call(root)
+            adapter = Lain::Grader::TestHarness::Adapter.for(layout.preset.name).call(root, mapping: layout.mapping)
             Lain::Grader::TestHarness.new(root, adapter:, timeout: layout.timeout)
           end
         end

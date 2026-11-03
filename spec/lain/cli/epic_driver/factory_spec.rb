@@ -1223,6 +1223,15 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
       expect(Lain::Grader::TestHarness).to have_received(:new).with(repo, adapter: anything, timeout: 1800)
     end
 
+    it "builds an adapter that names a missing package's manifest by the layout's source roots" do
+      layout = Lain::TestLayout.from({ "preset" => "cargo", "source_roots" => ["crates/a/src"] }, path: nil)
+      harness = Lain::CLI::EpicDriver::DeclaredHarness.for(layout).call(repo)
+      allow(harness.adapter).to receive(:packages).and_return({})
+
+      expect { harness.adapter.command(paths: ["crates/a/src/foo/tests/x.rs"]) }
+        .to raise_error(Lain::Error, %r{no crates/a/Cargo\.toml})
+    end
+
     it "keeps the harness's 300 when the layout names none" do
       allow(Lain::Grader::TestHarness).to receive(:new).and_call_original
 

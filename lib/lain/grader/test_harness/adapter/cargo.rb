@@ -27,8 +27,11 @@ module Lain
           # @param root [String] the workspace directory cargo runs in
           # @param metadata [#call] returns `cargo metadata --no-deps` JSON; injected
           #   so a spec needs no cargo
-          def initialize(root, metadata: -> { read_metadata(root) })
+          # @param mapping [#package_dir, nil] the project's test layout mapping; without one, or for a
+          #   path it places in no package, a package is the directory above the path's `src/` or `tests/`
+          def initialize(root, metadata: -> { read_metadata(root) }, mapping: nil)
             @root = root.to_s
+            @mapping = mapping
             @metadata = metadata
           end
 
@@ -39,11 +42,11 @@ module Lain
           def build_dir = "target/"
 
           # A missing-item error is accepted in the subject's own file, or in an integration test file of
-          # the subject's own package, whose imports are what the subject lacks. Neither can tell a typo
-          # in a test-local name from an item not yet written, so either reads as awaiting.
+          # the subject's own package when it names the subject's crate: rustc says "in crate `store`" or
+          # quotes `store::x`, where a typo in a test-local name names no crate.
           def awaiting_subject?(errors, subject:, target: subject, **)
-            awaited = [subject, *(target if target != subject && same_package?(subject, target))]
-            errors.any? && errors.all? { |text| awaited.include?(MISSING_ITEM.match(text)&.[](:file)) }
+            crate = target != subject && same_package?(subject, target) ? owner_crate(subject) : nil
+            errors.any? && errors.all? { |text| awaited_error?(text, subject:, target:, crate:) }
           end
 
           # A new file is not compiled until its parent module declares it, so the filtered run would
@@ -142,12 +145,25 @@ module Lain
             place(name, Pathname.new(absolute).relative_path_from(dir).to_s)
           end
 
-          # The package a path names by convention, the directory above its `src/` or `tests/`.
           def expected_manifest(path)
+            dir = @mapping&.package_dir(path)
+            return conventional_manifest(path) unless dir
+
+            File.join(*[dir, "Cargo.toml"].reject { |part| part == "." })
+          end
+
+          def conventional_manifest(path)
             parts = path.split("/")
             above = parts.rindex { |part| %w[src tests].include?(part) } || (parts.size - 1)
             File.join(*parts.take(above), "Cargo.toml")
           end
+
+          def awaited_error?(text, subject:, target:, crate:)
+            file = MISSING_ITEM.match(text)&.[](:file)
+            file == subject || (file == target && crate && text.match?(/`#{Regexp.escape(crate)}(?:::|`)/))
+          end
+
+          def owner_crate(path) = owner(File.expand_path(path, @root)).first.tr("-", "_")
 
           def same_package?(subject, target)
             owners = [subject, target].map { |path| owner(File.expand_path(path, @root))&.first }

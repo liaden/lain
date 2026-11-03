@@ -88,6 +88,43 @@ RSpec.describe Lain::TestLayout::Mapping do
     end
   end
 
+  describe "#package_dir" do
+    let(:workspace) { mapping({ "preset" => "cargo", "source_roots" => %w[crates/store/src crates/asr/src] }) }
+
+    it "names the directory above the source root holding the path, deepest first" do
+      expect(workspace.package_dir("crates/store/tests/x.rs")).to eq("crates/store")
+    end
+
+    it "is nil for a path in no source root's package" do
+      expect(workspace.package_dir("crates/other/tests/x.rs")).to be_nil
+    end
+
+    it "is nil for a workspace path when only a top-level source root is declared" do
+      expect(mapping({ "preset" => "cargo" }).package_dir("crates/store/tests/x.rs")).to be_nil
+    end
+
+    it "is nil for a path under a package but outside its source and level roots" do
+      expect(workspace.package_dir("crates/store/benches/x.rs")).to be_nil
+    end
+
+    it "gives a package under a top-level one its own directory, and the top its own" do
+      nested = mapping({ "preset" => "cargo", "source_roots" => %w[src crates/a/src] })
+
+      expect(%w[crates/a/tests/x.rs crates/a/src/y.rs tests/x.rs src/z.rs].map { |path| nested.package_dir(path) })
+        .to eq(%w[crates/a crates/a . .])
+    end
+
+    it "prefers the deepest place when a shallower package's test root also holds the path" do
+      overlapping = mapping({ "preset" => "cargo", "source_roots" => %w[a/src a/tests/z/src] })
+
+      expect(overlapping.package_dir("a/tests/z/src/x.rs")).to eq("a/tests/z")
+    end
+
+    it "is the project top for a source root at the top" do
+      expect(mapping({ "preset" => "cargo" }).package_dir("tests/x.rs")).to eq(".")
+    end
+  end
+
   describe "#level_of" do
     it "names the level whose root holds the path" do
       expect(rspec.level_of("spec/seam/models/order_spec.rb").name).to eq("seam")

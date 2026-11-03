@@ -56,9 +56,9 @@ module Lain
         # silently pretending an unwritten adapter exists.
         PROBES = [
           Probe.new(framework: "rspec", looks_for: "a Gemfile beside a spec/ directory",
-                    match: method(:rspec_root?), build: ->(_root) { Rspec.new }),
+                    match: method(:rspec_root?), build: ->(_root, **) { Rspec.new }),
           Probe.new(framework: "cargo", looks_for: "nothing: a tests preset names it",
-                    match: method(:declared_only?), build: ->(root) { Cargo.new(root) }),
+                    match: method(:declared_only?), build: ->(root, mapping: nil) { Cargo.new(root, mapping:) }),
           Probe.new(framework: "jest", looks_for: %(a package.json declaring "jest"),
                     match: method(:jest_root?), build: nil),
           Probe.new(framework: "pytest", looks_for: "a pyproject.toml or a pytest.ini",
@@ -85,7 +85,7 @@ module Lain
         # The adapter builder for a framework a project DECLARED, so no file has
         # to betray it: a checkout without a Gemfile is still an rspec project.
         # @param name [String] a framework name, as a test layout's preset names it
-        # @return [#call] `root -> adapter`
+        # @return [#call] `(root, mapping: nil) -> adapter`; the mapping is the project's TestLayout::Mapping
         # @raise [Error] naming the framework when no probe has an adapter for it
         def self.for(name)
           probe = PROBES.find { |candidate| candidate.framework == name }

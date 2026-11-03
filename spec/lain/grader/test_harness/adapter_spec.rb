@@ -14,6 +14,23 @@ RSpec.describe Lain::Grader::TestHarness::Adapter do
       end
     end
 
+    it "hands the project's mapping to the cargo adapter" do
+      layout = Lain::TestLayout.from({ "preset" => "cargo", "source_roots" => ["crates/store/src"] }, path: nil)
+      Dir.mktmpdir do |dir|
+        cargo = described_class.for("cargo").call(dir, mapping: layout.mapping)
+        allow(cargo).to receive(:packages).and_return({})
+
+        expect { cargo.command(paths: ["crates/store/tests/x.rs"]) }
+          .to raise_error(Lain::Error, %r{no crates/store/Cargo\.toml})
+      end
+    end
+
+    it "builds rspec given a mapping it has no use for" do
+      Dir.mktmpdir do |dir|
+        expect(described_class.for("rspec").call(dir, mapping: nil)).to be_a(described_class::Rspec)
+      end
+    end
+
     it "still detects rspec in a directory that also holds a Cargo.toml" do
       Dir.mktmpdir do |dir|
         FileUtils.mkdir_p(File.join(dir, "spec"))

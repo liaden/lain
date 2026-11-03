@@ -97,10 +97,54 @@ RSpec.describe Lain::Grader::TestHarness::Adapter::Cargo do
     it "refuses a path no package owns" do
       expect { argv("elsewhere/x.rs") }.to raise_error(Lain::Error, %r{elsewhere/x.rs.*no package})
     end
+  end
 
-    it "names where the missing package's manifest belongs, for a crate not yet created" do
-      expect { argv("crates/store/tests/store-crate.rs") }
-        .to raise_error(Lain::Error, %r{no package.*crates/store/Cargo\.toml})
+  describe "naming the manifest a package lacks" do
+    around do |example|
+      Dir.mktmpdir { |dir| @dir = dir and example.run }
+    end
+
+    let(:layout) do
+      Lain::TestLayout.from({ "preset" => "cargo", "source_roots" => %w[crates/store/src crates/asr/src] }, path: nil)
+    end
+    let(:adapter) do
+      described_class.new(@dir, metadata: -> { fixture("workspace_metadata.json") }, mapping: layout.mapping)
+    end
+
+    def refusal(path, with: adapter)
+      with.command(paths: [path])
+    rescue Lain::Error => e
+      e.message
+    end
+
+    it "names the layout's package manifest for a crate not yet created, though the root has one" do
+      File.write(File.join(@dir, "Cargo.toml"), "")
+
+      expect(refusal("crates/store/tests/store-crate.rs")).to include("no crates/store/Cargo.toml")
+    end
+
+    it "takes the package from the layout, not from the nearest src or tests segment" do
+      nested = Lain::TestLayout.from({ "preset" => "cargo", "source_roots" => ["crates/a/src"] }, path: nil)
+      cargo = described_class.new(@dir, metadata: -> { fixture("workspace_metadata.json") }, mapping: nested.mapping)
+
+      expect(refusal("crates/a/src/foo/tests/x.rs", with: cargo)).to include("no crates/a/Cargo.toml")
+    end
+
+    it "names the conventional manifest for a workspace path when the layout declares only a top-level root" do
+      top = Lain::TestLayout.from({ "preset" => "cargo" }, path: nil)
+      cargo = described_class.new(@dir, metadata: -> { fixture("workspace_metadata.json") }, mapping: top.mapping)
+
+      expect(refusal("crates/store/tests/x.rs", with: cargo)).to include("no crates/store/Cargo.toml")
+    end
+
+    it "falls back to the directory above src/ or tests/ when no layout is given" do
+      bare = described_class.new(@dir, metadata: -> { fixture("workspace_metadata.json") })
+
+      expect(refusal("crates/asr/tests/x.rs", with: bare)).to include("no crates/asr/Cargo.toml")
+    end
+
+    it "falls back the same way for a path in no package of the layout" do
+      expect(refusal("crates/other/tests/x.rs")).to include("no crates/other/Cargo.toml")
     end
   end
 
@@ -137,23 +181,36 @@ RSpec.describe Lain::Grader::TestHarness::Adapter::Cargo do
         adapter.awaiting_subject?(errors, subject: subject_file, target:, root:)
       end
 
-      it "accepts missing-item errors in that file as the subject not written yet" do
+      it "accepts missing-item errors in that file naming the subject's crate as the subject not written yet" do
         errors = ["E0432 #{target}: unresolved import `nyotes_capture::pipewire`",
                   "E0433 #{target}: failed to resolve: could not find `pipewire` in `nyotes_capture`",
-                  "E0412 #{target}: cannot find type `Stream` in this scope",
-                  "E0425 #{target}: cannot find function `open` in module `pipewire`",
-                  "E0599 #{target}: no method named `close` found for struct `Stream`"]
+                  "E0425 #{target}: cannot find function `open` in crate `nyotes_capture`",
+                  "E0425 #{target}: cannot find type `Stream` in crate `nyotes_capture`"]
 
         expect(awaiting_from?(errors)).to be(true)
       end
 
+      it "refuses a missing item naming no item of the subject's crate as a typo in the test" do
+        errors = ["E0425 #{target}: cannot find function `helpr` in this scope"]
+
+        expect(awaiting_from?(errors)).to be(false)
+      end
+
+      it "refuses a missing method, whose message names no crate" do
+        errors = ["E0599 #{target}: no method named `close` found for struct `Stream`"]
+
+        expect(awaiting_from?(errors)).to be(false)
+      end
+
       it "still accepts missing items in the subject itself beside them" do
-        expect(awaiting_from?(["E0432 #{target}: unresolved import", "E0425 #{subject_file}: cannot find value"]))
+        expect(awaiting_from?(["E0432 #{target}: unresolved import `nyotes_capture::x`",
+                               "E0425 #{subject_file}: cannot find value"]))
           .to be(true)
       end
 
       it "refuses any other compile error in that file as not loading" do
-        expect(awaiting_from?(["E0432 #{target}: unresolved import", "E0308 #{target}: mismatched types"]))
+        expect(awaiting_from?(["E0432 #{target}: unresolved import `nyotes_capture::x`",
+                               "E0308 #{target}: mismatched types"]))
           .to be(false)
       end
 

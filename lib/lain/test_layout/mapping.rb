@@ -25,6 +25,7 @@ module Lain
         @test_file = layout.preset.test_file
         @levels = layout.level_roots.map { |name, root| Level.new(name:, root:, shape: shape_of(root)) }.freeze
         @package_roots = package_roots_by_level
+        @package_places = package_places
         @trees = @levels.select(&:mirrored?).map { |level| level.root.split("/").first }.uniq.freeze
         freeze
       end
@@ -46,6 +47,15 @@ module Lain
         @levels.find do |level|
           level.holds?(path) || @package_roots.fetch(level.name, []).any? { |root| path.start_with?("#{root}/") }
         end
+      end
+
+      # The package a path belongs to: the directory above a source root, for
+      # a path under that source root or under one of that package's flat level
+      # roots. A path under neither belongs to no package the layout knows.
+      # @return [String, nil] "." for a package at the project top
+      def package_dir(path)
+        @package_places.select { |_, place| path == place || path.start_with?("#{place}/") }
+                       .max_by { |_, place| place.length }&.first
       end
 
       # The level a test that names none belongs to, in the order the answer is
@@ -136,6 +146,13 @@ module Lain
         @levels.select(&:flat?).to_h do |level|
           [level.name, @layout.source_roots.map { |root| joined(File.dirname(root), level.root) }.uniq]
         end
+      end
+
+      def package_places
+        @layout.source_roots.flat_map do |root|
+          dir = File.dirname(root)
+          [root, *@levels.select(&:flat?).map { |level| joined(dir, level.root) }].map { |place| [dir, place] }
+        end.freeze
       end
 
       def placing_levels
