@@ -15,7 +15,7 @@ module Lain
       # where there is nothing to drive -- a command that exists in some
       # sessions and not others is one a human cannot learn.
       class ImplementEpic
-        USAGE = "/implement-epic [--width N] -- work the mounted epic's approved issues to its working branch"
+        USAGE = "/implement-epic [SLUG] [--width N] -- work the mounted epic's approved issues to its working branch"
 
         # `--width` is the one knob worth typing: a human watching a run may
         # want the issues taken one at a time, and editing a config file to say
@@ -34,13 +34,25 @@ module Lain
         # @param args [String] the line after the verb
         # @param env [Env] the run's collaborators
         # @return [String] what the run came to
-        # @raise [Error] when this chat is in no epic
+        # @raise [Error] when this chat is in no epic, or names another epic
         # @raise [Lain::Error] when the width is not a positive whole number
         def call(args, env)
-          env.epic_driver.run(**width(args.to_s), resumed: resumed?(env.journal_path)).to_s
+          parsed = Lain::CLI::Command::Args.parse(args.to_s, name:, usage: USAGE, flags: FLAGS, positionals: 1)
+          mounted!(parsed.positionals.first, env.epic_driver.slug)
+          env.epic_driver.run(**width(parsed), resumed: resumed?(env.journal_path)).to_s
         end
 
         private
+
+        # The slug is accepted because humans type it, never as a choice: the
+        # mount is settled when the chat starts, so a chat drives that epic or none.
+        def mounted!(typed, slug)
+          return if typed.nil? || typed == slug
+
+          seated = slug.nil? ? "no epic is mounted in this chat" : "this chat's epic is #{slug.inspect}"
+          raise Error, "#{typed} is not this chat's epic: #{seated}, and a chat implements the epic it was " \
+                       "started with -- `#{Lain::Epic::Remedy.chat(typed)}`"
+        end
 
         # A chat resumed mid-epic -- after a crash, most often -- is carrying on
         # the run its issue branches belong to, so the driver keeps them rather
@@ -55,12 +67,11 @@ module Lain
 
         # {Command::Args} does this command's reading now -- it is what makes
         # `/implement-epic plans --wdith 1` name `--wdith` rather than reading
-        # `plans` as though this command took a path. Refused rather than
+        # `plans` as an epic's slug. Refused rather than
         # defaulted: a human who typed a width meant it, and driving the epic
         # at some other number because the word was misspelled is the kind of
         # quiet substitution that is found three issues later.
-        def width(args)
-          parsed = Lain::CLI::Command::Args.parse(args, name:, usage: USAGE, flags: FLAGS, positionals: 0)
+        def width(parsed)
           return {} unless parsed.pairs.key?("width")
 
           value = parsed.pairs["width"]

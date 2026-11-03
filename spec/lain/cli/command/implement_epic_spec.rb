@@ -5,8 +5,12 @@ require "tmpdir"
 
 # A driver that ran, as the command sees one.
 class ImplementEpicSpecDriver
-  def initialize(reply) = @reply = reply
-  attr_reader :width, :budget, :resumed
+  def initialize(reply, slug: "demo")
+    @reply = reply
+    @slug = slug
+  end
+
+  attr_reader :width, :budget, :resumed, :slug
 
   def run(width: nil, budget: nil, resumed: nil)
     @width = width
@@ -80,10 +84,40 @@ RSpec.describe Lain::CLI::Command::ImplementEpic do
     expect { command.call("plans --wdith 1", env) }.to raise_error(Lain::Error, /--wdith/)
   end
 
-  it "refuses a bare word, this command reading no positional at all" do
-    env = build_command_env(epic_driver: ImplementEpicSpecDriver.new("done"))
+  it "shows the optional slug in its usage" do
+    expect(command.usage).to start_with("/implement-epic [SLUG] [--width N]")
+  end
 
-    expect { command.call("plans", env) }.to raise_error(Lain::Error, /plans/)
+  # The runbook and the planner's own summary both name the epic, so a human
+  # types it; the mounted epic is still the only one a chat can drive.
+  context "when the human names an epic" do
+    it "runs as it would unnamed when the name is the mounted epic's" do
+      driver = ImplementEpicSpecDriver.new("landed a at sha-a")
+
+      reply = command.call("demo --width 1", build_command_env(epic_driver: driver))
+
+      expect([reply, driver.width]).to eq(["landed a at sha-a", 1])
+    end
+
+    it "refuses another epic's name, naming the mounted one and how a chat starts in an epic" do
+      driver = ImplementEpicSpecDriver.new("done")
+
+      expect { command.call("plans", build_command_env(epic_driver: driver)) }
+        .to raise_error(Lain::Error, /plans.*"demo".*started with.*--epic/m)
+      expect(driver.width).to be_nil
+    end
+
+    it "refuses a name in a chat in no epic, saying none is mounted" do
+      env = build_command_env(epic_driver: Lain::CLI::EpicDriver::Factory::Unmounted)
+
+      expect { command.call("nyotes", env) }.to raise_error(Lain::Error, /nyotes.*no epic is mounted.*--epic/m)
+    end
+
+    it "refuses a second bare word, naming it" do
+      env = build_command_env(epic_driver: ImplementEpicSpecDriver.new("done"))
+
+      expect { command.call("demo plans", env) }.to raise_error(Lain::Error, /plans is more than/)
+    end
   end
 
   # A chat resumed mid-epic, after a crash most often, is carrying on the run
