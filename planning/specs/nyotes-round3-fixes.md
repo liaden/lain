@@ -1,6 +1,6 @@
 # nyotes round 3 fixes: one verdict, one bounds, durable run state, a phone
 
-status: draft
+status: in-progress
 commit-mode: orchestrator-commits
 language: ruby, rust (T50 to T52 and T58 to T59)
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson); Rust cards add Raph Levien, Andrew Gallant, Frank McSherry, Ashley Williams
@@ -2504,3 +2504,20 @@ The comment at `redact_secret_reads.rb:113-125` calls this the last fail-open in
 8. Main session: update `docs/commands.md`, `ARCHITECTURE.md`, the `CLAUDE.md` suite count, and `ROADMAP.md` item 74.
 
 ## Execution log
+- Run started 2026-11-03. Base main at 0cbc7664 (2 plan commits over the plan's base 644ec6ae). Branch nyotes/implement-readiness at e677e024, merge-base 644ec6ae.
+- Start state: 87 worktrees and branches from earlier plans (card/T*, BD, EXT, FLK, HARNESS, TIM); left alone. Snapshots in the scratchpad (start-status.txt, start-worktrees.txt, start-branches.txt).
+- Pre-staged user work unstaged for the run. Re-stage at close-out: git add .gitmodules references/repos/cliffcompaction references/repos/pi
+- Hook: pre-commit hygiene hooks, shellcheck, cargo fmt/clippy/test (rust files), cargo deny (Cargo/deny files), `bundle exec rake compile check` (rubocop whole repo + pspec, about 90s), yard-lint --staged, bin/lint-gherkin-docs (planning/specs), bin/lint-commit-msg (commit-msg), bin/lint-price-freshness. Example count: tmp/parallel_runtime_rspec.log or the hook log's first pass.
+- Agent checks on own paths: bundle exec rubocop <paths>; bundle exec yard-lint <paths>; cargo fmt --check, cargo clippy --all-targets -- -D warnings, cargo test (Rust cards).
+- Ratchet specs: bundle exec rspec spec/*_spec.rb (top-level scanners: output discipline, zeitwerk, comment census, git scrub discipline, lain_spec membership).
+- Build outputs a worktree needs: lib/lain/lain.so, tmp/parallel_runtime_rspec.log; Rust cards also target/ is rebuilt per worktree (CARGO_TARGET_DIR own).
+- Locks: tmp/gate.lock and tmp/suite.lock (repo tmp/). Test-runner pattern for wait-quiet: 'rspec|parallel_rspec|cargo test|rake (pspec|check)'.
+- Worktree prefix: tmp/worktrees/nr3-T<id>, branch card/nr3-T<id>. Each worktree TMPDIR=$HOME/tmp/lain/nr3-T<id>.
+- Memory 15 GB: at most 5 agents at once, landing counted.
+- No path needs user approval.
+- T1 5 commits cherry-picked to main (28d830af..82fb48f2); suite green 32432/0, 15 pending (land/T1-cherry-1.log). Remaining T1 work: the mounted? nit.
+- T1 started 16:56, cut at 82fb48f2
+- T6 started 16:56, cut at 82fb48f2
+- T4 started 16:56, cut at 82fb48f2
+- T13 started 16:56, cut at 82fb48f2
+- T23 started 16:56, cut at 82fb48f2
