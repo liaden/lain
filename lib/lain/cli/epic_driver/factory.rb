@@ -365,12 +365,23 @@ module Lain
           def call(red, tip)
             return true if red == tip
 
-            changed = paths("diff", "--name-only", "-z", "--no-renames", git!("merge-base", @base.ref, tip).strip, tip)
+            changed = changed_by(tip)
             (changed - paths("diff-tree", "-r", "--no-commit-id", "--name-only", "-z", "--no-renames", red)).empty? &&
               unchanged?(red, tip, changed)
           end
 
+          # Whether a tip with no red commit beneath it changes nothing on the
+          # epic, the lease base aside: by the same net diff.
+          # @param _base [String] the commit the lease was cut at
+          # @param tip [String] the commit retirement anchored
+          # @return [Boolean]
+          def untouched?(_base, tip) = changed_by(tip).empty?
+
           private
+
+          def changed_by(tip)
+            paths("diff", "--name-only", "-z", "--no-renames", git!("merge-base", @base.ref, tip).strip, tip)
+          end
 
           def paths(*) = git!(*).split("\0")
 
@@ -764,9 +775,10 @@ module Lain
         NOTHING_COMMITTED = "its actor settled having committed nothing, so there was no implementation to submit"
 
         # The red step commits before the actor's first turn, so an actor that
-        # made no commit of its own retires with the red commit as its tip.
-        NO_WORK = "its actor settled having committed no work beyond its failing tests at %<sha>s, so there was " \
-                  "no implementation to submit"
+        # made no commit of its own retires with the red commit as its tip; a
+        # manual issue's actor has no red commit and is judged by its net diff.
+        NO_WORK = "its actor settled having committed no work beyond what it started from at %<sha>s, so there " \
+                  "was no implementation to submit"
 
         ANCHOR_REFUSED = "its work could not be anchored, so nothing was submitted"
 
@@ -836,6 +848,8 @@ module Lain
         # lends {Factory::RedOnly}.
         module Identical
           def self.call(red, tip) = red == tip
+
+          def self.untouched?(base, tip) = base == tip
         end
 
         # Asking one issue's gate, in a way a human can interrupt.
@@ -1005,8 +1019,10 @@ module Lain
         # @param grading [#call] `call(issue_id, registration)`, judged between
         #   an actor settling and its retirement -- see {#settle_one}. The Null
         #   grades nothing, so an ordinary run is unchanged.
-        # @param red_only [#call] `call(red_sha, tip_sha)`, answering whether the
-        #   tip retirement anchored carries nothing past the red step's commit
+        # @param red_only [#call, #untouched?] `call(red_sha, tip_sha)`, answering
+        #   whether the tip retirement anchored carries nothing past the red
+        #   step's commit, and `untouched?(base, tip_sha)` for a manual issue
+        #   that has none
         # @param qa_gate [#call] `call(checkpoint, graph) -> QaGate::Verdict`,
         #   asked of each {Epic::QaCheckpoint} as it becomes ready. The Null holds
         #   every checkpoint, because in an epic QA is not optional
@@ -1254,7 +1270,8 @@ module Lain
         # implementation.
         def judge(entry, report)
           return reported(entry, unkept(report)) if report.sha.nil?
-          return reported(entry, format(NO_WORK, sha: report.sha)) if @red_only.call(entry.launch.tests.sha, report.sha)
+          return reported(entry, format(NO_WORK, sha: report.sha)) if
+            entry.launch.tests.unworked?(report.sha, judge: @red_only)
 
           gated(entry, report)
         end
@@ -1360,6 +1377,27 @@ module Lain
         # commit holding the tests, and whether an earlier run made that commit.
         Red = Data.define(:record, :run, :sha, :carried) do
           def initialize(record:, run:, sha:, carried: false) = super
+
+          # @param tip [String] the commit retirement anchored
+          # @param judge [Factory::RedOnly, Run::Identical]
+          # @return [Boolean] whether the tip carries nothing past this commit
+          def unworked?(tip, judge:) = judge.call(sha, tip)
+
+          def briefed(brief) = brief.failing
+        end
+
+        # The red step's stand-in for a manual issue, which has no generated
+        # tests: `base` is the commit its lease was cut at.
+        Manual = Data.define(:base) do
+          # @return [Boolean] whether the tip changes nothing past the base
+          def unworked?(tip, judge:) = judge.untouched?(base, tip)
+
+          def briefed(brief) = brief.unscripted
+        end
+
+        # The red step a manual issue takes: nothing generated, nothing run.
+        module Unscripted
+          def self.call(_criteria, _worker_env, since:, **) = Manual.new(base: since)
         end
 
         # The part of a generation's record a carried commit still answers.

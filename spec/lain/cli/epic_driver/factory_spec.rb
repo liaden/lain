@@ -53,11 +53,13 @@ end
 # Scripted actors: each leases a real checkout from the epic's own supervisor,
 # makes a red commit there the way the red step does, and commits its work on
 # top -- which is what gives the loop something real to anchor, gate and land.
-# An issue named in `idle` commits nothing past its red commit.
+# An issue named in `idle` commits nothing past its red commit; one named in
+# `manual` makes no red commit at all, as the red step skips a manual issue.
 class FactorySpecActors
   Launch = Data.define(:actor, :worker_id, :branch, :tests)
 
-  def initialize(fleet, log, repo, files: {}, idle: [], slug: "demo")
+  def initialize(fleet, log, repo, files: {}, idle: [], manual: [], slug: "demo")
+    @manual = manual
     @slug = slug
     @fleet = fleet
     @log = log
@@ -72,16 +74,35 @@ class FactorySpecActors
     red = nil
     actor = @fleet.adopt(role: "factory-spec", worker_id: "issue.#{@slug}.#{issue_id}.#{attempt}") do |worker_env|
       @log << [:leased, issue_id, git(worker_env.cwd, "rev-parse", "HEAD")]
-      red = commit(worker_env.cwd, "red for #{issue_id}", "red_#{issue_id}.txt" => "red for #{issue_id}\n")
+      red = acceptance(worker_env.cwd, issue_id)
       commit(worker_env.cwd, "work for #{issue_id}", "#{issue_id}.txt" => "work for #{issue_id}\n", **@files) unless
         @idle.include?(issue_id)
       FactorySpecActor.new(worker_env)
     end
     Launch.new(actor:, worker_id: "issue.#{@slug}.#{issue_id}.#{attempt}", branch: "lain/issue/#{@slug}/#{issue_id}",
-               tests: Lain::CLI::EpicDriver::IssueTests::Red.new(record: nil, run: nil, sha: red))
+               tests: red)
   end
 
   private
+
+  def acceptance(dir, issue_id)
+    return manual(dir, issue_id) if @manual.include?(issue_id)
+
+    sha = commit(dir, "red for #{issue_id}", "red_#{issue_id}.txt" => "red for #{issue_id}\n")
+    Lain::CLI::EpicDriver::IssueTests::Red.new(record: nil, run: nil, sha:)
+  end
+
+  # An idle manual actor still commits, then takes it back, so its tip is a
+  # commit whose net change is nothing.
+  def manual(dir, issue_id)
+    base = git(dir, "rev-parse", "HEAD")
+    if @idle.include?(issue_id)
+      commit(dir, "scratch for #{issue_id}", "scratch_#{issue_id}.txt" => "scratch\n")
+      git(dir, "rm", "-q", "scratch_#{issue_id}.txt")
+      git(dir, "commit", "-q", "-m", "drop the scratch for #{issue_id}")
+    end
+    Lain::CLI::EpicDriver::IssueTests::Manual.new(base:)
+  end
 
   def commit(dir, message, files)
     files.each do |path, body|
@@ -234,15 +255,15 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
 
   # Actors that lease a real checkout each and commit in it -- the loop's own
   # collaborator, so a run driven over these is driven over real git.
-  def scripted(files: {}, idle: [], slug: "demo")
-    ->(fleet) { FactorySpecActors.new(fleet, log, repo, files:, idle:, slug:) }
+  def scripted(files: {}, idle: [], manual: [], slug: "demo")
+    ->(fleet) { FactorySpecActors.new(fleet, log, repo, files:, idle:, manual:, slug:) }
   end
 
   # The loop, over real git, with scripted actors in real leased checkouts.
-  def driven(width: 2, grading: nil, files: {}, idle: [], slug: "demo", interrupt: -> { false },
+  def driven(width: 2, grading: nil, files: {}, idle: [], manual: [], slug: "demo", interrupt: -> { false },
              journal: Lain::Channel::Null.instance)
-    factory_over(mount(slug), actors: scripted(files:, idle:, slug:), record: chronicle, grading:, interrupt:,
-                              journal:).run(width:)
+    factory_over(mount(slug), actors: scripted(files:, idle:, manual:, slug:), record: chronicle, grading:,
+                              interrupt:, journal:).run(width:)
   end
 
   def worktree_root = Lain::CLI::IsolationBackend.worktree_root(repo, paths:)
@@ -616,6 +637,19 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
       expect(journaled_decisions.select { |decision| decision["stage"] == "implementation" }
                                 .map { |decision| decision["issue_id"] }).to eq(["a"])
       expect(git(repo, "ls-tree", "-r", "--name-only", "refs/heads/epic/demo").split("\n")).not_to include("red_b.txt")
+    end
+
+    # A manual issue has no red commit, so no work is a tip that changes
+    # nothing past where its lease was cut.
+    it "reports a manual issue that committed nothing, and lands one whose work edits a tracked file" do
+      write_epic([issue("a", level: "manual"), issue("b", level: "manual")])
+      %w[a b].each { |id| approve_plan(id) }
+
+      result = driven(width: 2, idle: ["b"], manual: %w[a b], files: { "app/models/order.rb" => "edited\n" })
+
+      expect(result.landed.map(&:issue_id)).to eq(["a"])
+      expect(result.reported.map { |entry| [entry.issue_id, entry.reason[/committed no work/]] })
+        .to eq([["b", "committed no work"]])
     end
 
     # The same rebase, over an issue that did commit work: its rebased red

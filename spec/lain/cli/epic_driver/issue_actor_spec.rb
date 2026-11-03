@@ -285,16 +285,44 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
       end
     end
 
+    def recorded_actor(supervisor)
+      described_class.new(slug: "demo", supervisor:, subagent: build.method(:epic_subagent),
+                          renderer: backend.library.renderer, home:, plan:, repo_root: repo, tests: recording,
+                          lanes: child_lanes)
+    end
+
     it "names the red step's tests for the issue, so a flat level's file is the issue's own" do
       supervising do |supervisor|
-        described_class.new(slug: "demo", supervisor:, subagent: build.method(:epic_subagent),
-                            renderer: backend.library.renderer, home:, plan:, repo_root: repo, tests: recording,
-                            lanes: child_lanes)
-                       .call("a", subject: "app/models/order.rb", level: "integration").actor.settle
+        recorded_actor(supervisor).call("a", subject: "app/models/order.rb", level: "integration").actor.settle
       end
 
       expect(asked.map { |options| options.slice(:subject, :level, :name) })
         .to eq([{ subject: "app/models/order.rb", level: "integration", name: "a" }])
+    end
+
+    context "when the issue's level is manual" do
+      it "generates no tests, and tells the implementer the human checks the scenarios at the gate" do
+        supervising do |supervisor|
+          recorded_actor(supervisor).call("a", subject: "scripts/fetch-models.sh", level: "manual").actor.settle
+        end
+
+        prompt = first_prompt(provider.requests.last)
+        expect(asked).to be_empty
+        expect(prompt).to include("no failing tests were generated", "a human checks them at the implementation gate")
+        expect(prompt).not_to include("## The failing tests")
+      end
+
+      it "judges no work against where the lease was cut, never against a red commit" do
+        judged = []
+        judge = Object.new.tap { |j| j.define_singleton_method(:untouched?) { |base, tip| judged << [base, tip] } }
+        launched = supervising do |supervisor|
+          recorded_actor(supervisor).call("a", subject: "Cargo.toml", level: "manual").tap { |row| row.actor.settle }
+        end
+
+        launched.tests.unworked?("tip-sha", judge:)
+
+        expect(judged).to eq([[epic_tip, "tip-sha"]])
+      end
     end
   end
 

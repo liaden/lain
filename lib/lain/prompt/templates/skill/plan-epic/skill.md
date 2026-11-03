@@ -139,7 +139,10 @@ link lines: `` Subject: `lib/exporter/stream.rb` `` and, optionally, `Level: uni
 `Subject:` names the **one source file** this issue's generated failing tests mirror, relative to
 the project root. It is required, and the red step **refuses by name** without it: tests are placed
 by mirroring a source file, and an issue names none otherwise. `Level:` picks which level root the
-test lands in; omitted, the layout's default level is used.
+test lands in; omitted, the layout's default level is used. An `integration` issue's tests land in
+the subject's own package `tests/` directory, in a file named for the issue. `Level: manual` is for
+spikes, benchmarks, scripts and manifests: no tests are generated for it, and the human judges it
+at the implementation gate.
 
 A subject is a plain relative path — no `.` or `..` segment, no doubled or trailing slash, no
 leading `/`, `~` or `-` — and it need not exist yet, since a test written before its class is the

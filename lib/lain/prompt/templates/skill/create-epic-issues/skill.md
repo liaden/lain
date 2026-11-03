@@ -134,7 +134,10 @@ Level: unit
 `Subject:` names the one source file this issue's generated failing tests mirror, relative to the
 project root; `Level:` is optional and picks the level root. A missing, duplicated or out-of-root
 subject is **refused by name** — the red step places a test by mirroring a source file, and an
-issue on its own names none.
+issue on its own names none. An `integration` issue's tests land in the subject's own package
+`tests/` directory, in a file named for the issue. `Level: manual` is for spikes, benchmarks,
+scripts and manifests: no tests are generated for it, and the human judges it at the implementation
+gate.
 
 Under `interactive` a human answers;
 under `hands_off` it approves itself audibly; under `deferred` it refuses now and parks the

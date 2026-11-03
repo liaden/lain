@@ -1137,6 +1137,21 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
       expect(log).to eq([[:gated, "a", "sha-a", ran]])
     end
 
+    # A manual issue, or a project with no suite to run, gets a run that
+    # says why it did not run; the human at the gate decides, not the loop.
+    it "still asks the gate, and lands, when the tip's suite did not run" do
+      log = []
+      unrun = Lain::Telemetry::TestsRan.unrun(issue_id: "a", sha: "sha-a",
+                                              why: Lain::CLI::EpicDriver::DeclaredHarness::UNDECLARED)
+      run, _actors, landing = run_over(issues: [issue("a")], statuses: { "a" => "in_flight" },
+                                       reports: { "a" => anchored("sha-a") },
+                                       tip_tests: ->(_issue_id, _sha) { unrun }, gate: gated_into(log))
+
+      run.call
+
+      expect([log, landing.landed]).to eq([[[:gated, "a", "sha-a", unrun]], [%w[a sha-a]]])
+    end
+
     it "tests nothing when the actor committed nothing" do
       log = []
       empty = Lain::Isolation::WorkerHandoff::Report.new(kind: :nothing_to_do, ref: nil, sha: nil)

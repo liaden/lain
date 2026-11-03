@@ -41,7 +41,8 @@ module Lain
         # @raise [Refusal] naming the plan and what it must say
         def self.read(plan, layout:)
           text = plan.read
-          new(subject: subject_in(text, plan, layout), level: level_in(text, plan, layout))
+          level = level_in(text, plan, layout)
+          new(subject: subject_in(text, plan, layout, level), level:)
         end
 
         # @param issue [Epic::Issue] the issue whose tests are to be written
@@ -52,16 +53,16 @@ module Lain
           where = "issue #{issue.id.inspect}"
           raise Undeclared, undeclared(where) if issue.subject.nil?
 
-          new(subject: placed(canonical!(issue.subject, where), where, layout),
-              level: issue.level&.then { |name| known(name, where, layout) })
+          level = issue.level&.then { |name| known(name, where, layout) }
+          new(subject: placed(canonical!(issue.subject, where), where, layout, level), level:)
         end
 
-        def self.subject_in(text, plan, layout)
+        def self.subject_in(text, plan, layout, level)
           found = declarations(text, SUBJECT)
           raise Undeclared, undeclared(plan.path) if found.empty?
           raise Refusal, ambiguous(plan, SUBJECT, found) if found.size > 1
 
-          placed(canonical!(found.first, plan.path), plan.path, layout)
+          placed(canonical!(found.first, plan.path), plan.path, layout, level)
         end
 
         # Shape before placement, and refused the way a `tests` source root
@@ -104,8 +105,10 @@ module Lain
 
         def self.clean(value) = value.delete("`").strip
 
-        def self.placed(subject, where, layout)
-          return subject unless layout.in_force?
+        # A manual subject is a script, a manifest or a spike, which no
+        # layout mirrors a test from.
+        def self.placed(subject, where, layout, level)
+          return subject if level == TestLayout::MANUAL || !layout.in_force?
           return subject if layout.source_roots.any? { |root| subject == root || subject.start_with?("#{root}/") }
 
           raise OutsideSourceRoots, "#{where} names the subject #{subject.inspect}, which is under none of " \
@@ -117,7 +120,7 @@ module Lain
         # raises {TestLayout::Unplaceable} for a name it does not hold: a level
         # a plan misspelled is this object's refusal to make, by its own name.
         def self.known(level, where, layout)
-          return level unless layout.in_force?
+          return level if level == TestLayout::MANUAL || !layout.in_force?
           return level if layout.mapping.levels.any? { |declared| declared.name == level }
 
           raise Refusal, "#{where} names the level #{level.inspect}, which this project's `tests` config " \

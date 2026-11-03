@@ -34,6 +34,11 @@ module Lain
     # being slow, so the fastest level is where it is held to.
     DEFAULT_LEVEL = "unit"
 
+    # The level of an issue whose acceptance has no generated tests: a spike,
+    # a benchmark, a script or a manifest, judged by a human at its
+    # implementation gate. Reserved, so no layout declares it.
+    MANUAL = "manual"
+
     PRESET = "preset"
     KEYS = [PRESET, "source_roots", "level_roots", "exempt", "default_level", "timeout"].freeze
     private_constant :PRESET, :KEYS

@@ -222,11 +222,34 @@ module Lain
         # issue's own contract -- the issue as it was approved, the failing
         # tests it must turn green, and where its work has to end up.
         Brief = Data.define(:renderer, :slug, :view, :cut, :tests) do
-          def to_s = [renderer.render(SKILL), carrying, viewed, failing, settling].join("\n\n")
+          def to_s = [renderer.render(SKILL), carrying, viewed, tests.briefed(self), settling].join("\n\n")
 
           def working_branch = Lain::Isolation::WorkingBranch.epic_name(slug)
 
           def branch = cut.branch.name
+
+          def failing
+            <<~SECTION.strip
+              ## The failing tests
+
+              #{committed}
+
+              - `#{tests.record.target}`
+
+              Make them pass. Never weaken or delete one -- if a test is wrong, say so in your answer
+              instead of editing it away.
+            SECTION
+          end
+
+          def unscripted
+            <<~SECTION.strip
+              ## No generated tests
+
+              This issue's level is manual, so no failing tests were generated for it. Satisfy every
+              scenario in the issue above by the work itself: a human checks them at the implementation gate,
+              against your diff and whatever the issue says to run.
+            SECTION
+          end
 
           private
 
@@ -261,19 +284,6 @@ module Lain
               #{fence}markdown
               #{markdown}
               #{fence}
-            SECTION
-          end
-
-          def failing
-            <<~SECTION.strip
-              ## The failing tests
-
-              #{committed}
-
-              - `#{tests.record.target}`
-
-              Make them pass. Never weaken or delete one -- if a test is wrong, say so in your answer
-              instead of editing it away.
             SECTION
           end
 
@@ -369,11 +379,16 @@ module Lain
           held = nil
           actor = @supervisor.adopt(role: ROLE, worker_id: lane) do |worker_env|
             held = cut(worker_env, view.issue.id)
-            red = @tests.call(criteria, worker_env, subject:, level:, since: held.from, lane:, name: view.issue.id)
+            red = acceptance(level).call(criteria, worker_env, subject:, level:, since: held.from, lane:,
+                                                               name: view.issue.id)
             spawner(worker_env, held.branch, lane).launch_actor(brief(view, held, red), worker_env:)
           end
           Launch.new(actor:, worker_id: lane, branch: held.branch.name, tests: red)
         end
+
+        # A manual issue has no generated tests, so its red step is the stand-in
+        # that records only where the lease was cut.
+        def acceptance(level) = level == Lain::TestLayout::MANUAL ? IssueTests::Unscripted : @tests
 
         # The issue's own lain-owned branch, established at the tip the lease
         # was cut from and checked out. {Isolation::WorkingBranch} owns every

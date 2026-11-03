@@ -63,6 +63,26 @@ RSpec.describe Lain::CLI::EpicDriver::PlanSubject do
       expect { described_class.of(carried(subject: "app/models/order.rb", level: "nope"), layout:) }
         .to raise_error(described_class::Refusal, /issue "a".*level "nope"/m)
     end
+
+    context "with the manual level, which no layout declares" do
+      it "admits a script, a manifest or a spike outside every source root" do
+        subjects = %w[scripts/fetch-models.sh Cargo.toml spike/src/main.rs]
+
+        expect(subjects.map { |path| described_class.of(carried(subject: path, level: "manual"), layout:).to_h })
+          .to eq(subjects.map { |path| { subject: path, level: Lain::TestLayout::MANUAL } })
+      end
+
+      it "admits it when the project declares no layout at all" do
+        result = described_class.of(carried(subject: "Cargo.toml", level: "manual"), layout: Lain::TestLayout::None)
+
+        expect(result.level).to eq("manual")
+      end
+
+      it "still refuses a subject that is not a plain relative path" do
+        expect { described_class.of(carried(subject: "../outside.sh", level: "manual"), layout:) }
+          .to raise_error(described_class::NotCanonical, /issue "a"/)
+      end
+    end
   end
 
   it "reads the subject a plan declares, leaving the level to the layout's own default" do
@@ -147,6 +167,10 @@ RSpec.describe Lain::CLI::EpicDriver::PlanSubject do
     result = described_class.read(plan("Subject: lib/order.rb\nLevel: smoke\n"), layout: Lain::TestLayout::None)
 
     expect([result.subject, result.level]).to eq(["lib/order.rb", "smoke"])
+  end
+
+  it "reads a manual plan's subject outside every source root" do
+    expect(declared("Subject: scripts/fetch-models.sh\nLevel: manual\n").subject).to eq("scripts/fetch-models.sh")
   end
 
   it "is deeply frozen, as a value read from an approved plan" do
