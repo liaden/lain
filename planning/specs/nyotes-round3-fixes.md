@@ -103,8 +103,11 @@ ROADMAP item 74.
 - **Whether the 30 s judge clock runs during admission.** It is paused while the judge queues (`judge.rb:116-183`). Read.
 - **A tool-less judge runs 1 provider call.** This is a design premise, and T18 makes it true with 1 request carrying the sealed role prompt, not `Oracle::Model` (see Rejected options).
 
-**Decided by the planner, open to the user's overrule:**
-- **How a postponed call comes back.** The user steered to remote approval rather than ruling on hold semantics. T9 builds the planner's design: a postponed call answers the agent at once, and a later approve is a one-shot grant the agent spends by issuing the call again. The user can overrule it before T9 starts.
+**Rulings recorded on 2026-11-03, after a third review:**
+- Postponed calls use the liftable deny (T9, design A): no grant, no new rung, and the breaker counts a postpone.
+- Named build output is exempt from the tripwire's fresh_run_file signal (T14). Every other fresh exec still stops.
+- The ntfy notification carries Open only (T56).
+- The plan stays 1 plan.
 
 ## Algebra in this plan
 
@@ -112,7 +115,7 @@ Every new decision is a value with a law, pinned by an existing shared group. La
 
 | Value | Shape | Operation | Laws (shared group) | Card |
 |---|---|---|---|---|
-| `Approval::Verdict` | closed sum `Approve(notes) \| Hold(notes) \| Deny(notes)`, notes a sorted set | none: no card combines 2 verdicts | none; shareability and `coerce` are pinned | T6 |
+| `Approval::Verdict` | closed sum `Approve(note) \| Hold(note) \| Deny(note)`, note 1 String or nil | none: no card combines 2 verdicts | none; shareability and `coerce` are pinned | T6 |
 | `Approval::Reply` | `parse(String) -> Verdict \| Unrecognised` | `parse(render(v)) == v` | `round_trip.rb` | T7 |
 | `Approval::Silence` | a `Verdict` read from config | none (a constant) | none | T11 |
 | `Sensitivity::Bounds` | product `reads`, `writes`, `children` (`Roots`) and `execs` (`ExecRules`), canonical at construction | `\|` componentwise; `lend` drops `children` | `monoid.rb`; `meet_semilattice.rb` with `meet: :\|`, `equal: ==`, `ancestor_of: <=`; the componentwise law stated directly | T13 |
@@ -121,7 +124,7 @@ Every new decision is a value with a law, pinned by an existing shared group. La
 | `Epic::Signoff` | journal projection to `{Partition => Standing(digest, verdict)}` | right-biased merge per partition (newest wins) | `incremental_fold.rb` with `combine`, a monoid homomorphism from the record list | T33 |
 | run allowance | `Budget::Ceilings` held on the run | the newest grant replaces; only nesting meets (`Ceilings#meet`, existing laws) | `meet_semilattice.rb` (existing, for nesting) | T28 |
 | `Journal::Projection::Usage` | `{(command, role) => Usage}` over `turn_usage` records that each name their command | pointwise `Usage#+` | `incremental_fold.rb`, `monoid_homomorphism.rb` | T31 |
-| `Human::Agenda` | a polled snapshot of items, a closed sum `ParkedCall \| GateQuestion \| Question` | `delta_since(cursor)`, cursor a generation counter | the replay law: applying the deltas since any cursor to that cursor's snapshot gives the current snapshot | T53 |
+| `Remote::Agenda` | a polled snapshot of items, a closed sum `ParkedCall \| GateQuestion \| Question` | `delta_since(cursor)`, cursor a generation counter | the replay law: applying the deltas since any cursor to that cursor's snapshot gives the current snapshot | T53 |
 | `Usage`, `Budget::Spent`, `Sensitivity::Masked` | existing `+` | existing | `monoid.rb` (new pins) | T46 |
 
 A case statement over verdict symbols or reason strings that one of these values replaces gets deleted, not wrapped.
@@ -195,14 +198,13 @@ Only the main session edits these. Cards hand back a 1-line diff.
 - **Flag fewer abbreviated git shas.** git abbreviates to 7 to 12 hex characters, under the detector's 20-character floor. Longer abbreviations are rare, and a 24-hex token can be a real key.
 - **A `Verdict` with `Abstain`.** Abstain is the identity of `Ladder#+`. Folding it into `Verdict` would give the join 2 bottoms.
 - **Package-relative mirrored levels for rspec and pytest monorepos.** No trial needs them. T2 only corrects the branch's claim that it generalizes.
-- **Approve from the ntfy notification.** An approve needs the context the app shows. The notification carries Open and Deny only (T56).
+- **Answer from the ntfy notification.** An approve needs the context the app shows, and a Deny button would need an HTTP surface on the relay. The notification carries Open only (T56, user ruling 2026-11-03).
 - **The app inside this Cargo workspace.** Dioxus pulls a banned crate, and the app needs the Android toolchain. It gets its own repo (T58).
 
 ## Open decisions
 
 - **Pin the project config on an epic.** Issue worktrees cut from `epic/<slug>` before a config commit lack that commit's `.lain/config.rb`, and the driver reads the root's. No observed harm, so no card.
 - **An issue edited after its launch.** `IssueActor#approved!` checks the plan digest once, at launch. T35 reopens the gate on an edit, but a running issue keeps its launch-time plan. Revisit if a round shows an edit landing mid-run.
-- **Close the `--non-interactive` secret-release fail-open** (`redact_secret_reads.rb:113-125`). Its own comment defers the flip to a measurement.
 - **Spec-only cards.** T5 (the git-scrub guard) and T46 (monoid law pins) add tests over code that is already reachable. They have no production construction site by design.
 - **The phone's wake latency and a paired-device timeout.** Research §9, question 1. Measure buzz-to-verdict in the manual pass before changing any timeout.
 
@@ -274,7 +276,6 @@ flowchart LR
   T1 --> T46
   T38 --> T47
   T8 --> T48
-  T18 --> T48
   T11 --> T49
   T33 --> T49
   T1 --> T50
@@ -294,6 +295,9 @@ flowchart LR
   T55 --> T57
   T52 --> T58
   T58 --> T59
+  T52 --> T60
+  T15 --> T61
+  T43 --> T61
 ```
 
 ## Tasks
@@ -476,12 +480,12 @@ Spec file: `spec/git_fixture_scrub_discipline_spec.rb`
 
 ```gherkin
 Scenario: each variant answers what it is
-  Given Approve(notes: ["ok"]), Hold(notes: ["later"]) and Deny(notes: ["no"])
-  Then exactly one of approved?, held? and denied? is true for each, and #note joins the notes with "; "
+  Given Approve(note: "ok"), Hold(note: "later") and Deny(note: "no")
+  Then exactly one of approved?, held? and denied? is true for each
 
-Scenario: notes are a set
-  When Approve(notes: ["b", "a", "b"]) is built
-  Then its notes are ["a", "b"]
+Scenario: a note is 1 string
+  When Approve(note: "a; b") is built
+  Then its note is "a; b", and a blank note is nil
 
 Scenario: values are shareable
   Then Ractor.shareable? is true for each variant
@@ -496,10 +500,10 @@ Spec file: `spec/lain/approval/verdict_spec.rb`
 
 ```ruby
 module Lain::Approval::Verdict
-  Approve = Data.define(:notes)   # notes: a frozen, sorted Array of Strings, no duplicates
-  Hold    = Data.define(:notes)
-  Deny    = Data.define(:notes)
-  # each: #approved? #held? #denied?; #note -> notes joined with "; " or nil
+  Approve = Data.define(:note)    # note: a frozen String, or nil when blank
+  Hold    = Data.define(:note)
+  Deny    = Data.define(:note)
+  # each: #approved? #held? #denied?
   def self.coerce(value) = ...    # a variant, or raise ArgumentError
 end
 ```
@@ -546,11 +550,15 @@ Scenario: a hold with a note
 
 Scenario: a blank note is no note
   When "approve,   " is parsed
-  Then it is Approve with no notes
+  Then it is Approve with a nil note
 
 Scenario: a separator after the verdict word is dropped
   When "deny: wrong crate" and "deny, wrong crate" are parsed
   Then both are Deny with the note "wrong crate"
+
+Scenario: an empty line is not a verdict
+  When "" is parsed
+  Then it is Unrecognised; the [y/N] policy, not the grammar, maps a blank line to deny (T9)
 
 Scenario: an unknown first word is never a deny
   When "approvx" is parsed
@@ -607,8 +615,6 @@ Scenario: a wave reply resolves per issue
   Then a is Approve, b is Deny with "wrong crate", c is Hold
   And the leading bare "approve" applies to every id the reply does not name, which the reply instruction says
 
-Scenario: hold is a type, not a surface string
-  Then no file under lib/ compares a surface to "held"
 ```
 Spec file: `spec/lain/epic/gate_spec.rb`, `spec/lain/epic/submission_spec.rb`
 
@@ -616,20 +622,26 @@ Spec file: `spec/lain/epic/gate_spec.rb`, `spec/lain/epic/submission_spec.rb`
 - `spec/lain/forge/` pins `approved: true/false` on a landing record. List it; it moves to `verdict`.
 - `Gate#approved?` callers need more than this card's change. That set is T33's.
 
-### T9: The parked queue decides a Verdict, and a held call is postponed          [risk: high]
+### T9: The parked queue decides a Verdict, and a hold postpones the call          [risk: high]
 
 **Depends on:** T7
 **Files:**
 - `lib/lain/approval/parked/queue.rb`
 - `lib/lain/approval/escalation.rb`
+- `lib/lain/approval/denial_breaker.rb`
 - `lib/lain/frontend/approval_policy.rb`
+- `lib/lain/frontend/neovim/approval_view.rb`
 - `lib/lain/cli/command/approve.rb`
-- `lib/lain/approval/postponed.rb` (new)
-- Specs: `spec/lain/approval/parked/queue_spec.rb`, `spec/lain/approval/escalation_spec.rb`, `spec/lain/frontend/approval_policy_spec.rb`, `spec/lain/cli/command/approve_spec.rb`, `spec/lain/approval/postponed_spec.rb` (new)
+- Specs: `spec/lain/approval/parked/queue_spec.rb`, `spec/lain/approval/escalation_spec.rb`, `spec/lain/approval/denial_breaker_spec.rb`, `spec/lain/frontend/approval_policy_spec.rb`, `spec/lain/frontend/neovim/approval_view_spec.rb`, `spec/lain/cli/command/approve_spec.rb`, `spec/lain/middleware/gate_spec.rb`
 
-**Reuse:** `Pending#decide` (`queue.rb:262-268`); `Escalation::Ruling` and the Surfaces rung (`escalation.rb:91-116,884-891`); `Queue#remember` and `human_denial?` (`queue.rb:625-630,672`)
+**Reuse:**
+- `Pending#decide` (`queue.rb:262-268`).
+- `Escalation::Ruling.deny` with `final:`, `liftable:` and `told:` (`escalation.rb:91-171`). The gate already renders a liftable final deny (`middleware/gate.rb:92,188`).
+- `Queue#remember` and `human_denial?` (`queue.rb:625-630,672`).
+- `DenialBreaker` (`denial_breaker.rb`).
+
 **Shared-file wiring:** none
-**Reachable from:** `CLI::Switchboard#approvals` -> `Approval::Parked::Queue#adjudicate` -> `Pending#decide(verdict)` -> the Surfaces rung -> `Escalation::Ruling`
+**Reachable from:** `CLI::Switchboard#approvals` -> `Approval::Parked::Queue#adjudicate` -> `Pending#decide(verdict)` -> the Surfaces rung -> `Ruling.deny(final: true, liftable: true, told: ...)` -> `Middleware::Gate`
 
 **Acceptance criteria**
 
@@ -643,46 +655,40 @@ Scenario: a blank answer still denies
   When the human answers with an empty line at [y/N]
   Then the call is denied, as today (approval_policy.rb:43-46)
 
-Scenario: a postponed call answers the agent now
+Scenario: a hold postpones the call
   Given a parked bash call
   When the human answers "hold after lunch"
-  Then the agent's tool result says the call is postponed for a human, with the note, and the agent's turn goes on
-  And the call is listed as postponed in /inbox
+  Then the agent's tool result says the call is postponed by the human with "after lunch", and to issue it again later, when it will park for an answer
+  And the agent's turn goes on
 
-Scenario: a postpone is not a denial
+Scenario: a postpone is not a remembered denial
   Given a call postponed with "after lunch"
   When the agent issues the same call again
-  Then it parks again, and is not refused as a remembered denial
+  Then it parks again for the human, and is not refused as a remembered denial
 
-Scenario: approving a postponed call grants it once
-  Given a postponed bash call
-  When the human approves it in /inbox
-  Then a one-shot grant is recorded for that requester, tool, input and cwd, and the agent is told to issue it again
-  And the next identical call runs through the agent's own stack with no park, and the grant is spent
+Scenario: postponing in a loop trips the breaker
+  Given the same call postponed by the human 3 times for one requester
+  When the agent issues it a 4th time
+  Then the denial breaker counts each postpone as a denial, and trips at its usual threshold
 
-Scenario: decide refuses anything but a verdict
-  When Pending#decide is called with true or with a String
+Scenario: decide takes only a verdict
+  When Pending#decide is called with true, false or a String
   Then it raises, and nothing is approved
+  And ApprovalView#settled (approval_view.rb:422) passes a Verdict
 ```
-Spec file: `spec/lain/approval/parked/queue_spec.rb`, `spec/lain/approval/postponed_spec.rb`, `spec/lain/approval/escalation_spec.rb`
+Spec file: `spec/lain/approval/parked/queue_spec.rb`, `spec/lain/approval/denial_breaker_spec.rb`, `spec/lain/middleware/gate_spec.rb`
 
 **Interface**
 
 ```ruby
-Pending#decide(verdict, surface:, authority:)   # Verdict.coerce(verdict); a Hold settles the wait as postponed
-Escalation::Ruling                               # gains :postpone beside :allow, :deny, :abstain
-class Lain::Approval::Postponed                  # the postponed calls and the one-shot grants
-  Grant = Data.define(:requester, :tool, :input_digest, :cwd)
-  def postpone(pending, verdict) = ...
-  def grant(id) = ...                            # one-shot; the gate spends it on the next identical call
-  def granted?(requester:, effect:, cwd:) = ...  # true once, then false
-end
+Pending#decide(verdict, surface:, authority:)   # Verdict.coerce(verdict); a Hold settles as :postpone
+Pending#decision                                 # :approve | :deny | :postpone
 ```
 
-The planner chose this design, and the user has not ruled on it (Open decisions). A postponed call never runs outside its agent's stack. The approval becomes a one-shot grant, and the agent re-issues the call. The agent hears about the grant through its own next turn: the gate's postponed result already says "approve it in /inbox, then issue it again", so no mailbox registry is needed.
+This is the user's ruling of 2026-11-03 (design A). There is no grant and no new rung. The Surfaces rung maps `:postpone` to the existing liftable final deny with a "postponed" `told:` clause. Only the queue knows Hold, so `human_denial?` skips it, and the breaker counts it as a denial.
 
 **Stop and report if:**
-- The Surfaces rung's `Ruling` is consumed by code that treats anything not `allow` as `deny` (`escalation.rb:884-891`). List every consumer before adding `:postpone`.
+- `cli/human_replies.rb` calls `Pending#decide` directly with a Boolean (the second panel cited `:1110`, which is `ApprovalView#decide`). Grep for every `decide(` caller and list any outside this card's Files.
 
 ### T10: The nvim approval view sends and reads Reply words          [risk: medium]
 
@@ -702,7 +708,7 @@ Scenario: approve with a note from nvim
 
 Scenario: postpone from nvim
   When the human runs :LainHold back soon on a call
-  Then the call is postponed as T9 defines, and lain://approval moves it to the postponed list
+  Then the call is postponed as T9 defines, and the agent is told so
 ```
 Spec file: `spec/lain/frontend/neovim/approval_view_spec.rb`
 
@@ -717,7 +723,8 @@ Spec file: `spec/lain/frontend/neovim/approval_view_spec.rb`
 - `lib/lain/config.rb`, `lib/lain/config/builder.rb`
 - `lib/lain/epic/gate.rb`, `lib/lain/approval/parked/queue.rb`
 - `lib/lain/cli/switchboard.rb`, `lib/lain/cli/epic_submit.rb`
-- Specs: `spec/lain/approval/silence_spec.rb` (new), `spec/lain/config_spec.rb`, `spec/lain/epic/gate_spec.rb`, `spec/lain/approval/parked/queue_spec.rb`
+- `lib/lain/frontend/approval_policy.rb`, `lib/lain/cli/repl/approval_surfaces.rb`
+- Specs: `spec/lain/approval/silence_spec.rb` (new), `spec/lain/config_spec.rb`, `spec/lain/epic/gate_spec.rb`, `spec/lain/approval/parked/queue_spec.rb`, `spec/lain/frontend/approval_policy_spec.rb`, `spec/lain/cli/repl/approval_surfaces_spec.rb`
 
 **Reuse:** `Config::DEFAULT_APPROVAL_TIMEOUT`; `Gate::Outcome#for`
 **Shared-file wiring:** `docs/commands.md`: document `approval silence: :hold | :deny`
@@ -740,6 +747,10 @@ Scenario: deny is a choice
   Given "approval silence: :deny" in .lain/config.rb
   When a gate times out
   Then each item is Deny("timeout")
+
+Scenario: the prompts say what silence does
+  Given approval silence unset
+  Then the [y/N] prompt and the arrival line say "postpones in <window>", not "auto-denies in" (approval_policy.rb:305,312, approval_surfaces.rb:123)
 
 Scenario: an interrupt still denies
   When the run is interrupted while a gate waits
@@ -890,7 +901,8 @@ Scenario: lain's own entry point is a named rule
 
 Scenario: the tripwire agrees with the sandbox
   Given cargo test runs target/debug/deps/x-hash, which the build just wrote
-  Then the tripwire records no fresh_run_file stop signal for it
+  Then the tripwire records no fresh_run_file stop signal for it, by the user's ruling of 2026-11-03 that named build output is exempt
+  And any other fresh exec still records the stop signal, as the 2026-10-27 ruling requires
 ```
 Spec file: `spec/lain/confine/exec_rules_spec.rb`, `spec/lain/tripwire/resolution_spec.rb`
 
@@ -984,6 +996,8 @@ Scenario: the reader still refuses a fresh binary
 ```
 Spec file: `spec/lain/confine/profile_spec.rb`, `spec/lain/confine/profiles_spec.rb`, `spec/lain/shell/executable/fresh_spec.rb`
 
+`ExecRules` covers project-relative build output and lowers to lain-fence `exec_dirs`. The per-call `exec_files` from `Profiles#placed` still grant `:system` and `:user` programs. The 2 never cover the same path: `ExecRules` holds only paths under the root, and `placed` never grants `:project`.
+
 The user ruled on 2026-11-03 that freshness gates only the reader. That reverses the workspace half of the October binary-identity ruling.
 
 **Stop and report if:**
@@ -1045,12 +1059,11 @@ end
   - `spec/lain/role_spec.rb`, `spec/lain/role/catalog_spec.rb`, `spec/lain/prompt/slots_spec.rb`
   - `spec/lain/seams/role_child_judge_spec.rb`, `spec/lain/seams/child_read_scope_spec.rb`
   - `spec/lain/skill/role_spawn_spec.rb`, `spec/lain/tools/subagent_gate_spec.rb`
-  - `spec/lain/epic/gate/adjudicator_spec.rb`
   - `spec/lain/status_feed/fleet_spec.rb`
   - `spec/lain/bench/approval_replay/recorded_judge_spec.rb`
 
 **Reuse:** `Provider::Journaled` (`requester: :auto_approver`), as `cli/backend/summarizer.rb:50-53` wraps a provider; `Judge#question`, `#parse`, `Pause`; the sealed role prompt from `Prompt::Slots` (`prompt/slots.rb:71-113`); `Provider::Admission` with `queue: true`
-**Shared-file wiring:** none
+**Shared-file wiring:** `spec/lain/epic/gate/adjudicator_spec.rb:775` pins `gate_adjudicator.only == auto_approver.only`; the main session changes that example to say the adjudicator keeps its tools while the judge has none
 **Reachable from:** `CLI::Wiring` (`wiring.rb:926`) -> `JudgeSource.new(provider:, model:, journal:, timeout:)` -> `Approval::Judge`
 
 **Acceptance criteria**
@@ -1081,7 +1094,6 @@ Spec file: `spec/lain/approval/judge_spec.rb`, `spec/lain/cli/wiring/judge_sourc
 
 **Stop and report if:**
 - `Role::Catalog` refuses an empty `only:`. Keep the role in the catalog with an empty list and report the validation, because leaving the catalog unseals the prompt (`prompt/slots.rb:108-113`).
-- `spec/lain/epic/gate/adjudicator_spec.rb:775` pins `gate_adjudicator.only == auto_approver.only`. The adjudicator keeps its tools; change that example to state why the two differ.
 
 ### T19: Judged decides weighability once, before paying          [risk: high]
 
@@ -1160,7 +1172,7 @@ end
 
 ```gherkin
 Scenario: the hazard corpus must abstain
-  Given hazards.ndjson with sed w and e, find -delete, -fprint and -execdir, git -c, --output and --ext-diff, rg --pre, sort --compress-program and grep --exclude-from
+  Given hazards.ndjson with sed w and e; find -exec, -execdir, -ok, -delete, -fprint, -fprintf and -fls; git -c, --output and --ext-diff, and git reads in a repo whose config sets core.pager, core.fsmonitor or diff.external; rg --pre and -z; sort --compress-program; grep --exclude-from
   When the composed_term arm replays it
   Then the report lists every hazard the candidate table admits
 
@@ -1207,6 +1219,8 @@ Spec file: `spec/lain/approval/composed_term_spec.rb`
 - T20's replay of the round 2 and round 3 journals (integration check 5) lists a call the widened table admits whose recorded verdict was a deny. The user ruled on 2026-11-03 that the static tier ships only behind that replay. Narrow the table until the list is empty, or hand the list to the user.
 
 ### Stream R: run state and metering
+
+T22 was removed after the first panel; its static rung became T21's widening of `ComposedTerm`.
 
 ### T23: Actor children are journaled children          [risk: high]
 
@@ -1573,11 +1587,12 @@ end
 
 ### T48: A gate decision records a Verdict, and every reader reads it          [risk: high]
 
-**Depends on:** T8, T18
+**Depends on:** T8
 **Files:**
 - `lib/lain/epic/gate.rb`, `lib/lain/epic/signoff_queue.rb`, `lib/lain/epic/progress.rb`, `lib/lain/epic/gate/adjudicator.rb`
 - `lib/lain/forge/local_landing.rb`
-- `lib/lain/cli/epic.rb`, `lib/lain/cli/epic_queue.rb`
+- `lib/lain/epic/submission.rb`, `lib/lain/epic/gate/policy.rb`
+- `lib/lain/cli/epic.rb`, `lib/lain/cli/epic_queue.rb`, `lib/lain/cli/epic_submit.rb`
 - `lib/lain/frontend/neovim/planning_view.rb`, `lib/lain/frontend/neovim/status_view.rb`
 - `lib/lain/status_feed.rb`
 - `lib/lain/telemetry/awaiting_human.rb`
@@ -1603,6 +1618,9 @@ Scenario: a decision carries its verdict
   When a gate decides Hold with a note
   Then the journaled gate_decision has verdict "hold" and the note, and no approved boolean
 
+Scenario: hold is a type, not a surface string
+  Then no file under lib/ compares a gate surface to "held"
+
 Scenario: readers agree on a held issue
   Given a held issue
   Then lain epic status, the planning view, the status bar's inbox count and the landing approvals all show it held, not denied
@@ -1615,7 +1633,7 @@ Spec file: `spec/lain/epic/signoff_queue_spec.rb`, `spec/lain/forge/local_landin
 ### T49: SignoffQueue, Gate and Stage read the Signoff projection          [risk: high]
 
 **Depends on:** T11, T33
-**Files:** `lib/lain/epic/signoff_queue.rb`, `lib/lain/epic/stage.rb`, `lib/lain/epic/gate.rb`, `lib/lain/epic/gate/policy.rb`, `lib/lain/cli/epic.rb`, `spec/lain/epic/signoff_queue_spec.rb`, `spec/lain/epic/stage_spec.rb`, `spec/lain/epic/gate_spec.rb`, `spec/lain/epic/gate/policy_spec.rb`
+**Files:** `lib/lain/epic/signoff_queue.rb`, `lib/lain/epic/stage.rb`, `lib/lain/epic/gate.rb`, `lib/lain/epic/gate/policy.rb`, `lib/lain/cli/epic.rb`, `lib/lain/cli/epic_submit.rb`, `lib/lain/epic/progress.rb`, `lib/lain/forge/local_landing.rb`, `spec/lain/epic/signoff_queue_spec.rb`, `spec/lain/epic/progress_spec.rb`, `spec/lain/forge/local_landing_spec.rb`, `spec/lain/epic/stage_spec.rb`, `spec/lain/epic/gate_spec.rb`, `spec/lain/epic/gate/policy_spec.rb`
 **Reuse:** `Epic::Signoff` (T33); `SignoffQueue#standing?`
 **Shared-file wiring:** none
 **Reachable from:** `CLI::EpicSubmit` and `Epic::Stage#boundary` -> `SignoffQueue#standing?(partition, digest)` -> `Signoff#approved?`
@@ -1631,6 +1649,9 @@ Scenario: an edited research.md does not open epic_plan
 Scenario: a deny revokes everywhere
   Given an issue approved at D and then denied at D
   Then Gate, SignoffQueue and lain epic status all answer not approved
+
+Scenario: one fold of gate decisions
+  Then LocalLanding::Approvals.from, CLI::EpicSubmit's latest, held? and expired, and Epic::Progress read Epic::Signoff, and no other lib/ file folds gate_decision records
 
 Scenario: held_gate reads the newest decision
   Given an issue approved and then denied
@@ -1709,11 +1730,15 @@ Scenario: a reviewer's question is on the record
   Given a reviewer in epic nyotes asks about owner blessings
   When the human answers "yes, both"
   Then the journal holds the question text, the answer text, the requester role and the slug
+
+Scenario: a credential in an answer is withheld
+  When the human answers with a line holding an API key
+  Then the journaled answer masks the key, through the same filter the Intake uses for history
 ```
 Spec file: `spec/lain/tools/ask_human_spec.rb`
 
 **Stop and report if:**
-- The answer can carry credentials. The Intake withholds credentials from history; run the same filter here and name it.
+- The Intake's credential filter cannot be reached from `ask_human`. Report where it lives.
 
 ### T37: Give epic_review a context pack and a round cap          [risk: high]
 
@@ -2011,11 +2036,12 @@ Spec file: `spec/lain/cli/epic_mount_spec.rb`
 ### Stream P: answering from the phone
 
 The user pulled the remote surface into this plan on 2026-11-03 ("we will see fewer of those [holds] if we consider pulling that in as one chunk of functionality here"). The scope is approve plus context, and the wake path is a self-hosted ntfy. The design follows `planning/remote-surface-research-2026-08.md` §6.2 and §10, re-grounded at `644ec6ae` and reviewed by 2 panels:
+- **Each phone is a paired device** with its own token, revocable at once (T60).
 - **The relay is lain-core,** per the 2026-10-17 ruling. It gets a frame ceiling and an auth deadline (T50), then a `relay` subcommand bound to a tailnet address (T52). Ruby dials it over a Unix socket, and the phone dials it over the tailnet.
 - **Push in both directions is long-poll methods,** so the request and response contract does not change.
 - **The phone answers at the asking rung,** like the terminal, with authority `:human` and surface `"remote"`. The August research's rung model (`AutoSurface`, `Notify`, `Risk`, `alters_outcome?`) was deleted (`b24b2e62`, `c40ab419`, `46582847`).
 - **The app lives in its own repo,** `~/dev/lain-remote`, as belle-curves and pitchcraft do. Dioxus pulls `nu-ansi-term`, which `deny.toml` bans workspace-wide. Only `lain-wire` is shared, as a git dependency pinned to a commit.
-- **An ntfy notification carries "Open"** (a deep link into the app) and "Deny" (a single-use, item-bound nonce). It never carries "Approve" or the relay token.
+- **An ntfy notification carries only "Open"**, a deep link into the app. Every answer is given in the app, and the notification never carries input text or a token.
 
 Cards T50 to T57 are Rust or Ruby in this repo. T58 and T59 run in `~/dev/lain-remote`, and their commits land there.
 
@@ -2033,11 +2059,11 @@ Cards T50 to T57 are Rust or Ruby in this repo. T58 and T59 run in `~/dev/lain-r
 Scenario: a frame has a ceiling
   Given lain-core listening
   When a client sends 96 MiB of one unfinished str32 frame
-  Then the connection is closed once the frame passes the ceiling (1 MiB), and the daemon's memory does not grow with the frame
+  Then the connection is closed once the frame passes the ceiling (1 MiB), and the codec's buffered byte count never exceeds the ceiling
 
 Scenario: decoding is linear
   When a 1 MiB frame arrives in 4 KiB reads
-  Then the decoder resumes from where it stopped, and does not re-parse the buffer from the start on each read
+  Then a counting decoder reports under 2 MiB of bytes scanned in total
 
 Scenario: a handler seam
   Given serve(listener, handler) with a handler that answers "ping" and "echo"
@@ -2086,7 +2112,7 @@ pub enum AgendaItem {
     GateQuestion { id: String, requester: String, epic: String, stage: String, issues: Vec<String>, question: String, asked_at: i64 },
     Question { id: String, requester: String, question: String, options: Vec<String>, asked_at: i64 },
 }
-pub enum Verdict { Approve { notes: Vec<String> }, Hold { notes: Vec<String> }, Deny { notes: Vec<String> } }
+pub enum Verdict { Approve { note: Option<String> }, Hold { note: Option<String> }, Deny { note: Option<String> } }
 pub enum Answer {
     Call { id: String, verdict: Verdict },
     Gate { id: String, verdicts: Vec<(String, Verdict)> },        // per issue id
@@ -2111,13 +2137,24 @@ pub const WIRE_VERSION: u32 = 1;
 
 ```gherkin
 Scenario: the relay binds only a tailnet or loopback address
-  When it is started with --listen 0.0.0.0:7820 or a LAN address such as 192.168.1.5:7820
-  Then it exits non-zero, naming the allowed ranges 100.64.0.0/10, fd7a:115c:a1e0::/48 and loopback
+  When it is started with --listen 0.0.0.0:7820, a LAN address such as 192.168.1.5:7820, or a 100.64.0.0/10 address that is not this host's tailscale0 address
+  Then it exits non-zero, naming the rule: this host's own tailscale0 address, or loopback for tests
 
 Scenario: a phone without the token is refused
   Given a relay on 127.0.0.1 for the test
   When a client sends a Hello with a wrong token
-  Then the connection is closed before any agenda item is sent, and the compare took constant time in the token's length
+  Then the connection is closed before any agenda item is sent, and the token is compared with a constant-time function (the subtle crate's ConstantTimeEq)
+
+Scenario: the phone cannot publish
+  When a TCP client calls agenda.publish or answers.next
+  Then it gets UnknownMethod: the Unix handler serves lain's methods, and the TCP handler serves only hello, agenda.next and answer.send
+
+Scenario: an answer settles once
+  When a phone replays an answer.send for an id already settled
+  Then the relay answers already-settled, and lain sees 1 answer
+
+Scenario: the relay confines itself
+  Then after binding, the relay process holds a Landlock ruleset that allows reading only its devices file and writing only its Unix socket's directory
 
 Scenario: lain publishes, the phone long-polls, the phone answers
   Given lain connected on the unix socket and a phone client on TCP with the token
@@ -2144,10 +2181,10 @@ Push in either direction uses long-poll methods (`agenda.next(cursor)`, `answers
 ### T53: One agenda of everything waiting on a human          [risk: high]
 
 **Depends on:** T9, T48
-**Files:** `lib/lain/human/agenda.rb` (new), `spec/lain/human/agenda_spec.rb` (new)
+**Files:** `lib/lain/remote/agenda.rb` (new), `spec/lain/remote/agenda_spec.rb` (new)
 **Reuse:** `Approval::Parked::Queue#each` and `Approval::Postponed` (T9); `CLI::HumanReplies` and its `InboxItem` (`human_replies.rb:21`); the poll shape of `Approval::Parked::QueueSurface` (`parked/queue_surface.rb:21,62`)
 **Shared-file wiring:** none
-**Reachable from:** `Approval::RemoteSurface` (T55) -> `Human::Agenda.new(queue:, postponed:, replies:)`
+**Reachable from:** `Approval::RemoteSurface` (T55) -> `Remote::Agenda.new(queue:, postponed:, replies:)`
 
 **Acceptance criteria**
 
@@ -2157,7 +2194,7 @@ Scenario: the agenda lists every kind
   Then a snapshot lists 4 items: 2 ParkedCall (1 postponed), 1 GateQuestion and 1 Question
 
 Scenario: answering routes to the owner
-  When the agenda answers the gate item with Deny(notes: ["wrong crate"]) for issue b
+  When the agenda answers the gate item with Deny(note: "wrong crate") for issue b
   Then the gate records that deny for b, as it would from /inbox
 
 Scenario: a settled item leaves
@@ -2169,12 +2206,12 @@ Scenario: deltas replay to the present
   When they are applied in order to an empty item set
   Then the result equals the current snapshot, from any starting cursor and its snapshot
 ```
-Spec file: `spec/lain/human/agenda_spec.rb`
+Spec file: `spec/lain/remote/agenda_spec.rb`
 
 **Interface**
 
 ```ruby
-module Lain::Human
+module Lain::Remote
   class Agenda   # polls; not a journal projection, because a parked call's input is never journaled (queue.rb:375-379)
     ParkedCall   = Data.define(:id, :requester, :tool, :input, :cwd, :why, :postponed, :asked_at)
     GateQuestion = Data.define(:id, :requester, :epic, :stage, :issues, :question, :asked_at)
@@ -2186,7 +2223,7 @@ module Lain::Human
 end
 ```
 
-Ids are minted per item, because a `tool_use_id` can park twice (`queue.rb:381-384`).
+Ids are minted per item, because a `tool_use_id` can park twice (`queue.rb:381-384`). The agenda has 1 reader, the remote surface. `/inbox`, `lain://inbox` and the status bar's count keep their own lists; moving them onto the agenda is not in this plan.
 
 **Stop and report if:**
 - A deferred epic gate is not reachable from `HumanReplies` in a chat that did not raise it. Report where the gate's question lives.
@@ -2194,10 +2231,10 @@ Ids are minted per item, because a `tool_use_id` can park twice (`queue.rb:381-3
 ### T54: Show the phone a masked view of each item          [risk: high]
 
 **Depends on:** T53
-**Files:** `lib/lain/human/agenda/remote_view.rb` (new), `spec/lain/human/agenda/remote_view_spec.rb` (new)
+**Files:** `lib/lain/remote/agenda/view.rb` (new), `spec/lain/remote/agenda/view_spec.rb` (new)
 **Reuse:** the board's secrets source (`cli/wiring/board_build.rb:242`, `Sensitivity::HistoryLiterals` and the child env); `Sensitivity::TextMask` for those known values; `Sensitivity::Regions.detect` for a literal typed into a command; `Pending#outstanding` (`queue.rb:153`)
 **Shared-file wiring:** none
-**Reachable from:** `Approval::RemoteSurface#publish` -> `Agenda::RemoteView.of(item, secrets:)`
+**Reachable from:** `Approval::RemoteSurface#publish` -> `Remote::Agenda::View.of(item, secrets:)`
 
 **Acceptance criteria**
 
@@ -2218,7 +2255,7 @@ Scenario: a humans-only call goes to the phone
   Given a pending whose humans_only? is true
   Then the remote view includes it, because humans_only? bars an oracle and the phone is a human
 ```
-Spec file: `spec/lain/human/agenda/remote_view_spec.rb`
+Spec file: `spec/lain/remote/agenda/view_spec.rb`
 
 **Stop and report if:**
 - `Regions.detect` flags so much of an ordinary command that the view is unreadable. Report the shapes.
@@ -2233,7 +2270,7 @@ Spec file: `spec/lain/human/agenda/remote_view_spec.rb`
 - `spec/fixtures/wire/` (new)
 - Specs: `spec/lain/approval/remote_surface_spec.rb` (new), `spec/lain/remote/wire_spec.rb` (new), `spec/lain/core/transport/unix_spec.rb` (new), `spec/lain/cli/repl/approval_surfaces_spec.rb`, `spec/lain/cli/repl_spec.rb`, `spec/lain/config_spec.rb`
 
-**Reuse:** `Approval::Parked::QueueSurface#watch` (`parked/queue_surface.rb:21,62`); `Core::Client` (`lib/lain/core/client.rb:14`); `Human::Agenda`, `RemoteView`; the `Repl` -> `ApprovalSurfaces` path (`wiring.rb:972`, `repl.rb:125-126`)
+**Reuse:** `Approval::Parked::QueueSurface#watch` (`parked/queue_surface.rb:21,62`); `Core::Client` (`lib/lain/core/client.rb:14`); `Remote::Agenda`, `Remote::Agenda::View`; the `Repl` -> `ApprovalSurfaces` path (`wiring.rb:972`, `repl.rb:125-126`)
 **Shared-file wiring:** `docs/commands.md`: `remote relay:` and `remote ntfy:` config keys
 **Reachable from:** `CLI::Wiring#repl_over` -> `Repl.new(remote:)` -> `ApprovalSurfaces.new(remote:)` -> `#watch` (`approval_surfaces.rb:73`) -> `Approval::RemoteSurface` when `remote relay:` is set
 
@@ -2254,7 +2291,7 @@ Scenario: Ruby and Rust encode alike
 
 Scenario: no relay, no surface
   Given remote relay unset
-  Then ApprovalSurfaces#watch returns the same 3 surfaces it does today
+  Then ApprovalSurfaces#watch returns the same surfaces it returns today
 
 Scenario: a dead relay degrades
   Given the relay is down
@@ -2265,13 +2302,13 @@ Spec file: `spec/lain/approval/remote_surface_spec.rb`, `spec/lain/cli/repl/appr
 `spec/lain/approval/remote_surface_spec.rb` is a seam against the built relay. Gate it like the `:core` tier, and list it in `spec/support/slow_files.rb` through the main session.
 
 **Stop and report if:**
-- `ApprovalSurfaces#watch`'s spec pins the surface count as a constant. Report it; the count becomes 3 or 4.
+- The remote surface needs the board's secrets (`board_build.rb:242`) and they do not reach `Repl`. Report the path they take.
 
 ### T56: Buzz the phone through ntfy when something waits          [risk: medium]
 
 **Depends on:** T55
 **Files:** `lib/lain/remote/ntfy.rb` (new), `lib/lain/approval/remote_surface.rb` (created by T55), `spec/lain/remote/ntfy_spec.rb` (new), `spec/lain/approval/remote_surface_spec.rb` (created by T55)
-**Reuse:** `Human::Agenda#delta_since`; `Net::HTTP`
+**Reuse:** `Remote::Agenda#delta_since`; `Net::HTTP`
 **Shared-file wiring:** none
 **Reachable from:** `Approval::RemoteSurface` -> `Remote::Ntfy#notify(item)` when `remote ntfy:` is set
 
@@ -2279,17 +2316,13 @@ Spec file: `spec/lain/approval/remote_surface_spec.rb`, `spec/lain/cli/repl/appr
 
 ```gherkin
 Scenario: an unanswered item buzzes after the delay
-  Given remote ntfy "http://100.64.0.2:8090/lain-x7" and a delay of 60 s
+  Given remote ntfy "http://100.101.102.103:8090/lain-x7" and a delay of 60 s
   When a call has waited 60 s unanswered
   Then one POST reaches the topic with a title naming the kind and the requester, and no input text
 
-Scenario: the notice carries 2 actions and no token
-  Then its actions are "Open" (a view action to lain-remote://item/<id>) and "Deny" (an http action to the relay carrying a nonce for that item only)
-  And the relay token appears nowhere in the message
-
-Scenario: a nonce denies once and nothing else
-  When the Deny nonce is used twice, or for another item
-  Then the second use and the other item are refused
+Scenario: the notice carries 1 action and no secret
+  Then its only action is "Open", a view action to lain-remote://item/<id>
+  And neither the relay token nor any input text appears in the message
 
 Scenario: an item answered first does not buzz
   When the call is answered at the desk at 30 s
@@ -2297,10 +2330,10 @@ Scenario: an item answered first does not buzz
 ```
 Spec file: `spec/lain/remote/ntfy_spec.rb`
 
-ntfy stores an action's headers with the message and sends them to every subscriber, so the token must never be in it. The nonce is single-use, bound to 1 item id, and can only deny.
+Per the user's ruling of 2026-11-03, the notification opens the app, and every answer is given there. The relay grows no HTTP surface.
 
 **Stop and report if:**
-- The relay cannot check a nonce without a new wire method. Add `answer.deny_by_nonce` in T52's file through a hand-back diff.
+- ntfy rejects a view action whose URL scheme is not http or https. Then link to the app's intent URL, and report it.
 
 ### T57: lain up runs the relay in its own pane          [risk: medium]
 
@@ -2380,7 +2413,7 @@ Scenario: an item shows its context
 
 Scenario: an answer carries a note
   When the human taps Deny and types "wrong tree"
-  Then the relay receives Deny(notes: ["wrong tree"]) for that id
+  Then the relay receives Deny(note: "wrong tree") for that id
 
 Scenario: a deep link opens the item
   When the app opens from lain-remote://item/<id>
@@ -2391,11 +2424,69 @@ Spec file: `~/dev/lain-remote/src/ui/item.rs` (its `#[cfg(test)]` module, over t
 **Stop and report if:**
 - Dioxus 0.7 mobile has no deep-link hook without platform code. Report it and leave deep links to the manual pass.
 
+### T60: Pair and revoke a phone          [risk: high]
+
+**Depends on:** T52
+**Files:** `lib/lain/cli/remote.rb` (new), `lib/lain/remote/devices.rb` (new), `crates/lain-core/src/relay/devices.rs` (new), `spec/lain/cli/remote_spec.rb` (new), `spec/lain/remote/devices_spec.rb` (new)
+**Reuse:** `Gateway::TokenFile`'s file mode and atomic write (`lib/lain/gateway/token_file.rb`); `AtomicFile`
+**Shared-file wiring:** `exe/lain`: `def remote(verb, name = nil) = exit_status { Lain::CLI::Remote.new(verb:, name:, sink: $stdout).run }`
+**Reachable from:** `exe/lain remote pair <name>` and `exe/lain remote revoke <name>` -> `CLI::Remote` -> `Remote::Devices` (the relay rereads the file on change)
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: pairing makes a device token
+  When the human runs `lain remote pair pixel`
+  Then a new random token for device "pixel" is written to the devices file with mode 0600, and printed once with the relay address for the app's settings
+
+Scenario: a revoked device is refused at once
+  Given device "pixel" paired and connected
+  When the human runs `lain remote revoke pixel`
+  Then the relay closes pixel's connection and refuses its next Hello, and other devices keep working
+
+Scenario: answers name the device
+  When pixel approves a call
+  Then the escalation record's surface is "remote:pixel"
+
+Scenario: a stored token is not the token
+  Then the devices file holds a hash of each token, never the token
+```
+Spec file: `spec/lain/remote/devices_spec.rb`, `spec/lain/cli/remote_spec.rb`, `crates/lain-core/src/relay/devices.rs` (its `#[cfg(test)]` module)
+
+**Stop and report if:**
+- The relay cannot reread the devices file without a restart. Report the reload signal it needs.
+
+### T61: A headless run masks a sensitive read nobody can release          [risk: high]
+
+**Depends on:** T15, T43
+**Files:** `lib/lain/middleware/redact_secret_reads.rb`, `spec/lain/middleware/redact_secret_reads_spec.rb`, `spec/lain/cli/tool_guard_spec.rb`
+**Reuse:** `RedactSecretReads::Unqueued` (`redact_secret_reads.rb:113-125`); the approval ruling that a headless `auto` refuses what nobody settles
+**Shared-file wiring:** none
+**Reachable from:** `CLI::ToolGuard` (`--non-interactive`) -> `Middleware::RedactSecretReads.new(queue: Unqueued)`
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: no human, no release
+  Given a --non-interactive run
+  When read_file returns a file with a sensitive region
+  Then the region is masked, the tool result says no human is attached to release it, and no read_released record is written
+
+Scenario: the gate and the release agree
+  Then a --non-interactive run denies at the gate and masks at the release, and tool_guard_spec pins both halves together
+```
+Spec file: `spec/lain/middleware/redact_secret_reads_spec.rb`, `spec/lain/cli/tool_guard_spec.rb`
+
+The comment at `redact_secret_reads.rb:113-125` calls this the last fail-open in a headless run and defers the flip to a measurement. The approval ruling already settles it: a headless run refuses what nobody settles.
+
+**Stop and report if:**
+- A bench or QA arm depends on a headless run reading sensitive bytes. List it.
+
 ## Integration checks
 
 1. `bundle exec rake pspec` at a load under 8. Compare the example count with the start count plus the new examples, with 0 failures.
 2. `bundle exec rubocop`, `bin/comment-census --check-tickets`, `bin/zeitwerk-census --check`, `bin/spec-census --check`.
-3. `cargo test`, `cargo clippy --all-targets -- -D warnings`, `cargo deny check` for the 3 new crates, and `bundle exec rake core:build && bundle exec rspec --tag core`.
+3. `cargo test`, `cargo clippy --all-targets -- -D warnings`, `cargo deny check` for `crates/lain-wire` and the grown `crates/lain-core`, and `bundle exec rake core:build && bundle exec rspec --tag core`.
 4. `bin/hot-path-bench --check`. T29 touches the request path, and T15 and T16 touch the bash-call path.
 5. The T20 replay over the round 2 and round 3 session journals (`~/.local/state/lain/sessions/9d832bf6a4ad/`, `~/.local/state/lain/trial-archive/nyotes-round2/`), with T21's table as the candidate. It must list no admitted call recorded as denied, or the user accepts each row. It also reports the parks removed.
 6. Manual pass, owed by the user, in a nyotes round 4 cockpit:
