@@ -85,10 +85,11 @@ module Lain
         # CALLER's stack up to its first await, so launch is not fire-and-return
         # for a non-yielding prefix -- a synchronously-raising provider has
         # already set `@failure` by the time launch returns.
-        def launch(prompt)
-          # "launched" marks the actor path ONLY, and brings the adoption
-          # ordinal that separates twins launched on the same work.
-          @spawn = @lineage.spawn(@parent, prompt:, lifecycle: StatusFeed::SpawnLifecycle::LAUNCHED)
+        #
+        # The spawn is written before the child is built, so the child's own
+        # records can name it.
+        def launch(prompt, spawn:)
+          @spawn = spawn
           @address = @spawn.digest
           @parent_correlation = @lineage.correlation_of(@parent)
           @task = Async::Task.current.async { run(prompt) }

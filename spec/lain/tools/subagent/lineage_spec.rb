@@ -365,6 +365,27 @@ RSpec.describe Lain::Tools::Subagent::Lineage do
     end
   end
 
+  # A launched actor owns its own ending, so the record that wrote its spawn
+  # hands it over rather than ending it.
+  describe "OneShot#launched" do
+    let(:log) { Lain::Tools::Subagent::Log.new }
+    let(:writer) { described_class.new(policy:, log:) }
+
+    def recorded(&)
+      described_class::OneShot.new(writer, parent, consumed: Lain::Channel::Null.instance,
+                                                   journal: Lain::Channel::Null.instance).recording(&)
+    end
+
+    it "writes the spawn with its lifecycle and no end" do
+      recorded do |record|
+        record.spawned("go", lifecycle: Lain::StatusFeed::SpawnLifecycle::LAUNCHED)
+        record.launched
+      end
+
+      expect(log.to_a.map { |event| [event.kind, event.body["lifecycle"]] }).to eq([[:spawn, "launched"]])
+    end
+  end
+
   # The constructor's documented silent-failure invariant: an injected
   # observer must COMPOSE with the @log append, never replace it, or the
   # mailbox fold stops with nothing raised. Covered until now only at

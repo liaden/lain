@@ -1600,6 +1600,85 @@ RSpec.describe Lain::Tools::Subagent do
     end
   end
 
+  # An actor's spawn is written before its child is built, so the child is
+  # metered, watched and addressed as a one-shot's is.
+  describe "an actor's spawn" do
+    def ends_of(spawn) = record.messages.select { |message| message.causal_parents.include?(spawn.digest) }
+
+    it "ends as failed when the child could not be built, leaving no spawn open" do
+      tool = build_subagent(provider: mock(text_response("unused")), mode: :actor,
+                            tool_middleware: ->(_worker_env, task:) { raise "no stack for #{task}" })
+
+      Sync do
+        expect { tool.launch_actor("go", worker_env: Lain::WorkerEnv.default) }
+          .to raise_error(RuntimeError, "no stack for go")
+      end
+
+      expect(record.spawns.size).to eq(1)
+      expect(ends_of(record.spawn).map(&:body))
+        .to eq([{ "lifecycle" => "failed", "error" => "RuntimeError", "message" => "no stack for go" }])
+    end
+
+    it "gives back the grant of an actor whose child could not be built" do
+      spend = Lain::Budget::Shared.new
+      tool = build_subagent(provider: mock(text_response("unused")), mode: :actor, spend:,
+                            holder: Lain::Budget.ceilings(tokens: 1000).with(depth: 1),
+                            tool_middleware: ->(_worker_env, task:) { raise "no stack for #{task}" })
+
+      Sync do
+        expect { tool.launch_actor("go", worker_env: Lain::WorkerEnv.default) }.to raise_error(RuntimeError)
+      end
+
+      expect(spend.reserved).to eq(0)
+    end
+
+    it "ends as stopped when its launch is cancelled, and gives back its grant" do
+      spend = Lain::Budget::Shared.new
+      tool = build_subagent(provider: mock(text_response("unused")), mode: :actor, spend:,
+                            holder: Lain::Budget.ceilings(tokens: 1000).with(depth: 1),
+                            tool_middleware: ->(_worker_env, task:) { raise Async::Stop, task })
+
+      Sync do
+        expect { tool.launch_actor("go", worker_env: Lain::WorkerEnv.default) }.to raise_error(Async::Stop)
+      end
+
+      ends = ends_of(record.spawn).map { |message| message.body["lifecycle"] }
+      expect([ends, spend.reserved]).to eq([["stopped"], 0])
+    end
+
+    it "notes a lost end when the record refuses the failed one" do
+      telemetry = Lain::Channel.new
+      refusing = lambda do |event|
+        raise "no room for the end" if event.kind == :message
+
+        record.call(event)
+      end
+      tool = build_subagent(provider: mock(text_response("unused")), mode: :actor, observer: refusing, telemetry:,
+                            tool_middleware: ->(_worker_env, task:) { raise "no stack for #{task}" })
+
+      Sync do
+        expect { tool.launch_actor("go", worker_env: Lain::WorkerEnv.default) }
+          .to raise_error(RuntimeError, "no stack for go")
+      end
+
+      lost = telemetry.drain.grep(Lain::Tools::Subagent::Lineage::EndingNotRecorded)
+      expect(lost.map { |loss| [loss.spawn, loss.record, loss.lifecycle, loss.error] })
+        .to eq([[record.spawn.digest, "completion", "failed", "RuntimeError"]])
+    end
+
+    it "gives the child an inbox addressed to that spawn" do
+      readings = Array.new(8) { |index| tool_response(["r#{index}", "read_file", { "path" => "Gemfile#{index}" }]) }
+      tool = build_subagent(provider: mock(*readings), mode: :actor, budget: Lain::Budget.ceilings(iterations: 8))
+
+      Sync do
+        actor = tool.launch_actor("go", worker_env: Lain::WorkerEnv.default)
+        expect { actor.settle }.to raise_error(Lain::Budget::Exceeded)
+      end
+
+      expect(record.messages.find { |message| message.from == "lain" }.to).to eq(record.spawn.digest)
+    end
+  end
+
   # ---- Scenario: attenuation under each posture (5-1.2) ----------------------
 
   describe "attenuation postures" do

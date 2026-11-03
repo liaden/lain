@@ -112,17 +112,20 @@ RSpec.describe Lain::Supervisor::Restart do
     scribe = Lain::SessionRecord::Scribe.new(journal: record_journal, context:, toolset:,
                                              sections: SessionSections.complete)
     observer = described_class::JournalBlobs.new(journal: record_journal, store:, observer: scribe)
+    lineage = Lain::Tools::Subagent::Lineage.new(policy: spawn_policy)
     actor = Lain::Tools::Subagent::Actor.new(agent: scribed_agent(provider, observer), parent: parent_timeline,
-                                             lineage: Lain::Tools::Subagent::Lineage.new(policy: spawn_policy))
-    [actor, scribe]
+                                             lineage:)
+    [actor, scribe, lineage]
   end
 
   # Life 1: a real Actor over a scribed Agent, launched under a host task we
   # hold so the kill is abrupt -- host.stop cancels the parked fiber the way a
   # dying process would, landing no farewell and no session_closed record.
   def record_killed_actor(task, provider:)
-    actor, scribe = scribed_actor(provider)
-    host = task.async { actor.launch("keep the notes current") }
+    actor, scribe, lineage = scribed_actor(provider)
+    prompt = "keep the notes current"
+    spawn = lineage.spawn(parent_timeline, prompt:, lifecycle: Lain::StatusFeed::SpawnLifecycle::LAUNCHED)
+    host = task.async { actor.launch(prompt, spawn:) }
     # The initial turn does real file IO, so the launch's synchronous prefix
     # suspends before @task is assigned and a bare settle races NotLaunched --
     # await the launch block itself first, {Supervisor#adopt}'s own `.wait`

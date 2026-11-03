@@ -227,10 +227,14 @@ module Lain
         # child's LIFETIME: `Supervisor#stop` farewells every row, so a
         # `deregister` there rides the same lease teardown that reaps the fiber.
         # {ChildBuilder::Child} owns the case where no actor comes out at all.
-        build_child(parent, worker_env, task: prompt,
-                                        builder: granted(@builder)).launched do |agent, registration, tools, held|
-          Actor.new(agent:, registration:, lineage:, parent:, journal:, answer: @answer, reservation: held,
-                    worker: Isolation::SelfSync.worker(agent, tools:)).launch(prompt)
+        # The spawn is written before the child is built, so the child's
+        # payments, progress and inbox can name it as a one-shot's do.
+        builder = granted(@builder)
+        releasing(builder.reservation) do
+          Lineage::OneShot.new(lineage, parent, consumed: telemetry, journal:).recording do |record|
+            spawn = record.spawned(prompt, lifecycle: StatusFeed::SpawnLifecycle::LAUNCHED)
+            launched_over(spawn, prompt, worker_env, record, builder).tap { record.launched }
+          end
         end
       end
 
@@ -322,6 +326,25 @@ module Lain
         # WorkerEnv down, so the actor's child resolves cwd/env against it.
         actor = supervisor.adopt(role: @name) { |worker_env| launch_actor(prompt, worker_env:) }
         Tool::Result.ok("actor launched: #{actor.address}")
+      end
+
+      def launched_over(spawn, prompt, worker_env, record, builder)
+        progress = reporting(spawn, prompt, nil, @announces_as)
+        child = record.built(build_child(record.parent, worker_env, task: prompt, progress:, builder:))
+        child.launched do |agent, registration, tools, held|
+          Actor.new(agent:, registration:, lineage:, parent: record.parent, journal:, answer: @answer,
+                    reservation: held, worker: Isolation::SelfSync.worker(agent, tools:)).launch(prompt, spawn:)
+        end
+      end
+
+      # Every exit that brought out no actor gives the grant back, a cancel
+      # included; once the child held it, the release is a no-op, since a
+      # reservation settles once.
+      def releasing(reservation)
+        actor = nil
+        actor = yield
+      ensure
+        reservation.release unless actor
       end
 
       # Re-entrant by construction: the record rides a {Lineage::OneShot} held
@@ -1977,17 +2000,15 @@ module Lain
         # A child's payments go to the session file, never to the live tee:
         # the parent's HUD and compaction would take a child's reading as their
         # own. Each names its spawn, so a reader pairing payments with the
-        # parent's requests can skip it. An actor's spawn is written only after
-        # its Agent exists, so an actor's payments, which could name none, are
-        # not journaled; its spend still settles into the holder.
+        # parent's requests can skip it. A child built with no spawn names
+        # none, so its payments are not journaled; its spend still settles.
         def child_accounting(chain, spend)
           return Agent::Accounting.new(spend:) if chain.spawn.nil?
 
           Agent::Accounting.new(journal: @seam.journal, spawn: chain.spawn, spend:)
         end
 
-        # Addressed to the spawn digest, which only a one-shot dispatch knows
-        # before the Agent is built; any other spawn gets no inbox.
+        # Addressed to the spawn digest; a child built with no spawn gets no inbox.
         def child_mailbox(chain)
           return Context::Mailbox::Null if chain.spawn.nil?
 

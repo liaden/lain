@@ -23,9 +23,9 @@ module Lain
         # @return [String] the `:spawn` digest this dispatch's rows hang on
         attr_reader :spawn
 
-        # A dispatch with nowhere to tell: an actor's launch, a spawn built
-        # outside the one-shot path. The observer passes through untouched, so
-        # no call site asks whether there is a progress to report to.
+        # A dispatch with nowhere to tell: a child built with no spawn. The
+        # observer passes through untouched, so no call site asks whether there
+        # is a progress to report to.
         module Null
           def self.watching(observer) = observer
 

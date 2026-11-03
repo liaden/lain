@@ -44,6 +44,45 @@ RSpec.describe Lain::Tools::Subagent::Actor do
     end
   end
 
+  describe "an orchestrator's record" do
+    let(:usage) { Lain::Usage.new(input_tokens: 10) }
+    let(:tool) do
+      rounds = Array.new(2) { |index| tool_response(["e#{index}", "echo", { "text" => "pass #{index}" }], usage:) }
+      CoreGraph.subagent(provider: CoreGraph.provider(*rounds, text_response("landed", usage:)), parent:,
+                         journal: session_file, telemetry: session_file, observer: scribe, mode: :actor,
+                         toolset: Lain::Toolset.new([EchoTool.new]), policy: CoreGraph.spawn_policy(only: %i[echo]),
+                         announces_as: "issue_orchestrator")
+    end
+
+    def orchestrated
+      Sync do |task|
+        supervisor = Lain::Supervisor.new(journal: session_file).run(task)
+        supervisor.adopt(role: "issue_orchestrator") { |worker_env| tool.launch_actor("land it", worker_env:) }.settle
+      ensure
+        supervisor&.stop
+      end
+      journal_records(session_io).find { |record| record["kind"] == "spawn" }.fetch("digest")
+    end
+
+    it "journals a turn_usage per request, each naming its spawn" do
+      spawn = orchestrated
+
+      expect(journal_records(session_io).count { |record| record["kind"] == "spawn" }).to eq(1)
+      expect(journal_records(session_io, "turn_usage").map { |record| record["spawn"] }).to eq([spawn] * 3)
+    end
+
+    it "journals its progress under its role, a row per turn the session record holds" do
+      spawn = orchestrated
+      progress = journal_records(session_io, "child_progress")
+      turns = journal_records(session_io, "child_turn")
+
+      expect(progress.map { |record| record["spawn"] }.uniq).to eq([spawn])
+      expect(progress.first).to include("role" => "issue_orchestrator", "turns" => 0)
+      expect(progress.drop(1).map { |record| record["turns"] }).to eq((1..turns.size).to_a)
+      expect(turns.size).to be >= 3
+    end
+  end
+
   describe "the spend an actor's child reports" do
     let(:spend) { Lain::Budget::Shared.new }
     let(:tool) do

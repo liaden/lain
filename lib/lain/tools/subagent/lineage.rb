@@ -275,7 +275,18 @@ module Lain
 
           # @param prompt [String] the child's task
           # @param resumed [#head, #spawn, nil] the stopped child a resume carries on
-          def spawned(prompt, resumed: nil) = @spawn = @lineage.spawn(@parent, prompt:, resumed:)
+          # @param lifecycle [String, nil] the mark an actor's spawn carries
+          def spawned(prompt, resumed: nil, lifecycle: nil)
+            @spawn = @lineage.spawn(@parent, prompt:, resumed:, lifecycle:)
+          end
+
+          # A launched actor ends its own spawn, by its farewell or its failure,
+          # so the record hands the ending over and writes none on the way out.
+          #
+          # @return [void]
+          def launched
+            @open = false
+          end
 
           # @param child [#settled, #asked] the child this spawn built
           # @return the child, so a build reads as one expression

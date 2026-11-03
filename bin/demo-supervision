@@ -94,7 +94,9 @@ class DemoSupervision
                             snapshot_slot: Lain::Agent::SnapshotSlot.new(
                               root: @dir, log: Lain::Workspace::SnapshotLog.new(observer:)
                             ))
-    Lain::Tools::Subagent::Actor.new(agent:, parent: parent_timeline, lineage:)
+    @lineage = lineage
+    @parent = parent_timeline
+    Lain::Tools::Subagent::Actor.new(agent:, parent: @parent, lineage: @lineage)
   end
 
   def sections
@@ -117,7 +119,9 @@ class DemoSupervision
 
   def life(task)
     live = actor
-    @host = task.async { live.launch("keep the notes current") }
+    prompt = "keep the notes current"
+    spawn = @lineage.spawn(@parent, prompt:, lifecycle: Lain::StatusFeed::SpawnLifecycle::LAUNCHED)
+    @host = task.async { live.launch(prompt, spawn:) }
     # The initial turn does real file IO, so the launch's synchronous prefix
     # suspends before its task handle is assigned -- await the launch block
     # itself before touching the actor (Supervisor#adopt's own discipline).
