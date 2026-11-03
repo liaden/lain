@@ -2521,3 +2521,79 @@ The comment at `redact_secret_reads.rb:113-125` calls this the last fail-open in
 - T4 started 16:56, cut at 82fb48f2
 - T13 started 16:56, cut at 82fb48f2
 - T23 started 16:56, cut at 82fb48f2
+- T2 started 16:59, cut at 91b323c0
+- T5 started 16:59, cut at 91b323c0
+- T6 handed back (8 green, NameError red); medium review started.
+- T1 nit handed back (16/1 red, 1256/0 green); docs wiring applied in worktree; medium review started.
+- T1 review APPROVE-WITH-FIXES (mechanical, docs prose); main fixed docs/commands.md:1193.
+- T6 review 1 APPROVE-WITH-FIXES: 1 substantive (non-String note accepted), 3 mechanical; fix round sent, second review follows.
+- T1 landing 1 red (land/T1-1.hook.keep): 32433/1, workspace_profile_spec "passes one spec file with the example count an unconfined run reports" STARVED at load 28.3 (30s watchdog), seed 45651. Already on the known-flake list (2026-11-02): a repeat, so a follow-up card. Flake check running.
+- T13 handed back (NameError red; 29 card, 382 with ratchet, green). Note for T14: a literal exec glob lowers to its parent dir. High review queued behind the flake check.
+- T6 fix round handed back (10/1 red on the note type, 346/0 green). Second review queued behind the flake check.
+- T2 handed back (29/2 red, 29/0 + 460 related + 336 ratchet green). Low review queued.
+- T1 flake check: green alone and 3 of 3 at seed 45651 on base 91b323c0. Repeat of a listed flake: follow-up card FU-1 (workspace_profile example-count seam starves its 30s watchdog under pspec load; 2 reds in 2 rounds). Landing T1 attempt 2.
+- T5 handed back (6/2 red, 433/0 green). Low review queued.
+- Build outputs list gains target/release/lain-fence (wiring_spec and toolset_build_spec go red without it); copied into all nr3 worktrees.
+- T4 handed back scenarios 1-2 (268/0 green); scenario 3 (hands_off parks a manual issue) needs the gate. Ruling: scope change, lib/lain/epic/gate/policy.rb and its spec join T4, plus cli/epic_submit.rb or epic/submission.rb only if the acceptance must ride the submit; factory.rb changes come back as a wiring diff the main session applies (T26 not in flight).
+- T1 landing 2 red (land/T1-2.hook.keep): 32433/1, subagent_concurrency_spec "gathers every result into ONE user message in tool_use order, however the children finish" (order go-3 go-1 go-2), seed 35578. Listed flake (2026-09-21): green alone and 3 of 3 on base. Repeat: follow-up card FU-2. Landing attempt 3.
+- T23 handed back (5/4 red; 383 card, 1696 related green). Ruling: 1 progress row per committed turn accepted; every row must attribute to the role, on the row or via its spawn. High review queued.
+- T1 landed 8aac10aa (attempt 3)
+- T1 cleanup done. Example count: a passing hook prints none; parallel_rspec exits non-zero on a lost worker; runtime log named 1204 of 1209 spec files (5 excluded tiers).
+- 17:18 reviews started: T13 high, T23 high, T2 low, T5 low, T6 second.
+- T6 review 2 APPROVE; main applied the private-method nit (10/0, rubocop clean). Landing.
+- T2 low review APPROVE-WITH-FIXES: scenario 2 untested in guard_spec. Scope change: guard_spec joins T2; fix sent (red against base mapping.rb required).
+- T5 low review APPROVE-WITH-FIXES, mechanical: guard checks the constant's spelling at the call site; ruled accept, with comments at the guard and the 2 redundant merges, and the unscanned forms named. Fixes sent.
+- T4 scope-3 handed back (236/4 red; 6802/0 green incl. 9 wiring now passing). Medium review (opus) started.
+- T6 landed b0c26abc (attempt 1)
+- T6 landed b0c26abc. T7 started 17:21, cut at b0c26abc.
+- T5 fixes verified (comments only, 433/0). Landing.
+- T2 fix round: guard_spec example red against base mapping.rb (46/1), green 571/0; keyed by level name. Approved; lands after T5.
+- T5 landed 9065ac88 (attempt 1)
+- T13 high review REQUEST-CHANGES: read? omits writes; lend lends unleased dirs; lease spelling skips realpath; 8 of 26 mutants survive; literal glob lowers to parent (fix in T13, not T14); plus 4 nits. Fix round 1 sent; second review follows.
+- T2 landed 40cbd0ce (attempt 1)
+- T3 started 17:29, cut at 40cbd0ce
+- T43 started 17:29, cut at 40cbd0ce
+- T2 landed 40cbd0ce.
+- T7 handed back (load error red; 15/0, 1185 related green). Medium review started.
+- T43 stopped before code: gate's ruling reaches only WithholdAutomaticOutput::Carried, which does not forward it (verified, withhold_automatic_output.rb:127, gate.rb:252). Scope change: withhold_automatic_output.rb and its spec join T43. Lockfile gap (Scan skips lockfile checksums, TextMask does not) goes to T44's brief.
+- T23 high review APPROVE-WITH-FIXES: real journal confirms the role ruling (1 dispatch row with role, 6 turn rows name the spawn). Substantive: Async::Stop during build leaks an open spawn and the grant. Fix round 1 sent with 6 mechanical items; restart_spec.rb joins. Second review follows.
+- T7 medium review REQUEST-CHANGES: round trip breaks on punctuation-led notes; approve? and approve... approved; thin round-trip population; word table unpinned. Rulings (safe side, coordinator): approval word takes only a . or ! tail; an approval note needs a comma, colon or dash separator (approve it is Unrecognised); deny and hold keep any punctuation tail and the bare-space note. T8 must know this. Fix round 1 sent; second review follows, with mutation runs owed.
+- T3 handed back the crate-naming check (41/2 red, 444/0 green); scenario 1 not done (Cargo has no layout). Ruling: use Cargo#owner (nearest Cargo.toml walk, cargo's own rule) and delete the src/tests split; no adapter or factory change.
+- T13 fix round 1: 8 of 9 items done (39/7 red, 39/0 green, 6 mutants killed). Item 8 needs Roots.spellings public: roots.rb joins T13 for that 1 change.
+- T13 item 8 done (392/0). Second review (same opus reviewer) started 17:32.
+- T7 fix round 1 handed back (35/4 red, 35/0 + 1205 green; word table a pin, no red). Second review started 17:33.
+- T3 ruling corrected: the nearest-manifest walk mis-names the manifest for a crate not yet created (the only reader is selection_for's error). adapter.rb and its spec join T3 (mapping.rb if a public method is needed); Cargo gets the layout's package rule; factory wiring by main.
+- T23 fix round stopped on scope: lineage.rb and bin/demo-supervision join T23 (OneShot gains a launched lifecycle so actors reuse recording). Items 2,3,4,7 done.
+- T7 review 2 APPROVE-WITH-FIXES (7 mutants all red, probe clean); 2 mechanical nits sent. Note for T8: a deny or hold keeps leading punctuation in its note (n!! x gives note "! x"), and approve-with-a-note needs a comma, colon or dash.
+- T4 medium review (opus) REQUEST-CHANGES: factory_spec (slow) red; manual park writes no awaiting_human; acceptance parsed 3 times in production; gate fact commands unpinned; 5 stale comments. Rulings: route manual park through Deferred; factory wiring passes subject.acceptance; commands are When/Then backticked spans only; planning view's denied reading is T48's if pre-existing. Fix round 1 sent; second review follows.
+- T13 review 2 APPROVE-WITH-FIXES (34 of 35 mutants killed, every back-out red); 3 mechanical items sent. For T14: a rule whose root is reached through a symlink misses the real landing (probe 4f, nr3-T13 tmp/probes).
+- T7 nits done (1205/0). Landing.
+- T7 landed 2ba0130e (attempt 1)
+- T7 landed 2ba0130e. T9 started 17:41, cut at 2ba0130e (opus).
+- T13 round 2 items done (19/2 red, 611/0 green). Landing.
+- T3 handed back the layout route (96/8 red, 480/0 green); main applied the factory.rb:1350 wiring (rubocop clean). Medium review started.
+- T9 stopped before code: breaker never hears a postpone (only Judged calls DenialBreaker#denied); 5 specs pass Booleans to Pending#decide. Scope change: switchboard.rb (2 lines) and those 5 specs join T9; no Boolean shim.
+- T13 landed 22edfb51 (attempt 1)
+- T13 cleanup done.
+- T14 started 17:46, cut at 22edfb51 (opus). T3 medium review started.
+- T23 fix round done (5/2 red, lineage_spec unknown keyword red; 1735/0 green; demo exits 0). Second review started 17:47.
+- T43 handed back (219/6 red, 34/2 red after switch; 311/0 + 3605/0 green). Deviation: ruling passes up as env[:ruling] (forwarding broke tool_guard_spec's delegator-depth pin). High review (opus) started; hot-path-bench owed before landing.
+- T3 medium review APPROVE-WITH-FIXES: substantive regression (bare cargo preset makes package_dir answer . so the error names the root manifest); layout rule and factory wiring unpinned (mutants survive). Ruling: package_dir answers only under a package's own roots, else nil and fallback. factory_spec joins T3. Fix round sent; second review follows.
+- Overlap: T3 and T4 both now touch factory_spec.rb and factory.rb (different lines). The later landing applies by git apply -3 from its own cut sha; re-check its wiring against main before landing.
+- T14 handed back (28/8 red, 551/0 green), stop condition fired: an exec dir of node_modules/.bin denies its own symlinks under lain-fence. Rulings: widen to node_modules/** (links point inside node_modules; per-link targets drift); tripwire/ledger.rb and cli/wiring/observers.rb join T14 so production passes the rules; only fresh_run_file exempt, but report whether cargo test's unresolved_exec stops the agent.
+- T3 fix round done (20/3 red for item 1; items 2-4 proved by mutants; 583/0 green). Second review started 17:52.
+- T4 fix round 1 done (459/12 red, 4176/0 green). Scope change: epic/gate/policies.rb and epic_driver/run_spec.rb join T4. factory.rb:1224 wiring (acceptance:) applied in worktree. Second review started 17:52.
+- T23 review 2 APPROVE (8 of 10 mutants red, 2 caught by older specs; every back-out red; real journal 1 spawn, 7 progress, 3 usage). Landing.
+- T14 rulings done (129/5 red, 132/0 + 850/0 green). cargo test binary only records unresolved_exec (only refused_exec stops); would_stop noise on every honest cargo test becomes follow-up FU-3. High review queued behind the T23 landing.
+- T23 landed dff0946e (attempt 1)
+- T23 landed dff0946e. T24 started 18:00, cut at dff0946e (opus). T14 high review started.
+- T3 review 2 APPROVE-WITH-FIXES (regression fixed, 4 of 5 mutants red); 1 spec for deepest-wins sent.
+- T9 handed back (1144/25 red; 4987/0 green over 108 files incl. e2e cockpit_approval). Bare wait/stop at [y/N] now hold. High review (opus) started. Docs owed: docs/commands.md hold [note] at [y/N].
+- T3 review 2 fix done (deepest-wins pinned with a/src and a/tests/z/src; 422/0). Landing.
+- T24 stopped on its lease-owner condition. User ruling (2026-11-03): Hybrid. A stopped child keeps its live lease while the session runs and resumes in the same worktree; Conductor#close surrenders held leases; after an abandoned session, --resume cuts a fresh worktree from the stop's anchor plus snapshot. conductor.rb and its spec join T24; resume wiring to the live Subagent; exe/lain lines come back as wiring.
+- T43 high review APPROVE-WITH-FIXES: only a human approve releases (real wiring verified); env[:ruling] sound. Substantive: unbounded whole-file scan on release (12 MB wc -c 2.64s vs 0.29s); released surface recorded as the rung name. 8 surviving mutants; 3 false texts. Fix round sent; second review follows. Main owes planning/qa/scenarios/secret-boundary.md 4f (a human-approved cat releases).
+- T4 review 2 APPROVE-WITH-FIXES: substantive, IssueActor defaults acceptance so the factory wiring is unpinned (M12). Fix round 2 sent with GATE_PARKED wording as a factory wiring diff; third review follows.
+- T14 high review REQUEST-CHANGES: link-out run file exempted while lain-fence refuses it; ExecRules.lain on the tripwire exempts a fresh exe/lain; lease checkouts uncovered (180 of 349 real cwds). Rulings: lease checkouts move to T15 via the agent's Bounds; tripwire gets project rules only. Real history: 0 of 134 fresh run files exempted; the cargo test noise is unresolved_exec (never stops), follow-up FU-3. Fix round sent; second review follows.
+- Plan note for T15: cover each lease checkout's exec rules through the agent's Bounds (from T14 review).
+- T3 landed 15f63347 (attempt 1)
+- T3 landed 15f63347.
