@@ -17,13 +17,15 @@ module Lain
       # @return [Roots]
       def self.of(*dirs, facts: FileFacts::LIVE) = new(dirs.flat_map { spellings(_1, facts) })
 
+      # @param dir [String] expanded against the process directory
+      # @param facts [FileFacts::Live, FileFacts::Recorded] where it really lands
+      # @return [Array<String>] the directory as written and where it really lands
       def self.spellings(dir, facts)
         expanded = File.expand_path(dir)
         [expanded, facts.realpath(expanded)]
       rescue SystemCallError
         [expanded]
       end
-      private_class_method :spellings
 
       # @param spellings [Array<String>] absolute, already spelled; see {of}
       def initialize(spellings)
