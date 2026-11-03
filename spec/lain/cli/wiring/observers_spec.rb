@@ -152,6 +152,39 @@ RSpec.describe Lain::CLI::Wiring::Observers do
       end
     end
 
+    describe "a fresh run file the chat's own build wrote" do
+      let(:root) { File.join(@state, "project") }
+      let(:project) { instance_double(Lain::Project, root:) }
+
+      def written(path) = path.tap { FileUtils.mkdir_p(File.dirname(_1)) }.tap { File.write(_1, "") }
+
+      def run(program, path)
+        file = Lain::Shell::Executable::RunFiles::Entry.new(path:, klass: :project, fresh: true)
+        stage = Lain::Shell::Executable.new(name: File.basename(program), resolved: program, realpath: program,
+                                            chain: [], shadowed: [], anomalies: [], klass: :system, fresh: false,
+                                            run_files: [file], wrappers: [], skipped: [])
+        described_class.register(chronicle:, paths:, project:, resumed: nil,
+                                 arms: Lain::CLI::Arms::OFF.with(tripwire: :observe))
+        chronicle.durable_journal << Lain::Telemetry::ExecResolution.new(tool_use_id: "tu_1",
+                                                                         stages: [stage.to_journal])
+        journal_records(io).select { _1["type"] == "tripwire" }.map { _1["signal"] }
+      end
+
+      it "counts nothing for the project's build output" do
+        expect(run("/usr/bin/python3", written(File.join(root, ".venv/bin/pytest")))).to be_empty
+      end
+
+      it "still counts any other fresh run file" do
+        expect(run("/usr/bin/python3", written(File.join(root, "plant.py")))).to eq(["fresh_run_file"])
+      end
+
+      it "still counts lain's own entry point, which is not build output" do
+        entry = File.join(Lain::Paths::Shipped::GEM_ROOT, "exe/lain")
+
+        expect(run("/usr/bin/ruby", entry)).to eq(["fresh_run_file"])
+      end
+    end
+
     it "registers no ledger when the arm is off" do
       expect(tripwires_after_a_remembered_deny(Lain::CLI::Arms::OFF)).to be_empty
     end

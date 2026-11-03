@@ -16,8 +16,10 @@ module Lain
       # @param stages [Array<Hash{String=>Object}>, nil] nil when the call journalled none
       # @param fresh [#fresh?] whether a file changed during this lineage
       # @param home [String] the home whose toolchain roots a launcher may exec into
-      def initialize(stages, fresh: AllFresh, home: Dir.home)
+      # @param execs [Confine::ExecRules] named build output, whose fresh run files are expected
+      def initialize(stages, fresh: AllFresh, home: Dir.home, execs: Confine::ExecRules::NONE)
         @fresh = fresh
+        @execs = execs
         @home = real(home)
         @programs = Array(stages).flat_map { programs(_1) }
       end
@@ -45,8 +47,11 @@ module Lain
       # @return [Array<String>]
       def fresh_programs = @programs.select { _1["fresh"] }.map { _1["realpath"] || _1["name"] }
 
-      # @return [Array<String>]
-      def fresh_run_files = @programs.flat_map { Array(_1["run_files"]) }.select { _1["fresh"] }.map { _1["path"] }
+      # @return [Array<String>] each fresh run file not held by a named exec rule
+      def fresh_run_files
+        @programs.flat_map { Array(_1["run_files"]) }.select { _1["fresh"] }.map { _1["path"] }
+                 .reject { built?(_1) }
+      end
 
       private
 
@@ -59,6 +64,12 @@ module Lain
         return [] unless @home && claimed && real(claimed) == @home
 
         [*Confine::Profile::HOME_EXEC, Confine::Profile::INSTALLS].filter_map { real(File.join(@home, _1)) }
+      end
+
+      # The fence grants the file a link lands on, so a link out of the build output is not build output.
+      def built?(path)
+        landing = real(path)
+        !landing.nil? && @execs.exec?(path) && @execs.exec?(landing)
       end
 
       def real(path)

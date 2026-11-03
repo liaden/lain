@@ -83,7 +83,8 @@ module Lain
             observers.register(chronicle)
             unless arms.tripwire_off?
               chronicle.observe(Tripwire::Ledger.new(journal: chronicle.durable_journal, stops:,
-                                                     fresh: observers.fresh, home: paths.home))
+                                                     fresh: observers.fresh, home: paths.home,
+                                                     execs: Confine::ExecRules.project(project.root)))
             end
           end
         end

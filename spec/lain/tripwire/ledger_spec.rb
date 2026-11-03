@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "json"
 require "tmpdir"
 require "stringio"
@@ -149,6 +150,36 @@ RSpec.describe Lain::Tripwire::Ledger do
       approved(program("ruby", "/usr/bin/ruby", run_files: [script]))
 
       expect(tripwires.sole).to include("signal" => "fresh_run_file", "weight" => "strong")
+    end
+
+    describe "with the project's named exec rules" do
+      around do |example|
+        Dir.mktmpdir("ledger-execs") do |dir|
+          @root = File.realpath(dir)
+          example.run
+        end
+      end
+
+      let(:ledger) do
+        described_class.new(journal:, execs: Lain::Confine::ExecRules.project(@root)).tap { journal.observe(_1) }
+      end
+
+      def run_file(relative)
+        path = File.join(@root, relative).tap { FileUtils.mkdir_p(File.dirname(_1)) }.tap { File.write(_1, "") }
+        Lain::Shell::Executable::RunFiles::Entry.new(path:, klass: :project, fresh: true)
+      end
+
+      it "counts no fresh build output an interpreter will run" do
+        approved(program("python3", "/usr/bin/python3", run_files: [run_file(".venv/bin/pytest")]))
+
+        expect(tripwires).to be_empty
+      end
+
+      it "still counts a fresh run file outside them" do
+        approved(program("ruby", "/usr/bin/ruby", run_files: [run_file("x.rb")]))
+
+        expect(tripwires.sole).to include("signal" => "fresh_run_file")
+      end
     end
 
     # The bash tool journals a quoted command's parsed stages, so a quoted run of a written script still trips.

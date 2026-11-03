@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "shellwords"
+
 module Lain
   module Confine
     # The programs an agent may run, as a set of rules: a glob matched against
@@ -56,9 +58,53 @@ module Lain
         def relative(path) = path.delete_prefix(root).delete_prefix(File::SEPARATOR)
       end
 
+      # Build output a project's own tools write and then run. All of `node_modules`, not its `.bin`:
+      # npm links each `.bin` entry into its package, and the kernel grants the link's target.
+      PROJECT = %w[target/** node_modules/** .venv/bin/*].freeze
+
+      # What bin/install-shim writes into every shim, so a binstub of the same name is told apart.
+      SHIM_MARKER = "# lain-shim: written by bin/install-shim"
+
+      # A root is held as written and where it really lands, since the kernel
+      # grants a file by where it lands, not by the link it was spelled through.
+      #
       # @param pairs [Array<Array(String, String)>] each a glob and the absolute root it is matched under
+      # @param facts [FileFacts::Live, FileFacts::Recorded] where a root really lands
       # @return [ExecRules]
-      def self.of(*pairs) = new(pairs.map { |glob, root| Rule.new(glob:, root: File.expand_path(root)) })
+      def self.of(*pairs, facts: FileFacts::LIVE)
+        new(pairs.flat_map do |glob, root|
+          Sensitivity::Roots.spellings(root, facts).uniq.map { Rule.new(glob:, root: _1) }
+        end)
+      end
+
+      # @param root [String] absolute, or expanded against the process directory
+      # @param facts [FileFacts::Live, FileFacts::Recorded]
+      # @return [ExecRules] the {PROJECT} build output under it
+      def self.project(root, facts: FileFacts::LIVE) = of(*PROJECT.map { [_1, root] }, facts:)
+
+      # @param checkout [String] the lain checkout whose entry point runs
+      # @param path [String] the PATH searched for a shim of that checkout
+      # @param facts [FileFacts::Live, FileFacts::Recorded]
+      # @return [ExecRules] the checkout's exe/lain and each shim on PATH that runs it
+      def self.lain(checkout: Paths::Shipped::GEM_ROOT, path: ENV.fetch("PATH", ""), facts: FileFacts::LIVE)
+        entry = File.join(checkout, "exe", "lain")
+        shims = path.split(File::PATH_SEPARATOR).reject(&:empty?).select { shim_of?(File.join(_1, "lain"), entry) }
+        of(["exe/lain", checkout], *shims.map { ["lain", _1] }, facts:)
+      end
+
+      def self.shim_of?(file, entry)
+        lines = File.readlines(file, chomp: true)
+        lines.include?(SHIM_MARKER) && lines.any? { words(_1).include?(entry) }
+      rescue SystemCallError
+        false
+      end
+
+      def self.words(line)
+        Shellwords.split(line)
+      rescue ArgumentError
+        []
+      end
+      private_class_method :shim_of?, :words
 
       # @param rules [Array<Rule>]
       def initialize(rules)

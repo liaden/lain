@@ -89,9 +89,12 @@ module Lain
       # @param stops [Stops, Stops::None] with {Stops::None} a hard stop crossed stops no one
       # @param fresh [#fresh?] which files changed this lineage
       # @param home [String] the home whose toolchain roots a launcher may exec into
-      def initialize(journal:, rules: Rules::DEFAULT, stops: Stops::None, fresh: Resolution::AllFresh, home: Dir.home)
+      # @param execs [Confine::ExecRules] named build output, whose fresh run files are expected
+      def initialize(journal:, rules: Rules::DEFAULT, stops: Stops::None, fresh: Resolution::AllFresh, home: Dir.home,
+                     execs: Confine::ExecRules::NONE)
         @fresh = fresh
         @home = home
+        @execs = execs
         @journal = journal
         @rules = rules
         @stopping = stops.stopping(rules:)
@@ -155,7 +158,7 @@ module Lain
         Hit.of_escalation(record).map { [requester || requester_of(id), _1] }
       end
 
-      def resolved(record) = Resolution.new(record["stages"], fresh: @fresh, home: @home)
+      def resolved(record) = Resolution.new(record["stages"], fresh: @fresh, home: @home, execs: @execs)
 
       def keep(calls, id, value)
         calls.delete(id)
