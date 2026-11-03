@@ -38,7 +38,7 @@ module Lain
         # @raise [Lain::Error] when the width is not a positive whole number
         def call(args, env)
           parsed = Lain::CLI::Command::Args.parse(args.to_s, name:, usage: USAGE, flags: FLAGS, positionals: 1)
-          mounted!(parsed.positionals.first, env.epic_driver.slug)
+          mounted!(parsed.positionals.first, env.epic_driver)
           env.epic_driver.run(**width(parsed), resumed: resumed?(env.journal_path)).to_s
         end
 
@@ -46,10 +46,10 @@ module Lain
 
         # The slug is accepted because humans type it, never as a choice: the
         # mount is settled when the chat starts, so a chat drives that epic or none.
-        def mounted!(typed, slug)
-          return if typed.nil? || typed == slug
+        def mounted!(typed, driver)
+          return if typed.nil? || (driver.mounted? && typed == driver.slug)
 
-          seated = slug.nil? ? "no epic is mounted in this chat" : "this chat's epic is #{slug.inspect}"
+          seated = driver.mounted? ? "this chat's epic is #{driver.slug.inspect}" : "no epic is mounted in this chat"
           raise Error, "#{typed} is not this chat's epic: #{seated}, and a chat implements the epic it was " \
                        "started with -- `#{Lain::Epic::Remedy.chat(typed)}`"
         end

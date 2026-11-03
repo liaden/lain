@@ -12,6 +12,8 @@ class ImplementEpicSpecDriver
 
   attr_reader :width, :budget, :resumed, :slug
 
+  def mounted? = true
+
   def run(width: nil, budget: nil, resumed: nil)
     @width = width
     @budget = budget
@@ -111,6 +113,13 @@ RSpec.describe Lain::CLI::Command::ImplementEpic do
       env = build_command_env(epic_driver: Lain::CLI::EpicDriver::Factory::Unmounted)
 
       expect { command.call("nyotes", env) }.to raise_error(Lain::Error, /nyotes.*no epic is mounted.*--epic/m)
+    end
+
+    it "asks the mount whether an epic is seated, never reading a slug from an unmounted chat" do
+      unmounted = Class.new { def mounted? = false }.new
+
+      expect { command.call("nyotes", build_command_env(epic_driver: unmounted)) }
+        .to raise_error(Lain::Error, /nyotes.*no epic is mounted.*--epic/m)
     end
 
     it "refuses a second bare word, naming it" do

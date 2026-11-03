@@ -1184,13 +1184,14 @@ queue; the issue graph and the live fleet are drawn in [`lain://status`](../READ
 the fleet as a tree with each issue's own children nested under it.
 
 ```
-/implement-epic [--width N]
+/implement-epic [SLUG] [--width N]
 ```
 
 `--width` is the only flag, and it takes a whole number above zero: how many issues may be in flight
 at once. It defaults to 2. Anything else is refused by name.
 
-The epic comes from `lain chat --epic SLUG`, not from an argument here. Two properties worth knowing
+The epic comes from `lain chat --epic SLUG`. A SLUG typed here must name that epic, and any other is
+refused naming the mounted one. Two properties worth knowing
 before an unattended run:
 
 - **It stops between issues when the session is closing.** The loop asks the conductor whether it is
