@@ -38,12 +38,12 @@ module Lain
 
           def build_dir = "target/"
 
-          # Any missing-item error in the target is accepted when the target is the subject: an inline
-          # test sits in the subject file, so a typo in a test-local name reads as the item the subject
-          # lacks. A split layout (tests/x.rs importing a missing item) is never awaiting, since its
-          # primary span is in the test file.
-          def awaiting_subject?(errors, subject:, **)
-            errors.any? && errors.all? { |text| MISSING_ITEM.match(text)&.[](:file) == subject }
+          # A missing-item error is accepted in the subject's own file, or in an integration test file of
+          # the subject's own package, whose imports are what the subject lacks. Neither can tell a typo
+          # in a test-local name from an item not yet written, so either reads as awaiting.
+          def awaiting_subject?(errors, subject:, target: subject, **)
+            awaited = [subject, *(target if target != subject && same_package?(subject, target))]
+            errors.any? && errors.all? { |text| awaited.include?(MISSING_ITEM.match(text)&.[](:file)) }
           end
 
           # A new file is not compiled until its parent module declares it, so the filtered run would
@@ -134,9 +134,24 @@ module Lain
           def selection_for(path)
             absolute = File.expand_path(path, @root)
             name, dir = owner(absolute)
-            raise Error, "#{path} is in no package of the workspace at #{@root}" unless name
+            unless name
+              raise Error, "#{path} is in no package of the workspace at #{@root}: there is no " \
+                           "#{expected_manifest(path)}, so its crate must be created before its tests can run"
+            end
 
             place(name, Pathname.new(absolute).relative_path_from(dir).to_s)
+          end
+
+          # The package a path names by convention, the directory above its `src/` or `tests/`.
+          def expected_manifest(path)
+            parts = path.split("/")
+            above = parts.rindex { |part| %w[src tests].include?(part) } || (parts.size - 1)
+            File.join(*parts.take(above), "Cargo.toml")
+          end
+
+          def same_package?(subject, target)
+            owners = [subject, target].map { |path| owner(File.expand_path(path, @root))&.first }
+            owners.first && owners.uniq.one?
           end
 
           def place(package, inside)

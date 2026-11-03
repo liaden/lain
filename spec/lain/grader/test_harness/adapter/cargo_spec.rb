@@ -97,6 +97,11 @@ RSpec.describe Lain::Grader::TestHarness::Adapter::Cargo do
     it "refuses a path no package owns" do
       expect { argv("elsewhere/x.rs") }.to raise_error(Lain::Error, %r{elsewhere/x.rs.*no package})
     end
+
+    it "names where the missing package's manifest belongs, for a crate not yet created" do
+      expect { argv("crates/store/tests/store-crate.rs") }
+        .to raise_error(Lain::Error, %r{no package.*crates/store/Cargo\.toml})
+    end
   end
 
   describe "#awaiting_subject?" do
@@ -124,11 +129,38 @@ RSpec.describe Lain::Grader::TestHarness::Adapter::Cargo do
       expect(awaiting?(["E0425 src/meeting.rs: cannot find value `expected_totl` in this scope"])).to be(true)
     end
 
-    it "never accepts a split layout's test file importing a missing item, its span being in the test file" do
-      errors = ["E0432 tests/meeting.rs: unresolved import `app::meeting`"]
+    context "with an integration test file in the subject's own package" do
+      let(:subject_file) { "crates/capture/src/pipewire.rs" }
+      let(:target) { "crates/capture/tests/capture-pipewire.rs" }
 
-      expect(adapter.awaiting_subject?(errors, subject: "src/meeting.rs", target: "tests/meeting.rs",
-                                               root:)).to be(false)
+      def awaiting_from?(errors, target: self.target)
+        adapter.awaiting_subject?(errors, subject: subject_file, target:, root:)
+      end
+
+      it "accepts missing-item errors in that file as the subject not written yet" do
+        errors = ["E0432 #{target}: unresolved import `nyotes_capture::pipewire`",
+                  "E0433 #{target}: failed to resolve: could not find `pipewire` in `nyotes_capture`",
+                  "E0412 #{target}: cannot find type `Stream` in this scope",
+                  "E0425 #{target}: cannot find function `open` in module `pipewire`",
+                  "E0599 #{target}: no method named `close` found for struct `Stream`"]
+
+        expect(awaiting_from?(errors)).to be(true)
+      end
+
+      it "still accepts missing items in the subject itself beside them" do
+        expect(awaiting_from?(["E0432 #{target}: unresolved import", "E0425 #{subject_file}: cannot find value"]))
+          .to be(true)
+      end
+
+      it "refuses any other compile error in that file as not loading" do
+        expect(awaiting_from?(["E0432 #{target}: unresolved import", "E0308 #{target}: mismatched types"]))
+          .to be(false)
+      end
+
+      it "refuses missing items in a test file of another package" do
+        expect(awaiting_from?(["E0432 crates/other/tests/x.rs: unresolved import"],
+                              target: "crates/other/tests/x.rs")).to be(false)
+      end
     end
 
     it "refuses no errors at all" do
