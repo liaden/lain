@@ -201,7 +201,7 @@ module Lain
         answer = read_until_decided(pending)
         return pending.deny(surface: FAULT_SURFACE) if answer.nil?
 
-        pending.decide(verdict_in(answer), surface: SURFACE, authority: :human)
+        pending.decide(verdict_in(answer, pending), surface: SURFACE, authority: :human)
       end
 
       # {Approval::Reply}'s reading of a line typed at this prompt, where a hold
@@ -340,9 +340,13 @@ module Lain
         @input.gets
       end
 
-      def verdict_in(answer)
+      # A bare deny takes the reason the human already offered for this call ({Pending#offering}).
+      def verdict_in(answer, pending)
         verdict = ApprovalPolicy.read(answer.strip)
-        verdict.is_a?(Approval::Reply::Unrecognised) ? UNREAD : verdict
+        verdict = UNREAD if verdict.is_a?(Approval::Reply::Unrecognised)
+        return verdict unless verdict.denied? && verdict.note.nil? && pending.offered_reason
+
+        Approval::Verdict::Deny.new(note: pending.offered_reason)
       end
     end
   end

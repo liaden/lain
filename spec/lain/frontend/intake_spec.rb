@@ -999,8 +999,12 @@ RSpec.describe Lain::Frontend::Intake do
   describe "a line typed with nothing published and a command probe" do
     let(:probe_class) do
       Struct.new(:names, :reason, :ran) do
-        def perishable?(text) = names.include?(text)
-        def refusal(_text) = reason
+        def disposition(text)
+          return Lain::Frontend::Intake::Disposition.new(:hold, text) unless names.include?(text)
+
+          Lain::Frontend::Intake::Disposition.new(reason ? :refuse : :control, reason || text)
+        end
+
         def run_now(text) = ran << text
       end
     end
@@ -1008,7 +1012,7 @@ RSpec.describe Lain::Frontend::Intake do
     let(:probe) { probe_class.new(["/approve"], refusal, []) }
     let(:rail) { described_class.new(screen:, commands: probe) }
 
-    it "refuses a perishable command with nothing to answer, 13 times, and holds none" do
+    it "refuses a control command with nothing to act on, 13 times, and holds none" do
       13.times { rail << line("/approve", 0) }
 
       expect([screen.said.count { _1 == [:note, refusal] }, rail.held_lines]).to eq([13, []])
@@ -1024,14 +1028,14 @@ RSpec.describe Lain::Frontend::Intake do
       end
     end
 
-    it "holds prose and any command that is not perishable" do
+    it "holds prose and any command that is not a control command" do
       rail << line("fix the bug", 0)
       rail << line("/model", 0)
 
       expect([rail.held_lines, probe.ran]).to eq([["fix the bug", "/model"], []])
     end
 
-    it "acts on a perishable command a producer holds itself, instead of keeping it" do
+    it "acts on a control command a producer holds itself, instead of keeping it" do
       rail.hold("/approve")
       rail.hold("later")
 
@@ -1041,7 +1045,7 @@ RSpec.describe Lain::Frontend::Intake do
     context "when something is waiting to be answered" do
       let(:refusal) { nil }
 
-      it "runs a perishable command typed at an approval prompt that does not take it, and holds nothing" do
+      it "runs a control command typed at an approval prompt that does not take it, and holds nothing" do
         asked = Class.new(String) { def takes?(line) = %w[y n].include?(line) }.new("[y/N] ")
         answer = Sync do |task|
           task.async do
@@ -1055,6 +1059,26 @@ RSpec.describe Lain::Frontend::Intake do
 
         expect([answer, probe.ran, rail.held_lines]).to eq(["n", ["/approve"], []])
       end
+
+      it "does not say what answers the prompt after a control command typed at it has run" do
+        asked = Class.new(String) do
+          def takes?(line) = %w[y n].include?(line)
+          def refused = yield("y, n or hold answers the approval")
+        end.new("[y/N] ")
+        Sync do |task|
+          task.async do
+            pumped_until(task) { rail.published.generation == 1 }
+            rail << line("/approve", 1)
+            pumped_until(task) { rail.published.generation == 2 }
+            rail << line("later", 2)
+            pumped_until(task) { rail.published.generation == 3 }
+            rail << line("n", 3)
+          end
+          rail.read(:approval, asked)
+        end
+
+        expect(screen.said).to eq([[:held, "later"], [:note, "y, n or hold answers the approval"]])
+      end
     end
 
     it "takes a note before it asks the probe" do
@@ -1063,6 +1087,38 @@ RSpec.describe Lain::Frontend::Intake do
       noting << line("/approve", 0)
 
       expect([screen.said, probe.ran]).to eq([[[:human_note, "/approve"]], []])
+    end
+  end
+
+  # Scenario: /held clear works while a slash command runs, and /inbox opens during a run.
+  describe "a control command typed while a slash command runs, through the chat's own registry" do
+    let(:replies) { instance_double(Lain::CLI::HumanReplies, drain_at_prompt: nil) }
+    let(:human) { Struct.new(:unused) { def history_for(_tty) = Lain::Frontend::Intake::Unrecorded }.new }
+    let(:bound) { [nil] }
+    let(:chat) do
+      Lain::CLI::Wiring::IntakeBuild.rail(tty: screen, human:, notes: Lain::CLI::HumanNotes::Null, on_cycle: -> {},
+                                          surface: -> { Struct.new(:commands).new(bound.first) })
+    end
+
+    before do
+      registry = Lain::CLI::Command::Registry.new([Lain::CLI::Command::Held.new(rail: chat), Lain::CLI::Command::Inbox.new])
+      bound[0] = registry.bind(build_command_env(replies:))
+    end
+
+    it "drops a held line at once on /held clear" do
+      Sync do
+        chat << line("y", 0)
+        chat << line("/held clear", 0)
+      end
+
+      expect([chat.held_lines, screen.said.last]).to eq([[], [:note, "dropped 1 held line"]])
+    end
+
+    it "opens the inbox now, not after the run" do
+      Sync { chat << line("/inbox", 0) }
+
+      expect(replies).to have_received(:drain_at_prompt)
+      expect(chat.held_lines).to eq([])
     end
   end
 

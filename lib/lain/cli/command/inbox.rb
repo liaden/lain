@@ -19,6 +19,9 @@ module Lain
         # ({Registry#serves_replies?}).
         def serves_replies? = true
 
+        # A question waiting on the human is why the run is slow, so it opens now.
+        def disposition = :control
+
         # Nil, always: `#drain_at_prompt` already delivers everything a human
         # needs to see through the SAME TTY calls `human>`'s drain uses, so text
         # here would render a second, redundant confirmation over the one the

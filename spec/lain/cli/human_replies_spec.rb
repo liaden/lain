@@ -755,6 +755,25 @@ RSpec.describe Lain::CLI::HumanReplies do
       expect(ask_human.last_answer.body["answer"]).to include("go left")
     end
 
+    # The real /deny reads the terminal itself when several calls are parked, so it
+    # declares it serves replies; at the reply prompt it still runs as a command.
+    it "runs the real /deny as a command, denying the parked call, and does not take it for the reply" do
+      effect = Struct.new(:name, :input, :tool_use_id).new("bash", { "command" => "ls" }, "tu_bash")
+      parked = Lain::Approval::Parked::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 })
+      registry.register(Lain::CLI::Command::Deny.new(prompt: Lain::Frontend::ApprovalPolicy.new(output: StringIO.new)))
+      replies.bind_commands(registry.bind(instance_double(Lain::CLI::Command::Env, approvals: [parked])))
+      typed = ["/deny wrong tree", "go left"]
+      allow(conductor).to receive(:read_reply) { typed.shift.to_s }
+
+      Sync { announced(ask_human, "which db?") }
+      with_surfaces { ask_human.last_answer }
+
+      expect([parked.decision, parked.reason]).to eq([:deny, "wrong tree"])
+      expect(output.string).to include('bash({"command" => "ls"}): denied')
+      expect(ask_human.last_answer.body["answer"]).to include("go left")
+      expect(ask_human.last_answer.body["answer"]).not_to include("/deny")
+    end
+
     it "keeps /inbox item-scoped: it answers the set the loop is parked on, never the oldest listed" do
       other = other_asker
       Sync { listed(ask_human, announcement_of(question_of("db"))) } # older, still pending, still listed

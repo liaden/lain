@@ -440,11 +440,14 @@ RSpec.describe Lain::Frontend::StdinPump do
     end
   end
 
-  describe "a perishable command finished at a prompt withdrawn under it" do
+  describe "a refused control command finished at a prompt withdrawn under it" do
     let(:commands) do
       Struct.new(:said) do
-        def perishable?(text) = text == "/approve"
-        def refusal(_text) = "no pending approvals"
+        def disposition(text)
+          refused = text == "/approve"
+          Lain::Frontend::Intake::Disposition.new(refused ? :refuse : :hold, refused ? "no pending approvals" : text)
+        end
+
         def run_now(_text) = nil
       end.new
     end
@@ -972,7 +975,7 @@ RSpec.describe Lain::Frontend::StdinPump do
     end
   end
 
-  describe "a perishable command typed mid-run while an ask is in flight" do
+  describe "a control command typed mid-run while an ask is in flight" do
     let(:pipe) { IO.pipe }
     let(:console) do
       Class.new do
@@ -985,8 +988,12 @@ RSpec.describe Lain::Frontend::StdinPump do
     end
     let(:commands) do
       Struct.new(:ran) do
-        def perishable?(text) = text == "/approve"
-        def refusal(_text) = "no pending approvals"
+        def disposition(text)
+          return Lain::Frontend::Intake::Disposition.new(:refuse, "no pending approvals") if text == "/approve"
+
+          Lain::Frontend::Intake::Disposition.new(text.start_with?("/deny") ? :control : :hold, text)
+        end
+
         def run_now(text) = ran << text
       end.new([])
     end
@@ -1005,6 +1012,20 @@ RSpec.describe Lain::Frontend::StdinPump do
       end
 
       expect([rail.take_held, rail.take_held]).to eq(["/model", nil])
+    end
+
+    # Scenario: the stdin pump forwards control commands
+    it "forwards a control command to the Intake, which runs it, and does not put it back as typeahead" do
+      Sync do |task|
+        pumping = described_class.new(rail:, screen:, input: console).start(task)
+        pipe.last.write("/deny wrong tree\r/model\r")
+        pumped_until(task, reason: "the control command run") { commands.ran.any? }
+        rail.gather
+      ensure
+        pumping&.stop
+      end
+
+      expect([commands.ran, rail.take_held, rail.take_held]).to eq([["/deny wrong tree"], "/model", nil])
     end
   end
 

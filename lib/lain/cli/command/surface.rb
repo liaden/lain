@@ -162,6 +162,7 @@ module Lain
           @registry ||= Registry.new(builtins).tap do |registry|
             registry.register(Help.new(registry:, catalog: @library.catalog))
             registry.register(Approve.new(prompt: @approval_prompt))
+            registry.register(Deny.new(prompt: @approval_prompt))
             registry.register(Model.new)
             registry.register(Held.new(rail: @rail))
           end

@@ -65,19 +65,25 @@ module Lain
           command.respond_to?(:serves_replies?) && command.serves_replies?
         end
 
-        # Whether the command +text+ names loses its point if it waits behind a
-        # run, as `/approve` does: typed with nothing parked, it should be said
-        # so now rather than held until nothing is left to approve.
-        def perishable?(text)
+        # What a line typed while a run holds the chat is: a control command
+        # acts now, since held behind the run what it acts on is gone or moot,
+        # and one with nothing to act on is refused now. Prose, a skill, and
+        # every other command wait for `you>`.
+        #
+        # The refusal is read once and travels with the kind: the queue it
+        # reads can change between two reads, and a refusal with nothing to say
+        # is worse than either answer.
+        #
+        # @param text [String] the line as the human typed it
+        # @param env [Env] what a control command reads to tell whether it has anything to act on
+        # @return [Frontend::Intake::Disposition] kind :control, :refuse or :hold; said is the
+        #   refusal for :refuse and the line otherwise
+        def disposition(text, env)
           command = named(text)
-          command.respond_to?(:perishable?) && command.perishable?
-        end
+          return Frontend::Intake::Disposition.new(:hold, text) unless control?(command)
 
-        # Why the perishable command +text+ names has nothing to answer, or nil
-        # when it has something or is not perishable.
-        def refusal(text, env)
-          command = named(text)
-          command.refusal(env) if perishable?(text)
+          refusal = command.refusal(env) if command.respond_to?(:refusal)
+          Frontend::Intake::Disposition.new(refusal ? :refuse : :control, refusal || text)
         end
 
         # The registry curried over the session's one {Env} -- what Wiring hands
@@ -90,9 +96,7 @@ module Lain
           # about the COMMAND, decided before anything is called.
           def serves_replies?(text) = registry.serves_replies?(text)
 
-          def perishable?(text) = registry.perishable?(text)
-
-          def refusal(text) = registry.refusal(text, env)
+          def disposition(text) = registry.disposition(text, env)
         end
 
         def bind(env) = Bound.new(registry: self, env:)
@@ -122,6 +126,8 @@ module Lain
           invocation = command_invocation(text)
           invocation && @commands.fetch(invocation.skill)
         end
+
+        def control?(command) = command.respond_to?(:disposition) && command.disposition == :control
 
         def command_invocation(text)
           invocation = Skill::Invocation.parse(text)

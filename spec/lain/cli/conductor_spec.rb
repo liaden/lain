@@ -1331,11 +1331,14 @@ RSpec.describe Lain::CLI::Conductor do
     end
   end
 
-  describe "#hold of a perishable command" do
+  describe "#hold of a control command with nothing to act on" do
     let(:commands) do
       Struct.new(:unused) do
-        def perishable?(text) = text == "/approve"
-        def refusal(_text) = "no pending approvals"
+        def disposition(text)
+          refused = text == "/approve"
+          Lain::Frontend::Intake::Disposition.new(refused ? :refuse : :hold, refused ? "no pending approvals" : text)
+        end
+
         def run_now(_text) = nil
       end.new
     end

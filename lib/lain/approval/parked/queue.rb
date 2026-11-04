@@ -215,6 +215,7 @@ module Lain
             @clock = clock
             @asked_at = clock.call
             @promise = Promise.new
+            @offered = nil
           end
 
           # @return [String, nil] where the path this call names lands when that
@@ -370,6 +371,25 @@ module Lain
           def deny(surface:, authority: :automatic, reason: nil)
             decide(Verdict::Deny.new(note: reason), surface:, authority:)
           end
+
+          # A reason the human gave before answering, as `/deny <reason>` does,
+          # for the length of the block; an offering inside another gives the
+          # outer one back as it ends. It is held here rather than on one
+          # prompt because the human's `n` may land at any prompt asking about
+          # this call, the watcher's included.
+          #
+          # @param reason [String, nil]
+          # @return [Object] the block's value
+          def offering(reason)
+            outer = @offered
+            @offered = reason
+            yield
+          ensure
+            @offered = outer
+          end
+
+          # @return [String, nil] the reason {#offering} holds, while it holds one
+          def offered_reason = @offered
 
           def human? = authority == :human
           def decided? = @promise.resolved?

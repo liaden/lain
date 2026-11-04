@@ -32,7 +32,7 @@ module Lain
 
         # Held behind a run, a line of this goes stale: what it would approve
         # is decided or gone by the time `you>` returns.
-        def perishable? = true
+        def disposition = :control
 
         # @return [String, nil] why there is nothing to approve now
         def refusal(env) = (NOTHING_PENDING if undecided(env).empty?)
@@ -42,20 +42,24 @@ module Lain
           return NOTHING_PENDING if undecided.empty?
 
           undecided.each { |pending| @prompt.decide(pending) }
-          undecided.map { |pending| outcome_line(pending) }.join("\n")
+          undecided.map { |pending| Approve.outcome_line(pending) }.join("\n")
+        end
+
+        # A surface other than ours can win a pending mid-drain (first answer
+        # wins is the queue's own doctrine); the line then NAMES the deciding
+        # surface, so a "denied (timeout)" never reads as the human's no.
+        #
+        # @param pending [Approval::Parked::Queue::Pending] a decided call
+        # @param subject [String] how the line names the call
+        # @return [String]
+        def self.outcome_line(pending, subject = pending.tool)
+          surface = Frontend::ApprovalPolicy::SURFACE
+          "#{subject}: #{pending.verdict_face}#{" (#{pending.surface})" unless pending.surface == surface}"
         end
 
         private
 
         def undecided(env) = env.approvals.each.reject(&:decided?)
-
-        # A surface other than ours can win a pending mid-drain (first answer
-        # wins is the queue's own doctrine); the line then NAMES the deciding
-        # surface, so a "denied (timeout)" never reads as the human's no.
-        def outcome_line(pending)
-          surface = Frontend::ApprovalPolicy::SURFACE
-          "#{pending.tool}: #{pending.verdict_face}#{" (#{pending.surface})" unless pending.surface == surface}"
-        end
       end
     end
   end

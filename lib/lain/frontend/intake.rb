@@ -66,8 +66,9 @@ module Lain
       # Two exceptions, and both are "there is no ask to stop": `you>`, which
       # is read only between asks, and a sink with nothing supervised behind
       # it -- a slash command driving its own work. In both it stays an
-      # ordinary line, answering the prompt or held and said, and the command
-      # of that name is what tells the human nothing was running.
+      # ordinary line, answering the prompt or run at once as a control
+      # command, and the command of that name is what tells the human nothing
+      # was running.
       STOP = "/stop"
 
       Prompt = Data.define(:kind, :text, :header, :keys, :generation, :parts)
@@ -115,8 +116,7 @@ module Lain
 
       # So no caller asks whether a command probe was wired.
       module NoCommands
-        def self.perishable?(_text) = false
-        def self.refusal(_text) = nil
+        def self.disposition(text) = Disposition.new(kind: :hold, said: text)
         def self.run_now(_text) = nil
         def self.attend(_task) = Unattended
       end
@@ -155,7 +155,7 @@ module Lain
       #   {Discretion} in a chat someone types into
       # @param notes [#take?] offered each line that arrives with nothing published, before it is held
       # @param on_cycle [#call] what the approval key does, called on the producer's own stack
-      # @param commands [#perishable?, #refusal, #run_now] asked about each line that arrives with nothing published;
+      # @param commands [#disposition, #run_now] asked about each line that arrives with nothing published;
       #   `run_now` answers nil when it could not run the line, which is then held
       def initialize(screen: Unseen, history: Unrecorded, notes: CLI::HumanNotes::Null, on_cycle: UNCYCLED,
                      commands: NoCommands)
@@ -255,8 +255,8 @@ module Lain
       def gather = @lock.synchronize { @producers.keys }.each(&:sweep)
 
       # Keep a line for `you>`, and say so: a line nobody was told about reads as
-      # swallowed. A perishable command is acted on instead, because by the time
-      # `you>` returns what it would answer is gone; a note is not, since a line
+      # swallowed. A control command is acted on instead, because by the time
+      # `you>` returns what it would act on is gone; a note is not, since a line
       # held here was refused by a prompt and is not an aside to the agent.
       def hold(text)
         placed?(text, CLI::HumanNotes::Null) || keep(text)
@@ -351,9 +351,15 @@ module Lain
         when :refuse
           @screen.render_note(disposition.said)
           true
-        when :run_now then @commands.run_now(text)
+        when :control then @commands.run_now(text)
         else false
         end
+      end
+
+      # A line acted on already answered the human, so only one kept is told what does answer the prompt.
+      def refused(text, line)
+        keep(line)
+        text.refused { |note| @screen.render_note(note) } if text.respond_to?(:refused)
       end
 
       def keep(text)
@@ -413,8 +419,7 @@ module Lain
         return value.generation == prompt.generation ? STEPPED_ASIDE : STILL_DRAWN if value.is_a?(Preempt)
         return Heard.new(text: value.text) if answers?(prompt, text, value)
 
-        hold(value.text)
-        text.refused { |note| @screen.render_note(note) } if text.respond_to?(:refused)
+        refused(text, value.text) unless placed?(value.text, CLI::HumanNotes::Null)
         stale?(prompt, value) ? STILL_DRAWN : REDRAWN
       end
 

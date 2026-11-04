@@ -17,7 +17,7 @@ RSpec.describe Lain::CLI::Wiring::IntakeBuild do
     Struct.new(:name) do
       def usage = "/approve -- probe"
       def call(_args, _env) = "approved"
-      def perishable? = true
+      def disposition = :control
       def refusal(_env) = "no pending approvals"
     end.new("approve")
   end
@@ -37,7 +37,7 @@ RSpec.describe Lain::CLI::Wiring::IntakeBuild do
     expect(rail.held_lines).to eq(["/approve"])
   end
 
-  it "refuses a perishable command that has nothing to answer, through the real registry" do
+  it "refuses a control command that has nothing to act on, through the real registry" do
     surface[0] = bound
     typed("/approve")
 
@@ -49,6 +49,13 @@ RSpec.describe Lain::CLI::Wiring::IntakeBuild do
     typed("/")
 
     expect(rail.held_lines).to eq(["/"])
+  end
+
+  it "holds a line the registry cannot parse on the reactor too, where a control command would run" do
+    surface[0] = bound
+    Sync { typed("@/create-plan") }
+
+    expect([rail.held_lines, screen.said]).to eq([["@/create-plan"], ["held: @/create-plan"]])
   end
 
   it "runs a command now as a task of its own and says its outcome" do
@@ -67,7 +74,7 @@ RSpec.describe Lain::CLI::Wiring::IntakeBuild do
 
   # A pane's reader is a thread of its own with no reactor, and a command that asks a question reads the very
   # rail that thread feeds: running it there would leave the answer unreadable.
-  describe "a perishable command with something to answer, typed on a thread with no reactor" do
+  describe "a control command with something to act on, typed on a thread with no reactor" do
     let(:effect) { Struct.new(:name, :input, :tool_use_id).new("bash", { "command" => "ls" }, "tu") }
     let(:pending) do
       Lain::Approval::Parked::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 })

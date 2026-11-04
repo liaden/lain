@@ -272,9 +272,9 @@ module Lain
 
       def listens? = @listening && @typeahead.console?
 
-      # ONLY A STOP THE RAIL WILL LIFT, AND A NOTE TO THE RUNNING AGENT, ARE
-      # ACTED ON. Every other line, a `/stop` with no ask behind it included, is
-      # put back as the typeahead it was, in the order typed, so the prompt that
+      # ONLY A STOP THE RAIL WILL LIFT, A NOTE TO THE RUNNING AGENT, AND A
+      # CONTROL COMMAND TYPED WITH NOTHING PUBLISHED ARE ACTED ON. Every other
+      # line is put back as the typeahead it was, in the order typed, so the prompt that
       # opens next reads it as it always has: a `command>` takes it for its own
       # line, an answer holds it. Holding it here would send a `/approve` typed
       # just ahead of a parked call to `you>`.

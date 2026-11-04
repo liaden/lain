@@ -1596,6 +1596,31 @@ RSpec.describe Lain::Approval::Parked::Queue do
     end
   end
 
+  # The reason `/deny <reason>` offers on a call while the call is asked.
+  describe "Pending#offering" do
+    let(:offered) { described_class::Pending.new(effect: tool_call, identity: Lain::Requester.main, clock: -> { 0.0 }) }
+
+    it "holds no reason before any offering" do
+      expect(offered.offered_reason).to be_nil
+    end
+
+    it "holds the reason for the block, and none once a block that raised has ended" do
+      inside = nil
+      expect { offered.offering("wrong tree") { (inside = offered.offered_reason) && raise(IOError, "gone") } }
+        .to raise_error(IOError)
+
+      expect([inside, offered.offered_reason]).to eq(["wrong tree", nil])
+    end
+
+    it "nests: an inner offering on the same call gives the outer reason back as it ends" do
+      seen = offered.offering("outer") do
+        offered.offering("inner") { offered.offered_reason }.then { [_1, offered.offered_reason] }
+      end
+
+      expect([seen, offered.offered_reason]).to eq([%w[inner outer], nil])
+    end
+  end
+
   describe "a decision that is not a tool call" do
     let(:decision) do
       described_class::Decision.new(requester: "egress", kind: "egress", summary: "send 12 bytes to api.example.com",

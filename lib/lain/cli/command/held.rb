@@ -25,6 +25,9 @@ module Lain
 
         def usage = "/held -- list the lines held for you>, or /held clear to drop them"
 
+        # Held behind a run, `/held clear` would wait in the very list it clears.
+        def disposition = :control
+
         def call(args, _env)
           case args.to_s.strip
           when "" then listing

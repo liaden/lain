@@ -146,37 +146,89 @@ RSpec.describe Lain::CLI::Command::Registry do
     end
   end
 
-  # A command whose answer goes stale -- `/approve` with nothing parked -- says
-  # so, which lets a line typed while nothing reads it be refused at once.
-  describe "#perishable? and #refusal" do
-    let(:perishing) do
-      Struct.new(:name) do
+  # A control command acts the moment it is typed, even while a run holds the
+  # chat; every other line waits behind the run, and a control command with
+  # nothing to act on is refused at once rather than held.
+  describe "#disposition" do
+    let(:declaring) do
+      Struct.new(:name, :kind, :reason) do
         def usage = "/#{name} -- probe"
         def call(_args, _env) = nil
-        def perishable? = true
-        def refusal(_env) = "nothing to #{name}"
-      end.new("approve")
+        def disposition = kind
+        def refusal(_env) = reason
+      end
     end
-    let(:perishable_registry) { described_class.new([perishing, probe]) }
+    let(:controls) { described_class.new([declaring.new("approve", :control, "nothing to approve"), probe]) }
 
-    it "is false for a command that never says otherwise, for prose and for a skill" do
-      expect(["/help", "hello there", "@researcher/help go"].map { perishable_registry.perishable?(_1) })
-        .to eq([false, false, false])
-    end
+    def disposed(registry, text, against = env) = registry.disposition(text, against).to_h
 
-    it "is true for one that declares it, and names its refusal against the env" do
-      expect([perishable_registry.perishable?("/approve"), perishable_registry.refusal("/approve", env)])
-        .to eq([true, "nothing to approve"])
+    it "holds prose, a skill, and a command that never says otherwise, each as typed" do
+      expect(["/help", "hello there", "@researcher/help go"].map { disposed(controls, _1) })
+        .to eq([{ kind: :hold, said: "/help" }, { kind: :hold, said: "hello there" },
+                { kind: :hold, said: "@researcher/help go" }])
     end
 
-    it "has no refusal for a command that is not perishable" do
-      expect(perishable_registry.refusal("/help", env)).to be_nil
+    it "refuses a control command with nothing to act on, saying why against the env" do
+      expect(disposed(controls, "/approve")).to eq(kind: :refuse, said: "nothing to approve")
     end
 
-    it "answers both through the bound registry, which holds the env" do
-      bound = perishable_registry.bind(env)
+    it "answers control for a control command with something to act on" do
+      acting = described_class.new([declaring.new("approve", :control, nil)])
 
-      expect([bound.perishable?("/approve"), bound.refusal("/approve")]).to eq([true, "nothing to approve"])
+      expect(disposed(acting, "/approve")).to eq(kind: :control, said: "/approve")
+    end
+
+    it "holds a command that declares itself held, even one that names a refusal" do
+      held = described_class.new([declaring.new("approve", :hold, "never said")])
+
+      expect(disposed(held, "/approve")).to eq(kind: :hold, said: "/approve")
+    end
+
+    it "answers through the bound registry, which holds the env" do
+      expect(controls.bind(env).disposition("/approve").to_h).to eq(kind: :refuse, said: "nothing to approve")
+    end
+
+    # Read once: a call parking between two reads of the queue answered :refuse with nothing to say.
+    it "reads the refusal once, so a call parking as the line is judged never leaves a refusal that says nothing" do
+      parked = Lain::Approval::Parked::Queue::Pending.new(
+        effect: Struct.new(:name, :input, :tool_use_id).new("bash", { "command" => "ls" }, "tu"),
+        identity: Lain::Requester.main, clock: -> { 0.0 }
+      )
+      reads = 0
+      approvals = Object.new
+      approvals.define_singleton_method(:each) { (reads += 1) == 1 ? [].each : [parked].each }
+      shipped = described_class.new([Lain::CLI::Command::Deny.new(prompt: nil)])
+      bound = shipped.bind(build_command_env(approvals:))
+
+      disposition = Lain::Frontend::Intake::Disposition.of("/deny x", notes: Lain::CLI::HumanNotes::Null,
+                                                                      commands: bound)
+
+      expect(disposition.to_h).to eq(kind: :refuse, said: "no pending approvals")
+    end
+
+    it "acts on /held, /inbox and /stop during a run" do
+      shipped = described_class.new([Lain::CLI::Command::Held.new(rail: nil), Lain::CLI::Command::Inbox.new,
+                                     Lain::CLI::Command::Stop.new])
+
+      expect(["/held clear", "/inbox", "/stop"].map { disposed(shipped, _1)[:kind] }).to eq(%i[control control control])
+    end
+
+    it "refuses /approve and /deny with nothing parked, and acts on them with a call parked" do
+      prompt = Lain::Frontend::ApprovalPolicy.new
+      shipped = described_class.new([Lain::CLI::Command::Approve.new(prompt:), Lain::CLI::Command::Deny.new(prompt:)])
+      effect = Struct.new(:name, :input, :tool_use_id).new("bash", { "command" => "ls" }, "tu")
+      parked = Lain::Approval::Parked::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 })
+      waiting = build_command_env(approvals: [parked])
+
+      expect([%w[/approve /deny].map { disposed(shipped, _1)[:kind] },
+              %w[/approve /deny].map { disposed(shipped, _1, waiting)[:kind] }])
+        .to eq([%i[refuse refuse], %i[control control]])
+    end
+
+    it "is the one question a line's kind is asked: no shipped command defines perishable?" do
+      commands = Lain::CLI::Command.constants.map { Lain::CLI::Command.const_get(_1) }.grep(Class)
+
+      expect(commands.select { _1.method_defined?(:perishable?) }).to eq([])
     end
   end
 

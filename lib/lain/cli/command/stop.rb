@@ -36,6 +36,9 @@ module Lain
 
         def usage = "/stop -- stop the ask in flight (at its prompt, or s at the countdown), or the fleet if idle"
 
+        # A stop held until the run ends stops nothing.
+        def disposition = :control
+
         def call(_args, env)
           live = env.supervisor.live
           return NOTHING_RUNNING if live.empty?

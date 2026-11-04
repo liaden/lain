@@ -284,8 +284,11 @@ RSpec.describe Lain::CLI::InputSocket do
       let(:screen) { Struct.new(:said) { def render_note(text) = said << text }.new(said) }
       let(:commands) do
         Struct.new(:ran) do
-          def perishable?(text) = text == "/approve"
-          def refusal(_text) = "no pending approvals"
+          def disposition(text)
+            refused = text == "/approve"
+            Lain::Frontend::Intake::Disposition.new(refused ? :refuse : :hold, refused ? "no pending approvals" : text)
+          end
+
           def run_now(text) = ran << text
           def attend(_task) = Lain::Frontend::Intake::Unattended
         end.new([])

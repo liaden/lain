@@ -43,13 +43,11 @@ module Lain
           end
 
           # A line the registry cannot parse is prose to this question, not a failure on the producer's stack.
-          def perishable?(text)
-            current.perishable?(text)
+          def disposition(text)
+            current.disposition(text)
           rescue Lain::Error
-            false
+            Frontend::Intake::Disposition.new(kind: :hold, said: text)
           end
-
-          def refusal(text) = current.refusal(text)
 
           # On a reactor it runs as a task of its own; off one, it is queued to {#attend}'s drain, if any.
           #

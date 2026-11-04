@@ -36,9 +36,9 @@ RSpec.describe Lain::CLI::Command::Approve do
     expect(approve.usage).to include("/approve")
   end
 
-  describe "as a perishable command" do
-    it "declares itself perishable, so a line typed while nothing reads it is not held" do
-      expect(approve.perishable?).to be(true)
+  describe "as a control command" do
+    it "acts during a run, so a line typed while nothing reads it is not held" do
+      expect(approve.disposition).to eq(:control)
     end
 
     it "refuses with nothing to approve" do

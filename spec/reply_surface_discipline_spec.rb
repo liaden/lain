@@ -248,7 +248,7 @@ RSpec.describe "reply-surface discipline" do
   # the reply prompt, and that example is what a new declarer must keep green.
   it "pins the declarers the reply prompt's detour has been checked against" do
     expect(ReplySurfaceDiscipline.declarers.map(&:to_s))
-      .to contain_exactly("Lain::CLI::Command::Approve", "Lain::CLI::Command::Inbox")
+      .to contain_exactly("Lain::CLI::Command::Approve", "Lain::CLI::Command::Deny", "Lain::CLI::Command::Inbox")
   end
 
   # The census must be known to SEE the commands, or the example above passes by

@@ -419,7 +419,7 @@ module Lain
 
         # The race this surface lost, reported with the winner NAMED: "denied"
         # reading as the human's own no is the confusion
-        # {Command::Approve#outcome_line} already guards against at the terminal.
+        # {Command::Approve.outcome_line} already guards against at the terminal.
         def lost(pending, line)
           undecided(format(SETTLED, line: line.inspect, surface: pending.surface, decision: outcome(pending)))
         end
