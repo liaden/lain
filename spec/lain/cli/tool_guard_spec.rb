@@ -79,23 +79,6 @@ class ToolGuardSpecChronicle
   def instrumentation = Lain::Agent::Instrumentation.new(journal: @journal)
 end
 
-# A queue that refuses every release, so the fail-open block below can carry a
-# CONTROL arm. Without one, "the secret came through" is equally well explained
-# by a region detector that never fired, and the example would pin nothing.
-class ToolGuardSpecDecliningQueue
-  module Verdict
-    def self.approved? = false
-    def self.timed_out? = false
-    def self.postponed? = false
-  end
-
-  # `outstanding:` is accepted and discarded, but cannot become the unused-
-  # argument underscore: it is a KEYWORD, so the name is the duck.
-  def adjudicate(_effect, _context, outstanding: nil) # rubocop:disable Lint/UnusedMethodArgument
-    Verdict
-  end
-end
-
 # A tool middleware a config.rb could register: Base's pass-through.
 class ToolGuardSpecStamp < Lain::Middleware::Base; end
 
@@ -1470,8 +1453,7 @@ RSpec.describe Lain::CLI::ToolGuard do
       expect(read.journal).to be(journal)
     end
 
-    # Nobody is at an out-of-chat run's surface to release a region, and the
-    # chat's unattended stand-in APPROVES. This one must not.
+    # Nobody is at an out-of-chat run's surface to release a region.
     it "masks a credential region, because nobody out of chat can release it" do
       Dir.mktmpdir do |dir|
         path = File.join(dir, "creds.txt")
@@ -1926,18 +1908,10 @@ RSpec.describe Lain::CLI::ToolGuard do
     end
   end
 
-  # {Lain::Middleware::RedactSecretReads::Unqueued}'s docstring is the
-  # load-bearing account of this run's ONE fail-open, and until this block
-  # nothing executable joined its two halves: `switchboard_spec` pins the deny,
-  # `redact_secret_reads_spec` pins the approve over a HAND-BUILT Unqueued, and
-  # no board ever reached both. Either half could move and the docstring would
-  # go stale in silence -- the exact failure this card exists to remove.
-  #
-  # So: ONE unattended board, both halves, off the real Switchboard. This cannot
-  # go red today, and that is the point -- round 11's deferred flip to deny
-  # lands here as a red example on purpose, instead of quietly leaving a lying
-  # comment behind.
-  describe "the fail-open an unattended run ships with", :seam do
+  # An unattended run has nobody to ask, and both halves of the guard read that
+  # off the same nil `Switchboard#approvals`: the gate denies and the read masks.
+  # One board, both halves, so neither can move without the other going red.
+  describe "an unattended run, which nobody can answer", :seam do
     let(:base) { Lain::Toolset.new([Lain::Tools::Bash.new, Lain::Tools::ReadFile.new]) }
     let(:board) do
       Lain::CLI::Switchboard.new(journal:, model: "claude-opus-4-8", toolset: base, attended: false)
@@ -1980,29 +1954,14 @@ RSpec.describe Lain::CLI::ToolGuard do
       expect(told.content).to include("no approval is possible")
     end
 
-    # The other direction, off the SAME board: the secret is released whole.
-    it "and APPROVES every sensitive region, releasing the bytes verbatim" do
+    it "and MASKS every sensitive region, with no release recorded" do
       with_secret_file do |path|
         content = bytes_read_through(described_class.stack(chronicle, board), path)
 
-        expect(content).to include(secret)
-        expect(content).not_to include("<redacted")
-      end
-    end
-
-    # The control: identical bytes, identical guard, a queue that says no. It
-    # masks -- so the release above is a real decision, not a detector asleep.
-    it "is a real release -- the same read masks when a queue declines" do
-      with_secret_file do |path|
-        guard = Lain::Middleware::RedactSecretReads.new(ledger: board.ledger,
-                                                        queue: ToolGuardSpecDecliningQueue.new,
-                                                        journal: chronicle.instrumentation.journal)
-
-        content = bytes_read_through(Lain::Middleware::Stack.new([guard]), path)
-
+        expect(content).to include("<redacted:1>").and include("no human is attached")
         expect(content).not_to include(secret)
-        expect(content).to include("<redacted")
       end
+      expect(journal_records(journal_io, "read_released")).to be_empty
     end
   end
 

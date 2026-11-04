@@ -267,10 +267,6 @@ module Lain
 
       # The approval queue out of chat, which releases nothing: nobody is at a
       # surface to answer, so a masked region stays masked.
-      # {Middleware::RedactSecretReads::Unqueued} answers the other way on
-      # purpose -- that is a chat's unattended fail-open, kept pending its own
-      # measurement, and a run that never had a human in its loop has no
-      # approval for it to stand in for.
       module Unreleased
         # The messages the read guard asks of a settled answer.
         module Verdict
@@ -723,12 +719,11 @@ module Lain
       # An unattended run wires NO queue ({Switchboard#approvals} is nil), and
       # the stand-in is named HERE rather than defaulted inside the middleware:
       # a `queue:` with a default is how a forgotten injection becomes silent
-      # approval. The stand-in approves, which
-      # {Middleware::RedactSecretReads::Unqueued} records as the run's one
-      # fail-open.
+      # approval. With nobody to ask, {Middleware::RedactSecretReads::Unqueued}
+      # masks without parking.
       def read_kwargs(chronicle, inputs)
         { ledger: inputs.ledger,
-          queue: inputs.approvals || Middleware::RedactSecretReads::Unqueued.instance,
+          queue: inputs.approvals || Middleware::RedactSecretReads::Unqueued,
           journal: chronicle.instrumentation.journal, related: inputs.sensitivity,
           secrets: inputs.secrets, file_facts: inputs.sensitivity.file_facts }
       end

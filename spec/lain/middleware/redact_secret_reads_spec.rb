@@ -1285,34 +1285,31 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       expect { described_class.new(ledger:, queue: nil, journal:) }.to raise_error(ArgumentError, /queue/)
     end
 
-    # An unattended run wires no queue at all (Switchboard#approvals is nil).
-    # Masking with nowhere to park would leave the model `<redacted:1>` forever
-    # with no move, so the stand-in approves. That is a FAIL-OPEN in a run whose
-    # gate otherwise denies everything -- see the Unqueued docstring; this
-    # example pins the behaviour as it stands, not as it should be.
-    it "sends the whole file under the unqueued stand-in an unattended run wires" do
+    # An unattended run wires no queue at all (Switchboard#approvals is nil), so
+    # nobody can release a region, and the gate of the same run denies.
+    it "masks the file under the unqueued stand-in an unattended run wires" do
       path = write("notes.txt", one_secret)
       unqueued = described_class.new(ledger:, queue: described_class::Unqueued.instance, journal:)
 
       content = Sync { dispatch(effect(path), subject_stack: Lain::Middleware::Stack.new([unqueued])) }
                 .fetch(:result).content
 
-      expect(content).to eq(one_secret)
-      expect(session.read?(path)).to be(true)
+      expect(content).to include("<redacted:1>").and include("no human is attached to this run to release it")
+      expect(content).not_to include(api_key)
+      expect(releases).to be_empty
     end
 
-    # The fail-open leaves the same evidence a human's release does, signed by
-    # the stand-in, so a run that sent a secret with nobody asked says so.
-    it "records the unqueued stand-in's release under its own name" do
+    it "masks a second read under the stand-in for the same reason" do
       path = write("notes.txt", one_secret)
       unqueued = described_class.new(ledger:, queue: described_class::Unqueued.instance, journal:)
+      read = -> { Sync { dispatch(effect(path), subject_stack: Lain::Middleware::Stack.new([unqueued])) } }
 
-      Sync { dispatch(effect(path), subject_stack: Lain::Middleware::Stack.new([unqueued])) }
+      read.call
+      content = read.call.fetch(:result).content
 
-      expect(releases).to contain_exactly(
-        an_object_having_attributes(path:, regions: 1, requester: "agent",
-                                    surface: described_class::Unqueued::SURFACE)
-      )
+      expect(content).to include("no human is attached")
+      expect(content).not_to include("declined")
+      expect(journal.grep(Lain::Telemetry::SourceMasked).length).to eq(1)
     end
   end
 

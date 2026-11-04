@@ -43,10 +43,9 @@ module Lain
         # the QUEUE'S ABSENCE rather than for whatever caused it: which flags
         # leave a run queueless has already changed once.
         #
-        # This is a LISTING, not a verdict, so unlike its sibling stand-in
-        # {Middleware::RedactSecretReads::Unqueued} -- which answers APPROVE for
-        # the same queueless run -- it opens nothing. A module, like
-        # {Supervisor::Null}: no per-instance state.
+        # A LISTING, not a verdict, so it opens nothing; its sibling
+        # {Middleware::RedactSecretReads::Unqueued} is what makes the same
+        # queueless run mask. A module, like {Supervisor::Null}: no per-instance state.
         module NoApprovals
           def self.each(&block) = [].each(&block)
         end

@@ -134,15 +134,18 @@ RSpec.describe "A released secret reaching the egress guard", :seam do
     expect(send_text("the copy says #{api_key}")).to eq(:refused)
   end
 
-  describe "an unattended board, whose read releases automatically" do
+  describe "an unattended board, whose read masks because nobody can release it" do
     %w[.env notes.txt].each do |name|
-      it "still refuses the value after it reads #{name}" do
+      it "masks #{name} and still refuses the value" do
         env = write(".env", "API_KEY=#{api_key}\n")
         path = name == ".env" ? env : write(name, "copied from env: api_key = #{api_key}\n")
         board(attended: false)
         backend
 
-        expect(dispatch(path).content).to include(api_key)
+        content = dispatch(path).content
+
+        expect(content).to include("<redacted:1>")
+        expect(content).not_to include(api_key)
         expect(send_text("after the read: #{api_key}")).to eq(:refused)
       end
     end

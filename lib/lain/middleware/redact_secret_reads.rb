@@ -19,13 +19,14 @@ module Lain
     # `.env` copied to `notes.txt`, a key pasted into a fixture, a token committed
     # to a spec. A path rule structurally cannot catch those.
     #
-    # == Masking always comes with a release path
+    # == Masking comes with a release path wherever a human is attached
     #
     # An arm that only masked would leave the agent reading `Cargo.lock`, getting
     # `<redacted:1>` forever, with no move available to model or human. So when
     # anything would be masked this parks a {Approval::Parked::Queue::Pending} and awaits
     # it; the fail-closed default is the queue's own and is not reimplemented
-    # here. An unreleased region renders as `<redacted:N>` and a released one as
+    # here. A run with no human masks without asking; see {Unqueued}. An
+    # unreleased region renders as `<redacted:N>` and a released one as
     # its real bytes, so the model keeps the file's STRUCTURE and partial approval
     # falls out for free.
     #
@@ -121,50 +122,15 @@ module Lain
       PATH_INPUT = "path"
 
       # The queue an unattended run does not wire. `--non-interactive` is its only
-      # caller: {CLI::Switchboard#approvals} is nil there, and of the three answers
-      # available -- full bytes, refuse, or mask with no release -- the last leaves
-      # the model `<redacted:1>` forever with nobody able to answer.
+      # caller: {CLI::Switchboard#approvals} is nil there, and the gate of the same
+      # run denies what nobody can settle, so a sensitive read masks with no park
+      # and no release. A model left `<redacted:1>` is the safe side of a run with
+      # nobody to ask; full bytes would be the one place such a run fails open.
       #
-      # THIS IS A FAIL-OPEN, and the only one left in such a run: the SAME nil
-      # `Switchboard#approvals` selects DENY at the gate and APPROVE at the
-      # release. Its justification was that `--yolo` approved everywhere else; the
-      # flag is gone and the behaviour stayed. Flipping it to deny is deferred to
-      # its own measurement, because it changes what EVERY unattended run returns
-      # for a sensitive read, and both halves are pinned together in
-      # `cli/tool_guard_spec.rb` so the flip lands as a red example rather than a
-      # lying comment.
-      #
-      # It is passed EXPLICITLY and `queue:` carries no default, so this cannot be
-      # reached by forgetting an injection: what {Sensitivity::Ledger}'s no-Null
-      # rule forbids is silent approval arriving by omission, not a named object
-      # that approves on purpose.
-      class Unqueued
-        # What a release the stand-in approved is signed with, so the record of
-        # what the fail-open sent names it rather than a surface nobody watched.
-        SURFACE = "unqueued"
-
-        Verdict = Data.define(:requester)
-
-        # The messages this middleware reads off a settled
-        # {Approval::Parked::Queue::Pending}: `approved?`, `timed_out?`, `postponed?`, `surface`,
-        # `requester`, `authority`. Nobody answered, so its release never lifts an egress refusal.
-        class Verdict
-          def approved? = true
-          def timed_out? = false
-          def postponed? = false
-          def surface = SURFACE
-          def authority = :automatic
-        end
-
-        # `outstanding:` is accepted and discarded, but cannot be renamed to the
-        # unused-argument underscore: it is a KEYWORD, so the name is the duck.
-        def adjudicate(_effect, context, outstanding: nil) # rubocop:disable Lint/UnusedMethodArgument
-          Verdict.new(requester: Approval::Parked::Queue.identity_for(context).name)
-        end
-
-        INSTANCE = new.freeze
-
-        def self.instance = INSTANCE
+      # It is passed EXPLICITLY and `queue:` carries no default, so a forgotten
+      # injection raises rather than choosing for the run.
+      module Unqueued
+        def self.instance = self
       end
 
       # Where no `related:` is wired, nothing is related, so every flagged
@@ -179,12 +145,10 @@ module Lain
       LEDGER_CONTRACT = "the run has ONE region ledger, built on the Switchboard and injected -- " \
                         "a second one holds releases nobody ever sees"
 
-      # {LEDGER_CONTRACT}'s sibling, and it names the approval OUT LOUD. This
-      # message is read at exactly the moment somebody is hunting for a value to
-      # inject, so "pass Unqueued" on its own would read as an instruction to open
-      # the run's one fail-open without saying that is what it does.
-      QUEUE_CONTRACT = "pass Middleware::RedactSecretReads::Unqueued where a run wires none -- " \
-                       "but it APPROVES every release; see its docstring"
+      # {LEDGER_CONTRACT}'s sibling, read at the moment somebody is hunting for a
+      # value to inject, so it says what the stand-in does.
+      QUEUE_CONTRACT = "pass Middleware::RedactSecretReads::Unqueued where a run wires none, " \
+                       "which masks every sensitive read"
 
       # Readable for {Agent::ToolRunner#handler}'s reason, plus one: the wiring
       # spec has to be able to assert IDENTITY -- that this holds the board's one
@@ -198,8 +162,8 @@ module Lain
       #   second ledger gets constructed in silence, and a Null would answer
       #   "nothing outstanding" forever -- a release control that releases
       #   everything, wearing this codebase's Null idiom as camouflage.
-      # @param queue [#adjudicate] where a read parks for release, or
-      #   {Unqueued} when a run wires none. Required for the same reason.
+      # @param queue [#adjudicate, Unqueued] where a read parks for release, or
+      #   {Unqueued} when a run wires none, which masks without asking. Required for the same reason.
       # @param journal [#<<] where {Telemetry::SourceMasked},
       #   {Telemetry::SearchRedacted} and {Telemetry::ReadReleased} land
       # @param requester [Requester, nil] the child a read is asked for, as its
@@ -471,6 +435,7 @@ module Lain
       # Why a read is masked without asking, or nil when it must ask.
       def remembered(withheld)
         return :related if @related.related?(withheld.path)
+        return :unattended if @queue.equal?(Unqueued)
 
         (lapsed?(withheld) ? :timed_out : :declined) if declined?(withheld)
       end
@@ -730,7 +695,8 @@ module Lain
           declined: "the release was declined. #{ASK}",
           timed_out: "the release timed out, and a human may still release it. #{ASK}",
           postponed: "the human postponed the release, and the next read asks again. #{ASK}",
-          related: "the file lies under a related directory, so its regions are never released."
+          related: "the file lies under a related directory, so its regions are never released.",
+          unattended: "no human is attached to this run to release it."
         }.freeze
 
         # @param content [String, Array] the masked result, shaped as it arrived
