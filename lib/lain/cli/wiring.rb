@@ -337,7 +337,7 @@ module Lain
         # guarantee -- see #switchboard for what can refuse here and why a
         # refusal must land ahead of the header.
         switchboard(backend, toolset)
-        chronicle.start(toolset:, resumed:, **Header.new(project:, paths: @paths).fields(backend, toolset, arms))
+        chronicle.start(toolset:, resumed:, **Header.new(project, @paths, @epic_mount).fields(backend, toolset, arms))
         @toolset_build.record_opened
         @switchboard.journal_launch
         # ASSIGNED to an ivar, not merely returned: the `parent` thunk above and
@@ -603,8 +603,7 @@ module Lain
         Effect::Handler::Live.new(channel: LiveViews.tool_output(channel, views), display: board.live_display)
       end
 
-      # What the Agent tells the human, and the literals it masks that with.
-      def shown(board, channel) = { display: channel, secrets: board.secrets }
+      def shown(board, channel) = { display: channel, secrets: board.secrets, workspace: epic_mount.workspace }
 
       # Built while the agent is, so the agent is read at each line.
       def notes

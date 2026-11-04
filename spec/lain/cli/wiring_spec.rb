@@ -4715,6 +4715,47 @@ RSpec.describe Lain::CLI::Wiring do
         end
       end
 
+      it "sends a mounted chat's agent the epic's slug, home path and tools in its workspace" do
+        in_project("alpha") do |dir|
+          reminders = run_in(dir).command_env.agent.workspace.reminders.join("\n")
+
+          expect(reminders).to include("alpha", File.join(dir, ".lain", "epics", "alpha"), "epic_graph", "epic_show",
+                                       "epic_status")
+        end
+      end
+
+      describe "the session header" do
+        let(:journal_io) { StringIO.new }
+        let(:chronicle) do
+          Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: journal_io),
+                                   journal_path: File.join(Dir.tmpdir, "epic-header-#{Process.pid}.ndjson"))
+        end
+
+        def header_reminders = journal_records(journal_io).find { |r| r["type"] == "session" }["reminders"]
+
+        it "records the epic line of a mounted chat, so a replay renders what the model was sent" do
+          in_project("alpha") do |dir|
+            run_in(dir)
+
+            expect(header_reminders.join).to include("alpha", File.join(dir, ".lain", "epics", "alpha"))
+          end
+        end
+
+        it "records no reminder for a chat in no epic" do
+          in_project do |dir|
+            run_in(dir)
+
+            expect(header_reminders).to be_empty
+          end
+        end
+      end
+
+      it "sends a chat in no epic an empty workspace" do
+        in_project do |dir|
+          expect(run_in(dir).command_env.agent.workspace.reminders).to be_empty
+        end
+      end
+
       # {HumanReplies} is built in #build_repl, strictly AFTER the toolset --
       # so the tool holds a thunk, and what it must read at CALL time is the
       # run's ONE live replies object, the same one the Env hands the commands.

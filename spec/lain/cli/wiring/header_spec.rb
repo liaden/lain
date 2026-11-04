@@ -5,7 +5,7 @@ require "tmpdir"
 # The session header's run fields, gathered from the backend a chat resolved
 # and the project it runs in.
 RSpec.describe Lain::CLI::Wiring::Header do
-  subject(:header) { described_class.new(project: throwaway_project(@root), paths:) }
+  subject(:header) { described_class.new(project: throwaway_project(@root), paths:, epic:) }
 
   around do |example|
     Dir.mktmpdir("wiring-header") do |dir|
@@ -20,12 +20,18 @@ RSpec.describe Lain::CLI::Wiring::Header do
     Lain::CLI::Backend.new({ provider: "ollama", model: nil, max_tokens: 64, effort: "low" }, root: @root)
   end
 
+  let(:workspace) { Lain::Workspace.empty.with("the epic home is here") }
+  let(:epic) { instance_double(Lain::CLI::EpicMount, workspace:) }
   let(:arms) { Lain::CLI::Arms.from({}) }
 
   it "gathers the backend's profile, compaction section and middleware, and the arms, as the header sections" do
     expect(header.fields(backend, toolset, arms).fetch(:sections))
       .to have_attributes(profile: backend.run_profile.to_header, compaction: backend.compaction_header,
                           middleware: backend.middleware.to_header, arms: arms.to_header)
+  end
+
+  it "hands the chronicle the workspace the model is sent, so the header records its reminders" do
+    expect(header.fields(backend, toolset, arms).fetch(:workspace)).to eq(workspace)
   end
 
   it "records the summarizer tier's provider and model" do

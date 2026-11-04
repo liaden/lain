@@ -124,6 +124,18 @@ RSpec.describe Lain::CLI::EpicMount do
       expect(unmounted.map(&:name)).to eq(%w[epic_write epic_graph epic_status epic_show epic_review epic_submit])
     end
 
+    it "tells the chat its epic slug, its home path and the epic tools, so it never guesses the path" do
+      create_epic("alpha")
+
+      line = mount_for.workspace.reminders.join("\n")
+
+      expect(line).to include("alpha", bare_home("alpha").path, "epic_graph", "epic_show", "epic_status")
+    end
+
+    it "tells a chat in no epic nothing about one" do
+      expect(mount_for(options: { epic: "nope" }).workspace).to be_empty
+    end
+
     it "exposes the homes a document read resolves through, mounted or not" do
       create_epic("alpha")
 

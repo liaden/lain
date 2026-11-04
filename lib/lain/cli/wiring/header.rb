@@ -3,7 +3,7 @@
 module Lain
   module CLI
     class Wiring
-      Header = Data.define(:project, :paths)
+      Header = Data.define(:project, :paths, :epic)
 
       # The session header's run fields: what the resolved backend records, and
       # the provenance of a launch in this project.
@@ -19,11 +19,12 @@ module Lain
           context = backend.context
           provenance = SessionRecord::Provenance.launched(project:, toolset:, effort: context.effort, paths:,
                                                           weights: backend.provider.model_identity(backend.model))
-          { context:, sections: SessionRecord::Sections.of(profile: backend.run_profile, arms:, provenance:,
-                                                           compaction: backend.compaction_header,
-                                                           middleware: backend.middleware,
-                                                           summarizer: { "provider" => backend.summarizer_name,
-                                                                         "model" => backend.summarizer_model }) }
+          sections = SessionRecord::Sections.of(profile: backend.run_profile, arms:, provenance:,
+                                                compaction: backend.compaction_header,
+                                                middleware: backend.middleware,
+                                                summarizer: { "provider" => backend.summarizer_name,
+                                                              "model" => backend.summarizer_model })
+          { context:, sections:, workspace: epic.workspace }
         end
       end
     end

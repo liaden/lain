@@ -60,6 +60,9 @@ module Lain
 
         def mounted? = false
 
+        # @return [Lain::Workspace] empty: a chat in no epic has no home to name
+        def workspace = Lain::Workspace.empty
+
         # @return [Homes] where a written epic document is read back through
         attr_reader :homes
       end
@@ -286,6 +289,16 @@ module Lain
       end
 
       def mounted? = true
+
+      # The workspace line that names where this chat's epic lives, so the
+      # model never guesses a path under `.lain/`.
+      #
+      # @return [Lain::Workspace]
+      def workspace
+        names = [epic_graph, epic_show, epic_status].map(&:name).join(", ")
+        Lain::Workspace.empty.with("This chat is mounted on the epic #{slug}, whose home is #{home.path}. " \
+                                   "Read and change it through #{names}.")
+      end
 
       # The journaled home, guarded by the SAME Review the tool holds. A second
       # construction anywhere would leave the regeneration guard guarding
