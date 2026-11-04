@@ -28,6 +28,12 @@ module Lain
       # high-entropy run in one case. A secret split into short lowercase
       # segments is given up for that.
       WORD_SEGMENT = /\A(?:[a-z0-9._-]+|[A-Z0-9_]+|[A-Z][a-z]+)\z/
+      # A model id's segment (`SmolLM2-360M-Instruct-GGUF`) joins camel-case
+      # pieces with separators. Every word is a capital then 3 or more letters,
+      # because random base62 breaks into 2-letter capital-lowercase pairs that
+      # fit a looser word; a segment still needs 1 such word, not only acronyms.
+      REAL_WORD = /[A-Z][a-z]{2,}/
+      CAMEL_PIECE = /\A(?:[A-Z][a-z]{2,}|[A-Z]{2,}|\d+[A-Z]?)+\z/
       # An alphabet literal (base64's, a charset table) is maximally varied and
       # wholly predictable; no generator emits 16 consecutive code points. The
       # runs must cover most of the token, or a key glued onto one goes too.
@@ -57,7 +63,8 @@ module Lain
         def high?(token)
           return token.length >= HEX_LENGTH && shannon(token) >= HEX_ENTROPY if token.match?(HEX)
 
-          token.length >= BASE64_LENGTH && token.match?(BASE64) && shannon(token) >= BASE64_ENTROPY
+          token.length >= BASE64_LENGTH && token.match?(BASE64) && shannon(token) >= BASE64_ENTROPY &&
+            !slash_joined_words?(token)
         end
 
         # @param token [String]
@@ -88,7 +95,17 @@ module Lain
         def slash_joined_words?(token)
           segments = token.split("/").reject(&:empty?)
 
-          segments.size >= 2 && segments.all? { _1.match?(WORD_SEGMENT) && !high?(_1) }
+          segments.size >= 2 && segments.all? { word_segment?(_1) }
+        end
+
+        def word_segment?(segment)
+          (segment.match?(WORD_SEGMENT) && !high?(segment)) || camel_name?(segment)
+        end
+
+        def camel_name?(segment)
+          pieces = segment.split(/[-_.]/).reject(&:empty?)
+
+          segment.match?(REAL_WORD) && pieces.all? { _1.match?(CAMEL_PIECE) }
         end
 
         def alphabet_run?(token)

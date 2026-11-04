@@ -17,6 +17,35 @@ RSpec.describe Lain::Sensitivity::Entropy do
     it "rejects a hex run below the length floor" do
       expect(described_class.high?("3f5a9c2e1d7b")).to be(false)
     end
+
+    it "rejects a GGUF model id" do
+      expect(described_class.high?("bartowski/GLM-4-9B-Chat-GGUF")).to be(false)
+    end
+
+    it "rejects a mixed-case org and model id" do
+      expect(described_class.high?("HuggingFaceTB/SmolLM2-360M-Instruct-GGUF")).to be(false)
+    end
+
+    it "still flags a prefixed token" do
+      expect(described_class.high?("ghp_6Fz9qL2vX8mN4pR7tY1wK3sD5hJ0aB2cE4gI")).to be(true)
+    end
+
+    it "still flags alternating capital-digit runs either side of a slash" do
+      expect(described_class.high?("Ab1Cd2Ef3Gh4/Ij5Kl6Mn7Op8Qr9St0Uv1Wx2")).to be(true)
+    end
+
+    it "still flags a second alternating run either side of a slash" do
+      expect(described_class.high?("Kd8Fj2Ls9Qw/Tr5Yu1Io7Pa3Zx6Cv4Bn0Mm")).to be(true)
+    end
+
+    it "accepts real model ids" do
+      ids = %w[meta-llama/Llama-3.1-8B-Instruct Qwen/Qwen2.5-Coder-7B]
+      expect(ids.map { described_class.high?(_1) }).to eq([false, false])
+    end
+
+    it "still flags a random mixed-case segment after a slash" do
+      expect(described_class.high?("keys/Qm9vT2s3x9ZpL1aBc7Yw2RtUv5NhGd8E")).to be(true)
+    end
   end
 
   describe ".hinted?" do
