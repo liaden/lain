@@ -5,7 +5,7 @@
 # the other two here, and a signature that drifts fails the class that drifted.
 #
 # `own:` names state a wrapper holds that the policies it wraps do not (Confined's
-# roots, write roots, policy and both outside questions), and `lacks:` names that
+# policy and both outside questions), and `lacks:` names that
 # same state in the specs of the classes that must not answer it. Neither is a
 # place to park a message.
 #
@@ -29,7 +29,8 @@ RSpec.shared_examples "a sensitivity policy" do |config|
     denial: [%i[req], { cwd: :keyreq, named: :key }],
     classify: [%i[req], { within: :key }],
     judge: [%i[req], { cwd: :keyreq, within: :key }],
-    confined: [[], { roots: :keyreq }],
+    confined: [%i[req], {}],
+    bounds: [[], {}],
     home: [[], {}],
     root: [[], {}],
     read_roots: [[], {}],

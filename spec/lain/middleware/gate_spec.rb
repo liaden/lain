@@ -601,7 +601,7 @@ RSpec.describe Lain::Middleware::Gate do
       end
 
       it "names a path outside the project" do
-        confined = sensitivity.confined(roots: ["/home/tester/project"])
+        confined = sensitivity.confined(Lain::Sensitivity::Bounds.of(writes: ["/home/tester/project"]))
 
         expect(noted_for(tool_call("read_file", { "path" => "/opt/x" }), sensitivity: confined).join)
           .to include("outside the project")
@@ -764,6 +764,13 @@ RSpec.describe Lain::Middleware::Gate do
 
       expect(asked(write(File.join(checkout, "a.rb")), context: leased).asked).to be_empty
       expect(asked(write(File.join(elsewhere, "a.rb")), context: leased).asked).not_to be_empty
+    end
+
+    it "asks about a leased worker's write into the project root, which its lease does not lend it" do
+      checkout = File.join(@base, "spikes", "w1")
+      leased = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: checkout, env: {}, checkout:))
+
+      expect(asked(write(File.join(root, "b.rb")), context: leased).asked).not_to be_empty
     end
 
     # A read root widens what is read without asking, never where a write may land.

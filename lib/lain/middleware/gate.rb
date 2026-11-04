@@ -222,7 +222,7 @@ module Lain
         written = written(effect, context)
         return false if written.empty? || @sensitivity.root.nil?
 
-        project = @sensitivity.confined(roots: [::Lain::Sensitivity::Policy.base_of(context)])
+        project = ::Lain::Sensitivity::Policy.confined_at(@sensitivity, context)
         cwd = ::Lain::Session.cwd_of(context)
         written.any? { project.writes_outside?(_1, cwd:) }
       end

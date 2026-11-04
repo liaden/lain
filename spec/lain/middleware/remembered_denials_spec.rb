@@ -4,7 +4,8 @@ RSpec.describe Lain::Middleware::RememberedDenials do
   let(:home) { "/home/tester" }
   let(:project) { "#{home}/project" }
   let(:policy) do
-    Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: project)).confined(roots: [project])
+    Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: project))
+                             .confined(Lain::Sensitivity::Bounds.of(writes: [project]))
   end
   let(:queue) { instance_double(Lain::Approval::Parked::Queue, denied: nil, denied_call: nil) }
   let(:denial) { "approval denied for tool %<name>s" }
@@ -143,7 +144,7 @@ RSpec.describe Lain::Middleware::RememberedDenials do
   it "reads a path's ~ as the policy's home" do
     remembering("agent", "#{home}/notes")
     homed = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: project), home:)
-                                     .confined(roots: [project])
+                                     .confined(Lain::Sensitivity::Bounds.of(writes: [project]))
 
     expect(through(lists("~/notes"), via: described_class.new(queue:, sensitivity: homed, denial:)).first)
       .to have_attributes(is_error: true)
@@ -162,7 +163,7 @@ RSpec.describe Lain::Middleware::RememberedDenials do
     it "reads ~ in the command as the policy's home" do
       remembering("agent", "#{home}/notes")
       homed = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: project), home:)
-                                       .confined(roots: [project])
+                                       .confined(Lain::Sensitivity::Bounds.of(writes: [project]))
 
       expect(through(runs("cat ~/notes"), via: described_class.new(queue:, sensitivity: homed, denial:)).first)
         .to have_attributes(is_error: true)

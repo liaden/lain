@@ -27,7 +27,11 @@ module Lain
   # worker, and nil for the host's own environment. The lease sets it
   # ({Isolation::Lease}), because only the lease knows: a directory that looks
   # like a checkout proves nothing about whether this worker was given one.
-  WorkerEnv = Data.define(:cwd, :env, :checkout) do
+  #
+  # `bounds` is what the agent working here may read, write and run, once they
+  # are cut for it ({Sensitivity::Policy.bounds_for}), and nil before. Once cut
+  # they are authoritative: every layer answers them rather than cutting again.
+  WorkerEnv = Data.define(:cwd, :env, :checkout, :bounds) do
     # The live process working directory plus a snapshot of its environment, so a
     # run injecting no isolation shells out under the same `Dir.pwd` and `ENV` it
     # would read directly. Computed fresh, not a frozen constant, so a caller
@@ -48,8 +52,8 @@ module Lain
       new(cwd: Dir.pwd, env: snapshot)
     end
 
-    def initialize(cwd:, env:, checkout: nil)
-      super(cwd: cwd.dup.freeze, env: Ractor.make_shareable(env.to_h), checkout: checkout&.dup&.freeze)
+    def initialize(cwd:, env:, checkout: nil, bounds: nil)
+      super(cwd: cwd.dup.freeze, env: Ractor.make_shareable(env.to_h), checkout: checkout&.dup&.freeze, bounds:)
     end
 
     # The ONE cwd-resolution rule every exec arm shares (Exec::Local in

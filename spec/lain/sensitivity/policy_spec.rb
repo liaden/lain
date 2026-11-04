@@ -50,6 +50,8 @@ end
 RSpec.describe Lain::Sensitivity::Policy do
   subject(:policy) { described_class.new(sensitivity:) }
 
+  def confined_to(policy, *dirs) = policy.confined(policy.bounds | Lain::Sensitivity::Bounds.of(writes: dirs))
+
   let(:home) { "/home/tester" }
   let(:cwd) { "/home/tester/project" }
   let(:rules) { Lain::Sensitivity::Rules.empty }
@@ -364,7 +366,7 @@ RSpec.describe Lain::Sensitivity::Policy do
     end
 
     it "reads a command whose cwd field holds a NUL byte without raising" do
-      confined = policy.confined(roots: [cwd])
+      confined = confined_to(policy, cwd)
 
       expect { confined.denial(call("bash", { "command" => "cat notes", "cwd" => "bad\0dir" }), cwd:) }
         .not_to raise_error
@@ -427,7 +429,7 @@ RSpec.describe Lain::Sensitivity::Policy do
     it "is the same root through a confinement, and nil for the null policy" do
       null = described_class::Null.instance
 
-      expect([anchored.confined(roots: ["/w"]).root, null.root, null.confined(roots: ["/w"]).root])
+      expect([confined_to(anchored, "/w").root, null.root, confined_to(null, "/w").root])
         .to eq([cwd, nil, nil])
     end
   end
@@ -440,12 +442,12 @@ RSpec.describe Lain::Sensitivity::Policy do
     end
 
     it "is the same home through a confinement" do
-      expect(anchored.confined(roots: ["/w"]).home).to eq(home)
+      expect(confined_to(anchored, "/w").home).to eq(home)
     end
 
     it "is nil on the Null and its confinement" do
       null = described_class::Null.instance
-      expect([null.home, null.confined(roots: ["/w"]).home]).to eq([nil, nil])
+      expect([null.home, confined_to(null, "/w").home]).to eq([nil, nil])
     end
   end
 
@@ -656,7 +658,7 @@ RSpec.describe Lain::Sensitivity::Policy do
     it "answers its policy's own answer when confined, and false on the Null" do
       lock = written("yarn.lock")
 
-      expect(policy.confined(roots: [cwd]).checksums?(lock, within: cwd)).to be(true)
+      expect(confined_to(policy, cwd).checksums?(lock, within: cwd)).to be(true)
       expect(described_class::Null.instance.checksums?(lock, within: cwd)).to be(false)
     end
 
@@ -667,7 +669,7 @@ RSpec.describe Lain::Sensitivity::Policy do
 
       expect(policy.judge(lock, cwd: other)).to be_gated
       expect(policy.checksums?(lock, within: other)).to be(false)
-      expect(policy.confined(roots: [other]).checksums?(lock, within: other)).to be(false)
+      expect(confined_to(policy, other).checksums?(lock, within: other)).to be(false)
     end
   end
 
@@ -719,7 +721,7 @@ RSpec.describe Lain::Sensitivity::Policy do
     end
 
     it "holds a confined policy to the same facts" do
-      confined = policy.confined(roots: [project])
+      confined = confined_to(policy, project)
 
       expect(confined.file_facts).to be(recorded)
       expect(confined.gates?(call("read_file", { "path" => "notes.txt" }), cwd: project)).to be(true)
@@ -1063,7 +1065,7 @@ RSpec.describe Lain::Sensitivity::Policy do
     describe "a location verdict" do
       let(:documents) { File.join(home, "Documents", "plan.txt") }
       let(:outside) { File.join(@base, "elsewhere", "notes.txt") }
-      let(:confined) { policy.confined(roots: [cwd]) }
+      let(:confined) { confined_to(policy, cwd) }
 
       it "is not a mask when the path is out of scope" do
         expect(policy.judge(documents, cwd:).reason).to eq(:out_of_scope)
@@ -1141,7 +1143,7 @@ RSpec.describe Lain::Sensitivity::Policy do
     end
 
     it "refuses it through a confined child too" do
-      expect(homed.confined(roots: [root]).denial(write_to("write_file", epic_md), cwd: root))
+      expect(confined_to(homed, root).denial(write_to("write_file", epic_md), cwd: root))
         .to have_attributes(advice: /epic_write/)
     end
 
@@ -1175,7 +1177,7 @@ RSpec.describe Lain::Sensitivity::Policy do
     let(:policy) do
       described_class.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root, root:, rules:), home:, root:)
     end
-    let(:confined) { policy.confined(roots: [worker]) }
+    let(:confined) { confined_to(policy, worker) }
 
     def read(path) = call("read_file", { "path" => path })
     def glob(path, pattern) = call("glob", { "path" => path, "pattern" => pattern })
@@ -1205,7 +1207,7 @@ RSpec.describe Lain::Sensitivity::Policy do
 
     it "answers outside? for a write not yet on disk by where its directory lands" do
       File.symlink(File.join(@base, "elsewhere"), File.join(root, "out"))
-      project = policy.confined(roots: [root])
+      project = confined_to(policy, root)
 
       expect(%w[lib/new.rb lib/new/deep.rb out/new.rb ../elsewhere/new/a.rb].map { project.outside?(_1, cwd: root) })
         .to eq([false, false, true, true])
@@ -1318,21 +1320,29 @@ RSpec.describe Lain::Sensitivity::Policy do
         .to eq([true, false])
     end
 
-    it "holds the project root joined with the roots it is given, and nothing else" do
+    it "holds the bounds it is given, and nothing else" do
       paths = [File.join(root, "lib"), File.join(worker, "a.rb"), File.join(@base, "elsewhere"), home]
 
-      expect(paths.map { confined.roots.held?(_1) }).to eq([true, true, false, false])
+      expect(paths.map { confined.bounds.read?(_1) }).to eq([true, true, false, false])
     end
 
-    it "is built over a Roots value" do
-      built = described_class::Confined.new(policy:, roots: Lain::Sensitivity::Roots.of(worker), anchors: {})
+    it "is built over a Bounds value" do
+      built = described_class::Confined.new(policy:, bounds: Lain::Sensitivity::Bounds.of(writes: [worker]),
+                                            anchors: {})
 
       expect([read(File.join(worker, "a.rb")), read(File.join(root, "lib"))].map { built.gates?(_1, cwd: worker) })
         .to eq([false, true])
     end
 
-    it "confines again with more roots, keeping the ones it had" do
-      again = confined.confined(roots: [File.join(@base, "elsewhere")])
+    it "confines again to exactly the bounds it is given" do
+      again = confined.confined(Lain::Sensitivity::Bounds.of(writes: [File.join(@base, "elsewhere")]))
+
+      expect([read(File.join(worker, "a.rb")), read(File.join(@base, "elsewhere", "a.md")), read("lib")]
+               .map { again.gates?(_1, cwd: root) }).to eq([true, false, true])
+    end
+
+    it "confines again joined to the bounds it held" do
+      again = confined_to(confined, File.join(@base, "elsewhere"))
 
       expect([read(File.join(worker, "a.rb")), read(File.join(@base, "elsewhere", "a.md")), read("lib")]
                .map { again.gates?(_1, cwd: root) }).to eq([false, false, false])
@@ -1349,7 +1359,7 @@ RSpec.describe Lain::Sensitivity::Policy do
       it "answers the read roots it was built with, and none by default" do
         expect([reading.read_roots, policy.read_roots, described_class::Null.instance.read_roots])
           .to eq([[lent], [], []])
-        expect(reading.confined(roots: [worker]).read_roots).to eq([lent])
+        expect(confined_to(reading, worker).read_roots).to eq([lent])
       end
 
       it "refuses a read root that is not absolute, which would resolve against the process's directory" do
@@ -1362,7 +1372,7 @@ RSpec.describe Lain::Sensitivity::Policy do
       end
 
       it "reads under a read root ungated, and still gates a read beyond it" do
-        held = reading.confined(roots: [worker])
+        held = confined_to(reading, worker)
 
         expect([read(File.join(lent, "epic.md")), read(File.join(home, "a.md"))].map { held.gates?(_1, cwd: root) })
           .to eq([false, true])
@@ -1370,7 +1380,7 @@ RSpec.describe Lain::Sensitivity::Policy do
       end
 
       it "answers outside? by the read roots and writes_outside? by the write roots alone" do
-        held = reading.confined(roots: [worker])
+        held = confined_to(reading, worker)
         paths = [File.join(lent, "epic.md"), File.join(worker, "a.rb"), File.join(root, "lib", "a.rb"),
                  File.join(home, "notes", "n.md"), File.join(home, "a.md")]
 
@@ -1379,41 +1389,42 @@ RSpec.describe Lain::Sensitivity::Policy do
       end
 
       it "joins further roots to both reads and writes when confined again" do
-        again = reading.confined(roots: [worker]).confined(roots: [File.join(@base, "home")])
+        again = confined_to(confined_to(reading, worker), File.join(@base, "home"))
 
         expect(again.writes_outside?(File.join(home, "a.md"), cwd: root)).to be(false)
         expect(again.writes_outside?(File.join(lent, "epic.md"), cwd: root)).to be(true)
       end
 
-      it "writes only where it reads when built over one Roots value" do
-        built = described_class::Confined.new(policy:, roots: Lain::Sensitivity::Roots.of(worker), anchors: {})
+      it "writes only where its bounds write" do
+        built = described_class::Confined.new(policy:, bounds: Lain::Sensitivity::Bounds.of(writes: [worker]),
+                                              anchors: {})
 
         expect(built.writes_outside?(File.join(worker, "a.rb"), cwd: worker)).to be(false)
       end
     end
 
     it "answers ordinary over the Null for a path inside its roots, and outside the project beyond them" do
-      null = described_class::Null.instance.confined(roots: [worker])
+      null = confined_to(described_class::Null.instance, worker)
 
       expect(null.judge(File.join(worker, "a.rb"), cwd: worker)).to be_ordinary
       expect(null.judge(File.join(root, "a.rb"), cwd: worker)).to have_attributes(reason: :outside_project)
     end
 
     it "holds a path under a root spelled with a trailing slash, and the root itself" do
-      slashed = policy.confined(roots: ["#{worker}/"])
+      slashed = confined_to(policy, "#{worker}/")
 
       expect([File.join(worker, "a.rb"), worker].map { slashed.gates?(read(_1), cwd: worker) }).to eq([false, false])
     end
 
     it "holds every path under the filesystem root" do
-      expect(policy.confined(roots: ["/"]).gates?(read(File.join(@base, "elsewhere", "a.md")), cwd: root)).to be(false)
+      expect(confined_to(policy, "/").gates?(read(File.join(@base, "elsewhere", "a.md")), cwd: root)).to be(false)
     end
 
     it "confines a policy with no project root to the roots it is given" do
       rootless = described_class.new(sensitivity: Lain::Sensitivity.new(home:, cwd: worker), home:)
 
-      expect(rootless.confined(roots: [worker]).gates?(read(File.join(root, "lib")), cwd: worker)).to be(true)
-      expect(rootless.confined(roots: [worker]).gates?(read("x.rb"), cwd: worker)).to be(false)
+      expect(confined_to(rootless, worker).gates?(read(File.join(root, "lib")), cwd: worker)).to be(true)
+      expect(confined_to(rootless, worker).gates?(read("x.rb"), cwd: worker)).to be(false)
     end
 
     describe "the account database" do
@@ -1428,7 +1439,7 @@ RSpec.describe Lain::Sensitivity::Policy do
       end
 
       it "gives no home advice when the policy holds no home" do
-        null = described_class::Null.instance.confined(roots: [worker])
+        null = confined_to(described_class::Null.instance, worker)
 
         expect(null.denial(read("/etc/passwd"), cwd: worker).advice).to be_nil
       end
@@ -1456,7 +1467,7 @@ RSpec.describe Lain::Sensitivity::Policy do
       end
 
       it "refuses it over the Null policy too" do
-        null = described_class::Null.instance.confined(roots: [worker])
+        null = confined_to(described_class::Null.instance, worker)
 
         expect(null.denial(read("/etc/passwd"), cwd: worker)).to have_attributes(reason: :account_database)
       end
@@ -1487,8 +1498,8 @@ RSpec.describe Lain::Sensitivity::Policy do
 
       it "leaves a path the project's own config denies to the shell rung" do
         rules = Lain::Sensitivity::Rules.from({ "denied" => ["*.secret"] })
-        configured = described_class.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root, rules:), home:, root:)
-                                    .confined(roots: [worker])
+        configured = confined_to(described_class.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root, rules:),
+                                                     home:, root:), worker)
 
         expect(configured.denial(call("bash", { "command" => "cat #{root}/prod.secret" }), cwd: root)).to be_nil
       end
@@ -1507,6 +1518,140 @@ RSpec.describe Lain::Sensitivity::Policy do
       end
     end
   end
+
+  # One agent's bounds, which every layer judging its calls reads.
+  describe "the bounds an agent works within" do
+    around do |example|
+      Dir.mktmpdir("lain-policy-bounds") do |dir|
+        @base = File.realpath(dir)
+        FileUtils.mkdir_p(%w[home project/lib state/epics children/4bfe children/317dc2c7a3f3 elsewhere]
+                            .map { File.join(@base, _1) })
+        lent = File.join(@base, "children", "317dc2c7a3f3")
+        File.symlink(File.join(@base, "project"), File.join(lent, "to_root"))
+        File.symlink(File.join(@base, "children", "4bfe"), File.join(lent, "to_sibling"))
+        example.run
+      end
+    end
+
+    let(:home) { File.join(@base, "home") }
+    let(:root) { File.join(@base, "project") }
+    let(:spill) { File.join(@base, "state", "epics") }
+    let(:sibling) { File.join(@base, "children", "4bfe") }
+    let(:lease) { File.join(@base, "children", "317dc2c7a3f3") }
+    let(:policy) do
+      described_class.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root, root:), home:, root:,
+                          read_roots: [spill])
+    end
+    let(:leased) { Lain::WorkerEnv.new(cwd: lease, env: {}, checkout: lease) }
+
+    # Each kind of place a call can name, existing or not yet written.
+    def fixture_paths
+      %w[project/lib/a.rb project state/epics/epic.md children/317dc2c7a3f3/README.md
+         children/317dc2c7a3f3/new/dir/x.rb children/317dc2c7a3f3 children/4bfe/Cargo.toml elsewhere/notes.md
+         home/a.md children/317dc2c7a3f3-other/a.rb children/317dc2c7a3f3/to_root/a.rb
+         children/317dc2c7a3f3/to_sibling/a.rb children/317dc2c7a3f3/../4bfe/a.rb
+         children/317dc2c7a3f3/sub/../b.rb children/4bfe/ children/317dc2c7a3f3/].map { File.join(@base, _1) } << @base
+    end
+
+    # Bounds hold landings, so each layer is compared with them over where the path really lands.
+    def landed(path) = Lain::Landing.of(path, cwd: lease).first
+
+    describe "#bounds" do
+      it "reads the project and the read roots, writes the project, and runs the project's build output" do
+        bounds = policy.bounds
+
+        expect([File.join(root, "a.rb"), File.join(spill, "x"), File.join(home, "a")].map { bounds.read?(_1) })
+          .to eq([true, true, false])
+        expect([File.join(root, "a.rb"), File.join(spill, "x")].map { bounds.write?(_1) }).to eq([true, false])
+        expect(bounds.exec?(File.join(root, "target", "debug", "deps", "x-1f2e"))).to be(true)
+      end
+
+      it "holds nothing on the Null" do
+        expect(described_class::Null.instance.bounds).to eq(Lain::Sensitivity::Bounds::NONE)
+      end
+    end
+
+    describe ".bounds_for" do
+      it "lends a leased worker its own checkout to write, and the session's reads, and no sibling's" do
+        bounds = described_class.bounds_for(policy, leased)
+
+        expect([File.join(lease, "a.rb"), File.join(root, "a.rb"), File.join(spill, "x"),
+                File.join(sibling, "a.rb")].map { bounds.read?(_1) }).to eq([true, true, true, false])
+        expect([File.join(lease, "a.rb"), File.join(root, "a.rb")].map { bounds.write?(_1) }).to eq([true, false])
+      end
+
+      it "writes where an unleased worker stands, beside the project" do
+        here = Lain::WorkerEnv.new(cwd: File.join(@base, "elsewhere"), env: {})
+        bounds = described_class.bounds_for(policy, here)
+
+        expect([File.join(@base, "elsewhere", "a"), File.join(root, "a")].map { bounds.write?(_1) })
+          .to eq([true, true])
+      end
+
+      it "runs the project's build output from a leased worker, and none of the checkout's own" do
+        bounds = described_class.bounds_for(policy, leased)
+
+        expect([root, lease].map { bounds.exec?(File.join(_1, "target", "debug", "x")) }).to eq([true, false])
+      end
+
+      it "answers the bounds the worker's environment carries, narrower than its own" do
+        narrow = Lain::Sensitivity::Bounds.of(reads: [lease], writes: [File.join(lease, "lib")])
+        bounds = described_class.bounds_for(policy, leased.with(bounds: narrow))
+
+        expect(bounds).to eq(narrow)
+        expect([File.join(root, "a.rb"), File.join(lease, "a.rb")].map { bounds.read?(_1) }).to eq([false, true])
+        expect(bounds.write?(File.join(lease, "a.rb"))).to be(false)
+      end
+
+      it "answers the bounds the worker's environment carries, and no wider" do
+        wide = Lain::Sensitivity::Bounds.of(reads: [root, sibling], writes: [lease, sibling])
+        bounds = described_class.bounds_for(policy, leased.with(bounds: wide))
+
+        expect(bounds).to eq(wide)
+        expect(bounds.read?(File.join(spill, "x"))).to be(false)
+      end
+    end
+
+    it "answers a confined policy's reads as its bounds do, for every path in the fixture set" do
+      bounds = described_class.bounds_for(policy, leased)
+      confined = policy.confined(bounds)
+
+      expect(fixture_paths.map { !confined.outside?(_1, cwd: lease) })
+        .to eq(fixture_paths.map { bounds.read?(landed(_1)) })
+    end
+
+    describe "writes" do
+      let(:bounds) { described_class.bounds_for(policy, leased) }
+      let(:scope) { Lain::Session::Confined.new(worker_env: leased.with(bounds:), reminder: "") }
+      let(:guard) do
+        Lain::Middleware::ConfineToScope.new(scope: Data.define(:current).new(current: scope),
+                                             wording: Lain::Middleware::ConfineToScope::LEASE)
+      end
+
+      def let_through?(name, input)
+        effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name:, input:)
+        env = { effect:, tool: nil, context: Lain::Session.new(worker_env: leased) }
+        !guard.call(env) { _1.merge(result: Lain::Tool::Result.ok("ran")) }.fetch(:result).is_error
+      end
+
+      it "agree across the confined policy, the session's scope and its write and cd guard" do
+        wanted = fixture_paths.map { bounds.write?(landed(_1)) }
+        confined = policy.confined(bounds)
+
+        expect(fixture_paths.map { !confined.writes_outside?(_1, cwd: lease) }).to eq(wanted)
+        expect(fixture_paths.map { scope.holds?(_1) }).to eq(wanted)
+        expect(fixture_paths.map { let_through?("write_file", { "path" => _1, "content" => "x" }) }).to eq(wanted)
+        expect(fixture_paths.map { let_through?("bash", { "command" => "ls", "cwd" => _1 }) }).to eq(wanted)
+      end
+    end
+
+    it "is built once, through Bounds, wherever lib/ holds an agent's directories" do
+      sites = Dir[File.expand_path("../../../lib/**/*.rb", __dir__)].select { File.read(_1).include?("Roots.of(") }
+
+      expect(sites.map { File.basename(_1) }).to eq(["policy.rb"])
+      expect(File.read(sites.first).scan("Roots.of(").size).to eq(1)
+    end
+  end
 end
 
 RSpec.describe "the sensitivity policy contract" do
@@ -1515,21 +1660,22 @@ RSpec.describe "the sensitivity policy contract" do
   end
 
   context "with Policy" do
-    include_examples "a sensitivity policy", lacks: %i[roots write_roots policy outside? writes_outside?],
+    include_examples "a sensitivity policy", lacks: %i[policy outside? writes_outside?],
                                              policy_factory: -> { Lain::Sensitivity::Policy.new(sensitivity: contract_sensitivity) }
   end
 
   context "with Confined" do
     include_examples "a sensitivity policy",
-                     own: %i[roots write_roots policy outside? writes_outside?],
+                     own: %i[policy outside? writes_outside?],
                      policy_factory: lambda {
-                       Lain::Sensitivity::Policy.new(sensitivity: contract_sensitivity).confined(roots: [Dir.pwd])
+                       Lain::Sensitivity::Policy.new(sensitivity: contract_sensitivity)
+                                                .confined(Lain::Sensitivity::Bounds.of(writes: [Dir.pwd]))
                      }
   end
 
   context "with Null" do
     include_examples "a sensitivity policy", swallows: true,
-                                             lacks: %i[roots write_roots policy outside? writes_outside?],
+                                             lacks: %i[policy outside? writes_outside?],
                                              policy_factory: -> { Lain::Sensitivity::Policy::Null.instance }
   end
 end

@@ -159,7 +159,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
         policy = board_for(root, home).sensitivity
 
         expect(policy.read_roots).to eq([Lain::Tool::Spill.home(paths, root), container])
-        expect(policy.confined(roots: [root]).writes_outside?(File.join(container, "a", "epic.md"), cwd: root))
+        expect(policy.confined(policy.bounds).writes_outside?(File.join(container, "a", "epic.md"), cwd: root))
           .to be(true)
       end
     end

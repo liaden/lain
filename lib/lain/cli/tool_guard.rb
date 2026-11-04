@@ -502,7 +502,7 @@ module Lain
       # rungs read a command's words in that checkout -- on behalf of the child
       # `requester` names, as its read guard asks a release. The ledger and
       # listing filter stay the board's one, and the path policy is the board's
-      # confined to the child's scope ({.working}). A child whose environment
+      # confined to the child's bounds ({.bounded}). A child whose environment
       # names a checkout is held inside it, as plan scope holds one inside the
       # spike; one that names none is held nowhere.
       #
@@ -515,8 +515,18 @@ module Lain
       def child_stack(chronicle, board, worker_env, requester:, task: nil)
         inputs = board.guard_inputs
         asking = Asking.new(policy: inputs.policy_for.call(worker_env), requester:, task:)
-        working(chronicle, inputs, worker_env, asking,
-                requester:, held: held_for(worker_env, home: inputs.sensitivity.home))
+        bounded = bounded(inputs, worker_env)
+        layered(chronicle, confined(inputs, bounded), inputs.test_layout.roots_for(worker_env), asking,
+                requester:, held: held_for(bounded, home: inputs.sensitivity.home))
+      end
+
+      # Cut once, as the child is built, so its path policy and its hold read one value.
+      #
+      # @param inputs [Inputs] whose path policy's bounds the child's are cut from
+      # @param worker_env [WorkerEnv] the child's
+      # @return [WorkerEnv] the child's, carrying its bounds
+      def bounded(inputs, worker_env)
+        worker_env.with(bounds: Lain::Sensitivity::Policy.bounds_for(inputs.sensitivity, worker_env))
       end
 
       # @param worker_env [WorkerEnv] the child's
@@ -541,13 +551,12 @@ module Lain
       # environment names if its lease cut one, the policy its gate asks, and
       # the child a release is asked for -- nil for a worker nobody named.
       #
-      # Its path policy is confined to the project, its related directories,
-      # the session's read roots and the worker's own tree, so a read anywhere
-      # else asks first. The main agent's stack is built by {.stack} and reads
-      # where it likes.
+      # Its path policy is confined to the worker's bounds and its related
+      # directories, so a read anywhere else asks first. The main agent's stack
+      # is built by {.stack} and reads where it likes.
       def working(chronicle, inputs, worker_env, policy = inputs.policy, requester: nil, held: [])
-        layered(chronicle, confined(inputs, worker_env), inputs.test_layout.roots_for(worker_env), policy,
-                requester:, held:)
+        layered(chronicle, confined(inputs, bounded(inputs, worker_env)), inputs.test_layout.roots_for(worker_env),
+                policy, requester:, held:)
       end
 
       # A child of a run with no chat, leased a checkout: held inside it as a
@@ -563,12 +572,13 @@ module Lain
       # @param resolver [#for] what a command's programs resolve to, over `fresh`
       # @return [Middleware::Stack]
       def leased(chronicle, inputs, worker_env, fresh:, resolver:, requester: nil, task: nil)
-        held = confined(inputs, worker_env)
+        bounded = bounded(inputs, worker_env)
+        held = confined(inputs, bounded)
         policy = LeasedPolicy.new(sensitivity: held.sensitivity, lease: worker_env.checkout,
                                   allow: inputs.policy_for.call(worker_env), home: inputs.sensitivity.home,
                                   resolver:, fresh:)
         layered(chronicle, held, inputs.test_layout.roots_for(worker_env), named(policy, requester, task:),
-                requester:, held: held_for(worker_env, home: inputs.sensitivity.home))
+                requester:, held: held_for(bounded, home: inputs.sensitivity.home))
       end
 
       # A gate policy asked in `requester`'s name, or as it is when nobody is
@@ -581,10 +591,7 @@ module Lain
       # @return [#rule]
       def named(policy, requester, task: nil) = requester ? Asking.new(policy:, requester:, task:) : policy
 
-      def confined(inputs, worker_env)
-        roots = [worker_env.checkout || worker_env.cwd]
-        inputs.with(sensitivity: inputs.sensitivity.confined(roots:))
-      end
+      def confined(inputs, bounded) = inputs.with(sensitivity: inputs.sensitivity.confined(bounded.bounds))
 
       # The configured members, then the eight guards over one set of inputs,
       # the layout held at `roots`, and the gate's two layers asking `policy`
@@ -674,7 +681,9 @@ module Lain
         approve_all = Middleware::Gate::ApproveAll.new
         policy_for ||= ->(_worker_env) { approve_all }
         inputs = Inputs.new(ledger: Lain::Sensitivity::Ledger.new, approvals: Unreleased,
-                            sensitivity: Lain::Sensitivity::Policy::Null.instance.confined(roots:),
+                            sensitivity: Lain::Sensitivity::Policy::Null.instance.confined(
+                              Lain::Sensitivity::Bounds.of(writes: roots)
+                            ),
                             test_layout: Middleware::GuardTestLayout::Run.undeclared,
                             policy: approve_all, policy_for:,
                             denial: Middleware::Gate::DENIAL, bar: Middleware::WithholdAutomaticOutput::Bar.new)

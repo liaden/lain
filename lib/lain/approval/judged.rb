@@ -368,7 +368,7 @@ module Lain
         root = own_tree(context) || @policy.root || ::Lain::Sensitivity::Policy.base_of(context)
         cwd = ::Lain::Session.cwd_of(context)
         Judge::Place.new(root:, cwd:, requester: requester_of(context),
-                         outside: outside(effect, context, cwd, [root, ::Lain::Sensitivity::Policy.base_of(context)]),
+                         outside: outside(effect, context, cwd),
                          facts: facts_for(effect, context), request: @request.call(context),
                          human_checkout: (@policy.root unless root == @policy.root))
       end
@@ -377,23 +377,18 @@ module Lain
       # judge is told that checkout as the project root.
       def own_tree(context) = ::Lain::Sensitivity::Policy.checkout_of(context)
 
-      # The human's checkout and the session's read roots are read-only to a
-      # session in its own tree, as its confined policy keeps them, so only a
-      # write there is outside.
-      def outside(effect, context, cwd, held)
-        writable = held_to(held)
-        readable = held_to([*held, *@policy.root, *@policy.read_roots])
-        named_paths(effect, context, cwd).select { |path, writes| (writes ? writable : readable).outside?(path, cwd:) }
+      # Judged by the requester's own bounds, where each path lands, as the
+      # gate judges it: the human's checkout and the session's read roots are
+      # read-only to a session in its own tree, so only a write there is outside.
+      def outside(effect, context, cwd)
+        held = held_to(context)
+        named_paths(effect, context, cwd).select { |path, writes| outside_of?(held, path, writes, cwd) }
                                          .map(&:first).uniq
       end
 
-      # Where each path lands, as the gate judges it. Not {Sensitivity::Policy#confined},
-      # which always holds the project root, and a write there from a leased tree is outside.
-      def held_to(roots)
-        held = ::Lain::Sensitivity::Roots.of(*roots, facts: @policy.file_facts)
-        ::Lain::Sensitivity::Policy::Confined.new(policy: @policy, roots: held,
-                                                  anchors: { home: @policy.home, root: @policy.root })
-      end
+      def held_to(context) = ::Lain::Sensitivity::Policy.confined_at(@policy, context)
+
+      def outside_of?(held, path, writes, cwd) = writes ? held.writes_outside?(path, cwd:) : held.outside?(path, cwd:)
 
       def facts_for(effect, context)
         command = command_in(effect.input)

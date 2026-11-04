@@ -644,10 +644,12 @@ module Lain
     # The scope of a session confined to one directory -- a spike worktree or a
     # scratch directory -- which its environment names as its checkout.
     #
-    # A path is held when it really lands under the root: the real path of its
-    # longest existing prefix, with the part not on disk yet appended, since
-    # the kernel follows every link the path crosses. A dangling link names a
-    # target that can be made anywhere later, so it is not held.
+    # A path is held when it really lands where the scope writes: where the
+    # bounds its environment carries write, or under the root when it carries
+    # none. It lands at the real path of its longest existing prefix, with the
+    # part not on disk yet appended, since the kernel follows every link the
+    # path crosses. A dangling link names a target that can be made anywhere
+    # later, so it is not held.
     #
     # A child spawned under it is LENT the environment in place, since a lease
     # of its own would be a second checkout the spike never reads. One lend per
@@ -665,6 +667,7 @@ module Lain
       def initialize(worker_env:, reminder:)
         @worker_env = worker_env
         @root = File.realpath(worker_env.checkout)
+        @bounds = worker_env.bounds || Sensitivity::Bounds.of(writes: [@root])
         @reminders = [reminder.dup.freeze].freeze
         freeze
       end
@@ -677,8 +680,7 @@ module Lain
       #
       # @param path [String, nil] as a call wrote it; nil is the scope's cwd
       def holds?(path)
-        landed = Lain::Landing.of(worker_env.resolve(path), cwd: root).first
-        landed == root || landed.start_with?(File.join(root, ""))
+        @bounds.write?(Lain::Landing.of(worker_env.resolve(path), cwd: root).first)
       rescue SystemCallError, ArgumentError, TypeError, Lain::Landing::Dangling
         false
       end

@@ -783,6 +783,68 @@ RSpec.describe Lain::CLI::ToolGuard do
     end
   end
 
+  # A child judged by the bounds its lease lends it, read off the board's own.
+  describe "a reviewer child leased a checkout of its own", :seam do
+    around do |example|
+      Dir.mktmpdir("lain-tool-guard-bounds") do |dir|
+        @base = File.realpath(dir)
+        @root = File.join(@base, "project").tap { FileUtils.mkdir_p(_1) }
+        @lease = File.join(@base, "children", "317dc2c7a3f3").tap { FileUtils.mkdir_p(_1) }
+        @sibling = File.join(@base, "children", "4bfe").tap { FileUtils.mkdir_p(_1) }
+        [@root, @lease, @sibling].each { File.write(File.join(_1, "README.md"), "hello\n") }
+        example.run
+      end
+    end
+
+    let(:gate) { ToolGuardSpecPolicy.new(verdict: false) }
+    let(:board) do
+      home = File.join(@base, "home")
+      sensitivity = Lain::Sensitivity::Policy.new(
+        sensitivity: Lain::Sensitivity.new(home:, cwd: @root, root: @root), home:, root: @root
+      )
+      ToolGuardSpecBoard.new(policy: gate, sensitivity:)
+    end
+    let(:leased) { Lain::WorkerEnv.new(cwd: @lease, env: {}, checkout: @lease) }
+
+    def grepped(path)
+      tool = Lain::Tools::Grep.new
+      effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: tool.name, input: { "pattern" => "hello", path: })
+      stack = described_class.child_stack(chronicle, board, leased, requester: "reviewer")
+      stack.call({ effect:, tool:, context: Lain::Session.new(worker_env: leased) }) do |inner|
+        inner.merge(result: Lain::Tool::Result.ok("ran"))
+      end.fetch(:result)
+    end
+
+    it "reads its own lease without parking it as outside the project" do
+      expect(grepped(File.join(@lease, "README.md"))).to have_attributes(is_error: false)
+      expect(gate.contexts).to be_empty
+    end
+
+    it "reads the project its lease was cut from without asking" do
+      expect(grepped(File.join(@root, "README.md"))).to have_attributes(is_error: false)
+      expect(gate.contexts).to be_empty
+    end
+
+    it "asks before it reads a sibling's lease" do
+      expect(grepped(File.join(@sibling, "README.md"))).to have_attributes(is_error: true)
+      expect(gate.contexts.size).to eq(1)
+    end
+
+    it "is held past its lease only where the bounds its environment carries write" do
+      write = Lain::Tools::WriteFile.new
+      effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_2", name: write.name,
+                                          input: { "path" => File.join(@root, "a.rb"), "content" => "x" })
+      held = described_class.child_stack(chronicle, board, leased.with(bounds: Lain::Sensitivity::Bounds.of(
+        writes: [@root]
+      )), requester: "reviewer")
+      told = held.call({ effect:, tool: write, context: Lain::Session.new(worker_env: leased) }) do |inner|
+        inner.merge(result: Lain::Tool::Result.ok("ran"))
+      end.fetch(:result)
+
+      expect(told.content).not_to start_with("write_file refused")
+    end
+  end
+
   # What a chat's spawn seam carries: the builder over a board that does not
   # exist yet when the seam does, and the name its children are asked for.
   describe Lain::CLI::ToolGuard::Spawned do
@@ -1442,7 +1504,7 @@ RSpec.describe Lain::CLI::ToolGuard do
   # refused in words, and what only the tool's tier gates runs.
   describe "LeasedPolicy" do
     subject(:policy) do
-      confined = Lain::Sensitivity::Policy::Null.instance.confined(roots: ["/work/wt"])
+      confined = Lain::Sensitivity::Policy::Null.instance.confined(Lain::Sensitivity::Bounds.of(writes: ["/work/wt"]))
       described_class::LeasedPolicy.new(sensitivity: confined, lease: "/work/wt")
     end
 
@@ -1504,7 +1566,7 @@ RSpec.describe Lain::CLI::ToolGuard do
       def policy_over(written)
         fresh = Lain::Shell::Executable::Fresh.new(start: Time.now, written:, stat: Lain::Shell::Executable::Stat.new)
         resolver = Lain::Shell::Executable::Resolver.new(root: @lease, fresh:)
-        confined = Lain::Sensitivity::Policy::Null.instance.confined(roots: [@lease])
+        confined = Lain::Sensitivity::Policy::Null.instance.confined(Lain::Sensitivity::Bounds.of(writes: [@lease]))
         described_class::LeasedPolicy.new(sensitivity: confined, lease: @lease, resolver:, fresh:)
       end
 

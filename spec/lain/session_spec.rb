@@ -1374,6 +1374,16 @@ RSpec.describe Lain::Session do
       expect(scope.holds?(File.join(@spike, "dangling"))).to be(false)
     end
 
+    it "holds where the bounds its environment carries write, and only there" do
+      lib = File.join(@spike, "lib").tap { FileUtils.mkdir_p(_1) }
+      bounds = Lain::Sensitivity::Bounds.of(reads: [@base], writes: [lib])
+      narrow = described_class.new(worker_env: Lain::WorkerEnv.new(cwd: @spike, env: {}, checkout: @spike, bounds:),
+                                   reminder: "r")
+
+      expect([File.join(lib, "a.rb"), File.join(@spike, "b.rb"), File.join(@base, "c.rb")].map { narrow.holds?(_1) })
+        .to eq([true, false, false])
+    end
+
     it "names its root by its real path" do
       linked = File.join(@base, "linked")
       File.symlink(@spike, linked)

@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "tmpdir"
 
 RSpec.describe Lain::WorkerEnv do
@@ -44,6 +45,37 @@ RSpec.describe Lain::WorkerEnv do
       env = described_class.new(cwd: "/srv/w1", env: {}, checkout: "/srv/w1")
 
       expect(env.with(cwd: "/srv/w1/app").checkout).to eq("/srv/w1")
+    end
+  end
+
+  # What the agent working in this environment may read, write and run, so
+  # every layer judging its calls asks one value.
+  describe "#bounds" do
+    let(:bounds) { Lain::Sensitivity::Bounds.of(reads: ["/srv"], writes: ["/srv/w1"]) }
+
+    it "carries no bounds until an agent's are cut for it" do
+      expect(described_class.default.bounds).to be_nil
+    end
+
+    it "carries the bounds cut for it, and stays shareable" do
+      Dir.mktmpdir("lain-worker-env-bounds") do |dir|
+        root = File.join(File.realpath(dir), "project").tap { FileUtils.mkdir_p(_1) }
+        lease = File.join(File.realpath(dir), "children", "w1").tap { FileUtils.mkdir_p(_1) }
+        policy = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home: dir, cwd: root, root:),
+                                               root:, read_roots: [dir])
+        leased = described_class.new(cwd: lease, env: { "A" => "1" }, checkout: lease)
+        cut = Lain::Sensitivity::Policy.bounds_for(policy, leased)
+        env = leased.with(bounds: cut)
+
+        expect(env.bounds).to eq(cut)
+        expect(env).to be_deeply_frozen
+      end
+    end
+
+    it "keeps its bounds when its cwd moves" do
+      env = described_class.new(cwd: "/srv/w1", env: {}, bounds:)
+
+      expect(env.with(cwd: "/srv/w1/app").bounds).to eq(bounds)
     end
   end
 

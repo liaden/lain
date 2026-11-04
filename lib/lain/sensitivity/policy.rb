@@ -136,12 +136,12 @@ module Lain
         # Still confined: a never-parking child over a run with no chat
         # refuses what it would otherwise have read outside its tree.
         #
-        # @param roots [Array<String>] absolute
+        # @param bounds [Bounds] what the confined policy holds
         # @return [Confined]
-        def confined(roots:)
-          held = Roots.of(*roots, facts: file_facts)
-          Confined.new(policy: self, roots: held, write_roots: held, anchors: {})
-        end
+        def confined(bounds) = Confined.new(policy: self, bounds:, anchors: {})
+
+        # @return [Bounds] none: with no project, nothing is held
+        def bounds = Bounds::NONE
 
         # @return [nil] no home was configured
         def home = nil
@@ -187,7 +187,7 @@ module Lain
       # a read tool aimed outside every root gated too, so a researcher's look
       # around the operator's home reaches a human whatever the names it finds.
       #
-      # Only {#gates?}, {#judge} and {#confined} differ from the policy's own
+      # Only {#gates?}, {#judge}, {#confined} and {#bounds} differ from the policy's own
       # answers. The listing filter stays the policy's own, so a read a human
       # approved outside lists what it found, and {Filter} is still built in
       # one place.
@@ -208,32 +208,23 @@ module Lain
 
         attr_reader :policy
 
-        # @return [Roots] a path under one is in scope for a read
-        attr_reader :roots
-
-        # @return [Roots] a path under one is in scope for a write
-        attr_reader :write_roots
+        # @return [Bounds] a path it reads is in scope for a read, and one it writes for a write
+        attr_reader :bounds
 
         # @param policy [Policy] what every other answer is
-        # @param roots [Roots] a path under one is in scope for a read
-        # @param write_roots [Roots] a path under one is in scope for a write;
-        #   by default where it reads
+        # @param bounds [Bounds] what is in scope
         # @param anchors [Hash] the policy's home and root as configured, so a
         #   landing is also spelled under them
-        def initialize(policy:, roots:, anchors:, write_roots: roots)
+        def initialize(policy:, bounds:, anchors:)
           @policy = policy
           @anchors = anchors
-          @roots = roots
-          @write_roots = write_roots
+          @bounds = bounds
           freeze
         end
 
-        # @param roots [Array<String>] absolute; joined to the ones held, for reads and writes alike
+        # @param bounds [Bounds] held in place of these, over the same policy
         # @return [Confined]
-        def confined(roots:)
-          added = Roots.of(*roots, facts: file_facts)
-          Confined.new(policy: @policy, roots: @roots | added, write_roots: @write_roots | added, anchors: @anchors)
-        end
+        def confined(bounds) = Confined.new(policy: @policy, bounds:, anchors: @anchors)
 
         # @return [String, nil] the policy's home as configured
         def home = @anchors[:home]
@@ -270,7 +261,7 @@ module Lain
         # @param path [String] as the call wrote it
         # @param cwd [String] absolute
         # @return [Boolean] whether it lands outside every write root and related directory
-        def writes_outside?(path, cwd:) = !held?(File.expand_path(path, cwd), @write_roots)
+        def writes_outside?(path, cwd:) = !held?(File.expand_path(path, cwd), :write?)
 
         # @param effect [Lain::Effect]
         # @param cwd [String] absolute; the call's own base
@@ -344,8 +335,8 @@ module Lain
 
         # Every spelling is of where the path lands, so a link that leaves is
         # judged at its target; a related directory is matched as configured.
-        def held?(named, roots = @roots)
-          landings(named).any? { roots.held?(_1) || @policy.in_related_tree?(_1) }
+        def held?(named, question = :read?)
+          landings(named).any? { @bounds.public_send(question, _1) || @policy.in_related_tree?(_1) }
         end
       end
 
@@ -379,6 +370,7 @@ module Lain
         @epic_roots = Roots.of(*epic_home && absolute!(epic_home, "an epic home"), facts: file_facts)
         @anchors = { home:, root: }.freeze
         @landing_anchors = @anchors.transform_values { self.class.text_of(_1) }.freeze
+        @bounds = own_bounds(file_facts)
         # Built HERE, not memoized in the reader: this object freezes itself, so
         # a lazy `@filter ||=` raises FrozenError the first time anybody asks --
         # and the first asker is the tool phase, mid-run.
@@ -391,6 +383,12 @@ module Lain
 
       # @return [String, nil] the project root as configured, nil when none was
       def root = @anchors[:root]
+
+      # The session's own: it reads the project and the read roots, writes the
+      # project, and runs the project's build output.
+      #
+      # @return [Bounds]
+      attr_reader :bounds
 
       # Asked by {Confine::MaskList}, so the reader sandbox mounts what a child reads.
       #
@@ -492,16 +490,40 @@ module Lain
       # @return [String, nil] the checkout a leased worker or a spike runs in; nil for a session without one
       def self.checkout_of(context) = ::Lain::Session.worker_env_of(context).checkout
 
-      # The same boundary for a spawned child, which also asks before it reads
-      # outside the project, its related directories, `roots` and the read
-      # roots, and before it writes anywhere but the first three.
+      # The same boundary for an agent that asks before it reads outside its
+      # bounds and its related directories, and before it writes outside its
+      # bounds' writes.
       #
-      # @param roots [Array<String>] absolute; the child's own trees
+      # @param bounds [Bounds] the agent's own, see {.bounds_for}
       # @return [Confined]
-      def confined(roots:)
-        writes = Roots.of(*@anchors[:root], *roots, facts: file_facts)
-        Confined.new(policy: self, roots: writes | Roots.of(*@read_roots, facts: file_facts), write_roots: writes,
-                     anchors: @anchors)
+      def confined(bounds) = Confined.new(policy: self, bounds:, anchors: @anchors)
+
+      # Bounds the environment already carries are the worker's, and answered
+      # as they are. Otherwise a worker a lease cut a checkout for is lent that
+      # checkout from the policy's bounds, so it writes there alone and never
+      # reaches a sibling's; it still runs the policy's own exec rules, the
+      # project's build output, which it reads and does not write. Any other
+      # worker writes where it stands as well.
+      #
+      # @param policy [Policy, Confined, Null] whose bounds the worker's are cut from
+      # @param worker_env [WorkerEnv] where the worker runs
+      # @return [Bounds]
+      def self.bounds_for(policy, worker_env) = worker_env.bounds || cut(policy, worker_env)
+
+      def self.cut(policy, worker_env)
+        facts = policy.file_facts
+        checkout = worker_env.checkout
+        return policy.bounds | Bounds.of(writes: [worker_env.cwd], facts:) unless checkout
+
+        policy.bounds.with_child(checkout, facts:).lend(checkout, facts:)
+      end
+      private_class_method :cut
+
+      # @param policy [Policy, Confined, Null]
+      # @param context [Session, #worker_env, nil] as a middleware env carries it
+      # @return [Confined] the policy held to the bounds of the worker the context runs in
+      def self.confined_at(policy, context)
+        policy.confined(bounds_for(policy, ::Lain::Session.worker_env_of(context)))
       end
 
       # The path a call names, read off {PATH_FIELDS}, and nil for a call that
@@ -643,6 +665,12 @@ module Lain
       def self.masks?(verdict) = !verdict.ordinary? && !LOCATIONS.include?(verdict.reason)
 
       private
+
+      def own_bounds(facts)
+        root = @landing_anchors[:root]
+        execs = root ? Confine::ExecRules.project(root, facts:) : Confine::ExecRules::NONE
+        Bounds.of(reads: [*root, *@read_roots], writes: [*root], execs:, facts:)
+      end
 
       # A relative root would resolve against whatever directory the process sits in.
       def absolute!(dir, what = "a read root")

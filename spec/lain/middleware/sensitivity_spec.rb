@@ -35,7 +35,8 @@ RSpec.describe Lain::Middleware::Sensitivity do
 
   describe "the account database" do
     it "tells a confined child where its home really is, with no $HOME placeholder" do
-      confined = Lain::Sensitivity::Policy.new(sensitivity: classifier, home:).confined(roots: [project])
+      confined = Lain::Sensitivity::Policy.new(sensitivity: classifier, home:)
+                                          .confined(Lain::Sensitivity::Bounds.of(writes: [project]))
       result = result_of(described_class.new(sensitivity: confined, journal:), reads("/etc/passwd"))
 
       expect(result.content).to include("refused: /etc/passwd", "the agent's home directory is #{home}")
