@@ -13,11 +13,13 @@ repos:
       - id: check-merge-conflict
       - id: check-yaml
       # A .patch file's whitespace is load-bearing: a blank context line in a diff is a
-      # single trailing space, and stripping it corrupts the patch's applicability.
+      # single trailing space, and stripping it corrupts the patch's applicability. A
+      # .msgpack fixture is bytes that often look like text, and a fixer's newline breaks
+      # the round-trip test that compares them.
       - id: end-of-file-fixer
-        exclude: '\.patch$'
+        exclude: '\.(patch|msgpack)$'
       - id: trailing-whitespace
-        exclude: '\.patch$'
+        exclude: '\.(patch|msgpack)$'
 
   - repo: local
     hooks:

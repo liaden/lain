@@ -1,0 +1,12 @@
+[package]
+name = "lain-wire"
+version = "0.1.0"
+edition = "2024"
+authors = ["Joel Johnson <johnson.joel.b@gmail.com>"]
+license = "MIT"
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+# Structs encode as maps (`to_vec_named`) so Ruby's msgpack gem reads fields by name.
+rmp-serde = "1.3"
