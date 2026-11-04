@@ -315,6 +315,7 @@ RSpec.describe Lain::Tools::AskHuman do
     let(:oversized) { "x" * (ceiling + 1) }
     let(:announced) { [] }
     let(:confirmations) { [] }
+    let(:journal) { [] }
 
     # The arrival seam, standing in for the run's own queue. It answers the
     # handback INLINE, which is deterministic rather than lucky: the set is
@@ -329,12 +330,19 @@ RSpec.describe Lain::Tools::AskHuman do
     # {AskHuman::Handback} is the type that says which firing this is: nothing
     # else on this seam is one.
     let(:tool) do
-      described_class.new(parent:, notify: lambda { |text|
+      described_class.new(parent:, journal:, notify: lambda { |text|
         if text.is_a?(described_class::Handback)
           announced << text
           tool.reply(confirmations.shift, tool.last_question.digest) if confirmations.any?
         end
       })
+    end
+
+    it "records the confirmed content once, and not the confirmation word" do
+      confirmations << described_class::Ceiling::CONFIRMATION
+      asked_and_answered(oversized)
+
+      expect(journal.grep(Lain::Telemetry::QuestionAnswered).map(&:answer)).to eq([oversized])
     end
 
     def asked_and_answered(answer)
@@ -1490,6 +1498,95 @@ RSpec.describe Lain::Tools::AskHuman do
         expect(consumed).to be_empty
         run.stop
         expect(consumed.size).to eq(1)
+      end
+    end
+
+    def recorded = journal.grep(Lain::Telemetry::QuestionAnswered)
+
+    describe "recording the answer for the next agent" do
+      let(:tool) { described_class.new(parent:, journal:, agent: "reviewer", epic_slug: "nyotes") }
+
+      def ask_and_answer(answer)
+        Sync do |task|
+          run = task.async { tool.call({ "question" => "Do owners bless both?" }, invocation) }
+          task.yield
+          answered(tool, answer)
+          run.wait
+        end
+      end
+
+      it "journals the question, the answer, the requester role and the slug" do
+        ask_and_answer("yes, both")
+
+        expect(recorded).to contain_exactly(have_attributes(question: "Do owners bless both?", answer: "yes, both",
+                                                            requester: "reviewer", epic_slug: "nyotes"))
+      end
+
+      it "masks a credential in the answer with the table the Intake's history uses" do
+        key = "AKIA#{"A" * 16}"
+        ask_and_answer("use #{key} for it")
+
+        expect(recorded.map(&:answer)).to eq(["use [withheld] for it"])
+      end
+
+      it "records an answer holding no credential whole" do
+        ask_and_answer("yes, both -- see section 2.")
+
+        expect(recorded.map(&:answer)).to eq(["yes, both -- see section 2."])
+      end
+
+      it "records exactly one answer for the tool's own call" do
+        ask_and_answer("yes, both")
+
+        expect(recorded.size).to eq(1)
+      end
+
+      it "masks a credential in the question" do
+        key = "AKIA#{"B" * 16}"
+        Sync do |task|
+          run = task.async { tool.call({ "question" => "is #{key} still live?" }, invocation) }
+          task.yield
+          answered(tool, "no")
+          run.wait
+        end
+
+        expect(recorded.map(&:question)).to eq(["is [withheld] still live?"])
+      end
+
+      it "records the text of every question in a set, not its summary line" do
+        input = { "questions" => [{ "id" => "a", "body" => "first thing?" },
+                                  { "id" => "b", "body" => "second thing?" }] }
+        Sync do |task|
+          run = task.async { tool.call(input, invocation) }
+          task.yield
+          answered(tool, "both fine")
+          run.wait
+        end
+
+        expect(recorded.first.question).to include("first thing?").and include("second thing?")
+      end
+
+      it "records the answer to a question asked through #ask, as a gate asks, masked and once" do
+        key = "AKIA#{"C" * 16}"
+        Sync do
+          promise = tool.ask("Approve the plan?")
+          answered(tool, "approve #{key}")
+          promise.await
+        end
+
+        expect(recorded).to contain_exactly(have_attributes(question: "Approve the plan?",
+                                                            answer: "approve [withheld]"))
+      end
+
+      it "records nothing for a question nobody answered" do
+        Sync do |task|
+          run = task.async { tool.call({ "question" => "which db?" }, invocation) }
+          task.yield
+          tool.reply(described_class::Unanswered.new, tool.last_question.digest)
+          run.wait
+        end
+
+        expect(recorded).to be_empty
       end
     end
 

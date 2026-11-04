@@ -152,7 +152,7 @@ RSpec.describe Lain::Telemetry, ".read over every journaled record" do
   include_examples "a round trip", render:, parse:, population: -> { population.values.map(&:call) }
 
   # Journalable records with no carrier: each reads back whole, as Untyped.
-  unclaimed = %i[Escalation QuestionsConsumed RequestResent SlotFills TodoSnapshot].freeze
+  unclaimed = %i[Escalation QuestionAnswered QuestionsConsumed RequestResent SlotFills TodoSnapshot].freeze
   journalable = lambda do
     ObjectSpace.each_object(Class).select do |klass|
       klass.name&.start_with?("Lain::Telemetry::") && klass.include?(described_class::Journalable) &&

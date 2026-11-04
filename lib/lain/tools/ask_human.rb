@@ -224,11 +224,24 @@ module Lain
       # leaves an answered question in the human's inbox forever while an
       # unanswered one silently vanishes.
       class Pending < Promise
-        attr_reader :digest
+        attr_reader :digest, :announcement, :handback
 
         def initialize(digest)
           super()
           @digest = digest
+        end
+
+        # What the set asked, kept on the park so the answer that resolves it
+        # can be recorded against it wherever it was asked from.
+        def asking(announcement)
+          @announcement = announcement
+          self
+        end
+
+        # The overlong answer this park is waiting to have confirmed.
+        def handed_back(over)
+          @handback = over
+          self
         end
 
         def answers?(digest) = @digest == digest
@@ -657,8 +670,9 @@ module Lain
       # who inherits what. Passing `to:` explicitly still overrides, for a
       # caller with no handle worth carrying an address on at all.
       def initialize(parent:, name: "ask_human", agent: nil, observer: EventLog::ChainWriter::Null.new, to: nil,
-                     notify: NoArrival, journal: Channel::Null.instance)
+                     notify: NoArrival, journal: Channel::Null.instance, epic_slug: nil)
         super()
+        @epic_slug = epic_slug
         @parent = Parent.over(parent)
         @name = name
         @agent = agent
@@ -685,6 +699,10 @@ module Lain
                     "be chosen or several), leave it off for a free-text answer."
 
       def description = DESCRIPTION
+
+      # Names what was removed without echoing its shape, so a reader of the record
+      # cannot tell which pattern matched.
+      WITHHELD = "[withheld]"
 
       # The async-continue seam: emit Q to the human's inbox and return a
       # pending promise. Does not await -- the caller decides when, or whether,
@@ -715,7 +733,7 @@ module Lain
       # @raise [QuestionOutstanding] when a set is already awaiting a reply
       def ask(question)
         announcement = announcement_for(question)
-        pending = @outstanding.open { emit_question(announcement) }
+        pending = @outstanding.open { emit_question(announcement) }.asking(announcement)
         @notify.call(question)
         pending
       end
@@ -749,6 +767,7 @@ module Lain
       def reply(answer, digest)
         pending = @outstanding.answerable!(digest)
         recorded = recorded_reply(answer, pending)
+        answer_recorded(answer, pending)
         pending.resolve(answer)
         recorded
       end
@@ -878,6 +897,41 @@ module Lain
         Tool::Result.ok(answer).tap { @answered.push(pending.digest) }
       end
 
+      # Here, where {#reply} resolves the park, because a gate asks through
+      # {#ask} and awaits the promise itself, never reaching {#delivered}.
+      # Total, like {#retired}: the answer is already on its way.
+      def answer_recorded(answer, pending)
+        text = delivered_text(answer, pending)
+        return if text.nil?
+
+        @journal << Telemetry::QuestionAnswered.new(question: withheld(asked_text(pending.announcement)),
+                                                    answer: withheld(text), requester: @agent,
+                                                    epic_slug: Lain.live(@epic_slug))
+      rescue StandardError
+        nil
+      end
+
+      # What the model will be given for this reply, or nil when the reply is
+      # not an answer yet: nobody said it, or it overran and is handed back.
+      def delivered_text(answer, pending)
+        return if answer.is_a?(Unanswered)
+        return pending.handback.content if pending.handback && Ceiling.confirmed?(answer)
+
+        answer if Ceiling.overrun(answer).nil?
+      end
+
+      # The questions as asked, where {Announcement#summary} is one clamped line.
+      def asked_text(announcement)
+        set = announcement.set
+        set.size == 1 ? set.first.body : set.map { |question| "#{question.id}. #{question.body}" }.join("\n\n")
+      end
+
+      # The same table the Intake's history is spared by, so a key typed into an
+      # answer reaches the model but never the durable record.
+      def withheld(text)
+        CredentialPatterns.for(:write).each_value.inject(text.to_s) { |kept, pattern| kept.gsub(pattern, WITHHELD) }
+      end
+
       # The SAME set, put back to the human. Deliberately not a second {#ask}:
       # an ask writes a second Q event, and {Parent#escalate} relays that one
       # too, so one question would leave two human-addressed records and list
@@ -898,7 +952,10 @@ module Lain
       # {Outstanding#opened}, so an arrival that RAISES does not leave the set
       # claimed with no park to release it.
       def reopened(over, pending)
-        @outstanding.opened(pending.digest) { @notify.call(Ceiling.handback(over)) }
+        @outstanding.opened(pending.digest) do |again|
+          again.asking(pending.announcement).handed_back(over)
+          @notify.call(Ceiling.handback(over))
+        end
       end
 
       # A stop raised while parked here -- Ctrl-C, or a caller's timeout --

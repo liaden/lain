@@ -5599,6 +5599,29 @@ RSpec.describe Lain::CLI::Wiring do
         expect(heard.first).to include("request_review is not wired")
       end
 
+      describe "the slug a recorded answer carries" do
+        let(:journal) { [] }
+
+        def answered_slug(chat)
+          allow(chronicle).to receive(:record_journal).and_return(journal)
+          timeline = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                                       .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+          asker = chat.send(:wire_askers, -> { timeline })
+          Sync { asker.tap { |a| a.ask("which?") }.reply("this one", asker.last_question.digest) }
+          journal.grep(Lain::Telemetry::QuestionAnswered).fetch(0).epic_slug
+        end
+
+        it "is the mounted epic's" do
+          write_demo
+
+          expect(answered_slug(seated)).to eq("demo")
+        end
+
+        it "is absent when the chat is in no epic" do
+          expect(answered_slug(seated)).to be_nil
+        end
+      end
+
       it "hands the editor the mounted epic, folded from the root the mount resolved" do
         write_demo
 

@@ -29,8 +29,11 @@ module Lain
         #   an asker.
         # @param journal [#<<] where a wait's end names its question consumed;
         #   the chronicle's record journal, so the live inbox views fold it.
-        def initialize(observer:, attended: true, journal: Lain::Channel::Null.instance)
+        # @param epic_slug [#call, String, nil] the mounted epic's slug, or a thunk
+        #   reading it: the mount is resolved after the asker is built.
+        def initialize(observer:, attended: true, journal: Lain::Channel::Null.instance, epic_slug: nil)
           @observer = observer
+          @epic_slug = epic_slug
           @journal = journal
           @attended = attended
           @questions = Async::Queue.new
@@ -77,7 +80,8 @@ module Lain
         def asker_over(parent, agent:, &notify)
           return Lain::Tools::AskHuman::Unattended.new(parent:, observer: @observer, agent:) unless @attended
 
-          Lain::Tools::AskHuman.new(parent:, observer: @observer, agent:, notify:, journal: @journal)
+          Lain::Tools::AskHuman.new(parent:, observer: @observer, agent:, notify:, journal: @journal,
+                                    epic_slug: @epic_slug)
         end
 
         # ONE arrival, and what rides the queue is the inbox item
