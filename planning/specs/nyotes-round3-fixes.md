@@ -2262,7 +2262,7 @@ Spec file: `spec/lain/remote/agenda/view_spec.rb`
 
 ### T55: The phone answers at the asking rung          [risk: high]
 
-**Depends on:** T11, T18, T52, T54
+**Depends on:** T11, T18, T52, T54, T60
 **Files:**
 - `lib/lain/approval/remote_surface.rb` (new), `lib/lain/remote/wire.rb` (new), `lib/lain/core/transport/unix.rb` (new)
 - `lib/lain/cli/repl/approval_surfaces.rb`, `lib/lain/cli/repl.rb`, `lib/lain/cli/wiring.rb`
@@ -2280,7 +2280,7 @@ Spec file: `spec/lain/remote/agenda/view_spec.rb`
 Scenario: a parked call answered from the phone
   Given remote relay set and a loopback lain-core relay with a test client
   When a bash call parks
-  Then the client receives it, and its Approve runs the call with authority human and surface "remote" in the escalation record
+  Then the client receives it, and its Approve runs the call with authority human and surface "remote:<device>" in the escalation record, the device read from the Answer's `device` (T60)
 
 Scenario: the first answer wins
   When the desk and the phone both answer the same call
@@ -2337,9 +2337,9 @@ Per the user's ruling of 2026-11-03, the notification opens the app, and every a
 
 ### T57: lain up runs the relay in its own pane          [risk: medium]
 
-**Depends on:** T40, T52, T55
+**Depends on:** T40, T52, T55, T60
 **Files:** `lib/lain/cli/up.rb`, `spec/lain/cli/up_spec.rb`
-**Reuse:** `Up`'s pane layout; `Gateway::TokenFile` (`lib/lain/gateway/token_file.rb`)
+**Reuse:** `Up`'s pane layout; `Remote::Devices` (T60), whose file the relay reads with `--devices-file`
 **Shared-file wiring:** none
 **Reachable from:** `exe/lain up` -> `CLI::Up#run` -> a hidden tmux window running `lain-core relay`
 
@@ -2352,9 +2352,13 @@ Scenario: the relay runs with the cockpit
   Then a tmux window in the cockpit session runs the relay, and killing the session stops it
 
 Scenario: pairing survives a restart
-  Given a token file written on the first lain up
+  Given a phone paired with `lain remote pair pixel`
   When the cockpit restarts
-  Then the relay reads the same token, and the phone does not pair again
+  Then the relay runs with --devices-file <state>/lain/remote/devices and --listen <tailnet address>:7820, and pixel does not pair again
+
+Scenario: the first lain up writes an empty devices file
+  Given no phone has been paired
+  Then lain up writes an empty devices file, mode 0600, before starting the relay, which refuses a missing one
 
 Scenario: a missing tailnet address is named
   Given the address is not on any local interface
@@ -2817,3 +2821,65 @@ The comment at `redact_secret_reads.rb:113-125` calls this the last fail-open in
 01:59 T31 second review APPROVE-WITH-FIXES; spawn-time command ruled correct, WHY line added by main session; landing (exe/lain also changed by T20, 3-way)
 - T31 landed f4e3e8cf (attempt 1)
 02:02 T31 landed f4e3e8cf
+02:03 T8 reviewer idle since 23:51, T50 reviewer since 00:05, T19 impl since 01:44: nudged. Killed stale pid 1952021 (T8 round-2 reviewer's pgrep -f wait loop, matched itself, ran 6 h).
+02:03 T8 third review (verdict sent 23:51, missed by main session, recovered from transcript): APPROVE-WITH-FIXES, ids in notes case-sensitive (mechanical), approve clause with a deny-worded note approves (substantive). Ruled: verdict-word check on every approve clause's note; deny/hold notes free. Fix round R4, then another review (high-risk rule).
+02:04 T50 second review (report found in transcript): APPROVE-WITH-FIXES; memory bounded (1-byte frames 39 MiB, unread pings 4 MiB). New: error reply echoes a 1 MiB id twice (mechanical), unadmitted connections can hold all 64 slots and lock the phone out (substantive), 200 ms real wait in 1 test. Fix round R3, then another review. Killed 5 stale pgrep -f wait loops of the T50 reviewer (pids 1012353 1016940 1021281 1026504 1632110).
+02:05 T8 R4 done (113/4 red; 408/0). Over-strict side effect: 'approve b: yes, ship it' asked again. Ruled: approve notes ask again only on contradicting words; probes to rerun and hand-back grammar updated. Then another review.
+02:06 T8 R4 refinement done (115/1 red; 410/0; fuzz 45/106 decided); fourth review started
+02:07 T50 R3 done (id echo capped, unadmitted pool of 8, paused-time test; cargo 24+4, :core 1/0, core 14/0, 341/0); third review started
+02:11 T50 third review APPROVE-WITH-FIXES: 1 mechanical (welcome then EOF when cap full; refuse before welcome). Lobby starvation (8/rate s) ruled acceptable for a tailnet peer. Core 5 s poll is a hang guard, not a threshold. Fix sent, no re-review.
+02:12 T50 R4 done (cargo 25+4, :core 1/0, core 14/0); landing
+02:15 T8 fourth review APPROVE-WITH-FIXES: fullwidth no/deny approve (nfkc), reject unpinned; nit ruled in: not, don't, do not, cancel, decline, veto take an approval back. Mechanical, no re-review; land after.
+02:18 T50 landing 1 red: 'Lain::Tool::Offload keeps a sibling fiber running while the work holds its thread' (0.43 vs < 0.3 tick-gap share), seed 56101. Listed flake in toolchain-traps (repeat): FU-17, rewrite without a wall-clock ratio (user ruling). T50 is Rust-only. Re-landing attempt 2.
+- T50 landed 5c9ab953 (attempt 2)
+02:21 T50 landed 5c9ab953 (attempt 2)
+02:22 T52 started (opus, Rust), cut at 5c9ab953 with target/debug copied
+02:22 T8 fourth-review fixes done (122/5 red; 417/0); landing
+02:23 T52 stopped pre-code: needs RpcError variants (rpc.rs not in Files). Ruled: rpc.rs joins for typed variants only (bad token, wire version with both, already settled), no free-text variant; nix and subtle join Cargo.toml/lock.
+02:26 T8 landing 1 red, card-caused: run_clock_spec (gate.rb names CLOCK_MONOTONIC; only RunClock::MONOTONIC may). Sent back; mechanical.
+02:26 Added ratchets-deep.txt (43 specs below spec/ that scan lib/) to brief and review templates; told T19.
+02:28 Killed 8 stale pgrep -f wait loops (7 from T24's reviewer, 1 from T19 impl), up to 6.7 h old. T19 R2 done (3245/0; deep ratchets 3135/0); masked: wiring owed by main session in wiring.rb:921 and board_build.rb.
+02:29 T19 masked wiring: main-session attempt tripped Wiring ClassLength 303/302 and switchboard AbcSize 22.11/22; reverted; handed to the implementer with wiring.rb and board_build.rb joined and no limit raise.
+02:30 T8 run_clock fix done (17/2 red; 434/0; 58 scanner specs 4408/0); ratchets-deep merged to 74; landing attempt 2
+- T8 landed c56daf46 (attempt 2)
+02:33 T8 landed c56daf46 (attempt 2)
+02:34 T48 started (opus), cut at c56daf46. Deviation: shares spec/lain/cli/wiring/toolset_build_spec.rb with T19 in flight; trial-merge the second to land.
+02:37 T52 done (11/11 red; cargo 37+4, deny ok, 341/0, core 1/0; real binary round trip on loopback); review started (high)
+02:41 T19 R3 wiring done (Wiring size unchanged; 429/0; related 3248/0; deep 5856/0); review started (high)
+02:46 T52 review REQUEST-CHANGES: unbounded agenda/answers history and one-frame replies (phone at cursor 0 never catches up past 1 MiB), answers for unpublished ids, raw value forwarded, cursor past head/restart, confine call unpinned, token prefix mutant; nits ruled in (token file perms, length leak, exit codes, stale socket, dropped long-poll slot). Fix round, second review after.
+02:56 T19 review REQUEST-CHANGES, 2 secret blockers: masked git-read skip leaks history from nested/outside repos, submodules, dropped stash and dangling shas (HistoryLiterals covers only the project's reachable objects); listed? claims masks MaskList does not hold (non-git project, failed listing). Ruled fail-closed: skip only for the project's own repo and reachable reads; ask the real MaskList. Plus bench masked:, mutant pins, wiring_spec behaviour, dead code, nits. Fix round, second review after.
+02:57 T52 R2 done (19 item reds; cargo 53+6, deny ok, :core 1/0, 341/0). Choices to judge: TooLarge at publish, EOF drops in-flight (changes T50 contract), protocol [cursor, epoch], exit codes 2/1/3. Second review started.
+03:01 T48 done (612/168 red; 6384/0; deep 5873/0; real epic status, planning view, status bar show held); review started (high)
+03:05 T52 second review APPROVE-WITH-FIXES: budget holds, EOF drop no regression, re-encode red shown, 22/23 mutants red. Substantive: protocol shapes (Welcome, AgendaPage, AnswersPage, cursor params) not in lain_wire; fix with lain-wire joined, then third review. T53 note: lain must settle each answer and handle TooLarge.
+03:12 T48 review REQUEST-CHANGES. Blocker: refusing old approved-boolean gate records breaks the user's live nyotes epic (5 of 6 session files, 40 records; epic status and queue refuse; discarding loses all approvals). Lossless legacy read possible. Asking the user. Sent the independent fixes (one hold rule, wording, parked label, unhold lookup, dead Answer.of).
+06:16 USER RULING T48: one-shot rewrite of old gate records (backup, atomic, idempotent); readers refuse naming file and command. Sent with R2 done (one hold rule etc; 6390/0). Memory saved. T52 R3 done (lain_wire Welcome, Cursor, AgendaPage, AnswersPage; 6 fixtures; flake in dropped-long-polls test fixed). T19 R4 done (fail-closed own-repo and reachable-only skip; masks from the session's MaskList; 3255/0, deep 5856/0).
+- 06:18 T48 R3 ruling (coordinator): chained session files re-link from the first rewritten line; content byte for byte, link recomputed; verify must pass after; print old and new tip; refuse an already-broken chain. 3 of 5 nyotes gate files are chained (38 of 40 old records).
+- 06:19 T52 third review APPROVE (22 mutants, 21 red, NotEnforced unreachable on this kernel); landing attempt 1 started
+- T52 landed a4d8028b (attempt 1)
+- 06:23 T52 worktree removed; T58, T60 ready
+- 06:24 T58 started (new repo ~/dev/lain-remote, sonnet), T60 started (opus)
+- 06:26 T60 stop: rpc.rs had no per-connection state. Ruled: widen to rpc.rs with a session minted at hello and a closed() future; T50 guarantees and tests unchanged; Landlock rule on lain's own remote/ dir (inode trap confirmed by probe); poll reload. T55 brief owes: Ruby reader pins device on the escalation surface (no reader on main).
+- 06:32 T58 done (3 tests vs real relay); review spawned medium
+- 06:33 T19 second review REQUEST-CHANGES: whole-tree skip covered working-tree git reads (git diff/grep printed a deep tracked .env). Ruled R5: skip is an allowlist of history-only forms, fail closed; GIT_* in worker env fails closed; drop the redundant on? term. Optional attached -n forms declined.
+- FU-18: the sandbox mask and HistoryLiterals' on-disk list stop at a depth, so a tracked secret file below it (vendor/pkg/.env) is unmasked for any bash reader, not only git. Pre-existing, outside T19. Card it at close-out with a probe.
+- FU-19: the sandbox applies masks minus project_configs(root), and the judge side does not, so a secret file pulled in by a .git/config include is called hidden but left unmasked. Rare.
+- 06:36 T48 R3 done: lain epic rewrite-verdicts, 40 records over 5 files rewritten on a copy, verify passes, status matches main, originals untouched. session_journals.rb accepted into scope. exe/lain wiring applied in worktree; second review sent.
+- 06:36 T58 review APPROVE-WITH-FIXES: resume test blind to replay (4 mutants green), require-relay flag, reconnect loop, port retry, 3 WHAT comments. R2 sent.
+- 06:38 T58 R2 verified by coordinator (7 tests green with REQUIRE_RELAY, clippy, fmt, no stray lain-core); T58 landed afc6187 in ~/dev/lain-remote. T59 ready.
+- 06:38 T59 started (sonnet)
+- 06:41 T59 R1: 24 tests, deep links hit the stop (no hook in dioxus-desktop 0.7.10, Android needs platform code) -> manual pass. Sent back: back-outs per criterion skipped; explain gate verdict scope; name settings path.
+- 06:43 T59 R2: back-outs all red (2 tests added); 26 tests; review spawned medium
+- 06:43 T60 done (69 lain-core, 6 lifecycle, 19 wire, 12 back-outs red, confined real drive). exe/lain remote wiring applied in worktree; review spawned high (opus).
+- Owed to later briefs: T57 must pass --devices-file <state>/lain/remote/devices and --listen <tailscale0>:7820, and write an empty devices file before the first pair (the relay refuses a missing one). T55 owns the "remote:<device>" escalation surface; it reads Answer.device. docs/commands.md: lain remote pair/revoke.
+- 06:46 T19 R5 done (history-only allowlist; GIT_* fails closed; 12 back-outs red; 3257 + 5856 green). Card scenario changed to HEAD~1..HEAD (1-rev diff reads the working tree). Ruled R6: GIT_* env as an allowlist of harmless vars (editor, pager, author, committer, config global/nosystem), else walk.
+- 06:46 T48 second review APPROVE-WITH-FIXES: read-before-lock race, symlink not refused, backup mode widened, 4 mutants, signoff_queue held nit, splice!, comments, exe spec. R4 sent; third review after (high risk, substantive findings).
+- 06:46 T59 review APPROVE-WITH-FIXES. Ruled R3: gate item lists each issue on its own line, 1 tap still answers the wave (plan scenario); keep item open until answer confirmed; no empty answer; atomic settings save; CLAUDE.md deep-link wording (iOS/macOS have Event::Opened). Deep links deferred to manual pass. Owed manual pass: rsx never rendered (no display, no dx).
+- 06:48 T59 R3 verified (30 tests, clippy, fmt); landed 41fde1e in lain-remote. Deferred: deep links, rsx manual pass.
+- 06:51 T19 R6 done (HARMLESS_ENV allowlist; wiring_spec scrub removed). Third review sent.
+- 06:57 T60 review APPROVE-WITH-FIXES: lock unpinned (60 forks lost 54 pairs without it), 1-tick revoke unpinned, devices dir rechecked per poll and regular files only, 2 rpc mutants, malformed line -> Refused, Cargo comments. R2 sent.
+- 06:57 plan-gap: T55 now asks surface "remote:<device>" and depends on T60; T57 uses Remote::Devices and --devices-file, writes an empty devices file first, depends on T60. Plan edited (fold before next landing).
+- FU-20: T50's lobby size (9 passes) and pre-hello ceiling (64K passes) are unpinned by tests; pre-existing.
+- FU-21: after T60 lands, lain-remote's relay tests spawn lain-core with --token-file (now exit 2): bump its lain_wire pin and move the tests to --devices-file. Main session owns it.
+- 06:59 T48 R4 done (8 fixes, 6506 + 5873 green, fresh-copy drive matches). Third review sent.
+- 07:05 T19 third review APPROVE-WITH-FIXES: branch/tag/reflog write forms skipped the walk (restore !written, listing forms only); textconv driver in git config leaks via log -p (walk when config defines a diff driver); Judged env mutant. R7 sent; fourth review after.
+- 07:05 T60 R2 done (items 1-6 fixed; Default bound kept; ReadDir added to the Landlock dir rule). Second review sent.
