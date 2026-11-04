@@ -189,9 +189,11 @@ Metrics/ParameterLists:
 # of the one responsibility they have. 302 on 2026-10-18, for Wiring again: it now builds
 # the launch's one exec backend, which the toolset and the resolver both read. Inlining
 # `current_usage` trips AbcSize on `build_toolset`, and Style/EndlessMethod refuses
-# `exec_backend` as a 2-line endless memo.
+# `exec_backend` as a 2-line endless memo. 306 on 2026-11-04, for Wiring again: it now
+# builds the phone's remote surface, one more collaborator the chat is handed. Inlining
+# that call into `repl_over` trips AbcSize there.
 Metrics/ClassLength:
-  Max: 302
+  Max: 306
 
 # 15: the default 10 is the limit this codebase paid for hardest, and lib/'s long methods
 # pile up at exactly 10 -- a queue, not a distribution. 15 clears the queue with half
