@@ -73,6 +73,19 @@ class ReplRecordedAnswers
   def awaiting?(_digest) = true
 end
 
+# A remote surface that records being started by the conversation, then parks
+# until the conversation stops it.
+class ReplRemoteSpy
+  def initialize = @starts = 0
+
+  attr_reader :starts
+
+  def watch
+    @starts += 1
+    loop { Async::Task.current.sleep(0.01) }
+  end
+end
+
 # The real {Lain::CLI::HumanReplies} with an editor ALREADY attached. {Repl#run}
 # binds the frontend it builds, and an example with no nvim to build one from
 # would have its rail overwritten by that bind -- so the two binds are refused
@@ -1775,8 +1788,8 @@ RSpec.describe Lain::CLI::Repl do
       Timeout.timeout(10) { repl_over(commands, approvals).run(forks: no_forks, nvim: nil, store: nil, session: nil) }
     end
 
-    def repl_over(commands, approvals = nil)
-      described_class.new(agent:, tty:, replies:, commands:, supervisor:, approvals:,
+    def repl_over(commands, approvals = nil, remote: nil)
+      described_class.new(agent:, tty:, replies:, commands:, supervisor:, approvals:, remote:,
                           chronicle: Lain::CLI::Chronicle::Null.new, conductor:)
     end
 
@@ -1857,6 +1870,18 @@ RSpec.describe Lain::CLI::Repl do
 
       expect(answers.answered).to be_empty # nobody typed, so nothing may have been delivered
       expect(replies.pending?).to be(true)
+    end
+
+    it "starts the remote surface it is given for the conversation, and stops it when the conversation ends" do
+      remote = ReplRemoteSpy.new
+      allow(conductor).to receive(:read_prompt).and_return("quit")
+
+      Timeout.timeout(10) do
+        repl_over(commands_that { "never" }, approvals, remote:)
+          .run(forks: no_forks, nvim: nil, store: nil, session: nil)
+      end
+
+      expect(remote.starts).to eq(1)
     end
 
     # An ARRIVAL note says "this just arrived", which is owed ONCE per item

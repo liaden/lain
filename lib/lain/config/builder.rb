@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require "ipaddr"
+require "uri"
+
 module Lain
   class Config
     # The tables of one `.lain/config.rb`, each already through its own `.from`.
@@ -10,7 +13,7 @@ module Lain
     # against {TestLayout::None}.
     Built = Data.define(:epics, :approval, :isolation, :sensitivity, :shell, :search, :tests, :middleware,
                         :env_pass, :approval_timeout, :approval_silence, :judge_timeout, :keys, :todos, :theme,
-                        :think, :review, :budget) do
+                        :think, :review, :budget, :remote_relay, :remote_ntfy) do
       # @param framework [String, nil] a detected test framework
       # @return [TestLayout] the declared layout, else what the framework implies
       def test_layout(framework: nil) = tests || TestLayout.from(nil, path: nil, framework:)
@@ -25,11 +28,17 @@ module Lain
     # wrote Ruby and a backtrace into this file points nowhere they can edit.
     class Builder
       VERBS = %i[epics approval isolation sensitivity shell search tests middleware env todos think review
-                 budget].freeze
+                 budget remote].freeze
 
       ENV_TABLE = "`env`"
       THINK_TABLE = "`think`"
       BUDGET_TABLE = "`budget`"
+      REMOTE_TABLE = "`remote`"
+      RELAY_ADDRESS = /\A(?<host>\[[^\]]+\]|[^:\[\]]+):(?<port>\d{1,5})\z/
+      BAD_RELAY = "relay must be an IP address and a port, such as \"100.64.0.1:7820\", got %s"
+      EVERYWHERE = "relay listens only on loopback or this host's tailscale0 address, never on every address, " \
+                   "got %s"
+      BAD_NTFY = "ntfy must be an http or https URL naming a topic, got %s"
       UNNAMED_LEVEL = "think takes a level name such as \"low\", got %s"
 
       SECRET_PASS = "pass names %<names>s, which match the secret shape #{Exec::ChildEnv::SECRET.source}; " \
@@ -119,6 +128,7 @@ module Lain
         @approval_timeout = Config::DEFAULT_APPROVAL_TIMEOUT
         @approval_silence = Config::DEFAULT_APPROVAL_SILENCE
         @judge_timeout = Config::DEFAULT_JUDGE_TIMEOUT
+        @remote = {}
       end
 
       # @return [Built] every table not declared at its default
@@ -134,7 +144,8 @@ module Lain
                   env_pass: @tables.fetch(:env, []),
                   approval_timeout: @approval_timeout, approval_silence: @approval_silence,
                   judge_timeout: @judge_timeout,
-                  think: @tables[:think], **small_tables)
+                  think: @tables[:think], remote_relay: @remote[:relay], remote_ntfy: @remote[:ntfy],
+                  **small_tables)
       end
 
       def epics(**table, &block)
@@ -183,6 +194,16 @@ module Lain
       # `budget iterations: { "plan-epic" => 80 }` replaces the default row of that name.
       def budget(**table)
         declare(:budget, BUDGET_TABLE, table) { |at| budget_from(shaped(table), at) }
+      end
+
+      # `remote relay: "100.64.0.1:7820"` turns the phone's approval surface on:
+      # the address is where the relay listens for the phone, and the chat
+      # dials the relay's own socket beside it. `ntfy:` is the topic a waiting
+      # item is announced on.
+      def remote(relay: nil, ntfy: nil)
+        declare(:remote, REMOTE_TABLE) do |at|
+          @remote = { relay: relay_from(relay, at), ntfy: ntfy_from(ntfy, at) }.compact.freeze
+        end
       end
 
       def keys(**table) = declare(:keys, Keys::TABLE, table) { |at| Keys.from(shaped(table), path: at) }
@@ -316,6 +337,39 @@ module Lain
 
         raise Refusal.new("silence must be :hold or :deny, got #{silence.inspect}", path: at, table: Answers::TABLE,
                                                                                     key: "silence")
+      end
+
+      def relay_from(relay, at)
+        return if relay.nil?
+
+        address = RELAY_ADDRESS.match(relay.to_s)
+        host = address && ip(address[:host].delete("[]"))
+        unless host && address[:port].to_i.between?(1, 65_535)
+          raise Refusal.new(format(BAD_RELAY, relay.inspect), path: at, table: REMOTE_TABLE, key: "relay")
+        end
+        return -relay unless host.to_i.zero?
+
+        raise Refusal.new(format(EVERYWHERE, relay.inspect), path: at, table: REMOTE_TABLE, key: "relay")
+      end
+
+      def ip(host)
+        IPAddr.new(host)
+      rescue IPAddr::Error
+        nil
+      end
+
+      def ntfy_from(ntfy, at)
+        return if ntfy.nil?
+        return -ntfy if topic_url?(ntfy)
+
+        raise Refusal.new(format(BAD_NTFY, ntfy.inspect), path: at, table: REMOTE_TABLE, key: "ntfy")
+      end
+
+      def topic_url?(ntfy)
+        uri = URI.parse(ntfy.to_s)
+        %w[http https].include?(uri.scheme) && !uri.host.to_s.empty? && uri.path.length > 1
+      rescue URI::InvalidURIError
+        false
       end
 
       def located_at(line) = self.class.located(@path, line)

@@ -3,9 +3,10 @@
 module Lain
   module CLI
     class Repl
-      # Up to three watch the SAME parked-approval queue, and FIRST ANSWER WINS
+      # Up to four watch the SAME parked-approval queue, and FIRST ANSWER WINS
       # (Pending's own doctrine): the terminal's surface, the editor's under
-      # --nvim, and the secret oracle under --secret-oracle.
+      # --nvim, the secret oracle under --secret-oracle, and the phone's when
+      # `remote relay:` is set.
       #
       # Every one of them can be absent, the queue included: under
       # --non-interactive nobody is there to drain a parked call, so `watch`
@@ -15,10 +16,12 @@ module Lain
         # The oracle keyword is REQUIRED though it is a nil-by-default
         # capability: a defaulted keyword turns "the caller forgot to wire it"
         # into a surface that is silently inert. Forgetting it is an
-        # ArgumentError.
-        def initialize(approvals:, secret_surface:, tty:, conductor:)
+        # ArgumentError. `remote:` is defaulted, because nil is what every chat
+        # without `remote relay:` is, and the Repl passes what Wiring built.
+        def initialize(approvals:, secret_surface:, tty:, conductor:, remote: nil)
           @approvals = approvals
           @secret_surface = secret_surface
+          @remote = remote
           @tty = tty
           @conductor = conductor
         end
@@ -73,7 +76,8 @@ module Lain
         def watch(task, attention: ConversationScope::Attention.new)
           @approvals && [terminal_surface(task, attention),
                          *(@secret_surface && task.async { @secret_surface.watch(@approvals) }),
-                         *(@editor && task.async { @editor.watch(@approvals) })]
+                         *(@editor && task.async { @editor.watch(@approvals) }),
+                         *(@remote && task.async { @remote.watch })]
         end
 
         private

@@ -969,10 +969,15 @@ module Lain
       def repl_over(agent:, tty:, backend:, input:)
         Repl.new(agent:, tty:, replies: @replies, chronicle: @chronicle, conductor: @conductor, approvals:,
                  supervisor:, middleware: @command_surface.middleware, attended: attended?,
-                 commands: @command_surface.commands,
+                 commands: @command_surface.commands, remote: remote_surface,
                  secret_surface: secret_surface(backend), goal_driver:, input:,
                  echo_input: attended? && !human.socket_name.nil?, notes:, mode_switch: @switchboard.mode_switch,
                  idle: idle_compaction(agent:, backend:), heard:)
+      end
+
+      def remote_surface
+        Approval::RemoteSurface.for(relay: config.remote_relay, paths: @paths, root:, queue: approvals,
+                                    replies: @replies, secrets: @switchboard.secrets, journal: durable_journal)
       end
 
       # The same route compaction's own diagnostics take, so a fault lands on the

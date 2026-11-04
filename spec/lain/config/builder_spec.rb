@@ -156,7 +156,8 @@ RSpec.describe Lain::Config::Builder do
                                                        theme: Lain::Config::Theme.empty,
                                                        think: nil,
                                                        review: Lain::Config::Review.empty,
-                                                       budget: Lain::Budget::Table.new)
+                                                       budget: Lain::Budget::Table.new,
+                                                       remote_relay: nil, remote_ntfy: nil)
     end
 
     it "reads the judge's timeout from the approval table" do

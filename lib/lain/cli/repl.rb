@@ -30,7 +30,10 @@ module Lain
       #
       # `heard:` is told each line the model is handed, which is what the
       # judge is told the human asked for under `--judge-facts request`.
-      def initialize(agent:, tty:, replies:, commands:, chronicle:, conductor:, approvals: nil,
+      #
+      # `remote:` is the phone's surface ({Approval::RemoteSurface}), nil
+      # unless `remote relay:` is set.
+      def initialize(agent:, tty:, replies:, commands:, chronicle:, conductor:, approvals: nil, remote: nil,
                      supervisor: Lain::Supervisor::Null,
                      middleware: Lain::Middleware::Stack.new, secret_surface: nil,
                      goal_driver: Lain::CLI::GoalDriver::Null, attended: true, input: Lain::Frontend::StdinPump::Idle,
@@ -51,7 +54,7 @@ module Lain
         @attended = attended
         @echo_input = echo_input
         @mode_switch = mode_switch
-        name_lifetimes(replies:, supervisor:, idle:, approvals:, secret_surface:, tty:, conductor:)
+        name_lifetimes(replies:, supervisor:, idle:, approvals:, secret_surface:, tty:, conductor:, remote:)
       end
 
       # What this conversation was worth as a process exit status, for the one

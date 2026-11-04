@@ -36,8 +36,8 @@ module Lain
       built = built(root)
       new(epics: built.epics, approval: built.approval, isolation: built.isolation, env_pass: built.env_pass,
           todos: built.todos, approval_timeout: built.approval_timeout, approval_silence: built.approval_silence,
-          judge_timeout: built.judge_timeout,
-          review: built.review, budget: built.budget)
+          judge_timeout: built.judge_timeout, review: built.review, budget: built.budget,
+          remote_relay: built.remote_relay, remote_ntfy: built.remote_ntfy)
     end
 
     # What a project adds to the path classifier's built-in tables, and the
@@ -244,9 +244,16 @@ module Lain
     # @return [Budget::Table] how many iterations an ask may run, by skill and role
     attr_reader :budget
 
+    # @return [String, nil] the address the phone relay listens on, `ip:port`; nil leaves the phone surface off
+    attr_reader :remote_relay
+
+    # @return [String, nil] the ntfy topic URL a waiting item is announced on
+    attr_reader :remote_ntfy
+
     def initialize(epics:, approval: Answers.empty, isolation: Isolation.empty, env_pass: [], todos: Todos.empty,
                    approval_timeout: DEFAULT_APPROVAL_TIMEOUT, approval_silence: DEFAULT_APPROVAL_SILENCE,
-                   judge_timeout: DEFAULT_JUDGE_TIMEOUT, review: Review.empty, budget: Budget::Table.new)
+                   judge_timeout: DEFAULT_JUDGE_TIMEOUT, review: Review.empty, budget: Budget::Table.new,
+                   remote_relay: nil, remote_ntfy: nil)
       @epics = epics
       @approval = Answers.coerce(approval)
       @isolation = Isolation.coerce(isolation)
@@ -257,6 +264,8 @@ module Lain
       @judge_timeout = judge_timeout
       @review = review
       @budget = budget
+      @remote_relay = remote_relay
+      @remote_ntfy = remote_ntfy
       freeze
     end
 
@@ -280,7 +289,7 @@ module Lain
 
     def state
       [epics, approval, isolation, env_pass, todos, approval_timeout, approval_silence, judge_timeout, review,
-       budget]
+       budget, remote_relay, remote_ntfy]
     end
 
     # The default `gates` table must stay EMPTY. {Epics::Gates.check!} reads

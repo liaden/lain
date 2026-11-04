@@ -32,6 +32,21 @@ module ApprovalSurfacesSpecSupport
       loop { Async::Task.current.sleep(POLL) }
     end
   end
+
+  # The remote surface reads the agenda it was built over, so it is handed no
+  # queue: the spy records that it was started, then parks like the others.
+  class SpyRemote
+    attr_reader :starts
+
+    def initialize
+      @starts = 0
+    end
+
+    def watch
+      @starts += 1
+      loop { Async::Task.current.sleep(SpySurface::POLL) }
+    end
+  end
 end
 
 # The fan-out a conversation opens ({Lain::CLI::Repl::ConversationScope}): `watch(task)`
@@ -80,8 +95,8 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
     end
   end
 
-  def surfaces(approvals: queue, attached: nil, secret: nil)
-    described_class.new(approvals:, secret_surface: secret, tty:, conductor:)
+  def surfaces(approvals: queue, attached: nil, secret: nil, remote: nil)
+    described_class.new(approvals:, secret_surface: secret, tty:, conductor:, remote:)
                    .tap { |built| built.bind_editor(attached) }
   end
 
@@ -94,9 +109,9 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
   # spies, the conductor, and the journal carry the rest of the evidence.
   # `with_timeout` bounds the whole thing so a fan-out that spawned no
   # answerer AND no clock fails in words rather than hanging the suite.
-  def fan_out(attached: nil, secret: nil, context: nil)
+  def fan_out(attached: nil, secret: nil, context: nil, remote: nil)
     Sync do |task|
-      watched = surfaces(attached:, secret:).watch(task)
+      watched = surfaces(attached:, secret:, remote:).watch(task)
       gated = task.async { queue.call(effect, context) }
       { verdict: task.with_timeout(2) { gated.wait }, watched: }
     ensure
@@ -507,6 +522,29 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
     # Repl#respond's ensure walks this set to stop each surface, so a nil
     # member is a hole in the shutdown path, not a cosmetic detail.
     expect(watched).to contain_exactly(an_instance_of(Async::Task))
+  end
+
+  describe "remote relay: the phone's surface" do
+    let(:remote) { ApprovalSurfacesSpecSupport::SpyRemote.new }
+
+    it "returns the same surfaces it returns today when no relay is set" do
+      expect(fan_out(remote: nil)[:watched]).to contain_exactly(an_instance_of(Async::Task))
+    end
+
+    it "spawns a fiber for the remote surface beside the terminal's when one is wired" do
+      result = fan_out(remote:)
+
+      expect(result[:watched]).to contain_exactly(an_instance_of(Async::Task), an_instance_of(Async::Task))
+      expect(remote.starts).to eq(1)
+    end
+
+    it "starts no remote surface for an unattended run, which has no queue for it to answer" do
+      Sync do |task|
+        expect(surfaces(approvals: nil, remote:).watch(task)).to be_nil
+      end
+
+      expect(remote.starts).to eq(0)
+    end
   end
 
   describe "unattended: no queue was wired" do

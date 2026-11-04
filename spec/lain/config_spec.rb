@@ -94,6 +94,85 @@ RSpec.describe Lain::Config do
     end
   end
 
+  describe "the remote table" do
+    it "is unset without the verb, so no chat dials a relay" do
+      expect([described_class.empty.remote_relay, described_class.empty.remote_ntfy]).to eq([nil, nil])
+    end
+
+    it "reads the relay's address and the ntfy topic" do
+      Dir.mktmpdir do |root|
+        write_config(root, "remote relay: \"100.64.0.1:7820\", ntfy: \"http://100.101.102.103:8090/lain-x7\"\n")
+        config = described_class.load(root:)
+
+        expect([config.remote_relay, config.remote_ntfy])
+          .to eq(["100.64.0.1:7820", "http://100.101.102.103:8090/lain-x7"])
+      end
+    end
+
+    it "refuses a relay that is not an IP address and a port, naming the line" do
+      Dir.mktmpdir do |root|
+        write_config(root, "\nremote relay: \"phone.local\"\n")
+
+        expect { described_class.load(root:) }
+          .to raise_error(Lain::Config::Refusal, /config\.rb:2.*relay must be an IP address and a port/)
+      end
+    end
+
+    it "refuses a relay port outside 1 to 65535" do
+      Dir.mktmpdir do |root|
+        write_config(root, "remote relay: \"100.64.0.1:70000\"\n")
+
+        expect { described_class.load(root:) }.to raise_error(Lain::Config::Refusal, /relay must be an IP address/)
+      end
+    end
+
+    it "refuses a host name with a port, since the relay resolves no names" do
+      Dir.mktmpdir do |root|
+        write_config(root, "remote relay: \"phone.local:7820\"\n")
+
+        expect { described_class.load(root:) }.to raise_error(Lain::Config::Refusal, /relay must be an IP address/)
+      end
+    end
+
+    it "refuses an address that listens everywhere, naming where the relay may listen" do
+      refusals = ["0.0.0.0:7820", "[::]:7820"].map do |relay|
+        Dir.mktmpdir do |root|
+          write_config(root, "remote relay: #{relay.inspect}\n")
+          described_class.load(root:)
+        rescue Lain::Config::Refusal => e
+          e.message
+        end
+      end
+
+      expect(refusals).to all(include("listens only on loopback or this host's tailscale0 address"))
+    end
+
+    it "refuses an ntfy URL that names no topic" do
+      Dir.mktmpdir do |root|
+        write_config(root, "remote ntfy: \"http://100.101.102.103:8090/\"\n")
+
+        expect { described_class.load(root:) }.to raise_error(Lain::Config::Refusal, /ntfy must be an http or https/)
+      end
+    end
+
+    it "refuses an ntfy topic that is not an http or https URL" do
+      Dir.mktmpdir do |root|
+        write_config(root, "remote ntfy: \"ftp://host/topic\"\n")
+
+        expect { described_class.load(root:) }
+          .to raise_error(Lain::Config::Refusal, /ntfy must be an http or https URL/)
+      end
+    end
+
+    it "makes configs differing only in it unequal, with different hashes" do
+      epics = Lain::Config::Epics.new(home: :xdg)
+      plain = described_class.new(epics:)
+      other = described_class.new(epics:, remote_relay: "127.0.0.1:7820")
+
+      expect([plain == other, plain.hash == other.hash]).to eq([false, false])
+    end
+  end
+
   describe "the judge timeout" do
     it "is 30 seconds unset, and read from the approval table" do
       Dir.mktmpdir do |root|

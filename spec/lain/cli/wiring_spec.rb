@@ -3709,6 +3709,28 @@ RSpec.describe Lain::CLI::Wiring do
 
     # The schedule decides whether a tick exists at all, so the surface a
     # built Repl is handed is read back off the constructor it really got.
+    describe "the phone's surface" do
+      def remote_handed
+        seen = []
+        allow(Lain::CLI::Repl).to receive(:new).and_wrap_original do |original, **kwargs|
+          seen << kwargs.fetch(:remote)
+          original.call(**kwargs)
+        end
+        run_wiring
+        seen.sole
+      end
+
+      it "hands the Repl a remote surface when remote relay is set" do
+        write_config(project_dir, "remote relay: \"127.0.0.1:7820\"\n")
+
+        expect(remote_handed).to be_a(Lain::Approval::RemoteSurface)
+      end
+
+      it "hands the Repl none when remote relay is unset" do
+        expect(remote_handed).to be_nil
+      end
+    end
+
     describe "the idle compaction surface" do
       def idle_handed(schedule)
         seen = []
