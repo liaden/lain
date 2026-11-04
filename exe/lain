@@ -1627,6 +1627,9 @@ class LainCLI < Thor
   desc "usage SESSION", "Tokens by command and role from a session"
   def usage(selector) = exit_status { Lain::CLI::Usage.new(selector:, sink: $stdout).run }
 
+  desc "remote VERB NAME", "Pair or revoke a phone for the relay (VERB = pair or revoke)"
+  def remote(verb, name = nil) = exit_status { Lain::CLI::Remote.new(verb:, name:, sink: $stdout).run }
+
   desc "friction SESSION", "Knob guidance from a session's friction signals (offline, deterministic)"
   def friction(selector) = render { Lain::CLI::Friction.new.report(selector) }
 

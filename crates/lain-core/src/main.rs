@@ -72,9 +72,9 @@ async fn serve_unix(socket_path: &str) -> ExitCode {
     }
 }
 
-/// `lain-core relay --unix <sock> --listen <addr>:<port> --token-file <path> [--trace <path>]`.
+/// `lain-core relay --unix <sock> --listen <addr>:<port> --devices-file <path> [--trace <path>]`.
 ///
-/// Binds both listeners and reads the token, then confines the process while
+/// Binds both listeners and reads the paired devices, then confines the process while
 /// it is still one thread: Landlock binds the calling thread and the threads
 /// it spawns after, so the runtime's workers start inside the ruleset.
 fn relay(args: impl Iterator<Item = String>) -> ExitCode {
@@ -85,7 +85,7 @@ fn relay(args: impl Iterator<Item = String>) -> ExitCode {
         return ExitCode::from(USAGE_ERROR);
     }
     let started = relay::Bound::open(&config).and_then(|bound| {
-        relay::confine(&config.token_file, config.socket_dir()).inspect_err(|_| {
+        relay::confine(bound.devices_directory(), config.socket_dir()).inspect_err(|_| {
             let _ = std::fs::remove_file(&config.unix);
         })?;
         Ok(bound)

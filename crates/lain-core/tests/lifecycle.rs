@@ -188,18 +188,20 @@ async fn an_unfinished_frame_past_the_ceiling_closes_its_connection_only() {
     assert_ping_reply(&ping(&mut healthy).await, daemon.id().expect("daemon pid"));
 }
 
-/// A relay on loopback with a 0600 token, tracing to `trace`.
+/// A relay on loopback with a 0600 devices file pairing nobody, tracing to `trace`.
 fn spawn_relay(dir: &Path, listen: &str) -> tokio::process::Child {
     use std::os::unix::fs::PermissionsExt;
-    let token = dir.join("token");
-    std::fs::write(&token, "a-lifecycle-token").expect("write the token");
-    std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+    let remote = dir.join("remote");
+    std::fs::create_dir(&remote).expect("the devices dir");
+    let devices = remote.join("devices");
+    std::fs::write(&devices, "").expect("write the devices file");
+    std::fs::set_permissions(&devices, std::fs::Permissions::from_mode(0o600)).expect("chmod");
     tokio::process::Command::new(env!("CARGO_BIN_EXE_lain-core"))
         .arg("relay")
         .arg("--unix")
         .arg(dir.join("relay.sock"))
-        .args(["--listen", listen, "--token-file"])
-        .arg(&token)
+        .args(["--listen", listen, "--devices-file"])
+        .arg(&devices)
         .arg("--trace")
         .arg(dir.join("trace.log"))
         .stdin(Stdio::null())

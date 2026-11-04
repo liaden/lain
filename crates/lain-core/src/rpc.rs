@@ -314,20 +314,48 @@ impl Accept for UnixListener {
     }
 }
 
+/// What one connection carries from its start, or from its hello, to every
+/// call it makes: who the peer is, and when the server must close it.
+pub(crate) trait Session: Send + Sync + 'static {
+    /// Resolves when the server should close the connection, dropping what is in flight.
+    fn closed(&self) -> impl Future<Output = ()> + Send {
+        std::future::pending()
+    }
+}
+
+impl Session for () {}
+
 /// What a server answers beyond `ping`, which the server answers itself so
 /// every handler reports lain-core's own version (the Ruby client pins it).
 ///
 /// `-> impl Future + Send` for the reason [`Accept`] gives: each call runs in
 /// a spawned task.
 pub(crate) trait Handler: Send + Sync + 'static {
+    /// A connection that needs no hello starts with the default session.
+    type Session: Session + Default;
+
     /// When true, a connection's first request must be a `hello` this
     /// handler answers without an error, within the auth deadline.
     fn requires_hello(&self) -> bool {
         false
     }
 
+    /// The answer to an admitting hello and the session the connection keeps.
+    /// By default the default session, with `hello` answered by [`Handler::call`].
+    fn hello(
+        &self,
+        params: Vec<Value>,
+    ) -> impl Future<Output = Result<(Value, Self::Session), RpcError>> + Send {
+        async move {
+            let session = Self::Session::default();
+            let result = self.call(&session, "hello", params).await?;
+            Ok((result, session))
+        }
+    }
+
     fn call(
         &self,
+        session: &Self::Session,
         method: &str,
         params: Vec<Value>,
     ) -> impl Future<Output = Result<Value, RpcError>> + Send;
@@ -337,7 +365,9 @@ pub(crate) trait Handler: Send + Sync + 'static {
 pub(crate) struct Core;
 
 impl Handler for Core {
-    async fn call(&self, method: &str, _params: Vec<Value>) -> Result<Value, RpcError> {
+    type Session = ();
+
+    async fn call(&self, _: &(), method: &str, _params: Vec<Value>) -> Result<Value, RpcError> {
         Err(RpcError::UnknownMethod(method.to_string()))
     }
 }
@@ -392,7 +422,8 @@ fn admit<C: Wire, H: Handler>(
     match Arc::clone(slots).try_acquire_owned() {
         Ok(slot) => {
             let framed = Framed::new(stream, Codec::default());
-            tokio::spawn(serve_connection(framed, Arc::clone(handler), slot));
+            let session = H::Session::default();
+            tokio::spawn(serve_connection(framed, Arc::clone(handler), session, slot));
         }
         Err(_full) => {
             tracing::warn!(MAX_CONNECTIONS, "at the connection cap; closing a new one");
@@ -482,11 +513,11 @@ async fn greet_then_serve<C: Wire, H: Handler>(
         }
     };
     drop(seat);
-    let Some(slot) = admitted else {
+    let Some((slot, session)) = admitted else {
         return;
     };
     framed.codec_mut().ceiling = MAX_FRAME;
-    serve_connection(framed, handler, slot).await;
+    serve_connection(framed, handler, session, slot).await;
 }
 
 type Sink<C> = SplitSink<Framed<C, Codec>, Value>;
@@ -495,10 +526,12 @@ type Stream<C> = SplitStream<Framed<C, Codec>>;
 /// A response bound for the writer, with the in-flight slot it frees once written.
 type Outgoing = (Value, OwnedSemaphorePermit);
 
-/// How a connection's reading ended. Only poison drops the responses still in flight.
+/// How a connection's reading ended. Poison and a closed session drop the
+/// responses still in flight.
 enum Ending {
     Finished,
     Poisoned,
+    Closed,
 }
 
 /// One connection: a reader that spawns an independent task per request, and
@@ -507,27 +540,34 @@ enum Ending {
 /// running are dropped: a peer that stopped sending is gone, and a long-poll
 /// it left behind must not hold the connection's slot. On poison the writer
 /// is aborted too -- the connection dies immediately and takes no response
-/// with it. The slot is held for the connection's life, so dropping it frees the cap.
+/// with it, and a session that closes ends it the same way. The slot is held
+/// for the connection's life, so dropping it frees the cap.
 async fn serve_connection<C: Wire, H: Handler>(
     framed: Framed<C, Codec>,
     handler: Arc<H>,
+    session: H::Session,
     _slot: OwnedSemaphorePermit,
 ) {
+    let session = Arc::new(session);
     let (sink, mut inbound) = framed.split();
     let (responses, inbox) = mpsc::channel(RESPONSE_BUFFER);
     let writer = tokio::spawn(write_responses(sink, inbox));
     let mut requests = JoinSet::new();
-    let ending = read_requests(&mut inbound, &responses, &handler, &mut requests).await;
+    let ending = tokio::select! {
+        ending = read_requests(&mut inbound, &responses, &handler, &session, &mut requests) => ending,
+        () = session.closed() => Ending::Closed,
+    };
     requests.shutdown().await;
     drop(responses);
-    if matches!(ending, Ending::Poisoned) {
+    if matches!(ending, Ending::Poisoned | Ending::Closed) {
         writer.abort();
     }
     let _ = writer.await;
 }
 
-/// The connection's cap slot once the first request is a `hello` the handler
-/// answered without an error. Anything else is answered, when it can be, and refused.
+/// The connection's cap slot and session once the first request is a `hello`
+/// the handler answered without an error. Anything else is answered, when it
+/// can be, and refused.
 ///
 /// The cap slot is taken before the handler sees the hello, so a hello past
 /// the cap is refused before any of its side effects run.
@@ -535,7 +575,7 @@ async fn greet<C: Wire, H: Handler>(
     framed: &mut Framed<C, Codec>,
     handler: &H,
     slots: &Arc<Semaphore>,
-) -> Option<OwnedSemaphorePermit> {
+) -> Option<(OwnedSemaphorePermit, H::Session)> {
     let Ok(frame) = next_frame(framed.next().await) else {
         return None;
     };
@@ -543,8 +583,8 @@ async fn greet<C: Wire, H: Handler>(
         Ok(request) if request.method == "hello" => {
             let msgid = request.msgid;
             match Arc::clone(slots).try_acquire_owned() {
-                Ok(slot) => match handler.call("hello", request.params).await {
-                    Ok(result) => (ok_response(msgid, result), Some(slot)),
+                Ok(slot) => match handler.hello(request.params).await {
+                    Ok((result, session)) => (ok_response(msgid, result), Some((slot, session))),
                     Err(error) => (error_response(msgid, error), None),
                 },
                 Err(_full) => (error_response(msgid, RpcError::AtCapacity), None),
@@ -573,6 +613,7 @@ async fn read_requests<C: Wire, H: Handler>(
     inbound: &mut Stream<C>,
     responses: &mpsc::Sender<Outgoing>,
     handler: &Arc<H>,
+    session: &Arc<H::Session>,
     requests: &mut JoinSet<()>,
 ) -> Ending {
     let in_flight = Arc::new(Semaphore::new(RESPONSE_BUFFER));
@@ -583,7 +624,13 @@ async fn read_requests<C: Wire, H: Handler>(
         while requests.try_join_next().is_some() {}
         match next_frame(inbound.next().await) {
             Ok(frame) => {
-                let task = respond_to(frame, Arc::clone(handler), responses.clone(), slot);
+                let task = respond_to(
+                    frame,
+                    Arc::clone(handler),
+                    Arc::clone(session),
+                    responses.clone(),
+                    slot,
+                );
                 requests.spawn(task);
             }
             Err(ending) => return ending,
@@ -604,11 +651,12 @@ async fn write_responses<C: Wire>(mut sink: Sink<C>, mut inbox: mpsc::Receiver<O
 async fn respond_to<H: Handler>(
     frame: Value,
     handler: Arc<H>,
+    session: Arc<H::Session>,
     responses: mpsc::Sender<Outgoing>,
     slot: OwnedSemaphorePermit,
 ) {
     let response = match Request::parse(frame) {
-        Ok(request) => request.dispatch(&*handler).await,
+        Ok(request) => request.dispatch(&*handler, &session).await,
         Err((echo_id, error)) => error_reply(echo_id, &error),
     };
     let _ = responses.send((response, slot)).await;
@@ -655,11 +703,11 @@ impl Request {
         })
     }
 
-    async fn dispatch(self, handler: &impl Handler) -> Value {
+    async fn dispatch<H: Handler>(self, handler: &H, session: &H::Session) -> Value {
         if self.method == "ping" {
             return ok_response(self.msgid, ping_result());
         }
-        match handler.call(&self.method, self.params).await {
+        match handler.call(session, &self.method, self.params).await {
             Ok(result) => ok_response(self.msgid, result),
             Err(error) => error_response(self.msgid, error),
         }
@@ -799,13 +847,15 @@ pub(crate) mod support {
     struct SlowCore;
 
     impl Handler for SlowCore {
-        async fn call(&self, method: &str, params: Vec<Value>) -> Result<Value, RpcError> {
+        type Session = ();
+
+        async fn call(&self, _: &(), method: &str, params: Vec<Value>) -> Result<Value, RpcError> {
             if method == "sleep" {
                 let millis = params.first().and_then(Value::as_u64).unwrap_or(0);
                 tokio::time::sleep(Duration::from_millis(millis)).await;
                 Ok(Value::Nil)
             } else {
-                Core.call(method, params).await
+                Core.call(&(), method, params).await
             }
         }
     }
@@ -1017,6 +1067,7 @@ mod tests {
     use bytes::{BufMut, BytesMut};
     use rmpv::Value;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::sync::watch;
     use tokio_util::codec::Decoder;
 
     use super::support::{
@@ -1024,7 +1075,8 @@ mod tests {
         start_flaky_server, start_server, start_server_with, start_tcp_server,
     };
     use super::{
-        ACCEPT_RETRY_DELAY, Codec, Handler, MAX_CONNECTIONS, RESPONSE_BUFFER, RpcError, Wire,
+        ACCEPT_RETRY_DELAY, Codec, Handler, MAX_CONNECTIONS, RESPONSE_BUFFER, RpcError, Session,
+        Wire,
     };
 
     /// The whole protocol surface a transport has to carry, as one value: a
@@ -1158,7 +1210,9 @@ mod tests {
     struct Echo;
 
     impl Handler for Echo {
-        async fn call(&self, method: &str, params: Vec<Value>) -> Result<Value, RpcError> {
+        type Session = ();
+
+        async fn call(&self, _: &(), method: &str, params: Vec<Value>) -> Result<Value, RpcError> {
             match method {
                 "echo" => Ok(Value::Array(params)),
                 "ping" => Ok(Value::from("the handler's ping")),
@@ -1198,11 +1252,13 @@ mod tests {
     struct Gatekeeper;
 
     impl Handler for Gatekeeper {
+        type Session = ();
+
         fn requires_hello(&self) -> bool {
             true
         }
 
-        async fn call(&self, method: &str, params: Vec<Value>) -> Result<Value, RpcError> {
+        async fn call(&self, _: &(), method: &str, params: Vec<Value>) -> Result<Value, RpcError> {
             match (method, params.first().and_then(Value::as_str)) {
                 ("hello", Some("letmein")) => Ok(Value::from("welcome")),
                 ("hello", Some("slow")) => std::future::pending().await,
@@ -1210,6 +1266,127 @@ mod tests {
                 _ => Err(RpcError::UnknownMethod(method.to_string())),
             }
         }
+    }
+
+    type Live = Arc<std::sync::Mutex<std::collections::HashMap<String, watch::Sender<()>>>>;
+
+    /// Mints a session named by the hello's first param. `whoami` answers that
+    /// name, and dropping a name's sender is what closes its connections.
+    struct Badges(Live);
+
+    struct Badge {
+        name: String,
+        live: watch::Receiver<()>,
+    }
+
+    impl Session for Option<Badge> {
+        async fn closed(&self) {
+            match self {
+                Some(badge) => {
+                    let mut live = badge.live.clone();
+                    while live.changed().await.is_ok() {}
+                }
+                None => std::future::pending().await,
+            }
+        }
+    }
+
+    impl Handler for Badges {
+        type Session = Option<Badge>;
+
+        fn requires_hello(&self) -> bool {
+            true
+        }
+
+        async fn hello(&self, params: Vec<Value>) -> Result<(Value, Self::Session), RpcError> {
+            let name = params
+                .first()
+                .and_then(Value::as_str)
+                .ok_or(RpcError::BadToken)?
+                .to_string();
+            let mut live = self.0.lock().expect("the live map");
+            let sender = live
+                .entry(name.clone())
+                .or_insert_with(|| watch::channel(()).0);
+            let badge = Badge {
+                name,
+                live: sender.subscribe(),
+            };
+            Ok((Value::from("welcome"), Some(badge)))
+        }
+
+        async fn call(
+            &self,
+            session: &Self::Session,
+            method: &str,
+            _params: Vec<Value>,
+        ) -> Result<Value, RpcError> {
+            match (method, session) {
+                ("whoami", Some(badge)) => Ok(Value::from(badge.name.as_str())),
+                ("big", Some(_)) => Ok(Value::from("x".repeat(64 << 10))),
+                _ => Err(RpcError::UnknownMethod(method.to_string())),
+            }
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn each_connection_keeps_its_hello_session_and_closes_alone() {
+        let live = Live::default();
+        let (_dir, path) = start_server_with(Badges(Arc::clone(&live))).await;
+        let mut a = TestClient::connect(&path).await;
+        let mut b = TestClient::connect(&path).await;
+        for (client, name) in [(&mut a, "a"), (&mut b, "b")] {
+            let (_, error, _) = client.call(1, "hello", vec![Value::from(name)]).await;
+            assert_eq!(Value::Nil, error, "the hello as {name}");
+        }
+        let (_, _, a_is) = a.call(2, "whoami", vec![]).await;
+        let (_, _, b_is) = b.call(2, "whoami", vec![]).await;
+        assert_eq!((Value::from("a"), Value::from("b")), (a_is, b_is));
+
+        live.lock().expect("the live map").remove("a");
+        assert!(closes(a).await, "a closed session left its connection open");
+        let (_, error, b_is) = b.call(4, "whoami", vec![]).await;
+        assert_eq!(
+            (Value::Nil, Value::from("b")),
+            (error, b_is),
+            "closing a took b with it"
+        );
+    }
+
+    /// The replies a client had not read when its session closed are dropped,
+    /// not written: a revoked peer learns nothing more.
+    #[tokio::test(start_paused = true)]
+    async fn a_closed_session_drops_the_replies_it_had_not_written() {
+        let live = Live::default();
+        let (_dir, path) = start_server_with(Badges(Arc::clone(&live))).await;
+        let mut a = TestClient::connect(&path).await;
+        let (_, error, _) = a.call(1, "hello", vec![Value::from("a")]).await;
+        assert_eq!(Value::Nil, error);
+        let asked = u32::try_from(RESPONSE_BUFFER).expect("a count");
+        for msgid in 2..2 + asked {
+            a.send(request(msgid, "big", vec![])).await;
+        }
+        // Paused time moves only once every task is idle, so by now each reply
+        // is written or waiting on the socket the client is not reading.
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        live.lock().expect("the live map").remove("a");
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        let mut bytes = Vec::new();
+        let mut stream = a.into_inner();
+        tokio::time::timeout(RESPONSE_WAIT, stream.read_to_end(&mut bytes))
+            .await
+            .expect("the connection closed")
+            .expect("read until the close");
+        let mut rest = bytes.as_slice();
+        let mut replies = 0;
+        while rmpv::decode::read_value(&mut rest).is_ok() {
+            replies += 1;
+        }
+        assert!(
+            replies < asked,
+            "all {replies} replies were written after the session closed"
+        );
     }
 
     async fn closes<C: Wire>(client: TestClient<C>) -> bool {
@@ -1469,7 +1646,14 @@ mod tests {
     }
 
     impl Handler for Hang {
-        async fn call(&self, _method: &str, _params: Vec<Value>) -> Result<Value, RpcError> {
+        type Session = ();
+
+        async fn call(
+            &self,
+            _: &(),
+            _method: &str,
+            _params: Vec<Value>,
+        ) -> Result<Value, RpcError> {
             self.entered.fetch_add(1, Ordering::SeqCst);
             std::future::pending().await
         }

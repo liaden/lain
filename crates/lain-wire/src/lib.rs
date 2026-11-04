@@ -115,6 +115,9 @@ pub enum Answer {
         id: String,
         /// The decision.
         verdict: Verdict,
+        /// The paired device that gave it; the relay stamps it, whatever the phone claimed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        device: Option<String>,
     },
     /// Reply to a wave gate, a verdict per issue id.
     Gate {
@@ -122,6 +125,9 @@ pub enum Answer {
         id: String,
         /// Issue id and its verdict.
         verdicts: Vec<(String, Verdict)>,
+        /// The paired device that gave it; the relay stamps it, whatever the phone claimed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        device: Option<String>,
     },
     /// Reply to a question: a chosen option, free text, or both.
     Question {
@@ -133,7 +139,22 @@ pub enum Answer {
         /// Free text.
         #[serde(default)]
         text: Option<String>,
+        /// The paired device that gave it; the relay stamps it, whatever the phone claimed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        device: Option<String>,
     },
+}
+
+impl Answer {
+    /// The same answer, naming `device` as the one that gave it.
+    #[must_use]
+    pub fn stamped_by(mut self, device: &str) -> Self {
+        let (Self::Call { device: slot, .. }
+        | Self::Gate { device: slot, .. }
+        | Self::Question { device: slot, .. }) = &mut self;
+        *slot = Some(device.to_string());
+        self
+    }
 }
 
 /// What changed in the agenda since a cursor.
@@ -341,6 +362,7 @@ mod tests {
                 verdict: Verdict::Deny {
                     note: Some(s("no")),
                 },
+                device: None,
             },
         );
         check(
@@ -357,6 +379,7 @@ mod tests {
                     ),
                     (s("c"), Verdict::Deny { note: None }),
                 ],
+                device: None,
             },
         );
         check(
@@ -365,7 +388,37 @@ mod tests {
                 id: s("q1"),
                 option: Some(s("dev")),
                 text: None,
+                device: None,
             },
+        );
+    }
+
+    #[test]
+    fn an_answer_carries_the_device_that_gave_it() {
+        check(
+            "answer_call_device",
+            Answer::Call {
+                id: s("c1"),
+                verdict: Verdict::Approve { note: None },
+                device: Some(s("pixel")),
+            },
+        );
+    }
+
+    #[test]
+    fn a_device_stamp_replaces_any_device_the_answer_claimed() {
+        let claimed = Answer::Gate {
+            id: s("g1"),
+            verdicts: vec![],
+            device: Some(s("someone-else")),
+        };
+        assert_eq!(
+            Answer::Gate {
+                id: s("g1"),
+                verdicts: vec![],
+                device: Some(s("pixel")),
+            },
+            claimed.stamped_by("pixel")
         );
     }
 
@@ -440,11 +493,13 @@ mod tests {
                     Answer::Call {
                         id: s("c1"),
                         verdict: Verdict::Approve { note: None },
+                        device: None,
                     },
                     Answer::Question {
                         id: s("q1"),
                         option: Some(s("dev")),
                         text: None,
+                        device: None,
                     },
                 ],
             },
@@ -500,7 +555,8 @@ mod tests {
             Answer::Question {
                 id: s("q1"),
                 option: None,
-                text: None
+                text: None,
+                device: None,
             }
         );
     }

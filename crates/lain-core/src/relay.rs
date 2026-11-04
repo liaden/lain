@@ -2,22 +2,27 @@
 //! phone reads it and answers over the tailnet.
 
 mod agenda;
+mod devices;
 
 use std::convert::Infallible;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use lain_wire::{AgendaPage, Answer, AnswersPage, Cursor, Delta, Hello, WIRE_VERSION, Welcome};
 use rmpv::Value;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use subtle::ConstantTimeEq;
 use tokio::net::{TcpListener, TcpStream, UnixListener};
 
-use crate::rpc::{self, Accept, Handler, RpcError};
+use crate::rpc::{self, Accept, Handler, RpcError, Session};
 use agenda::{Agenda, REPLY_BUDGET, Refusal};
+use devices::{Admitted, DevicesError, DevicesFile, Paired, Roster, Watcher};
+
+/// How often the relay checks its devices file for a pair or a revoke.
+pub(crate) const RELOAD_TICK: Duration = Duration::from_secs(1);
 
 /// Why the relay would not start.
 #[derive(Debug, thiserror::Error)]
@@ -30,14 +35,8 @@ pub(crate) enum StartError {
     ListenUnparsable(String),
     #[error("cannot list this host's interfaces: {0}")]
     Interfaces(nix::Error),
-    #[error("cannot read the token file {}: {error}", path.display())]
-    TokenUnreadable { path: PathBuf, error: io::Error },
-    #[error("the token file {} is a symlink", .0.display())]
-    TokenSymlink(PathBuf),
-    #[error("the token file {} is open to group or others (mode {mode:o}); it must be 600", path.display())]
-    TokenOpen { path: PathBuf, mode: u32 },
-    #[error("the token file {} is empty", .0.display())]
-    TokenEmpty(PathBuf),
+    #[error(transparent)]
+    Devices(#[from] DevicesError),
     #[error("{} is in use by a listening process", .0.display())]
     SocketInUse(PathBuf),
     #[error("{} exists and is not a socket", .0.display())]
@@ -56,73 +55,13 @@ impl StartError {
     /// its own code, so a caller can tell the kernel is what refused.
     pub(crate) fn exit_code(&self) -> u8 {
         match self {
-            Self::Listen(_)
-            | Self::ListenUnparsable(_)
-            | Self::TokenUnreadable { .. }
-            | Self::TokenSymlink(_)
-            | Self::TokenOpen { .. }
-            | Self::TokenEmpty(_) => crate::USAGE_ERROR,
+            Self::Listen(_) | Self::ListenUnparsable(_) | Self::Devices(_) => crate::USAGE_ERROR,
             Self::Interfaces(_)
             | Self::SocketInUse(_)
             | Self::NotASocket(_)
             | Self::Bind { .. } => crate::BIND_ERROR,
             Self::Confine(_) | Self::Unconfined => crate::CONFINE_ERROR,
         }
-    }
-}
-
-/// The digest of the shared secret a phone's hello must carry. Digests of
-/// both sides are compared, so the comparison takes the same time whatever
-/// the guess's length. No `Debug`, so it cannot reach a log.
-pub(crate) struct Token(blake3::Hash);
-
-impl Token {
-    fn of(secret: &str) -> Self {
-        Self(blake3::hash(secret.as_bytes()))
-    }
-
-    fn matches(&self, guess: &str) -> bool {
-        bool::from(
-            self.0
-                .as_bytes()
-                .ct_eq(blake3::hash(guess.as_bytes()).as_bytes()),
-        )
-    }
-
-    /// Opened without following a symlink, and refused when anyone but its
-    /// owner may read or write it.
-    fn read(path: &Path) -> Result<Self, StartError> {
-        use std::io::Read;
-        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
-        let unreadable = |error| StartError::TokenUnreadable {
-            path: path.to_path_buf(),
-            error,
-        };
-        let mut file = std::fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(nix::fcntl::OFlag::O_NOFOLLOW.bits())
-            .open(path)
-            .map_err(|error| {
-                if error.raw_os_error() == Some(nix::errno::Errno::ELOOP as i32) {
-                    StartError::TokenSymlink(path.to_path_buf())
-                } else {
-                    unreadable(error)
-                }
-            })?;
-        let mode = file.metadata().map_err(unreadable)?.mode() & 0o777;
-        if mode & 0o077 != 0 {
-            return Err(StartError::TokenOpen {
-                path: path.to_path_buf(),
-                mode,
-            });
-        }
-        let mut text = String::new();
-        file.read_to_string(&mut text).map_err(unreadable)?;
-        let token = text.trim();
-        if token.is_empty() {
-            return Err(StartError::TokenEmpty(path.to_path_buf()));
-        }
-        Ok(Self::of(token))
     }
 }
 
@@ -153,24 +92,24 @@ fn tailscale0_addresses() -> Result<Vec<IpAddr>, StartError> {
         .collect())
 }
 
-/// `relay --unix <sock> --listen <addr>:<port> --token-file <path> [--trace <path>]`.
+/// `relay --unix <sock> --listen <addr>:<port> --devices-file <path> [--trace <path>]`.
 pub(crate) struct Config {
     pub(crate) unix: PathBuf,
     pub(crate) listen: String,
-    pub(crate) token_file: PathBuf,
+    pub(crate) devices_file: PathBuf,
     pub(crate) trace: Option<String>,
 }
 
 impl Config {
     /// None for a missing, repeated, unknown or unparsable flag.
     pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Option<Self> {
-        let (mut unix, mut listen, mut token_file, mut trace) = (None, None, None, None);
+        let (mut unix, mut listen, mut devices_file, mut trace) = (None, None, None, None);
         while let Some(flag) = args.next() {
             let value = args.next()?;
             let slot = match flag.as_str() {
                 "--unix" => &mut unix,
                 "--listen" => &mut listen,
-                "--token-file" => &mut token_file,
+                "--devices-file" => &mut devices_file,
                 "--trace" => &mut trace,
                 _ => return None,
             };
@@ -181,7 +120,7 @@ impl Config {
         Some(Self {
             unix: PathBuf::from(unix?),
             listen: listen?,
-            token_file: PathBuf::from(token_file?),
+            devices_file: PathBuf::from(devices_file?),
             trace,
         })
     }
@@ -194,11 +133,12 @@ impl Config {
     }
 }
 
-/// Both listeners and the token, taken before the relay confines itself.
+/// Both listeners and the paired devices, taken before the relay confines itself.
 pub(crate) struct Bound {
     lain: std::os::unix::net::UnixListener,
     phone: std::net::TcpListener,
-    token: Token,
+    watcher: Watcher,
+    roster: Roster,
 }
 
 impl Bound {
@@ -208,7 +148,9 @@ impl Bound {
             .parse()
             .map_err(|_| StartError::ListenUnparsable(config.listen.clone()))?;
         let listen = listen_rule(address, &tailscale0_addresses()?)?;
-        let token = Token::read(&config.token_file)?;
+        let mut watcher = Watcher::new(DevicesFile::new(config.devices_file.clone()));
+        watcher.file().check_directory()?;
+        let roster = watcher.read()?;
         clear_stale_socket(&config.unix)?;
         let bind_error = |what: String| move |error| StartError::Bind { what, error };
         let lain = std::os::unix::net::UnixListener::bind(&config.unix)
@@ -217,7 +159,17 @@ impl Bound {
             let _ = std::fs::remove_file(&config.unix);
             bind_error(listen.to_string())(error)
         })?;
-        Ok(Self { lain, phone, token })
+        Ok(Self {
+            lain,
+            phone,
+            watcher,
+            roster,
+        })
+    }
+
+    /// The directory the relay may read: its devices file's own.
+    pub(crate) fn devices_directory(&self) -> &Path {
+        self.watcher.file().directory()
     }
 
     /// Takes a runtime context: tokio adopts the listeners here.
@@ -226,7 +178,7 @@ impl Bound {
         self.phone.set_nonblocking(true)?;
         let lain = UnixListener::from_std(self.lain)?;
         let phone = TcpListener::from_std(self.phone)?;
-        Ok(serve(lain, phone, self.token))
+        Ok(serve(lain, phone, self.watcher, self.roster))
     }
 }
 
@@ -256,9 +208,10 @@ fn clear_stale_socket(path: &Path) -> Result<(), StartError> {
 }
 
 /// Every filesystem right is handled, so all but these two grants are refused,
-/// for the calling thread and every thread it spawns after. A kernel that
+/// for the calling thread and every thread it spawns after. The devices
+/// directory is listed too, because every reread checks what it holds. A kernel that
 /// enforces none of it is refused too: an unconfined relay is not one we run.
-pub(crate) fn confine(token_file: &Path, socket_dir: &Path) -> Result<(), StartError> {
+pub(crate) fn confine(devices_dir: &Path, socket_dir: &Path) -> Result<(), StartError> {
     use landlock::{
         ABI, Access, AccessFs, Ruleset, RulesetAttr, RulesetCreatedAttr, RulesetStatus,
         path_beneath_rules,
@@ -267,7 +220,12 @@ pub(crate) fn confine(token_file: &Path, socket_dir: &Path) -> Result<(), StartE
     let status = Ruleset::default()
         .handle_access(AccessFs::from_all(TARGET))
         .and_then(|ruleset| ruleset.create())
-        .and_then(|ruleset| ruleset.add_rules(path_beneath_rules([token_file], AccessFs::ReadFile)))
+        .and_then(|ruleset| {
+            ruleset.add_rules(path_beneath_rules(
+                [devices_dir],
+                AccessFs::ReadFile | AccessFs::ReadDir,
+            ))
+        })
         .and_then(|ruleset| {
             ruleset.add_rules(path_beneath_rules(
                 [socket_dir],
@@ -284,21 +242,35 @@ pub(crate) fn confine(token_file: &Path, socket_dir: &Path) -> Result<(), StartE
 
 /// Lain's methods on the Unix socket, the phone's on TCP, over one agenda.
 /// Each side is a separate handler, so neither can call the other's methods.
-pub(crate) async fn serve(lain: UnixListener, phone: TcpListener, token: Token) -> Infallible {
+pub(crate) async fn serve(
+    lain: UnixListener,
+    phone: TcpListener,
+    watcher: Watcher,
+    roster: Roster,
+) -> Infallible {
     let relay = Arc::new(Relay {
-        token,
+        paired: Paired::new(roster),
         agenda: Agenda::default(),
     });
+    let reread = reread(watcher, Arc::clone(&relay));
     let lain = rpc::serve(lain, Lain(Arc::clone(&relay)));
     let phone = rpc::serve(Tailnet(phone), Phone(relay));
     tokio::select! {
+        never = reread => match never {},
         never = lain => match never {},
         never = phone => match never {},
     }
 }
 
+async fn reread(mut watcher: Watcher, relay: Arc<Relay>) -> Infallible {
+    loop {
+        tokio::time::sleep(RELOAD_TICK).await;
+        watcher.poll(&relay.paired);
+    }
+}
+
 struct Relay {
-    token: Token,
+    paired: Paired,
     agenda: Agenda,
 }
 
@@ -323,7 +295,9 @@ impl Accept for Tailnet {
 struct Lain(Arc<Relay>);
 
 impl Handler for Lain {
-    async fn call(&self, method: &str, params: Vec<Value>) -> Result<Value, RpcError> {
+    type Session = ();
+
+    async fn call(&self, _: &(), method: &str, params: Vec<Value>) -> Result<Value, RpcError> {
         let agenda = &self.0.agenda;
         match method {
             "agenda.publish" => {
@@ -347,23 +321,46 @@ impl Handler for Lain {
 
 struct Phone(Arc<Relay>);
 
+/// A phone connection's device, closed when it is revoked.
+impl Session for Option<Admitted> {
+    async fn closed(&self) {
+        match self {
+            Some(admitted) => admitted.revoked().await,
+            None => std::future::pending().await,
+        }
+    }
+}
+
 impl Handler for Phone {
+    type Session = Option<Admitted>;
+
     fn requires_hello(&self) -> bool {
         true
     }
 
-    async fn call(&self, method: &str, params: Vec<Value>) -> Result<Value, RpcError> {
+    async fn hello(&self, params: Vec<Value>) -> Result<(Value, Self::Session), RpcError> {
+        let hello = decoded::<Hello>(params, "hello takes [Hello]")?;
+        let admitted = self.0.admit(&hello)?;
         let agenda = &self.0.agenda;
+        let welcome = reply(&Welcome {
+            wire_version: WIRE_VERSION,
+            head: agenda.head(),
+            epoch: agenda.epoch(),
+        })?;
+        Ok((welcome, Some(admitted)))
+    }
+
+    async fn call(
+        &self,
+        session: &Self::Session,
+        method: &str,
+        params: Vec<Value>,
+    ) -> Result<Value, RpcError> {
+        let agenda = &self.0.agenda;
+        let Some(device) = session else {
+            return Err(RpcError::HelloRequired);
+        };
         match method {
-            "hello" => {
-                let hello = decoded::<Hello>(params, "hello takes [Hello]")?;
-                self.0.admit(&hello)?;
-                reply(&Welcome {
-                    wire_version: WIRE_VERSION,
-                    head: agenda.head(),
-                    epoch: agenda.epoch(),
-                })
-            }
             "agenda.next" => {
                 let at = decoded::<Cursor>(params, "agenda.next takes [Cursor]")?;
                 let page = agenda.deltas_after(at.cursor, at.epoch).await;
@@ -376,7 +373,9 @@ impl Handler for Phone {
             }
             "answer.send" => {
                 let answer = decoded::<Answer>(params, "answer.send takes [Answer]")?;
-                agenda.answer(&answer).map_err(refused)?;
+                agenda
+                    .answer(&answer.stamped_by(device.name()))
+                    .map_err(refused)?;
                 Ok(Value::Nil)
             }
             _ => Err(RpcError::UnknownMethod(method.to_string())),
@@ -400,18 +399,14 @@ fn refused(refusal: Refusal) -> RpcError {
 impl Relay {
     /// The version is checked first so a phone on another version learns why,
     /// which tells it nothing about the token.
-    fn admit(&self, hello: &Hello) -> Result<(), RpcError> {
+    fn admit(&self, hello: &Hello) -> Result<Admitted, RpcError> {
         if hello.wire_version != WIRE_VERSION {
             return Err(RpcError::WireVersion {
                 peer: hello.wire_version,
                 ours: WIRE_VERSION,
             });
         }
-        if self.token.matches(&hello.token) {
-            Ok(())
-        } else {
-            Err(RpcError::BadToken)
-        }
+        self.paired.admit(&hello.token).ok_or(RpcError::BadToken)
     }
 }
 
@@ -437,7 +432,6 @@ fn reply<T: Serialize>(message: &T) -> Result<Value, RpcError> {
 #[cfg(test)]
 mod tests {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-    use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
     use std::time::Duration;
 
@@ -452,11 +446,23 @@ mod tests {
     use tokio_util::codec::Framed;
 
     use super::agenda::{LONG_POLL, MAX_TAIL, REPLY_BUDGET};
-    use super::{Config, StartError, Token};
+    use super::devices::tests::{devices_file, line, rewrite};
+    use super::devices::{DevicesFile, Watcher};
+    use super::{Config, RELOAD_TICK, StartError};
     use crate::rpc::Codec;
     use crate::rpc::support::{request, response_parts};
 
     const TOKEN: &str = "a-paired-phone-token";
+    const PHONE: &str = "phone";
+    const TABLET: &str = "tablet";
+    const TABLET_TOKEN: &str = "a-paired-tablet-token";
+
+    fn both_paired() -> String {
+        line(PHONE, TOKEN) + &line(TABLET, TABLET_TOKEN)
+    }
+
+    /// Long enough for the relay to reread its devices file, in paused time.
+    const REREAD: Duration = Duration::from_secs(RELOAD_TICK.as_secs() + 1);
 
     /// Longer than any reply needs and far shorter than [`LONG_POLL`], in paused time.
     const PROMPTLY: Duration = Duration::from_secs(1);
@@ -544,6 +550,31 @@ mod tests {
         _dir: tempfile::TempDir,
         socket: PathBuf,
         phone: SocketAddr,
+        devices: PathBuf,
+    }
+
+    /// Serves on listeners already bound, over the devices file at `devices`.
+    fn spawn_relay(lain: UnixListener, phone: TcpListener, devices: &Path) {
+        let mut watcher = Watcher::new(DevicesFile::new(devices.to_path_buf()));
+        let roster = watcher.read().expect("read the devices file");
+        tokio::spawn(async move { match super::serve(lain, phone, watcher, roster).await {} });
+    }
+
+    async fn connect(address: SocketAddr) -> Peer<TcpStream> {
+        let stream = TcpStream::connect(address).await.expect("connect a phone");
+        // Nagle holds a second small request for the relay's delayed ack,
+        // a real 40 ms that paused time skips past.
+        stream.set_nodelay(true).expect("no delay");
+        Peer::over(stream)
+    }
+
+    /// The (error, result) of a hello with `token`.
+    async fn hello_with(peer: &mut Peer<TcpStream>, token: &str) -> (Value, Value) {
+        peer.call("hello", vec![hello(token, WIRE_VERSION)]).await
+    }
+
+    fn refused() -> (Value, Value) {
+        (Value::from("the hello was refused"), Value::Nil)
     }
 
     impl Relay {
@@ -555,12 +586,13 @@ mod tests {
                 .await
                 .expect("bind loopback");
             let address = phone.local_addr().expect("the bound address");
-            let token = Token::of(TOKEN);
-            tokio::spawn(async move { match super::serve(lain, phone, token).await {} });
+            let devices = devices_file(dir.path(), &both_paired());
+            spawn_relay(lain, phone, &devices);
             Self {
                 _dir: dir,
                 socket,
                 phone: address,
+                devices,
             }
         }
 
@@ -573,24 +605,26 @@ mod tests {
         }
 
         async fn stranger(&self) -> Peer<TcpStream> {
-            let stream = TcpStream::connect(self.phone)
-                .await
-                .expect("connect a phone");
-            // Nagle holds a second small request for the relay's delayed ack,
-            // a real 40 ms that paused time skips past.
-            stream.set_nodelay(true).expect("no delay");
-            Peer::over(stream)
+            connect(self.phone).await
         }
 
         async fn hello(&self) -> (Peer<TcpStream>, Value) {
+            self.hello_as(TOKEN).await
+        }
+
+        async fn hello_as(&self, token: &str) -> (Peer<TcpStream>, Value) {
             let mut peer = self.stranger().await;
-            let (error, result) = peer.call("hello", vec![hello(TOKEN, WIRE_VERSION)]).await;
-            assert_eq!(Value::Nil, error, "a phone with the token was refused");
+            let (error, result) = hello_with(&mut peer, token).await;
+            assert_eq!(Value::Nil, error, "a phone with a paired token was refused");
             (peer, result)
         }
 
         async fn phone(&self) -> Phone {
-            let (peer, welcome) = self.hello().await;
+            self.phone_as(TOKEN).await
+        }
+
+        async fn phone_as(&self, token: &str) -> Phone {
+            let (peer, welcome) = self.hello_as(token).await;
             let welcome: Welcome = message(&welcome);
             Phone {
                 peer,
@@ -701,7 +735,13 @@ mod tests {
         Answer::Call {
             id: id.to_string(),
             verdict: Verdict::Approve { note },
+            device: None,
         }
+    }
+
+    /// An approval as lain receives it from the phone paired as [`PHONE`].
+    fn answered(id: &str) -> Answer {
+        approve(id).stamped_by(PHONE)
     }
 
     async fn publish(lain: &mut Peer<UnixStream>, delta: Value) -> Value {
@@ -736,19 +776,11 @@ mod tests {
         answers_page(lain, 0, None).await.page
     }
 
-    fn token_file(dir: &Path, text: &str) -> PathBuf {
-        let path = dir.join("token");
-        std::fs::write(&path, text).expect("write the token");
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
-            .expect("chmod the token");
-        path
-    }
-
     fn config(dir: &Path, listen: &str) -> Config {
         Config {
             unix: dir.join("relay.sock"),
             listen: listen.to_string(),
-            token_file: token_file(dir, TOKEN),
+            devices_file: devices_file(dir, &both_paired()),
             trace: None,
         }
     }
@@ -815,33 +847,15 @@ mod tests {
     }
 
     #[test]
-    fn a_token_file_others_can_read_is_refused_by_name() {
+    fn a_devices_file_beside_other_files_stops_the_relay_before_it_binds() {
         let dir = tempfile::tempdir().expect("a tempdir");
-        let path = token_file(dir.path(), TOKEN);
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).expect("chmod");
-        let error = Token::read(&path).err().expect("a 0640 token was read");
-        assert_eq!(
-            format!(
-                "the token file {} is open to group or others (mode 640); it must be 600",
-                path.display()
-            ),
-            error.to_string()
-        );
-    }
-
-    #[test]
-    fn a_token_file_that_is_a_symlink_is_refused_by_name() {
-        let dir = tempfile::tempdir().expect("a tempdir");
-        let real = token_file(dir.path(), TOKEN);
-        let link = dir.path().join("link");
-        std::os::unix::fs::symlink(&real, &link).expect("symlink");
-        let error = Token::read(&link)
+        let config = config(dir.path(), "127.0.0.1:0");
+        std::fs::write(config.devices_file.with_file_name("notes"), "x").expect("a neighbour");
+        let error = super::Bound::open(&config)
             .err()
-            .expect("a symlinked token was read");
-        assert_eq!(
-            format!("the token file {} is a symlink", link.display()),
-            error.to_string()
-        );
+            .expect("a shared devices directory was allowed");
+        assert_eq!(crate::USAGE_ERROR, error.exit_code(), "{error}");
+        assert!(!config.unix.exists(), "the socket was bound anyway");
     }
 
     #[test]
@@ -931,7 +945,7 @@ mod tests {
         );
 
         let page = first_answers(&mut lain).await;
-        assert_eq!((1, vec![approve("p1")]), (page.cursor, page.answers));
+        assert_eq!((1, vec![answered("p1")]), (page.cursor, page.answers));
         lain.send("answers.next", vec![at(1, Some(page.epoch))])
             .await;
         assert_eq!(
@@ -981,7 +995,7 @@ mod tests {
         );
         publish(&mut lain, adding(parked("p1"))).await;
         assert_eq!(Value::Nil, phone.answer(&approve("p1")).await);
-        assert_eq!(vec![approve("p1")], first_answers(&mut lain).await.answers);
+        assert_eq!(vec![answered("p1")], first_answers(&mut lain).await.answers);
     }
 
     #[tokio::test(start_paused = true)]
@@ -1009,33 +1023,207 @@ mod tests {
             assert_eq!(Value::Nil, error);
         }
         assert_eq!(
-            vec![value(&approve("x1")), value(&approve("x2"))],
+            vec![value(&answered("x1")), value(&answered("x2"))],
             answers_page(&mut lain, 0, None).await.raw
         );
     }
 
     #[test]
-    fn the_relay_confines_itself_to_its_token_and_socket_directory() {
-        let token_dir = tempfile::tempdir().expect("a token dir");
+    fn the_relay_confines_itself_to_its_devices_and_socket_directories() {
+        let dir = tempfile::tempdir().expect("a dir");
         let socket_dir = tempfile::tempdir().expect("a socket dir");
-        let token_file = token_file(token_dir.path(), TOKEN);
-        let neighbour = token_dir.path().join("neighbour");
+        let devices = devices_file(dir.path(), &both_paired());
+        let neighbour = dir.path().join("neighbour");
         std::fs::write(&neighbour, "not the relay's").expect("write a neighbour");
         let socket_path = socket_dir.path().to_path_buf();
+        let devices_dir = devices.parent().expect("the devices dir").to_path_buf();
 
         // Landlock binds the calling thread, so the test confines only a thread of its own.
         let seen = std::thread::spawn(move || {
-            super::confine(&token_file, &socket_path).expect("confine");
+            super::confine(&devices_dir, &socket_path).expect("confine");
             (
-                std::fs::read(&token_file).is_ok(),
+                std::fs::read(&devices).is_ok(),
                 std::fs::read(&neighbour).is_ok(),
                 std::fs::write(socket_path.join("relay.sock.tmp"), "x").is_ok(),
-                std::fs::write(token_file.with_file_name("written"), "x").is_ok(),
+                std::fs::write(devices.with_file_name("written"), "x").is_ok(),
             )
         })
         .join()
         .expect("the confined thread");
         assert_eq!((true, false, true, false), seen);
+    }
+
+    #[test]
+    fn a_confined_relay_rereads_its_devices_after_a_pair_and_a_revoke() {
+        let dir = tempfile::tempdir().expect("a dir");
+        let devices = devices_file(dir.path(), &line(PHONE, TOKEN));
+        let socket_dir = dir.path().join("run");
+        std::fs::create_dir(&socket_dir).expect("the socket dir");
+        let lain = std::os::unix::net::UnixListener::bind(socket_dir.join("relay.sock"))
+            .expect("bind the unix socket");
+        let phone = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind loopback");
+        let address = phone.local_addr().expect("the bound address");
+
+        // The rewrites come from a thread spawned before the relay confined
+        // itself, as `lain remote` runs outside the relay's ruleset.
+        let (ask, asked) = std::sync::mpsc::channel::<String>();
+        let (done, finished) = std::sync::mpsc::channel::<()>();
+        let written = devices.clone();
+        let writer = std::thread::spawn(move || {
+            for text in asked {
+                rewrite(&written, &text);
+                done.send(()).expect("say it is written");
+            }
+        });
+        let devices_dir = devices.parent().expect("the devices dir").to_path_buf();
+        let seen = std::thread::spawn(move || {
+            super::confine(&devices_dir, &socket_dir).expect("confine");
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .start_paused(true)
+                .build()
+                .expect("a runtime");
+            runtime.block_on(async move {
+                let rewrite = |text: String| {
+                    ask.send(text).expect("ask for a rewrite");
+                    finished.recv().expect("the rewrite");
+                };
+                lain.set_nonblocking(true).expect("nonblocking");
+                phone.set_nonblocking(true).expect("nonblocking");
+                spawn_relay(
+                    UnixListener::from_std(lain).expect("adopt"),
+                    TcpListener::from_std(phone).expect("adopt"),
+                    &devices,
+                );
+                let mut phone = connect(address).await;
+                let phone_admitted = hello_with(&mut phone, TOKEN).await.0 == Value::Nil;
+
+                rewrite(both_paired());
+                tokio::time::sleep(REREAD).await;
+                let mut tablet = connect(address).await;
+                let paired = hello_with(&mut tablet, TABLET_TOKEN).await.0 == Value::Nil;
+
+                rewrite(line(TABLET, TABLET_TOKEN));
+                tokio::time::sleep(REREAD).await;
+                let closed = phone.closes().await;
+                let mut again = connect(address).await;
+                let refused_again = hello_with(&mut again, TOKEN).await == refused();
+                let tablet_up = tablet.call("ping", vec![]).await.0 == Value::Nil;
+                (phone_admitted, paired, closed, refused_again, tablet_up)
+            })
+        })
+        .join()
+        .expect("the confined relay");
+        writer.join().expect("the writer");
+        assert_eq!((true, true, true, true, true), seen);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_answer_names_the_device_that_sent_it_whatever_it_claimed() {
+        let relay = Relay::start().await;
+        let mut lain = relay.lain().await;
+        publish(&mut lain, adding(parked("p1"))).await;
+        publish(&mut lain, adding(parked("p2"))).await;
+        let mut phone = relay.phone().await;
+        let mut tablet = relay.phone_as(TABLET_TOKEN).await;
+        assert_eq!(Value::Nil, phone.answer(&approve("p1")).await);
+        let claiming = approve("p2").stamped_by(PHONE);
+        assert_eq!(Value::Nil, tablet.answer(&claiming).await);
+        assert_eq!(
+            vec![answered("p1"), approve("p2").stamped_by(TABLET)],
+            first_answers(&mut lain).await.answers
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_revoked_device_is_closed_and_refused_while_another_keeps_answering() {
+        let relay = Relay::start().await;
+        let mut lain = relay.lain().await;
+        publish(&mut lain, adding(parked("p1"))).await;
+        let mut phone = relay.phone().await;
+        let mut tablet = relay.phone_as(TABLET_TOKEN).await;
+        let waiting = phone
+            .peer
+            .send("agenda.next", vec![at(1, phone.epoch)])
+            .await;
+        assert_eq!(None, phone.peer.reply_within(PROMPTLY).await, "{waiting}");
+
+        rewrite(&relay.devices, &line(TABLET, TABLET_TOKEN));
+        tokio::time::sleep(REREAD).await;
+        assert!(
+            phone.peer.closes().await,
+            "a revoked phone stayed connected"
+        );
+        let mut again = relay.stranger().await;
+        assert_eq!(refused(), hello_with(&mut again, TOKEN).await);
+        assert_eq!(Value::Nil, tablet.answer(&approve("p1")).await);
+        assert_eq!(
+            vec![approve("p1").stamped_by(TABLET)],
+            first_answers(&mut lain).await.answers
+        );
+    }
+
+    /// No socket here: real I/O lets paused time run ahead, which would hide
+    /// a reread that waits longer than one tick.
+    #[tokio::test(start_paused = true)]
+    async fn a_revoke_is_read_within_one_tick() {
+        async fn settle() {
+            for _ in 0..8 {
+                tokio::task::yield_now().await;
+            }
+        }
+        let dir = tempfile::tempdir().expect("a dir");
+        let devices = devices_file(dir.path(), &both_paired());
+        let mut watcher = Watcher::new(DevicesFile::new(devices.clone()));
+        let roster = watcher.read().expect("read the devices file");
+        let relay = std::sync::Arc::new(super::Relay {
+            paired: super::Paired::new(roster),
+            agenda: super::Agenda::default(),
+        });
+        tokio::spawn(super::reread(watcher, std::sync::Arc::clone(&relay)));
+        settle().await;
+
+        rewrite(&devices, &line(TABLET, TABLET_TOKEN));
+        tokio::time::advance(RELOAD_TICK - Duration::from_millis(1)).await;
+        settle().await;
+        assert!(
+            relay.paired.admit(TOKEN).is_some(),
+            "reread before its tick"
+        );
+        tokio::time::advance(Duration::from_millis(1)).await;
+        settle().await;
+        assert!(
+            relay.paired.admit(TOKEN).is_none(),
+            "a revoke was not read within one tick"
+        );
+        assert!(relay.paired.admit(TABLET_TOKEN).is_some());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_second_hello_on_an_admitted_connection_is_an_unknown_method() {
+        let relay = Relay::start().await;
+        let mut phone = relay.phone().await;
+        assert_eq!(
+            Value::from("unknown method \"hello\""),
+            hello_with(&mut phone.peer, TOKEN).await.0
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_device_paired_while_the_relay_runs_is_admitted_after_the_reread() {
+        let relay = Relay::start().await;
+        let mut early = relay.stranger().await;
+        assert_eq!(refused(), hello_with(&mut early, "a-new-watch-token").await);
+        let mut phone = relay.phone().await;
+
+        rewrite(
+            &relay.devices,
+            &(both_paired() + &line("watch", "a-new-watch-token")),
+        );
+        tokio::time::sleep(REREAD).await;
+        relay.hello_as("a-new-watch-token").await;
+        let (error, _) = phone.peer.call("ping", vec![]).await;
+        assert_eq!(Value::Nil, error, "a pair closed a device it did not name");
     }
 
     #[tokio::test(start_paused = true)]
@@ -1087,7 +1275,7 @@ mod tests {
         assert_eq!((waiting, Value::Nil), (msgid, error));
         let delivered: AnswersPage = message(&result);
         assert_eq!(
-            (1, vec![approve("p1")]),
+            (1, vec![answered("p1")]),
             (delivered.cursor, delivered.answers)
         );
     }
