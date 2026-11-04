@@ -16,7 +16,23 @@ RSpec.describe Lain::Frontend::Decorators::ToolCalled do
   end
 
   it "adds the outcome and the time when the call ends" do
-    expect(rendered(phase: "end", outcome: "ok", seconds: 0.4)).to eq("▸ [01ab] edit_file lib/a.rb  ok 0.4s")
+    expect(rendered(phase: "end", outcome: "ok", seconds: 15.31)).to eq("▸ [01ab] edit_file lib/a.rb  ok 15.3s")
+  end
+
+  it "shows a few milliseconds in ms" do
+    expect(rendered(phase: "end", outcome: "ok", seconds: 0.004)).to end_with("ok 4ms")
+  end
+
+  it "reads a call that rounds up to a second as 1.0s, never 1000ms" do
+    expect(rendered(phase: "end", outcome: "ok", seconds: 0.9996)).to end_with("ok 1.0s")
+  end
+
+  it "reads a call under half a millisecond as 0ms" do
+    expect(rendered(phase: "end", outcome: "ok", seconds: 0.0004)).to end_with("ok 0ms")
+  end
+
+  it "shows just under a second as 999ms" do
+    expect(rendered(phase: "end", outcome: "ok", seconds: 0.9994)).to end_with("ok 999ms")
   end
 
   it "carries the first line of an error in the outcome" do

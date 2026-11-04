@@ -13,7 +13,7 @@ module Lain
         def stamped? = true
 
         # @param theme [Frontend::Theme]
-        # @return [String] `▸ [call tag] tool summary`, plus `  outcome 0.4s` once the call ended
+        # @return [String] `▸ [call tag] tool summary`, plus `  outcome 400ms` once the call ended
         def render(theme) = theme.paint(:tool_header, [head, tail].compact.join("  "))
 
         private
@@ -25,7 +25,12 @@ module Lain
         def tail
           return unless @event.phase == "end"
 
-          format("%<outcome>s %<seconds>.1fs", outcome: @event.outcome, seconds: @event.seconds)
+          "#{@event.outcome} #{elapsed}"
+        end
+
+        def elapsed
+          millis = (@event.seconds * 1000).round
+          millis < 1000 ? "#{millis}ms" : format("%<seconds>.1fs", seconds: @event.seconds)
         end
       end
     end
