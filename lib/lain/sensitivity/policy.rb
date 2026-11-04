@@ -143,6 +143,10 @@ module Lain
         # @return [Bounds] none: with no project, nothing is held
         def bounds = Bounds::NONE
 
+        # @param worker_env [WorkerEnv] where the worker runs
+        # @return [Bounds] the worker's, cut from none
+        def bounds_at(worker_env) = Policy.cut(self, worker_env)
+
         # @return [nil] no home was configured
         def home = nil
 
@@ -208,19 +212,27 @@ module Lain
 
         attr_reader :policy
 
-        # @return [Bounds] a path it reads is in scope for a read, and one it writes for a write
-        attr_reader :bounds
-
         # @param policy [Policy] what every other answer is
-        # @param bounds [Bounds] what is in scope
+        # @param bounds [Bounds, Bounds::Cell] what is in scope; a cell is held as it is, so
+        #   the spawner that grows an agent's bounds and the policy that reads them share it
         # @param anchors [Hash] the policy's home and root as configured, so a
         #   landing is also spelled under them
         def initialize(policy:, bounds:, anchors:)
           @policy = policy
           @anchors = anchors
-          @bounds = bounds
+          @cell = Bounds::Cell.of(bounds)
           freeze
         end
+
+        # @return [Bounds] a path it reads is in scope for a read, and one it writes for a write
+        def bounds = @cell.current
+
+        # A confined policy is already cut to its own worker, and its cell has
+        # grown with the leases that worker handed out, which a recut would drop.
+        #
+        # @param _worker_env [WorkerEnv]
+        # @return [Bounds] its own, as they are now
+        def bounds_at(_worker_env) = bounds
 
         # @param bounds [Bounds] held in place of these, over the same policy
         # @return [Confined]
@@ -336,7 +348,8 @@ module Lain
         # Every spelling is of where the path lands, so a link that leaves is
         # judged at its target; a related directory is matched as configured.
         def held?(named, question = :read?)
-          landings(named).any? { @bounds.public_send(question, _1) || @policy.in_related_tree?(_1) }
+          held = bounds
+          landings(named).any? { held.public_send(question, _1) || @policy.in_related_tree?(_1) }
         end
       end
 
@@ -510,6 +523,9 @@ module Lain
       # @return [Bounds]
       def self.bounds_for(policy, worker_env) = worker_env.bounds || cut(policy, worker_env)
 
+      # @param policy [Policy, Confined, Null] whose bounds the worker's are cut from
+      # @param worker_env [WorkerEnv]
+      # @return [Bounds]
       def self.cut(policy, worker_env)
         facts = policy.file_facts
         checkout = worker_env.checkout
@@ -517,13 +533,22 @@ module Lain
 
         policy.bounds.with_child(checkout, facts:).lend(checkout, facts:)
       end
-      private_class_method :cut
+
+      # @param worker_env [WorkerEnv] where the worker runs
+      # @return [Bounds] this worker's, cut from these
+      def bounds_at(worker_env) = Policy.cut(self, worker_env)
+
+      # The cell of the agent a stack asks through, which holds the leases it
+      # has handed its children; a context that is no stack's names none.
+      def self.held_cell_of(context) = context.respond_to?(:bounds_cell) ? context.bounds_cell : nil
+      private_class_method :held_cell_of
 
       # @param policy [Policy, Confined, Null]
       # @param context [Session, #worker_env, nil] as a middleware env carries it
       # @return [Confined] the policy held to the bounds of the worker the context runs in
       def self.confined_at(policy, context)
-        policy.confined(bounds_for(policy, ::Lain::Session.worker_env_of(context)))
+        worker_env = ::Lain::Session.worker_env_of(context)
+        policy.confined(held_cell_of(context) || worker_env.bounds || policy.bounds_at(worker_env))
       end
 
       # The path a call names, read off {PATH_FIELDS}, and nil for a call that

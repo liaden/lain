@@ -153,9 +153,13 @@ module Lain
       # new parameter, because `rule(effect, context)` is what every policy on
       # this seam already answers. What it wraps is adapted the way the Gate
       # adapts what it is handed, since the Gate only ever sees this wrapper.
-      Asking = Data.define(:policy, :requester, :task) do
-        def initialize(policy:, requester:, task: nil)
-          super(policy: Middleware::Gate::Callable.of(policy), requester:, task:)
+      #
+      # Given the agent's cell, the context also says whose bounds a path is
+      # judged against: the ladder reads the board's one policy, which holds
+      # nobody's leases ({Sensitivity::Policy.confined_at}).
+      Asking = Data.define(:policy, :requester, :task, :cell) do
+        def initialize(policy:, requester:, task: nil, cell: nil)
+          super(policy: Middleware::Gate::Callable.of(policy), requester:, task:, cell:)
         end
 
         def call(effect, context) = rule(effect, context).allow?
@@ -166,7 +170,32 @@ module Lain
 
         private
 
-        def requested(context) = Approval::Parked::PolicySwitch::Requested.new(context, requester, task:)
+        def requested(context)
+          Approval::Parked::PolicySwitch::Requested.new(cell ? Celled.new(context, cell) : context, requester, task:)
+        end
+      end
+
+      # The gate policy of an agent nobody named: the policy's own, asked
+      # through a context that says whose bounds a path is judged against.
+      Celling = Data.define(:policy, :cell) do
+        def call(effect, context) = rule(effect, context).allow?
+
+        def rule(effect, context) = policy.rule(effect, Celled.new(context, cell))
+      end
+
+      # A context that also answers the cell holding its agent's bounds.
+      # A delegator, as {Approval::Parked::PolicySwitch::Requested} is, so a
+      # rung reading the session still gets one.
+      class Celled < SimpleDelegator
+        # @return [Sensitivity::Bounds::Cell]
+        attr_reader :bounds_cell
+
+        # @param context [Object] what the gate threads
+        # @param bounds_cell [Sensitivity::Bounds::Cell]
+        def initialize(context, bounds_cell)
+          super(context)
+          @bounds_cell = bounds_cell
+        end
       end
 
       # What a chat's spawn seam carries as its tool middleware: a builder over
@@ -185,11 +214,22 @@ module Lain
       #
       # A child whose lease cut a checkout is held inside it ({.child_stack}):
       # outside plan the board's scope confines nothing.
-      Spawned = Data.define(:chronicle, :board, :requester) do
+      #
+      # `cell` is where the next stack it builds is cut into, nil until a
+      # spawn tells it ({#holding}), so a cell is per child and never per builder.
+      Spawned = Data.define(:chronicle, :board, :requester, :cell) do
+        def initialize(chronicle:, board:, requester:, cell: nil) = super
+
         # @param worker_env [WorkerEnv] the environment the child runs in
         # @param task [String, nil] what the child was spawned to do, asked about beside its name
         # @return [Middleware::Stack] a fresh one per child
-        def call(worker_env, task: nil) = ToolGuard.child_stack(chronicle, board.call, worker_env, requester:, task:)
+        def call(worker_env, task: nil)
+          ToolGuard.child_stack(chronicle, board.call, worker_env, requester:, task:, cell:)
+        end
+
+        # @param cell [Sensitivity::Bounds::Cell] where the child's bounds are held, for its spawner to grow
+        # @return [Spawned] this builder, cutting its next stack into that cell
+        def holding(cell) = with(cell:)
 
         # Read off the board as a child is built, never before.
         def guard_inputs = board.call.guard_inputs
@@ -207,8 +247,12 @@ module Lain
       # holds. Until then its gate asks as the run's own agent. No current
       # caller spawns a role over it except through {#never_parking}, whose
       # copy names the child's role the same way.
-      Detached = Data.define(:chronicle, :guard_inputs, :requester) do
-        def initialize(chronicle:, guard_inputs:, requester: nil) = super
+      Detached = Data.define(:chronicle, :guard_inputs, :requester, :cell) do
+        def initialize(chronicle:, guard_inputs:, requester: nil, cell: nil) = super
+
+        # @param cell [Sensitivity::Bounds::Cell] as {Spawned#holding}
+        # @return [Detached]
+        def holding(cell) = with(cell:)
 
         # @param worker_env [WorkerEnv] the environment the child runs in
         # @param task [String, nil] what the child was spawned to do, asked about beside its name
@@ -217,7 +261,8 @@ module Lain
           return leased(worker_env, task) if worker_env.checkout
 
           ToolGuard.working(chronicle, guard_inputs, worker_env,
-                            ToolGuard.named(guard_inputs.policy_for.call(worker_env), requester, task:), requester:)
+                            ToolGuard.named(guard_inputs.policy_for.call(worker_env), requester, task:, cell:),
+                            requester:, cell:)
         end
 
         # @return [NeverParking]
@@ -229,7 +274,7 @@ module Lain
           fresh = LEASES.for(worker_env)
           # A run with no project root classes a program by the lease, which is a copy of the project.
           resolver = ::Lain::Shell::Executable::Resolver.new(root: worker_env.checkout, fresh:)
-          ToolGuard.leased(chronicle, guard_inputs, worker_env, requester:, task:, fresh:, resolver:)
+          ToolGuard.leased(chronicle, guard_inputs, worker_env, requester:, task:, fresh:, resolver:, cell:)
         end
       end
 
@@ -507,12 +552,13 @@ module Lain
       # @param worker_env [WorkerEnv] the environment the child runs in
       # @param requester [Requester, String] who a human is told is asking
       # @param task [String, nil] what the child was spawned to do
+      # @param cell [Sensitivity::Bounds::Cell, nil] where its bounds are held, so its spawner can grow them
       # @return [Middleware::Stack]
-      def child_stack(chronicle, board, worker_env, requester:, task: nil)
+      def child_stack(chronicle, board, worker_env, requester:, task: nil, cell: nil)
         inputs = board.guard_inputs
-        asking = Asking.new(policy: inputs.policy_for.call(worker_env), requester:, task:)
+        asking = Asking.new(policy: inputs.policy_for.call(worker_env), requester:, task:, cell:)
         bounded = bounded(inputs, worker_env)
-        layered(chronicle, confined(inputs, bounded), inputs.test_layout.roots_for(worker_env), asking,
+        layered(chronicle, confined(inputs, bounded, cell), inputs.test_layout.roots_for(worker_env), asking,
                 requester:, held: held_for(bounded, home: inputs.sensitivity.home))
       end
 
@@ -550,9 +596,9 @@ module Lain
       # Its path policy is confined to the worker's bounds and its related
       # directories, so a read anywhere else asks first. The main agent's stack
       # is built by {.stack} and reads where it likes.
-      def working(chronicle, inputs, worker_env, policy = inputs.policy, requester: nil, held: [])
-        layered(chronicle, confined(inputs, bounded(inputs, worker_env)), inputs.test_layout.roots_for(worker_env),
-                policy, requester:, held:)
+      def working(chronicle, inputs, worker_env, policy = inputs.policy, requester: nil, held: [], cell: nil)
+        layered(chronicle, confined(inputs, bounded(inputs, worker_env), cell),
+                inputs.test_layout.roots_for(worker_env), policy, requester:, held:)
       end
 
       # A child of a run with no chat, leased a checkout: held inside it as a
@@ -566,14 +612,15 @@ module Lain
       # @param task [String, nil] what the child was spawned to do
       # @param fresh [#fresh?] whether a path was written during the lease
       # @param resolver [#for] what a command's programs resolve to, over `fresh`
+      # @param cell [Sensitivity::Bounds::Cell, nil] as on {.child_stack}
       # @return [Middleware::Stack]
-      def leased(chronicle, inputs, worker_env, fresh:, resolver:, requester: nil, task: nil)
+      def leased(chronicle, inputs, worker_env, fresh:, resolver:, requester: nil, task: nil, cell: nil)
         bounded = bounded(inputs, worker_env)
-        held = confined(inputs, bounded)
+        held = confined(inputs, bounded, cell)
         policy = LeasedPolicy.new(sensitivity: held.sensitivity, lease: worker_env.checkout,
                                   allow: inputs.policy_for.call(worker_env), home: inputs.sensitivity.home,
                                   resolver:, fresh:)
-        layered(chronicle, held, inputs.test_layout.roots_for(worker_env), named(policy, requester, task:),
+        layered(chronicle, held, inputs.test_layout.roots_for(worker_env), named(policy, requester, task:, cell:),
                 requester:, held: held_for(bounded, home: inputs.sensitivity.home))
       end
 
@@ -584,10 +631,21 @@ module Lain
       # @param policy [#rule]
       # @param requester [Requester, String, nil]
       # @param task [String, nil] what the child was spawned to do
+      # @param cell [Sensitivity::Bounds::Cell, nil] the asking agent's bounds, for a ladder to judge paths by
       # @return [#rule]
-      def named(policy, requester, task: nil) = requester ? Asking.new(policy:, requester:, task:) : policy
+      def named(policy, requester, task: nil, cell: nil)
+        return Asking.new(policy:, requester:, task:, cell:) if requester
 
-      def confined(inputs, bounded) = inputs.with(sensitivity: inputs.sensitivity.confined(bounded.bounds))
+        cell ? Celling.new(policy: Middleware::Gate::Callable.of(policy), cell:) : policy
+      end
+
+      # The worker's bounds are cut into the cell its spawner was given, so the leases that
+      # spawner takes for its children grow the bounds this path policy reads.
+      def confined(inputs, bounded, cell)
+        held = cell || Lain::Sensitivity::Bounds::Cell.new(Lain::Sensitivity::Bounds::NONE)
+        held.swap { _1 | bounded.bounds }
+        inputs.with(sensitivity: inputs.sensitivity.confined(held))
+      end
 
       # The configured members, then the eight guards over one set of inputs,
       # the layout held at `roots`, and the gate's two layers asking `policy`

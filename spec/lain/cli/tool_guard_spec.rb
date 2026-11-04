@@ -813,6 +813,96 @@ RSpec.describe Lain::CLI::ToolGuard do
       expect(gate.contexts.size).to eq(1)
     end
 
+    describe "that spawned a child into a lease of its own" do
+      let(:cell) { Lain::Sensitivity::Bounds::Cell.new(Lain::Sensitivity::Bounds::NONE) }
+      let(:stack) { described_class.child_stack(chronicle, board, leased, requester: "orchestrator", cell:) }
+
+      def grepped_through(stack, path)
+        tool = Lain::Tools::Grep.new
+        effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_3", name: tool.name,
+                                            input: { "pattern" => "hello", path: })
+        stack.call({ effect:, tool:, context: Lain::Session.new(worker_env: leased) }) do |inner|
+          inner.merge(result: Lain::Tool::Result.ok("ran"))
+        end.fetch(:result)
+      end
+
+      it "cuts the cell it was given to the lease" do
+        stack
+
+        expect(cell.current).to eq(Lain::Sensitivity::Policy.bounds_for(board.sensitivity, leased))
+      end
+
+      it "reads under a lease the cell took after the stack was built, without parking it" do
+        stack
+        cell.swap { _1.with_child(@sibling) }
+
+        expect(grepped_through(stack, File.join(@sibling, "README.md"))).to have_attributes(is_error: false)
+        expect(gate.contexts).to be_empty
+      end
+
+      it "still asks before it reads a lease the cell never took" do
+        stack
+        cell.swap { _1.with_child(File.join(@base, "children", "other")) }
+
+        expect(grepped_through(stack, File.join(@sibling, "README.md"))).to have_attributes(is_error: true)
+      end
+
+      it "is judged by the ladder where the gate holds it, through the context the stack asks it in" do
+        stack
+        cell.swap { _1.with_child(@sibling) }
+        grepped_through(stack, File.join(@base, "children", "stray", "README.md"))
+        place = Lain::Sensitivity::Policy.confined_at(board.sensitivity, gate.contexts.last)
+        landed = File.join(@sibling, "README.md")
+
+        expect([place.outside?(landed, cwd: @lease), place.writes_outside?(landed, cwd: @lease)]).to eq([false, true])
+      end
+
+      it "tells a ladder asked for nobody in particular whose bounds hold the path" do
+        cell.swap { _1.with_child(@sibling) }
+        tool = Lain::Tools::Grep.new
+        effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_4", name: tool.name,
+                                            input: { "pattern" => "hello", "path" => @sibling })
+        described_class.named(gate, nil, cell:).rule(effect, Lain::Session.new(worker_env: leased))
+        place = Lain::Sensitivity::Policy.confined_at(board.sensitivity, gate.contexts.last)
+
+        expect(place.outside?(File.join(@sibling, "README.md"), cwd: @lease)).to be(false)
+      end
+
+      it "keeps the leases a cell already holds when a second stack is cut into it" do
+        stack
+        cell.swap { _1.with_child(@sibling) }
+        described_class.child_stack(chronicle, board, leased, requester: "resolver", cell:)
+
+        expect(cell.current.read?(File.join(@sibling, "README.md"))).to be(true)
+      end
+
+      it "keeps the cell of each stack built over the one environment" do
+        resolver_cell = Lain::Sensitivity::Bounds::Cell.new(Lain::Sensitivity::Bounds::NONE)
+        resolver = described_class.child_stack(chronicle, board, leased, requester: "resolver", cell: resolver_cell)
+        stack
+        cell.swap { _1.with_child(@sibling) }
+
+        expect(grepped_through(stack, File.join(@sibling, "README.md"))).to have_attributes(is_error: false)
+        expect(grepped_through(resolver, File.join(@sibling, "README.md"))).to have_attributes(is_error: true)
+      end
+
+      it "is built over the cell its Spawned builder is told to hold" do
+        spawned = described_class::Spawned.new(chronicle:, board: -> { board }, requester: "orchestrator")
+        held = spawned.holding(cell).call(leased)
+        expect(spawned.holding(cell).cell).to be(cell)
+        cell.swap { _1.with_child(@sibling) }
+
+        expect(grepped_through(held, File.join(@sibling, "README.md"))).to have_attributes(is_error: false)
+      end
+
+      it "is built over a cell of its own by a Detached builder told to hold one" do
+        built = described_class.detached(journal:).holding(cell).call(leased)
+        cell.swap { _1.with_child(@sibling) }
+
+        expect(grepped_through(built, File.join(@sibling, "README.md"))).to have_attributes(is_error: false)
+      end
+    end
+
     it "is held past its lease only where the bounds its environment carries write" do
       write = Lain::Tools::WriteFile.new
       effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_2", name: write.name,

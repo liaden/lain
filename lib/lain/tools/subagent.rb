@@ -246,8 +246,8 @@ module Lain
       # grandchild is clamped to what the child has left, never to what this
       # tool's own holder had. Public only for {ChildBuilder}, which is not a
       # Subagent, so `protected` can no longer say "only the spawn machinery".
-      def descend(parent:, escalation:, holder:, spend: Budget::Shared::Null)
-        config = @builder.config(parent:, escalation:, holder:, spend:)
+      def descend(parent:, escalation:, holder:, bounds: NO_BOUNDS, spend: Budget::Shared::Null)
+        config = @builder.config(parent:, escalation:, holder:, bounds:, spend:)
         self.class.new(**config, name: @name, announces_as: @announces_as, mode: @mode, log: @log, answer: @answer)
       end
 
@@ -435,6 +435,7 @@ module Lain
       def leased(record, prompt, scope:, lease:, on_stream_started:, builder:, announced:, opening:, stops:)
         scope, lent = lending(scope, lease)
         lent.hold(@name, journal:) do |worker_env, sync, worker, keep = Isolation::Leases::KEEP_NOTHING|
+          leased_to_child(worker_env)
           spawn = record.spawned(prompt, resumed: opening.resumed)
           progress = reporting(spawn, prompt, worker, announced)
           child = build_child(record.parent, worker_env, scope, progress:, task: prompt, builder:, opening:)
@@ -442,6 +443,16 @@ module Lain
                                 announced:, scope:, lease:, parent: EventLog::ChainWriter.correlation_of(record.parent))
           run_child(record.built(child), opening, sync, on_stream_started:, stopping: stops.keeping(stopped, keep))
         end
+      end
+
+      # The parent reads what it leased, so it can review the tree its child
+      # handed back; a child never reads a sibling's, which its own bounds cut apart.
+      #
+      # The lease stays in the cell after the handback, since reading what the
+      # child left is what a parent does next.
+      def leased_to_child(worker_env)
+        dir = worker_env.checkout
+        Lain.live(@seam.bounds).swap { _1.with_child(dir) } if dir
       end
 
       # Under plan the board lends its spike instead, since it refuses a write in any lease outside it.
@@ -1136,9 +1147,9 @@ module Lain
 
         # Each spawner descends as its own, so every role on offer is capped at
         # the child's ceiling exactly as a lone spawner would be.
-        def descend(parent:, escalation:, holder:, spend: Budget::Shared::Null)
+        def descend(parent:, escalation:, holder:, bounds: NO_BOUNDS, spend: Budget::Shared::Null)
           self.class.new(@spawners.transform_values do |spawner|
-            spawner.descend(parent:, escalation:, holder:, spend:)
+            spawner.descend(parent:, escalation:, holder:, bounds:, spend:)
           end)
         end
 
@@ -1185,6 +1196,9 @@ module Lain
       # Config::Middleware has no value equality, so a fresh empty would make 2
       # unconfigured seams compare unequal.
       NO_MIDDLEWARE = Config::Middleware.empty
+
+      # The cell of a spawner no policy confines: one nothing reads, so a lease taken into it is no one's.
+      NO_BOUNDS = -> { Sensitivity::Bounds::Cell.new(Sensitivity::Bounds::NONE) }
 
       # The scope of a seam no board confines.
       module UNSCOPED
@@ -1577,7 +1591,7 @@ module Lain
       # {Ext::Event}/{Canonical} sense.
       Seam = Data.define(:provider, :context_factory, :parent, :tool_middleware, :journal, :telemetry, :display_channel,
                          :supervisor, :observer, :askers, :isolation, :escalation, :scope, :attachments, :middleware,
-                         :twins, :holder, :spend) do
+                         :twins, :holder, :spend, :bounds) do
         # Everything after `tool_middleware` defaults to its Null object. The
         # first four stay required, so Data's own missing-keyword error is the
         # loud failure, unwritten.
@@ -1654,6 +1668,11 @@ module Lain
         #
         # `spend` is the holder's {Budget::Shared}, or a thunk answering it:
         # where a child's token grant is reserved and its spend settles.
+        #
+        # `bounds` is the holder's {Sensitivity::Bounds::Cell}, or a thunk
+        # answering it: where each checkout leased to a child is taken as a
+        # lease the holder may read. It is late-bound because the holder's tool
+        # stack, which reads the cell, is built after the union this seam rides in.
         def initialize(provider:, context_factory:, parent:, tool_middleware:, journal: Channel::Null.instance,
                        telemetry: Channel::Null.instance, display_channel: Channel::Null.instance,
                        supervisor: Supervisor::Null, observer: NO_OBSERVER,
@@ -1661,7 +1680,7 @@ module Lain
                        escalation: [AskHuman::HUMAN].freeze, scope: UNSCOPED,
                        attachments: Middleware::ResolveAttachments::Unwired,
                        middleware: NO_MIDDLEWARE, twins: Lineage::Twins::Null, holder: Holder::ROOT,
-                       spend: Budget::Shared::Null)
+                       spend: Budget::Shared::Null, bounds: NO_BOUNDS)
           Seam.refuse_unbuildable(tool_middleware)
 
           super
@@ -1847,8 +1866,8 @@ module Lain
         # `parent`'s: a bound model is ONE child's property, not a subtree's.
         # The copy this builds is the run's own `subagent` tool descending into
         # a child's union, and what binds a grandchild is whoever spawns it.
-        def config(parent:, escalation:, holder:, spend:)
-          { seam: @seam.with(parent:, escalation:, holder:, spend:), toolset: @toolset, policy: @policy,
+        def config(parent:, escalation:, holder:, bounds:, spend:)
+          { seam: @seam.with(parent:, escalation:, holder:, bounds:, spend:), toolset: @toolset, policy: @policy,
             budget: @budget, persona: @persona }
         end
 
@@ -1879,9 +1898,11 @@ module Lain
           child = nil
           spend = Budget::Shared.new
           chain = own_chain(parent, progress, opening) { child.timeline }
-          union = child_union(chain.timeline, chain.escalation, Holder.of(-> { child }), spend)
           view = @compaction.call(base: chain.base, worker_env: scope.env_over(worker_env), scope:)
-          spawned(@seam.askers.enrol(chain.asking_handle, agent: @name), chain, union, view, task:, spend:)
+          # Minted afresh for a resumed child too, so what it leased to its own children before a stop is not read back.
+          cell = Sensitivity::Bounds::Cell.new(Sensitivity::Bounds::NONE)
+          union = child_union(chain.timeline, chain.escalation, Holder.of(-> { child }), spend, cell)
+          spawned(@seam.askers.enrol(chain.asking_handle, agent: @name), chain, union, view, task:, spend:, cell:)
             .tap { |built| child = built.agent }
         end
 
@@ -1922,11 +1943,11 @@ module Lain
         # for anyone to hang a `deregister` on, and retention runs from
         # `register` to `deregister` and nothing else -- so this method is the
         # only place that release can live.
-        def spawned(enrolled, chain, union, view, task:, spend:)
+        def spawned(enrolled, chain, union, view, task:, spend:, cell:)
           child = nil
           asker = enrolled.asker
           allowed = granted(@policy.attenuate(union), asker)
-          child = Child.new(agent: spawn_agent(chain, granted(union, asker), allowed, view, task:, spend:),
+          child = Child.new(agent: spawn_agent(chain, granted(union, asker), allowed, view, task:, spend:, cell:),
                             registration: enrolled.registration, tools: allowed.names, asker:, feed: chain.feed,
                             reservation: @reservation)
         ensure
@@ -1968,10 +1989,9 @@ module Lain
         # only because this union is assembled below the trust boundary: a run's
         # own wiring decides what is in it, never the model, so a tool answering
         # the duck is one lain put there.
-        def child_union(parent_handle, escalation, holder, spend)
-          Toolset.new(@toolset.map do |tool|
-            tool.respond_to?(:descend) ? tool.descend(parent: parent_handle, escalation:, holder:, spend:) : tool
-          end)
+        def child_union(parent_handle, escalation, holder, spend, bounds)
+          over = { parent: parent_handle, escalation:, holder:, spend:, bounds: }
+          Toolset.new(@toolset.map { |tool| tool.respond_to?(:descend) ? tool.descend(**over) : tool })
         end
 
         # A fresh {Session} per spawn -- never {Session::Null} -- so a
@@ -1995,13 +2015,13 @@ module Lain
         # The child Agent's `tool_cancelled` records discard, deliberately,
         # while the seam's records around it reach the session file: in the
         # parent's file they would read as the parent's.
-        def spawn_agent(chain, union, allowed, (pipeline_source, session), task:, spend:)
+        def spawn_agent(chain, union, allowed, (pipeline_source, session), task:, spend:, cell:)
           mailbox = child_mailbox(chain)
           Agent.new(
             provider: @seam.provider, context: child_context(session.worker_env),
             toolset: @policy.posture.rendered_toolset(union:, allowed:), handler: Effect::Handler::Live.new,
             timeline: chain.base, turn_middleware: recorded_turns(chain, mailbox),
-            model_middleware: child_budget, tool_middleware: child_stack(session.worker_env, allowed, task:),
+            model_middleware: child_budget, tool_middleware: child_stack(session.worker_env, allowed, task:, cell:),
             session:, budget: @budget, accounting: child_accounting(chain, spend), pipeline_source:, mailbox:,
             display: CLI::JournalTee.new(@seam.telemetry, @seam.display_channel), display_as: @name
           )
@@ -2067,8 +2087,10 @@ module Lain
         # first: the builder is the only place a child's gate comes from, so a
         # stack it does not end in the gate is refused here, as the child is
         # built and before any of its tools can run.
-        def child_stack(worker_env, allowed, task:)
-          stack = Middleware::Gate.closes!(Middleware::Stack.new(@seam.tool_middleware.call(worker_env, task:).to_a))
+        def child_stack(worker_env, allowed, task:, cell:)
+          guard = @seam.tool_middleware
+          guard = guard.holding(cell) if guard.respond_to?(:holding)
+          stack = Middleware::Gate.closes!(Middleware::Stack.new(guard.call(worker_env, task:).to_a))
           return stack unless @policy.posture.refuses_over_union?
 
           stack.insert_before(path_refusal(stack),

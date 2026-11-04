@@ -52,9 +52,10 @@ class SubagentSpecIsolation
 
   # `reclaim: :refuse` is {Lain::Isolation::Worktree}'s real teardown failure:
   # `#remove` raises rather than leave a checkout it could not reclaim standing.
-  def initialize(root, reclaim: :succeed)
+  def initialize(root, reclaim: :succeed, checkouts: false)
     @root = root
     @reclaim = reclaim
+    @checkouts = checkouts
     @worker_ids = []
     @leased = []
     @released = []
@@ -69,8 +70,9 @@ class SubagentSpecIsolation
 
       claim(path, worker_id)
     end
+    origin = @checkouts ? Lain::Isolation::Lease::Origin.new(path:) : Lain::Isolation::Lease::Origin.new
     Lain::Isolation::Lease.new(worker_env: Lain::WorkerEnv.default.with(cwd: path),
-                               on_release: -> { give_back(path) })
+                               on_release: -> { give_back(path) }, origin:)
   end
 
   private
@@ -3263,6 +3265,72 @@ RSpec.describe Lain::Tools::Subagent do
       expect(grandchild).not_to eq(child)
       expect(seen).not_to include(Dir.pwd)
       expect(seen.sort).to eq(backend.leased.sort)
+    end
+
+    describe "the bounds cell of the parent that leases the checkouts" do
+      let(:backend) { SubagentSpecIsolation.new(leases_root, checkouts: true) }
+      let(:cell) { Lain::Sensitivity::Bounds::Cell.new(Lain::Sensitivity::Bounds::NONE) }
+      let(:own_cell) { Lain::Sensitivity::Bounds::Cell.new(Lain::Sensitivity::Bounds::NONE) }
+
+      def spawner(**over)
+        build_subagent(provider: mock(text_response("done")), toolset: cwd_only, isolation: leases,
+                       policy: spawn_policy(only: %i[cwd]), **over)
+      end
+
+      it "takes each checkout it cuts for a child as a lease it may read, and no other" do
+        tool = spawner(bounds: -> { own_cell })
+        2.times { expect(tool.call({ "prompt" => "go" }, invocation)).to be_ok }
+
+        expect(backend.leased.size).to eq(2)
+        expect(backend.released).to eq(backend.leased)
+        expect(backend.leased).to all(satisfy { own_cell.current.read?(File.join(_1, "Cargo.toml")) })
+        expect(own_cell.current.read?(File.join(leases_root, "other", "Cargo.toml"))).to be(false)
+      end
+
+      it "takes a cell given directly as well as one answered late" do
+        expect(spawner(bounds: own_cell).call({ "prompt" => "go" }, invocation)).to be_ok
+
+        expect(own_cell.current.read?(File.join(backend.leased.first, "Cargo.toml"))).to be(true)
+      end
+
+      it "takes nothing for a lease that cut no checkout" do
+        plain = SubagentSpecIsolation.new(leases_root)
+        tool = spawner(bounds: own_cell, isolation: Lain::Isolation::Leases.new(backend: plain))
+
+        expect(tool.call({ "prompt" => "go" }, invocation)).to be_ok
+        expect(own_cell.current).to eq(Lain::Sensitivity::Bounds::NONE)
+      end
+
+      it "descends onto the cell of the child it descends into, and leaves the parent's alone" do
+        parents = spawner(bounds: -> { cell })
+        child = parents.descend(parent:, escalation: [Lain::Tools::AskHuman::HUMAN], bounds: -> { own_cell },
+                                holder: Lain::Tools::Subagent::Holder.at(2))
+
+        expect(child.call({ "prompt" => "go" }, invocation)).to be_ok
+        expect(own_cell.current.read?(File.join(backend.leased.first, "Cargo.toml"))).to be(true)
+        expect(cell.current.read?(File.join(backend.leased.first, "Cargo.toml"))).to be(false)
+      end
+
+      it "gives a nested spawner the cell its child's tool stack was told to hold" do
+        held = []
+        holding = Object.new
+        holding.define_singleton_method(:holding) { |cell| (held << cell) && self }
+        holding.define_singleton_method(:call) { |worker_env, **| ToolRegistry::UNGUARDED.call(worker_env) }
+        provider = mock(tool_response(["c1", "subagent", { "prompt" => "deeper" }]), text_response("grandchild done"),
+                        text_response("child done"))
+        inner = build_subagent(provider:, toolset: cwd_only, policy: spawn_policy(only: %i[cwd]), depth: 9,
+                               isolation: leases, tool_middleware: holding)
+        tool = build_subagent(provider:, toolset: cwd_only(inner), depth: 2, isolation: leases,
+                              policy: spawn_policy(only: %i[cwd subagent]), tool_middleware: holding)
+
+        expect(tool.call({ "prompt" => "start" }, invocation)).to be_ok
+
+        child, grandchild = held
+        child_dir, grandchild_dir = backend.leased
+        expect([child.current.read?(File.join(grandchild_dir, "x")), child.current.read?(File.join(child_dir, "x"))])
+          .to eq([true, false])
+        expect(grandchild.current.read?(File.join(child_dir, "x"))).to be(false)
+      end
     end
 
     # The teardown that FAILS. {Lain::Isolation::Worktree#remove} raises rather
