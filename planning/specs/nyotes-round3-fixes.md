@@ -2758,3 +2758,62 @@ The comment at `redact_secret_reads.rb:113-125` calls this the last fail-open in
 - T36 landed 649e45e0 (attempt 2)
 23:53 T36 landed 649e45e0 (attempt 2)
 23:54 T25 started (sonnet), T28 started (sonnet), T18 started (opus); all cut at 649e45e0
+23:56 T25 done (subagent_spec 311/2 red, 311/0); review started (low)
+23:56 T50 R2 done (cargo 22+4, deny ok, :core 1/0, core 14/0, 341/0); second review started
+23:58 T18 stopped pre-code on 2 out-of-list files. Ruled: judged.rb place_for joins (T19 not in flight); TurnUsage gains requester mirroring RequestSent plus agent? predicate, 7 readers and turn_usage.rb join; option a (role in spawn) refused. T25 review APPROVE-WITH-FIXES: actor spawn drops iterations silently (substantive, small) plus spec grouping nit; fix round then short second review.
+00:00 T25 R2 done (312/1 red; 784/0); second review started
+00:01 T25 second review APPROVE-WITH-FIXES (wording nit, fixed by main session: 'Not for actors.'); approved
+00:02 T25 landing
+- T25 landed d98a5597 (attempt 1)
+00:04 T25 landed d98a5597
+00:04 T17 started (sonnet), cut at d98a5597
+00:06 T17 stopped pre-code: cell must reach both Confined (tool_guard.rb) and the descended Subagent. Ruled: tool_guard.rb and spec join; cell made where bounded is cut, passed via a new Seam member
+00:14 T28 R2 done (6/6 red; 1371/0, wider 7448/0); review started (medium). Note: T28 and T18 both touch wiring.rb now; trial-merge and rubocop before the second lands
+00:20 T17 done (4330/0, 1048/0); review started (high: process-global Cell registry, actor leases not covered)
+00:23 T28 review APPROVE-WITH-FIXES: unnamed skill resets grant to default (substantive), resume seam spec, WHAT comment, repl_spec setup. Fix round sent, second review after. FU-14: repl.rb:349 and repl/ask.rb:56 read :iterations only for user extras middleware; delete or name. FU-15: fork_result drops the run allowance.
+00:26 T28 R3 done (4 red; 2013/0); budget.rb and table_spec joined; second review started
+00:29 T17 review REQUEST-CHANGES: Cell registry keyed by env, and InPlace leases share the lender's env, so the conflict resolver steals the orchestrator's cell (blocker); confined_at drops children for judge facts; lease kept after handback (ruled keep plus WHY); 3 nits. Fix round sent, second review after.
+00:32 T18 done (11580/1, the 1 being the main session's wiring); wiring applied in worktree, adjudicator_spec 87/0, rubocop clean. Sent back for the 0.5 s wall-clock margin in the admission-pause spec before review. Joined by ruling: Bounds#readable in bounds.rb, 4 constructor-call specs, auto.ndjson prompt digests.
+00:33 T28 second review APPROVE; landing
+- T28 landed 4243c082 (attempt 1)
+00:37 T28 landed 4243c082
+00:37 T29 started (opus), cut at 4243c082
+00:38 T18 R2 done (judge 54/1 red; 61/0; 152/0); review started (high)
+00:44 T17 R2 done (cell per child via Seam and holding(cell); WeakMap gone; bounds_at on Policy; 4332/0); second review started
+00:49 T29 done (11/12 red; 276/0; 3286/0); stop condition fired, cleared with evidence (stall spec still green); review started (high)
+00:52 T17 second review APPROVE-WITH-FIXES with 1 substantive (ladder built over base Policy, judge reads held dev tree as outside); fix round R3 sent, third review after (user rule). Nits: swap union, resumed child empty cell (WHY line), rename bounds->cell.
+00:55 T18 review APPROVE-WITH-FIXES, no blockers: child_paid rename and docs, judged_spec stand-in, unused listeners, duplicate wired expect, 2 WHAT comments; mechanical, no re-review. Faraday resend kept (1 logical request). FU-16: the judge sees named_paths guesses for paths that do not exist (git status --short . -> proj/status).
+00:57 T29 review REQUEST-CHANGES: retry recursion inside rescue leaks the drop as cause (13 connections for drop+503s), bad cert retried, EOF scenario tests an impossible shape, layer-ambiguous retry records, dead default, false comment. Fix round sent; second review after.
+00:59 T17 R3 done (Celled context carries the cell to the ladder; 4628/0); third review started
+01:01 T18 R3 mechanical done (981/0); trial merge over T28's wiring.rb clean (wiring+agent 530/0 once lain-fence was copied); landing
+- T18 landed 52510849 (attempt 1)
+01:08 T18 landed 52510849
+01:09 T19 (opus), T20 (sonnet), T31 (sonnet) started, cut at 52510849
+01:09 T29 R2 done (28/7 red; 282/0; wider 3292/1 = listed CoreGraph fd flake); second review started (SSL_read prefix match to judge)
+01:09 T17 third review APPROVE-WITH-FIXES (1 mechanical nit: Celled wrap when requester nil); sent, then land
+01:10 T31 stopped pre-code (Accounting cannot see command or role). Ruled: skill_dispatch.rb, agent.rb (delegate list only), subagent.rb child_accounting, Skill::RoleSpawn join. Held until T17 and T29 land (they hold agent.rb, subagent.rb); worktree removed, recut then. exe/lain diff saved in handbacks/T31-stop.md
+01:10 T19 stopped pre-code (both stop conditions). Ruled per plan's stop note: Named unchanged; Judgement skips walking a git-implied root when masked and relies on output masking, which the implementer must first confirm covers secrets from git history (else stop); switchboard.rb joins for masked:. Seam spec required: judge-approved git log -p over a history .env is masked.
+01:11 T17 R4 nit done (500/0); landing
+01:12 T29 second review APPROVE-WITH-FIXES: SSL_read prefix pinned only by typed strings (substantive, seam spec), dead TLS branch, dead ConnectionFailed exclusion, provider_retry doc. Fix round R3, third review after (wire: drop+503 = 5 connections, bad cert = 1).
+- T17 landed 3fdb4e11 (attempt 1)
+01:15 T17 landed 3fdb4e11
+01:20 T29 R3 done (seam red under prefix change; 3397/0); third review started
+01:20 T20 built (7/7 red; 10/0; wider 825/1 = replay_spec counts sessions/*/*.ndjson). Ruled: move hazards corpus out of sessions/, bench CLI arm selection joins for reachability. T21 note: Shell::Verdict gives no term for sed, find or git.
+01:22 T29 third review APPROVE (16/16 mutants red; wire 5/1/2 connections). Bench vs main before landing.
+01:26 T29 bench: request_1000000 card 2.90-3.09 vs main 2.84-2.89, but the row posts on a raw Faraday connection T29 never touches and the card tree lacks T18/T17: ruled base/layout noise. wire_ready FU-5, journal_chained bimodal. Landing.
+- T29 landed b03483e8 (attempt 1)
+01:30 T29 landed b03483e8
+01:30 T31 resumed, recut at b03483e8 with skill_dispatch, agent.rb delegate, subagent child_accounting, role_spawn joined
+01:32 T20 R2 done (corpus moved; bench CLI joined; 827/0); exe/lain wiring applied (rubocop clean, --help lists both, missing table refused); review started (medium)
+01:36 T20 review APPROVE-WITH-FIXES, 4 substantive: raising candidate escapes as stack trace; 4 bench/production gaps unsaid (content predicate unpinned); unrebuilt and verdict-vacuous hazards indistinct; corpus missing core shapes (and bare ; in find -exec). Fix round, second review after. T21 premise confirmed: Shell::Verdict gives no term for sed, find, git.
+01:38 T31 done (39 red; 4753/6 then fixed); exe/lain usage wired (rubocop clean, fixture table prints); review started (medium)
+01:39 T19 done (3240/0; output mask covers git history, seam pins it). Sent back pre-review: masked: true under docker or a failed sandbox build, so facts would claim a mask that is not there; toolset_build.rb joins to read masked from the real wrap.
+01:40 T20 R3 done (6 red; 834/0; corpus 28 lines); second review started
+01:43 T20 second review APPROVE (1 nit fixed by main session, 2 spec strings updated; 267/0); landing
+01:43 T31 review REQUEST-CHANGES: epic_review children carry no command (card's first scenario fails), judge spend unsplit, fixture not a real session (in sessions glob), WHAT comment. Ruled: children inherit parent's command via Accounting. Fix round, second review after.
+- T20 landed ae2c349c (attempt 1)
+01:47 T20 landed ae2c349c
+01:51 T31 R2 done (children inherit command via Seam thunk; judge line under table; fixture moved; 5349/0); toolset_build.rb joined, which T19 R2 also edits: trial-merge the second to land. Second review started.
+01:59 T31 second review APPROVE-WITH-FIXES; spawn-time command ruled correct, WHY line added by main session; landing (exe/lain also changed by T20, 3-way)
+- T31 landed f4e3e8cf (attempt 1)
+02:02 T31 landed f4e3e8cf
