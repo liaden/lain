@@ -1456,13 +1456,13 @@ The Agent retries only `Faraday::SSLError` and a mid-stream EOF, through a new `
 
 **Depends on:** T18, T23, T48
 **Files:**
-- `lib/lain/telemetry/child_progress.rb`, `lib/lain/tools/subagent/progress.rb`
+- `lib/lain/telemetry/child_progress.rb`, `lib/lain/tools/subagent/progress.rb`, `lib/lain/tools/subagent.rb` (the child's accounting, window and ceiling are wired into `Progress` there)
 - `lib/lain/status_feed.rb`, `lib/lain/status_feed/fleet.rb`, `lib/lain/status_feed/reading.rb`
 - Specs: `spec/lain/telemetry/child_progress_spec.rb`, `spec/lain/status_feed_spec.rb`, `spec/lain/status_feed/fleet_spec.rb`
 
 **Reuse:** `Agent#occupancy`; `ContextWindow#occupancy` (`context_window.rb:448`); `Usage#+`
 **Shared-file wiring:** none
-**Reachable from:** `Tools::Subagent::Progress#turned` -> `ChildProgress(usage:, occupancy:, ceiling:)` -> `StatusFeed#observe` -> `Reading`
+**Reachable from:** `Tools::Subagent::Progress#watching` (handed the child by `Progress#measuring`) -> `ChildProgress(usage:, occupancy:, ceiling:)` -> `StatusFeed#observe` -> `Reading`
 
 **Acceptance criteria**
 
@@ -2182,20 +2182,20 @@ Push in either direction uses long-poll methods (`agenda.next(cursor)`, `answers
 
 **Depends on:** T9, T48
 **Files:** `lib/lain/remote/agenda.rb` (new), `spec/lain/remote/agenda_spec.rb` (new)
-**Reuse:** `Approval::Parked::Queue#each` and `Approval::Postponed` (T9); `CLI::HumanReplies` and its `InboxItem` (`human_replies.rb:21`); the poll shape of `Approval::Parked::QueueSurface` (`parked/queue_surface.rb:21,62`)
+**Reuse:** `Approval::Parked::Queue#each`; the `lain epic approve|deny` path (`CLI::EpicQueue`) for deferred gates; `CLI::HumanReplies` and its `InboxItem` (`human_replies.rb:21`); the poll shape of `Approval::Parked::QueueSurface` (`parked/queue_surface.rb:21,62`)
 **Shared-file wiring:** none
-**Reachable from:** `Approval::RemoteSurface` (T55) -> `Remote::Agenda.new(queue:, postponed:, replies:)`
+**Reachable from:** `Approval::RemoteSurface` (T55) -> `Remote::Agenda.new(queue:, gates:, replies:)`
 
 **Acceptance criteria**
 
 ```gherkin
 Scenario: the agenda lists every kind
-  Given a parked bash call, a postponed call, a deferred wave gate and an ask_human question
-  Then a snapshot lists 4 items: 2 ParkedCall (1 postponed), 1 GateQuestion and 1 Question
+  Given a parked bash call, a deferred wave gate and an ask_human question
+  Then a snapshot lists 3 items: 1 ParkedCall, 1 GateQuestion and 1 Question
 
 Scenario: answering routes to the owner
   When the agenda answers the gate item with Deny(note: "wrong crate") for issue b
-  Then the gate records that deny for b, as it would from /inbox
+  Then the gate records that deny for b, as `lain epic deny` would
 
 Scenario: a settled item leaves
   When the bash call is approved at the desk
@@ -2213,7 +2213,7 @@ Spec file: `spec/lain/remote/agenda_spec.rb`
 ```ruby
 module Lain::Remote
   class Agenda   # polls; not a journal projection, because a parked call's input is never journaled (queue.rb:375-379)
-    ParkedCall   = Data.define(:id, :requester, :tool, :input, :cwd, :why, :postponed, :asked_at)
+    ParkedCall   = Data.define(:id, :requester, :tool, :input, :cwd, :why, :asked_at)
     GateQuestion = Data.define(:id, :requester, :epic, :stage, :issues, :question, :asked_at)
     Question     = Data.define(:id, :requester, :question, :options, :asked_at)
     def snapshot = ...                 # frozen items, each with a minted id
@@ -2883,3 +2883,25 @@ The comment at `redact_secret_reads.rb:113-125` calls this the last fail-open in
 - 06:59 T48 R4 done (8 fixes, 6506 + 5873 green, fresh-copy drive matches). Third review sent.
 - 07:05 T19 third review APPROVE-WITH-FIXES: branch/tag/reflog write forms skipped the walk (restore !written, listing forms only); textconv driver in git config leaks via log -p (walk when config defines a diff driver); Judged env mutant. R7 sent; fourth review after.
 - 07:05 T60 R2 done (items 1-6 fixed; Default bound kept; ReadDir added to the Landlock dir rule). Second review sent.
+- 07:08 T48 third review APPROVE-WITH-FIXES (2 nits applied by coordinator: 0644 mode example red then green, symlink refusal wording). Landing attempt 1.
+- 07:17 T48 landing 1 failed before the hook: a transient .git/index.lock (another git process in main) made restore's git reset exit 128. Restored by hand; main clean. Retrying.
+- 07:24 T48 landing 2: suite green, yard-lint red (GateDecision docstring in 2 places; redundant @param). Coordinator moved the docstring to the reopen and reworded the param. Landing 3. T60 second review APPROVE, no new findings.
+- 07:27 T19 R7 done (listing forms only for branch/tag/reflog; driver config keeps the walk; Judged env pinned). Ruled R8: hidden? never counts a git rev-path (index or object) as hidden. Fourth review after.
+- T48 landed 073ba740 (attempt 3)
+- 07:29 T48 landed 073ba740 (attempt 3). Worktree removed. land.sh now runs yard-lint on staged lib files. Landing T60.
+- 07:33 T60 landing 1 red: devices_spec concurrency example + 3 rpc_thread_spec ENOENT. rpc_thread green 3/3 alone on base. Cause: the card's forked children exit normally and run the worker's at_exit hooks, deleting shared spec dirs. Card caused it; sent back (exit! via ForkedChild).
+- 07:34 T26, T33, T53 (opus) and T30, T38 (sonnet) started. T11 waits on T19 (both touch switchboard.rb).
+- 07:35 T60 R3: children via ForkedChild.start; red (3 ENOENT) then green 3x in 1 process. Landing 2.
+- 07:35 T26 stop: /stop never reaches the epic driver (per-run supervisor). Ruled: widen to stop.rb; Null driver when none; reply names stopped epic issues; run result records stopped by the human.
+- 07:36 T53 stop: deferred gates live in the journal fold, answered only by lain epic approve|deny; Approval::Postponed does not exist (a postpone is a liftable deny, nothing waits). Ruled: agenda answers gates through the EpicQueue path (Agenda.new(queue:, gates:, replies:)); drop the postponed item, so the first scenario lists 3 items; lain_wire ParkedCall.postponed is sent false. PLAN EDIT OWED at next fold: T53 Reuse, Reachable-from, scenario 1, Interface.
+- FU-22: lain_wire ParkedCall.postponed is always false now; drop it with the next wire change.
+- 07:36 T30 stop: no Progress#turned, Progress holds no agent; wiring in subagent.rb. Ruled: widen to subagent.rb; usage from TurnUsage if visible, else injected collaborators; fleet_windows path is lib/lain/cli/fleet_windows.rb. PLAN EDIT OWED: T30 Files.
+- 07:37 T19 R8 done (any git command counts nothing as hidden; wider than ruled). Fourth review sent, asked to measure the cost of the wider rule.
+- 07:43 T60 landing 2 red: approval_replay_spec 'the disk is never asked' fails alone on base (order-dependent memo of shipped templates). Not T60. Coordinator fixed the spec (red alone, then green) as its own commit before retrying T60.
+- 07:47 T38 stop: 5 tool-roster ratchets red. Ruled: widen to them, classify honestly (parallel safety, commutation, output bound); back-outs owed.
+- 07:49 T33 done (11 examples, 6 back-outs red, 30 partitions agree on real data). Review spawned high. Open point for T49: superseded-draft deny keeps approval in SignoffQueue, revokes in Signoff.
+- 07:49 spec fix landed 74bbb92d. T60 landing 3.
+- 07:51 T30 done (injected into Progress; 25 examples red then green; back-outs 5 of 7 red; deep ratchets reported 1569, which is short). Review queued until the T60 landing ends.
+- T60 landed 41f60380 (attempt 3)
+- 07:54 T60 landed 41f60380 (attempt 3). Worktree removed.
+- 07:54 Plan edits applied: T53 (gates via EpicQueue, no postponed item, 3 items), T30 (subagent.rb in Files, watching not turned).
