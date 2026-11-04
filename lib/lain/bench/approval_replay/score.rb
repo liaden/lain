@@ -85,6 +85,74 @@ module Lain
           "#{lines.join("\n")}\n"
         end
 
+        # What a table of programs for {Approval::ComposedTerm} would change: the calls it would stop
+        # parking, those among them a judge or a human refused, and the hazards it lets through.
+        class Terms
+          DECIDERS = [Approval::Judged::NAME, Approval::Escalation::Surfaces::NAME].freeze
+
+          # @param today [#admits?] the production table
+          # @param candidate [#admits?] the table under test
+          # @param calls [Array<Call>] bash calls, each with a place
+          # @param hazards [Array<Hazard>]
+          def initialize(today:, candidate:, calls:, hazards:)
+            @today = today
+            @candidate = candidate
+            @calls = calls
+            @hazards = hazards
+          end
+
+          # @return [String]
+          def report
+            admitted = @calls.select { @candidate.admits?(_1) }
+            let_through = @hazards.select { @candidate.admits?(_1.to_call) }
+            "#{[*head, *parks(admitted), *denied(admitted), *hazard_lines(let_through)].join("\n")}\n"
+          end
+
+          private
+
+          def head
+            ["composed term: the candidate table against today's, over #{@calls.size} bash calls",
+             "scored per call: a park removed may be a call the judge denied",
+             "not modelled, so a clean result is no licence to widen: the content predicate (closed files, secret " \
+             "regions, oversize, FIFOs), classes:, project program exclusions; Landing reads the live disk for " \
+             "unrecorded paths"]
+          end
+
+          def parks(admitted)
+            removed = admitted.select { parked?(_1) && !@today.admits?(_1) }
+            ["parks removed: #{removed.size}", *removed.map { "  #{named(_1)}" }]
+          end
+
+          def denied(admitted)
+            refused = admitted.filter_map { |call| [call, denier(call)] if denier(call) }
+            ["admitted against a recorded deny: #{refused.size}",
+             *refused.map { |call, who| "  #{named(call)} (#{who} deny)" }]
+          end
+
+          def hazard_lines(let_through)
+            inert = @hazards.reject { @candidate.weighs?(_1.to_call) }
+            refused = @hazards.size - let_through.size - inert.size
+            ["hazards admitted: #{let_through.size} of #{@hazards.size}", *let_through.map { hazard_line(_1) },
+             "refused by the table: #{refused}",
+             "inert, the shell verdict gives no term: #{inert.map(&:name).join(", ")}",
+             "not rebuilt: #{@hazards.count(&:context)} (judged as plain commands, also counted above)"]
+          end
+
+          def parked?(call) = DECIDERS.include?(call.recorded&.fetch("rung"))
+
+          def denier(call)
+            return "judge" if call.judged&.fetch("verdict") == "deny"
+
+            "human" if call.decisions.last == "deny"
+          end
+
+          def named(call) = "#{File.basename(call.session)} #{call.tool_use_id} #{call.input.fetch("command")}"
+
+          def hazard_line(hazard)
+            "  #{hazard.name}: #{hazard.command}#{" (#{hazard.context})" if hazard.context}"
+          end
+        end
+
         private
 
         def rows_of(arm) = @rows.select { _1.arm == arm }

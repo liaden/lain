@@ -81,6 +81,127 @@ module Lain
         end
       end
 
+      Hazard = Data.define(:name, :command, :context, :place)
+
+      # A command that must stay with a person whatever a table says, and what must hold for it to be one
+      # (a repo whose config sets a pager, say), which a replay cannot rebuild and so only reports.
+      class Hazard
+        def initialize(name:, command:, context: nil, place: nil) = super
+
+        # @param path [String] a JSONL corpus of `{"hazard", "command", "context"}` lines
+        # @param place [Place] where each is judged
+        # @return [Array<Hazard>]
+        # @raise [CLI::Refusal] on a line that is not JSON or names no hazard or command
+        def self.load(path, place:)
+          File.foreach(path).with_index(1).map do |line, number|
+            record = JSON.parse(line)
+            new(name: record.fetch("hazard"), command: record.fetch("command"), context: record["context"], place:)
+          rescue JSON::ParserError, KeyError, TypeError
+            raise CLI::Refusal, "#{path} line #{number} needs a hazard and a command"
+          end
+        end
+
+        # @return [Call] the gated call it would be, with no ruling
+        def to_call
+          Call.new(session: "hazards", tool: "bash", input: { "command" => command }, tool_use_id: name, place:)
+        end
+      end
+
+      # Whether {Approval::ComposedTerm}, holding a table of programs, would approve a call with no
+      # human and no judge. Nothing is run, and paths are placed through {FileFacts::Recorded}.
+      #
+      # It scores a table SAFER than it would run, in 4 places, so a clean result is no licence to widen:
+      # the content predicate is replaced by root containment (a file closed to other users, a secret
+      # region, an oversize file and a FIFO are never refused); `classes:` is always off where a chat
+      # can turn it on; the shell verdict holds no project program exclusions; and {Landing} still
+      # reads the reviewer's live disk for a path the session did not record.
+      class TermArm
+        # A table's own programs in place of {Approval::ComposedTerm::PROGRAMS}, everything else the rule's.
+        class Candidate < Approval::ComposedTerm
+          def initialize(programs:, **)
+            @programs = programs
+            super(**)
+          end
+
+          private
+
+          def listed?(program) = @programs.key?(program) || VERSION_PROBES.include?(program)
+
+          def flags_for(program)
+            @programs.fetch(program) { VERSION_PROBES.include?(program) ? VERSION_PROBE : UNLISTED }
+          end
+        end
+
+        # The content predicate asks the disk what a file holds, which does not depend on the table; the
+        # root predicate still decides where a word may land.
+        class Unopened < SimpleDelegator
+          Contained = Data.define(:confinement) do
+            def admits?(word) = confinement.contains?(word)
+          end
+
+          def content(cwd) = Contained.new(confinement(cwd))
+        end
+
+        BASH = Tools::Bash.new(exec: Stack::Unrun)
+
+        # @return [TermArm] the table in force
+        def self.today = new
+
+        # @param path [String] a Ruby file, evaluated as a rule set's is, whose value is a Hash of program
+        #   name to the object that admits its arguments
+        # @return [TermArm]
+        # @raise [CLI::Refusal] when the file does not evaluate to a table of programs
+        def self.from_file(path)
+          table = evaluated(path)
+          valid = table.is_a?(Hash) && table.all? { |name, flags| name.is_a?(String) && flags.respond_to?(:admits?) }
+          raise CLI::Refusal, "candidate #{path} must evaluate to a Hash of programs to their flags" unless valid
+
+          new(table.freeze)
+        end
+
+        def self.evaluated(path)
+          Object.new.instance_eval(File.read(path), path)
+        rescue StandardError, ScriptError => e
+          raise CLI::Refusal, "candidate #{path} will not load: #{e.class}: #{e.message}"
+        end
+        private_class_method :evaluated
+
+        # @param programs [Hash, nil] none means the production table
+        def initialize(programs = nil)
+          @programs = programs
+          @rules = {}
+        end
+
+        # @param call [Call] with a place
+        # @return [Boolean]
+        def admits?(call)
+          !rule_for(call).decide(rule_call(call)).nil?
+        end
+
+        # @param call [Call] with a place
+        # @return [Boolean] whether the shell verdict gives the command a term at all; where it does not, no
+        #   table is ever asked, so a refusal is the verdict's and not the table's
+        def weighs?(call) = rule_call(call).term?
+
+        private
+
+        def rule_call(call) = Approval::Rule::Call.for(tool: BASH, input: call.input)
+
+        def rule_for(call)
+          place = call.place
+          @rules[[place, call.landings]] ||= build(place, call.landings)
+        end
+
+        def build(place, landings)
+          facts = FileFacts::Recorded.new(places: [place.cwd, place.root, place.home], landings:)
+          factory = ::Lain::CLI::Wiring::BoardBuild::Classifiers.new(
+            home: place.home, cwd: place.cwd, root: place.root, confinement: Approval::Root.new(place.root), facts:
+          )
+          sensitivity = Unopened.new(factory)
+          @programs ? Candidate.new(programs: @programs, sensitivity:) : Approval::ComposedTerm.new(sensitivity:)
+        end
+      end
+
       # @param paths [Array<String>] session files
       # @param arms [Array<Arm>]
       # @param project [Place] where a session that recorded no place is replayed
@@ -117,12 +238,15 @@ module Lain
       # @param tripwire [Boolean] end the report with what the tripwire would have done to the sessions
       # @param tripwire_rules [Array<String>] `key=value` overrides of the default tripwire rules, one
       #   extra row each; naming any asks for the tripwire section
-      # @return [ApprovalReplay]
+      # @param composed_term [String, nil] a candidate PROGRAMS table; the answer is then {.composed_term}'s
+      # @param hazards [String, nil] the corpus for `composed_term`
+      # @return [ApprovalReplay, Score::Terms] either answers `report`
       # @raise [CLI::Refusal] on an unknown level, approver or judge-denial arm, an arm asked for twice, a
       #   rule set that will not load, a labels file that will not, or a tripwire rule that does not parse
       def self.asked(sessions:, approvals:, rules:, approver:, project:, labels: nil, denials: %i[off],
-                     tripwire: false, tripwire_rules: [])
+                     tripwire: false, tripwire_rules: [], composed_term: nil, hazards: nil)
         raise CLI::Refusal, "approval-replay needs at least one session file" if sessions.empty?
+        return self.composed_term(sessions:, candidate: composed_term, hazards:, project:) if composed_term
 
         checked(approvals, approver, labels)
         refuse_unknown(denials, ::Lain::CLI::Arms::JUDGE_DENIALS, "--judge-denials")
@@ -131,6 +255,27 @@ module Lain
                                               tripwire: armed(tripwire, tripwire_rules))
       rescue Config::Refusal => e
         raise CLI::Refusal, e.message
+      end
+
+      # Scores a table of programs for {Approval::ComposedTerm} against what the sessions recorded and a
+      # corpus of commands that must never be approved unasked, beside today's table.
+      #
+      # @param sessions [Array<String>] session files, passed at run time
+      # @param candidate [String] a Ruby file whose value is the table, as {TermArm.from_file} reads it
+      # @param hazards [String] a JSONL corpus, as {Hazard.load} reads it
+      # @param project [Place] where a session that recorded no place, and each hazard, is judged
+      # @return [Score::Terms]
+      # @raise [CLI::Refusal] on a session, table or corpus that will not load
+      def self.composed_term(sessions:, candidate:, hazards:, project:)
+        raise CLI::Refusal, "--hazards is missing: name the corpus the table is scored against" unless hazards
+
+        { "candidate table" => candidate, "hazard corpus" => hazards }.each do |what, path|
+          raise CLI::Refusal, "no #{what} at #{path}" unless File.file?(path.to_s)
+        end
+        replay = from_journals(spelled_once(sessions), arms: [], project:)
+        bash = replay.replayable.select { _1.tool == "bash" }.map { _1.with(place: _1.place || project) }
+        Score::Terms.new(today: TermArm.today, candidate: TermArm.from_file(candidate), calls: bash,
+                         hazards: Hazard.load(hazards, place: project))
       end
 
       def self.armed(asked, specs) = asked || specs.any? ? Tripwire.rules_from(specs) : []

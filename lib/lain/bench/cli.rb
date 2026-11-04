@@ -180,6 +180,9 @@ module Lain
       # @param labels [String, nil] a call-label sidecar; each arm is then scored against it
       # @param denials [Array<String>] judge-denial arms, each replayed under every level and rule set
       # @param tripwire [Hash] passed to {ApprovalReplay.asked}
+      # @option tripwire [String] :composed_term a candidate PROGRAMS table; the report is then
+      #   {ApprovalReplay.composed_term}'s, scored against `:hazards`, and the level, rule set and approver are unused
+      # @option tripwire [String] :hazards the hazard corpus the candidate is scored against
       # @option tripwire [Boolean] :tripwire end the report with the tripwire's replay
       # @option tripwire [Array<String>] :tripwire_rules `key=value` overrides of the default tripwire rules, a row each
       # @return [String] the report; never printed here

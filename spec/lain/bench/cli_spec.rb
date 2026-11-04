@@ -1900,6 +1900,28 @@ RSpec.describe Lain::Bench::CLI do
       expect { report(tripwire_rules: ["nope=1"]) }.to raise_error(described_class::Refusal, /nope.*hard_stop/)
     end
 
+    describe "the composed_term arm" do
+      let(:hazards) { File.expand_path("../../fixtures/approval_replay/hazards.ndjson", __dir__) }
+      let(:candidate) do
+        File.join(Dir.mktmpdir, "candidate.rb").tap do |path|
+          File.write(path, "Lain::Approval::ComposedTerm::PROGRAMS.merge(\"rg\" => Lain::Approval::ComposedTerm::Flags.new)")
+        end
+      end
+
+      it "scores a candidate PROGRAMS table against the sessions and the hazard corpus" do
+        out = report(composed_term: candidate, hazards:)
+
+        expect(out).to include("composed term:", "parks removed:", "hazards admitted:")
+        expect(out).to match(/^  rg --pre:/)
+      end
+
+      it "refuses a candidate with no hazard corpus, and a candidate that is missing" do
+        expect { report(composed_term: candidate) }.to raise_error(described_class::Refusal, /--hazards is missing/)
+        expect { report(composed_term: "/nonexistent/table.rb", hazards:) }
+          .to raise_error(described_class::Refusal, %r{/nonexistent/table.rb})
+      end
+    end
+
     it "refuses an arm asked for twice, naming it" do
       expect { report(approvals: %w[auto auto]) }.to raise_error(described_class::Refusal, /auto no rules recorded/)
     end

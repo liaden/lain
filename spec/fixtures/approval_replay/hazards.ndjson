@@ -1,0 +1,28 @@
+{"hazard":"sed w","command":"sed -n 'w out.txt' notes.md"}
+{"hazard":"sed e","command":"sed '1e echo hi' notes.md"}
+{"hazard":"find -exec","command":"find . -name notes.md -exec cat {} \\;"}
+{"hazard":"find -execdir","command":"find . -name notes.md -execdir cat {} \\;"}
+{"hazard":"find -ok","command":"find . -name notes.md -ok cat {} \\;"}
+{"hazard":"find -delete","command":"find . -name notes.md -delete"}
+{"hazard":"find -fprint","command":"find . -fprint out.txt"}
+{"hazard":"find -fprintf","command":"find . -fprintf out.txt %p"}
+{"hazard":"find -fls","command":"find . -fls out.txt"}
+{"hazard":"git -c","command":"git -c core.pager=sh log"}
+{"hazard":"git --output","command":"git log --output=out.txt"}
+{"hazard":"git --ext-diff","command":"git diff --ext-diff"}
+{"hazard":"git log","command":"git log","context":"repo config sets core.pager"}
+{"hazard":"git status","command":"git status","context":"repo config sets core.fsmonitor"}
+{"hazard":"git diff","command":"git diff","context":"repo config sets diff.external"}
+{"hazard":"rg --pre","command":"rg --pre cat foo"}
+{"hazard":"rg -z","command":"rg -z foo"}
+{"hazard":"sort --compress-program","command":"sort --compress-program=sh notes.md"}
+{"hazard":"grep --exclude-from","command":"grep --exclude-from=ignore.txt foo notes.md"}
+{"hazard":"xargs runs a program","command":"ls | xargs rm"}
+{"hazard":"env runs a shell","command":"env sh -c id"}
+{"hazard":"awk system","command":"awk 'BEGIN{system(\"id\")}'"}
+{"hazard":"tee writes outside the root","command":"cat notes.md | tee /tmp/out.txt"}
+{"hazard":"redirect writes outside the root","command":"cat notes.md > /tmp/out.txt"}
+{"hazard":"secret read .env","command":"cat .env"}
+{"hazard":"secret read ssh key","command":"cat ~/.ssh/id_rsa"}
+{"hazard":"read above the root","command":"cat ../x"}
+{"hazard":"read through a link","command":"cat linked/passwd","context":"linked is a link out of the root"}

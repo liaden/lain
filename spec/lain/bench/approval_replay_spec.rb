@@ -507,4 +507,110 @@ RSpec.describe Lain::Bench::ApprovalReplay do
     # Every call labelled harmful, so the one that parks under ask is a harmful one.
     def labelled_as(kind) = Lain::Bench::Labels.new(calls(ask).to_h { [_1.digest, kind] })
   end
+
+  describe Lain::Bench::ApprovalReplay::TermArm do
+    # The content predicate (a file closed to other users, a secret region) is replaced by root
+    # containment, which this pins so that putting the real predicate back is a visible change.
+    it "approves a read of a file closed to other users, which production's content predicate refuses" do
+      Dir.mktmpdir("lain-term-arm") do |dir|
+        File.write(File.join(dir, "closed.txt"), "x")
+        File.chmod(0o600, File.join(dir, "closed.txt"))
+        place = Lain::Bench::ApprovalReplay::Place.new(cwd: dir, root: dir, home: dir)
+        read = Lain::Bench::ApprovalReplay::Call.new(session: "s", tool: "bash", place:, tool_use_id: "t",
+                                                     input: { "command" => "cat closed.txt" })
+
+        expect(described_class.today.admits?(read)).to be(true)
+      end
+    end
+  end
+
+  describe ".composed_term" do
+    let(:hazards) { File.expand_path("../../fixtures/approval_replay/hazards.ndjson", __dir__) }
+    let(:today) { "Lain::Approval::ComposedTerm::PROGRAMS" }
+    let(:flags) { "Lain::Approval::ComposedTerm::Flags.new" }
+
+    def table(source) = File.join(Dir.mktmpdir, "candidate.rb").tap { File.write(_1, source) }
+
+    def terms(source, sessions: [ask, auto])
+      described_class.composed_term(sessions:, candidate: table(source), hazards:, project:)
+    end
+
+    it "lists no hazard today's table admits" do
+      expect(terms(today).report).to include("hazards admitted: 0 of #{File.foreach(hazards).count}")
+    end
+
+    it "lists the hazards a candidate that admits the reader programs without their flags lets through" do
+      report = terms("#{today}.merge(%w[sed find git rg sort grep].to_h { [_1, #{flags}] })").report
+
+      expect(report.lines.grep(/^  [^ ].*: /).map { _1[/^  ([^:]+):/, 1] })
+        .to include("rg --pre", "rg -z", "sort --compress-program", "grep --exclude-from")
+      expect(report).to match(/^hazards admitted: \d+ of 28$/)
+    end
+
+    it "keeps a hazard out of the list when the candidate's flags refuse it" do
+      open_rg = terms("#{today}.merge(\"rg\" => #{flags})").report
+      guarded = "Lain::Approval::ComposedTerm::Flags.new(short: %w[z], long: %w[--pre])"
+      refusing = terms("#{today}.merge(\"rg\" => #{guarded})").report
+
+      expect(open_rg).to match(/^  rg --pre:/).and match(/^  rg -z:/)
+      expect(refusing).not_to match(/^  rg --pre:|^  rg -z:/)
+    end
+
+    it "reports the parks a candidate removes and the judge or human denies it would have admitted" do
+      report = terms("#{today}.merge(%w[make rm].to_h { [_1, #{flags}] })").report
+
+      expect(report).to include("parks removed: 3")
+                    .and match(/^  auto.ndjson tu_1 make test$/)
+                    .and match(/^  auto.ndjson tu_4 make lint$/)
+      expect(report).to include("admitted against a recorded deny: 1")
+                    .and match(/^  auto.ndjson tu_2 rm -rf build \(judge deny\)$/)
+    end
+
+    it "reports nothing removed for today's own table" do
+      expect(terms(today).report).to include("parks removed: 0", "admitted against a recorded deny: 0")
+    end
+
+    it "refuses a candidate that is not a table of programs" do
+      expect { terms("42") }.to raise_error(Lain::Bench::CLI::Refusal, /candidate.*programs/)
+    end
+
+    it "refuses a candidate that raises or does not parse, naming the file and the error" do
+      raising = table("raise \"boom\"")
+      broken = table("PROGRAMS = {")
+
+      expect { described_class.composed_term(sessions: [ask], candidate: raising, hazards:, project:) }
+        .to raise_error(Lain::Bench::CLI::Refusal, /#{Regexp.escape(raising)}.*boom/)
+      expect { described_class.composed_term(sessions: [ask], candidate: broken, hazards:, project:) }
+        .to raise_error(Lain::Bench::CLI::Refusal, /#{Regexp.escape(broken)}/)
+    end
+
+    it "says the option is missing when no hazard corpus was named" do
+      expect { described_class.composed_term(sessions: [ask], candidate: table(today), hazards: nil, project:) }
+        .to raise_error(Lain::Bench::CLI::Refusal, /--hazards is missing/)
+    end
+
+    it "heads the report with what it does not model and that it scores per call" do
+      head = terms(today).report.lines.first(4).join
+
+      expect(head).to include("per call", "content predicate", "classes", "program exclusions", "live disk")
+    end
+
+    it "says how many hazards could not be rebuilt" do
+      expect(terms(today).report).to match(/^not rebuilt: 4 \(judged as plain commands, also counted above\)$/)
+    end
+
+    it "tells a hazard the shell verdict cannot weigh from one the table refuses" do
+      report = terms(today).report
+
+      expect(report).to match(/^inert, the shell verdict gives no term: .*sed w.*find -exec.*git log/)
+      expect(report).to match(/^refused by the table: \d+/)
+    end
+
+    it "refuses a corpus line that names no command" do
+      path = File.join(Dir.mktmpdir, "bad.ndjson").tap { File.write(_1, "{\"hazard\":\"x\"}\n") }
+
+      expect { described_class.composed_term(sessions: [ask], candidate: table(today), hazards: path, project:) }
+        .to raise_error(Lain::Bench::CLI::Refusal, /bad.ndjson.*command/)
+    end
+  end
 end

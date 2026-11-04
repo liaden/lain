@@ -272,4 +272,71 @@ RSpec.describe Lain::Bench::ApprovalReplay::Score do
     template = replay(arm(:ask)).rows.find { !_1.unanswered }
     (0...30).map { template.with(call_digest: "h#{_1}") }
   end
+
+  describe Lain::Bench::ApprovalReplay::Score::Terms do
+    let(:replay_class) { Lain::Bench::ApprovalReplay }
+    let(:admitter) do
+      Data.define(:words, :unweighed) do
+        def admits?(call) = words.include?(call.input["command"])
+        def weighs?(call) = !unweighed.include?(call.input["command"])
+      end
+    end
+    let(:admitting) { ->(*words, unweighed: []) { admitter.new(words, unweighed) } }
+    let(:hazard) { replay_class::Hazard }
+
+    def bash(id, command, rung: nil, verdict: nil, decisions: [])
+      rulings = rung ? [{ "type" => "escalation", "rung" => rung, "verdict" => verdict }] : []
+      replay_class::Call.new(session: "/s/one.ndjson", tool: "bash", input: { "command" => command },
+                             tool_use_id: id, rulings:, decisions:)
+    end
+
+    def terms(today, candidate, calls: [], hazards: [], unweighed: [])
+      described_class.new(today: admitting.call(*today), candidate: admitting.call(*candidate, unweighed:), calls:,
+                          hazards:)
+    end
+
+    it "counts a park removed only for a call the judge or a human decided and only the candidate admits" do
+      calls = [bash("a", "make", rung: "auto", verdict: "allow"), bash("b", "ls", rung: "surfaces", verdict: "allow"),
+               bash("c", "cat x", rung: "triage", verdict: "deny"), bash("d", "rg y", rung: "auto", verdict: "allow")]
+
+      report = terms(%w[ls], ["ls", "make", "cat x"], calls:).report
+
+      expect(report).to include("parks removed: 1").and match(/^  one.ndjson a make$/)
+      expect(report).not_to match(/^  one.ndjson (b|c|d) /)
+    end
+
+    it "names who denied an admitted call, the judge or the human, and not a triage refusal" do
+      calls = [bash("a", "rm x", rung: "auto", verdict: "deny"),
+               bash("b", "mv y", rung: "surfaces", verdict: "deny", decisions: %w[deny]),
+               bash("c", "cat z", rung: "triage", verdict: "deny")]
+
+      report = terms([], ["rm x", "mv y", "cat z"], calls:).report
+
+      expect(report).to include("admitted against a recorded deny: 2")
+                    .and match(/^  one.ndjson a rm x \(judge deny\)$/).and match(/^  one.ndjson b mv y \(human deny\)$/)
+    end
+
+    it "lists each hazard the candidate admits with the context it needs" do
+      hazards = [hazard.new(name: "sed w", command: "sed w", context: nil),
+                 hazard.new(name: "git log", command: "git log", context: "repo config sets core.pager"),
+                 hazard.new(name: "find -delete", command: "find -delete", context: nil)]
+
+      report = terms([], ["sed w", "git log"], hazards:).report
+
+      expect(report).to include("hazards admitted: 2 of 3").and match(/^  sed w: sed w$/)
+                    .and match(/^  git log: git log \(repo config sets core.pager\)$/)
+      expect(report).not_to include("find -delete:")
+    end
+
+    it "separates a hazard the verdict cannot weigh from one the table refuses, and counts the unrebuilt" do
+      hazards = [hazard.new(name: "sed w", command: "sed w"), hazard.new(name: "rg --pre", command: "rg --pre"),
+                 hazard.new(name: "git log", command: "git log", context: "repo config")]
+
+      report = terms([], [], hazards:, unweighed: ["sed w", "git log"]).report
+
+      expect(report).to include("inert, the shell verdict gives no term: sed w, git log",
+                                "refused by the table: 1",
+                                "not rebuilt: 1 (judged as plain commands, also counted above)")
+    end
+  end
 end

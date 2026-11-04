@@ -1206,6 +1206,10 @@ class LainCLI < Thor
     method_option :tripwire_rules, type: :string, repeatable: true, banner: "KEY=VALUE,...",
                                    desc: "rules for the tripwire replay as overrides of the default " \
                                          "(hard_stop, strong, medium, weak); repeat for a row each. Implies --tripwire"
+    method_option :composed_term, type: :string, banner: "TABLE_RB",
+                                  desc: "score a candidate PROGRAMS table against SESSIONS and --hazards; it is " \
+                                        "run as Ruby, so name only a file you trust"
+    method_option :hazards, type: :string, banner: "HAZARDS_NDJSON", desc: "the hazard corpus for --composed-term"
     def approval_replay(*sessions)
       render do
         Lain::Bench::CLI.new.approval_replay_report(sessions:, approvals: options[:approval] || %w[ask],
@@ -1213,7 +1217,9 @@ class LainCLI < Thor
                                                     labels: options[:labels],
                                                     denials: options[:judge_denials] || %w[off],
                                                     tripwire: options[:tripwire],
-                                                    tripwire_rules: options[:tripwire_rules] || [])
+                                                    tripwire_rules: options[:tripwire_rules] || [],
+                                                    composed_term: options[:composed_term],
+                                                    hazards: options[:hazards])
       end
     end
 
