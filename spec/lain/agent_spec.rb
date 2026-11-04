@@ -2102,6 +2102,92 @@ RSpec.describe Lain::Agent do
     end
   end
 
+  describe "a connection dropped mid-run" do
+    let(:journal) { [] }
+    let(:slept) { [] }
+
+    def failure(cause)
+      raise cause
+    rescue StandardError
+      begin
+        raise Lain::Provider::Ollama::APIError, "round trip failed"
+      rescue StandardError => e
+        e
+      end
+    end
+
+    def ssl_eof = failure(Faraday::SSLError.new(OpenSSL::SSL::SSLError.new("SSL_read: unexpected eof while reading")))
+
+    def scripted(*outcomes)
+      Class.new do
+        attr_reader :requests
+
+        define_method(:initialize) do |list|
+          @list = list
+          @requests = []
+        end
+        define_method(:complete) do |request|
+          @requests << request
+          outcome = @list.size > 1 ? @list.shift : @list.first
+          outcome.respond_to?(:call) ? raise(outcome.call) : outcome
+        end
+      end.new(outcomes)
+    end
+
+    def retrying_agent(provider)
+      retrying = Lain::Agent::TransportRetry.new(journal:, sleeper: ->(seconds) { slept << seconds })
+      described_class.new(model_caller: Lain::Agent::ModelCaller.new(provider:, retrying:), journal:, toolset:,
+                          context:)
+    end
+
+    it "retries an SSL EOF once, journals the retry, and counts one iteration" do
+      a = retrying_agent(scripted(-> { ssl_eof }, text_response("answered")))
+
+      expect(a.ask("hi").text).to eq("answered")
+      expect(journal.grep(Lain::Telemetry::ProviderRetry).map(&:reason)).to eq(["Faraday::SSLError"])
+      expect(a.iterations).to eq(1)
+    end
+
+    it "retries through the Agent's own construction, journaling to the run's journal" do
+      allow(Kernel).to receive(:sleep)
+      a = described_class.new(provider: scripted(-> { ssl_eof }, text_response("answered")), journal:, toolset:,
+                              context:)
+
+      expect(a.ask("hi").text).to eq("answered")
+      expect(journal.grep(Lain::Telemetry::ProviderRetry).map(&:attempt)).to eq([1])
+      expect(Kernel).to have_received(:sleep).with(0.1)
+    end
+
+    it "re-sends the same rendered request after a TLS read ends mid-body and keeps only the answer's text" do
+      provider = scripted(-> { ssl_eof }, text_response("answered"))
+      a = retrying_agent(provider)
+
+      a.ask("hi")
+
+      expect(provider.requests.map(&:digest).uniq.size).to eq(1)
+      expect(provider.requests.size).to eq(2)
+      expect(a.timeline.head.content).to eq([{ "type" => "text", "text" => "answered" }])
+    end
+
+    it "stops with reason transport after 4 attempts with backoff" do
+      provider = scripted(-> { ssl_eof })
+      a = retrying_agent(provider)
+      error = nil
+
+      expect { a.ask("hi") }.to raise_error(Lain::Provider::Ollama::APIError) { |raised| error = raised }
+      expect([provider.requests.size, slept]).to eq([4, [0.1, 0.2, 0.4]])
+      expect(Lain::Agent::StopReason.for(error)).to eq(:transport)
+    end
+
+    it "leaves a 503 to Faraday's retries" do
+      provider = scripted(-> { Lain::Provider::Ollama::APIStatusError.new("unavailable", status: 503) })
+      a = retrying_agent(provider)
+
+      expect { a.ask("hi") }.to raise_error(Lain::Provider::Ollama::APIStatusError)
+      expect([provider.requests.size, slept, journal.grep(Lain::Telemetry::ProviderRetry)]).to eq([1, [], []])
+    end
+  end
+
   describe "#rewind" do
     it "moves the head back and reopens the loop" do
       a = agent([tool_response(["tu_1", "echo", { "text" => "a" }]), text_response])

@@ -162,9 +162,158 @@ RSpec.describe Lain::Agent::StopReason do
     expect(described_class.for(RuntimeError.new("a bug"))).to eq(:torn)
   end
 
+  # Faraday's retry middleware already re-sends a failed connection and a
+  # momentary status, so only what reaches past it may be retried again above.
+  describe ".dropped?" do
+    def chained(*errors) = errors.drop(1).reduce(errors.first) { |cause, error| caused_by(cause, error) }
+
+    def round_trip_failure(*causes) = chained(*causes, Lain::Provider::Ollama::APIError.new("round trip failed"))
+
+    # The adapter's own shape: Faraday::SSLError wraps the OpenSSL error and takes its message.
+    def tls_failure(message)
+      openssl = OpenSSL::SSL::SSLError.new(message)
+      round_trip_failure(openssl, Faraday::SSLError.new(openssl))
+    end
+
+    def read_eof = tls_failure("SSL_read: unexpected eof while reading")
+
+    it "is true for a TLS read that ended early" do
+      expect(described_class.dropped?(read_eof)).to be(true)
+    end
+
+    it "is false for a certificate the handshake refused" do
+      refused = tls_failure("SSL_connect returned=1 errno=0 peeraddr=127.0.0.1:443 state=error: " \
+                            "certificate verify failed (self-signed certificate)")
+
+      expect(described_class.dropped?(refused)).to be(false)
+    end
+
+    it "is false for an end of file or an OpenSSL error no Faraday::SSLError carries" do
+      bare = [EOFError.new("end of file reached"), OpenSSL::SSL::SSLError.new("SSL_read: unexpected eof while reading")]
+
+      expect(bare.map { |cause| described_class.dropped?(round_trip_failure(cause)) }).to eq([false, false])
+    end
+
+    it "is false for an end of file the adapter raised as a failed connection" do
+      failed = round_trip_failure(EOFError.new("end of file reached"), Faraday::ConnectionFailed.new("eof"))
+
+      expect(described_class.dropped?(failed)).to be(false)
+    end
+
+    it "is false for a server-side status" do
+      expect(described_class.dropped?(status_error(503))).to be(false)
+    end
+
+    it "is false for a stalled stream" do
+      stalled = round_trip_failure(Lain::Provider::HTTP::Streaming::StalledStreamError.new("stalled stream"))
+
+      expect(described_class.dropped?(stalled)).to be(false)
+    end
+
+    it "is false when a stop unwound through the drop" do
+      stopped = caused_by(read_eof, Lain::Stopped.new("stopped"))
+
+      expect(described_class.dropped?(stopped)).to be(false)
+    end
+
+    it "still reads a drop that ends the run as transport" do
+      expect(described_class.for(read_eof)).to eq(:transport)
+    end
+  end
+
   it "answers only reasons the run_interrupted record accepts" do
     reasons = [Lain::Error.new("x"), Lain::Stopped.new("x"), status_error(500)].map { |error| described_class.for(error) }
 
     expect(Lain::Telemetry::RunInterrupted::REASONS).to include(*reasons)
+  end
+end
+
+# The read-phase prefix `dropped?` keys on is the openssl binding's wording, so
+# it is pinned here against the errors a real Provider::Ollama raises off a
+# loopback TLS server, never only against strings typed into a spec.
+RSpec.describe Lain::Agent::StopReason, ".dropped? on a real TLS wire", :seam do
+  let(:key) { OpenSSL::PKey::RSA.new(2048) }
+  let(:cert) do
+    OpenSSL::X509::Certificate.new.tap do |cert|
+      cert.version = 2
+      cert.serial = 1
+      cert.subject = cert.issuer = OpenSSL::X509::Name.parse("/CN=localhost")
+      cert.public_key = key.public_key
+      cert.not_before = Time.now - 60
+      cert.not_after = Time.now + 3600
+      extensions = OpenSSL::X509::ExtensionFactory.new(cert, cert)
+      cert.add_extension(extensions.create_extension("subjectAltName", "DNS:localhost,IP:127.0.0.1"))
+      cert.add_extension(extensions.create_extension("basicConstraints", "CA:TRUE", true))
+      cert.sign(key, OpenSSL::Digest.new("SHA256"))
+    end
+  end
+  let(:dir) { Dir.mktmpdir("tls-wire") }
+  let(:trusted) { File.join(dir, "cert.pem").tap { |path| File.write(path, cert.to_pem) } }
+
+  after { FileUtils.rm_rf(dir) }
+
+  # Sends 1 NDJSON chunk of a 200, then closes the socket under the TLS
+  # session without a close_notify: the client's read ends early.
+  def serve_one_chunk_then_drop(ssl, raw)
+    ssl.accept
+    head = +""
+    head << ssl.readpartial(65_536) until head.include?("\r\n\r\n")
+    body = head.split("\r\n\r\n", 2)[1].to_s
+    body << ssl.readpartial(65_536) while body.bytesize < head[/content-length: (\d+)/i, 1].to_i
+    message = { "model" => "m", "message" => { "role" => "assistant", "content" => "half " }, "done" => false }
+    line = "#{JSON.generate(message)}\n"
+    ssl.write("HTTP/1.1 200 OK\r\ncontent-type: application/x-ndjson\r\ntransfer-encoding: chunked\r\n\r\n" \
+              "#{line.bytesize.to_s(16)}\r\n#{line}\r\n")
+    ssl.flush
+    sleep 0.05
+    raw.close
+  end
+
+  def failure_off_the_wire(cert_file)
+    tcp = TCPServer.new("127.0.0.1", 0)
+    context = OpenSSL::SSL::SSLContext.new.tap do |ctx|
+      ctx.cert = cert
+      ctx.key = key
+    end
+    server = Thread.new do
+      raw = tcp.accept
+      serve_one_chunk_then_drop(OpenSSL::SSL::SSLSocket.new(raw, context), raw)
+    rescue StandardError
+      raw&.close
+    end
+    asked(tcp.addr[1], cert_file)
+  ensure
+    server&.join(5)
+    tcp&.close
+  end
+
+  def asked(port, cert_file)
+    kept = ENV.fetch("SSL_CERT_FILE", nil)
+    ENV["SSL_CERT_FILE"] = cert_file
+    provider = Lain::Provider::Ollama.local(api_base: "https://localhost:#{port}")
+    agent = Lain::Agent.new(model_caller: Lain::Agent::ModelCaller.new(provider:), toolset: Lain::Toolset.new([]),
+                            context: Lain::Context.new(model: "m", max_tokens: 64))
+    NetworkAccess.permit_loopback(port) { agent.ask("hi") }
+    raise "the wire answered; nothing dropped"
+  rescue Lain::Provider::Ollama::APIError => e
+    e
+  ensure
+    ENV["SSL_CERT_FILE"] = kept
+  end
+
+  def tls_cause(error) = Enumerator.produce(error, &:cause).take_while(&:itself).find { _1.is_a?(Faraday::SSLError) }
+
+  it "is true for the error a stream that lost its peer mid-body raises" do
+    dropped = failure_off_the_wire(trusted)
+
+    expect(tls_cause(dropped)).to be_a(Faraday::SSLError)
+    expect(described_class.dropped?(dropped)).to be(true)
+  end
+
+  it "is false for the error a refused certificate raises" do
+    refused = failure_off_the_wire(File::NULL)
+
+    expect(tls_cause(refused)).to be_a(Faraday::SSLError)
+    expect(described_class.dropped?(refused)).to be(false)
   end
 end

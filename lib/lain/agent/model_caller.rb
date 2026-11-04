@@ -13,9 +13,14 @@ module Lain
       # what it was wired to.
       attr_reader :provider, :middleware
 
-      def initialize(provider:, middleware: Middleware::Stack.new)
+      # @param provider [Provider]
+      # @param middleware [Middleware::Stack] the model phase
+      # @param retrying [#call] re-sends a round trip whose connection dropped;
+      #   the default calls it once
+      def initialize(provider:, middleware: Middleware::Stack.new, retrying: TransportRetry::NONE)
         @provider = provider
         @middleware = middleware
+        @retrying = retrying
       end
 
       # `on_stream_started` (see {Provider::StreamStartedSignal}) is an
@@ -36,7 +41,7 @@ module Lain
       # @return [Lain::Response]
       def call(request, on_stream_started: nil, **turn)
         @middleware.call({ request:, **turn }) do |inner|
-          inner.merge(response: complete(inner.fetch(:request), on_stream_started))
+          inner.merge(response: @retrying.call { complete(inner.fetch(:request), on_stream_started) })
         end.response
       end
 

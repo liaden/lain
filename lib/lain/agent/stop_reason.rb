@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require "faraday"
+require "openssl"
+
 module Lain
   class Agent
     # Why an ask stopped, as a {Telemetry::RunInterrupted} reason, read off the
@@ -86,6 +89,28 @@ module Lain
         return true unless error.is_a?(Provider::ErrorWrapping::Status)
 
         MOMENTARY.include?(error.status) || error.status.to_i >= 500
+      end
+
+      # The one place this module reads a message. OpenSSL raises one class for
+      # a handshake that refused a certificate and for a read that lost its
+      # peer, and Ruby's binding prefixes the message with the libssl call that
+      # failed, so the prefix is the only thing that tells the phases apart.
+      READ_PHASE = "SSL_read"
+
+      # A TLS connection that dropped where nothing below the Agent re-sends
+      # it. Narrower than {.transport?} on purpose: Faraday already retries a
+      # failed connection, a momentary status and a server-side one, and
+      # retrying those again here would multiply its attempts by the Agent's. A
+      # handshake failure is not a drop: a certificate refused once is refused
+      # every time.
+      #
+      # @param error [Exception]
+      # @return [Boolean]
+      def self.dropped?(error)
+        chain = Enumerator.produce(error, &:cause).take_while(&:itself)
+        return false if chain.any?(Lain::Stopped)
+
+        chain.drop_while { |cause| !cause.is_a?(Faraday::SSLError) }.any? { |cause| cause.message.start_with?(READ_PHASE) }
       end
     end
   end

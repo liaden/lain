@@ -17,6 +17,20 @@ RSpec.describe Lain::Agent::ModelCaller do
     expect(described_class.new(provider:).call(request)).to be(response)
   end
 
+  it "retries nothing unless it is handed a retry" do
+    dropping = Class.new do
+      attr_reader :calls
+
+      define_method(:complete) do |_request|
+        @calls = @calls.to_i + 1
+        raise Faraday::SSLError, OpenSSL::SSL::SSLError.new("SSL_read: unexpected eof while reading")
+      end
+    end.new
+
+    expect { described_class.new(provider: dropping).call(request) }.to raise_error(Faraday::SSLError)
+    expect(dropping.calls).to eq(1)
+  end
+
   it "hands the fetched request to the provider unchanged" do
     described_class.new(provider:).call(request)
     expect(provider.last_request).to eq(request)

@@ -18,8 +18,9 @@ module Lain
     # more than the reported Usage ever shows. `attempt` is 1 for the first
     # retry; `will_retry_in` is the backoff seconds, nil once retries are
     # exhausted; `reason` names what triggered it (an exception class name);
-    # `path` is the request path the retry was for, nil on a line journaled
-    # before it was recorded.
+    # `path` is where the retry happened: the request path for a provider's
+    # transport retry, or a layer name such as "agent" for a retry above the
+    # transport; nil on a line journaled before it was recorded.
     ProviderRetry = Data.define(:attempt, :will_retry_in, :status, :reason, :path) do
       include Journalable
 
