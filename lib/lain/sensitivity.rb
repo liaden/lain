@@ -916,7 +916,8 @@ module Lain
     # gates one still wins. For them only, {Regions.detect} lifts the entropy arm
     # and an assignment's value-shape half, for a value behind a checksum key.
     CHECKSUMS = %w[Gemfile.lock Cargo.lock package-lock.json yarn.lock pnpm-lock.yaml poetry.lock Pipfile.lock
-                   composer.lock go.sum].map { |name| Rule.named(name, level: :ordinary, reason: :checksums) }.freeze
+                   composer.lock go.sum uv.lock flake.lock Package.resolved mix.lock pubspec.lock deno.lock go.work.sum
+                   .terraform.lock.hcl].map { |name| Rule.named(name, level: :ordinary, reason: :checksums) }.freeze
     RAISED_BY_A_CHECKOUT_NAME = %i[none checksums].freeze
 
     # The project's own Ruby, which a later launch evaluates. The trust digest

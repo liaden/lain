@@ -780,7 +780,8 @@ RSpec.describe Lain::Sensitivity do
 
   describe "lockfiles of package checksums" do
     lockfiles = %w[Gemfile.lock Cargo.lock package-lock.json yarn.lock pnpm-lock.yaml poetry.lock Pipfile.lock
-                   composer.lock go.sum]
+                   composer.lock go.sum uv.lock flake.lock Package.resolved mix.lock pubspec.lock deno.lock
+                   go.work.sum .terraform.lock.hcl]
 
     lockfiles.each do |name|
       it "classes #{name} as ordinary, for its checksums" do
@@ -792,7 +793,7 @@ RSpec.describe Lain::Sensitivity do
     end
 
     it "names only those files, not a spelling near one" do
-      %w[Cargo.lock.bak my-Cargo.lock go.sum.txt flake.lock notes.txt].each do |path|
+      %w[Cargo.lock.bak my-Cargo.lock go.sum.txt flake.lock.bak notes.txt].each do |path|
         expect(classify(path).reason).to eq(:none), path
         expect(sensitivity.checksums?(path)).to be(false), path
       end

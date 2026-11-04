@@ -757,10 +757,10 @@
   class: checksums
 - path: "/home/user/project/vendor/pkg30/flake.lock"
   label: benign
-  class: none
+  class: checksums
 - path: "/home/user/project/vendor/pkg31/mix.lock"
   label: benign
-  class: none
+  class: checksums
 - path: "/home/user/project/app/widgets/alpha_widget.rb"
   label: benign
   class: none
