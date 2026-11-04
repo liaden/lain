@@ -39,7 +39,8 @@ RSpec.describe Lain::CLI::Resume::Selector do
   # journal holding one terminal gate decision and no session header.
   def drain(name, at:)
     write(name, [Lain::Epic::GateDecision.new(artifact_digest: "blake3:#{"a" * 64}", epic_slug: "alpha",
-                                              stage: "research", approved: true, answered_by: "human",
+                                              stage: "research",
+                                              verdict: Lain::Approval::Verdict::Approve.new, answered_by: "human",
                                               policy: "signoff", latency: 3.0).to_journal.merge("ts" => at)])
   end
 

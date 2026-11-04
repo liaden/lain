@@ -106,7 +106,8 @@ RSpec.describe Lain::CLI::EpicLand, :seam do
   end
 
   def decision(stage, issue_id, digest, approved: true)
-    Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: "demo", stage:, approved:,
+    Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: "demo", stage:,
+                                 verdict: Lain::Approval::Verdict.const_get(approved ? :Approve : :Deny).new,
                                  answered_by: "human", policy: "hands_off", latency: 0.0, issue_id:)
   end
 
@@ -292,7 +293,8 @@ RSpec.describe Lain::CLI::EpicLand, :seam do
       sha = worker("a", "README" => "a's work\n")
       parked = Lain::Epic::GateDecision.new(
         artifact_digest: Lain::Epic::Submission.implementation(slug: "demo", issue_id: "a", digest: sha).digest,
-        epic_slug: "demo", stage: "implementation", approved: false, answered_by: "none", policy: "deferred",
+        epic_slug: "demo", stage: "implementation",
+        verdict: Lain::Approval::Verdict::Deny.new, answered_by: "none", policy: "deferred",
         latency: 0.0, issue_id: "a"
       )
       session(plan_approval("a"), parked)

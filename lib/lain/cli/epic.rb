@@ -642,7 +642,7 @@ module Lain
 
         approved = Journal.records(records, type: Lain::Epic::SignoffQueue::JOURNAL_TYPE).find do |record|
           record["issue_id"] == issue_id && Lain::Epic::ISSUE_STAGES.include?(record["stage"].to_s) &&
-            record["approved"] == true
+            Lain::Epic::GateDecision.verdict_in(record).approved?
         end
         return unless approved
 

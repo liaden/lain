@@ -74,7 +74,9 @@ module Lain
       # @return [Progress]
       def call(graph)
         stage = self.stage
-        Progress.new(graph: overlaid(graph), stage:, epic_slug: @epic_slug, parked: parked_at)
+        queue = Epic::SignoffQueue.from_journal(@records)
+        Progress.new(graph: overlaid(graph), stage:, epic_slug: @epic_slug, parked: parked_at(queue),
+                     held: held_at(queue))
       end
 
       # The last stage STARTED, or the first when nothing has. A completion
@@ -179,10 +181,10 @@ module Lain
       #
       # Every stage is shown, not the current one's: a draft left parked at an
       # earlier stage after a newer one was approved is still awaiting a human.
-      def parked_at
-        queue = Epic::SignoffQueue.from_journal(@records)
-        Stage.all.flat_map { |shown| queue.parked(@epic_slug, shown.name) }
-      end
+      def parked_at(queue) = Stage.all.flat_map { |shown| queue.parked(@epic_slug, shown.name) }
+
+      # Held is neither parked nor denied: the human asked the work to wait.
+      def held_at(queue) = Stage.all.flat_map { |shown| queue.held(@epic_slug, shown.name) }
 
       def of_type(type) = Journal.records(@records, type:)
     end
@@ -202,7 +204,7 @@ module Lain
     # Note {Graph#waves} is deliberately status-blind -- a finished first wave
     # still reports as wave 1, which is correct as a DAG layering. Remaining
     # work is computed from these effective statuses, never from wave output.
-    Progress = Data.define(:graph, :stage, :epic_slug, :parked) do
+    Progress = Data.define(:graph, :stage, :epic_slug, :parked, :held) do
       # `epic_slug` is REQUIRED as a safety rule, not an ergonomic slip. A
       # {Graph} carries no slug, so a slug derived from the records could never
       # be checked against the issues it is about: a journal holding only another
@@ -226,9 +228,9 @@ module Lain
       # @return [Stage]
       def self.stage(entries, epic_slug:) = Refold.new(entries, epic_slug:).stage
 
-      def initialize(graph:, stage:, epic_slug:, parked:)
+      def initialize(graph:, stage:, epic_slug:, parked:, held: [])
         slug = named_epic(epic_slug)
-        super(graph:, stage:, epic_slug: slug, parked: signoffs(parked, slug))
+        super(graph:, stage:, epic_slug: slug, parked: signoffs(parked, slug), held: signoffs(held, slug))
       end
 
       # One issue's effective status.
@@ -241,7 +243,7 @@ module Lain
       # The one line an author scans.
       def summary
         "stage #{stage} — #{tally("done")}/#{graph.count} done, #{tally("in_flight")} in flight, " \
-          "#{parked.size} #{"gate".pluralize(parked.size)} parked"
+          "#{parked.size} #{"gate".pluralize(parked.size)} parked#{", #{held.size} held" unless held.empty?}"
       end
 
       private
@@ -264,7 +266,7 @@ module Lain
 
       def refuse_stranger!(offender)
         raise ArgumentError,
-              "parked must be an Array of #{Epic::SignoffQueue::Item} values (got #{offender.inspect})"
+              "parked and held must each be an Array of #{Epic::SignoffQueue::Item} values (got #{offender.inspect})"
       end
 
       def refuse_foreign!(item, slug)

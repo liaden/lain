@@ -234,7 +234,8 @@ RSpec.describe Lain::CLI::Repl::Ask do
       research = Lain::Epic::Submission.research(text: "notes\n", slug: "frugirl-mvp")
       home.research.write("notes\n")
       approved = Lain::Epic::GateDecision.new(artifact_digest: research.digest, epic_slug: "frugirl-mvp",
-                                              stage: "research", approved: true, answered_by: "human",
+                                              stage: "research",
+                                              verdict: Lain::Approval::Verdict::Approve.new, answered_by: "human",
                                               policy: "interactive", latency: 1.0)
       FileUtils.mkdir_p(paths.filing_dir(root: @dir))
       File.open(File.join(paths.filing_dir(root: @dir), "earlier.ndjson"), "w") do |io|
@@ -257,8 +258,8 @@ RSpec.describe Lain::CLI::Repl::Ask do
       expect(provider.requests.size).to eq(1)
       expect(shown.text).to eq("the human asked you to wait: I'll run the review myself")
       expect(records("ask_settled").map { _1["stop_reason"] }).to eq(["held"])
-      expect(records("gate_decision").last).to include("stage" => "epic_plan", "approved" => false,
-                                                       "answered_by" => "held")
+      expect(records("gate_decision").last).to include("stage" => "epic_plan", "verdict" => "hold",
+                                                       "answered_by" => "human")
     end
   end
 

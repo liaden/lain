@@ -60,6 +60,15 @@ module Lain
         def self.io(path, cause) = new("cannot read the session journal #{path}: #{cause.message}")
 
         def self.damaged(line) = new("the session journal #{line.path} #{line.where} (#{line.what}) -- #{line.remedy}")
+
+        # @param path [String] the session journal
+        # @param line [Integer] the 1-based line number of the old gate_decision record
+        # @return [Unreadable] naming the file and the command that rewrites it
+        def self.outdated(path, line)
+          new("the session journal #{path} holds a gate_decision at line #{line} written before gate decisions " \
+              "recorded a verdict -- run `lain epic rewrite-verdicts` to rewrite it in place, a backup kept " \
+              "beside the file; nothing was decided")
+        end
       end
 
       REMEDY = "move the damaged file aside or repair the line; nothing was decided"
@@ -300,8 +309,16 @@ module Lain
       def read(path, acc, line, record)
         return torn(path, acc, line) if record.nil?
         return misfiled(path, acc, record) if Misfiled.shaped?(record)
+        raise Unreadable.outdated(path, acc[:lines]) if outdated?(record)
 
         acc[:records] << record if @types.include?(record["type"].to_s)
+      end
+
+      # Refused here, where the file is known, in either damage mode: a fold
+      # past it would refuse the same record later with no file to name.
+      def outdated?(record)
+        type = Lain::Epic::SignoffQueue::JOURNAL_TYPE
+        @types.include?(type) && record["type"] == type && record.key?("approved") && !record.key?("verdict")
       end
 
       def written_since?(path, began, tails) = tails.any?(&:decisive?) && File.size(path) != began

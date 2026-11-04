@@ -62,8 +62,8 @@ RSpec.describe Lain::Tools::EpicSubmit do
 
     expect(result).not_to be_error
     expect(result.content).to start_with("approved")
-    expect(this_sessions_decisions.map { |record| record.values_at("stage", "approved", "policy") })
-      .to eq([["research", true, "interactive"]])
+    expect(this_sessions_decisions.map { |record| record.values_at("stage", "verdict", "policy") })
+      .to eq([%w[research approve interactive]])
   end
 
   it "puts the agent's quoted review into the question the human is asked" do
@@ -135,7 +135,8 @@ RSpec.describe Lain::Tools::EpicSubmit do
     it "starts with denied" do
       parked = Lain::Epic::GateDecision.new(
         artifact_digest: Lain::Epic::Submission.research(text: "# findings\n", slug: "frugirl-mvp").digest,
-        epic_slug: "frugirl-mvp", stage: "research", approved: false, answered_by: "deferred",
+        epic_slug: "frugirl-mvp", stage: "research",
+        verdict: Lain::Approval::Verdict::Deny.new, answered_by: "deferred",
         policy: "deferred", latency: 1.0
       )
       FileUtils.mkdir_p(paths.filing_dir(root: @dir))
@@ -162,7 +163,7 @@ RSpec.describe Lain::Tools::EpicSubmit do
       end
 
       expect(result.content).to start_with("denied").and include("the summarizer question needs a benchmark first")
-      expect(this_sessions_decisions.last).to include("approved" => false, "answered_by" => "human",
+      expect(this_sessions_decisions.last).to include("verdict" => "deny", "answered_by" => "human",
                                                       "reason" => "the summarizer question needs a benchmark first")
     end
   end
@@ -182,7 +183,7 @@ RSpec.describe Lain::Tools::EpicSubmit do
 
       expect([result.ends_turn, result.error?]).to eq([true, false])
       expect(result.content).to eq("the human asked you to wait: I'll run the review myself")
-      expect(this_sessions_decisions.last).to include("approved" => false, "answered_by" => "held")
+      expect(this_sessions_decisions.last).to include("verdict" => "hold", "answered_by" => "human")
     end
 
     it "says only that the human asked it to wait when no note came with the hold" do
@@ -283,7 +284,8 @@ RSpec.describe Lain::Tools::EpicSubmit do
       %w[a b c].each { |id| home.issue(id).write("prose for #{id}\n") }
       earlier = %w[research epic_plan].map do |stage|
         Lain::Epic::GateDecision.new(artifact_digest: "blake3:#{stage}", epic_slug: "frugirl-mvp", stage:,
-                                     approved: true, answered_by: "hands_off", policy: "hands_off", latency: 1.0)
+                                     verdict: Lain::Approval::Verdict::Approve.new,
+                                     answered_by: "hands_off", policy: "hands_off", latency: 1.0)
       end
       FileUtils.mkdir_p(paths.filing_dir(root: @dir))
       File.open(File.join(paths.filing_dir(root: @dir), "earlier.ndjson"), "w") do |io|
@@ -320,8 +322,8 @@ RSpec.describe Lain::Tools::EpicSubmit do
 
       expect(result).not_to be_error
       expect(result.content).to include("approved b", "approved c")
-      expect(this_sessions_decisions.map { |record| record.values_at("issue_id", "approved") })
-        .to eq([["b", true], ["c", true]])
+      expect(this_sessions_decisions.map { |record| record.values_at("issue_id", "verdict") })
+        .to eq([%w[b approve], %w[c approve]])
     end
   end
 end

@@ -100,7 +100,8 @@ RSpec.describe Lain::Epic::Gate::Policy do
   def approved(signoffs, epic_slug, stages: %w[research epic_plan])
     stages.each_with_object(signoffs) do |stage, folded|
       folded.apply(Lain::Epic::GateDecision.new(artifact_digest: "blake3:#{stage}-approved", epic_slug:, stage:,
-                                                approved: true, answered_by: "human", policy: "signoff",
+                                                verdict: Lain::Approval::Verdict::Approve.new,
+                                                answered_by: "human", policy: "signoff",
                                                 latency: 1.0).to_journal)
     end
   end
@@ -148,7 +149,7 @@ RSpec.describe Lain::Epic::Gate::Policy do
     it "delegates to the asker and journals the surface that answered" do
       expect(decide(described_class.new(asker: approving_asker, queue: drained))).to be(true)
 
-      expect(decisions.first).to include("approved" => true, "answered_by" => "human",
+      expect(decisions.first).to include("verdict" => "approve", "answered_by" => "human",
                                          "policy" => "interactive")
       expect(gate.approved?(plan.digest)).to be(true)
     end
@@ -182,7 +183,7 @@ RSpec.describe Lain::Epic::Gate::Policy do
     it "approves and journals answered_by hands_off under policy hands_off" do
       expect(decide(policy)).to be(true)
 
-      expect(decisions.first).to include("approved" => true, "answered_by" => "hands_off",
+      expect(decisions.first).to include("verdict" => "approve", "answered_by" => "hands_off",
                                          "policy" => "hands_off")
     end
 
@@ -222,14 +223,15 @@ RSpec.describe Lain::Epic::Gate::Policy do
     before do
       queue.apply(Lain::Epic::GateDecision.new(artifact_digest: "blake3:plan-a", epic_slug: "alpha",
                                                stage: "issue_plan",
-                                               approved: true, answered_by: "human", policy: "signoff", latency: 1.0,
+                                               verdict: Lain::Approval::Verdict::Approve.new,
+                                               answered_by: "human", policy: "signoff", latency: 1.0,
                                                issue_id: "a").to_journal)
     end
 
     it "denies and journals a park for a human, awaited under a question naming manual acceptance" do
       expect(manual_decision).to be(false)
 
-      expect(decisions.first).to include("approved" => false, "policy" => "deferred")
+      expect(decisions.first).to include("verdict" => "deny", "policy" => "deferred")
       expect(journal_records(journal_io, "awaiting_human"))
         .to contain_exactly(include("deferred" => true, "issue_id" => "a", "summary" => /manual acceptance/))
     end
@@ -260,7 +262,7 @@ RSpec.describe Lain::Epic::Gate::Policy do
     it "answers false and journals answered_by deferred, approved false" do
       expect(decide(policy)).to be(false)
 
-      expect(decisions.first).to include("approved" => false, "answered_by" => "deferred",
+      expect(decisions.first).to include("verdict" => "deny", "answered_by" => "deferred",
                                          "policy" => "deferred")
     end
 

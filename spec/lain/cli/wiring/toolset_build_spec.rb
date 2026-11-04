@@ -465,7 +465,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
 
         expect(result.content).to start_with("approved")
         decisions = Lain::Journal.records(File.foreach(chronicle.journal_path), type: "gate_decision").to_a
-        expect(decisions.map { |record| record.values_at("stage", "approved") }).to eq([["research", true]])
+        expect(decisions.map { |record| record.values_at("stage", "verdict") }).to eq([%w[research approve]])
       end
     end
 

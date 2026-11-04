@@ -361,12 +361,12 @@ module Lain
         #   digest; an adjudicator's evidence note is judge-side text and is not shown
         def reason(digest)
           decision = latest(digest)
-          decision.reason if [Prompt::SURFACE, Lain::Epic::GateReply::HELD].include?(decision&.answered_by)
+          decision.reason if decision&.answered_by == Prompt::SURFACE || decision&.held?
         end
 
         # @param digest [String] the submitted artifact's address
         # @return [Boolean] whether the human answered this command's latest decision on the digest with a hold
-        def held?(digest) = Lain::Epic::GateReply.held?(latest(digest)&.answered_by)
+        def held?(digest) = latest(digest)&.held? || false
 
         # @param digest [String] the submitted artifact's address
         # @return [Boolean] whether this command's own latest decision on the digest deferred it

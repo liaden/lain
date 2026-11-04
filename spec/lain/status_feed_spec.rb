@@ -568,8 +568,8 @@ RSpec.describe Lain::StatusFeed do
 
     def question_wait(digest) = Lain::Telemetry::AwaitingHuman.new(kind: "question", ref: digest, summary: "Which?")
 
-    def gate_decision(digest)
-      Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: "alpha", stage: "research", approved: true,
+    def gate_decision(digest, verdict: Lain::Approval::Verdict::Approve.new)
+      Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: "alpha", stage: "research", verdict:,
                                    answered_by: "human", policy: "interactive", latency: 1.0)
     end
 
@@ -602,6 +602,17 @@ RSpec.describe Lain::StatusFeed do
       end
 
       expect(counts).to eq([2, 2, 2, 1])
+    end
+
+    # A hold pauses the work until the human speaks again, so the gate still waits on them.
+    it "keeps a held gate waiting, where a denial closes it" do
+      feed = described_class.new(path:)
+      feed << gate_wait("blake3:held") << gate_wait("blake3:denied")
+
+      feed << gate_decision("blake3:held", verdict: Lain::Approval::Verdict::Hold.new(note: "after lunch"))
+      feed << gate_decision("blake3:denied", verdict: Lain::Approval::Verdict::Deny.new)
+
+      expect(published["waiting"]).to eq(1)
     end
 
     it "is not moved by a decision on a gate nobody waited on" do

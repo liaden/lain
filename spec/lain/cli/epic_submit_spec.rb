@@ -133,7 +133,8 @@ RSpec.describe Lain::CLI::EpicSubmit do
   # Built through the real producers, so no fixture can drift from the wire
   # shape the live path writes.
   def decision(digest:, stage:, approved: false, policy: "deferred", slug: "alpha")
-    Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: slug, stage:, approved:,
+    Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: slug, stage:,
+                                 verdict: Lain::Approval::Verdict.const_get(approved ? :Approve : :Deny).new,
                                  answered_by: policy, policy:, latency: 1.0)
   end
 
@@ -185,8 +186,8 @@ RSpec.describe Lain::CLI::EpicSubmit do
     it "journals one approving gate_decision under the configured policy" do
       command(gates: { "research" => "hands_off" }).submit("research")
 
-      expect(gate_decisions.map { |record| record.values_at("approved", "policy", "stage") })
-        .to eq([[true, "hands_off", "research"]])
+      expect(gate_decisions.map { |record| record.values_at("verdict", "policy", "stage") })
+        .to eq([%w[approve hands_off research]])
     end
 
     it "completes the gated stage and starts its successor" do
@@ -206,8 +207,8 @@ RSpec.describe Lain::CLI::EpicSubmit do
       command.submit("implementation", issue: "a", digest: commit_sha)
 
       expect(stage_events).to eq([%w[issue_plan started]])
-      expect(submitted_decisions.map { |record| record.values_at("stage", "issue_id", "approved") })
-        .to eq([["issue_plan", "a", true], ["implementation", "a", true]])
+      expect(submitted_decisions.map { |record| record.values_at("stage", "issue_id", "verdict") })
+        .to eq([%w[issue_plan a approve], %w[implementation a approve]])
     end
 
     it "parks a manual issue's implementation under hands_off, naming manual acceptance" do
@@ -219,7 +220,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       command.submit("implementation", issue: "a", digest: commit_sha)
 
       implementation = gate_decisions.find { |record| record["stage"] == "implementation" }
-      expect(implementation).to include("approved" => false, "policy" => "deferred")
+      expect(implementation).to include("verdict" => "deny", "policy" => "deferred")
       expect(session_records.select { |record| record["type"] == "awaiting_human" && record["issue_id"] == "a" })
         .to include(include("deferred" => true, "summary" => /manual acceptance/))
     end
@@ -244,7 +245,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
       expect(said).to start_with("approved #{research_digest}")
       expect(said).to include("research completed, epic_plan started")
-      expect(gate_decisions.map { |record| record.values_at("approved", "stage") }).to eq([[true, "research"]])
+      expect(gate_decisions.map { |record| record.values_at("verdict", "stage") }).to eq([%w[approve research]])
       expect(stage_events).to eq([%w[research completed], %w[epic_plan started]])
       expect(home.epic.exist?).to be(false)
     end
@@ -330,8 +331,8 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
       expect(said).not_to start_with("already approved")
       implementations = gate_decisions.select { |record| record["stage"] == "implementation" }
-      expect(implementations.map { |record| record.values_at("issue_id", "approved") })
-        .to eq([["a", true], ["b", true]])
+      expect(implementations.map { |record| record.values_at("issue_id", "verdict") })
+        .to eq([%w[a approve], %w[b approve]])
       expect(implementations.map { |record| record["artifact_digest"] }.uniq.size).to eq(2)
     end
 
@@ -412,13 +413,14 @@ RSpec.describe Lain::CLI::EpicSubmit do
       Lain::Epic::Submission.issue_plan(view: Lain::Epic::IssueView.read(home, id), slug: "alpha", issue_id: id).digest
     end
 
-    def verdicts = submitted_decisions.to_h { |record| [record["issue_id"], record.values_at("approved", "reason")] }
+    def verdicts = submitted_decisions.to_h { |record| [record["issue_id"], record.values_at("verdict", "reason")] }
 
     # Scenario: a wave is approved but for one issue
     it "approves the wave but for the issue a deny names, and names all 3 outcomes" do
       said = asking("approve; deny c: the end time is missing").submit("issue_plan", wave: 2)
 
-      expect(verdicts).to eq("b" => [true, nil], "c" => [false, "the end time is missing"], "d" => [true, nil])
+      expect(verdicts).to eq("b" => ["approve", nil], "c" => ["deny", "the end time is missing"],
+                             "d" => ["approve", nil])
       expect(said.status).to eq(1)
       expect(said.text).to include("approved b #{plan_digest("b")}", "approved d #{plan_digest("d")}",
                                    "denied c #{plan_digest("c")}", "reason: the end time is missing")
@@ -439,7 +441,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       asking("deny cc: the end time is missing", "deny", output: screen).submit("issue_plan", wave: 2)
 
       expect(screen.string).to include("cc is not in wave 2")
-      expect(verdicts).to eq(%w[b c d].to_h { |id| [id, [false, nil]] })
+      expect(verdicts).to eq(%w[b c d].to_h { |id| [id, ["deny", nil]] })
     end
 
     it "reports a held issue as held, beside the issues decided" do
@@ -453,15 +455,15 @@ RSpec.describe Lain::CLI::EpicSubmit do
     it "denies b, c and d with a bare deny's reason" do
       asking("deny: not yet").submit("issue_plan", wave: 2)
 
-      expect(verdicts).to eq(%w[b c d].to_h { |id| [id, [false, "not yet"]] })
+      expect(verdicts).to eq(%w[b c d].to_h { |id| [id, ["deny", "not yet"]] })
     end
 
     # Scenario: a semicolon inside a reason is not a new clause
     it "keeps a semicolon inside a reason, and starts a clause at the next verdict word" do
       asking("approve; deny c: keep the WAV; add the end time; deny d: rename it").submit("issue_plan", wave: 2)
 
-      expect(verdicts).to eq("b" => [true, nil], "c" => [false, "keep the WAV; add the end time"],
-                             "d" => [false, "rename it"])
+      expect(verdicts).to eq("b" => ["approve", nil], "c" => ["deny", "keep the WAV; add the end time"],
+                             "d" => ["deny", "rename it"])
     end
 
     it "puts every approved issue in flight" do
@@ -484,7 +486,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       held = asking("hold").submit("issue_plan", wave: 2)
 
       expect(held).to be_a(described_class::Held)
-      expect(submitted_decisions.map { |record| record["answered_by"] }).to eq([Lain::Epic::GateReply::HELD] * 3)
+      expect(submitted_decisions.map { |record| record["verdict"] }).to eq(%w[hold hold hold])
     end
 
     it "parks one item per issue under the deferred policy" do
@@ -505,7 +507,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
       expect(session_records.select { |record| record["type"] == "gate_evidence" }.map { |record| record["stage"] })
         .to eq(%w[issue_plan issue_plan issue_plan])
-      expect(verdicts.values.map(&:first)).to eq([true, true, true])
+      expect(verdicts.values.map(&:first)).to eq(%w[approve approve approve])
       expect(said.status).to eq(0)
     end
 
@@ -518,7 +520,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
       said = adjudicating.submit("issue_plan", wave: 2)
 
-      expect(verdicts.transform_values(&:first)).to eq("b" => true, "c" => false, "d" => true)
+      expect(verdicts.transform_values(&:first)).to eq("b" => "approve", "c" => "deny", "d" => "approve")
       expect(said.status).to eq(1)
       expect(said.text).to include("2 approved, 0 held, 1 not", "approved b", "denied c", "approved d")
     end
@@ -775,11 +777,11 @@ RSpec.describe Lain::CLI::EpicSubmit do
     it "refuses a gate_decision whose approved field is \"maybe\" in one line naming the record" do
       File.write(File.join(sessions_dir, "damaged.ndjson"),
                  "#{JSON.generate(decision(digest: research_digest, stage: "research").to_journal
-                                    .merge("ts" => "2026-01-01T00:00:00Z", "approved" => "maybe"))}\n")
+                                    .merge("ts" => "2026-01-01T00:00:00Z", "verdict" => "maybe"))}\n")
 
       expect { command.submit("epic_plan") }.to raise_error(Lain::Error) { |error|
         expect(error).to be_a(Lain::Epic::SignoffQueue::UnreadableRecord)
-        expect(error.message).to include("gate_decision", research_digest, "approved")
+        expect(error.message).to include("gate_decision", research_digest, "verdict")
         expect(error.message).not_to include("\n")
       }
       expect(stage_transitions).to be_empty
@@ -796,11 +798,11 @@ RSpec.describe Lain::CLI::EpicSubmit do
       home.issue("a").write("the prose for a\n")
       File.write(File.join(sessions_dir, "damaged.ndjson"),
                  "#{JSON.generate(decision(digest: "blake3:damaged", stage: "issue_plan").to_journal
-                                    .merge("ts" => "2026-01-01T00:00:00Z", "approved" => "maybe"))}\n")
+                                    .merge("ts" => "2026-01-01T00:00:00Z", "verdict" => "maybe"))}\n")
 
       expect { command.ensure_plan_approved!("a") }.to raise_error(Lain::Error) { |error|
         expect(error).to be_a(Lain::Epic::SignoffQueue::UnreadableRecord)
-        expect(error.message).to include("gate_decision", "blake3:damaged", "approved")
+        expect(error.message).to include("gate_decision", "blake3:damaged", "verdict")
         expect(error.message).not_to include("\n")
       }
     end
@@ -925,7 +927,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
       expect(said).to start_with("approved")
       expect(session_records.map { |record| record["type"] }).to include("gate_evidence")
-      expect(gate_decisions.last).to include("policy" => "adjudicated", "approved" => true)
+      expect(gate_decisions.last).to include("policy" => "adjudicated", "verdict" => "approve")
     end
 
     it "parks an artifact the adjudicator will not call, for a human" do
@@ -1044,7 +1046,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
   # build for itself can be handed in instead.
   describe Lain::CLI::EpicSubmit::ReadBack do
     def decided(answered_by, reason)
-      Lain::Epic::GateDecision.new(artifact_digest: "blake3:x", epic_slug: "alpha", stage: "research", approved: false,
+      Lain::Epic::GateDecision.new(artifact_digest: "blake3:x", epic_slug: "alpha", stage: "research", verdict: Lain::Approval::Verdict::Deny.new,
                                    answered_by:, policy: "deferred", latency: 1.0, reason:)
     end
 
@@ -1075,7 +1077,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       described_class.new(root:, paths:, config: config(hands_off.merge("research" => "interactive")), asker:)
                      .submit("research")
 
-      expect(gate_decisions.last).to include("answered_by" => "driver", "approved" => true)
+      expect(gate_decisions.last).to include("answered_by" => "driver", "verdict" => "approve")
     end
 
     it "journals into an injected journal, and leaves it open for its owner" do
@@ -1147,7 +1149,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
         end
       end
 
-      def verdicts = gate_decisions.map { |record| record.values_at("approved", "answered_by") }
+      def verdicts = gate_decisions.map { |record| record.values_at("verdict", "answered_by") }
 
       # The cockpit's own answer gesture: <CR> on the inbox row opens
       # lain://question, the human writes beneath the gate's question, and `:w`
@@ -1207,13 +1209,13 @@ RSpec.describe Lain::CLI::EpicSubmit do
         it "approves when the human writes approve and saves" do
           expect(written_and_saved("approve")).to include("approved")
 
-          expect(verdicts).to eq([[true, "human"]])
+          expect(verdicts).to eq([%w[approve human]])
         end
 
         it "denies as the human's own denial when the human writes deny and saves" do
           expect(written_and_saved("deny")).to include("denied")
 
-          expect(verdicts).to eq([[false, "human"]])
+          expect(verdicts).to eq([%w[deny human]])
         end
       end
 
@@ -1222,14 +1224,14 @@ RSpec.describe Lain::CLI::EpicSubmit do
       # reaches the asker as the words themselves.
       describe "a reply in words" do
         {
-          "approve" => true, "approved" => true, "y" => true, "yes" => true,
-          "  YES \n" => true, "Approve." => true, "approved!" => true,
-          "deny" => false, "denied" => false, "n" => false, "No." => false
-        }.each do |reply, approved|
-          it "reads #{reply.inspect} as the human #{approved ? "approving" : "denying"}" do
+          "approve" => "approve", "approved" => "approve", "y" => "approve", "yes" => "approve",
+          "  YES \n" => "approve", "Approve." => "approve", "approved!" => "approve",
+          "deny" => "deny", "denied" => "deny", "n" => "deny", "No." => "deny"
+        }.each do |reply, verdict|
+          it "reads #{reply.inspect} as the human #{verdict == "approve" ? "approving" : "denying"}" do
             submitted_while { |question| asker.reply(reply, question.digest) }
 
-            expect(verdicts).to eq([[approved, "human"]])
+            expect(verdicts).to eq([[verdict, "human"]])
           end
         end
 
@@ -1238,7 +1240,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
             said = answered_in_turn(reply, "deny")
 
             expect(said).to include("denied")
-            expect(verdicts).to eq([[false, "human"]])
+            expect(verdicts).to eq([%w[deny human]])
             expect(asker.last_question.body.to_s).to include("The reply", reply)
           end
         end
@@ -1246,8 +1248,8 @@ RSpec.describe Lain::CLI::EpicSubmit do
         it "approves with the note after a comma" do
           expect(answered_in_turn("approve, round 2 research, re-signed unchanged")).to include("approved")
 
-          expect(gate_decisions.map { |record| record.values_at("approved", "answered_by", "reason") })
-            .to eq([[true, "human", "round 2 research, re-signed unchanged"]])
+          expect(gate_decisions.map { |record| record.values_at("verdict", "answered_by", "reason") })
+            .to eq([["approve", "human", "round 2 research, re-signed unchanged"]])
         end
 
         it "journals the words after a denial as the human's reason and shows them under denied" do
@@ -1255,7 +1257,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
           expect(said).to start_with("denied")
           expect(said).to include("needs a benchmark first")
-          expect(verdicts).to eq([[false, "human"]])
+          expect(verdicts).to eq([%w[deny human]])
           expect(gate_decisions.first["reason"]).to eq("needs a benchmark first")
         end
 
@@ -1274,12 +1276,12 @@ RSpec.describe Lain::CLI::EpicSubmit do
         end
 
         # Scenario: hold stops the agent until the human speaks
-        it "journals a hold as surface held, not a denial, and says it held with the human's note" do
+        it "journals a hold as a hold, not a denial, and says it held with the human's note" do
           said = submitted_while { |question| asker.reply("hold, I'll run the review myself", question.digest) }
 
           expect(said).to start_with("held").and include("I'll run the review myself", "nothing advanced")
           expect(said).not_to include("denied")
-          expect(verdicts).to eq([[false, "held"]])
+          expect(verdicts).to eq([%w[hold human]])
           expect(gate_decisions.first["reason"]).to eq("I'll run the review myself")
         end
 
@@ -1287,7 +1289,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
         it "records end of input at the reply prompt as eof" do
           submitted_while { |question| asker.reply(Lain::Tools::AskHuman::Unanswered.new, question.digest) }
 
-          expect(verdicts).to eq([[false, "eof"]])
+          expect(verdicts).to eq([%w[deny eof]])
         end
       end
 
@@ -1580,7 +1582,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
       expect(said).to include("denied")
       expect(stage_transitions).to be_empty
-      expect(gate_decisions.map { |record| record["approved"] }).to eq([false])
+      expect(gate_decisions.map { |record| record["verdict"] }).to eq(["deny"])
     end
 
     it "exits 1 on a denial and 0 on an approval" do
@@ -1624,7 +1626,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
       expect(said).to include("denied")
       expect(screen.string).to include('The reply "maybe" decides nothing')
-      expect(gate_decisions.map { |record| record.values_at("approved", "answered_by") }).to eq([[false, "human"]])
+      expect(gate_decisions.map { |record| record.values_at("verdict", "answered_by") }).to eq([%w[deny human]])
     end
 
     # Scenario: end of input is not a human's answer
@@ -1632,7 +1634,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       said = command(gates: hands_off.merge("research" => "interactive"), input: tty(nil)).submit("research").text
 
       expect(said).to include("denied")
-      expect(gate_decisions.map { |record| record.values_at("approved", "answered_by") }).to eq([[false, "eof"]])
+      expect(gate_decisions.map { |record| record.values_at("verdict", "answered_by") }).to eq([%w[deny eof]])
     end
 
     # Scenario: latency is measured from the question's write, not from
@@ -1686,7 +1688,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       end
 
       decisions = journal_records(io, "gate_decision").to_a
-      expect(decisions.map { |record| record.values_at("approved", "answered_by") }).to eq([[false, "interrupted"]])
+      expect(decisions.map { |record| record.values_at("verdict", "answered_by") }).to eq([%w[deny interrupted]])
     end
   end
 
@@ -1812,7 +1814,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
       expect(status.exitstatus).to eq(130)
       expect(screen).to include("interrupted")
-      expect(decisions.map { |record| record.values_at("approved", "answered_by") }).to eq([[false, "interrupted"]])
+      expect(decisions.map { |record| record.values_at("verdict", "answered_by") }).to eq([%w[deny interrupted]])
     end
   end
 

@@ -40,13 +40,16 @@ RSpec.describe Lain::Epic::SignoffQueue do
     io.string.lines
   end
 
-  def decision(policy:, approved: false, digest: "blake3:plan", epic_slug: "alpha", stage: "research", **overrides)
-    Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug:, stage:, approved:,
+  def hold = Lain::Approval::Verdict::Hold.new
+  def deny = Lain::Approval::Verdict::Deny.new
+
+  def decision(policy:, verdict: deny, digest: "blake3:plan", epic_slug: "alpha", stage: "research", **overrides)
+    Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug:, stage:, verdict:,
                                  answered_by: policy, policy:, latency: 0.1, **overrides)
   end
 
   def deferral(**overrides) = decision(policy: described_class::DEFERRED_POLICY, **overrides)
-  def approval(**overrides) = decision(policy: "signoff", approved: true, **overrides)
+  def approval(**overrides) = decision(policy: "signoff", verdict: Lain::Approval::Verdict::Approve.new, **overrides)
 
   describe "parking" do
     it "holds one item per (digest, epic, stage) address" do
@@ -223,7 +226,7 @@ RSpec.describe Lain::Epic::SignoffQueue do
     end
 
     it "treats a later DENIAL as terminal too -- a refused artifact is not awaiting sign-off" do
-      queue = described_class.from_journal(journaled(deferral, decision(policy: "signoff", approved: false)))
+      queue = described_class.from_journal(journaled(deferral, decision(policy: "signoff")))
 
       expect(queue.to_a).to be_empty
     end
@@ -286,12 +289,12 @@ RSpec.describe Lain::Epic::SignoffQueue do
       expect(queue.drained?("alpha", "research")).to be(false)
     end
 
-    it "refuses a record with no approved verdict -- the wire shape is nine members, not six" do
+    it "refuses a record with no verdict" do
       queue = described_class.new
       park(queue)
 
-      expect { queue.apply(decision(policy: "signoff").to_journal.except("approved")) }
-        .to raise_error(ArgumentError, /approved/)
+      expect { queue.apply(decision(policy: "signoff").to_journal.except("verdict")) }
+        .to raise_error(ArgumentError, /verdict/)
       expect(queue.drained?("alpha", "research")).to be(false)
     end
 
@@ -320,12 +323,12 @@ RSpec.describe Lain::Epic::SignoffQueue do
     # a damaged line reached a human as a backtrace. The fold is where a record
     # becomes a decision, so the fold is where the refusal gets its name.
     it "refuses a parseable but malformed gate_decision as a named Lain::Error, in one line naming the record" do
-      line = decision(policy: "signoff").to_journal.merge("approved" => "maybe")
+      line = decision(policy: "signoff").to_journal.merge("verdict" => "maybe")
 
       expect { described_class.from_journal(journaled(deferral) + [line]) }
         .to raise_error(Lain::Error) { |error|
           expect(error).to be_a(described_class::UnreadableRecord)
-          expect(error.message).to include("gate_decision", "blake3:plan", "alpha/research", "approved",
+          expect(error.message).to include("gate_decision", "blake3:plan", "alpha/research", "verdict",
                                            "nothing was decided")
           expect(error.message).not_to include("\n")
         }
@@ -395,7 +398,7 @@ RSpec.describe Lain::Epic::SignoffQueue do
     end
 
     it "is false for a denial, and for a deferral that parks" do
-      denied = described_class.from_journal(journaled(decision(policy: "signoff", approved: false)))
+      denied = described_class.from_journal(journaled(decision(policy: "signoff")))
 
       expect(denied.approved?("alpha", "research")).to be(false)
       expect(described_class.from_journal(journaled(deferral)).approved?("alpha", "research")).to be(false)
@@ -405,14 +408,14 @@ RSpec.describe Lain::Epic::SignoffQueue do
     # resubmitted draft withdraws the approval its first draft had.
     it "is false once a later denial in the partition follows an approval" do
       queue = described_class.from_journal(journaled(approval(digest: "blake3:v1"),
-                                                     decision(policy: "signoff", approved: false, digest: "blake3:v2")))
+                                                     decision(policy: "signoff", digest: "blake3:v2")))
 
       expect(queue.approved?("alpha", "research")).to be(false)
     end
 
     it "keeps a newer approval when a superseded draft that was parked before it is denied" do
       queue = described_class.from_journal(journaled(deferral(digest: "blake3:v1"), approval(digest: "blake3:v2"),
-                                                     decision(policy: "signoff", approved: false, digest: "blake3:v1")))
+                                                     decision(policy: "signoff", digest: "blake3:v1")))
 
       expect(queue.approved?("alpha", "research")).to be(true)
       expect(queue.standing?("blake3:v2", "alpha", "research")).to be(true)
@@ -422,7 +425,7 @@ RSpec.describe Lain::Epic::SignoffQueue do
     it "withdraws the approval again when a superseded draft is re-deferred and then denied" do
       queue = described_class.from_journal(journaled(deferral(digest: "blake3:v1"), approval(digest: "blake3:v2"),
                                                      deferral(digest: "blake3:v1"),
-                                                     decision(policy: "signoff", approved: false, digest: "blake3:v1")))
+                                                     decision(policy: "signoff", digest: "blake3:v1")))
 
       expect(queue.approved?("alpha", "research")).to be(false)
     end
@@ -430,21 +433,21 @@ RSpec.describe Lain::Epic::SignoffQueue do
     it "withdraws an older approval when a newer draft parked beside it is denied" do
       queue = described_class.from_journal(journaled(deferral(digest: "blake3:v1"), deferral(digest: "blake3:v2"),
                                                      approval(digest: "blake3:v1"),
-                                                     decision(policy: "signoff", approved: false, digest: "blake3:v2")))
+                                                     decision(policy: "signoff", digest: "blake3:v2")))
 
       expect(queue.approved?("alpha", "research")).to be(false)
     end
 
     it "withdraws an approval when a draft parked after it is denied" do
       queue = described_class.from_journal(journaled(approval(digest: "blake3:v1"), deferral(digest: "blake3:v2"),
-                                                     decision(policy: "signoff", approved: false, digest: "blake3:v2")))
+                                                     decision(policy: "signoff", digest: "blake3:v2")))
 
       expect(queue.approved?("alpha", "research")).to be(false)
     end
 
     it "is true again once a re-approval follows that denial" do
       queue = described_class.from_journal(journaled(approval(digest: "blake3:v1"),
-                                                     decision(policy: "signoff", approved: false, digest: "blake3:v2"),
+                                                     decision(policy: "signoff", digest: "blake3:v2"),
                                                      approval(digest: "blake3:v3")))
 
       expect(queue.approved?("alpha", "research")).to be(true)
@@ -459,9 +462,7 @@ RSpec.describe Lain::Epic::SignoffQueue do
 
     # Scenario: a hold does not revoke a standing approval
     it "keeps issue a approved when a later issue_plan gate for a is answered hold" do
-      held = Lain::Epic::GateDecision.new(artifact_digest: "blake3:v2", epic_slug: "alpha", stage: "issue_plan",
-                                          issue_id: "a", approved: false, answered_by: Lain::Epic::GateReply::HELD,
-                                          policy: "interactive", latency: 0.1)
+      held = decision(policy: "interactive", verdict: hold, digest: "blake3:v2", stage: "issue_plan", issue_id: "a")
       queue = described_class.from_journal(journaled(approval(digest: "blake3:v1", stage: "issue_plan", issue_id: "a"),
                                                      held))
 
@@ -470,10 +471,71 @@ RSpec.describe Lain::Epic::SignoffQueue do
     end
 
     it "leaves a parked sign-off parked when its digest is answered hold" do
-      held = decision(policy: "interactive").to_h.merge(answered_by: Lain::Epic::GateReply::HELD)
-      queue = described_class.from_journal(journaled(deferral, Lain::Epic::GateDecision.new(**held)))
+      queue = described_class.from_journal(journaled(deferral, decision(policy: "interactive", verdict: hold)))
 
       expect(queue.drained?("alpha", "research")).to be(false)
+    end
+
+    it "reads a hold off the verdict, whoever gave it, and lists it held" do
+      held = decision(policy: "interactive", verdict: Lain::Approval::Verdict::Hold.new(note: "after lunch"),
+                      answered_by: "human", stage: "issue_plan", issue_id: "a")
+      queue = described_class.from_journal(journaled(held))
+
+      expect(queue.held("alpha", "issue_plan", issue_id: "a").map(&:artifact_digest)).to eq(["blake3:plan"])
+      expect(queue.approved?("alpha", "issue_plan", issue_id: "a")).to be(false)
+    end
+
+    it "reads a denial answered by a surface named held as a denial" do
+      denied = decision(policy: "interactive", answered_by: "held", stage: "issue_plan", issue_id: "a")
+      queue = described_class.from_journal(journaled(deferral(stage: "issue_plan", issue_id: "a"), denied))
+
+      expect(queue.held("alpha", "issue_plan", issue_id: "a")).to be_empty
+      expect(queue.drained?("alpha", "issue_plan", issue_id: "a")).to be(true)
+    end
+
+    # One rule for every reader: a hold names only an address nothing else answers.
+    it "does not list a hold over a standing approval of the same digest" do
+      queue = described_class.from_journal(journaled(approval, decision(policy: "interactive", verdict: hold)))
+
+      expect(queue.held("alpha", "research")).to be_empty
+      expect(queue.standing?("blake3:plan", "alpha", "research")).to be(true)
+    end
+
+    it "does not list a hold over a parked sign-off of the same digest, which stays parked" do
+      queue = described_class.from_journal(journaled(deferral, decision(policy: "interactive", verdict: hold)))
+
+      expect(queue.held("alpha", "research")).to be_empty
+      expect(queue.parked("alpha", "research").size).to eq(1)
+    end
+
+    it "keeps a hold over a standing approval unlisted after a later approval moves the partition on" do
+      queue = described_class.from_journal(journaled(approval(digest: "blake3:d1"),
+                                                     decision(policy: "interactive", verdict: hold,
+                                                              digest: "blake3:d1"),
+                                                     approval(digest: "blake3:d2")))
+
+      expect(queue.held("alpha", "research")).to be_empty
+    end
+
+    it "lists a hold over a denial of the same digest" do
+      queue = described_class.from_journal(journaled(decision(policy: "interactive"),
+                                                     decision(policy: "interactive", verdict: hold)))
+
+      expect(queue.held("alpha", "research").map(&:artifact_digest)).to eq(["blake3:plan"])
+    end
+
+    it "stops listing a hold once a later verdict decides its address" do
+      queue = described_class.from_journal(journaled(decision(policy: "interactive", verdict: hold),
+                                                     approval))
+
+      expect(queue.held("alpha", "research")).to be_empty
+    end
+
+    it "refuses a record written before decisions carried a verdict, saying so" do
+      old = decision(policy: "signoff").to_journal.except("verdict").merge("approved" => true)
+
+      expect { described_class.from_journal([old]) }
+        .to raise_error(described_class::UnreadableRecord, /approved boolean.*no verdict.*lain epic rewrite-verdicts/)
     end
 
     it "keys on the whole partition: another epic, stage or issue vouches for nothing" do
@@ -502,7 +564,7 @@ RSpec.describe Lain::Epic::SignoffQueue do
     end
 
     def damaged_approval
-      approval(stage: "issue_plan", issue_id: "a", digest: "blake3:a").to_journal.merge("approved" => [])
+      approval(stage: "issue_plan", issue_id: "a", digest: "blake3:a").to_journal.merge("verdict" => [])
     end
 
     it "keeps one issue's parked sign-off out of a sibling's partition" do
@@ -575,11 +637,11 @@ RSpec.describe Lain::Epic::SignoffQueue do
     end
 
     # Scenario: a damaged decision line cannot drain a parked sign-off
-    it "refuses a live decision whose approved is [], leaving the issue's sign-off parked" do
+    it "refuses a live decision whose verdict is [], leaving the issue's sign-off parked" do
       queue = described_class.new
       issue_park(queue, "a")
 
-      expect { queue.apply(damaged_approval) }.to raise_error(ArgumentError, /approved/)
+      expect { queue.apply(damaged_approval) }.to raise_error(ArgumentError, /verdict/)
       expect(queue.drained?("alpha", "issue_plan", issue_id: "a")).to be(false)
     end
 
@@ -587,7 +649,7 @@ RSpec.describe Lain::Epic::SignoffQueue do
       lines = journaled(deferral(stage: "issue_plan", issue_id: "a", digest: "blake3:a")) +
               ["#{JSON.generate(damaged_approval)}\n"]
 
-      expect { described_class.from_journal(lines) }.to raise_error(described_class::UnreadableRecord, /approved/)
+      expect { described_class.from_journal(lines) }.to raise_error(described_class::UnreadableRecord, /verdict/)
     end
   end
 

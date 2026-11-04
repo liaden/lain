@@ -92,7 +92,8 @@ RSpec.describe Lain::Epic::Gate::Adjudicator do
   def approved_queue(epic_slug = "alpha")
     %w[research epic_plan].each_with_object(Lain::Epic::SignoffQueue.new) do |stage, folded|
       folded.apply(Lain::Epic::GateDecision.new(artifact_digest: "blake3:#{stage}-approved", epic_slug:, stage:,
-                                                approved: true, answered_by: "human", policy: "signoff",
+                                                verdict: Lain::Approval::Verdict::Approve.new,
+                                                answered_by: "human", policy: "signoff",
                                                 latency: 1.0).to_journal)
     end
   end
@@ -112,7 +113,7 @@ RSpec.describe Lain::Epic::Gate::Adjudicator do
   # exercises Decided directly rebinds it.
   def adjudicated(approved:, digest: plan.digest, policy: Lain::Epic::Gate::Adjudicator::TERMINAL_POLICY)
     { "type" => "gate_decision", "artifact_digest" => digest, "epic_slug" => "alpha", "stage" => "epic_plan",
-      "approved" => approved, "answered_by" => Lain::Epic::Gate::Adjudicator::SURFACE,
+      "verdict" => approved ? "approve" : "deny", "answered_by" => Lain::Epic::Gate::Adjudicator::SURFACE,
       "policy" => policy, "latency" => 0.1 }
   end
 
@@ -141,7 +142,7 @@ RSpec.describe Lain::Epic::Gate::Adjudicator do
     it "journals answered_by gate_adjudicator -- a machine approval is never mistaken for a human one" do
       adjudicate
 
-      expect(decisions.first).to include("approved" => true, "answered_by" => "gate_adjudicator")
+      expect(decisions.first).to include("verdict" => "approve", "answered_by" => "gate_adjudicator")
     end
 
     it "carries the evidence digest on the decision, so the verdict names what it was reached on" do
@@ -199,7 +200,7 @@ RSpec.describe Lain::Epic::Gate::Adjudicator do
     it "refuses, journals the denial, and parks nothing" do
       expect(adjudicate(adjudicator(spawn_stub(verdict: "DENY")))).to be(false)
 
-      expect(decisions.first).to include("approved" => false, "answered_by" => "gate_adjudicator")
+      expect(decisions.first).to include("verdict" => "deny", "answered_by" => "gate_adjudicator")
       expect(queue.to_a).to be_empty
       expect { gate.ensure_approved!(plan) }.to raise_error(Lain::Epic::Gate::NotApproved)
     end
@@ -223,7 +224,7 @@ RSpec.describe Lain::Epic::Gate::Adjudicator do
     it "journals a deferred decision, so the queue stays a subset of the journal's fold" do
       adjudicate(adjudicator(spawn_stub(verdict: hedged)))
 
-      expect(decisions.first).to include("approved" => false,
+      expect(decisions.first).to include("verdict" => "deny",
                                          "policy" => Lain::Epic::SignoffQueue::DEFERRED_POLICY)
       expect(decisions.first["evidence_digest"]).to eq(Lain::Canonical.digest(evidence_text))
     end
@@ -551,7 +552,7 @@ RSpec.describe Lain::Epic::Gate::Adjudicator do
       expect { adjudicate(adj) }
         .to raise_error(described_class::AlreadyDecided) { |e|
           expect(e.message).to include(plan.digest)
-          expect(e.message).to include("true")
+          expect(e.message).to include("verdict: approve")
         }
     end
 
@@ -559,7 +560,7 @@ RSpec.describe Lain::Epic::Gate::Adjudicator do
       adj = adjudicator(spawn_stub(verdict: "DENY"))
       adjudicate(adj)
 
-      expect { adjudicate(adj) }.to raise_error(described_class::AlreadyDecided, /false/)
+      expect { adjudicate(adj) }.to raise_error(described_class::AlreadyDecided, /verdict: deny/)
     end
 
     it "refuses BEFORE spending a spawn or journaling anything" do
@@ -595,7 +596,7 @@ RSpec.describe Lain::Epic::Gate::Adjudicator do
       before = journal_io.string.lines.length
 
       expect { adjudicate(adjudicator) }.to raise_error(described_class::AlreadyDecided) { |e|
-        expect(e.message).to include(plan.digest).and include("true")
+        expect(e.message).to include(plan.digest).and include("verdict: approve")
       }
       expect(journal_io.string.lines.length).to eq(before)
     end
@@ -605,7 +606,7 @@ RSpec.describe Lain::Epic::Gate::Adjudicator do
       adjudicate(adjudicator(spawn_stub(verdict: "DENY")))
       before = decisions.length
 
-      expect { adjudicate(adjudicator) }.to raise_error(described_class::AlreadyDecided, /false/)
+      expect { adjudicate(adjudicator) }.to raise_error(described_class::AlreadyDecided, /verdict: deny/)
       expect(decisions.length).to eq(before)
     end
 
@@ -619,7 +620,7 @@ RSpec.describe Lain::Epic::Gate::Adjudicator do
 
     it "reads the verdict off the RECORD, so a deny nobody in this process made is still terminal" do
       expect { adjudicate(adjudicator_over([adjudicated(approved: false)])) }
-        .to raise_error(described_class::AlreadyDecided, /false/)
+        .to raise_error(described_class::AlreadyDecided, /verdict: deny/)
     end
 
     it "ignores a decision reached under another policy -- only an adjudication is terminal here" do
@@ -669,7 +670,7 @@ RSpec.describe Lain::Epic::Gate::Adjudicator do
   describe Lain::Epic::Gate::Adjudicator::Decided do
     it "refuses an address a terminal record already settled, naming the verdict" do
       expect { described_class.new([adjudicated(approved: false)]).ensure_undecided!(plan.digest) }
-        .to raise_error(Lain::Epic::Gate::Adjudicator::AlreadyDecided, /false/)
+        .to raise_error(Lain::Epic::Gate::Adjudicator::AlreadyDecided, /verdict: deny/)
     end
 
     it "passes an address nothing settled" do
@@ -686,7 +687,7 @@ RSpec.describe Lain::Epic::Gate::Adjudicator do
       line = "#{JSON.generate(adjudicated(approved: true))}\n"
 
       expect { described_class.new([line]).ensure_undecided!(plan.digest) }
-        .to raise_error(Lain::Epic::Gate::Adjudicator::AlreadyDecided, /true/)
+        .to raise_error(Lain::Epic::Gate::Adjudicator::AlreadyDecided, /verdict: approve/)
     end
 
     it "skips foreign lines rather than raising over another writer's bytes" do
@@ -707,12 +708,12 @@ RSpec.describe Lain::Epic::Gate::Adjudicator do
 
       it "names the LAST record, not the first, when the deny came second" do
         expect { described_class.new([approved, denied]).ensure_undecided!(plan.digest) }
-          .to raise_error(Lain::Epic::Gate::Adjudicator::AlreadyDecided, /false/)
+          .to raise_error(Lain::Epic::Gate::Adjudicator::AlreadyDecided, /verdict: deny/)
       end
 
       it "names the LAST record when the approve came second -- journal order is time order" do
         expect { described_class.new([denied, approved]).ensure_undecided!(plan.digest) }
-          .to raise_error(Lain::Epic::Gate::Adjudicator::AlreadyDecided, /true/)
+          .to raise_error(Lain::Epic::Gate::Adjudicator::AlreadyDecided, /verdict: approve/)
       end
     end
   end

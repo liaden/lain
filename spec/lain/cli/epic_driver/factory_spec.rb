@@ -190,7 +190,8 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
       journal = Lain::Journal.new(io:, clock: -> { "2026-01-01T00:00:00Z" })
       %w[research epic_plan].each do |stage|
         journal.record(Lain::Epic::GateDecision.new(artifact_digest: "blake3:#{stage}-approved", epic_slug: slug,
-                                                    stage:, approved: true, answered_by: "human",
+                                                    stage:,
+                                                    verdict: Lain::Approval::Verdict::Approve.new, answered_by: "human",
                                                     policy: "hands_off", latency: 0.0))
       end
     end
@@ -198,7 +199,8 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
 
   def approve_plan(id, slug: "demo")
     journaled(Lain::Epic::GateDecision.new(artifact_digest: approved_plan(id, slug).digest, epic_slug: slug,
-                                           stage: "issue_plan", approved: true, answered_by: "human",
+                                           stage: "issue_plan",
+                                           verdict: Lain::Approval::Verdict::Approve.new, answered_by: "human",
                                            policy: "hands_off", latency: 0.0, issue_id: id))
   end
 
@@ -663,7 +665,7 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
       expect(result.reported.last.reason).to include("committed no work")
       expect(result.reported.first.reason).to include("parked", "lain epic queue")
       parked = journaled_decisions.select { |entry| entry.values_at("issue_id", "stage") == %w[a implementation] }
-      expect(parked).to contain_exactly(include("approved" => false, "policy" => "deferred"))
+      expect(parked).to contain_exactly(include("verdict" => "deny", "policy" => "deferred"))
     end
 
     # The same rebase, over an issue that did commit work: its rebased red
@@ -894,7 +896,8 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
       original = home.issue("a").read
       home.issue("a").write("#{original}revised\n")
       journaled(Lain::Epic::GateDecision.new(artifact_digest: approved_plan("a").digest, epic_slug: "demo",
-                                             stage: "issue_plan", approved: false, answered_by: "human",
+                                             stage: "issue_plan",
+                                             verdict: Lain::Approval::Verdict::Deny.new, answered_by: "human",
                                              policy: "signoff", latency: 0.0, issue_id: "a"))
       home.issue("a").write(original)
       git(repo, "switch", "-q", "main")

@@ -98,12 +98,12 @@ module Lain
       # @param reason [String, nil] the human's rationale, journaled verbatim
       # @return [String] the confirmation
       # @raise [UnknownDigest] naming the digest and listing the parked ones
-      def approve(digest, reason: nil) = drain(digest, approved: true, reason:)
+      def approve(digest, reason: nil) = drain(digest, Lain::Approval::Verdict::Approve.new(note: reason))
 
       # A denial is terminal too: a refused artifact awaits nobody's sign-off
       # either, so it drains the partition exactly as an approval does.
       # @see #approve
-      def deny(digest, reason: nil) = drain(digest, approved: false, reason:)
+      def deny(digest, reason: nil) = drain(digest, Lain::Approval::Verdict::Deny.new(note: reason))
 
       private
 
@@ -133,13 +133,13 @@ module Lain
         SessionJournals.new(dirs:, types:, damage:)
       end
 
-      def drain(digest, approved:, reason:)
+      def drain(digest, verdict)
         digest = digest.to_s
         rows = review.find(digest)
-        raise UnknownDigest, unknown_message(digest, approved:) if rows.empty?
+        raise UnknownDigest, unknown_message(digest, approved: verdict.approved?) if rows.empty?
 
-        decisions = in_stage_order(rows).map { |row| row.terminal(approved:, reason:) }
-        ensure_open!(decisions) if approved
+        decisions = in_stage_order(rows).map { |row| row.terminal(verdict) }
+        ensure_open!(decisions) if verdict.approved?
         advances = Advances.new(decisions) { epics }
         confirmation(digest, decisions, append(decisions, advances))
       end
@@ -178,10 +178,10 @@ module Lain
 
       def confirmation(digest, decisions, moved)
         signed = decisions.map do |decision|
-          "  #{partition_of(decision)} — #{decision.approved ? "approved" : "denied"} by " \
+          "  #{partition_of(decision)} — #{decision.approved? ? "approved" : "denied"} by " \
             "#{decision.answered_by} after #{Row.waited_label(decision.latency)}"
         end
-        ["#{decisions.first.approved ? "signed off" : "denied"} #{digest}", *signed,
+        ["#{decisions.first.approved? ? "signed off" : "denied"} #{digest}", *signed,
          *moved.map { |line| "  #{line}" }].join("\n")
       end
 
@@ -288,11 +288,11 @@ module Lain
 
         def address = "#{item.artifact_digest}  (#{item.partition})"
 
-        def terminal(approved:, reason:)
+        def terminal(verdict)
           Lain::Epic::GateDecision.new(artifact_digest: item.artifact_digest, epic_slug: item.epic_slug,
-                                       stage: item.stage, approved:, answered_by: HUMAN,
+                                       stage: item.stage, verdict:, answered_by: HUMAN,
                                        policy: Lain::Epic::SignoffQueue::SIGNOFF_POLICY,
-                                       latency: waited, evidence_digest: item.evidence_digest, reason:,
+                                       latency: waited, evidence_digest: item.evidence_digest,
                                        issue_id: item.issue_id, criteria_digest: item.criteria_digest)
         end
 
@@ -329,7 +329,7 @@ module Lain
         # @raise [MissingEpicDocument] when an approved plan's epic has no
         #   document where this process resolves it
         def initialize(decisions)
-          advances = decisions.select(&:approved).map { |decision| [decision, advance(decision)] }
+          advances = decisions.select(&:approved?).map { |decision| [decision, advance(decision)] }
           moving = advances.select { |_decision, advance| advance.moves? }
           @ready = moving.empty? ? [] : read(moving, yield)
         end

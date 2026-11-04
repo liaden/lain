@@ -51,7 +51,8 @@ RSpec.describe Lain::Epic::Gate::Policies do
   def approved_queue(epic_slug = "alpha")
     %w[research epic_plan].each_with_object(Lain::Epic::SignoffQueue.new) do |stage, folded|
       folded.apply(Lain::Epic::GateDecision.new(artifact_digest: "blake3:#{stage}-approved", epic_slug:, stage:,
-                                                approved: true, answered_by: "human", policy: "signoff",
+                                                verdict: Lain::Approval::Verdict::Approve.new,
+                                                answered_by: "human", policy: "signoff",
                                                 latency: 1.0).to_journal)
     end
   end

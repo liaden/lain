@@ -20,7 +20,7 @@ module Lain
                         Telemetry::AwaitingHuman].freeze
 
         # @!attribute [r] gate
-        #   @return [String] draft, waiting, held, approved or denied with its reason's first line
+        #   @return [String] draft, waiting, parked, approved, or held or denied with its note's first line
         Row = Data.define(:id, :title, :mark, :stage, :gate, :blockers) do
           def line
             held = blockers.empty? ? "" : " (blocked by #{blockers.map { |id| "`#{id}`" }.join(", ")})"
@@ -30,7 +30,8 @@ module Lain
 
         # A gate's state is whichever of its records came last: a decision settles
         # it, a wait reopens it, and a deferred wait is the one written after the
-        # denial that closed the gate, so it reads as held.
+        # denial that closed the gate, so it reads as parked, as `lain epic
+        # status` counts it.
         module Roadmap
           GATE_TYPES = %w[gate_decision awaiting_human].freeze
 
@@ -58,10 +59,12 @@ module Lain
           end
 
           def state(record)
-            return (record["deferred"] ? "held" : "waiting") unless record["type"] == "gate_decision"
-            return "approved" if record["approved"]
+            return (record["deferred"] ? "parked" : "waiting") unless record["type"] == "gate_decision"
 
-            "denied: #{record["reason"].to_s.lines.first.to_s.strip}".strip
+            verdict = Lain::Epic::GateDecision.verdict_in(record)
+            return "approved" if verdict.approved?
+
+            "#{verdict.held? ? "held" : "denied"}: #{verdict.note.to_s.lines.first.to_s.strip}".strip
           end
         end
 

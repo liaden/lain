@@ -21,9 +21,9 @@ RSpec.describe Lain::Frontend::Neovim::PlanningView do
                                                     records: ->(_slug) { records })
   end
 
-  def decided(id, approved:, reason: nil)
+  def decided(id, verdict:, reason: nil)
     { "type" => "gate_decision", "epic_slug" => "demo", "stage" => "issue_plan", "issue_id" => id,
-      "approved" => approved, "reason" => reason }
+      "verdict" => verdict, "reason" => reason }
   end
 
   def asked(id, deferred: false)
@@ -32,8 +32,9 @@ RSpec.describe Lain::Frontend::Neovim::PlanningView do
   end
 
   def denial
-    Lain::Epic::GateDecision.new(artifact_digest: "blake3:x", epic_slug: "demo", stage: "issue_plan", approved: false,
-                                 answered_by: "cli", policy: "interactive", latency: 1, reason: "needs tests",
+    Lain::Epic::GateDecision.new(artifact_digest: "blake3:x", epic_slug: "demo", stage: "issue_plan",
+                                 verdict: Lain::Approval::Verdict::Deny.new(note: "needs tests"),
+                                 answered_by: "cli", policy: "interactive", latency: 1,
                                  issue_id: "a")
   end
 
@@ -44,8 +45,8 @@ RSpec.describe Lain::Frontend::Neovim::PlanningView do
   describe "the gate round at a glance" do
     it "shows each issue's state and the first line of a denial's reason" do
       ids = (1..20).map { |n| format("i%02d", n) }
-      records = ids.first(18).map { |id| decided(id, approved: true) }
-      records << decided("i19", approved: false, reason: "criteria are vague\nsecond line stays out")
+      records = ids.first(18).map { |id| decided(id, verdict: "approve") }
+      records << decided("i19", verdict: "deny", reason: "criteria are vague\nsecond line stays out")
       records << asked("i20")
       lines = described_class.new(epic: epic(graph_of(*ids.map { |id| issue(id) }), records)).initial
 
@@ -55,16 +56,25 @@ RSpec.describe Lain::Frontend::Neovim::PlanningView do
       expect(row(lines, "i20")).to include("issue_plan, waiting")
     end
 
-    it "reads a deferred wait after a denial as held, and an issue with no gate as draft" do
-      records = [decided("a", approved: false, reason: "no"), asked("a", deferred: true)]
+    it "reads a deferred wait after a denial as parked, and an issue with no gate as draft" do
+      records = [decided("a", verdict: "deny", reason: "no"), asked("a", deferred: true)]
       lines = described_class.new(epic: epic(graph_of(issue("a"), issue("b")), records)).initial
 
-      expect(row(lines, "a")).to include("held")
+      expect(row(lines, "a")).to include("issue_plan, parked")
+      expect(row(lines, "a")).not_to include("held")
       expect(row(lines, "b")).to include("draft")
     end
 
+    it "reads a hold as held with its note, not as a denial" do
+      records = [asked("a"), decided("a", verdict: "hold", reason: "back after lunch")]
+      lines = described_class.new(epic: epic(graph_of(issue("a")), records)).initial
+
+      expect(row(lines, "a")).to include("issue_plan, held: back after lunch")
+      expect(row(lines, "a")).not_to include("denied")
+    end
+
     it "lets a later decision supersede an earlier wait" do
-      records = [asked("a"), decided("a", approved: true)]
+      records = [asked("a"), decided("a", verdict: "approve")]
       lines = described_class.new(epic: epic(graph_of(issue("a")), records)).initial
 
       expect(row(lines, "a")).to include("approved")
@@ -85,7 +95,7 @@ RSpec.describe Lain::Frontend::Neovim::PlanningView do
     end
 
     it "ignores a record of another epic" do
-      foreign = decided("a", approved: true).merge("epic_slug" => "other")
+      foreign = decided("a", verdict: "approve").merge("epic_slug" => "other")
       lines = described_class.new(epic: epic(graph_of(issue("a")), [foreign])).initial
 
       expect(row(lines, "a")).to include("draft")
@@ -109,7 +119,7 @@ RSpec.describe Lain::Frontend::Neovim::PlanningView do
       records = []
       view = described_class.new(epic: epic(graph_of(issue("a")), records))
       view.initial
-      records << decided("a", approved: true)
+      records << decided("a", verdict: "approve")
 
       expect(view.update(turn)).to be_nil
     end

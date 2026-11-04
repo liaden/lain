@@ -78,7 +78,8 @@ RSpec.describe Lain::CLI::Epic do
   end
 
   def verdict(approved:, at:, stage: "research")
-    Lain::Epic::GateDecision.new(artifact_digest: "blake3:#{"a" * 64}", epic_slug: "alpha", stage:, approved:,
+    Lain::Epic::GateDecision.new(artifact_digest: "blake3:#{"a" * 64}", epic_slug: "alpha", stage:,
+                                 verdict: approved ? Lain::Approval::Verdict::Approve.new : Lain::Approval::Verdict::Deny.new,
                                  answered_by: "human", policy: "signoff", latency: 1.5)
                             .to_journal.merge("ts" => at)
   end
@@ -107,6 +108,18 @@ RSpec.describe Lain::CLI::Epic do
         ["epic `alpha` — stage research — 1/3 done, 0 in flight, 0 gates parked",
          "home: #{File.join(container, "alpha")}"]
       )
+    end
+
+    it "counts a held issue as held in the summary, not as a denial or a parked gate" do
+      write_epic("alpha", chain)
+      held = Lain::Epic::GateDecision.new(artifact_digest: "blake3:#{"b" * 64}", epic_slug: "alpha",
+                                          stage: "issue_plan", issue_id: "a", answered_by: "human",
+                                          verdict: Lain::Approval::Verdict::Hold.new(note: "after lunch"),
+                                          policy: "interactive", latency: 1.0)
+      session("one.ndjson", held)
+
+      expect(command.status.lines.first.chomp)
+        .to eq("epic `alpha` — stage research — 0/3 done, 0 in flight, 0 gates parked, 1 held")
     end
 
     it "lists every ready issue with its status glyph" do
@@ -927,7 +940,8 @@ RSpec.describe Lain::CLI::Epic do
 
     def gate_decision(stage:, issue_id:, approved:, policy: approved ? "interactive" : "deferred",
                       digest: "blake3:#{"a" * 64}")
-      Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: "alpha", stage:, approved:,
+      Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: "alpha", stage:,
+                                   verdict: approved ? Lain::Approval::Verdict::Approve.new : Lain::Approval::Verdict::Deny.new,
                                    answered_by: "human", policy:, latency: 1.0, issue_id:)
     end
 
@@ -1272,6 +1286,35 @@ RSpec.describe Lain::CLI::Epic do
     it "lists the document names it accepts when given an unknown one" do
       expect { command.show("notes") }
         .to raise_error(Lain::CLI::Epic::UnknownDocument, %r{research, epic, issues/ID or sources/NAME\z})
+    end
+  end
+
+  # The command line's wiring, end to end: Thor dispatch, the real paths and
+  # the project resolved from the working directory.
+  describe "lain epic rewrite-verdicts" do
+    def rewrite_via_cli
+      with_env("XDG_STATE_HOME" => state_home, "HOME" => state_home) do
+        Dir.chdir(root) do
+          original = $stdout
+          $stdout = StringIO.new
+          LainCLI.start(%w[epic rewrite-verdicts], debug: true)
+          $stdout.string
+        ensure
+          $stdout = original
+        end
+      end
+    end
+
+    it "rewrites an old gate_decision in this project's sessions and says which file" do
+      old = { "type" => "gate_decision", "artifact_digest" => "blake3:#{"a" * 64}", "epic_slug" => "alpha",
+              "stage" => "research", "approved" => true, "answered_by" => "human", "policy" => "signoff",
+              "latency" => 1.5, "reason" => nil }
+      path = session("old.ndjson", old)
+
+      said = rewrite_via_cli
+
+      expect(said).to include(path, "1 gate_decision records rewritten")
+      expect(JSON.parse(File.readlines(path).last)).to include("verdict" => "approve")
     end
   end
 end

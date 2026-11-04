@@ -355,22 +355,25 @@ module Lain
       # commit as issue b's too. The decision record names its issue, and a
       # decision naming none approves no issue's landing.
       #
-      # A decision whose `approved` is neither true nor false is refused, not
-      # read as a denial: "not approved" sends a human to approve a commit
-      # their journal may already hold a decision on.
+      # A decision whose verdict cannot be read is refused, not read as a
+      # denial: "not approved" sends a human to approve a commit their journal
+      # may already hold a decision on.
       #
-      # A hold is no verdict, as in {Epic::SignoffQueue#apply}: it neither
-      # refuses a commit nor withdraws an approval the commit already carries.
+      # Which commit is held is {Epic::SignoffQueue#held}'s rule, read rather
+      # than restated, so landing and the sign-off queue never disagree. A hold
+      # is otherwise no verdict here: it neither refuses a commit nor
+      # withdraws an approval the commit already carries.
       class Approvals
         # @param entries [Enumerable<Hash, String>] journal records or lines
         # @raise [Epic::SignoffQueue::UnreadableRecord] naming a decision
-        #   whose `approved` is not a boolean
+        #   whose verdict cannot be read
         def self.from(entries)
-          new(Journal.records(entries, type: Epic::SignoffQueue::JOURNAL_TYPE)
-                     .map { |decision| readable!(decision) }
-                     .select { |decision| implementation?(decision) }
-                     .reject { |decision| Epic::GateReply.held?(decision["answered_by"]) }
-                     .to_h { |decision| [[decision["issue_id"], decision["artifact_digest"]], verdict(decision)] })
+          records = Journal.records(entries, type: Epic::SignoffQueue::JOURNAL_TYPE).to_a
+          decided = records.map { |decision| [decision, readable!(decision)] }
+                           .select { |decision, _| implementation?(decision) }
+          new(decided.reject { |_, verdict| verdict.held? }
+                     .to_h { |decision, verdict| [key(decision), state(decision, verdict)] },
+              held: held(records, decided))
         end
 
         def self.implementation?(decision)
@@ -378,37 +381,53 @@ module Lain
         end
         private_class_method :implementation?
 
-        def self.verdict(decision)
-          return :approved if decision["approved"]
+        def self.key(decision) = [decision["issue_id"], decision["artifact_digest"]]
+        private_class_method :key
+
+        def self.held(records, decided)
+          queue = Epic::SignoffQueue.from_journal(records)
+          decided.map { |decision, _| decision["epic_slug"] }.uniq
+                 .flat_map { |slug| queue.held(slug, "implementation") }
+                 .to_set { |item| [item.issue_id, item.artifact_digest] }
+        end
+        private_class_method :held
+
+        def self.state(decision, verdict)
+          return :approved if verdict.approved?
 
           decision["policy"].to_s == Epic::SignoffQueue::DEFERRED_POLICY ? :parked : :denied
         end
-        private_class_method :verdict
+        private_class_method :state
 
         def self.readable!(decision)
-          return decision if [true, false].include?(decision["approved"])
-
+          Epic::GateDecision.verdict_in(decision)
+        rescue ArgumentError => e
           address = decision.values_at("epic_slug", "stage", "issue_id").compact.join("/")
           raise Epic::SignoffQueue::UnreadableRecord,
                 "the #{Epic::SignoffQueue::JOURNAL_TYPE} record for #{decision["artifact_digest"].inspect} in " \
-                "#{address.inspect} cannot be read (approved = #{decision["approved"].inspect} is neither true nor " \
-                "false) -- repair the line or move its session file aside; nothing landed"
+                "#{address.inspect} cannot be read (#{e.message}) -- repair the line or move its session file " \
+                "aside; nothing landed"
         end
         private_class_method :readable!
 
         # @param verdicts [Hash{Array, String, String => Symbol}] the newest
         #   verdict per issue and digest, the rule {Epic::SignoffQueue#approved?} reads by
-        def initialize(verdicts)
+        # @param held [Set<Array(String, String)>] issue and digest pairs {Epic::SignoffQueue#held} lists
+        def initialize(verdicts, held: Set.new)
           @verdicts = verdicts.freeze
+          @held = held.freeze
           freeze
         end
 
         def approved?(digest, issue_id) = verdict(digest, issue_id) == :approved
 
-        def denied?(digest, issue_id) = verdict(digest, issue_id) == :denied
+        def denied?(digest, issue_id) = verdict(digest, issue_id) == :denied && !held?(digest, issue_id)
 
         # Not approved, and not refused either: {Epic::SignoffQueue} holds it for a human.
         def parked?(digest, issue_id) = verdict(digest, issue_id) == :parked
+
+        # The human asked the work to wait: neither approved nor refused.
+        def held?(digest, issue_id) = @held.include?([issue_id.to_s, digest.to_s])
 
         private
 

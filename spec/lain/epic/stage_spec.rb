@@ -17,7 +17,8 @@ RSpec.describe Lain::Epic::Stage do
   # Folded the way a journaled sign-off is, since a verdict reaches the queue
   # only as a decision record.
   def decide(approved:, epic_slug:, stage:, digest:, **scope)
-    queue.apply(Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug:, stage:, approved:,
+    verdict = Lain::Approval::Verdict.const_get(approved ? :Approve : :Deny).new
+    queue.apply(Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug:, stage:, verdict:,
                                              answered_by: "human", policy: "signoff", latency: 1.0, **scope)
                                             .to_journal)
   end

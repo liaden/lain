@@ -98,13 +98,13 @@ RSpec.describe Lain::Epic::Gate do
   end
 
   describe "a malformed Answer from an untrusted surface" do
-    it "refuses a non-boolean verdict rather than treating it as truthy" do
-      expect { gate_class::Answer.new(approved: "yes", surface: "human") }
-        .to raise_error(ArgumentError, /approved/)
+    it "refuses a verdict that is no verdict rather than treating it as truthy" do
+      expect { gate_class::Answer.new(verdict: "yes", surface: "human") }
+        .to raise_error(ArgumentError, /verdict/)
     end
 
     it "does not register an approval from a malformed Answer" do
-      bad = scripted_asker { |p, _q| p.resolve(gate_class::Answer.new(approved: "yes", surface: "h")) }
+      bad = scripted_asker { |p, _q| p.resolve(gate_class::Answer.new(verdict: "yes", surface: "h")) }
       subject_gate = gate_class.new(journal:)
       Sync { subject_gate.call(plan, asker: bad, stage: "s", epic_slug: "e") }
     rescue ArgumentError
@@ -115,21 +115,21 @@ RSpec.describe Lain::Epic::Gate do
   describe "latency" do
     it "refuses a nil latency rather than silently journaling 0.0" do
       expect do
-        Lain::Epic::GateDecision.new(artifact_digest: "d", epic_slug: "e", stage: "s", approved: true,
+        Lain::Epic::GateDecision.new(artifact_digest: "d", epic_slug: "e", stage: "s", verdict: Lain::Approval::Verdict::Approve.new,
                                      answered_by: "human", policy: "interactive", latency: nil)
       end.to raise_error(ArgumentError, /latency/)
     end
 
     it "refuses a non-numeric latency rather than coercing it to 0.0" do
       expect do
-        Lain::Epic::GateDecision.new(artifact_digest: "d", epic_slug: "e", stage: "s", approved: true,
+        Lain::Epic::GateDecision.new(artifact_digest: "d", epic_slug: "e", stage: "s", verdict: Lain::Approval::Verdict::Approve.new,
                                      answered_by: "human", policy: "interactive", latency: "quick")
       end.to raise_error(ArgumentError, /latency/)
     end
 
     it "refuses a negative latency" do
       expect do
-        Lain::Epic::GateDecision.new(artifact_digest: "d", epic_slug: "e", stage: "s", approved: true,
+        Lain::Epic::GateDecision.new(artifact_digest: "d", epic_slug: "e", stage: "s", verdict: Lain::Approval::Verdict::Approve.new,
                                      answered_by: "human", policy: "interactive", latency: -3.0)
       end.to raise_error(ArgumentError, /latency/)
     end
@@ -142,7 +142,7 @@ RSpec.describe Lain::Epic::Gate do
       expect(row["type"]).to eq("gate_decision")
       expect(row["stage"]).to eq("epic_plan")
       expect(row["epic_slug"]).to eq("lain-epics")
-      expect(row["approved"]).to be(true).or be(false)
+      expect(row["verdict"]).to eq("approve")
       expect(row["latency"]).to be_a(Float)
       expect(row).to have_key("evidence_digest")
       expect(row.keys).to all(be_a(String))
@@ -157,7 +157,7 @@ RSpec.describe Lain::Epic::Gate do
       blank.define_singleton_method(:to_s) { "" }
 
       expect do
-        Lain::Epic::GateDecision.new(artifact_digest: "d", epic_slug: "e", stage: blank, approved: true,
+        Lain::Epic::GateDecision.new(artifact_digest: "d", epic_slug: "e", stage: blank, verdict: Lain::Approval::Verdict::Approve.new,
                                      answered_by: "human", policy: "p", latency: 0.1)
       end.to raise_error(ArgumentError, /stage/)
     end
@@ -198,7 +198,7 @@ RSpec.describe Lain::Epic::Gate do
 
   describe "immutability" do
     it "GateDecision is deeply frozen even with mutable inputs" do
-      rec = Lain::Epic::GateDecision.new(artifact_digest: +"d", epic_slug: +"e", stage: +"s", approved: false,
+      rec = Lain::Epic::GateDecision.new(artifact_digest: +"d", epic_slug: +"e", stage: +"s", verdict: Lain::Approval::Verdict::Deny.new,
                                          answered_by: +"timeout", policy: +"interactive", latency: 1.0,
                                          evidence_digest: +"ev")
       expect(rec).to be_deeply_frozen
@@ -207,7 +207,7 @@ RSpec.describe Lain::Epic::Gate do
 
     it "does not mutate a frozen digest argument" do
       frozen = "blake3:frozen"
-      rec = Lain::Epic::GateDecision.new(artifact_digest: frozen, epic_slug: "e", stage: "s", approved: true,
+      rec = Lain::Epic::GateDecision.new(artifact_digest: frozen, epic_slug: "e", stage: "s", verdict: Lain::Approval::Verdict::Approve.new,
                                          answered_by: "h", policy: "p", latency: 1.0)
       expect(rec.artifact_digest).to eq(frozen)
     end

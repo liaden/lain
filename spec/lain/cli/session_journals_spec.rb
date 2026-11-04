@@ -51,6 +51,32 @@ RSpec.describe Lain::CLI::SessionJournals do
     end
   end
 
+  # A record written before gate decisions carried a verdict is refused where
+  # its file is known, naming the file and the command that rewrites it.
+  describe "a gate_decision written before verdicts" do
+    let(:old) do
+      JSON.generate("ts" => "2026-07-27T09:00:00Z", "type" => "gate_decision", "artifact_digest" => "blake3:a",
+                    "epic_slug" => "alpha", "stage" => "research", "policy" => "interactive", "approved" => true)
+    end
+
+    it "is refused naming its file, its line and lain epic rewrite-verdicts, by a strict reader and a tolerant one" do
+      write("20260727T090000-1.ndjson", [record(type: "gate_decision", at: "2026-07-27T08:00:00Z", id: "a"), old])
+      path = File.join(@dir, "20260727T090000-1.ndjson")
+
+      [journals, tolerant].each do |reader|
+        expect { reader.to_a }.to raise_error(described_class::Unreadable) { |error|
+          expect(error.message).to include(path, "line 2", "lain epic rewrite-verdicts")
+        }
+      end
+    end
+
+    it "is not refused by a reader that does not read gate decisions" do
+      write("20260727T090000-1.ndjson", [old])
+
+      expect(described_class.new(dirs: @dir, types: %w[gate_evidence]).to_a).to be_empty
+    end
+  end
+
   describe "several directories" do
     it "folds a record held only by the second directory, ordered by time across both" do
       other = File.join(@dir, "other").tap { |dir| Dir.mkdir(dir) }
@@ -136,7 +162,7 @@ RSpec.describe Lain::CLI::SessionJournals do
   describe "a gate-shaped record under an unknown type" do
     def misfiled(type = "gate_decisoin")
       JSON.generate("ts" => "2026-07-28T09:00:00Z", "type" => type, "artifact_digest" => "blake3:plan",
-                    "epic_slug" => "alpha", "stage" => "research", "policy" => "deferred", "approved" => false)
+                    "epic_slug" => "alpha", "stage" => "research", "policy" => "deferred", "verdict" => "deny")
     end
 
     it "refuses the read, naming the file, the line and the type" do

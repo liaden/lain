@@ -621,6 +621,10 @@ class LainCLI < Thor
     desc "deny DIGEST", "Refuse a parked artifact -- journals a terminal gate_decision"
     def deny(digest) = render { Lain::CLI::EpicQueue.new.deny(digest, reason: options[:reason]) }
 
+    desc "rewrite-verdicts", "Rewrite this project's gate_decision records written before verdicts, in place, " \
+                             "keeping a .pre-verdict.bak beside each file"
+    def rewrite_verdicts = render { Lain::CLI::GateVerdictRewrite.new.call }
+
     method_option :issue, type: :string, desc: "Which issue -- issue_plan and implementation gate one issue"
     method_option :digest, type: :string, desc: "The changeset content address -- implementation only"
     method_option :wave, type: :numeric, desc: "A wave of issue plans, asked about together -- issue_plan only"

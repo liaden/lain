@@ -101,7 +101,8 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
                                                             gate: "approved", blockers: [])
 
       surfaces.post(Lain::Epic::GateDecision.new(artifact_digest: "blake3:x", epic_slug: "demo", stage: "issue_plan",
-                                                 approved: true, answered_by: "cli", policy: "interactive", latency: 1,
+                                                 verdict: Lain::Approval::Verdict::Approve.new,
+                                                 answered_by: "cli", policy: "interactive", latency: 1,
                                                  issue_id: "a"))
 
       expect(posted(Lain::Frontend::Neovim::PlanningView::NAME)).to include(a_string_matching(/`a`.*approved/))

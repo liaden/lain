@@ -149,7 +149,8 @@ RSpec.describe Lain::CLI::EpicFinish, :seam do
   describe "a torn implementation sign-off in the session journals" do
     it "refuses, naming the file and the line, before anything reaches the remote" do
       decision = Lain::Epic::GateDecision.new(artifact_digest: "blake3:#{"a" * 64}", epic_slug: "demo",
-                                              stage: "implementation", approved: true, answered_by: "human",
+                                              stage: "implementation",
+                                              verdict: Lain::Approval::Verdict::Approve.new, answered_by: "human",
                                               policy: "hands_off", latency: 0.0, issue_id: "a")
       line = JSON.generate({ "ts" => "2026-01-01T00:00:00.000000Z" }.merge(decision.to_journal))
       File.write(File.join(paths.filing_dir(root:), "fixture.ndjson"), line[0, line.size / 2])

@@ -20,7 +20,8 @@ RSpec.describe Lain::Bench::EpicMetrics do
 
   def gate_decision(approved:, epic_slug: "lain-epics", stage: "issue_plan", digest: "blake3:artifact")
     journal.record(
-      Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug:, stage:, approved:,
+      Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug:, stage:,
+                                   verdict: Lain::Approval::Verdict.const_get(approved ? :Approve : :Deny).new,
                                    answered_by: "human", policy: "interactive", latency: 0.1)
     )
   end
@@ -32,7 +33,8 @@ RSpec.describe Lain::Bench::EpicMetrics do
   # {Lain::Journal.records} already reads any foreign-but-typed line as.
   def gate_decision_for_issue(issue_id:, approved:, epic_slug: "lain-epics", stage: "issue_plan",
                               digest: "blake3:artifact")
-    record = Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug:, stage:, approved:,
+    record = Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug:, stage:,
+                                          verdict: Lain::Approval::Verdict.const_get(approved ? :Approve : :Deny).new,
                                           answered_by: "human", policy: "interactive", latency: 0.1)
     journal_io.puts(record.to_journal.merge("issue_id" => issue_id).to_json)
   end

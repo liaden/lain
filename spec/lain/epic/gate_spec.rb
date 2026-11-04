@@ -94,7 +94,7 @@ RSpec.describe Lain::Epic::Gate do
       expect(subject_gate.approved?(plan.digest)).to be(false)
       record = decisions.first
       expect(record["artifact_digest"]).to eq(plan.digest)
-      expect(record["approved"]).to be(false)
+      expect(record["verdict"]).to eq("deny")
       expect(record["answered_by"]).to eq(described_class::TIMEOUT_SURFACE)
       expect(record["stage"]).to eq("research")
       expect(record["epic_slug"]).to eq("lain-epics")
@@ -129,7 +129,7 @@ RSpec.describe Lain::Epic::Gate do
 
       record = decisions.first
       expect(record["artifact_digest"]).to eq(plan.digest)
-      expect(record["approved"]).to be(false)
+      expect(record["verdict"]).to eq("deny")
       expect(record["answered_by"]).to eq(described_class::INTERRUPTED_SURFACE)
       expect(subject_gate.approved?(plan.digest)).to be(false)
     end
@@ -222,7 +222,7 @@ RSpec.describe Lain::Epic::Gate do
       end
 
       expect(decisions.size).to eq(1)
-      expect(decisions.first["approved"]).to be(true)
+      expect(decisions.first["verdict"]).to eq("approve")
       expect(subject_gate.approved?(plan.digest)).to be(true)
     end
 
@@ -261,7 +261,7 @@ RSpec.describe Lain::Epic::Gate do
       end
 
       expect(decisions.size).to eq(1)
-      expect(decisions.first["approved"]).to be(true)
+      expect(decisions.first["verdict"]).to eq("approve")
       expect(subject_gate.approved?(plan.digest)).to be(true)
     end
   end
@@ -557,7 +557,8 @@ RSpec.describe Lain::Epic::Gate do
   # -- has that reason journaled beside the verdict, over the caller's.
   describe "an answer that carries its own reason" do
     it "journals the answer's reason over the caller's" do
-      noted = described_class::Answer.new(approved: false, surface: "human", reason: "wrong crate name")
+      noted = described_class::Answer.new(verdict: Lain::Approval::Verdict::Deny.new(note: "wrong crate name"),
+                                          surface: "human")
       asker = scripted_asker { |promise, _q| promise.resolve(noted) }
 
       call(gate, asker:, reason: "the caller's note")
@@ -572,7 +573,7 @@ RSpec.describe Lain::Epic::Gate do
     end
 
     it "keeps a carried reason frozen, so the answer stays shareable" do
-      expect(described_class::Answer.new(approved: false, surface: +"human", reason: +"why"))
+      expect(described_class::Answer.new(verdict: Lain::Approval::Verdict::Deny.new(note: +"why"), surface: +"human"))
         .to be_deeply_frozen
     end
   end
@@ -601,8 +602,8 @@ RSpec.describe Lain::Epic::Gate do
       approved = decide(words_in_turn("approve, round 2 research, re-signed unchanged"))
 
       expect(approved).to be(true)
-      expect(decisions.map { |record| record.values_at("approved", "answered_by", "reason") })
-        .to eq([[true, "human", "round 2 research, re-signed unchanged"]])
+      expect(decisions.map { |record| record.values_at("verdict", "answered_by", "reason") })
+        .to eq([["approve", "human", "round 2 research, re-signed unchanged"]])
       expect(journal_io.string).not_to include("unrecognised")
     end
 
@@ -614,7 +615,7 @@ RSpec.describe Lain::Epic::Gate do
       expect(approved).to be(true)
       expect(asked.size).to eq(2)
       expect(asked.last).to include('"aprove"', Lain::Epic::GateReply::INSTRUCTION)
-      expect(decisions.map { |record| record.values_at("approved", "answered_by") }).to eq([[true, "human"]])
+      expect(decisions.map { |record| record.values_at("verdict", "answered_by") }).to eq([%w[approve human]])
     end
 
     it "asks again after each of 2 unreadable replies in a row" do
@@ -623,7 +624,7 @@ RSpec.describe Lain::Epic::Gate do
 
       expect(approved).to be(true)
       expect(asked.size).to eq(3)
-      expect(decisions.map { |record| record.values_at("approved", "answered_by") }).to eq([[true, "human"]])
+      expect(decisions.map { |record| record.values_at("verdict", "answered_by") }).to eq([%w[approve human]])
     end
 
     it "withdraws the unread question before it asks again" do
@@ -681,15 +682,16 @@ RSpec.describe Lain::Epic::Gate do
     it "denies on the end of input, naming nobody's answer" do
       decide(words_in_turn(nil))
 
-      expect(decisions.map { |record| record.values_at("approved", "answered_by") })
-        .to eq([[false, Lain::Epic::GateReply::EOF]])
+      expect(decisions.map { |record| record.values_at("verdict", "answered_by") })
+        .to eq([["deny", Lain::Epic::GateReply::EOF]])
     end
 
     it "holds on a hold word, with the words after it as the note" do
       decide(words_in_turn("hold back after lunch"))
 
-      expect(decisions.map { |record| record.values_at("approved", "answered_by", "reason") })
-        .to eq([[false, Lain::Epic::GateReply::HELD, "back after lunch"]])
+      expect(decisions.map { |record| record.values_at("verdict", "answered_by", "reason") })
+        .to eq([["hold", "human", "back after lunch"]])
+      expect(decisions.first).not_to have_key("approved")
     end
   end
 
@@ -704,8 +706,8 @@ RSpec.describe Lain::Epic::Gate do
 
       expect(subject_gate.approved?(plan.digest)).to be(true)
       expect(subject_gate.ensure_approved!(plan)).to eq(plan.digest)
-      expect(decisions.map { |record| record.values_at("approved", "answered_by") })
-        .to eq([[true, "human"], [false, "timeout"]])
+      expect(decisions.map { |record| record.values_at("verdict", "answered_by") })
+        .to eq([%w[approve human], %w[deny timeout]])
     end
   end
 
@@ -801,16 +803,16 @@ RSpec.describe Lain::Epic::Gate do
     # A damaged line is a Lain::Error naming the record in one sentence, the way
     # the sign-off queue's own fold refuses it -- never a bare ArgumentError a
     # human reads as a backtrace from `lain epic land`.
-    it "refuses a gate_decision whose approved field is \"maybe\" in one line naming the record" do
+    it "refuses a gate_decision whose verdict field is \"maybe\" in one line naming the record" do
       damaged = JSON.generate(Lain::Epic::GateDecision.new(artifact_digest: "blake3:maybe", epic_slug: "demo",
-                                                           stage: "issue_plan", approved: true,
+                                                           stage: "issue_plan", verdict: Lain::Approval::Verdict::Approve.new,
                                                            answered_by: "human", policy: "interactive",
                                                            latency: 1.0, issue_id: "a")
-                                                          .to_journal.merge("approved" => "maybe"))
+                                                          .to_journal.merge("verdict" => "maybe"))
 
       expect { described_class.from_journal([damaged], journal:) }.to raise_error(Lain::Error) { |error|
         expect(error).to be_a(Lain::Epic::SignoffQueue::UnreadableRecord)
-        expect(error.message).to include("gate_decision", "blake3:maybe", "approved", "demo/issue_plan/a")
+        expect(error.message).to include("gate_decision", "blake3:maybe", "verdict", "demo/issue_plan/a")
         expect(error.message).not_to include("\n")
       }
     end
@@ -857,7 +859,7 @@ RSpec.describe Lain::Epic::Gate do
 
     def outcome_of(verdicts) = described_class::Outcome.new(verdicts:, surface: "human")
 
-    def by_issue = decisions.to_h { |record| [record["issue_id"], record.values_at("approved", "reason")] }
+    def by_issue = decisions.to_h { |record| [record["issue_id"], record.values_at("verdict", "reason")] }
 
     def digest_of(id) = wave.submissions.find { |submission| submission.issue_id == id }.digest
 
@@ -879,8 +881,8 @@ RSpec.describe Lain::Epic::Gate do
       outcome = decide("approve", subject_gate:)
 
       expect(outcome).to eq(outcome_of(%w[b c d].to_h { [_1, verdict(:Approve)] }))
-      expect(decisions.map { |record| record.values_at("issue_id", "artifact_digest", "approved") })
-        .to eq(%w[b c d].map { |id| [id, digest_of(id), true] })
+      expect(decisions.map { |record| record.values_at("issue_id", "artifact_digest", "verdict") })
+        .to eq(%w[b c d].map { |id| [id, digest_of(id), "approve"] })
       expect(%w[b c d].map { |id| subject_gate.approved?(digest_of(id)) }).to all(be(true))
     end
 
@@ -896,9 +898,8 @@ RSpec.describe Lain::Epic::Gate do
 
       expect(outcome.verdicts).to eq("a" => verdict(:Approve), "b" => verdict(:Deny, "wrong crate"),
                                      "c" => verdict(:Hold))
-      expect(decisions.map { |record| record.values_at("issue_id", "approved", "answered_by", "reason") })
-        .to eq([["a", true, "human", nil], ["b", false, "human", "wrong crate"],
-                ["c", false, Lain::Epic::GateReply::HELD, nil]])
+      expect(decisions.map { |record| record.values_at("issue_id", "verdict", "answered_by", "reason") })
+        .to eq([["a", "approve", "human", nil], ["b", "deny", "human", "wrong crate"], ["c", "hold", "human", nil]])
     end
 
     it "says in the reply instruction that a leading bare verdict decides every issue not named" do
@@ -921,7 +922,8 @@ RSpec.describe Lain::Epic::Gate do
       expect(asked.size).to eq(2)
       expect(asked.last).to include("b, d")
       expect(outcome.denied).to eq("c" => "the end time is missing")
-      expect(by_issue).to eq("b" => [true, nil], "c" => [false, "the end time is missing"], "d" => [true, nil])
+      expect(by_issue).to eq("b" => ["approve", nil], "c" => ["deny", "the end time is missing"],
+                             "d" => ["approve", nil])
     end
 
     # Scenario: a mistyped id is asked again, never read as another issue
@@ -930,7 +932,7 @@ RSpec.describe Lain::Epic::Gate do
       decide("deny cc: the end time is missing", "deny", asked:)
 
       expect(asked.last).to include("cc is not in wave 2")
-      expect(decisions.map { |record| record["approved"] }).to eq([false, false, false])
+      expect(decisions.map { |record| record["verdict"] }).to eq(%w[deny deny deny])
       expect(decisions.map { |record| record["reason"] }).to all(be_nil)
     end
 
@@ -958,7 +960,7 @@ RSpec.describe Lain::Epic::Gate do
         decide(reply, "deny", asked:)
 
         expect(asked.size).to eq(2)
-        expect(decisions.map { |record| record["approved"] }).to eq([false, false, false])
+        expect(decisions.map { |record| record["verdict"] }).to eq(%w[deny deny deny])
       end
     end
 
@@ -986,7 +988,7 @@ RSpec.describe Lain::Epic::Gate do
           decide(reply, "deny", asked:, of: real_wave)
 
           expect(asked.size).to eq(2)
-          expect(decisions.map { |record| record.values_at("approved", "reason") }).to all(eq([false, nil]))
+          expect(decisions.map { |record| record.values_at("verdict", "reason") }).to all(eq(["deny", nil]))
         end
       end
 
@@ -1023,7 +1025,7 @@ RSpec.describe Lain::Epic::Gate do
       outcome = decide("deny: not yet")
 
       expect(outcome.denied).to eq("b" => "not yet", "c" => "not yet", "d" => "not yet")
-      expect(by_issue.values).to all(eq([false, "not yet"]))
+      expect(by_issue.values).to all(eq(["deny", "not yet"]))
     end
 
     # Scenario: a semicolon inside a note is not a new clause
@@ -1040,7 +1042,7 @@ RSpec.describe Lain::Epic::Gate do
       outcome = decide("hold on", subject_gate:)
 
       expect(outcome.held).to eq(%w[b c d].to_h { [_1, "on"] })
-      expect(decisions.map { |record| record["answered_by"] }).to eq([Lain::Epic::GateReply::HELD] * 3)
+      expect(decisions.map { |record| record.values_at("verdict", "answered_by") }).to eq([%w[hold human]] * 3)
       expect(%w[b c d].map { |id| subject_gate.approved?(digest_of(id)) }).to all(be(false))
     end
 
@@ -1065,7 +1067,8 @@ RSpec.describe Lain::Epic::Gate do
   describe Lain::Epic::GateDecision do
     def record(**overrides)
       described_class.new(artifact_digest: "blake3:abc", epic_slug: "lain-epics", stage: "epic_plan",
-                          approved: true, answered_by: "human", policy: "interactive", latency: 0.5,
+                          verdict: Lain::Approval::Verdict::Approve.new, answered_by: "human", policy: "interactive",
+                          latency: 0.5,
                           evidence_digest: nil, **overrides)
     end
 
@@ -1079,7 +1082,7 @@ RSpec.describe Lain::Epic::Gate do
 
     it "carries the full wire shape, evidence, reason and issue scope included" do
       expect(record(evidence_digest: "blake3:spike", reason: "researcher spawn failed").to_journal.keys)
-        .to contain_exactly("type", "artifact_digest", "epic_slug", "stage", "approved", "answered_by",
+        .to contain_exactly("type", "artifact_digest", "epic_slug", "stage", "verdict", "answered_by",
                             "policy", "latency", "evidence_digest", "reason", "issue_id", "criteria_digest")
     end
 
@@ -1121,8 +1124,8 @@ RSpec.describe Lain::Epic::Gate do
       expect { record(answered_by: nil) }.to raise_error(ArgumentError, /answered_by/)
     end
 
-    it "refuses a non-boolean approved -- presence: cannot reject false, so inclusion guards it" do
-      expect { record(approved: "yes") }.to raise_error(ArgumentError, /approved/)
+    it "refuses a verdict that is no verdict -- a truthy \"yes\" approves nothing" do
+      expect { record(verdict: "yes") }.to raise_error(ArgumentError, /verdict/)
     end
 
     it "refuses a nil artifact_digest -- a decision always names what it judged" do
@@ -1143,7 +1146,7 @@ RSpec.describe Lain::Epic::Gate do
   end
 
   describe Lain::Epic::Gate::Answer do
-    it "is Ractor-shareable (a boolean and an interned surface String)" do
+    it "is Ractor-shareable (a verdict and an interned surface String)" do
       expect(described_class.approve(+"human")).to be_deeply_frozen
     end
 
@@ -1152,12 +1155,12 @@ RSpec.describe Lain::Epic::Gate do
       expect(described_class.deny("timeout").approved?).to be(false)
     end
 
-    it "carries the verdict it was built from, a hold under the held surface" do
+    it "carries the verdict it was built from, and the surface that gave it" do
       hold = Lain::Approval::Verdict::Hold.new(note: "after lunch")
-      answer = described_class.of(hold, surface: "human")
+      answer = described_class.new(verdict: hold, surface: "human")
 
-      expect([answer.verdict, answer.surface]).to eq([hold, Lain::Epic::GateReply::HELD])
-      expect(described_class.of(Lain::Approval::Verdict::Approve.new(note: "fine"), surface: "human").verdict)
+      expect([answer.verdict, answer.surface]).to eq([hold, "human"])
+      expect(described_class.new(verdict: Lain::Approval::Verdict::Approve.new(note: "fine"), surface: "human").verdict)
         .to eq(Lain::Approval::Verdict::Approve.new(note: "fine"))
       expect(described_class.deny("timeout").verdict).to eq(Lain::Approval::Verdict::Deny.new)
     end

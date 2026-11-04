@@ -38,7 +38,8 @@ RSpec.describe Lain::Epic::Progress do
 
   def gate(policy: "deferred", approved: false, stage: "research", epic_slug: "alpha", digest: "blake3:plan",
            **scope)
-    Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug:, stage:, approved:,
+    Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug:, stage:,
+                                 verdict: Lain::Approval::Verdict.const_get(approved ? :Approve : :Deny).new,
                                  answered_by: policy, policy:, latency: 0.1, **scope)
   end
 
@@ -162,7 +163,7 @@ RSpec.describe Lain::Epic::Progress do
     # stage over work nobody signed off. Policy::Drained is not a fallback here.
     it "aborts on a gate_decision the sign-off fold cannot read, never reading it as drained" do
       damaged = { "type" => "gate_decision", "artifact_digest" => "blake3:plan", "epic_slug" => "alpha",
-                  "stage" => "research", "approved" => false }
+                  "stage" => "research", "verdict" => "deny" }
       entries = journaled(transition(issue_id: "a"), damaged)
 
       expect { fold(entries, graph: chain) }.to raise_error(Lain::Epic::SignoffQueue::UnreadableRecord, /policy/)
@@ -193,7 +194,7 @@ RSpec.describe Lain::Epic::Progress do
     it "keeps an unattributable gate_decision so the sign-off fold refuses it" do
       entries = journaled(transition(issue_id: "a"),
                           { "type" => "gate_decision", "artifact_digest" => "blake3:plan",
-                            "stage" => "research", "approved" => false, "policy" => "deferred" })
+                            "stage" => "research", "verdict" => "deny", "policy" => "deferred" })
 
       expect { fold(entries, graph: chain) }
         .to raise_error(Lain::Epic::SignoffQueue::UnreadableRecord, /epic_slug/)

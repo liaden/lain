@@ -5,33 +5,26 @@ require "async"
 module Lain
   module Epic
     module Contracts
-      # {Gate::Answer} is what decides whether a digest is registered, so a
-      # non-boolean here is worse than the same value in {GateDecision}: `"yes"`
-      # is truthy, so `#approved?` would open the gate and only the record's own
-      # guard would object, after the fact. The DECIDING value guards itself, at
-      # the same standard as the recorded one.
+      # Only the surface: {Gate::Answer} coerces its verdict through
+      # {Approval::Verdict.coerce} after this check, so `"yes"` still never
+      # reaches a gate as a truthy approval.
       class Answer < Declarative::Carrier
-        attribute :approved
         attribute :surface
-        validates :approved, inclusion: { in: [true, false], message: "must be true or false, got %<value>s" }
         validates :surface, presence: { message: "must name the surface that answered, got nil" }
       end
 
-      # `approved` is guarded by inclusion rather than `presence:`, which
-      # cannot reject `false` -- the very verdict this record most often
-      # carries.
+      # The verdict is not an attribute here: {Epic::GateDecision} coerces it
+      # through {Approval::Verdict.coerce} before this check runs.
       class GateDecision < Declarative::Carrier
         attribute :artifact_digest
         attribute :epic_slug
         attribute :stage
-        attribute :approved
         attribute :answered_by
         attribute :policy
         attribute :latency
         validates :artifact_digest, presence: { message: "must name the artifact it judged, got nil" }
         validates :epic_slug, presence: { message: "must name the epic it belongs to, got nil" }
         validates :stage, presence: { message: "must name the stage it gated, got nil" }
-        validates :approved, inclusion: { in: [true, false], message: "must be true or false, got %<value>s" }
         validates :answered_by, presence: { message: "must name who answered, got nil" }
         validates :policy, presence: { message: "must name the policy that reached the verdict, got nil" }
         attribute :issue_id
@@ -44,23 +37,70 @@ module Lain
                                             message: "must be seconds >= 0, got %<value>s" }
       end
 
-      # Narrower than {GateDecision} on purpose: the fold reads only these two
-      # fields, so guarding the rest would check bytes it never looks at.
-      #
-      # `approved` is a TRUNCATION CANARY. {Contracts::GateDecision} makes it
-      # mandatory at every WRITE, so no record this process produced can be
-      # missing it or spell it as the STRING `"false"` -- the only way either
-      # reaches here is a line damaged by truncation or a hand-made record, and
-      # a truncation that took `approved` could equally have taken
-      # `artifact_digest`. Refusing the whole rebuild is the fail-closed answer:
-      # silently skipping would let a fold-past denial masquerade as "nothing to
-      # see here" as quietly as folding a truncated `true` in.
+      # Narrower than {GateDecision} on purpose: the registry reads only the
+      # digest and the verdict, and {Epic::GateDecision.verdict_in} guards the
+      # verdict. A record missing either is refused rather than skipped:
+      # skipping would let a fold-past denial read as "nothing to see here" as
+      # quietly as folding a truncated approval in.
       class RegistryEntry < Declarative::Carrier
         attribute :artifact_digest
-        attribute :approved
         validates :artifact_digest, presence: { message: "must name the artifact it judged, got nil" }
-        validates :approved, inclusion: { in: [true, false], message: "must be true or false, got %<value>s" }
       end
+    end
+
+    GateDecision = Data.define(:artifact_digest, :epic_slug, :stage, :verdict, :answered_by, :policy,
+                               :latency, :evidence_digest, :issue_id, :criteria_digest) do
+      include Telemetry::Journalable
+
+      # `reason` fills in a note the verdict does not carry: a policy's
+      # rationale, forwarded by a caller that is not the one answering.
+      def initialize(artifact_digest:, epic_slug:, stage:, verdict:, answered_by:, policy:, latency:,
+                     evidence_digest: nil, reason: nil, issue_id: nil, criteria_digest: nil)
+        # Stringified BEFORE the guard, so `presence:` judges the bytes that
+        # actually get journaled: a stage object whose `#to_s` is blank passes a
+        # presence check on the raw object and then writes an empty partition
+        # key -- the one value a queue folding on (epic_slug, stage) can never
+        # match back.
+        epic_slug = interned(epic_slug)
+        stage = interned(stage)
+        answered_by = interned(answered_by)
+        policy = interned(policy)
+        issue_id = SignoffQueue::IssueId.read(issue_id)
+        verdict = noted(Approval::Verdict.coerce(verdict), reason)
+        Contracts::GateDecision.check!(artifact_digest:, epic_slug:, stage:, answered_by:, policy:,
+                                       latency:, issue_id:)
+
+        super(artifact_digest: artifact_digest.dup.freeze, epic_slug:, stage:, verdict:, answered_by:, policy:,
+              latency: latency.to_f, evidence_digest: frozen(evidence_digest),
+              issue_id:, criteria_digest: frozen(criteria_digest))
+      end
+
+      # @return [String, nil] the verdict's note
+      def reason = verdict.note
+
+      def approved? = verdict.approved?
+
+      def held? = verdict.held?
+
+      # @return [Hash{String=>Object}] the verdict as its word, its note as `reason`
+      def to_journal
+        super.merge("verdict" => GateDecision.word(verdict), "reason" => reason)
+      end
+
+      private
+
+      def noted(verdict, reason)
+        return verdict if verdict.note || reason.nil?
+
+        verdict.class.new(note: reason.to_s)
+      end
+
+      # Interned where the digests are dup'd-and-frozen: a stage or a surface
+      # repeats across every record in a run, a digest does not.
+      def interned(value) = -value.to_s
+
+      # nil stays nil: "nothing was carried" is a value on this record.
+      def frozen(value) = value&.dup&.freeze
     end
 
     # One verdict over one artifact, journaled as `gate_decision`.
@@ -73,6 +113,10 @@ module Lain
     # INDEPENDENT: a `"deferred"` policy still journals a real surface, and
     # reading either off the other would be a guess.
     #
+    # `verdict` is an {Approval::Verdict}, journaled as its word in {WORDS};
+    # `reason` is that verdict's note, journaled beside it. A hold is a verdict
+    # of its own, never a denial under a surface name.
+    #
     # `evidence_digest` and `reason` are nullable, and nullable is a value here
     # ("nothing was gathered", "no rationale was given"), not a missing field.
     #
@@ -83,38 +127,35 @@ module Lain
     # so a later grade can be matched to the criteria somebody signed off.
     # Both joined the shape after records were already on disk; a record
     # written before reads them as nil, which is exactly what it was.
-    GateDecision = Data.define(:artifact_digest, :epic_slug, :stage, :approved, :answered_by, :policy,
-                               :latency, :evidence_digest, :reason, :issue_id, :criteria_digest) do
-      include Telemetry::Journalable
+    #
+    # This reopen holds the verdict's wire form, and the one place a journaled
+    # decision becomes a verdict again.
+    class GateDecision
+      WORDS = { Approval::Verdict::Approve => "approve", Approval::Verdict::Hold => "hold",
+                Approval::Verdict::Deny => "deny" }.freeze
 
-      def initialize(artifact_digest:, epic_slug:, stage:, approved:, answered_by:, policy:, latency:,
-                     evidence_digest: nil, reason: nil, issue_id: nil, criteria_digest: nil)
-        # Stringified BEFORE the guard, so `presence:` judges the bytes that
-        # actually get journaled: a stage object whose `#to_s` is blank passes a
-        # presence check on the raw object and then writes an empty partition
-        # key -- the one value a queue folding on (epic_slug, stage) can never
-        # match back.
-        epic_slug = interned(epic_slug)
-        stage = interned(stage)
-        answered_by = interned(answered_by)
-        policy = interned(policy)
-        issue_id = SignoffQueue::IssueId.read(issue_id)
-        Contracts::GateDecision.check!(artifact_digest:, epic_slug:, stage:, approved:, answered_by:, policy:,
-                                       latency:, issue_id:)
+      BEFORE_VERDICTS = "it carries an approved boolean and no verdict, so it was written before gate decisions " \
+                        "recorded one -- run `lain epic rewrite-verdicts` to rewrite its session in place"
+      private_constant :BEFORE_VERDICTS
 
-        super(artifact_digest: artifact_digest.dup.freeze, epic_slug:, stage:, approved:, answered_by:, policy:,
-              latency: latency.to_f, evidence_digest: frozen(evidence_digest), reason: frozen(reason),
-              issue_id:, criteria_digest: frozen(criteria_digest))
+      # @param verdict [Approval::Verdict::Approve, Approval::Verdict::Hold, Approval::Verdict::Deny]
+      # @return [String] approve, hold or deny
+      def self.word(verdict) = WORDS.fetch(verdict.class)
+
+      # A record from before verdicts is refused rather than read off its
+      # boolean: a `false` there was a denial or a hold, and only the surface
+      # name told them apart.
+      #
+      # @param record [Hash{String=>Object}] one journaled gate_decision
+      # @return [Approval::Verdict::Approve, Approval::Verdict::Hold, Approval::Verdict::Deny] with `reason` as its note
+      # @raise [ArgumentError] when `verdict` is not one of {WORDS}' words
+      def self.verdict_in(record)
+        kind = WORDS.key(record["verdict"])
+        return kind.new(note: record["reason"]) if kind
+        raise ArgumentError, "verdict is missing: #{BEFORE_VERDICTS}" if record.key?("approved")
+
+        raise ArgumentError, "verdict must be one of #{WORDS.values.join(", ")}, got #{record["verdict"].inspect}"
       end
-
-      private
-
-      # Interned where the digests are dup'd-and-frozen: a stage or a surface
-      # repeats across every record in a run, a digest does not.
-      def interned(value) = -value.to_s
-
-      # nil stays nil: "nothing was carried" is a value on this record.
-      def frozen(value) = value&.dup&.freeze
     end
 
     # The ARTIFACT gate: the fail-closed approval any artifact answering
@@ -263,41 +304,26 @@ module Lain
       # A verdict plus the surface that gave it. Deeply frozen, so it is
       # Ractor-shareable like every value that crosses a fiber boundary.
       #
-      # `reason` is what the ANSWERING side knows about its own verdict -- a
-      # reply it could not classify, say -- and it is journaled over whatever
-      # reason the caller forwarded, because it is the more specific account.
-      Answer = Data.define(:approved, :surface, :reason) do
-        def self.approve(surface) = new(approved: true, surface:)
-        def self.deny(surface) = new(approved: false, surface:)
+      # The verdict's note is what the ANSWERING side knows about its own
+      # verdict, and it is journaled over whatever reason the caller
+      # forwarded, because it is the more specific account.
+      Answer = Data.define(:verdict, :surface) do
+        def self.approve(surface) = new(verdict: Approval::Verdict::Approve.new, surface:)
+        def self.deny(surface) = new(verdict: Approval::Verdict::Deny.new, surface:)
 
-        # A hold is journaled under {GateReply::HELD}, whoever gave it, so
-        # every reader of the record tells it from a denial.
-        #
         # @param verdict [Approval::Verdict::Approve, Approval::Verdict::Hold, Approval::Verdict::Deny]
         # @param surface [#to_s] who gave it
-        # @return [Answer]
-        def self.of(verdict, surface:)
-          verdict = Approval::Verdict.coerce(verdict)
-          new(approved: verdict.approved?, surface: verdict.held? ? GateReply::HELD : surface, reason: verdict.note)
-        end
-
-        def initialize(approved:, surface:, reason: nil)
+        def initialize(verdict:, surface:)
           surface = -surface.to_s
-          Contracts::Answer.check!(approved:, surface:)
+          Contracts::Answer.check!(surface:)
 
-          super(approved:, surface:, reason: reason&.dup&.freeze)
+          super(verdict: Approval::Verdict.coerce(verdict), surface:)
         end
 
-        def approved? = approved
+        def approved? = verdict.approved?
 
-        # @return [Approval::Verdict::Approve, Approval::Verdict::Hold, Approval::Verdict::Deny]
-        def verdict
-          kind = if approved then Approval::Verdict::Approve
-                 elsif GateReply.held?(surface) then Approval::Verdict::Hold
-                 else Approval::Verdict::Deny
-                 end
-          kind.new(note: reason)
-        end
+        # @return [String, nil] the verdict's note
+        def reason = verdict.note
       end
 
       # What a human wrote, as a surface hands it over: the gate reads it,
@@ -331,7 +357,7 @@ module Lain
 
         # @param issue_id [String] one issue of the wave
         # @return [Answer] the verdict journaled for that one issue
-        def answer(issue_id) = Answer.of(verdicts.fetch(issue_id), surface:)
+        def answer(issue_id) = Answer.new(verdict: verdicts.fetch(issue_id), surface:)
 
         private
 
@@ -551,16 +577,15 @@ module Lain
       end
 
       def register(decision)
-        Contracts::RegistryEntry.check!(artifact_digest: decision["artifact_digest"], approved: decision["approved"])
-        @approved << decision["artifact_digest"] if decision["approved"]
+        Contracts::RegistryEntry.check!(artifact_digest: decision["artifact_digest"])
+        @approved << decision["artifact_digest"] if GateDecision.verdict_in(decision).approved?
       end
 
       # `evidence_digest`/`reason` are FORWARDED, never derived: this class
       # gathers nothing and judges nothing, so the only honest value is the one
       # its caller handed down. A later path adds a VALUE here, never a column.
       def record(answer, reason:, **decided)
-        @journal.record(GateDecision.new(approved: answer.approved?, answered_by: answer.surface,
-                                         reason: answer.reason || reason, **decided))
+        @journal.record(GateDecision.new(verdict: answer.verdict, answered_by: answer.surface, reason:, **decided))
       end
 
       # SCOPED TO THE WAIT ALONE, never the whole of {#call}. A cancellation

@@ -123,7 +123,8 @@ module Lain
   #   stream that was never paired, not the primary defence.
   # * `waiting` -- `approvals_pending` plus each gate and model question whose
   #   `awaiting_human` no `gate_decision` or `questions_consumed` has closed. A
-  #   wave is one question asked about several issues, so it counts once.
+  #   wave is one question asked about several issues, so it counts once. A
+  #   hold closes nothing: the work waits until the human speaks again.
   # * `scope` / `approval` / `layers` / `mode_lighter` -- derived from a
   #   {Telemetry::ModeSwitch} by {ModeState}, whose doc holds the reasoning. All
   #   absent until the first switch, and forced to be: {Mode::Switch} journals
@@ -560,7 +561,7 @@ module Lain
       case event
       when Telemetry::AwaitingHuman then opened(event)
       when Approval::Parked::Queue::Pending then release_approval
-      when Epic::GateDecision then closed("gate", event.artifact_digest)
+      when Epic::GateDecision then closed("gate", event.artifact_digest) unless event.held?
       when Telemetry::QuestionsConsumed then event.digests.each { |digest| closed("question", digest) }
       when Hash then observe_degraded_approval(event)
       end

@@ -92,7 +92,7 @@ module Lain
         #
         # {Gate}'s registry is ADD-ONLY, so an APPROVE followed by a DENY over
         # one digest would leave the journal's terminal record saying
-        # `approved: false` while {Gate#approved?} still answers true -- and an
+        # `verdict: deny` while {Gate#approved?} still answers true -- and an
         # irreversible caller would proceed on a gate the record shows refused.
         # This class is the first path that can re-run a gate with nobody
         # watching, so it refuses loudly. It also closes the RATCHET the other
@@ -111,8 +111,8 @@ module Lain
         # -- {#admit} folds the journal, TWO model round-trips run, then
         # {#settle} writes. Two Adjudicators over one address concurrently both
         # pass the check before either writes, and both journal a terminal
-        # verdict; reproduced under `Async`, one `approved: true` and one
-        # `approved: false` for the same digest. Closing it needs
+        # verdict; reproduced under `Async`, one `verdict: approve` and one
+        # `verdict: deny` for the same digest. Closing it needs
         # compare-and-append, which the Journal has no primitive for. Until
         # then: one Adjudicator per address at a time.
         class AlreadyDecided < Error; end
@@ -197,7 +197,7 @@ module Lain
           end
 
           def refusal(digest, settled)
-            "artifact #{digest} already has a terminal adjudication (approved: #{settled["approved"]}) -- " \
+            "artifact #{digest} already has a terminal adjudication (verdict: #{settled["verdict"]}) -- " \
               "Gate's approval registry is add-only, so a second verdict would leave it disagreeing " \
               "with the journal"
           end

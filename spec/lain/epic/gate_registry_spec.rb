@@ -16,7 +16,8 @@ RSpec.describe "Lain::Epic::Gate.from_journal" do
 
   def decision(digest:, approved:, **overrides)
     { "type" => "gate_decision", "artifact_digest" => digest, "epic_slug" => "lain-epics",
-      "stage" => "epic_plan", "approved" => approved, "answered_by" => "human",
+      "stage" => "epic_plan", "verdict" => { true => "approve", false => "deny" }.fetch(approved, approved),
+      "answered_by" => "human",
       "policy" => "interactive", "latency" => 0.1, "evidence_digest" => nil, "reason" => nil }
       .merge(overrides)
   end
@@ -42,7 +43,7 @@ RSpec.describe "Lain::Epic::Gate.from_journal" do
       expect { Sync { rebuilt.call(artifact("x"), asker: silent_asker, stage: "s", epic_slug: "e") } }
         .not_to raise_error
       expect(JSON.parse(journal_io.string.lines.last))
-        .to include("approved" => false, "answered_by" => "timeout", "latency" => 0.01)
+        .to include("verdict" => "deny", "answered_by" => "timeout", "latency" => 0.01)
     end
   end
 
@@ -88,9 +89,9 @@ RSpec.describe "Lain::Epic::Gate.from_journal" do
       expect(gate).not_to respond_to(:apply)
     end
 
-    it "raises rather than registering an approval when `approved` arrives as the STRING \"false\"" do
+    it "raises rather than registering an approval when `verdict` arrives as no verdict word" do
       expect { rebuild([decision(digest: "d", approved: "false")]) }
-        .to raise_error(Lain::Epic::SignoffQueue::UnreadableRecord, /approved/)
+        .to raise_error(Lain::Epic::SignoffQueue::UnreadableRecord, /verdict/)
     end
 
     it "raises rather than registering nil when artifact_digest is missing" do
@@ -99,7 +100,7 @@ RSpec.describe "Lain::Epic::Gate.from_journal" do
     end
 
     it "never reaches a turn_usage record with the fold at all -- from_journal's type filter runs first" do
-      foreign = { "type" => "turn_usage", "artifact_digest" => "d", "approved" => true }
+      foreign = { "type" => "turn_usage", "artifact_digest" => "d", "verdict" => "approve" }
 
       expect(rebuild([foreign]).approved?("d")).to be(false)
     end
@@ -127,7 +128,7 @@ RSpec.describe "Lain::Epic::Gate.from_journal" do
   # filter is documented scope (see .from_journal's own comment), not a bug.
   describe "malformed / foreign entries" do
     it "skips a truncated NDJSON line rather than raising" do
-      lines = [%({"type":"gate_decision","artifact_digest":"d","approved":tr),
+      lines = [%({"type":"gate_decision","artifact_digest":"d","verdict":"appr),
                JSON.generate(decision(digest: "e", approved: true))]
 
       expect(rebuild(lines).to_a).to eq(%w[e])
@@ -175,11 +176,12 @@ RSpec.describe "Lain::Epic::Gate.from_journal" do
     end
   end
 
-  def asker(verdict)
+  def asker(approved)
     surface = "human"
+    verdict = approved ? Lain::Approval::Verdict::Approve.new : Lain::Approval::Verdict::Deny.new
     Class.new do
       define_method(:ask) do |_question|
-        Lain::Promise.new.tap { |p| p.resolve(Lain::Epic::Gate::Answer.new(approved: verdict, surface:)) }
+        Lain::Promise.new.tap { |p| p.resolve(Lain::Epic::Gate::Answer.new(verdict:, surface:)) }
       end
     end.new
   end

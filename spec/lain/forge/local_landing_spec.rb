@@ -101,18 +101,23 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
     sha
   end
 
-  def approve(issue_id, sha, approved: true, policy: "hands_off", answered_by: "human")
+  def approve(issue_id, sha, verdict: Lain::Approval::Verdict::Approve.new, policy: "hands_off",
+              answered_by: "human")
     digest = Lain::Epic::Submission.implementation(slug: "demo", issue_id:, digest: sha).digest
     decisions << Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: "demo", stage: "implementation",
-                                              approved:, answered_by:, policy:,
+                                              verdict:, answered_by:, policy:,
                                               latency: 0.0, issue_id:)
   end
 
-  def hold(issue_id, sha) = approve(issue_id, sha, approved: false, policy: "interactive", answered_by: "held")
+  def hold(issue_id, sha) = approve(issue_id, sha, verdict: Lain::Approval::Verdict::Hold.new, policy: "interactive")
 
-  def deny(issue_id, sha) = approve(issue_id, sha, approved: false, policy: "signoff")
+  def deny(issue_id, sha) = approve(issue_id, sha, verdict: Lain::Approval::Verdict::Deny.new, policy: "signoff")
 
-  def park(issue_id, sha) = approve(issue_id, sha, approved: false, policy: "deferred")
+  def park(issue_id, sha) = approve(issue_id, sha, verdict: Lain::Approval::Verdict::Deny.new, policy: "deferred")
+
+  def implementation_digest(issue_id, sha)
+    Lain::Epic::Submission.implementation(slug: "demo", issue_id:, digest: sha).digest
+  end
 
   def anchor(id, attempt, sha)
     git("update-ref", Lain::Isolation::Worktree::Handback::Naming.new("issue.demo.#{id}.#{attempt}").ref, sha)
@@ -200,13 +205,13 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
     # Read as "not approved", a damaged decision sent the human to approve a
     # commit their journal may already hold a decision on. It is a record the
     # fold cannot read, so it is refused as one, in one line.
-    it "refuses a gate_decision whose approved is neither true nor false, naming the record" do
+    it "refuses a gate_decision whose verdict is no verdict word, naming the record" do
       approve("a", "a" * 40)
-      line = decisions.first.to_journal.merge("approved" => "maybe")
+      line = decisions.first.to_journal.merge("verdict" => "maybe")
 
       expect { described_class::Approvals.from([line]) }.to raise_error(Lain::Error) { |error|
         expect(error).to be_a(Lain::Epic::SignoffQueue::UnreadableRecord)
-        expect(error.message).to include("gate_decision", "demo/implementation/a", "approved", "nothing landed")
+        expect(error.message).to include("gate_decision", "demo/implementation/a", "verdict", "nothing landed")
         expect(error.message).not_to include("\n")
       }
     end
@@ -403,6 +408,56 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
           expect(error.message).to include(sha, "lain epic submit implementation demo --issue a --digest #{sha}")
           expect(error.message).not_to include("re-run the issue", "no worker commit is anchored")
         }
+      end
+
+      it "reads the commit held, neither approved nor denied" do
+        hold("a", "a" * 40)
+
+        expect(approvals.held?(implementation_digest("a", "a" * 40), "a")).to be(true)
+        expect(approvals.denied?(implementation_digest("a", "a" * 40), "a")).to be(false)
+        expect(approvals.approved?(implementation_digest("a", "a" * 40), "a")).to be(false)
+      end
+
+      it "reads a hold after an approval as approved, not held, as the sign-off queue does" do
+        approve("a", "a" * 40)
+        hold("a", "a" * 40)
+
+        expect(approvals.approved?(implementation_digest("a", "a" * 40), "a")).to be(true)
+        expect(approvals.held?(implementation_digest("a", "a" * 40), "a")).to be(false)
+      end
+
+      it "reads a hold over an approval as approved, not held, once a later commit is approved too" do
+        approve("a", "a" * 40)
+        hold("a", "a" * 40)
+        approve("a", "b" * 40)
+
+        expect(approvals.held?(implementation_digest("a", "a" * 40), "a")).to be(false)
+        expect(approvals.approved?(implementation_digest("a", "a" * 40), "a")).to be(true)
+      end
+
+      it "reads a hold after a park as parked, not held, as the sign-off queue does" do
+        park("a", "a" * 40)
+        hold("a", "a" * 40)
+
+        expect(approvals.parked?(implementation_digest("a", "a" * 40), "a")).to be(true)
+        expect(approvals.held?(implementation_digest("a", "a" * 40), "a")).to be(false)
+      end
+
+      it "reads a hold after a denial as held, not denied" do
+        deny("a", "a" * 40)
+        hold("a", "a" * 40)
+
+        expect(approvals.held?(implementation_digest("a", "a" * 40), "a")).to be(true)
+        expect(approvals.denied?(implementation_digest("a", "a" * 40), "a")).to be(false)
+      end
+
+      it "refuses a decision written before verdicts were recorded, naming the command that rewrites it" do
+        approve("a", "a" * 40)
+        old = decisions.first.to_journal.except("verdict").merge("approved" => true)
+
+        expect { described_class::Approvals.from([old]) }
+          .to raise_error(Lain::Epic::SignoffQueue::UnreadableRecord,
+                          /approved boolean.*no verdict.*lain epic rewrite-verdicts/)
       end
 
       it "still lands a commit approved before the hold on the same digest" do

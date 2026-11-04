@@ -132,11 +132,8 @@ module Lain
     # and the gate asks again: "the human denied this" would be a claim
     # nobody made. A blank reply denies, as the prompt's cue says, and the end
     # of input is {EOF}, because nobody typed the denial it stands for.
-    #
-    # A hold is journaled under {HELD}, approving nothing and revoking nothing.
     module GateReply
       EOF = "eof"
-      HELD = "held"
 
       def self.words(kind)
         *leading, last = Approval::Reply::WORDS.fetch(kind)
@@ -169,7 +166,7 @@ module Lain
         verdict = read(words)
         return Gate::Unheard.new(words:) if verdict.is_a?(Approval::Reply::Unrecognised)
 
-        Gate::Answer.of(verdict, surface:)
+        Gate::Answer.new(verdict:, surface:)
       end
 
       # @param text [String] one reply, or one wave clause with its id taken out
@@ -189,10 +186,6 @@ module Lain
         why = unheard.why || "The reply #{clipped(unheard.words.to_s.strip).inspect} decides nothing"
         "#{why}, so nothing was decided. #{question}"
       end
-
-      # @param answered_by [#to_s, nil] a decision's surface
-      # @return [Boolean] whether the human held the gate rather than deciding it
-      def self.held?(answered_by) = answered_by.to_s == HELD
 
       # A reply cannot pose as a second result line: control bytes are written
       # out, and the reader indents every continuation line.

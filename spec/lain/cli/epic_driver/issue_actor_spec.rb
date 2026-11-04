@@ -188,7 +188,8 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
   def approve_plan(id)
     plan = Lain::Epic::Submission.issue_plan(view: Lain::Epic::IssueView.read(home, id), slug: "demo", issue_id: id)
     decision = Lain::Epic::GateDecision.new(artifact_digest: plan.digest, epic_slug: "demo", stage: "issue_plan",
-                                            approved: true, answered_by: "human", policy: "hands_off",
+                                            verdict: Lain::Approval::Verdict::Approve.new,
+                                            answered_by: "human", policy: "hands_off",
                                             latency: 0.0, issue_id: id)
     File.open(File.join(paths.filing_dir(root: repo), "fixture.ndjson"), "a") do |io|
       Lain::Journal.new(io:, clock: -> { "2026-01-01T00:00:00Z" }).record(decision)

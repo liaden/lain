@@ -60,7 +60,8 @@ RSpec.describe Lain::Arm::Epic do
   # The epic's own gate decisions, as a run of it really journals them: one per
   # stage, each naming the policy that reached it.
   def decide(stage, policy:, approved: true, issue_id: nil, digest: "blake3:#{stage}")
-    Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: "demo", stage:, approved:,
+    Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: "demo", stage:,
+                                 verdict: Lain::Approval::Verdict.const_get(approved ? :Approve : :Deny).new,
                                  answered_by: policy, policy:, latency: 0.0, issue_id:)
   end
 
@@ -187,7 +188,7 @@ RSpec.describe Lain::Arm::Epic do
 
       run_arm(driver_for(decisions: recorded), name: "epic-progressive")
 
-      expect(journalled.map { |record| record["approved"] }).to eq([true, false, true])
+      expect(journalled.map { |record| record["verdict"] }).to eq(%w[approve deny approve])
       expect(journalled.map { |record| record["policy"] }.uniq).to eq(["recorded"])
     end
   end

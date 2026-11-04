@@ -128,8 +128,8 @@ module Lain
         #
         # Refusing is the only answer safe in BOTH directions: skipping a record
         # loses a deferral as quietly as misreading one drains a parked item.
-        # `approved` is a TRUNCATION CANARY -- no producible record trips it,
-        # and a truncation that took it could as well have taken `policy`.
+        # The verdict is guarded by {Epic::GateDecision.verdict_in}, which the
+        # fold reads it through.
         class Decision < Declarative::Carrier
           # Read when a record is refused, never at load: both sets belong to
           # units that load after this one.
@@ -143,14 +143,12 @@ module Lain
           attribute :type
           attribute :stage
           attribute :policy
-          attribute :approved
           validates :type, inclusion: { in: [JOURNAL_TYPE],
                                         message: "must be #{JOURNAL_TYPE.inspect} for the sign-off fold, " \
                                                  "got %<value>s" }
           validates :stage, inclusion: { in: STAGES, message: one_of(STAGES) }
           validates :policy, inclusion: { in: POLICIES,
                                           message: one_of(POLICIES, " -- the fold branches on it and will not guess") }
-          validates :approved, inclusion: { in: [true, false], message: "must be true or false, got %<value>s" }
         end
       end
 
@@ -254,6 +252,8 @@ module Lain
         # approved: the approval replaced them, so denying one withdraws nothing.
         # A draft parked after the approved one is newer and is not in here.
         @superseded = Set.new
+        # {Partition} => digest => {Item} whose newest decision is a hold.
+        @held = {}
       end
 
       # Idempotent on `(artifact_digest, epic_slug, stage, issue_id)`: an
@@ -344,6 +344,21 @@ module Lain
         @parked.select { |partition, _| asked.overlaps?(partition) }.flat_map { |_, items| items.values }
       end
 
+      # The addresses this question reaches whose newest decision is a hold:
+      # the human asked the work to wait, so they are neither parked nor denied.
+      # A hold over a standing approval or a parked sign-off of the same digest
+      # is not listed, because that address is already answered or still
+      # waits in the queue. This is the one rule every reader of a hold uses.
+      #
+      # @param epic_slug [#to_s] the epic asked about
+      # @param stage [#to_s] the stage asked about
+      # @param issue_id [String, nil] one issue's partition; nil asks for every issue's
+      # @return [Array<Item>]
+      def held(epic_slug, stage, issue_id: nil)
+        asked = Partition.new(epic_slug:, stage:, issue_id:)
+        @held.select { |partition, _| asked.overlaps?(partition) }.flat_map { |_, items| items.values }
+      end
+
       # Everything parked, oldest first within each partition.
       def each(&block)
         return to_enum(:each) unless block
@@ -373,7 +388,7 @@ module Lain
       # answers -- a DENIAL included, since a refused artifact is not awaiting
       # anyone's sign-off either. A hold is neither: the human asked the agent
       # to wait, so it parks nothing, drains nothing, and leaves a standing
-      # approval standing.
+      # approval standing; {#held} lists it until a later decision answers it.
       #
       # PUBLIC, and therefore guarded on its own rather than trusting
       # {.from_journal}'s type filter: this is the seam a live session folds its
@@ -386,26 +401,50 @@ module Lain
       # @return [self]
       # @raise [ArgumentError] naming the field that made the record unreadable
       def apply(decision)
-        Contracts::Decision.check!(type: decision["type"], stage: decision["stage"], policy: decision["policy"],
-                                   approved: decision["approved"])
-        fold(decision) unless held?(decision)
+        Contracts::Decision.check!(type: decision["type"], stage: decision["stage"], policy: decision["policy"])
+        verdict = GateDecision.verdict_in(decision)
+        verdict.held? ? hold(decision) : fold(decision, verdict)
         self
       end
 
       private
 
-      def fold(decision) = deferred?(decision) ? park(**parked_attributes(decision)) : settle(decision)
+      def fold(decision, verdict)
+        unhold(decision)
+        deferred?(decision) ? park(**parked_attributes(decision)) : settle(decision, verdict)
+      end
 
-      def held?(decision) = GateReply.held?(decision["answered_by"])
+      # Dropped here, not when read: a later approval of another digest moves the
+      # partition's standing approval on, and a hold read then would resurface.
+      def hold(decision)
+        item = Item.new(**address_attributes(decision))
+        return if answered?(item.partition, item.artifact_digest)
 
-      def settle(decision)
+        (@held[item.partition] ||= {})[item.artifact_digest] = item
+      end
+
+      def unhold(decision)
+        return if @held.empty?
+
+        partition = Partition.new(epic_slug: decision["epic_slug"], stage: decision["stage"],
+                                  issue_id: decision["issue_id"])
+        items = @held[partition] or return
+        items.delete(decision["artifact_digest"].to_s)
+        @held.delete(partition) if items.empty?
+      end
+
+      def answered?(partition, digest)
+        @approved[partition] == digest || @parked.fetch(partition, {}).key?(digest)
+      end
+
+      def settle(decision, verdict)
         address = address_attributes(decision)
         partition = Partition.new(**address.except(:artifact_digest))
         digest = address[:artifact_digest].to_s
         replaced = @superseded.delete?([partition, digest])
         older = @parked.fetch(partition, {}).keys.take_while { |parked| parked != digest }
         drain(**address)
-        decision["approved"] ? approve(partition, digest, older) : (@approved.delete(partition) unless replaced)
+        verdict.approved? ? approve(partition, digest, older) : (@approved.delete(partition) unless replaced)
       end
 
       def approve(partition, digest, older)

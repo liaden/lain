@@ -376,7 +376,7 @@ RSpec.describe Lain::Epic::Submission do
       it "reads #{reply.inspect} as a held answer, approving nothing and carrying no note" do
         result = answer(reply)
 
-        expect([result.approved?, result.surface, result.reason]).to eq([false, "held", nil])
+        expect([result.verdict, result.surface]).to eq([Lain::Approval::Verdict::Hold.new, "human"])
       end
     end
 
@@ -569,7 +569,8 @@ RSpec.describe Lain::Epic::Submission do
     it "is not approved by a gate that approved another issue's implementation of the same commit" do
       mine = described_class.implementation(slug: "demo", issue_id: "c", digest: "a" * 40)
       approval = Lain::Epic::GateDecision.new(artifact_digest: mine.digest, epic_slug: "demo",
-                                              stage: "implementation", approved: true, answered_by: "human",
+                                              stage: "implementation",
+                                              verdict: Lain::Approval::Verdict::Approve.new, answered_by: "human",
                                               policy: "hands_off", latency: 0.0, issue_id: "c")
       gate = Lain::Epic::Gate.from_journal([approval.to_journal], journal: Lain::Channel::Null.instance)
 

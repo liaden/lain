@@ -40,9 +40,9 @@ RSpec.describe Lain::CLI::EpicQueue do
 
   # Built through the real producers, so the fixture cannot drift from the wire
   # shape production actually writes (the sessions_spec `header` idiom).
-  def decision(digest:, at:, policy:, approved: false, slug: "alpha", stage: "research",
+  def decision(digest:, at:, policy:, verdict: Lain::Approval::Verdict::Deny.new, slug: "alpha", stage: "research",
                answered_by: "gate_adjudicator", evidence_digest: nil, reason: nil, **scope)
-    Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: slug, stage:, approved:,
+    Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: slug, stage:, verdict:,
                                  answered_by:, policy:, latency: 1.5, evidence_digest:, reason:, **scope)
                             .to_journal.merge("ts" => at)
   end
@@ -51,7 +51,8 @@ RSpec.describe Lain::CLI::EpicQueue do
   # stage only over approved earlier ones, as a verdict does.
   def approvals(*stages, at: "2026-07-28T05:00:00.000000Z", **scope)
     stages.map do |stage|
-      decision(digest: "blake3:#{stage}-approved", at:, policy: "signoff", approved: true, answered_by: "human",
+      decision(digest: "blake3:#{stage}-approved", at:, policy: "signoff",
+               verdict: Lain::Approval::Verdict::Approve.new, answered_by: "human",
                stage:, **scope)
     end
   end
@@ -293,7 +294,8 @@ RSpec.describe Lain::CLI::EpicQueue do
 
       terminal = gate_decisions.find { |record| record["policy"] == "signoff" }
       expect(terminal).to include("artifact_digest" => digest_a, "epic_slug" => "alpha", "stage" => "research",
-                                  "approved" => true, "answered_by" => "human", "policy" => "signoff")
+                                  "verdict" => "approve", "answered_by" => "human", "policy" => "signoff")
+      expect(terminal).not_to have_key("approved")
     end
 
     it "carries the evidence the verdict was reached on into the terminal record" do
@@ -373,7 +375,15 @@ RSpec.describe Lain::CLI::EpicQueue do
       queue.deny(digest_a)
 
       terminal = gate_decisions.find { |record| record["policy"] == "signoff" }
-      expect(terminal).to include("approved" => false, "answered_by" => "human", "policy" => "signoff")
+      expect(terminal).to include("verdict" => "deny", "answered_by" => "human", "policy" => "signoff")
+      expect(terminal).not_to have_key("approved")
+    end
+
+    it "journals the reason a denial gave as the verdict's note" do
+      queue.deny(digest_a, reason: "wrong crate")
+
+      terminal = gate_decisions.find { |record| record["policy"] == "signoff" }
+      expect(terminal).to include("verdict" => "deny", "reason" => "wrong crate")
     end
 
     # A denial signs nothing off, so the confirmation says what was done.
@@ -418,7 +428,7 @@ RSpec.describe Lain::CLI::EpicQueue do
         decision(digest: digest_c, at: "2026-07-28T07:30:00.000000Z", policy: "deferred",
                  answered_by: "deferred"),
         decision(digest: digest_c, at: "2026-07-28T07:40:00.000000Z", policy: "signoff",
-                 approved: true, answered_by: "human")
+                 verdict: Lain::Approval::Verdict::Approve.new, answered_by: "human")
       ]
       write_journal("20260728T060000-100.ndjson", [*parked_with_evidence, parked_bare, *already_terminal])
     end
@@ -586,7 +596,7 @@ RSpec.describe Lain::CLI::EpicQueue do
     it "reports what it understood, not merely how many files it opened" do
       write_journal("20260728T060000-100.ndjson",
                     [decision(digest: digest_a, at: "2026-07-28T06:00:00.000000Z", policy: "signoff",
-                              approved: true, answered_by: "human")])
+                              verdict: Lain::Approval::Verdict::Approve.new, answered_by: "human")])
 
       expect(queue.listing).to match(/1 line.*1 gate record/m)
     end
@@ -671,7 +681,7 @@ RSpec.describe Lain::CLI::EpicQueue do
       home.research.write("the research, such as it is\n")
       write_journal("20260728T060000-100.ndjson",
                     [decision(digest: digest_c, at: "2026-07-28T05:00:00.000000Z", policy: "signoff",
-                              approved: true, answered_by: "human"),
+                              verdict: Lain::Approval::Verdict::Approve.new, answered_by: "human"),
                      decision(digest: digest_a, at: "2026-07-28T06:00:00.000000Z", policy: "deferred",
                               answered_by: "deferred", stage: "epic_plan"),
                      decision(digest: digest_b, at: "2026-07-28T06:30:00.000000Z", policy: "signoff",
@@ -802,19 +812,19 @@ RSpec.describe Lain::CLI::EpicQueue do
   end
 
   # Scenario: a malformed but parseable gate_decision refuses by name
-  describe "a gate_decision whose approved field is not a verdict" do
+  describe "a gate_decision whose verdict field is not a verdict word" do
     before do
       write_journal("20260728T060000-100.ndjson",
                     [decision(digest: digest_a, at: "2026-07-28T06:00:00.000000Z", policy: "deferred",
                               answered_by: "deferred"),
                      decision(digest: digest_a, at: "2026-07-28T06:30:00.000000Z", policy: "signoff",
-                              answered_by: "human").merge("approved" => "maybe")])
+                              answered_by: "human").merge("verdict" => "maybe")])
     end
 
     it "refuses the listing and the approval as a Lain::Error, in one line naming the record" do
       [-> { queue.listing }, -> { queue.approve(digest_a) }].each do |command|
         expect(&command).to raise_error(Lain::Error) { |error|
-          expect(error.message).to include("gate_decision", digest_a, "alpha/research", "approved")
+          expect(error.message).to include("gate_decision", digest_a, "alpha/research", "verdict")
           expect(error.message).not_to include("\n")
         }
       end
@@ -939,7 +949,7 @@ RSpec.describe Lain::CLI::EpicQueue do
       # last and report a signed-off artifact as still parked.
       write_journal("20260728T050000-100.ndjson",
                     [decision(digest: digest_a, at: "2026-07-28T08:00:00.000000Z", policy: "signoff",
-                              approved: true, answered_by: "human")])
+                              verdict: Lain::Approval::Verdict::Approve.new, answered_by: "human")])
       write_journal("20260728T090000-101.ndjson",
                     [decision(digest: digest_a, at: "2026-07-28T06:00:00.000000Z", policy: "deferred",
                               answered_by: "deferred"),
