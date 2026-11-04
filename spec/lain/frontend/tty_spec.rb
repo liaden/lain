@@ -927,6 +927,24 @@ RSpec.describe Lain::Frontend::TTY do
       expect(output.string.lines.size).to eq(1)
     end
 
+    it "shows every line of a lone multi-line question under the note, not one joined line" do
+      body = "approve, alt-path, or skip?\ncontext one\ncontext two\ncontext three"
+      tty.render_arrival(announced("db", body:), from: "researcher")
+
+      note, *rest = output.string.lines
+      expect(note).to include("? researcher")
+      expect(rest.map(&:strip)).to eq(["approve, alt-path, or skip?", "context one", "context two", "context three"])
+    end
+
+    it "keeps the control strip on each line of a lone multi-line question" do
+      body = "first\e[2J line\a\0\e]0;title\a\u009b\nsecond\e[1A line"
+      tty.render_arrival(announced("db", body:), from: "researcher")
+
+      shown = output.string.lines.drop(1).map(&:strip)
+      expect(shown).to eq(["first line", "second line"])
+      expect(shown.join).not_to match(/[[:cntrl:]]/)
+    end
+
     it "stays one note line for a five-question set of multi-line bodies" do
       tty.render_arrival(announced("db", "region", "budget", "deploy", "owner",
                                    body: "which database?\n\n| a | b |\n| - | - |"),
@@ -936,15 +954,13 @@ RSpec.describe Lain::Frontend::TTY do
       expect(output.string.lines).to all(satisfy { |line| !line.chomp.match?(line_break) })
     end
 
-    # One line on the TERMINAL, which is what the property is actually about:
-    # a lone \r holds no "\n" and still redraws the note from column 0, so
-    # everything before it -- the asker included -- is overwritten by whatever
-    # the question's author put after it.
-    it "is one line for a terminal, not merely free of newlines" do
+    # A lone \r holds no "\n" and still redraws the line from column 0, so the
+    # note's own line must hold none, whatever the body after it carries.
+    it "keeps the note line free of terminal line breaks" do
       tty.render_arrival(announced("db", body: "harmless question\rATTACKER OWNS THIS LINE"),
                          from: "researcher")
 
-      expect(output.string.chomp).not_to match(line_break)
+      expect(output.string.lines.first.chomp).not_to match(line_break)
       expect(output.string).to include("researcher").and include("lain://inbox, or /inbox")
     end
 

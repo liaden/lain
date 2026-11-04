@@ -814,10 +814,10 @@ module Lain
         # A human answering from the chat should not have to open the inbox to
         # learn what was asked.
         def headlines(question)
-          return unless listed?(question)
+          shown = shown_lines(question)
+          return if shown.empty?
 
-          shown = question.headlines
-          if shown.size > MAX_HEADLINES + 1
+          if listed?(question) && shown.size > MAX_HEADLINES + 1
             shown = shown.first(MAX_HEADLINES) << "... #{shown.size - MAX_HEADLINES} more in /inbox"
           end
           shown.each { |line| @output.puts(@fit.call(@pastel.yellow("  #{line}"))) }
@@ -977,6 +977,15 @@ module Lain
           return "#{question.set.size} questions" if listed?(question)
 
           question.respond_to?(:summary) ? question.summary : question
+        end
+
+        def shown_lines(question)
+          return question.headlines if listed?(question)
+          return [] unless question.is_a?(Tools::AskHuman::Announcement)
+
+          # One line is already the note itself, so a body line would only repeat it.
+          lines = question.split(/\R/).map { |line| Tools::AskHuman::InboxRow.one_line(line) }
+          lines.size > 1 ? lines : []
         end
 
         def listed?(question) = question.is_a?(Tools::AskHuman::Announcement) && question.set.size > 1
