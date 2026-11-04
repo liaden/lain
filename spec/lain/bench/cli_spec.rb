@@ -1904,7 +1904,7 @@ RSpec.describe Lain::Bench::CLI do
       let(:hazards) { File.expand_path("../../fixtures/approval_replay/hazards.ndjson", __dir__) }
       let(:candidate) do
         File.join(Dir.mktmpdir, "candidate.rb").tap do |path|
-          File.write(path, "Lain::Approval::ComposedTerm::PROGRAMS.merge(\"rg\" => Lain::Approval::ComposedTerm::Flags.new)")
+          File.write(path, "Lain::Approval::ComposedTerm::PROGRAMS.merge(\"sort\" => Lain::Approval::ComposedTerm::Flags.new)")
         end
       end
 
@@ -1912,7 +1912,7 @@ RSpec.describe Lain::Bench::CLI do
         out = report(composed_term: candidate, hazards:)
 
         expect(out).to include("composed term:", "parks removed:", "hazards admitted:")
-        expect(out).to match(/^  rg --pre:/)
+        expect(out).to match(/^  sort --compress-program:/)
       end
 
       it "refuses a candidate with no hazard corpus, and a candidate that is missing" do

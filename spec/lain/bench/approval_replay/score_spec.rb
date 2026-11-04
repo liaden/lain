@@ -334,7 +334,7 @@ RSpec.describe Lain::Bench::ApprovalReplay::Score do
 
       report = terms([], [], hazards:, unweighed: ["sed w", "git log"]).report
 
-      expect(report).to include("inert, the shell verdict gives no term: sed w, git log",
+      expect(report).to include("verdict gives no term; only ComposedTerm's own reading weighs: sed w, git log",
                                 "refused by the table: 1",
                                 "not rebuilt: 1 (judged as plain commands, also counted above)")
     end

@@ -134,7 +134,7 @@ module Lain
             refused = @hazards.size - let_through.size - inert.size
             ["hazards admitted: #{let_through.size} of #{@hazards.size}", *let_through.map { hazard_line(_1) },
              "refused by the table: #{refused}",
-             "inert, the shell verdict gives no term: #{inert.map(&:name).join(", ")}",
+             "verdict gives no term; only ComposedTerm's own reading weighs: #{inert.map(&:name).join(", ")}",
              "not rebuilt: #{@hazards.count(&:context)} (judged as plain commands, also counted above)"]
           end
 

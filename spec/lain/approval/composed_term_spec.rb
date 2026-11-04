@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "json"
+require "open3"
 require "tmpdir"
 
 module ComposedTermSpecSupport
@@ -932,7 +934,7 @@ RSpec.describe Lain::Approval::ComposedTerm do
 
     # The list is the artifact a reviewer checks, so it is asserted as a list.
     it "carries no program that writes, deletes, fetches or executes when given argv" do
-      absent = %w[gzip xz zstd tee dd xxd find awk sed xargs curl wget git sh bash python perl rm mv cp]
+      absent = %w[gzip xz zstd tee dd xxd awk xargs curl wget sh bash python perl rm mv cp env]
 
       expect(described_class::PROGRAMS.keys & absent).to be_empty
     end
@@ -1264,7 +1266,7 @@ RSpec.describe Lain::Approval::ComposedTerm do
         rule = rule_for(home, root)
 
         expect(rule.decide(call_of("echo a && echo b", cwd: root))).to be_nil
-        expect(rule.decide(call_of("git log --oneline -5", cwd: root))).to be_nil
+        expect(rule.decide(call_of("echo 'a b' && echo c", cwd: root))).to be_nil
       end
     end
 
@@ -1605,6 +1607,363 @@ RSpec.describe Lain::Approval::ComposedTerm do
         expect(classed_rule(root, home, path: "#{bin}:/usr/bin", classes: false)
           .decide(call_of("cat README.md", cwd: root))).to be_allow
       end
+    end
+  end
+
+  # The verdict abstains on every command below, for a `cd`, a quoted word or a
+  # program that can run another; this rule reads those itself.
+  describe "a command the verdict leaves to a shell" do
+    def expect_left_to_a_shell(*commands)
+      verdict = Lain::Shell::Verdict.new
+      expect(commands.map { |command| verdict.call(command).name }).to eq([:abstain] * commands.size)
+    end
+
+    def views(root)
+      on_disk(root, ".lain-views/a.md", "Given a tree\nWhen\n")
+      on_disk(root, ".lain-views/b.md", "Given another\n")
+    end
+
+    it "approves the trial's grep after a cd, under this rule's name" do
+      in_tree do |root, home|
+        views(root)
+        command = 'cd .lain-views && grep -c "Given" a.md b.md'
+        expect_left_to_a_shell(command)
+
+        decision = rule_for(home, root).decide(call_of(command, cwd: root))
+
+        expect(decision).to have_attributes(verdict: :allow, rule: described_class.rule_name)
+      end
+    end
+
+    # From the round 3 journal, where a person approved it by hand. Inside
+    # double quotes bash keeps a backslash before `|`, so grep is given `\|`.
+    it "approves the trial's alternation, whose backslashes a shell keeps inside double quotes" do
+      in_tree do |root, home|
+        views(root)
+        command = 'cd .lain-views && grep -n "leak\\|iterations\\|ggml" a.md | head -20'
+        expect_left_to_a_shell(command)
+
+        rule = rule_for(home, root)
+        expect(rule.decide(call_of(command, cwd: root))).to be_allow
+        expect(rule.decide(call_of('cd .lain-views && grep -n "a\\$HOME" a.md', cwd: root))).to be_nil
+        expect(rule.decide(call_of('cd .lain-views && grep -n "a\\"b" a.md', cwd: root))).to be_nil
+      end
+    end
+
+    it "judges the words where the cd lands" do
+      in_tree do |root, home|
+        views(root)
+        on_disk(root, ".lain-views/.env", "API_TOKEN=x\n")
+
+        expect(rule_for(home, root).decide(call_of("cd .lain-views && cat .env", cwd: root))).to be_nil
+      end
+    end
+
+    it "refuses a cd out of the root, as written or through a link" do
+      in_tree do |root, home|
+        views(root)
+        outside = File.join(home, "elsewhere")
+        on_disk(outside, "a.md", "Given\n")
+        File.symlink(outside, File.join(root, "out"))
+        commands = ["cd #{outside} && grep -c Given a.md", "cd .. && grep -c Given repo/a.md",
+                    "cd out && grep -c Given a.md"]
+
+        rule = rule_for(home, root)
+        expect(commands.map { rule.decide(call_of(_1, cwd: root)) }).to eq([nil] * commands.size)
+      end
+    end
+
+    it "stays refused where the session excludes a program, though the verdict denies before it reads" do
+      in_tree do |root, home|
+        views(root)
+        excluded = Lain::Shell::Verdict.new(capability_set: Lain::Shell::Exclusions.new(patterns: ["grep"]))
+        command = "cd .lain-views && grep -c Given a.md"
+
+        expect(excluded.call(command)).to be_deny
+        expect(rule_for(home, root).decide(call_of(command, cwd: root, verdict: excluded))).to be_nil
+      end
+    end
+
+    it "refuses a grep whose path lies outside the requester's reads, and approves one inside them" do
+      in_tree do |root, home|
+        reads = File.join(home, "reads")
+        on_disk(reads, "a.md", "Given\n")
+        on_disk(home, "other/a.md", "Given\n")
+        rule = described_class.new(sensitivity: Lain::CLI::Wiring::BoardBuild::Classifiers.new(
+          home:, cwd: root, root:, confinement: Lain::Approval::Root.new(root), reads: [reads]
+        ))
+
+        expect(rule.decide(call_of("grep -c 'Given' #{home}/other/a.md", cwd: root))).to be_nil
+        expect(rule.decide(call_of("grep -c 'Given' #{reads}/a.md", cwd: root))).to be_allow
+      end
+    end
+  end
+
+  # A real repository, as `git init` writes it, so the config this rule reads
+  # is the one git would.
+  def git_repo(root, config: nil)
+    _, status = Open3.capture2e(SeedRepo::SCRUB, "git", "init", "-q", root)
+    raise "git init failed" unless status.success?
+
+    File.write(File.join(root, ".git", "config"), config, mode: "a") if config
+    root
+  end
+
+  describe "git's read subcommands" do
+    it "approves a log with no body and a diff that prints only its stat" do
+      in_tree do |root, home|
+        git_repo(root)
+        command = "git log --oneline -5 && git diff --stat"
+
+        expect(rule_for(home, root).decide(call_of(command, cwd: root))).to be_allow
+      end
+    end
+
+    it "approves the forms that print commit ids, subjects and counts" do
+      in_tree do |root, home|
+        git_repo(root)
+        commands = ["git rev-parse HEAD", "git log --format='%h %s' -3", "git log --pretty=oneline",
+                    "git log --oneline main..HEAD", "git log --oneline --shortstat", "git diff --shortstat HEAD~1"]
+
+        rule = rule_for(home, root)
+        expect(commands.map { rule.decide(call_of(_1, cwd: root)) }).to all(be_allow)
+      end
+    end
+
+    # A file name is held to the classifier wherever else this rule lets one
+    # print -- `ls` entry by entry, `find` over its whole tree -- and git
+    # prints the names of every changed, untracked or tracked file unchecked.
+    it "refuses the forms that list file names, which no name check holds" do
+      in_tree do |root, home|
+        git_repo(root)
+        commands = ["git status", "git status --short", "git ls-files", "git log --oneline --stat",
+                    "git log --oneline --name-only", "git log --oneline --name-status", "git log --oneline --numstat",
+                    "git log --oneline --raw", "git log --oneline --summary", "git log --oneline --dirstat",
+                    "git diff --name-only", "git diff --name-status", "git diff --numstat"]
+
+        rule = rule_for(home, root)
+        expect(commands.map { rule.decide(call_of(_1, cwd: root)) }).to eq([nil] * commands.size)
+      end
+    end
+
+    it "refuses every form that can print a file's bytes, a commit body, or reach another program" do
+      in_tree do |root, home|
+        git_repo(root)
+        commands = ["git log", "git log -p --oneline", "git log --oneline --patch", "git log --format=%B",
+                    "git log --oneline --format=medium", "git log --format='%h %b'", "git show HEAD",
+                    "git show --stat", "git diff", "git diff --stat -p", "git diff --stat --check",
+                    "git diff --stat --output=out.txt", "git diff --stat --ext-diff", "git diff --stat --textconv",
+                    "git diff --stat --no-index a b", "git log -S secret --oneline",
+                    "git log --oneline --show-signature", "git log --oneline --notes", "git log --format='%h %G?'",
+                    "git -C . log --oneline", "git --no-pager log --oneline", "git -c core.pager=sh log --oneline",
+                    "git branch -D main", "git commit -m x", "git log --oneline -- .env", "git blame README.md",
+                    "git log --oneline -L1,2:README.md", "git diff --stat -O order.txt"]
+
+        rule = rule_for(home, root)
+        expect(commands.map { rule.decide(call_of(_1, cwd: root)) }).to eq([nil] * commands.size)
+      end
+    end
+
+    # The repository's own spec holds each config shape; this is the rule asking it.
+    it "refuses where the repository's own config names a program git would run" do
+      in_tree do |root, home|
+        git_repo(root, config: "[core]\n\tfsmonitor = id\n")
+
+        expect(rule_for(home, root).decide(call_of("git diff --stat", cwd: root))).to be_nil
+      end
+    end
+  end
+
+  describe "rg" do
+    it "approves a search of named files, under options known to take no value" do
+      in_tree do |root, home|
+        on_disk(root, "a.md", "foo\n")
+        on_disk(root, "b.md", "foo\n")
+        commands = ["rg -n foo a.md", "rg -c foo a.md b.md", "rg -niw foo a.md", "rg --count --no-heading foo a.md"]
+
+        rule = rule_for(home, root)
+        expect(commands.map { rule.decide(call_of(_1, cwd: root)) }).to all(be_allow)
+      end
+    end
+
+    it "refuses a search of a directory, of the cwd, and of nothing it names" do
+      in_tree do |root, home|
+        on_disk(root, "a.md", "foo\n")
+        on_disk(root, "lib/b.md", "foo\n")
+        commands = ["rg foo", "rg foo lib", "rg foo a.md lib", "rg foo missing.md"]
+        expect_allowed_by_the_verdict(*commands)
+
+        rule = rule_for(home, root)
+        expect(commands.map { rule.decide(call_of(_1, cwd: root)) }).to eq([nil] * commands.size)
+      end
+    end
+
+    # MEASURED in review: each of these was approved and walked the cwd,
+    # printing a key. An option that takes a value moves the pattern and file
+    # slots, so a word read as the file may be a second pattern or a value, and
+    # the real operand a directory.
+    it "refuses a pattern or a value given by option, which leaves the file slots uncertain" do
+      in_tree do |root, home|
+        on_disk(root, "a.md", "foo\n")
+        on_disk(root, "id_rsa", "-----BEGIN OPENSSH PRIVATE KEY-----\nAAA\n")
+        commands = ["rg --regexp=. . a.md", "rg -e . -e a.md", "rg -T md a.md", "rg -e. . a.md", "rg -t md foo a.md",
+                    "rg -m 1 foo a.md", "rg --max-count=1 foo a.md", "rg -A2 foo a.md",
+                    "git log --oneline -1 && rg --regexp=. . a.md", "git status && rg --regexp=. . a.md"]
+
+        rule = rule_for(home, root)
+        expect(commands.map { rule.decide(call_of(_1, cwd: root)) }).to eq([nil] * commands.size)
+      end
+    end
+
+    # Each names a real file after its pattern, so the operand predicate holds
+    # and only the flag table stands between the hazard and an approval.
+    it "refuses every flag that runs a program, unpacks, follows, unhides or lists, over a named file" do
+      in_tree do |root, home|
+        on_disk(root, "a.md", "foo\n")
+        commands = ["rg --pre=cat foo a.md", "rg --pre-glob=x foo a.md", "rg -z foo a.md",
+                    "rg --search-zip foo a.md", "rg -L foo a.md", "rg --follow foo a.md", "rg --hidden foo a.md",
+                    "rg -. foo a.md", "rg -u foo a.md", "rg --unrestricted foo a.md", "rg --no-ignore foo a.md",
+                    "rg --no-ignore-vcs foo a.md", "rg -f a.md a.md", "rg --file=a.md foo a.md",
+                    "rg --files foo a.md", "rg --ignore-file=a.md foo a.md", "rg --hostname-bin=id foo a.md"]
+        rule = rule_for(home, root)
+        expect(rule.decide(call_of("rg foo a.md", cwd: root))).to be_allow
+
+        expect(commands.map { rule.decide(call_of(_1, cwd: root)) }).to eq([nil] * commands.size)
+      end
+    end
+  end
+
+  describe "find" do
+    it "approves a listing of a small tree whose every entry is ordinary" do
+      in_tree do |root, home|
+        on_disk(root, "docs/a.md", "x\n")
+        on_disk(root, "docs/b.rb", "x\n")
+
+        rule = rule_for(home, root)
+        expect(["find docs -name '*.md'", "find . -maxdepth 1 -type f", "find docs"]
+          .map { rule.decide(call_of(_1, cwd: root)) }).to all(be_allow)
+      end
+    end
+
+    it "refuses a tree holding an entry it would print that is not ordinary, at any depth" do
+      in_tree do |root, home|
+        on_disk(root, "docs/a.md", "x\n")
+        on_disk(root, "docs/deep/er/.env", "A=1\n")
+
+        rule = rule_for(home, root)
+        expect(rule.decide(call_of("find docs -name '*.md'", cwd: root))).to be_nil
+        expect(rule.decide(call_of("find docs -maxdepth 1", cwd: root))).to be_allow
+      end
+    end
+
+    # The landing pair is asked only of a link, so this is the case it is for.
+    it "refuses a tree holding an ordinary name that links to a secret" do
+      in_tree do |root, home|
+        on_disk(root, "docs/a.md", "x\n")
+        on_disk(root, ".env", "A=1\n")
+        File.symlink(File.join(root, ".env"), File.join(root, "docs", "notes.txt"))
+
+        expect(rule_for(home, root).decide(call_of("find docs", cwd: root))).to be_nil
+      end
+    end
+
+    # GNU find warns and obeys the LAST -maxdepth, so reading any one of them is a guess.
+    it "refuses more than one -maxdepth" do
+      in_tree do |root, home|
+        on_disk(root, "docs/a.md", "x\n")
+
+        expect(rule_for(home, root).decide(call_of("find docs -maxdepth 1 -maxdepth 9", cwd: root))).to be_nil
+      end
+    end
+
+    # 1001 entries, one past the bound of 1000, written out so a raised bound shows here.
+    it "refuses a tree too large to walk, and a link it would follow" do
+      in_tree do |root, home|
+        FileUtils.mkdir_p(File.join(root, "big"))
+        1001.times { File.write(File.join(root, "big", "f#{_1}"), "") }
+        on_disk(root, "docs/a.md", "x\n")
+
+        rule = rule_for(home, root)
+        expect(rule.decide(call_of("find big -name f1", cwd: root))).to be_nil
+        expect(["find -L docs", "find docs -follow", "find -H docs"].map { rule.decide(call_of(_1, cwd: root)) })
+          .to eq([nil] * 3)
+      end
+    end
+
+    it "refuses every action that runs, deletes or writes, and every start point outside the root" do
+      in_tree do |root, home|
+        on_disk(root, "docs/a.md", "x\n")
+        commands = ["find docs -delete", "find docs -fprint out.txt", "find docs -fprint0 out.txt",
+                    "find docs -fprintf out.txt %p", "find docs -fls out.txt", "find docs -files0-from list",
+                    "find docs -okdir cat", "find #{home}", "find .."]
+
+        rule = rule_for(home, root)
+        expect(commands.map { rule.decide(call_of(_1, cwd: root)) }).to eq([nil] * commands.size)
+      end
+    end
+  end
+
+  describe "sed -n" do
+    it "approves a print of a line range, chained into head or tail" do
+      in_tree do |root, home|
+        on_disk(root, "a.md", "one\ntwo\n")
+        commands = ["sed -n '1,20p' a.md | head -5", "sed -n 5p a.md", "sed -n '10,$p' a.md | tail -3",
+                    "sed -n -e 1p -e 2p a.md", "sed -nE '1p;3p' a.md", "cat a.md | sed -n 1p"]
+
+        rule = rule_for(home, root)
+        expect(commands.map { rule.decide(call_of(_1, cwd: root)) }).to all(be_allow)
+      end
+    end
+
+    it "refuses a script that writes, reads, runs or substitutes, and a sed with no -n" do
+      in_tree do |root, home|
+        on_disk(root, "a.md", "one\n")
+        commands = ["sed -n 'w out.txt' a.md", "sed -n '1w out.txt' a.md", "sed -n 'r /etc/passwd' a.md",
+                    "sed -n 1e a.md", "sed -n 's/a/b/w out' a.md", "sed -n 's/a/b/p' a.md", "sed 1p a.md",
+                    "sed -n -i 1p a.md", "sed -ni 1p a.md", "sed -n -f s.sed a.md", "sed -n --debug 1p a.md",
+                    "sed -n --in-place 1p a.md", "sed -n 1p .env", "sed -n '1p;w x' a.md"]
+
+        rule = rule_for(home, root)
+        expect(commands.map { rule.decide(call_of(_1, cwd: root)) }).to eq([nil] * commands.size)
+      end
+    end
+  end
+
+  describe "the hazard corpus the approval replay scores a table against" do
+    let(:hazards) do
+      File.foreach(File.expand_path("../../fixtures/approval_replay/hazards.ndjson", __dir__)).map { JSON.parse(_1) }
+    end
+
+    # Each context the corpus names, rebuilt, so a hazard that needs one is
+    # judged where it is one.
+    def rebuilt(root, context)
+      case context
+      when nil then nil
+      when "repo config sets core.pager" then git_repo(root, config: "[core]\n\tpager = sh\n")
+      when "repo config sets core.fsmonitor" then git_repo(root, config: "[core]\n\tfsmonitor = id\n")
+      when "repo config sets diff.external" then git_repo(root, config: "[diff]\n\texternal = id\n")
+      when "linked is a link out of the root" then File.symlink("/etc", File.join(root, "linked"))
+      else raise "no rebuild for #{context}"
+      end
+    end
+
+    it "leaves every hazard to a person, each in the context it names" do
+      hazards.each do |hazard|
+        in_tree do |root, home|
+          on_disk(root, "notes.md", "a note\n")
+          rebuilt(root, hazard["context"])
+
+          verdict = Lain::Shell::Verdict.new(home:)
+          decision = rule_for(home, root).decide(call_of(hazard.fetch("command"), cwd: root, verdict:))
+          expect(decision).to be_nil, hazard.fetch("hazard")
+        end
+      end
+    end
+  end
+
+  describe "the programs a stage may run" do
+    it "gives rg, git, find and sed a table of their own" do
+      expect(described_class::PROGRAMS.values_at("rg", "git", "find", "sed")).to all(respond_to(:admits?))
     end
   end
 

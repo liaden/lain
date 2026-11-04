@@ -13,8 +13,8 @@
 {"hazard":"git log","command":"git log","context":"repo config sets core.pager"}
 {"hazard":"git status","command":"git status","context":"repo config sets core.fsmonitor"}
 {"hazard":"git diff","command":"git diff","context":"repo config sets diff.external"}
-{"hazard":"rg --pre","command":"rg --pre cat foo"}
-{"hazard":"rg -z","command":"rg -z foo"}
+{"hazard":"rg --pre","command":"rg --pre=cat foo README.md"}
+{"hazard":"rg -z","command":"rg -z foo README.md"}
 {"hazard":"sort --compress-program","command":"sort --compress-program=sh notes.md"}
 {"hazard":"grep --exclude-from","command":"grep --exclude-from=ignore.txt foo notes.md"}
 {"hazard":"xargs runs a program","command":"ls | xargs rm"}

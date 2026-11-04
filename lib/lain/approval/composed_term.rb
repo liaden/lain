@@ -40,10 +40,24 @@ module Lain
     #     stage's program, every wrapper around it and every file it runs
     #     resolves to a system file, or a user file unchanged this lineage and
     #     shadowing nothing on PATH, with no PATH or env anomaly.
+    # 13. THE OPERAND PREDICATE: an `rg` searches only files it is named, each
+    #     a regular file, since with none or a directory it walks a tree. It
+    #     reads the slots by position, which holds only because `rg`'s table
+    #     admits no option that takes a value.
+    # 14. THE WALK PREDICATE: a `find` lists a tree of at most {WALK_BOUND}
+    #     entries, each ordinary as an `ls` entry must be, since it prints names.
+    # 15. THE REPOSITORY PREDICATE: no `git` stage runs in a repository whose
+    #     own config names a program, includes another file or moves the tree.
     #
-    # {#approvable?} holds predicates 1 to 11 on one line and every predicate is
-    # total over a term on its own, so another is one more `&&` plus one more
-    # method. That is not tidiness, and it has been TESTED rather than claimed:
+    # Predicate 2 has one widening: where the verdict ABSTAINS rather than
+    # denies, {Shell::Reading} reads the string itself, accepting only leading `cd`s
+    # bound by `&&`, plain quoting, `|` and `&&`, and the term it builds is
+    # judged by every predicate. Such a command still runs through `sh -c`, so
+    # the reading refuses anything a shell would read differently.
+    #
+    # {#approvable?} and {#vouchable?} hold the predicates as one conjunction,
+    # and every predicate but 13 is total over a term on its own, so another is
+    # one more `&&` plus one more method. That is not tidiness, and it has been TESTED rather than claimed:
     # predicates 6, 7, 8 and 9 were each added after the rest shipped, and each
     # cost one `&&` and one method here -- two for 9, which needs a rescue of
     # its own -- and no existing predicate's logic changed.
@@ -367,6 +381,152 @@ module Lain
       end
       private_constant :Subcommands
 
+      # A program whose first argument names a subcommand, each read by a table
+      # of its own; any word before it, a global option included, is refused.
+      class Reads
+        # @param subcommands [Hash{String=>#admits?}]
+        def initialize(subcommands)
+          @subcommands = subcommands.freeze
+          freeze
+        end
+
+        def admits?(arguments)
+          subcommand, *rest = arguments
+          arguments == [VERSION] || @subcommands.fetch(subcommand, UNLISTED).admits?(rest)
+        end
+      end
+      private_constant :Reads
+
+      # The options a program takes with no value, as an allowlist. Any other
+      # option could take the next word as its value, and the operand predicate
+      # reads the pattern and file slots by position; MEASURED, `--regexp=. .`,
+      # `-e . -e a.md` and `-T md a.md` each walked the cwd when a table only
+      # refused the dangerous flags. Words after `--` are operands.
+      class Valueless
+        # @param short [String] the letters, any of which may be bundled
+        # @param long [Array<String>] whole, with no abbreviation and no `=`
+        def initialize(short:, long:)
+          @short = short.chars.freeze
+          @long = long.freeze
+          freeze
+        end
+
+        def admits?(arguments)
+          arguments.take_while { _1 != LONG }.select { _1.start_with?(DASH) && _1 != DASH }.all? { known?(_1) }
+        end
+
+        private
+
+        def known?(word)
+          word.start_with?(LONG) ? @long.include?(word) : word.delete_prefix(DASH).chars.all? { @short.include?(_1) }
+        end
+      end
+      private_constant :Valueless
+
+      # git's `log` and `diff` each need a flag table and a requirement at once,
+      # and the program table holds one object per subcommand.
+      Both = Data.define(:first, :second) do
+        def admits?(arguments) = first.admits?(arguments) && second.admits?(arguments)
+      end
+      private_constant :Both
+
+      # A diff that does not ask for its stat prints the patch, so the stat is
+      # required, not merely allowed.
+      Requires = Data.define(:pattern) do
+        def admits?(arguments) = arguments.any? { _1.match?(pattern) }
+      end
+      private_constant :Requires
+
+      # A `git log` admitted only when it names its format and every format it
+      # names prints no commit body, no note and no signature, which runs gpg.
+      class Bodiless
+        FORMAT = /\A--(oneline\z|format(=|\z)|pretty(=|\z))/
+        NAMED = %w[oneline short reference].freeze
+        PLACEHOLDER = "%"
+        BODY = /%[-+ ]?(?:[bBNG]|\(trailers)/
+
+        def admits?(arguments)
+          formats = arguments.grep(FORMAT)
+          formats.any? && formats.all? { bodiless?(_1) }
+        end
+
+        private
+
+        def bodiless?(word)
+          value = word.partition("=").last
+          word == "--oneline" || NAMED.include?(value) || (value.include?(PLACEHOLDER) && !value.match?(BODY))
+        end
+      end
+      private_constant :Bodiless
+
+      # find's options and actions are whole words, so they are matched whole.
+      # `-H`, `-L`, `-D` and `-O` come before its start points.
+      class Primaries
+        LEADING = /\A-[HLDO]/
+
+        # @param refused [Array<String>]
+        def initialize(refused)
+          @refused = refused.freeze
+          freeze
+        end
+
+        def admits?(arguments) = arguments.none? { @refused.include?(_1) || _1.match?(LEADING) }
+      end
+      private_constant :Primaries
+
+      # `sed -n` with scripts that only print lines, by number, range or
+      # pattern: nothing that writes, reads another file, runs or substitutes.
+      class Prints
+        ADDRESS = %r{(?:\d+|\$|/[^/\\\n]*/)}
+        SCRIPT = /\A#{ADDRESS}(?:,#{ADDRESS})?p(?:;#{ADDRESS}(?:,#{ADDRESS})?p)*\z/
+        QUIET = %w[--quiet --silent].freeze
+        LONG = [*QUIET, "--regexp-extended", "--separate", "--unbuffered"].freeze
+        SHORT = /\A-[nErsu]+\z/
+        EXPRESSION = "-e"
+        EXPRESSION_LONG = /\A--expression=/
+
+        def admits?(arguments)
+          scripts, options, operands = parts(arguments.dup)
+          scripts = operands.first(1) if scripts.empty?
+          !options.nil? && quiet?(options) && scripts.any? && scripts.all? { _1.to_s.match?(SCRIPT) }
+        end
+
+        private
+
+        # @return [Array(Array<String>, Array<String>, Array<String>)] scripts,
+        #   options and operands; nil options for a word no table here reads
+        def parts(words)
+          scripts = []
+          options = []
+          operands = []
+          until words.empty?
+            word = words.shift
+            if word == EXPRESSION then scripts << words.shift
+            elsif word.match?(EXPRESSION_LONG) then scripts << word.delete_prefix("--expression=")
+            elsif LONG.include?(word) || word.match?(SHORT) then options << word
+            elsif word.start_with?(DASH) then return [scripts, nil, operands]
+            else operands << word
+            end
+          end
+          [scripts, options, operands]
+        end
+
+        def quiet?(switches) = switches.any? { QUIET.include?(_1) || (_1.match?(SHORT) && _1.include?("n")) }
+      end
+      private_constant :Prints
+
+      # The git and diff options that print a file's bytes or a patch, write a
+      # file, read one, run a program or search the content of history.
+      HISTORY_SHORT = %w[p u U c W O S G L].freeze
+      HISTORY_LONG = %w[--patch --unified --patch-with-stat --patch-with-raw --word-diff --color-words --cc
+                        --remerge-diff --combined-all-paths --full-diff --function-context --binary --output
+                        --ext-diff --textconv --show-signature --notes --show-notes --pickaxe-all --pickaxe-regex
+                        --find-object --check --no-index --submodule --orderfile].freeze
+      # The log forms that list file names, which no name check holds.
+      NAMES = %w[--stat --name-only --name-status --numstat --raw --summary --dirstat --compact-summary].freeze
+      STAT = /\A--(stat|shortstat)(=|\z)/
+      private_constant :HISTORY_SHORT, :HISTORY_LONG, :NAMES, :STAT
+
       # THE ALLOWLIST, derived from what each program does with the argv it is
       # GIVEN: reads only, writes nothing, fetches nothing, executes nothing.
       #
@@ -442,7 +602,37 @@ module Lain
         # `epic status` and `epic show` print only progress derived from the epic
         # home and its journals. `watch` is left out: it shows raw stored output,
         # which can hold secrets.
-        "lain" => Subcommands.new([%w[epic status], %w[epic show]])
+        "lain" => Subcommands.new([%w[epic status], %w[epic show]]),
+        # Searches every file under a directory it is given, or the cwd when
+        # given none -- the operand predicate requires named files. Only the
+        # options listed take no value; every other is refused, those that run
+        # a program, unpack, follow a link, unhide or list names among them.
+        "rg" => Valueless.new(short: "nNiSswxvcloFHIbqUPap0",
+                              long: %w[--line-number --no-line-number --ignore-case --smart-case --case-sensitive
+                                       --word-regexp --line-regexp --invert-match --count --count-matches
+                                       --files-with-matches --files-without-match --only-matching --fixed-strings
+                                       --with-filename --no-filename --byte-offset --quiet --multiline --pcre2
+                                       --null --column --no-heading --heading --vimgrep --trim --text --no-messages
+                                       --json --pretty]),
+        # Read subcommands only, and only the forms that print commit ids,
+        # subjects and counts, never a file's bytes or a commit body -- a
+        # history read that does is the judge's, with the history fact it is
+        # told -- and never a list of file names, which no name check holds
+        # here as `ls` and `find` are held. The diff's own stat is the one
+        # exception, and the form the diff must ask for. Every global option is
+        # refused, `-c` and `-C` among them; the repository predicate reads the
+        # config git would.
+        "git" => Reads.new(
+          "log" => Both.new(Flags.new(short: HISTORY_SHORT, long: HISTORY_LONG + NAMES), Bodiless.new),
+          "diff" => Both.new(Flags.new(short: HISTORY_SHORT, long: HISTORY_LONG), Requires.new(STAT)),
+          "rev-parse" => Flags.new
+        ),
+        # Lists names, so the walk predicate holds its tree to what an `ls`
+        # may print. Every action that runs, deletes or writes is refused, and
+        # so is following a link.
+        "find" => Primaries.new(%w[-exec -execdir -ok -okdir -delete -fprint -fprint0 -fprintf -fls
+                                   -files0-from -follow]),
+        "sed" => Prints.new
       }.freeze
 
       # Programs whose stage is approved only as exactly `[name, "--version"]`.
@@ -476,6 +666,15 @@ module Lain
       # Matched as {Flags} match, so an abbreviation or a bundle counts too.
       SHOWS_DOT_ENTRIES = Flags.new(short: %w[a A], long: %w[--all --almost-all])
       CURRENT = "."
+
+      SEARCHER = "rg"
+      FINDER = "find"
+      GIT = "git"
+      # The most entries a `find` may reach before this rule stops walking and
+      # leaves it to the judge: each is classified, on every judged call.
+      WALK_BOUND = 1000
+      MAX_DEPTH = "-maxdepth"
+      FIND_START = "-P"
 
       RUSTUP_PROXIES = %w[rustc cargo rustup].freeze
       # rustup looks for both, from `getcwd` upward -- the REAL cwd.
@@ -513,18 +712,16 @@ module Lain
       # @param call [Rule::Call]
       # @return [Rule::Decision, nil] an allow, or nil for every other command
       def decide(call)
-        # {Rule::Call#term?} IS predicate 2: a deny and every abstention carry
-        # {Shell::Verdict::NO_TERM}, so "a term arrived" is "the verdict allowed"
-        # -- and a session excluding a program makes that verdict a DENY, which
-        # is how an exclusion outranks the allowlist without this rule knowing
-        # the exclusion table exists.
-        return nil unless judged?(call) && call.term?
+        # Predicate 2: the verdict allowed, or abstained and {Shell::Reading}
+        # read the string. A deny is never read again, and a session excluding
+        # a program makes the verdict a DENY, which is how an exclusion outranks
+        # the allowlist without this rule knowing the exclusion table exists.
+        return nil unless judged?(call)
 
-        # One local, because {Rule::Call#term} re-parses on every ask.
-        term = call.term
-        return nil unless approvable?(term, call.input.cwd)
+        term, cwd = read(call)
+        return nil unless term && approvable?(call, term, cwd)
 
-        names = vouched_names(call)
+        names = vouched_names(call, term, cwd)
         names && allow(call, because: format(APPROVED, programs: names.join(", ")))
       end
 
@@ -532,21 +729,40 @@ module Lain
       # @return [String, nil] which binary stopped the class predicate, once every
       #   other predicate held; nil where this rule would have decided or never judges
       def why_not(call)
-        return nil unless @classes && judged?(call) && call.term? && explainable?(call.term, call.input.cwd)
+        term, cwd = read(call) if @classes && judged?(call)
+        return nil unless term && explainable?(call, term, cwd)
 
-        stages = executables(call)
+        stages = executables(call, term, cwd)
         suspect = stages.flat_map(&:programs).find { !trusted?(_1) } if stages
         suspect && describe_binary(suspect)
       end
 
       private
 
+      # Once per call, for {#decide} and {#why_not} both: {Rule::Call#term}
+      # parses again on every ask. A deny is a decision the session made, so
+      # only an abstention is read again.
+      def read(call) = call.memo([self, :read]) { verdict_read(call) }
+
+      def verdict_read(call)
+        return unless call.tool.respond_to?(:decision_for)
+
+        decision = call.tool.decision_for(call.input)
+        return [decision.term, call.input.cwd] if decision.allow?
+
+        Shell::Reading.of(call.input.command, call.input.cwd) if decision.abstain?
+      end
+
       # THE CONJUNCTION. Each predicate is total over a term by itself, so the
       # order is short-circuiting for cost and for nothing else, and another
       # goes here plus one method below.
-      def approvable?(term, cwd)
-        bare_names?(term) && allowlisted?(term) && unflagged?(term) && vouchable?(term, cwd)
+      def approvable?(call, term, cwd)
+        bare_names?(term) && allowlisted?(term) && unflagged?(term) && vouched?(call, term, cwd)
       end
+
+      # Once per call: the walk and the repository read are paid in {#decide}
+      # and asked again by {#why_not}.
+      def vouched?(call, term, cwd) = call.memo([self, :vouched]) { vouchable?(term, cwd) }
 
       # Everything but the name and flag predicates, which no flag table can
       # answer for a path-named program, so one that only the class predicate
@@ -554,10 +770,11 @@ module Lain
       def vouchable?(term, cwd)
         ordinary_words?(term, cwd) && unaliased?(term) && confined?(term, cwd) &&
           plain_content?(term, cwd) && resolved_words?(term, cwd) &&
-          unpinned?(term, cwd) && unrevealing?(term, cwd)
+          unpinned?(term, cwd) && unrevealing?(term, cwd) && searched_files?(term, cwd) &&
+          walkable?(term, cwd) && quiet_repository?(term, cwd)
       end
 
-      def explainable?(term, cwd) = flags_ok_where_listed?(term) && vouchable?(term, cwd)
+      def explainable?(call, term, cwd) = flags_ok_where_listed?(term) && vouched?(call, term, cwd)
 
       def flags_ok_where_listed?(term)
         term.stages.all? do |stage|
@@ -707,8 +924,100 @@ module Lain
 
       # A link's landing counts though a plain `ls` prints only its name: `-l`
       # prints the target, and the parked prompt costs less than telling them apart.
+      # Only a link has a landing of its own: every entry sits in a directory
+      # already resolved, so any other entry lands where it is named, and
+      # resolving it again was most of a `find` walk's cost.
       def ordinary_entry?(classifier, confinement, path)
-        ordinary_spellings?(classifier, confinement, path) && ordinary_landing?(classifier, confinement, path)
+        ordinary_spellings?(classifier, confinement, path) &&
+          (!File.symlink?(path) || ordinary_landing?(classifier, confinement, path))
+      end
+
+      # The operand predicate. The first word that is not an option is the
+      # pattern and the rest are files -- true only because `rg`'s table admits
+      # no option that takes a value, which is what makes the slots certain.
+      def searched_files?(term, cwd)
+        confinement = @sensitivity.confinement(cwd)
+        term.stages.select { |stage| stage.program == SEARCHER }
+            .all? { |stage| named_files?(operands(stage.argv.drop(1)).drop(1), confinement) }
+      end
+
+      def named_files?(words, confinement)
+        words.any? && words.all? { |word| File.file?(confinement.landing_of(word)) }
+      rescue StandardError
+        false
+      end
+
+      # The walk predicate. Bounded, so a large tree is the judge's rather than
+      # a cost on every call; never through a link, as find does not follow one.
+      def walkable?(term, cwd)
+        classifier = @sensitivity.call(cwd)
+        confinement = @sensitivity.confinement(cwd)
+        term.stages.select { |stage| stage.program == FINDER }
+            .all? { |stage| ordinary_tree?(stage.argv.drop(1), classifier, confinement) }
+      rescue StandardError
+        false
+      end
+
+      def ordinary_tree?(arguments, classifier, confinement)
+        depth = max_depth(arguments)
+        starts = start_points(arguments).map { |word| confinement.landing_of(word) }
+        entries = Tree.new(starts, depth:, bound: WALK_BOUND).first(WALK_BOUND + 1) if depth
+        entries && entries.size <= WALK_BOUND && entries.all? { |path| ordinary_entry?(classifier, confinement, path) }
+      end
+
+      def start_points(arguments)
+        words = arguments.drop_while { |word| word == FIND_START }.take_while { |word| !word.start_with?(DASH) }
+        words.empty? ? [CURRENT] : words
+      end
+
+      # One that is not a number bounds nothing. GNU find obeys the last of
+      # several and warns, so more than one is not read: nil.
+      def max_depth(arguments)
+        depths = arguments.each_cons(2).select { |option, _| option == MAX_DEPTH }
+                          .map { |_, value| Integer(value, exception: false) || Float::INFINITY }
+        depths.size > 1 ? nil : depths.first || Float::INFINITY
+      end
+
+      # Every entry under each start point, breadth first, the start included.
+      class Tree
+        include Enumerable
+
+        # @param starts [Array<String>] absolute
+        # @param depth [Numeric] how many levels below a start to read
+        # @param bound [Integer] past this many entries a directory is read no further
+        def initialize(starts, depth:, bound:)
+          @starts = starts
+          @depth = depth
+          @bound = bound
+        end
+
+        def each
+          queue = @starts.map { [_1, 0] }
+          until queue.empty?
+            path, level = queue.shift
+            yield path
+            queue.concat(children(path).map { [_1, level + 1] }) if level < @depth
+          end
+        end
+
+        private
+
+        # One past the bound is enough to know a walk is over it, so a large
+        # directory is not read whole.
+        def children(path)
+          File.lstat(path).directory? ? Dir.each_child(path).first(@bound + 1).map { File.join(path, _1) } : []
+        end
+      end
+      private_constant :Tree
+
+      # The repository predicate. The repository is the one git finds from where
+      # the stage runs; the user's own config, global and system, is trusted.
+      def quiet_repository?(term, cwd)
+        return true unless term.programs.include?(GIT)
+
+        Repository.quiet?(@sensitivity.confinement(cwd).landing_of(CURRENT))
+      rescue StandardError
+        false
       end
 
       def programs(term) = term.programs
@@ -716,17 +1025,17 @@ module Lain
       # One resolution answers both the predicate and the reason, so the reason
       # names the file that was judged. A raise abstains, as the other
       # predicates' rescues do.
-      def vouched_names(call)
-        return programs(call.term) unless @classes
+      def vouched_names(call, term, cwd)
+        return programs(term) unless @classes
 
-        stages = executables(call)
+        stages = executables(call, term, cwd)
         stages.map { |stage| "#{stage.name} at #{stage.resolved} (#{stage.klass})" } if stages.all? { trusted?(_1) }
       rescue StandardError
         nil
       end
 
-      def executables(call)
-        call.memo(self) { @sensitivity.executables(call.term, call.input.cwd) }
+      def executables(call, term, cwd)
+        call.memo(self) { @sensitivity.executables(term, cwd) }
       end
 
       def describe_binary(binary)

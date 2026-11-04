@@ -539,25 +539,32 @@ RSpec.describe Lain::Bench::ApprovalReplay do
       described_class.composed_term(sessions:, candidate: table(source), hazards:, project:)
     end
 
-    it "lists no hazard today's table admits" do
-      expect(terms(today).report).to include("hazards admitted: 0 of #{File.foreach(hazards).count}")
+    it "lists no hazard today's table admits, though it cannot rebuild the context some hazards name" do
+      report = terms(today).report
+
+      # A replay blind spot, not a live verdict: the corpus names `git status`, `git log` and `git diff` in a
+      # repository whose config runs a program, the replay cannot rebuild a repository, and it judges each
+      # as the plain command. Today's table refuses all 3 plain, and the live rule also reads that config and
+      # refuses it (repository_spec, and composed_term_spec's hazard corpus example with each context rebuilt).
+      expect(report).to include("hazards admitted: 0 of #{File.foreach(hazards).count}\n")
+      expect(report).to match(/^not rebuilt: 4 \(judged as plain commands, also counted above\)$/)
     end
 
     it "lists the hazards a candidate that admits the reader programs without their flags lets through" do
       report = terms("#{today}.merge(%w[sed find git rg sort grep].to_h { [_1, #{flags}] })").report
 
       expect(report.lines.grep(/^  [^ ].*: /).map { _1[/^  ([^:]+):/, 1] })
-        .to include("rg --pre", "rg -z", "sort --compress-program", "grep --exclude-from")
+        .to include("sort --compress-program", "grep --exclude-from")
       expect(report).to match(/^hazards admitted: \d+ of 28$/)
     end
 
     it "keeps a hazard out of the list when the candidate's flags refuse it" do
-      open_rg = terms("#{today}.merge(\"rg\" => #{flags})").report
-      guarded = "Lain::Approval::ComposedTerm::Flags.new(short: %w[z], long: %w[--pre])"
-      refusing = terms("#{today}.merge(\"rg\" => #{guarded})").report
+      open_sort = terms("#{today}.merge(\"sort\" => #{flags})").report
+      guarded = "Lain::Approval::ComposedTerm::Flags.new(long: %w[--compress-program])"
+      refusing = terms("#{today}.merge(\"sort\" => #{guarded})").report
 
-      expect(open_rg).to match(/^  rg --pre:/).and match(/^  rg -z:/)
-      expect(refusing).not_to match(/^  rg --pre:|^  rg -z:/)
+      expect(open_sort).to match(/^  sort --compress-program:/)
+      expect(refusing).not_to match(/^  sort --compress-program:/)
     end
 
     it "reports the parks a candidate removes and the judge or human denies it would have admitted" do
@@ -606,7 +613,8 @@ RSpec.describe Lain::Bench::ApprovalReplay do
     it "tells a hazard the shell verdict cannot weigh from one the table refuses" do
       report = terms(today).report
 
-      expect(report).to match(/^inert, the shell verdict gives no term: .*sed w.*find -exec.*git log/)
+      unread = "verdict gives no term; only ComposedTerm's own reading weighs:"
+      expect(report).to match(/^#{unread} .*sed w.*find -exec.*git log/)
       expect(report).to match(/^refused by the table: \d+/)
     end
 
