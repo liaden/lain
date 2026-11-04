@@ -39,6 +39,11 @@ module Lain
 
         Dispatched = Data.define(:records, :guessed)
 
+        # A session records its confine arm but never the list its mask list answered, so no replay
+        # can say which secret the sandbox hid: the board is built with its default, no masks, the safe side.
+        UNMASKED = "the workspace profile's masks, which no session records (git reads and walks past a " \
+                   "masked secret replay unmasked, so the judge is not asked about them)"
+
         # What the board and the guards journal into: the records, as a reader parses them.
         class Capture
           attr_reader :records

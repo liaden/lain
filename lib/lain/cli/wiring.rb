@@ -918,12 +918,14 @@ module Lain
       # {Lain::Sensitivity::Policy::Null} default, so `gates?` answered false for
       # every path in every real chat and the whole axis was dark.
       def switchboard(backend, toolset)
-        @switchboard ||= BoardBuild.for(chronicle:, options:, model: backend.context.model, toolset:, project:,
-                                        verdict:, middleware: backend.middleware, config:, paths: @paths,
-                                        judge: JudgeSource.for(backend, journal: durable_journal, config:),
-                                        display: @channel, arms:, request: heard, resolver: exec_resolver,
-                                        worker_env: chat_env, child_env: exec_backend.child_env, stops: observers.stops)
+        @switchboard ||= BoardBuild.for(chronicle:, judge: JudgeSource.for(backend, journal: durable_journal, config:),
+                                        model: backend.context.model, middleware: backend.middleware, display: @channel,
+                                        options:, resolver: exec_resolver, worker_env: chat_env, stops: observers.stops,
+                                        toolset:, project:, verdict:, config:, paths: @paths, arms:, **chat_reads)
       end
+
+      # A chat assembled with no toolset build, as a spec's, leaves the board its defaults.
+      def chat_reads = { request: heard, child_env: exec_backend.child_env, **@toolset_build&.board_inputs }
 
       # What the judge is told the human asked for under `--judge-facts request`. One for the run,
       # because the board reads it and the Repl, built after the board, writes it.

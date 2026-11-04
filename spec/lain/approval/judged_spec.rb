@@ -180,9 +180,13 @@ RSpec.describe Lain::Approval::Judged do
         Lain::Compaction::Derivation.new(strategy:, keep_last: 3).derive(history)
       end
 
+      # A chat with no session file reads every program as written this session, which bars the judge;
+      # a resolver that finds nothing fresh leaves the facts clear, so the judge is asked.
       def judging(scripted)
         allow(Lain::CLI::Wiring::BoardBuild).to receive(:for).and_wrap_original do |original, **kwargs|
-          original.call(**kwargs, judge: JudgedSpecSupport.judge(scripted, timeout: 5))
+          stale = Struct.new(:root) { def fresh?(_path) = false }.new(kwargs[:project].root)
+          original.call(**kwargs, judge: JudgedSpecSupport.judge(scripted, timeout: 5),
+                                  resolver: Lain::Shell::Executable::Resolver.new(root: stale.root, fresh: stale))
         end
       end
 
@@ -611,7 +615,7 @@ RSpec.describe Lain::Approval::Judged do
     end
   end
 
-  describe "the structured bar over a judge approve" do
+  describe "the structured bar, decided before the judge is asked" do
     let(:asked_human) { StringIO.new }
 
     def stage(klass, fresh: false, anomalies: [], run_files: [])
@@ -643,14 +647,16 @@ RSpec.describe Lain::Approval::Judged do
 
     def parked(*stages, within: context)
       pending = nil
-      ruling = ruled(rung(answering("approve"), facts: told(*stages)), bash, within:) do |parked|
+      scripted = answering("approve")
+      ruling = ruled(rung(scripted, facts: told(*stages)), bash, within:) do |parked|
         pending = parked
         Lain::Frontend::ApprovalPolicy.new(output: asked_human, input: StringIO.new("n\n")).decide(parked)
       end
+      expect(scripted.prompts).to be_empty
       [ruling, pending]
     end
 
-    it "defers an approve the bar forbids to the human, journaling each stage's reason" do
+    it "hands a call the bar forbids to the human without asking the judge, journaling each stage's reason" do
       barred = {
         [stage(:project, fresh: true)] => "make -> /somewhere/project/bin/make: written this session",
         [stage(:system, run_files: [makefile(fresh: true)])] => "make runs /p/Makefile: written this session",
@@ -665,16 +671,16 @@ RSpec.describe Lain::Approval::Judged do
         .to eq(barred.values.map { { "rung" => "auto", "verdict" => "abstain", "reason" => "bar", "bar" => [_1] } })
     end
 
-    it "tells the human the judge approved and what lain's bar stopped, never that the judge deferred" do
+    it "tells the human what lain's bar stopped, never that the judge deferred" do
       ruling, pending = parked(stage(:project, fresh: true), stage(:system, anomalies: [:relative_path_entry]))
 
       expect([ruling.verdict, pending.reasons.map(&:own?).include?(true)]).to eq([:deny, false])
-      expect(pending.notes).to eq([described_class::OVERRULED,
+      expect(pending.notes).to eq([described_class::RESOLVED_BAR,
                                    "make -> /somewhere/project/bin/make: written this session",
                                    "PATH has a relative entry"])
       expect(asked_human.string)
-        .to include("; \"the judge approved this, but what lain resolved the command to bars an automatic " \
-                    "approval\"; \"make -> /somewhere/project/bin/make: written this session\"; " \
+        .to include("; \"what lain resolved the command to bars an automatic approval, so the judge was not " \
+                    "asked\"; \"make -> /somewhere/project/bin/make: written this session\"; " \
                     "\"PATH has a relative entry\"")
         .and(satisfy { |text| !text.include?("the judge deferred") })
     end
@@ -684,16 +690,10 @@ RSpec.describe Lain::Approval::Judged do
 
       _, pending = parked(stage(:unresolved), within: noted)
 
-      expect(pending.notes).to eq(["a rung above noted this", described_class::OVERRULED, "make: not resolved"])
+      expect(pending.notes).to eq(["a rung above noted this", described_class::RESOLVED_BAR, "make: not resolved"])
     end
 
-    it "never turns a judge deny into anything else" do
-      ruling = answered("deny", stage(:project, fresh: true))
-
-      expect([ruling.verdict, ruling.rung, ruling.final?]).to eq([:deny, "auto", false])
-    end
-
-    it "defers a planted cat the judge approved, through the session's real resolver" do
+    it "hands a planted cat down unasked, through the session's real resolver" do
       Dir.mktmpdir("lain-judged-bar") do |dir|
         project = File.realpath(dir)
         FileUtils.mkdir_p(File.join(project, "bin"))
@@ -1347,13 +1347,13 @@ RSpec.describe Lain::Approval::Judged do
       expect(ruling.reason).to include("--non-interactive").and include("not allowed to judge")
     end
 
-    it "says the judge approved a call lain's bar stopped, and why, rather than that the judge did not approve it" do
+    it "says lain's bar stopped the call, and why, rather than that the judge did not approve it" do
       stage = Lain::Shell::Executable.unresolved("make")
       facts = Lain::Approval::Judge::Facts.new([stage])
       ruling = ruled(rung(answering("approve"), asking: unattended, facts: ->(*, **) { facts }), bash)
 
       expect([ruling.verdict, ruling.final?]).to eq([:deny, false])
-      expect(ruling.reason).to include("the judge approved this call").and include("make: not resolved")
+      expect(ruling.reason).to include("bars an automatic approval").and include("make: not resolved")
         .and include("--non-interactive")
       expect(ruling.reason).not_to include("did not approve")
     end
@@ -1420,7 +1420,7 @@ RSpec.describe Lain::Approval::Judged do
       expect(judged_records.sole).to include("verdict" => "deny", "prompt_digest" => digest(scripted.prompts.sole))
     end
 
-    it "names it on a deferral, a fault and an approve the bar stopped" do
+    it "names it on a deferral and a fault, and none on a call the bar stopped before the judge read it" do
       barring = Lain::Approval::Judge::Facts.new([stages.first.with(klass: :unresolved, resolved: nil, realpath: nil)])
       deferred = read_by_judge("defer", asking: refusing)
       faulted = read_by_judge(nil, asking: refusing)
@@ -1431,7 +1431,8 @@ RSpec.describe Lain::Approval::Judged do
 
       expect(judged_records.map { _1["reason"] }).to eq(%w[deferred fault bar])
       expect(judged_records.map { _1["prompt_digest"] })
-        .to eq([deferred, faulted, stopped].map { digest(_1.prompts.sole) })
+        .to eq([*[deferred, faulted].map { digest(_1.prompts.sole) }, nil])
+      expect(stopped.prompts).to be_empty
     end
 
     it "leaves the digests off a call the judge never looked at" do
@@ -1531,5 +1532,118 @@ RSpec.describe Lain::Approval::Judged do
     end
 
     expect([scripted.prompts, humans_only, ruling.authority]).to eq([[], true, :human])
+  end
+
+  describe "deciding whether the judge may weigh a call, before it is paid" do
+    around do |example|
+      Dir.mktmpdir("lain-judgement") do |dir|
+        @base = File.realpath(dir)
+        example.run
+      end
+    end
+
+    let(:home) { File.join(@base, "home") }
+    let(:root) { File.join(home, "project") }
+
+    before do
+      FileUtils.mkdir_p([File.join(root, ".git", "objects"), File.join(root, "crates", "store"),
+                         File.join(root, ".lain-views"), File.join(root, "wide")])
+      File.write(File.join(root, ".git", "HEAD"), "ref: refs/heads/main\n")
+      File.write(File.join(root, ".lain-views", "x.md"), "Given a view\n")
+      (described_class::Reach::ENTRIES + 1).times { File.write(File.join(root, "wide", "f#{_1}"), "") }
+    end
+
+    # The session's mask list, as the workspace sandbox reads it: here it masks the tree's .env alone.
+    def listing
+      Struct.new(:masks).new([Lain::Sensitivity::Policy::Mask.new(path: File.join(root, "tree", ".env"),
+                                                                  reason: :credential)])
+    end
+
+    def prompts_for(command, masked:)
+      scripted = answering("approve")
+      masks = masked ? Lain::Approval::Judgement::Masking.new(listing) : Lain::Approval::Judgement::Unmasked
+      settled(rung(scripted, masks:), bash(command))
+      scripted.prompts
+    end
+
+    it "asks the judge about git reads that run under the workspace mask, weighing nothing under .git" do
+      prompts = prompts_for("git status && git log && git branch -a", masked: true)
+
+      expect(prompts.size).to eq(1)
+      expect(prompts.sole).to include(Lain::Approval::Judge::Facts::HISTORY)
+      expect(prompts.sole).not_to include("#{root}/.git")
+    end
+
+    it "keeps a git log from the judge when the call's environment points git at another repository" do
+      scripted = answering("approve")
+      pointed = context.with(worker_env: Lain::WorkerEnv.new(cwd: root, env: { "GIT_DIR" => File.join(@base, ".git") }))
+
+      settled(rung(scripted, masks: Lain::Approval::Judgement::Masking.new(listing)), bash("git log"), within: pointed)
+
+      expect([scripted.prompts, prompts_for("git log", masked: true).size]).to eq([[], 1])
+    end
+
+    # A diff against the working tree prints files below the mask's depth, which no mask covers.
+    it "asks the judge about a git diff between 2 commits under the workspace mask, and not one against the tree" do
+      expect(prompts_for("git diff HEAD~1..HEAD -- crates/store", masked: true).size).to eq(1)
+      expect(prompts_for("git diff HEAD~1 -- crates/store", masked: true)).to be_empty
+    end
+
+    it "still hands a git log down unasked when nothing masks its output" do
+      expect(prompts_for("git log", masked: false)).to be_empty
+    end
+
+    it "asks the judge about a grep run from a directory the command changes into" do
+      expect(prompts_for("cd .lain-views && grep -c Given x.md", masked: false).size).to eq(1)
+    end
+
+    describe "a recursive grep over a tree holding a secret" do
+      let(:tree) { File.join(root, "tree") }
+
+      before do
+        FileUtils.mkdir_p(tree)
+        File.write(File.join(tree, "a.rb"), "1\n")
+        File.write(File.join(tree, ".env"), "TOKEN=1\n")
+      end
+
+      it "asks the judge when the mask hides the secret, and tells it so" do
+        masked = prompts_for("grep -rn needle tree", masked: true)
+
+        expect(masked.size).to eq(1)
+        expect(masked.sole).to include(format(Lain::Approval::Judge::Facts::MASKED, paths: File.join(tree, ".env")))
+      end
+
+      it "hands it down unasked when the call runs unconfined" do
+        expect(prompts_for("grep -rn needle tree", masked: false)).to be_empty
+      end
+
+      it "hands it down unasked when the secret lies deeper than the mask lists" do
+        File.delete(File.join(tree, ".env"))
+        FileUtils.mkdir_p(File.join(tree, "vendor", "pkg"))
+        File.write(File.join(tree, "vendor", "pkg", ".env"), "TOKEN=1\n")
+
+        expect(prompts_for("grep -rn needle tree", masked: true)).to be_empty
+      end
+    end
+
+    it "still hands down a recursive read past the walk's bound, mask or not" do
+      expect(prompts_for("grep -rn needle wide", masked: true)).to be_empty
+    end
+
+    describe "a call whose resolved stages bar an automatic approval" do
+      let(:barring) do
+        Lain::Approval::Judge::Facts.new([Lain::Shell::Executable.unresolved("make test")])
+      end
+
+      it "asks the judge nothing, and journals the bar it found" do
+        scripted = answering("approve")
+
+        settled(rung(scripted, facts: ->(*, **) { barring }), bash)
+
+        expect(scripted.prompts).to be_empty
+        expect(escalations.sole).to include("rung" => "auto", "verdict" => "abstain", "reason" => "bar",
+                                            "bar" => barring.bar)
+      end
+    end
   end
 end

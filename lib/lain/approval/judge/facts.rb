@@ -5,8 +5,10 @@ module Lain
     class Judge
       # What lain resolved each stage of a bash call to, told to the judge as
       # lines it did not write: which file a name runs, who could have put it
-      # there, whether it changed this session, and what it shadows. A program
-      # name says what a command means to run; these say what will.
+      # there, and what it shadows. A program name says what a command means to
+      # run; these say what will. A stage that changed this session, did not
+      # resolve or ran past an anomaly bars the call ({#bar}), so the judge is
+      # never asked about it and no line says so.
       #
       # Every name and path is printed bare only while it holds nothing but
       # path-safe characters, and inspected otherwise, so a file named to look
@@ -15,17 +17,20 @@ module Lain
         HEADER = "facts (computed by lain, not by the model):"
         GUIDANCE = "A command name runs the file shown in the facts block, not the program its name suggests. " \
                    "A stage that is not [system] is a reason to DEFER."
+        MASKED = "hidden from the command by its sandbox: %<paths>s"
+        HISTORY = "a value a sensitive file ever held in git history is masked in the command's output"
         PLAIN = %r{\A[\w./+@:,=%~-]+\z}
-        NOT_RESOLVED = "not resolved"
-        WRITTEN = "written this session"
         UNCHANGED = "unchanged since before session"
         SWAPPABLE = %i[user project].freeze
-        ANOMALIES = Shell::Executable::ANOMALIES
-        private_constant :PLAIN, :NOT_RESOLVED, :WRITTEN, :UNCHANGED, :SWAPPABLE, :ANOMALIES
+        private_constant :PLAIN, :UNCHANGED, :SWAPPABLE
 
         # @param executables [Array<Shell::Executable>] one per stage of the call
-        def initialize(executables)
+        # @param masked [Array<String>] absolute; what the call's sandbox hides from it
+        # @param history [Boolean] whether its output is masked for what git history held
+        def initialize(executables, masked: [], history: false)
           @executables = executables.dup.freeze
+          @masked = masked.map(&:-@).freeze
+          @history = history
           freeze
         end
 
@@ -36,7 +41,7 @@ module Lain
         #
         # @return [String]
         def to_s
-          return "" if @executables.empty?
+          return "" if @executables.empty? && @masked.empty? && !@history
 
           "\n#{HEADER}\n#{lines.join("\n")}\n\n#{GUIDANCE}\n"
         end
@@ -44,14 +49,20 @@ module Lain
         # @return [Array<String>] why no machine may approve it, one reason per stage, run file or anomaly
         def bar = Shell::Executable.bar(@executables)
 
-        # @return [Array<String>] one per program, run file and anomaly, each once
-        def lines
-          programs = @executables.flat_map { |stage| stage_lines(stage) }
-          anomalies = @executables.flat_map(&:programs).flat_map(&:anomalies).map { |anomaly| ANOMALIES.fetch(anomaly) }
-          [*programs, *anomalies].uniq
-        end
+        # @param masked [Array<String>] absolute; what the call's sandbox hides from it
+        # @param history [Boolean] whether its output is masked for what git history held
+        # @return [Facts] these, and what the sandbox keeps from the call
+        def masking(masked, history:) = Facts.new(@executables, masked:, history:)
+
+        # @return [Array<String>] one per program and run file, each once, then what is masked
+        def lines = [*@executables.flat_map { |stage| stage_lines(stage) }, *masked_lines].uniq
 
         private
+
+        def masked_lines
+          [(format(MASKED, paths: @masked.map { safe(_1) }.join(", ")) unless @masked.empty?),
+           (HISTORY if @history)].compact
+        end
 
         def stage_lines(stage)
           [program_line(safe(stage.name), stage),
@@ -62,14 +73,9 @@ module Lain
           line(name, program.realpath || program.resolved, [*tags(program), *shadows(program.shadowed)])
         end
 
-        def line(name, path, tags)
-          "#{name} -> #{path ? safe(path) : NOT_RESOLVED} [#{tags.join("; ")}]"
-        end
+        def line(name, path, tags) = "#{name} -> #{safe(path.to_s)} [#{tags.join("; ")}]"
 
-        def tags(found)
-          [found.klass.to_s, (WRITTEN if found.fresh), (UNCHANGED if !found.fresh && SWAPPABLE.include?(found.klass))]
-            .compact
-        end
+        def tags(found) = [found.klass.to_s, (UNCHANGED if !found.fresh && SWAPPABLE.include?(found.klass))].compact
 
         def shadows(paths) = paths.empty? ? [] : ["shadows #{paths.map { |path| safe(path) }.join(", ")}"]
 

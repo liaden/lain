@@ -210,7 +210,7 @@ RSpec.describe Lain::Approval::Judge do
 
   def facts_naming(path)
     stage = Lain::Shell::Executable.new(name: "cat", resolved: path, realpath: path, chain: [path], shadowed: [],
-                                        anomalies: [], klass: :project, fresh: true, run_files: [], wrappers: [])
+                                        anomalies: [], klass: :project, fresh: false, run_files: [], wrappers: [])
     described_class::Facts.new([stage])
   end
 
@@ -230,7 +230,7 @@ RSpec.describe Lain::Approval::Judge do
 
     prompt = asked(provider)
     expect(prompt.lines.map(&:chomp)).to include("facts (computed by lain, not by the model):",
-                                                 "cat -> /p/bin/cat [project; written this session]")
+                                                 "cat -> /p/bin/cat [project; unchanged since before session]")
     expect(prompt.index("facts (computed")).to be > prompt.index("approve on doubt.")
     expect(prompt).to include("A command name runs the file shown in the facts block")
   end

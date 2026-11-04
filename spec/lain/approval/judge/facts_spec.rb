@@ -36,12 +36,12 @@ RSpec.describe Lain::Approval::Judge::Facts do
 
   def lines_of(facts) = facts.to_s.lines.map(&:chomp)
 
-  it "heads the block as computed by lain and names a planted, fresh project stage and what it shadows" do
-    plant(File.join(root, "bin", "cat"))
+  it "heads the block as computed by lain and names a project stage nothing changed, and what it shadows" do
+    plant(File.join(root, "tools", "cat"))
 
-    expect(lines_of(facts_of("cat README.md", path: "#{root}/bin:/usr/bin")))
+    expect(lines_of(facts_of("cat README.md", path: "#{root}/tools:/usr/bin")))
       .to include("facts (computed by lain, not by the model):",
-                  "cat -> #{root}/bin/cat [project; written this session; shadows /usr/bin/cat]")
+                  "cat -> #{root}/tools/cat [project; unchanged since before session; shadows /usr/bin/cat]")
   end
 
   it "names a system stage by the file that runs" do
@@ -66,22 +66,22 @@ RSpec.describe Lain::Approval::Judge::Facts do
                   "Makefile -> #{root}/Makefile [project; unchanged since before session]")
   end
 
-  it "tells an interpreter stage as 1 unresolved line, since the Verdict does not let it through" do
+  it "bars an interpreter stage as unresolved, since the Verdict does not let it through" do
     File.write(File.join(root, "x.rb"), "puts 1\n")
 
-    expect(lines_of(facts_of("ruby x.rb")).grep(/->/)).to eq(['"ruby x.rb" -> not resolved [unresolved]'])
+    expect(facts_of("ruby x.rb").bar).to eq(["ruby x.rb: not resolved"])
   end
 
-  it "says once which PATH or env anomaly could change what runs" do
+  it "bars once on each PATH or env anomaly that could change what runs" do
     plant(File.join(root, "bin", "cat"))
 
-    expect(lines_of(facts_of("cat README.md | cat", path: "bin:/usr/bin")).grep(/PATH/))
+    expect(facts_of("cat README.md | cat", path: "bin:/usr/bin").bar.grep(/PATH/))
       .to eq(["PATH has a relative entry", "PATH has an entry inside the project"])
   end
 
   it "resolves nothing in a command the Verdict does not fully understand, wrappers included" do
     ["cat <<EOF | bash\nrm -rf /\nEOF", "nice -n 5 cat README.md"].each do |command|
-      expect(lines_of(facts_of(command)).grep(/->/)).to eq(["#{command.inspect} -> not resolved [unresolved]"])
+      expect(facts_of(command).bar).to eq(["#{command}: not resolved"])
     end
   end
 
@@ -94,19 +94,19 @@ RSpec.describe Lain::Approval::Judge::Facts do
       described_class::Resolving.new(verdict: Lain::Shell::Verdict.new, stages:, **rest)
     end
 
-    it "tells the stage as unresolved and records why, so a resolver bug reads apart from a doubt" do
+    it "bars the stage as unresolved and records why, so a resolver bug reads apart from a doubt" do
       facts = facts_over(raising, faults: sink).call("cat README.md", root, tool_use_id: "tu_1")
 
-      expect(lines_of(facts).grep(/->/)).to eq(['"cat README.md" -> not resolved [unresolved]'])
+      expect(facts.bar).to eq(["cat README.md: not resolved"])
       expect(faults).to eq([[{ rule: "judge facts", tool: "bash", error: "RuntimeError", message: "boom" }, "tu_1"]])
     end
 
-    it "still tells the stage as unresolved when recording the fault raises too" do
+    it "still bars the stage as unresolved when recording the fault raises too" do
       broken = ->(_fault, tool_use_id:) { raise IOError, "journal closed #{tool_use_id}" }
 
       facts = facts_over(raising, faults: broken).call("cat README.md", root, tool_use_id: "tu_1")
 
-      expect(lines_of(facts).grep(/->/)).to eq(['"cat README.md" -> not resolved [unresolved]'])
+      expect(facts.bar).to eq(["cat README.md: not resolved"])
     end
   end
 
@@ -148,6 +148,27 @@ RSpec.describe Lain::Approval::Judge::Facts do
 
   it "renders nothing when it holds no stage" do
     expect(described_class::NONE.to_s).to eq("")
+  end
+
+  describe "what the sandbox hides from a call" do
+    it "tells the judge each path the mask hides, with no stage to name" do
+      masked = described_class::NONE.masking(["#{root}/.env", "#{root}/a b"], history: false)
+
+      expect(lines_of(masked)).to include("facts (computed by lain, not by the model):",
+                                          format(described_class::MASKED, paths: "#{root}/.env, \"#{root}/a b\""))
+      expect(lines_of(masked)).not_to include(described_class::HISTORY)
+    end
+
+    it "tells the judge history is masked in the output, beside the stages it already names" do
+      masked = facts_of("cat README.md").masking([], history: true)
+
+      expect(lines_of(masked)).to include("cat -> /usr/bin/cat [system]", described_class::HISTORY)
+      expect(masked.bar).to eq([])
+    end
+
+    it "renders nothing when the mask hides nothing" do
+      expect(described_class::NONE.masking([], history: false).to_s).to eq("")
+    end
   end
 
   it "answers no facts while the arm is off" do

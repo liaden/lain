@@ -113,6 +113,8 @@ module Lain
       # @param denied_tools [Enumerable<String>] the tools the trusted config refuses with `deny_tool`; none by default
       # @param stops [Tripwire::Stops, Tripwire::Stops::None] who the tripwire stopped, which every tool
       #   stack refuses or holds; no one by default
+      # @param masks [Approval::Judgement::Masking, Approval::Judgement::Unmasked] the workspace sandbox a call
+      #   the judge approves runs under; the toolset's to say, since the arm alone does not build the sandbox
       # @option options [Boolean] :non_interactive no human is at this
       #   session's terminal
       # @option options [String] :approval the session starts at this approval
@@ -125,10 +127,11 @@ module Lain
                    verdict: Lain::Shell::Verdict.new, spike: Scoping::NOWHERE, middleware: Config::Middleware.empty,
                    approval_timeout: Approval::Parked::Queue::DEFAULT_TIMEOUT, display: Channel::Null.instance, arms: Arms::OFF,
                    request: Approval::Judge::Unrequested, secrets: Sensitivity::Secrets::Source::DEFAULT,
-                   denied_tools: Set[].freeze, stops: Tripwire::Stops::None)
+                   denied_tools: Set[].freeze, stops: Tripwire::Stops::None,
+                   masks: Approval::Judgement::Unmasked)
         new(journal: chronicle.record_journal, model:, toolset:, rules:, approving:, sensitivity:, classifiers:,
             verdict:, test_layout:, spike:, middleware:, approval_timeout:, judge:, display:, arms:, request:,
-            secrets:, denied_tools:, stops:,
+            secrets:, denied_tools:, stops:, masks:,
             # A resumed session starts at the launch flag's approval, not its last recorded mode.
             attended: !options[:non_interactive], approval: options.fetch(:approval, :ask))
       end
@@ -237,6 +240,7 @@ module Lain
       # @param secrets [Sensitivity::Secrets::Source] as on {.for}; the process default by default
       # @param denied_tools [Enumerable<String>] as on {.for}; none by default
       # @param stops [Tripwire::Stops, Tripwire::Stops::None] as on {.for}; no one by default
+      # @param masks [Approval::Judgement::Masking, Approval::Judgement::Unmasked] as on {.for}; none by default
       def initialize(journal:, model:, toolset:, rules: [], approving: REMEMBERED,
                      sensitivity: Sensitivity::Policy::Null.instance,
                      classifiers: Approval::Escalation::Triage::AnyPath.new,
@@ -245,8 +249,9 @@ module Lain
                      approval_timeout: Approval::Parked::Queue::DEFAULT_TIMEOUT, judge: DEFERRING,
                      display: Channel::Null.instance, arms: Arms::OFF, request: Approval::Judge::Unrequested,
                      secrets: Sensitivity::Secrets::Source::DEFAULT, denied_tools: Set[].freeze,
-                     stops: Tripwire::Stops::None)
+                     stops: Tripwire::Stops::None, masks: Approval::Judgement::Unmasked)
         @attended = attended
+        @masks = masks
         @display = display
         @journal = journal
         @spike = spike
@@ -550,7 +555,7 @@ module Lain
       def judged(classifiers)
         asking = @approvals ? Approval::Escalation::Surfaces.new(@approvals, denials: @denials) : Approval::Judged::Unattended.new
         Approval::Judged.new(judge: @judge, policy: @sensitivity, asking:, journal: @journal, display: @display,
-                             facts: facts_over(classifiers), request: @request, denials: @denials)
+                             facts: facts_over(classifiers), request: @request, denials: @denials, masks: @masks)
       end
 
       # Over the ladder's own factory, so a leased worker's stages resolve

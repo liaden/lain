@@ -226,6 +226,13 @@ RSpec.describe Lain::Shell::Named do
       expect(patterns("git status")).to be_empty
     end
 
+    it "marks a git read of the whole tree as git's and read only, and a recursive grep's as neither" do
+      reads = ["git log", "git diff HEAD~1 -- crates/store", "git branch -a", "grep -rn x ."]
+      whole_tree = ->(command) { named(command).paths.select { _1.pattern == "/p/**" }.map { [_1.git, _1.written] } }
+
+      expect(reads.to_h { [_1, whole_tree.call(_1)] }).to eq(reads.to_h { [_1, [[!_1.start_with?("grep"), false]]] })
+    end
+
     it "reads the whole tree for log only when it prints file contents or commit bodies" do
       ["git log -p", "git log --patch", "git log -u", "git log -Skey", "git log -Gkey", "git log --follow -p f",
        "git log --format=%B", "git log --pretty=format:%h%b", "git log --format=%+b", "git log --format=%-B",

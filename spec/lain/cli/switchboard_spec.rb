@@ -30,6 +30,36 @@ RSpec.describe Lain::CLI::Switchboard do
     end
   end
 
+  describe "a git read under auto approval" do
+    def asked_under(**masking)
+      Dir.mktmpdir("lain-switchboard-masked") do |dir|
+        root = File.join(File.realpath(dir), "repo")
+        FileUtils.mkdir_p(File.join(root, ".git", "objects"))
+        policy = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home: dir, cwd: root, root:),
+                                               home: dir, root:)
+        asked = []
+        board = switchboard(sensitivity: policy, approval: :auto, attended: false,
+                            judge: judge_answering(:approve, asked), **masking)
+        log = Struct.new(:name, :input, :tool_use_id).new("bash", { "command" => "git log" }, "tu_1")
+        Sync { board.policy_switch.call(log, Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: root, env: {}))) }
+        asked
+      end
+    end
+
+    it "reaches the judge when the workspace profile will mask what it prints" do
+      expect(asked_under(masks: Lain::Approval::Judgement::Masking.new(Struct.new(:masks).new([])))).to eq(["bash"])
+    end
+
+    it "stays from the judge when nothing masks what it prints" do
+      expect(asked_under(masks: Lain::Approval::Judgement::Unmasked)).to eq([])
+    end
+
+    # The arm says what was asked for; whether the sandbox really wraps bash is the toolset's to say.
+    it "stays from the judge under the workspace arm alone" do
+      expect(asked_under(arms: Lain::CLI::Arms::OFF.with(confine: :workspace))).to eq([])
+    end
+  end
+
   def layout_run = Lain::Middleware::GuardTestLayout::Run.undeclared
 
   def gated_call = Struct.new(:name, :input, :tool_use_id).new("bash", { "command" => "ls" }, "tu_1")
@@ -1446,20 +1476,22 @@ RSpec.describe Lain::CLI::Switchboard do
       dir
     end
 
-    # Under `--confine classes` a planted cat is left to the judge, which is what lets it be asked.
-    def board_in(root, home, judge_facts:, resolver: nil, request: Lain::Approval::Judge::Unrequested)
+    # Under `--confine classes` a planted cat is left to the auto rung, and `--non-interactive` refuses at once
+    # what that rung hands down, rather than parking it.
+    def board_in(root, home, judge_facts:, resolver: nil, request: Lain::Approval::Judge::Unrequested,
+                 path: "#{planted_cat(File.join(root, "bin"))}:/usr/bin")
       project = Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag)
       fresh = Struct.new(:root) { def fresh?(path) = path.start_with?("#{root}/") }.new(root)
       resolver ||= Lain::Shell::Executable::Resolver.new(root:, fresh:)
       Lain::CLI::Wiring::BoardBuild.for(
-        chronicle:, options: { approval: "auto" }, model: "m", toolset: base, project:,
+        chronicle:, options: { approval: "auto", non_interactive: true }, model: "m", toolset: base, project:,
         paths: Lain::Paths.new(env: { "HOME" => home }),
         judge: Lain::Approval::Judge.new(provider: judge_provider, model: "m",
                                          slots: Lain::Prompt::Slots.new(fills: {})),
         verdict: Lain::CLI::Wiring::BoardBuild.shell_verdict(project:),
         arms: Lain::CLI::Arms.from(confine: "classes", judge_facts:),
         resolver:, request:,
-        worker_env: Lain::WorkerEnv.new(cwd: root, env: { "PATH" => "#{planted_cat(File.join(root, "bin"))}:/usr/bin" })
+        worker_env: Lain::WorkerEnv.new(cwd: root, env: { "PATH" => path })
       )
     end
 
@@ -1469,28 +1501,51 @@ RSpec.describe Lain::CLI::Switchboard do
 
     def cat_readme(root) = gated_call.class.new("bash", { "command" => "cat README.md", "cwd" => root }, "tu_1")
 
+    # A system make over a Makefile nothing wrote this session: facts that bar nothing, so the judge is asked.
+    def clean_make(root, home, **)
+      File.write(File.join(root, "Makefile"), "test:\n\ttrue\n")
+      stale = Struct.new(:root) { def fresh?(_path) = false }.new(root)
+      board_in(root, home, resolver: Lain::Shell::Executable::Resolver.new(root:, fresh: stale), path: "/usr/bin", **)
+        .policy_switch.call(gated_call.class.new("bash", { "command" => "make test", "cwd" => root }, "tu_1"), nil)
+    end
+
+    def bar_on(tool_use_id)
+      journal_records(journal_io, "escalation").find { _1["rung"] == "auto" && _1["tool_use_id"] == tool_use_id }
+                                               &.fetch("bar", nil)
+    end
+
     it "tells the judge what each stage resolved to under --judge-facts facts" do
       in_project do |root, home|
-        board_in(root, home, judge_facts: "facts").policy_switch.call(cat_readme(root), nil)
+        clean_make(root, home, judge_facts: "facts")
 
         expect(prompts.sole.lines.map(&:chomp))
-          .to include("facts (computed by lain, not by the model):",
-                      "cat -> #{root}/bin/cat [project; written this session; shadows /usr/bin/cat]")
+          .to include("facts (computed by lain, not by the model):", "make -> /usr/bin/make [system]")
       end
     end
 
-    it "resolves a leased worker's stages through its own PATH" do
+    it "asks the judge nothing about a planted program, journaling what lain found under --judge-facts facts" do
+      in_project do |root, home|
+        board_in(root, home, judge_facts: "facts").policy_switch.call(cat_readme(root), nil)
+
+        expect(prompts).to be_empty
+        expect(bar_on("tu_1")).to include("cat -> #{root}/bin/cat: written this session")
+      end
+    end
+
+    it "resolves a leased worker's stages through its own PATH, not the chat's planted one" do
       in_project do |root, home|
         checkout = File.join(File.dirname(root), "lease")
-        File.write(File.join(FileUtils.mkdir_p(checkout).first, "x"), "x\n")
-        leased = Lain::WorkerEnv.new(cwd: checkout, checkout:,
-                                     env: { "PATH" => "#{planted_cat(File.join(checkout, "bin"))}:/usr/bin" })
-        board = board_in(root, home, judge_facts: "facts")
+        File.write(File.join(FileUtils.mkdir_p(checkout).first, "Makefile"), "test:\n\ttrue\n")
+        leased = Lain::WorkerEnv.new(cwd: checkout, checkout:, env: { "PATH" => "/usr/bin" })
+        stale = Struct.new(:root) { def fresh?(_path) = false }.new(root)
+        board = board_in(root, home, judge_facts: "facts",
+                                     resolver: Lain::Shell::Executable::Resolver.new(root:, fresh: stale))
 
-        board.policy_for(leased).call(gated_call.class.new("bash", { "command" => "cat x", "cwd" => checkout }, "tu_2"),
-                                      nil)
+        board.policy_for(leased)
+             .call(gated_call.class.new("bash", { "command" => "make test", "cwd" => checkout }, "tu_2"), nil)
 
-        expect(prompts.sole).to include("cat -> #{checkout}/bin/cat [project")
+        expect(prompts.sole).to include("make -> /usr/bin/make [system]")
+        expect(prompts.sole).not_to include("PATH has an entry inside the project")
       end
     end
 
@@ -1499,7 +1554,7 @@ RSpec.describe Lain::CLI::Switchboard do
       in_project do |root, home|
         board_in(root, home, judge_facts: "facts", resolver: raising).policy_switch.call(cat_readme(root), nil)
 
-        expect(prompts.sole).to include('"cat README.md" -> not resolved [unresolved]')
+        expect(bar_on("tu_1")).to include("cat README.md: not resolved")
         expect(journal_records(journal_io, "escalation_fault"))
           .to include(a_hash_including("rule" => "judge facts", "tool_use_id" => "tu_1", "message" => "boom"))
       end
@@ -1507,8 +1562,7 @@ RSpec.describe Lain::CLI::Switchboard do
 
     it "tells the judge the human's last line under --judge-facts request" do
       in_project do |root, home|
-        board_in(root, home, judge_facts: "request", request: heard("summarize the README"))
-          .policy_switch.call(cat_readme(root), nil)
+        clean_make(root, home, judge_facts: "request", request: heard("summarize the README"))
 
         expect(prompts.sole).to include('the user\'s request: "summarize the README"').and include("facts (computed")
       end
@@ -1516,8 +1570,7 @@ RSpec.describe Lain::CLI::Switchboard do
 
     it "tells the judge no request under --judge-facts facts, whatever source it was handed" do
       in_project do |root, home|
-        board_in(root, home, judge_facts: "facts", request: heard("summarize the README"))
-          .policy_switch.call(cat_readme(root), nil)
+        clean_make(root, home, judge_facts: "facts", request: heard("summarize the README"))
 
         expect(prompts.sole).not_to include("summarize the README")
       end

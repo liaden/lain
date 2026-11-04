@@ -173,7 +173,7 @@ RSpec.describe Lain::Bench::ApprovalReplay do
     it "says what it never replays, once, at its head" do
       expect(report.lines.grep(/\Anot replayed: /).size).to eq(1)
       expect(report).to include("sensitivity and tests tables", "BoardBuild.approving", "judge-facts",
-                                "non-interactive")
+                                "non-interactive", Lain::Bench::ApprovalReplay::Stack::UNMASKED)
     end
 
     it "says the place a pre-provenance session was replayed under" do

@@ -825,6 +825,69 @@ RSpec.describe Lain::CLI::Wiring do
           expect([ruling.verdict, ruling.rung]).to eq([:allow, "auto"])
           expect(board.approvals.to_a).to be_empty
         end
+
+        it "keeps a git log from the judge, since the sandbox never wraps a container" do
+          offering_every_layer
+
+          judged = outside_a_git_hook do
+            docked_on_path(workspace_wiring(exec: "docker")) { judge_asked_about_git_log(_1) }
+          end
+
+          expect(judged).to eq([])
+        end
+      end
+
+      # Whether a judge-approved call runs under the workspace profile's masks is what the toolset
+      # built, read by the board; the arm alone builds no sandbox. Read through the one call it changes:
+      # a git log of the project's own history reaches the judge only under the masks.
+      describe "the masks the board is told guard a judge-approved call" do
+        it "lets a git log reach the judge when the sandbox wraps bash under --confine workspace" do
+          offering_every_layer
+
+          expect(outside_a_git_hook { judge_asked_about_git_log(board_on_path("/usr/bin", workspace_wiring)) })
+            .to eq(["bash"])
+        end
+
+        it "keeps a git log from the judge when the box cannot build the sandbox" do
+          allow(Lain::Confine::Probe).to receive(:new).and_wrap_original do |original, **kwargs|
+            original.call(**kwargs, runner: ->(_argv) { ["", false] })
+          end
+
+          expect(outside_a_git_hook { judge_asked_about_git_log(board_on_path("/usr/bin", workspace_wiring)) })
+            .to eq([])
+        end
+      end
+
+      def offering_every_layer
+        allow(Lain::Confine::Probe).to receive(:new).and_wrap_original do |original, **kwargs|
+          original.call(**kwargs, runner: ->(argv) { [argv.include?("--status") ? '{"abi":3,"reap":true}' : "", true] })
+        end
+      end
+
+      # Unattended, so a call the judge never sees is refused at once rather than parked.
+      def workspace_wiring(**over)
+        allow(Lain::CLI::Wiring::BoardBuild).to receive(:for).and_wrap_original do |original, **kwargs|
+          original.call(**kwargs, judge: ->(tool:, **) { asked.push(tool).then { :approve } })
+        end
+        options = { grace: 5, approval: "auto", confine: "workspace", non_interactive: true, **over }
+        described_class.new(options:,
+                            chronicle:, status_feed:, project: throwaway_project(@root),
+                            paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @home }))
+      end
+
+      def asked = @asked ||= []
+
+      # The chat's env is a snapshot of this process's, and the commit hook exports GIT_DIR and
+      # GIT_INDEX_FILE; a git log under those reads another index, so it is rightly walked. Only the
+      # config pair the specs set is kept.
+      def outside_a_git_hook(&)
+        with_env(ENV.keys.grep(/\AGIT_/).-(%w[GIT_CONFIG_GLOBAL GIT_CONFIG_NOSYSTEM]).to_h { [_1, nil] }, &)
+      end
+
+      def judge_asked_about_git_log(board)
+        FileUtils.mkdir_p(File.join(@root, ".git", "objects"))
+        Sync { |task| task.with_timeout(5) { board.policy_switch.rule(bash_of("git log"), nil) } }
+        asked
       end
     end
 

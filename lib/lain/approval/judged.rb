@@ -12,9 +12,10 @@ module Lain
     # A `bash` call is held to every path its command names ({Shell::Named}),
     # and one whose paths cannot be named never reaches the judge either.
     #
-    # A judge approve is a model's answer, so it stands only where the facts
-    # lain computed ({Judge::Facts#bar}) leave nothing a planted or swapped
-    # file could run; past that bar the call goes to the asking rung.
+    # Whether the judge may weigh a call is decided once, before it is paid
+    # for ({Judgement}): past the facts lain computed ({Judge::Facts#bar}), a
+    # planted or swapped file could run, so such a call goes to the asking
+    # rung unasked.
     #
     # Whatever this rung hands down, it first journals one `escalation` record
     # of its own saying why, so a reader can tell a call the judge deferred
@@ -45,13 +46,15 @@ module Lain
       BROKEN = "the judge refused too many of this requester's calls to be asked again"
       BROKEN_NOTE = "the judge is no longer asked about this requester: it refused too many of its calls"
       BAR = "bar"
-      OVERRULED = "the judge approved this, but what lain resolved the command to bars an automatic approval"
+      RESOLVED_BAR = "what lain resolved the command to bars an automatic approval, so the judge was not asked"
       FAULT = "fault"
       FAULT_NOTE = "the judge could not be asked (it timed out or failed)"
       UNJUDGEABLE = "unjudgeable"
       BASH = "bash"
       CALL = "%<tool>s(%<input>s)"
       NOTHING_NAMED = ::Lain::Shell::Named.new(paths: [].freeze, opaque: false)
+      UNWEIGHED = { opaque: OPAQUE, barred: BARRED, below_top: BELOW_TOP, git_store: GIT_STORE,
+                    too_many: TOO_MANY }.freeze
 
       # The files a named path stands for when the judge would be asked: the
       # path, every match of its glob, and every entry below a recursive
@@ -127,9 +130,9 @@ module Lain
         BECAUSE = "approval is auto and this session was started with --non-interactive, so a call the judge " \
                   "did not approve, or was not allowed to judge, has no human to ask and is refused"
         BARRED = "approval is auto, and this command is barred from automatic approval"
-        OVERRULED = "approval is auto and the judge approved this call, but what lain resolved it to bars an " \
-                    "automatic approval (%<bar>s), and this session was started with --non-interactive, so it " \
-                    "has no human to ask and is refused"
+        RESOLVED_BAR = "approval is auto, and what lain resolved this call to bars an automatic approval " \
+                       "(%<bar>s), and this session was started with --non-interactive, so it has no human to ask " \
+                       "and is refused"
         TOLD = "this command's automatically approved output held a credential, so only a human may approve " \
                "it, and this session was started with --non-interactive, so no human can -- retrying will " \
                "fail the same way"
@@ -145,7 +148,7 @@ module Lain
         def call(_effect, context)
           return Escalation::Ruling.deny(rung: NAME, because: BARRED, final: true, told: TOLD, liftable: true) \
             if Escalation.barred?(context)
-          return overruled(context.overruled_by) if context.respond_to?(:overruled_by)
+          return resolved_bar(context.barred_by) if context.respond_to?(:barred_by)
 
           Escalation::Ruling.deny(rung: NAME, because: BECAUSE)
         end
@@ -153,8 +156,8 @@ module Lain
         private
 
         # Each reason inspected, because a path in one is the model's and could hold a line break.
-        def overruled(bar)
-          Escalation::Ruling.deny(rung: NAME, because: format(OVERRULED, bar: bar.map(&:inspect).join("; ")))
+        def resolved_bar(bar)
+          Escalation::Ruling.deny(rung: NAME, because: format(RESOLVED_BAR, bar: bar.map(&:inspect).join("; ")))
         end
       end
 
@@ -166,15 +169,15 @@ module Lain
         end
       end
 
-      # A call the judge approved and the bar stopped: not deferred by the
-      # judge, so a human is told what lain found rather than that the judge doubted.
-      class Overruled < SimpleDelegator
+      # A call the bar stopped before the judge was asked, so a human is told
+      # what lain found rather than that the judge doubted.
+      class ResolvedBar < SimpleDelegator
         # @return [Array<String>] why the bar stopped the call
-        attr_reader :overruled_by
+        attr_reader :barred_by
 
         def initialize(context, bar)
-          super([OVERRULED, *bar].inject(context) { |noted, note| Escalation::Noted.new(noted, note) })
-          @overruled_by = bar
+          super([RESOLVED_BAR, *bar].inject(context) { |noted, note| Escalation::Noted.new(noted, note) })
+          @barred_by = bar
         end
       end
 
@@ -201,9 +204,12 @@ module Lain
       # @param facts [#call] `(command, cwd, tool_use_id:) -> Judge::Facts` for a bash call; none by default
       # @param request [#call] `context -> Judge::Request or nil`, what the call was made for; none by default
       # @param denials [DenialBreaker, DenialBreaker::Unbroken] what a judge's deny does; applied by default
+      # @param masks [Judgement::Masking, Judgement::Unmasked] the sandbox a call the judge approves runs under
       def initialize(judge:, policy:, asking:, journal:, display: ::Lain::Channel::Null.instance,
-                     facts: Judge::Facts::Off, request: Judge::Unrequested, denials: DenialBreaker::Off)
+                     facts: Judge::Facts::Off, request: Judge::Unrequested, denials: DenialBreaker::Off,
+                     masks: Judgement::Unmasked)
         @judge = judge
+        @masks = masks
         @denials = denials
         @facts = facts
         @request = request
@@ -221,26 +227,43 @@ module Lain
       # @return [Escalation::Ruling, Ladder::Outcome] an outcome when the judge
       #   faulted, carrying that fault beside the asking rung's ruling
       def call(effect, context)
-        unlooked = unlooked(effect, context)
-        return unjudged(effect, context, format(UNLOOKED, why: unlooked)) if unlooked
+        case judgement_of(effect, context)
+        in Judgement::Unweighable(reason: :barred, details: [_, *] => bar) then resolved_bar(effect, context, bar)
+        in Judgement::Unweighable => unweighed then unjudged(effect, context, format(UNLOOKED, why: why(unweighed)))
+        in Judgement::Weighable(facts:) then weigh(effect, context, facts)
+        end
+      end
+
+      private
+
+      def judgement_of(effect, context)
+        Judgement.of(effect, bounds: held_to(context), named: named_in(effect, context),
+                             facts: -> { facts_for(effect, context) }, masks: @masks,
+                             verdict: ->(path) { verdict_on(path, context) }, barred: Escalation.barred?(context),
+                             env: ::Lain::Session.worker_env_of(context).env)
+      end
+
+      def why(unweighed)
+        UNWEIGHED.fetch(unweighed.reason) { format(UNWEIGHABLE, path: unweighed.details.first) }
+      end
+
+      def weigh(effect, context, facts)
         return noted(effect, context, BROKEN, BROKEN_NOTE) if @denials.tripped?(requester_of(context))
 
         cause = nil
-        place = place_for(effect, context)
+        place = place_for(effect, context, facts)
         prompt = prompt_of(effect, place)
         read = digests_of(prompt, place)
         verdict = @judge.call(tool: effect.name, input: effect.input, place:, **{ prompt: }.compact) do |why|
           cause = why
         end
-        ruled(verdict, effect, context, cause, bar: place.facts.bar, read:)
+        ruled(verdict, effect, context, cause, read:)
       end
 
-      private
-
-      def ruled(verdict, effect, context, cause, bar:, read:)
+      def ruled(verdict, effect, context, cause, read:)
         counted(verdict, context)
         case verdict
-        when :approve then bar.empty? ? approved(effect, read) : overruled(effect, context, bar, read)
+        when :approve then approved(effect, read)
         when :deny then @denials.maps_deny? ? escalated(effect, context, read) : denied(effect, read)
         when :defer then handed_down(effect, Deferred.new(context), abstain(DEFERRED), read:)
         else faulted(effect, context, cause, read)
@@ -264,8 +287,8 @@ module Lain
         handed_down(effect, Escalation::Noted.new(context, Parked::Queue::Reason.own(note)), abstain(reason), read:)
       end
 
-      def overruled(effect, context, bar, read)
-        handed_down(effect, Overruled.new(context, bar), abstain(BAR), bar:, read:)
+      def resolved_bar(effect, context, bar)
+        handed_down(effect, ResolvedBar.new(context, bar), abstain(BAR), bar:)
       end
 
       # Nil digests for what the call was not told, never the digest of an empty string; none at all
@@ -319,57 +342,13 @@ module Lain
 
       def abstain(reason) = Escalation::Ruling.abstain(rung: NAME, because: reason)
 
-      # @return [String, nil] why the judge may not be asked; nil when it may
-      def unlooked(effect, context)
-        return BARRED if Escalation.barred?(context)
-
-        named = named_in(effect, context)
-        return OPAQUE if named.opaque?
-        return BELOW_TOP if named.paths.any? { below_top?(_1) }
-
-        reached = named.paths.map { Reach.of(_1, facts: @policy.file_facts) }
-        return TOO_MANY if reached.any?(&:nil?)
-
-        return GIT_STORE if reached_store?(named.paths, reached)
-
-        unweighable(effect, reached.flatten, context)
-      end
-
-      # Only what a pattern or recursive reach found counts: naming `.git/HEAD` is a file, not the store.
-      # A pointer file, as in a linked worktree, is a store only to a path a git command implies.
-      def reached_store?(paths, reached)
-        paths.zip(reached).any? do |path, found|
-          found.drop(1).any? { store_entry?(path.resolved, _1.delete_prefix(path.resolved), git: path.git) }
-        end
-      end
-
-      # A checkout-local git write names the `.git` beside its cwd; with none
-      # there, its pathspecs and `-A` are relative to a top level it never named.
-      def below_top?(path)
-        path.checkout_git? && !(@policy.file_facts.directory?(path.resolved) || @policy.file_facts.file?(path.resolved))
-      end
-
-      def store_entry?(root, relative, git:)
-        segments = relative.split(File::SEPARATOR)
-        index = segments.index(".git")
-        index && begin
-          dotgit = File.join(root, *segments.first(index + 1))
-          @policy.file_facts.directory?(dotgit) || (git && @policy.file_facts.file?(dotgit))
-        end
-      end
-
-      def unweighable(effect, reached, context)
-        path = [*named_by_field(effect), *reached].find { !verdict_on(_1, context).oracle_approvable? }
-        path && format(UNWEIGHABLE, path:)
-      end
-
       # A path in the requester's own checkout is where it works, not outside it.
-      def place_for(effect, context)
+      def place_for(effect, context, facts)
         root = own_tree(context) || @policy.root || ::Lain::Sensitivity::Policy.base_of(context)
         cwd = ::Lain::Session.cwd_of(context)
         Judge::Place.new(root:, cwd:, requester: requester_of(context),
                          outside: outside(effect, context, cwd),
-                         facts: facts_for(effect, context), request: @request.call(context),
+                         facts:, request: @request.call(context),
                          human_checkout: (@policy.root unless root == @policy.root),
                          read_roots: read_roots(context), classified: classified(effect, context, cwd))
       end

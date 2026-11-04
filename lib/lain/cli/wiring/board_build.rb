@@ -59,6 +59,8 @@ module Lain
         #   and the session's own env, whose PATH the main agent's stages resolve through
         # @param child_env [Lain::Exec::ChildEnv] the launch's, one half of the board's secrets source
         # @param stops [Lain::Tripwire::Stops, Lain::Tripwire::Stops::None] who the tripwire stopped
+        # @param masks [Approval::Judgement::Masking, Approval::Judgement::Unmasked] the workspace sandbox a call
+        #   the judge approves runs under, as {ToolsetBuild#board_inputs} answers; none by default
         # @option options [Boolean] :non_interactive no human is at this
         #   session's terminal -- read by {Switchboard.for}, never here
         # @return [Switchboard]
@@ -66,7 +68,9 @@ module Lain
                 verdict: Lain::Shell::Verdict.new, middleware: Config::Middleware.empty,
                 config: Config.load(root: project.root), display: Channel::Null.instance,
                 arms: Lain::CLI::Arms::OFF, request: Lain::Approval::Judge::Unrequested,
-                child_env: Lain::Exec::ChildEnv::DEFAULT, stops: Lain::Tripwire::Stops::None, **identity)
+                child_env: Lain::Exec::ChildEnv::DEFAULT, stops: Lain::Tripwire::Stops::None,
+                masks: Lain::Approval::Judgement::Unmasked,
+                **identity)
           # Compiled once: the exemption check stats the disk.
           table = rules(project:, paths:)
           # The SAME factory reaches both the triage rung and the approving
@@ -84,7 +88,7 @@ module Lain
                           test_layout: test_layout(project:, file_facts: sensitivity.file_facts),
                           approval_timeout: Config.approval_timeout(root: project.root), judge:, display:, arms:,
                           request:, secrets: secrets(project:, sensitivity:, child_env:),
-                          denied_tools: config.approval.deny_tools, stops:)
+                          denied_tools: config.approval.deny_tools, stops:, masks:)
         end
 
         # What every agent of the session reads outside the project without

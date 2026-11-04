@@ -16,7 +16,7 @@ module Lain
                         "BoardBuild.approving, the rule approving a command by what its programs resolve to",
                         "the judge-facts arm (the judge is asked with no facts and no request)",
                         "whether a session ran non-interactive, which no header records " \
-                        "(each is replayed with a human attached)"].freeze
+                        "(each is replayed with a human attached)", Stack::UNMASKED].freeze
 
         # The policy digest of a project and a user with no config at all.
         UNCONFIGURED = SessionRecord::Provenance.policy_of(

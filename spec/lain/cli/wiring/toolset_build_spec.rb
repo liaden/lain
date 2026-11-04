@@ -1374,6 +1374,36 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       expect(judged_profile(bash_exec(built(reader)), journal)).to eq(:traced)
     end
 
+    describe "whether the workspace profile's masks guard a judge-approved call" do
+      let(:workspace) { Lain::CLI::Arms::OFF.with(confine: :workspace) }
+
+      def masks_workspace?(arms, **over)
+        build_with(options, arms:, probe:, fence:, **over).tap { _1.build(recorder, ask_human:) }
+                                                          .board_inputs.fetch(:masks).on?
+      end
+
+      it "says they do when the sandbox wraps the local exec under --confine workspace" do
+        expect(masks_workspace?(workspace)).to be(true)
+      end
+
+      it "says they do not when bash runs in a container, which the sandbox never wraps" do
+        expect(masks_workspace?(workspace, exec: Lain::Exec::Docker.new(image: "img:1", project: "/srv/project")))
+          .to be(false)
+      end
+
+      context "when the box cannot build the sandbox" do
+        let(:runner) { bare_box }
+
+        it "says they do not, since bash runs unconfined" do
+          expect(masks_workspace?(workspace)).to be(false)
+        end
+      end
+
+      it "says they do not under --confine reader, whose judge-approved calls run traced" do
+        expect(masks_workspace?(reader)).to be(false)
+      end
+    end
+
     %i[off classes].each do |arm|
       it "builds no sandbox under --confine #{arm}" do
         exec = bash_exec(built(Lain::CLI::Arms::OFF.with(confine: arm)))

@@ -367,7 +367,18 @@ module Lain
           self
         end
 
+        # What the board reads of the bash this built: the workspace sandbox's masks, but only where the
+        # sandbox wraps bash, since a container is never wrapped and a box that cannot build the sandbox
+        # runs bash unconfined.
+        #
+        # @return [Hash{Symbol=>Approval::Judgement::Masking, Approval::Judgement::Unmasked}] `masks:`
+        def board_inputs
+          { masks: @arms.workspace? && wrapped? ? Approval::Judgement::Masking.new(@masks) : Approval::Judgement::Unmasked }
+        end
+
         private
+
+        def wrapped? = !@confined.nil? && !@confined.equal?(@exec)
 
         attr_reader :backend, :library, :seam, :epic, :askers
 
@@ -411,11 +422,11 @@ module Lain
 
         def sandboxed(inner)
           home = @in_chat.fetch(:paths).home
-          masks = Lain::Confine::MaskList.new(root: @root, policy: -> { @switchboard.call.sensitivity })
+          @masks = masks = Lain::Confine::MaskList.new(root: @root, policy: -> { @switchboard.call.sensitivity })
           @sandbox = Lain::Confine::Sandbox.new(root: @root, home:, masks:, probe: @probe, fence: @fence,
                                                 journal: seam.journal, notes: @notes, fresh: @fresh,
                                                 workspace: @arms.workspace?)
-          @sandbox.wrap(inner, requirer: self.class.name)
+          @confined = @sandbox.wrap(inner, requirer: self.class.name)
         end
 
         # The session model's own capabilities, memoized because the probe is a
