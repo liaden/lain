@@ -187,3 +187,86 @@ async fn an_unfinished_frame_past_the_ceiling_closes_its_connection_only() {
     let mut healthy = UnixStream::connect(&socket).await.expect("connect");
     assert_ping_reply(&ping(&mut healthy).await, daemon.id().expect("daemon pid"));
 }
+
+/// A relay on loopback with a 0600 token, tracing to `trace`.
+fn spawn_relay(dir: &Path, listen: &str) -> tokio::process::Child {
+    use std::os::unix::fs::PermissionsExt;
+    let token = dir.join("token");
+    std::fs::write(&token, "a-lifecycle-token").expect("write the token");
+    std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+    tokio::process::Command::new(env!("CARGO_BIN_EXE_lain-core"))
+        .arg("relay")
+        .arg("--unix")
+        .arg(dir.join("relay.sock"))
+        .args(["--listen", listen, "--token-file"])
+        .arg(&token)
+        .arg("--trace")
+        .arg(dir.join("trace.log"))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("spawn the relay")
+}
+
+fn no_new_privs(pid: &str) -> String {
+    let status = std::fs::read_to_string(format!("/proc/{pid}/status")).expect("read status");
+    status
+        .lines()
+        .find(|line| line.starts_with("NoNewPrivs:"))
+        .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
+        .expect("a NoNewPrivs line")
+}
+
+#[tokio::test]
+async fn the_relay_confines_itself_and_removes_its_socket_on_sigterm() {
+    assert_eq!(
+        "NoNewPrivs: 0",
+        no_new_privs("self"),
+        "the test runner already has no_new_privs, so the relay's own cannot be seen"
+    );
+    let dir = tempfile::tempdir().expect("tempdir");
+    let socket = dir.path().join("relay.sock");
+    let mut relay = spawn_relay(dir.path(), "127.0.0.1:0");
+    assert!(
+        wait_until(5000, || socket.exists()).await,
+        "the relay never bound its unix socket"
+    );
+    let pid = relay.id().expect("relay pid").to_string();
+    assert_eq!(
+        "NoNewPrivs: 1",
+        no_new_privs(&pid),
+        "the relay is not confined"
+    );
+
+    let term = std::process::Command::new("kill")
+        .args(["-TERM", &pid])
+        .status()
+        .expect("send SIGTERM");
+    assert!(term.success());
+    let status = tokio::time::timeout(Duration::from_secs(5), relay.wait())
+        .await
+        .expect("the relay did not exit on SIGTERM")
+        .expect("relay wait");
+    assert!(status.success(), "SIGTERM should exit 0, got {status}");
+    assert!(!socket.exists(), "the relay left its socket behind");
+}
+
+#[tokio::test]
+async fn a_relay_told_to_listen_on_a_host_name_says_why_and_exits_2() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut relay = spawn_relay(dir.path(), "localhost:7820");
+    let status = tokio::time::timeout(Duration::from_secs(5), relay.wait())
+        .await
+        .expect("the relay did not exit")
+        .expect("relay wait");
+    assert_eq!(Some(2), status.code());
+    let trace = std::fs::read_to_string(dir.path().join("trace.log")).expect("the trace");
+    assert!(
+        trace.contains(
+            "--listen localhost:7820 is not an IP address and port; the relay resolves no names"
+        ),
+        "{trace}"
+    );
+}

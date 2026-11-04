@@ -149,6 +149,61 @@ pub struct Delta {
     pub settled: Vec<String>,
 }
 
+/// The relay's reply to an admitted [`Hello`].
+///
+/// Encode with [`encode`] (named maps); positional arrays do not decode.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Welcome {
+    /// The relay's [`WIRE_VERSION`].
+    pub wire_version: u32,
+    /// The newest delta cursor.
+    pub head: u64,
+    /// Random per relay process; a cursor from another epoch is reset.
+    pub epoch: u64,
+}
+
+/// Where a reader resumes: the param of `agenda.next` and `answers.next`.
+///
+/// Encode with [`encode`] (named maps); positional arrays do not decode.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Cursor {
+    /// The last cursor the reader saw, 0 for none.
+    pub cursor: u64,
+    /// The epoch that cursor came from; absent until the reader has seen one.
+    #[serde(default)]
+    pub epoch: Option<u64>,
+}
+
+/// The relay's reply to `agenda.next`.
+///
+/// Encode with [`encode`] (named maps); positional arrays do not decode.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgendaPage {
+    /// The relay's epoch.
+    pub epoch: u64,
+    /// The cursor to ask from next.
+    pub cursor: u64,
+    /// When true, drop what you hold: `deltas` is one delta adding every open item.
+    pub reset: bool,
+    /// The deltas after the asked cursor, as many as fit one reply.
+    pub deltas: Vec<Delta>,
+}
+
+/// The relay's reply to `answers.next`.
+///
+/// Encode with [`encode`] (named maps); positional arrays do not decode.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AnswersPage {
+    /// The relay's epoch.
+    pub epoch: u64,
+    /// The cursor to ask from next.
+    pub cursor: u64,
+    /// When true, the asked cursor was not kept and some answers may be gone.
+    pub reset: bool,
+    /// The answers after the asked cursor, as many as fit one reply.
+    pub answers: Vec<Answer>,
+}
+
 /// Encodes a message with named struct fields.
 pub fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, rmp_serde::encode::Error> {
     rmp_serde::to_vec_named(value)
@@ -310,6 +365,88 @@ mod tests {
                 id: s("q1"),
                 option: Some(s("dev")),
                 text: None,
+            },
+        );
+    }
+
+    #[test]
+    fn welcome_round_trips() {
+        check(
+            "welcome",
+            Welcome {
+                wire_version: WIRE_VERSION,
+                head: 9,
+                epoch: 0x9e37_79b9_7f4a_7c15,
+            },
+        );
+    }
+
+    #[test]
+    fn cursor_round_trips_with_and_without_an_epoch() {
+        check(
+            "cursor",
+            Cursor {
+                cursor: 7,
+                epoch: Some(0x9e37_79b9_7f4a_7c15),
+            },
+        );
+        check(
+            "cursor_fresh",
+            Cursor {
+                cursor: 0,
+                epoch: None,
+            },
+        );
+    }
+
+    #[test]
+    fn a_cursor_without_an_epoch_key_is_fresh() {
+        let cursor: Cursor = decode(&committed("cursor_epoch_absent")).expect("decode");
+        assert_eq!(
+            cursor,
+            Cursor {
+                cursor: 0,
+                epoch: None
+            }
+        );
+    }
+
+    #[test]
+    fn agenda_page_round_trips() {
+        check(
+            "agenda_page",
+            AgendaPage {
+                epoch: 0x9e37_79b9_7f4a_7c15,
+                cursor: 9,
+                reset: false,
+                deltas: vec![Delta {
+                    cursor: 9,
+                    added: vec![call(), gate(), question()],
+                    settled: vec![s("old")],
+                }],
+            },
+        );
+    }
+
+    #[test]
+    fn answers_page_round_trips() {
+        check(
+            "answers_page",
+            AnswersPage {
+                epoch: 0x9e37_79b9_7f4a_7c15,
+                cursor: 2,
+                reset: true,
+                answers: vec![
+                    Answer::Call {
+                        id: s("c1"),
+                        verdict: Verdict::Approve { note: None },
+                    },
+                    Answer::Question {
+                        id: s("q1"),
+                        option: Some(s("dev")),
+                        text: None,
+                    },
+                ],
             },
         );
     }

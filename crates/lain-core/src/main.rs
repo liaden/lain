@@ -1,8 +1,9 @@
 //! lain-core: the msgpack-RPC wire seed.
 //!
 //! A msgpack-RPC server on a Unix socket, kept as the Ruby-to-Rust wire that a
-//! phone relay and a code-mode handle store will grow methods on; today it
-//! answers `ping` and nothing else. The socket path arrives via argv -- this
+//! phone relay and a code-mode handle store will grow methods on. Run plain it
+//! answers `ping` and nothing else; run as `relay` it is the phone relay
+//! (`relay.rs`). The socket path arrives via argv -- this
 //! binary NEVER computes its own path; path policy belongs to Ruby
 //! (`Paths#runtime_dir`). Tracing goes to a file path given by argv, or
 //! /dev/null when absent, and never to an inherited terminal: the Journal is
@@ -13,6 +14,7 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
+mod relay;
 mod rpc;
 
 use std::process::ExitCode;
@@ -23,12 +25,17 @@ use std::process::ExitCode;
 const USAGE_ERROR: u8 = 2;
 /// The socket could not be bound (stale file, missing dir, permissions).
 const BIND_ERROR: u8 = 1;
+/// The relay could not confine itself, so it did not run.
+const CONFINE_ERROR: u8 = 3;
 
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     let Some(socket_path) = args.next() else {
         return ExitCode::from(USAGE_ERROR);
     };
+    if socket_path == "relay" {
+        return relay(args);
+    }
     let tracing_path = args.next();
     if init_tracing(tracing_path.as_deref().unwrap_or("/dev/null")).is_err() {
         return ExitCode::from(USAGE_ERROR);
@@ -63,6 +70,54 @@ async fn serve_unix(socket_path: &str) -> ExitCode {
             ExitCode::from(BIND_ERROR)
         }
     }
+}
+
+/// `lain-core relay --unix <sock> --listen <addr>:<port> --token-file <path> [--trace <path>]`.
+///
+/// Binds both listeners and reads the token, then confines the process while
+/// it is still one thread: Landlock binds the calling thread and the threads
+/// it spawns after, so the runtime's workers start inside the ruleset.
+fn relay(args: impl Iterator<Item = String>) -> ExitCode {
+    let Some(config) = relay::Config::parse(args) else {
+        return ExitCode::from(USAGE_ERROR);
+    };
+    if init_tracing(config.trace.as_deref().unwrap_or("/dev/null")).is_err() {
+        return ExitCode::from(USAGE_ERROR);
+    }
+    let started = relay::Bound::open(&config).and_then(|bound| {
+        relay::confine(&config.token_file, config.socket_dir()).inspect_err(|_| {
+            let _ = std::fs::remove_file(&config.unix);
+        })?;
+        Ok(bound)
+    });
+    match started {
+        Ok(bound) => serve_relay(bound, &config.unix),
+        Err(error) => {
+            tracing::error!(%error, "the relay did not start");
+            ExitCode::from(error.exit_code())
+        }
+    }
+}
+
+#[tokio::main]
+async fn serve_relay(bound: relay::Bound, socket: &std::path::Path) -> ExitCode {
+    let code = match bound.serve() {
+        Ok(relay) => {
+            tracing::info!(pid = std::process::id(), "lain-core relay listening");
+            tokio::select! {
+                never = relay => match never {},
+                code = shutdown_signal() => code,
+            }
+        }
+        Err(error) => {
+            tracing::error!(%error, "could not adopt the relay's listeners");
+            ExitCode::from(BIND_ERROR)
+        }
+    };
+    if let Err(error) = std::fs::remove_file(socket) {
+        tracing::warn!(%error, "could not remove the relay's socket");
+    }
+    code
 }
 
 /// SIGTERM/SIGINT land here so shutdown goes THROUGH the runtime: returning

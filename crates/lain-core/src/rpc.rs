@@ -35,6 +35,7 @@ use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
+use tokio::task::JoinSet;
 use tokio_util::codec::{Decoder, Encoder, Framed};
 
 /// Incremental msgpack decode with a frame ceiling. msgpack is
@@ -502,9 +503,11 @@ enum Ending {
 
 /// One connection: a reader that spawns an independent task per request, and
 /// a writer that sends responses in whatever order the tasks finish. On EOF
-/// the writer drains in-flight responses before closing; on poison it is
-/// aborted -- the connection dies immediately and takes no response with it.
-/// The slot is held for the connection's life, so dropping it frees the cap.
+/// the writer sends the responses already finished and the requests still
+/// running are dropped: a peer that stopped sending is gone, and a long-poll
+/// it left behind must not hold the connection's slot. On poison the writer
+/// is aborted too -- the connection dies immediately and takes no response
+/// with it. The slot is held for the connection's life, so dropping it frees the cap.
 async fn serve_connection<C: Wire, H: Handler>(
     framed: Framed<C, Codec>,
     handler: Arc<H>,
@@ -513,7 +516,9 @@ async fn serve_connection<C: Wire, H: Handler>(
     let (sink, mut inbound) = framed.split();
     let (responses, inbox) = mpsc::channel(RESPONSE_BUFFER);
     let writer = tokio::spawn(write_responses(sink, inbox));
-    let ending = read_requests(&mut inbound, &responses, &handler).await;
+    let mut requests = JoinSet::new();
+    let ending = read_requests(&mut inbound, &responses, &handler, &mut requests).await;
+    requests.shutdown().await;
     drop(responses);
     if matches!(ending, Ending::Poisoned) {
         writer.abort();
@@ -568,16 +573,18 @@ async fn read_requests<C: Wire, H: Handler>(
     inbound: &mut Stream<C>,
     responses: &mpsc::Sender<Outgoing>,
     handler: &Arc<H>,
+    requests: &mut JoinSet<()>,
 ) -> Ending {
     let in_flight = Arc::new(Semaphore::new(RESPONSE_BUFFER));
     loop {
         let Ok(slot) = Arc::clone(&in_flight).acquire_owned().await else {
             return Ending::Finished;
         };
+        while requests.try_join_next().is_some() {}
         match next_frame(inbound.next().await) {
             Ok(frame) => {
                 let task = respond_to(frame, Arc::clone(handler), responses.clone(), slot);
-                tokio::spawn(task);
+                requests.spawn(task);
             }
             Err(ending) => return ending,
         }
@@ -748,6 +755,22 @@ pub(crate) enum RpcError {
     HelloRequired,
     #[error("the server is at its connection cap")]
     AtCapacity,
+    #[error("the hello was refused")]
+    BadToken,
+    #[error("wire version {peer} is not served; this relay speaks {ours}")]
+    WireVersion { peer: u32, ours: u32 },
+    #[error("agenda item {:?} is already settled", clip(.0))]
+    AlreadySettled(String),
+    #[error("agenda item {:?} is not open", clip(.0))]
+    NotOpen(String),
+    #[error("{what} {bytes} bytes, over the relay's reply budget of {budget}")]
+    TooLarge {
+        what: &'static str,
+        bytes: usize,
+        budget: usize,
+    },
+    #[error("{0}")]
+    BadParams(&'static str),
 }
 
 #[cfg(test)]

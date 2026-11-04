@@ -54,6 +54,18 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
 # Idiomatic std::error::Error + Display derives for the request error enum;
 # its Display text is the RPC error string a client sees.
 thiserror = "2"
+# The relay's messages, pinned with the phone's client.
+lain-wire = { path = "../lain-wire", version = "0.1.0" }
+serde = "1"
+# The relay's token check: digests of both sides compared in constant time,
+# so its timing tells a peer neither how much of a guess matched nor how long the token is.
+subtle = "2.6"
+blake3 = "1"
+# The relay confines itself after binding, without unsafe here.
+landlock = "0.4.7"
+# `getifaddrs` without unsafe, to find this host's tailscale0 address, and
+# `O_NOFOLLOW` (`fs`), so the token file is never read through a symlink.
+nix = { version = "0.31", default-features = false, features = ["fs", "net"] }
 
 [dev-dependencies]
 # Tempdir-scoped test sockets and scratch files, auto-cleaned.
