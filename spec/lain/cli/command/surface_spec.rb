@@ -422,7 +422,7 @@ RSpec.describe Lain::CLI::Command::Surface do
       expect(surface.middleware).to be(surface.middleware)
 
       seen = nil
-      surface.middleware.call({ text: "/greet warmly", agent: :the_agent }) do |env|
+      surface.middleware.call({ text: "/greet warmly", agent: instance_double(Lain::Agent, allow: nil) }) do |env|
         seen = env
         env.merge(response: "ran")
       end
@@ -432,7 +432,7 @@ RSpec.describe Lain::CLI::Command::Surface do
     end
   end
 
-  it "marks an epic skill's line with iterations scaled to the issues of the mounted epic" do
+  it "grants the agent iterations scaled to the issues of the mounted epic for an epic skill's line" do
     with_project do |root|
       graph = Lain::Epic::Graph.new(issues: Array.new(33) { |i| Lain::Epic::Issue.new(id: "i#{i}", title: "t#{i}") })
       home = instance_double(Lain::Epic::Home::Journaled, read_epic: graph)
@@ -443,13 +443,10 @@ RSpec.describe Lain::CLI::Command::Surface do
       File.write(skill, "# Issues\n")
       surface = build_surface(root, epic: seams)
 
-      seen = nil
-      surface.middleware.call({ text: "/create-epic-issues", agent: :the_agent }) do |env|
-        seen = env
-        env.merge(response: "ran")
-      end
+      agent = instance_double(Lain::Agent, allow: nil)
+      surface.middleware.call({ text: "/create-epic-issues", agent: }) { |env| env.merge(response: "ran") }
 
-      expect(seen.fetch(:iterations)).to eq(124)
+      expect(agent).to have_received(:allow).with(having_attributes(iterations: 124))
     end
   end
 

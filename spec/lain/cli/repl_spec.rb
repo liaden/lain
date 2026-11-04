@@ -2438,35 +2438,37 @@ RSpec.describe Lain::CLI::Repl do
     end
 
     # Each asked line, in order, against a provider that answers `turns` replies.
-    def converse(asks, turns, middleware)
+    def converse(asks, turns, middleware, ceilings: chat_ceilings)
       queued = asks.dup
       conductor.define_singleton_method(:read_prompt) { |*| queued.shift }
       provider = Lain::Provider::Mock.new(responses: turns)
       agent = @agent = Lain::Agent.new(provider:, toolset: Lain::Toolset.new([counting_tool(rooms, -> { @agent })]),
-                                       context:, budget: chat_ceilings)
+                                       context:, budget: ceilings)
       described_class.new(agent:, tty:, replies: ceiling_replies, commands: passing_lines, conductor:, middleware:,
                           chronicle: Lain::CLI::Chronicle::Null.new)
                      .run(forks: no_forks, nvim: nil, store: nil, session: nil)
       provider
     end
 
-    it "gives /create-epic-issues on a 33-issue epic room for its plan, and the next plain line 25" do
+    it "gives /create-epic-issues on a 33-issue epic room for its plan, and the next plain line keeps it" do
       Dir.mktmpdir do |root|
         done = Lain::Response.new(content: [{ "type" => "text", "text" => "planned" }], stop_reason: :end_turn)
-        provider = converse(["/create-epic-issues", "and now?"], [*tool_turns(40), done, *tool_turns(30)],
+        provider = converse(["/create-epic-issues", "and now?"], [*tool_turns(40), done, *tool_turns(30), done],
                             middleware_in(root, issues: 33))
 
-        expect(provider.requests.size).to eq(41 + 25)
-        expect(out.string).to include("planned", "ceiling is 25")
+        expect(provider.requests.size).to eq(41 + 31)
+        expect(out.string).to include("planned")
+        expect(out.string).not_to include("ceiling is")
         expect([rooms.first.iterations, rooms.first.tokens, rooms.first.dollars]).to eq([123, 100_000, 5.0])
         expect(@agent.budget).to eq(chat_ceilings)
       end
     end
 
-    it "gives a plain line the configured default row" do
+    it "leaves a plain line the chat's own ceiling, which is the table's default row, when no skill has granted one" do
       Dir.mktmpdir do |root|
         table = Lain::Budget::Table.new(rows: { "default" => 30 })
-        provider = converse(["go"], tool_turns(40), middleware_in(root, issues: 0, table:))
+        configured = Lain::Budget.ceilings(iterations: table.iterations, tokens: 100_000).with(dollars: 5.0)
+        provider = converse(["go"], tool_turns(40), middleware_in(root, issues: 0, table:), ceilings: configured)
 
         expect(provider.requests.size).to eq(30)
         expect(out.string).to include("ceiling is 30")

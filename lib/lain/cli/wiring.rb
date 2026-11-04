@@ -560,7 +560,7 @@ module Lain
       # branch that put it over AbcSize.
       def build_agent(toolset:, channel:, session:, backend:, resumed: nil, views: nil)
         board = switchboard(backend, toolset).tap { backend.attach(_1, channel) }
-        agent_over(board:, channel:, session:, backend:, timeline: resumed&.timeline, views:)
+        agent_over(board:, channel:, session:, backend:, timeline: resumed&.timeline, views:).tap { resumed&.seed(_1) }
       end
 
       # What the Agent is built FROM: the provider the run talks to, the

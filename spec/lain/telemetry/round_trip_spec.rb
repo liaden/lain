@@ -91,6 +91,7 @@ RSpec.describe Lain::Telemetry, ".read over every journaled record" do
                    requester: "summarizer" },
     ResendDispatched: { digest: d },
     RoundBounded: { head: d, basis: "tokens", budget: 100, delivered: ["tu_1"], deduplicated: [], withheld: ["tu_2"] },
+    RunAllowance: { iterations: 103 },
     RunArms: { arms: { "confine" => "reader", "judge" => true } },
     RunInterrupted: { head: d, reason: :quota, status: 130, detail: "quota exceeded",
                       reset_at: "2026-11-01T18:00:00Z" },

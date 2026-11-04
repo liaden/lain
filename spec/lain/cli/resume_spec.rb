@@ -195,6 +195,24 @@ RSpec.describe Lain::CLI::Resume do
     end
   end
 
+  describe "the allowance a skill granted the run" do
+    let(:three) { chain("first", "ack", "second") }
+
+    def grant(iterations) = Lain::Telemetry::RunAllowance.new(iterations:).to_journal
+
+    it "carries the newest grant to the resumed run" do
+      write_closed("20260101T000000-1.ndjson", three, extra: [grant(25), grant(103)])
+
+      expect(resume.call(profile: untyped).allowance.iterations).to eq(103)
+    end
+
+    it "carries none when the chain was never granted one" do
+      write_closed("20260101T000000-1.ndjson", three)
+
+      expect(resume.call(profile: untyped).allowance).to be_nil
+    end
+  end
+
   # `lain bench record` writes through the same Scribe a chat does, so its
   # files are sessions a chat can continue.
   describe "a session written by bench record" do

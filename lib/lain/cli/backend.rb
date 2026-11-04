@@ -501,7 +501,7 @@ module Lain
       #
       # @return [Budget::Ceilings]
       # @raise [InvalidCeiling] on a `--max-cost` that is not positive
-      def ceilings = Budget.ceilings.with(dollars: max_cost)
+      def ceilings = Budget.ceilings(iterations: Config.budget(root: @root).iterations).with(dollars: max_cost)
 
       # `--num-ctx`, through the same {Ceiling} both `--max-tokens` flags go
       # through, and OPTIONAL: unset means "serve the model's own". What is NOT

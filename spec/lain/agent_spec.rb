@@ -1119,6 +1119,43 @@ RSpec.describe Lain::Agent do
       end
     end
 
+    describe "an allowance the run was granted" do
+      def calls(count) = Array.new(count) { |i| tool_response(["tu_#{i}", "echo", { "text" => "loop #{i}" }]) }
+
+      it "bounds a plain ask that follows, and every one after" do
+        a = agent([*calls(3), text_response("one"), *calls(3), text_response("two")],
+                  budget: Lain::Budget.ceilings(iterations: 2))
+        a.allow(Lain::Budget.ceilings(iterations: 4))
+
+        expect([a.ask("first").text, a.ask("again").text]).to eq(%w[one two])
+        expect(a.budget.iterations).to eq(2)
+      end
+
+      it "is replaced by a later grant, even a smaller one" do
+        a = agent(calls(3), budget: Lain::Budget.ceilings(iterations: 2))
+        a.allow(Lain::Budget.ceilings(iterations: 9))
+        a.allow(Lain::Budget.ceilings(iterations: 3))
+
+        expect { a.ask("go") }.to raise_error(Lain::Budget::Exceeded, /ceiling is 3/)
+      end
+
+      it "yields to the ceiling an ask names itself" do
+        a = agent(calls(3), budget: Lain::Budget.ceilings(iterations: 2))
+        a.allow(Lain::Budget.ceilings(iterations: 9))
+
+        expect { a.ask("go", iterations: 3) }.to raise_error(Lain::Budget::Exceeded, /ceiling is 3/)
+      end
+
+      it "is journaled as the run's allowance" do
+        journal = []
+        a = agent([text_response("x")], journal:)
+
+        a.allow(Lain::Budget.ceilings(iterations: 103))
+
+        expect(journal.grep(Lain::Telemetry::RunAllowance).map(&:iterations)).to eq([103])
+      end
+    end
+
     describe "the ceiling bounds ONE ask, not the session" do
       # Two iterations per ask: the tool call, then the text that settles it.
       def settling_pair(text) = [tool_response(["tu_1", "echo", { "text" => "loop" }]), text_response(text)]

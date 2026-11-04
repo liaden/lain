@@ -7,6 +7,27 @@ RSpec.describe Lain::Agent::Accounting do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
 
+  describe "the run's allowance" do
+    subject(:accounting) { described_class.new(journal:) }
+
+    it "holds no ceiling until one is granted" do
+      expect(accounting.allowed).to be_nil
+    end
+
+    it "holds the newest grant's iterations, whatever came before" do
+      accounting.allow(Lain::Budget.ceilings(iterations: 103))
+      accounting.allow(Lain::Budget.ceilings(iterations: 25))
+
+      expect(accounting.allowed).to eq(25)
+    end
+
+    it "journals each grant" do
+      accounting.allow(Lain::Budget.ceilings(iterations: 103))
+
+      expect(records).to match([include("type" => "run_allowance", "iterations" => 103)])
+    end
+  end
+
   def records = journal_records(journal_io)
 
   def response(input: 10, output: 5, model: "claude-opus-4-8", stop_reason: :end_turn,

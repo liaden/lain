@@ -141,36 +141,50 @@ RSpec.describe Lain::Middleware::SkillDispatch do
 
   describe "an in-line skill the allowance grants iterations" do
     let(:allowance) { Lain::Budget::Allowance.new(table: Lain::Budget::Table.new, issues: -> { 33 }) }
+    let(:agent) { instance_double(Lain::Agent, allow: nil) }
 
-    it "marks the env downstream sees with that ask's ceiling" do
+    it "grants the agent that skill's ceiling" do
       with_dispatch(shipped: { "create-epic-issues/skill.md" => "# Issues\n" }, allowance:) do |dispatch|
-        _result, seen = run(dispatch, "/create-epic-issues")
+        run(dispatch, "/create-epic-issues", agent:)
 
-        expect(seen.fetch(:iterations)).to eq(124)
+        expect(agent).to have_received(:allow).once
+        expect(agent).to have_received(:allow).with(having_attributes(iterations: 124))
       end
     end
 
-    it "marks a skill the table has no row for with the default row" do
+    it "grants a skill the table has no row for nothing" do
       with_dispatch(shipped: create_plan, allowance:) do |dispatch|
-        _result, seen = run(dispatch, "/create-plan")
+        run(dispatch, "/create-plan", agent:)
 
-        expect(seen.fetch(:iterations)).to eq(25)
+        expect(agent).not_to have_received(:allow)
       end
     end
 
-    it "marks a plain line with the default row" do
+    it "leaves an epic skill's grant standing through an unnamed skill and a plain line" do
+      real = Lain::Agent.new(provider: Lain::Provider::Mock.new(responses: []), toolset: Lain::Toolset.new,
+                             context: Lain::Context.new(model: "m", max_tokens: 1))
+      shipped = create_plan.merge("create-epic-issues/skill.md" => "# Issues\n")
+      with_dispatch(shipped:, allowance:) do |dispatch|
+        ["/create-epic-issues", "/create-plan", "just talk"].each { |line| run(dispatch, line, agent: real) }
+
+        expect(real.allowed).to eq(124)
+      end
+    end
+
+    it "grants a plain line nothing, so the skill's allowance stands" do
       with_dispatch(allowance:) do |dispatch|
-        _result, seen = run(dispatch, "just talk")
+        _result, seen = run(dispatch, "just talk", agent:)
 
-        expect(seen.fetch(:iterations)).to eq(25)
+        expect(agent).not_to have_received(:allow)
+        expect(seen.to_h).not_to have_key(:iterations)
       end
     end
 
-    it "marks nothing when no allowance is wired" do
+    it "grants nothing when no allowance is wired" do
       with_dispatch(shipped: create_plan) do |dispatch|
-        _result, seen = run(dispatch, "just talk")
+        run(dispatch, "/create-plan", agent:)
 
-        expect(seen.to_h).not_to have_key(:iterations)
+        expect(agent).not_to have_received(:allow)
       end
     end
   end

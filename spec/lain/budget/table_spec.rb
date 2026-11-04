@@ -65,10 +65,10 @@ RSpec.describe Lain::Budget::Allowance do
     expect(allowance.grant("implement-epic")).to eq(iterations: 31)
   end
 
-  it "grants a skill with no row, and a plain line, the default row" do
+  it "grants nothing to a skill with no row, or to a plain line, so the standing grant is left alone" do
     allowance = described_class.new(table: Lain::Budget::Table.new(rows: { "default" => 30 }), issues: -> { 33 })
 
-    expect([allowance.grant("greet"), allowance.grant]).to eq([{ iterations: 30 }, { iterations: 30 }])
+    expect([allowance.grant("greet"), allowance.grant]).to eq([{}, {}])
   end
 
   it "grants nothing at all when none is wired" do

@@ -1128,6 +1128,36 @@ RSpec.describe Lain::CLI::Wiring do
         .to raise_error(Lain::Tool::InvalidInput, /these are: "skeleton"/)
     end
 
+    describe "the iteration ceiling a chat starts under" do
+      let(:table) { Lain::Budget::Table.new(rows: { "default" => 30 }) }
+
+      before { allow(Lain::Config).to receive(:budget).and_return(table) }
+
+      def resumed_with(allowance)
+        recorder, session = wiring.run_state(nil)
+        Lain::CLI::Resume::Result.new(file: "gone.ndjson", timeline: Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store),
+                                      session:, recorder:, open: false, notices: [], allowance:)
+      end
+
+      def wired(resumed)
+        wiring.wire_agent(channel:, recorder: resumed.recorder, session: resumed.session, backend:, resumed:)
+      end
+
+      it "is the configured default row on a fresh chat, before any skill" do
+        expect(wire_agent.budget.iterations).to eq(30)
+      end
+
+      it "is the configured default row on a resume that holds no grant" do
+        expect(wired(resumed_with(nil)).budget.iterations).to eq(30)
+      end
+
+      it "is the grant a resumed chain held, kept for the plain lines that follow" do
+        agent = wired(resumed_with(Lain::Budget.ceilings(iterations: 103)))
+
+        expect(agent.allowed).to eq(103)
+      end
+    end
+
     it "builds the Agent over the injected backend's provider, no exe involved" do
       agent = wire_agent
       expect(agent).to be_a(Lain::Agent)

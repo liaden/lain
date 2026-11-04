@@ -94,7 +94,13 @@ module Lain
     attr_reader :timeline, :toolset, :context, :workspace, :session,
                 :iterations, :budget, :request_override, :dispatch_lock
 
-    delegate :usage, :spent, :spend, to: :accounting
+    # @!method allow(grant)
+    #   Grants the run a ceiling that bounds every later ask in place of the last grant; an ask
+    #   naming its own iterations still wins.
+    #   @param grant [Budget::Ceilings] only its iterations are read
+    # @!method allowed
+    #   @return [Integer, nil] the newest grant's iterations, nil before any
+    delegate :usage, :spent, :spend, :allow, :allowed, to: :accounting
 
     # Private because every caller is one: the curated public surface above is
     # this class's own decision to widen, and the three objects the loop drives
@@ -269,7 +275,7 @@ module Lain
         answer_stranded(:unknown)
         before = @timeline
         @timeline = asked = prompted([{ "type" => "text", "text" => text }], on_fold)
-        withdrawing(before, asked) { ceilinged(iterations) { run(on_stream_started:) } }
+        withdrawing(before, asked) { ceilinged(iterations || allowed) { run(on_stream_started:) } }
       end
     end
 

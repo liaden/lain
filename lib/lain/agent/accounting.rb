@@ -36,6 +36,9 @@ module Lain
       # What this run's children spent and still hold ({Budget::Shared}).
       attr_reader :spend
 
+      # @return [Integer, nil] the iteration ceiling the newest grant set, nil before any
+      attr_reader :allowed
+
       # @param journal [#<<] where TurnUsage records land; the Null channel by
       #   default, so no caller guards `if journal`
       # @param spawn [String, nil] the spawn a child's records are paid under,
@@ -53,6 +56,16 @@ module Lain
         @usage = Usage.zero
         @dollars = Friction::CacheWaste::Dollars.zero
         @reading = Unread
+      end
+
+      # Replaces the run's standing iteration ceiling and records the grant, which lives here
+      # because the journal and the run's other ceilings' ledger already do.
+      #
+      # @param grant [Budget::Ceilings] only its iterations are read
+      # @return [void]
+      def allow(grant)
+        @allowed = grant.iterations
+        @journal << Telemetry::RunAllowance.new(iterations: @allowed)
       end
 
       # The run's own usage and its settled children's together: what its

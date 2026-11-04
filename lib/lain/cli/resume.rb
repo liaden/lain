@@ -58,13 +58,16 @@ module Lain
       # the exe never assembles wire-format hashes itself.
       #
       # `stops` are the children the chain left stopped and never resumed, for
-      # the run's spawner to hold again; a fork carries none.
-      Result = Data.define(:file, :timeline, :recorded, :session, :recorder, :open, :notices, :stops) do
+      # the run's spawner to hold again; a fork carries none. `allowance` is the newest ceiling a
+      # skill granted the chain, nil when it never granted one.
+      Result = Data.define(:file, :timeline, :recorded, :session, :recorder, :open, :notices, :stops,
+                           :allowance) do
         # `recorded` defaults to `timeline` so a caller with nothing to
         # distinguish -- every untorn session -- constructs exactly as before.
-        def initialize(file:, timeline:, session:, recorder:, open:, notices:, recorded: timeline, stops: [])
+        def initialize(file:, timeline:, session:, recorder:, open:, notices:, recorded: timeline, stops: [],
+                       allowance: nil)
           super(file:, timeline:, recorded:, session:, recorder:, open:, notices: notices.freeze,
-                stops: stops.freeze)
+                stops: stops.freeze, allowance:)
         end
 
         # Both are claims about the PRIOR FILE, so both read `recorded` and
@@ -77,6 +80,8 @@ module Lain
         def resumed_from = { "file" => file, "head" => recorded.head_digest }
         def written = recorded.to_a.map(&:digest)
         def open? = open
+
+        def seed(agent) = allowance && agent.allow(allowance)
 
         # Whether {Resume#settled} projected a cancellation. Identity, not
         # digest comparison: the repair commits a NEW Timeline and leaves the
@@ -242,7 +247,12 @@ module Lain
                                       chat: EventLog::ChainWriter.correlation_of(recording.timeline))
         result(Door.new(verb: "resume", path:), recording.timeline, SessionRecord::Replay.new(entries),
                open: recording.open?, notices: [*notices(path, recording, outcome, mismatched), *stopped.notices],
-               stops: stopped.resumable)
+               stops: stopped.resumable, allowance: granted(entries))
+      end
+
+      def granted(entries)
+        grant = Journal.records(entries).select { _1["type"] == "run_allowance" }.to_a.last
+        grant && Budget.ceilings(iterations: Telemetry.read(grant).iterations)
       end
 
       def fork_result(point, recording, forked, current)
@@ -308,10 +318,10 @@ module Lain
       # exists against. The {Door} rides through for the REFUSAL alone -- the
       # repair and this disclosure are identical at both doors, and only what a
       # human is told when the repair CANNOT be made names which door they used.
-      def result(door, timeline, replay, open:, notices:, stops: [])
+      def result(door, timeline, replay, open:, notices:, stops: [], allowance: nil)
         built = Result.new(file: door.file, timeline: settled(door, timeline),
                            recorded: timeline, session: replay.session(on: timeline), recorder: replay.memory,
-                           open:, notices:, stops:)
+                           open:, notices:, stops:, allowance:)
         built.repaired? ? built.with(notices: [*notices, repair_notice(built)]) : built
       end
 

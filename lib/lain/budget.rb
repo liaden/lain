@@ -26,9 +26,12 @@ module Lain
       end
 
       # @param skill [String, nil] the skill the line invokes; nil for a plain line
-      # @return [Hash{Symbol => Integer}] `{iterations:}`: the skill's row, else the default row
+      # @return [Hash{Symbol => Integer}] `{iterations:}` for a skill the table names; empty otherwise,
+      #   so a line that earns no row leaves the run's standing grant alone
       def grant(skill = nil)
-        { iterations: @table.iterations(skill:, issues: @table.named?(skill) ? @issues.call : 0) }
+        return {} unless @table.named?(skill)
+
+        { iterations: @table.iterations(skill:, issues: @issues.call) }
       end
 
       # Grants nothing, so a line keeps its agent's own ceiling.
