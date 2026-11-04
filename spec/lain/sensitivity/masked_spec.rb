@@ -14,4 +14,22 @@ RSpec.describe Lain::Sensitivity::Masked do
 
     expect(joined).to eq(described_class.new(text: "ab", fresh: 3, prior: 3))
   end
+
+  describe "the monoid laws" do
+    def self.masked_generator
+      PropCheck::Generators.tuple(
+        PropCheck::Generators.one_of(
+          PropCheck::Generators.printable_ascii_string,
+          PropCheck::Generators.one_of(*["é", "日本", "😀", "e\u0301"].map { |t| PropCheck::Generators.constant(t) })
+        ),
+        PropCheck::Generators.nonnegative_integer,
+        PropCheck::Generators.nonnegative_integer
+      ).map { |text, fresh, prior| described_class.new(text:, fresh:, prior:) }
+    end
+
+    include_examples "a monoid",
+                     operation: ->(a, b) { a + b },
+                     identity: described_class.plain(""),
+                     generator: masked_generator
+  end
 end

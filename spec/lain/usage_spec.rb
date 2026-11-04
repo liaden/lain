@@ -88,6 +88,12 @@ RSpec.describe Lain::Usage do
                      operation: ->(a, b) { a + b },
                      generator: usage_generator
 
+    it "sums distinct non-zero fields field by field" do
+      sum = usage(input: 1, output: 2, creation: 3, read: 4) + usage(input: 10, output: 20, creation: 30, read: 40)
+
+      expect(sum).to eq(usage(input: 11, output: 22, creation: 33, read: 44))
+    end
+
     it "sums the same regardless of the order it is folded in" do
       shuffled = population.shuffle.reduce(described_class.zero, :+)
       ordered = population.reduce(described_class.zero, :+)
