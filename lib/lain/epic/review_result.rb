@@ -2,7 +2,8 @@
 
 module Lain
   module Epic
-    ReviewResult = Data.define(:id, :epic_slug, :stage, :read, :verdict, :must_fix, :minor, :verdict_lines)
+    ReviewResult = Data.define(:id, :epic_slug, :stage, :read, :documents, :verdict, :must_fix, :minor,
+                               :verdict_lines)
 
     # What one epic_review round found, bound to the digests its reviewers
     # read, journaled as `epic_reviewed` and named by {#id}. epic_submit takes
@@ -11,7 +12,10 @@ module Lain
     #
     # `read` maps each reviewed partition (an issue id, or `epic_plan` for
     # epic.md) to the content digest {Submission} gives it, the address the
-    # gate signs. `verdict` is approve, revise or unparsed; an unparsed review
+    # gate signs. `documents` maps each file the reviewers were shown, named
+    # from the epic home, to the digest of the text they were shown (masked
+    # where a secret was), so a later round shows an unchanged one by digest
+    # alone. `verdict` is approve, revise or unparsed; an unparsed review
     # keeps only its raw verdict lines, because a count read off a block that
     # did not parse would be a guess.
     class ReviewResult
@@ -23,16 +27,22 @@ module Lain
 
       ID = /\Areview-\h{12}\z/
 
+      # Session files outlive the record's shape, and a fold that raised on an
+      # older line would cost a chat its review and submit tools; anything not
+      # named here still raises, so a torn record stays loud.
+      UNRECORDED = { "documents" => {} }.freeze
+
       UNKNOWN = "no review was journaled under %<id>s; pass the id epic_review returned"
 
       # @param findings [String] the merged critique, every cluster's closing block in it
       # @param epic_slug [String]
       # @param stage [String] epic_plan or issue_plan
       # @param read [Hash{String=>String}] partition to the gated content digest the reviewers read
+      # @param documents [Hash{String=>String}] each file the reviewers were shown to the digest of its shown text
       # @param clusters [Integer] how many clusters were critiqued, each critic of each owing 1 block
       # @param critics [Integer] how many critics read each cluster
       # @return [ReviewResult]
-      def self.parse(findings, epic_slug:, stage:, read:, clusters:, critics:)
+      def self.parse(findings, epic_slug:, stage:, read:, clusters:, critics:, documents: {})
         # A child's reply is bytes nobody vouched for, and the id digests what is kept of it.
         findings = Utf8.legible(findings)
         blocks = Closing.one_per_reader(findings, clusters, critics)
@@ -43,7 +53,7 @@ module Lain
                 else
                   { verdict: UNPARSED, must_fix: [], minor: [], verdict_lines: Closing.verdict_lines(findings) }
                 end
-        identified(epic_slug:, stage:, read:, **shape)
+        identified(epic_slug:, stage:, read:, documents:, **shape)
       end
 
       def self.identified(**fields)
@@ -51,10 +61,13 @@ module Lain
       end
       private_class_method :identified
 
+      # A record from before `documents` was journaled knows none, so a
+      # later round shows every document whole.
+      #
       # @param record [Hash{String=>Object}] an `epic_reviewed` journal line
       # @return [ReviewResult]
       def self.from_journal(record)
-        new(**members.to_h { [_1, record.fetch(_1.to_s)] })
+        new(**members.to_h { [_1, record.fetch(_1.to_s) { |key| UNRECORDED.fetch(key) }] })
       end
 
       # @param records [Enumerable<Hash>] journal lines, of any type
@@ -66,9 +79,9 @@ module Lain
         found ? from_journal(found) : raise(Unknown, format(UNKNOWN, id:))
       end
 
-      def initialize(id:, epic_slug:, stage:, read:, verdict:, must_fix:, minor:, verdict_lines:)
-        super(id: -id.to_s, epic_slug: -epic_slug.to_s, stage: -stage.to_s,
-              read: read.to_h { |key, digest| [-key.to_s, -digest.to_s] }.freeze, verdict: -verdict.to_s,
+      def initialize(id:, epic_slug:, stage:, read:, verdict:, must_fix:, minor:, verdict_lines:, documents: {})
+        super(id: -id.to_s, epic_slug: -epic_slug.to_s, stage: -stage.to_s, read: digests(read),
+              documents: digests(documents), verdict: -verdict.to_s,
               must_fix: interned(must_fix), minor: interned(minor), verdict_lines: interned(verdict_lines))
       end
 
@@ -83,6 +96,8 @@ module Lain
       end
 
       private
+
+      def digests(named) = named.to_h { |key, digest| [-key.to_s, -digest.to_s] }.freeze
 
       def interned(lines) = lines.map { -_1.to_s }.freeze
 

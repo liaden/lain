@@ -61,8 +61,8 @@ RSpec.describe Lain::Review::Critique::Documents, :seam do
 
   def clusters = [cluster("storage", 1..3), cluster("wire", 4..6), cluster("cockpit", 7..9)]
 
-  def documents(clusters: self.clusters, shared: ["epic.md"], corpus: self.corpus)
-    described_class.new(corpus:, clusters:, shared:, brief: "the issue views of the nyotes epic")
+  def documents(clusters: self.clusters, shared: ["epic.md"], corpus: self.corpus, **)
+    described_class.new(corpus:, clusters:, shared:, brief: "the issue views of the nyotes epic", **)
   end
 
   def window
@@ -190,6 +190,66 @@ RSpec.describe Lain::Review::Critique::Documents, :seam do
       _, inside = tool_results(provider)
 
       expect(inside.to_s).to include("ISSUE-BODY-8")
+    end
+  end
+
+  def digest(text) = Lain::Workspace::Snapshot::Blob.new(bytes: text).digest
+
+  def short(text) = Lain::Canonical.abbreviate(digest(text), scheme: false)
+
+  describe "a document already reviewed and unchanged since" do
+    before { critique(documents(known: { view(2) => digest("# issue 2\nISSUE-BODY-2\n") })).call }
+
+    it "is named by its digest in place of its text" do
+      prompt = spawn.calls.first[:prompt]
+
+      expect(prompt).to include("## #{view(2)}", short("# issue 2\nISSUE-BODY-2\n"), "ISSUE-BODY-1", "ISSUE-BODY-3")
+      expect(prompt).not_to include("ISSUE-BODY-2")
+    end
+  end
+
+  describe "a shared document already read and unchanged since" do
+    it "is named by its digest in place of its text" do
+      critique(documents(known: { "epic.md" => digest("# nyotes\nEPIC-SHARED-CONTEXT\n") })).call
+
+      expect(spawn.calls).to all(include(prompt: include("## epic.md", short("# nyotes\nEPIC-SHARED-CONTEXT\n"))))
+      expect(spawn.calls.map { _1[:prompt] }.grep(/EPIC-SHARED-CONTEXT/)).to be_empty
+    end
+  end
+
+  describe "a document read at another digest" do
+    it "is shown whole, since what the earlier round read is not what stands" do
+      critique(documents(known: { view(2) => digest("# issue 2\nan older body\n") })).call
+
+      expect(spawn.calls.first[:prompt]).to include("ISSUE-BODY-2")
+    end
+  end
+
+  describe "#shown" do
+    it "digests the very text each document was shown as, shared and clustered alike" do
+      shown = documents(clusters: [cluster("storage", 1..2)]).shown
+
+      expect(shown).to eq("epic.md" => digest("# nyotes\nEPIC-SHARED-CONTEXT\n"),
+                          view(1) => digest("# issue 1\nISSUE-BODY-1\n"),
+                          view(2) => digest("# issue 2\nISSUE-BODY-2\n"))
+    end
+
+    it "digests a masked document as the child saw it, not as the file holds it" do
+      key = "-----BEGIN PRIVATE KEY-----\n#{"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZn\n" * 4}" \
+            "-----END PRIVATE KEY-----\n"
+      write(view(2), "# issue 2\n#{key}")
+
+      shown = documents(clusters: [cluster("storage", 2..2)]).shown.fetch(view(2))
+
+      expect(shown).not_to eq(digest(File.binread(File.join(@home, view(2)))))
+    end
+  end
+
+  describe "notes beside the documents" do
+    it "are shown to every child" do
+      critique(documents(notes: "# Where this review sits\nWAVE-LAYOUT-NOTE")).call
+
+      expect(spawn.calls).to all(include(prompt: include("WAVE-LAYOUT-NOTE")))
     end
   end
 

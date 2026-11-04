@@ -42,6 +42,10 @@ module Lain
         RENAMED = "#{REFUSED}the corpus has its documents named from %<base>s, not from %<root>s, the root " \
                   "they are read under -- build it with no `named_from:`".freeze
 
+        # An earlier round's reviewer was shown these very bytes, and its
+        # findings travel in the notes, so a later round spends no window on them.
+        KNOWN = "unchanged since the previous round, which read it at digest %<digest>s; not shown again"
+
         HEADLINE = "critique of %<count>d document cluster%<plural>s under %<root>s, each read by the %<role>s role"
 
         Cluster = Data.define(:label, :paths) do
@@ -62,19 +66,33 @@ module Lain
         # @param clusters [Array<Cluster>] in the order their findings merge
         # @param brief [String] what the set is, told to every child
         # @param shared [Array<String>] paths every child reads beside its cluster
+        # @param notes [String] told to every child after the brief, before the documents
+        # @param known [Hash{String=>String}] a path to the digest an earlier
+        #   round was shown it at; a document whose text still has that digest
+        #   is shown by it in place of its text
         # @raise [Refused] for a corpus named from elsewhere, an empty cluster, a
         #   path named twice, or a path the corpus cannot show a child
-        def initialize(corpus:, clusters:, brief:, shared: [])
+        def initialize(corpus:, clusters:, brief:, shared: [], notes: "", known: {})
           @root = -corpus.root
-          raise Refused, format(RENAMED, base: corpus.named_from, root:) unless corpus.named_from == root
+          refuse_renamed!(corpus)
 
           @head_ref = corpus.head_ref
           @brief = -brief.to_s
+          @notes = -notes.to_s
+          @known = interned(known)
           refuse_repeats!([*shared, *clusters.flat_map(&:paths)])
+          @shown = {}
           @shared = read(corpus, shared)
           @clusters = clusters.map { |cluster| partition(corpus, cluster) }.freeze
+          @shown.freeze
           freeze
         end
+
+        # The one read each document had, so a digest recorded from here names
+        # exactly the bytes a reviewer was shown, or shown by digest.
+        #
+        # @return [Hash{String=>String}] every document's path to the digest of its text
+        attr_reader :shown
 
         # @return [Symbol] the catalog role a document critique defaults to
         def role = ROLE
@@ -98,13 +116,20 @@ module Lain
 
         # @return [Brief]
         def brief(instructions:, chunk:, ordinal:, count:)
-          Brief.new(instructions:, about: @brief, shared: @shared, chunk:, ordinal:, count:, root:, head_ref:)
+          Brief.new(instructions:, about: @brief, notes: @notes, shared: @shared, chunk:, ordinal:, count:, root:,
+                    head_ref:)
         end
 
         # @return [String]
         def headline(count:, role:) = format(HEADLINE, count:, plural: count == 1 ? "" : "s", root:, role:)
 
         private
+
+        def refuse_renamed!(corpus)
+          raise Refused, format(RENAMED, base: corpus.named_from, root:) unless corpus.named_from == root
+        end
+
+        def interned(known) = known.to_h { |path, digest| [-path.to_s, -digest.to_s] }.freeze
 
         def refuse_repeats!(paths)
           twice = paths.tally.find { |_path, count| count > 1 }
@@ -121,7 +146,11 @@ module Lain
 
         def document(corpus, path)
           refuse_unshowable!(corpus, path)
-          Document.new(path: -path.to_s, text: -Utf8.legible(corpus.file_at(head_ref, path)))
+          text = -Utf8.legible(corpus.file_at(head_ref, path))
+          digest = @shown[-path.to_s] = Workspace::Snapshot::Blob.new(bytes: text).digest
+          return Document.new(path: -path.to_s, text:) unless @known[path] == digest
+
+          Document.new(path: -path.to_s, text: format(KNOWN, digest: Canonical.abbreviate(digest, scheme: false)))
         end
 
         def refuse_unshowable!(corpus, path)
@@ -137,7 +166,7 @@ module Lain
       end
 
       class Documents
-        Brief = Data.define(:instructions, :about, :shared, :chunk, :ordinal, :count, :root, :head_ref)
+        Brief = Data.define(:instructions, :about, :notes, :shared, :chunk, :ordinal, :count, :root, :head_ref)
 
         # One child's prompt. The documents are shown whole rather than left
         # for the child to read, so what it judged is exactly what {#key} names.
@@ -156,7 +185,8 @@ module Lain
           OTHERS = "Other reviewers are critiquing the other clusters in this set."
 
           def to_s
-            [instructions, "#{CHUNK}\n\n#{where}", *shared_section, "#{DOCUMENTS}\n\n#{shown(files)}"].join("\n\n")
+            [instructions, "#{CHUNK}\n\n#{where}", *notes_section, *shared_section, "#{DOCUMENTS}\n\n#{shown(files)}"]
+              .join("\n\n")
           end
 
           def key = Keying.digest(KEY_SCHEME, [to_s])
@@ -175,6 +205,8 @@ module Lain
             "cluster #{ordinal} of #{count}: #{label}\n#{about}\nfiles: #{paths.join(", ")}\n\n" \
               "#{[format(ROOT, root:), (OTHERS if count > 1)].compact.join(" ")}"
           end
+
+          def notes_section = notes.empty? ? [] : [notes]
 
           def shared_section = shared.empty? ? [] : ["#{SHARED}\n\n#{shown(shared)}"]
 

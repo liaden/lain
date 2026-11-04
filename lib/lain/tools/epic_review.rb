@@ -10,6 +10,14 @@ module Lain
     class EpicReview < Tool
       STAGES = %w[epic_plan issue_plan].freeze
 
+      # A third round on the same scope rarely finds what two missed, and each
+      # one costs a reviewer per wave, so the gate's human judges what is left.
+      ROUNDS = 2
+
+      # An unparsed round spends no round, so a reviewer that never closes its
+      # block, or a provider that keeps refusing, would otherwise run forever.
+      ATTEMPTS = 2 * ROUNDS
+
       # Beside the documents under review, every reviewer reads whichever of
       # these the home holds.
       CONTEXT = { "epic_plan" => %w[research.md SPEC.md], "issue_plan" => %w[epic.md research.md SPEC.md] }.freeze
@@ -44,6 +52,18 @@ module Lain
 
       NO_WAVE = "wave %<wave>d does not exist: the epic has %<count>d wave%<plural>s"
 
+      CAPPED = "epic_review has already run %<rounds>d rounds over %<ids>s of %<slug>s; review them no more -- " \
+               "call epic_submit with review %<id>s and quote its open findings to the human:\n%<open>s%<unreviewed>s"
+
+      FAILING = "epic_review's reviewers have failed to return a verdict in %<attempts>d rounds over %<ids>s of " \
+                "%<slug>s; run no more -- call epic_submit and tell the human the reviewers kept failing on these"
+
+      FAILING_SINCE = "epic_review's reviewers have failed to return a verdict in the %<later>d rounds after " \
+                      "review %<id>s over %<ids>s of %<slug>s; run no more -- call epic_submit with review %<id>s, " \
+                      "quote its open findings to the human and tell them the later reviewers kept failing:\n%<open>s"
+
+      UNREVIEWED = "\nnever reviewed: %<ids>s -- tell the human at the gate that no reviewer read these"
+
       HANDLE = "\n\nreview id: %<id>s -- pass it as `review` on epic_submit, and the gate shows this review"
 
       # One stage, one slug, and an optional wave for an issue_plan.
@@ -64,8 +84,9 @@ module Lain
 
       input_model Input
 
-      # @param homes [#for, #journal] answers `for(slug)` with that epic's home, and
-      #   `journal` with where each round's {Epic::ReviewResult} lands
+      # @param homes [#for, #journal, #review_results] answers `for(slug)` with that epic's home,
+      #   `journal` with where each round's {Epic::ReviewResult} lands, and
+      #   `review_results` with the journaled records earlier rounds and answers are read from
       # @param critique [#call] `(subject:, instructions:) -> String`, running a
       #   {Review::Critique} over the {Review::Critique::Documents} given
       # @param critics [Integer] how many critics the critique runs per cluster, which the merged findings
@@ -99,30 +120,58 @@ module Lain
 
       def reviewed(home, input)
         clusters = clusters(home, input)
-        read = gated(home, input)
-        findings = findings(home, input, clusters)
-        result = Epic::ReviewResult.parse(findings, epic_slug: input.slug, stage: input.stage, read:,
-                                                    clusters: clusters.size, critics: @critics)
+        pack = pack(home, input)
+        refuse_spent!(pack, input)
+        refuse_exhausted!(pack, input)
+        subject = subject(home, input, clusters, pack)
+        findings = findings(input, subject)
+        result = Epic::ReviewResult.parse(findings, epic_slug: input.slug, stage: input.stage, read: pack.diff.now,
+                                                    documents: subject.shown, clusters: clusters.size,
+                                                    critics: @critics)
         @homes.journal << result
         bounded(findings, input, format(HANDLE, id: result.id))
       end
 
-      def findings(home, input, clusters)
-        @critique.call(subject: documents(home, input, clusters), instructions: INSTRUCTIONS) ||
+      def pack(home, input)
+        Epic::ReviewPack.for(home.read_epic, home, @homes.review_results, stage: input.stage, wave: input.wave)
+      end
+
+      def findings(input, subject)
+        @critique.call(subject:, instructions: INSTRUCTIONS) ||
           raise(Review::Critique::Refused, format(NO_FINDINGS, stage: input.stage, slug: input.slug))
       end
 
-      # The content digest each reviewed document's gate signs, built the way
-      # epic_submit builds its {Epic::Submission}, so the two compare.
-      def gated(home, input)
-        if input.stage == "epic_plan"
-          return { input.stage => Epic::Submission.epic_plan(graph: home.read_epic, slug: home.slug).content_digest }
-        end
+      def refuse_spent!(pack, input)
+        spent = pack.spent(ROUNDS)
+        return if spent.empty?
 
-        waves(home, input.wave).flat_map(&:last).to_h do |issue|
-          view = Epic::IssueView.read(home, issue.id)
-          [issue.id, Epic::Submission.issue_plan(view:, slug: home.slug, issue_id: issue.id).content_digest]
-        end
+        latest = pack.settled.last
+        raise Review::Critique::Refused, format(CAPPED, rounds: ROUNDS, ids: spent.join(", "), slug: input.slug,
+                                                        id: latest.id, open: open_findings(latest),
+                                                        unreviewed: unreviewed(pack))
+      end
+
+      def refuse_exhausted!(pack, input)
+        exhausted = pack.exhausted(ATTEMPTS)
+        return if exhausted.empty?
+
+        raise Review::Critique::Refused, failing(pack, exhausted.join(", "), input.slug)
+      end
+
+      # A verdict that did come back still reaches the gate through its id.
+      def failing(pack, ids, slug)
+        latest = pack.settled.last
+        return format(FAILING, attempts: ATTEMPTS, ids:, slug:) if latest.nil?
+
+        format(FAILING_SINCE, later: pack.prior.size - pack.prior.index(latest) - 1, id: latest.id, ids:, slug:,
+                              open: open_findings(latest))
+      end
+
+      def open_findings(review) = review.must_fix.empty? ? "- none" : review.must_fix.map { "- #{_1}" }.join("\n")
+
+      def unreviewed(pack)
+        ids = pack.unreviewed
+        ids.empty? ? "" : format(UNREVIEWED, ids: ids.join(", "))
       end
 
       # Whole paragraphs from the front while they fit, a hard cut when the first
@@ -145,9 +194,9 @@ module Lain
         kept.empty? ? findings.byteslice(0, room).scrub("") : kept.join("\n\n")
       end
 
-      def documents(home, input, clusters)
-        Review::Critique::Documents.new(corpus: corpus(home), clusters:,
-                                        shared: shared(home, input.stage), brief: brief(input))
+      def subject(home, input, clusters, pack)
+        Review::Critique::Documents.new(corpus: corpus(home), clusters:, shared: shared(home, input.stage),
+                                        brief: brief(input), notes: pack.to_s, known: pack.diff.shown)
       end
 
       def clusters(home, input)

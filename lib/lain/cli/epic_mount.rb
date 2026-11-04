@@ -104,11 +104,14 @@ module Lain
         attr_reader :journal
 
         # Every session's, read per call, so a review from an earlier chat or a
-        # moment ago is found by its id.
+        # moment ago is found by its id, and an answer the human gave in any
+        # chat reaches the next review.
         #
-        # @return [SessionJournals] the journaled {Lain::Epic::ReviewResult} records
+        # @return [SessionJournals] the journaled {Lain::Epic::ReviewResult} and
+        #   {Lain::Telemetry::QuestionAnswered} records, oldest first
         def review_results
-          SessionJournals.of(@paths, @root, types: [Lain::Epic::ReviewResult::JOURNAL_TYPE])
+          SessionJournals.of(@paths, @root, types: [Lain::Epic::ReviewResult::JOURNAL_TYPE,
+                                                    Lain::Epic::ReviewPack::ANSWERED])
         end
 
         # The epic verbs, journaling into the chat's own session record.

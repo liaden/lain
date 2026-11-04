@@ -262,6 +262,21 @@ RSpec.describe Lain::Epic::ReviewResult do
       expect(described_class.from_journal(line)).to eq(result)
     end
 
+    it "records the digest of each document the round read, and reads it back" do
+      documents = { "epic.md" => "blake3:#{"1" * 64}", "research.md" => "blake3:#{"2" * 64}" }
+      result = described_class.parse(merged(block), epic_slug: "demo", stage: "epic_plan", read: {}, documents:,
+                                                    clusters: 1, critics: 1)
+      line = JSON.parse(JSON.generate(result.to_journal))
+
+      expect(described_class.from_journal(line).documents).to eq(documents)
+    end
+
+    it "reads a record written before documents were recorded as knowing none" do
+      line = JSON.parse(JSON.generate(reviewed(merged(block)).to_journal)).except("documents")
+
+      expect(described_class.from_journal(line).documents).to eq({})
+    end
+
     it "is deeply frozen" do
       expect(Ractor.shareable?(reviewed(merged(block(must:, minor:, verdict: "revise"))))).to be(true)
     end

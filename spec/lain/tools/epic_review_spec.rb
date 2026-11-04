@@ -30,7 +30,8 @@ class EpicReviewSpecSpawn
 
     def call(_role, _mode, prompt, model: nil)
       @prompts << prompt
-      Lain::Tool::Result.ok(@reply.call(@prompts.size, model))
+      reply = @reply.call(@prompts.size, model)
+      reply.is_a?(Lain::Tool::Result) ? reply : Lain::Tool::Result.ok(reply)
     end
   end
 end
@@ -68,6 +69,7 @@ RSpec.describe Lain::Tools::EpicReview, :seam do
   let(:worker_env) { Lain::WorkerEnv.new(cwd: Dir.pwd, env: { "LANG" => "C" }) }
   let(:homes) { instance_double(Lain::CLI::EpicMount::Homes) }
   let(:journal) { [] }
+  let(:answers) { [] }
 
   around do |example|
     Dir.mktmpdir("lain-epic-review") do |made|
@@ -80,8 +82,9 @@ RSpec.describe Lain::Tools::EpicReview, :seam do
 
   before do
     paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@home_path, "state"), "HOME" => @home_path })
-    home = Lain::Epic::Home.resolve(config: Lain::Config.new(epics: Lain::Config::Epics.new(home: :repo)), paths:,
-                                    root: @project, slug: "nyotes")
+    @paths = paths
+    @config = Lain::Config.new(epics: Lain::Config::Epics.new(home: :repo))
+    home = Lain::Epic::Home.resolve(config: @config, paths:, root: @project, slug: "nyotes")
     @home_path = home.path
     FileUtils.mkdir_p(File.join(@home_path, "issues"))
     home.write_epic(graph)
@@ -89,6 +92,7 @@ RSpec.describe Lain::Tools::EpicReview, :seam do
     %w[a1 b2 b3 c4].each { File.write(File.join(@home_path, "issues", "#{_1}.md"), "BODY-#{_1}\n") }
     allow(homes).to receive(:for).with("nyotes").and_return(home)
     allow(homes).to receive(:journal).and_return(journal)
+    allow(homes).to receive(:review_results) { journal.map(&:to_journal) + answers }
     @home = home
   end
 
@@ -324,6 +328,205 @@ RSpec.describe Lain::Tools::EpicReview, :seam do
       invoke(stage: "issue_plan", slug: "nyotes", wave: 9)
 
       expect(journal).to be_empty
+    end
+  end
+
+  describe "the context pack" do
+    let(:spawn) do
+      EpicReviewSpecSpawn.new(reply: lambda { |child, _model|
+        "MUST-FIX:\n- issues/b2.md: round #{child} wants an owner\nMINOR:\n- none\nVERDICT: revise"
+      })
+    end
+
+    def bytes(relative)
+      Lain::Workspace::Snapshot::Blob.new(bytes: File.binread(File.join(@home_path, relative))).digest
+    end
+
+    def abbreviated(relative) = Lain::Canonical.abbreviate(bytes(relative), scheme: false)
+
+    it "tells the reviewer every wave, which are written, and that its verdict covers its wave only" do
+      FileUtils.rm(File.join(@home_path, "issues", "c4.md"))
+
+      result = invoke(stage: "issue_plan", slug: "nyotes", wave: 2)
+
+      expect(result).not_to be_error
+      expect(spawn.prompts.first).to include("wave 2 of 3", "covers b2, b3 only", "wave 3: c4 (not written)",
+                                             "against epic.md")
+    end
+
+    it "carries the human's answers about this epic" do
+      answers << Lain::Telemetry::QuestionAnswered.new(question: "Who blesses the owner?", answer: "OWNER-BLESSED",
+                                                       epic_slug: "nyotes").to_journal
+
+      invoke(stage: "issue_plan", slug: "nyotes", wave: 2)
+
+      expect(spawn.prompts.first).to include("Who blesses the owner?", "OWNER-BLESSED")
+    end
+
+    it "shows round 2 round 1's findings, the changed issue whole and the unchanged one by digest" do
+      invoke(stage: "issue_plan", slug: "nyotes", wave: 2)
+      File.write(File.join(@home_path, "issues", "b2.md"), "BODY-b2 revised\n")
+
+      invoke(stage: "issue_plan", slug: "nyotes", wave: 2)
+
+      second = spawn.prompts.last
+      expect(second).to include("issues/b2.md: round 1 wants an owner", "BODY-b2 revised",
+                                abbreviated("issues/b3.md"))
+      expect(second).not_to include("BODY-b3\n")
+    end
+
+    it "shows round 2 the unchanged research.md and epic.md by digest only" do
+      invoke(stage: "issue_plan", slug: "nyotes", wave: 2)
+      invoke(stage: "issue_plan", slug: "nyotes", wave: 2)
+
+      second = spawn.prompts.last
+      expect(second).to include("## research.md", abbreviated("research.md"), abbreviated("epic.md"))
+      expect(second).not_to include("RESEARCH-CONTEXT", "the b2 issue")
+    end
+
+    it "journals the digest of every document the round read" do
+      invoke(stage: "issue_plan", slug: "nyotes", wave: 2)
+
+      expect(journal.first.documents).to eq(%w[epic.md research.md issues/b2.md issues/b3.md].to_h { [_1, bytes(_1)] })
+    end
+
+    describe "through the real homes" do
+      let(:homes) do
+        Lain::CLI::EpicMount::Homes.new(journal:, root: @project, paths: @paths, config: @config)
+      end
+
+      # The outer setup stubs these for every other example; here the homes answer for themselves.
+      before { %i[for review_results].each { allow(homes).to receive(_1).and_call_original } }
+
+      it "reads the human's answers out of the session journals" do
+        dir = @paths.filing_dir(root: @project)
+        FileUtils.mkdir_p(dir)
+        answer = Lain::Telemetry::QuestionAnswered.new(question: "Who blesses the owner?", answer: "OWNER-BLESSED",
+                                                       epic_slug: "nyotes")
+        File.write(File.join(dir, "earlier.ndjson"),
+                   "#{JSON.generate({ "ts" => Time.now.utc.iso8601(6), **answer.to_journal })}\n")
+
+        result = invoke(stage: "issue_plan", slug: "nyotes", wave: 2)
+
+        expect(result).not_to be_error
+        expect(spawn.prompts.first).to include("OWNER-BLESSED")
+      end
+    end
+
+    it "refuses a third round on a wave, telling the agent to submit and quote the open findings" do
+      2.times { invoke(stage: "issue_plan", slug: "nyotes", wave: 2) }
+
+      result = invoke(stage: "issue_plan", slug: "nyotes", wave: 2)
+
+      expect(result).to be_error
+      expect(result.text).to include("2 rounds", "epic_submit", journal.last.id, "issues/b2.md: round 2 wants an owner")
+      expect([spawn.prompts.size, journal.size]).to eq([2, 2])
+      expect(invoke(stage: "issue_plan", slug: "nyotes", wave: 1)).not_to be_error
+    end
+
+    it "refuses a review of every wave once a wave in it has had 2 rounds, naming the spent ids" do
+      2.times { invoke(stage: "issue_plan", slug: "nyotes", wave: 2) }
+
+      result = invoke(stage: "issue_plan", slug: "nyotes")
+
+      expect(result).to be_error
+      expect(result.text).to include("b2, b3", "epic_submit")
+      expect(spawn.prompts.size).to eq(2)
+    end
+
+    it "keeps the cap on a wave an issue was added to" do
+      2.times { invoke(stage: "issue_plan", slug: "nyotes", wave: 2) }
+      @home.write_epic(Lain::Epic::Graph.new(issues: [issue("a1", blocks: %w[b2 b3 b9]), issue("b2", blocks: ["c4"]),
+                                                      issue("b3"), issue("c4"), issue("b9")]))
+      File.write(File.join(@home_path, "issues", "b9.md"), "BODY-b9\n")
+
+      result = invoke(stage: "issue_plan", slug: "nyotes", wave: 2)
+
+      expect(result).to be_error
+      expect(result.text).to include("b2, b3", "never reviewed: b9")
+    end
+
+    context "when round 1's reviewer was refused" do
+      let(:spawn) do
+        EpicReviewSpecSpawn.new(reply: lambda { |child, _model|
+          refused = Lain::Tool::Result.error("provider refused: rate limited")
+          child == 1 ? refused : "MUST-FIX:\n- none\nMINOR:\n- none\nVERDICT: approve"
+        })
+      end
+
+      it "shows round 2 every document in full" do
+        invoke(stage: "issue_plan", slug: "nyotes", wave: 2)
+        invoke(stage: "issue_plan", slug: "nyotes", wave: 2)
+
+        expect(journal.first.verdict).to eq("unparsed")
+        expect(spawn.prompts.last).to include("BODY-b2\n", "BODY-b3\n", "RESEARCH-CONTEXT")
+      end
+    end
+
+    context "when every reviewer fails to return a verdict" do
+      let(:spawn) { EpicReviewSpecSpawn.new(reply: ->(*) { "I read it. No closing block." }) }
+
+      it "runs 4 rounds and refuses the 5th, naming the ids and telling the agent to submit" do
+        results = Array.new(5) { invoke(stage: "issue_plan", slug: "nyotes", wave: 2) }
+
+        expect(results.map(&:error?)).to eq(([false] * 4) + [true])
+        expect(results.last.text).to include("failed to return a verdict", "b2, b3", "epic_submit")
+        expect(spawn.prompts.size).to eq(4)
+      end
+    end
+
+    context "when only round 1 returns a verdict" do
+      let(:spawn) do
+        EpicReviewSpecSpawn.new(reply: lambda { |child, _model|
+          child == 1 ? "MUST-FIX:\n- issues/b2.md: needs an owner\nMINOR:\n- none\nVERDICT: revise" : "no block"
+        })
+      end
+
+      it "refuses the 5th call with round 1's review id and must-fix, saying only the later rounds failed" do
+        results = Array.new(5) { invoke(stage: "issue_plan", slug: "nyotes", wave: 2) }
+
+        expect(results.map(&:error?)).to eq(([false] * 4) + [true])
+        expect(results.last.text).to include("the 3 rounds after review #{journal.first.id}", "epic_submit",
+                                             "review #{journal.first.id}", "- issues/b2.md: needs an owner")
+      end
+    end
+
+    context "when the provider refuses rounds 1 and 2" do
+      let(:spawn) do
+        EpicReviewSpecSpawn.new(reply: lambda { |child, _model|
+          refused = Lain::Tool::Result.error("provider down")
+          child <= 2 ? refused : "MUST-FIX:\n- none\nMINOR:\n- none\nVERDICT: approve"
+        })
+      end
+
+      it "spends no round on them, so a third call runs" do
+        3.times { invoke(stage: "issue_plan", slug: "nyotes", wave: 2) }
+
+        expect(journal.map(&:verdict)).to eq(%w[unparsed unparsed approve])
+      end
+    end
+
+    it "records the digest of the bytes the reviewer was shown, not of an earlier read" do
+      target = File.join(@home_path, "issues", "b2.md")
+      allow(Lain::Epic::ReviewPack).to receive(:for).and_wrap_original do |original, *args, **kwargs|
+        original.call(*args, **kwargs).tap { File.write(target, "BODY-b2 EDITED-MID\n") if journal.empty? }
+      end
+      invoke(stage: "issue_plan", slug: "nyotes", wave: 2)
+      File.write(target, "BODY-b2\n")
+
+      invoke(stage: "issue_plan", slug: "nyotes", wave: 2)
+
+      expect(spawn.prompts.first).to include("EDITED-MID")
+      expect(spawn.prompts.last).to include("BODY-b2\n")
+    end
+
+    it "tells round 2 a shared document was deleted since round 1" do
+      invoke(stage: "issue_plan", slug: "nyotes", wave: 2)
+      FileUtils.rm(File.join(@home_path, "research.md"))
+
+      invoke(stage: "issue_plan", slug: "nyotes", wave: 2)
+
+      expect(spawn.prompts.last).to include("Deleted since the previous round: research.md")
     end
   end
 
