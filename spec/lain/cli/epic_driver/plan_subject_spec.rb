@@ -44,6 +44,12 @@ RSpec.describe Lain::CLI::EpicDriver::PlanSubject do
       expect([result.subject, result.level]).to eq(["app/models/order.rb", "seam"])
     end
 
+    it "carries Tested acceptance at the issue's level" do
+      result = described_class.of(carried(subject: "app/models/order.rb", level: "seam"), layout:)
+
+      expect(result.acceptance).to eq(Lain::CLI::EpicDriver::Acceptance::Tested.new(level: "seam"))
+    end
+
     it "refuses an issue that carries no subject, naming the issue and the line to add" do
       expect { described_class.of(carried, layout:) }
         .to raise_error(described_class::Undeclared, /issue "a" declares no test subject.*Subject:/m)
@@ -68,8 +74,16 @@ RSpec.describe Lain::CLI::EpicDriver::PlanSubject do
       it "admits a script, a manifest or a spike outside every source root" do
         subjects = %w[scripts/fetch-models.sh Cargo.toml spike/src/main.rs]
 
-        expect(subjects.map { |path| described_class.of(carried(subject: path, level: "manual"), layout:).to_h })
-          .to eq(subjects.map { |path| { subject: path, level: Lain::TestLayout::MANUAL } })
+        expect(subjects.map { |path| described_class.of(carried(subject: path, level: "manual"), layout:).subject })
+          .to eq(subjects)
+      end
+
+      it "carries Manual acceptance with the commands its scenarios name, and compares no level itself" do
+        criteria = "```gherkin\nScenario: it fetches\n  Then `scripts/fetch-models.sh --check` exits 0\n```"
+        issue = carried(subject: "scripts/fetch-models.sh", level: "manual", criteria:)
+
+        expect(described_class.of(issue, layout:).acceptance)
+          .to eq(Lain::CLI::EpicDriver::Acceptance::Manual.new(commands: ["scripts/fetch-models.sh --check"]))
       end
 
       it "admits it when the project declares no layout at all" do
@@ -96,7 +110,7 @@ RSpec.describe Lain::CLI::EpicDriver::PlanSubject do
 
     expect(result.subject).to eq("app/models/order.rb")
     expect(result.level).to be_nil
-    expect(result.to_h).to eq({ subject: "app/models/order.rb", level: nil })
+    expect([result.subject, result.level]).to eq(["app/models/order.rb", nil])
   end
 
   it "reads a level the plan declares beside its subject, backticks and emphasis aside" do

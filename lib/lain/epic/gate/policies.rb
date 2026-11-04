@@ -193,8 +193,8 @@ module Lain
             builder: ->(deps) { Policy::Interactive.new(asker: deps.asker, queue: deps.queue) }
           ),
           Policy::HandsOff::NAME => Recipe.new(
-            seams: %i[queue],
-            builder: ->(deps) { Policy::HandsOff.new(queue: deps.queue) }
+            seams: %i[queue journal],
+            builder: ->(deps) { Policy::HandsOff.new(queue: deps.queue, journal: deps.journal) }
           ),
           Policy::Deferred::NAME => Recipe.new(
             seams: %i[queue journal],

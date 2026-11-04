@@ -209,6 +209,51 @@ RSpec.describe Lain::Epic::Gate::Policy do
     end
   end
 
+  describe "hands-off meeting a manual acceptance" do
+    subject(:policy) { described_class::HandsOff.new(queue:, journal:) }
+
+    let(:manual) do
+      Lain::Epic::Submission.implementation(slug: "alpha", issue_id: "a", digest: "a" * 40,
+                                            manual_commands: ["scripts/fetch-models.sh --check"])
+    end
+
+    def manual_decision = decide(policy, artifact: manual, stage: "implementation", issue_id: "a")
+
+    before do
+      queue.apply(Lain::Epic::GateDecision.new(artifact_digest: "blake3:plan-a", epic_slug: "alpha",
+                                               stage: "issue_plan",
+                                               approved: true, answered_by: "human", policy: "signoff", latency: 1.0,
+                                               issue_id: "a").to_journal)
+    end
+
+    it "denies and journals a park for a human, awaited under a question naming manual acceptance" do
+      expect(manual_decision).to be(false)
+
+      expect(decisions.first).to include("approved" => false, "policy" => "deferred")
+      expect(journal_records(journal_io, "awaiting_human"))
+        .to contain_exactly(include("deferred" => true, "issue_id" => "a", "summary" => /manual acceptance/))
+    end
+
+    it "refuses, before deciding anything, to park with no journal to record the wait in" do
+      expect { decide(described_class::HandsOff.new(queue:), artifact: manual, stage: "implementation", issue_id: "a") }
+        .to raise_error(Lain::Error, /journal/)
+      expect(decisions).to be_empty
+    end
+
+    it "parks the issue where a human signs it off, and leaves no standing approval" do
+      manual_decision
+
+      expect(queue.parked("alpha", "implementation").map(&:issue_id)).to eq(["a"])
+      expect { gate.ensure_approved!(manual) }.to raise_error(Lain::Error)
+    end
+
+    it "still approves a tested implementation" do
+      tested = Lain::Epic::Submission.implementation(slug: "alpha", issue_id: "a", digest: "b" * 40)
+
+      expect(decide(policy, artifact: tested, stage: "implementation", issue_id: "a")).to be(true)
+    end
+  end
+
   describe "deferred parks without approving" do
     subject(:policy) { described_class::Deferred.new(queue:, journal:) }
 

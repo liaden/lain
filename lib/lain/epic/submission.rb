@@ -289,7 +289,7 @@ module Lain
     # inside a plan's content address, because the gate decision and the
     # sign-off queue partition on the issue, and a grader joins on the criteria.
     Submission = Data.define(:stage, :slug, :content_digest, :fact, :issue_id, :criteria_digest, :changeset,
-                             :review) do
+                             :review, :manual_commands) do
       # `sources` maps each source name to its text, so an approval of the
       # research is an approval of the facts it cites. With none the digest is
       # the text's alone, as it was before sources existed.
@@ -363,12 +363,20 @@ module Lain
       #
       # `tests` is evidence for the human and stays out of the address, so a
       # re-asked gate over the same commit is the same gate.
-      def self.implementation(slug:, issue_id:, digest:, tests: nil)
+      # `manual_commands` is nil for an issue judged by tests, and for one a
+      # human judges, the commands its scenarios name.
+      def self.implementation(slug:, issue_id:, digest:, tests: nil, manual_commands: nil)
         issue_id = clean_issue_id(issue_id)
-        fact = "issue #{issue_id}, #{digest}, tests: #{tests_said(tests)}"
+        fact = "issue #{issue_id}, #{digest}, tests: #{tests_said(tests)}#{manual_said(manual_commands)}"
         Contracts::Submission.check!(stage: "implementation", slug:, content_digest: digest, fact:)
         new(stage: "implementation", slug:, content_digest: implemented(digest, issue_id), fact:, issue_id:,
-            changeset: digest)
+            changeset: digest, manual_commands:)
+      end
+
+      def self.manual_said(commands)
+        return "" if commands.nil?
+
+        ", manual acceptance (a human runs: #{commands.empty? ? "none named" : commands.join("; ")})"
       end
 
       def self.tests_said(tests)
@@ -397,7 +405,7 @@ module Lain
       private_class_method :clean_issue_id
 
       def initialize(stage:, slug:, content_digest:, fact:, issue_id: nil, criteria_digest: nil, changeset: nil,
-                     review: nil)
+                     review: nil, manual_commands: nil)
         # Interned BEFORE the contract, so `presence:` judges the bytes that
         # actually get asked and journaled.
         stage = -stage.to_s
@@ -411,8 +419,11 @@ module Lain
         # nothing loses its deduplication.
         super(**Contracts::Submission.settle!(stage:, slug:, content_digest:, fact:),
               issue_id: issue_id && -issue_id.to_s, criteria_digest: criteria_digest && -criteria_digest.to_s,
-              changeset: changeset && -changeset.to_s, review: review && -review.to_s)
+              changeset: changeset && -changeset.to_s, review: review && -review.to_s,
+              manual_commands: manual_commands&.map { |command| -command.to_s }&.freeze)
       end
+
+      def manual_acceptance? = !manual_commands.nil?
 
       # THE GATE IDENTITY, which {Epic::Gate#call}/`#ensure_approved!` key
       # their registry on. See the class header for why it composes stage + slug

@@ -142,6 +142,15 @@ RSpec.describe Lain::Epic::Gate::Policies do
         .to be_a(Lain::Epic::Gate::Policy::HandsOff)
     end
 
+    it "refuses hands_off with no journal, because a manual issue parks into one" do
+      journalless = described_class::Deps.new(queue:, asker: nil, journal: nil)
+
+      expect { described_class.for(stage: "research", config: config_with(research: "hands_off"), deps: journalless) }
+        .to raise_error(described_class::Refusal) { |error|
+              expect([error.kind, error.seams]).to eq([:missing_seam, ["journal"]])
+            }
+    end
+
     it "refuses a policy that does declare it, naming the stage, the policy, and the seam" do
       askerless = described_class::Deps.new(queue:, asker: nil, journal:)
 

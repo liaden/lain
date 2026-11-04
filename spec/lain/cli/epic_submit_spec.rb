@@ -201,6 +201,20 @@ RSpec.describe Lain::CLI::EpicSubmit do
         .to eq([["issue_plan", "a", true], ["implementation", "a", true]])
     end
 
+    it "parks a manual issue's implementation under hands_off, naming manual acceptance" do
+      home.write_epic(Lain::Epic::Graph.new(issues: [issue("a", subject: "scripts/x.sh", level: "manual")]))
+      session("started.ndjson", *epic_approved, stage_event("issue_plan"))
+      home.issue("a").write("the prose for a\n")
+      command.submit("issue_plan", issue: "a")
+
+      command.submit("implementation", issue: "a", digest: commit_sha)
+
+      implementation = gate_decisions.find { |record| record["stage"] == "implementation" }
+      expect(implementation).to include("approved" => false, "policy" => "deferred")
+      expect(session_records.select { |record| record["type"] == "awaiting_human" && record["issue_id"] == "a" })
+        .to include(include("deferred" => true, "summary" => /manual acceptance/))
+    end
+
     # `Bench::EpicMetrics` folds round trips on the record's `issue_id`, and an
     # epic-wide decision is the nil member of that key -- present, not absent.
     it "journals an epic-wide decision with a nil issue" do

@@ -534,6 +534,13 @@ RSpec.describe Lain::Epic::Submission do
       expect(submission.content_digest).to eq(Lain::Canonical.digest("changeset" => "blake3:impl", "issue" => "T7"))
     end
 
+    it "names the manual commands in the question a human is asked" do
+      submission = described_class.implementation(slug: "demo", issue_id: "c", digest: "a" * 40,
+                                                  manual_commands: ["scripts/fetch-models.sh --check"])
+
+      expect(submission.gate_question).to include("manual acceptance", "scripts/fetch-models.sh --check")
+    end
+
     # One commit can be offered as two issues' work. Keyed on the commit alone,
     # approving it for issue c would open issue b's gate over the same commit.
     it "gives two issues' implementations of the same commit two gate identities" do

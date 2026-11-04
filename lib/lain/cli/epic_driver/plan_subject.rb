@@ -3,7 +3,7 @@
 module Lain
   module CLI
     module EpicDriver
-      PlanSubject = Data.define(:subject, :level)
+      PlanSubject = Data.define(:subject, :level, :acceptance)
 
       # What an issue declares about its failing tests: the one source file
       # they are written for, and optionally the level root they sit under.
@@ -30,8 +30,8 @@ module Lain
         class NotCanonical < Refusal; end
         class OutsideSourceRoots < Refusal; end
 
-        def initialize(subject:, level: nil)
-          super(subject: -subject.to_s, level: level&.then { |name| -name.to_s })
+        def initialize(subject:, level: nil, acceptance: Acceptance.of(level, scenarios: []))
+          super(subject: -subject.to_s, level: level&.then { |name| -name.to_s }, acceptance:)
         end
 
         # @param plan [#read, #path] the planner's plan text and a
@@ -42,7 +42,8 @@ module Lain
         def self.read(plan, layout:)
           text = plan.read
           level = level_in(text, plan, layout)
-          new(subject: subject_in(text, plan, layout, level), level:)
+          acceptance = Acceptance.of(level, scenarios: [])
+          new(subject: subject_in(text, plan, layout, acceptance), level:, acceptance:)
         end
 
         # @param issue [Epic::Issue] the issue whose tests are to be written
@@ -54,15 +55,16 @@ module Lain
           raise Undeclared, undeclared(where) if issue.subject.nil?
 
           level = issue.level&.then { |name| known(name, where, layout) }
-          new(subject: placed(canonical!(issue.subject, where), where, layout, level), level:)
+          acceptance = Acceptance.of_issue(issue)
+          new(subject: placed(canonical!(issue.subject, where), where, layout, acceptance), level:, acceptance:)
         end
 
-        def self.subject_in(text, plan, layout, level)
+        def self.subject_in(text, plan, layout, acceptance)
           found = declarations(text, SUBJECT)
           raise Undeclared, undeclared(plan.path) if found.empty?
           raise Refusal, ambiguous(plan, SUBJECT, found) if found.size > 1
 
-          placed(canonical!(found.first, plan.path), plan.path, layout, level)
+          placed(canonical!(found.first, plan.path), plan.path, layout, acceptance)
         end
 
         # Shape before placement, and refused the way a `tests` source root
@@ -107,8 +109,8 @@ module Lain
 
         # A manual subject is a script, a manifest or a spike, which no
         # layout mirrors a test from.
-        def self.placed(subject, where, layout, level)
-          return subject if level == TestLayout::MANUAL || !layout.in_force?
+        def self.placed(subject, where, layout, acceptance)
+          return subject unless acceptance.placed_by_layout? && layout.in_force?
           return subject if layout.source_roots.any? { |root| subject == root || subject.start_with?("#{root}/") }
 
           raise OutsideSourceRoots, "#{where} names the subject #{subject.inspect}, which is under none of " \
@@ -120,7 +122,7 @@ module Lain
         # raises {TestLayout::Unplaceable} for a name it does not hold: a level
         # a plan misspelled is this object's refusal to make, by its own name.
         def self.known(level, where, layout)
-          return level if level == TestLayout::MANUAL || !layout.in_force?
+          return level unless Acceptance.of(level, scenarios: []).placed_by_layout? && layout.in_force?
           return level if layout.mapping.levels.any? { |declared| declared.name == level }
 
           raise Refusal, "#{where} names the level #{level.inspect}, which this project's `tests` config " \

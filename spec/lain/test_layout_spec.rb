@@ -20,6 +20,13 @@ RSpec.describe Lain::TestLayout do
       expect(layout.mapping.test_path("app/models/order.rb", level: "unit")).to eq("spec/unit/models/order_spec.rb")
     end
 
+    it "refuses a level named for the reserved manual level, naming it" do
+      table = { "preset" => "rspec", "level_roots" => { "unit" => "spec/unit", "manual" => "spec/manual" } }
+
+      expect(refusal(table)).to be_a(Lain::Config::Refusal).and(have_attributes(key: "level_roots",
+                                                                                message: /manual.*reserved/))
+    end
+
     it "refuses a misspelt key, naming the key and the file" do
       expect { described_class.from({ "prest" => "rspec" }, path: config) }
         .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(config)}.*"prest"/)

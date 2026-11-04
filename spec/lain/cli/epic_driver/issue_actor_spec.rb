@@ -238,7 +238,11 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
     end
   end
 
-  def launch(supervisor, id, **) = issue_actor(supervisor).call(id, subject: "app/models/order.rb", **)
+  def tested(level = nil) = Lain::CLI::EpicDriver::Acceptance::Tested.new(level:)
+
+  def launch(supervisor, id, **)
+    issue_actor(supervisor).call(id, subject: "app/models/order.rb", acceptance: tested, **)
+  end
 
   def first_prompt(request) = request.messages.first["content"].first["text"]
 
@@ -293,17 +297,20 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
 
     it "names the red step's tests for the issue, so a flat level's file is the issue's own" do
       supervising do |supervisor|
-        recorded_actor(supervisor).call("a", subject: "app/models/order.rb", level: "integration").actor.settle
+        recorded_actor(supervisor).call("a", subject: "app/models/order.rb", level: "integration",
+                                             acceptance: tested("integration")).actor.settle
       end
 
       expect(asked.map { |options| options.slice(:subject, :level, :name) })
         .to eq([{ subject: "app/models/order.rb", level: "integration", name: "a" }])
     end
 
-    context "when the issue's level is manual" do
+    context "when the issue's acceptance is manual" do
+      let(:manual) { Lain::CLI::EpicDriver::Acceptance::Manual.new(commands: ["scripts/fetch-models.sh --check"]) }
+
       it "generates no tests, and tells the implementer the human checks the scenarios at the gate" do
         supervising do |supervisor|
-          recorded_actor(supervisor).call("a", subject: "scripts/fetch-models.sh", level: "manual").actor.settle
+          recorded_actor(supervisor).call("a", subject: "scripts/fetch-models.sh", acceptance: manual).actor.settle
         end
 
         prompt = first_prompt(provider.requests.last)
@@ -316,7 +323,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
         judged = []
         judge = Object.new.tap { |j| j.define_singleton_method(:untouched?) { |base, tip| judged << [base, tip] } }
         launched = supervising do |supervisor|
-          recorded_actor(supervisor).call("a", subject: "Cargo.toml", level: "manual").tap { |row| row.actor.settle }
+          recorded_actor(supervisor).call("a", subject: "Cargo.toml", acceptance: manual).tap { |row| row.actor.settle }
         end
 
         launched.tests.unworked?("tip-sha", judge:)
@@ -663,7 +670,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
                                   plan:, repo_root: repo, tests: red_step(renderer), lanes: child_lanes,
                                   shell_out_factory: deleting)
 
-      expect { actor.call("a", subject: "app/models/order.rb") }
+      expect { actor.call("a", subject: "app/models/order.rb", acceptance: tested) }
         .to raise_error(Lain::Isolation::WorkingBranch::Refused, /another run is deleting it/)
     end
     expect(provider.call_count).to eq(0)

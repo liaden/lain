@@ -345,6 +345,8 @@ module Lain
         # @param subject [String] the source file its tests are for, relative to
         #   the checkout, as its issue declares ({PlanSubject})
         # @param level [String, nil] the layout level to generate them at
+        # @param acceptance [Acceptance::Tested, Acceptance::Manual, nil] how the issue is judged, as
+        #   {PlanSubject} parsed it
         # @param attempt [Integer] which attempt this is. It names the worker AND
         #   its children's lane, so a retry anchors apart from the attempt
         #   before it.
@@ -359,11 +361,11 @@ module Lain
         #   issue's lease
         # @raise [Isolation::WorkingBranch::Refused] when its branch is
         #   unholdable, nested against, or one lain did not create
-        def call(issue_id, subject:, level: nil, attempt: 1)
+        def call(issue_id, subject:, acceptance:, level: nil, attempt: 1)
           view = approved!(Lain::Epic::IssueView.read(@home, issue_id))
           lane = lane_for(view.issue.id, attempt)
           unanchored!(lane)
-          adopted(view, lane, subject:, level:)
+          adopted(view, lane, subject:, level:, acceptance:)
         end
 
         private
@@ -373,22 +375,18 @@ module Lain
         # then the launch. The actor's worker id and its children's lane are ONE
         # string, so a second attempt's children cannot compare-and-swap the
         # first attempt's anchors away.
-        def adopted(view, lane, subject:, level:)
+        def adopted(view, lane, subject:, level:, acceptance:)
           criteria = criteria_of(view)
           red = nil
           held = nil
           actor = @supervisor.adopt(role: ROLE, worker_id: lane) do |worker_env|
             held = cut(worker_env, view.issue.id)
-            red = acceptance(level).call(criteria, worker_env, subject:, level:, since: held.from, lane:,
-                                                               name: view.issue.id)
+            step = acceptance.red_step(@tests)
+            red = step.call(criteria, worker_env, subject:, level:, since: held.from, lane:, name: view.issue.id)
             spawner(worker_env, held.branch, lane).launch_actor(brief(view, held, red), worker_env:)
           end
           Launch.new(actor:, worker_id: lane, branch: held.branch.name, tests: red)
         end
-
-        # A manual issue has no generated tests, so its red step is the stand-in
-        # that records only where the lease was cut.
-        def acceptance(level) = level == Lain::TestLayout::MANUAL ? IssueTests::Unscripted : @tests
 
         # The issue's own lain-owned branch, established at the tip the lease
         # was cut from and checked out. {Isolation::WorkingBranch} owns every

@@ -782,7 +782,7 @@ module Lain
 
         ANCHOR_REFUSED = "its work could not be anchored, so nothing was submitted"
 
-        GATE_PARKED = "its implementation gate has not approved %<sha>s, so nothing landed"
+        GATE_PARKED = "its implementation gate parked %<sha>s for sign-off, so nothing landed: see `lain epic queue`"
 
         UNCARRIED = "it could not be carried any further, so nothing landed"
 
@@ -1222,7 +1222,7 @@ module Lain
         def launch(issue)
           subject = @plans.call(issue.id)
           launched = @actors.call(issue.id, subject: subject.subject, level: subject.level,
-                                            attempt: @attempts.call(issue.id))
+                                            acceptance: subject.acceptance, attempt: @attempts.call(issue.id))
           @live << Live.new(issue_id: issue.id, launch: launched)
         rescue JournalUnreadable
           raise

@@ -68,9 +68,10 @@ class FactorySpecActors
     @idle = idle
   end
 
-  def call(issue_id, subject:, level: nil, attempt: 1)
+  def call(issue_id, subject:, acceptance:, level: nil, attempt: 1)
     @log << [:launched, issue_id, attempt, git(@repo, "rev-parse", "refs/heads/epic/#{@slug}")]
     @log << [:subject, issue_id, subject, level] unless subject.empty?
+    @log << [:acceptance, issue_id, acceptance]
     red = nil
     actor = @fleet.adopt(role: "factory-spec", worker_id: "issue.#{@slug}.#{issue_id}.#{attempt}") do |worker_env|
       @log << [:leased, issue_id, git(worker_env.cwd, "rev-parse", "HEAD")]
@@ -639,17 +640,30 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
       expect(git(repo, "ls-tree", "-r", "--name-only", "refs/heads/epic/demo").split("\n")).not_to include("red_b.txt")
     end
 
+    it "hands each actor the acceptance its issue was parsed to" do
+      write_epic([issue("a", level: "manual"), issue("c")])
+      %w[a c].each { |id| approve_plan(id) }
+
+      driven(width: 2, manual: %w[a], idle: %w[a])
+
+      expect(log.select { |row| row.first == :acceptance }.map { |row| row.last.class })
+        .to contain_exactly(Lain::CLI::EpicDriver::Acceptance::Manual, Lain::CLI::EpicDriver::Acceptance::Tested)
+    end
+
     # A manual issue has no red commit, so no work is a tip that changes
     # nothing past where its lease was cut.
-    it "reports a manual issue that committed nothing, and lands one whose work edits a tracked file" do
-      write_epic([issue("a", level: "manual"), issue("b", level: "manual")])
-      %w[a b].each { |id| approve_plan(id) }
+    it "reports a manual issue that did nothing, parks one that edited a file, and lands a tested one" do
+      write_epic([issue("a", level: "manual"), issue("b", level: "manual"), issue("c")])
+      %w[a b c].each { |id| approve_plan(id) }
 
       result = driven(width: 2, idle: ["b"], manual: %w[a b], files: { "app/models/order.rb" => "edited\n" })
 
-      expect(result.landed.map(&:issue_id)).to eq(["a"])
-      expect(result.reported.map { |entry| [entry.issue_id, entry.reason[/committed no work/]] })
-        .to eq([["b", "committed no work"]])
+      expect(result.landed.map(&:issue_id)).to eq(["c"])
+      expect(result.reported.map(&:issue_id)).to eq(%w[a b])
+      expect(result.reported.last.reason).to include("committed no work")
+      expect(result.reported.first.reason).to include("parked", "lain epic queue")
+      parked = journaled_decisions.select { |entry| entry.values_at("issue_id", "stage") == %w[a implementation] }
+      expect(parked).to contain_exactly(include("approved" => false, "policy" => "deferred"))
     end
 
     # The same rebase, over an issue that did commit work: its rebased red

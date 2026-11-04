@@ -59,7 +59,7 @@ class RunSpecActors
 
   attr_reader :launched, :concurrency
 
-  def call(issue_id, subject:, level: nil, attempt: 1) # rubocop:disable Lint/UnusedMethodArgument
+  def call(issue_id, subject:, level: nil, acceptance: nil, attempt: 1) # rubocop:disable Lint/UnusedMethodArgument
     raise @refusals.fetch(issue_id) if @refusals.key?(issue_id)
 
     @launched << [issue_id, attempt]

@@ -124,7 +124,8 @@ module Lain
       # rather than the subject project under test.
       def carry(task, lease:, journal:, spawn_seam:)
         declared = subject_of(planned(task, lease:, journal:, spawn_seam:))
-        launch = @actors.call(ISSUE, subject: declared.subject, level: declared.level, attempt: 1,
+        launch = @actors.call(ISSUE, subject: declared.subject, level: declared.level, acceptance: declared.acceptance,
+                                     attempt: 1,
                                      worker_env: lease.worker_env)
         @supervisor.retire(row_of(launch))
       end

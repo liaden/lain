@@ -95,8 +95,8 @@ RSpec.describe Lain::Arm::PlanOnly do
   # An issue actor, as this arm drives one: asked to carry a plan in a checkout
   # of its own, then retired for what it committed.
   let(:actors) do
-    lambda do |issue_id, subject:, level: nil, attempt: 1, worker_env: nil|
-      launched << { issue_id:, subject:, level:, attempt:, worker_env: }
+    lambda do |issue_id, subject:, level: nil, acceptance: nil, attempt: 1, worker_env: nil|
+      launched << { issue_id:, subject:, level:, acceptance:, attempt:, worker_env: }
       actor = PlanOnlySpecActor.new(issue_id)
       supervisor.adopt(PlanOnlySpecSupervisor::Row.new(actor:))
       PlanOnlySpecLaunch.new(actor:, branch: nil, tests: nil,
@@ -148,7 +148,8 @@ RSpec.describe Lain::Arm::PlanOnly do
     it "hands the issue actor the subject and level the plan itself declared" do
       run_arm
 
-      expect(launched.first).to include(subject: "lib/order.rb", level: "unit")
+      expect(launched.first).to include(subject: "lib/order.rb", level: "unit",
+                                        acceptance: Lain::CLI::EpicDriver::Acceptance::Tested.new(level: "unit"))
     end
 
     # The actor carries the plan out in the checkout this arm is holding -- the

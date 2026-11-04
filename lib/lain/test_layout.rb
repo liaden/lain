@@ -156,7 +156,15 @@ module Lain
         raise invalid_value(key, value, rule.describe(value), path:) unless rule.admits?(value)
       end
       declared!(overrides, preset, path:)
+      unreserved!(overrides, path:)
       bounded!(overrides, path:)
+    end
+
+    def self.unreserved!(overrides, path:)
+      levels = overrides.fetch("level_roots", {})
+      return unless levels.key?(MANUAL)
+
+      raise invalid_value("level_roots", levels, "free of the reserved level #{MANUAL.inspect}", path:)
     end
 
     def self.bounded!(overrides, path:)
@@ -202,7 +210,8 @@ module Lain
                                 path:, table: TABLE, key: DEFAULT_LEVEL, value: mirrored)
     end
 
-    private_class_method :detected, :shaped!, :preset_named, :admit!, :declared!, :settled!, :bounded!, :invalid_value
+    private_class_method :detected, :shaped!, :preset_named, :admit!, :declared!, :settled!, :bounded!, :unreserved!,
+                         :invalid_value
 
     # Never the caller's own strings: the table arrives from a TOML parse the
     # caller still holds, and this value has to stay `Ractor.shareable?`.

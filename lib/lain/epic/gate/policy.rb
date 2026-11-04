@@ -12,7 +12,7 @@ module Lain
       # record would be a second copy of that ordering waiting to disagree.
       #
       # Every policy therefore inherits Gate's reactor precondition, {HandsOff}
-      # included, whose answer needs no human. One seam, one precondition, no
+      # included, whose approval needs no human. One seam, one precondition, no
       # policy-shaped exception to remember.
       #
       # `answered_by` and `policy` stay independent on the record: {Interactive}
@@ -107,10 +107,10 @@ module Lain
         # fold discriminator, so a rename must break loudly at the constant
         # instead of quietly re-labelling records nobody can join anymore.
         #
-        # It is the CONFIGURED name. {Adjudicated} is the exception and has to
-        # be: it answers `"adjudicated"` here, but a decision it PARKS journals
-        # `policy: "deferred"`, because a parked sign-off must wear the
-        # discriminator {SignoffQueue}'s fold reads.
+        # It is the CONFIGURED name. {Adjudicated} and {HandsOff} are the
+        # exceptions and have to be: each answers its own name here, but a
+        # decision it PARKS journals `policy: "deferred"`, because a parked
+        # sign-off must wear the discriminator {SignoffQueue}'s fold reads.
         def name = self.class::NAME
 
         private
@@ -166,7 +166,8 @@ module Lain
           def surface = @asker
         end
 
-        # Approve immediately -- and AUDIBLY. The verdict still goes through
+        # Approve immediately -- and AUDIBLY -- unless the issue's acceptance is
+        # manual, which is deferred to a human instead. The verdict still goes through
         # Gate, so an unattended run leaves the same `gate_decision` trail an
         # attended one does. An approval nobody can point at afterwards makes
         # the run unreviewable, which on a study bench is the same as unrun.
@@ -174,9 +175,29 @@ module Lain
           NAME = "hands_off"
           SURFACE = StandingAnswer.new(Answer.approve(NAME)).freeze
 
+          # @param queue [#drained?, #approved?, #parked] see {Policy#initialize}
+          # @param journal [#record, nil] where a deferral records its wait; needed only by an issue a human judges
+          def initialize(queue:, journal: nil)
+            super(queue:)
+            @deferral = journal && Deferred.new(queue:, journal:)
+          end
+
+          # An issue judged by a human is never approved unseen: it is deferred, so its park and its
+          # `awaiting_human` record come from the one policy that owns them.
+          def decide(artifact, **scope)
+            return super unless artifact.respond_to?(:manual_acceptance?) && artifact.manual_acceptance?
+
+            deferral.decide(artifact, **scope)
+          end
+
           private
 
           def surface = SURFACE
+
+          def deferral
+            @deferral || raise(Error, "a manual acceptance parks for a human, which needs a journal to record the " \
+                                      "wait in; build HandsOff with one")
+          end
         end
 
         # Refuse now, decide later: journaled as a REAL denial and parked for
