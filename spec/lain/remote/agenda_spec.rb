@@ -152,6 +152,32 @@ RSpec.describe Lain::Remote::Agenda do
       end
     end
 
+    it "counts the regions a call would release, 0 for an ordinary call, and never carries the regions" do
+      regions = Lain::Sensitivity::Regions.detect("a=ghp_6Fz9qL2vX8mN4pR7tY1wK3sD5hJ0aB2cE4gI\n" \
+                                                  "b=AKIAIOSFODNN7EXAMPLE\n")
+      calls = []
+      Sync do |task|
+        park(task)
+        read = Lain::Effect::ToolCall.new(tool_use_id: "tu_2", name: "read_file", input: { "path" => "/tmp/r/.env" })
+        outstanding = Lain::Approval::Parked::Queue::Outstanding.new(path: "/tmp/r/.env", regions:)
+        task.async { queue.adjudicate(read, nil, outstanding:) }
+        task.yield
+        calls = agenda.snapshot.select { kinds([_1]) == ["ParkedCall"] }
+      ensure
+        task.stop
+      end
+
+      expect(regions.size).to eq(2)
+      expect(calls.to_h { [_1.tool, _1.releases] }).to eq("bash" => 0, "read_file" => 2)
+      expect(calls).to all(satisfy { Ractor.shareable?(_1) })
+    end
+
+    it "carries releases 0 on a gate and a question, which never release a file's regions" do
+      defer_wave
+
+      expect(%w[GateQuestion Question].map { listed(_1).releases }).to eq([0, 0])
+    end
+
     it "is frozen all the way down" do
       Sync do |task|
         park(task)
@@ -223,6 +249,12 @@ RSpec.describe Lain::Remote::Agenda do
         expect(listed("GateQuestion")).to have_attributes(issues: [], question: /lain epic rewrite-verdicts/)
         task.stop
       end
+    end
+
+    it "carries releases 0 on the gate item standing in for that journal" do
+      write_old_gate_record
+
+      expect(listed("GateQuestion").releases).to eq(0)
     end
 
     it "refuses any answer to that gate item, naming the rewrite" do
