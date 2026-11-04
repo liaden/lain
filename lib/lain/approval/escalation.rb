@@ -871,14 +871,20 @@ module Lain
 
         APPROVED = "a surface approved this call"
         REFUSED = "a surface refused this call, or the window closed and the fail-closed doctrine did"
+        POSTPONED = "a human postponed this call"
+        POSTPONED_TOLD = "postponed by the human%<said>s; issue it again later, when it will park for an answer"
 
         # The SAME object `/approve` drains, readable here so "the gate asks
         # through the session's one queue" stays an identity a caller can check
         # rather than a shape it must trust.
         attr_reader :queue
 
-        def initialize(queue)
+        # @param queue [Parked::Queue]
+        # @param denials [DenialBreaker, DenialBreaker::Unbroken] counts a postpone as a
+        #   denial, so a call the human keeps putting off stops reaching the judge
+        def initialize(queue, denials: DenialBreaker::Off)
           @queue = queue
+          @denials = denials
           freeze
         end
 
@@ -894,9 +900,21 @@ module Lain
           if pending.approved?
             return Ruling.allow(rung: NAME, because: "#{APPROVED} (#{surface})", authority:, surface:)
           end
+          return postponed(pending) if pending.postponed?
 
           Ruling.deny(rung: NAME, because: "#{REFUSED} (#{surface})", authority:, surface:,
                       said: pending.timed_out? ? pending.lapse : pending.reason)
+        end
+
+        private
+
+        # Final so the model is not told a retry now could help, and liftable
+        # because the next issue of the call parks for the human again.
+        def postponed(pending)
+          @denials.denied(pending.requester)
+          Ruling.deny(rung: NAME, because: "#{POSTPONED} (#{pending.surface})", authority: pending.authority,
+                      surface: pending.surface, final: true, liftable: true,
+                      told: format(POSTPONED_TOLD, said: pending.reason&.then { ": #{_1}" }))
         end
       end
     end

@@ -146,11 +146,12 @@ module Lain
         Verdict = Data.define(:requester)
 
         # The messages this middleware reads off a settled
-        # {Approval::Parked::Queue::Pending}: `approved?`, `timed_out?`, `surface`, `requester`,
-        # `authority`. Nobody answered, so its release never lifts an egress refusal.
+        # {Approval::Parked::Queue::Pending}: `approved?`, `timed_out?`, `postponed?`, `surface`,
+        # `requester`, `authority`. Nobody answered, so its release never lifts an egress refusal.
         class Verdict
           def approved? = true
           def timed_out? = false
+          def postponed? = false
           def surface = SURFACE
           def authority = :automatic
         end
@@ -500,7 +501,10 @@ module Lain
         decided = true
         return release(carried, effect, withheld, settled) if approved
 
-        why = settled.timed_out? ? :timed_out : :declined
+        why = if settled.timed_out? then :timed_out
+              elsif settled.postponed? then :postponed
+              else :declined
+              end
         @ledger.lapse(withheld.path, withheld.unreleased) if why == :timed_out
         mask(carried, effect, withheld, why)
       ensure
@@ -533,7 +537,7 @@ module Lain
       def mask(carried, effect, withheld, why)
         withheld.session.record_withheld(Session::Withheld::Source.file(withheld.path))
         record(Telemetry::SourceMasked) { redaction(effect, withheld) } unless declined?(withheld)
-        @ledger.decline(withheld.path, withheld.unreleased)
+        @ledger.decline(withheld.path, withheld.unreleased) unless why == :postponed
         masked = withheld.scan.mask(withheld.unreleased)
         carried.merge(result: Tool::Result.ok(Trailer.append(masked, withheld.unreleased.length, why)))
       end
@@ -725,6 +729,7 @@ module Lain
         REASONS = {
           declined: "the release was declined. #{ASK}",
           timed_out: "the release timed out, and a human may still release it. #{ASK}",
+          postponed: "the human postponed the release, and the next read asks again. #{ASK}",
           related: "the file lies under a related directory, so its regions are never released."
         }.freeze
 

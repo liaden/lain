@@ -886,6 +886,19 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       )
     end
 
+    # A hold means ask again later, here as at every other prompt.
+    it "says a held release was postponed, and asks about the file again on the next read" do
+      path = write("notes.txt", one_secret)
+      hold = Lain::Approval::Verdict::Hold.new(note: "after lunch")
+
+      content = read(path) { |q| q.dequeue.decide(hold, surface: "spec", authority: :human) }.fetch(:result).content
+      read(path, tool_use_id: "tu_2") { |q| q.dequeue.deny(surface: "spec") }
+
+      expect(content).to include("1 region is masked as <redacted:1>", "postponed")
+      expect(content).not_to include("declined")
+      expect(decisions.length).to eq(2)
+    end
+
     it "counts every withheld region" do
       path = write(".env", dotenv)
 

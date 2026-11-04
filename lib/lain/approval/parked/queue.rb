@@ -58,6 +58,9 @@ module Lain
 
         Outstanding = Data.define(:path, :regions)
 
+        DECISIONS = { Verdict::Approve => :approve, Verdict::Hold => :postpone, Verdict::Deny => :deny }.freeze
+        FACES = { approve: "approved", postpone: "postponed" }.freeze
+
         REASON_LIMIT = 400
         REASON_POINTER = "the full call is in lain://approval]"
         CUT_TAIL = Regexp.escape(REASON_POINTER)
@@ -250,27 +253,37 @@ module Lain
           # IO-shaped and would open exactly that gap. This queue holds no ledger
           # at all, which is how that stays true.
           #
-          # `reason` is the human's own words for a denial, which the model reads
-          # as the last clause of its tool result. Flattened to one line with no
-          # control bytes, so it cannot open a line or a sequence of its own.
+          # A deny's or a hold's note is the human's own words, which the model
+          # reads as the last clause of its tool result. Flattened to one line
+          # with no control bytes, so it cannot open a line or a sequence of its own.
           #
           # `authority` defaults to automatic so that a surface which forgets to
           # declare fails safe: its allow is suppressed over a fault like any
           # machine's. Only a surface a person answers passes `:human`.
           #
-          # @raise [ArgumentError] for an authority outside {AUTHORITIES}
-          def decide(verdict, surface:, authority: :automatic, reason: nil)
+          # @param verdict [Verdict::Approve, Verdict::Hold, Verdict::Deny]
+          # @param surface [#to_s] the surface that answered
+          # @param authority [Symbol] one of {AUTHORITIES}
+          # @return [Boolean] whether this answer won
+          # @raise [ArgumentError] for an authority outside {AUTHORITIES}, or anything but a verdict
+          def decide(verdict, surface:, authority: :automatic)
+            verdict = Verdict.coerce(verdict)
             raise ArgumentError, "unknown authority #{authority.inspect}" unless AUTHORITIES.include?(authority)
             return false if decided?
 
-            @surface = surface.to_s
-            @authority = authority
-            @decision = verdict ? :approve : :deny
-            @reason = flattened(reason) unless verdict
-            @latency = @clock.call - @asked_at
-            @promise.resolve(@decision)
+            resolve(verdict, surface, authority)
             true
           end
+
+          def resolve(verdict, surface, authority)
+            @surface = surface.to_s
+            @authority = authority
+            @decision = DECISIONS.fetch(verdict.class)
+            @reason = flattened(verdict.note) unless verdict.approved?
+            @latency = @clock.call - @asked_at
+            @promise.resolve(@decision)
+          end
+          private :resolve
 
           def humans_only? = @humans_only
 
@@ -352,11 +365,24 @@ module Lain
           end
           private :relative_path?
 
-          def approve(surface:, authority: :automatic) = decide(true, surface:, authority:)
-          def deny(surface:, authority: :automatic, reason: nil) = decide(false, surface:, authority:, reason:)
+          def approve(surface:, authority: :automatic) = decide(Verdict::Approve.new, surface:, authority:)
+
+          def deny(surface:, authority: :automatic, reason: nil)
+            decide(Verdict::Deny.new(note: reason), surface:, authority:)
+          end
+
           def human? = authority == :human
           def decided? = @promise.resolved?
           def approved? = @decision == :approve
+
+          # A hold: the human will answer this call later, so it is refused now
+          # without being a judgement against it.
+          def postponed? = @decision == :postpone
+
+          # The decision as every surface says it in a sentence, so two never word it apart.
+          #
+          # @return [String] "approved", "postponed" or "denied"
+          def verdict_face = FACES.fetch(@decision, "denied")
           def timed_out? = @surface == TIMEOUT_SURFACE
           def abandoned? = @surface == ABANDONED_SURFACE
 
@@ -668,8 +694,9 @@ module Lain
         def at_or_below?(place, path) = place == path || place.start_with?(below(path))
 
         # A machine's no, the clock's, or one a fault forced, is not a person's
-        # judgement about a path, so none of these is held against later calls.
-        def human_denial?(pending) = pending.tool_call? && pending.human? && !pending.approved?
+        # judgement about a path, and a hold is a person's "not yet", so none of
+        # these is held against later calls.
+        def human_denial?(pending) = pending.tool_call? && pending.human? && pending.decision == :deny
 
         def below(path) = path.end_with?("/") ? path : "#{path}/"
 

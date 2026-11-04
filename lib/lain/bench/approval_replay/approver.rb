@@ -13,6 +13,10 @@ module Lain
       class Approver
         SURFACE = "approval-replay"
 
+        # A recorded verdict's journal word, back to what the human answered; any
+        # other word refuses, as a recorded deny does.
+        RECORDED = { "approve" => Approval::Verdict::Approve, "postpone" => Approval::Verdict::Hold }.freeze
+
         # @param kind [Symbol] one of {APPROVERS}
         # @param calls [Enumerable<Call>]
         # @param labels [Labels] what `perfect` reads; the digests are the calls' own
@@ -43,10 +47,10 @@ module Lain
         def answer(pending)
           id = pending.tool_use_id
           @prompted << id
-          return pending.approve(surface: @surface, authority: :human) if verdict(id) == "approve"
+          given = verdict(id)
           return pending.deny(surface: @surface) if @unanswered.include?(id)
 
-          pending.deny(surface: @surface, authority: :human)
+          pending.decide(RECORDED.fetch(given, Approval::Verdict::Deny).new, surface: @surface, authority: :human)
         end
 
         def prompted?(tool_use_id) = @prompted.include?(tool_use_id)

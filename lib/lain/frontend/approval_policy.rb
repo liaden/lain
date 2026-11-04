@@ -39,21 +39,18 @@ module Lain
       # nobody answering.
       FAULT_SURFACE = "tty_fault"
 
-      # Anything else -- a bare "enter", "n", garbage, or EOF -- denies. Approving
-      # a tier-3 shell command is the one decision in this whole harness that must
-      # fail closed: an unrecognized keystroke is not consent.
-      AFFIRMATIVE = /\Ay(es)?[[:punct:]]*\z/i
-      private_constant :AFFIRMATIVE
+      # Only a blank line reaches it: {Asked#takes?} holds any other line it
+      # cannot read for the chat, and EOF is a fault. A blank still denies,
+      # because an approval must fail closed: no keystroke is not consent.
+      UNREAD = Approval::Verdict::Deny.new
+      private_constant :UNREAD
 
-      VERDICT = /\A(?:y(?:es)?|no?|nope|nah)[[:punct:]]*\z/i
-      private_constant :VERDICT
+      # Only "hold" holds here. Reply also reads "wait" and "stop" as a hold,
+      # but at this prompt those open lines meant for the chat.
+      HOLD = /\A\s*hold(?![[:alnum:]])/i
+      private_constant :HOLD
 
-      # The model reads the reason. Punctuation counts as a separator only when
-      # space follows it or it touches the word, so "n ./build" keeps its path.
-      REASONED_NO = /\A(?:nope|nah|no?)(?:(?:[[:punct:]]*\s+)+|[[:punct:]]+)(?<reason>\S.*)\z/i
-      private_constant :REASONED_NO
-
-      REFUSED = "a y or n answers the approval"
+      REFUSED = "y, n or hold answers the approval"
 
       # How a prompt another surface decided ends its line.
       CLOSED = "decided by %<surface>s: %<verdict>s"
@@ -133,7 +130,7 @@ module Lain
           answer = line.strip
           return false if answer.include?("\n")
 
-          answer.empty? || answer.match?(VERDICT) || answer.match?(REASONED_NO)
+          answer.empty? || !ApprovalPolicy.read(answer).is_a?(Approval::Reply::Unrecognised)
         end
 
         # Yields what is said after a refused line is held, so the human learns
@@ -163,7 +160,7 @@ module Lain
         # have scrolled off; a decision names its decider and the call is above it.
         def closing = @pending.unanswered? ? "#{call}: #{outcome}" : outcome
 
-        def verdict = @pending.approved? ? "approved" : "denied"
+        def verdict = @pending.verdict_face
 
         def outcome
           @pending.unanswered? ? @pending.closure : format(CLOSED, surface: @pending.surface, verdict:)
@@ -204,7 +201,20 @@ module Lain
         answer = read_until_decided(pending)
         return pending.deny(surface: FAULT_SURFACE) if answer.nil?
 
-        pending.decide(affirmative?(answer), surface: SURFACE, authority: :human, reason: reason_in(answer))
+        pending.decide(verdict_in(answer), surface: SURFACE, authority: :human)
+      end
+
+      # {Approval::Reply}'s reading of a line typed at this prompt, where a hold
+      # must be spelled "hold".
+      #
+      # @param line [String]
+      # @return [Approval::Verdict::Approve, Approval::Verdict::Hold, Approval::Verdict::Deny,
+      #   Approval::Reply::Unrecognised]
+      def self.read(line)
+        verdict = Approval::Reply.parse(line)
+        return verdict unless verdict.is_a?(Approval::Verdict::Hold) && !line.match?(HOLD)
+
+        Approval::Reply::Unrecognised.new(text: line.dup.freeze)
       end
 
       private
@@ -330,14 +340,10 @@ module Lain
         @input.gets
       end
 
-      # Fail closed: nil (EOF / closed input) short-circuits to false via safe
-      # navigation, and `|| false` maps a non-match to a Boolean so the shape of
-      # the verdict never depends on what the human typed.
-      def affirmative?(answer)
-        answer&.strip&.match?(AFFIRMATIVE) || false
+      def verdict_in(answer)
+        verdict = ApprovalPolicy.read(answer.strip)
+        verdict.is_a?(Approval::Reply::Unrecognised) ? UNREAD : verdict
       end
-
-      def reason_in(answer) = REASONED_NO.match(answer.to_s.strip)&.[](:reason)
     end
   end
 end

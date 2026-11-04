@@ -469,7 +469,7 @@ module Lain
       def plan_ladders(classifiers, root)
         triage = Approval::Escalation::Triage.new(sensitivity: classifiers, verdict: @verdict, policy: @sensitivity)
         rules = @approving.call(@rules.map { |rule| DeniesOnly.new(rule) }, classifiers)
-        asking = @approvals ? Approval::Escalation::Surfaces.new(@approvals) : Unattended.new
+        asking = @approvals ? Approval::Escalation::Surfaces.new(@approvals, denials: @denials) : Unattended.new
         { ask: confined_ladder("plan ask", triage:, rules:, asking:, otherwise: asking, root:),
           auto: confined_ladder("plan auto", triage:, rules:, asking:, otherwise: judged(classifiers), root:),
           bypass: confined_ladder("plan bypass", triage:, rules:, asking:, root:,
@@ -548,7 +548,7 @@ module Lain
       end
 
       def judged(classifiers)
-        asking = @approvals ? Approval::Escalation::Surfaces.new(@approvals) : Approval::Judged::Unattended.new
+        asking = @approvals ? Approval::Escalation::Surfaces.new(@approvals, denials: @denials) : Approval::Judged::Unattended.new
         Approval::Judged.new(judge: @judge, policy: @sensitivity, asking:, journal: @journal, display: @display,
                              facts: facts_over(classifiers), request: @request, denials: @denials)
       end

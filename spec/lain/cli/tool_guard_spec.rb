@@ -86,6 +86,7 @@ class ToolGuardSpecDecliningQueue
   module Verdict
     def self.approved? = false
     def self.timed_out? = false
+    def self.postponed? = false
   end
 
   # `outstanding:` is accepted and discarded, but cannot become the unused-
@@ -1733,7 +1734,8 @@ RSpec.describe Lain::CLI::ToolGuard do
       Sync do |task|
         ran = task.async { run_bash(board, command, id: "tu_2", **) }
         pending = task.with_timeout(5) { board.approvals.dequeue }
-        pending.decide(approve, surface: Lain::Frontend::ApprovalPolicy::SURFACE, authority: :human)
+        verdict = approve ? Lain::Approval::Verdict::Approve.new : Lain::Approval::Verdict::Deny.new
+        pending.decide(verdict, surface: Lain::Frontend::ApprovalPolicy::SURFACE, authority: :human)
         [pending, task.with_timeout(30) { ran.wait }]
       end
     end
@@ -1985,7 +1987,8 @@ RSpec.describe Lain::CLI::ToolGuard do
         ran = task.async(&call)
         parked = task.with_timeout(5) { held.approvals.dequeue }
         yield_to_trip(parked)
-        parked.decide(true, surface: Lain::Frontend::ApprovalPolicy::SURFACE, authority: :human)
+        parked.decide(Lain::Approval::Verdict::Approve.new,
+                      surface: Lain::Frontend::ApprovalPolicy::SURFACE, authority: :human)
         [parked, task.with_timeout(30) { ran.wait }]
       end
     end

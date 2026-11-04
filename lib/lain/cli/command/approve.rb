@@ -53,9 +53,8 @@ module Lain
         # wins is the queue's own doctrine); the line then NAMES the deciding
         # surface, so a "denied (timeout)" never reads as the human's no.
         def outcome_line(pending)
-          verdict = pending.approved? ? "approved" : "denied"
           surface = Frontend::ApprovalPolicy::SURFACE
-          "#{pending.tool}: #{verdict}#{" (#{pending.surface})" unless pending.surface == surface}"
+          "#{pending.tool}: #{pending.verdict_face}#{" (#{pending.surface})" unless pending.surface == surface}"
         end
       end
     end

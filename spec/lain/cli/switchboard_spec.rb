@@ -502,6 +502,24 @@ RSpec.describe Lain::CLI::Switchboard do
         expect(asked.size).to eq(6)
         expect(journal_records(journal_io, "judge_breaker_tripped")).to be_empty
       end
+
+      # Scenario: postponing in a loop trips the breaker
+      it "counts a human's postpone toward the breaker, so the 4th call reaches the human unjudged" do
+        asked = []
+        board = board_with("breaker", judge_answering(:defer, asked))
+        3.times do
+          Sync do |task|
+            call = task.async { board.policy_switch.call(gated_call, nil) }
+            task.with_timeout(1) { board.approvals.dequeue }
+                .decide(Lain::Approval::Verdict::Hold.new(note: "after lunch"), surface: "tty", authority: :human)
+            call.wait
+          end
+        end
+
+        expect(parked_under(board).notes).to eq([Lain::Approval::Judged::BROKEN_NOTE])
+        expect(asked.size).to eq(3)
+        expect(journal_records(journal_io, "judge_breaker_tripped").sole).to include("count" => 3)
+      end
     end
 
     # Scenario: a headless worker commits inside its lease
@@ -1774,6 +1792,33 @@ RSpec.describe Lain::CLI::Switchboard do
 
         expect(pending_call.notes).to eq([Lain::Approval::Judged::BROKEN_NOTE])
         expect(asked.size).to eq(3)
+      end
+
+      # Scenario: postponing in a loop trips the breaker
+      it "counts a postpone of an unconfined command under plan auto, so the judge is not asked after 3" do
+        asked = []
+        board(judge: judge_answering(:approve, asked), arms: Lain::CLI::Arms::OFF.with(judge_denials: :breaker))
+        plan!(:auto)
+        3.times do
+          Sync do |task|
+            call = task.async { board.policy_switch.call(gated_call, session) }
+            task.with_timeout(1) { board.approvals.dequeue }
+                .decide(Lain::Approval::Verdict::Hold.new(note: "after lunch"), surface: "tty", authority: :human)
+            call.wait
+          end
+        end
+        write = Struct.new(:name, :input, :tool_use_id).new("write_file", { "path" => "a.rb", "content" => "" },
+                                                            "tu_2")
+
+        pending_call = Sync do |task|
+          call = task.async { board.policy_switch.call(write, session) }
+          task.with_timeout(1) { board.approvals.dequeue }
+        ensure
+          call&.stop
+        end
+
+        expect(pending_call.notes).to eq([Lain::Approval::Judged::BROKEN_NOTE])
+        expect(asked).to eq([])
       end
 
       it "hands a call that is no command under plan auto to the judge" do

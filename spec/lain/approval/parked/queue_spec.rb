@@ -342,13 +342,14 @@ RSpec.describe Lain::Approval::Parked::Queue do
     it "refuses an authority no ruling knows" do
       pending = described_class::Pending.new(effect: tool_call, identity: Lain::Requester.main, clock: -> { 0.0 })
 
-      expect { pending.decide(true, surface: "tty", authority: :person) }.to raise_error(ArgumentError, /person/)
+      expect { pending.decide(Lain::Approval::Verdict::Approve.new, surface: "tty", authority: :person) }
+        .to raise_error(ArgumentError, /person/)
       expect(pending).not_to be_decided
     end
 
     it "decides as automatic when the surface names no authority" do
       pending = described_class::Pending.new(effect: tool_call, identity: Lain::Requester.main, clock: -> { 0.0 })
-      pending.decide(true, surface: "tty")
+      pending.decide(Lain::Approval::Verdict::Approve.new, surface: "tty")
 
       expect(pending.authority).to eq(:automatic)
     end
@@ -430,9 +431,48 @@ RSpec.describe Lain::Approval::Parked::Queue do
       blank = pending
       blank.deny(surface: "tty", reason: "  \n")
       approved = pending
-      approved.decide(true, surface: "tty", reason: "fine")
+      approved.decide(Lain::Approval::Verdict::Approve.new(note: "fine"), surface: "tty")
 
       expect([blank.reason, approved.reason]).to eq([nil, nil])
+    end
+  end
+
+  # Scenario: decide takes only a verdict
+  describe "what decides a pending" do
+    let(:verdict) { Lain::Approval::Verdict }
+
+    def pending = described_class::Pending.new(effect: tool_call, identity: Lain::Requester.main, clock: -> { 0.0 })
+
+    [true, false, "approve", :approve, nil].each do |answer|
+      it "refuses #{answer.inspect}, and nothing is approved" do
+        asked = pending
+
+        expect { asked.decide(answer, surface: "tty") }.to raise_error(ArgumentError, /not a verdict/)
+        expect(asked).not_to be_decided
+      end
+    end
+
+    it "settles approve, hold and deny as approve, postpone and deny" do
+      answers = [verdict::Approve.new, verdict::Hold.new(note: "after lunch"), verdict::Deny.new(note: "no")]
+
+      expect(answers.map { |answer| pending.tap { _1.decide(answer, surface: "tty") }.decision })
+        .to eq(%i[approve postpone deny])
+    end
+
+    it "keeps a hold's words as its reason, on one line, and approves nothing" do
+      held = pending.tap { _1.decide(verdict::Hold.new(note: "after\nlunch"), surface: "tty", authority: :human) }
+
+      expect(held).to have_attributes(reason: "after lunch", approved?: false, postponed?: true)
+    end
+
+    it "journals a hold as a postpone, with the words it was given" do
+      Sync do |task|
+        run = task.async { queue.call(tool_call, nil) }
+        queue.dequeue.decide(verdict::Hold.new(note: "after lunch"), surface: "tty", authority: :human)
+        expect(run.wait).to be(false)
+      end
+
+      expect(decision_records).to contain_exactly(a_hash_including("verdict" => "postpone", "reason" => "after lunch"))
     end
   end
 
@@ -726,6 +766,17 @@ RSpec.describe Lain::Approval::Parked::Queue do
       settled(lists("/home")) { |pending| pending.approve(surface: "spec") }
 
       expect(queue.denied(requester: "agent", path: "/home")).to be_nil
+    end
+
+    # Scenario: a postpone is not a remembered denial
+    it "remembers nothing for a postpone, so the same call parks again" do
+      settled(lists("/home")) do |pending|
+        pending.decide(Lain::Approval::Verdict::Hold.new(note: "after lunch"), surface: "spec", authority: :human)
+      end
+
+      expect(queue.denied(requester: "agent", path: "/home")).to be_nil
+      expect(queue.denied_call(requester: "agent", tool: "list_files", input: { "path" => "/home" },
+                               cwd: Lain::Session.cwd_of(nil))).to be_nil
     end
 
     it "remembers nothing for a call that names no path" do

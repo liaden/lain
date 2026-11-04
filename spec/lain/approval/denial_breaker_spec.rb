@@ -83,4 +83,34 @@ RSpec.describe Lain::Approval::DenialBreaker do
       expect([breaker.tripped?("agent"), breaker.tripped?("researcher")]).to eq([false, false])
     end
   end
+
+  # Scenario: postponing in a loop trips the breaker
+  describe "a human's answer at the asking rung" do
+    let(:queue) { Lain::Approval::Parked::Queue.new(journal:, timeout: 1) }
+    let(:surfaces) { Lain::Approval::Escalation::Surfaces.new(queue, denials: breaker) }
+    let(:effect) { Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => "ls" }) }
+
+    def answered(verdict)
+      Sync do |task|
+        ruled = task.async { surfaces.call(effect, nil) }
+        task.with_timeout(1) { queue.dequeue }.decide(verdict, surface: "tty", authority: :human)
+        task.with_timeout(1) { ruled.wait }
+      end
+    end
+
+    it "counts each postpone as a denial, and trips at the usual 3 in a row" do
+      2.times { answered(Lain::Approval::Verdict::Hold.new(note: "after lunch")) }
+      tripped_after_two = breaker.tripped?("agent")
+      answered(Lain::Approval::Verdict::Hold.new(note: "after lunch"))
+
+      expect([tripped_after_two, breaker.tripped?("agent")]).to eq([false, true])
+      expect(tripped_records.sole).to include("requester" => "agent", "count" => 3, "because" => "3 in a row")
+    end
+
+    it "never counts a human's deny" do
+      3.times { answered(Lain::Approval::Verdict::Deny.new(note: "no")) }
+
+      expect(breaker.tripped?("agent")).to be(false)
+    end
+  end
 end

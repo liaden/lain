@@ -309,6 +309,16 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       expect(result[:outcome].report).to include(Lain::Frontend::ApprovalPolicy::SURFACE, "approve")
     end
 
+    it "says a call the terminal held was postponed, not denied" do
+      result = gated do |queue|
+        queue.first.decide(Lain::Approval::Verdict::Hold.new(note: "after lunch"),
+                           surface: Lain::Frontend::ApprovalPolicy::SURFACE, authority: :human)
+        view.decide(1, "approve", generation:)
+      end
+
+      expect(result[:outcome].report).to include(Lain::Frontend::ApprovalPolicy::SURFACE, "postponed")
+    end
+
     it "refuses its OWN second answer: one row cannot be answered twice" do
       result = gated(await: true) do |_queue|
         [view.decide(1, "approve", generation:), view.decide(1, "deny", generation:)]

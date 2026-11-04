@@ -396,6 +396,32 @@ RSpec.describe Lain::Approval::Escalation do
     end
   end
 
+  # Scenario: a hold postpones the call
+  describe "a call the human postpones" do
+    let(:queue) { Lain::Approval::Parked::Queue.new(journal:, timeout: 1) }
+
+    def held(note)
+      Sync do |task|
+        ruled = task.async { described_class::Surfaces.new(queue).call(effect, nil) }
+        task.with_timeout(1) { queue.dequeue }
+            .decide(Lain::Approval::Verdict::Hold.new(note:), surface: "tty", authority: :human)
+        task.with_timeout(1) { ruled.wait }
+      end
+    end
+
+    it "is a final deny a human can still lift, telling the model the human's words and to ask again later" do
+      ruling = held("after lunch")
+
+      expect(ruling).to have_attributes(verdict: :deny, final: true, liftable: true, authority: :human)
+      expect(ruling.told).to include("postponed by the human", "after lunch", "issue it again later",
+                                     "park for an answer")
+    end
+
+    it "tells the model it was postponed when the human gave no words" do
+      expect(held(nil).told).to start_with("postponed by the human; issue it again later")
+    end
+  end
+
   # Scenario: the ladder remains fail-closed
   describe "fail-closed" do
     it "denies a call that reaches the timeout with no answer from any surface" do

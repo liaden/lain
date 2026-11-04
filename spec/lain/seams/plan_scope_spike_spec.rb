@@ -75,7 +75,8 @@ RSpec.describe "Plan scope confines a session to a spike", :seam do
     Sync do |task|
       call = task.async { dispatch(name, input) }
       pending = task.with_timeout(10) { board.approvals.dequeue }
-      pending.decide(verdict == :approve, surface: "tty", authority: :human)
+      pending.decide(verdict == :approve ? Lain::Approval::Verdict::Approve.new : Lain::Approval::Verdict::Deny.new,
+                     surface: "tty", authority: :human)
       [pending, call.wait]
     end
   end

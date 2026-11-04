@@ -95,6 +95,12 @@ RSpec.describe Lain::CLI::Command::Approve do
     expect(settled.surface).to eq("editor")
   end
 
+  it "says a call the human held was postponed, never denied" do
+    answers << "hold after lunch"
+
+    expect(approve.call("", env_over([pending("bash")]))).to eq("bash: postponed")
+  end
+
   it "names the deciding surface when another surface wins mid-drain" do
     racy = pending("bash")
     race_prompt = Lain::Frontend::ApprovalPolicy.new(reader: lambda { |_question|

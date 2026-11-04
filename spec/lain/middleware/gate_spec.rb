@@ -418,6 +418,53 @@ RSpec.describe Lain::Middleware::Gate do
     end
   end
 
+  # A human at the [y/N] prompt answers a parked call with one typed line.
+  describe "a human's answer typed at the prompt" do
+    let(:queue) { Lain::Approval::Parked::Queue.new(journal: Lain::Journal.new(io: StringIO.new), timeout: 1) }
+    let(:gate) { described_class.new(policy: Lain::Approval::Escalation::Surfaces.new(queue)) }
+
+    def answered(line)
+      terminal = Lain::Frontend::ApprovalPolicy.new(output: StringIO.new, reader: ->(_prompt) { "#{line}\n" })
+      Sync do |task|
+        asked = task.async { through(gate, tool_call("dangerous")) }
+        terminal.decide(task.with_timeout(1) { queue.dequeue })
+        task.with_timeout(1) { asked.wait }
+      end
+    end
+
+    # Scenario: a reasoned deny reaches the agent
+    it "tells the agent a reasoned deny in the human's words" do
+      result, reached = answered("n use lain epic status")
+
+      expect(result).to eq(Lain::Tool::Result.error('approval denied for tool "dangerous": use lain epic status'))
+      expect(reached).to be_empty
+    end
+
+    # Scenario: a blank answer still denies
+    it "denies on an empty line" do
+      result, reached = answered("")
+
+      expect(result).to eq(Lain::Tool::Result.error('approval denied for tool "dangerous"'))
+      expect(reached).to be_empty
+    end
+
+    # Scenario: a hold postpones the call
+    it "tells the agent a hold postponed the call, in the human's words, and to issue it again later" do
+      result, reached = answered("hold after lunch")
+
+      expect(result).to eq(Lain::Tool::Result.error('refused tool "dangerous": postponed by the human: after lunch; ' \
+                                                    "issue it again later, when it will park for an answer"))
+      expect([result.ends_turn, reached]).to eq([false, []])
+    end
+
+    it "parks the same call again after a postpone, rather than refusing it unasked" do
+      answered("hold after lunch")
+      again, = answered("y")
+
+      expect(again).to eq(Lain::Tool::Result.ok("downstream ran"))
+    end
+  end
+
   describe "the two fixed policies" do
     it "answer a ruling themselves, so neither is adapted" do
       [described_class::ApproveAll.new, described_class::DenyAll.new].each do |policy|

@@ -793,8 +793,8 @@ RSpec.describe "a plain chat's inline prompts", :seam do
         terminal.await(PlainChatPromptGuards::APPROVAL)
         terminal.type("please also fix the tests\r")
         terminal.await(/held as your next prompt: please also fix the tests/)
-        terminal.await(/a y or n answers the approval/)
-        terminal.await_asked_again_after("a y or n answers the approval")
+        terminal.await(/y, n or hold answers the approval/)
+        terminal.await_asked_again_after("y, n or hold answers the approval")
 
         expect(terminal.verdicts).to be_empty
 

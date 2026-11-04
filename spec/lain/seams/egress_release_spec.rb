@@ -73,7 +73,8 @@ RSpec.describe "A released secret reaching the egress guard", :seam do
       answerer = task.async do
         loop do
           pending = board.approvals.dequeue
-          verdict = pending.outstanding.none? || release
+          approve = pending.outstanding.none? || release
+          verdict = approve ? Lain::Approval::Verdict::Approve.new : Lain::Approval::Verdict::Deny.new
           pending.decide(verdict, surface: "spec", authority: :human)
         end
       end

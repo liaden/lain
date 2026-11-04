@@ -125,11 +125,11 @@ module Lain
         # three, because they are one fact from the human's side.
         DETACHED = "showing a parked approval needs an attached editor"
 
-        # The wire's two words, against the Booleans {Approval::Parked::Queue::Pending}
+        # The wire's two words, against the verdicts {Approval::Parked::Queue::Pending}
         # takes. A CLOSED map and never a truthiness test: an unknown word is
         # REFUSED, because the one thing an approval surface must never do is
         # let a value nobody recognises fall toward approve.
-        VERDICTS = { "approve" => true, "deny" => false }.freeze
+        VERDICTS = { "approve" => Approval::Verdict::Approve, "deny" => Approval::Verdict::Deny }.freeze
 
         # A sibling fiber on the reactor, so this is a scheduler yield rather
         # than a wall-clock stall.
@@ -381,11 +381,13 @@ module Lain
           return undecided(format(NO_ROW, line.inspect)) unless resolved.owned?
 
           word, said = words(verdict)
-          answer = VERDICTS[word]
-          return undecided(unknown(verdict)) if answer.nil?
-          return undecided(WORDLESS) if answer && said
+          kind = VERDICTS[word]
+          return undecided(unknown(verdict)) if kind.nil?
 
-          settled(resolved.owner, answer, line, said)
+          answer = kind.new(note: said)
+          return undecided(WORDLESS) if answer.approved? && said
+
+          settled(resolved.owner, answer, line)
         end
 
         # Rides the verdict wire as "mode <level>" because that is the one
@@ -418,8 +420,8 @@ module Lain
           [word.to_s.downcase, said]
         end
 
-        def settled(pending, answer, line, said)
-          return lost(pending, line) unless pending.decide(answer, surface: SURFACE, authority: :human, reason: said)
+        def settled(pending, answer, line)
+          return lost(pending, line) unless pending.decide(answer, surface: SURFACE, authority: :human)
 
           Decided.new(pending:, report: "#{pending.tool} #{outcome(pending)}")
         end
@@ -433,7 +435,7 @@ module Lain
 
         # Not the Symbol {Pending#decision} carries: "deny" reads as an
         # instruction where the sentence is about something already done.
-        def outcome(pending) = pending.approved? ? "approved" : "denied"
+        def outcome(pending) = pending.verdict_face
 
         # A word this surface does not recognise decides NOTHING rather than
         # falling toward approve, and the pending it leaves alone is still the

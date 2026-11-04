@@ -276,6 +276,7 @@ module Lain
         module Verdict
           def self.approved? = false
           def self.timed_out? = false
+          def self.postponed? = false
         end
 
         # `outstanding:` is a KEYWORD, so the name is the duck and cannot take

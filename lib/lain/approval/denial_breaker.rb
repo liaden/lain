@@ -5,8 +5,10 @@ module Lain
     # What `auto` does with a judge's refusals, per requester. The breaker
     # counts them and, past {IN_A_ROW} in a row or {PER_SESSION} in all, stops
     # asking the judge about that requester: a model refusing a run of calls is
-    # better settled by a person than by the same model again. Only the
-    # judge's denials reach it, so a human's never counts.
+    # better settled by a person than by the same model again. The judge's
+    # denials reach it, and so does each call a human postpones, since one put
+    # off again and again is better asked of the person directly; a human's
+    # deny never counts.
     #
     # A session here is one board: a resume or a restart builds a new breaker,
     # so its counts start fresh. Once tripped, the judge is not asked, so a
@@ -67,7 +69,7 @@ module Lain
       # @return [Boolean] whether the judge is no longer asked about this requester's calls
       def tripped?(requester) = @lock.synchronize { @tripped.key?(requester) }
 
-      # A judge's deny of one of this requester's calls.
+      # A judge's deny, or a human's postpone, of one of this requester's calls.
       #
       # @param requester [String]
       # @return [void]

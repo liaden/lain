@@ -260,6 +260,31 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     end
   end
 
+  # Scenario: a hold postpones the call
+  ["hold after lunch", "hold: after lunch", "Hold, after lunch"].each do |answer|
+    it "postpones on #{answer.inspect}, keeping the words after the hold" do
+      approval = pending
+      policy_for("#{answer}\n").decide(approval)
+
+      expect(approval).to have_attributes(decision: :postpone, surface: "tty", authority: :human,
+                                          reason: "after lunch")
+    end
+  end
+
+  it "postpones on hold followed by words, whatever the words" do
+    approval = pending
+    policy_for("hold on, let me check\n").decide(approval)
+
+    expect(approval).to have_attributes(decision: :postpone, reason: "on, let me check")
+  end
+
+  it "approves on an approval that carries a note" do
+    approval = pending
+    policy_for("approve, re-signed unchanged\n").decide(approval)
+
+    expect(approval).to have_attributes(decision: :approve, reason: nil)
+  end
+
   it "keeps punctuation that opens the reason itself" do
     approval = pending
     policy_for("n ./build is generated\n").decide(approval)
@@ -268,7 +293,9 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
   end
 
   # The standalone reader's decision only; the Intake holds a line {Asked#takes?} refuses before it gets here.
-  %w[n nope nah no.].push("y stay", "nobody asked", "garbage").each do |answer|
+  # Only "hold" holds at this prompt; "wait" and "stop" are how people talk to the chat.
+  %w[n nope nah no.].push("y stay", "nobody asked", "garbage", "stop, wrong file", "wait, why delete that?", "stop",
+                          "wait").each do |answer|
     it "denies on #{answer.inspect} with no reason" do
       approval = pending
       policy_for("#{answer}\n").decide(approval)
@@ -914,13 +941,15 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
 
     it "takes a verdict, an empty line and a reasoned no included" do
       lines = ["y", "Yes", "n", "no", "N", "n not now", "No. not now", "n - stay inside", "", "  ",
-               "nope", "nah", "no.", "N.", "y.", "yes!"]
+               "nope", "nah", "no.", "N.", "y.", "yes!", "hold after lunch", "hold", "approve, fine", "deny: no",
+               "hold on, let me check"]
 
       expect(lines.map { |line| asked.takes?(line) }).to all(be(true))
     end
 
     it "does not take prose, so it is held as the next prompt" do
-      lines = ["please also fix the tests", "maybe", "garbage", "yes please", "nobody asked", "y stay"]
+      lines = ["please also fix the tests", "maybe", "garbage", "yes please", "nobody asked", "y stay", "approve it",
+               "stop, wrong file", "wait, why delete that?", "stop", "wait"]
 
       expect(lines.map { |line| asked.takes?(line) }).to all(be(false))
     end
@@ -931,11 +960,11 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
       expect(blocks.map { |block| asked.takes?(block) }).to all(be(false))
     end
 
-    it "says a y or n answers the approval when it refuses a line" do
+    it "says a y, n or hold answers the approval when it refuses a line" do
       said = []
       asked.refused { |note| said << note }
 
-      expect(said).to eq(["a y or n answers the approval"])
+      expect(said).to eq(["y, n or hold answers the approval"])
     end
 
     it "does not take a /command, leading blanks or not" do
@@ -943,8 +972,8 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     end
   end
 
-  it "keeps the affirmative pattern a private implementation detail" do
-    expect { described_class::AFFIRMATIVE }.to raise_error(NameError, /private constant/)
+  it "keeps the verdict an unread line gets a private implementation detail" do
+    expect { described_class::UNREAD }.to raise_error(NameError, /private constant/)
   end
 
   # A Pending can carry the sensitive regions approving it would release

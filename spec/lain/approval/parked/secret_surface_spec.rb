@@ -505,7 +505,7 @@ RSpec.describe Lain::Approval::Parked::SecretSurface do
       # The human decides WHILE the oracle is mid-answer, so the surface's own
       # approve arrives second and first-answer-wins makes it a quiet no-op.
       tier = SecretSurfaceSpecSupport::ScriptedOracle.new do
-        pending.decide(false, surface: "tty")
+        pending.decide(Lain::Approval::Verdict::Deny.new, surface: "tty")
         { "verdict" => "approve", "confidence" => 1.0 }
       end
       surface(tier).sweep(queue)
