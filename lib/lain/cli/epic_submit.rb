@@ -100,8 +100,8 @@ module Lain
         end
 
         # @param question [String] the artifact's own rendering
-        # @return [Lain::Promise] resolves with an {Lain::Epic::Gate::Answer} once
-        #   the read returns
+        # @return [Lain::Promise] resolves with the {Lain::Epic::Gate::Said} words
+        #   once the read returns
         def ask(question)
           task = Async::Task.current
           promise = Promise.new
@@ -131,7 +131,7 @@ module Lain
           true
         end
 
-        def answer(reply) = Lain::Epic::GateReply.answer(reply, surface: SURFACE)
+        def answer(reply) = Lain::Epic::Gate::Said.new(words: reply, surface: SURFACE)
       end
 
       # The asker the chat lends this command, heard in the words its gate's
@@ -159,9 +159,9 @@ module Lain
         end
       end
 
-      # One asked question's promise, awaited as a verdict. A value that is
-      # already one passes through untouched: a standing answer, or this
-      # command's own {Prompt}.
+      # One asked question's promise, awaited as the human's words for the gate
+      # to read. A value that is already a verdict passes through untouched: a
+      # standing answer.
       class Hearing
         # Only a promise naming its question answers `#digest`, because the gate
         # retires exactly the questions that do.
@@ -180,8 +180,8 @@ module Lain
         def verdict(resolved)
           return resolved if resolved.respond_to?(:approved?)
 
-          Lain::Epic::GateReply.answer(resolved.respond_to?(:words) ? resolved.words : resolved,
-                                       surface: Prompt::SURFACE)
+          Lain::Epic::Gate::Said.new(words: resolved.respond_to?(:words) ? resolved.words : resolved,
+                                     surface: Prompt::SURFACE)
         end
 
         # A hearing whose question is in the record.
@@ -361,8 +361,7 @@ module Lain
         #   digest; an adjudicator's evidence note is judge-side text and is not shown
         def reason(digest)
           decision = latest(digest)
-          decision.reason if [Prompt::SURFACE, Lain::Epic::GateReply::UNRECOGNISED,
-                              Lain::Epic::GateReply::HELD].include?(decision&.answered_by)
+          decision.reason if [Prompt::SURFACE, Lain::Epic::GateReply::HELD].include?(decision&.answered_by)
         end
 
         # @param digest [String] the submitted artifact's address
@@ -531,7 +530,7 @@ module Lain
           outcome = Sync { @policy.decide(@wave, gate: @gate, stage: @stage.name, epic_slug: @wave.slug) }
           window = @journal.expired(first)
           return unanswered(window) if window
-          return held if outcome.held
+          return held if outcome.held.size == @wave.ids.size
 
           reported = @wave.submissions.map { |submission| report(submission, outcome) }
           Said.new(text: [heading(outcome), *@standing, *reported.map(&:first)].join("\n"),
@@ -547,7 +546,8 @@ module Lain
         def named = "wave #{@wave.number} of epic #{@wave.slug}"
 
         def heading(outcome)
-          "#{@stage} for #{named}: #{outcome.approved.size} approved, #{outcome.denied.size} not, " \
+          "#{@stage} for #{named}: #{outcome.approved.size} approved, #{outcome.held.size} held, " \
+            "#{outcome.verdicts.size - outcome.approved.size - outcome.held.size} not, " \
             "by policy #{@policy.name}"
         end
 
@@ -557,11 +557,18 @@ module Lain
           return ["approved #{id} #{submission.digest}\n  #{@advances.fetch(id).call}", true] if
             outcome.approved.include?(id)
 
+          return [held_issue(submission, outcome.held.fetch(id)), false] if outcome.held.key?(id)
+
           parked = @journal.deferred?(submission.digest) && parked_item(submission)
           return ["deferred #{id} #{submission.digest}\n  parked in #{parked.partition} -- nothing advanced", true] if
             parked
 
           [denied(submission), false]
+        end
+
+        def held_issue(submission, note)
+          ["held #{submission.issue_id} #{submission.digest} -- the human asked to wait, nothing advanced",
+           *("  note: #{note.gsub("\n", "\n    ")}" if note)].join("\n")
         end
 
         def parked_item(submission)

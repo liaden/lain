@@ -553,20 +553,16 @@ RSpec.describe Lain::Epic::Gate do
     end
   end
 
-  # The gate reads a verdict and nothing else: which words approve, and which
-  # surface typed them, is decided before an Answer reaches it. So an answer
-  # that carries a reason of its own -- a reply nobody could classify, say --
-  # has that reason journaled beside the verdict.
+  # An answer that carries a reason of its own -- a note the human wrote, say
+  # -- has that reason journaled beside the verdict, over the caller's.
   describe "an answer that carries its own reason" do
     it "journals the answer's reason over the caller's" do
-      unclassified = described_class::Answer.new(approved: false, surface: "unrecognised",
-                                                 reason: "the reply \"lgtm\" names no verdict")
-      asker = scripted_asker { |promise, _q| promise.resolve(unclassified) }
+      noted = described_class::Answer.new(approved: false, surface: "human", reason: "wrong crate name")
+      asker = scripted_asker { |promise, _q| promise.resolve(noted) }
 
       call(gate, asker:, reason: "the caller's note")
 
-      expect(decisions.first).to include("answered_by" => "unrecognised",
-                                         "reason" => "the reply \"lgtm\" names no verdict")
+      expect(decisions.first).to include("answered_by" => "human", "reason" => "wrong crate name")
     end
 
     it "journals the caller's reason when the answer carries none" do
@@ -576,8 +572,124 @@ RSpec.describe Lain::Epic::Gate do
     end
 
     it "keeps a carried reason frozen, so the answer stays shareable" do
-      expect(described_class::Answer.new(approved: false, surface: +"unrecognised", reason: +"why"))
+      expect(described_class::Answer.new(approved: false, surface: +"human", reason: +"why"))
         .to be_deeply_frozen
+    end
+  end
+
+  # A surface hands the gate what the human wrote, and the gate reads it
+  # through the one reply grammar.
+  describe "a human's words" do
+    def research
+      Lain::Epic::Submission.research(text: "round 2 notes", slug: "alpha")
+    end
+
+    def words_in_turn(*replies, asked: [])
+      queue = replies.dup
+      scripted_asker do |promise, question|
+        asked << question
+        promise.resolve(described_class::Said.new(words: queue.shift, surface: "human"))
+      end
+    end
+
+    def decide(asker)
+      Sync { gate.call(research, asker:, stage: "research", epic_slug: "alpha") }
+    end
+
+    # Scenario: an approval with a note approves
+    it "approves an approval with a note, carrying the note, and records nothing as unrecognised" do
+      approved = decide(words_in_turn("approve, round 2 research, re-signed unchanged"))
+
+      expect(approved).to be(true)
+      expect(decisions.map { |record| record.values_at("approved", "answered_by", "reason") })
+        .to eq([[true, "human", "round 2 research, re-signed unchanged"]])
+      expect(journal_io.string).not_to include("unrecognised")
+    end
+
+    # Scenario: an unrecognised reply asks again
+    it "asks again with the reply instruction on an unrecognised reply, recording no decision for it" do
+      asked = []
+      approved = decide(words_in_turn("aprove", "approve", asked:))
+
+      expect(approved).to be(true)
+      expect(asked.size).to eq(2)
+      expect(asked.last).to include('"aprove"', Lain::Epic::GateReply::INSTRUCTION)
+      expect(decisions.map { |record| record.values_at("approved", "answered_by") }).to eq([[true, "human"]])
+    end
+
+    it "asks again after each of 2 unreadable replies in a row" do
+      asked = []
+      approved = decide(words_in_turn("aprove", "lgtm", "approve", asked:))
+
+      expect(approved).to be(true)
+      expect(asked.size).to eq(3)
+      expect(decisions.map { |record| record.values_at("approved", "answered_by") }).to eq([[true, "human"]])
+    end
+
+    it "withdraws the unread question before it asks again" do
+      events = []
+      replies = %w[aprove approve]
+      said = described_class::Said
+      asker = Object.new
+      asker.define_singleton_method(:ask) do |_question|
+        Lain::Promise.new.tap do |promise|
+          events << [:ask, promise.object_id]
+          promise.resolve(said.new(words: replies.shift, surface: "human"))
+        end
+      end
+      asker.define_singleton_method(:withdraw) { |promise| events << [:withdraw, promise.object_id] }
+
+      decide(asker)
+
+      first, second = events.select { _1.first == :ask }.map(&:last)
+      expect(events.first(3)).to eq([[:ask, first], [:withdraw, first], [:ask, second]])
+    end
+
+    # A window that restarted at each re-ask would never close while unreadable
+    # replies kept arriving inside it; here the 6th reply would approve.
+    it "ends a bounded window on time while unreadable replies keep arriving" do
+      asks = 0
+      asker = scripted_asker do |promise, _question|
+        asks += 1
+        words = asks >= 6 ? "approve" : "aprove"
+        Async do
+          sleep 0.06
+          promise.resolve(described_class::Said.new(words:, surface: "human"))
+        end
+      end
+
+      approved = Sync { gate(timeout: 0.1).call(research, asker:, stage: "research", epic_slug: "alpha") }
+
+      expect(approved).to be(false)
+      expect(asks).to be < 6
+      expect(decisions.map { |record| record["answered_by"] }).to eq([described_class::TIMEOUT_SURFACE])
+    end
+
+    it "decides nothing while every reply is unrecognised" do
+      subject_gate = gate(timeout: 0.05)
+      asks = 0
+      asker = scripted_asker do |promise, _question|
+        asks += 1
+        promise.resolve(described_class::Said.new(words: "aprove", surface: "human")) if asks == 1
+      end
+
+      Sync { subject_gate.call(research, asker:, stage: "research", epic_slug: "alpha") }
+
+      expect(decisions.map { |record| record["answered_by"] }).to eq([described_class::TIMEOUT_SURFACE])
+    end
+
+    it "denies on the end of input, naming nobody's answer" do
+      decide(words_in_turn(nil))
+
+      expect(decisions.map { |record| record.values_at("approved", "answered_by") })
+        .to eq([[false, Lain::Epic::GateReply::EOF]])
+    end
+
+    it "holds on a hold word, with the words after it as the note" do
+      decide(words_in_turn("hold back after lunch"))
+
+      expect(decisions.map { |record| record.values_at("approved", "answered_by", "reason") })
+        .to eq([[false, Lain::Epic::GateReply::HELD, "back after lunch"]])
     end
   end
 
@@ -727,13 +839,23 @@ RSpec.describe Lain::Epic::Gate do
       Lain::Epic::Submission.wave(slug: "frugirl", views:, number: 2)
     end
 
-    def words_asker(words)
-      scripted_asker { |promise, _q| promise.resolve(Lain::Epic::GateReply.answer(words, surface: "human")) }
+    def words_asker(*replies, asked: [])
+      queue = replies.dup
+      scripted_asker do |promise, question|
+        asked << question
+        promise.resolve(described_class::Said.new(words: queue.shift, surface: "human"))
+      end
     end
 
-    def decide(words, subject_gate = gate)
-      Sync { subject_gate.call(wave, asker: words_asker(words), stage: "issue_plan", epic_slug: "frugirl") }
+    def decide(*replies, subject_gate: gate, asked: [], of: wave)
+      Sync do
+        subject_gate.call(of, asker: words_asker(*replies, asked:), stage: "issue_plan", epic_slug: "frugirl")
+      end
     end
+
+    def verdict(kind, note = nil) = Lain::Approval::Verdict.const_get(kind).new(note:)
+
+    def outcome_of(verdicts) = described_class::Outcome.new(verdicts:, surface: "human")
 
     def by_issue = decisions.to_h { |record| [record["issue_id"], record.values_at("approved", "reason")] }
 
@@ -754,65 +876,149 @@ RSpec.describe Lain::Epic::Gate do
 
     it "approves every issue on approve, each under its own digest" do
       subject_gate = gate
-      outcome = decide("approve", subject_gate)
+      outcome = decide("approve", subject_gate:)
 
-      expect(outcome).to eq(described_class::Outcome.new(approved: %w[b c d], denied: {}, held: false))
+      expect(outcome).to eq(outcome_of(%w[b c d].to_h { [_1, verdict(:Approve)] }))
       expect(decisions.map { |record| record.values_at("issue_id", "artifact_digest", "approved") })
         .to eq(%w[b c d].map { |id| [id, digest_of(id), true] })
       expect(%w[b c d].map { |id| subject_gate.approved?(digest_of(id)) }).to all(be(true))
     end
 
-    # Scenario: a wave is approved but for one issue
-    it "denies only the issue a deny names, with that reason, and approves the rest" do
-      subject_gate = gate
-      outcome = decide("deny c: the end time is missing", subject_gate)
+    # Scenario: a wave reply resolves per issue
+    it "resolves a reply issue by issue, the leading bare verdict deciding every issue it does not name" do
+      leaves = %w[a b c].map { |id| Lain::Epic::Issue.new(id:, title: "the #{id} issue") }
+      root = Lain::Epic::Issue.new(id: "z", title: "the root", blocks: %w[a b c])
+      graph = Lain::Epic::Graph.new(issues: [root, *leaves])
+      views = %w[a b c].map { |id| Lain::Epic::IssueView.new(issue: graph.fetch(id), graph:, authored: "") }
+      abc = Lain::Epic::Submission.wave(slug: "frugirl", views:, number: 2)
 
-      expect(outcome).to eq(described_class::Outcome.new(approved: %w[b d],
-                                                         denied: { "c" => "the end time is missing" }, held: false))
+      outcome = decide("approve; deny b: wrong crate; hold c", of: abc)
+
+      expect(outcome.verdicts).to eq("a" => verdict(:Approve), "b" => verdict(:Deny, "wrong crate"),
+                                     "c" => verdict(:Hold))
+      expect(decisions.map { |record| record.values_at("issue_id", "approved", "answered_by", "reason") })
+        .to eq([["a", true, "human", nil], ["b", false, "human", "wrong crate"],
+                ["c", false, Lain::Epic::GateReply::HELD, nil]])
+    end
+
+    it "says in the reply instruction that a leading bare verdict decides every issue not named" do
+      expect(wave.gate_question).to include(Lain::Epic::GateReply::WAVE_INSTRUCTION)
+      expect(Lain::Epic::GateReply::WAVE_INSTRUCTION)
+        .to include("approve; deny b: wrong crate; hold c", "every issue the reply does not name")
+    end
+
+    it "carries a note on a named approval" do
+      outcome = decide("deny: not yet; approve c: looks right")
+
+      expect(outcome.verdicts).to eq("b" => verdict(:Deny, "not yet"), "c" => verdict(:Approve, "looks right"),
+                                     "d" => verdict(:Deny, "not yet"))
+    end
+
+    it "asks again when the reply leaves an issue undecided, and decides on the next reply" do
+      asked = []
+      outcome = decide("deny c: the end time is missing", "approve; deny c: the end time is missing", asked:)
+
+      expect(asked.size).to eq(2)
+      expect(asked.last).to include("b, d")
+      expect(outcome.denied).to eq("c" => "the end time is missing")
       expect(by_issue).to eq("b" => [true, nil], "c" => [false, "the end time is missing"], "d" => [true, nil])
-      expect(subject_gate.approved?(digest_of("c"))).to be(false)
     end
 
-    # Scenario: a mistyped id denies the whole wave
-    it "denies the whole wave when the reply names an id outside it, saying which" do
-      outcome = decide("deny cc: the end time is missing")
+    # Scenario: a mistyped id is asked again, never read as another issue
+    it "asks again when the reply names an id outside the wave, saying which" do
+      asked = []
+      decide("deny cc: the end time is missing", "deny", asked:)
 
-      expect(outcome.approved).to be_empty
-      expect(outcome.denied.keys).to eq(%w[b c d])
+      expect(asked.last).to include("cc is not in wave 2")
       expect(decisions.map { |record| record["approved"] }).to eq([false, false, false])
-      expect(decisions.map { |record| record["reason"] }).to all(include("cc is not in wave 2"))
-      expect(decisions.map { |record| record["answered_by"] }.uniq).to eq([Lain::Epic::GateReply::UNRECOGNISED])
-    end
-
-    it "denies the whole wave when a later clause names an id outside it" do
-      outcome = decide("deny b: too big; cc: rename it")
-
-      expect(outcome.approved).to be_empty
-      expect(decisions.map { |record| record["reason"] }).to all(include("cc is not in wave 2", "rename it"))
-    end
-
-    it "denies the whole wave when a new line opens with an id outside it" do
-      outcome = decide("deny b: too big\ncc: rename it")
-
-      expect(outcome.approved).to be_empty
-      expect(decisions.map { |record| record["reason"] }).to all(include("cc is not in wave 2"))
+      expect(decisions.map { |record| record["reason"] }).to all(be_nil)
     end
 
     {
-      "a capitalised id on a new line" => "deny b: x\nC: y",
-      "a capitalised id after a semicolon" => "deny b: x; C: y",
-      "a mixed-case word after a semicolon" => "deny b: x; Cc: y",
-      "an underscored word after a semicolon" => "deny b: x; c_d: y"
+      "a capitalised id" => "approve; deny C: y",
+      "a mixed-case word" => "approve; deny Cc: y",
+      "an underscored word" => "approve; deny c_d: y",
+      "an issue named twice" => "approve; deny c: x; hold c",
+      "2 bare verdicts" => "approve; deny",
+      "an unrecognised clause" => "approve; deny c: x; approve it",
+      "an unrecognised first clause" => "aprove; deny b",
+      "a note naming an id in another case" => "approve; deny b: C too",
+      "an approval whose note says deny" => "approve; approve b: no, deny it",
+      "an approval after a deny whose note says deny" => "deny; approve b: actually deny",
+      "an approval whose note says nope" => "approve; approve b: nope",
+      "an approval whose note says no in fullwidth" => "approve, \uFF4E\uFF4F",
+      "an approval whose note says deny in fullwidth" => "approve, \uFF44\uFF45\uFF4E\uFF59",
+      "an approval whose note says rejected" => "approve; approve b: rejected",
+      "an approval whose note says not ok" => "approve, not ok",
+      "an approval whose note says don't" => "approve; approve b: don't ship",
+      "an approval whose note says cancel" => "approve: cancel"
     }.each do |shape, reply|
-      it "denies the whole wave when a later clause opens with #{shape}" do
-        outcome = decide(reply)
+      it "asks again, deciding nothing, on #{shape}" do
+        asked = []
+        decide(reply, "deny", asked:)
 
-        expect(outcome.approved).to be_empty
-        expect(decisions.map { |record| record["answered_by"] }.uniq).to eq([Lain::Epic::GateReply::UNRECOGNISED])
+        expect(asked.size).to eq(2)
+        expect(decisions.map { |record| record["approved"] }).to eq([false, false, false])
       end
     end
 
     # Scenario: a bare deny denies everything
+    describe "a reply that could be read 2 ways" do
+      def real_wave
+        root = Lain::Epic::Issue.new(id: "asr", title: "the root", blocks: %w[asr-vad asr-vad-live asr-adapter])
+        leaves = %w[asr-vad asr-vad-live asr-adapter].map { |id| Lain::Epic::Issue.new(id:, title: "the #{id} issue") }
+        graph = Lain::Epic::Graph.new(issues: [root, *leaves])
+        views = %w[asr-vad asr-vad-live asr-adapter].map do |id|
+          Lain::Epic::IssueView.new(issue: graph.fetch(id), graph:, authored: "")
+        end
+        Lain::Epic::Submission.wave(slug: "frugirl", views:, number: 2)
+      end
+
+      ["approve; deny asr-vad asr-vad-live", "approve; deny asr-vad, asr-vad-live",
+       "approve; deny asr-vad and asr-vad-live", "approve; deny asr-vad, asr-vad-live: same bug",
+       "deny asr-vad asr-vad-live; approve asr-adapter", "approve, but deny asr-vad",
+       "deny: approve asr-adapter later", "approve; hold asr-vad: also deny asr-adapter",
+       # 1 guard each: a note without a colon, an id in an id clause's note, a verdict word in a bare note
+       "approve; deny asr-vad wrong crate", "approve; deny asr-vad: same as asr-adapter",
+       "approve, but deny the rest"].each do |reply|
+        it "asks again on #{reply.inspect}, recording no decision for it" do
+          asked = []
+          decide(reply, "deny", asked:, of: real_wave)
+
+          expect(asked.size).to eq(2)
+          expect(decisions.map { |record| record.values_at("approved", "reason") }).to all(eq([false, nil]))
+        end
+      end
+
+      it "decides a note after a colon on an id clause" do
+        outcome = decide("approve; deny asr-vad-live: same bug", of: real_wave)
+
+        expect(outcome.verdicts).to eq("asr-vad" => verdict(:Approve), "asr-vad-live" => verdict(:Deny, "same bug"),
+                                       "asr-adapter" => verdict(:Approve))
+      end
+    end
+
+    # A note after an id's colon cannot open a clause, so a verdict word in it
+    # is only a word.
+    {
+      "approve; deny b: no tests" => { "b" => [:Deny, "no tests"] },
+      "approve; deny b: stop doing that" => { "b" => [:Deny, "stop doing that"] },
+      "approve; hold c: wait for review" => { "c" => [:Hold, "wait for review"] },
+      "approve; deny b: n+1 query" => { "b" => [:Deny, "n+1 query"] },
+      "approve; deny c: y" => { "c" => [:Deny, "y"] },
+      "approve; deny b :x" => { "b" => [:Deny, "x"] },
+      "approve; approve b: yes, ship it" => { "b" => [:Approve, "yes, ship it"] },
+      "approve: lgtm" => %w[b c d].to_h { [_1, [:Approve, "lgtm"]] },
+      "approve; approve b: ok" => { "b" => [:Approve, "ok"] }
+    }.each do |reply, named|
+      it "decides #{reply.inspect}, keeping the note" do
+        approved = wave.ids.to_h { [_1, verdict(:Approve)] }
+        expected = approved.merge(named.transform_values { |kind, note| verdict(kind, note) })
+
+        expect(decide(reply).verdicts).to eq(expected)
+      end
+    end
+
     it "denies every issue with a bare deny's reason" do
       outcome = decide("deny: not yet")
 
@@ -820,25 +1026,20 @@ RSpec.describe Lain::Epic::Gate do
       expect(by_issue.values).to all(eq([false, "not yet"]))
     end
 
-    # Scenario: a semicolon inside a reason is not a new clause
-    it "starts a clause only at a semicolon or line that opens with an id in the wave" do
-      outcome = decide("deny c: keep the WAV; add the end time; d: rename it")
+    # Scenario: a semicolon inside a note is not a new clause
+    it "opens a clause only at a semicolon or line that starts with a verdict word" do
+      outcome = decide("approve; deny c: keep the WAV; add the end time\nhold d: rename it")
 
-      expect(outcome.denied).to eq("c" => "keep the WAV; add the end time", "d" => "rename it")
+      expect(outcome.denied).to eq("c" => "keep the WAV; add the end time")
+      expect(outcome.held).to eq("d" => "rename it")
       expect(outcome.approved).to eq(%w[b])
-    end
-
-    it "starts a clause at a line that opens with an id in the wave" do
-      outcome = decide("deny c: keep the WAV\nadd the end time\nd: rename it")
-
-      expect(outcome.denied).to eq("c" => "keep the WAV\nadd the end time", "d" => "rename it")
     end
 
     it "holds the whole wave on hold, approving and denying nothing" do
       subject_gate = gate
-      outcome = decide("hold on", subject_gate)
+      outcome = decide("hold on", subject_gate:)
 
-      expect(outcome).to eq(described_class::Outcome.new(approved: [], denied: {}, held: true))
+      expect(outcome.held).to eq(%w[b c d].to_h { [_1, "on"] })
       expect(decisions.map { |record| record["answered_by"] }).to eq([Lain::Epic::GateReply::HELD] * 3)
       expect(%w[b c d].map { |id| subject_gate.approved?(digest_of(id)) }).to all(be(false))
     end
@@ -846,7 +1047,7 @@ RSpec.describe Lain::Epic::Gate do
     it "denies the whole wave when the window closes" do
       outcome = Sync { gate(timeout: 0.02).call(wave, asker: silent_asker, stage: "issue_plan", epic_slug: "frugirl") }
 
-      expect(outcome.denied.keys).to eq(%w[b c d])
+      expect(outcome.denied).to eq(%w[b c d].to_h { [_1, nil] })
       expect(decisions.map { |record| record["answered_by"] }).to eq([described_class::TIMEOUT_SURFACE] * 3)
     end
   end
@@ -949,6 +1150,16 @@ RSpec.describe Lain::Epic::Gate do
     it "reads its verdict through #approved?" do
       expect(described_class.approve("human").approved?).to be(true)
       expect(described_class.deny("timeout").approved?).to be(false)
+    end
+
+    it "carries the verdict it was built from, a hold under the held surface" do
+      hold = Lain::Approval::Verdict::Hold.new(note: "after lunch")
+      answer = described_class.of(hold, surface: "human")
+
+      expect([answer.verdict, answer.surface]).to eq([hold, Lain::Epic::GateReply::HELD])
+      expect(described_class.of(Lain::Approval::Verdict::Approve.new(note: "fine"), surface: "human").verdict)
+        .to eq(Lain::Approval::Verdict::Approve.new(note: "fine"))
+      expect(described_class.deny("timeout").verdict).to eq(Lain::Approval::Verdict::Deny.new)
     end
   end
 end

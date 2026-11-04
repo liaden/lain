@@ -280,6 +280,8 @@ RSpec.describe Lain::Epic::Submission do
   describe Lain::Epic::GateReply do
     def answer(words) = described_class.answer(words, surface: "human")
 
+    def unheard = Lain::Epic::Gate::Unheard
+
     ["deny: the summarizer question needs a benchmark first", "no, the summarizer question needs a benchmark first",
      "n - the summarizer question needs a benchmark first"].each do |reply|
       it "reads #{reply.inspect} as the human's denial carrying the words after the denial word" do
@@ -290,6 +292,17 @@ RSpec.describe Lain::Epic::Submission do
       end
     end
 
+    it "reads an approval with a note after a comma as the human's approval carrying the note" do
+      result = answer("approve, re-signed unchanged")
+
+      expect([result.approved?, result.surface, result.reason]).to eq([true, "human", "re-signed unchanged"])
+      expect(result.verdict).to eq(Lain::Approval::Verdict::Approve.new(note: "re-signed unchanged"))
+    end
+
+    it "drops the line break a terminal read ends with" do
+      expect(answer("deny: too broad\n").reason).to eq("too broad")
+    end
+
     it "keeps every word after the denial word, a leading because included" do
       expect(answer("DENIED because X").reason).to eq("because X")
     end
@@ -298,7 +311,7 @@ RSpec.describe Lain::Epic::Submission do
       expect(answer("No. too broad").reason).to eq("too broad")
     end
 
-    ["deny:", "deny: ", "no -", "n,"].each do |reply|
+    ["deny:", "deny: ", "n,"].each do |reply|
       it "reads #{reply.inspect}, a separator and nothing after it, as a reasonless denial" do
         result = answer(reply)
 
@@ -337,21 +350,6 @@ RSpec.describe Lain::Epic::Submission do
       expect([kept.bytesize <= limit, notice]).to eq([true, "#{kept.bytesize} of #{total} bytes]"])
     end
 
-    it "clips a multibyte unrecognised reply at 300 bytes without splitting a character" do
-      reason = answer("maybe #{"日" * 200}").reason
-      quoted = reason[/the reply "(.*)\.\.\." is none/m, 1]
-
-      expect(reason).to be_valid_encoding
-      expect(quoted.bytesize).to be <= 300
-    end
-
-    it "clips the quoted reply of an unrecognised long reply so the reason stays bounded" do
-      reason = answer("maybe #{"x" * 50_000}").reason
-
-      expect(reason.length).to be < 500
-      expect(reason).to include("...").and end_with("so the gate denied it")
-    end
-
     it "keeps a bare denial reasonless" do
       expect(answer("Deny.").reason).to be_nil
     end
@@ -360,18 +358,21 @@ RSpec.describe Lain::Epic::Submission do
       expect(answer("deny: Split M3.").reason).to eq("Split M3.")
     end
 
-    it "still denies an approval word followed by words as unrecognised" do
-      result = answer("yes but trim the scope")
-
-      expect(result.surface).to eq("unrecognised")
-      expect(result.reason).to include("yes but trim the scope")
+    it "denies a blank reply, as the prompt's cue says" do
+      expect([answer("  \n").approved?, answer("  \n").surface]).to eq([false, "human"])
     end
 
-    it "does not take a word merely starting with a denial word for one" do
-      expect(answer("nothing to add").surface).to eq("unrecognised")
+    it "denies the end of input as nobody's answer" do
+      expect(answer(nil).surface).to eq(described_class::EOF)
     end
 
-    ["hold", "wait", "stop", "Hold.", "  WAIT! \n"].each do |reply|
+    ["yes but trim the scope", "approve it", "nothing to add", "lgtm", "holding on", "waiter"].each do |reply|
+      it "hears #{reply.inspect} as no verdict at all, carrying the words" do
+        expect(answer(reply)).to eq(unheard.new(words: reply, why: nil))
+      end
+    end
+
+    ["hold", "wait", "stop", "Hold.", "  WAIT! \n", "stop?"].each do |reply|
       it "reads #{reply.inspect} as a held answer, approving nothing and carrying no note" do
         result = answer(reply)
 
@@ -383,9 +384,23 @@ RSpec.describe Lain::Epic::Submission do
       expect(answer("hold, I'll run the review myself").reason).to eq("I'll run the review myself")
     end
 
-    ["holding on", "stop?", "waiter"].each do |reply|
-      it "reads #{reply.inspect}, no hold word standing alone, as unrecognised" do
-        expect(answer(reply).surface).to eq("unrecognised")
+    describe ".again" do
+      it "leads the question asked again with the reply it could not read" do
+        expect(described_class.again(unheard.new(words: "lgtm", why: nil), "Approve it?"))
+          .to eq('The reply "lgtm" decides nothing, so nothing was decided. Approve it?')
+      end
+
+      it "leads with the reason a reply was not read when one is known" do
+        expect(described_class.again(unheard.new(words: "deny cc", why: "cc is not in wave 2"), "Approve it?"))
+          .to eq("cc is not in wave 2, so nothing was decided. Approve it?")
+      end
+
+      it "clips a long multibyte reply at 300 bytes without splitting a character" do
+        lead = described_class.again(unheard.new(words: "maybe #{"日" * 200}", why: nil), "Q")
+        quoted = lead[/The reply "(.*)\.\.\." decides/m, 1]
+
+        expect(lead).to be_valid_encoding
+        expect(quoted.bytesize).to be <= 300
       end
     end
   end
@@ -393,17 +408,17 @@ RSpec.describe Lain::Epic::Submission do
   describe "gate_question" do
     # The question is the only place a human learns which replies decide, so it
     # names both vocabularies and says what becomes of anything else.
-    it "says what approves, what denies, and that any other reply is recorded as unrecognised and denies" do
+    it "says what approves, what denies, and that any other reply is asked again" do
       question = described_class.research(text: "notes", slug: "demo").gate_question
 
       expect(question).to include("approve", "approved", "y", "yes", "deny", "denied", "n", "no")
-      expect(question).to include("any other reply is recorded as unrecognised and denies")
+      expect(question).to include("any other reply decides nothing and is asked again")
     end
 
-    it "says a reason may follow a denial word" do
+    it "names the separator a note follows, an approval's included" do
       question = described_class.research(text: "notes", slug: "demo").gate_question
 
-      expect(question).to include("a reason may follow a denial word")
+      expect(question).to include("after a comma", '"approve, re-signed unchanged"')
     end
 
     describe "a quoted review" do
@@ -447,7 +462,7 @@ RSpec.describe Lain::Epic::Submission do
     it "names the words that hold the agent until the human speaks" do
       question = described_class.research(text: "notes", slug: "demo").gate_question
 
-      expect(question).to include("hold, wait, stop")
+      expect(question).to include("hold, wait or stop")
     end
 
     it "names the stage, the slug, and the issue count for an epic_plan" do
@@ -514,7 +529,7 @@ RSpec.describe Lain::Epic::Submission do
       it "asks about each issue on its own line, naming the wave and the per-issue deny" do
         expect(wave.gate_question).to include("issue_plan", "wave 2", "\n  issue b \"Issue b\"; blocked by a",
                                               "\n  issue c \"Issue c\"", "lain://epic/demo/issues/c.md",
-                                              "deny <id>: <reason>")
+                                              "approve; deny b: wrong crate; hold c")
       end
 
       it "counts a lone issue in the singular" do

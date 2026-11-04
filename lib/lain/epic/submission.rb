@@ -123,80 +123,76 @@ module Lain
       end
     end
 
-    # What a human's reply to {Submission#gate_question} decides. It lives beside
-    # the question because the question is the only place a human is told which
-    # words count, so the words it names and the words read back are one list.
+    # What a human's reply to {Submission#gate_question} decides, read through
+    # {Approval::Reply}, the one reply grammar. It lives beside the question
+    # because the question is the only place a human is told which words
+    # count, so the words it names and the words read back are one list.
     #
-    # Only a word the question names is a human's verdict. Anything else still
-    # denies -- an approval is the one reading nobody may guess into -- but is
-    # journaled as {UNRECOGNISED} with the reply in its reason, because
-    # "the human denied this" would be a claim nobody made. End of input is
-    # {EOF} for the same reason.
+    # A reply the grammar cannot read is no verdict, so it is {Gate::Unheard}
+    # and the gate asks again: "the human denied this" would be a claim
+    # nobody made. A blank reply denies, as the prompt's cue says, and the end
+    # of input is {EOF}, because nobody typed the denial it stands for.
     #
-    # A hold word is no verdict either: the human asked for the work to wait
-    # for them, so it is journaled as {HELD}, approving nothing and revoking
-    # nothing. Like a denial word it only has to stand alone at the start, so
-    # "hold on" holds, with "on" as its note.
+    # A hold is journaled under {HELD}, approving nothing and revoking nothing.
     module GateReply
-      APPROVALS = %w[approve approved y yes].freeze
-      DENIALS = %w[deny denied n no].freeze
-      HOLDS = %w[hold wait stop].freeze
-
-      UNRECOGNISED = "unrecognised"
       EOF = "eof"
       HELD = "held"
 
-      # How a reply is spoken, as opposed to what it says: case, surrounding
-      # space and a closing full stop or exclamation mark. Only those two: a
-      # trailing `?` turns "approve" into a question back, and an ellipsis into
-      # a hesitation, and neither is a verdict anybody gave.
-      TRAILING_PUNCTUATION = /[.!]+\z/
+      def self.words(kind)
+        *leading, last = Approval::Reply::WORDS.fetch(kind)
+        "#{leading.join(", ")} or #{last}"
+      end
+      private_class_method :words
 
-      INSTRUCTION = "Reply #{APPROVALS.join(", ")} to approve, #{DENIALS.join(", ")} to deny, " \
-                    "or #{HOLDS.join(", ")} to pause the work until you speak again; " \
-                    "a reason may follow a denial word, and a note a hold word; " \
-                    "any other reply is recorded as #{UNRECOGNISED} and denies.".freeze
+      INSTRUCTION = "Reply #{words(Approval::Verdict::Approve)} to approve, " \
+                    "#{words(Approval::Verdict::Deny)} to deny, or #{words(Approval::Verdict::Hold)} to pause " \
+                    "the work until you speak again. A note may follow the word after a comma, as in " \
+                    "\"approve, re-signed unchanged\" or \"deny, wrong crate\"; any other reply decides " \
+                    "nothing and is asked again.".freeze
 
-      # A wave names its issues by id, so a denial may name the ones it means.
-      WAVE_INSTRUCTION = "Reply #{APPROVALS.first} to approve every issue in the wave, #{DENIALS.first} to deny " \
-                         "every one, or #{DENIALS.first} <id>: <reason> to deny only the issues named, starting " \
-                         "each further one with ; <id>: or on a new line; the issues not named are approved. " \
-                         "Reply #{HOLDS.join(", ")} to pause the whole wave; any other reply, or an id not in " \
-                         "the wave, is recorded as #{UNRECOGNISED} and denies every issue.".freeze
+      WAVE_INSTRUCTION = "Reply approve, deny or hold alone to decide every issue in the wave. To decide issues " \
+                         "one by one, write clauses split by ; or new lines, each a verdict word, an issue id and " \
+                         "an optional note after a colon, as in \"approve; deny b: wrong crate; hold c\". A leading " \
+                         "bare verdict decides every issue the reply does not name; without one, name every issue. " \
+                         "A reply naming an issue outside the wave, or any other reply, decides nothing and is " \
+                         "asked again."
 
-      SEPARATOR = '[\s.!:,;\-]'
-
-      def self.word_then_reason(words) = /\A\s*(?:#{words.join("|")})(?:#{SEPARATOR}*\z|#{SEPARATOR}+(?<reason>.*\S))/mi
-      private_class_method :word_then_reason
-
-      DENIAL = word_then_reason(DENIALS)
-      HOLD = word_then_reason(HOLDS)
-
-      UNRECOGNISED_CLIP = 300
+      UNHEARD_CLIP = 300
 
       # @param words [String, nil] what the human wrote; nil when nothing was
       # @param surface [String] who is credited with a recognised verdict
-      # @return [Epic::Gate::Answer]
+      # @return [Gate::Answer, Gate::Unheard]
       def self.answer(words, surface:)
-        return Epic::Gate::Answer.deny(EOF) if words.nil?
+        return Gate::Answer.deny(EOF) if words.nil?
+        return Gate::Answer.deny(surface) if words.strip.empty?
 
-        word = words.to_s.strip.downcase.sub(TRAILING_PUNCTUATION, "")
-        return Epic::Gate::Answer.approve(surface) if APPROVALS.include?(word)
-        return led(DENIAL, words, surface) if DENIAL.match?(words.to_s)
-        return led(HOLD, words, HELD) if HOLD.match?(words.to_s)
+        verdict = read(words)
+        return Gate::Unheard.new(words:) if verdict.is_a?(Approval::Reply::Unrecognised)
 
-        Epic::Gate::Answer.new(approved: false, surface: UNRECOGNISED, reason: unrecognised(words))
+        Gate::Answer.of(verdict, surface:)
+      end
+
+      # @param text [String] one reply, or one wave clause with its id taken out
+      # @return [Approval::Verdict::Approve, Approval::Verdict::Hold, Approval::Verdict::Deny,
+      #   Approval::Reply::Unrecognised] the verdict, its note made legible
+      def self.read(text)
+        verdict = Approval::Reply.parse(text.strip)
+        return verdict if verdict.is_a?(Approval::Reply::Unrecognised) || verdict.note.nil?
+
+        verdict.class.new(note: legible_text(verdict.note.strip))
+      end
+
+      # @param unheard [Gate::Unheard] the reply that decided nothing
+      # @param question [String] the artifact's own question
+      # @return [String] the question asked again, led by why
+      def self.again(unheard, question)
+        why = unheard.why || "The reply #{clipped(unheard.words.to_s.strip).inspect} decides nothing"
+        "#{why}, so nothing was decided. #{question}"
       end
 
       # @param answered_by [#to_s, nil] a decision's surface
       # @return [Boolean] whether the human held the gate rather than deciding it
       def self.held?(answered_by) = answered_by.to_s == HELD
-
-      def self.led(pattern, words, surface)
-        reason = pattern.match(words.to_s)[:reason]
-        Epic::Gate::Answer.new(approved: false, surface:, reason: reason && legible_text(reason))
-      end
-      private_class_method :led
 
       # A reply cannot pose as a second result line: control bytes are written
       # out, and the reader indents every continuation line.
@@ -212,18 +208,12 @@ module Lain
       # @param text [String] what the human wrote
       # @param limit [Integer] the most bytes kept
       # @return [String] the text on one line, control bytes written out, cut to `limit` bytes with `...`
-      def self.clipped(text, limit: UNRECOGNISED_CLIP)
+      def self.clipped(text, limit: UNHEARD_CLIP)
         escaped = Utf8.escaped(text.gsub(/\s+/, " "))
         return escaped if escaped.bytesize <= limit
 
         "#{escaped.byteslice(0, limit).scrub("")}..."
       end
-
-      def self.unrecognised(words)
-        "the reply #{clipped(words.to_s).inspect} is none of #{(APPROVALS + DENIALS + HOLDS).join(", ")}, " \
-          "so the gate denied it"
-      end
-      private_class_method :unrecognised
     end
 
     # One artifact bound to one stage of an epic's pipeline: the gate's whole
@@ -477,14 +467,15 @@ module Lain
       # still decided under its own {Submission}, so the wave adds a question
       # and a reading of the reply, and no gate identity of its own.
       #
-      # A denial is read against the wave's ids only once they are known: a
-      # clause opens only at the start, at `; <id>:` or at a line opening
-      # `<id>:`, so a semicolon or newline inside a reason stays in it. Any
-      # clause naming an id outside the wave denies every issue, because the
-      # issue it meant to deny is otherwise the one it approves.
+      # A reply is clauses, each opened by a verdict word at the start, after
+      # `;` or at a line start, so a semicolon inside a note stays in it. A
+      # clause naming an id is read by {GateReply.read} with the id taken out;
+      # a bare one decides every issue no clause names. Any reply that leaves
+      # an issue undecided, or names an id outside the wave, decides nothing:
+      # the issue it meant is otherwise the one it decides wrongly.
       #
       # `standing` names the wave's issues left out of this question because
-      # their approval stands, so a deny naming one is told so, not called a typo.
+      # their approval stands, so a clause naming one is told so, not called a typo.
       Wave = Data.define(:slug, :number, :submissions, :standing, :review) do
         def initialize(slug:, number:, submissions:, standing: [], review: nil)
           super(slug:, number:, submissions:, standing: standing.map { -_1.to_s }.freeze,
@@ -502,64 +493,119 @@ module Lain
             *submissions.map { |submission| "  #{submission.fact}" }, GateReply::WAVE_INSTRUCTION].compact.join("\n")
         end
 
-        # @param answer [Gate::Answer] the reply as {GateReply.answer} read it
-        # @return [Gate::Answer] the same reply, or an unrecognised denial when
-        #   any clause names an id outside this question
-        def heard(answer)
-          stray = named(answer).find { |id| !ids.include?(id) }
-          return answer if stray.nil?
+        # @param said [Gate::Said] what the human wrote
+        # @return [Gate::Outcome, Gate::Unheard] each issue's verdict, or why the reply decided nothing
+        def heard(said)
+          return outcome(GateReply.answer(said.words, surface: said.surface)) if said.words.to_s.strip.empty?
 
-          Gate::Answer.new(approved: false, surface: GateReply::UNRECOGNISED,
-                           reason: "#{unasked(stray)}, so the gate denied the whole wave: #{answer.reason}")
+          readings = said.words.split(Submission::WaveReading::CLAUSE).map { Submission::WaveReading.new(self, _1) }
+          unheard = readings.lazy.filter_map(&:refusal).first || undecided(readings)
+          return Gate::Unheard.new(words: said.words, why: unheard) if unheard
+
+          Gate::Outcome.new(verdicts: decided(readings), surface: said.surface)
         end
 
-        # @param answer [Gate::Answer] a reply {#heard} has read
+        # @param answer [Gate::Answer] one answer for the whole wave
         # @return [Gate::Outcome]
-        def outcome(answer)
-          return Gate::Outcome.new(approved: ids, denied: {}, held: false) if answer.approved?
-          return Gate::Outcome.new(approved: [], denied: {}, held: true) if GateReply.held?(answer.surface)
+        def outcome(answer) = Gate::Outcome.new(verdicts: ids.to_h { [_1, answer.verdict] }, surface: answer.surface)
 
-          denied = clauses(answer) || ids.to_h { |id| [id, answer.reason] }
-          Gate::Outcome.new(approved: ids - denied.keys, denied:, held: false)
+        # @param id [String] an id a clause named
+        # @return [String, nil] why the id is not one this question asks about
+        def unasked(id)
+          return if ids.include?(id)
+          return "#{id} is in wave #{number} but was not asked this time: its approval stands" if standing.include?(id)
+
+          "#{id} is not in wave #{number} (#{(ids + standing).join(", ")})"
         end
 
         private
 
-        def worded?(answer)
-          !answer.approved? && !answer.reason.nil? && answer.surface != GateReply::UNRECOGNISED &&
-            !GateReply.held?(answer.surface)
+        def undecided(readings)
+          named = readings.filter_map(&:id)
+          bare = readings.count { _1.id.nil? }
+          return "the reply gives #{bare} bare verdicts" if bare > 1
+
+          twice = named.tally.select { _2 > 1 }.keys
+          return "the reply names #{twice.join(", ")} twice" unless twice.empty?
+
+          missing = ids - named
+          "the reply decides nothing for #{missing.join(", ")}" if bare.zero? && !missing.empty?
         end
 
-        # Wider than an id on purpose: a word in another case or with an
-        # underscore is not the wave id it resembles, and must fail closed.
-        def named(answer)
-          return [] unless worded?(answer)
+        def decided(readings)
+          bare = readings.find { _1.id.nil? }&.verdict
+          named = readings.select(&:id).to_h { [_1.id, _1.verdict] }
+          ids.to_h { [_1, named.fetch(_1) { bare }] }
+        end
+      end
 
-          answer.reason.scan(/(?:\A|[;\n])\s*([A-Za-z0-9][\w-]*)[ \t]*:/).flatten
+      # One clause of a wave's reply: a verdict word, then an id the wave
+      # knows or any word followed by a colon, then a note after a colon. Ids
+      # are matched case and all, so a word that only resembles one fails
+      # closed. A clause that could be read 2 ways decides nothing: an id
+      # followed by anything but a colon, a note naming an id, a verdict word
+      # in a bare deny or hold note, or a word taking an approval back may
+      # mean a second issue the reading would decide wrongly.
+      class WaveReading
+        WORDS = Approval::Reply::WORDS.values.flatten.freeze
+        # Words that take an approval back, which its note may not hold: the
+        # deny and hold words, and the plain negations a human types.
+        AGAINST = (Approval::Reply::WORDS.fetch(Approval::Verdict::Deny) +
+                   Approval::Reply::WORDS.fetch(Approval::Verdict::Hold) +
+                   %w[reject rejected not don't dont cancel cancelled decline declined veto vetoed]).freeze
+        TOKEN = /[[:alpha:]]+(?:'[[:alpha:]]+)*/
+        WORD = WORDS.sort_by { -_1.size }.join("|")
+        CLAUSE = /[;\n](?=[ \t]*(?:#{WORD})(?![\w-]))/i
+        ID = /[A-Za-z0-9][\w-]*/
+        SHAPE = /\A\s*(?<word>#{WORD})[ \t]+(?<id>#{ID})(?<rest>.*)\z/mi
+        NOTE = /\A(?:[ \t]*:.*)?\z/m
+
+        attr_reader :id, :verdict
+
+        # @param wave [Wave] the question this clause answers
+        # @param clause [String] one clause of the reply
+        def initialize(wave, clause)
+          @wave = wave
+          @clause = clause
+          shape = SHAPE.match(clause)
+          @id = shape[:id] if shape && named?(shape)
+          @loose = @id && !NOTE.match?(shape[:rest])
+          @verdict = GateReply.read(@id ? "#{shape[:word]}: #{shape[:rest].sub(/\A[ \t]*:?/, "")}" : clause)
         end
 
-        def unasked(stray)
-          return "#{stray} is in wave #{number} but was not asked this time: its approval stands" if
-            standing.include?(stray)
+        # @return [String, nil] why this clause decides nothing
+        def refusal
+          return @wave.unasked(id) if id && @wave.unasked(id)
+          return "the clause #{quoted} gives #{id} a note without a colon, so it reads 2 ways" if @loose
+          return "the clause #{quoted} decides nothing" if verdict.is_a?(Approval::Reply::Unrecognised)
 
-          "#{stray} is not in wave #{number} (#{(ids + standing).join(", ")})"
+          "the note in #{quoted} names #{tangled.join(", ")}, so it reads 2 ways" unless tangled.empty?
         end
 
-        def clauses(answer)
-          return unless worded?(answer) && ids.include?(named(answer).first)
+        private
 
-          answer.reason.split(/[;\n](?=[ \t]*(?:#{opener})[ \t]*:)/).each_with_object({}) do |clause, denied|
-            id, why = clause.match(/\A\s*(#{opener})[ \t]*:(.*)\z/m).captures
-            denied[id] = joined(denied[id], why.strip)
-          end
+        def known = @wave.ids + @wave.standing
+
+        def named?(shape) = known.include?(shape[:id]) || shape[:rest].match?(/\A[ \t]*:/)
+
+        def quoted = GateReply.clipped(@clause.strip).inspect
+
+        # A deny or hold note after an id's colon cannot open a clause, so it
+        # may hold any word; an approval is the one reading nobody may guess
+        # into, so its note may not take it back. Ids in a note match in any
+        # case, since a human naming one there was not typing a clause.
+        #
+        # NFKC first, so a fullwidth "ｎｏ" reads as the "no" it shows.
+        def tangled
+          note = verdict.note.to_s.unicode_normalize(:nfkc).tr("’", "'")
+          named = note.scan(ID).map(&:downcase)
+          known.select { named.include?(_1.downcase) } + (note.downcase.scan(TOKEN) & refused_words)
         end
 
-        # Longest first, so an id that prefixes another cannot claim its clause.
-        def opener = ids.sort_by { -_1.size }.map { Regexp.escape(_1) }.join("|")
+        def refused_words
+          return AGAINST if verdict.approved?
 
-        def joined(earlier, why)
-          said = [earlier, why].compact.reject(&:empty?).join("; ")
-          said unless said.empty?
+          id ? [] : WORDS
         end
       end
     end

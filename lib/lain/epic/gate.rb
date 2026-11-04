@@ -203,7 +203,7 @@ module Lain
         # @return [Bounded]
         def self.bounded(seconds) = Bounded.new(seconds)
 
-        # Arms exactly one reactor timer, for the duration of the block.
+        # Arms one reactor timer per wait, for what is left of the window.
         class Bounded
           # @return [Numeric] the window this arms, for {#await}'s
           #   fired-through-the-window report
@@ -213,8 +213,17 @@ module Lain
             @seconds = seconds
           end
 
-          def around(task, &block)
-            task.with_timeout(@seconds, &block)
+          # A question asked again waits only for what is left, so replies
+          # that decide nothing cannot hold the window open.
+          #
+          # @return [Opened] this window, its clock started now
+          def open = Opened.new(seconds:, opened: RunClock::MONOTONIC.call)
+
+          # A window whose clock is running.
+          Opened = Data.define(:seconds, :opened) do
+            def around(task, &)
+              task.with_timeout([seconds - (RunClock::MONOTONIC.call - opened), 0].max, &)
+            end
           end
         end
 
@@ -223,6 +232,8 @@ module Lain
         # {Async::Cancel} -- Ctrl-C included -- ever ends the wait this wraps.
         module Unbounded
           def self.seconds = nil
+
+          def self.open = self
 
           def self.around(_task)
             yield
@@ -259,6 +270,17 @@ module Lain
         def self.approve(surface) = new(approved: true, surface:)
         def self.deny(surface) = new(approved: false, surface:)
 
+        # A hold is journaled under {GateReply::HELD}, whoever gave it, so
+        # every reader of the record tells it from a denial.
+        #
+        # @param verdict [Approval::Verdict::Approve, Approval::Verdict::Hold, Approval::Verdict::Deny]
+        # @param surface [#to_s] who gave it
+        # @return [Answer]
+        def self.of(verdict, surface:)
+          verdict = Approval::Verdict.coerce(verdict)
+          new(approved: verdict.approved?, surface: verdict.held? ? GateReply::HELD : surface, reason: verdict.note)
+        end
+
         def initialize(approved:, surface:, reason: nil)
           surface = -surface.to_s
           Contracts::Answer.check!(approved:, surface:)
@@ -267,25 +289,53 @@ module Lain
         end
 
         def approved? = approved
+
+        # @return [Approval::Verdict::Approve, Approval::Verdict::Hold, Approval::Verdict::Deny]
+        def verdict
+          kind = if approved then Approval::Verdict::Approve
+                 elsif GateReply.held?(surface) then Approval::Verdict::Hold
+                 else Approval::Verdict::Deny
+                 end
+          kind.new(note: reason)
+        end
       end
 
-      # What a wave's one answer decided, issue by issue: the ids approved,
-      # the ids denied (each to its reason, nil when none was given), and
-      # whether the human held the whole wave instead.
-      Outcome = Data.define(:approved, :denied, :held) do
-        def initialize(approved:, denied:, held:)
-          super(approved: approved.map { -_1.to_s }.freeze,
-                denied: denied.to_h { |id, why| [-id.to_s, why&.dup&.freeze] }.freeze, held:)
+      # What a human wrote, as a surface hands it over: the gate reads it,
+      # because only the artifact knows whether a wave's clauses apply.
+      # `words` is nil when the input ended with nothing written.
+      Said = Data.define(:words, :surface) do
+        def initialize(words:, surface:) = super(words: words&.dup&.freeze, surface: -surface.to_s)
+      end
+
+      # A reply that decided nothing, and why when more is known than that
+      # the grammar could not read it. The gate asks again.
+      Unheard = Data.define(:words, :why) do
+        def initialize(words:, why: nil) = super(words: words&.dup&.freeze, why: why&.dup&.freeze)
+      end
+
+      # What a wave's one answer decided, issue by issue, and who gave it.
+      Outcome = Data.define(:verdicts, :surface) do
+        def initialize(verdicts:, surface:)
+          super(verdicts: verdicts.to_h { |id, verdict| [-id.to_s, Approval::Verdict.coerce(verdict)] }.freeze,
+                surface: -surface.to_s)
         end
+
+        # @return [Array<String>] the ids approved
+        def approved = verdicts.select { _2.approved? }.keys
+
+        # @return [Hash{String => String, nil}] each id denied, to its reason
+        def denied = notes(&:denied?)
+
+        # @return [Hash{String => String, nil}] each id held, to its note
+        def held = notes(&:held?)
 
         # @param issue_id [String] one issue of the wave
-        # @param heard [Answer] the wave's answer, which names who gave it
         # @return [Answer] the verdict journaled for that one issue
-        def answer(issue_id, heard)
-          return Answer.new(approved: true, surface: heard.surface) if approved.include?(issue_id)
+        def answer(issue_id) = Answer.of(verdicts.fetch(issue_id), surface:)
 
-          Answer.new(approved: false, surface: heard.surface, reason: held ? heard.reason : denied[issue_id])
-        end
+        private
+
+        def notes(&) = verdicts.select { |_, verdict| yield(verdict) }.transform_values(&:note)
       end
 
       # @param journal [#record] where verdicts land as evidence; required, not
@@ -341,7 +391,11 @@ module Lain
         decided = { epic_slug:, stage:, policy:, evidence_digest:, reason:, issue_id:, criteria_digest: }
         started = @clock.call
         asked = asker.ask(artifact.gate_question)
-        answer, latency = awaited(asked, asker, started, artifact, **decided)
+        answer, latency = awaited(asked, asker, started, artifact, **decided) do |unheard|
+          withdrawn(asker, asked)
+          retired(asked)
+          asked = asker.ask(GateReply.again(unheard, artifact.gate_question))
+        end
 
         # Journal FIRST, register second, never the other way round: a journal
         # that raises -- a full disk, or a contract refusing a nil digest --
@@ -489,10 +543,9 @@ module Lain
       def ballot(artifact, answer)
         return [answer.approved?, [[artifact.digest, answer, {}]]] unless artifact.respond_to?(:submissions)
 
-        heard = artifact.heard(answer)
-        outcome = artifact.outcome(heard)
+        outcome = answer.is_a?(Outcome) ? answer : artifact.outcome(answer)
         [outcome, artifact.submissions.map do |submission|
-          [submission.digest, outcome.answer(submission.issue_id, heard),
+          [submission.digest, outcome.answer(submission.issue_id),
            { issue_id: submission.issue_id, criteria_digest: submission.criteria_digest }]
         end]
       end
@@ -522,9 +575,16 @@ module Lain
       #
       # The wait is journaled inside the same scope, so a cancellation landing
       # while that record is written still closes it with a decision.
+      #
+      # A reply that decided nothing is handed to the block, which asks again
+      # and answers the new promise; the new wait gets only what is left of
+      # the window opened for the first.
       def awaited(asked, asker, started, artifact, **decided)
         waiting(artifact, asker, **decided)
-        await(asked, started)
+        window = @window.open
+        heard = await(asked, started, artifact, window)
+        heard = await(yield(heard.first), started, artifact, window) while heard.first.is_a?(Unheard)
+        heard
       rescue Async::Cancel
         interrupted(artifact, started, **decided)
         raise
@@ -604,10 +664,17 @@ module Lain
       # cancelled wait unwinds through {#awaited}'s own rescue, which needs
       # the same reference to report the same elapsed time this method would
       # have.
-      def await(promise, started)
-        [@window.around(task) { promise.await }, @clock.call - started]
+      def await(promise, started, artifact, window)
+        [read(window.around(task) { promise.await }, artifact), @clock.call - started]
       rescue Async::TimeoutError
         [Answer.deny(TIMEOUT_SURFACE), @window.seconds]
+      end
+
+      def read(resolved, artifact)
+        return resolved unless resolved.is_a?(Said)
+        return artifact.heard(resolved) if artifact.respond_to?(:heard)
+
+        GateReply.answer(resolved.words, surface: resolved.surface)
       end
 
       # `current?` rather than `current`, so the precondition is a CHECK rather

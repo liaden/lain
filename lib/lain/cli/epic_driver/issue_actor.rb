@@ -54,6 +54,10 @@ module Lain
         class Earlier
           DELETE = "delete"
 
+          # How a reply is spoken rather than what it says: a closing full stop
+          # or exclamation mark. A `?` makes it a question back, not a delete.
+          SPOKEN = /[.!]+\z/
+
           UNFINISHED = " (a delete lain left unfinished)"
 
           # One branch deleted on the human's word, and the anchor its old tip
@@ -137,7 +141,7 @@ module Lain
           def delete?(standing) = answered(@asker.ask(question(standing)))
 
           def answered(asked)
-            reply(heard(asked)).strip.downcase.sub(Lain::Epic::GateReply::TRAILING_PUNCTUATION, "") == DELETE
+            reply(heard(asked)).strip.downcase.sub(SPOKEN, "") == DELETE
           ensure
             settled(asked)
           end

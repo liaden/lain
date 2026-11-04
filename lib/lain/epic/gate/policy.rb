@@ -330,8 +330,8 @@ module Lain
             end
             return verdicts.values.first unless artifact.respond_to?(:submissions)
 
-            Outcome.new(approved: verdicts.select { _2 }.keys, denied: verdicts.reject { _2 }.transform_values { nil },
-                        held: false)
+            judged = verdicts.transform_values { _1 ? Approval::Verdict::Approve.new : Approval::Verdict::Deny.new }
+            Outcome.new(verdicts: judged, surface: Adjudicator::SURFACE)
           end
 
           private

@@ -17,7 +17,11 @@ module EpicSubmitSpecSupport
 
     def never_parking = self
 
-    def call(role, _context_mode, _prompt) = Lain::Tool::Result.ok(@answers.fetch(role))
+    # An answer may be a callable, to answer each prompt on its own.
+    def call(role, _context_mode, prompt)
+      answer = @answers.fetch(role)
+      Lain::Tool::Result.ok(answer.respond_to?(:call) ? answer.call(prompt) : answer)
+    end
   end
 
   # The three things the adjudication pair reads off a backend; `provider` is
@@ -68,7 +72,12 @@ RSpec.describe Lain::CLI::EpicSubmit do
   # A terminal a human answers. `instance_double(IO)` is what makes
   # `respond_to?(:tty?)` true without a pty, which is the one question the
   # command asks before it decides it has an asker at all.
-  def tty(reply = "y\n") = instance_double(IO, tty?: true, gets: reply)
+  # Each read takes the next reply, and the last one repeats.
+  def tty(*replies)
+    instance_double(IO, tty?: true).tap do |input|
+      allow(input).to receive(:gets).and_return(*(replies.empty? ? ["y\n"] : replies))
+    end
+  end
 
   def command(gates: hands_off, input: tty, output: StringIO.new, approval_timeout: 300)
     described_class.new(root:, paths:, config: config(gates, approval_timeout:), input:, output:)
@@ -395,8 +404,8 @@ RSpec.describe Lain::CLI::EpicSubmit do
       %w[a b c d].each { |id| home.issue(id).write("the prose for #{id}\n") }
     end
 
-    def asking(reply, output: StringIO.new)
-      command(gates: hands_off.merge("issue_plan" => "interactive"), input: tty("#{reply}\n"), output:)
+    def asking(*replies, output: StringIO.new)
+      command(gates: hands_off.merge("issue_plan" => "interactive"), input: tty(*replies.map { "#{_1}\n" }), output:)
     end
 
     def plan_digest(id)
@@ -407,7 +416,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
     # Scenario: a wave is approved but for one issue
     it "approves the wave but for the issue a deny names, and names all 3 outcomes" do
-      said = asking("deny c: the end time is missing").submit("issue_plan", wave: 2)
+      said = asking("approve; deny c: the end time is missing").submit("issue_plan", wave: 2)
 
       expect(verdicts).to eq("b" => [true, nil], "c" => [false, "the end time is missing"], "d" => [true, nil])
       expect(said.status).to eq(1)
@@ -417,19 +426,27 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
     # Scenario: implementation still needs each issue's own approval
     it "still refuses c's implementation, naming c's issue_plan gate, while b's plan stands" do
-      asking("deny c: the end time is missing").submit("issue_plan", wave: 2)
+      asking("approve; deny c: the end time is missing").submit("issue_plan", wave: 2)
 
       expect(command.ensure_plan_approved!("b")).to eq(plan_digest("b"))
       expect { command.ensure_plan_approved!("c") }
         .to raise_error(described_class::PlanNotApproved, /"c".*issue_plan #{plan_digest("c")}/m)
     end
 
-    # Scenario: a mistyped id denies the whole wave
-    it "denies b, c and d when the reply names an id outside the wave, saying so" do
-      said = asking("deny cc: the end time is missing").submit("issue_plan", wave: 2)
+    # Scenario: a mistyped id is asked again
+    it "asks again when the reply names an id outside the wave, saying so, and decides on the next reply" do
+      screen = StringIO.new
+      asking("deny cc: the end time is missing", "deny", output: screen).submit("issue_plan", wave: 2)
 
-      expect(verdicts.values.map(&:first)).to eq([false, false, false])
-      expect(said.text).to include("cc is not in wave 2")
+      expect(screen.string).to include("cc is not in wave 2")
+      expect(verdicts).to eq(%w[b c d].to_h { |id| [id, [false, nil]] })
+    end
+
+    it "reports a held issue as held, beside the issues decided" do
+      said = asking("approve; hold c: after lunch").submit("issue_plan", wave: 2)
+
+      expect(said.status).to eq(1)
+      expect(said.text).to include("approved b", "held c #{plan_digest("c")}", "note: after lunch", "approved d")
     end
 
     # Scenario: a bare deny denies everything
@@ -440,8 +457,8 @@ RSpec.describe Lain::CLI::EpicSubmit do
     end
 
     # Scenario: a semicolon inside a reason is not a new clause
-    it "keeps a semicolon inside a reason, and starts a clause at the next id in the wave" do
-      asking("deny c: keep the WAV; add the end time; d: rename it").submit("issue_plan", wave: 2)
+    it "keeps a semicolon inside a reason, and starts a clause at the next verdict word" do
+      asking("approve; deny c: keep the WAV; add the end time; deny d: rename it").submit("issue_plan", wave: 2)
 
       expect(verdicts).to eq("b" => [true, nil], "c" => [false, "keep the WAV; add the end time"],
                              "d" => [false, "rename it"])
@@ -492,6 +509,26 @@ RSpec.describe Lain::CLI::EpicSubmit do
       expect(said.status).to eq(0)
     end
 
+    it "journals each issue's own adjudicated verdict, a deny beside the approvals" do
+      judge = ->(prompt) { prompt.include?("issue c ") ? "DENY" : "APPROVE" }
+      spawn = EpicSubmitSpecSupport::ScriptedRoleSpawn.new(evidence_researcher: "the plan names its files",
+                                                           gate_adjudicator: judge)
+      adjudicating = described_class.new(root:, paths:, config: config(hands_off.merge("issue_plan" => "adjudicated")),
+                                         role_spawn: spawn, brief: ->(artifact) { "read #{artifact.issue_id}" })
+
+      said = adjudicating.submit("issue_plan", wave: 2)
+
+      expect(verdicts.transform_values(&:first)).to eq("b" => true, "c" => false, "d" => true)
+      expect(said.status).to eq(1)
+      expect(said.text).to include("2 approved, 0 held, 1 not", "approved b", "denied c", "approved d")
+    end
+
+    it "counts a held issue on its own in the heading" do
+      said = asking("approve; hold c: after lunch").submit("issue_plan", wave: 2)
+
+      expect(said.text).to include("2 approved, 1 held, 0 not")
+    end
+
     # A new edge or a status mark reopens one issue's gate; its approved
     # siblings stand, so only the reopened issue is asked again.
     it "asks again only about an issue whose plan changed since the wave was approved" do
@@ -539,10 +576,11 @@ RSpec.describe Lain::CLI::EpicSubmit do
       asking("approve").submit("issue_plan", wave: 2)
       home.issue("c").write("the prose for c, revised\n")
 
-      said = asking("deny b: x").submit("issue_plan", wave: 2)
+      screen = StringIO.new
+      asking("deny b: x", "approve", output: screen).submit("issue_plan", wave: 2)
 
-      expect(said.text).to include("b is in wave 2 but was not asked this time: its approval stands")
-      expect(said.text).not_to include("b is not in wave 2")
+      expect(screen.string).to include("b is in wave 2 but was not asked this time: its approval stands")
+      expect(screen.string).not_to include("b is not in wave 2")
       expect(command.ensure_plan_approved!("b")).to eq(plan_digest("b"))
     end
 
@@ -1085,6 +1123,20 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
       # The human's side of the gate, run beside the submit the way the chat's
       # drain runs beside the driver: it waits for the question, then acts.
+      # Each reply answers the next question the gate asks.
+      # A reply the gate never asks for is left unsent, and the replier stops with the submit.
+      def answered_in_turn(*replies)
+        Sync do |task|
+          replier = task.async do
+            replies.reduce(nil) do |answered, reply|
+              task.yield until asker.pending? && asker.last_question.digest != answered
+              asker.last_question.digest.tap { asker.reply(reply, _1) }
+            end
+          end
+          seat(approval_timeout: 5).submit("research").text.tap { replier.stop }
+        end
+      end
+
       def submitted_while
         Sync do |task|
           task.async do
@@ -1181,14 +1233,21 @@ RSpec.describe Lain::CLI::EpicSubmit do
           end
         end
 
-        ["lgtm", "approve it", "", "approve?", "yes?"].each do |reply|
-          it "denies #{reply.inspect} as unrecognised, carrying the reply in the reason" do
-            said = submitted_while { |question| asker.reply(reply, question.digest) }
+        ["lgtm", "approve it", "approve?", "yes?"].each do |reply|
+          it "asks again after #{reply.inspect}, recording no decision for it" do
+            said = answered_in_turn(reply, "deny")
 
             expect(said).to include("denied")
-            expect(verdicts).to eq([[false, "unrecognised"]])
-            expect(gate_decisions.first["reason"]).to include(reply.inspect)
+            expect(verdicts).to eq([[false, "human"]])
+            expect(asker.last_question.body.to_s).to include("The reply", reply)
           end
+        end
+
+        it "approves with the note after a comma" do
+          expect(answered_in_turn("approve, round 2 research, re-signed unchanged")).to include("approved")
+
+          expect(gate_decisions.map { |record| record.values_at("approved", "answered_by", "reason") })
+            .to eq([[true, "human", "round 2 research, re-signed unchanged"]])
         end
 
         it "journals the words after a denial as the human's reason and shows them under denied" do
@@ -1198,12 +1257,6 @@ RSpec.describe Lain::CLI::EpicSubmit do
           expect(said).to include("needs a benchmark first")
           expect(verdicts).to eq([[false, "human"]])
           expect(gate_decisions.first["reason"]).to eq("needs a benchmark first")
-        end
-
-        it "shows an unrecognised reply's reason under denied" do
-          said = submitted_while { |question| asker.reply("lgtm", question.digest) }
-
-          expect(said).to include("reason:", "lgtm")
         end
 
         it "carries a long numbered reason whole, every line indented under reason:" do
@@ -1564,12 +1617,14 @@ RSpec.describe Lain::CLI::EpicSubmit do
         .to raise_error(Lain::Epic::Gate::Policies::Refusal, /research.*interactive.*nowhere to write/m)
     end
 
-    it "denies an unrecognised reply as unrecognised, never as the human's denial" do
-      said = command(gates: hands_off.merge("research" => "interactive"), input: tty("maybe\n")).submit("research").text
+    it "asks again after an unrecognised reply, and records only the reply that decided" do
+      screen = StringIO.new
+      said = command(gates: hands_off.merge("research" => "interactive"), input: tty("maybe\n", "n\n"),
+                     output: screen).submit("research").text
 
       expect(said).to include("denied")
-      expect(gate_decisions.map { |record| record.values_at("approved", "answered_by") })
-        .to eq([[false, "unrecognised"]])
+      expect(screen.string).to include('The reply "maybe" decides nothing')
+      expect(gate_decisions.map { |record| record.values_at("approved", "answered_by") }).to eq([[false, "human"]])
     end
 
     # Scenario: end of input is not a human's answer
