@@ -768,14 +768,29 @@ RSpec.describe Lain::Confine::Profile do
       expect(workspace.hidden.grep(/\A#{Regexp.escape(@dir)}/)).to eq([])
     end
 
-    it "runs a real target/ inside the root, and nothing for a target/ that is a link or absent" do
-      absent = workspace.exec_dirs
-      FileUtils.mkdir_p(target = File.join(root, "target"))
-      real = workspace.exec_dirs
-      FileUtils.rm_rf(target)
-      File.symlink(FileUtils.mkdir_p(File.join(@dir, "outside")).first, target)
+    def bare = described_class.workspace(root:, home:, tmpdir:, execs: Lain::Confine::ExecRules::NONE)
 
-      expect([absent, real, workspace.exec_dirs].map { _1.include?(target) }).to eq([false, true, false])
+    it "runs each exec rule's dir that is a real dir in the root, and none that is a link, absent or outside" do
+      FileUtils.mkdir_p([target = File.join(root, "target"), venv = File.join(root, ".venv/bin")])
+      outside = FileUtils.mkdir_p(File.join(@dir, "outside")).first
+      File.symlink(outside, File.join(root, "node_modules"))
+      execs = Lain::Confine::ExecRules.project(root) | Lain::Confine::ExecRules.of(["bin/*", outside])
+
+      expect(described_class.workspace(root:, home:, tmpdir:, execs:).exec_dirs - bare.exec_dirs)
+        .to eq([venv, target])
+    end
+
+    it "runs no exec rule's dir reached through a link inside the root" do
+      FileUtils.mkdir_p(File.join(@dir, "venv/bin"))
+      File.symlink(File.join(@dir, "venv"), File.join(root, ".venv"))
+
+      expect(workspace.exec_dirs).to eq(bare.exec_dirs)
+    end
+
+    it "runs the project's build output by default, and none with no exec rules" do
+      FileUtils.mkdir_p(target = File.join(root, "target"))
+
+      expect([workspace, bare].map { _1.exec_dirs.include?(target) }).to eq([true, false])
     end
 
     it "runs the call's own TMPDIR, which is removed after it, and never the TMPDIR beneath which it is made" do
@@ -956,6 +971,13 @@ RSpec.describe Lain::Confine::Profile do
       File.write(target, "")
 
       expect([linked, grant("cargo")]).to all(satisfy { refused?(_1) })
+    end
+
+    it "leaves running target/ to the exec rules, granting cargo its ports in a workspace that runs none" do
+      bare = described_class.workspace(root:, home:, tmpdir:, execs: Lain::Confine::ExecRules::NONE)
+      cargo = bare.granting("cargo", home:, env: {})
+
+      expect([cargo.name, cargo.exec_dirs.include?(File.join(root, "target"))]).to eq([:grant, false])
     end
 
     it "grants a first cargo fetch in a checkout with no target/ yet, with no exec dir" do

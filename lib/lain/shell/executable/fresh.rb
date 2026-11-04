@@ -131,7 +131,7 @@ module Lain
         # in-place edit deeper down, by a command whose write was not recorded,
         # is missed. The ctime check leaves out `target/` and `.git/objects`; a
         # write into `target/` that the journal cannot see, from the string arm
-        # or a script, stays a residual that cargo's exec grant there can run.
+        # or a script, stays a residual that the exec rule for build output there can run.
         #
         # It fails closed on what a granted call leaves: in a main checkout a
         # fetch writes `.git`, a first cargo build makes `target/` and a git add

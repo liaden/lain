@@ -31,14 +31,15 @@ module Lain
       TIMEOUT = 10
       PRUNED_REASON = :pruned
 
-      Related = Data.define(:roots, :masks, :reads)
+      Related = Data.define(:roots, :masks, :reads, :execs)
 
-      # What a reader may read beyond the project, answered as 1 value so no
+      # What a call may read beyond the project, answered as 1 value so no
       # refresh can fall between a root and its masks. `reads` are the
       # session's read roots: no listing stands behind them, because a call
-      # reaches the reader only once its words' bytes were checked.
+      # reaches the reader only once its words' bytes were checked. `execs`
+      # are the build output the session's bounds run.
       class Related
-        def initialize(roots:, masks:, reads: [].freeze) = super
+        def initialize(roots:, masks:, reads: [].freeze, execs: ExecRules::NONE) = super
 
         NONE = new(roots: [].freeze, masks: [].freeze)
       end
@@ -75,12 +76,13 @@ module Lain
       # As the last {#masks} left it, without listing again.
       #
       # @return [Related] each related directory whose last listing answered, as the policy names it, and its
-      #   masks, beside each read root that exists now
+      #   masks, beside each read root that exists now and the exec rules of the policy's bounds
       def related
         join_priming
         listed = @related.values.select(&:listed?)
+        policy = @policy.call
         Related.new(roots: listed.map(&:root).freeze, masks: listed.flat_map(&:current).uniq(&:path).freeze,
-                    reads: @policy.call.read_roots.select { File.directory?(_1) }.freeze)
+                    reads: policy.read_roots.select { File.directory?(_1) }.freeze, execs: policy.bounds.execs)
       end
 
       # The session's own policy on one path, which a grant outside the project asks before it reads one.

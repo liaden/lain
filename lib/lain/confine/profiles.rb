@@ -16,7 +16,9 @@ module Lain
     #
     # A workspace call earns its build tool's ports, the grant profile, only
     # through {BuildGrant}: one fetching stage of a trusted program, while
-    # nothing in the project is fresh.
+    # nothing in the project is fresh. Freshness gates only the reader's exec:
+    # a workspace program whose ctime moved mid-run still runs, and the
+    # tripwire records it.
     #
     # What this kernel lacks narrows the profile: no trace leaves a reader
     # confined and untraced, and every other call unwatched.
@@ -134,17 +136,40 @@ module Lain
         granted(profile.with(read_dirs: [*profile.read_dirs, *git_configs(root)]))
       end
 
-      # The call's dir is made last, so a call refused on the way leaves none
+      # The call's dirs are made last, so a call refused on the way leaves none
       # behind, and never beneath the private /tmp, which is the call's own already.
       def workspace(request)
-        masks = mask_paths(root_of(request))
-        programs = programs(request, masks)
-        profile = granted(networked(ported(request)).then do |ported|
-          ported.with(masks:, exec_files: exec_files(programs),
-                      exec_dirs: [*ported.exec_dirs, *install_bins(programs)].uniq,
-                      read_dirs: [*ported.read_dirs, *git_configs(root_of(request))].uniq)
-        end)
+        root = root_of(request)
+        related = @classifier.related
+        lent = granted(lent(programmed(networked(ported(request)), request, root), related))
+        built_by_cargo(lent.read_dirs.first)
+        profile = granted(lent.running(related.execs | ExecRules.project(root)))
         Profile::SYSTEM_WRITE.include?(@tmpdir) ? profile : housed(profile.for_call(call_dir, granted: @tmpdir))
+      end
+
+      # lain-fence grants only a dir that exists when it starts, so a first `cargo test` could not run what it
+      # builds. cargo would make this same dir anyway; no other build output is made, since an empty
+      # node_modules or .venv changes how npm and venv tools behave. A link there is left alone, and runs nothing.
+      def built_by_cargo(project)
+        return unless File.file?(File.join(project, "Cargo.toml"))
+
+        Dir.mkdir(File.join(project, "target"))
+      rescue SystemCallError
+        nil
+      end
+
+      def programmed(ported, request, root)
+        masks = mask_paths(root)
+        programs = programs(request, masks)
+        ported.with(masks:, exec_files: exec_files(programs),
+                    exec_dirs: [*ported.exec_dirs, *install_bins(programs)].uniq,
+                    read_dirs: [*ported.read_dirs, *git_configs(root)].uniq)
+      end
+
+      def lent(profile, related)
+        reads = [*related.roots, *related.reads].map { Profile.landing(_1) }
+        profile.with(masks: [*profile.masks, *related.masks.map(&:path)].uniq,
+                     read_dirs: [*profile.read_dirs, *reads].uniq)
       end
 
       # A grant fetches from the host's network; a plain workspace call gets
@@ -163,10 +188,9 @@ module Lain
         raise NoTmpdir.new(path: @tmpdir)
       end
 
-      # A bin dir is granted whole, its subdirs with it, so never one that holds a dir or anything fresh.
+      # A bin dir is granted whole, its subdirs with it, so never one that holds a dir.
       def install_bins(programs)
-        programs.filter_map { Profile.install_bin(_1.realpath, home: @home) }.uniq
-                .select { flat?(_1) && !@fresh.any_under?(_1) }
+        programs.filter_map { Profile.install_bin(_1.realpath, home: @home) }.uniq.select { flat?(_1) }
       end
 
       # A dir that is not there holds nothing to run; one that cannot be listed may hold anything.
@@ -233,14 +257,17 @@ module Lain
       # A parsed guess under a mask is dropped where a resolved stage there
       # refuses the call, since the guess may name a program the shell never runs.
       def programs(request, masks)
-        [*placed(request.executables), *placed(request.grants).reject { masked?(_1.realpath, masks) }]
+        [*placed(request.executables, fresh_gates: false),
+         *placed(request.grants, fresh_gates: false).reject { masked?(_1.realpath, masks) }]
       end
 
       # A program the call resolved to outside /usr may run, unless the project
       # could have put it there: that is the plant the reader profile exists to
       # stop. Both arms ask the one placement test a build tool's grant does.
-      def placed(executables)
-        executables.flat_map(&:programs).select { grantable?(_1) && BuildGrant.placed?(_1, home: @home) }
+      def placed(executables, fresh_gates: true)
+        executables.flat_map(&:programs).select do |program|
+          grantable?(program) && BuildGrant.placed?(program, home: @home, fresh_gates:)
+        end
       end
 
       def exec_files(programs) = programs.map(&:realpath).uniq
@@ -291,9 +318,10 @@ module Lain
         #
         # @param stage [Shell::Executable]
         # @param home [String] absolute; where the mise installs are
+        # @param fresh_gates [Boolean] whether a program changed this lineage is refused
         # @return [Boolean]
-        def self.placed?(stage, home:)
-          Profile::GRANTED_CLASSES.include?(stage.klass) && !stage.realpath.nil? && !stage.fresh &&
+        def self.placed?(stage, home:, fresh_gates: true)
+          Profile::GRANTED_CLASSES.include?(stage.klass) && !stage.realpath.nil? && !(fresh_gates && stage.fresh) &&
             !(stage.klass == :user && stage.shadowed.any? && !Profile.install_bin(stage.realpath, home:))
         end
 
@@ -412,7 +440,9 @@ module Lain
 
         def build(root, trace)
           files = config_files(root).all
-          profile = Profile.workspace(root:, home: @home, tmpdir: @tmpdir, trace:, configs: files)
+          # A kept rule dir could have become a link since, so {Profiles} adds them per call.
+          profile = Profile.workspace(root:, home: @home, tmpdir: @tmpdir, trace:, configs: files,
+                                      execs: ExecRules::NONE)
           configs = [*files, *Profile.watched(root, @home)]
           Kept.new(profile:, configs:, stamp: stamp(profile, configs))
         end

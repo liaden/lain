@@ -290,10 +290,7 @@ module Lain
       # rustup `rust-toolchain` over `rust-toolchain.toml`, so a call that
       # creates the absent one of a pair overrides the present, sealed one.
       #
-      # So a project's own tests run: `<root>/target` runs when it is a real
-      # directory, as the build scripts and test binaries cargo puts there
-      # do, and a `CARGO_TARGET_DIR` anywhere else runs nothing; a `target/`
-      # the call makes runs from the next call on. The exact file
+      # A project's own build output runs as {#running} says. The exact file
       # {RESOLV_CONF} lands on and {LSM_LIST} are read; cargo's home is a
       # {PrivateHome}; bundler's user config and every mise binary are
       # hidden. {Profiles} gives a plain workspace call a private loopback,
@@ -307,12 +304,14 @@ module Lain
       # @param trace [Boolean] false where this kernel cannot trace
       # @param configs [Array<String>] git config files git reads for the root; each one the call could
       #   rewrite is sealed, as `.git/config` is, so no include, hook path or fsmonitor can be planted there
+      # @param execs [ExecRules] the build output the call runs
       # @return [Profile]
       # @raise [Unsealable] when a seal is reached through a link inside the writes
       # @raise [HomeTmpdir] when the TMPDIR is home or holds it
       # @raise [Tampered] when the root is a clone lain cut whose git dir was tampered with
       # @raise [HoldsState] when the root is lain's state home or holds it
-      def self.workspace(root:, home:, tmpdir:, masks: [], exec_files: [], trace: true, configs: [])
+      def self.workspace(root:, home:, tmpdir:, masks: [], exec_files: [], trace: true, configs: [],
+                         execs: ExecRules.project(root))
         refuse_workspace(root, home, tmpdir)
         refuse_tampered(landing(root), :workspace)
         reader = reader(root:, home:, masks:, exec_files:, trace:)
@@ -323,8 +322,34 @@ module Lain
         hooks = hooks_outside(project, git)
         new(**reader.to_h, name: :workspace, sealed: sealing(project, git, tmpdir, configs), homes:,
                            write_dirs: [*writes, *homes.map(&:path), *SYSTEM_WRITE],
-                           exec_dirs: [*reader.exec_dirs, *target(project), *hooks],
-                           read_dirs: [*reader.read_dirs, *system_files, *hooks], hidden: hidden(home))
+                           exec_dirs: [*reader.exec_dirs, *hooks],
+                           read_dirs: [*reader.read_dirs, *system_files, *hooks], hidden: hidden(home)).running(execs)
+      end
+
+      # So a project's own tests run, each rule's directory runs where it is a
+      # real directory now, reached through no link from the project, so no
+      # call can point one elsewhere for the next. A `CARGO_TARGET_DIR`
+      # outside the project runs nothing. lain-fence grants only what exists
+      # when it starts, so a dir the call makes runs from the next call on;
+      # {Profiles} makes a cargo checkout's `target/` before the call for that reason.
+      #
+      # @param execs [ExecRules] the build output the call's bounds run
+      # @return [Profile] this one, running each such directory under its project
+      def running(execs)
+        project = read_dirs.first
+        with(exec_dirs: [*exec_dirs, *execs.dirs.select { Profile.real_beneath?(_1, project) }].uniq)
+      end
+
+      # @param dir [String] absolute
+      # @param project [String] absolute, landed
+      # @return [Boolean] whether `dir` and every directory between it and the project is a real directory
+      def self.real_beneath?(dir, project)
+        return false unless dir != project && Landing.under?(dir, project)
+
+        names = dir.delete_prefix(project).split(File::SEPARATOR).reject(&:empty?)
+        names.each_index.all? { File.lstat(File.join(project, *names.take(_1 + 1))).directory? }
+      rescue SystemCallError
+        false
       end
 
       # The seals a workspace call in `root` would hold, refused as {.workspace} refuses them.
@@ -357,8 +382,8 @@ module Lain
          File.join(home, BUNDLE_CONFIG), File.join(home, MISE_SHIMS), RESOLV_CONF]
       end
 
-      # cargo runs its build scripts out of `target/`, so only a real directory
-      # is run; a link or a file runs nothing.
+      # cargo runs its build scripts out of `target/`, so a link or a file
+      # there gets cargo no grant; {#running} grants the real one.
       #
       # @param project [String]
       # @return [Array<String>, nil] the target dir, none when absent, nil when it is not a real directory
@@ -400,8 +425,8 @@ module Lain
 
       # The workspace profile with a build tool's ports, the resolver's socket
       # dir, and what the tool writes outside the project: bundle its gem home
-      # and its user cache, cargo its fetched sources, with exec on `target/`
-      # for its build scripts. Every seal the workspace holds is kept. Where a
+      # and its user cache, cargo its fetched sources; the workspace's exec
+      # rules already run `target/`. Every seal the workspace holds is kept. Where a
       # write cannot be bounded, the workspace profile comes back unchanged,
       # with no ports.
       #
@@ -439,7 +464,7 @@ module Lain
         return self unless tool
 
         with(name: :grant, connect_ports: ports, unix_dirs: [RESOLVER], read_dirs: [*read_dirs, RESOLVER],
-             write_dirs: [*write_dirs, *tool.writes], exec_dirs: [*exec_dirs, *tool.execs].uniq,
+             write_dirs: [*write_dirs, *tool.writes],
              sealed: [*sealed, *tool.seals], homes: homes.map { _1.opening(tool.writes) }, private_net: false)
       end
 
@@ -545,7 +570,7 @@ module Lain
       end
       private_class_method :linked_git_dir
 
-      BuildTool = Data.define(:writes, :execs, :seals)
+      BuildTool = Data.define(:writes, :seals)
 
       # What one build tool needs beyond the workspace, or nil where a write
       # cannot be bounded. GEM_HOME and CARGO_HOME are read from the host env,
@@ -563,7 +588,7 @@ module Lain
           case program
           when "bundle" then bundle(project, home, env)
           when "cargo" then cargo(project, home, env)
-          else new(writes: [], execs: [], seals: [])
+          else new(writes: [], seals: [])
           end
         end
 
@@ -578,17 +603,16 @@ module Lain
                         holds_nothing?(gem_home, project, home)
 
           seals = installs_in(Gem.bindir(gem_home), writes)
-          seals && new(writes:, execs: [], seals:)
+          seals && new(writes:, seals:)
         end
 
         # cargo's own bin is where its home is meant to hold a reader's grant.
         def self.cargo(project, home, env)
           cargo_home = named(env, "CARGO_HOME") || File.join(home, PrivateHome::CARGO)
-          execs = Profile.target(project)
-          return unless execs && bounded?(cargo_home, home) &&
+          return unless Profile.target(project) && bounded?(cargo_home, home) &&
                         holds_nothing?(cargo_home, project, home, own: File.join(cargo_home, "bin"))
 
-          new(writes: CARGO_WRITES.map { File.join(cargo_home, _1) }, execs:, seals: [])
+          new(writes: CARGO_WRITES.map { File.join(cargo_home, _1) }, seals: [])
         end
 
         def self.named(env, key) = env[key].to_s.empty? ? nil : env[key]

@@ -256,7 +256,7 @@ RSpec.describe Lain::Confine::Profiles do
         expect(profiles.for(request(ruling("auto"))).masks).to eq([File.join(root, ".env")])
       end
 
-      it "refuses a stage the term resolved to a user program that shadows another of its name, or a fresh one" do
+      it "refuses a stage the term resolved to a user program that shadows another of its name, and runs a fresh one" do
         FileUtils.mkdir_p(File.join(home, "bin"))
         ls = File.join(home, "bin/ls").tap { File.write(_1, "#!/bin/sh\n") }.tap { File.chmod(0o755, _1) }
         resolver = Lain::Shell::Executable::Resolver.new(root:, fresh: Lain::Shell::Executable::Resolver::NeverFresh)
@@ -264,7 +264,166 @@ RSpec.describe Lain::Confine::Profiles do
                             .call(Lain::Shell::Term.of(%w[ls]))
         fresh = executable("rg", File.join(home, ".cargo/bin/rg"), :user).with(fresh: true)
 
-        expect(profiles.for(request(ruling("auto"), executables: [*shadowing, fresh])).exec_files).to eq([])
+        expect(profiles.for(request(ruling("auto"), executables: [*shadowing, fresh])).exec_files)
+          .to eq([fresh.realpath])
+      end
+
+      describe "a program whose ctime changes during the run" do
+        let(:cargo) do
+          File.join(home, ".cargo/bin/cargo").tap do |path|
+            FileUtils.mkdir_p(File.dirname(path))
+            File.write(path, "#!/bin/sh\n")
+            File.chmod(0o755, path)
+          end
+        end
+        let(:changed) do
+          fresh = Lain::Shell::Executable::Fresh.new(start: Time.now - 60, written: [],
+                                                     stat: Lain::Shell::Executable::Stat.new)
+          Lain::Shell::Executable::Resolver.new(root:, fresh:)
+                                           .for(Lain::WorkerEnv.new(cwd: root, env: { "PATH" => File.dirname(cargo) }))
+                                           .call(Lain::Shell::Term.of(%w[cargo test]))
+        end
+
+        it "still runs in the workspace, while its resolution stays fresh for the tripwire to record" do
+          expect(changed.map { [_1.realpath, _1.fresh] }).to eq([[cargo, true]])
+          expect(profiles.for(request(ruling("auto"), executables: changed)).exec_files).to eq([cargo])
+        end
+
+        it "may not run under the reader" do
+          expect(profiles.for(composed(executables: changed)).exec_files).to eq([])
+        end
+      end
+
+      it "reads each read root and related directory the classifier names, with the related masks, writing neither" do
+        epics = File.join(@base, "state", "epics").tap { FileUtils.mkdir_p(_1) }
+        related = File.join(@base, "sibling").tap { FileUtils.mkdir_p(_1) }
+        hidden = File.join(related, ".env")
+        answer = Lain::Confine::MaskList::Related.new(roots: [related], masks: [mask(hidden)], reads: [epics])
+        classifier = Struct.new(:related) { def classify(_) = Lain::Sensitivity::ORDINARY.verdict }.new(answer)
+        bounded = described_class.new(masks:, probe:, home:, root:, workspace: true, tmpdir: scratch, classifier:)
+
+        profile = bounded.for(request(ruling("auto")))
+
+        expect([profile.read_dirs, profile.masks]).to match([include(related, epics), include(hidden)])
+        expect(profile.write_dirs).not_to include(related, epics)
+      end
+
+      it "lists a read root lent to the session, as a judged ls of the epic home does", :seam do
+        epics = File.join(@base, "state", "epics", "nyotes").tap { FileUtils.mkdir_p(_1) }
+        File.write(File.join(epics, "epic.md"), "# nyotes\n")
+        policy = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root), root:,
+                                               read_roots: [File.dirname(epics)])
+        system(SeedRepo::SCRUB, "git", "init", "-q", root, exception: true)
+        classifier = Lain::Confine::MaskList.new(root:, policy: -> { policy })
+        real = Lain::Confine::Probe.new(fence: Lain::Confine::Bwrap.fence_binary, journal:)
+        confined = described_class.new(masks: classifier, probe: real, home:, root:, workspace: true,
+                                       tmpdir: scratch, classifier:)
+        local = Lain::Exec::Local.new(child_env: Lain::Exec::ChildEnv.new(env: ENV.to_h))
+        exec = Lain::Exec::Sandboxed.new(inner: local, journal:, profiles: confined,
+                                         launcher: Lain::Confine::Bwrap.new(fence: Lain::Confine::Bwrap.fence_binary))
+
+        listed = exec.call(command: "ls #{epics}", cwd: root, env: {}, timeout: 20,
+                           confinement: request(ruling("auto")))
+
+        expect(listed).to have_attributes(exit_status: 0, stdout: "epic.md\n")
+      end
+
+      it "runs the build output each PROJECT exec rule names in the root the request names, a lease's included" do
+        lease = File.join(@base, "lease")
+        FileUtils.mkdir_p(%w[node_modules .venv/bin target src].map { File.join(lease, _1) })
+
+        profile = profiles.for(request(ruling("auto"), root: lease))
+
+        expect(%w[node_modules/.bin/vitest .venv/bin/pytest target/debug/deps/x-hash src/main.rs]
+                 .map { profile.runs?(File.join(lease, _1)) }).to eq([true, true, true, false])
+      end
+
+      describe "a cargo checkout with no target/ yet" do
+        before { File.write(File.join(root, "Cargo.toml"), "[package]\nname = \"x\"\n") }
+
+        it "makes target/ empty before the call, and runs it" do
+          profile = profiles.for(request(ruling("auto")))
+
+          expect([Dir.children(File.join(root, "target")), profile.runs?(File.join(root, "target/debug/x"))])
+            .to eq([[], true])
+        end
+
+        it "neither makes nor runs a target/ that is a link out of the checkout, nor writes where it points" do
+          outside = File.join(@base, "outside").tap { FileUtils.mkdir_p(_1) }
+          File.symlink(File.join(outside, "made"), File.join(root, "target"))
+
+          profile = profiles.for(request(ruling("auto")))
+
+          expect([Dir.children(outside), profile.exec_dirs.include?(File.join(root, "target"))]).to eq([[], false])
+        end
+
+        it "runs a test binary the same call builds", :seam do
+          real = Lain::Confine::Probe.new(fence: Lain::Confine::Bwrap.fence_binary, journal:)
+          confined = described_class.new(masks:, probe: real, home:, root:, workspace: true, tmpdir: scratch)
+          local = Lain::Exec::Local.new(child_env: Lain::Exec::ChildEnv.new(env: ENV.to_h))
+          exec = Lain::Exec::Sandboxed.new(inner: local, journal:, profiles: confined,
+                                           launcher: Lain::Confine::Bwrap.new(fence: Lain::Confine::Bwrap.fence_binary))
+          bin = "target/debug/deps/x-hash"
+
+          built = exec.call(command: "mkdir -p #{File.dirname(bin)} && cp /usr/bin/true #{bin} && ./#{bin}",
+                            cwd: root, env: {}, timeout: 20, confinement: request(ruling("auto")))
+
+          expect(built).to have_attributes(exit_status: 0, stderr: "")
+        end
+
+        it "makes no target/ for a call it refuses" do
+          listed = Struct.new(:masks) { def landed_on(_path) = ["link"] }.new([mask(root)])
+          refusing = described_class.new(masks: listed, probe:, home:, root:, workspace: true, tmpdir: scratch)
+
+          expect { refusing.for(request(ruling("auto"))) }.to raise_error(described_class::Overmasked)
+          expect(File.exist?(File.join(root, "target"))).to be(false)
+        end
+      end
+
+      it "stops running a node_modules/ swapped for a link out of the root between 2 calls" do
+        FileUtils.mkdir_p(modules = File.join(root, "node_modules"))
+        real = profiles.for(request(ruling("auto"))).exec_dirs
+        FileUtils.rm_rf(modules)
+        File.symlink(FileUtils.mkdir_p(home).first, modules)
+
+        expect([real, profiles.for(request(ruling("auto"))).exec_dirs].map { _1.include?(modules) })
+          .to eq([true, false])
+      end
+
+      it "never runs the root itself, though a rule lowers to it" do
+        answer = Lain::Confine::MaskList::Related.new(roots: [], masks: [],
+                                                      execs: Lain::Confine::ExecRules.of(["**", root]))
+        classifier = Struct.new(:related) { def classify(_) = Lain::Sensitivity::ORDINARY.verdict }.new(answer)
+        wide = described_class.new(masks:, probe:, home:, root:, workspace: true, tmpdir: scratch, classifier:)
+
+        expect(wide.for(request(ruling("auto"))).runs?(File.join(root, "planted"))).to be(false)
+      end
+
+      it "makes no target/ in a checkout without a Cargo.toml" do
+        profiles.for(request(ruling("auto")))
+
+        expect(File.exist?(File.join(root, "target"))).to be(false)
+      end
+
+      it "makes no node_modules/ or .venv/bin, which run from the call after the one that made them" do
+        absent = profiles.for(request(ruling("auto")))
+        made = %w[node_modules .venv/bin].map { File.join(root, _1) }
+        expect(made.map { File.exist?(_1) }).to eq([false, false])
+        FileUtils.mkdir_p(made)
+
+        expect([absent, profiles.for(request(ruling("auto")))].map { |profile| made.map { profile.runs?("#{_1}/x") } })
+          .to eq([[false, false], [true, true]])
+      end
+
+      it "runs what the exec rules the classifier carries name in the root" do
+        FileUtils.mkdir_p(tools = File.join(root, "tools"))
+        answer = Lain::Confine::MaskList::Related.new(roots: [], masks: [],
+                                                      execs: Lain::Confine::ExecRules.of(["tools/*", root]))
+        classifier = Struct.new(:related) { def classify(_) = Lain::Sensitivity::ORDINARY.verdict }.new(answer)
+        bounded = described_class.new(masks:, probe:, home:, root:, workspace: true, tmpdir: scratch, classifier:)
+
+        expect(bounded.for(request(ruling("auto"))).runs?(File.join(tools, "gen"))).to be(true)
+        expect(profiles.for(request(ruling("auto"))).runs?(File.join(tools, "gen"))).to be(false)
       end
 
       it "lets a workspace call run a program resolved outside /usr that no project could have planted" do
@@ -284,13 +443,13 @@ RSpec.describe Lain::Confine::Profiles do
         end
         let(:profiles) { described_class.new(masks:, probe:, home:, root:, workspace: true, tmpdir: scratch, fresh:) }
 
-        it "grants no install's bin dir when the lineage was not read, since anything in it may be fresh" do
+        it "grants an install's bin dir when the lineage was not read, since freshness gates only the reader" do
           unread = described_class.new(masks:, probe:, home:, root:, workspace: true, tmpdir: scratch)
 
-          expect(unread.for(request(ruling("auto"), grants: [bundle])).exec_dirs).not_to include(bin)
+          expect(unread.for(request(ruling("auto"), grants: [bundle])).exec_dirs).to include(bin)
         end
 
-        it "grants no install's bin dir that holds a fresh program, so the fresh one beside a granted one cannot run" do
+        it "runs a fresh program in an install's bin dir beside a granted one" do
           ruby = script(bin, "ruby")
           rake = script(bin, "rake")
           fresh_paths << rake
@@ -298,7 +457,7 @@ RSpec.describe Lain::Confine::Profiles do
 
           profile = profiles.for(request(ruling("auto"), grants:))
 
-          expect([profile.runs?(ruby), profile.runs?(rake)]).to eq([true, false])
+          expect([profile.runs?(ruby), profile.runs?(rake)]).to eq([true, true])
         end
 
         it "grants no install's bin dir that holds a dir, whose programs a dir grant would run too" do
@@ -406,12 +565,12 @@ RSpec.describe Lain::Confine::Profiles do
           expect(profiles.for(request(ruling("auto"), grants:)).exec_files).to eq([tool])
         end
 
-        it "refuses a user program written this lineage" do
+        it "grants a user program written this lineage, which only the reader refuses" do
           tool = script(File.join(@base, "outside"), "lain-t5-tool")
           fresh = Class.new { define_method(:fresh?) { |path| path == tool } }.new
           grants = resolved(%w[lain-t5-tool], path: File.dirname(tool), fresh:)
 
-          expect(profiles.for(request(ruling("auto"), grants:)).exec_files).to eq([])
+          expect(profiles.for(request(ruling("auto"), grants:)).exec_files).to eq([tool])
         end
 
         it "hands a reader call none of its grants, since the reader runs only what the term resolved" do

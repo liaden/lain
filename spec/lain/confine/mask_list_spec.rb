@@ -132,6 +132,16 @@ RSpec.describe Lain::Confine::MaskList do
     expect(paths).to eq([File.join(root, ".env")])
   end
 
+  it "carries the policy's exec rules with what a call may read beyond the project" do
+    sensitivity = Lain::Sensitivity.new(home: File.join(@base, "home"), cwd: root)
+    rooted = Lain::Sensitivity::Policy.new(sensitivity:, root:)
+    list = described_class.new(root:, policy: -> { rooted })
+
+    expect(list.related.execs).to eq(rooted.bounds.execs)
+    expect([list.related.execs.exec?(File.join(root, "target/debug/x")), described_class::Related::NONE.execs])
+      .to eq([true, Lain::Confine::ExecRules::NONE])
+  end
+
   it "reads the policy only when first asked" do
     built = []
     lazy = described_class.new(root:, policy: -> { built.push(1).then { policy } })

@@ -1067,10 +1067,14 @@ three places, and each answers a different question. All three read one `Shell::
    short system list, write only `/dev/null` and the private `/tmp`, no TCP, no abstract sockets, and a
    seccomp filter refusing a `memfd_create` without `MFD_NOEXEC_SEAL`. Under `--confine workspace`, the default
    for a chat, a call the judge, a config rule or bypass approved runs in the `workspace` profile instead: the
-   reader's reach plus writes to the project and a per-call TMPDIR, with the persistence files (`.envrc`, git's
-   hooks and config, the toolchain files) bound read-only, a private loopback, and a project whose seal sits
-   behind a link refused whole. Each confined profile also reads every git config file git names for the
-   project, unless the mask list hides it. Any other allow (a human's, a surface's, and under `reader` the judge's
+   reader's reach (its related directories and read roots included) plus writes to the project and a per-call
+   TMPDIR, and exec on the build output `Confine::ExecRules` names (`target/`, `node_modules/`, `.venv/bin`)
+   where each is a real directory when the call starts; an absent `target/` in a checkout with a `Cargo.toml` is
+   made empty first, so `cargo test` runs the binaries it builds. Freshness gates only the reader's exec: a
+   program that changed during the run still runs here, and the tripwire records the change. The persistence
+   files (`.envrc`, git's hooks and config, the toolchain files) are bound read-only, the call gets a private
+   loopback, and a project whose seal sits behind a link is refused whole. Each confined profile also reads every git config file
+   git names for the project, unless the mask list hides it. Any other allow (a human's, a surface's, and under `reader` the judge's
    and a config rule's too) runs `traced`: watched and journaled, not confined. A traced or untraced unconfined call
    runs under the fence as a reaper only, so stopping it kills every descendant, a re-setsid one included,
    while a normal exit leaves background children running; that covers sandboxed calls only, and
