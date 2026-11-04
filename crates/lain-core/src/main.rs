@@ -54,7 +54,7 @@ async fn serve_unix(socket_path: &str) -> ExitCode {
         Ok(listener) => {
             tracing::info!(socket_path, pid = std::process::id(), "lain-core listening");
             tokio::select! {
-                never = rpc::serve(listener) => match never {},
+                never = rpc::serve(listener, rpc::Core) => match never {},
                 code = shutdown_signal() => code,
             }
         }

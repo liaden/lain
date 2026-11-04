@@ -157,3 +157,33 @@ async fn the_shipped_binary_refuses_the_test_only_sleep() {
         reply
     );
 }
+
+#[tokio::test]
+async fn an_unfinished_frame_past_the_ceiling_closes_its_connection_only() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let socket = dir.path().join("core.sock");
+    let (daemon, mut flood) = connected_daemon(&socket).await;
+
+    // A str32 header that declares 1 byte past the 96 MiB sent, so the frame never finishes.
+    let declared: u32 = (96 << 20) + 1;
+    let mut header = vec![0xdb];
+    header.extend_from_slice(&declared.to_be_bytes());
+    let chunk = vec![b'x'; 64 << 10];
+    let mut sent = 0usize;
+    let mut refused = flood.write_all(&header).await.is_err();
+    while !refused && sent < 96 << 20 {
+        refused = flood.write_all(&chunk).await.is_err();
+        sent += chunk.len();
+    }
+    let mut buffer = [0u8; 16];
+    let read = tokio::time::timeout(Duration::from_secs(5), flood.read(&mut buffer))
+        .await
+        .expect("the flooded connection stayed open");
+    assert!(
+        matches!(read, Ok(0) | Err(_)),
+        "the flooded connection answered instead of closing: {read:?}"
+    );
+
+    let mut healthy = UnixStream::connect(&socket).await.expect("connect");
+    assert_ping_reply(&ping(&mut healthy).await, daemon.id().expect("daemon pid"));
+}

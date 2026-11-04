@@ -19,7 +19,7 @@ path = "src/main.rs"
 tokio = { version = "1.53", features = ["macros", "rt-multi-thread", "net", "time", "sync", "signal"] }
 # `codec::{Decoder, Encoder}` + `Framed`: incremental decode over the socket.
 # msgpack is self-delimiting, so there is no framing to invent -- the Decoder
-# just retries `rmpv::decode::read_value` until the buffer holds a whole value.
+# walks each value's headers until the buffer holds a whole frame, then decodes it once.
 tokio-util = { version = "0.7", features = ["codec"] }
 # `StreamExt`/`SinkExt` + `Framed::split`, so one task reads frames while
 # another writes responses (the out-of-order completion contract).
@@ -61,4 +61,5 @@ tempfile = "3"
 # `process` for tests/lifecycle.rs, the only code that spawns a process: it
 # drives the real binary to observe argv and signal handling. `io-util` for the
 # tests' `AsyncReadExt`/`AsyncWriteExt`; the daemon itself never needs it.
-tokio = { version = "1.53", features = ["process", "io-util"] }
+# `test-util` for paused time, so the 5 s auth deadline is tested without a 5 s wait.
+tokio = { version = "1.53", features = ["process", "io-util", "test-util"] }
