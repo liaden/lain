@@ -508,7 +508,7 @@ a note may be left:
 | `lain://question` | `:w` | submit the set. `:w!` declines the whole set. After the last set the buffer is marked `answered at HH:MM`, made read-only and its window closed, with your answers still readable under `:buffer lain://question` |
 | `lain://compose` | `:w` | send the draft back to the prompt |
 | `lain://timeline` | `p` | `:LainPin` — pin the turn under the cursor so compaction may not elide it |
-| `lain://approval` | `y` / `n` | `:LainApprove` / `:LainDeny [reason]` for the call under the cursor. The `n` key denies without a reason; `:LainDeny` takes the words after it as the reason, and the model reads them in the tool result. At the `[y/N]` prompt in a plain chat, `n <why>` does the same |
+| `lain://approval` | `y` / `n` | `:LainApprove [note]` / `:LainDeny [reason]` / `:LainHold [note]` for the call under the cursor. The `y` and `n` keys answer without words; `:LainDeny` takes the words after it as the reason, and the model reads them in the tool result; `:LainHold` postpones the call and tells the agent a human will answer later. At the `[y/N]` prompt in a plain chat, `n <why>` does the same |
 | `lain://review` (the sidebar) | `<CR>` | `:LainReviewOpen` — open the file under the cursor at its first hunk |
 | `lain://review` (the sidebar) | `x` / `u` | `:LainReviewMark reviewed` / `unreviewed`. Two keys and never a toggle: a toggle would have to be computed from rows that may already have moved |
 | a review thread | `:w` | send what you typed under the conversation to the docent as a question |

@@ -91,6 +91,35 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
+    it "postpones the parked call when the human runs :LainHold with a note" do
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
+
+      frontend.run do |handle|
+        with_parked_approval(handle) do
+          wait_until_editor { buffer_lines("lain://approval").join.include?("pwd") }
+          inspector.command("buffer lain://approval")
+          inspector.command("LainHold back soon")
+        end
+
+        expect(decisions.last).to include("verdict" => "postpone", "reason" => "back soon")
+      end
+    end
+
+    it "approves with the words given after :LainApprove" do
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
+
+      frontend.run do |handle|
+        settled = with_parked_approval(handle) do
+          wait_until_editor { buffer_lines("lain://approval").join.include?("pwd") }
+          inspector.command("buffer lain://approval")
+          inspector.command("LainApprove looks fine")
+        end
+
+        expect(settled).to be(true)
+        expect(decisions.last).to include("verdict" => "approve")
+      end
+    end
+
     # `y` is a GLOBAL command's keymap only inside this buffer, and the command
     # behind it reads the CURRENT window's cursor -- so typed elsewhere it must
     # answer nothing rather than whatever the list holds on that line. The

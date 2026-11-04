@@ -358,8 +358,8 @@ your own `:highlight link` overrides any of them without a fight:
 Defined by the runtime at attach (they do not exist before it): `:LainSend`,
 `:LainResend`, `:LainContext`, `:LainReply {answer}`, `:LainOpen`, `:LainPin`,
 `:LainTreeRewind`, `:LainTreeLabel`, `:LainTreeRefresh`, `:LainVersion`, `:LainReviewOpen`, `:LainReviewMark {state}`,
-`:LainReviewVerdict {verdict}`, `:LainReviewClose`, `:LainApprove`,
-`:LainDeny [{reason}]`, `:LainMode {level}`, `:LainSurveyAdd`
+`:LainReviewVerdict {verdict}`, `:LainReviewClose`, `:LainApprove [{note}]`,
+`:LainDeny [{reason}]`, `:LainHold [{note}]`, `:LainMode {level}`, `:LainSurveyAdd`
 (defined, but refuses every time -- NOT YET AVAILABLE, see |:LainSurveyAdd|
 below), and -- only meaningful inside a review
 buffer lain opened (|lain-review|) -- `:LainAnnotate` and `:LainReviewDone`.
@@ -717,6 +717,7 @@ than by selection. Ticking is the editor's gesture, and the only one.
                                                              *lain://approval*
                                                                *:LainApprove*
                                                                   *:LainDeny*
+                                                                  *:LainHold*
                                                                   *:LainMode*
 
 When lain gates a tool call, the agent PARKS on your answer and a fail-closed
@@ -747,7 +748,7 @@ One row per parked call, leading with who is asking:
 
     agent  bash({"command" => "pwd"})
 
-    -- y approve, n deny  (:LainApprove / :LainDeny [reason])
+    -- y approve, n deny  (:LainApprove / :LainDeny / :LainHold [note])
 
     y                       Approve the call your cursor is on
                             (`:LainApprove`).
@@ -757,7 +758,14 @@ One row per parked call, leading with who is asking:
     :LainDeny [{reason}]    Deny it, and tell the agent why: the words after
                             the command reach the model as the end of the
                             refusal it reads, and the decision record keeps
-                            them. `:LainApprove` takes no words.
+                            them.
+
+    :LainApprove [{note}]   Approve it. Any words after the command ride
+                            along with the answer.
+
+    :LainHold [{note}]      Postpone it: the agent is told a human will answer
+                            later and its turn goes on; the call waits in
+                            /inbox. The words after the command are the note.
 
     :LainMode {level}       Set who answers a gated call: `ask`, `auto` or
                             `bypass`, by name. It works from any buffer, and

@@ -194,7 +194,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
   end
 
   it "says in its hint that a denial can carry a reason" do
-    expect(described_class::HINT).to eq("-- y approve, n deny  (:LainApprove / :LainDeny [reason])")
+    expect(described_class::HINT).to eq("-- y approve, n deny  (:LainApprove / :LainDeny / :LainHold [note])")
   end
 
   describe "a decision that is not a tool call" do
@@ -251,12 +251,55 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       expect(decisions.first).to include("verdict" => "deny", "reason" => "Not this file")
     end
 
-    it "refuses words after approve, since an approval carries no reason" do
-      result = gated(await: true) { |_queue| view.decide(1, "approve not this file", generation:) }
+    it "approves with the words after approve as the note" do
+      sent = nil
+      result = gated(await: true) do |queue|
+        allow(queue.first).to(receive(:decide).and_wrap_original { |m, v, **kw| (sent ||= v) && m.call(v, **kw) })
+        view.decide(1, "approve looks fine", generation:)
+      end
+
+      expect(result[:verdicts]).to eq([true])
+      expect(result[:outcome].pending.verdict_face).to eq("approved")
+      expect(sent).to eq(Lain::Approval::Verdict::Approve.new(note: "looks fine"))
+    end
+
+    it "reads the verdict word in capitals" do
+      result = gated(await: true) { |_queue| view.decide(1, "APPROVE", generation:) }
+
+      expect(result[:verdicts]).to eq([true])
+    end
+
+    it "keeps a note punctuated onto the verdict word" do
+      result = gated(await: true) { |_queue| view.decide(1, "deny:wrong crate", generation:) }
+
+      expect(result[:outcome].pending).to have_attributes(reason: "wrong crate")
+    end
+
+    it "keeps a comma-separated approve note" do
+      sent = nil
+      result = gated(await: true) do |queue|
+        allow(queue.first).to(receive(:decide).and_wrap_original { |m, v, **kw| (sent ||= v) && m.call(v, **kw) })
+        view.decide(1, "approve, looks fine", generation:)
+      end
+
+      expect(result[:verdicts]).to eq([true])
+      expect(sent).to eq(Lain::Approval::Verdict::Approve.new(note: "looks fine"))
+    end
+
+    it "postpones with the words after hold, and the agent is told so" do
+      result = gated(await: true) { |_queue| view.decide(1, "hold back soon", generation:) }
+
+      expect(result[:verdicts]).to eq([false])
+      expect(result[:outcome].pending).to be_postponed
+      expect(result[:outcome].pending).to have_attributes(reason: "back soon")
+      expect(result[:outcome].report).to include("postponed")
+    end
+
+    it "refuses a word that is not a verdict and leaves the call parked" do
+      result = gated(await: true) { |_queue| view.decide(1, "maybe later", generation:) }
 
       expect(result[:outcome]).not_to be_decided
-      expect(result[:outcome].report).to eq("approve takes no reason -- run :LainApprove alone; still parked")
-      expect(result[:verdicts]).to eq([false])
+      expect(result[:outcome].report).to include("not a verdict")
       expect(decisions.map { |record| record.fetch("surface") }).to eq([Lain::Approval::Parked::Queue::TIMEOUT_SURFACE])
     end
 
@@ -450,10 +493,10 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     end
 
     it "refuses an unknown verdict rather than letting anything fall toward approve" do
-      result = gated(await: true) { |_queue| view.decide(1, "yes", generation:) }
+      result = gated(await: true) { |_queue| view.decide(1, "maybe", generation:) }
 
       expect(result[:outcome]).not_to be_decided
-      expect(result[:outcome].report).to include("approve", "deny", '"yes"')
+      expect(result[:outcome].report).to include("approve", "deny", '"maybe"')
       expect(result[:verdicts]).to eq([false])
       expect(decisions.map { |record| record.fetch("surface") })
         .to eq([Lain::Approval::Parked::Queue::TIMEOUT_SURFACE])
@@ -945,10 +988,10 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     end
 
     it "keeps the unknown-verdict refusal inside the message area, both verdicts named" do
-      report = refusal_for { |_queue| view.decide(1, "yes", generation:) }
+      report = refusal_for { |_queue| view.decide(1, "maybe", generation:) }
 
       expect(width_of(report)).to be <= bar
-      expect(report).to include('"yes"', "approve/deny")
+      expect(report).to include('"maybe"', "approve, deny or hold")
     end
 
     it "keeps the lost-the-race refusal inside the message area, longest surface name and all" do

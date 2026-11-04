@@ -214,9 +214,8 @@ end
 -- nothing refuses. Ruby's ApprovalView#decide carries the full note and why
 -- neither side can close it alone.
 --
--- A deny's REASON rides inside the verdict string, "deny <words>", so the reason
--- crosses the one wire the verdict does. Ruby splits it off and refuses words
--- after approve.
+-- A note rides inside the verdict string, "<verb> <words>", so it crosses the
+-- one wire the verdict does; Ruby reads the verb with Approval::Reply.
 local function submit_approval(verdict)
   local buf = vim.api.nvim_get_current_buf()
   if vim.api.nvim_buf_get_name(buf) ~= lain_approval.NAME then
@@ -230,7 +229,7 @@ local function submit_approval(verdict)
     -- the only thing that catches the next refusal placed in a helper.
     -- `need the cursor on a call in` rather than `answer the call under the
     -- cursor in`, which measured 84 against the 80-column budget.
-    _G.__lain.review_refused(":LainApprove and :LainDeny need the cursor on a call in " ..
+    _G.__lain.review_refused(":LainApprove, :LainDeny and :LainHold need the cursor on a call in " ..
       lain_approval.NAME)
     return
   end
@@ -240,9 +239,8 @@ local function submit_approval(verdict)
   end
 end
 
--- TWO COMMANDS, where 46_sidebar's mark took one parameterised one: there is no
--- third verdict to add, because the far side takes a Boolean, and what a human
--- types under a running clock is the word itself.
+-- THREE COMMANDS, one per verb, because what a human types under a running
+-- clock is the word itself.
 --
 -- SPELLED OUT, never looped over the table above, and that is not repetition:
 -- `spec/plugin/nvim_plugin_spec.rb` reads the runtime's command list by
@@ -252,9 +250,12 @@ end
 -- would pass and a help file naming one nothing defines would pass too. (The
 -- same scanner is why this paragraph describes that call rather than showing
 -- it: a quoted example in a comment reads as a command named after the example.)
-define("LainApprove", function()
-  submit_approval("approve")
-end)
+define("LainApprove", function(opts)
+  submit_approval(vim.trim("approve " .. opts.args))
+end, { nargs = "*" })
+define("LainHold", function(opts)
+  submit_approval(vim.trim("hold " .. opts.args))
+end, { nargs = "*" })
 define("LainDeny", function(opts)
   submit_approval(vim.trim("deny " .. opts.args))
 end, { nargs = "*" })

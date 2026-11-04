@@ -79,7 +79,7 @@ module Lain
         # The only discoverability this surface has: the buffer takes focus when
         # an approval lands, and a human who has never read `:help lain-approval`
         # has to learn what to press FROM the thing in front of them.
-        HINT = "-- y approve, n deny  (:LainApprove / :LainDeny [reason])"
+        HINT = "-- y approve, n deny  (:LainApprove / :LainDeny / :LainHold [note])"
 
         # A FOLD's measurement rather than a terminal's: a closed item shows
         # this line plus `10_folds.lua`'s "  (+N lines)" marker on ONE screen
@@ -124,12 +124,6 @@ module Lain
         # None attached, dead, or no longer draining -- one sentence for all
         # three, because they are one fact from the human's side.
         DETACHED = "showing a parked approval needs an attached editor"
-
-        # The wire's two words, against the verdicts {Approval::Parked::Queue::Pending}
-        # takes. A CLOSED map and never a truthiness test: an unknown word is
-        # REFUSED, because the one thing an approval surface must never do is
-        # let a value nobody recognises fall toward approve.
-        VERDICTS = { "approve" => Approval::Verdict::Approve, "deny" => Approval::Verdict::Deny }.freeze
 
         # A sibling fiber on the reactor, so this is a scheduler yield rather
         # than a wall-clock stall.
@@ -246,8 +240,7 @@ module Lain
         # them lives in {#decide}'s own comments.
         UNSHOWN = "#{BUFFER} has re-rendered since rendering %<generation>s -- press again".freeze
         NO_ROW = "no parked approval on #{BUFFER} line %s".freeze
-        UNKNOWN = "%<given>s is not a verdict lain has -- answer %<verdicts>s; still parked"
-        WORDLESS = "approve takes no reason -- run :LainApprove alone; still parked"
+        UNKNOWN = "%<given>s is not a verdict -- answer approve, deny or hold; still parked"
         SETTLED = "%<surface>s %<decision>s #{BUFFER} line %<line>s first, and that stands".freeze
 
         # @param rpc [#set_approval] the editor's render inlet ({RpcThread}):
@@ -356,8 +349,8 @@ module Lain
         # cursor with its item. Neither is contained in this file.
         #
         # @param line [Integer] 1-based, as nvim's cursor reports it
-        # @param verdict [String] one of {VERDICTS}' keys, in any case, as the
-        #   human's key sent it; "deny" may be followed by the human's reason
+        # @param verdict [String] a word {Approval::Reply} reads, in any case, as the
+        #   human's key sent it, optionally followed by the human's note or reason
         # @param generation [Integer] the stamp on the buffer they are looking
         #   at (b:lain_view_generation)
         # @return [Decided]
@@ -380,14 +373,22 @@ module Lain
           return undecided(format(UNSHOWN, generation: generation.inspect)) if resolved.unshown?
           return undecided(format(NO_ROW, line.inspect)) unless resolved.owned?
 
-          word, said = words(verdict)
-          kind = VERDICTS[word]
-          return undecided(unknown(verdict)) if kind.nil?
-
-          answer = kind.new(note: said)
-          return undecided(WORDLESS) if answer.approved? && said
+          answer = read(verdict)
+          return undecided(unknown(verdict)) if answer.is_a?(Approval::Reply::Unrecognised)
 
           settled(resolved.owner, answer, line)
+        end
+
+        # The whole line first, so a note punctuated onto the word survives;
+        # the editor's plain "approve <note>" has no separator Reply's approve
+        # grammar accepts, so it falls back to the word and the rest.
+        def read(verdict)
+          line = verdict.to_s.strip
+          whole = Approval::Reply.parse(line)
+          return whole unless whole.is_a?(Approval::Reply::Unrecognised)
+
+          word, said = line.split(/\s+/, 2)
+          Approval::Reply.parse(word.to_s).then { _1.is_a?(Approval::Reply::Unrecognised) ? _1 : _1.with(note: said) }
         end
 
         # Rides the verdict wire as "mode <level>" because that is the one
@@ -408,16 +409,6 @@ module Lain
         def level_names
           *init, last = Mode::Approval::NAMES
           "#{init.join(", ")} or #{last}"
-        end
-
-        # The verdict word, then whatever the human typed after it, which only
-        # a deny may carry. It rides in the verdict's own string so the reason
-        # crosses the wire the verdict already crosses. `to_s` armors a
-        # non-String that crossed msgpack into something {VERDICTS} misses BY
-        # NAME rather than something a lookup crashes on.
-        def words(verdict)
-          word, said = verdict.to_s.strip.split(/\s+/, 2)
-          [word.to_s.downcase, said]
         end
 
         def settled(pending, answer, line)
@@ -441,7 +432,7 @@ module Lain
         # falling toward approve, and the pending it leaves alone is still the
         # clock's -- which is what "still parked" tells the human.
         def unknown(verdict)
-          format(UNKNOWN, given: verdict.inspect, verdicts: VERDICTS.keys.join("/"))
+          format(UNKNOWN, given: verdict.inspect)
         end
 
         def undecided(report) = Decided.new(pending: nil, report:)
