@@ -262,6 +262,35 @@ class SubagentSpecCommitTool < Lain::Tool
   end
 end
 
+# Linked worktrees of a seed repository, so a stop has a real checkout to snapshot.
+class SubagentSpecGitWorktrees
+  attr_reader :repo_root
+
+  def initialize(repo_root, root)
+    @repo_root = repo_root
+    @root = root
+  end
+
+  def acquire(worker_id)
+    path = File.join(@root, worker_id.to_s)
+    SeedRepo.git(@repo_root, "worktree", "add", "--detach", "--quiet", path, "HEAD")
+    Lain::Isolation::Lease.new(worker_env: Lain::WorkerEnv.default.with(cwd: path),
+                               on_release: ->(**) { SeedRepo.git(@repo_root, "worktree", "remove", "--force", path) },
+                               origin: Lain::Isolation::Lease::Origin.new(path:))
+  end
+end
+
+# Raises a scripted error in a response's place, as a provider whose
+# connection dropped mid-turn does.
+class SubagentSpecDroppingProvider < Lain::Provider::Mock
+  def complete(request, **)
+    answer = super
+    raise answer if answer.is_a?(Exception)
+
+    answer
+  end
+end
+
 class SubagentSpecYieldingProvider < Lain::Provider::Mock
   def complete(request, **)
     Async::Task.current.yield
@@ -3049,6 +3078,15 @@ RSpec.describe Lain::Tools::Subagent do
         end
       end
 
+      it "holds no stop a restarted run read back for a researcher, since only its own run confined its directory" do
+        stop = Lain::Telemetry::ChildStopped.new(spawn: "blake3:spawn", label: "researcher", head: parent.head_digest,
+                                                 reason: :iterations, task: "go",
+                                                 parent: Lain::EventLog::ChainWriter.correlation_of(parent))
+
+        expect { kept_tool.restore([stop]).call({ "resume" => "researcher", "iterations" => 2 }, invocation) }
+          .to raise_error(Lain::Tool::InvalidInput, /none is held/)
+      end
+
       it "resumes a stopped researcher in the directory it stopped in" do
         tool = stopped_researcher
 
@@ -3420,6 +3458,156 @@ RSpec.describe Lain::Tools::Subagent do
 
         expect(calls.last.first).to eq(:surrender)
         expect(handoff.synced).to eq([sync.result])
+      end
+    end
+
+    # A stopped dev's work is in its checkout, so a stop keeps the checkout
+    # live and a resume carries on in it rather than starting over elsewhere.
+    describe "a stopped child's checkout" do
+      let(:stops_journal) { [] }
+
+      def dev_tool(provider, iterations: 2)
+        build_subagent(provider:, toolset: cwd_only, policy: spawn_policy(only: %i[cwd]), isolation: leases,
+                       journal: stops_journal, announces_as: "skeleton",
+                       budget: Lain::Budget.ceilings(iterations:))
+      end
+
+      # Each round asks with its own input, so no round reads as the repeat the stuck check stops.
+      def cwd_rounds(*ids) = ids.map { |id| tool_response([id, "cwd", { "round" => id }]) }
+
+      def stopped_dev
+        dev_tool(mock(*cwd_rounds("c0", "c1", "c2"), text_response("done"))).tap do |tool|
+          expect { tool.call({ "prompt" => "build the skeleton" }, invocation) }
+            .to raise_error(Lain::Budget::Exceeded, /resume: "skeleton"/)
+        end
+      end
+
+      def stopped_records = stops_journal.grep(Lain::Telemetry::ChildStopped)
+
+      # Only the run's own spawner is there after the run to resume a stop, so a
+      # nested spawner's stop keeps no pin past the close.
+      it "drops a nested spawner's snapshot pin at close, and keeps the run's own" do
+        repo = File.join(leases_root, "repo")
+        FileUtils.cp_r("#{SeedRepo.at(SeedRepo::SEED)}/.", FileUtils.mkdir_p(repo).first)
+        worktrees = SubagentSpecGitWorktrees.new(repo, File.join(leases_root, "w"))
+        git_leases = Lain::Isolation::Leases.new(backend: worktrees)
+        root = build_subagent(provider: mock(*cwd_rounds("r0", "r1")), toolset: cwd_only,
+                              policy: spawn_policy(only: %i[cwd]), isolation: git_leases, announces_as: "skeleton",
+                              budget: Lain::Budget.ceilings(iterations: 1))
+        nested = root.descend(parent:, escalation: ["blake3:a-child", Lain::Tools::AskHuman::HUMAN],
+                              holder: Lain::Tools::Subagent::Holder.at(2))
+        # Each stops on a HEAD of its own, so their snapshots differ.
+        stopped_pins = [root, nested].map do |tool|
+          expect { tool.call({ "prompt" => "go" }, invocation) }.to raise_error(Lain::Budget::Exceeded)
+          SeedRepo.git(repo, "commit", "--allow-empty", "--quiet", "-m", "moved on")
+          SeedRepo.git(repo, "for-each-ref", "--format=%(refname)", "refs/lain/stopped/").stdout.split
+        end
+
+        git_leases.close
+
+        expect(stopped_pins.last.size).to eq(2)
+        expect(SeedRepo.git(repo, "for-each-ref", "--format=%(refname)", "refs/lain/stopped/").stdout.split)
+          .to eq(stopped_pins.first)
+      end
+
+      it "keeps a dev stopped at its ceiling in its checkout, neither reclaimed nor released" do
+        stopped_dev
+
+        expect(backend.leased.size).to eq(1)
+        expect(backend.released).to be_empty
+      end
+
+      it "resumes the dev in the checkout it stopped in, and gives the checkout back once it ends" do
+        tool = stopped_dev
+        File.write(File.join(backend.leased.first, "skeleton.rb"), "class Skeleton; end\n")
+
+        expect(tool.call({ "resume" => "skeleton", "iterations" => 2 }, invocation).text).to start_with("done")
+        expect(seen.uniq).to eq(backend.leased)
+        expect(File.read(File.join(seen.last, "skeleton.rb"))).to eq("class Skeleton; end\n")
+        expect(backend.released).to eq(backend.leased)
+      end
+
+      it "journals the stop, naming the spawn, the head it stopped at, its ceiling and why" do
+        stopped_dev
+
+        expect(stopped_records.map(&:to_h)).to match([include(spawn: record.spawn.digest, label: "skeleton",
+                                                              ceiling: 2, reason: "iterations",
+                                                              head: record.message.body.fetch("final"))])
+      end
+
+      it "resumes a child whose turn dropped on a transport error from its last head, in the same checkout" do
+        dropped = Lain::Provider::Ollama::APIError.new("SSL_read: unexpected eof while reading")
+        provider = SubagentSpecDroppingProvider.new(responses: [*cwd_rounds("c0"), dropped, text_response("done")])
+        tool = dev_tool(provider, iterations: 5)
+
+        expect { tool.call({ "prompt" => "build the skeleton" }, invocation) }
+          .to raise_error(Lain::Provider::Ollama::APIError, /unexpected eof.*resume: "skeleton"/m)
+        expect(stopped_records.map(&:reason)).to eq(["transport"])
+        expect(tool.call({ "resume" => "skeleton", "iterations" => 2 }, invocation).text).to eq("done")
+        expect(provider.requests.last.messages.map { |message| message["content"].first })
+          .to eq(provider.requests[1].messages.map { |message| message["content"].first })
+        expect(backend.leased.size).to eq(1)
+      end
+
+      it "keeps an interrupted child's checkout and journals it as interrupted" do
+        parked = Class.new(Lain::Provider::Mock) { def complete(*) = sleep }
+        tool = dev_tool(parked.new(responses: []))
+
+        Sync do |task|
+          run = task.async { tool.call({ "prompt" => "build the skeleton" }, invocation) }
+          task.sleep(0.05)
+          run.stop
+        end
+
+        expect(stopped_records.map(&:reason)).to eq(["interrupted"])
+        expect(backend.released).to be_empty
+      end
+
+      def journal_lines(stopped_parent: nil)
+        stops = stopped_records.map(&:to_journal)
+        stops = stops.map { |stop| stop.merge("parent" => stopped_parent) } if stopped_parent
+        [*record.spawns.map { |event| Lain::Telemetry::Message.from_event(event).to_journal }, *stops]
+          .map { |entry| JSON.generate(entry) }
+      end
+
+      it "offers a restored stop only under the parent it stopped under" do
+        stopped_dev
+        restarted = dev_tool(mock(text_response("never")))
+
+        restarted.restore(Lain::Tools::Subagent::Stops.from_journal(journal_lines(stopped_parent: "blake3:another")))
+
+        expect { restarted.call({ "resume" => "skeleton", "iterations" => 2 }, invocation) }
+          .to raise_error(Lain::Tool::InvalidInput, /none is held/)
+      end
+
+      it "still holds a restored stop whose snapshot would not go back, so it can be asked for again" do
+        stopped_dev
+        refusing = Struct.new(:lane) do
+          def hold(*, **) = raise(Lain::Isolation::Leases::Unrestored, "the snapshot is gone")
+        end
+        allow(leases).to receive(:restoring).and_return(refusing.new(leases.lane))
+        restarted = dev_tool(mock(text_response("never")))
+        restarted.restore(Lain::Tools::Subagent::Stops.from_journal(journal_lines))
+
+        2.times do
+          expect { restarted.call({ "resume" => "skeleton", "iterations" => 2 }, invocation) }
+            .to raise_error(Lain::Isolation::Leases::Unrestored, /snapshot is gone/)
+        end
+      end
+
+      it "resumes a child restored from the journal of a run that never closed, in a fresh checkout" do
+        stopped_dev
+        lines = [*record.spawns.map { |event| Lain::Telemetry::Message.from_event(event) }, *stopped_records]
+                .map { |entry| JSON.generate(entry.to_journal) }
+        restarted = dev_tool(mock(*cwd_rounds("c2"), text_response("done")))
+
+        restarted.restore(Lain::Tools::Subagent::Stops.from_journal(lines))
+
+        expect(restarted.call({ "resume" => "skeleton", "iterations" => 2 }, invocation).text).to start_with("done")
+        expect(backend.leased.size).to eq(2)
+        expect(seen.last).to eq(backend.leased.last)
+        first, resumed = record.spawns
+        expect(resumed.body).to include("task" => first.body.fetch("task"), "resumed_from" => first.digest)
       end
     end
   end

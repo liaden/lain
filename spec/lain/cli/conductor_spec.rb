@@ -822,6 +822,34 @@ RSpec.describe Lain::CLI::Conductor do
       expect { conductor.close(reason: :exit) }.to raise_error(Lain::Error, /refused/)
       expect(types).to include("session_closed")
     end
+
+    # A stopped child keeps its checkout live for a resume, and the run's close
+    # is what gives it back: its handback writes, so the record must be open.
+    it "gives back the checkouts stopped children kept, after the fleet and before the record closes" do
+      order = []
+      fleet = Object.new.tap { |stub| stub.define_singleton_method(:stop) { order << :fleet } }
+      stops = Object.new.tap { |stub| stub.define_singleton_method(:close) { order << :stops } }
+      conductor = described_class.new(tty:, chronicle:, signals: Lain::CLI::Signals.new, grace: 60,
+                                      clock: clock_returning(1000.0), supervisor: fleet, stops:)
+
+      conductor.close(reason: :exit)
+      conductor.close(reason: :exit)
+
+      expect(order).to eq(%i[fleet stops])
+      expect(types.last).to eq("session_closed")
+    end
+
+    it "gives back the kept checkouts and closes the record when stopping the fleet raises" do
+      closed = []
+      refusing = Object.new.tap { |stub| stub.define_singleton_method(:stop) { raise Lain::Error, "refused" } }
+      stops = Object.new.tap { |stub| stub.define_singleton_method(:close) { closed << :stops } }
+      conductor = described_class.new(tty:, chronicle:, signals: Lain::CLI::Signals.new, grace: 60,
+                                      clock: clock_returning(1000.0), supervisor: refusing, stops:)
+
+      expect { conductor.close(reason: :exit) }.to raise_error(Lain::Error, /refused/)
+      expect(closed).to eq([:stops])
+      expect(types).to include("session_closed")
+    end
   end
 
   # FB (interrupt-readline UX fix): while an ask_human reply is outstanding, Reline

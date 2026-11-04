@@ -59,6 +59,10 @@ module Lain
         # role.
         attr_reader :role_spawn, :docent
 
+        # The run's spawn checkouts, which keep a stopped child's lease live
+        # until the conductor closes them at the end of the run.
+        attr_reader :spawn_leases
+
         # Refuses a spawn while the checkout holds work git has not recorded,
         # and stays that way for every spawner descended from it.
         class CommittedOnly < SimpleDelegator
@@ -281,18 +285,20 @@ module Lain
         # @param ask_human [Lain::Tools::AskHuman] the reply seam
         #   {Wiring} wired, appended here rather than built here -- the Repl's
         #   replier fiber parks on the same object
+        # @param stops [Array<Lain::Telemetry::ChildStopped>] the children a
+        #   resumed session left stopped, for the chat's subagent tool to resume
         # @return [Lain::Toolset]
         #
         # A build is a session starting, so it is where the spills an earlier
         # session left are swept.
-        def build(recorder, ask_human:)
+        def build(recorder, ask_human:, stops: [])
           spill.sweep
           base = capability_floor(recorder)
           @role_spawn = role_spawn_seam(base)
           @docent = Lain::Review::Docent::Answerer.new(spawn: @role_spawn)
           @floor = base
           submitter = EpicSubmit.in_chat(**@in_chat, asker: ask_human, role_spawn: @role_spawn)
-          Lain::Toolset.new(base.to_a + [chat_subagent(base), ask_human, run_skill, session_usage] +
+          Lain::Toolset.new(base.to_a + [chat_subagent(base).restore(stops), ask_human, run_skill, session_usage] +
                             epic.tools(submitter:, critique: document_critique))
         end
 
@@ -459,9 +465,12 @@ module Lain
                                           twins: Lain::Tools::Subagent::Lineage::Twins.new,
                                           supervisor:, observer: chronicle.observer, askers:,
                                           scope: CLI::ToolGuard::BoardScope.new(board: switchboard),
-                                          isolation: Lain::Isolation::Leases.new(backend: isolation,
-                                                                                 handoff: handback.handoff,
-                                                                                 sync: handback.sync))
+                                          isolation: spawn_leases_over(isolation, handback))
+        end
+
+        def spawn_leases_over(isolation, handback)
+          @spawn_leases = Lain::Isolation::Leases.new(backend: isolation, handoff: handback.handoff,
+                                                      sync: handback.sync)
         end
 
         # The stack {Wiring#backing} mounts in the parent's tool phase, built again

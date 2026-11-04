@@ -64,6 +64,9 @@ class LeasesSpecIsolation
   end
 end
 
+# What a stopped child's dispatch raises past the lease it kept.
+class LeasesSpecStopped < StandardError; end
+
 # Where a child's execution environment is leased FROM, driven directly. The
 # same object reached through a spawn is spec/lain/tools/subagent_spec.rb's
 # subject: what is here is the lease LIFECYCLE and the worker-id sequence, which
@@ -411,6 +414,254 @@ RSpec.describe Lain::Isolation::Leases do
 
     it "hands the answer back as it was when there is nothing to say" do
       expect(held.delivered(answer)).to be(answer)
+    end
+  end
+
+  # A stopped child can be resumed, and its work is in its checkout: a stop
+  # keeps the lease live rather than surrendering it, until the resumed child
+  # ends or the run closes.
+  describe "a lease its block keeps" do
+    def kept_by(leases)
+      kept = nil
+      expect do
+        leases.hold("dev", journal:) do |_worker_env, _sync, _worker, keep|
+          kept = keep.call
+          raise LeasesSpecStopped, "ceiling"
+        end
+      end.to raise_error(LeasesSpecStopped, "ceiling")
+      kept
+    end
+
+    it "is neither surrendered nor released when the block raises" do
+      handoff = Class.new do
+        attr_reader :calls
+
+        def initialize = @calls = []
+
+        def reclaim(lease, **) = given_back(:reclaim, lease)
+
+        def surrender(lease, **) = given_back(:surrender, lease)
+
+        def given_back(how, lease)
+          @calls << how
+          lease.release
+          Lain::Isolation::WorkerHandoff::Report.nothing
+        end
+      end.new
+
+      kept_by(described_class.new(backend:, handoff:))
+
+      expect(handoff.calls).to be_empty
+      expect(backend.released).to be_empty
+    end
+
+    it "is held again in the same directory, and given back once that hold returns" do
+      kept = kept_by(leases)
+
+      held = kept.hold("dev", journal:) { |worker_env, _sync| worker_env.cwd }
+
+      expect(held.value).to eq(backend.leased.first)
+      expect(backend.leased.size).to eq(1)
+      expect(backend.released).to eq(backend.leased)
+    end
+
+    it "stays kept when the hold that resumed it is stopped again" do
+      kept = kept_by(leases)
+
+      again = nil
+      expect do
+        kept.hold("dev", journal:) do |_worker_env, _sync, _worker, keep|
+          again = keep.call
+          raise LeasesSpecStopped, "ceiling again"
+        end
+      end.to raise_error(LeasesSpecStopped)
+
+      expect(again.lease).to be(kept.lease)
+      expect(backend.released).to be_empty
+    end
+
+    it "is surrendered when the run closes, once" do
+      kept_by(leases)
+
+      leases.close
+      leases.close
+
+      expect(backend.released).to eq(backend.leased)
+    end
+
+    it "is not surrendered at close while a resumed child still runs in it" do
+      released_inside = kept_by(leases).hold("dev", journal:) do
+        leases.close
+        backend.released.dup
+      end
+
+      expect(released_inside.value).to be_empty
+    end
+
+    it "is not surrendered at close once a resumed hold gave it back" do
+      kept_by(leases).hold("dev", journal:) { "done" }
+
+      expect { leases.close }.not_to(change { backend.released.size })
+    end
+
+    it "lends nothing to keep from a lease lent in place" do
+      place = described_class::InPlace.new(worker_env: Lain::WorkerEnv.default)
+
+      kept = place.hold("dev", journal:) { |_worker_env, _sync, _worker, keep| keep.call }
+
+      expect(kept.value).to be_nil
+    end
+  end
+
+  # After a run that never closed, a stopped child's checkout may be gone, so
+  # what it left is snapshotted when it stops and a resume cuts a fresh
+  # checkout carrying it.
+  describe "a kept git checkout", :seam do
+    let(:repo) { File.join(leases_root, "repo") }
+    let(:git_backend) do
+      Class.new do
+        def initialize(repo, root)
+          @repo = repo
+          @root = root
+        end
+
+        def repo_root = @repo
+
+        def acquire(worker_id)
+          path = File.join(@root, worker_id.to_s)
+          SeedRepo.git(@repo, "worktree", "add", "--detach", "--quiet", path, "HEAD")
+          Lain::Isolation::Lease.new(worker_env: Lain::WorkerEnv.default.with(cwd: path),
+                                     on_release: ->(**) { SeedRepo.git(@repo, "worktree", "remove", "--force", path) },
+                                     origin: Lain::Isolation::Lease::Origin.new(path:))
+        end
+      end.new(repo, File.join(leases_root, "children"))
+    end
+    let(:git_leases) { described_class.new(backend: git_backend) }
+
+    before { FileUtils.cp_r("#{SeedRepo.at(SeedRepo::SEED)}/.", FileUtils.mkdir_p(repo).first) }
+
+    def stopped_with_work(lasting: true, skeleton: "class Skeleton; end\n")
+      kept = nil
+      expect do
+        git_leases.hold("dev", journal:) do |worker_env, _sync, _worker, keep|
+          SeedRepo.git(worker_env.cwd, "commit", "--allow-empty", "--quiet", "-m", "committed by the dev")
+          File.write(File.join(worker_env.cwd, "skeleton.rb"), skeleton)
+          File.write(File.join(worker_env.cwd, "README"), "changed\n")
+          kept = keep.call(lasting:)
+          raise LeasesSpecStopped, "ceiling"
+        end
+      end.to raise_error(LeasesSpecStopped)
+      kept
+    end
+
+    def pins = SeedRepo.git(repo, "for-each-ref", "--format=%(refname)", "refs/lain/stopped/").stdout.split
+
+    it "pins the snapshot in the repository its checkouts are cut from, so a later checkout reaches it" do
+      snapshot = stopped_with_work.snapshot
+
+      expect(SeedRepo.git(repo, "rev-parse", "refs/lain/stopped/#{snapshot}").stdout.strip).to eq(snapshot)
+    end
+
+    it "puts the uncommitted work back uncommitted" do
+      snapshot = stopped_with_work.snapshot
+      git_leases.close
+
+      held = git_leases.restoring(snapshot).hold("dev", journal:) do |worker_env|
+        SeedRepo.git(worker_env.cwd, "status", "--porcelain").stdout.lines.map(&:chomp).sort
+      end
+
+      expect(held.value).to eq([" M README", "?? skeleton.rb"])
+    end
+
+    it "drops the pin once a resume restored from it" do
+      snapshot = stopped_with_work.snapshot
+      git_leases.close
+
+      git_leases.restoring(snapshot).hold("dev", journal:) { "resumed" }
+
+      expect(pins).to be_empty
+    end
+
+    it "drops the pin once a resume holds the kept checkout again" do
+      stopped_with_work.hold("dev", journal:) { "resumed" }
+
+      expect(pins).to be_empty
+    end
+
+    it "keeps the pin at close for a stop a later run can resume, and drops it for one none can" do
+      lasting = stopped_with_work.snapshot
+      passing = stopped_with_work(lasting: false, skeleton: "class Other; end\n").snapshot
+
+      git_leases.close
+
+      expect(pins).to eq(["refs/lain/stopped/#{lasting}"])
+      expect(passing).not_to eq(lasting)
+    end
+
+    it "snapshots the work the stopped child left, committed and not" do
+      kept = stopped_with_work
+
+      expect(kept.snapshot).to match(/\A\h{40}\z/)
+      expect(SeedRepo.git(repo, "show", "#{kept.snapshot}:skeleton.rb").stdout).to eq("class Skeleton; end\n")
+    end
+
+    it "resumes in a fresh checkout holding that work when the old one is gone" do
+      snapshot = stopped_with_work.snapshot
+      git_leases.close
+
+      held = git_leases.restoring(snapshot).hold("dev", journal:) do |worker_env|
+        dir = worker_env.cwd
+        [dir, File.read(File.join(dir, "skeleton.rb")), File.read(File.join(dir, "README")),
+         SeedRepo.git(dir, "log", "-1", "--format=%s").stdout.strip]
+      end
+
+      dir, skeleton, readme, subject = held.value
+      expect(dir).not_to be_nil
+      expect([skeleton, readme, subject]).to eq(["class Skeleton; end\n", "changed\n", "committed by the dev"])
+    end
+
+    it "resumes in a fresh checkout when nothing was snapshotted" do
+      held = git_leases.restoring(nil).hold("dev", journal:) do |worker_env|
+        File.read(File.join(worker_env.cwd, "README"))
+      end
+
+      expect(held.value).to eq("seed\n")
+    end
+  end
+
+  # `--isolation worktree` cuts each checkout as a shared clone, whose own
+  # objects upstream never sees, so a snapshot made in one is pinned upstream
+  # where the next clone reads it.
+  describe "a stop on the backend --isolation worktree resolves to", :seam do
+    let(:repo) { File.join(leases_root, "proj") }
+
+    def resolved
+      Lain::CLI::IsolationBackend.resolve("worktree", root: repo, journal: Lain::Channel::Null.instance,
+                                                      cwd: repo)
+    end
+
+    before do
+      FileUtils.cp_r("#{SeedRepo.at(SeedRepo::SEED)}/.", FileUtils.mkdir_p(repo).first)
+      SeedRepo.git(repo, "branch", "-M", "main")
+    end
+
+    it "comes back with its uncommitted file in a fresh checkout after the run closed" do
+      leases = described_class.new(backend: resolved)
+      kept = nil
+      expect do
+        leases.hold("dev", journal:) do |worker_env, _sync, _worker, keep|
+          File.write(File.join(worker_env.cwd, "skeleton.rb"), "class Skeleton; end\n")
+          kept = keep.call
+          raise LeasesSpecStopped, "ceiling"
+        end
+      end.to raise_error(LeasesSpecStopped)
+      leases.close
+
+      held = described_class.new(backend: resolved).restoring(kept.snapshot).hold("dev", journal:) do |worker_env|
+        File.read(File.join(worker_env.cwd, "skeleton.rb"))
+      end
+
+      expect(held.value).to eq("class Skeleton; end\n")
     end
   end
 end

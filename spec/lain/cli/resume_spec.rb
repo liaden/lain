@@ -167,6 +167,34 @@ RSpec.describe Lain::CLI::Resume do
     end
   end
 
+  # A child stopped at its ceiling, or dropped by its connection, is resumable,
+  # and a restart must not lose it: the stop is on the record with the task its
+  # spawn carried.
+  describe "the stopped children a resumed chain holds" do
+    let(:three) { chain("first", "ack", "second") }
+    let(:spawn) do
+      Lain::Ext::Event.new(kind: :spawn, body: { "task" => Lain::Canonical.digest("build the skeleton") },
+                           from: "agent", to: "child",
+                           causal_parents: [three.head_digest])
+    end
+
+    def stop_record(label, role: "dev", parent: Lain::EventLog::ChainWriter.correlation_of(three), kept: false)
+      Lain::Telemetry::ChildStopped.new(spawn: spawn.digest, label:, role:, head: three.head_digest, parent:, kept:,
+                                        reason: :iterations, ceiling: 20, task: "build the skeleton").to_journal
+    end
+
+    before do
+      write_closed("20260101T000000-1.ndjson", three,
+                   extra: [Lain::Telemetry::Message.from_event(spawn).to_journal, stop_record("skeleton")])
+    end
+
+    it "carries each stopped child, with its task, to the resumed run" do
+      stops = resume.call(profile: untyped).stops
+
+      expect(stops.map { |stop| [stop.label, stop.task] }).to eq([["skeleton", "build the skeleton"]])
+    end
+  end
+
   # `lain bench record` writes through the same Scribe a chat does, so its
   # files are sessions a chat can continue.
   describe "a session written by bench record" do

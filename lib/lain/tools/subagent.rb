@@ -62,8 +62,8 @@ module Lain
           end
         end
 
-        field :resume, :string, description: "The label a subagent stopped at its iteration ceiling was given. " \
-                                             "It carries on from where it stopped, so no prompt is needed."
+        field :resume, :string, description: "The label a stopped subagent was given. It carries on from where it " \
+                                             "stopped, so pass no prompt, name or extends."
         field :iterations, :integer, description: "With resume: how many more iterations the subagent may run."
         validates :prompt, presence: true, unless: :resuming?
         validates :iterations, absence: { message: "applies only to a resume" }, unless: :resuming?
@@ -256,7 +256,20 @@ module Lain
       # @param role [String] the role this spawner is offered as
       # @return [self]
       def offered_as(role)
-        @stops = Stops.new(role:)
+        @stops = Stops.new(role:, journal:, lasting: lasting?)
+        self
+      end
+
+      # Holds again the children a closed or abandoned run left stopped, so the parent can
+      # resume them. A researcher is not restored: its directory is confined by a scope only
+      # the run that leased it held.
+      #
+      # @param restored [Array<Telemetry::ChildStopped>] read off the run's record
+      # @return [self]
+      def restore(restored)
+        return self unless @kept.equal?(Unkept)
+
+        @stops.restore(restored) { |stop| restored_stop(stop) }
         self
       end
 
@@ -291,9 +304,16 @@ module Lain
         lease = relet(stopped)
         admitted(stopped.builder, budget.with(iterations: resume_ceiling(input.iterations))) do |builder|
           @stops.take(stopped.label)
-          spawn_one_shot(stopped.prompt, lease:, builder:, announced: stopped.announced, opening: stopped,
-                                         stops: @stops)
+          resuming(stopped, lease, builder)
         end
+      end
+
+      # A snapshot that will not go back starts no child, so the stop stays held for a retry.
+      def resuming(stopped, lease, builder)
+        spawn_one_shot(stopped.prompt, lease:, builder:, announced: stopped.announced, opening: stopped, stops: @stops)
+      rescue Isolation::Leases::Unrestored
+        @stops.give_back(stopped)
+        raise
       end
 
       def resumable(input)
@@ -301,7 +321,9 @@ module Lain
           invalid!("a resume carries on the child's own task, name and directory, so it takes no prompt, name " \
                    "or extends")
         end
-        @stops.fetch(input.resume) { |held| invalid!(Stops.unknown(input.resume, held)) }
+        @stops.fetch(input.resume, parent: EventLog::ChainWriter.correlation_of(parent_timeline)) do |held|
+          invalid!(Stops.unknown(input.resume, held))
+        end
       end
 
       # A resume is a fresh run of the same role, so the role's ceiling bounds it as it bounds a spawn.
@@ -407,17 +429,17 @@ module Lain
       # A child the scope did not lend to -- one its caller lent a checkout of
       # its own -- keeps that checkout, so its session is not the scope's.
       #
-      # What a ceiling stop keeps for a resume is the scope and lease as lent here, so a resumed
-      # researcher goes back to the directory it stopped in.
+      # What a stop keeps for a resume is the scope and lease as lent here, so a resumed
+      # researcher goes back to the directory it stopped in; a leased checkout is kept live.
       def leased(record, prompt, scope:, lease:, on_stream_started:, builder:, announced:, opening:, stops:)
         scope, lent = lending(scope, lease)
-        lent.hold(@name, journal:) do |worker_env, sync, worker|
+        lent.hold(@name, journal:) do |worker_env, sync, worker, keep = Isolation::Leases::KEEP_NOTHING|
           spawn = record.spawned(prompt, resumed: opening.resumed)
           progress = reporting(spawn, prompt, worker, announced)
           child = build_child(record.parent, worker_env, scope, progress:, task: prompt, builder:, opening:)
           stopped = Stopped.new(label: announced.label, spawn: spawn.digest, head: nil, prompt:, builder:,
-                                announced:, scope:, lease:)
-          run_child(record.built(child), opening, sync, on_stream_started:, stopping: stops.keeping(stopped))
+                                announced:, scope:, lease:, parent: EventLog::ChainWriter.correlation_of(record.parent))
+          run_child(record.built(child), opening, sync, on_stream_started:, stopping: stops.keeping(stopped, keep))
         end
       end
 
@@ -483,17 +505,39 @@ module Lain
 
       # Only the child's own run is rescued: a ceiling hit later, in the
       # self-sync ask, follows a complete answer and must not read as a stop.
+      #
+      # An interrupt has no parent left to tell, so its stop is only kept and
+      # recorded, for a run that resumes it later.
       def asked(agent, opening, on_stream_started, stopping)
         opening.run(agent, on_stream_started)
       rescue Budget::Exceeded => e
         raise Budget::Exceeded.new(@answer.partial(agent, stopped_message(e, agent, stopping)), kind: e.kind)
+      rescue StandardError => e
+        raise e unless Agent::StopReason.transport?(e)
+
+        raise e.exception(offering_resume(e.message, agent, stopping, :transport))
+      rescue Async::Stop
+        stopping.call(agent.timeline.head_digest, :interrupted)
+        raise
       end
 
-      # Only an iteration ceiling is offered a resume: more iterations are what a resume grants.
+      # Of the ceilings, only the iteration one is offered a resume: more iterations are what a resume grants.
       def stopped_message(error, agent, stopping)
         return error.message unless error.kind == :iterations
 
-        [error.message, stopping.call(agent.timeline.head_digest)].reject(&:empty?).join("\n\n")
+        offering_resume(error.message, agent, stopping, :iterations)
+      end
+
+      def offering_resume(message, agent, stopping, reason)
+        [message, stopping.call(agent.timeline.head_digest, reason)].reject(&:empty?).join("\n\n")
+      end
+
+      # The stop as the restarted run can resume it: in a fresh checkout cut from what the
+      # stopped one held, since a run that never closed may have left that one for a reaper.
+      def restored_stop(stop)
+        Stopped.new(label: stop.label, spawn: stop.spawn, head: stop.head, prompt: stop.task, builder: @builder,
+                    announced: @announces_as, scope: Session::Unconfined, parent: stop.parent,
+                    lease: -> { Stops::Lending.new(leases: isolation.restoring(stop.snapshot)) })
       end
 
       # Checked before the bounding, so an envelope too large to deliver is not
@@ -561,8 +605,11 @@ module Lain
         @name = name
         @mode = MODES.include?(mode.to_sym) ? mode.to_sym : raise(ArgumentError, "bad subagent mode #{mode.inspect}")
         @log = log
-        @stops = Stops.new
+        @stops = Stops.new(journal:, lasting: lasting?)
       end
+
+      # Only the run's own spawner is there to resume a stop after the run ends.
+      def lasting? = @seam.escalation == [AskHuman::HUMAN]
 
       def actor_refused
         Tool::Result.error("actor mode cannot be launched from a tool call: a long-lived actor needs " \
@@ -994,10 +1041,10 @@ module Lain
         def resumed = nil
       end
 
-      # A one-shot child its iteration ceiling stopped, kept so a resume can carry it on: the head
+      # A one-shot child that stopped before it answered, kept so a resume can carry it on: the head
       # it stopped at, the spawn it ran under, and what it was built and lent with. Its conversation
       # is already on the shared Store, so a resume sends nothing of it again.
-      Stopped = Data.define(:label, :spawn, :head, :prompt, :builder, :announced, :scope, :lease) do
+      Stopped = Data.define(:label, :spawn, :head, :prompt, :builder, :announced, :scope, :lease, :parent) do
         def base(_prefix, parent) = Dag::Factory.timeline(head_digest: head, store: parent.store)
         def run(agent, on_stream_started) = agent.run(on_stream_started:)
         def resumed = self
@@ -1006,51 +1053,6 @@ module Lain
         #
         # @raise [Kept::Refused] when the kept directory is gone
         def relet = scope.respond_to?(:relet) ? scope.relet : lease
-      end
-
-      # The children a ceiling stopped, each under the label a resume names it by. Fan-out
-      # siblings are fibers under one reactor, and nothing here suspends, so no lock is taken.
-      class Stops
-        RESUMABLE = "It can be resumed from where it stopped: call subagent with %<call>s and " \
-                    "iterations set to how many more iterations it may run."
-
-        # @param label [String] what the parent asked to resume
-        # @param held [Array<String>] the labels it could have named
-        # @return [String] why the resume was refused
-        def self.unknown(label, held)
-          known = held.empty? ? "none is held" : "these are: #{held.map(&:inspect).join(", ")}"
-          "no stopped child is labelled #{label.inspect}; #{known}"
-        end
-
-        # @param role [String, nil] the role a {Choice} offers this spawner as, which a resume names
-        def initialize(role: nil)
-          @role = role
-          @held = {}
-        end
-
-        # @param stopped [Stopped] the child, its head not yet known
-        # @return [#call] keeps the child at the head it is called with, and answers the sentence
-        #   that tells the parent how to resume it
-        def keeping(stopped) = ->(head) { keep(stopped.with(head:)) }
-
-        # @yieldparam held [Array<String>] the labels held, when `label` is not one
-        def fetch(label) = @held.fetch(label) { yield @held.keys }
-
-        def take(label) = @held.delete(label)
-
-        # A spawn nobody can resume, since only a model-dispatched call can name a label.
-        module None
-          def self.keeping(_stopped) = ->(_head) { "" }
-        end
-
-        private
-
-        # A second stop under one label takes a numbered one, so neither child shadows the other.
-        def keep(stopped)
-          label = (1..).lazy.map { |n| n == 1 ? stopped.label : "#{stopped.label}-#{n}" }.find { !@held.key?(_1) }
-          @held[label] = stopped.with(label:)
-          format(RESUMABLE, call: [("role: #{@role.inspect}" if @role), "resume: #{label.inspect}"].compact.join(", "))
-        end
       end
 
       # One model-facing spawner over several roles, the role named PER CALL
@@ -1123,6 +1125,13 @@ module Lain
         # on offer. Restating {Subagent#parallel_safe?}'s `true` would have gone
         # on claiming it for a spawner wired to answer otherwise.
         def parallel_safe? = @spawners.each_value.all?(&:parallel_safe?)
+
+        # @param restored [Array<Telemetry::ChildStopped>] each restored under the role it stopped in
+        # @return [self]
+        def restore(restored)
+          @spawners.each_value { |spawner| spawner.restore(restored) }
+          self
+        end
 
         # Each spawner descends as its own, so every role on offer is capped at
         # the child's ceiling exactly as a lone spawner would be.

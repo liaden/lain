@@ -298,18 +298,12 @@ module Lain
       # records on must be the instance the StatusFeed publishes, or the
       # published `idle` never resets; this class only passes on what
       # {ChatLaunch} built.
+      #
+      # Its close gives back the checkouts the chat's stopped children kept.
       def open_conductor(tty, rail)
         @conductor_opener.call(tty:, chronicle:, rail:, grace: @options[:grace], supervisor:, run_clock:,
-                               countdown: countdown_for(rail))
-      end
-
-      # The grace window is drawn where the human is: the chat's own status line
-      # when they are at this terminal, and a rail prompt when they are in the
-      # input pane, which has no way to see this screen.
-      def countdown_for(rail)
-        return Lain::CLI::Conductor::RailCountdown::Unoffered unless human.socket_name
-
-        Lain::CLI::Conductor::RailCountdown.new(rail:)
+                               countdown: Conductor::RailCountdown.where(rail:, socketed: human.socket_name),
+                               stops: @toolset_build.spawn_leases)
       end
 
       # @param resumed [#recorder, #session, nil] the resumed chat, nil when fresh
@@ -337,7 +331,8 @@ module Lain
         @supervisor = supervise
         @ask_human = wire_askers(parent)
         @observers = Observers.register(chronicle:, paths: @paths, project:, resumed:, arms:)
-        toolset = build_toolset(recorder, backend:, parent:, ask_human: @ask_human, session:, notice:)
+        toolset = build_toolset(recorder, backend:, parent:, ask_human: @ask_human, session:, notice:,
+                                          stops: resumed&.stops || [])
         # Resolved BEFORE the record opens, and the statement order IS the
         # guarantee -- see #switchboard for what can refuse here and why a
         # refusal must land ahead of the header.
@@ -778,7 +773,8 @@ module Lain
       # resolves, so `Dir.pwd` would mount whichever subdirectory the shell
       # happened to be in, leaving every path above it missing INSIDE the
       # container while it still resolves outside one.
-      def build_toolset(recorder, backend:, parent:, ask_human:, session: Lain::Session::Null.instance, notice: nil)
+      def build_toolset(recorder, backend:, parent:, ask_human:, session: Lain::Session::Null.instance, notice: nil,
+                        stops: [])
         @toolset_build = ToolsetBuild.new(backend:, provider: spooled_provider(backend), session:,
                                           chronicle:, options:, root:, agent: -> { @agent }, askers: @askers,
                                           supervisor: @supervisor, parent:, library: backend.library,
@@ -787,7 +783,7 @@ module Lain
                                           handback:, epic: epic_mount(notice),
                                           attachments:, middleware: backend.middleware, paths: @paths,
                                           display: @channel, config:, arms:, **lineage_reads)
-        @toolset_build.build(recorder, ask_human:)
+        @toolset_build.build(recorder, ask_human:, stops:)
       end
 
       def lineage_reads = { resolver: exec_resolver, fresh: observers.fresh }

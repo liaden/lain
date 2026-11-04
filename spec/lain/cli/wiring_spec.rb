@@ -1109,6 +1109,25 @@ RSpec.describe Lain::CLI::Wiring do
   end
 
   describe "#wire_agent" do
+    # A child a closed or abandoned run left stopped is still the parent's to
+    # resume, so the chat's subagent tool holds it under its label again.
+    it "holds a resumed run's stopped children under their labels, for the chat's subagent to resume" do
+      recorder, session = wiring.run_state(nil)
+      store = Lain::Dag::Factory.store
+      stop = Lain::Telemetry::ChildStopped.new(spawn: "blake3:spawn", label: "skeleton", role: "reviewer_code",
+                                               head: "blake3:head", reason: :iterations, task: "review it")
+      resumed = Lain::CLI::Resume::Result.new(file: "gone.ndjson", timeline: Lain::Dag::Factory.timeline(store:),
+                                              session:, recorder:, open: false, notices: [], stops: [stop])
+
+      agent = wiring.wire_agent(channel:, recorder:, session:, backend:, resumed:)
+      subagent = agent.toolset.fetch("subagent")
+
+      asked = { "role" => "reviewer_code", "resume" => "nobody" }
+
+      expect { subagent.call(asked, Lain::Tool::Invocation.new(context: session)) }
+        .to raise_error(Lain::Tool::InvalidInput, /these are: "skeleton"/)
+    end
+
     it "builds the Agent over the injected backend's provider, no exe involved" do
       agent = wire_agent
       expect(agent).to be_a(Lain::Agent)
@@ -3431,6 +3450,22 @@ RSpec.describe Lain::CLI::Wiring do
 
         expect([pane.value, stdin.pos]).to eq([path, 0])
       end
+    end
+
+    # A stopped child keeps its checkout live for a resume, so the run's close
+    # is what gives back the leases the chat's spawns hold.
+    it "hands the conductor the chat's spawn leases, which its close gives back" do
+      closed = []
+      allow(Lain::Isolation::Leases).to receive(:new).and_wrap_original do |original, **kwargs|
+        original.call(**kwargs).tap do |leases|
+          leases.define_singleton_method(:close) { (closed << self) && super() }
+        end
+      end
+
+      run_wiring
+
+      expect(closed.size).to eq(1)
+      expect(closed.first.lane).to eq(Lain::Isolation::Leases::Lane::UNNAMED)
     end
 
     # History is a line editor's, and a chat reading a pipe has none: what a

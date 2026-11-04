@@ -74,6 +74,58 @@ module Lain
 
       Lane = Data.define(:name)
 
+      # What a lender with no lease of its own answers when a dispatch asks to keep one.
+      KEEP_NOTHING = ->(**) {}
+
+      # Where a kept checkout's snapshot is pinned in the repository checkouts are cut from, so any
+      # later checkout reaches it, a shared clone included. Outside `refs/lain/worker/`, which the
+      # reaper ages out. A pin is dropped once a resume takes it up, or at close when no later run
+      # can resume its stop.
+      SNAPSHOT_REFS = "refs/lain/stopped"
+
+      # A lease a stopped dispatch kept live for its resume: the checkout, the
+      # worker key it was cut under, and the commit its work was snapshotted to.
+      class Retained
+        attr_reader :lease, :worker, :journal, :snapshot
+
+        # @param leases [Leases] the one that cut it, and gives it back
+        # @param lease [Lease]
+        # @param worker [String]
+        # @param journal [#<<] where the dispatch that kept it recorded a failed give-back
+        # @param snapshot [String, nil] nil where there is no checkout, or it could not be snapshotted
+        # @param lasting [Boolean] whether a later run can resume the stop, so its snapshot outlasts this one
+        def initialize(leases:, lease:, worker:, journal:, snapshot:, lasting:)
+          @leases = leases
+          @lease = lease
+          @worker = worker
+          @journal = journal
+          @snapshot = snapshot
+          @lasting = lasting
+        end
+
+        def lasting? = @lasting
+
+        def lane = @leases.lane
+
+        # @return [String, nil] the checkout, nil for a backend that cuts none
+        def path = lease.origin.path
+
+        # The resumed dispatch's lease lifetime, in this same checkout: given
+        # back when it returns, kept again when it stops again.
+        def hold(_role, journal:, &block) = @leases.rehold(self, journal:, &block)
+      end
+
+      # A resume of a stop whose checkout may be gone: a fresh lease, carrying
+      # what the stopped child left.
+      Restoring = Data.define(:leases, :snapshot) do
+        def lane = leases.lane
+
+        def hold(role, journal:, &) = leases.restored(role, snapshot, journal:, &)
+      end
+
+      # A snapshot that will not go back into a fresh checkout.
+      class Unrestored < Error; end
+
       # The lane a Leases numbers its workers in. A named lane prefixes each
       # worker id with its name, because every worktree of one repository
       # anchors under the one `refs/lain/worker/` namespace: two lanes that
@@ -142,7 +194,7 @@ module Lain
         def hold(_role, **)
           none = SelfSync::Result::NONE
           @monitor.synchronize do
-            Held.new(value: yield(worker_env, ->(_worker) { none }, nil), sync: none,
+            Held.new(value: yield(worker_env, ->(_worker) { none }, nil, KEEP_NOTHING), sync: none,
                      report: WorkerHandoff::Report.nothing)
           end
         end
@@ -166,14 +218,18 @@ module Lain
       #   nothing
       # @param lane [Lane] where its workers are numbered; the run's own,
       #   unnamed, by default
+      # @param shell_out_factory [#call] builds the git a kept checkout is snapshotted and
+      #   restored with
       def initialize(backend: Null.new, handoff: WorkerHandoff::Null,
-                     sync: SelfSync::Null, lane: Lane::UNNAMED)
+                     sync: SelfSync::Null, lane: Lane::UNNAMED, shell_out_factory: Shell::Out.public_method(:new))
         @backend = backend
         @handoff = handoff
         @sync = sync
         @lane = lane
+        @shell_out_factory = shell_out_factory
         @monitor = Monitor.new
         @count = 0
+        @retained = Set.new
       end
 
       # One dispatch's whole lease lifetime: mint a worker, acquire, run the
@@ -205,22 +261,125 @@ module Lain
       # @yieldparam worker [String] the key this worker's resource is named
       #   under, so a dispatch can say on its own record which checkout its
       #   work is in -- the same key {Telemetry::IsolationLease} carries
+      # @yieldparam keep [#call] called by a block about to stop resumably: the
+      #   lease is then neither reclaimed nor surrendered on its way out, and
+      #   the call answers the {Retained} a resume holds again
       # @return [Held] the block's value and the handback's report
-      def hold(role, journal:)
+      def hold(role, journal:, &block)
         worker = @lane.worker(role:, ordinal: next_ordinal)
-        synced = nil
+        holding(@backend.acquire(worker), worker, journal, &block)
+      end
+
+      # @param retained [Retained] a lease a stopped dispatch kept
+      # @param journal [#<<] as {#hold}
+      # @return [Held] as {#hold}
+      def rehold(retained, journal:, &block)
+        @monitor.synchronize { @retained.delete(retained) }
+        unpin(retained.snapshot)
+        holding(retained.lease, retained.worker, journal, &block)
+      end
+
+      # A fresh lease with what a stopped child left put back in it: its commits checked out, and
+      # its uncommitted work in the working tree. A lease the snapshot will not go into is given
+      # back before the refusal climbs.
+      #
+      # @param role [String] as {#hold}
+      # @param snapshot [String, nil] a {Retained#snapshot}; nil restores nothing
+      # @param journal [#<<] as {#hold}
+      # @return [Held] as {#hold}
+      # @raise [Unrestored]
+      def restored(role, snapshot, journal:, &block)
+        worker = @lane.worker(role:, ordinal: next_ordinal)
         lease = @backend.acquire(worker)
-        value = yield(@sync.editorless(lease.worker_env),
-                      ->(asked) { synced = @sync.call(lease, worker: asked, worker_id: worker) }, worker)
-        synced ||= SelfSync::Result::NONE
-        Held.new(value:, sync: synced, report: reclaim(lease, worker, journal, synced))
-      rescue StandardError => e
-        raise told(e, lease, worker, journal, synced)
-      ensure
-        surrender(lease, worker, journal, synced) unless lease.nil? || lease.released?
+        put_back(lease, snapshot)
+        unpin(snapshot)
+        holding(lease, worker, journal, &block)
+      rescue Unrestored
+        surrender(lease, worker, journal, nil)
+        raise
+      end
+
+      # @param snapshot [String, nil]
+      # @return [Restoring] a lender {#restored} answers through
+      def restoring(snapshot) = Restoring.new(leases: self, snapshot:)
+
+      # Gives back every lease a stopped dispatch still keeps, as a dispatch that
+      # raised gives its back: the run is ending, and nothing will resume them.
+      #
+      # @return [self]
+      def close
+        kept = @monitor.synchronize { @retained.to_a.tap { @retained.clear } }
+        kept.each { |retained| surrender(retained.lease, retained.worker, retained.journal, nil) }
+        kept.reject(&:lasting?).each { |retained| unpin(retained.snapshot) }
+        self
       end
 
       private
+
+      def holding(lease, worker, journal)
+        synced = nil
+        kept = nil
+        keep = ->(lasting: true) { kept = retain(lease, worker, journal, lasting) }
+        value = yield(@sync.editorless(lease.worker_env),
+                      ->(asked) { synced = @sync.call(lease, worker: asked, worker_id: worker) }, worker, keep)
+        synced ||= SelfSync::Result::NONE
+        Held.new(value:, sync: synced, report: reclaim(lease, worker, journal, synced))
+      rescue StandardError => e
+        raise kept ? e : told(e, lease, worker, journal, synced)
+      ensure
+        surrender(lease, worker, journal, synced) unless kept || lease.released?
+      end
+
+      # Snapshotted under the shield a surrender takes, since a stop that keeps
+      # its lease may be a cancel already unwinding.
+      def retain(lease, worker, journal, lasting)
+        retained = Retained.new(leases: self, lease:, worker:, journal:, lasting:,
+                                snapshot: shielded { snapshot(lease.origin.path) })
+        @monitor.synchronize { @retained << retained }
+        retained
+      end
+
+      # A stop never fails for want of a snapshot: the checkout is still kept,
+      # and only a resume after a run that never closed needs one.
+      def snapshot(path)
+        return nil if path.nil?
+
+        commit = Gc::Snapshot.new(path, shell_out_factory: @shell_out_factory).commit
+        pin(path, commit)
+        commit
+      rescue Gc::Unanchored
+        nil
+      end
+
+      # A shared clone's commits live in its own store, so the commit is fetched upstream first.
+      # Every stop copies the child's whole working state, large untracked output included, into the user's repo.
+      def pin(path, commit)
+        upstream = checkout(@backend.repo_root)
+        upstream.fold_in!(path, commit, error: Gc::Unanchored)
+        pinned = upstream.update_ref("#{SNAPSHOT_REFS}/#{commit}", commit, reason: "lain: a stopped child's work")
+        raise Gc::Unanchored, "#{SNAPSHOT_REFS}/#{commit} could not be written" unless Shell::Out.ok?(pinned)
+      end
+
+      # Best effort: a pin left behind costs one ref, and must not fail the resume that took it up.
+      def unpin(snapshot)
+        return if snapshot.nil?
+
+        checkout(@backend.repo_root).run("update-ref", "-d", "#{SNAPSHOT_REFS}/#{snapshot}")
+      rescue StandardError
+        nil
+      end
+
+      # HEAD to the snapshot's first parent, the working tree to its tree, and
+      # the index back to HEAD, so what was uncommitted stays uncommitted.
+      def put_back(lease, snapshot)
+        return if snapshot.nil? || lease.origin.path.nil?
+
+        git = checkout(lease.origin.path)
+        [%W[checkout --quiet --detach #{snapshot}^1], %W[read-tree -u --reset #{snapshot}], %w[reset --quiet]]
+          .each { |args| git.run!(*args, error: Unrestored) }
+      end
+
+      def checkout(path) = Checkout.of(path, shell_out_factory: @shell_out_factory)
 
       # The surrender runs here for a StandardError, so its report can ride the
       # error the parent reads; the `ensure` then finds the lease released.

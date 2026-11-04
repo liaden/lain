@@ -56,11 +56,15 @@ module Lain
       # Everything a resumed chat starts from. `resumed_from`/`written` are
       # exactly {CLI::Chronicle#start}'s chaining keywords, derived here so
       # the exe never assembles wire-format hashes itself.
-      Result = Data.define(:file, :timeline, :recorded, :session, :recorder, :open, :notices) do
+      #
+      # `stops` are the children the chain left stopped and never resumed, for
+      # the run's spawner to hold again; a fork carries none.
+      Result = Data.define(:file, :timeline, :recorded, :session, :recorder, :open, :notices, :stops) do
         # `recorded` defaults to `timeline` so a caller with nothing to
         # distinguish -- every untorn session -- constructs exactly as before.
-        def initialize(file:, timeline:, session:, recorder:, open:, notices:, recorded: timeline)
-          super(file:, timeline:, recorded:, session:, recorder:, open:, notices: notices.freeze)
+        def initialize(file:, timeline:, session:, recorder:, open:, notices:, recorded: timeline, stops: [])
+          super(file:, timeline:, recorded:, session:, recorder:, open:, notices: notices.freeze,
+                stops: stops.freeze)
         end
 
         # Both are claims about the PRIOR FILE, so both read `recorded` and
@@ -233,8 +237,12 @@ module Lain
       # the mismatch notices alone.
       def resumed_result(path, recording, outcome, current)
         mismatched = mismatches(path, current)
-        result(Door.new(verb: "resume", path:), recording.timeline, replay(path),
-               open: recording.open?, notices: notices(path, recording, outcome, mismatched))
+        entries = chain_entries(path)
+        stopped = StoppedChildren.new(Tools::Subagent::Stops.from_journal(entries),
+                                      chat: EventLog::ChainWriter.correlation_of(recording.timeline))
+        result(Door.new(verb: "resume", path:), recording.timeline, SessionRecord::Replay.new(entries),
+               open: recording.open?, notices: [*notices(path, recording, outcome, mismatched), *stopped.notices],
+               stops: stopped.resumable)
       end
 
       def fork_result(point, recording, forked, current)
@@ -265,7 +273,9 @@ module Lain
       # Run-state and memory replay are chain-wide, where the Loader folds only
       # the Timeline and message events across `resumed_from` -- so the entries
       # come from {ChainWalk}, every file of the chain, oldest first.
-      def replay(path) = SessionRecord::Replay.new(ChainWalk.new(paths: @paths, dir:).entries(path))
+      def replay(path) = SessionRecord::Replay.new(chain_entries(path))
+
+      def chain_entries(path) = ChainWalk.new(paths: @paths, dir:).entries(path)
 
       def mismatches(path, current)
         MismatchNotices.new(path:).call(**current.to_h)
@@ -298,10 +308,10 @@ module Lain
       # exists against. The {Door} rides through for the REFUSAL alone -- the
       # repair and this disclosure are identical at both doors, and only what a
       # human is told when the repair CANNOT be made names which door they used.
-      def result(door, timeline, replay, open:, notices:)
+      def result(door, timeline, replay, open:, notices:, stops: [])
         built = Result.new(file: door.file, timeline: settled(door, timeline),
                            recorded: timeline, session: replay.session(on: timeline), recorder: replay.memory,
-                           open:, notices:)
+                           open:, notices:, stops:)
         built.repaired? ? built.with(notices: [*notices, repair_notice(built)]) : built
       end
 

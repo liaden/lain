@@ -129,11 +129,16 @@ module Lain
         def ask_in_flight? = false
       end
 
+      # What a run with no stopped children to give back closes.
+      module NoStops
+        def self.close = self
+      end
+
       # A conductor over a fresh {Signals} installer it also owns, so the exe
       # carries neither the installer nor its lifecycle (see {#guard}).
       def self.open(tty:, chronicle:, rail:, grace: Shutdown::GRACE_DEFAULT, supervisor: Supervisor::Null,
-                    run_clock: RunClock.new, countdown: RailCountdown::Unoffered)
-        new(tty:, chronicle:, signals: Signals.new, rail:, grace:, supervisor:, run_clock:, countdown:)
+                    run_clock: RunClock.new, countdown: RailCountdown::Unoffered, stops: NoStops)
+        new(tty:, chronicle:, signals: Signals.new, rail:, grace:, supervisor:, run_clock:, countdown:, stops:)
       end
 
       # `supervisor:` answers `#drain(within:)` with an Enumerable of
@@ -147,15 +152,20 @@ module Lain
       #
       # `rail:` is where the human's lines come from; a fresh one with nothing
       # feeding it by default, for a conductor that supervises and never reads.
+      #
+      # `stops:` answers `#close` by giving back the checkouts stopped children
+      # kept live for a resume, which nothing resumes once the run ends.
       def initialize(tty:, chronicle:, signals:, rail: Frontend::Intake.new, grace: Shutdown::GRACE_DEFAULT,
                      supervisor: Supervisor::Null, run_clock: RunClock.new,
-                     clock: RunClock::MONOTONIC, tick: DEFAULT_TICK, countdown: RailCountdown::Unoffered)
+                     clock: RunClock::MONOTONIC, tick: DEFAULT_TICK, countdown: RailCountdown::Unoffered,
+                     stops: NoStops)
         @tty = tty
         @chronicle = chronicle
         @signals = signals
         @rail = rail
         @grace = grace
         @supervisor = supervisor
+        @stops = stops
         @run_clock = run_clock
         @clock = clock
         @ticker = CountdownTicker.new(tty:, tick:)
@@ -363,8 +373,16 @@ module Lain
       # The close is unconditional: a farewell that raises -- a worktree release
       # git refuses -- still propagates, but after the record has closed, since
       # {#close} is already marked closed and nothing would close it later.
+      # The kept checkouts go back after the fleet and before the record, since
+      # each handback writes to it.
       def stop_fleet_then_close(reason, **detail)
         @supervisor.stop
+      ensure
+        give_back_then_close(reason, **detail)
+      end
+
+      def give_back_then_close(reason, **detail)
+        @stops.close
       ensure
         @chronicle.close(reason:, **detail)
       end
@@ -609,6 +627,15 @@ module Lain
           def self.offering(_shutdown, _task, keys: nil) = keys
           def self.withdraw = nil
         end
+
+        # The grace window is drawn where the human is: the chat's own status line
+        # when they are at this terminal, and a rail prompt when they are in the
+        # input pane, which has no way to see this screen.
+        #
+        # @param rail [Frontend::Intake] where the pane reads the window
+        # @param socketed [Object, nil] the input pane's socket name; nil at the chat's own terminal
+        # @return [RailCountdown, Unoffered]
+        def self.where(rail:, socketed:) = socketed ? new(rail:) : Unoffered
 
         def initialize(rail:, clock: RunClock::MONOTONIC, tick: TICK)
           @rail = rail
