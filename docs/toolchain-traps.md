@@ -557,6 +557,16 @@ Unproven; counting only the example's own thread would settle it.
   - `Lain::Ext::AstGrep.search on another thread behaves like a GVL-releasing binding stops soon after its
     thread is killed, rather than at the end of the call` (0.56s against a 0.20s bound). It is the shared
     GVL-releasing group's wall-clock bound, the same one as the 2026-10-31 `Fuzzy#match` entry.
+  - From one landing whose suite alone reached a load of 66.9 on 16 cores (load 1.2 when it started), all
+    STARVED at a 30s watchdog and green alone: `Landing calls in lib finds the calls it polices`;
+    `Lain::RunClock MONOTONIC is named once even inside run_clock.rb, so RunClock's own default reads the
+    constant too`; `a plain chat's inline prompts over a real terminal a line typed across the moment the
+    prompt opens holds the whole line and asks again, when its end is typed at a human's pace, unseen`;
+    `a chat fed by an input pane completes a skill named in the chat's context frame when Tab is pressed in
+    the pane`; `CommentCensus third-party identifiers carries no project-scheme citation anywhere the
+    checker scans`; `the deletion map booting without a capability still loads with disclosure_sweep and
+    everything it forces removed`; and a repeat, `two cockpits on one machine leaves the second cockpit's
+    editor answering after the first stops`.
   Several of these wait on a wall-clock bound a loaded box starves, which the 2026-10-27 ruling forbids
   new specs to carry, so they stay cards to rewrite rather than flakes to budget a retry for.
 
