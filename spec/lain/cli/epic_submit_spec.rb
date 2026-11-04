@@ -558,6 +558,47 @@ RSpec.describe Lain::CLI::EpicSubmit do
       expect(said.text).to include("already approved b", "approved c #{plan_digest("c")}")
     end
 
+    it "marks the issue an edit reopened in the question it is asked again" do
+      asking("approve").submit("issue_plan", wave: 2)
+      home.issue("c").write("the prose for c, revised\n")
+      screen = StringIO.new
+
+      asking("approve", output: screen).submit("issue_plan", wave: 2)
+
+      expect(screen.string).to match(/issue c [^\n]*\(reopened by an edit\)/)
+    end
+
+    it "names, in the next wave's question, an issue an edit reopened in another wave" do
+      asking("approve").submit("issue_plan", wave: 1)
+      home.issue("a").write("the prose for a, revised\n")
+      screen = StringIO.new
+
+      asking("approve", output: screen).submit("issue_plan", wave: 2)
+
+      expect(screen.string).to include("also reopened by an edit, in another wave: a")
+    end
+
+    it "says nothing of an edit when no approved plan changed" do
+      screen = StringIO.new
+
+      asking("approve", output: screen).submit("issue_plan", wave: 2)
+
+      expect(screen.string).not_to include("reopened by an edit")
+    end
+
+    it "keeps the review lines in what a parked wave leaves for the queue, one question per issue" do
+      read = %w[b c d].to_h { [_1, plan_digest(_1)] }
+      findings = "## cluster 1 of 1 -- wave 2\n\nMUST-FIX:\n- none\nMINOR:\n- none\nVERDICT: approve"
+      review = Lain::Epic::ReviewResult.parse(findings, epic_slug: "alpha", stage: "issue_plan", read:, clusters: 1,
+                                                        critics: 1)
+
+      command(gates: hands_off.merge("issue_plan" => "deferred")).submit("issue_plan", wave: 2, review:)
+
+      waits = session_records.select { |record| record["type"] == "awaiting_human" }
+      expect(waits.map { |record| record["summary"] }).to all(include(review.id))
+      expect(waits.size).to eq(3)
+    end
+
     it "reaches the wave path from `lain epic submit --wave`" do
       load File.expand_path("../../../exe/lain", __dir__) unless defined?(LainCLI)
       gates = Lain::Epic::STAGES.map { |stage| "  gate :#{stage}, :hands_off\n" }.join

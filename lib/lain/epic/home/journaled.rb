@@ -18,6 +18,9 @@ module Lain
       # nothing, since the journal write is the second of two steps and a
       # `journal << ` that raises leaves the file on disk with no record.
       #
+      # `signoffs:` is a duck answering `#reopened(epic_slug:, issue_id:)`, asked after an issue's write is
+      # acknowledged: it says which issues the new bytes took back from an approved plan.
+      #
       # `reviews:` is a duck answering `#open?(path)`, asked before every write.
       # While a human is mid-review they hold the baton, and lain regenerating
       # underneath them would discard edits nobody has read yet -- so the write
@@ -48,13 +51,24 @@ module Lain
           end
         end
 
+        # Who reopens a plan an edit changed. One message, `#reopened(epic_slug:, issue_id:)`;
+        # {Epic::Reopen} is the shipped answer to it.
+        module Signoffs
+          # The seam's Null Object: nothing is reopened, so nothing writes `if @signoffs`.
+          module Null
+            def self.reopened(**) = []
+          end
+        end
+
         # @param home [Home] the real home every call forwards to
         # @param journal [#<<] where {DocWritten} records land
         # @param reviews [#open?] who holds the baton for a path
-        def initialize(home, journal:, reviews: Reviews::Null)
+        # @param signoffs [#reopened] who takes an issue's approval back when its file changes
+        def initialize(home, journal:, reviews: Reviews::Null, signoffs: Signoffs::Null)
           @home = home
           @journal = journal
           @reviews = reviews
+          @signoffs = signoffs
         end
 
         # What this decorator does NOT acknowledge: a read answers no DocWritten,
@@ -63,7 +77,7 @@ module Lain
 
         def research = written(@home.research, "research")
         def epic = written(@home.epic, "epic")
-        def issue(id) = written(@home.issue(id), "issue")
+        def issue(id) = written(@home.issue(id), "issue", issue_id: id)
         def source(name) = written(@home.source(name), "source")
 
         # The graph's own content address rides along with the bytes', because
@@ -94,9 +108,9 @@ module Lain
         # `research`/`issue`, putting a graph address on a prose record,
         # and would widen the write duck past the {Home::Artifact#write} this
         # wraps.
-        def written(artifact, kind, graph_digest: nil)
+        def written(artifact, kind, graph_digest: nil, issue_id: nil)
           Written.new(artifact:, kind:, graph_digest:, epic_slug: @home.slug, relative: relative(artifact),
-                      journal: @journal, reviews: @reviews)
+                      journal: @journal, reviews: @reviews, signoffs: @signoffs, issue_id:)
         end
 
         # {Home} composed this path from that same prefix a moment ago, so the
@@ -107,7 +121,19 @@ module Lain
         # write: the baton check before it and the ack after it. {Home}'s own
         # split between itself and its Artifact, kept.
         class Written
-          def initialize(artifact:, kind:, epic_slug:, relative:, journal:, reviews:, graph_digest: nil)
+          # @return [Array<String>] the issues the last write took back from an approved plan
+          attr_reader :reopened
+
+          # @return [String, nil] why the reopen step could not run, after the bytes had landed
+          attr_reader :reopen_failure
+
+          # What the reopen step really raises: the journal write, and a fold that refuses a damaged
+          # decision line (kept fail-closed there, so it is named here rather than swallowed).
+          REOPEN_FAILURES = [JournalUnreadable, SignoffQueue::UnreadableRecord, SystemCallError].freeze
+          private_constant :REOPEN_FAILURES
+
+          def initialize(artifact:, kind:, epic_slug:, relative:, journal:, reviews:, signoffs:, graph_digest: nil,
+                         issue_id: nil)
             @artifact = artifact
             @kind = kind
             @epic_slug = epic_slug
@@ -115,6 +141,9 @@ module Lain
             @journal = journal
             @reviews = reviews
             @graph_digest = graph_digest
+            @signoffs = signoffs
+            @issue_id = issue_id
+            @reopened = []
           end
 
           delegate :path, :read, :exist?, to: :@artifact
@@ -127,6 +156,7 @@ module Lain
             @artifact.write(content)
             @journal << DocWritten.new(epic_slug: @epic_slug, kind: @kind, path: @relative,
                                        byte_digest: address(content), graph_digest: @graph_digest)
+            reopen
             self
           end
 
@@ -139,6 +169,12 @@ module Lain
           # rather than the content, and which pins UTF-8 where a file is
           # arbitrary bytes.
           def address(content) = Workspace::Snapshot::Blob.new(bytes: content).digest
+
+          def reopen
+            @reopened = @signoffs.reopened(epic_slug: @epic_slug, issue_id: @issue_id) if @issue_id
+          rescue *REOPEN_FAILURES => e
+            @reopen_failure = e.message
+          end
 
           def refuse_open_review!
             return unless @reviews.open?(path)

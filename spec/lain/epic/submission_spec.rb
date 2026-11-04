@@ -530,6 +530,24 @@ RSpec.describe Lain::Epic::Submission do
                                               "approve; deny b: wrong crate; hold c")
       end
 
+      it "marks an issue reopened by an edit on its own line" do
+        question = wave.with(reopened: ["c"]).gate_question
+
+        expect(question).to include("\n  issue c \"Issue c\"", "(reopened by an edit)")
+        expect(question.scan("reopened by an edit").size).to eq(1)
+        expect(question).to match(/issue c [^\n]*\(reopened by an edit\)/)
+      end
+
+      it "lists a reopened issue outside the wave, so a later wave's question names it" do
+        question = wave.with(reopened: %w[b ghost]).gate_question
+
+        expect(question).to include("also reopened by an edit, in another wave: ghost")
+      end
+
+      it "says nothing of an edit when none reopened an issue" do
+        expect(wave.gate_question).not_to include("reopened")
+      end
+
       it "counts a lone issue in the singular" do
         one = described_class.wave(slug: "demo", views: wave_views.take(1), number: 2)
 

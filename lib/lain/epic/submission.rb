@@ -448,9 +448,13 @@ module Lain
       #
       # `standing` names the wave's issues left out of this question because
       # their approval stands, so a clause naming one is told so, not called a typo.
-      Wave = Data.define(:slug, :number, :submissions, :standing, :review) do
-        def initialize(slug:, number:, submissions:, standing: [], review: nil)
-          super(slug:, number:, submissions:, standing: standing.map { -_1.to_s }.freeze, review:)
+      #
+      # `reopened` names the issues of the whole epic whose approved plan an edit has since changed:
+      # the ones in this wave are marked where they are listed, and the rest are named after them.
+      Wave = Data.define(:slug, :number, :submissions, :standing, :review, :reopened) do
+        def initialize(slug:, number:, submissions:, standing: [], review: nil, reopened: [])
+          super(slug:, number:, submissions:, standing: standing.map { -_1.to_s }.freeze, review:,
+                reopened: reopened.map { -_1.to_s }.freeze)
         end
 
         def stage = "issue_plan"
@@ -461,7 +465,8 @@ module Lain
           count = Submission.issue_count(submissions.size)
           -["Approve the #{stage} stage for #{slug.inspect}, wave #{number} (#{count})?",
             *review&.gate_lines(submissions),
-            *submissions.map { |submission| "  #{submission.fact}" }, GateReply::WAVE_INSTRUCTION].join("\n")
+            *submissions.map { |submission| "  #{submission.fact}#{reopened_mark(submission)}" },
+            *elsewhere, GateReply::WAVE_INSTRUCTION].join("\n")
         end
 
         # @param said [Gate::Said] what the human wrote
@@ -490,6 +495,13 @@ module Lain
         end
 
         private
+
+        def reopened_mark(submission) = (" (reopened by an edit)" if reopened.include?(submission.issue_id))
+
+        def elsewhere
+          others = reopened - ids
+          ["  also reopened by an edit, in another wave: #{others.join(", ")}"] unless others.empty?
+        end
 
         def undecided(readings)
           named = readings.filter_map(&:id)

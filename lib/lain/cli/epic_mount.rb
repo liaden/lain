@@ -94,7 +94,7 @@ module Lain
           return @mounted if @mounted&.slug == slug
 
           Lain::Epic::Home::Journaled.new(Lain::Epic::Home.resolve(config: @config, paths: @paths, root: @root, slug:),
-                                          journal: @journal, reviews: reviews(slug))
+                                          journal: @journal, reviews: reviews(slug), signoffs: reopen)
         end
 
         # @return [String] the project root a path is shown relative to
@@ -117,6 +117,8 @@ module Lain
         def epics = Epic.new(root: @root, paths: @paths, config: @config, journal: @journal, homes: method(:for))
 
         private
+
+        def reopen = EpicSubmit.reopen(journal: @journal, root: @root, paths: @paths, config: @config)
 
         def reviews(slug)
           Lain::Epic::Review.from_journal(EpicMount.prior_claims(@paths, root: @root), journal: @journal,
@@ -327,7 +329,8 @@ module Lain
       def home
         @home ||= Lain::Epic::Home::Journaled.new(
           Lain::Epic::Home.resolve(config: @config, paths: @paths, root: @root, slug:),
-          journal: @journal, reviews: review
+          journal: @journal, reviews: review,
+          signoffs: EpicSubmit.reopen(journal: @journal, root: @root, paths: @paths, config: @config)
         )
       end
 

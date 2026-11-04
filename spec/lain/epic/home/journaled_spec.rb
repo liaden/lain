@@ -295,4 +295,90 @@ RSpec.describe Lain::Epic::Home::Journaled do
       end
     end
   end
+
+  describe "reopening a signed-off issue plan" do
+    let(:signoffs) { instance_double(Lain::Epic::Reopen, reopened: ["a1"]) }
+
+    it "asks the signoffs once the issue's bytes are on disk and journaled" do
+      Dir.mktmpdir do |tmp|
+        home = home_in(tmp)
+        asked = []
+        allow(signoffs).to receive(:reopened) do |**address|
+          asked << [address, File.read(home.issue("a1").path), records.size]
+          ["a1"]
+        end
+
+        described_class.new(home, journal:, signoffs:).issue("a1").write("body")
+
+        expect(asked).to eq([[{ epic_slug: "alpha", issue_id: "a1" }, "body", 1]])
+      end
+    end
+
+    it "tells the writer which issues the write reopened" do
+      Dir.mktmpdir do |tmp|
+        artifact = described_class.new(home_in(tmp), journal:, signoffs:).issue("a1")
+
+        expect { artifact.write("body") }.to change(artifact, :reopened).from([]).to(["a1"])
+      end
+    end
+
+    it "is not asked about research, which reopens no issue" do
+      Dir.mktmpdir do |tmp|
+        described_class.new(home_in(tmp), journal:, signoffs:).research.write("what we learned")
+
+        expect(signoffs).not_to have_received(:reopened)
+      end
+    end
+
+    it "is not asked when the write was refused" do
+      Dir.mktmpdir do |tmp|
+        home = home_in(tmp)
+        decorator = described_class.new(home, journal:, reviews: FakeReviews.new(home.issue("a1").path), signoffs:)
+
+        expect { decorator.issue("a1").write("body") }.to raise_error(described_class::ReviewPending)
+        expect(signoffs).not_to have_received(:reopened)
+      end
+    end
+
+    it "acknowledges a write whose reopen could not be journaled, and names why" do
+      Dir.mktmpdir do |tmp|
+        allow(signoffs).to receive(:reopened).and_raise(Errno::ENOSPC)
+        artifact = described_class.new(home_in(tmp), journal:, signoffs:).issue("a1")
+
+        expect(artifact.write("body")).to equal(artifact)
+        expect([artifact.reopened, artifact.reopen_failure]).to match([[], /No space left/])
+        expect(records.size).to eq(1)
+      end
+    end
+
+    it "names an unreadable gate record as the reason, rather than raising" do
+      Dir.mktmpdir do |tmp|
+        allow(signoffs).to receive(:reopened).and_raise(Lain::Epic::SignoffQueue::UnreadableRecord, "line 3 is torn")
+        artifact = described_class.new(home_in(tmp), journal:, signoffs:).issue("a1")
+
+        artifact.write("body")
+
+        expect(artifact.reopen_failure).to eq("line 3 is torn")
+      end
+    end
+
+    it "does not swallow an error nobody named" do
+      Dir.mktmpdir do |tmp|
+        allow(signoffs).to receive(:reopened).and_raise(NoMethodError)
+
+        expect { described_class.new(home_in(tmp), journal:, signoffs:).issue("a1").write("body") }
+          .to raise_error(NoMethodError)
+      end
+    end
+
+    it "reopens nothing by default" do
+      Dir.mktmpdir do |tmp|
+        artifact = described_class.new(home_in(tmp), journal:).issue("a1")
+
+        artifact.write("body")
+
+        expect(artifact.reopened).to eq([])
+      end
+    end
+  end
 end

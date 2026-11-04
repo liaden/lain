@@ -74,12 +74,34 @@ module Lain
         refuse_derived!(home, input)
         journaled_write(artifact, input.content)
         session_of(invocation).record_document(document_name(home, artifact))
-        Tool::Result.ok("wrote #{input.content.bytesize} bytes to #{artifact.path}#{parsed}")
+        wrote = "wrote #{input.content.bytesize} bytes to #{artifact.path}#{parsed}"
+        Tool::Result.ok("#{wrote}#{reopened(home, artifact, input)}")
       rescue Lain::Error, SystemCallError => e
         Tool::Result.error(e.message)
       end
 
       private
+
+      # The wave is named because the agent's next step is resubmitting it, and the gate asks a wave at a time.
+      def reopened(home, artifact, input)
+        failure = artifact.reopen_failure
+        return failure_note(home, input.issue, failure) if failure
+
+        artifact.reopened.map do |id|
+          "\nissue #{id} was approved at its wave gate and is reopened by this edit: #{resubmit(home, id)}"
+        end.join
+      end
+
+      # An unjournaled reopen leaves the gate approved for bytes it never saw, so the agent is told to resubmit.
+      def failure_note(home, id, failure)
+        "\nthe write was recorded, but its reopen could not be journaled: #{failure}; issue #{id} may be approved " \
+          "at its wave gate for bytes it never saw: #{resubmit(home, id)}"
+      end
+
+      def resubmit(home, id)
+        wave = home.read_epic.waves.index { |layer| layer.any? { _1.id == id } }
+        Epic::Remedy.resubmit("issue_plan", home.slug, wave: wave + 1)
+      end
 
       def document_name(home, artifact)
         "#{home.slug}/#{artifact.path.delete_prefix("#{home.path}#{File::SEPARATOR}")}"

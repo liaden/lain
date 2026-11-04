@@ -339,6 +339,20 @@ module Lain
         end
       end
 
+      # The decisions are folded per call, so an approval another chat gave is seen by an edit made here.
+      #
+      # @param journal [#record] where a reopen lands: the chat's own session record
+      # @param root [String] the project root
+      # @param paths [Paths] the state home the sessions directory resolves under
+      # @param config [Config] says where epics live
+      # @return [Lain::Epic::Reopen]
+      def self.reopen(journal:, root:, paths:, config:)
+        Lain::Epic::Reopen.new(
+          journals: -> { SessionJournals.of(paths, root, types: [Lain::Epic::SignoffQueue::JOURNAL_TYPE]) },
+          digests: Digests.new(config:, paths:, root:), journal:
+        )
+      end
+
       # A journal handed in belongs to its caller -- the driver runs this
       # command in-process over the chat's own -- so it is lent for one
       # decision and left open.
@@ -887,7 +901,8 @@ module Lain
       end
 
       def decide_wave(stage, epic_home, wave)
-        recorded(epic_home) { |records, journal| settled_wave(stage, wave, records, journal) }
+        issue_ids = epic_home.read_epic.issues.map(&:id)
+        recorded(epic_home) { |records, journal| settled_wave(stage, wave, records, journal, issue_ids) }
       end
 
       def recorded(epic_home)
@@ -920,7 +935,7 @@ module Lain
       # Only the issues without a standing approval are asked; the others are
       # reported already approved, and repaired as a lone re-submit is. So an
       # edit that reopens one issue's gate asks about that issue alone.
-      def settled_wave(stage, wave, records, journal)
+      def settled_wave(stage, wave, records, journal, issue_ids)
         queue = Lain::Epic::SignoffQueue.from_journal(records)
         standing, pending = wave.submissions.partition { |submission| standing?(queue, submission) }
         advances = wave_advances(stage, wave, journal)
@@ -928,10 +943,18 @@ module Lain
         return Said.new(text: already.join("\n"), status: 0) if pending.empty?
 
         policy = policy_for(stage, queue, journal) { pending.each { ensure_open!(stage, _1, queue) } }
-        asked = wave.with(submissions: pending.freeze, standing: standing.map(&:issue_id))
+        asked = asked_wave(wave, pending, standing, queue, issue_ids)
         WaveVerdict.new(wave: asked, stage:, policy:, queue:, advances:, journal:, standing: already,
                         gate: gate_for(records, journal, policy)).call
       end
+
+      def asked_wave(wave, pending, standing, queue, issue_ids)
+        wave.with(submissions: reviewed(pending, wave.review), standing: standing.map(&:issue_id),
+                  reopened: Lain::Epic::Reopen.stale(queue, digests, epic_slug: wave.slug, issue_ids:))
+      end
+
+      # Each submission is parked and journaled under its own question, so the wave's review has to ride on each.
+      def reviewed(submissions, review) = submissions.map { _1.with(review:) }.freeze
 
       def gate_for(records, journal, policy)
         Lain::Epic::Gate.from_journal(records, journal:, timeout: gate_timeout(policy),

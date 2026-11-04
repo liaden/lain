@@ -533,5 +533,92 @@ RSpec.describe Lain::CLI::EpicMount do
       expect(result.content).to include("research.md", "under review")
       expect(File.read(bare_home("frugirl-mvp").research.path)).to eq("# what the human holds\n")
     end
+
+    describe "an issue plan approved at its wave gate, then rewritten" do
+      def issue_digest(slug)
+        Lain::CLI::EpicSubmit::Digests.new(config:, paths:, root: @dir).digest(slug, "issue_plan", "a1")
+      end
+
+      def approve_in_another_session(slug)
+        bare_home(slug).issue("a1").write("old prose\n")
+        File.open(File.join(sessions_dir, "prior.ndjson"), "ab") do |file|
+          Lain::Journal.new(io: file).record(
+            Lain::Epic::GateDecision.new(artifact_digest: issue_digest(slug), epic_slug: slug, stage: "issue_plan",
+                                         verdict: Lain::Approval::Verdict::Approve.new, answered_by: "human",
+                                         policy: "signoff", latency: 0.1, issue_id: "a1")
+          )
+        end
+      end
+
+      def rewrite_issue(mount, slug)
+        epic_write(mount).call({ "slug" => slug, "artifact" => "issue", "issue" => "a1", "content" => "new prose\n" },
+                               invocation)
+      end
+
+      def reopen_records = journal_records(io, "gate_decision")
+
+      it "journals a reopen and says the wave needs resubmitting, from a mounted chat" do
+        create_epic("alpha")
+        approve_in_another_session("alpha")
+
+        result = rewrite_issue(mount_for, "alpha")
+
+        expect(reopen_records).to contain_exactly(a_hash_including("policy" => "deferred", "issue_id" => "a1",
+                                                                   "reason" => "reopened by an edit"))
+        expect(result.content).to include("a1", "reopened by this edit", "wave 1")
+      end
+
+      it "does the same from an unmounted chat" do
+        create_epic("alpha")
+        create_epic("another")
+        approve_in_another_session("alpha")
+
+        result = rewrite_issue(mount_for, "alpha")
+
+        expect(reopen_records.size).to eq(1)
+        expect(result.content).to include("reopened by this edit")
+      end
+
+      it "acknowledges the write and names the damaged record when a gate decision elsewhere is torn" do
+        create_epic("alpha")
+        approve_in_another_session("alpha")
+        File.write(File.join(sessions_dir, "torn.ndjson"), "{\"type\":\"gate_decision\"}\n")
+
+        result = rewrite_issue(mount_for, "alpha")
+
+        expect(result).not_to be_error
+        expect(File.read(bare_home("alpha").issue("a1").path)).to eq("new prose\n")
+        expect(result.content).to include("reopen could not be journaled", "cannot be read", "wave 1")
+        expect(reopen_records).to be_empty
+      end
+
+      it "drains the reopen when the issue is written back to its approved bytes" do
+        # A session file, as in a real chat, so the second write sees the first's reopen.
+        chat_file = File.new(File.join(sessions_dir, "chat.ndjson"), "ab").tap { _1.sync = true }
+        allow(chronicle).to receive(:record_journal).and_return(Lain::Journal.new(io: chat_file))
+        create_epic("alpha")
+        approve_in_another_session("alpha")
+        mount = mount_for
+        rewrite_issue(mount, "alpha")
+        epic_write(mount).call({ "slug" => "alpha", "artifact" => "issue", "issue" => "a1",
+                                 "content" => "old prose\n" }, invocation)
+
+        folded = Lain::Epic::SignoffQueue.from_journal(
+          Lain::CLI::SessionJournals.of(paths, @dir, types: ["gate_decision"]).to_a
+        )
+        expect(folded.parked("alpha", "issue_plan")).to be_empty
+        expect(folded.approved?("alpha", "issue_plan", issue_id: "a1")).to be(true)
+        chat_file.close
+      end
+
+      it "writes nothing for an issue never approved" do
+        create_epic("alpha")
+
+        result = rewrite_issue(mount_for, "alpha")
+
+        expect(result.content).not_to include("reopened")
+        expect(reopen_records).to be_empty
+      end
+    end
   end
 end

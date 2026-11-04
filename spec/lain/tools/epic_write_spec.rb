@@ -37,6 +37,45 @@ RSpec.describe Lain::Tools::EpicWrite do
     expect([home.research, home.epic, home.issue("a1")].map(&:read)).to eq(["r\n", epic_md, "i\n"])
   end
 
+  describe "an issue plan approved at its wave gate" do
+    let(:epic_md) { "### [ ] `a1` the first issue\n\nBlocks: `b2`\n\n### [ ] `b2` the second issue\n" }
+    let(:reopen) { instance_double(Lain::Epic::Reopen) }
+    let(:homes) do
+      journaled = ->(slug) { Lain::Epic::Home::Journaled.new(home(slug), journal:, reviews:, signoffs: reopen) }
+      Class.new { define_method(:for) { |slug| journaled.call(slug) } }.new
+    end
+
+    before { home.epic.write(epic_md) }
+
+    it "tells the agent the issue is reopened and which wave to resubmit" do
+      allow(reopen).to receive(:reopened).with(epic_slug: "frugirl-mvp", issue_id: "b2").and_return(["b2"])
+
+      result = write(slug: "frugirl-mvp", artifact: "issue", issue: "b2", content: "new prose\n")
+
+      expect(result).not_to be_error
+      expect(result.content).to include("wrote 10 bytes", "issue b2 was approved at its wave gate",
+                                        "reopened by this edit", "wave 2")
+    end
+
+    it "reports a write whose reopen was not journaled, saying the issue needs resubmitting" do
+      allow(reopen).to receive(:reopened).and_raise(Errno::ENOSPC)
+
+      result = write(slug: "frugirl-mvp", artifact: "issue", issue: "b2", content: "new prose\n")
+
+      expect(result).not_to be_error
+      expect(home.issue("b2").read).to eq("new prose\n")
+      expect(result.content).to include("reopen could not be journaled", "No space left", "wave 2")
+    end
+
+    it "adds nothing for a write that reopened no issue" do
+      allow(reopen).to receive(:reopened).and_return([])
+
+      result = write(slug: "frugirl-mvp", artifact: "issue", issue: "b2", content: "new prose\n")
+
+      expect(result.content).not_to include("reopened")
+    end
+  end
+
   describe "the round's write report" do
     let(:session) { Lain::Session.new.open_pre_images }
     let(:invocation) { Lain::Tool::Invocation.new(context: session) }
