@@ -224,6 +224,21 @@ module Lain
         # stand now, so an edited plan or criterion is caught here.
         def required(stage) = stage.name == "implementation" ? [plan_for(issue!(stage))] : []
 
+        # What the stage boundary reads an earlier stage's approval against.
+        #
+        # @param stage [#to_s] an earlier stage than the one opening
+        # @return [String, nil] the artifact's digest as it stands now; nil when the
+        #   artifact is gone, or when an issue-scoped stage was asked with no issue,
+        #   so the boundary reads either as not approved
+        def digest(stage)
+          stage = Lain::Epic::Stage.new(stage)
+          return if stage.issue_scoped? && @issue.to_s.strip.empty?
+
+          submission(stage).digest
+        rescue Lain::Epic::Home::MissingArtifact
+          nil
+        end
+
         private
 
         def unnamed_artifact(stage)
@@ -299,6 +314,28 @@ module Lain
           # same content is how two records of one thing start disagreeing.
           raise Error, "the #{stage} stage gates a changeset, and no artifact in the epic home addresses " \
                        "one -- #{Lain::Epic::Remedy.submit(stage, @home.slug, issue: "ISSUE_ID", digest: "ADDRESS")}"
+        end
+      end
+
+      # Each epic's artifacts as they stand now, by slug: the digest source every
+      # stage boundary of this project reads, whichever command asks it.
+      class Digests
+        # @param config [Config] says where the epics live
+        # @param paths [Paths] the state home an XDG epic home resolves under
+        # @param root [String] the project root
+        def initialize(config:, paths:, root:)
+          @config = config
+          @paths = paths
+          @root = root
+        end
+
+        # @param epic_slug [String] the epic
+        # @param stage [#to_s] an earlier stage than the one opening
+        # @param issue_id [String, nil] the issue, for an issue-scoped stage
+        # @return [String, nil] see {Artifacts#digest}
+        def digest(epic_slug, stage, issue_id)
+          home = Lain::Epic::Home.resolve(config: @config, paths: @paths, root: @root, slug: epic_slug)
+          Artifacts.new(home:, root: @root, issue: issue_id).digest(stage)
         end
       end
 
@@ -805,8 +842,8 @@ module Lain
       # @param tests [Telemetry::TestsRan, nil] what the suite did on that changeset, for `implementation`
       # @param wave [Integer, nil] a wave of {Lain::Epic::Graph#waves}, counted
       #   from 1, whose issue plans are asked about together; issue_plan only
-      # @param review [String, nil] the agent's quote of a review, shown to the
-      #   human beside the question and never part of the gate's identity
+      # @param review [Object, nil] a review result whose gate rendering the
+      #   question shows beside it, or nil; never part of the gate's identity
       # @return [Said, Held] the verdict, rendered
       # @raise [Lain::Error] every refusal on this path: an unknown stage, an
       #   ambiguous home, a missing artifact, an unbuildable policy, or the
@@ -930,10 +967,12 @@ module Lain
       # asked here only on the two routes that never reach it: a standing
       # approval's repair, and a policy that could not be built.
       def ensure_open!(stage, submission, queue)
-        Lain::Epic::Gate::Policy::Boundary.new(queue)
+        Lain::Epic::Gate::Policy::Boundary.new(queue, digests)
                                           .ensure_open!(stage.name, epic_slug: submission.slug,
                                                                     issue_id: submission.issue_id)
       end
+
+      def digests = Digests.new(config: @config, paths: @paths, root: @root)
 
       # The ASKER says its own window ({Prompt#window}), never a type check
       # here: a chat's own asker also answers through the `interactive`
@@ -982,7 +1021,7 @@ module Lain
       # A missing asker is the wrong refusal to read while the stage could not
       # open anyway, so the yielded boundary check goes first.
       def policy_for(stage, queue, journal)
-        deps = Lain::Epic::Gate::Policies::Deps.new(queue:, asker: Heard.over(@asker), journal:,
+        deps = Lain::Epic::Gate::Policies::Deps.new(queue:, digests:, asker: Heard.over(@asker), journal:,
                                                     role_spawn: @role_spawn, brief: @brief)
         @policies.call(stage.name, config: @config, deps:)
       rescue Lain::Epic::Gate::Policies::Refusal => e

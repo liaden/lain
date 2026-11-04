@@ -140,18 +140,26 @@ RSpec.describe Lain::CLI::EpicSubmit do
   end
 
   # Approvals of the named stages, as the stages before an epic's later gates
-  # carry them: a boundary opens only over an approved earlier stage. Their
-  # digests are not any artifact's here, so no submit reads one as standing.
+  # carry them: a boundary opens only over an earlier stage approved at the
+  # bytes its artifact holds now, so each is stamped at the current digest.
   def approvals(*stages, slug: "alpha")
     stages.map do |stage|
-      decision(digest: "blake3:#{stage}-approved", stage:, approved: true, policy: "hands_off", slug:)
+      decision(digest: current_digest(slug, stage), stage:, approved: true, policy: "hands_off", slug:)
     end
   end
 
-  def epic_approved(slug: "alpha") = approvals("research", "epic_plan", slug:)
+  def current_digest(slug, stage)
+    Lain::CLI::EpicSubmit::Digests.new(config:, paths:, root:).digest(slug, stage, nil) || "blake3:#{stage}-gone"
+  end
+
+  # The research and plan approvals an epic past its plan carries. Research is
+  # stamped at the bytes on disk, so a setup writes research.md before this.
+  def epic_approved(slug: "alpha") = approvals(*epic_approved_stages, slug:)
+
+  def epic_approved_stages = %w[research epic_plan]
 
   # What the examples decided, past the approvals a fixture stamped before them.
-  def submitted_decisions = gate_decisions.drop(epic_approved.size)
+  def submitted_decisions = gate_decisions.drop(epic_approved_stages.size)
 
   def stage_event(stage, event: "started", slug: "alpha")
     Lain::Epic::StageTransition.new(epic_slug: slug, stage:, event:)
@@ -201,6 +209,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     # An issue's implementation is ONE issue's; approving it says nothing about
     # the epic's other issues, so it moves no epic-wide stage.
     it "moves no epic-wide stage when one issue's implementation is approved" do
+      write_research
       session("started.ndjson", *epic_approved, stage_event("issue_plan"))
       home.issue("a").write("the prose for a\n")
       command.submit("issue_plan", issue: "a")
@@ -214,6 +223,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
     it "parks a manual issue's implementation under hands_off, naming manual acceptance" do
       home.write_epic(Lain::Epic::Graph.new(issues: [issue("a", subject: "scripts/x.sh", level: "manual")]))
+      write_research
       session("started.ndjson", *epic_approved, stage_event("issue_plan"))
       home.issue("a").write("the prose for a\n")
       command.submit("issue_plan", issue: "a")
@@ -302,6 +312,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
   describe "issue-scoped gates" do
     before do
       write_epic
+      write_research
       session("started.ndjson", *epic_approved, stage_event("issue_plan"))
       home.issue("a").write("the prose for a\n")
       home.issue("b").write("the prose for b\n")
@@ -402,6 +413,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
     before do
       home.write_epic(wave_graph)
+      write_research
       session("started.ndjson", *epic_approved, stage_event("issue_plan"))
       %w[a b c d].each { |id| home.issue(id).write("the prose for #{id}\n") }
     end
@@ -699,6 +711,50 @@ RSpec.describe Lain::CLI::EpicSubmit do
     end
   end
 
+  # The boundary asks whether research stands approved at the bytes on disk now,
+  # so an edit after the approval shuts the next stage until research is decided again.
+  describe "a research edited since its approval" do
+    before do
+      write_research("v1\n")
+      write_epic
+      command.submit("research")
+    end
+
+    it "keeps epic_plan blocked, naming research as changed since its approval" do
+      write_research("v2\n")
+
+      expect { command.submit("epic_plan") }.to raise_error(Lain::Epic::StageBlocked) { |error|
+        expect(error.message)
+          .to start_with('epic "alpha" cannot open its epic_plan stage -- research changed since its approval; ' \
+                         "resubmit research")
+      }
+      expect(gate_decisions.map { _1["stage"] }).to eq(["research"])
+    end
+
+    # A standing approval's repair never reaches a policy, so the submit's own boundary check is what refuses it.
+    it "refuses a standing epic_plan resubmitted after the research was edited" do
+      command.submit("epic_plan")
+      write_research("v2\n")
+
+      expect { command.submit("epic_plan") }
+        .to raise_error(Lain::Epic::StageBlocked, /research changed since its approval; resubmit research/)
+    end
+
+    it "opens epic_plan again once the edit is undone" do
+      write_research("v2\n")
+      write_research("v1\n")
+
+      expect(command.submit("epic_plan").text).to start_with("approved")
+    end
+
+    it "refuses over a research.md removed since its approval, saying to restore it" do
+      FileUtils.rm(home.research.path)
+
+      expect { command.submit("epic_plan") }
+        .to raise_error(Lain::Epic::StageBlocked, /research's file is missing; restore it, then resubmit research/)
+    end
+  end
+
   describe "a stage never approved" do
     before do
       write_research(slug: "plans")
@@ -731,6 +787,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     end
 
     it "does not read another epic's approvals as this one's" do
+      write_research(slug: "other")
       session("approved.ndjson", *epic_approved(slug: "other"))
 
       expect { command.submit("epic_plan", "plans") }.to raise_error(Lain::Epic::StageBlocked, /"plans".*research/)
@@ -1339,6 +1396,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
         before do
           home.write_epic(Lain::Epic::Graph.new(issues: [issue("a", blocks: ids), *ids.map { issue(_1) }]))
+          write_research
           session("started.ndjson", *epic_approved, stage_event("issue_plan"))
           ["a", *ids].each { |id| home.issue(id).write("the prose for #{id}\n") }
         end
@@ -1514,6 +1572,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
   describe "an abbreviated implementation digest" do
     before do
       write_epic
+      write_research
       session("started.ndjson", *epic_approved, stage_event("issue_plan"))
       home.issue("a").write("the prose for a\n")
       command.submit("issue_plan", issue: "a")
@@ -1582,6 +1641,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     def tip = commit_sha
 
     it "writes what the tip's tests did into an implementation's question" do
+      write_research
       session("started.ndjson", *epic_approved, stage_event("issue_plan"))
       home.issue("a").write("the prose for a\n")
       command.submit("issue_plan", issue: "a")
@@ -1595,6 +1655,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     end
 
     it "carries the tests through a chat's guarded submit" do
+      write_research
       session("started.ndjson", *epic_approved, stage_event("issue_plan"))
       home.issue("a").write("the prose for a\n")
       command.submit("issue_plan", issue: "a")
@@ -1610,6 +1671,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     end
 
     it "says nothing ran for a hand submit given no tests" do
+      write_research
       session("started.ndjson", *epic_approved, stage_event("issue_plan"))
       home.issue("a").write("the prose for a\n")
       command.submit("issue_plan", issue: "a")
@@ -1938,6 +2000,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
     before do
       home.write_epic(graph_with("it works"))
+      write_research
       session("started.ndjson", *epic_approved, stage_event("issue_plan"))
       home.issue("a").write("the prose for a\n")
     end
@@ -2049,6 +2112,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
   describe "the issue-scoped stages" do
     before do
       write_epic
+      write_research
       session("started.ndjson", *epic_approved, stage_event("issue_plan"))
     end
 

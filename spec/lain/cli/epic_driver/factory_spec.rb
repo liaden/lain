@@ -208,13 +208,16 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
     issues.each { |each| home(slug).issue(each.id).write("the prose for #{each.id}\n") }
   end
 
-  # The stage boundary opens only over approved earlier stages. A file of its
-  # own, because the torn-sign-off example halves `fixture.ndjson`.
+  # The stage boundary opens only over earlier stages approved at the bytes
+  # their artifacts hold now. A file of its own, because the torn-sign-off
+  # example halves `fixture.ndjson`.
   def approve_epic(slug = "demo")
+    home(slug).research.write("the research for #{slug}\n")
+    digests = Lain::CLI::EpicSubmit::Digests.new(config:, paths:, root: repo)
     File.open(File.join(paths.filing_dir(root: repo), "epic-approved.ndjson"), "a") do |io|
       journal = Lain::Journal.new(io:, clock: -> { "2026-01-01T00:00:00Z" })
       %w[research epic_plan].each do |stage|
-        journal.record(Lain::Epic::GateDecision.new(artifact_digest: "blake3:#{stage}-approved", epic_slug: slug,
+        journal.record(Lain::Epic::GateDecision.new(artifact_digest: digests.digest(slug, stage, nil), epic_slug: slug,
                                                     stage:,
                                                     verdict: Lain::Approval::Verdict::Approve.new, answered_by: "human",
                                                     policy: "hands_off", latency: 0.0))

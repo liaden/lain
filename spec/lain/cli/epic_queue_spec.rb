@@ -48,14 +48,17 @@ RSpec.describe Lain::CLI::EpicQueue do
   end
 
   # The approvals a later stage's sign-off stands on: approving it opens its
-  # stage only over approved earlier ones, as a verdict does.
+  # stage only over earlier ones approved at the bytes their artifacts hold now,
+  # as a verdict does. An artifact the home lacks is stamped at a digest none has.
   def approvals(*stages, at: "2026-07-28T05:00:00.000000Z", **scope)
     stages.map do |stage|
-      decision(digest: "blake3:#{stage}-approved", at:, policy: "signoff",
-               verdict: Lain::Approval::Verdict::Approve.new, answered_by: "human",
+      digest = digests.digest(scope.fetch(:slug, "alpha"), stage, scope[:issue_id]) || "blake3:#{stage}-gone"
+      decision(digest:, at:, policy: "signoff", verdict: Lain::Approval::Verdict::Approve.new, answered_by: "human",
                stage:, **scope)
     end
   end
+
+  def digests = Lain::CLI::EpicSubmit::Digests.new(config:, paths:, root:)
 
   def evidence(digest:, at:, question:, slug: "alpha", stage: "research", text: "the spike found two answers")
     gated = { artifact_digest: digest, epic_slug: slug, stage:, question: }
@@ -97,7 +100,7 @@ RSpec.describe Lain::CLI::EpicQueue do
     before do
       journal = Lain::Journal.open(paths:, root:)
       gate = Lain::Epic::Gate.new(journal:, timeout: 1)
-      policy = Lain::Epic::Gate::Policy::Deferred.new(queue: Lain::Epic::SignoffQueue.new, journal:)
+      policy = Lain::Epic::Gate::Policy::Deferred.new(queue: Lain::Epic::SignoffQueue.new, digests:, journal:)
       Sync { policy.decide(artifact, gate:, stage: "research", epic_slug: "alpha") }
       journal.close
     end
@@ -144,6 +147,7 @@ RSpec.describe Lain::CLI::EpicQueue do
     def progress = Lain::Epic::Progress.fold(journal_records, graph: home.read_epic, epic_slug: "alpha")
 
     before do
+      home.research.write("the research, such as it is\n")
       home.write_epic(Lain::Epic::Graph.new(issues: [Lain::Epic::Issue.new(id: "a", title: "A"),
                                                      Lain::Epic::Issue.new(id: "b", title: "B")]))
       write_journal("20260728T060000-100.ndjson",
@@ -226,6 +230,10 @@ RSpec.describe Lain::CLI::EpicQueue do
   # Scenario: implementation rows name their issue
   describe "parked gates for two issues" do
     before do
+      home.research.write("the research, such as it is\n")
+      home.write_epic(Lain::Epic::Graph.new(issues: [Lain::Epic::Issue.new(id: "greet", title: "Greet"),
+                                                     Lain::Epic::Issue.new(id: "shout", title: "Shout")]))
+      home.issue("greet").write("the prose for greet\n")
       write_journal("20260728T060000-100.ndjson",
                     [*approvals("research", "epic_plan"), *approvals("issue_plan", issue_id: "greet"),
                      decision(digest: digest_a, at: "2026-07-28T06:00:00.000000Z", policy: "deferred",
@@ -643,7 +651,11 @@ RSpec.describe Lain::CLI::EpicQueue do
   # the confirmation names them -- leaving one parked with no sign to say so is
   # exactly the failure this surface exists to prevent.
   describe "a digest parked in two partitions" do
+    # The same bytes at both stages: the research as it stands, so the boundary reads its approval.
+    let(:digest_a) { Lain::Epic::Submission.research(text: "the research, such as it is\n", slug: "alpha").digest }
+
     before do
+      home.research.write("the research, such as it is\n")
       write_journal("20260728T060000-100.ndjson",
                     [decision(digest: digest_a, at: "2026-07-28T06:00:00.000000Z", policy: "deferred",
                               answered_by: "deferred"),
@@ -702,6 +714,36 @@ RSpec.describe Lain::CLI::EpicQueue do
     end
   end
 
+  # The same boundary a submit meets: research stands approved only at the bytes on disk now.
+  describe "approving epic_plan over a research edited since its approval" do
+    subject(:queue) { described_class.new(paths:, clock:, epics:, root:) }
+
+    before do
+      home.research.write("v1\n")
+      write_journal("20260728T060000-100.ndjson",
+                    [decision(digest: Lain::Epic::Submission.research(text: "v1\n", slug: "alpha").digest,
+                              at: "2026-07-28T05:00:00.000000Z", policy: "signoff",
+                              verdict: Lain::Approval::Verdict::Approve.new, answered_by: "human"),
+                     decision(digest: digest_a, at: "2026-07-28T06:00:00.000000Z", policy: "deferred",
+                              answered_by: "deferred", stage: "epic_plan")])
+    end
+
+    it "refuses naming research as changed since its approval, journaling no sign-off" do
+      home.research.write("v2\n")
+
+      expect { queue.approve(digest_a) }.to raise_error(Lain::Epic::StageBlocked) { |error|
+        expect(error.message)
+          .to start_with('epic "alpha" cannot open its epic_plan stage -- research changed since its approval; ' \
+                         "resubmit research")
+      }
+      expect(gate_decisions.count { |record| record["artifact_digest"] == digest_a }).to eq(1)
+    end
+
+    it "signs off while the research is the approved one" do
+      expect(queue.approve(digest_a)).to include("signed off #{digest_a}")
+    end
+  end
+
   # Two issues' plans under one digest keep the order they were parked in.
   describe "a digest parked for two issues at one stage" do
     before do
@@ -727,6 +769,9 @@ RSpec.describe Lain::CLI::EpicQueue do
   # off before it.
   describe "a digest parked in two partitions, the later stage parked first" do
     subject(:queue) { described_class.new(paths:, clock:, epics:, root:) }
+
+    # The same bytes at both stages: the research as it stands, so the boundary reads its approval.
+    let(:digest_a) { Lain::Epic::Submission.research(text: "the research, such as it is\n", slug: "alpha").digest }
 
     before do
       home.research.write("the research, such as it is\n")

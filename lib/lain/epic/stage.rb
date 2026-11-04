@@ -115,8 +115,9 @@ module Lain
 
       # The boundary check a gate runs before it opens at this stage.
       #
-      # @param queue [#drained?, #approved?] the sign-off queue, asked per
-      #   earlier partition
+      # @param queue [#drained?, #approved?, #standing, #missing?] the sign-off queue, asked per
+      #   earlier partition; #standing and #missing? only of a stage standing approved that
+      #   it reads as not approved
       # @param epic_slug [#to_s] the epic being walked; nothing outside it is consulted
       # @param issue_id [String, nil] the issue whose gate is opening; nil
       #   checks every issue, the conservative reading
@@ -127,7 +128,7 @@ module Lain
         blocked = blocked_by(queue, epic_slug:, issue_id:)
         return self if clear?(blocked)
 
-        raise StageBlocked, blocked_message(blocked[:parked], blocked[:unapproved], epic_slug, issue_id)
+        raise StageBlocked, blocked_message(explained(blocked, queue, epic_slug, issue_id), epic_slug, issue_id)
       end
 
       # The refusal a park runs before it reaches the queue: a park in an
@@ -154,16 +155,43 @@ module Lain
         queue.approved?(epic_slug, earlier.name, issue_id: (issue_id if earlier.issue_scoped?))
       end
 
-      def blocked_message(parked, unapproved, epic_slug, issue_id)
-        reasons = [(held(parked) unless parked.empty?),
-                   (never_approved(unapproved) unless unapproved.empty?)]
+      # Standing approved yet not approved: the queue reads that stage's approval
+      # at the bytes its artifact holds now, and they changed since.
+      def changed?(earlier, queue, epic_slug, issue_id)
+        standing = queue.standing(epic_slug, earlier.name, issue_id: (issue_id if earlier.issue_scoped?))
+        standing&.verdict&.approved? || false
+      end
+
+      # Splits the unapproved stages by why: edited since the approval, its file
+      # gone since (resubmitting alone would fail on the missing file), or never approved.
+      def explained(blocked, queue, epic_slug, issue_id)
+        changed, unapproved = blocked[:unapproved].partition { |earlier| changed?(earlier, queue, epic_slug, issue_id) }
+        missing, edited = changed.partition do |earlier|
+          queue.missing?(epic_slug, earlier.name, issue_id: (issue_id if earlier.issue_scoped?))
+        end
+        { parked: blocked[:parked], edited:, missing:, unapproved: }
+      end
+
+      def blocked_message(explained, epic_slug, issue_id)
+        sentences = { parked: :held, edited: :changed_since, missing: :gone, unapproved: :never_approved }
+        reasons = sentences.reject { |key, _| explained[key].empty? }.map { |key, said| send(said, explained[key]) }
         "epic #{epic_slug.to_s.inspect} cannot open its #{name} stage#{for_issue(issue_id)} -- " \
-          "#{reasons.compact.join("; ")}"
+          "#{reasons.join("; ")}"
       end
 
       def held(parked)
         "#{parked.map(&:name).join(", ")} still holds sign-offs parked " \
           "(approve or deny them before the boundary opens)"
+      end
+
+      def gone(missing)
+        names = missing.map(&:name).join(", ")
+        "#{names}'s file is missing; restore it, then resubmit #{names}"
+      end
+
+      def changed_since(changed)
+        names = changed.map(&:name).join(", ")
+        "#{names} changed since its approval; resubmit #{names}"
       end
 
       def never_approved(unapproved)

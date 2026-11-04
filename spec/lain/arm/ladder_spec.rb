@@ -61,7 +61,8 @@ RSpec.describe Lain::Arm::Ladder do
       # each epic-scoped stage runs under -- both are built from the SAME
       # ladder entry, so the rungs each arm's run would visit are identical
       # before either has decided a single gate.
-      deps = Lain::Epic::Gate::Policies::Deps.new(queue:, asker: nil, journal: Lain::Channel::Null.instance)
+      digests = Data.define { def digest(_epic_slug, stage, _issue_id) = "blake3:#{stage}-approved" }.new
+      deps = Lain::Epic::Gate::Policies::Deps.new(queue:, digests:, asker: nil, journal: Lain::Channel::Null.instance)
       built = Lain::Epic::Gate::Policies.for_all(config: config_for("hands_off"), deps:)
 
       # Every GATED stage (every member of Epic::STAGES) resolves to

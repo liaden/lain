@@ -370,7 +370,9 @@ module Lain
         #   (`File.foreach(path)` re-opens per walk); a snapshot Array taken at
         #   construction goes stale at the first decision.
         # @param clock [#call] monotonic seconds, measuring the SPIKE's latency
-        def initialize(role_spawn:, gate:, queue:, journal:, brief:, decisions:, clock: RunClock::MONOTONIC)
+        # @param digests [#digest] each earlier artifact's digest as it stands now, for the
+        #   stage boundary ({Policy::Boundary})
+        def initialize(role_spawn:, gate:, queue:, digests:, journal:, brief:, decisions:, clock: RunClock::MONOTONIC)
           @role_spawn = role_spawn
           @gate = gate
           @queue = queue
@@ -378,7 +380,7 @@ module Lain
           @brief = brief
           @decided = Decided.new(decisions)
           @clock = clock
-          @boundary = Policy::Boundary.new(queue)
+          @boundary = Policy::Boundary.new(queue, digests)
         end
 
         # Spike, adjudicate, settle or park.

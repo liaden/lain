@@ -78,11 +78,15 @@ module Lain
       #   default one at that moment, so a drain that moves nothing never
       #   builds the epic command
       # @param root [String] the project root, where a chat files its journal
-      def initialize(paths: Paths.new, clock: DEFAULT_CLOCK, epics: nil, root: Project::Resolver.default_project.root)
+      # @param config [Config, nil] says where the epics live, for the boundary's
+      #   current digests; nil loads the root's own when an approval first needs it
+      def initialize(paths: Paths.new, clock: DEFAULT_CLOCK, epics: nil, root: Project::Resolver.default_project.root,
+                     config: nil)
         @paths = paths
         @root = root
         @clock = clock
         @epics = epics
+        @config = config
       end
 
       # @param slug [String, nil] narrow to one epic; every epic when omitted
@@ -153,7 +157,7 @@ module Lain
       # the research approval this same drain journals.
       def ensure_open!(decisions)
         queue = Lain::Epic::SignoffQueue.from_journal(journals.to_a)
-        boundary = Lain::Epic::Gate::Policy::Boundary.new(queue)
+        boundary = Lain::Epic::Gate::Policy::Boundary.new(queue, digests)
         decisions.each do |decision|
           boundary.ensure_open!(decision.stage, epic_slug: decision.epic_slug, issue_id: decision.issue_id)
           queue.apply(decision.to_journal)
@@ -161,6 +165,8 @@ module Lain
       end
 
       def epics = @epics ||= Epic.new(paths: @paths)
+
+      def digests = EpicSubmit::Digests.new(config: @config || Config.load(root:), paths: @paths, root:)
 
       # {Journal.open} creates a fresh file under the root's session directory, deliberately:
       # the fold reads every file there, so a decision journaled from a one-shot

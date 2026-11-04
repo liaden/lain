@@ -36,6 +36,10 @@ module Lain
 
           def self.approved?(_epic_slug, _stage, **) = true
 
+          def self.standing?(_digest, _epic_slug, _stage, **) = true
+
+          def self.standing(_epic_slug, _stage, **) = nil
+
           def self.parked(_epic_slug, _stage, **) = []
         end
 
@@ -48,12 +52,52 @@ module Lain
         # applied to one leaves the other open, and the other is the unattended
         # path. Naming the rule makes "checked exactly once, by whoever holds a
         # queue" a property of the object rather than of a convention.
+        #
+        # Research counts as approved only at the bytes research.md holds NOW, so
+        # an edit after its approval shuts the stages after it again. The later
+        # stages keep their standing approval: epic.md carries the graph and its
+        # statuses, which routine work rewrites, and an issue's own plan is
+        # checked at its current digest where its implementation is submitted.
         class Boundary
-          # @param queue [#drained?, #approved?, #parked] the sign-off queue, or
+          # The stage whose approval is read at its current digest.
+          FRESH = "research"
+
+          # The queue as {Epic::Stage} asks it, with research's approval read at its current digest.
+          class Current
+            # @param queue [#drained?, #approved?, #standing?, #standing] the sign-off queue; this view
+            #   adds #missing? from the digests
+            # @param digests [#digest] see {Boundary#initialize}
+            def initialize(queue, digests)
+              @queue = queue
+              @digests = digests
+            end
+
+            # @return [Boolean] whether nothing is parked where the question reaches
+            def drained?(epic_slug, stage, issue_id: nil) = @queue.drained?(epic_slug, stage, issue_id:)
+
+            # @return [Signoff::Standing, nil] the partition's newest settling verdict, whatever bytes it was over
+            def standing(epic_slug, stage, issue_id: nil) = @queue.standing(epic_slug, stage, issue_id:)
+
+            # @return [Boolean] whether the stage's artifact is gone, so it has no current digest
+            def missing?(epic_slug, stage, issue_id: nil) = @digests.digest(epic_slug, stage, issue_id).nil?
+
+            # @return [Boolean] whether the partition stands approved; for research, at its
+            #   current digest, so a research.md that is gone reads as not approved
+            def approved?(epic_slug, stage, issue_id: nil)
+              return @queue.approved?(epic_slug, stage, issue_id:) unless stage.to_s == FRESH
+
+              @queue.standing?(@digests.digest(epic_slug, stage, issue_id), epic_slug, stage, issue_id:)
+            end
+          end
+          private_constant :Current
+
+          # @param queue [#drained?, #approved?, #standing?, #standing] the sign-off queue, or
           #   {Drained} when the session has none -- named, never defaulted, for
           #   {Policy}'s reason
-          def initialize(queue)
-            @queue = queue
+          # @param digests [#digest] answers `digest(epic_slug, stage, issue_id)` with
+          #   that stage's artifact digest as it stands now, or nil where it is gone
+          def initialize(queue, digests)
+            @queue = Current.new(queue, digests)
           end
 
           # @param stage [#to_s] the stage a gate is about to open at
@@ -69,11 +113,13 @@ module Lain
           end
         end
 
-        # @param queue [#drained?, #approved?, #parked] the sign-off queue the stage
-        #   boundary is checked against, or {Drained} when the session has none
-        def initialize(queue:)
+        # @param queue [#drained?, #approved?, #standing?, #standing, #parked] the sign-off queue
+        #   the stage boundary is checked against, or {Drained} when the session has none
+        # @param digests [#digest] each earlier artifact's digest as it stands now; see {Boundary}
+        def initialize(queue:, digests:)
           @queue = queue
-          @boundary = Boundary.new(queue)
+          @digests = digests
+          @boundary = Boundary.new(queue, digests)
         end
 
         # @param artifact [#digest, #gate_question] the thing being gated
@@ -154,10 +200,11 @@ module Lain
           NAME = Gate::DEFAULT_POLICY
 
           # @param asker [#ask] the `ask_human`-shaped duck a human answers through
-          # @param queue [#drained?, #approved?, #parked] forwarded to {Policy#initialize} -- the
-          #   sign-off queue this gate's stage boundary is checked against
-          def initialize(asker:, queue:)
-            super(queue:)
+          # @param queue [#drained?, #approved?, #standing?, #standing, #parked] forwarded to
+          #   {Policy#initialize} -- the sign-off queue this gate's stage boundary is checked against
+          # @param digests [#digest] see {Policy#initialize}
+          def initialize(asker:, queue:, digests:)
+            super(queue:, digests:)
             @asker = asker
           end
 
@@ -175,11 +222,12 @@ module Lain
           NAME = "hands_off"
           SURFACE = StandingAnswer.new(Answer.approve(NAME)).freeze
 
-          # @param queue [#drained?, #approved?, #parked] see {Policy#initialize}
+          # @param queue [#drained?, #approved?, #standing?, #standing, #parked] see {Policy#initialize}
+          # @param digests [#digest] see {Policy#initialize}
           # @param journal [#record, nil] where a deferral records its wait; needed only by an issue a human judges
-          def initialize(queue:, journal: nil)
-            super(queue:)
-            @deferral = journal && Deferred.new(queue:, journal:)
+          def initialize(queue:, digests:, journal: nil)
+            super(queue:, digests:)
+            @deferral = journal && Deferred.new(queue:, digests:, journal:)
           end
 
           # An issue judged by a human is never approved unseen: it is deferred, so its park and its
@@ -214,10 +262,11 @@ module Lain
           SURFACE = StandingAnswer.new(Answer.deny(NAME)).freeze
 
           # @param queue [#park] see {Policy#initialize}
+          # @param digests [#digest] see {Policy#initialize}
           # @param journal [#record] where the deferred `awaiting_human` lands; required, and it must be
           #   the journal the gate decides into, so the two records sit together
-          def initialize(queue:, journal:)
-            super(queue:)
+          def initialize(queue:, digests:, journal:)
+            super(queue:, digests:)
             @journal = journal
           end
 
@@ -313,10 +362,11 @@ module Lain
           #   publish its journal. That half of the invariant is the CALLER's.
           # @param queue [SignoffQueue] where an uncertain verdict parks -- and
           #   the same queue the stage boundary is read against
-          def initialize(role_spawn:, brief:, journal:, queue:)
+          # @param digests [#digest] see {Policy#initialize}
+          def initialize(role_spawn:, brief:, journal:, queue:, digests:)
             raise UnreadableJournal, ONE_JOURNAL unless journal.respond_to?(:record) && journal.respond_to?(:each)
 
-            super(queue:)
+            super(queue:, digests:)
             @role_spawn = role_spawn
             @brief = brief
             @journal = journal
@@ -340,7 +390,7 @@ module Lain
           # this seam and a constructor-time one there. Nothing is cached:
           # {Adjudicator::Decided} re-walks the journal per call by design.
           def adjudicator(gate)
-            Adjudicator.new(role_spawn: @role_spawn, gate:, queue: @queue, journal: @journal,
+            Adjudicator.new(role_spawn: @role_spawn, gate:, queue: @queue, digests: @digests, journal: @journal,
                             brief: @brief, decisions: @journal)
           end
         end

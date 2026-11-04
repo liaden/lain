@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "delegate"
+
 # Epic::Stage is the closed ordered set an epic walks: research -> epic_plan ->
 # issue_plan -> implementation. It is a value object, so an unknown name fails at
 # construction rather than as a missing branch three cards later, and it owns the
@@ -177,6 +179,54 @@ RSpec.describe Lain::Epic::Stage do
       park(epic_slug: "alpha", stage: "research")
 
       expect { stage("research").ensure_open!(queue, epic_slug: "alpha") }.not_to raise_error
+    end
+  end
+
+  # The gate's boundary reads research's approval at the bytes research.md holds
+  # now, so research can stand approved and still not count. The refusal says
+  # why, and what to do about it.
+  describe "an earlier stage edited since its approval" do
+    # The queue as the gate's boundary hands it over, with research's file edited since.
+    let(:edited) do
+      Class.new(SimpleDelegator) do
+        def approved?(epic_slug, stage, **) = stage.to_s != "research" && super
+
+        def missing?(*) = false
+      end.new(queue)
+    end
+
+    # The same queue with research's file deleted, so its current digest is nil.
+    let(:deleted) do
+      Class.new(SimpleDelegator) do
+        def approved?(epic_slug, stage, **) = stage.to_s != "research" && super
+
+        def missing?(_epic_slug, stage, **) = stage.to_s == "research"
+      end.new(queue)
+    end
+
+    it "says research changed since its approval, and to resubmit it" do
+      approve(epic_slug: "alpha", stage: "research")
+
+      expect { stage("epic_plan").ensure_open!(edited, epic_slug: "alpha") }
+        .to raise_error(Lain::Epic::StageBlocked, /"alpha" cannot open its epic_plan stage -- /) { |error|
+          expect(error.message).to include("research changed since its approval; resubmit research")
+        }
+    end
+
+    it "says a deleted research is missing and must be restored, not just resubmitted" do
+      approve(epic_slug: "alpha", stage: "research")
+
+      expect { stage("epic_plan").ensure_open!(deleted, epic_slug: "alpha") }
+        .to raise_error(Lain::Epic::StageBlocked, /"alpha" cannot open its epic_plan stage -- /) { |error|
+          expect(error.message).to include("research's file is missing; restore it, then resubmit research")
+        }
+    end
+
+    it "keeps not approved for a research never approved" do
+      expect { stage("epic_plan").ensure_open!(edited, epic_slug: "alpha") }
+        .to raise_error(Lain::Epic::StageBlocked, /research not approved/) { |error|
+          expect(error.message).not_to include("changed")
+        }
     end
   end
 

@@ -285,8 +285,10 @@ RSpec.describe Lain::Tools::EpicSubmit do
                 Lain::Epic::Issue.new(id: "c", title: "c")]
       home.write_epic(Lain::Epic::Graph.new(issues:))
       %w[a b c].each { |id| home.issue(id).write("prose for #{id}\n") }
+      digests = Lain::CLI::EpicSubmit::Digests.new(config:, paths:, root: @dir)
       earlier = %w[research epic_plan].map do |stage|
-        Lain::Epic::GateDecision.new(artifact_digest: "blake3:#{stage}", epic_slug: "frugirl-mvp", stage:,
+        Lain::Epic::GateDecision.new(artifact_digest: digests.digest("frugirl-mvp", stage, nil),
+                                     epic_slug: "frugirl-mvp", stage:,
                                      verdict: Lain::Approval::Verdict::Approve.new,
                                      answered_by: "hands_off", policy: "hands_off", latency: 1.0)
       end

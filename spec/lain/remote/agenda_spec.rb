@@ -102,7 +102,8 @@ RSpec.describe Lain::Remote::Agenda do
     Lain::Journal.open(paths:, root:) do |journal|
       gate = Lain::Epic::Gate.new(journal:, timeout: 0.5)
       Sync do
-        Lain::Epic::Gate::Policy::Deferred.new(queue: signoffs, journal:)
+        current = Data.define { def digest(_epic_slug, stage, _issue_id) = "blake3:#{stage}" }.new
+        Lain::Epic::Gate::Policy::Deferred.new(queue: signoffs, digests: current, journal:)
                                           .decide(wave, gate:, stage: "issue_plan", epic_slug: "alpha")
       end
     end

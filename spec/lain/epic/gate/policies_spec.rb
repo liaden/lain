@@ -40,7 +40,9 @@ RSpec.describe Lain::Epic::Gate::Policies do
       promise.resolve(Lain::Epic::Gate::Answer.approve("human"))
     end
   end
-  let(:deps) { described_class::Deps.new(queue:, asker:, journal:) }
+  # Each artifact's digest as it stands now: the one its approval was given at.
+  let(:current) { Data.define { def digest(_epic_slug, stage, _issue_id) = "blake3:#{stage}-approved" }.new }
+  let(:deps) { described_class::Deps.new(queue:, digests: current, asker:, journal:) }
 
   def decide(policy, stage:, epic_slug: "alpha")
     Sync { policy.decide(plan, gate:, stage:, epic_slug:) }
@@ -131,20 +133,26 @@ RSpec.describe Lain::Epic::Gate::Policies do
     end
   end
 
+  describe "the current digests in deps" do
+    it "refuses deps built without them, so no session skips the boundary's digest check" do
+      expect { described_class::Deps.new(queue:, asker:, journal:) }.to raise_error(ArgumentError, /digests/)
+    end
+  end
+
   describe "a policy whose seams are nil in deps" do
     # The requirement is DATA, per policy: hands_off needs no asker and builds
     # without one, while interactive at the same stage with the same deps
     # refuses. A blanket "all seams present" check passes the first and fails
     # the second, so this pair is what pins the per-policy declaration.
     it "builds a policy that does not declare the missing seam" do
-      askerless = described_class::Deps.new(queue:, asker: nil, journal:)
+      askerless = described_class::Deps.new(queue:, digests: current, asker: nil, journal:)
 
       expect(described_class.for(stage: "research", config: config_with(research: "hands_off"), deps: askerless))
         .to be_a(Lain::Epic::Gate::Policy::HandsOff)
     end
 
     it "refuses hands_off with no journal, because a manual issue parks into one" do
-      journalless = described_class::Deps.new(queue:, asker: nil, journal: nil)
+      journalless = described_class::Deps.new(queue:, digests: current, asker: nil, journal: nil)
 
       expect { described_class.for(stage: "research", config: config_with(research: "hands_off"), deps: journalless) }
         .to raise_error(described_class::Refusal) { |error|
@@ -153,7 +161,7 @@ RSpec.describe Lain::Epic::Gate::Policies do
     end
 
     it "refuses a policy that does declare it, naming the stage, the policy, and the seam" do
-      askerless = described_class::Deps.new(queue:, asker: nil, journal:)
+      askerless = described_class::Deps.new(queue:, digests: current, asker: nil, journal:)
 
       expect { described_class.for(stage: "research", config: config_with(research: "interactive"), deps: askerless) }
         .to raise_error(described_class::Refusal) do |error|
@@ -212,7 +220,7 @@ RSpec.describe Lain::Epic::Gate::Policies do
     # Panel NIT: the rule this class documents is "nil-able", so nil is the test.
     # A seam deliberately wired to `false` is wired.
     it "treats a seam wired to false as present -- the rule is nil, not falsiness" do
-      falsey = described_class::Deps.new(queue: false, asker:, journal:)
+      falsey = described_class::Deps.new(queue: false, digests: current, asker:, journal:)
       recipe = described_class::Recipe.new(seams: %i[queue], builder: ->(wiring) { [wiring.queue] })
 
       expect(recipe.build(falsey, stage: "research", policy: "hands_off")).to eq([false])
@@ -271,7 +279,7 @@ RSpec.describe Lain::Epic::Gate::Policies do
     end
 
     it "refuses at wiring time for a seam only a LATER stage needs" do
-      askerless = described_class::Deps.new(queue:, asker: nil, journal:)
+      askerless = described_class::Deps.new(queue:, digests: current, asker: nil, journal:)
       config = config_with(research: "hands_off", epic_plan: "hands_off", issue_plan: "hands_off")
 
       expect { described_class.for_all(config:, deps: askerless) }
@@ -285,7 +293,7 @@ RSpec.describe Lain::Epic::Gate::Policies do
     # The point of the pair: `.for` alone is happy to build the early stages of
     # exactly the session `.for_all` refuses, which is why late is the defect.
     it "refuses a session whose earlier stages .for would have built without complaint" do
-      askerless = described_class::Deps.new(queue:, asker: nil, journal:)
+      askerless = described_class::Deps.new(queue:, digests: current, asker: nil, journal:)
       config = config_with(research: "hands_off", epic_plan: "hands_off", issue_plan: "hands_off")
 
       expect(described_class.for(stage: "research", config:, deps: askerless))
@@ -326,7 +334,7 @@ RSpec.describe Lain::Epic::Gate::Policies do
   # A one-stage session says which stage it decides. A missing asker is then
   # refused only there, while every other seam is still refused for every stage.
   describe ".for_all(asking:)" do
-    let(:askerless) { described_class::Deps.new(queue:, asker: nil, journal:) }
+    let(:askerless) { described_class::Deps.new(queue:, digests: current, asker: nil, journal:) }
 
     it "builds a hands_off stage it decides, with no asker at all, beside interactive stages it does not" do
       built = described_class.for_all(config: config_with(research: "hands_off"), deps: askerless,
@@ -376,12 +384,13 @@ RSpec.describe Lain::Epic::Gate::Policies do
 
   describe ".runnable" do
     it "names the policies an askerless session with no adjudication seams can run" do
-      expect(described_class.runnable(described_class::Deps.new(queue:, asker: nil, journal:)))
+      expect(described_class.runnable(described_class::Deps.new(queue:, digests: current, asker: nil, journal:)))
         .to eq(%w[hands_off deferred])
     end
 
     it "names every policy for a session wired with every seam" do
-      wired = described_class::Deps.new(queue:, asker:, journal:, role_spawn: ->(*) {}, brief: ->(*) { "" })
+      wired = described_class::Deps.new(queue:, digests: current, asker:, journal:,
+                                        role_spawn: ->(*) {}, brief: ->(*) { "" })
 
       expect(described_class.runnable(wired)).to eq(described_class.names)
     end
@@ -395,7 +404,8 @@ RSpec.describe Lain::Epic::Gate::Policies do
     end
 
     it "answers false when a declared seam is nil" do
-      expect(recipe.runs_on?(Lain::Epic::Gate::Policies::Deps.new(queue:, asker: nil, journal:))).to be(false)
+      expect(recipe.runs_on?(Lain::Epic::Gate::Policies::Deps.new(queue:, digests: current, asker: nil,
+                                                                  journal:))).to be(false)
     end
   end
 
@@ -424,7 +434,8 @@ RSpec.describe Lain::Epic::Gate::Policies do
 
     it "carries the adjudication seams when a caller fills them" do
       spawn = ->(*) {}
-      filled = described_class::Deps.new(queue:, asker:, journal:, role_spawn: spawn, brief: ->(*) { "" })
+      filled = described_class::Deps.new(queue:, digests: current, asker:, journal:, role_spawn: spawn,
+                                         brief: ->(*) { "" })
 
       expect(filled.role_spawn).to equal(spawn)
     end

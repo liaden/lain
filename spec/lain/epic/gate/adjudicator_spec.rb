@@ -25,6 +25,16 @@ module AdjudicatorSpecSupport
     end
   end
 
+  # Each artifact's digest as it stands now: the one its approval was given at,
+  # unless the example names an edit.
+  class Current
+    def initialize(edited = {})
+      @edited = edited
+    end
+
+    def digest(_epic_slug, stage, _issue_id) = @edited.fetch(stage.to_s) { "blake3:#{stage}-approved" }
+  end
+
   # A {Skill::RoleSpawn} stand-in scripted PER ROLE. The adjudicator spawns two
   # different roles inside one #call -- the evidence spike and the verdict -- so
   # a single-answer stub could not tell them apart, and half of what this card
@@ -70,6 +80,7 @@ RSpec.describe Lain::Epic::Gate::Adjudicator do
   let(:journal) { Lain::Journal.new(io: journal_io) }
   let(:gate) { Lain::Epic::Gate.new(journal:, timeout: 0.5) }
   let(:queue) { approved_queue }
+  let(:current) { AdjudicatorSpecSupport::Current.new }
   let(:evidence_text) { "The plan cites Epic::Stage's closed set, which the issue graph already honours." }
   let(:plan) { artifact }
   # The caller's answer to "how does an artifact render for a spike". There is
@@ -102,8 +113,10 @@ RSpec.describe Lain::Epic::Gate::Adjudicator do
     AdjudicatorSpecSupport::ScriptedRoleSpawn.new(evidence_researcher: researcher, gate_adjudicator: verdict)
   end
 
-  def adjudicator(spawn = spawn_stub, clock: Lain::RunClock::MONOTONIC, signoffs: queue)
-    described_class.new(role_spawn: spawn, gate:, queue: signoffs, journal:, brief:, decisions: journaled, clock:)
+  def adjudicator(spawn = spawn_stub, clock: Lain::RunClock::MONOTONIC, signoffs: queue,
+                  digests: current)
+    described_class.new(role_spawn: spawn, gate:, queue: signoffs, digests:, journal:, brief:, decisions: journaled,
+                        clock:)
   end
 
   # One journaled `gate_decision` under the terminal policy, hand-built so a
@@ -118,7 +131,7 @@ RSpec.describe Lain::Epic::Gate::Adjudicator do
   end
 
   def adjudicator_over(records, spawn = spawn_stub)
-    described_class.new(role_spawn: spawn, gate:, queue:, journal:, brief:, decisions: records)
+    described_class.new(role_spawn: spawn, gate:, queue:, digests: current, journal:, brief:, decisions: records)
   end
 
   def adjudicate(subject_under_test = adjudicator, item: plan, stage: "epic_plan", epic_slug: "alpha")
@@ -332,7 +345,7 @@ RSpec.describe Lain::Epic::Gate::Adjudicator do
       exploding.define_singleton_method(:record) { |_entry| raise IOError, "disk full" }
       subject_under_test = described_class.new(role_spawn: spawn_stub(verdict: "MAYBE"),
                                                gate: Lain::Epic::Gate.new(journal: exploding),
-                                               queue:, journal: exploding, brief:, decisions: [])
+                                               queue:, digests: current, journal: exploding, brief:, decisions: [])
 
       expect { adjudicate(subject_under_test) }.to raise_error(IOError)
       expect(queue.to_a).to be_empty
@@ -353,6 +366,18 @@ RSpec.describe Lain::Epic::Gate::Adjudicator do
     # Both refusals precede every spend, so only DIAGNOSIS is at stake -- and
     # "your epic's research sign-offs are still parked" is the actionable fact
     # an operator can act on, where "already decided" is a dead end.
+    it "refuses epic_plan over a research edited since its approval, spawning nothing" do
+      spawn = spawn_stub
+      edited = AdjudicatorSpecSupport::Current.new("research" => "blake3:research-edited")
+
+      expect { adjudicate(adjudicator(spawn, digests: edited)) }.to raise_error(Lain::Epic::StageBlocked) { |error|
+        expect(error.message)
+          .to start_with('epic "alpha" cannot open its epic_plan stage -- research changed since its approval; ' \
+                         "resubmit research")
+      }
+      expect(spawn.calls).to be_empty
+    end
+
     it "reports the blocked stage first when an already-decided digest sits in a blocked epic" do
       adjudicate(adjudicator)
       queue.park(artifact_digest: "blake3:research", epic_slug: "alpha", stage: "research",
@@ -385,7 +410,9 @@ RSpec.describe Lain::Epic::Gate::Adjudicator do
   # nothing that then reads as gathered evidence.
   describe "the caller must say how an artifact renders for the spike" do
     it "refuses to be built without a brief" do
-      expect { described_class.new(role_spawn: spawn_stub, gate:, queue:, journal:, decisions: journaled) }
+      expect do
+        described_class.new(role_spawn: spawn_stub, gate:, queue:, digests: current, journal:, decisions: journaled)
+      end
         .to raise_error(ArgumentError, /brief/)
     end
 
@@ -640,7 +667,7 @@ RSpec.describe Lain::Epic::Gate::Adjudicator do
     end
 
     it "requires the journal it folds -- 'nothing was decided' is never a default" do
-      expect { described_class.new(role_spawn: spawn_stub, gate:, queue:, journal:, brief:) }
+      expect { described_class.new(role_spawn: spawn_stub, gate:, queue:, digests: current, journal:, brief:) }
         .to raise_error(ArgumentError, /decisions/)
     end
 
@@ -658,7 +685,8 @@ RSpec.describe Lain::Epic::Gate::Adjudicator do
     # failure the re-readable requirement exists to prevent, and it fails OPEN.
     it "goes stale on a snapshot Array, which is why the duck must re-enumerate" do
       snapshot = journal_io.string.lines
-      adj = described_class.new(role_spawn: spawn_stub, gate:, queue:, journal:, brief:, decisions: snapshot)
+      adj = described_class.new(role_spawn: spawn_stub, gate:, queue:, digests: current, journal:, brief:,
+                                decisions: snapshot)
       adjudicate(adj)
 
       expect(adjudicate(adj)).to be(true)

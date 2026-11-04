@@ -114,11 +114,13 @@ module Lain
         #
         # `role_spawn` and `brief` default to nil -- a session with no
         # meta-agent wiring is the normal case, and nil is a fact there, not an
-        # oversight. The other three are REQUIRED keywords: a caller must SAY it
+        # oversight. The other four are REQUIRED keywords: a caller must SAY it
         # has no asker rather than forget one, because forgetting is exactly how
-        # a gate ends up unable to ask anybody anything.
-        Deps = Data.define(:queue, :asker, :journal, :role_spawn, :brief) do
-          def initialize(queue:, asker:, journal:, role_spawn: nil, brief: nil)
+        # a gate ends up unable to ask anybody anything. `digests` has no
+        # opt-out at all, since a default would let a session skip the
+        # boundary's check that an earlier stage is approved at its current bytes.
+        Deps = Data.define(:queue, :digests, :asker, :journal, :role_spawn, :brief) do
+          def initialize(queue:, digests:, asker:, journal:, role_spawn: nil, brief: nil)
             super
           end
 
@@ -189,26 +191,26 @@ module Lain
         # {Config::Epics::Gates} reads its valid names from here.
         CATALOG = {
           Policy::Interactive::NAME => Recipe.new(
-            seams: %i[asker queue],
-            builder: ->(deps) { Policy::Interactive.new(asker: deps.asker, queue: deps.queue) }
+            seams: %i[asker queue digests],
+            builder: ->(deps) { Policy::Interactive.new(asker: deps.asker, queue: deps.queue, digests: deps.digests) }
           ),
           Policy::HandsOff::NAME => Recipe.new(
-            seams: %i[queue journal],
-            builder: ->(deps) { Policy::HandsOff.new(queue: deps.queue, journal: deps.journal) }
+            seams: %i[queue digests journal],
+            builder: ->(deps) { Policy::HandsOff.new(queue: deps.queue, digests: deps.digests, journal: deps.journal) }
           ),
           Policy::Deferred::NAME => Recipe.new(
-            seams: %i[queue journal],
-            builder: ->(deps) { Policy::Deferred.new(queue: deps.queue, journal: deps.journal) }
+            seams: %i[queue digests journal],
+            builder: ->(deps) { Policy::Deferred.new(queue: deps.queue, digests: deps.digests, journal: deps.journal) }
           ),
           # The one row wanting the adjudication seams -- what the per-policy
           # declaration was for: a session running `hands_off` overnight still
           # wires no spawn, and one naming this policy without a spawn is
           # refused at startup, by NAME.
           Policy::Adjudicated::NAME => Recipe.new(
-            seams: %i[queue journal role_spawn brief],
+            seams: %i[queue digests journal role_spawn brief],
             builder: lambda { |deps|
               Policy::Adjudicated.new(role_spawn: deps.role_spawn, brief: deps.brief,
-                                      journal: deps.journal, queue: deps.queue)
+                                      journal: deps.journal, queue: deps.queue, digests: deps.digests)
             }
           )
         }.freeze
