@@ -21,6 +21,9 @@ module Lain
       CAPABILITY = :remote_surface
       DEFAULT_POLL_INTERVAL = 0.25
 
+      # A phone that is looking at the app needs no buzz, so a short wait is the desk's to end.
+      DEFAULT_BUZZ_AFTER = 60
+
       # How the phone learns an answer was refused: the reason heads the item's
       # own text, since the wire has no reply to an answer the relay accepted.
       REFUSED = "your last answer was refused: %<reason>s"
@@ -65,7 +68,8 @@ module Lain
       # it at all: over the agenda of this chat's parked calls, the project's
       # deferred gates and the chat's open questions.
       #
-      # @param relay [String, nil] the `remote relay:` address; nil leaves the phone surface off
+      # @param config [Config] its `remote relay:` address, where nil leaves the phone surface off, and
+      #   its `remote ntfy:` topic URL a long-waiting item is announced on
       # @param paths [Paths]
       # @param root [String] the project root
       # @param queue [Parked::Queue, nil] the chat's parked calls; nil when nobody answers the chat
@@ -73,12 +77,16 @@ module Lain
       # @param secrets [#to_a] the board's known secret values
       # @param journal [#<<] the session journal
       # @return [RemoteSurface, nil]
-      def self.for(relay:, paths:, root:, queue:, replies:, secrets:, journal:)
-        return unless relay && queue
+      def self.for(config:, paths:, root:, queue:, replies:, secrets:, journal:)
+        return unless config.remote_relay && queue
 
         agenda = Remote::Agenda.new(queue:, gates: Remote::Agenda::Gates.new(paths:, root:), replies:)
-        new(transport: Core::Transport::Unix.new(socket(paths:, root:)), agenda:, secrets:, journal:)
+        new(transport: Core::Transport::Unix.new(socket(paths:, root:)), agenda:, secrets:, journal:,
+            ntfy: announcer(config.remote_ntfy))
       end
+
+      def self.announcer(url) = url ? Remote::Ntfy.new(url:) : Remote::Ntfy::Null::INSTANCE
+      private_class_method :announcer
 
       # @param transport [#start, #stop] the relay's Unix socket ({Core::Transport::Unix})
       # @param agenda [Remote::Agenda] what waits on a human, and where an answer goes
@@ -86,14 +94,22 @@ module Lain
       # @param journal [#<<] where a degraded relay and a failed sweep are recorded
       # @param poll_interval [Numeric] seconds between reads of the agenda
       # @param prefix [String] marks this chat's ids on a relay other chats may publish to
+      # @param ntfy [#notify] announces an item that has waited {buzz_after} seconds
+      # @param clock [#now] what the wait is measured by
+      # @param buzz_after [Numeric] seconds an item waits before it is announced
       def initialize(transport:, agenda:, secrets:, journal: Channel::Null::INSTANCE,
-                     poll_interval: DEFAULT_POLL_INTERVAL, prefix: SecureRandom.hex(4))
+                     poll_interval: DEFAULT_POLL_INTERVAL, prefix: SecureRandom.hex(4),
+                     ntfy: Remote::Ntfy::Null::INSTANCE, clock: Time, buzz_after: DEFAULT_BUZZ_AFTER)
         @transport = transport
         @agenda = agenda
         @secrets = secrets
         @journal = journal
         @poll_interval = poll_interval
         @prefix = "#{prefix}-"
+        @ntfy = ntfy
+        @clock = clock
+        @buzz_after = buzz_after
+        @waiting = {}
         @cursor = 0
         @published = {}
         @refused = {}
@@ -101,12 +117,16 @@ module Lain
         @agenda_lock = Mutex.new
       end
 
+      # @return [#notify] what announces an item that has waited too long
+      attr_reader :ntfy
+
       # Runs for the conversation, in its own fiber, and returns once the relay is gone.
       #
       # @return [void]
       def watch
         client = Core::Client.start(transport: @transport)
         answering = Async { follow_answers(client) }
+        @announcing = Async::Barrier.new
         while answering.running?
           publish(client)
           Async::Task.current.sleep(@poll_interval)
@@ -115,6 +135,7 @@ module Lain
         degrade(e)
       ensure
         answering&.stop
+        @announcing&.stop
         retract(client) if client && !@degraded
         client&.stop
       end
@@ -176,6 +197,7 @@ module Lain
         views.each { |item, view| show(client, item, view) }
         @cursor = cursor
         republish_refused(client)
+        announce_overdue
       rescue *ENDS
         raise
       rescue StandardError => e
@@ -186,11 +208,15 @@ module Lain
         return if ids.empty?
 
         send_delta(client, settled: ids.map { wire_id(_1) })
-        ids.each { @published.delete(_1) }
+        ids.each do |id|
+          @published.delete(id)
+          @waiting.delete(id)
+        end
       end
 
       def show(client, item, view)
         send_delta(client, added: [wired(view)])
+        @waiting[item.id] = view unless @published.key?(item.id)
         @published[item.id] = item
       rescue Core::Client::Refused => e
         fault(e)
@@ -202,6 +228,23 @@ module Lain
         refused.each do |id, reason|
           view = Remote::Agenda::View.of(annotated(phone_face(@published.fetch(id)), reason), secrets: @secrets)
           view && show(client, @published.fetch(id), view)
+        end
+      end
+
+      # Dropped before the POST, so a topic that is down is one failure and not one per sweep.
+      def announce_overdue
+        now = @clock.now
+        @waiting.select { |_, view| now - view.asked_at >= @buzz_after }.each do |id, view|
+          @waiting.delete(id)
+          announce(view.with(id: wire_id(view.id)))
+        end
+      end
+
+      def announce(view)
+        @announcing.async do
+          @ntfy.notify(view)
+        rescue StandardError => e
+          fault(e)
         end
       end
 

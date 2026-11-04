@@ -976,7 +976,7 @@ module Lain
       end
 
       def remote_surface
-        Approval::RemoteSurface.for(relay: config.remote_relay, paths: @paths, root:, queue: approvals,
+        Approval::RemoteSurface.for(config:, paths: @paths, root:, queue: approvals,
                                     replies: @replies, secrets: @switchboard.secrets, journal: durable_journal)
       end
 
