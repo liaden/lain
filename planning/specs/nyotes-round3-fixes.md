@@ -2662,3 +2662,51 @@ The comment at `redact_secret_reads.rb:113-125` calls this the last fail-open in
 - T41 landed 206cadcf (attempt 2)
 20:32 T41 landed 206cadcf (attempt 2)
 20:32 T12 high review started
+20:34 T8 fix round 1 done (279/11 red; 394/0, 1762/0, 341/0; fuzz 22 decided/38 asked again; window 0.121s). 3 specs green on write. Second review started. Plan log fold: lint rejected a 79-char subject, rerun double-appended; fixed by feabc38b; fold.sh now lints first.
+20:35 T15 fix round 1: items 3-9 done, item 1 at Gate (94/1 red; ToolGuard/Escalation mutants claimed equivalent), item 2 layers read carried bounds (nil = not cut). Ruling: setting bounds where envs are made (switchboard, subagent, wiring; T24 overlap) moves to FU-7 after T24 lands. Second review started.
+20:41 T15 review 2 APPROVE (nil default safe and loud; ToolGuard/Escalation mutants equivalent; 16 of 19 mutants red). 2 nits sent (drop unread execs flag, re-wrap). Then hot-path-bench check with main control, then land.
+20:43 T15 nits done (1546/0). execs flag dropped; lease exec rules via Bounds join FU-7 (production runs from LeasedPolicy's resolver, unchanged). Bench vs main started.
+20:50 T15 bench 1: bash rows equal to main; wire_ready over on main too (FU-5); journal_chained_1000000 T15 1.23/1.37/0.83 vs main 0.85-0.86 (no journal files in T15, all NOISY). Rerunning alternation once.
+20:53 T24 fix round 1 done (204/25 red, item reds checked; 503/1 spec bug fixed; leases 36/0, subagent 391/0, wiring 296/0, 341/0; --resume drive resumed in a fresh clone). FU-8: Gc ages refs/lain/stopped by retain_days. Second review started.
+21:09 T15 journal row: alone-process probe equal to main (0.77-0.83 vs 0.78-0.79, same GC counts); the 1 spike came before any bash row. Noise, not T15. Landing T15 attempt 1.
+21:11 T12 high review REQUEST-CHANGES: blocker, /deny reason lost when the watcher already asks call 1 (reason not on Pending; walk counts others' denies). Plus outcome line hides the decider, refusal read twice race, 3 survivors, stale y/N hint, double announce. Ruling: reason held on the Pending, passed through ApprovalPolicy#decide, Reasoned delegator removed. Fix round 1 sent; second review follows.
+- T15 landed b3d82f89 (attempt 1)
+21:17 T15 landed b3d82f89
+21:17 T16 and T32 started (cut at b3d82f89)
+21:21 T32 impl done (8/2 red; 674/0; edge examples green on write, code already rounds first). Low review started.
+21:21 T32 low review APPROVE (rounding guarded by mutant; 0ms honest). Landing. Note: ask_settled prints %.1fs for a sub-second settle (different event).
+- T32 landed ff41a701 (attempt 1)
+21:28 T32 landed ff41a701
+21:28 T46 started
+21:29 T46 impl done (specs only; no red, laws already held; 28/0, 341/0). Low review proves the spec can fail by mutating Masked, Usage, Spent.
+21:30 T46 low review APPROVE-WITH-FIXES (Masked identity and associativity mutants red; Usage max mutant survives). Sent: concrete Usage sum example, multibyte generator. No second review.
+21:31 T46 fixes done (max mutant red on the new example; 29/0, 341/0). Landing.
+21:33 T12 fix round 1 done (314/24 red incl. probes B, C; 2855/0). queue.rb and approval_policy.rb confirmed in scope (reason on Pending); approval_view.rb joins for 1 stale reference. Second review after.
+- T46 landed e2e34c3f (attempt 1)
+21:35 T46 landed e2e34c3f
+21:35 T36 started (cut at e2e34c3f)
+21:36 T12 ready (436/0 after approval_view ref). Second review started.
+21:39 T16 impl: cargo scenario cannot pass as written (lain-fence skips exec dirs absent at start; 126 same call, 0 next). Ruling: pre-create empty target/ only with Cargo.toml, inside the checkout, no symlink escape; node_modules and .venv/bin run from the next call; never widen exec to the root. Leased child Bounds into profiles joins FU-7.
+21:40 T36 impl done (NameError red; 117/0, 4299/0). epic_slug wiring needs a source (Askers has none): askers.rb joins, implementer wires it with a spec. Masking reuses CredentialPatterns.for(:write).
+21:43 T16 impl done (135/2 red: seam 126, ENOENT; 2324/0). ARCHITECTURE.md wiring applied in worktree (docs specs 30/0). High review started.
+21:45 T36 wiring done (askers ArgumentError red; 4352/0). Wiring 303/302 ClassLength: no raise, lands after T24 frees lines. Medium review started.
+21:47 T36 medium review APPROVE-WITH-FIXES: epic gate answers record nothing (gate calls asker.ask, not perform); question masking and slug thunk unpinned; set records the summary. Ruling: record where the answer resolves in AskHuman (no gate.rb edit, T8 overlap); pass the announcement down. Second review follows. Masking gap shared with history (xoxb-, free prose) noted, not a regression.
+21:51 T12 review 2 APPROVE-WITH-FIXES (blocker fixed, drive confirms; no leak; no surprise approval; 16 of 17 mutants). Mechanical: pin ensure, nest offerings, init @offered. No third review. /deny on a call the human never saw stays (fails closed).
+21:53 T36 fix round done (4 red; 4467/0). Record in AskHuman#reply covers gate path. Second review started.
+21:55 T36 review 2 APPROVE (no double record; nothing recorded for overrun/timeout/cancel; mask once at reply). Ready; lands after T24 (Wiring ClassLength).
+21:56 T16 high review APPROVE-WITH-FIXES (28/28 attacks refused on the real fence; 2 unpinned guards incl. Sealed cache swap hole under mutant; mkdir before refusal; cargo exec rule in 2 places). Fix round sent; second review follows. ARCHITECTURE.md sentence fixed by main session. FU-9: fence opens exec dirs with O_PATH (follows links) after an lstat check; use RESOLVE_NO_SYMLINKS.
+21:56 T12 final fixes done (queue_spec 3/1 red, ensure re-proved 3/2; 2858/0). Landing T12 (26 paths, clean 3-way over T10).
+- T12 landed 9e2518e5 (attempt 1)
+21:59 T12 landed 9e2518e5
+21:59 T45 started (cut at 9e2518e5)
+22:00 T45 stop: only caller of CompactionProfile#need is backend.rb:931; sweep not yet run. Ruling: backend.rb joins; code first, then CompactionSweep window/4 vs /8 on 1 nyotes session under the lock (45 min cap); stop if saving <10% or wall grows.
+22:02 T45 DROPPED by its stop condition: CompactionSweep on 20261103T005255-29709 (round 3 nyotes, 131072 window), window/8 vs /4: request bytes -6.4% (elide -6.6%), under the 10% bar; cuts 14 -> 26; rebilled tokens +85% (1,030,581 -> 1,905,705). Net loss on a re-prefilling local model. Code kept as a diff in handbacks/T45-dropped.diff; not landed.
+22:03 T16 fix round done (266/2 red; pins re-proved under mutants 138/3; 2328/0, seams 156/0). Accepted: empty target/ left when Sandboxed#unrunnable refuses later. Second review started.
+22:03 T27 and T61 started (cut at 9e2518e5). T18 waits for T24 and T36 (wiring.rb). T50 and T51 (Rust) held: a fresh worktree would build lain-core from scratch.
+22:08 T16 review 2 APPROVE (15 of 15 mutants; 28/28 attacks; same-call cargo exit 0). Bench vs main started.
+22:09 T61 impl done (315/3 red; 315/0, 2114/0). Unqueued is a module; headless read masks with reason :unattended. Removed the declining-queue control example (reviewer to judge). 4 stale comments: env.rb and tool_guard.rb join for comments only.
+22:10 T27 impl done (98/1 red; 7303/0). Medium review started (typeahead safety focus).
+22:14 T16 bench: bash rows equal to main except workspace +0.2 ms (16.88-17.00 vs 16.70-16.76, ceiling 17.8; per-call dir checks); wire_ready over on main too (FU-5). Landing T16.
+22:15 T61 comments done (656/0). High review started.
+- T16 landed b2237ddf (attempt 1)
+22:17 T16 landed b2237ddf
