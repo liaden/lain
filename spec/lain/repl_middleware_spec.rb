@@ -87,7 +87,7 @@ RSpec.describe "the repl phase's Middleware::Stack" do
         expect(stack.to_a[0, 2]).to eq(extras)
         expect(stack.to_a.last).to be_an_instance_of(Lain::Middleware::SkillDispatch)
 
-        stack.call({ text: "hi", agent: :the_agent }) { |env| env.merge(response: "ran") }
+        stack.call({ text: "hi", agent: instance_double(Lain::Agent, :command= => nil) }) { |env| env.merge(response: "ran") }
 
         expect(trace).to eq([%i[a in], %i[b in], %i[b out], %i[a out]])
       end
@@ -103,7 +103,7 @@ RSpec.describe "the repl phase's Middleware::Stack" do
         end.new
 
         stack = Lain::CLI::ReplMiddleware.build(library:, role_spawn:, extras: [silent], **critique_seams)
-        result = stack.call({ text: "hi", agent: :the_agent }) { |env| env.merge(response: "ran") }
+        result = stack.call({ text: "hi", agent: instance_double(Lain::Agent, :command= => nil) }) { |env| env.merge(response: "ran") }
 
         expect(result.to_h).not_to have_key(:response)
       end

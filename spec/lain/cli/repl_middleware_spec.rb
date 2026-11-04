@@ -89,7 +89,7 @@ RSpec.describe Lain::CLI::ReplMiddleware do
                                       **critique_seams)
 
         seen = nil
-        stack.call({ text: "/greet warmly", agent: :the_agent }) do |env|
+        stack.call({ text: "/greet warmly", agent: instance_double(Lain::Agent, :command= => nil) }) do |env|
           seen = env
           env.merge(response: "ran")
         end

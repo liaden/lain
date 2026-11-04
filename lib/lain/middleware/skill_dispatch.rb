@@ -105,18 +105,25 @@ module Lain
 
       def call(env, &app)
         invocation = Skill::Invocation.parse(env.fetch(:text))
-        return downstream(env, &app) if invocation.nil?
+        return plain(env, &app) if invocation.nil?
         return report_role_bound(env, invocation) unless invocation.inline?
         return report_unknown(env, invocation) unless known?(invocation)
 
         refuse_unspawned_model!(invocation)
         return report_critique(env, invocation) if held_critique?(invocation)
 
+        env.fetch(:agent).command = invocation.skill
         grant!(env.fetch(:agent), invocation.skill)
         downstream(env.merge(text: expand(invocation)), &app)
       end
 
       private
+
+      # A plain line is not the work of the command before it, so its payments name none.
+      def plain(env, &block)
+        env.fetch(:agent).command = nil
+        downstream(env, &block)
+      end
 
       def grant!(agent, skill)
         grant = @allowance.grant(skill)

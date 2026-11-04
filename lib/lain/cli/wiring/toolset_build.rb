@@ -534,7 +534,8 @@ module Lain
         def held_by(agent)
           return { holder: Lain::Tools::Subagent::Holder::ROOT } unless agent
 
-          { holder: Lain::Tools::Subagent::Holder.of(agent), spend: -> { agent.call.spend } }
+          { holder: Lain::Tools::Subagent::Holder.of(agent), spend: -> { agent.call.spend },
+            command: -> { agent.call.command } }
         end
 
         # The chat's one subagent tool: the researcher, and a reviewer that reads the

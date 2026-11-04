@@ -2647,6 +2647,43 @@ RSpec.describe Lain::Tools::Subagent do
       expect(paid.map(&:spawn)).to eq([record.spawn.digest])
     end
 
+    it "journals a child's payments under the role it was announced as and the skill it runs" do
+      journal = Lain::Channel.new
+      who = Lain::Requester.new(name: "reviewer", role: "reviewer", skill: "create-epic-issues")
+      build_subagent(provider: mock(text_response("done", usage: spending(10))), journal:, announces_as: who).run("go")
+
+      paid = journal.drain.grep(Lain::Telemetry::TurnUsage)
+      expect(paid.map { [_1.role, _1.command] }).to eq([%w[reviewer create-epic-issues]])
+    end
+
+    it "journals a model-spawned child's payments under the command its parent is running" do
+      journal = Lain::Channel.new
+      build_subagent(provider: mock(text_response("done", usage: spending(10))), journal:,
+                     command: -> { "create-epic-issues" }).run("go")
+
+      expect(journal.drain.grep(Lain::Telemetry::TurnUsage).map(&:command)).to eq(["create-epic-issues"])
+    end
+
+    it "reads the parent's command when the child is built, so a later line does not rename its payments" do
+      journal = Lain::Channel.new
+      running = "plan-epic"
+      tool = build_subagent(provider: mock(text_response("done", usage: spending(10))), journal:,
+                            command: -> { running })
+      tool.run("go")
+      running = nil
+
+      expect(journal.drain.grep(Lain::Telemetry::TurnUsage).map(&:command)).to eq(["plan-epic"])
+    end
+
+    it "names a child announced as a bare word by that word, under no command" do
+      journal = Lain::Channel.new
+      build_subagent(provider: mock(text_response("done", usage: spending(10))), journal:,
+                     announces_as: "researcher").run("go")
+
+      paid = journal.drain.grep(Lain::Telemetry::TurnUsage)
+      expect(paid.map { [_1.role, _1.command] }).to eq([["researcher", nil]])
+    end
+
     it "is spent, live, exactly what the session file's payments add up to" do
       io = StringIO.new
       journal = Lain::Journal.new(io:)

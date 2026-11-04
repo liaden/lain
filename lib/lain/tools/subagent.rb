@@ -127,7 +127,7 @@ module Lain
         @answer = answer
         @kept = kept
         @builder = ChildBuilder.new(seam: @seam, toolset:, policy:, budget:, persona:, model:,
-                                    name: @announces_as.label, compaction:)
+                                    name: @announces_as.label, compaction:, payer: @announces_as)
         seed_config(name, mode, log)
       end
 
@@ -1591,7 +1591,7 @@ module Lain
       # {Ext::Event}/{Canonical} sense.
       Seam = Data.define(:provider, :context_factory, :parent, :tool_middleware, :journal, :telemetry, :display_channel,
                          :supervisor, :observer, :askers, :isolation, :escalation, :scope, :attachments, :middleware,
-                         :twins, :holder, :spend, :bounds) do
+                         :twins, :holder, :spend, :bounds, :command) do
         # Everything after `tool_middleware` defaults to its Null object. The
         # first four stay required, so Data's own missing-keyword error is the
         # loud failure, unwritten.
@@ -1669,6 +1669,9 @@ module Lain
         # `spend` is the holder's {Budget::Shared}, or a thunk answering it:
         # where a child's token grant is reserved and its spend settles.
         #
+        # `command` is the skill line the holder is running, or a thunk answering it: a child's payments
+        # are made under it, read when the child is built.
+        #
         # `bounds` is the holder's {Sensitivity::Bounds::Cell}, or a thunk
         # answering it: where each checkout leased to a child is taken as a
         # lease the holder may read. It is late-bound because the holder's tool
@@ -1680,7 +1683,7 @@ module Lain
                        escalation: [AskHuman::HUMAN].freeze, scope: UNSCOPED,
                        attachments: Middleware::ResolveAttachments::Unwired,
                        middleware: NO_MIDDLEWARE, twins: Lineage::Twins::Null, holder: Holder::ROOT,
-                       spend: Budget::Shared::Null, bounds: NO_BOUNDS)
+                       spend: Budget::Shared::Null, bounds: NO_BOUNDS, command: nil)
           Seam.refuse_unbuildable(tool_middleware)
 
           super
@@ -1829,7 +1832,8 @@ module Lain
         # than as a 71-character correlation.
         def initialize(seam:, toolset:, policy:, budget:, persona: Role::Persona::Null,
                        model: ModelChoice::Null, name: "subagent", compaction: ParentView::None,
-                       reservation: Budget::Shared::Unreserved)
+                       reservation: Budget::Shared::Unreserved, payer: Requester::UNNAMED)
+          @payer = payer
           @seam = seam
           @toolset = toolset
           @policy = policy
@@ -1845,7 +1849,7 @@ module Lain
         def named(requester)
           self.class.new(seam: @seam.with(tool_middleware: @seam.tool_middleware.with(requester:)), toolset: @toolset,
                          policy: @policy, budget: @budget, persona: @persona, model: @model, name: @name,
-                         compaction: @compaction)
+                         compaction: @compaction, payer: @payer)
         end
 
         # Every copy gets the spawn wiring verbatim, the seam's observer and
@@ -1875,7 +1879,8 @@ module Lain
         # the holder's room clamped the role's request, and settling into it.
         def granting(reservation)
           self.class.new(seam: @seam, toolset: @toolset, policy: @policy, budget: reservation.ceilings,
-                         persona: @persona, model: @model, name: @name, compaction: @compaction, reservation:)
+                         persona: @persona, model: @model, name: @name, compaction: @compaction, reservation:,
+                         payer: @payer)
         end
 
         # `child` is late-bound through the thunk exactly as the exe wires the
@@ -2032,10 +2037,14 @@ module Lain
         # own. Each names its spawn, so a reader pairing payments with the
         # parent's requests can skip it. A child built with no spawn names
         # none, so its payments are not journaled; its spend still settles.
+        # The command is read once, at the spawn: a child does the work of the
+        # skill that started it, even after that skill line has ended.
         def child_accounting(chain, spend)
           return Agent::Accounting.new(spend:) if chain.spawn.nil?
 
-          Agent::Accounting.new(journal: @seam.journal, spawn: chain.spawn, spend:)
+          Agent::Accounting.new(journal: @seam.journal, spawn: chain.spawn, spend:,
+                                role: @payer.role || @payer.name,
+                                command: @payer.skill || Lain.live(@seam.command))
         end
 
         # Addressed to the spawn digest; a child built with no spawn gets no inbox.

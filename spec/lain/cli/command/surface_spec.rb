@@ -422,7 +422,8 @@ RSpec.describe Lain::CLI::Command::Surface do
       expect(surface.middleware).to be(surface.middleware)
 
       seen = nil
-      surface.middleware.call({ text: "/greet warmly", agent: instance_double(Lain::Agent, allow: nil) }) do |env|
+      agent = instance_double(Lain::Agent, allow: nil, :command= => nil)
+      surface.middleware.call({ text: "/greet warmly", agent: }) do |env|
         seen = env
         env.merge(response: "ran")
       end
@@ -443,7 +444,7 @@ RSpec.describe Lain::CLI::Command::Surface do
       File.write(skill, "# Issues\n")
       surface = build_surface(root, epic: seams)
 
-      agent = instance_double(Lain::Agent, allow: nil)
+      agent = instance_double(Lain::Agent, allow: nil, :command= => nil)
       surface.middleware.call({ text: "/create-epic-issues", agent: }) { |env| env.merge(response: "ran") }
 
       expect(agent).to have_received(:allow).with(having_attributes(iterations: 124))

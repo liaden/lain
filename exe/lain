@@ -1620,6 +1620,9 @@ class LainCLI < Thor
   method_option :session, type: :string, desc: "Session file to tail; defaults to this project's newest"
   def watch(selector) = exit_status { Lain::CLI::Watch.new(selector:, path: options[:session], sink: $stdout).run }
 
+  desc "usage SESSION", "Tokens by command and role from a session"
+  def usage(selector) = exit_status { Lain::CLI::Usage.new(selector:, sink: $stdout).run }
+
   desc "friction SESSION", "Knob guidance from a session's friction signals (offline, deterministic)"
   def friction(selector) = render { Lain::CLI::Friction.new.report(selector) }
 

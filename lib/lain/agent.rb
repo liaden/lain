@@ -100,7 +100,7 @@ module Lain
     #   @param grant [Budget::Ceilings] only its iterations are read
     # @!method allowed
     #   @return [Integer, nil] the newest grant's iterations, nil before any
-    delegate :usage, :spent, :spend, :allow, :allowed, to: :accounting
+    delegate :usage, :spent, :spend, :allow, :allowed, :command, :command=, to: :accounting
 
     # Private because every caller is one: the curated public surface above is
     # this class's own decision to widen, and the three objects the loop drives

@@ -110,7 +110,7 @@ RSpec.describe "a critique of a held review", :seam do
 
   def typed(stack, line)
     seen = nil
-    result = stack.call({ text: line, agent: :the_agent }) do |env|
+    result = stack.call({ text: line, agent: instance_double(Lain::Agent, :command= => nil) }) do |env|
       seen = env
       env.merge(response: "a parent turn ran")
     end

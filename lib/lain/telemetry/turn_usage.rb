@@ -11,6 +11,8 @@ module Lain
         attribute :usage, :lain_canonical
         attribute :spawn, default: nil
         attribute :requester, default: nil
+        attribute :command, default: nil
+        attribute :role, default: nil
         validates :digest, presence: { message: "must name the committed turn, got nil" }
         validates :stop_reason, presence: { message: "must name why the model stopped, got nil" }
       end
@@ -39,12 +41,17 @@ module Lain
     # `requester` names who paid when it was not the agent, as on
     # {RequestSent}: the judge's round trip is a payment, keyed by the request
     # digest since it commits no turn, and never the chat's own.
-    TurnUsage = Data.define(:digest, :model, :stop_reason, :usage, :spawn, :requester) do
+    #
+    # `command` names the skill line the payment was made under and `role` the
+    # role that made it, each left out of the record when nil, so a file
+    # written before they existed reads as it always did.
+    TurnUsage = Data.define(:digest, :model, :stop_reason, :usage, :spawn, :requester, :command, :role) do
       include Journalable
 
-      def initialize(digest:, model:, stop_reason:, usage:, spawn: nil, requester: nil)
+      def initialize(digest:, model:, stop_reason:, usage:, spawn: nil, requester: nil, command: nil, role: nil)
         super(**Carriers::TurnUsage.settle!(digest:, model: model&.to_s, stop_reason: stop_reason&.to_sym, usage:,
-                                            spawn: spawn&.then { -_1.to_s }, requester: requester&.then { -_1.to_s }))
+                                            spawn: spawn&.then { -_1.to_s }, requester: requester&.then { -_1.to_s },
+                                            command: command&.then { -_1.to_s }, role: role&.then { -_1.to_s }))
       end
 
       # A record with no requester predates the field and was the agent's.
@@ -53,8 +60,8 @@ module Lain
       def agent? = self.class.agent?("requester" => requester)
 
       def to_journal
-        journaled = spawn ? super : super.except("spawn")
-        requester ? journaled : journaled.except("requester")
+        super.except(*{ "spawn" => spawn, "requester" => requester, "command" => command, "role" => role }
+                     .select { |_key, value| value.nil? }.keys)
       end
     end
   end

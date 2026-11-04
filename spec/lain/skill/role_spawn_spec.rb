@@ -71,6 +71,16 @@ RSpec.describe Lain::Skill::RoleSpawn do
     expect(seen).to eq(["read_file"])
   end
 
+  it "journals a role's child under its role and the command its parent is running" do
+    journal = Lain::Channel.new
+
+    seam(provider: mock(text_response("done")), journal:, command: -> { "create-epic-issues" })
+      .call(:dev, :fresh, "go")
+
+    expect(journal.drain.grep(Lain::Telemetry::TurnUsage).map { [_1.role, _1.command] })
+      .to eq([%w[dev create-epic-issues]])
+  end
+
   it "refuses loose seam members that name no tool middleware" do
     expect do
       described_class.new(provider: mock(text_response("unused")), context_factory: -> { child_context },

@@ -270,6 +270,16 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       expect(reported.content).to include("  total: 700")
     end
 
+    it "spawns the chat's children over a seam that reads the command the chat is running" do
+      chat = Lain::Agent.new(provider: Lain::Provider::Mock.new, toolset: Lain::Toolset.new([]),
+                             context: Lain::Context.new(model: "m", max_tokens: 64))
+      built = build_with({}, agent: -> { chat })
+      built.build(recorder, ask_human:)
+      chat.command = "create-epic-issues"
+
+      expect(Lain.live(built.role_spawn.seam.command)).to eq("create-epic-issues")
+    end
+
     it "layers the capability floor, the child seam, and the three main-agent-only tools" do
       names = toolset_build.build(recorder, ask_human:).names
 

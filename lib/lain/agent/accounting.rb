@@ -36,6 +36,9 @@ module Lain
       # What this run's children spent and still hold ({Budget::Shared}).
       attr_reader :spend
 
+      # @return [String, nil] the skill line this run's payments are made under; nil for a plain line
+      attr_accessor :command
+
       # @return [Integer, nil] the iteration ceiling the newest grant set, nil before any
       attr_reader :allowed
 
@@ -43,13 +46,17 @@ module Lain
       #   default, so no caller guards `if journal`
       # @param spawn [String, nil] the spawn a child's records are paid under,
       #   so a reader of the parent's file can tell them from the parent's own
+      # @param role [String, nil] the role paying; nil is the chat's own agent
+      # @param command [String, nil] the skill line the payments are made under
       # @param spend [Budget::Shared] where this run's children settle
       # @param prices [PriceBook] what each response is priced under
       # @param clock [#call] the time a response arrived, which a rate may depend on
-      def initialize(journal: Channel::Null.instance, spawn: nil, spend: Budget::Shared::Null,
+      def initialize(journal: Channel::Null.instance, spawn: nil, role: nil, command: nil, spend: Budget::Shared::Null,
                      prices: PriceBook.default, clock: -> { Time.now.utc })
         @journal = journal
         @spawn = spawn
+        @role = role
+        @command = command
         @spend = spend
         @prices = prices
         @clock = clock
@@ -90,7 +97,9 @@ module Lain
           model: response.model,
           stop_reason: response.stop_reason,
           usage: response.usage.to_h,
-          spawn: @spawn
+          spawn: @spawn,
+          command: @command,
+          role: @role
         )
         @usage
       end

@@ -120,6 +120,24 @@ RSpec.describe Lain::Telemetry::TurnUsage do
     end
   end
 
+  describe "the command and role" do
+    let(:named) do
+      described_class.new(digest: "blake3:abc", model: "m", stop_reason: :end_turn, usage: {},
+                          command: :"create-epic-issues", role: :reviewer)
+    end
+
+    it "names the command and role that paid, and leaves both keys out when nil" do
+      expect([named.to_journal.values_at("command", "role"), event.to_journal.key?("command"),
+              event.to_journal.key?("role")]).to eq([%w[create-epic-issues reviewer], false, false])
+      expect(named).to be_deeply_frozen
+    end
+
+    it "reads a record with neither, as older files wrote it" do
+      expect(Lain::Telemetry.read(JSON.parse(JSON.generate(event.to_journal)))).to eq(event)
+      expect(Lain::Telemetry.read(JSON.parse(JSON.generate(named.to_journal)))).to eq(named)
+    end
+  end
+
   describe "interning and refusals" do
     def fresh(**extra)
       described_class.new(digest: +"blake3:abc", model: +"m", stop_reason: :end_turn, usage: {}, spawn: +"s", **extra)

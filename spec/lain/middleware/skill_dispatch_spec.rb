@@ -96,6 +96,7 @@ RSpec.describe Lain::Middleware::SkillDispatch do
 
   let(:checkouts) { SkillDispatchCheckouts.new }
   let(:journal) { [] }
+  let(:the_agent) { instance_double(Lain::Agent, :command= => nil) }
 
   def served_window = Lain::CLI::Backend::WindowBook::Served.new(model: "critic-model", window_tokens: 32_768)
 
@@ -111,7 +112,7 @@ RSpec.describe Lain::Middleware::SkillDispatch do
   # exe/lain's dispatch in miniature: `:text`/`:agent` in, downstream records
   # the env it was handed (so we can assert what reached the model turn) and
   # answers with a `:response`.
-  def run(dispatch, text, agent: :the_agent)
+  def run(dispatch, text, agent: the_agent)
     seen = nil
     result = dispatch.call({ text:, agent: }) do |env|
       seen = env
@@ -126,7 +127,7 @@ RSpec.describe Lain::Middleware::SkillDispatch do
         _result, seen = run(dispatch, "/create-plan add a write_file tool")
 
         expect(seen.fetch(:text)).to eq("# Create plan\nDo the planning.\n\n\nadd a write_file tool")
-        expect(seen.fetch(:agent)).to eq(:the_agent) # one timeline, session role unchanged
+        expect(seen.fetch(:agent)).to be(the_agent) # one timeline, session role unchanged
       end
     end
 
@@ -139,9 +140,34 @@ RSpec.describe Lain::Middleware::SkillDispatch do
     end
   end
 
+  describe "the command the agent's usage belongs to" do
+    let(:accounting) { Lain::Agent::Accounting.new }
+    let(:agent) do
+      Lain::Agent.new(provider: Lain::Provider::Mock.new(responses: []), toolset: Lain::Toolset.new, accounting:,
+                      context: Lain::Context.new(model: "m", max_tokens: 1))
+    end
+
+    it "is named for every skill line, whether or not the allowance grants it anything" do
+      with_dispatch(shipped: create_plan) do |dispatch|
+        run(dispatch, "/create-plan", agent:)
+
+        expect(accounting.command).to eq("create-plan")
+      end
+    end
+
+    it "is cleared by a plain line, which is not that command's work" do
+      with_dispatch(shipped: create_plan) do |dispatch|
+        run(dispatch, "/create-plan", agent:)
+        run(dispatch, "just talk", agent:)
+
+        expect(accounting.command).to be_nil
+      end
+    end
+  end
+
   describe "an in-line skill the allowance grants iterations" do
     let(:allowance) { Lain::Budget::Allowance.new(table: Lain::Budget::Table.new, issues: -> { 33 }) }
-    let(:agent) { instance_double(Lain::Agent, allow: nil) }
+    let(:agent) { instance_double(Lain::Agent, allow: nil, :command= => nil) }
 
     it "grants the agent that skill's ceiling" do
       with_dispatch(shipped: { "create-epic-issues/skill.md" => "# Issues\n" }, allowance:) do |dispatch|

@@ -28,6 +28,32 @@ RSpec.describe Lain::Agent::Accounting do
     end
   end
 
+  describe "the command and role a payment is made under" do
+    subject(:accounting) { described_class.new(journal:, role: "reviewer") }
+
+    it "names the role, and the command once one is set" do
+      accounting.command = "create-epic-issues"
+      accounting.observe(response, digest: "blake3:t1")
+
+      expect(records).to match([include("type" => "turn_usage", "command" => "create-epic-issues",
+                                        "role" => "reviewer")])
+    end
+
+    it "names the newest command, and none once it is cleared" do
+      accounting.command = "plan-epic"
+      accounting.command = nil
+      accounting.observe(response, digest: "blake3:t1")
+
+      expect(records.first).not_to include("command")
+    end
+
+    it "leaves both keys off the record of a run with neither" do
+      described_class.new(journal:).observe(response, digest: "blake3:t1")
+
+      expect(records.first.keys).not_to include("command", "role")
+    end
+  end
+
   def records = journal_records(journal_io)
 
   def response(input: 10, output: 5, model: "claude-opus-4-8", stop_reason: :end_turn,
