@@ -201,6 +201,44 @@ RSpec.describe Lain::StatusFeed do
       expect(published["fleet"]).to eq([first.digest, second.digest])
     end
 
+    describe "the fullest child" do
+      def child(feed, id, occupancy)
+        launch = spawn_event(id)
+        feed << launch
+        feed << Lain::Telemetry::ChildProgress.new(spawn: launch.digest, turns: 3, occupancy:, ceiling: 25)
+      end
+
+      it "shows beside fleet while ctx stays the main chat's" do
+        feed = described_class.new(path:)
+        feed << turn_usage(input: 1_000)
+        child(feed, "dev", 0.41)
+        child(feed, "reviewer", 0.63)
+
+        hud = Lain::StatusFeed::Reading.new(feed.state).hud(now: Time.now)
+
+        expect(hud).to include("fleet:2 max:63% inbox:0")
+        expect(hud).to match(/ctx:~?\d+%/)
+        expect(hud).not_to include("ctx:63%")
+      end
+
+      it "says nothing when no child reported a fill" do
+        feed = described_class.new(path:)
+        feed << spawn_event("a")
+
+        expect(Lain::StatusFeed::Reading.new(feed.state).hud(now: Time.now)).to include("fleet:1 inbox:0")
+      end
+
+      it "stops counting a child once it has ended" do
+        feed = described_class.new(path:)
+        launch = spawn_event("a")
+        feed << launch
+        feed << Lain::Telemetry::ChildProgress.new(spawn: launch.digest, turns: 1, occupancy: 0.9)
+        feed << spawn_completion(launch)
+
+        expect(Lain::StatusFeed::Reading.new(feed.state).hud(now: Time.now)).not_to include("max:")
+      end
+    end
+
     it "grows on neither an ordinary :message nor a :turn -- only a :spawn names a fleet member" do
       feed = described_class.new(path:)
 

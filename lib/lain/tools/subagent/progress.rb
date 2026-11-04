@@ -29,6 +29,10 @@ module Lain
         module Null
           def self.watching(observer) = observer
 
+          def self.measuring(**) = self
+
+          def self.accounted_by(journal) = journal
+
           def self.spawn = nil
         end
 
@@ -38,6 +42,36 @@ module Lain
           @spawn = spawn
           @tee = tee
           @turns = 0
+          @iterations = 0
+          @child = -> {}
+          @ceiling = nil
+        end
+
+        # Where the row's window fill comes from: the child itself, handed as a block because
+        # it is built after this and its progress is told from inside its own build.
+        #
+        # @param ceiling [Integer] the iterations the child may take
+        # @yieldreturn [#occupancy] the child agent
+        # @return [self]
+        def measuring(ceiling:, &child)
+          @child = child
+          @ceiling = ceiling
+          self
+        end
+
+        # The child's accounting journal, wrapped: each payment is one iteration, told to the
+        # live views once the accounting has taken its reading, so the fill is the turn's own.
+        #
+        # @param journal [#<<] where the child's records go
+        # @return [#<<]
+        def accounted_by(journal) = Payments.new(journal:, progress: self)
+
+        # @return [self]
+        def paid
+          @iterations += 1
+          @tee << Telemetry::ChildProgress.new(spawn: @spawn, turns: @turns, iterations: @iterations,
+                                               occupancy: fill, ceiling: @ceiling)
+          self
         end
 
         # The standing half of the row, written once as the child is
@@ -64,6 +98,31 @@ module Lain
             observer.call(turn)
             @turns += 1
             @tee << Telemetry::ChildProgress.new(spawn: @spawn, turns: @turns, head: turn.digest)
+          end
+        end
+
+        private
+
+        # A window the book cannot size leaves the fill out rather than costing the child its turn.
+        def fill
+          @child.call&.occupancy
+        rescue ContextWindow::UnknownModel, ArgumentError
+          nil
+        end
+
+        # A journal that also counts what is paid into it. The count is the status line's
+        # iterations, close enough for that: a step that never pays (one that raises, or a
+        # refusal the provider writes no usage for) leaves the row 1 behind the agent's own count.
+        class Payments
+          def initialize(journal:, progress:)
+            @journal = journal
+            @progress = progress
+          end
+
+          def <<(record)
+            @journal << record
+            @progress.paid if record.is_a?(Telemetry::TurnUsage)
+            self
           end
         end
       end

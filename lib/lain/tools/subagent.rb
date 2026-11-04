@@ -1790,7 +1790,7 @@ module Lain
         # seam being spawned INTO rather than recomputing. The four travel
         # together because the asker needs the other three before the Agent
         # that owns them exists.
-        Chain = Data.define(:base, :timeline, :feed, :escalation, :spawn) do
+        Chain = Data.define(:base, :timeline, :feed, :escalation, :spawn, :payments) do
           # A correlation is a chain's ROOT digest, and an `:inherit` spawn is
           # `parent.fork`, so child and parent share a root PERMANENTLY -- the
           # child's own future correlation is therefore the SAME STRING as
@@ -1903,6 +1903,7 @@ module Lain
           child = nil
           spend = Budget::Shared.new
           chain = own_chain(parent, progress, opening) { child.timeline }
+          progress.measuring(ceiling: @budget.iterations) { child }
           view = @compaction.call(base: chain.base, worker_env: scope.env_over(worker_env), scope:)
           # Minted afresh for a resumed child too, so what it leased to its own children before a stop is not read back.
           cell = Sensitivity::Bounds::Cell.new(Sensitivity::Bounds::NONE)
@@ -1940,7 +1941,7 @@ module Lain
           base = opening.base(@policy.prefix, parent)
           Chain.new(base:, timeline:, escalation: Chain.escalation_road(base, parent, @seam.escalation),
                     feed: TurnFeed.new(observer: progress.watching(@seam.observer), base: base.head_digest),
-                    spawn: progress.spawn)
+                    spawn: progress.spawn, payments: progress.accounted_by(@seam.journal))
         end
 
         # A spawn that raises past this point (a Context that will not render,
@@ -2042,7 +2043,7 @@ module Lain
         def child_accounting(chain, spend)
           return Agent::Accounting.new(spend:) if chain.spawn.nil?
 
-          Agent::Accounting.new(journal: @seam.journal, spawn: chain.spawn, spend:,
+          Agent::Accounting.new(journal: chain.payments, spawn: chain.spawn, spend:,
                                 role: @payer.role || @payer.name,
                                 command: @payer.skill || Lain.live(@seam.command))
         end

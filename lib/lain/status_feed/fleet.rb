@@ -267,6 +267,7 @@ module Lain
           @carried = 0
           @resumed_from = nil
           @head = nil
+          @fill = Fill::NONE
           @rows = nil
         end
 
@@ -298,12 +299,9 @@ module Lain
         # Only what the record carries: a turn record names no role and no
         # task, and taking its nils would erase what the dispatch record said.
         def progressed(record)
-          @role = record.role unless record.role.nil?
-          @label = record.label unless record.label.nil?
-          @skill = record.skill unless record.skill.nil?
-          @task = record.task_line unless record.task_line.nil?
-          @worker = record.worker unless record.worker.nil?
+          standing(record)
           @head = record.head unless record.head.nil?
+          @fill = @fill.folded(record)
           @turns = record.turns
           @rows = nil
         end
@@ -312,19 +310,42 @@ module Lain
 
         # Memoised per depth: the iso8601 string dominated a rebuild's cost.
         #
-        # `resumed_from` is written only on a resumed row, so every other row keeps its shape.
+        # `resumed_from`, `occupancy` and `ceiling` are written only where there is one, so every
+        # other row keeps its shape.
         def published(depth)
           (@rows ||= {})[depth] ||= row(depth).freeze
         end
 
         private
 
+        def standing(record)
+          @role = record.role unless record.role.nil?
+          @label = record.label unless record.label.nil?
+          @skill = record.skill unless record.skill.nil?
+          @task = record.task_line unless record.task_line.nil?
+          @worker = record.worker unless record.worker.nil?
+        end
+
         def row(depth)
           row = { "spawn" => @spawn, "role" => shown, "task" => @task, "worker" => @worker,
                   "state" => @state, "turns" => @carried + @turns, "depth" => depth, "started" => @started.utc.iso8601 }
-          @resumed_from ? row.merge("resumed_from" => @resumed_from) : row
+          row = row.merge("resumed_from" => @resumed_from) if @resumed_from
+          row.merge(@fill.published)
         end
       end
+
+      # How many iterations a child has taken, how full its window is and the iterations it may
+      # take, as far as its records have said: a record carrying none leaves what an earlier one reported.
+      Fill = Data.define(:iterations, :occupancy, :ceiling) do
+        def folded(record)
+          with(iterations: record.iterations || iterations, occupancy: record.occupancy || occupancy,
+               ceiling: record.ceiling || ceiling)
+        end
+
+        def published = { "iterations" => iterations, "occupancy" => occupancy, "ceiling" => ceiling }.compact
+      end
+
+      Fill::NONE = Fill.new(iterations: nil, occupancy: nil, ceiling: nil)
 
       Row = Data.define(:indent, :columns)
 
@@ -369,11 +390,19 @@ module Lain
         # the indent is leading space that means something.
         def self.composed(published, age)
           cells = [published["role"], published["state"], (published["resumed_from"] ? "resumed" : ""),
-                   "#{published["turns"].to_i}t", age, published["task"]]
+                   turns_cell(published), age, published["task"]]
           new(indent: INDENT * published["depth"].to_i,
               columns: cells.map { |cell| Tools::AskHuman::InboxRow.one_line(cell) }.reject(&:empty?))
         end
         private_class_method :composed
+
+        def self.turns_cell(published)
+          ceiling = published["ceiling"]
+          return "#{published["turns"].to_i}t" unless ceiling
+
+          "#{published["iterations"].to_i}/#{ceiling.to_i}"
+        end
+        private_class_method :turns_cell
 
         # A row's age is read off the instant it started, never off a stamped
         # duration, so it stays true between publications. An unreadable instant

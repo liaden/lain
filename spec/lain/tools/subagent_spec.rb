@@ -2811,6 +2811,36 @@ RSpec.describe Lain::Tools::Subagent do
       expect(File.read(path)).to eq("goodbye world")
     end
 
+    describe "reporting a child's progress to the live views" do
+      let(:telemetry) { Lain::Channel.new }
+
+      def accounted(first:, second:)
+        path = write("notes.txt", "hello")
+        provider = mock(tool_response(["r1", "read_file", { "path" => path }],
+                                      usage: Lain::Usage.new(input_tokens: first, output_tokens: 20)),
+                        text_response("read", usage: Lain::Usage.new(input_tokens: second, output_tokens: 20)))
+        tool = build_subagent(provider:, budget: Lain::Budget.ceilings.with(iterations: 7), telemetry:)
+        tool.call({ "prompt" => "read it" }, invocation)
+        telemetry.drain.grep(Lain::Telemetry::ChildProgress).reject { _1.iterations.nil? }
+      end
+
+      def fill_of(tokens) = Lain::ContextWindow::DEFAULT.occupancy(tokens, model: child_context.model).ratio
+
+      it "counts the child's iterations, not its promoted turns: a tool round and an answer are 2" do
+        records = accounted(first: 500, second: 800)
+
+        expect(records.map(&:iterations)).to eq([1, 2])
+        expect(records.map(&:ceiling).uniq).to eq([7])
+        expect(records.last.turns).to be > 2
+      end
+
+      it "publishes a fill that is current from the first assistant turn on" do
+        records = accounted(first: 500, second: 800)
+
+        expect(records.map(&:occupancy)).to eq([fill_of(500), fill_of(800)])
+      end
+    end
+
     describe "reporting a child's writes" do
       let(:display) { Lain::Channel.new }
       let(:telemetry) { Lain::Channel.new }

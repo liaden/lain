@@ -129,10 +129,17 @@ module Lain
       # @return [String] ending in exactly one space, so the last segment never
       #   sits hard against the right edge of a bar
       def hud(now:, timed: true)
-        [marker(now:), " fleet:#{fleet_size} inbox:#{inbox_count}", *optional_segments(now:, timed:), " "].join
+        [marker(now:), " fleet:#{fleet_size}#{fullest_child} inbox:#{inbox_count}", *optional_segments(now:, timed:),
+         " "].join
       end
 
       def fleet_size = Array(@state["fleet"]).size
+
+      # The fullest running child's window, beside the count: ctx stays the main chat's.
+      def fullest_child
+        fills = Array(@state["fleet_tree"]).filter_map { _1["occupancy"] if _1["state"] == "running" }
+        " max:#{self.class.percent(fills.max)}%" unless fills.empty?
+      end
 
       def inbox_count = @state.fetch("inbox_count").to_i
 

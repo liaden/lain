@@ -13,7 +13,8 @@ RSpec.describe Lain::Telemetry::ChildProgress do
                                    task_line: "port the parser", worker: "spawn.dev.1", turns: 0)
 
       expect(record.to_h).to eq({ spawn: "blake3:spawn", label: "dev-2", role: "dev", skill: "gherkin-tests",
-                                  task_line: "port the parser", worker: "spawn.dev.1", turns: 0, head: nil })
+                                  task_line: "port the parser", worker: "spawn.dev.1", turns: 0, head: nil,
+                                  iterations: nil, occupancy: nil, ceiling: nil })
     end
 
     # A child lent its spawner's own checkout runs under a lease nobody minted
@@ -28,7 +29,35 @@ RSpec.describe Lain::Telemetry::ChildProgress do
       record = described_class.new(spawn: "blake3:spawn", turns: 3, head: "blake3:t3")
 
       expect(record.to_h).to eq({ spawn: "blake3:spawn", label: nil, role: nil, skill: nil,
-                                  task_line: nil, worker: nil, turns: 3, head: "blake3:t3" })
+                                  task_line: nil, worker: nil, turns: 3, head: "blake3:t3",
+                                  iterations: nil, occupancy: nil, ceiling: nil })
+    end
+
+    it "carries the iterations the child has taken, how full its window is and the iterations it may take" do
+      record = described_class.new(spawn: "blake3:spawn", turns: 47, iterations: 23, occupancy: 0.63, ceiling: 25)
+
+      expect([record.iterations, record.occupancy, record.ceiling]).to eq([23, 0.63, 25])
+      expect(Ractor.shareable?(record)).to be(true)
+    end
+
+    it "coerces the measures it is handed, so a journal line read back as strings compares equal" do
+      record = described_class.new(spawn: "blake3:spawn", turns: 1, iterations: "3", occupancy: "0.5", ceiling: "25")
+
+      expect([record.iterations, record.occupancy, record.ceiling]).to eq([3, 0.5, 25])
+    end
+
+    it "makes a whole-number occupancy a Float and keeps an Integer ceiling an Integer" do
+      record = described_class.new(spawn: "blake3:spawn", turns: 1, occupancy: 1, ceiling: 25)
+
+      expect(record.occupancy).to be_a(Float)
+      expect(record.ceiling).to be_an(Integer)
+    end
+
+    it "rebuilds from its own journal line" do
+      record = described_class.new(spawn: "blake3:spawn", turns: 2, iterations: 2,
+                                   occupancy: 0.5, ceiling: 25)
+
+      expect(Lain::Telemetry.read(JSON.parse(JSON.generate(record.to_journal)))).to eq(record)
     end
   end
 
@@ -99,14 +128,15 @@ RSpec.describe Lain::Telemetry::ChildProgress do
 
       expect(JSON.generate(record.to_journal)).to eq(
         '{"type":"child_progress","spawn":"blake3:spawn","label":"dev-2","role":"dev","skill":"gherkin-tests",' \
-        '"task_line":"port the parser","worker":"spawn.dev.1","turns":2,"head":"blake3:t2"}'
+        '"task_line":"port the parser","worker":"spawn.dev.1","turns":2,"head":"blake3:t2",' \
+        '"iterations":null,"occupancy":null,"ceiling":null}'
       )
     end
 
     it "prints null for every optional field" do
       expect(JSON.generate(described_class.new(spawn: "blake3:spawn", turns: 0).to_journal)).to eq(
         '{"type":"child_progress","spawn":"blake3:spawn","label":null,"role":null,"skill":null,' \
-        '"task_line":null,"worker":null,"turns":0,"head":null}'
+        '"task_line":null,"worker":null,"turns":0,"head":null,"iterations":null,"occupancy":null,"ceiling":null}'
       )
     end
 

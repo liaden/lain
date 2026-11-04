@@ -356,6 +356,37 @@ RSpec.describe Lain::StatusFeed::Fleet do
                                   "started" => "2026-09-20T12:00:00Z" }])
     end
 
+    it "publishes a child's window fill and its iteration ceiling, and nothing where it reported none" do
+      fleet = described_class.new(clock: -> { now })
+      launch = spawn_event("a").tap { |event| fleet.launched(event) }
+      fleet.progressed(progress(launch, role: "reviewer", task_line: "review", turns: 0))
+      expect(fleet.tree.first.keys).not_to include("occupancy", "ceiling", "iterations")
+
+      fleet.progressed(progress(launch, turns: 47, iterations: 23, occupancy: 0.63, ceiling: 25))
+
+      expect(fleet.tree.first).to include("occupancy" => 0.63, "ceiling" => 25, "turns" => 47, "iterations" => 23)
+    end
+
+    it "keeps the last fill a turn record reported when a later one carries none" do
+      fleet = described_class.new(clock: -> { now })
+      launch = spawn_event("a").tap { |event| fleet.launched(event) }
+      fleet.progressed(progress(launch, turns: 1, iterations: 3, occupancy: 0.4, ceiling: 25))
+      fleet.progressed(progress(launch, turns: 2))
+
+      expect(fleet.tree.first).to include("iterations" => 3, "occupancy" => 0.4, "ceiling" => 25)
+    end
+
+    it "draws a row near its ceiling as turns over ceiling" do
+      fleet = described_class.new(clock: -> { now })
+      launch = spawn_event("a").tap { |event| fleet.launched(event) }
+      fleet.progressed(progress(launch, role: "reviewer", task_line: "review", turns: 47, iterations: 23, ceiling: 25))
+
+      columns = described_class::Row.at(fleet.tree.first, now:).columns
+
+      expect(columns).to include("23/25")
+      expect(columns).not_to include("47t")
+    end
+
     it "tells 2 spawns with the same role and task apart by their labels" do
       fleet = described_class.new(clock: -> { now })
       rows = %w[capture diarization].map do |label|

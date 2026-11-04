@@ -78,7 +78,7 @@ RSpec.describe Lain::Tools::Subagent::Actor do
 
       expect(progress.map { |record| record["spawn"] }.uniq).to eq([spawn])
       expect(progress.first).to include("role" => "issue_orchestrator", "turns" => 0)
-      expect(progress.drop(1).map { |record| record["turns"] }).to eq((1..turns.size).to_a)
+      expect(progress.select { |record| record["head"] }.map { |record| record["turns"] }).to eq((1..turns.size).to_a)
       expect(turns.size).to be >= 3
     end
   end
