@@ -92,6 +92,22 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     end
   end
 
+  describe "the approval silence" do
+    it "reaches the board's approval queue from a trusted config, so a chosen deny denies a silent park" do
+      in_tree(config: "approval timeout: 0.01, silence: :deny\n") do |root, home|
+        pending = Sync { board_for(root, home).approvals.adjudicate(bash_of("ls"), nil) }
+
+        expect([pending.decision, pending.reason]).to eq([:deny, "timeout"])
+      end
+    end
+
+    it "postpones a silent park when the project leaves it unset" do
+      in_tree(config: "approval timeout: 0.01\n") do |root, home|
+        expect(Sync { board_for(root, home).approvals.adjudicate(bash_of("ls"), nil) }.decision).to eq(:postpone)
+      end
+    end
+  end
+
   describe ".classifier" do
     it "anchors the home-relative table at the INJECTED home, not the process's" do
       in_tree do |root, home|

@@ -58,8 +58,9 @@ RSpec.describe Lain::CLI::EpicSubmit do
   def state_home = File.join(@tmp, "state")
   def paths = @paths ||= Lain::Paths.new(env: { "XDG_STATE_HOME" => state_home, "HOME" => state_home })
 
-  def config(gates = {}, approval_timeout: Lain::Approval::Parked::Queue::DEFAULT_TIMEOUT)
-    Lain::Config.new(epics: Lain::Config::Epics.new(home: :xdg, gates:), approval_timeout:)
+  def config(gates = {}, approval_timeout: Lain::Approval::Parked::Queue::DEFAULT_TIMEOUT,
+             approval_silence: Lain::Config::DEFAULT_APPROVAL_SILENCE)
+    Lain::Config.new(epics: Lain::Config::Epics.new(home: :xdg, gates:), approval_timeout:, approval_silence:)
   end
 
   # Every stage gated the same way, so an example that is about ONE stage does
@@ -1118,9 +1119,11 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
       def inbox_count = JSON.parse(File.read(feed_path)).fetch("inbox_count")
 
-      def seat(approval_timeout: Lain::Approval::Parked::Queue::DEFAULT_TIMEOUT)
+      def seat(approval_timeout: Lain::Approval::Parked::Queue::DEFAULT_TIMEOUT,
+               approval_silence: Lain::Config::DEFAULT_APPROVAL_SILENCE, stage: "research")
         described_class.new(root:, paths:, asker:, journal: chronicle.record_journal,
-                            config: config(hands_off.merge("research" => "interactive"), approval_timeout:))
+                            config: config(hands_off.merge(stage => "interactive"), approval_timeout:,
+                                                                                    approval_silence:))
       end
 
       # The human's side of the gate, run beside the submit the way the chat's
@@ -1301,20 +1304,69 @@ RSpec.describe Lain::CLI::EpicSubmit do
         expect(Lain::Epic::Gate).to have_received(:from_journal).with(anything, hash_including(timeout: 300))
       end
 
-      # Scenario: an unanswered gate hands the agent a next step and waits
-      it "hands the chat's agent the resubmit and the wait when the window closes unanswered" do
-        chronicle_path = File.join(sessions_dir, "chat.ndjson")
-        stub_chronicle = instance_double(Lain::CLI::Chronicle, journal_path: chronicle_path)
-
-        result = Sync do
-          described_class::InChat.new(chronicle: stub_chronicle, command: seat(approval_timeout: 0.2))
+      def unanswered_in_chat(approval_silence)
+        stub_chronicle = instance_double(Lain::CLI::Chronicle, journal_path: File.join(sessions_dir, "chat.ndjson"))
+        Sync do
+          described_class::InChat.new(chronicle: stub_chronicle,
+                                      command: seat(approval_timeout: 0.2, approval_silence:))
                                  .submit("research", "alpha")
         end
+      end
+
+      # Scenario: an unanswered gate hands the agent a next step and waits
+      it "hands the chat's agent the resubmit and the wait when the window closes unanswered under deny" do
+        result = unanswered_in_chat(:deny)
 
         expect(result.ends_turn).to be(true)
         expect(result.content).to include("did not answer", "0.2 seconds", "epic_submit again", "research",
                                           "has not advanced", "tell the user")
         expect(result.content).not_to include("lain epic submit")
+      end
+
+      it "tells the chat's agent a held gate waits on the user before any resubmit, under hold" do
+        result = unanswered_in_chat(:hold)
+
+        expect(result.ends_turn).to be(true)
+        expect(result.content).to include("did not answer", "0.2 seconds",
+                                          "It is held: tell the user, and call epic_submit again only when they ask")
+        expect(result.content).not_to include("lain epic status", "do not re-submit")
+        expect(result.content).not_to include("epic_submit again with", "reopen the gate")
+      end
+
+      # Scenario: a silent wave gate holds each issue
+      describe "a wave nobody answers" do
+        let(:ids) { (1..9).map { "i#{_1}" } }
+
+        before do
+          home.write_epic(Lain::Epic::Graph.new(issues: [issue("a", blocks: ids), *ids.map { issue(_1) }]))
+          session("started.ndjson", *epic_approved, stage_event("issue_plan"))
+          ["a", *ids].each { |id| home.issue(id).write("the prose for #{id}\n") }
+        end
+
+        def silent_wave(approval_silence)
+          Sync do
+            seat(approval_timeout: 0.2, approval_silence:, stage: "issue_plan").submit("issue_plan", wave: 2)
+          end
+        end
+
+        def wave_verdicts = submitted_decisions.map { _1.values_at("issue_id", "verdict", "reason") }
+
+        it "holds all 9 issues when the project leaves silence unset, and reports them unsettled" do
+          said = silent_wave(Lain::Config::DEFAULT_APPROVAL_SILENCE)
+
+          expect(wave_verdicts).to eq(ids.map { [_1, "hold", "no answer within 0.2s"] })
+          expect(said.text).to include("unanswered wave 2 of epic alpha", "held for the human")
+          expect(said.wait).to include("It is held: tell the user, and call epic_submit again only when they ask")
+          expect(said.wait).not_to include("lain epic status")
+          expect(said.wait).not_to include("reopen the gate")
+        end
+
+        it "denies all 9 with the word timeout when the project chooses deny, and says how to reopen" do
+          said = silent_wave(:deny)
+
+          expect(wave_verdicts).to eq(ids.map { [_1, "deny", "timeout"] })
+          expect(said.wait).to include("To reopen the gate", "epic_submit again")
+        end
       end
 
       it "counts the gate's question while it waits and none once its window closes" do
@@ -1725,6 +1777,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       policy.define_singleton_method(:decide) { |*| false }
       journal = Object.new
       journal.define_singleton_method(:expired) { |_digest| 1 }
+      journal.define_singleton_method(:held?) { |_digest| false }
       submission = Lain::Epic::Submission.research(text: research_text, slug: "alpha")
       verdict = described_class.new(submission:, stage: Lain::Epic::Stage.new("research"), policy:, gate: nil,
                                     queue: nil, advance: nil, journal:)
@@ -1737,6 +1790,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       policy.define_singleton_method(:decide) { |*| false }
       journal = Object.new
       journal.define_singleton_method(:expired) { |_digest| 5 }
+      journal.define_singleton_method(:held?) { |_digest| false }
       submission = Lain::Epic::Submission.research(text: research_text, slug: "alpha")
       verdict = described_class.new(submission:, stage: Lain::Epic::Stage.new("research"), policy:, gate: nil,
                                     queue: nil, advance: nil, journal:)

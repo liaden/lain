@@ -162,9 +162,9 @@ module Lain
     # `#digest` and `#gate_question` must pass before an irreversible action
     # consumes that digest. It renders nothing itself -- the artifact owns its
     # human-facing question -- asks through the injected `ask_human`-shaped
-    # duck, and BLOCKS on that promise with a timeout. Silence is a denial
-    # signed by the clock: an unattended gate must refuse, never wedge, and
-    # never default open.
+    # duck, and BLOCKS on that promise with a timeout. Silence is settled by
+    # the injected {Approval::Silence} rule and signed by the clock: an
+    # unattended gate holds or refuses, never wedges, and never defaults open.
     #
     # == Two things in this codebase are called a gate
     #
@@ -368,7 +368,7 @@ module Lain
       #   defaulted, because a silently unjournaled approval would be a hole in
       #   the experiment record
       # @param timeout [Numeric, Window::Unbounded] seconds an unanswered gate
-      #   waits before the fail-closed denial -- wrapped in {Window::Bounded}
+      #   waits before the silence rule settles it -- wrapped in {Window::Bounded}
       #   -- or {Window::Unbounded} itself for a wait that only a cancellation
       #   ends. The window is enforced by the REACTOR's clock, never by
       #   `clock:` below.
@@ -377,17 +377,22 @@ module Lain
       #   make the timeout fire sooner, so a spec exercising the timeout still
       #   waits real seconds. Where the two clocks would contradict each other
       #   is settled in {#await}.
-      # @param wall [#call] the time of day, as a Time, for naming when a wait is denied
-      def initialize(journal:, timeout: DEFAULT_TIMEOUT, clock: RunClock::MONOTONIC, wall: -> { Time.now })
+      # @param wall [#call] the time of day, as a Time, for naming when a wait is settled
+      # @param silence [Approval::Silence::Hold, Approval::Silence::Deny] what a
+      #   closed window settles as; bare, it denies, and a project's config
+      #   picks it through {Approval::Silence.from}
+      def initialize(journal:, timeout: DEFAULT_TIMEOUT, clock: RunClock::MONOTONIC, wall: -> { Time.now },
+                     silence: Approval::Silence::DENY)
         @journal = journal
+        @silence = silence
         @window = timeout.is_a?(Numeric) ? Window.bounded(timeout) : timeout
         @clock = clock
         @wall = wall
         @approved = Set.new
       end
 
-      # Ask the artifact's own question, block on the answer with a timeout ->
-      # deny, journal the verdict, and remember an approved digest.
+      # Ask the artifact's own question, block on the answer with a timeout the
+      # silence rule settles, journal the verdict, and remember an approved digest.
       #
       # Parking on the promise is safe inside a reactor because the answering
       # surface runs as a SIBLING fiber. PRECONDITION: this must run under an
@@ -624,7 +629,9 @@ module Lain
       # instead would leave the reactor's shutdown sweep waiting on a task
       # that never finishes.
       def interrupted(artifact, started, **decided)
-        settle(artifact, Answer.deny(INTERRUPTED_SURFACE), latency: @clock.call - started, **decided)
+        settle(artifact, Answer.new(verdict: Approval::Verdict::Deny.new(note: INTERRUPTED_SURFACE),
+                                    surface: INTERRUPTED_SURFACE),
+               latency: @clock.call - started, **decided)
       end
 
       # A WAIT THAT ENDED STOPS BEING OUTSTANDING, HOWEVER IT ENDED. The window
@@ -635,7 +642,7 @@ module Lain
       #
       # It runs from an ENSURE, which is the whole of why it is correct: the
       # wait ends three ways, and only one of them returns here. A timeout
-      # denies, an answer arrives -- and a caller polling its own interrupt
+      # settles, an answer arrives -- and a caller polling its own interrupt
       # STOPS this fiber from outside, unwinding it at the await, so a
       # withdrawal written after the answer would never run on the one path
       # that most needs it. An approved set is already resolved, so withdrawing
@@ -675,7 +682,7 @@ module Lain
         nil
       end
 
-      # An expired window denies through the same {Answer} the surfaces build,
+      # An expired window settles through the same {Answer} the surfaces build,
       # so the journal and the return value read identically on either path.
       #
       # Answers the verdict AND its seconds together, because TWO clocks are in
@@ -692,7 +699,7 @@ module Lain
       def await(promise, started, artifact, window)
         [read(window.around(task) { promise.await }, artifact), @clock.call - started]
       rescue Async::TimeoutError
-        [Answer.deny(TIMEOUT_SURFACE), @window.seconds]
+        [Answer.new(verdict: @silence.verdict(@window.seconds), surface: TIMEOUT_SURFACE), @window.seconds]
       end
 
       def read(resolved, artifact)

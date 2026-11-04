@@ -150,6 +150,7 @@ RSpec.describe Lain::Config::Builder do
                                                        tests: nil,
                                                        env_pass: [],
                                                        approval_timeout: 300,
+                                                       approval_silence: :hold,
                                                        judge_timeout: 30,
                                                        todos: Lain::Config::Todos.empty,
                                                        theme: Lain::Config::Theme.empty,

@@ -35,7 +35,8 @@ module Lain
     def self.load(root: Dir.pwd)
       built = built(root)
       new(epics: built.epics, approval: built.approval, isolation: built.isolation, env_pass: built.env_pass,
-          todos: built.todos, approval_timeout: built.approval_timeout, judge_timeout: built.judge_timeout,
+          todos: built.todos, approval_timeout: built.approval_timeout, approval_silence: built.approval_silence,
+          judge_timeout: built.judge_timeout,
           review: built.review, budget: built.budget)
     end
 
@@ -215,6 +216,9 @@ module Lain
     # Spelled as a literal for the same reason; a spec pins it to {Approval::Judge::TIMEOUT}.
     DEFAULT_JUDGE_TIMEOUT = 30
 
+    # A Symbol rather than {Approval::Silence::HOLD}, for {DEFAULT_APPROVAL_TIMEOUT}'s reason.
+    DEFAULT_APPROVAL_SILENCE = :hold
+
     attr_reader :epics, :approval, :isolation
 
     # @return [Array<String>] the variables `env pass:` hands every child,
@@ -224,8 +228,12 @@ module Lain
     # @return [Todos] which file in the project root holds the chores
     attr_reader :todos
 
-    # @return [Numeric] seconds an unanswered parked call or epic gate waits before it denies
+    # @return [Numeric] seconds an unanswered parked call or epic gate waits before {#approval_silence} settles it
     attr_reader :approval_timeout
+
+    # @return [Symbol] what an unanswered parked call or epic gate settles as, :hold or :deny;
+    #   {Approval::Silence.from} reads it
+    attr_reader :approval_silence
 
     # @return [Numeric] seconds the `auto` approval judge may take before its call goes to a human
     attr_reader :judge_timeout
@@ -237,14 +245,15 @@ module Lain
     attr_reader :budget
 
     def initialize(epics:, approval: Answers.empty, isolation: Isolation.empty, env_pass: [], todos: Todos.empty,
-                   approval_timeout: DEFAULT_APPROVAL_TIMEOUT, judge_timeout: DEFAULT_JUDGE_TIMEOUT,
-                   review: Review.empty, budget: Budget::Table.new)
+                   approval_timeout: DEFAULT_APPROVAL_TIMEOUT, approval_silence: DEFAULT_APPROVAL_SILENCE,
+                   judge_timeout: DEFAULT_JUDGE_TIMEOUT, review: Review.empty, budget: Budget::Table.new)
       @epics = epics
       @approval = Answers.coerce(approval)
       @isolation = Isolation.coerce(isolation)
       @env_pass = env_pass.map(&:-@).freeze
       @todos = todos
       @approval_timeout = approval_timeout
+      @approval_silence = approval_silence
       @judge_timeout = judge_timeout
       @review = review
       @budget = budget
@@ -269,7 +278,10 @@ module Lain
 
     protected
 
-    def state = [epics, approval, isolation, env_pass, todos, approval_timeout, judge_timeout, review, budget]
+    def state
+      [epics, approval, isolation, env_pass, todos, approval_timeout, approval_silence, judge_timeout, review,
+       budget]
+    end
 
     # The default `gates` table must stay EMPTY. {Epics::Gates.check!} reads
     # `Epic::STAGES` and {Epic::Gate::Policies}, so a non-empty default

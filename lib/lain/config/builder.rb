@@ -9,8 +9,8 @@ module Lain
     # the detected-framework fallback survives, without every caller comparing
     # against {TestLayout::None}.
     Built = Data.define(:epics, :approval, :isolation, :sensitivity, :shell, :search, :tests, :middleware,
-                        :env_pass, :approval_timeout, :judge_timeout, :keys, :todos, :theme, :think, :review,
-                        :budget) do
+                        :env_pass, :approval_timeout, :approval_silence, :judge_timeout, :keys, :todos, :theme,
+                        :think, :review, :budget) do
       # @param framework [String, nil] a detected test framework
       # @return [TestLayout] the declared layout, else what the framework implies
       def test_layout(framework: nil) = tests || TestLayout.from(nil, path: nil, framework:)
@@ -117,6 +117,7 @@ module Lain
         @skills = skills
         @tables = {}
         @approval_timeout = Config::DEFAULT_APPROVAL_TIMEOUT
+        @approval_silence = Config::DEFAULT_APPROVAL_SILENCE
         @judge_timeout = Config::DEFAULT_JUDGE_TIMEOUT
       end
 
@@ -131,7 +132,8 @@ module Lain
                   tests: @tables[:tests],
                   middleware: @tables.fetch(:middleware, Middleware.empty),
                   env_pass: @tables.fetch(:env, []),
-                  approval_timeout: @approval_timeout, judge_timeout: @judge_timeout,
+                  approval_timeout: @approval_timeout, approval_silence: @approval_silence,
+                  judge_timeout: @judge_timeout,
                   think: @tables[:think], **small_tables)
       end
 
@@ -142,9 +144,10 @@ module Lain
         end
       end
 
-      def approval(timeout: nil, judge_timeout: nil, &block)
+      def approval(timeout: nil, judge_timeout: nil, silence: nil, &block)
         declare(:approval, Answers::TABLE) do |at|
           @approval_timeout = timeout_from(timeout, at)
+          @approval_silence = silence_from(silence, at)
           @judge_timeout = timeout_from(judge_timeout, at, key: "judge_timeout", current: @judge_timeout)
           calls = collect(block, %i[allow deny deny_tool])
           calls.each { |call| Answers.from({ call.verb.to_s => [entry(call)] }, path: located_at(call.line)) }
@@ -305,6 +308,14 @@ module Lain
 
         detail = "#{key} must be above 0 seconds, got #{timeout.inspect}"
         raise Refusal.new(detail, path: at, table: Answers::TABLE, key:)
+      end
+
+      def silence_from(silence, at)
+        return @approval_silence if silence.nil?
+        return silence if Approval::Silence.named?(silence)
+
+        raise Refusal.new("silence must be :hold or :deny, got #{silence.inspect}", path: at, table: Answers::TABLE,
+                                                                                    key: "silence")
       end
 
       def located_at(line) = self.class.located(@path, line)

@@ -127,6 +127,30 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     expect(output.string).to include("bash(").and include("auto-denies in 5:00")
   end
 
+  # Scenario: the prompts say what silence does
+  describe "under the project's default silence" do
+    def holding
+      Lain::Approval::Parked::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 },
+                                                 timeout: 300,
+                                                 silence: Lain::Approval::Silence.from(Lain::Config.empty))
+    end
+
+    it "says in the [y/N] question that the call postpones, not that it auto-denies" do
+      policy_for("n\n").decide(holding)
+
+      expect(output.string).to include("asks (postpones in 5:00): approve")
+      expect(output.string).not_to include("auto-denies")
+    end
+
+    it "hands the rail a tail that says the call postpones" do
+      seen = nil
+      described_class.new(output:, pastel: Pastel.new(enabled: false),
+                          reader: ->(prompt) { (seen = prompt) && "n\n" }).decide(holding)
+
+      expect(seen.parts.tail).to eq("postpones in 5:00, approve? [y/N] ")
+    end
+  end
+
   it "stamps the prompt with the time it is drawn, not the time it was built" do
     times = [Time.new(2026, 10, 8, 13, 14, 1), Time.new(2026, 10, 8, 13, 19, 1)].each
     seen = nil

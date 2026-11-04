@@ -383,6 +383,9 @@ module Lain
 
       HELD_NOTE_BYTES = 300
 
+      # Nothing outside the chat answers a held gate yet, so the user decides when it is asked again.
+      KEPT = "It is held: tell the user, and call epic_submit again only when they ask."
+
       # A hold, said like any verdict for a shell, and carrying the shorter words a
       # chat's agent is handed as the result that ends its turn.
       #
@@ -402,6 +405,24 @@ module Lain
           return "the human asked you to wait" if note.nil?
 
           "the human asked you to wait: #{Lain::Epic::GateReply.clipped(note, limit: HELD_NOTE_BYTES)}"
+        end
+
+        # A gate whose window closed. Held, nothing yet answers it from outside
+        # the chat, so the agent resubmits only when the user asks; denied, a
+        # resubmit is how it reopens.
+        #
+        # @param head [String] the first line, naming what went unanswered
+        # @param gate [String] the gate, as the second line names it
+        # @param seconds [String] the window, spelled out
+        # @param held [Boolean] whether the silence rule held it
+        # @param resubmit [String] how a denied gate is reopened
+        # @return [Held]
+        def self.unanswered(head:, gate:, seconds:, held:, resubmit:)
+          outcome = held ? "held for the human, nothing advanced" : "nothing advanced"
+          new(text: "#{head}\n  nobody answered the #{gate} within #{seconds} -- #{outcome}", status: 1,
+              wait: "the human was asked and did not answer in #{seconds}. The stage has not advanced. " \
+                    "#{held ? KEPT : "To reopen the gate, #{resubmit}. Stop and tell the user."} " \
+                    "Do not read lain's state to work out what happened.")
         end
 
         def initialize(text:, status:, wait:) = super(text: -text, status:, wait: -wait)
@@ -477,19 +498,11 @@ module Lain
                    status: 0)
         end
 
-        # A closed window denies, but nobody decided it, so it is not said as a
-        # denial; a chat's agent is told to resubmit and to tell the user.
+        # Nobody decided a closed window, so it is not said as a decision.
         def unanswered(window)
-          Held.new(text: ["unanswered #{@submission.digest}",
-                          "  nobody answered the #{@stage} gate for epic #{slug} within #{seconds(window)} -- " \
-                          "nothing advanced"].join("\n"),
-                   status: 1, wait: unanswered_wait(window))
-        end
-
-        def unanswered_wait(window)
-          "the human was asked and did not answer in #{seconds(window)}. The stage has not advanced. " \
-            "To reopen the gate, #{Lain::Epic::Remedy.resubmit(@stage.name, slug, issue: @submission.issue_id)}. " \
-            "Stop and tell the user; do not read lain's state to work out what happened."
+          Held.unanswered(head: "unanswered #{@submission.digest}", gate: "#{@stage} gate for epic #{slug}",
+                          seconds: seconds(window), held: @journal.held?(@submission.digest),
+                          resubmit: Lain::Epic::Remedy.resubmit(@stage.name, slug, issue: @submission.issue_id))
         end
 
         def seconds(window) = window == 1 ? "1 second" : "#{format("%g", window)} seconds"
@@ -590,13 +603,9 @@ module Lain
         end
 
         def unanswered(window)
-          seconds = window == 1 ? "1 second" : "#{format("%g", window)} seconds"
-          Held.new(text: "unanswered #{named}\n  nobody answered the #{@stage} gate within #{seconds} -- " \
-                         "nothing advanced",
-                   status: 1,
-                   wait: "the human was asked and did not answer in #{seconds}. The stage has not advanced. To " \
-                         "reopen the gate, #{resubmit}. Stop and tell the user; do not read lain's state to " \
-                         "work out what happened.")
+          Held.unanswered(head: "unanswered #{named}", gate: "#{@stage} gate",
+                          seconds: window == 1 ? "1 second" : "#{format("%g", window)} seconds",
+                          held: @journal.held?(first), resubmit:)
         end
       end
 
@@ -888,7 +897,8 @@ module Lain
       end
 
       def gate_for(records, journal, policy)
-        Lain::Epic::Gate.from_journal(records, journal:, timeout: gate_timeout(policy))
+        Lain::Epic::Gate.from_journal(records, journal:, timeout: gate_timeout(policy),
+                                               silence: ::Lain::Approval::Silence.from(@config))
       end
 
       def wave_advances(stage, wave, journal)

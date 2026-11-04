@@ -1284,6 +1284,66 @@ RSpec.describe Lain::Approval::Parked::Queue do
     end
   end
 
+  # Scenario: a silent park holds
+  describe "a silent park under the project's default silence" do
+    let(:queue) do
+      described_class.new(journal:, timeout: 0.01, silence: Lain::Approval::Silence.from(Lain::Config.empty))
+    end
+
+    it "postpones the call, signed by the clock, naming the window" do
+      pending = Sync { queue.adjudicate(tool_call, nil) }
+
+      expect(pending).to have_attributes(postponed?: true, approved?: false, timed_out?: true,
+                                         reason: "no answer within 0.01s",
+                                         lapse: "postponed after 0:01 with no answer")
+    end
+
+    it "journals a timed-out postpone, not a denial" do
+      Sync { queue.call(tool_call, nil) }
+
+      expect(decision_records).to contain_exactly(
+        a_hash_including("verdict" => "postpone", "surface" => "timeout", "timed_out" => true)
+      )
+    end
+
+    it "tells the agent the call is postponed and to issue it again, and its turn goes on" do
+      runs = []
+      result = Sync { gate_over(runs).call(tool_call("dangerous")) }
+
+      expect(result.content).to eq('refused tool "dangerous": postponed: no answer within 0.01s; ' \
+                                   "issue it again later, when it will park for an answer")
+      expect([result.ends_turn, runs]).to eq([false, []])
+    end
+
+    # The parked set is what /approve, /deny and lain://approval list. A longer
+    # window, so the re-issued call is surely still parked when it is approved.
+    it "parks the re-issued call again, listed for the human, and runs it once approved" do
+      queue = described_class.new(journal:, timeout: 0.3, silence: Lain::Approval::Silence.from(Lain::Config.empty))
+      gate = Lain::Middleware::Gate.new(policy: asking_ladder(queue))
+      toolset = Lain::Toolset.new([gated_tool(runs = [])])
+      issue = -> { dispatch_call("dangerous", { "text" => "again" }, id: "tu_1", toolset:, layers: [gate]) }
+
+      listed, result = Sync do |task|
+        issue.call
+        again = task.async { issue.call }
+        pending = task.with_timeout(1) { queue.dequeue }
+        [queue.map(&:input), pending.approve(surface: "spec") && again.wait]
+      end
+
+      expect(listed).to eq([{ "text" => "again" }])
+      expect([result, runs]).to eq([Lain::Tool::Result.ok("again"), [{ "text" => "again" }]])
+    end
+
+    it "warns of the postpone on the pending's own face" do
+      pending = Sync do |task|
+        task.async { queue.call(tool_call, nil) }
+        queue.dequeue.tap { _1.deny(surface: "spec") }
+      end
+
+      expect(pending.silence_face).to eq("postpones in 0:01")
+    end
+  end
+
   describe "a pending that was drawn after it parked" do
     let(:queue) { described_class.new(journal:, timeout: 0.3) }
 
@@ -1537,7 +1597,7 @@ RSpec.describe Lain::Approval::Parked::Queue do
       expect(described_class::Pending.instance_method(:initialize).parameters)
         .to eq([%i[keyreq effect], %i[keyreq identity], %i[keyreq clock], %i[key timeout],
                 %i[key outstanding], %i[key humans_only], %i[key cwd], %i[key within], %i[key wall],
-                %i[key notes], %i[key file_facts]])
+                %i[key notes], %i[key file_facts], %i[key silence]])
     end
 
     # The other half of the same ruling, one level up: a queue that constructed

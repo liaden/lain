@@ -84,9 +84,10 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
   def asked_by(requester) = Lain::Approval::Parked::PolicySwitch::Requested.new(nil, requester)
 
   def gated(timeout: 0.4, await: false, calls: [effect], requesters: nil, clock: Lain::RunClock::MONOTONIC,
-            outstanding: Lain::Approval::Parked::Queue::Outstanding::NONE, wall: Time.method(:now), &block)
+            outstanding: Lain::Approval::Parked::Queue::Outstanding::NONE, wall: Time.method(:now),
+            silence: Lain::Approval::Silence::DENY, &block)
     Sync do |task|
-      queue = Lain::Approval::Parked::Queue.new(journal:, timeout:, clock:, wall:)
+      queue = Lain::Approval::Parked::Queue.new(journal:, timeout:, clock:, wall:, silence:)
       asking = requesters || calls.map { "agent" }
       parked = calls.zip(asking).map do |call, requester|
         task.async { queue.adjudicate(call, asked_by(requester), outstanding:).approved? }
@@ -146,7 +147,15 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
         described_class.new(rpc: later).sweep(queue)
       end
 
-      expect(later.last[:lines].first).to include("4:00 left, denies at 13:20:00")
+      expect(later.last[:lines].first).to include("4:00 left, auto-denies at 13:20:00")
+    end
+
+    # Scenario: the prompts say what silence does
+    it "says the row postpones at its deadline when the project leaves silence unset" do
+      gated(timeout: 300, silence: Lain::Approval::Silence.from(Lain::Config.empty)) { |_queue| nil }
+
+      expect(rpc.last[:lines].first).to match(/  \d:\d\d left, postpones at \d\d:\d\d:\d\d\z/)
+      expect(rpc.last[:lines].first).not_to include("denies")
     end
 
     it "drops a row the clock denied and says so once, in the chat's own words" do
@@ -589,7 +598,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       it "leaves an ordinary row exactly as it was, bar the actor it now names" do
         gated(timeout: window, requesters: %w[researcher]) { |_queue| nil }
 
-        expect(rpc.last[:lines].first).to match(/\Aresearcher  bash\(.*  \d:\d\d left, denies at \d\d:\d\d:\d\d\z/)
+        expect(rpc.last[:lines].first).to match(/\Aresearcher  bash\(.*  \d:\d\d left, auto-denies at \d\d:\d\d:\d\d\z/)
       end
     end
 

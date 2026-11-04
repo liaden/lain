@@ -241,6 +241,32 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
       expect(notes).to contain_exactly(a_string_including("auto-denies in 0:01"))
     end
 
+    # Scenario: the prompts say what silence does
+    context "when the project leaves silence unset" do
+      let(:queue) do
+        Lain::Approval::Parked::Queue.new(journal:, timeout: 0.1,
+                                          silence: Lain::Approval::Silence.from(Lain::Config.empty))
+      end
+
+      it "says in the announcement the call postpones, not that it auto-denies" do
+        fan_out(attached: editor)
+
+        expect(notes).to contain_exactly(a_string_including("postpones in 0:01"))
+        expect(notes.join).not_to include("auto-denies")
+      end
+
+      it "says in the lapse line that the call was postponed" do
+        Sync do |task|
+          watched = surfaces(attached: editor).watch(task)
+          task.with_timeout(2) { task.async { queue.call(effect, nil) }.wait }
+          pumped_until(task, reason: "the lapse was said") { output.string.include?("postponed after") }
+          watched.each(&:stop)
+        end
+
+        expect(output.string).to include("postponed after 0:01 with no answer")
+      end
+    end
+
     it "adds the ladder's note to the announcement, inspected on one line" do
       Sync do |task|
         watched = surfaces(attached: editor).watch(task)

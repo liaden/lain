@@ -20,8 +20,9 @@ RSpec.describe Lain::Tools::EpicSubmit do
   let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@dir, "state"), "HOME" => @dir }) }
   let(:gates) { {} }
   let(:approval_timeout) { Lain::Approval::Parked::Queue::DEFAULT_TIMEOUT }
+  let(:approval_silence) { Lain::Config::DEFAULT_APPROVAL_SILENCE }
   let(:config) do
-    Lain::Config.new(epics: Lain::Config::Epics.new(home: :repo, gates:), approval_timeout:)
+    Lain::Config.new(epics: Lain::Config::Epics.new(home: :repo, gates:), approval_timeout:, approval_silence:)
   end
   let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
   let(:store) { Lain::Dag::Factory.store }
@@ -236,9 +237,11 @@ RSpec.describe Lain::Tools::EpicSubmit do
     end
   end
 
-  it "says in its description that silence holds the stage and ends the turn once the window closes" do
-    expect(tool.description).to include("nobody answers", "holds", "does not advance", "turn ends", "epic_submit again")
-    expect(tool.description).not_to include("denies")
+  it "says in its description that silence ends the turn, and what each outcome asks of the agent" do
+    expect(tool.description).to include("nobody answers", "turn ends", "denied", "epic_submit again",
+                                        "It is held: tell the user, and call epic_submit again only when they ask")
+    expect(tool.description).not_to include("do not re-submit")
+    expect(tool.description).not_to include("call epic_submit again to reopen.")
   end
 
   it "names the issue file, never a plans/ path, as what an issue_plan submits" do
@@ -310,10 +313,21 @@ RSpec.describe Lain::Tools::EpicSubmit do
       let(:gates) { every_stage("hands_off").merge("issue_plan" => "interactive") }
       let(:approval_timeout) { 0.3 }
 
-      it "tells the agent to resubmit the same wave" do
+      it "tells the agent the wave is held for the human" do
         result = submit(stage: "issue_plan", slug: "frugirl-mvp", wave: 2)
 
-        expect(result.content).to include(Lain::Epic::Remedy.resubmit("issue_plan", "frugirl-mvp", wave: 2))
+        expect(result.content).to include("It is held: tell the user, and call epic_submit again only when they ask")
+        expect(result.content).not_to include("lain epic status")
+      end
+
+      context "when the project chooses deny" do
+        let(:approval_silence) { :deny }
+
+        it "tells the agent to resubmit the same wave" do
+          result = submit(stage: "issue_plan", slug: "frugirl-mvp", wave: 2)
+
+          expect(result.content).to include(Lain::Epic::Remedy.resubmit("issue_plan", "frugirl-mvp", wave: 2))
+        end
       end
     end
 

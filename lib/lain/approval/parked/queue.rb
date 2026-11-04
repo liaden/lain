@@ -16,10 +16,12 @@ module Lain
       # queue, and what makes every decision observable -- on a study bench "who
       # approved what, and how long the human took" is evidence.
       #
-      # Fail-closed is inherited, not reimplemented: an expired window resolves
-      # the pending as a denial, so Gate returns the same refusal Result an
-      # interactive "n" produces. {Gate::DenyAll} remains the default policy
-      # everywhere; this queue exists only where a frontend wires it.
+      # An expired window settles the pending through the injected
+      # {Approval::Silence} rule, the same {Pending#decide} a surface answers
+      # through, so Gate returns the refusal Result an interactive "n" or
+      # "hold" produces. Bare, the rule denies; a chat's comes from its config.
+      # {Gate::DenyAll} remains the default policy everywhere; this queue exists
+      # only where a frontend wires it.
       class Queue
         include Enumerable
 
@@ -200,16 +202,16 @@ module Lain
           # `file_facts` is what the path's landing is read off at construction.
           def initialize(effect:, identity:, clock:, timeout: DEFAULT_TIMEOUT,
                          outstanding: Outstanding::NONE, humans_only: false, cwd: ::Lain::Session.cwd_of(nil),
-                         within: cwd, wall: -> { Time.now }, notes: [], file_facts: ::Lain::FileFacts::LIVE)
+                         within: cwd, wall: -> { Time.now }, notes: [], file_facts: ::Lain::FileFacts::LIVE,
+                         silence: Silence::DENY)
             @timeout = timeout
+            @silence = silence
             @reasons = notes.map { Reason.of(_1) }.freeze
             @notes = @reasons.map(&:text).freeze
             @wall = wall
             @humans_only = humans_only == true
-            @cwd = cwd
-            @within = within
             take(effect)
-            @landing = path && ::Lain::Landing.redirect(path, cwd:, facts: file_facts)
+            place(cwd, within, file_facts)
             @outstanding = outstanding || Outstanding::NONE
             @identity = identity
             @clock = clock
@@ -235,6 +237,13 @@ module Lain
             @input_digest = tool_call? ? ::Lain::Effect.input_digest(input) : nil
           end
           private :take
+
+          def place(cwd, within, file_facts)
+            @cwd = cwd
+            @within = within
+            @landing = path && ::Lain::Landing.redirect(path, cwd:, facts: file_facts)
+          end
+          private :place
 
           # A decision's `tool_use_id` is already the digest of what it asks.
           #
@@ -317,7 +326,7 @@ module Lain
           # @return [Numeric, nil] the clock reading at the first {#drawn}
           def drawn_at = @drawn
 
-          # Seconds until the queue denies this call unasked. The window runs from
+          # Seconds until the queue settles this call unasked. The window runs from
           # the draw when a surface drew it and from the park otherwise, which is
           # the queue's own rule in {Queue#await_decision}. It reads the clock
           # the queue was built with, so a view showing it stays a projection.
@@ -328,7 +337,7 @@ module Lain
           # @return [String] {#remaining} as minutes and seconds, rounded up
           def remaining_face = Queue.face(remaining)
 
-          # The wall-clock moment the call is denied at. {#remaining_face} is true
+          # The wall-clock moment the call settles unasked. {#remaining_face} is true
           # only at the instant it is read, and a view that does not redraw would
           # keep showing it; this does not move, so a stale render stays true.
           #
@@ -344,7 +353,19 @@ module Lain
           # The sentence every surface says when the clock, and nobody, decided.
           # Here for the reason {Outstanding#preamble} is on its value: two
           # surfaces word it, and two copies are how they come to disagree.
-          def lapse = "denied after #{window_face} with no answer"
+          def lapse = "#{@silence.past} after #{window_face} with no answer"
+
+          # @return [String] what the window's close will do, as a prompt warns of it
+          def silence_face = "#{@silence.warning} in #{window_face}"
+
+          # @return [String] what the window's close will do, and the {#fires_at_face} moment it does it
+          def settles_at_face = "#{@silence.warning} at #{fires_at_face}"
+
+          # The clock's verdict, settled through {#decide} so a surface that
+          # answered in the same tick still wins.
+          #
+          # @return [Boolean] whether the clock's verdict won
+          def lapsed = decide(@silence.verdict(@timeout), surface: TIMEOUT_SURFACE)
 
           # The path this call's input names, read from the table
           # {Sensitivity::Policy} classifies by, and only a String: a value the
@@ -498,7 +519,7 @@ module Lain
         #   the call itself names nobody -- the SESSION's default, not the fleet's
         #   answer; see {.identity_for}
         # @param timeout [Numeric] seconds an unanswered pending waits before the
-        #   fail-closed denial
+        #   silence rule settles it
         # @param clock [#call] monotonic seconds, injectable so specs pin latency
         # @param wall [#call] the time of day, as a Time, for naming when a call fires
         # @param home [String, nil] what `~` means in a denied command, from
@@ -506,9 +527,11 @@ module Lain
         #   with `~` is not remembered
         # @param file_facts [FileFacts::Live, FileFacts::Recorded] where a denied path lands, from
         #   {Sensitivity::Policy#file_facts}
+        # @param silence [Silence::Hold, Silence::Deny] what an unanswered window settles as
         def initialize(journal:, requester: REQUESTER, timeout: DEFAULT_TIMEOUT, clock: RunClock::MONOTONIC,
-                       wall: -> { Time.now }, home: nil, file_facts: FileFacts::LIVE)
+                       wall: -> { Time.now }, home: nil, file_facts: FileFacts::LIVE, silence: Silence::DENY)
           @journal = journal
+          @silence = silence
           @home = home
           @file_facts = file_facts
           @requester = Requester.of(requester)
@@ -556,11 +579,11 @@ module Lain
         end
 
         # @param decision [Decision]
-        # @param timeout [Numeric, nil] seconds before the fail-closed denial; the queue's own when nil
+        # @param timeout [Numeric, nil] seconds before the silence rule settles it; the queue's own when nil
         # @return [Boolean] true to proceed
         def ask_decision(decision, timeout: nil)
           pending = DecisionPending.new(decision:, identity: Requester.of(decision.requester), clock: @clock,
-                                        timeout: timeout || @timeout, wall: @wall)
+                                        timeout: timeout || @timeout, wall: @wall, silence: @silence)
           park(pending)
           settle(pending)
           pending.approved?
@@ -638,7 +661,7 @@ module Lain
                                 notes: context.respond_to?(:parked_because) ? context.parked_because : [],
                                 cwd: ::Lain::Session.cwd_of(context),
                                 within: ::Lain::Sensitivity::Policy.base_of(context),
-                                file_facts: @file_facts)
+                                file_facts: @file_facts, silence: @silence)
           park(pending)
         end
 
@@ -766,7 +789,8 @@ module Lain
 
         # The expired window IS a decision, routed through the same single-shot
         # {Pending#decide}, so a surface that answered in the same tick still wins
-        # and a later answer is a no-op.
+        # and a later answer is a no-op. A hold settles as a postpone, so the
+        # abandonment deny in {#settle}'s ensure finds it decided.
         #
         # A pending drawn after it parked is owed the rest of a whole window from
         # the draw, so a call queued behind a slow answer is not denied unasked.
@@ -774,7 +798,7 @@ module Lain
           Async::Task.current.with_timeout(window) { pending.await }
         rescue Async::TimeoutError
           left = pending.drawn_at ? pending.drawn_at + pending.timeout - @clock.call : 0
-          left.positive? ? await_decision(pending, left) : pending.deny(surface: TIMEOUT_SURFACE)
+          left.positive? ? await_decision(pending, left) : pending.lapsed
         end
       end
     end

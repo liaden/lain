@@ -99,7 +99,9 @@ module Lain
       #   behind it is a mis-wire, not a default
       # @param middleware [Config::Middleware] what the chat's config.rb files
       #   registered, whose tool members run ahead of every guard
-      # @param approval_timeout [Numeric] seconds an unanswered call waits before the queue denies it
+      # @param approval_timeout [Numeric] seconds an unanswered call waits before `silence` settles it
+      # @param silence [Approval::Silence::Hold, Approval::Silence::Deny] what an unanswered call
+      #   settles as; {Approval::Silence::DEFAULT} by default
       # @param judge [#call] what `auto` approval asks first, on `new`'s terms.
       #   REQUIRED here, as `test_layout:` is: defaulted, a real chat's `auto`
       #   would quietly hand every call to a human
@@ -128,10 +130,10 @@ module Lain
                    approval_timeout: Approval::Parked::Queue::DEFAULT_TIMEOUT, display: Channel::Null.instance, arms: Arms::OFF,
                    request: Approval::Judge::Unrequested, secrets: Sensitivity::Secrets::Source::DEFAULT,
                    denied_tools: Set[].freeze, stops: Tripwire::Stops::None,
-                   masks: Approval::Judgement::Unmasked)
+                   masks: Approval::Judgement::Unmasked, silence: Approval::Silence::DEFAULT)
         new(journal: chronicle.record_journal, model:, toolset:, rules:, approving:, sensitivity:, classifiers:,
-            verdict:, test_layout:, spike:, middleware:, approval_timeout:, judge:, display:, arms:, request:,
-            secrets:, denied_tools:, stops:, masks:,
+            verdict:, test_layout:, spike:, middleware:, approval_timeout:, silence:, judge:, display:, arms:,
+            request:, secrets:, denied_tools:, stops:, masks:,
             # A resumed session starts at the launch flag's approval, not its last recorded mode.
             attended: !options[:non_interactive], approval: options.fetch(:approval, :ask))
       end
@@ -231,6 +233,7 @@ module Lain
       #   scope
       # @param middleware [Config::Middleware] as on {.for}; none by default
       # @param approval_timeout [Numeric] as on {.for}
+      # @param silence [Approval::Silence::Hold, Approval::Silence::Deny] as on {.for}
       # @param judge [#call] the {Approval::Judge} `auto` approval asks before
       #   anyone else. {DEFERRING} by default, so a board built with no model
       #   behind it parks under `auto` exactly as under `ask`
@@ -249,7 +252,8 @@ module Lain
                      approval_timeout: Approval::Parked::Queue::DEFAULT_TIMEOUT, judge: DEFERRING,
                      display: Channel::Null.instance, arms: Arms::OFF, request: Approval::Judge::Unrequested,
                      secrets: Sensitivity::Secrets::Source::DEFAULT, denied_tools: Set[].freeze,
-                     stops: Tripwire::Stops::None, masks: Approval::Judgement::Unmasked)
+                     stops: Tripwire::Stops::None, masks: Approval::Judgement::Unmasked,
+                     silence: Approval::Silence::DEFAULT)
         @attended = attended
         @masks = masks
         @display = display
@@ -258,7 +262,7 @@ module Lain
         hold_ladder_parts(rules:, approving:, classifiers:, verdict:, judge:, sensitivity:, arms:, request:)
         # A parked call has to be answered by somebody, and a queue with no
         # drain is a wait, not a decision.
-        @approvals = queue_over(sensitivity, approval_timeout) if @attended
+        @approvals = queue_over(sensitivity, approval_timeout, silence) if @attended
         @toolset = toolset
         @model_switch = Context::ModelSwitch.new(model, journal:)
         seed(Mode.new(approval:, layers:))
@@ -490,9 +494,9 @@ module Lain
       def faults = Approval::Escalation::Faults.new(@journal)
 
       # Over the path policy's own file facts, so a remembered denial lands where the gate's paths do.
-      def queue_over(sensitivity, timeout)
+      def queue_over(sensitivity, timeout, silence)
         Approval::Parked::Queue.new(journal: @journal, timeout:, home: sensitivity.home,
-                                    file_facts: sensitivity.file_facts)
+                                    file_facts: sensitivity.file_facts, silence:)
       end
 
       # Every launch journals the mode it started in: the session header

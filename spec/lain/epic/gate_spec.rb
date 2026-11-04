@@ -3,6 +3,7 @@
 require "json"
 require "open3"
 require "stringio"
+require "tmpdir"
 
 # Epic::Gate is the artifact gate: any artifact answering #digest and
 # #gate_question must pass it before an irreversible action consumes that
@@ -100,10 +101,76 @@ RSpec.describe Lain::Epic::Gate do
       expect(record["epic_slug"]).to eq("lain-epics")
     end
 
-    it "leaves evidence_digest and reason null -- later cards populate them, this path has neither" do
+    it "leaves evidence_digest null and gives the bare silence rule's reason" do
       call(gate(timeout: 0.02), asker: silent_asker)
 
-      expect(decisions.first).to include("evidence_digest" => nil, "reason" => nil)
+      expect(decisions.first).to include("evidence_digest" => nil, "reason" => "timeout")
+    end
+  end
+
+  # A window that has already closed when it opens, reporting the seconds it
+  # stands for, so a 900 second wait is decided without waiting for it.
+  def lapsed(seconds)
+    Module.new do
+      define_singleton_method(:seconds) { seconds }
+      define_singleton_method(:open) { self }
+      define_singleton_method(:around) { |_task| raise Async::TimeoutError }
+    end
+  end
+
+  def silence(source = nil)
+    return Lain::Approval::Silence.from(Lain::Config.empty) unless source
+
+    Dir.mktmpdir do |root|
+      write_config(root, source)
+      Lain::Approval::Silence.from(Lain::Config.load(root:))
+    end
+  end
+
+  def nine_issue_wave
+    ids = (1..9).map { "i#{_1}" }
+    graph = Lain::Epic::Graph.new(issues: ids.map { Lain::Epic::Issue.new(id: _1, title: "the #{_1} issue") })
+    views = ids.map { |id| Lain::Epic::IssueView.new(issue: graph.fetch(id), graph:, authored: "") }
+    Lain::Epic::Submission.wave(slug: "frugirl", views:, number: 1)
+  end
+
+  describe "what silence settles as" do
+    # Scenario: a silent wave gate holds each issue
+    it "holds each issue of a silent wave when the project leaves silence unset" do
+      outcome = Sync do
+        gate(timeout: lapsed(900), silence:)
+          .call(nine_issue_wave, asker: silent_asker, stage: "issue_plan", epic_slug: "frugirl")
+      end
+
+      expect(outcome.held.values).to eq(["no answer within 900s"] * 9)
+      expect([outcome.denied, outcome.approved]).to eq([{}, []])
+      expect(decisions.map { _1.values_at("verdict", "reason", "answered_by") })
+        .to eq([["hold", "no answer within 900s", described_class::TIMEOUT_SURFACE]] * 9)
+    end
+
+    # Scenario: deny is a choice
+    it "denies each item with the word timeout when the project chooses deny" do
+      approved = call(gate(timeout: lapsed(900), silence: silence("approval silence: :deny\n")),
+                      asker: silent_asker)
+
+      expect(approved).to be(false)
+      expect(decisions.map { _1.values_at("verdict", "reason") }).to eq([%w[deny timeout]])
+    end
+
+    # Scenario: an interrupt still denies
+    [nil, "approval silence: :deny\n"].each do |source|
+      it "denies an interrupted wait with the word interrupted under #{source ? "deny" : "hold"}" do
+        subject_gate = gate(timeout: 30, silence: silence(source))
+
+        Sync do |task|
+          asking = task.async { subject_gate.call(plan, asker: silent_asker, stage: "research", epic_slug: "demo") }
+          task.yield until journal_io.size.positive?
+          asking.stop
+        end
+
+        expect(decisions.map { _1.values_at("verdict", "reason", "answered_by") })
+          .to eq([["deny", "interrupted", described_class::INTERRUPTED_SURFACE]])
+      end
     end
   end
 
@@ -1046,10 +1113,10 @@ RSpec.describe Lain::Epic::Gate do
       expect(%w[b c d].map { |id| subject_gate.approved?(digest_of(id)) }).to all(be(false))
     end
 
-    it "denies the whole wave when the window closes" do
+    it "denies the whole wave when the window closes under the bare silence rule" do
       outcome = Sync { gate(timeout: 0.02).call(wave, asker: silent_asker, stage: "issue_plan", epic_slug: "frugirl") }
 
-      expect(outcome.denied).to eq(%w[b c d].to_h { [_1, nil] })
+      expect(outcome.denied).to eq(%w[b c d].to_h { [_1, "timeout"] })
       expect(decisions.map { |record| record["answered_by"] }).to eq([described_class::TIMEOUT_SURFACE] * 3)
     end
   end

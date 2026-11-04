@@ -562,7 +562,7 @@ module Lain
         # the result through here and through {#lines_for}, so an item that
         # wraps into many rows still runs `.inspect` on its input once.
         def summary_for(pending, call)
-          deadline = "#{pending.remaining_face} left, denies at #{pending.fires_at_face}"
+          deadline = "#{pending.remaining_face} left, #{pending.settles_at_face}"
           "#{pending.label}  #{pending.outstanding.preamble}#{judged(pending)}#{call}  #{deadline}".lstrip
         end
 

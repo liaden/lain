@@ -86,7 +86,8 @@ module Lain
                           sensitivity:, spike: PlanSpike.new(project:, paths:),
                           classifiers: factory, middleware:,
                           test_layout: test_layout(project:, file_facts: sensitivity.file_facts),
-                          approval_timeout: Config.approval_timeout(root: project.root), judge:, display:, arms:,
+                          approval_timeout: Config.approval_timeout(root: project.root),
+                          silence: Lain::Approval::Silence.from(config), judge:, display:, arms:,
                           request:, secrets: secrets(project:, sensitivity:, child_env:),
                           denied_tools: config.approval.deny_tools, stops:, masks:)
         end

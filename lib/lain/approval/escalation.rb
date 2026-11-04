@@ -871,7 +871,8 @@ module Lain
         APPROVED = "a surface approved this call"
         REFUSED = "a surface refused this call, or the window closed and the fail-closed doctrine did"
         POSTPONED = "a human postponed this call"
-        POSTPONED_TOLD = "postponed by the human%<said>s; issue it again later, when it will park for an answer"
+        LAPSED = "the window closed with no answer, and the silence rule postponed this call"
+        POSTPONED_TOLD = "postponed%<by>s%<said>s; issue it again later, when it will park for an answer"
 
         # The SAME object `/approve` drains, readable here so "the gate asks
         # through the session's one queue" stays an identity a caller can check
@@ -909,11 +910,15 @@ module Lain
 
         # Final so the model is not told a retry now could help, and liftable
         # because the next issue of the call parks for the human again.
+        #
+        # Only a person's hold is said to be the human's: the clock's comes from the silence rule.
         def postponed(pending)
           @denials.denied(pending.requester)
-          Ruling.deny(rung: NAME, because: "#{POSTPONED} (#{pending.surface})", authority: pending.authority,
-                      surface: pending.surface, final: true, liftable: true,
-                      told: format(POSTPONED_TOLD, said: pending.reason&.then { ": #{_1}" }))
+          lapsed = pending.timed_out?
+          Ruling.deny(rung: NAME, because: "#{lapsed ? LAPSED : POSTPONED} (#{pending.surface})",
+                      authority: pending.authority, surface: pending.surface, final: true, liftable: true,
+                      told: format(POSTPONED_TOLD, by: lapsed ? "" : " by the human",
+                                                   said: pending.reason&.then { ": #{_1}" }))
         end
       end
     end

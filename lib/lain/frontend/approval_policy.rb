@@ -312,14 +312,14 @@ module Lain
       # is the property the escaped path above relies on.
       def prompt_for(pending)
         "#{pending.outstanding.preamble}#{landing(pending)}#{pending.label} " \
-          "asks (auto-denies in #{pending.window_face}#{judged(pending)}): " \
+          "asks (#{pending.silence_face}#{judged(pending)}): " \
           "approve #{pending.call_face}? [y/N] "
       end
 
       def prompt_parts(pending)
         Intake::Parts.new(lead: "#{pending.outstanding.preamble}#{landing(pending)}#{pending.label} asks:",
                           call: pending.call_face, reasons: pending.reasons,
-                          tail: "auto-denies in #{pending.window_face}, approve? [y/N] ")
+                          tail: "#{pending.silence_face}, approve? [y/N] ")
       end
 
       def judged(pending)

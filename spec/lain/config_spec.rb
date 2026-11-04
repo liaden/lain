@@ -66,6 +66,34 @@ RSpec.describe Lain::Config do
     end
   end
 
+  describe "the approval silence" do
+    it "is hold unset, and read from the approval table" do
+      Dir.mktmpdir do |root|
+        write_config(root, "approval silence: :deny\n")
+
+        expect([described_class.load(root:).approval_silence, described_class.empty.approval_silence])
+          .to eq(%i[deny hold])
+      end
+    end
+
+    it "refuses a word that is neither hold nor deny, naming both" do
+      Dir.mktmpdir do |root|
+        write_config(root, "\napproval silence: :approve\n")
+
+        expect { described_class.load(root:) }
+          .to raise_error(Lain::Config::Refusal, /config\.rb:2.*silence must be :hold or :deny, got :approve/)
+      end
+    end
+
+    it "makes configs differing only in it unequal, with different hashes" do
+      epics = Lain::Config::Epics.new(home: :xdg)
+      plain = described_class.new(epics:)
+      other = described_class.new(epics:, approval_silence: :deny)
+
+      expect([plain == other, plain.hash == other.hash]).to eq([false, false])
+    end
+  end
+
   describe "the judge timeout" do
     it "is 30 seconds unset, and read from the approval table" do
       Dir.mktmpdir do |root|

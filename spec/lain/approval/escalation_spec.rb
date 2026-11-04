@@ -420,6 +420,17 @@ RSpec.describe Lain::Approval::Escalation do
     it "tells the model it was postponed when the human gave no words" do
       expect(held(nil).told).to start_with("postponed by the human; issue it again later")
     end
+
+    it "tells the model a call nobody answered was postponed for want of an answer, not by the human" do
+      silent = Lain::Approval::Parked::Queue.new(journal:, timeout: 0.01,
+                                                 silence: Lain::Approval::Silence.from(Lain::Config.empty))
+
+      ruling = Sync { described_class::Surfaces.new(silent).call(effect, nil) }
+
+      expect(ruling).to have_attributes(verdict: :deny, final: true, liftable: true)
+      expect(ruling.told)
+        .to eq("postponed: no answer within 0.01s; issue it again later, when it will park for an answer")
+    end
   end
 
   # Scenario: the ladder remains fail-closed
