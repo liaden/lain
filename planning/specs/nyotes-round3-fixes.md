@@ -3061,3 +3061,79 @@ The comment at `redact_secret_reads.rb:113-125` calls this the last fail-open in
 - 17:45 T56 landing 1 red: 1 failure, 'Lain::Ext::AstGrep.search on another thread behaves like a GVL-releasing binding stops soon after its thread is killed, rather than at the end of the call' (0.56s against 0.20s, seed 28958 suite). Green alone (23 examples). Repeat of the shared group's 2026-10-31 Fuzzy flake: FU-40, replace the GVL-releasing shared example's wall-clock bounds with a property assertion (wall-clock ruling 2026-10-27). Relanding.
 - T56 landed cd2afc9f (attempt 2)
 - 17:48 T56 landed cd2afc9f.
+- 17:49 Close-out docs pass started (nr3-Tdocs): docs/commands.md, ARCHITECTURE.md, toolchain-traps flakes, QA scenarios.
+- 17:50 T37 stop fired: round 2 cut 26.2% unchanged, 18.6% with 1 issue per wave edited (floor 30%); epic.md and research.md (about 93 KB) go in full each round. Ruling: every context document unchanged since the prior round's read goes by digest (research.md is frozen after approval since 144f03ca); Files widened to epic/review_result.rb and its spec; old epic_reviewed records read as nothing known. Wiring: epic_mount.rb review_results reads question_answered (T35b's file), applied in T37's worktree before review; T37 lands after T35b. Continued.
+- 17:55 Docs pass 1 done (commands.md 6 entries, ARCHITECTURE composed terms + phone and epic gate section, toolchain-traps 2026-11-04 flakes, remote-phone.md, epic-tier, shell-terms, cockpit-surfaces). Sent back for 8 uncovered QA scenarios. Follow-ups: FU-41 commands.md lacks the think, review and budget config verbs; FU-42 re-measure the read-roots planted .env and id_rsa probe now that find is admitted.
+- Tdocs landed 5ec7dbe9 (attempt 1)
+- 18:01 Docs landed 5ec7dbe9 (review APPROVE-WITH-FIXES, 3 nits: FU ids in remote-phone.md fixed; em dash kept as the file convention; read-roots re-measure is FU-42). T37 done after the ruling: round 2 cut 97.3% unchanged, 89.7% with 1 issue per wave edited. Wiring applied in T37 (epic_mount.rb review_results reads question_answered); 64/0. High review spawned (opus).
+- 18:01 T35b handed back (406/0 card + fold ratchet, 2908/0 related, 5906/0 deep; stop condition cleared: the reopen folds as a park, Approvals reads only implementation). Reopen built in EpicSubmit.reopen (fold ratchet allowlist). Review spawned medium; T37 review spawned high.
+- 18:07 T35b review APPROVE-WITH-FIXES: a failing reopen step reports a completed write as failed and skips the reopen (fail-open on the gate); edit then revert leaves a parked reopen item that blocks the stage. Rulings: acknowledge the write and name the skipped reopen with resubmit; damaged lines stay fail-closed reads; clear the parked item on revert with an existing record shape, or stop with a proposed shape. Fix round 1 sent; same reviewer re-reviews. FU-43: a raw edit_file or write_file on an issue path does not reopen (only Journaled's Written#write does).
+- 18:11 T37 high review REQUEST-CHANGES: BLOCKER an unparsed prior round marks documents shown (digest-only on round 2 though no reviewer read them); round cap dodged by a no-wave call or a grown wave; digest and shown bytes come from 2 reads (A-B-A); dead Diff#before; deleted shared doc unmentioned; 5 nits. All in fix round 1 (count rounds per scope id; digest the bytes Documents showed; journal type via Telemetry::QuestionAnswered). Same reviewer re-reviews after.
+- 18:15 T35b R1 done (414/0, 2916/0, 5906/0). Revert clears via approve(current) then deny(stale), answered_by epic_write, no new shape. Re-review asked to prove no deny revokes the human approval and no machine approve reads as a human one.
+- 18:16 T35b re-review APPROVE (8-step revert and deny probe: no machine approve without a standing human one, the deny never revokes it). NIT: resubmit's read_epic inside the failure note may raise, unprobed (FU-44). Landing 1.
+- T35b landed 76989261 (attempt 1)
+- 18:21 T35b landed 76989261.
+- 18:22 T37 R1 done (13 reds first; 150/0, 1026/0, 5906/0; round 2 cut 97.4% and 89.8%). Stage filter dropped (issue ids carry no underscore). Re-review (high) sent to the same reviewer.
+- 18:29 T37 re-review APPROVE-WITH-FIXES (P1-P5 pass, 11/11 back-outs red; 3-way apply of the epic_mount diff over 76989261 clean). Substantive: unparsed rounds spend the cap. Fix round 2 sent (plus naming never-reviewed ids, a hoisted journal-type constant, 2 comment fixes); another review after, as the card is high risk.
+- 18:35 T37 R2 done (5 reds first; 581/0, 5906/0; real drive round 2 11,245 bytes against 148,706). Final re-review sent.
+- 18:40 T37 R2 re-review APPROVE-WITH-FIXES: parsed-only counting lets unparsed rounds run without limit (P6). Fix round 3: outer ceiling on all rounds per id at 2 * ROUNDS. Another review after.
+- 18:45 T37 R3 done (2 reds first; 583/0, 5906/0). Re-review of the ceiling sent.
+- 18:48 T37 R3 re-review APPROVE-WITH-FIXES (ceiling holds, 3 back-outs red); 1 mechanical item (FAILING drops a parsed review, P7) fixed in R4 and verified by the main session (probes P1-P7 plus epic_review_spec 47/0). Landing 1.
+- 18:54 T37 landing 1 red: 33640 examples, 7 failures, all STUCK and STARVED at load 64 to 67 with nothing but the suite on the box (load 1.2 at start): landing_calls 'finds the calls it polices', run_clock 'MONOTONIC is named once even inside run_clock.rb...', plain_chat_prompt_guards 'a line typed across the moment the prompt opens holds the whole line...', two_cockpits 'leaves the second cockpit's editor answering after the first stops' (repeat, FU-12), input_pane_socket 'completes a skill named in the chat's context frame when Tab is pressed in the pane', comment_census 'carries no project-scheme citation anywhere the checker scans', deletability 'booting without a capability still loads with disclosure_sweep...'. All 7 green alone in the card's worktree. Load flakes; relanding as attempt 2.
+- T37 landed 97b4f5af (attempt 2)
+- 18:58 T37 landed 97b4f5af (attempt 2). All cards landed; close-out started.
+
+## Follow-up cards
+
+Raised during the run. Not started. Each names where it came from in the log above.
+
+Done in this run: FU-12 and FU-27 (flakes recorded by name in docs/toolchain-traps.md, 5ec7dbe9), FU-21 (lain-remote a93f485), FU-33 (in T55), FU-38 (in T35b).
+
+Flakes and tests that measure the clock (user ruling 2026-10-27: assert the property or move it to hot-path-bench):
+- FU-1: the workspace_profile example-count seam starves its 30s watchdog under pspec load (4 reds in the run).
+- FU-2 and FU-26: subagent fan-out "gathers every result into ONE user message in tool_use order" reorders under load.
+- FU-13: cockpit_approval's fleet-line example, a repeat from the greenfield trial fixes.
+- FU-17 and FU-25: Offload's tick-gap share ("keeps a sibling fiber running ...") is a wall-clock ratio.
+- FU-40: the GVL-releasing shared example's elapsed-time bounds (Fuzzy, then AstGrep).
+- FU-45: the suite itself peaks near load 66 on 16 cores (T37 landing 1, nothing else on the box), and 30s watchdogs starve; look at the runtime census and the e2e files first.
+
+Approval and the secret boundary:
+- FU-3: an honest cargo test logs unresolved_exec noise on every run.
+- FU-4: TextMask gap, cat on a lockfile masks more than read_file.
+- FU-7: set Bounds where envs are made (switchboard, subagent, wiring) and pass a leased child's Bounds into its profiles.
+- FU-9: the fence opens exec dirs with O_PATH, which follows links, after an lstat check; use RESOLVE_NO_SYMLINKS.
+- FU-16: the judge sees named_paths guesses for paths that do not exist.
+- FU-18: the sandbox mask and HistoryLiterals stop at a depth, so a tracked secret below it (vendor/pkg/.env) is unmasked for a bash reader. Card it with a probe.
+- FU-19: a secret file pulled in by a .git/config include is called hidden but left unmasked.
+- FU-24: Named does not see /usr/lib/git-core/git-show as git.
+- FU-28: the replay report cannot mark one hazard as unjudgeable.
+- FU-42: re-measure the read-roots planted .env and id_rsa probe now that find is admitted.
+
+Epic gates and review:
+- FU-30: a held gate cannot be answered (EpicQueue approve and deny by digest, Remote::Agenda lists held gates). Needs a UX decision from the user.
+- FU-37: epic_plan freshness against a digest that leaves out statuses.
+- FU-43: a raw edit_file or write_file on an issue path does not reopen its gate; only Journaled's write does.
+- FU-44: EpicWrite's resubmit line reads the epic inside the failure note and could raise there.
+- FU-46: one shared builder for the gated Submission (Tools::EpicReview#gated and CLI::EpicSubmit::Artifacts).
+
+Phone surface:
+- FU-29: TextMask limits seen through the phone view (base64 or reversed values, under 6 bytes, split across 2 fields).
+- FU-31: no "already answered" signal reaches a phone that loses the race (needs a wire change).
+- FU-32: IO::Buffer experimental warning on stderr from remote/devices.rb.
+- FU-34: extract Wiring's surface builders before any further ClassLength raise (ceiling 306).
+- FU-35: an explicit marker for agenda's unreadable-gate item instead of the empty-epic sentinel.
+- FU-36: masking misses a path with a space, and relative or $HOME paths.
+- FU-39: a reattach does not revive a dead relay.
+- FU-22: lain_wire ParkedCall.postponed is always false; drop it with the next wire change.
+
+Other:
+- FU-5: hot-path-bench wire_ready sits over its ceiling on main too (base drift).
+- FU-6: Pending#resolve drops an approve note.
+- FU-8: Gc ages refs/lain/stopped by retain_days.
+- FU-10: a detached Unreleased says :declined; headless withhold wording invites asking a human.
+- FU-11: /clear should name stopped children.
+- FU-14: repl.rb and repl/ask.rb read :iterations only for user extras middleware; delete or name it.
+- FU-15: fork_result drops the run allowance.
+- FU-20: T50's lobby size and pre-hello ceiling are unpinned by tests.
+- FU-23: the ollama-tier cassette ollama_run_tool_loop.yml lists epic tools and is stale.
+- FU-41: docs/commands.md lacks the think, review and budget config verbs.
