@@ -2710,3 +2710,51 @@ The comment at `redact_secret_reads.rb:113-125` calls this the last fail-open in
 22:15 T61 comments done (656/0). High review started.
 - T16 landed b2237ddf (attempt 1)
 22:17 T16 landed b2237ddf
+22:17 T40 started (cut at c97934b5)
+22:22 T40 impl done (NameError/NoMethodError red; 247/0, 1064/0). surface.rb and spec joined. Defect sent back: a respawn reusing --resume resumes the old session; drop session-picking flags.
+22:23 T61 high review APPROVE-WITH-FIXES (every headless route masks; real binary drive masked; 5 meaningful mutants red; identity test fails closed). 2 nits sent; no second review. FU-10: detached Unreleased says :declined (points at an absent user); headless WithholdAutomaticOutput and grep trailer wording invite asking a human.
+22:24 T40 fix done (--resume example red; 248/0, 1064/0). Medium review started. docs/commands.md /clear wording owed.
+22:25 T61 nits done (780/0). Landing.
+22:28 T61 landing 1 RED: 2 failures in seams/egress_release_spec (unattended board 'read releases automatically' premise, now masks). Card-caused, deterministic: sent back to implementer; egress_release_spec joins. Not a flake (assertion on content the card changed).
+22:29 T27 medium review REQUEST-CHANGES: 2 blockers, early_verdict carries any held verdict to any approval or question prompt (8 probes approve unseen calls); stop condition fired (gen-0 safety pin). Ruling: keep gen 0 never answers; the only exception is a verdict typed after the human's own /approve and before its [y/N] draws, stamped for that call. Fix round sent; second review follows.
+22:31 T40 medium review REQUEST-CHANGES: blocker, /clear at a reply prompt arms the respawn before the refusal (stray respawn later). Ruling: registry answers 'returns an action' before the call; reply prompt refuses Clear uncalled. Plus single waiter, pin remain-on-exit, refusal says why. FU-11: /clear names stopped children (after T24). Second review follows.
+22:31 T61 seam spec fixed (9/2 red; 44 unattended specs + ratchets 3919/0). Landing attempt 2.
+- T61 landed 28c71b87 (attempt 2)
+22:35 T61 landed 28c71b87 (attempt 2)
+22:37 T40 fix round done (reds recorded; 1451/0). registry, quit, human_replies joined. Second review started.
+22:38 T40 review 2 APPROVE-WITH-FIXES: blocker closed; substantive, ARMED stuck if tmux fails mid-arm, then /clear quits with no waiter (dead pane). Fix round 2 sent; third review follows (standing rule).
+22:42 T40 fix round 2 done (3 red; 1455/0). Third review started.
+22:44 T40 review 3 APPROVE-WITH-FIXES (mechanical: pin the remain-on-exit restore, name the guard's limit). Accepted: a refused or raising unset can still strand ARMED (tmux failing mid-call). Lands after this round.
+22:44 T27 rework done (14/11 red vs old change; 8203/0; guard mutants red). Second review started; key question: can a stamped y reach a different call (2 parked).
+22:45 T40 mechanical done (restore pin red 5/2; 588/0). Landing.
+- T40 landed dacb74ef (attempt 1)
+22:48 T40 landed dacb74ef
+22:49 T50 and T51 started (cut at dacb74ef, target/debug copied, 12G each). T51 root Cargo.toml member wired in its worktree.
+22:51 T51 impl done (23 compile errors red; 5 passed; Ruby probe decodes and repacks 8 fixtures). Medium review started.
+22:52 T27 review 2 REQUEST-CHANGES: stamped y reaches a different call (2 parked, watcher first; async /approve dispatch); window stays open when /approve draws nothing. Ruling: token binds the stamp to /approve's own prompt; window closes in an ensure when the dispatch ends. Third review follows; if still unsafe, recommend dropping T27.
+22:52 T51 medium review APPROVE-WITH-FIXES (Ruby parity holds; mutants red). Fixes: wire version fixture, unknown variant is Err / unknown field ignored, serde(default) on Options, bless only on =1 and panic after, encode doc + positional reject, real wave test. Second review follows.
+22:53 T51 fix round done (positional reject red; 11 pass; 6 forward fixtures made by Ruby). Second review started.
+22:54 T51 review 2 APPROVE-WITH-FIXES. Mechanical: map marker check accepts only fixmap (map16/map32 rejected), decode doc, hand-back notes. Lands after.
+22:54 T51 last round done (map16 pin; 12 pass). Landing (new crate, root Cargo.toml member, Cargo.lock).
+22:58 T27 rework 2 done (F, G red; 8208/0). requested:true marker; dispatch-end close not reachable from Intake, G covered by not-requested. Ruling added: window opens only with exactly 1 call pending at /approve. Then third review.
+23:01 T51 landing 1 RED (not a flake): end-of-file-fixer appended a newline to .msgpack fixtures (text-looking bytes), breaking answers_round_trip. Fix: exclude .msgpack from both fixers in .pre-commit-config.yaml (joins T51). Main's empty crates/lain-wire dirs removed. Re-landing.
+23:05 T27 1-pending rule done (approve_spec 15/1 red; 8209/0). Third review started.
+23:09 T51 landing 2 red: stop_while_busy_spec:71 STUCK 30s at load 17 (seed 23328 worker); T51 is Rust plus fixer config; running alone
+23:09 T50 done (lifecycle 3/1 red; cargo 16+4, :core 15/0, ratchet 341/0). T24 R3 nits sent (no re-review). T8 R3 sent (tangled word check bare clause only; 4 spec gaps; note colon) then third review.
+23:09 T50 review started (high)
+23:11 T27 dropped after third review: e2e probe (real Intake+Approve) shows a later chat line can approve the next call (window opens after run_now starts the dispatch), and the card's own /approve-then-y scenario does not hold on the reactor path. Diff at handbacks/T27-dropped.diff, probes at handbacks/T27-probes. Redesign needs the window opened before dispatch and a real-reactor spec.
+23:14 T51 red was 'typing in a real cockpit while the model is busy stops an ask parked on an approval when /stop is typed, without running the call or closing the session' STUCK at load 17; alone 5/0, base seed 23328 3 of 3 green at load 3. T51 has no Ruby or runtime change (new unloaded crate plus fixer excludes), so ruled load flake, not card-caused. FU-12: record it by name in docs/toolchain-traps.md. Re-landing attempt 3. T27 worktree removed.
+23:17 T51 landing 3 red: 'Lain::Tools::Subagent async fan-out ... gathers every result into ONE user message in tool_use order, however the children finish' (seed 30623), the FU-2 flake again: a repeat, so FU-2 becomes a card; re-landing as attempt 4
+23:23 T24 R3 nits done, approved (193/0, 392/0, 341/0). T8 R3 done (gate_spec 109/6 red then 109/0; 404/0; 341/0); third review next. T51 landing 4 red: workspace_profile_spec:48 and two_cockpits_spec:81 STUCK at load 21.5; suite walls 141-172s vs 74s nominal tonight; running each alone
+23:36 workspace_profile_spec and two_cockpits_spec green alone (4/0 each, load 3); ruled load flakes (T51 unreachable), add to FU-12 by name; landing attempt 5
+- T51 landed 7682313c (attempt 5)
+23:39 T51 landed 7682313c (attempt 5). T52 now waits only on T50.
+23:39 T50 review REQUEST-CHANGES: per-frame spawn unbounded (5.8 GiB RSS from 1-byte frames), linearity test cannot fail, 5 s pin reads a constant, no connection cap, boundary mutants, stale Cargo comment, hello outside deadline. Ruled all 7 fixed in-card (Cargo.toml joins; connection cap plus smaller pre-hello ceiling here, not T52). Fix round sent; second review after.
+- T24 landed 4a04ecc9 (attempt 1)
+23:41 T24 landed 4a04ecc9
+23:42 T36 landing (wiring.rb 3-way trial clean, rubocop clean)
+23:45 T36 landing 1 red: cockpit_approval_spec 'when the human approves the call shows a fleet line above a you> line in an input pane at its floor height' (hint line shown, not fleet), seed 30101; running alone then base
+23:51 cockpit_approval fleet-line example green alone (5/0, seed 30101). Repeat of the greenfield-trial-fixes T23 sighting: FU-13 card; T36 landing attempt 2
+- T36 landed 649e45e0 (attempt 2)
+23:53 T36 landed 649e45e0 (attempt 2)
+23:54 T25 started (sonnet), T28 started (sonnet), T18 started (opus); all cut at 649e45e0
