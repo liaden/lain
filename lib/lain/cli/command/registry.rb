@@ -65,6 +65,17 @@ module Lain
           command.respond_to?(:serves_replies?) && command.serves_replies?
         end
 
+        # Whether the command +text+ names returns a Repl action (`:quit`) rather than an
+        # answer. Asked BEFORE the call by a surface that cannot honour an action, because a
+        # command that arms something and then returns one would leave it armed.
+        #
+        # @param text [String] the line as the human typed it
+        # @return [Boolean] false for prose, a role-bound line, and every command that never declares it
+        def returns_action?(text)
+          command = named(text)
+          command.respond_to?(:returns_action?) && command.returns_action?
+        end
+
         # What a line typed while a run holds the chat is: a control command
         # acts now, since held behind the run what it acts on is gone or moot,
         # and one with nothing to act on is refused now. Prose, a skill, and
@@ -95,6 +106,8 @@ module Lain
           # Env-free, unlike {#dispatch}: whether a line serves replies is a fact
           # about the COMMAND, decided before anything is called.
           def serves_replies?(text) = registry.serves_replies?(text)
+
+          def returns_action?(text) = registry.returns_action?(text)
 
           def disposition(text) = registry.disposition(text, env)
         end

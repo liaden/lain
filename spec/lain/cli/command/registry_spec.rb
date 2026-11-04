@@ -146,6 +146,55 @@ RSpec.describe Lain::CLI::Command::Registry do
     end
   end
 
+  # The reply prompt cannot honour a Repl action, so it asks BEFORE calling.
+  describe "#returns_action?" do
+    let(:acting) do
+      Struct.new(:name) do
+        def usage = "/#{name} -- probe"
+        def call(_args, _env) = :quit
+        def returns_action? = true
+      end.new("leave")
+    end
+
+    it "is false for a command that never says otherwise" do
+      expect(registry.returns_action?("/help")).to be(false)
+    end
+
+    it "is true for one that declares it, and through a bound registry" do
+      acting_registry = described_class.new([acting])
+
+      expect(acting_registry.returns_action?("/leave")).to be(true)
+      expect(acting_registry.bind(env).returns_action?("/leave")).to be(true)
+    end
+
+    it "is false for prose and for a line no command claims" do
+      expect(registry.returns_action?("hello")).to be(false)
+      expect(registry.returns_action?("/nope")).to be(false)
+    end
+
+    # A command that forgets the declaration gets its side effects fired at a reply prompt
+    # that then refuses its :quit.
+    # Reads the call's source for a :quit literal, so an action returned through a constant from
+    # another file or through a helper method is not seen.
+    it "is declared by every shipped command that can return :quit" do
+      shipped = Lain::CLI::Command.constants.map { |name| Lain::CLI::Command.const_get(name) }
+                                  .grep(Class).select { |klass| klass.method_defined?(:call, false) }
+      quitting = shipped.select do |klass|
+        File.read(klass.instance_method(:call).source_location.first).match?(/:quit\b/)
+      end
+
+      expect(quitting).not_to be_empty
+      expect(quitting.reject { |klass| klass.method_defined?(:returns_action?) }).to be_empty
+    end
+
+    it "is true for the shipped /quit and /clear" do
+      shipped = described_class.new([Lain::CLI::Command::Quit.new, Lain::CLI::Command::Clear.new(pane: nil)])
+
+      expect(shipped.returns_action?("/quit")).to be(true)
+      expect(shipped.returns_action?("/clear")).to be(true)
+    end
+  end
+
   # A control command acts the moment it is typed, even while a run holds the
   # chat; every other line waits behind the run, and a control command with
   # nothing to act on is refused at once rather than held.

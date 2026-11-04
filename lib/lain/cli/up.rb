@@ -467,6 +467,93 @@ module Lain
         def live = @tmux.run("list-panes", "-t", @window, "-F", PANE_ID).stdout.split
       end
 
+      # `lain up -- ARGS` may name a session to resume or fork; a restart is a new chat, so
+      # the respawned command drops them. A bare `--resume X` takes its value as the next word.
+      class FreshChatArgs
+        PICKERS = %w[--resume --fork].freeze
+
+        def self.call(args)
+          valued = false
+          args.reject do |arg|
+            picker = PICKERS.include?(arg)
+            drop = picker || arg.start_with?(*PICKERS.map { |flag| "#{flag}=" }) || (valued && !arg.start_with?("-"))
+            valued = picker
+            drop
+          end
+        end
+      end
+
+      # Restarts a cockpit's chat pane from inside that chat, which `respawn-pane -k`
+      # alone cannot do without killing the asker mid-reply: the pane's process gets
+      # SIGHUP and its leases, journal and parked approvals never see their ensures.
+      # So the pane is held open past the exit, and the tmux SERVER, which outlives
+      # the chat, waits for the chat to leave on its own before it respawns.
+      class ChatRestart
+        # The session option holding the chat's command without the flags that pick an
+        # existing session, written when the cockpit is built.
+        FRESH = "@lain_chat_fresh_command"
+
+        # Pane-scoped, so a second ask before the chat exits finds the first waiter and arms no other.
+        ARMED = "@lain_chat_restart"
+
+        # @param tmux [Tmux] the server the cockpit lives on
+        # @param pane [String, nil] the pane the asking chat runs in
+        # @param waiting_on [Integer] the chat process the respawn follows the exit of
+        def initialize(tmux:, pane:, waiting_on:)
+          @tmux = tmux
+          @pane = pane.to_s
+          @waiting_on = waiting_on
+        end
+
+        # @return [Boolean] false, having touched nothing, when the pane is not a lain cockpit's chat pane
+        def call
+          return false unless chat_pane?
+
+          arm unless armed?
+          true
+        end
+
+        private
+
+        def arm
+          @tmux.act("set-option", "-p", "-t", @pane, ARMED, "1")
+          @tmux.act("set-option", "-p", "-t", @pane, "remain-on-exit", "on")
+          @tmux.act("run-shell", "-b", after_exit)
+        rescue TmuxUnavailable
+          # A mark left behind would make every later ask believe a waiter exists.
+          @tmux.run("set-option", "-p", "-u", "-t", @pane, ARMED)
+          @tmux.run("set-option", "-p", "-t", @pane, "remain-on-exit", "failed")
+          raise
+        end
+
+        def armed?
+          answer = @tmux.run("show-options", "-p", "-v", "-t", @pane, ARMED)
+          Shell::Out.ok?(answer) && !answer.stdout.strip.empty?
+        end
+
+        def chat_pane?
+          return false if @pane.empty?
+
+          answer = @tmux.run("show-options", "-v", "-t", @pane, Panes::CHAT)
+          Shell::Out.ok?(answer) && answer.stdout.strip == @pane
+        end
+
+        def fresh_command
+          answer = @tmux.run("show-options", "-v", "-t", @pane, FRESH)
+          command = Shell::Out.ok?(answer) ? answer.stdout.strip : ""
+          command.empty? ? [] : [command]
+        end
+
+        # Released after the respawn, which {Up#run_chat} would otherwise have left holding
+        # a dead screen: the human is attached, so the window's own `failed` governs again.
+        def after_exit
+          "while kill -0 #{@waiting_on} 2>/dev/null; do sleep 0.1; done; " \
+            "#{Shellwords.join(@tmux.argv("respawn-pane", "-k", "-t", @pane, *fresh_command))}; " \
+            "#{Shellwords.join(@tmux.argv("set-option", "-p", "-t", @pane, "remain-on-exit", "failed"))}; " \
+            "#{Shellwords.join(@tmux.argv("set-option", "-p", "-u", "-t", @pane, ARMED))}"
+        end
+      end
+
       # Asks `chat` whether it would refuse, before a session exists to hide the
       # answer in: a missing API key or a bad `--num-ctx` used to reach the
       # operator only from inside a dying pane, where tmux's dead-pane banner
@@ -1066,6 +1153,19 @@ module Lain
       end
       private_class_method :listening?
 
+      # What `/clear` asks: the chat pane named restarts on its original command, under a
+      # fresh session file, once the asking chat has exited.
+      #
+      # @param pane [String, nil] the asking chat's `$TMUX_PANE`
+      # @param socket [String, nil] tmux's `-L`; nil follows the `$TMUX` the chat inherited
+      # @param waiting_on [Integer] the process whose exit the respawn follows
+      # @param shell_out_factory [#call] `Shell::Out.new`, or a double
+      # @return [Boolean] whether a restart is scheduled; false when the pane is no lain cockpit's chat
+      def self.respawn_chat(pane:, socket: nil, waiting_on: Process.pid,
+                            shell_out_factory: Shell::Out.public_method(:new))
+        ChatRestart.new(tmux: Tmux.new(socket:, shell_out_factory:), pane:, waiting_on:).call
+      end
+
       # The cockpit switch is `nvim:`: nil is off, "" derives the plugin's
       # deterministic socket, a non-empty String is that path used verbatim.
       #
@@ -1192,8 +1292,8 @@ module Lain
       # ONE command for both shapes -- the cockpit's chat differs only by the
       # editor socket in front of the same flags -- so an injected
       # `chat_command:` overrides either.
-      def chat_pane_command(editor_flags)
-        @chat_command || PaneCommand.call("chat", *editor_flags, *input_flags, *@chat_args)
+      def chat_pane_command(editor_flags, chat_args = @chat_args)
+        @chat_command || PaneCommand.call("chat", *editor_flags, *input_flags, *chat_args)
       end
 
       # The chat's end of the input rail, written before either process
@@ -1325,8 +1425,10 @@ module Lain
       # rather than the cockpit.
       def run_chat(chat, cockpit)
         @tmux.run("set-option", "-p", "-t", chat, "remain-on-exit", "on")
-        @tmux.act("respawn-pane", "-k", "-t", chat, "-c", @cwd,
-                  chat_pane_command(cockpit ? @cockpit.chat_flags : []))
+        flags = cockpit ? @cockpit.chat_flags : []
+        @tmux.act("set-option", "-t", @session, ChatRestart::FRESH,
+                  chat_pane_command(flags, FreshChatArgs.call(@chat_args)))
+        @tmux.act("respawn-pane", "-k", "-t", chat, "-c", @cwd, chat_pane_command(flags))
       end
 
       # Two corpses, and only one of them refuses. Nothing to attach TO is a

@@ -14,6 +14,8 @@ module Lain
         def usage = "/quit -- end the session (same as bare quit)"
 
         def call(_args, _env) = :quit
+
+        def returns_action? = true
       end
     end
   end

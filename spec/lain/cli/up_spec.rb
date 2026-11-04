@@ -3222,3 +3222,157 @@ RSpec.describe Lain::CLI::Up, "the size of the session it creates" do
     end
   end
 end
+
+RSpec.describe Lain::CLI::Up, ".respawn_chat" do
+  include WaitUntil
+
+  before { skip("tmux not found on PATH") unless system("tmux", "-V", out: File::NULL, err: File::NULL) }
+
+  let(:socket) { "lain-spec-clear-#{Process.pid}-#{object_id}" }
+  let(:dir) { Dir.mktmpdir("lain-clear") }
+  let(:starts) { File.join(dir, "starts") }
+  let(:chat_pane) { tmux("show-options", "-v", "-t", "lain", described_class::Panes::CHAT) }
+  # The stand-in for the chat process: the respawn waits on its exit, as it waits on the real chat's.
+  let!(:chat_process) { Process.spawn("sleep", "30") }
+
+  def tmux(*args) = Open3.capture2("tmux", "-L", socket, *args).first.strip
+
+  def start_cockpit
+    described_class.new(session: "lain", socket:, state_path: File.join(dir, "state.json"), cwd: dir,
+                        chat_command: "echo started >> #{starts}; sleep 30",
+                        chat_preflight: ->(_args) { [] }).call
+    wait_until(reason: "the first chat start") { File.exist?(starts) }
+  end
+
+  def start_count = File.exist?(starts) ? File.readlines(starts).size : 0
+
+  after do
+    Process.kill("KILL", chat_process) if Process.waitpid(chat_process, Process::WNOHANG).nil?
+  rescue Errno::ESRCH, Errno::ECHILD
+    nil
+  ensure
+    system("tmux", "-L", socket, "kill-server", out: File::NULL, err: File::NULL)
+    FileUtils.rm_rf(dir)
+  end
+
+  it "restarts the chat pane in place once the asking chat has exited, leaving the other panes" do
+    start_cockpit
+    before = tmux("list-panes", "-t", "lain:chat", "-F", "\#{pane_id}").lines.map(&:strip)
+
+    expect(described_class.respawn_chat(pane: chat_pane, socket:, waiting_on: chat_process)).to be(true)
+    sleep 0.3
+    expect(start_count).to eq(1)
+
+    Process.kill("TERM", chat_process)
+    Process.wait(chat_process)
+    wait_until(reason: "the second chat start") { start_count == 2 }
+
+    expect(tmux("list-panes", "-t", "lain:chat", "-F", "\#{pane_id}").lines.map(&:strip)).to eq(before)
+  end
+
+  context "when the cockpit was launched resuming a session" do
+    let(:argv_log) { File.join(dir, "argv") }
+    let(:chat_args) { ["--resume", "old-session", "--fork=a@b", "--epic", "plans"] }
+
+    # The input pane runs the same binary, so only the chat's own starts count.
+    def chat_starts = (File.exist?(argv_log) ? File.readlines(argv_log) : []).grep(/\Achat /)
+
+    # The pane execs $PROGRAM_NAME, so a script standing there records what each chat start was handed.
+    around do |example|
+      script = File.join(dir, "fake-lain")
+      File.write(script, "#!/bin/sh\necho \"$@\" >> #{argv_log}\nsleep 30\n")
+      File.chmod(0o755, script)
+      original = $PROGRAM_NAME
+      $PROGRAM_NAME = script
+      example.run
+    ensure
+      $PROGRAM_NAME = original
+    end
+
+    it "respawns without the flags that pick an existing session and keeps every other flag" do
+      described_class.new(session: "lain", socket:, state_path: File.join(dir, "state.json"), cwd: dir,
+                          chat_args:, chat_preflight: ->(_args) { [] }).call
+      wait_until(reason: "the first chat start") { chat_starts.size == 1 }
+
+      described_class.respawn_chat(pane: chat_pane, socket:, waiting_on: chat_process)
+      Process.kill("TERM", chat_process)
+      Process.wait(chat_process)
+      wait_until(reason: "the second chat start") { chat_starts.size == 2 }
+
+      first, second = chat_starts
+      expect(first).to include("--resume old-session", "--fork=a@b", "--epic plans")
+      expect(second).to include("--epic plans")
+      expect(second).not_to include("--resume", "old-session", "--fork")
+    end
+  end
+
+  it "declines a pane that is not the chat pane of a lain cockpit" do
+    start_cockpit
+    input = tmux("show-options", "-v", "-t", "lain", described_class::Panes::INPUT)
+
+    expect(described_class.respawn_chat(pane: input, socket:, waiting_on: chat_process)).to be(false)
+    expect(described_class.respawn_chat(pane: "%999", socket:, waiting_on: chat_process)).to be(false)
+  end
+
+  it "declines without asking tmux when the chat has no pane" do
+    expect(described_class.respawn_chat(pane: nil, socket:)).to be(false)
+  end
+end
+
+RSpec.describe Lain::CLI::Up::ChatRestart do
+  # Answers the two reads a restart makes, and records every call so the arming is pinned
+  # by what tmux was told, not by what a live server happened to do.
+  let(:calls) { [] }
+  let(:armed) { [] }
+  let(:failing) { nil }
+  let(:factory) do
+    lambda do |*argv|
+      calls << argv
+      return FakeShellOut.new(1, "boom", "") if failing && argv.include?(failing) && argv.last != described_class::ARMED
+
+      stdout = case argv.drop_while { |word| word != "show-options" }.last
+               when Lain::CLI::Up::Panes::CHAT then "%3"
+               when described_class::ARMED then armed.last.to_s
+               else ""
+               end
+      FakeShellOut.new(0, "", stdout).tap { armed << "armed" if argv.include?("run-shell") }
+    end
+  end
+
+  def restart = Lain::CLI::Up.respawn_chat(pane: "%3", waiting_on: 4242, shell_out_factory: factory)
+
+  def tmux_calls(verb) = calls.select { |argv| argv.include?(verb) }
+
+  it "holds the pane open past the exit and puts remain-on-exit back to failed after the respawn" do
+    restart
+
+    expect(calls).to include(["tmux", "set-option", "-p", "-t", "%3", "remain-on-exit", "on"])
+    script = tmux_calls("run-shell").sole.last
+    expect(script).to match(/kill -0 4242.*respawn-pane -k -t \\%3.*set-option -p -t \\%3 remain-on-exit failed/)
+  end
+
+  it "arms at most one waiter, however many times the chat asks before it exits" do
+    expect([restart, restart]).to eq([true, true])
+
+    expect(tmux_calls("run-shell").size).to eq(1)
+  end
+
+  %w[run-shell remain-on-exit].each do |step|
+    context "when #{step} fails" do
+      let(:failing) { step }
+
+      it "raises, and leaves the pane unarmed so a later ask can arm it" do
+        expect { restart }.to raise_error(Lain::CLI::Up::TmuxUnavailable)
+
+        expect(calls).to include(["tmux", "set-option", "-p", "-u", "-t", "%3", described_class::ARMED])
+        expect(calls).to include(["tmux", "set-option", "-p", "-t", "%3", "remain-on-exit", "failed"])
+      end
+    end
+  end
+
+  it "arms nothing for a pane that is not the chat pane" do
+    expect(Lain::CLI::Up.respawn_chat(pane: "%9", waiting_on: 1, shell_out_factory: factory)).to be(false)
+    expect(tmux_calls("run-shell")).to be_empty
+    expect(tmux_calls("remain-on-exit")).to be_empty
+  end
+end

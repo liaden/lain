@@ -1488,6 +1488,7 @@ module Lain
         def classify(line)
           return :prose if prose?(line)
           return :replies if @commands.serves_replies?(line) && @detour.serves_replies?(line)
+          return refused_action(line) if @commands.returns_action?(line)
 
           arm = :handled
           outcome = @commands.dispatch(line) { arm = :unmatched }
@@ -1525,13 +1526,9 @@ module Lain
         # else -- so it is refused BY NAME rather than dropped, because a
         # `/quit` that appears to do nothing reads as a wedged session.
         #
-        # The refusal is POST-HOC: the command has already run. `/quit` is the
-        # only shipped command returning a Symbol and its `#call` is `= :quit`,
-        # so nothing happens before it is refused. A future action-returning
-        # command that DOES something first would fire that side effect and then
-        # be told it cannot run, which is a lie the human cannot act on -- at
-        # that point this needs the registry to answer "does this command return
-        # an action" BEFORE the call, not a wider rescue.
+        # A command that DECLARES it returns an action ({Registry#returns_action?}) is
+        # refused before it is called, so one that arms something first (`/clear`)
+        # arms nothing. The refusal below is the backstop for one that does not declare.
         def delivered(outcome, line)
           case outcome
           when nil then nil
@@ -1546,6 +1543,11 @@ module Lain
         # answer reaches the terminal through one renderer whichever prompt it
         # was typed at.
         def spoken(text) = Response.new(content: [{ "type" => "text", "text" => text }], stop_reason: :end_turn)
+
+        def refused_action(line)
+          @tty.render_error(refusal(:action, line))
+          :handled
+        end
 
         # Both halves say WHICH command: a refusal that names none is one the
         # human cannot act on.

@@ -799,6 +799,23 @@ RSpec.describe Lain::CLI::HumanReplies do
       expect(ask_human.last_answer.body["answer"]).to include("go left")
     end
 
+    # The refusal has to come BEFORE the call: a command that arms something and then
+    # returns an action would otherwise leave the thing armed on a chat that stays up.
+    it "refuses an action-returning command without calling it" do
+      asked = []
+      restarting = Lain::CLI::Command::Clear.new(pane: "%1", restart: ->(**kwargs) { asked << kwargs })
+      registry.register(restarting)
+      typed = ["/clear", "go left"]
+      allow(conductor).to receive(:read_reply) { typed.shift.to_s }
+
+      Sync { announced(ask_human, "which db?") }
+      with_surfaces { ask_human.last_answer }
+
+      expect(output.string).to include("error:").and include("/clear")
+      expect(asked).to be_empty
+      expect(ask_human.last_answer.body["answer"]).to include("go left")
+    end
+
     it "still answers the question with prose" do
       allow(conductor).to receive(:read_reply).and_return("go left")
 

@@ -179,7 +179,7 @@ module Lain
         def builtins
           [Quit.new, Stop.new, *history_commands, Btw.new, Status.new, Sessions.new, Inbox.new, Ruby.new, Mode.new,
            Goal.new(driver: @goal_driver), Meta.new(root: @root), Introspect.new(outbox:), *review_commands,
-           *epic_commands, *plan_commands, *secret_commands, *share_commands]
+           *epic_commands, *plan_commands, *secret_commands, *share_commands, *cockpit_commands]
         end
 
         # What a plan's execution offers once it has landed. Its own group for
@@ -191,6 +191,10 @@ module Lain
         # The commands that change what a read may show: `/release` lifts a decline or a lapse
         # the ledger holds. Its own group for #builtins' reason.
         def secret_commands = [Release.new(cwd: @cwd, ledger: @ledger, sensitivity: @sensitivity)]
+
+        # `/clear` restarts the chat pane of a `lain up` cockpit, and refuses by name anywhere else. Its own
+        # group for #builtins' reason.
+        def cockpit_commands = [Clear.new]
 
         # `/share` publishes the session record, which only a chat with a file has. Its own group for
         # #builtins' reason; the export is opened per call because promotion renames the file.
