@@ -2597,3 +2597,28 @@ The comment at `redact_secret_reads.rb:113-125` calls this the last fail-open in
 - Plan note for T15: cover each lease checkout's exec rules through the agent's Bounds (from T14 review).
 - T3 landed 15f63347 (attempt 1)
 - T3 landed 15f63347.
+- T14 fix round done (each red recorded; 855/0 green). Second review started 18:14.
+- T9 high review APPROVE-WITH-FIXES (real tmux drive: hold, reissue, y ran it; 12 of 13 mutants red). Rulings: at [y/N] only 'hold' is a hold, wait/stop are chat lines again; a hold at a secret-release prompt postpones (no run-long decline). Scope: approval_replay/approver.rb and redact_secret_reads.rb (release decision lines only; T43 overlaps that file) join T9. Fix round sent; second review follows.
+- T4 round 3 handed back (factory_spec 34 red without wiring; ladder_spec fix unconfirmed). Scope widened: plan_only.rb and spec, policies_spec, ladder_spec. Rebasing the worktree onto main was denied by the permission classifier (reset --hard); T4 lands by the standard 3-way patch instead. Third review started 18:16.
+- T14 review 2 APPROVE-WITH-FIXES (13 of 14 mutants red; real fence and resolver probes agree). 1 spec sent.
+- T14 last spec done (6/1 red, 138/0 green). Landing.
+- T14 landing 1 never ran its hook: wait-quiet counted T43's xargs (its args name bundle exec rspec) while that xargs waited on the gate; deadlock for 30 min. Local wait-quiet now skips xargs, env, nice, ionice. Re-landing T14.
+- T14 landed 005621ae (attempt 2)
+- T44 started 18:58, cut at 005621ae
+- T42 started 18:58, cut at 005621ae
+- T14 landed 005621ae (attempt 2).
+- T9 fix round: items 1,2,5,6,7 done (408/9 red). Items 3,4 approved: redact_secret_reads.rb line 483 and a Trailer::REASONS key; plain_chat_prompt_guards_spec joins; [y/N] tail unchanged; 'hold on' as a hold accepted.
+- T43 fix round done (385/20 red; 385/0, 6075/0 wide; 19 mutants killed). escalation.rb and spec joined (Ruling gains surface). Dropped directory and pattern filters. Second review started 18:59; hot-path-bench owed before landing.
+- T44 handed back (395/8 red, 736/0 green). TextMask gap (cat on a lockfile masks more than read_file) becomes FU-4 after T43 lands. Low review started.
+- T4 review 3 APPROVE (13 mutants dead, back-outs red, 1045/0). Patch checked against main (3-way clean over T3's factory edits). Landing.
+19:04 T9 round 2: item 3 broke 4 specs (2 stand-in Verdicts lack postponed?); ruled: add postponed? = false to both, no respond_to?
+19:05 T44 review (low): REQUEST-CHANGES, mechanical: oracle paths.yml flake.lock/mix.lock class none -> checksums; sent to impl; no re-review needed
+- T4 landed 82438dac (attempt 1)
+19:05 T4 landed 82438dac (1210 of 1215 runtime files)
+19:06 T8 started (worktree nr3-T8 from 82438dac)
+19:06 T8 ruling: scenario 1 reply has no separator, Unrecognised under T7; spec uses separator form, Reply not loosened
+19:06 T44 fix done (oracle fixture); landing attempt 1
+19:07 T42 impl done (2 files, red 2 of 34, green 2421/0); low review queued until T44 landing releases the gate
+19:09 T43 review 2 (high): APPROVE-WITH-FIXES, 3 mechanical (trailer names read_file; cap+binary specs kill 2 survivors; reflow 2 comments); no third review
+- T44 landed b93101f2 (attempt 1)
+19:12 T44 landed b93101f2
