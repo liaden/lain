@@ -795,8 +795,19 @@ RSpec.describe "shipped skills" do
 
         expect(text).to include("lain renders", "## Acceptance criteria", "## References")
         expect(text).to match(/do not restate .{0,40}description/i)
-        expect(text[/^## Phase 3 .*?(?=^## )/m]).to include("lain epic show issues/<id>")
+        expect(text[/^## Phase 3 .*?(?=^## )/m]).to include("epic_show")
         expect(text).not_to match(/^(Blocked by|Blocks|Related|Discovered from): </)
+      end
+    end
+
+    it "has plan-epic and create-epic-issues read status and issues through tools, never a lain epic command" do
+      with_empty_project do |renderer|
+        %w[plan-epic create-epic-issues].each do |name|
+          text = renderer.render(name)
+
+          expect(text).to include("epic_status", "epic_show"), "#{name} never names the read tools"
+          expect(text).not_to match(/lain epic (status|show)/), "#{name} still sends the agent to the shell"
+        end
       end
     end
 
@@ -804,7 +815,7 @@ RSpec.describe "shipped skills" do
       with_empty_project do |renderer|
         phase = renderer.render("create-epic-issues")[/^## Phase 4 .*?(?=^## )/m]
 
-        expect(phase).to include("`wave`", "lain epic status", "deny <id>: <reason>")
+        expect(phase).to include("`wave`", "epic_status", "deny <id>: <reason>")
         expect(phase).to match(/wave by wave|one wave at a time/i)
       end
     end

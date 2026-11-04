@@ -108,7 +108,8 @@ RSpec.describe Lain::CLI::EpicMount do
       mount = mount_for
 
       expect(mount.slug).to eq("alpha")
-      expect(tools_of(mount).map(&:name)).to eq(%w[request_review epic_write epic_graph epic_submit])
+      expect(tools_of(mount).map(&:name)).to eq(%w[request_review epic_write epic_graph epic_status epic_show
+                                                   epic_submit])
     end
 
     it "adds epic_review beside epic_graph when the chat can run a critique" do
@@ -118,8 +119,9 @@ RSpec.describe Lain::CLI::EpicMount do
       mounted = mount_for.tools(submitter:, critique:)
       unmounted = mount_for(options: { epic: "nope" }).tools(submitter:, critique:)
 
-      expect(mounted.map(&:name)).to eq(%w[request_review epic_write epic_graph epic_review epic_submit])
-      expect(unmounted.map(&:name)).to eq(%w[epic_write epic_graph epic_review epic_submit])
+      expect(mounted.map(&:name)).to eq(%w[request_review epic_write epic_graph epic_status epic_show epic_review
+                                           epic_submit])
+      expect(unmounted.map(&:name)).to eq(%w[epic_write epic_graph epic_status epic_show epic_review epic_submit])
     end
 
     it "exposes the homes a document read resolves through, mounted or not" do
@@ -137,7 +139,7 @@ RSpec.describe Lain::CLI::EpicMount do
 
       mount, said = notices_from
 
-      expect(tools_of(mount).map(&:name)).to eq(%w[epic_write epic_graph epic_submit])
+      expect(tools_of(mount).map(&:name)).to eq(%w[epic_write epic_graph epic_status epic_show epic_submit])
       expect(said.join).to include("alpha", "beta", "lain chat --epic SLUG")
     end
 
@@ -160,7 +162,8 @@ RSpec.describe Lain::CLI::EpicMount do
       mount = mount_for(options: { epic: "beta" })
 
       expect(mount.slug).to eq("beta")
-      expect(tools_of(mount).map(&:name)).to eq(%w[request_review epic_write epic_graph epic_submit])
+      expect(tools_of(mount).map(&:name)).to eq(%w[request_review epic_write epic_graph epic_status epic_show
+                                                   epic_submit])
     end
 
     # The ordinary case. Most chats are not in an epic, and a startup line about
@@ -169,7 +172,7 @@ RSpec.describe Lain::CLI::EpicMount do
       mount, said = notices_from
 
       expect(mount).not_to be_mounted
-      expect(tools_of(mount).map(&:name)).to eq(%w[epic_write epic_graph epic_submit])
+      expect(tools_of(mount).map(&:name)).to eq(%w[epic_write epic_graph epic_status epic_show epic_submit])
       expect(said).to be_empty
     end
 
@@ -191,7 +194,7 @@ RSpec.describe Lain::CLI::EpicMount do
       mount = nil
 
       expect { mount = mount_for }.not_to raise_error
-      expect(tools_of(mount).map(&:name)).to eq(%w[epic_write epic_graph epic_submit])
+      expect(tools_of(mount).map(&:name)).to eq(%w[epic_write epic_graph epic_status epic_show epic_submit])
     end
   end
 

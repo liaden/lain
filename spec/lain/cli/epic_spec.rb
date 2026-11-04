@@ -448,7 +448,7 @@ RSpec.describe Lain::CLI::Epic do
       write_epic("beta", graph_of(issue("z")))
 
       expect { command.status }
-        .to raise_error(Lain::CLI::Epic::Ambiguous, /`alpha`, `beta`.*lain epic status SLUG/m)
+        .to raise_error(Lain::CLI::Epic::Ambiguous, /`alpha`, `beta`.*name one: pass its slug/m)
     end
 
     # Every epic verb asks this one question, so the remedy has to name the
@@ -528,7 +528,7 @@ RSpec.describe Lain::CLI::Epic do
     it "advises argv the CLI accepts, for every verb whose refusal names one" do
       write_epic("alpha", chain)
       write_epic("beta", graph_of(issue("z")))
-      triggers = { "status" => %w[epic status], "submit" => %w[epic submit research],
+      triggers = { "submit" => %w[epic submit research],
                    "land" => %w[epic land a1], "resume" => %w[epic land a1 --resume], "finish" => %w[epic finish] }
 
       advised = triggers.transform_values { |argv| remedy_advised_by(argv) }

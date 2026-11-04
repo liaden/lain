@@ -88,8 +88,8 @@ renders both.
 
 ## Phase 3 — Check each view cold
 
-Before you gate anything, read each issue's view back with `lain epic show issues/<id>` (run it
-with `bash`), as if you had never seen the epic. That is the view an implementer will read: your
+Before you gate anything, read each issue's view back with the `epic_show` tool (`id` is the issue's id),
+as if you had never seen the epic. That is the view an implementer will read: your
 file plus what lain renders around it. If you have to reach for anything outside it to know where
 to start, that issue is not self-contained yet — fix the file rather than noting it.
 
@@ -108,8 +108,7 @@ and that a reply of `deny: <reason>` sends the reason back to you.
 
 Submit the write-ups wave by wave with the `epic_submit` tool: `stage` is `issue_plan`, `slug` is the
 epic's slug, and `wave` is the wave's number: wave 1 holds the issues nothing blocks, and each later
-wave the issues whose blockers sit in earlier waves, the numbering the user sees in
-`lain epic status <slug>`. One
+wave the issues whose blockers sit in earlier waves, the numbering `epic_status` shows. One
 question asks about every issue in the wave, and each issue is still approved or denied on its own.
 The human may answer `approve` for the whole wave, `deny: <reason>` to deny all of it, or
 `deny <id>: <reason>` to deny only the issues named; the result names each issue's outcome. Fix a
@@ -160,8 +159,8 @@ reads as no answer, and nothing advanced. A `--btw` chat cannot submit at all.
 
 `issue_plan` sits behind two earlier stages, so its gates cannot open while this epic's
 `research` or `epic_plan` sign-offs are still parked. Ask the user to drain them with
-`lain epic queue` and `lain epic approve DIGEST` / `lain epic deny DIGEST`; the user can run
-`lain epic status [SLUG]` to see where the epic currently stands.
+`lain epic queue` and `lain epic approve DIGEST` / `lain epic deny DIGEST`; `epic_status`
+shows where the epic currently stands.
 
 ## Where the epic goes after you
 

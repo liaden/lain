@@ -689,7 +689,8 @@ RSpec.describe Lain::Tool::Bounds do
       expect(ceilings.keys).to contain_exactly("read_file", "bash", "memory_read", "memory_write",
                                                "run_skill", "ask_human", "subagent", "grep", "glob",
                                                "list_files", "file_symbols", "test_pattern", "web_search",
-                                               "ast_search", "ast_dump", "web_fetch", "epic_review")
+                                               "ast_search", "ast_dump", "web_fetch", "epic_review", "epic_status",
+                                               "epic_show")
     end
 
     it "gives every row the one static figure, with no per-model variation" do

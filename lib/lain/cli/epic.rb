@@ -83,6 +83,10 @@ module Lain
       # strings that can drift apart.
       REMEDY = "name one: %<remedy>s"
 
+      # The remedy for a caller that is not necessarily a command line: the epic
+      # tools read status and shows through this class too.
+      BY_SLUG = "pass its slug"
+
       # The container exists but cannot be listed. Its own class for
       # {Epic::Home::UnreadableArtifact}'s reason: an unreadable directory is not
       # "no epics yet", and the empty-home message would report a permissions
@@ -207,7 +211,7 @@ module Lain
         slugs = slugs_in(container)
         return unstarted(container) if slugs.empty?
 
-        resolved = chosen(slug, slugs, container, remedy: "lain epic status SLUG")
+        resolved = chosen(slug, slugs, container, remedy: BY_SLUG)
         mermaid ? Lain::Epic::Mermaid.render(progress(resolved)) : report(resolved)
       end
 
@@ -222,7 +226,7 @@ module Lain
       #   unwritable id
       def show(doc = "research", slug = nil)
         slugs = slugs_in(container)
-        resolved = chosen(slug, slugs, container, remedy: "lain epic show SLUG")
+        resolved = chosen(slug, slugs, container, remedy: BY_SLUG)
         document(home_for(resolved), doc)
       end
 

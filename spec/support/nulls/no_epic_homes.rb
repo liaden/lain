@@ -6,10 +6,12 @@ module SpecNulls
   module NoEpicHomes
     def self.for(_slug) = raise(Lain::Error, "this spec wired no epic home")
 
+    def self.root = raise(Lain::Error, "this spec wired no epic home")
+
     # What epic_graph edits through, refusing as {.for} does.
     def self.epics = self
 
-    %i[add split merge link unlink retitle describe subject].each do |verb|
+    %i[add split merge link unlink retitle describe subject status show resolve_slug].each do |verb|
       define_singleton_method(verb) { |*, **| raise(Lain::Error, "this spec wired no epic home") }
     end
   end

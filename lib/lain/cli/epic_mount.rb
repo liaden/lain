@@ -19,8 +19,8 @@ module Lain
     # == A chat never fails to start over an epic
     #
     # Every refusal from the epic tier answers {NoEpic}, whose whole surface is
-    # `tools` and `mounted?`: its tools are epic_write, epic_graph, epic_review and epic_submit,
-    # which need no mounted epic. `home` and `review` have no honest null (which epic this is
+    # `tools` and `mounted?`: its tools are epic_write, epic_graph, epic_status, epic_show, epic_review
+    # and epic_submit, which need no mounted epic. `home` and `review` have no honest null (which epic this is
     # cannot be defaulted), so answering them would be a lie rather than a Null
     # Object.
     #
@@ -36,8 +36,8 @@ module Lain
 
       # No epic resolved. `tools` and `mounted?` are the entire duck its
       # callers depend on; the class comment says why `home` and `review` are
-      # absent. Its tools are the epic_write, epic_graph, epic_review and epic_submit a chat
-      # needs to start its first epic, reshape it and put it before its gates.
+      # absent. Its tools are the epic_write, epic_graph, epic_status, epic_show, epic_review and
+      # epic_submit a chat needs to start its first epic, reshape it and put it before its gates.
       class NoEpic
         # @param homes [Homes] where epic_write resolves a home per call, and
         #   which epic_graph edits through
@@ -45,6 +45,8 @@ module Lain
           @homes = homes
           @epic_write = Lain::Tools::EpicWrite.new(homes:)
           @epic_graph = Lain::Tools::EpicGraph.new(epics: homes.epics)
+          @epic_status = Lain::Tools::EpicStatus.new(homes:)
+          @epic_show = Lain::Tools::EpicShow.new(homes:)
           freeze
         end
 
@@ -52,7 +54,7 @@ module Lain
         # @param critique [#call, nil] `(subject:, instructions:) -> String`; nil leaves out epic_review
         # @return [Array<Lain::Tool>]
         def tools(submitter:, critique: nil)
-          [@epic_write, @epic_graph, *EpicMount.review_tool(homes, critique),
+          [@epic_write, @epic_graph, @epic_status, @epic_show, *EpicMount.review_tool(homes, critique),
            Lain::Tools::EpicSubmit.new(submitter:)]
         end
 
@@ -91,6 +93,9 @@ module Lain
           Lain::Epic::Home::Journaled.new(Lain::Epic::Home.resolve(config: @config, paths: @paths, root: @root, slug:),
                                           journal: @journal, reviews: reviews(slug))
         end
+
+        # @return [String] the project root a path is shown relative to
+        attr_reader :root
 
         # The epic verbs, journaling into the chat's own session record.
         #
@@ -276,8 +281,8 @@ module Lain
       #   the chat's spawn runs a document critique through; nil leaves out epic_review
       # @return [Array<Lain::Tool>]
       def tools(submitter:, critique: nil)
-        [*(@tools ||= [request_review, epic_write, epic_graph]), *EpicMount.review_tool(homes, critique),
-         Lain::Tools::EpicSubmit.new(submitter:)]
+        [*(@tools ||= [request_review, epic_write, epic_graph, epic_status, epic_show]),
+         *EpicMount.review_tool(homes, critique), Lain::Tools::EpicSubmit.new(submitter:)]
       end
 
       def mounted? = true
@@ -326,6 +331,10 @@ module Lain
       def epic_write = Lain::Tools::EpicWrite.new(homes:)
 
       def epic_graph = Lain::Tools::EpicGraph.new(epics: homes.epics)
+
+      def epic_status = Lain::Tools::EpicStatus.new(homes:)
+
+      def epic_show = Lain::Tools::EpicShow.new(homes:)
 
       # {Epic::Review.from_journal} and not {Review.new}, so a chat restarted
       # while a human still holds a file goes on refusing to overwrite it.

@@ -186,6 +186,8 @@ you are told the stage is blocked, that is the boundary rule, not a bug: ask the
 user to drain the earlier stage first, with `lain epic queue` and `lain epic approve DIGEST` /
 `lain epic deny DIGEST`.
 
+Read where the epic stands with `epic_status` and an issue's view with `epic_show`; neither needs a shell.
+
 Structural changes after this point belong to `iterate-epic`, not to a second run of this
 skill — it edits the graph through the `epic_graph` tool (`split`, `merge` and `add`) rather than by
 rewriting the document.
