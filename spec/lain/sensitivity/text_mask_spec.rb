@@ -37,6 +37,20 @@ RSpec.describe Lain::Sensitivity::TextMask do
       expect(masked).to have_attributes(text: "echo #{placeholder(1)} #{placeholder(2)}\n", fresh: 2)
     end
 
+    it "shows a region whose digest is released, and masks the rest" do
+      digest = Lain::Sensitivity::Regions.detect("A_TOKEN=#{secret}\n").first.digest
+      masked = described_class.new(secrets: [], released: Set[digest]).call("A_TOKEN=#{secret}\nB_TOKEN=#{other}\n")
+
+      expect(masked).to have_attributes(text: "A_TOKEN=#{secret}\nB_TOKEN=#{placeholder(1)}\n", fresh: 1)
+    end
+
+    it "masks a released region's bytes where a secret-named value holds them too" do
+      digest = Lain::Sensitivity::Regions.detect("A_TOKEN=#{secret}\n").first.digest
+
+      expect(described_class.new(secrets: [secret], released: Set[digest]).call("A_TOKEN=#{secret}\n").text)
+        .to eq("A_TOKEN=#{placeholder(1)}\n")
+    end
+
     it "leaves clean text alone" do
       expect(mask.call("hello\n")).to eq(Lain::Sensitivity::Masked.new(text: "hello\n", fresh: 0, prior: 0))
     end

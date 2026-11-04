@@ -88,7 +88,8 @@ module Lain
       # What one rung said, and everything a journal needs to attribute it.
       # Deeply frozen -- strings interned, `fault` coerced to a strict Boolean --
       # so `Ractor.shareable?` holds and the record is safe to share.
-      Ruling = Data.define(:verdict, :rung, :reason, :fault, :authority, :final, :told, :said, :rule, :note, :liftable)
+      Ruling = Data.define(:verdict, :rung, :reason, :fault, :authority, :final, :told, :said, :rule, :note, :liftable,
+                           :surface)
 
       class Ruling
         # Reopened rather than written in the `Data.define` block: a constant
@@ -145,8 +146,12 @@ module Lain
         # `note` is what an ABSTAINING rung wants the human to read when the call
         # parks, and never the model: the ladder hands it down as {Noted}, and it
         # is left off `told` and `said` so no refusal can carry it.
+        #
+        # `surface` names who answered, as the queue's decision does, so a
+        # release journaled from this ruling says which human said yes; a
+        # ruling no surface made names its rung.
         def initialize(verdict:, rung:, reason:, fault: false, authority: :automatic, final: false, told: nil,
-                       said: nil, rule: nil, note: nil, liftable: false)
+                       said: nil, rule: nil, note: nil, liftable: false, surface: nil)
           unless VERDICTS.include?(verdict)
             raise Error, "unknown verdict #{verdict.inspect}; expected one of #{VERDICTS.inspect}"
           end
@@ -156,7 +161,7 @@ module Lain
 
           super(verdict:, rung: -rung.to_s, reason: -reason.to_s, fault: fault == true, authority:,
                 final: final == true, told: -(told || reason).to_s, said: spoken(said), rule: spoken(rule),
-                note: spoken(note), liftable: liftable == true)
+                note: spoken(note), liftable: liftable == true, surface: -(surface || rung).to_s)
         end
 
         def allow? = verdict == :allow
@@ -885,9 +890,12 @@ module Lain
         def call(effect, context)
           pending = @queue.adjudicate(effect, context)
           authority = pending.authority
-          return Ruling.allow(rung: NAME, because: "#{APPROVED} (#{pending.surface})", authority:) if pending.approved?
+          surface = pending.surface
+          if pending.approved?
+            return Ruling.allow(rung: NAME, because: "#{APPROVED} (#{surface})", authority:, surface:)
+          end
 
-          Ruling.deny(rung: NAME, because: "#{REFUSED} (#{pending.surface})", authority:,
+          Ruling.deny(rung: NAME, because: "#{REFUSED} (#{surface})", authority:, surface:,
                       said: pending.timed_out? ? pending.lapse : pending.reason)
         end
       end

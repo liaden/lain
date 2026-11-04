@@ -87,11 +87,12 @@ RSpec.describe Lain::Middleware::WithholdAutomaticOutput do
       expect(record).to be_deeply_frozen
     end
 
-    it "names the shape that matched, and that a human's approval shows it masked" do
+    it "names the shape that matched, and that a human's approval shows only what the named files hold" do
       env, = run(call_of("cat notes.txt"), authority: :automatic)
 
       expect(env.fetch(:result).content).to include("1 pem private key block")
-      expect(env.fetch(:result).content).to include("a human's approval shows it masked")
+      expect(env.fetch(:result).content)
+        .to include("a human's approval shows only the values the files the command names hold")
       expect(env.fetch(:result).content).to include("a respelling does not help")
     end
 
@@ -316,6 +317,20 @@ RSpec.describe Lain::Middleware::WithholdAutomaticOutput do
       _, seen = run(call_of("ls"), context: nil)
 
       expect(seen.__getobj__).to be(Lain::Session::Null.instance)
+    end
+
+    # A layer above reads who approved the call, and the context it sees has no ruling on it.
+    it "hands the gate's ruling up the stack beside the result" do
+      env, = run(call_of("ls"), authority: :human)
+
+      expect([env.fetch(:automatic_output_ruling).allow?, env.fetch(:automatic_output_ruling).human?])
+        .to eq([true, true])
+    end
+
+    it "hands up a ruling that allowed nothing for a call no ladder ruled on" do
+      env, = run(call_of("ls"))
+
+      expect(env.fetch(:automatic_output_ruling).allow?).to be(false)
     end
 
     it "hands the caller's own context back up the stack" do

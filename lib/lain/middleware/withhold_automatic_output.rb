@@ -19,7 +19,8 @@ module Lain
     #
     # A human-approved call is not withheld, but its bytes do not reach the
     # model raw either: {RedactSecretReads} runs outside this layer and masks
-    # every `bash` result, whoever approved it, with no release. This layer
+    # every `bash` result, releasing only what the files a human-approved
+    # command names hold. This layer
     # withholds rather than masks because it also bars the command, so the
     # retry it names goes to a human.
     #
@@ -42,10 +43,12 @@ module Lain
     # The gate sits after this layer and answers only a result, so the
     # ruling rides the context: the call goes downstream over a {Carried}
     # context, the ladder hands its settled ruling to it, and this layer reads
-    # it back once the call returns. Only a ruling that allowed the call with
-    # no human is scanned for. A context no ladder ruled on ran under nothing
-    # this layer can vouch was automatic -- the path policy refused it first,
-    # or a gate policy with no ladder answered -- and is passed through.
+    # it back once the call returns, then hands it up as
+    # `:automatic_output_ruling` beside the result for {RedactSecretReads}.
+    # Only a ruling that allowed the call with no human is scanned for. A
+    # context no ladder ruled on ran under nothing this layer can vouch was
+    # automatic -- the path policy refused it first, or a gate policy with no
+    # ladder answered -- and is passed through.
     class WithholdAutomaticOutput < Base
       # Exact membership, {RedactSecretReads::GUARDED_TOOLS}' rule.
       GUARDED_TOOLS = Set["bash"].freeze
@@ -54,8 +57,8 @@ module Lain
       # Mode-neutral, and conditional on `bypass`: `/mode` switches at runtime,
       # so which mode is in force when this is read cannot be known here.
       WITHHELD = "%<name>s output withheld: it held %<count>s, and the command was approved automatically, " \
-                 "so it now needs a human's approval; a human's approval shows it masked, " \
-                 "so a respelling does not help. " \
+                 "so it now needs a human's approval; a human's approval shows only the values the files the " \
+                 "command names hold, masking the rest, so a respelling does not help. " \
                  "If approval is bypass, no approval is possible, so a human must first switch to /mode ask."
 
       # A spill that cannot be read back cannot be vouched for, so it is
@@ -152,7 +155,8 @@ module Lain
         return downstream(env, &app) unless guarded?(effect)
 
         carried = Carried.new(env[:context] || Session::Null.instance, barred: @bar.include?(command(effect)))
-        ran = downstream(env.merge(context: carried), &app).merge(context: env[:context])
+        ran = downstream(env.merge(context: carried), &app)
+              .merge(context: env[:context], automatic_output_ruling: carried.ruling)
         decided(ran, effect, carried)
       ensure
         carried&.held&.discard

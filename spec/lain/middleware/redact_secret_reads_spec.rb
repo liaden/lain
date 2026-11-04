@@ -1635,6 +1635,9 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       expect(result).to have_attributes(is_error: false)
       expect(result.content).to include("--- stdout ---\n<redacted:1>\n")
       expect(result.content.lines.last).to include("1 region was masked")
+      expect(result.content.lines.last)
+        .to include("a value a file holds is shown once a human approves a command that names the file, " \
+                    "or once read_file releases it")
       expect(result.content).not_to include(token)
       expect(queue.to_a).to be_empty
     end
@@ -1991,6 +1994,186 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
         expect(result).to have_attributes(is_error: true, content: /read masked this session/)
         expect(recorder.fetch("note").body).to eq(credential)
       end
+    end
+  end
+
+  describe "a bash read the gate ruled on" do
+    subject(:middleware) { described_class.new(ledger:, queue:, journal:, file_facts:) }
+
+    let(:file_facts) { Lain::FileFacts::LIVE }
+    let(:config) { File.join(dir, ".lain", "config.rb") }
+    let(:other) { File.join(dir, "other.txt") }
+    let(:digest) { Lain::Sensitivity::Regions.detect(one_secret).first.digest }
+
+    before do
+      FileUtils.mkdir_p(File.dirname(config))
+      File.write(config, one_secret)
+      write("other.txt", one_secret)
+    end
+
+    def ruling(authority)
+      Lain::Approval::Escalation::Ruling.allow(rung: "asking", because: "spec", authority:, surface: "tty")
+    end
+
+    # Production's order: the parse above this layer, the automatic-output
+    # layer below it, and the gate's ruling handed to the context it was given.
+    # A nil authority is a call no ladder ruled on.
+    def ruled_stack(authority)
+      ruled = authority && ruling(authority)
+      gate = Lain::Middleware::Inline.new(proc do |env, &down|
+        env.fetch(:context).ruled(ruled) if ruled
+        down.call(env)
+      end)
+      automatic = Lain::Middleware::WithholdAutomaticOutput
+      Lain::Middleware::Stack.new([Lain::Middleware::ParsedCommand.new, middleware,
+                                   automatic.new(bar: automatic::Bar.new), gate])
+    end
+
+    # No automatic-output layer, so only this one decides what a ruling shows.
+    def bare_stack(authority)
+      handed = Lain::Middleware::Inline.new(proc do |env, &down|
+        down.call(env).merge(automatic_output_ruling: ruling(authority))
+      end)
+      Lain::Middleware::Stack.new([Lain::Middleware::ParsedCommand.new, middleware, handed])
+    end
+
+    def bash(command, authority:, stack: ruled_stack(authority))
+      call = Lain::Effect::ToolCall.new(tool_use_id: "tu_bash", name: "bash", input: { "command" => command })
+      Sync { dispatch(call, subject_stack: stack, tool: Lain::Tools::Bash.new) }.fetch(:result)
+    end
+
+    it "shows a human-approved cat its file's bytes, and journals the release by path and surface" do
+      result = bash("cat .lain/config.rb", authority: :human)
+
+      expect(result.content).to include(one_secret)
+      expect(result.content).not_to include("redacted")
+      expect(releases.map { [_1.path, _1.regions, _1.surface] }).to eq([[config, 1, "tty"]])
+    end
+
+    it "keeps the release to the path the command named" do
+      bash("cat .lain/config.rb", authority: :human)
+
+      result = bash("cat other.txt", authority: nil)
+
+      expect(result.content).to include("API_KEY=<redacted:1>")
+      expect(result.content).not_to include(api_key)
+    end
+
+    it "shows a released file's value to a later command naming it, with no new release" do
+      bash("cat .lain/config.rb", authority: :human)
+
+      expect(bash("cat .lain/config.rb", authority: nil).content).to include(one_secret)
+      expect(releases.length).to eq(1)
+    end
+
+    it "journals a second human-approved read of a released file as no new release" do
+      2.times { bash("cat .lain/config.rb", authority: :human) }
+
+      expect(releases.length).to eq(1)
+    end
+
+    it "releases as a human, so the egress guard counts it" do
+      bash("cat .lain/config.rb", authority: :human)
+
+      expect(ledger.released_digests).to include(digest)
+    end
+
+    it "releases nothing on a judged approve" do
+      result = bash("cat .lain/config.rb", authority: :automatic)
+
+      expect(result.content).not_to include(api_key)
+      expect([releases, ledger.released(config)]).to eq([[], []])
+    end
+
+    it "masks a judged approve's output itself, whatever the layer below withholds" do
+      result = bash("cat .lain/config.rb", authority: :automatic, stack: bare_stack(:automatic))
+
+      expect(result.content).to include("API_KEY=<redacted:1>")
+      expect([releases, ledger.released(config)]).to eq([[], []])
+    end
+
+    it "releases only the regions the named file holds" do
+      result = bash("cat .lain/config.rb; echo sk-ant-api03-Zp4rT8wQ2mL6vN1xB9kD3hF7jG5sC0yE", authority: :human)
+
+      expect(result.content).to include(one_secret, "<redacted:1>")
+      expect(releases.map(&:regions)).to eq([1])
+    end
+
+    it "releases nothing for a file the command writes" do
+      write("written.txt", one_secret)
+
+      bash("cat other.txt >> written.txt; cat other.txt", authority: :human)
+
+      expect(releases.map(&:path)).to eq([other])
+    end
+
+    it "releases nothing for a path only guessed at in an unknown program's flag" do
+      write("tool.sh", "#!/bin/sh\ncat .lain/config.rb\n")
+      File.chmod(0o755, File.join(dir, "tool.sh"))
+
+      result = bash("./tool.sh -f.lain/config.rb", authority: :human)
+
+      expect(result.content).to include("API_KEY=<redacted:1>")
+      expect(releases).to be_empty
+    end
+
+    describe "a path the file facts do not call a file" do
+      let(:file_facts) { instance_double(Lain::FileFacts::Live, file?: false, directory?: false) }
+
+      it "releases nothing for it" do
+        expect(bash("cat .lain/config.rb", authority: :human).content).to include("API_KEY=<redacted:1>")
+        expect(releases).to be_empty
+      end
+    end
+
+    it "scans no named file when the output holds nothing to release" do
+      allow(Lain::Sensitivity::Regions).to receive(:detect).and_call_original
+
+      bash("wc -c .lain/config.rb", authority: :human)
+
+      expect(Lain::Sensitivity::Regions).not_to have_received(:detect).with(one_secret)
+    end
+
+    it "releases nothing from a named file past the scan cap, and masks its value" do
+      stub_const("#{described_class}::RELEASE_SCAN_CAP", one_secret.bytesize - 1)
+
+      expect(bash("cat .lain/config.rb", authority: :human).content).to include("API_KEY=<redacted:1>")
+      expect(releases).to be_empty
+    end
+
+    it "reads no more of a named file than one byte past the scan cap" do
+      cap = one_secret.bytesize + 8
+      stub_const("#{described_class}::RELEASE_SCAN_CAP", cap)
+      File.write(config, "#{one_secret}#{"x" * (cap * 4)}\n")
+      read = []
+      allow(File).to receive(:open).and_wrap_original do |original, *args, **options, &block|
+        if block && args.first == config
+          original.call(*args, **options) { |file| block.call(file).tap { read << file.pos } }
+        else
+          original.call(*args, **options, &block)
+        end
+      end
+
+      bash("head -1 .lain/config.rb", authority: :human)
+
+      expect(read).to eq([cap + 1])
+    end
+
+    it "neither raises nor releases over a named file that is not valid UTF-8" do
+      File.binwrite(File.join(dir, "blob.bin"), "\xFF\xFE\x00API_KEY=\xC3(\n".b)
+
+      result = bash("cat .lain/config.rb; wc -c blob.bin", authority: :human)
+
+      expect(result).not_to be_error
+      expect(result.content).to include(one_secret)
+      expect(releases.map(&:path)).to eq([config])
+    end
+
+    it "lets a later read_file of the released file through without asking" do
+      bash("cat .lain/config.rb", authority: :human)
+
+      expect(Sync { dispatch(effect(config)) }.fetch(:result).content).to eq(one_secret)
+      expect(queue.to_a).to be_empty
     end
   end
 

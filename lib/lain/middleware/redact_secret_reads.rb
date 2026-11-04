@@ -61,15 +61,20 @@ module Lain
     # If a cap is ever taken it must come back through `complete: false`, or every
     # read past it forgets its releases and re-prompts forever.
     #
-    # == A command's output masks on every call, with no release
+    # == A command's output masks unless a human approved a read of its file
     #
-    # A `bash` result names no file to key a release on, so its regions mask
-    # whoever approved the call and nothing parks. The detector misses a secret
-    # with no recognisable shape, so the value of every secret-named variable in
-    # the process environment is masked wherever it appears too. The live pane
-    # is masked as the command runs by {Sensitivity::Display}, which reads the
-    # same {Sensitivity::Secrets}, so the channel the pane and `lain://journal`
-    # read never carries them raw.
+    # A `bash` result parks nothing. When a human approved the call, the regions
+    # it printed that a file it names also holds are released for that file, as
+    # an approved `read_file` would release them, and a later command naming
+    # that file shows them. A judge's approval releases nothing, and the output
+    # of an automatically approved command that holds a credential is withheld
+    # whole by {WithholdAutomaticOutput} below. A file past {RELEASE_SCAN_CAP}
+    # is not scanned for a release, so its values stay masked. The detector
+    # misses a secret with no recognisable shape, so the value of every
+    # secret-named variable in the process environment is masked wherever it
+    # appears too. The live pane is masked as the command runs by
+    # {Sensitivity::Display}, which reads the same {Sensitivity::Secrets}, so
+    # the channel the pane and `lain://journal` read never carries them raw.
     #
     # == A memory item's body masks on every read, with no release
     #
@@ -89,7 +94,12 @@ module Lain
 
       COMMAND_TOOLS = Set["bash"].freeze
       OUTPUT_TRAILER = "%<count>d %<noun>s masked in this command's output%<prior>s; " \
-                       "a command's output cannot be released."
+                       "a value a file holds is shown once a human approves a command that names the file, " \
+                       "or once read_file releases it."
+
+      # Regions detection costs about 0.2s a megabyte, paid on every human-approved
+      # command for each file it names, so a larger file is not read to release.
+      RELEASE_SCAN_CAP = 1024 * 1024
 
       # A row is a partial view, so its regions are masked and never parked: a park per
       # matched file would turn one search into a queue of prompts, and
@@ -254,10 +264,10 @@ module Lain
 
       def call(env, &app)
         effect = env.fetch(:effect)
-        carried = downstream(env, &app)
+        carried = downstream(env.merge(automatic_output_ruling: WithholdAutomaticOutput::Carried::Unruled), &app)
         return carried unless SCANNED_TOOLS.any? { _1.include?(effect.name) }
 
-        holding(guarded(carried, effect), carried)
+        holding(guarded(carried, effect, carried.fetch(:automatic_output_ruling)), carried)
       end
 
       private
@@ -266,10 +276,10 @@ module Lain
       # a stopped requester must keep unwinding. {#settle}'s `ensure` is what
       # makes that safe -- it has already recorded the mask by the time the stop
       # passes through here.
-      def guarded(carried, effect)
+      def guarded(carried, effect, ruling)
         result = carried.fetch(:result)
         # A failed command can still quote what it printed.
-        return printed(carried, result) if COMMAND_TOOLS.include?(effect.name)
+        return printed(carried, effect, result, ruling) if COMMAND_TOOLS.include?(effect.name)
         # A failed read carries a message, never file bytes, so there is nothing
         # here to mask and no read to record.
         return carried if result.error?
@@ -306,8 +316,11 @@ module Lain
         settle(carried, effect, withheld)
       end
 
-      def printed(carried, result)
-        masked = text_mask(carried).call(result.text)
+      def printed(carried, effect, result, ruling)
+        human = ruling.allow? && ruling.human?
+        files = named_files(carried, effect, human:)
+        release_printed(carried, effect, result.text, files, ruling) if human
+        masked = text_mask(carried, released: files.flat_map { @ledger.released(_1) }).call(result.text)
         return carried unless masked.fresh.positive? || masked.prior.positive?
 
         record_printed(carried, masked) if masked.fresh.positive?
@@ -351,8 +364,48 @@ module Lain
         end
       end
 
-      def text_mask(carried)
-        ::Lain::Sensitivity::TextMask.new(secrets: @secrets.for(carried.fetch(:context)))
+      def text_mask(carried, released: [])
+        ::Lain::Sensitivity::TextMask.new(secrets: @secrets.for(carried.fetch(:context)), released:)
+      end
+
+      # Every `bash` call passes here, so nothing is parsed or stat'd until a
+      # release could be shown.
+      def named_files(carried, effect, human:)
+        return [] unless human || !@ledger.empty?
+
+        named = ParsedCommand.named_in(effect, carried.fetch(:context), home: nil)
+        named.paths.reject { _1.written || _1.guess }.map(&:resolved).uniq.select { @file_facts.file?(_1) }
+      end
+
+      # Only what the file itself holds, so a value printed from elsewhere in the
+      # same command is not released under this file's name.
+      def release_printed(carried, effect, text, files, ruling)
+        printed = ::Lain::Sensitivity::Regions.detect(text).uniq(&:digest)
+        return if printed.empty?
+
+        files.each do |path|
+          held = file_digests(path)
+          fresh = printed.select { held.include?(_1.digest) && !@ledger.released?(path, _1.digest) }
+          release_command(carried, effect, path, fresh, ruling) if fresh.any?
+        end
+      end
+
+      def file_digests(path)
+        text = File.open(path, "rb") { _1.read(RELEASE_SCAN_CAP + 1) }.to_s
+        return Set.new if text.bytesize > RELEASE_SCAN_CAP
+
+        ::Lain::Sensitivity::Regions.detect(text).to_set(&:digest)
+      rescue SystemCallError, IOError
+        Set.new
+      end
+
+      def release_command(carried, effect, path, regions, ruling)
+        @ledger.release(path, regions, authority: ruling.authority)
+        requester = Approval::Parked::Queue.identity_for(asked(carried.fetch(:context))).name
+        record(Telemetry::ReadReleased) do
+          Telemetry::ReadReleased.new(tool_use_id: effect.tool_use_id, path:, regions: regions.length, requester:,
+                                      surface: ruling.surface)
+        end
       end
 
       def with_trailer(masked, trailer = OUTPUT_TRAILER)

@@ -9,8 +9,8 @@ module Lain
     # A placeholder already in the text is a slot whose bytes are gone: it is
     # kept, counted as `prior`, and never renumbered, so masking is idempotent.
     #
-    # A command's output has no file to key a release on, so nothing here is
-    # ever released: what is detected is masked.
+    # A detected region whose digest is in `released` is shown; a secret-named
+    # value is masked whatever was released.
     class TextMask
       # @param text [String] the whole output
       # @param secrets [#to_a] values masked wherever they appear
@@ -18,8 +18,10 @@ module Lain
       def self.text(text, secrets:) = new(secrets: secrets.to_a).call(text).text
 
       # @param secrets [Array<String>] values masked wherever they appear
-      def initialize(secrets:)
+      # @param released [Set<String>] digests of detected regions to show
+      def initialize(secrets:, released: Set.new)
         @secrets = secrets.map(&:-@).freeze
+        @released = released.to_set.freeze
         freeze
       end
 
@@ -37,7 +39,7 @@ module Lain
       # @param ordinals [Enumerator] the placeholder numbering, shared across a stream's pieces
       # @return [Masked]
       def mask(text, ordinals)
-        found = Regions.detect(text)
+        found = Regions.detect(text).reject { @released.include?(_1.digest) }
         spans = Spans.of(found + Regions.recurrences(text, found.map(&:bytes) + @secrets))
         Masked.new(text: Masking.render(text, spans, ordinals:), fresh: spans.count, prior: Regions.placeholders(text))
       end
