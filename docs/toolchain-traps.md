@@ -530,6 +530,36 @@ Unproven; counting only the example's own thread would settle it.
   spec file with the example count an unconfined run reports` hit its 30s watchdog (0.4s CPU, 30.4s wall)
   at load 23 on 16 cores.
 
+  Added 2026-11-04, from the nyotes round 3 landing suites, run at loads of 17 to 52 on 16 cores
+  with other suites and a game beside them. Each went red once in a landing suite and passed alone
+  (3 of 3 with the failing seed on the base, where it was tried), on cards that do not reach it:
+  - `typing in a real cockpit while the model is busy stops an ask parked on an approval when /stop is
+    typed, without running the call or closing the session` (STUCK at load 17; 5 of 5 alone, on a card
+    with no Ruby or runtime change).
+  - Repeats of the entries above: `a project's own tests inside the workspace profile passes one spec
+    file with the example count an unconfined run reports` (STARVED at its 30s watchdog at load 28.3 and
+    again at 24.5, so 2 more reds) and the same group's `passes the fence crate's tests, none of them
+    skipped`; all 4 examples of `two cockpits on one machine` (STUCK at load 21.5); `Lain::Tool::Offload
+    keeps a sibling fiber running while the work never gives up the lock between threads` (tick gap
+    0.302 against a 0.3 bound, seed 33746) and `... while the work holds its thread` (0.312 against 0.3,
+    seed 56381).
+  - `cockpit_approval_spec`'s `when the human approves the call shows a fleet line above a you> line in an
+    input pane at its floor height` (the hint line was showing, not the fleet line; seed 30101, 5 of 5
+    alone). It is also a repeat of a sighting in an earlier plan's log, not recorded here until now.
+  - `read_file_spec`'s `an offset of one with no limit allocates like a whole read, not like a line-by-line one` (30434 allocations
+    against a bound of 21666, seed 17987). The allocation count is process-wide, and the likely cause is
+    a git-priming thread of an earlier example's board still running in the same worker; not reproduced
+    in 3 tries.
+  - From one landing at a load of 51.6, each green alone: `review_spec`'s `answers 2 asks sent at once`;
+    `child_env`'s `passes the names LAIN_ENV_PASS lists`; `qa_sandbox_pane_resolution`'s `sends to the pane
+    the cockpit records`; `Lain::CLI::EpicSubmit`'s `journals the fail-closed decision for a stop landing`
+    (a sibling of the retired Ctrl-C entry below); and 2 examples of the `cockpit_question` e2e.
+  - `Lain::Ext::AstGrep.search on another thread behaves like a GVL-releasing binding stops soon after its
+    thread is killed, rather than at the end of the call` (0.56s against a 0.20s bound). It is the shared
+    GVL-releasing group's wall-clock bound, the same one as the 2026-10-31 `Fuzzy#match` entry.
+  Several of these wait on a wall-clock bound a loaded box starves, which the 2026-10-27 ruling forbids
+  new specs to carry, so they stay cards to rewrite rather than flakes to budget a retry for.
+
   **Retired, with the fix that ended each.** Keep a retired name here so a later red under it reads
   as a regression, not as a known flake.
   - 2026-10-30: `draining one chore through a lease, a headless chat and lain land lands the chat's commit

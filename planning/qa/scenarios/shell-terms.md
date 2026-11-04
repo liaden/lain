@@ -374,7 +374,7 @@ disqualifying flag, no aliasing segment, confined to the project root, and — a
 ```
 you> /ruby Lain::Approval::ComposedTerm::PROGRAMS.keys
 ```
-→ 13 programs: `cat head tail wc nl grep sort cut tr rev` plus `ls`, `pwd` and `which` (round 26). `echo` is not on it. `ls`, `pwd` and `which` still answer to their own listing predicates, and `VERSION_PROBES` is `rustc cargo rustup dx adb go gcc clang cmake`.
+→ 18 programs: `cat head tail wc nl grep sort cut tr rev` plus `ls`, `pwd` and `which` (round 26), `lain` (only `epic status` and `epic show`), and, since round 3, `rg`, `git`, `find` and `sed`. The last four are read-only by option table (below). `echo` is not on it. `ls`, `pwd` and `which` still answer to their own listing predicates, and `VERSION_PROBES` is `rustc cargo rustup dx adb go gcc clang cmake`.
 
 `echo` reaches `allow` at the verdict (§1) and is not auto-approved. The same predicates approve `ls`, `pwd` and `which`,
 and `rustc`, `cargo`, `rustup`, `dx`, `adb`, `go`, `gcc`, `clang` and `cmake` with exactly `--version`,
@@ -457,6 +457,26 @@ what a round should check rather than the outcome:
 | `cat ../outside/notes.txt`, `cat /etc/hostname` | **the root predicate.** Every path-like word, and the call's own cwd, must resolve under the project root — lexically and again through the real path, so a symlink out of the root does not count as in it. A call whose cwd is `/` abstains even for `cat README.md` (*driven 2026-09-14*) |
 | `cat notes2.txt`, where `notes2.txt` is an ordinary-classified file holding an `API_KEY=…` line (not named `secrets.txt`: since round 22 that name classifies gated by itself, which would refuse it for the wrong predicate) | **the content predicate**, new in round 18 and the last one checked, because it is the only one that opens a file. Every word that resolves to a real regular file must be world-readable, at most 64 KiB, and carry **no region** `Sensitivity::Regions` can find. Classification said this file was ordinary and it is; the bytes are what disqualify it. Not-a-file words (a nonexistent path, a directory) pass trivially; a FIFO, socket or device does not, and the open is `O_NOFOLLOW` |
 | `cat <an exempted `.env`>` | **also the content predicate's neighbour, the ordinary-words one.** An `exempt` entry lifts the human read prompt and nothing else, so an ordinary-**by-exemption** verdict still fails here. One basename exemption for a fixture `.env` used to approve `cat` of every `.env` in the tree with nobody asked |
+
+**Round 3 added four readers, each by a table of the options it knows, and any other option abstains** (`composed_term.rb`,
+predicates 13 to 15; `Shell::Reading`). Not yet driven; rebuild the probe above with these rows and expect:
+
+| command | expected |
+|---|---|
+| `rg -n foo README.md` | approves: `rg` only over files it is named, each a regular file |
+| `rg foo`, `rg foo lib`, `rg --files`, `rg -z foo README.md` | abstain: no operand or a directory would walk a tree, and an option outside the table (`--files`, `-z`) is refused |
+| `find . -maxdepth 1 -name '*.rb'` | approves when the tree it reaches has at most 1000 entries and each classifies ordinary as an `ls` entry must |
+| `find . -exec cat {} \;`, `find . -delete`, `find . -follow`, `find . -maxdepth 1 -maxdepth 2` | abstain: an action that runs or writes, a followed link, more than 1 `-maxdepth` |
+| `sed -n '1,20p' README.md`, `sed -n '/foo/p' README.md` | approve: `sed -n` with print-only scripts by number, range or pattern |
+| `sed -i 's/a/b/' README.md`, `sed -n 'w out' README.md`, `sed 's/a/b/' README.md` | abstain: a write form, a script that is not a print, or no `-n` |
+| `git log --oneline`, `git diff --stat`, `git rev-parse HEAD` | approve in a repository whose config names no program, include or moved tree |
+| `git -c core.pager=x log`, `git status` | abstain: every global option is refused, and `status` is not on the table |
+| `git log` in a repository whose `.git/config` sets `core.fsmonitor` or `core.pager`, or a submodule's config does | abstain: the repository predicate |
+
+Also check the shell reading: `cd lib && cat foo.rb | head -5` (plain quoting, leading `cd`, `|` and `&&` only) can now approve
+where the verdict itself abstains, and a command a shell could read differently, such as one with a glob, `$VAR` or `;`, must
+still abstain. The bench scores the same table: `lain bench approval-replay` reads the recorded verdicts and the hazard file
+(which gained the `rg` hazards).
 
 **Two roots approve nothing at all, whatever the command.** A session rooted at `$HOME` (or above
 it), and one whose root nothing detected (`detected_by: :none`, i.e. wherever the process started

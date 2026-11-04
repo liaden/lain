@@ -338,7 +338,7 @@ itself, and with none the tools still exist). Ask for each in turn, and read the
    `lain://inbox` and the tool waits; answer it. The tool result is the same text `lain epic submit` prints,
    starting `approved blake3:… by policy interactive`; the session file holds a `gate_decision` with
    `policy: interactive` and `answered_by` that is not `eof`. The chat's HUD and prompts keep updating while the
-   gate waits. If nobody answers within the gate's window the gate denies and nothing advances. With
+   gate waits. If nobody answers within the gate's window the gate is held under the default `approval silence: :hold` (denied under `silence: :deny`), and either way nothing advances (§14b). With
    `gate :research, :hands_off` the result says `by policy hands_off` and no question appears.
    **Wrong looks like:** a result with no policy named, a hang that freezes the HUD, or an answer given in a
    shell that never reaches the model.
@@ -1086,3 +1086,66 @@ histogram, patience, minimal, myers`), `conflict_style: :zdiff`, and an unknown 
 "bogus"; known keys: retain_days, rebase_retries, diff_algorithm, conflict_style, verifier, verify, verify_timeout, verify_keep, batch_cap, rebuild_cap, check, lint, lint_files, check_retries ``). Every reader
 refuses the same file (§13a), so drive them through `lain epic` or `lain worktrees gc` and `lain chat`
 and read the same line. Then set `rebase_retries: 0` and confirm worker self-sync is genuinely off.
+
+## 14: Round 3 changes: a stopped run, a held gate, a revoking deny, a fresh research gate, old records
+
+**Status:** written 2026-11-04 from the code at HEAD (`5d769e5f`: `cli/command/stop.rb`, `cli/epic_driver/factory.rb`,
+`cli/epic_submit.rb`, `epic/gate.rb`, `epic/signoff.rb`, `epic/stage.rb`, `epic/gate/policy.rb`,
+`cli/gate_verdict_rewrite.rb`). Nothing here has been driven; every "Expect" is a prediction read off the code.
+
+**14a: `/stop` ends an epic run.** Start `/implement-epic` over a two-issue epic on a local model and type `/stop` while an issue
+runs. Expect one `stopped epic issue <id>` line per issue it ended, no further issue launched, and the chat still at `you>`
+(`/stop` keeps the session). The issue is unsettled and ungated: the run's report says its work is kept on its ref at an
+anchored sha, its checkout is released, and the next run starts a fresh attempt instead of resuming it. An issue stopped after
+its gate was asked reads as abandoned and nothing lands. `/stop` with no run and no fleet answers `no ask is running -- ...`;
+with the run in flight but no issue yet launched it prints `stopped the epic run`. **Wrong looks like:** an issue left
+`in flight` in `lain epic status`, a landed commit from a stopped issue, a second `/stop` that stops something more.
+
+**14b: a gate nobody answers is held, not denied.** With `gate :research, :interactive` and no `approval silence:` line, set
+`approval timeout: 30`, run `lain trust --yes`, submit `research` and let the window close. Expect the submit to exit 1 with
+`unanswered blake3:…` and `nobody answered the research gate for epic <slug> within 30 seconds -- held for the human, nothing
+advanced`, a `gate_decision` that is a hold, and the partition still `lain epic queue`-listed. The model's tool result tells it to
+tell the user and to call `epic_submit` again only when asked. Then add `silence: :deny` to the `approval` line: the same lapse
+ends `nothing advanced` with no `held`, the decision is a deny, and the result says how to reopen the gate. **Wrong looks like:** a
+held gate that unblocks the next stage, or a denied one the queue still lists. A hold settles nothing, so `lain epic status`
+must not advance either way.
+
+**14c: a deny revokes.** Approve `research`, then `lain epic deny` a later digest of the same partition (park a second draft
+with `gate :research, :deferred`, change `research.md`, submit again, then deny it). Expect the partition to stand denied
+everywhere at once: `lain epic status`, `lain epic queue`, the stage boundary on `epic_plan`, `lain epic land`, and the
+planning view all agree. A deny of a draft parked BEFORE the approved one does not withdraw the approval (clearing an old
+queue item must not stall the epic). **Wrong looks like:** one reader still showing the approval.
+
+**14d: edited research closes the plan stage again.** Approve `research`, then edit `research.md` and run `lain epic submit
+epic_plan`. Expect a refusal reading `epic "<slug>" cannot open its epic_plan stage -- research changed since its approval;
+resubmit research`, and the same sentence from `lain epic approve` of an epic_plan digest and from the `epic_submit` tool.
+Delete `research.md` instead and expect `research's file is missing; restore it, then resubmit research`. Resubmit and
+approve research and the stage reopens. An `epic.md` edit (a status change, an `epic add`) must NOT close the issue gates: the
+later stages keep their standing approval. **Wrong looks like:** the three entry points giving 3 different answers.
+
+**14e: `lain epic rewrite-verdicts`.** On a copy of a session written before verdicts (a `gate_decision` with no verdict
+field), any epic reader refuses by naming the file and `lain epic rewrite-verdicts`. Run it with a live chat holding that
+file: expect a refusal naming the file and `end that session`, and no file touched. End the chat and run it again: expect
+`<file>: N gate_decision records rewritten, original kept at <file>.pre-verdict.bak`, plus a `tip OLD -> NEW` line for a
+chained file, and `lain verify` passing on the result. A third run says `no gate_decision record written before verdicts in
+<dir>; nothing changed`. Plant a `.pre-verdict.bak` first and expect a refusal; break a chain and expect a refusal naming
+`lain verify`. **Wrong looks like:** a half-rewritten set after a refusal.
+
+**14f: `epic_status` and `epic_show` as tools.** In a chat with the epic mounted, have the model call `epic_status` and `epic_show`
+(the `plan-epic` and `create-epic-issues` skills do, instead of asking for a shell). Expect `epic_status` to return the text
+`lain epic status` prints, `epic_show` with an issue `id` to return the text `lain epic show issues/<id>` prints, neither to ask
+approval, and both to be read-only. They are not run in parallel with the tools that rewrite the same files. Each cuts by whole
+lines at 16 KiB; for a cut `epic_show` the notice names the issue file's path so `read_file` can read the rest. With 2 epics in
+the home and no `slug`, the refusal says to pass a slug (a tool caller's remedy, where the command line says to name one). **Wrong
+looks like:** a tool result cut mid-line, or a gate prompt for a read.
+
+**14g: the readiness check ending `/create-epic-issues`.** The skill's last step (Phase 5) calls `epic_status` with `readiness`
+true and quotes the result. Drive the tool directly in 3 states and read the last lines:
+1. a `tests` line that places every tested issue: first line `readiness: ready`, last line `N tested, M manual`;
+2. a `tests` line that cannot place an issue (a `Subject:` the layout refuses): `readiness: 1 unplaceable` and one
+   `- <id> unplaceable: <the layout's reason>` line per such issue;
+3. no `tests` line: `readiness: no test layout`, a line `add to .lain/config.rb: tests preset: :<preset>, source_roots: [...]`
+   covering only the issues that line would place, and `- <id> needs a Subject under a source root` for an issue with no subject or
+   a root-file subject.
+A manual issue (judged by a human, not by tests) is counted under `manual` and never named as unplaceable. **Wrong looks like:** a
+proposal that places an issue its own preset does not cover, or `ready` with no test layout.

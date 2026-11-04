@@ -159,7 +159,7 @@ declares none keeps 25), the researcher can `grep` and `glob` as well as `read_f
    first request in the journal: the tool list holds `grep` and `glob`, and, since the lease change below, `bash` and `write_file`. The
    `subagent` tool's own description names each of the child's tools, and says a role with no `bash` cannot run commands, so
    the parent should run them and pass the output in. A role
-   with no `max_iterations` (any other built-in) stops at 25. The researcher stops at 60. A child's iteration ceiling is its role's own, whatever iterations the parent's ask has left (round 27 saw 24 and ruled against it, i27-3); tokens are still attenuated from the parent's room. A researcher stopping at 24 is the finding back.
+   with no `max_iterations` (any other built-in) stops at 25. The researcher stops at 60. A child's iteration ceiling is its role's own, whatever iterations the parent's ask has left. Since round 3 the parent may ask for a LOWER one: a one-shot `subagent` call may pass `iterations`, and the role's own ceiling bounds it (ask for 400 under a role that allows 60 and the child runs with 60; ask for 10 and it stops at 10). An actor spawn that passes `iterations` is refused (`iterations applies only to a one-shot spawn`), rather than running without it (round 27 saw 24 and ruled against it, i27-3); tokens are still attenuated from the parent's room. A researcher stopping at 24 is the finding back.
    **Round 23 j-10, fixed: the researcher's reads are confined.** A `glob`, `list_files`, `grep` or `ast_search` it aims
    above the project, outside every `related` directory and outside its own working root parks for a human as
    `outside_project` (`secret-boundary.md` section 3b); the same call from the chat itself does not. Reads inside the
@@ -528,3 +528,28 @@ Then, inside tmux, spawn two subagents and check:
 - **Isolation under concurrency.** The one-run-per-project precondition above is a *precondition*,
   not a property under test. Whether two concurrent runs actually corrupt each other is a question
   this scenario deliberately does not ask, because asking it destroys the answer.
+
+### 2d: A stopped child keeps its worktree and resumes there *(round 3)*
+
+**Status:** written 2026-11-04 from the code at HEAD (`tools/subagent/stops.rb`, `isolation/leases.rb`,
+`telemetry/child_stopped.rb`, `cli/resume/stopped_children.rb`). Nothing here has been driven.
+
+A child that stops at its iteration ceiling, on a transport error, on an interrupt, or at a restarted run no longer loses its
+checkout. Drive it with a researcher given `iterations` 2 over a task that needs more, in a git project with a worktree lease:
+
+1. **The stop is journaled and kept.** Expect a `child_stopped` record naming the `spawn`, the `label`, the role, the `head`, the
+   `lease_path`, the `ceiling`, a `reason` of `iterations`, `transport` or `interrupted`, and a `snapshot` commit; the lease stays
+   on disk (no `released`). The tool result says `It can be resumed from where it stopped: call subagent with resume: "<label>"
+   and iterations set to how many more iterations it may run.`
+2. **A resume continues in the same checkout.** Call `subagent` with `resume` the label, `iterations` 5, and no prompt, name or
+   `extends`. Expect the same directory, the earlier edits present, a spawn carrying `resumed_from` the stop, and that stop retired
+   (a second resume of the same label names `no stopped child is labelled "<label>"; none is held` or lists what is held).
+3. **The work is pinned upstream.** In the project's repository expect `refs/lain/stopped/<commit>` for the snapshot. End the
+   chat, delete the stopped checkout, and `lain chat --resume <session>`: the startup notice reads `N stopped child can be
+   resumed: <label> (<role>)`, and resuming it restores the work into a fresh clone from the pin.
+4. **The ones it cannot resume are named.** Resume a session whose stopped child belonged to another chain, or worked in a
+   directory a confined run held: the notice reads `N stopped child cannot be resumed: <label>, as the child it stopped under has
+   ended` or `... as its directory was confined by the run that leased it`.
+5. **A clean exit gives the leases back.** End a chat holding a stopped child's lease: the lease is surrendered, and the pin is
+   dropped unless a later run can resume it. **Wrong looks like:** a checkout reaped under a child that could still resume, a lease
+   held forever by a chat that exited, or an unpinned snapshot.

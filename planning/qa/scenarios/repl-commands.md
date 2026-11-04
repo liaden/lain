@@ -1,13 +1,13 @@
 # Scenario: every command at the `you>` prompt
 
-**What it exercises:** `Command::Registry` and the fourteen commands nothing else drives, `/help`,
+**What it exercises:** `Command::Registry` and the commands nothing else drives, `/help`,
 `/pin`, `/unpin`, `/keep`, `/btw`, `/rewind`, `/undo`, `/fork`, `/goal`, `/meta`, `/review-submit`,
-`/introspect`, `/stop` and `/qa`, alongside the eleven that other scenarios touch only in passing (`/status`,
-`/sessions`, `/mode`, `/model`, `/approve`, `/quit`, `/ruby`, `/inbox`, `/review`, `/survey`,
-`/implement-epic`). Fourteen plus eleven is the whole registry, twenty-five commands (round 20 found this line
-saying twenty-three: `/qa` and `/stop` were added), pinned as a literal roster in
+`/introspect`, `/stop`, `/qa`, and, since round 3, `/deny`, `/held` and `/clear` (§10), alongside the commands that other
+scenarios touch only in passing (`/status`, `/sessions`, `/mode`, `/model`, `/approve`, `/quit`, `/ruby`, `/inbox`,
+`/review`, `/survey`, `/implement-epic`, and `/label`, `/release` and `/share`). The whole registry is 31 commands as of
+2026-11-04 (earlier rounds counted 23, then 25), pinned as a literal roster in
 `spec/lain/cli/command/surface_spec.rb` ("registers the whole shipped command set"). Count `/help`'s
-rows against 25 rather than trusting this number (round 25: `/help` lists 25; re-derive the count from the registry each
+rows against 31 rather than trusting this number (round 25: `/help` lists 25; re-derive the count from the registry each
 round). `/implement-epic` is driven end
 to end by `epic-tier.md` §10; here it only has to appear in `/help` and refuse by name outside an
 epic.
@@ -762,3 +762,33 @@ is the negative: with a question parked, type a **different** command at the rep
 each runs and returns to that read with the question still parked. A command
 that swallows the parked question, or that drops the reply loop, is the failure, and it can only be
 seen by driving commands that are *not* `/inbox`.
+
+## 10: Round 3 additions: `/deny`, `/held`, `/clear`, and commands that run during a run
+
+**Status:** written 2026-11-04 from the code at HEAD (`5d769e5f`: `cli/command/deny.rb`, `held.rb`, `clear.rb`,
+`approve.rb`, `registry.rb`, `up.rb` `ChatRestart`). Nothing here has been driven; every "Expect" is a prediction read off the code.
+Every command below is a zero-model-turn path.
+
+**10a: five commands act while the agent works.** `/approve`, `/deny`, `/held`, `/inbox` and `/stop` carry the `:control`
+disposition: typed during a run, each is answered at once, where any other `/word` is held as a typed line until `you>`. Start an
+ask that parks a `bash` call, type `/held` and expect a listing (empty when nothing is held), type a plain line and `/held` again
+and expect that line listed, then `/held clear` and expect it dropped; `/held x` refuses with `/held takes no argument but clear`.
+**Wrong looks like:** `/held clear` itself landing in the list, or `/deny` waiting behind the run it is meant to answer.
+
+**10b: `/deny <reason>`.** Park 1 call and type `/deny stay inside the project`: expect it denied at once, an outcome line naming who
+decided and the call (cut at 60 characters), and the model's tool result ending in the reason. Park 2 or more calls and type
+`/deny not this one`: expect a `[y/N]` for each in turn, off the input rail. Answer `n` at the first: the walk ends there, the
+reason reaches that call, and the second stays parked. Answer `y` at the first and `n` at the second: the first is approved, the
+second denied with the reason, and the walk ends. Decide the first from another surface (nvim) while the walk asks it: that
+does not end the walk. With nothing parked, `/deny x` answers `NOTHING_PENDING`, the same sentence `/approve` gives. A bare `n` at
+the walk's prompt carries the reason; a bare `n` at an ordinary `[y/N]` does not. **Wrong looks like:** the reason offered on a
+call the walk never asked, or a walk that carries on past its own deny.
+
+**10c: `/clear`.** In a `lain up` cockpit with an epic mounted, type `/clear`. Expect the chat to exit normally (leases released, a
+`session_closed` record, parked approvals dropped) and the same pane to respawn a fresh chat on a NEW session file, the same
+epic mounted, with the input and nvim panes untouched and no `--resume` or `--fork` in the new chat's command line
+(`tmux list-panes -F '#{pane_start_command}'`). Type it at a reply prompt (a parked `ask_human`): expect a refusal before anything
+is armed, and no restart later. Type it twice quickly: at most 1 restart is armed. Break the tmux setup (a `-L` socket that is
+gone) and expect `the restart could not be set up, so this chat stays: ...` with the chat alive. In a plain `lain chat` expect
+`/clear restarts the chat pane of a `lain up` cockpit, and this plain chat has no cockpit pane to restart -- use /rewind 0 to empty
+its context in place`. **Wrong looks like:** a dead pane after `/clear`, the old session file reused, or a lease left held.

@@ -39,9 +39,10 @@ Subagent spawns can open read-only viewer windows (`chat --windows`, each runnin
 
 `crates/lain-core` and Neovim talk to `lain` over the same transport, msgpack-RPC on a Unix
 socket, which is why they look symmetric below. The Neovim path is live. The `lain-core` path is
-dashed because that daemon is off the default chat path today: it answers `ping` and nothing
-else, is kept as the wire seed for the phone relay and code-mode handles, and only the one opt-in
-`:core` spec drives it. `crates/lain-fence` is a separate binary that bash confinement execs per
+dashed because that daemon is off the default chat path: a chat reaches it only when the project's
+`remote relay:` is set, where it runs as the phone relay (`lain-core relay`, below). Run plain it
+answers `ping` and nothing else and is kept as the wire seed for code-mode handles, and only the
+one opt-in `:core` spec drives that mode. `crates/lain-fence` is a separate binary that bash confinement execs per
 call (Landlock and seccomp, no socket). `ext/lain` is in-process and built.
 
 ```mermaid
@@ -56,7 +57,7 @@ flowchart LR
   TTY <-->|msgpack-RPC · unix socket<br/>runtime injected at attach| NVIM
   TTY -->|read-only journal tail| WATCH
   TTY -->|in-process FFI · magnus| EXT["ext/lain (Rust) · built<br/>pure · synchronous<br/>BLAKE3 · Rust canonical encoder for the DAG<br/>persistent DAG · BM25 · AST search"]
-  TTY -.->|msgpack-RPC · unix socket<br/>off default path · opt-in| CORE["crates/lain-core (Rust · tokio)<br/>out-of-process wire seed<br/>answers ping only"]
+  TTY -.->|msgpack-RPC · unix socket<br/>off default path · opt-in| CORE["crates/lain-core (Rust · tokio)<br/>out-of-process wire seed<br/>ping, and the phone relay when remote relay: is set"]
   TTY -->|bwrap, strace, then lain-fence per confined bash call| FENCE["crates/lain-fence (Rust)<br/>Landlock + seccomp<br/>runs one command, then exits"]
   TTY -->|HTTPS| ANTH["api.anthropic.com (default: vendored transport)"]
   TTY -->|HTTP| OLL["local Ollama (--provider ollama)"]
@@ -88,7 +89,7 @@ flowchart TB
 
   subgraph RUST["Rust"]
     EXT["<b>ext/lain</b> · in-process · magnus FFI<br/><i>pure · synchronous · NO tokio</i><br/>runs on the calling Ruby thread, holding the GVL<br/>canonical · digest · dag · bm25 · astgrep<br/>deny print_stdout/stderr · unsafe only at the FFI boundary"]
-    CORE["<b>crates/lain-core</b> · separate OS process<br/><i>tokio rt-multi-thread</i><br/>wire seed · answers ping only<br/>forbid(unsafe_code) · off default path"]
+    CORE["<b>crates/lain-core</b> · separate OS process<br/><i>tokio rt-multi-thread</i><br/>wire seed · ping, and the phone relay<br/>forbid(unsafe_code) · off default path"]
     FENCE["<b>crates/lain-fence</b> · short-lived process per confined call<br/>Landlock + seccomp, then execs the command<br/>isolation, not pure work"]
   end
 
@@ -746,7 +747,17 @@ and level, and a child's reads of `/etc/passwd` and `/etc/group` are refused in
 `Sensitivity::Policy::Confined`. `Middleware::RememberedDenials` refuses a requester the paths a
 human denied it, for the session. `Approval::ComposedTerm` approves a bare allowlisted reader (`cat`, `grep`, `ls`,
 `wc`, `pwd` and the like) over ordinary words, a named program's `--version`, and lain's own `epic status`
-and `epic show`, with no human or model; `lain watch` still asks, and an interpreter is never one of those. What a bare name resolves to is a separate question, below.
+and `epic show`, with no human or model; `lain watch` still asks, and an interpreter is never one of those.
+Three more readers are admitted by a table of the options each knows, and any option outside it
+refuses the term: `rg` only over files it is named (each a regular file, never a directory or no
+operand, which would walk a tree); `find` over a tree of at most 1000 entries, each as ordinary as an
+`ls` entry, with every action that runs, deletes or writes refused, and `sed -n` only with a script
+that prints lines. `git` is admitted for `log`, `diff --stat` and `rev-parse` with every global option
+refused, and a `git` stage also refuses when the repository's own config (read from the files, with
+the config of every submodule the index names) names a program, includes another file or moves the
+tree. `Shell::Reading` holds the read-only word rules, and where the shell verdict abstains it
+reads the string itself, accepting only leading `cd`s, plain quoting, `|` and `&&`, so such a
+command still reaches the predicates. What a bare name resolves to is a separate question, below.
 
 Shift+Tab (`Switchboard#cycle_approval`) flips `ask` and `auto` through `mode_switch`, from the
 chat's own prompt (only at its prompts; a key typed ahead mid-run is dropped) or the `lain input`
@@ -1138,7 +1149,7 @@ the rule.
 Such a file enters a survey masked whole and stays masked there; a file gated by its shape
 (`.env`, `*.pem`) keeps region masking and release.
 
-**A session has one set of read roots**: the answers dir, and the epic home when `epics_home` is `:xdg`. `CLI::Wiring::BoardBuild.read_roots` builds them once, and `Sensitivity::Policy.new(read_roots:)` lends them to every agent of the session, children included. So a read there needs no approval, while a write there still counts as outside the project. The reader sandbox mounts them read-only and masks nothing inside them, which is safe only because of what reaches it: a command runs there only once `ComposedTerm` has approved it, and that rule checks the bytes of every file the command names. The shell verdict abstains on a glob, and `ComposedTerm` approves neither `find` nor `grep -r`, so each of them parks; measured with a planted `.env` and `id_rsa` in both roots, nothing leaked.
+**A session has one set of read roots**: the answers dir, and the epic home when `epics_home` is `:xdg`. `CLI::Wiring::BoardBuild.read_roots` builds them once, and `Sensitivity::Policy.new(read_roots:)` lends them to every agent of the session, children included. So a read there needs no approval, while a write there still counts as outside the project. The reader sandbox mounts them read-only and masks nothing inside them, which is safe only because of what reaches it: a command runs there only once `ComposedTerm` has approved it, and that rule checks the bytes of every file the command names. The shell verdict abstains on a glob, and `ComposedTerm` approves no `grep -r` and no `rg` that names a directory, so each of them parks. It does approve a `find` whose walk is bounded and whose every entry classifies ordinary, which prints names and no bytes; the planted `.env` and `id_rsa` measurement in both roots was made before `find` was admitted and covers `grep -r` and the glob, so it is to be repeated for `find` before this paragraph is trusted for it.
 
 `Policy` judges a path twice before the call runs: as the call wrote it, and where it lands
 (`Landing.of`, resolved against the call's own worker cwd, so a worktree or `/mode plan` moves the
@@ -2265,6 +2276,40 @@ orders held to the same law names the Ruby groups use, with the render order pas
 unchanged group* against the binding, and the deleted Ruby's answers frozen in a corpus the
 extension must reproduce, which is how a port is known to be a swap rather than a rewrite.
 
+## The phone surface and the epic gate
+
+**The phone is one more surface over the same agenda, never a second authority.** With `remote relay:`
+set, `lain up` opens a `relay` tmux window running `lain-core relay` on the chat's socket, the
+paired-devices file and the listen address. The address must be loopback or this host's `tailscale0`
+address (`Config::Builder` refuses an all-addresses spelling, and the relay refuses any other), and
+the relay confines itself with Landlock before it serves. `lain remote pair` and `lain remote
+revoke` write the devices file (`Remote::Devices`, 0600, one token digest per device name); the
+relay rereads it each second, so neither verb restarts it and a revoke closes that device's
+connection. `Approval::RemoteSurface` is the chat's side: it folds what waits on a human (this
+chat's parked calls, the project's held gates, open questions: `Remote::Agenda`) into a masked
+view (`Remote::Agenda::View`, with paths in a refusal hidden), publishes it over a Unix socket in a
+private directory whose peer must be this user, and takes answers back with `:human` authority
+naming the device. An answer the desk beat leaves a `remote_answer_lost` record. A dead relay or a
+failing answer degrades the surface with a recorded `capability_degraded`, never the chat. With
+`remote ntfy:` set, an item that waits 60 seconds sends 1 notice (`Remote::Ntfy`) carrying a title and an
+Open link and nothing of the item. The announced set lives in the chat, so an item still waiting
+after a chat restarts is announced again.
+
+**Every reader of an epic gate reads one fold.** A `gate_decision` record carries an
+`Approval::Verdict`, and `Epic::Signoff` folds those records per partition into what stands:
+`SignoffQueue`, `Epic::Gate`, the held-gate check, landing approvals, the planning view and the
+adjudicator all ask it, so a deny revokes an earlier approval everywhere, only the standing digest
+counts as approved, and a hold settles nothing. `spec/gate_decision_fold_discipline_spec.rb` names every
+other `lib/` reader of gate decisions. A record written before verdicts is refused by name, and
+`lain epic rewrite-verdicts` rewrites it in place. The stage boundary reads research at the digest
+`research.md` holds now, from one digest source shared by `epic_submit`, `lain epic approve` and the
+adjudicator, so an edited research document closes the plan stage again; later stages keep their
+standing approval, since `epic.md` carries statuses routine work rewrites. `epic_review` journals an
+`epic_reviewed` record (`Epic::ReviewResult`): the digests its critics read and the findings of a
+closing block parsed strictly, anything else being unparsed with its raw lines shown.
+`epic_submit` takes that record's id, and the gate question marks it current or stale against the
+digest being signed.
+
 ## Everything else, mapped
 
 Subsystems without a section above, each self-documented in its own index file:
@@ -2330,9 +2375,9 @@ out of process (`crates/lain-core`, msgpack-RPC over a Unix socket); data-struct
 in-process (`ext/lain`, magnus, pure and synchronous).** `ext/lain/CLAUDE.md` restates the same
 line and adds the mechanical reason: driving an async runtime from inside an FFI call while
 holding the GVL is a known footgun, and an in-process sandbox is not a sandbox. Today
-`crates/lain-core` serves one method, `ping`: it is the wire seed for the phone relay and
-code-mode handles, with no production caller, and the isolation work that exists lives in its
-sibling `crates/lain-fence`.
+`crates/lain-core` serves `ping` when run plain, and as `lain-core relay` it is the phone relay
+(its only production caller); it is also the wire seed for code-mode handles. The isolation work
+that exists lives in its sibling `crates/lain-fence`.
 
 `ext/lain` denies `clippy::print_stdout` and `clippy::print_stderr` at the crate root, matching
 what `spec/output_discipline_spec.rb` enforces on the Ruby side. It does not forbid `unsafe`:
@@ -2372,10 +2417,10 @@ free, and `Ractor.shareable?(event)` staying `true` is spec'd mechanically. `Ext
 
 `crates/lain-core` is a separate binary. `main.rs` is a msgpack-RPC daemon on a Unix socket
 whose path arrives via argv, because path *policy* stays in Ruby (`Paths#runtime_dir`) and the
-daemon never computes its own. `rpc.rs` is the codec and server, and today the daemon answers
-`ping` and nothing else: it is the wire seed the phone relay and code-mode handles will grow
-methods on, which is the out-of-process side the placement rule reserves for async and
-isolation-relevant work. `crates/lain-fence` is the other out-of-process crate, a binary that
+daemon never computes its own. `rpc.rs` is the codec and server. Run plain, the daemon answers
+`ping` and nothing else, a wire seed code-mode handles will grow methods on. Run as `relay`, it is
+the phone relay (`relay.rs`, with `crates/lain-wire` defining the types the phone and lain share),
+the out-of-process side the placement rule reserves for async and network-facing work. `crates/lain-fence` is the other out-of-process crate, a binary that
 applies Landlock and a seccomp filter to itself and execs one command (see the sandbox section
 above).
 

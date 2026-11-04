@@ -946,8 +946,9 @@ The whole prompt, as `/approve` draws it in a cockpit and as the plain chat draw
 ### The deadline, the reason, the held notice and the stamps *(2026-10-08 trial fixes)*
 
 The trial's first `bash` call auto-denied after 300 seconds with no surface having shown it, and a deny
-gave the model nothing to read. Make the wait short so each check is quick: write `approval timeout: 30` in
-`.lain/config.rb`, run `lain trust --yes`, relaunch. (`approval timeout:` takes a number of seconds above 0;
+gave the model nothing to read. Make the wait short so each check is quick: write `approval timeout: 30, silence: :deny` in
+`.lain/config.rb` (since round 3 the default is `silence: :hold`, where every `auto-denies` and `denied` below reads
+`postpones` and `postponed` instead; see the hold paragraph after the table), run `lain trust --yes`, relaunch. (`approval timeout:` takes a number of seconds above 0;
 `0`, a negative number and a non-number refuse at load. Without the line the window is 300 seconds, and
 the displayed figure is `5:00`.) Park `echo hello` and read each surface:
 
@@ -956,6 +957,12 @@ the displayed figure is `5:00`.) Park `echo hello` and read each surface:
 | plain chat prompt (`--no-nvim`) | `HH:MM:SS agent asks (auto-denies in 0:30): approve bash(...)? [y/N]` |
 | cockpit chat arrival note | starts with `HH:MM:SS` and ends `; auto-denies in 0:30` |
 | nvim `lain://approval` row | `agent  <call>  0:30 left, denies at HH:MM:SS`; the sensitive-region warning, if any, stays ahead of the call, and a long call cuts the deadline from the first line (it stays in the folded item beneath) |
+
+**Under the default `silence: :hold`** the same three surfaces read `postpones in 0:30`, `0:30 left, postpones at HH:MM:SS`
+and `... ; postpones in 0:30`, and a lapse says `postponed after 0:30 with no answer`. The model's tool result then says
+the call was postponed and to issue it again later, when it will park for an answer; it is not an `approval denied` error.
+The postponed call leaves the queue and the nvim buffer. A Ctrl-C or `/stop` over the parked call still denies whatever the
+rule says. **Wrong looks like:** a postponed call that stays listed, or `denied` under `:hold`.
 
 1. **The nvim figure is a snapshot.** `0:30 left` does not tick (it is re-rendered only when the parked set
    moves), so do not file a countdown that sits still. The `denies at` clock time is fixed and is the
@@ -1038,7 +1045,7 @@ read is guarded three ways, and each guard is a check:
 2. **A prompt decided elsewhere is closed in words.** When the timeout, `--secret-oracle` or
    another surface decides the pending the TTY is reading, the read stops and the prompt line ends
    with `-- decided by <surface>: <verdict>`; **a lapse of the clock is the exception and says
-   `denied after M:SS with no answer` instead** (2026-10-08: the old `decided by timeout: denied` told
+   `denied after M:SS with no answer` instead** (`postponed after M:SS with no answer` under the default `silence: :hold`; 2026-10-08: the old `decided by timeout: denied` told
    nobody how long the wait was). *Driven 2026-09-14* by leaving `ls -la` parked for the
    300 s window, before that wording changed: the prompt line became
 

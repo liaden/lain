@@ -15,6 +15,8 @@ tmux's message "and nothing else", with no desktop notifier behind it. Since the
 terminal escape sequence and runs `notify-feed`. Each of those files carries a pointer here. The bell and tmux halves
 they describe are unchanged, so keep driving them there.
 
+**The phone's `ntfy` notice** (`remote ntfy:`, an item waiting 60 s) is a different channel with its own scenario, `remote-phone.md` §5; this file covers the bell, tmux, the desktop notifier and the feed only.
+
 **The question it answers:** does a human who walked away hear about a finished ask or a parked question exactly once,
 through every channel the environment offers, and nothing when the layer is down? A note carries model-written text, so
 the second question is whether a secret or a control byte in it ever reaches a terminal, tmux or the feed.

@@ -199,6 +199,16 @@ server between modes.
 A secret gist is unlisted, not private (`docs/commands.md`). The scenario never checks that a real gist is unreadable,
 because it never makes one.
 
+## 7: `lain usage` *(round 3, free, offline)*
+
+`lain usage SESSION` folds a session's `turn_usage` records into input and output tokens per command and role. Run it over a session
+that used a skill with reviewers (`/plan-epic` with `epic_review`) and over one recorded before this change. Expect a table headed
+`COMMAND  ROLE  INPUT  OUTPUT`, sorted by command then role; the reviewers' tokens under the skill's command, not under `-`; a turn
+with no command under `-` (every row of an old session); and, when the approval judge spent anything, an `auto_approver` row and
+a note that its spend is not split by command. The totals equal the sum of the session's `turn_usage` records (read them with
+the `ruby -rjson` one-liner in `failure-injection.md` §7), so nothing is counted twice, and `lain usage nosuch` fails by naming
+the selector. **Wrong looks like:** a judge turn counted under a command, or a child's turns under `-` when the parent ran a skill.
+
 ## What this scenario cannot answer
 
 - **Whether a real gist renders.** The stand-in proves what lain sends, not what GitHub shows.

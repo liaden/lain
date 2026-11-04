@@ -231,6 +231,34 @@ an empty editor: while you are typing it holds still, and a resize waits for the
 `lain up` `exec`s into tmux, replacing the process. From inside tmux it uses `switch-client`;
 from outside, `attach`.
 
+### lain remote
+
+```bash
+lain remote pair my-phone      # admit a phone; prints its token and the relay address, once
+lain remote revoke my-phone    # stop admitting it
+```
+
+`lain remote pair NAME` adds a device to the devices file under `$XDG_STATE_HOME/lain/remote/` and
+prints `paired NAME`, the `token:` and the `relay:` address (this host's `tailscale0` address on
+port 7820, or `none` when the host has no such address). Enter the token and address in the
+lain-remote app's settings. The token is not shown again. `lain remote revoke NAME` removes the
+device. The relay rereads the file on its own, so neither verb restarts it, and a revoked device's
+connection closes at that reread. Any other verb, or a missing `NAME`, is refused by name. The
+phone surface itself is switched on by the [`remote` config verb](#remote).
+
+### lain usage
+
+```bash
+lain usage SESSION
+```
+
+What a session spent, read offline from its `turn_usage` records: a table of `COMMAND`, `ROLE`, `INPUT` and `OUTPUT` tokens,
+one row per command and role pair, sorted by those 2 columns. A turn is counted under the command current when it ran, and a
+child takes the command current when it was spawned, so a skill's reviewers count toward that skill. A turn with no command
+shows `-`. The approval judge's spend is shown as `auto_approver`, with a note under the table that it is not split by command.
+Nothing is counted twice, and a session recorded before this record carried a command reads as before, under `-`. `SESSION` is a
+selector as `lain export` takes it.
+
 ### lain input
 
 The pane a human types into, feeding a `lain chat --input socket:NAME`. `lain up` runs it for
@@ -421,6 +449,7 @@ lain epic finish --local                           # ...or one merge commit in m
 | `lain epic submit STAGE [SLUG]` | Submit an artifact to a stage's gate. `--issue` names the issue for the per-issue stages, `--wave N` asks, in one question, every issue plan of wave N whose approval does not already stand, and records 1 decision per issue (`deny <id>: reason` denies only the issues named), `--digest` the changeset for `implementation`; `--provider`/`--model` wire the adjudicating spike. A denied or unanswered gate exits 1; a deferred one exits 0. |
 | `lain epic queue [SLUG]` | The parked sign-offs, folded from the journals rather than read from a file. |
 | `lain epic approve DIGEST` / `lain epic deny DIGEST` | Append a terminal decision, draining the partition. Both take `--reason`. |
+| `lain epic rewrite-verdicts` | Rewrite this project's session files in place, for each `gate_decision` record written before decisions carried a verdict. The readers refuse such a record and name this command. A `.pre-verdict.bak` is kept beside each file, a chained file is re-linked so `lain verify` still passes (the old and new tip are printed), and a file a live session holds is refused with no file touched. With nothing to rewrite it says so and changes nothing. |
 | `lain epic add ID TITLE [SLUG]` | Add an issue discovered mid-flight. `--discovered-from` names the live issue it grew out of. |
 | `lain epic split ID [SLUG]` | Replace one issue with several. `--into` is required and takes comma-separated ids. |
 | `lain epic merge LEFT RIGHT [SLUG]` | Replace two issues with one. `--as` is required and names the id it takes; `--title` overrides the combined title. |
@@ -932,6 +961,13 @@ running, so it works from a prompt a run is waiting on — a `[y/N]` or a `human
 from `you>`. With nothing running there is nothing to intercept and the command answers instead:
 *"no ask is running -- /stop at the prompt it parks on, or s at a countdown"*.
 
+**An epic run is stopped the same way.** While `/implement-epic` drives issues, `/stop` halts the
+run: each issue it ends is named (`stopped epic issue <id>`), a stop that finds no issue running
+still halts the run and prints `stopped the epic run`, and the loop launches nothing further.
+An issue stopped mid-run is left unsettled and ungated; its work is kept on its ref at the sha
+that was anchored, its checkout is released, and the next run starts a fresh attempt rather than
+resuming it. An issue whose gate was already asked is reported as abandoned, and nothing lands.
+
 The countdown's `s` key is the same gesture: Ctrl-C opens the grace window, and `s` there stops
 the ask while `c` cancels the countdown, `w` extends it and `r` waits for responses. An idle
 `you>` countdown offers only `c` and `w`, since there is no ask to stop.
@@ -1057,6 +1093,28 @@ Answer each pending tool approval `y/N`.
 and a pasted block of several lines whatever its first line says, leaves the approval open and is held as your next
 prompt, with one line saying `a y or n answers the approval`. A prompt that lapses on its clock tells the model so
 (`approval denied for tool "bash": denied after 5:00 with no answer`), where a human's `n` gives the bare sentence.
+
+### /deny
+
+`/deny <reason>` refuses a parked call and hands your reason to the agent as the last clause of its tool result. With 1 call
+parked it is denied at once. With several, each is asked `[y/N]` in turn through the prompt `/approve` uses, with the reason
+offered on that call while it is asked, so a bare `n` at any prompt about it carries the reason. The walk ends at the first deny
+it made, and a call another surface decided meanwhile does not count. The outcome line names who decided and which call
+(the call cut at 60 characters). With nothing parked it says so. Like [`/approve`](#approve), `/inbox`, `/held` and
+[`/stop`](#stop), it runs while the agent works instead of waiting behind it as a typed line.
+
+### /held
+
+`/held` lists the lines you typed while nothing was reading them, each waiting for its turn at `you>`. `/held clear` drops them.
+Any other argument is refused. It runs while the agent works.
+
+### /clear
+
+`/clear` restarts the chat fresh in the same `lain up` cockpit pane. It quits the chat through its normal exit, so leases, parked
+approvals and the session record close, and a tmux job respawns the pane once the chat is gone, dropping `--resume` and `--fork`,
+so the new chat starts on a new session file with the same epic mounted and the input and editor panes left standing. It is
+refused at a reply prompt before anything is armed, arms at most 1 restart, and stays in the chat, saying why, if tmux cannot set
+the restart up. Outside `lain up` it refuses and points to `/rewind 0`, which empties the context in place.
 
 ### /release
 
@@ -1227,8 +1285,8 @@ End the session. Same as a bare `quit`.
 
 ## Configuration (config.rb)
 
-`.lain/config.rb` is Ruby, evaluated once per launch, with 10 verbs: `epics`, `approval`,
-`isolation`, `sensitivity`, `shell`, `search`, `tests`, `middleware`, `env` and `todos`. Each verb may appear once, and every
+`.lain/config.rb` is Ruby, evaluated once per launch, with 11 documented verbs: `epics`, `approval`,
+`isolation`, `sensitivity`, `shell`, `search`, `tests`, `middleware`, `env`, `todos` and `remote`. Each verb may appear once, and every
 one is optional. Each is read by its own **strict** reader: an unknown key is refused by name,
 listing the keys that do exist, because a restricting table has to refuse a typo loudly rather than
 silently leave the restriction off.
@@ -1242,7 +1300,7 @@ is never refused: every table is then at its default.
 epics home: :repo, width: 3 do
   gate :research, :hands_off
 end
-approval timeout: 900, judge_timeout: 60 do      # the auto judge's own limit; 30 when unset
+approval timeout: 900, judge_timeout: 60, silence: :hold do   # judge_timeout is the auto judge's own limit; 30 when unset
   allow "bash", command: "bundle exec rspec"
   deny_tool "web_fetch"                         # refuses the tool whatever its tier; no approval lifts it
 end
@@ -1260,6 +1318,12 @@ tests preset: :rspec
   seconds a parked call waits for an answer before it is denied (300 by default); it must be a
   finite number above 0, and the prompt, `lain://approval` and the chat show the time left.
   It also bounds how long an interactive epic gate waits for a sign-off.
+  `silence:` is what a wait nobody answered settles as, for a parked call and an epic gate alike:
+  `:hold` (the default) or `:deny`, and anything else is refused by name. Under `:hold` a parked
+  call is postponed, leaving the queue until the agent issues it again, and a silent gate is held
+  and listed for you while the agent tells you; the prompt warns `postpones`. Under `:deny` both
+  are denied as before (`auto-denies`), for an unattended run that should fail closed. A Ctrl-C
+  or other cancelled wait is not silence and denies whatever the rule.
 * `isolation`, `tests`: documented below.
 * `sensitivity`: `denied:`, `gated:` and `exempt:`, each a list of path globs, and `related:`, a
   list of directories (each starting with `~/` or `/`, and each must exist). A read under a related
@@ -1283,6 +1347,19 @@ tests preset: :rspec
   should still read; a glob that leaves the project is refused. `max_entries:` (20,000 by default)
   caps the files one walk lists and `max_bytes:` (200 MiB by default) the bytes it reads; both are
   positive integers, and a search that hits one says it was cut short.
+* `remote`: `relay:` and `ntfy:`, the phone's approval surface, off until `relay:` is set.
+  `relay:` is the `"ip:port"` the relay listens on for the phone, such as `"100.64.0.1:7820"`. It
+  must be loopback or this host's `tailscale0` address; `0.0.0.0` and any other all-addresses
+  spelling are refused. [`lain up`](#lain-up) runs the relay in its own `relay` tmux window of the
+  cockpit, and a relay it cannot start (no `lain-core` build, no matching address, an unsafe
+  devices file) is a warning and a cockpit without one, never a refusal. Devices are admitted with
+  [`lain remote pair`](#lain-remote). `ntfy:` is an `http` or `https` topic URL, such as
+  `"https://ntfy.sh/my-lain-topic"`; anything else is refused. An item that waits 60 seconds
+  unanswered sends 1 notice to the topic, a title naming the kind and the requester plus an Open
+  action into the lain-remote app, and no item text, token or path. An item answered first never
+  buzzes. A chat announces each item once, so an item still waiting after the chat restarts (an
+  epic gate held across it, say) is announced again as a reminder. The topic is a shared name to
+  ntfy, which is why nothing else rides on the notice.
 * `middleware`: documented [below](#middleware).
 
 ### middleware

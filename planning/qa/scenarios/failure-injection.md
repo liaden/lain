@@ -329,6 +329,19 @@ almost certainly not have).
 
 `bench record` honours `--num-batch` / `LAIN_NUM_BATCH` (round 26), so it no longer re-keys the shared runner.
 
+### 4b: a TLS connection dropped mid-response is retried by the Agent *(round 3)*
+
+**Status:** written 2026-11-04 from the code at HEAD (`agent/transport_retry.rb`, `agent/stop_reason.rb`). Not yet driven.
+
+A response cut by an unexpected TLS end of file used to end a run of hours. Use a TLS-terminating forwarder in front of the
+endpoint that closes the TCP socket with no `close_notify` after N bytes of the first response only, then relays normally. Expect
+the ask to complete from the same rendered request, 1 or more `provider_retry` records with `path: "agent"` (the providers' own
+retries carry another path) and `attempt` 1, 2 and so on, `will_retry_in` backing off from 0.1 s doubling, and the step counted
+once in `turn_usage`. Make every attempt drop: after 4 attempts the last drop surfaces as the ask's error, with the final
+`provider_retry` having `will_retry_in` null. Controls that must NOT retry at the Agent: a handshake or certificate failure (a
+wrong CA), a 429 or 5xx, a refused connection (Faraday's layer retries those, and the 2 layers must not multiply).
+**Wrong looks like:** a retried certificate failure, a step counted per attempt, or 3 x 4 attempts.
+
 ## 5 — An unreachable endpoint
 
 **`--api-base` probes are TURN-level, not launch-level** — judging by launch records is a false
@@ -928,3 +941,16 @@ wrong cause twice.
 **A clean run here is a real result and worth recording as one** — it means either the concurrency
 is gone or the server has more than one slot. Record `-np` from the runner's argv beside the
 reading, because this whole section is void on a multi-slot box.
+
+### 7b: a skill's allowance lasts for the run *(round 3)*
+
+**Status:** written 2026-11-04 from the code at HEAD (`middleware/skill_dispatch.rb`, `agent/accounting.rb`,
+`telemetry/run_allowance.rb`, `cli/resume.rb`, `budget/table.rb`). Not yet driven. §7's "25" is now the default row of the
+budget table; a fresh chat starts under that row (25 unless the project sets another), not under a fixed constant.
+
+1. Run a skill the table names (`/plan-epic`, 60 by default): that ask runs under 60, and the journal holds a `run_allowance`
+   record with `iterations: 60`.
+2. Interrupt it (Ctrl-C) and send a plain line, or an unnamed skill: the re-ask keeps 60, since a plain line or an unnamed skill
+   grants nothing. Run a different named skill: its row replaces the last grant, journaled again.
+3. `lain chat --resume <session>`: the newest `run_allowance` is read back and the resumed chat starts under it, not under 25.
+   **Wrong looks like:** the re-ask after an interrupt dropping to 25, or a resumed chat that forgot the grant.
