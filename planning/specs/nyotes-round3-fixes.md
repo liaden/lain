@@ -2637,3 +2637,53 @@ The comment at `redact_secret_reads.rb:113-125` calls this the last fail-open in
 - T9 landed 020cbabe (attempt 1)
 19:37 T42 landed 73f4132e; T9 landed 020cbabe
 19:37 T15, T12, T10 started (cut at 020cbabe); T24 high review started
+19:38 T10 stop: nvim_plugin_spec requires doc/lain.txt to name every runtime command (:LainHold). Cleared: plugin/nvim/doc/lain.txt and README.md join T10.
+19:39 T12 stop: needs surface.rb (only registration site), surface_spec name list, and 3 registry stand-ins (input_socket_spec, conductor_spec [T24 overlap], intake_build_spec). All 5 joined. Rulings: disposition answered by the instance; :note stays in Disposition.of.
+19:39 T8 impl done (380/49 red; policy item 1/1 red; 1748/0, 341/0 ratchets). High review started.
+19:41 T15 stop: confined(bounds) breaks judged.rb held_to, shared policy contract, 4 spec call sites. Widened (scenario 4 met here, not deferred to T19). Neither card stop fired (WorkerEnv stays shareable).
+19:43 T10 impl done (122/5 red; 762/0). Doc item has no own red; reviewer re-proves. Medium review started.
+19:45 T10 medium review APPROVE-WITH-FIXES (doc guard proven; 3 mutants caught; nvim hold drive). False blocker from a T43 paragraph left in my brief (also in T8/T24 briefs; stripped, reviewers told). Fixes sent: note overwrite on first-token note, 2 stale Lua comments, orphan comment, note asserts. Mechanical: no second review.
+19:48 T10 fixes done (item 1 red 100/1; 765/0). Fallback accepted: editor command's verb is explicit. FU-6: Pending#resolve drops an approve note (queue.rb:282). Landing T10.
+- T10 landed 492e485f (attempt 1)
+19:52 T10 landed 492e485f
+19:52 T41 started (cut at 492e485f)
+19:53 T15 impl done (880/141 red; 880/0; 10919/0 wide). Per-call bounds on hot path; bench owed. High review started.
+19:55 T41 impl done (14/2 red; 712/0, 592/0). Low review started.
+19:56 T41 low review APPROVE-WITH-FIXES: strip spec weakened (mechanical), cap ruled no (card asks whole; scrollback keeps it), WHY comment, hand-back notes. No second review.
+19:56 T8 high review REQUEST-CHANGES: 2 blockers (id-clause note after space/comma swallows a second id and approves it; 'approve, but deny b' approves b), re-ask restarts the window clock, 3 surviving mutants, stop-condition answer, held count. Ruling: ambiguous wave replies ask again; note only after a colon in an id clause; remaining time per wait. Fix round 1 sent; second review follows.
+19:56 T12 impl done (338/22 red; 2348/1, reply_surface_discipline pin). Pin's own rule needs a human_replies_spec declarer example first: both files joined, sent back. docs/commands.md /deny entry owed by main session (wording in hand-back).
+19:57 T41 fixes done (strip example red with one_line out; 712/0). Landing.
+20:12 T41 landing 1 RED: 26 failures in 28 files (screen waits never held; nvim, git seams, history scans), seeds 36223/49841/35010. Load 69 during hook. T24 reviewer's real-binary drive (lain chat + ollama 130% CPU) ran outside the locks; told to lock its drive. Running failing files alone on a quiet box.
+20:13 T15 high review APPROVE-WITH-FIXES: 35 widen probes refused; behaviour change unpinned at ToolGuard/Gate/Escalation (3 survivors); per-call recut not needed for a child, WorkerEnv#bounds never set in production; own|carried join widens. Ruling: bounds set on WorkerEnv where made (Lease, Session::Confined#env_over, child Session), layers read them; carried replaces own. Fix round 1 sent; second review follows.
+20:18 T41 failing files alone in card worktree: 1458/0 at load 5. Running on base x3 with hook seeds.
+20:18 T12 impl done (2350/0; the 2 new examples green on write, reviewer re-proves). High review queued until T41 base runs release the gate. docs/commands.md /deny owed.
+20:20 T24 high review REQUEST-CHANGES: blocker, restart resume fails on the real Clone backend (snapshot not in upstream; spec used worktree add). Also take-before-put_back drops a stop, researcher stops misreported, role-only restore matches a grandchild, 3 survivors, ref cleanup, docstring. Ruling: push snapshot to upstream refs/lain/stopped/<sha>, seam spec over the real backend, delete ref on resume. Fix round 1 sent; second review follows.
+20:28 T41 base x3 (seeds 36223, 49841, 35010): 1458/0 each. Card alone 1458/0. Neither reproduces: contention from out-of-lock work (reviewer drive + ollama), load 69. Re-landing T41 attempt 2.
+- T41 landed 206cadcf (attempt 2)
+20:32 T41 landed 206cadcf (attempt 2)
+20:32 T12 high review started
+19:38 T10 stop: nvim_plugin_spec requires doc/lain.txt to name every runtime command (:LainHold). Cleared: plugin/nvim/doc/lain.txt and README.md join T10.
+19:39 T12 stop: needs surface.rb (only registration site), surface_spec name list, and 3 registry stand-ins (input_socket_spec, conductor_spec [T24 overlap], intake_build_spec). All 5 joined. Rulings: disposition answered by the instance; :note stays in Disposition.of.
+19:39 T8 impl done (380/49 red; policy item 1/1 red; 1748/0, 341/0 ratchets). High review started.
+19:41 T15 stop: confined(bounds) breaks judged.rb held_to, shared policy contract, 4 spec call sites. Widened (scenario 4 met here, not deferred to T19). Neither card stop fired (WorkerEnv stays shareable).
+19:43 T10 impl done (122/5 red; 762/0). Doc item has no own red; reviewer re-proves. Medium review started.
+19:45 T10 medium review APPROVE-WITH-FIXES (doc guard proven; 3 mutants caught; nvim hold drive). False blocker from a T43 paragraph left in my brief (also in T8/T24 briefs; stripped, reviewers told). Fixes sent: note overwrite on first-token note, 2 stale Lua comments, orphan comment, note asserts. Mechanical: no second review.
+19:48 T10 fixes done (item 1 red 100/1; 765/0). Fallback accepted: editor command's verb is explicit. FU-6: Pending#resolve drops an approve note (queue.rb:282). Landing T10.
+- T10 landed 492e485f (attempt 1)
+19:52 T10 landed 492e485f
+19:52 T41 started (cut at 492e485f)
+19:53 T15 impl done (880/141 red; 880/0; 10919/0 wide). Per-call bounds on hot path; bench owed. High review started.
+19:55 T41 impl done (14/2 red; 712/0, 592/0). Low review started.
+19:56 T41 low review APPROVE-WITH-FIXES: strip spec weakened (mechanical), cap ruled no (card asks whole; scrollback keeps it), WHY comment, hand-back notes. No second review.
+19:56 T8 high review REQUEST-CHANGES: 2 blockers (id-clause note after space/comma swallows a second id and approves it; 'approve, but deny b' approves b), re-ask restarts the window clock, 3 surviving mutants, stop-condition answer, held count. Ruling: ambiguous wave replies ask again; note only after a colon in an id clause; remaining time per wait. Fix round 1 sent; second review follows.
+19:56 T12 impl done (338/22 red; 2348/1, reply_surface_discipline pin). Pin's own rule needs a human_replies_spec declarer example first: both files joined, sent back. docs/commands.md /deny entry owed by main session (wording in hand-back).
+19:57 T41 fixes done (strip example red with one_line out; 712/0). Landing.
+20:12 T41 landing 1 RED: 26 failures in 28 files (screen waits never held; nvim, git seams, history scans), seeds 36223/49841/35010. Load 69 during hook. T24 reviewer's real-binary drive (lain chat + ollama 130% CPU) ran outside the locks; told to lock its drive. Running failing files alone on a quiet box.
+20:13 T15 high review APPROVE-WITH-FIXES: 35 widen probes refused; behaviour change unpinned at ToolGuard/Gate/Escalation (3 survivors); per-call recut not needed for a child, WorkerEnv#bounds never set in production; own|carried join widens. Ruling: bounds set on WorkerEnv where made (Lease, Session::Confined#env_over, child Session), layers read them; carried replaces own. Fix round 1 sent; second review follows.
+20:18 T41 failing files alone in card worktree: 1458/0 at load 5. Running on base x3 with hook seeds.
+20:18 T12 impl done (2350/0; the 2 new examples green on write, reviewer re-proves). High review queued until T41 base runs release the gate. docs/commands.md /deny owed.
+20:20 T24 high review REQUEST-CHANGES: blocker, restart resume fails on the real Clone backend (snapshot not in upstream; spec used worktree add). Also take-before-put_back drops a stop, researcher stops misreported, role-only restore matches a grandchild, 3 survivors, ref cleanup, docstring. Ruling: push snapshot to upstream refs/lain/stopped/<sha>, seam spec over the real backend, delete ref on resume. Fix round 1 sent; second review follows.
+20:28 T41 base x3 (seeds 36223, 49841, 35010): 1458/0 each. Card alone 1458/0. Neither reproduces: contention from out-of-lock work (reviewer drive + ollama), load 69. Re-landing T41 attempt 2.
+- T41 landed 206cadcf (attempt 2)
+20:32 T41 landed 206cadcf (attempt 2)
+20:32 T12 high review started
