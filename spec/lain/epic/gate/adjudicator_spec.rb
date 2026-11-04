@@ -716,6 +716,24 @@ RSpec.describe Lain::Epic::Gate::Adjudicator do
           .to raise_error(Lain::Epic::Gate::Adjudicator::AlreadyDecided, /verdict: approve/)
       end
     end
+
+    # The verdict named is the partition's standing as Epic::Signoff folds it,
+    # so a human's later answer over the same digest is the one reported.
+    describe "the verdict it names" do
+      it "names a human's later denial of an adjudicated approval" do
+        human = adjudicated(approved: false, policy: Lain::Epic::SignoffQueue::SIGNOFF_POLICY)
+
+        expect { described_class.new([adjudicated(approved: true), human]).ensure_undecided!(plan.digest) }
+          .to raise_error(Lain::Epic::Gate::Adjudicator::AlreadyDecided, /verdict: deny/)
+      end
+
+      it "names the approval a later hold leaves standing" do
+        held = adjudicated(approved: true, policy: "interactive").merge("verdict" => "hold")
+
+        expect { described_class.new([adjudicated(approved: true), held]).ensure_undecided!(plan.digest) }
+          .to raise_error(Lain::Epic::Gate::Adjudicator::AlreadyDecided, /verdict: approve/)
+      end
+    end
   end
 
   # The should-fix: two of the three members that make a record joinable were

@@ -194,6 +194,34 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
       expect(approvals.approved?(digest, "a")).to be(false)
     end
 
+    # The partition's standing is one digest, so approving a newer commit of an
+    # issue withdraws the older one's approval rather than leaving 2 to land.
+    it "withdraws an older commit's approval once a newer commit of the issue is approved" do
+      approve("a", "a" * 40)
+      approve("a", "b" * 40)
+
+      expect(approvals.approved?(implementation_digest("a", "a" * 40), "a")).to be(false)
+      expect(approvals.approved?(implementation_digest("a", "b" * 40), "a")).to be(true)
+    end
+
+    # A deferral after the approval parks the digest again for sign-off, so it is
+    # not landed while it waits, however the partition stood before.
+    it "does not count a digest approved and then parked again as approved" do
+      approve("a", "a" * 40)
+      park("a", "a" * 40)
+
+      expect(approvals.parked?(implementation_digest("a", "a" * 40), "a")).to be(true)
+      expect(approvals.approved?(implementation_digest("a", "a" * 40), "a")).to be(false)
+    end
+
+    it "reads a digest denied and then parked again as parked, not denied" do
+      deny("a", "a" * 40)
+      park("a", "a" * 40)
+
+      expect(approvals.parked?(implementation_digest("a", "a" * 40), "a")).to be(true)
+      expect(approvals.denied?(implementation_digest("a", "a" * 40), "a")).to be(false)
+    end
+
     it "counts a digest denied and then approved as approved" do
       deny("a", "a" * 40)
       approve("a", "a" * 40)
@@ -211,7 +239,7 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
 
       expect { described_class::Approvals.from([line]) }.to raise_error(Lain::Error) { |error|
         expect(error).to be_a(Lain::Epic::SignoffQueue::UnreadableRecord)
-        expect(error.message).to include("gate_decision", "demo/implementation/a", "verdict", "nothing landed")
+        expect(error.message).to include("gate_decision", "demo/implementation/a", "verdict", "nothing was decided")
         expect(error.message).not_to include("\n")
       }
     end
@@ -426,13 +454,14 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
         expect(approvals.held?(implementation_digest("a", "a" * 40), "a")).to be(false)
       end
 
-      it "reads a hold over an approval as approved, not held, once a later commit is approved too" do
+      it "reads a hold over an approval as not held once a later commit is approved, which alone stands" do
         approve("a", "a" * 40)
         hold("a", "a" * 40)
         approve("a", "b" * 40)
 
         expect(approvals.held?(implementation_digest("a", "a" * 40), "a")).to be(false)
-        expect(approvals.approved?(implementation_digest("a", "a" * 40), "a")).to be(true)
+        expect(approvals.approved?(implementation_digest("a", "a" * 40), "a")).to be(false)
+        expect(approvals.approved?(implementation_digest("a", "b" * 40), "a")).to be(true)
       end
 
       it "reads a hold after a park as parked, not held, as the sign-off queue does" do
@@ -648,15 +677,14 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
       expect(contains?(sha)).to be(false)
     end
 
-    it "refuses two different approved commits for one issue, naming both" do
+    # The issue's standing is one commit, so two approvals leave only the newer to land.
+    it "admits the newer of two approved commits for one issue, the older one's approval withdrawn" do
       first, = worker("a1", "README" => "one\n")
       second, = worker("a2", "README" => "two\n")
       approve("a", first)
       approve("a", second)
 
-      expect { landing.anchored("a") }.to raise_error(described_class::Ambiguous) { |error|
-        expect(error.message).to include(first, second)
-      }
+      expect(landing.anchored("a").worker.sha).to eq(second)
     end
   end
 

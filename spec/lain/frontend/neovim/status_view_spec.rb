@@ -176,8 +176,8 @@ RSpec.describe Lain::Frontend::Neovim::StatusView do
       asked = []
       handle = lambda do |slug|
         asked << slug
-        [{ "type" => "gate_decision", "epic_slug" => "demo", "stage" => "issue_plan", "issue_id" => "a",
-           "verdict" => "approve" }]
+        [{ "type" => "gate_decision", "artifact_digest" => "blake3:a", "epic_slug" => "demo", "stage" => "issue_plan",
+           "issue_id" => "a", "verdict" => "approve", "policy" => "interactive" }]
       end
       epic = described_class::Mounted.new(slug: "demo", status:, records: handle)
 

@@ -630,12 +630,9 @@ module Lain
                           "#{remedy} before editing this epic's graph"
       end
 
-      # Parked first -- {Lain::Epic::SignoffQueue} is the live fold and answers
-      # from the same records {SessionJournals} already walked for this epic --
-      # and only once nothing is parked does a raw scan ask whether the issue
-      # ever carried a terminal APPROVAL: the queue itself forgets an address
-      # the moment a decision drains it, so an approved plan or implementation
-      # has no other place left to ask.
+      # Parked first, then an approval the issue's partition still stands on: the
+      # queue forgets an address the moment a decision drains it, so an approved
+      # plan or implementation is found by its standing, which a later deny revokes.
       #
       # @return [Array(String, String, String), nil] state, stage and digest,
       #   or nil when the issue holds no gate at all
@@ -644,13 +641,10 @@ module Lain
         parked = Lain::Epic::ISSUE_STAGES.filter_map { |stage| queue.parked(slug, stage, issue_id:).first }.first
         return ["parked", parked.stage, parked.artifact_digest] if parked
 
-        approved = Journal.records(records, type: Lain::Epic::SignoffQueue::JOURNAL_TYPE).find do |record|
-          record["issue_id"] == issue_id && Lain::Epic::ISSUE_STAGES.include?(record["stage"].to_s) &&
-            Lain::Epic::GateDecision.verdict_in(record).approved?
-        end
-        return unless approved
-
-        ["approved", approved["stage"], approved["artifact_digest"]]
+        Lain::Epic::ISSUE_STAGES.filter_map do |stage|
+          standing = queue.standing(slug, stage, issue_id:)
+          ["approved", stage, standing.digest] if standing&.verdict&.approved?
+        end.first
       end
 
       # A lent journal is the caller's to close. Otherwise opened and closed

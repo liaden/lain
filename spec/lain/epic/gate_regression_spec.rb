@@ -37,28 +37,28 @@ RSpec.describe Lain::Epic::Gate do
       exploding.define_singleton_method(:record) { |_| raise IOError, "disk full" }
       subject_gate = gate_class.new(journal: exploding)
 
-      expect { Sync { subject_gate.call(plan, asker: approve_asker, stage: "s", epic_slug: "e") } }
+      expect { Sync { subject_gate.call(plan, asker: approve_asker, stage: "research", epic_slug: "e") } }
         .to raise_error(IOError)
       expect(subject_gate.approved?(plan.digest)).to be(false)
       expect { subject_gate.ensure_approved!(plan) }.to raise_error(gate_class::NotApproved)
     end
 
-    it "does not leave a standing approval when the record guard rejects the call args" do
+    it "does not leave a standing approval when the stage check refuses the call" do
       subject_gate = gate_class.new(journal:)
 
       expect { Sync { subject_gate.call(plan, asker: approve_asker, stage: nil, epic_slug: "e") } }
-        .to raise_error(ArgumentError, /stage/)
+        .to raise_error(Lain::Epic::UnknownStage)
       expect(subject_gate.approved?(plan.digest)).to be(false)
     end
   end
 
-  describe "monotonicity direction" do
-    it "deny-then-approve ends approved (add-only, as documented)" do
+  describe "the newest decision stands" do
+    it "deny-then-approve ends approved" do
       subject_gate = gate_class.new(journal:, timeout: 0.02)
       Sync do
         subject_gate.call(plan, asker: scripted_asker { |p, _| p.resolve(gate_class::Answer.deny("human")) },
-                                stage: "s", epic_slug: "e")
-        subject_gate.call(plan, asker: approve_asker, stage: "s", epic_slug: "e")
+                                stage: "research", epic_slug: "e")
+        subject_gate.call(plan, asker: approve_asker, stage: "research", epic_slug: "e")
       end
       expect(subject_gate.approved?(plan.digest)).to be(true)
       expect(decisions.length).to eq(2)
@@ -68,14 +68,14 @@ RSpec.describe Lain::Epic::Gate do
   describe "artifact duck" do
     it "fails loudly when the artifact has no #gate_question" do
       half = Data.define(:digest).new(digest: "blake3:x")
-      expect { Sync { gate_class.new(journal:).call(half, asker: approve_asker, stage: "s", epic_slug: "e") } }
+      expect { Sync { gate_class.new(journal:).call(half, asker: approve_asker, stage: "research", epic_slug: "e") } }
         .to raise_error(NoMethodError, /gate_question/)
     end
 
     it "refuses to register a nil digest as approved" do
       nil_digest = Data.define(:digest, :gate_question).new(digest: nil, gate_question: "q?")
       subject_gate = gate_class.new(journal:)
-      expect { Sync { subject_gate.call(nil_digest, asker: approve_asker, stage: "s", epic_slug: "e") } }
+      expect { Sync { subject_gate.call(nil_digest, asker: approve_asker, stage: "research", epic_slug: "e") } }
         .to raise_error(ArgumentError, /artifact_digest/)
       expect(subject_gate.approved?(nil)).to be(false)
     end
@@ -89,7 +89,7 @@ RSpec.describe Lain::Epic::Gate do
       ticks = [0.0, 1000.0].each
       subject_gate = gate_class.new(journal:, timeout: 0.3, clock: -> { ticks.next })
       approved = Sync do
-        subject_gate.call(plan, asker: scripted_asker { |_p, _q| nil }, stage: "s", epic_slug: "e")
+        subject_gate.call(plan, asker: scripted_asker { |_p, _q| nil }, stage: "research", epic_slug: "e")
       end
       expect(approved).to be(false)
       expect(decisions.first["answered_by"]).to eq("timeout")
@@ -106,7 +106,7 @@ RSpec.describe Lain::Epic::Gate do
     it "does not register an approval from a malformed Answer" do
       bad = scripted_asker { |p, _q| p.resolve(gate_class::Answer.new(verdict: "yes", surface: "h")) }
       subject_gate = gate_class.new(journal:)
-      Sync { subject_gate.call(plan, asker: bad, stage: "s", epic_slug: "e") }
+      Sync { subject_gate.call(plan, asker: bad, stage: "research", epic_slug: "e") }
     rescue ArgumentError
       expect(subject_gate.approved?(plan.digest)).to be(false)
     end
@@ -115,21 +115,21 @@ RSpec.describe Lain::Epic::Gate do
   describe "latency" do
     it "refuses a nil latency rather than silently journaling 0.0" do
       expect do
-        Lain::Epic::GateDecision.new(artifact_digest: "d", epic_slug: "e", stage: "s", verdict: Lain::Approval::Verdict::Approve.new,
+        Lain::Epic::GateDecision.new(artifact_digest: "d", epic_slug: "e", stage: "research", verdict: Lain::Approval::Verdict::Approve.new,
                                      answered_by: "human", policy: "interactive", latency: nil)
       end.to raise_error(ArgumentError, /latency/)
     end
 
     it "refuses a non-numeric latency rather than coercing it to 0.0" do
       expect do
-        Lain::Epic::GateDecision.new(artifact_digest: "d", epic_slug: "e", stage: "s", verdict: Lain::Approval::Verdict::Approve.new,
+        Lain::Epic::GateDecision.new(artifact_digest: "d", epic_slug: "e", stage: "research", verdict: Lain::Approval::Verdict::Approve.new,
                                      answered_by: "human", policy: "interactive", latency: "quick")
       end.to raise_error(ArgumentError, /latency/)
     end
 
     it "refuses a negative latency" do
       expect do
-        Lain::Epic::GateDecision.new(artifact_digest: "d", epic_slug: "e", stage: "s", verdict: Lain::Approval::Verdict::Approve.new,
+        Lain::Epic::GateDecision.new(artifact_digest: "d", epic_slug: "e", stage: "research", verdict: Lain::Approval::Verdict::Approve.new,
                                      answered_by: "human", policy: "interactive", latency: -3.0)
       end.to raise_error(ArgumentError, /latency/)
     end
@@ -182,8 +182,8 @@ RSpec.describe Lain::Epic::Gate do
       other = artifact(digest: "blake3:other")
 
       results = Sync do
-        t1 = Async { a.call(plan, asker: shared, stage: "s", epic_slug: "e") }
-        t2 = Async { b.call(other, asker: shared, stage: "s", epic_slug: "e") }
+        t1 = Async { a.call(plan, asker: shared, stage: "research", epic_slug: "e") }
+        t2 = Async { b.call(other, asker: shared, stage: "research", epic_slug: "e") }
         Async do
           Async::Task.current.sleep(0.001) until pendings.size == 2
           pendings.last&.resolve(gate_class::Answer.approve("human"))
@@ -207,7 +207,7 @@ RSpec.describe Lain::Epic::Gate do
 
     it "does not mutate a frozen digest argument" do
       frozen = "blake3:frozen"
-      rec = Lain::Epic::GateDecision.new(artifact_digest: frozen, epic_slug: "e", stage: "s", verdict: Lain::Approval::Verdict::Approve.new,
+      rec = Lain::Epic::GateDecision.new(artifact_digest: frozen, epic_slug: "e", stage: "research", verdict: Lain::Approval::Verdict::Approve.new,
                                          answered_by: "h", policy: "p", latency: 1.0)
       expect(rec.artifact_digest).to eq(frozen)
     end
@@ -215,7 +215,7 @@ RSpec.describe Lain::Epic::Gate do
 
   describe "outside a reactor" do
     it "names the missing reactor rather than raising a bare NoMethodError" do
-      expect { gate_class.new(journal:).call(plan, asker: approve_asker, stage: "s", epic_slug: "e") }
+      expect { gate_class.new(journal:).call(plan, asker: approve_asker, stage: "research", epic_slug: "e") }
         .to raise_error(/reactor|Async|task/i)
     end
   end

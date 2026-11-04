@@ -21,9 +21,9 @@ RSpec.describe Lain::Frontend::Neovim::PlanningView do
                                                     records: ->(_slug) { records })
   end
 
-  def decided(id, verdict:, reason: nil)
-    { "type" => "gate_decision", "epic_slug" => "demo", "stage" => "issue_plan", "issue_id" => id,
-      "verdict" => verdict, "reason" => reason }
+  def decided(id, verdict:, reason: nil, digest: "blake3:#{id}", policy: "interactive")
+    { "type" => "gate_decision", "artifact_digest" => digest, "epic_slug" => "demo", "stage" => "issue_plan",
+      "issue_id" => id, "verdict" => verdict, "reason" => reason, "policy" => policy }
   end
 
   def asked(id, deferred: false)
@@ -71,6 +71,24 @@ RSpec.describe Lain::Frontend::Neovim::PlanningView do
 
       expect(row(lines, "a")).to include("issue_plan, held: back after lunch")
       expect(row(lines, "a")).not_to include("denied")
+    end
+
+    # Scenario: readers agree on the standing -- the row is Epic::Signoff's answer,
+    # never a second reading of the newest record.
+    it "reads a denial of a draft the approval superseded as approved, as the sign-off queue does" do
+      records = [decided("a", verdict: "deny", digest: "blake3:v1", policy: "deferred"),
+                 decided("a", verdict: "approve", digest: "blake3:v2"),
+                 decided("a", verdict: "deny", digest: "blake3:v1", reason: "stale draft")]
+      lines = described_class.new(epic: epic(graph_of(issue("a")), records)).initial
+
+      expect(row(lines, "a")).to include("issue_plan, approved")
+    end
+
+    it "reads a hold over the standing approval of the same digest as approved, as the sign-off queue does" do
+      records = [decided("a", verdict: "approve"), decided("a", verdict: "hold", reason: "back after lunch")]
+      lines = described_class.new(epic: epic(graph_of(issue("a")), records)).initial
+
+      expect(row(lines, "a")).to include("issue_plan, approved")
     end
 
     it "lets a later decision supersede an earlier wait" do

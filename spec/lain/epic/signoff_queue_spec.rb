@@ -49,6 +49,7 @@ RSpec.describe Lain::Epic::SignoffQueue do
   end
 
   def deferral(**overrides) = decision(policy: described_class::DEFERRED_POLICY, **overrides)
+  def settle(queue, **overrides) = queue.apply(decision(policy: "signoff", **overrides).to_journal)
   def approval(**overrides) = decision(policy: "signoff", verdict: Lain::Approval::Verdict::Approve.new, **overrides)
 
   describe "parking" do
@@ -132,13 +133,28 @@ RSpec.describe Lain::Epic::SignoffQueue do
       expect(queue.drained?(:alpha, :research)).to be(false)
     end
 
-    it "is drained again once the item is drained by address" do
+    it "is drained again once a decision settles the item's address" do
       queue = described_class.new
       park(queue)
-      drained = queue.drain(artifact_digest: "blake3:plan", epic_slug: "alpha", stage: "research")
+      settle(queue)
 
-      expect(drained).to have_attributes(artifact_digest: "blake3:plan")
       expect(queue.drained?("alpha", "research")).to be(true)
+    end
+
+    # A park leaves the queue only through a decision Signoff also sees, so the
+    # ledger that orders drafts never holds a park the queue has forgotten.
+    it "offers no public drain" do
+      expect(described_class.new).not_to respond_to(:drain)
+    end
+
+    it "revokes a newer approval when an older draft, parked and settled live, is denied again" do
+      queue = described_class.new
+      park(queue, digest: "blake3:a")
+      settle(queue, digest: "blake3:a")
+      queue.apply(approval(digest: "blake3:b").to_journal)
+      settle(queue, digest: "blake3:a")
+
+      expect(queue.approved?("alpha", "research")).to be(false)
     end
 
     # park keyed on the raw object while drain keyed on its #to_s, so anything
@@ -149,7 +165,7 @@ RSpec.describe Lain::Epic::SignoffQueue do
       queue = described_class.new
       park(queue, digest: :sym_digest)
 
-      queue.drain(artifact_digest: :sym_digest, epic_slug: "alpha", stage: "research")
+      settle(queue, digest: "sym_digest")
 
       expect(queue.drained?("alpha", "research")).to be(true)
     end
@@ -170,7 +186,7 @@ RSpec.describe Lain::Epic::SignoffQueue do
       park(queue, epic_slug: "alpha", stage: "research")
       park(queue, epic_slug: "beta", stage: "research", digest: "blake3:beta")
 
-      queue.drain(artifact_digest: "blake3:plan", epic_slug: "alpha", stage: "research")
+      settle(queue)
 
       expect(queue.instance_variable_get(:@parked).keys.map(&:epic_slug)).to eq(["beta"])
     end
@@ -180,15 +196,17 @@ RSpec.describe Lain::Epic::SignoffQueue do
       park(queue, digest: "blake3:one")
       park(queue, digest: "blake3:two")
 
-      queue.drain(artifact_digest: "blake3:one", epic_slug: "alpha", stage: "research")
+      settle(queue, digest: "blake3:one")
 
       expect(queue.drained?("alpha", "research")).to be(false)
       expect(queue.instance_variable_get(:@parked).size).to eq(1)
     end
 
-    it "answers nil when draining an address that was never parked" do
-      expect(described_class.new.drain(artifact_digest: "blake3:nope", epic_slug: "alpha",
-                                       stage: "research")).to be_nil
+    it "settles an address that was never parked without parking or raising" do
+      queue = described_class.new
+      settle(queue, digest: "blake3:nope")
+
+      expect(queue.count).to eq(0)
     end
   end
 
@@ -550,6 +568,55 @@ RSpec.describe Lain::Epic::SignoffQueue do
 
     it "reads a Symbol pair the same as its Strings" do
       expect(described_class.from_journal(journaled(approval)).approved?(:alpha, :research)).to be(true)
+    end
+
+    it "keeps a newer approval over a denied older draft that was parked live rather than folded" do
+      queue = described_class.new
+      park(queue, digest: "blake3:v1")
+      queue.apply(approval(digest: "blake3:v2").to_journal)
+      queue.apply(decision(policy: "signoff", digest: "blake3:v1").to_journal)
+
+      expect(queue.standing?("blake3:v2", "alpha", "research")).to be(true)
+    end
+  end
+
+  # The partition's standing is Epic::Signoff's, read rather than folded again,
+  # so a reader that needs the verdict itself asks here.
+  describe "#standing" do
+    let(:signoff_partition) { described_class::Partition.new(epic_slug: "alpha", stage: "research") }
+
+    it "is nil where nothing settled the partition" do
+      expect(described_class.from_journal(journaled(deferral)).standing("alpha", "research")).to be_nil
+    end
+
+    it "is the newest settling verdict and its digest, note included" do
+      denied = decision(policy: "signoff", verdict: Lain::Approval::Verdict::Deny.new(note: "too vague"))
+      standing = described_class.from_journal(journaled(approval, denied)).standing("alpha", "research")
+
+      expect(standing.digest).to eq("blake3:plan")
+      expect(standing.verdict).to be_denied
+      expect(standing.verdict.note).to eq("too vague")
+    end
+
+    it "answers what Epic::Signoff answers over the same journal" do
+      lines = journaled(deferral(digest: "blake3:v1"), approval(digest: "blake3:v2"),
+                        decision(policy: "signoff", digest: "blake3:v1"))
+
+      expect(described_class.from_journal(lines).standing("alpha", "research"))
+        .to eq(Lain::Epic::Signoff.from_journal(lines).standing(signoff_partition))
+    end
+  end
+
+  describe "a held item" do
+    it "carries the hold's note, so a reader can say why the work waits" do
+      held = decision(policy: "interactive", verdict: Lain::Approval::Verdict::Hold.new(note: "after lunch"))
+
+      expect(described_class.from_journal(journaled(held)).held("alpha", "research").map(&:note))
+        .to eq(["after lunch"])
+    end
+
+    it "carries no note when parked" do
+      expect(described_class.from_journal(journaled(deferral)).first.note).to be_nil
     end
   end
 

@@ -36,16 +36,6 @@ module Lain
         validates :latency, numericality: { greater_than_or_equal_to: 0,
                                             message: "must be seconds >= 0, got %<value>s" }
       end
-
-      # Narrower than {GateDecision} on purpose: the registry reads only the
-      # digest and the verdict, and {Epic::GateDecision.verdict_in} guards the
-      # verdict. A record missing either is refused rather than skipped:
-      # skipping would let a fold-past denial read as "nothing to see here" as
-      # quietly as folding a truncated approval in.
-      class RegistryEntry < Declarative::Carrier
-        attribute :artifact_digest
-        validates :artifact_digest, presence: { message: "must name the artifact it judged, got nil" }
-      end
     end
 
     GateDecision = Data.define(:artifact_digest, :epic_slug, :stage, :verdict, :answered_by, :policy,
@@ -183,12 +173,11 @@ module Lain
     # does not carry -- {#ensure_approved!} refuses loudly, naming the
     # un-approved address.
     #
-    # The registry is MONOTONIC and add-only: a later denial of an
-    # already-approved digest does NOT revoke the standing approval. Both
-    # verdicts land in the Journal, which is the audit record; the registry is
-    # only the in-memory convenience that answers without re-reading it, and it
-    # starts empty regardless of what an earlier session journaled.
-    # {.from_journal} is the opt-in for the other direction.
+    # The registry is each partition's standing as {Epic::Signoff} folds it, so
+    # a later denial revokes an approval, and so does approving a newer draft of
+    # the same partition. A digest is approved while any partition it was
+    # decided in stands approved at it. The registry starts empty regardless of
+    # what an earlier session journaled; {.from_journal} is the opt-in for that.
     #
     # == The stage boundary is NOT this class's guarantee
     #
@@ -197,9 +186,9 @@ module Lain
     # on the POLICY seam ({Gate::Policy#decide}), not here. {#call} is public and
     # skips it entirely, so calling this directly can approve an
     # implementation-stage artifact while that epic's research sign-offs are
-    # still parked. Deliberate: the check needs {Epic}'s vocabulary, and this
-    # class stays blind to what it gates -- the bench wires it under artifacts
-    # that are not epic stages at all. Go through a Policy for the boundary.
+    # still parked. Deliberate: the boundary needs the sign-off queue, which
+    # this class is not handed. Go through a Policy for the boundary. The stage
+    # must still be a pipeline stage, because {Signoff} keys the registry by it.
     #
     # == The asker duck, and where attribution lives
     #
@@ -388,7 +377,8 @@ module Lain
         @window = timeout.is_a?(Numeric) ? Window.bounded(timeout) : timeout
         @clock = clock
         @wall = wall
-        @approved = Set.new
+        @signoff = Signoff.unit
+        @decided = {}
       end
 
       # Ask the artifact's own question, block on the answer with a timeout the
@@ -417,8 +407,10 @@ module Lain
       # @param criteria_digest [String, nil] the criteria the artifact carries
       # @return [Boolean, Outcome] whether the artifact was approved, or for a
       #   wave (an artifact answering `#submissions`) which of its issues were
+      # @raise [UnknownStage] when `stage` is not a pipeline stage, before anyone is asked
       def call(artifact, asker:, stage:, epic_slug:, policy: DEFAULT_POLICY, evidence_digest: nil, reason: nil,
                issue_id: nil, criteria_digest: nil)
+        Stage.new(stage)
         decided = { epic_slug:, stage:, policy:, evidence_digest:, reason:, issue_id:, criteria_digest: }
         started = @clock.call
         asked = asker.ask(artifact.gate_question)
@@ -448,7 +440,9 @@ module Lain
         retired(asked)
       end
 
-      def approved?(digest) = @approved.include?(digest)
+      # @param digest [String] an artifact's address
+      # @return [Boolean] whether a partition that decided it stands approved at it
+      def approved?(digest) = @decided.fetch(digest, []).any? { |partition| @signoff.approved?(partition, digest) }
 
       # An edited artifact hashes to a different digest, so a prior approval of
       # the old text never satisfies this.
@@ -464,16 +458,14 @@ module Lain
       end
 
       # The standing approvals, for the bench to inspect without draining.
-      def each(&block) = @approved.each(&block)
+      def each(&block) = @decided.keys.select { |digest| approved?(digest) }.each(&block)
 
       # Rebuild a Gate's registry from a journal, so {#approved?} answers for
-      # approvals a PRIOR process journaled. Denials fold to nothing, and fold
-      # ORDER cannot matter for the same reason: add-only never revokes.
+      # approvals a PRIOR process journaled, and not for one a later decision revoked.
       #
-      # Ignores the `(epic_slug, stage)` partition entirely -- the returned
-      # registry answers for every approved digest in `entries`, across every
-      # epic and stage. A caller wanting the partitioned view goes through
-      # {Epic::Stage}/{SignoffQueue}.
+      # Asked by digest alone, because an irreversible caller holds the
+      # artifact and not its partition; revoked per partition, because a deny
+      # or a newer draft only speaks for the partition it was made in.
       #
       # Replayed entries are NOT re-journaled; the returned Gate's own FUTURE
       # verdicts land in `journal:` like any other Gate's.
@@ -527,8 +519,7 @@ module Lain
         artifact.submissions.map { |submission| [submission, submission.issue_id] }
       end
 
-      # An approval registers its digest, a denial does not -- {#call}'s live
-      # rule replayed against records already on disk.
+      # {#call}'s live rule replayed against records already on disk.
       #
       # PRIVATE, unlike {SignoffQueue#apply}, which is public because a LIVE
       # session folds its own decisions through it one at a time. Nothing here
@@ -537,23 +528,14 @@ module Lain
       # Gate handed one hand-built Hash could register a standing approval with
       # no journal record behind it at all.
       #
-      # Guarded per record even though {Journal.records}' type filter already
-      # ran: {Contracts::RegistryEntry} is the TRUNCATION CANARY, and skipping a
-      # damaged record would be exactly as silent a failure as folding a
-      # truncated one in.
+      # A damaged record is refused by {Signoff} as {SignoffQueue::UnreadableRecord},
+      # never skipped: skipping a denial would leave the approval it revoked standing.
       #
       # @param entries [Enumerable<Hash, String>] see {.from_journal}
       # @return [self]
-      #
-      # Refused as {SignoffQueue::UnreadableRecord}, the queue's own refusal
-      # over the same record type: the canary's ArgumentError is right for a
-      # caller that built a value wrong, and a backtrace for a human whose
-      # journal holds a damaged line.
       def absorb(entries)
         Journal.records(entries, type: SignoffQueue::JOURNAL_TYPE).each do |decision|
-          register(decision)
-        rescue ArgumentError => e
-          raise SignoffQueue::UnreadableRecord.for(decision, e)
+          register(Journal.payload_of(decision))
         end
         self
       end
@@ -565,8 +547,7 @@ module Lain
       def settle(artifact, answer, **decided)
         result, ballots = ballot(artifact, answer)
         ballots.each do |digest, verdict, scope|
-          record(verdict, artifact_digest: digest, **decided, **scope)
-          @approved << digest if verdict.approved?
+          register(record(verdict, artifact_digest: digest, **decided, **scope).to_journal)
         end
         result
       end
@@ -581,16 +562,25 @@ module Lain
         end]
       end
 
-      def register(decision)
-        Contracts::RegistryEntry.check!(artifact_digest: decision["artifact_digest"])
-        @approved << decision["artifact_digest"] if GateDecision.verdict_in(decision).approved?
+      # @param fields [Hash{String=>Object}] one decision as journaled
+      def register(fields)
+        @signoff = @signoff.step(Telemetry::Untyped.new(fields:))
+        digest = fields["artifact_digest"].to_s
+        @decided[digest] = [*@decided[digest], partition_of(fields)].uniq
+      end
+
+      def partition_of(fields)
+        SignoffQueue::Partition.new(epic_slug: fields["epic_slug"], stage: fields["stage"],
+                                    issue_id: fields["issue_id"])
       end
 
       # `evidence_digest`/`reason` are FORWARDED, never derived: this class
       # gathers nothing and judges nothing, so the only honest value is the one
       # its caller handed down. A later path adds a VALUE here, never a column.
+      # @return [GateDecision] the decision journaled
       def record(answer, reason:, **decided)
-        @journal.record(GateDecision.new(verdict: answer.verdict, answered_by: answer.surface, reason:, **decided))
+        GateDecision.new(verdict: answer.verdict, answered_by: answer.surface, reason:, **decided)
+                    .tap { |decision| @journal.record(decision) }
       end
 
       # SCOPED TO THE WAIT ALONE, never the whole of {#call}. A cancellation

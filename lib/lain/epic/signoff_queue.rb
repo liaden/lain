@@ -204,11 +204,12 @@ module Lain
       #
       # `evidence_digest` and `criteria_digest` ARE recoverable, because the
       # decision record carries them -- so a later sign-off can carry the
-      # criteria the parked plan was submitted with.
+      # criteria the parked plan was submitted with. `note` is a held item's
+      # reason for waiting, nil on a parked one.
       Item = Data.define(:artifact_digest, :epic_slug, :stage, :issue_id, :question, :evidence_digest,
-                         :criteria_digest) do
+                         :criteria_digest, :note) do
         def initialize(artifact_digest:, epic_slug:, stage:, issue_id: nil, question: nil, evidence_digest: nil,
-                       criteria_digest: nil)
+                       criteria_digest: nil, note: nil)
           # Stringified BEFORE the guard, and before this becomes half of the
           # queue's key: {#drain} reconstructs that key through `to_s`, so an
           # Item holding the raw object would park under an address drain could
@@ -224,7 +225,8 @@ module Lain
           # non-`Ractor.shareable?`.
           super(artifact_digest: artifact_digest.dup.freeze, epic_slug: partition.epic_slug,
                 stage: partition.stage, issue_id: partition.issue_id, question: frozen_text(question),
-                evidence_digest: frozen_text(evidence_digest), criteria_digest: frozen_text(criteria_digest))
+                evidence_digest: frozen_text(evidence_digest), criteria_digest: frozen_text(criteria_digest),
+                note: frozen_text(note))
         end
 
         # Derived rather than stored: the members ARE the partition, and a
@@ -246,12 +248,9 @@ module Lain
         # twice is one sign-off and enumeration reads oldest-first -- the order
         # a morning review wants.
         @parked = {}
-        # {Partition} => the digest its newest terminal verdict approved.
-        @approved = {}
-        # [partition, digest] pairs for drafts parked BEFORE the draft that was
-        # approved: the approval replaced them, so denying one withdraws nothing.
-        # A draft parked after the approved one is newer and is not in here.
-        @superseded = Set.new
+        # Where each partition stands; it sees every park, live or folded, because
+        # whether a deny withdraws an approval depends on the order drafts parked in.
+        @signoff = Signoff.unit
         # {Partition} => digest => {Item} whose newest decision is a hold.
         @held = {}
       end
@@ -272,29 +271,8 @@ module Lain
                criteria_digest: nil)
         item = Item.new(artifact_digest:, epic_slug:, stage:, issue_id:, question:, evidence_digest:,
                         criteria_digest:)
-        @superseded.delete([item.partition, item.artifact_digest])
+        @signoff = @signoff.step(deferral_of(item))
         (@parked[item.partition] ||= {})[item.artifact_digest] = item
-      end
-
-      # Remove a parked sign-off by address -- what a terminal decision does to
-      # the live view of the fold. The address is EXACT, issue included: a
-      # decision drains only the partition it was made in.
-      #
-      # @return [Item, nil] the item that was holding, or nil if none was
-      def drain(artifact_digest:, epic_slug:, stage:, issue_id: nil)
-        artifact_digest = artifact_digest.to_s
-        Contracts::Item.check!(artifact_digest:)
-
-        partition = Partition.new(epic_slug:, stage:, issue_id:)
-        # Deleting from an absent partition is a no-op, so a throwaway Hash
-        # nobody keeps is enough here.
-        items = @parked.fetch(partition, {})
-        drained = items.delete(artifact_digest)
-        # The emptied partition goes too. Every read is correct over a leftover
-        # empty one, so the only symptom would be a key space growing for the
-        # life of the process -- and an epic run spans days.
-        @parked.delete(partition) if items.empty?
-        drained
       end
 
       # Whether nothing awaits sign-off where this question reaches -- the
@@ -318,7 +296,9 @@ module Lain
       # @param epic_slug [#to_s] the epic asked about
       # @param stage [#to_s] the stage asked about
       # @param issue_id [String, nil] the issue, for an issue-scoped stage
-      def approved?(epic_slug, stage, issue_id: nil) = @approved.key?(Partition.new(epic_slug:, stage:, issue_id:))
+      def approved?(epic_slug, stage, issue_id: nil)
+        standing(epic_slug, stage, issue_id:)&.verdict&.approved? || false
+      end
 
       # Whether that newest approving verdict was of exactly these bytes -- what
       # "already approved" means to a submit and to an issue's plan check, so
@@ -329,8 +309,17 @@ module Lain
       # @param stage [#to_s] the stage asked about
       # @param issue_id [String, nil] the issue, for an issue-scoped stage
       def standing?(artifact_digest, epic_slug, stage, issue_id: nil)
-        @approved[Partition.new(epic_slug:, stage:, issue_id:)] == artifact_digest.to_s
+        @signoff.approved?(Partition.new(epic_slug:, stage:, issue_id:), artifact_digest)
       end
+
+      # Exact, like {#standing?}: the partition asked about and no other.
+      #
+      # @param epic_slug [#to_s] the epic asked about
+      # @param stage [#to_s] the stage asked about
+      # @param issue_id [String, nil] the issue, for an issue-scoped stage
+      # @return [Signoff::Standing, nil] the partition's newest settling verdict
+      #   and its digest, or nil where nothing settled it
+      def standing(epic_slug, stage, issue_id: nil) = @signoff.standing(Partition.new(epic_slug:, stage:, issue_id:))
 
       # The items this question reaches, for a review surface that shows one
       # stage of one epic at a time.
@@ -403,21 +392,58 @@ module Lain
       def apply(decision)
         Contracts::Decision.check!(type: decision["type"], stage: decision["stage"], policy: decision["policy"])
         verdict = GateDecision.verdict_in(decision)
-        verdict.held? ? hold(decision) : fold(decision, verdict)
+        verdict.held? ? hold(decision, verdict) : fold(decision)
         self
       end
 
       private
 
-      def fold(decision, verdict)
+      def fold(decision)
         unhold(decision)
-        deferred?(decision) ? park(**parked_attributes(decision)) : settle(decision, verdict)
+        deferred?(decision) ? park(**parked_attributes(decision)) : settle(decision)
+      end
+
+      # Drained first: it refuses a nil digest with the ArgumentError a live
+      # caller is promised, before Signoff could refuse it as unreadable.
+      def settle(decision)
+        drain(**address_attributes(decision))
+        @signoff = @signoff.step(Telemetry::Untyped.new(fields: decision))
+      end
+
+      # Remove a parked sign-off by address -- what a terminal decision does to
+      # the live view of the fold. The address is EXACT, issue included: a
+      # decision drains only the partition it was made in.
+      #
+      # @return [Item, nil] the item that was holding, or nil if none was
+      def drain(artifact_digest:, epic_slug:, stage:, issue_id: nil)
+        artifact_digest = artifact_digest.to_s
+        Contracts::Item.check!(artifact_digest:)
+
+        partition = Partition.new(epic_slug:, stage:, issue_id:)
+        # Deleting from an absent partition is a no-op, so a throwaway Hash
+        # nobody keeps is enough here.
+        items = @parked.fetch(partition, {})
+        drained = items.delete(artifact_digest)
+        # The emptied partition goes too. Every read is correct over a leftover
+        # empty one, so the only symptom would be a key space growing for the
+        # life of the process -- and an epic run spans days.
+        @parked.delete(partition) if items.empty?
+        drained
+      end
+
+      # The record a live park stands for, so Signoff orders it among the drafts
+      # exactly as it would the journaled deferral behind it.
+      def deferral_of(item)
+        Telemetry::Untyped.new(fields: { "type" => JOURNAL_TYPE, "artifact_digest" => item.artifact_digest,
+                                         "epic_slug" => item.epic_slug, "stage" => item.stage,
+                                         "issue_id" => item.issue_id, "policy" => DEFERRED_POLICY,
+                                         "verdict" => GateDecision.word(Approval::Verdict::Deny.new) })
       end
 
       # Dropped here, not when read: a later approval of another digest moves the
       # partition's standing approval on, and a hold read then would resurface.
-      def hold(decision)
-        item = Item.new(**address_attributes(decision))
+      def hold(decision, verdict)
+        item = Item.new(**address_attributes(decision), note: verdict.note)
         return if answered?(item.partition, item.artifact_digest)
 
         (@held[item.partition] ||= {})[item.artifact_digest] = item
@@ -434,22 +460,7 @@ module Lain
       end
 
       def answered?(partition, digest)
-        @approved[partition] == digest || @parked.fetch(partition, {}).key?(digest)
-      end
-
-      def settle(decision, verdict)
-        address = address_attributes(decision)
-        partition = Partition.new(**address.except(:artifact_digest))
-        digest = address[:artifact_digest].to_s
-        replaced = @superseded.delete?([partition, digest])
-        older = @parked.fetch(partition, {}).keys.take_while { |parked| parked != digest }
-        drain(**address)
-        verdict.approved? ? approve(partition, digest, older) : (@approved.delete(partition) unless replaced)
-      end
-
-      def approve(partition, digest, older)
-        older.each { |parked| @superseded << [partition, parked] }
-        @approved[partition] = -digest
+        @signoff.approved?(partition, digest) || @parked.fetch(partition, {}).key?(digest)
       end
 
       def deferred?(decision) = decision["policy"].to_s == DEFERRED_POLICY

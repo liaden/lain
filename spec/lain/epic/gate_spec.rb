@@ -762,19 +762,64 @@ RSpec.describe Lain::Epic::Gate do
     end
   end
 
-  describe "approval is monotonic" do
-    it "keeps approved? true through approve -> deny while both decisions are journaled" do
-      subject_gate = gate(timeout: 0.02)
-
+  # The registry is the partition's standing as Epic::Signoff folds it, so the
+  # gate, the sign-off queue and `lain epic status` cannot disagree on a digest.
+  describe "a deny revokes" do
+    def approve_then(asker, gate = self.gate(timeout: 0.02))
       Sync do
-        subject_gate.call(plan, asker: approve_asker, stage: "epic_plan", epic_slug: "lain-epics")
-        subject_gate.call(plan, asker: silent_asker, stage: "epic_plan", epic_slug: "lain-epics")
+        gate.call(plan, asker: approve_asker, stage: "epic_plan", epic_slug: "lain-epics")
+        gate.call(plan, asker:, stage: "epic_plan", epic_slug: "lain-epics")
       end
+      gate
+    end
 
-      expect(subject_gate.approved?(plan.digest)).to be(true)
-      expect(subject_gate.ensure_approved!(plan)).to eq(plan.digest)
+    it "answers not approved after approve -> deny of one digest, with both decisions journaled" do
+      subject_gate = approve_then(silent_asker)
+
+      expect(subject_gate.approved?(plan.digest)).to be(false)
+      expect { subject_gate.ensure_approved!(plan) }.to raise_error(described_class::NotApproved)
+      expect(subject_gate.to_a).to be_empty
       expect(decisions.map { |record| record.values_at("verdict", "answered_by") })
         .to eq([%w[approve human], %w[deny timeout]])
+    end
+
+    it "answers not approved after the same pair is rebuilt from the journal" do
+      approve_then(deny_asker)
+
+      expect(described_class.from_journal(journal_io.string.lines, journal:).approved?(plan.digest)).to be(false)
+    end
+
+    it "keeps an approval a later hold of the same digest leaves standing" do
+      held = scripted_asker do |promise, _q|
+        promise.resolve(described_class::Answer.new(verdict: Lain::Approval::Verdict::Hold.new, surface: "human"))
+      end
+
+      expect(approve_then(held).approved?(plan.digest)).to be(true)
+    end
+
+    it "withdraws an approval once a newer draft of the partition is approved" do
+      subject_gate = gate
+      newer = artifact(digest: "blake3:plan-v2")
+      Sync do
+        subject_gate.call(plan, asker: approve_asker, stage: "epic_plan", epic_slug: "lain-epics")
+        subject_gate.call(newer, asker: approve_asker, stage: "epic_plan", epic_slug: "lain-epics")
+      end
+
+      expect(subject_gate.to_a).to eq([newer.digest])
+    end
+
+    it "agrees with the sign-off queue and the stage boundary over one journal" do
+      Sync do
+        gate.call(artifact(digest: "blake3:r1"), asker: approve_asker, stage: "research", epic_slug: "alpha")
+        gate.call(artifact(digest: "blake3:r1"), asker: deny_asker, stage: "research", epic_slug: "alpha")
+      end
+      lines = journal_io.string.lines
+      queue = Lain::Epic::SignoffQueue.from_journal(lines)
+
+      expect(described_class.from_journal(lines, journal:).approved?("blake3:r1")).to be(false)
+      expect(queue.standing?("blake3:r1", "alpha", "research")).to be(false)
+      expect(Lain::Epic::Stage.new("epic_plan").blocked_by(queue, epic_slug: "alpha")[:unapproved].map(&:name))
+        .to eq(["research"])
     end
   end
 
@@ -846,7 +891,7 @@ RSpec.describe Lain::Epic::Gate do
       Sync do
         journal_gate = gate
         journal_gate.call(approved_artifact, asker: approve_asker, stage: "epic_plan", epic_slug: "lain-epics")
-        journal_gate.call(denied_artifact, asker: deny_asker, stage: "epic_plan", epic_slug: "lain-epics")
+        journal_gate.call(denied_artifact, asker: deny_asker, stage: "research", epic_slug: "lain-epics")
       end
 
       rebuilt = described_class.from_journal(journal_io.string.lines, journal:)
@@ -882,6 +927,22 @@ RSpec.describe Lain::Epic::Gate do
         expect(error.message).to include("gate_decision", "blake3:maybe", "verdict", "demo/issue_plan/a")
         expect(error.message).not_to include("\n")
       }
+    end
+  end
+
+  # Signoff keys the registry by stage, and every reader refuses a decision
+  # journaled outside the pipeline, so the gate refuses one before anyone is asked.
+  describe "a stage outside the pipeline" do
+    it "refuses before asking, journaling nothing" do
+      asked = []
+      asker = scripted_asker do |promise, question|
+        asked << question
+        promise.resolve(described_class::Answer.approve("human"))
+      end
+
+      expect { call(gate, asker:, stage: "bench") }.to raise_error(Lain::Epic::UnknownStage, /bench/)
+      expect(asked).to be_empty
+      expect(journal_io.string).to be_empty
     end
   end
 

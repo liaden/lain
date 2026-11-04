@@ -90,22 +90,14 @@ module Lain
 
         # A second terminal verdict over one artifact address, refused.
         #
-        # {Gate}'s registry is ADD-ONLY, so an APPROVE followed by a DENY over
-        # one digest would leave the journal's terminal record saying
-        # `verdict: deny` while {Gate#approved?} still answers true -- and an
-        # irreversible caller would proceed on a gate the record shows refused.
         # This class is the first path that can re-run a gate with nobody
-        # watching, so it refuses loudly. It also closes the RATCHET the other
-        # way: without it, a terminal DENY could be re-run until some spike
-        # happened to produce evidence a verdict approved on.
+        # watching, and without this a terminal DENY could be re-run until some
+        # spike happened to produce evidence a verdict approved on.
         #
         # SCOPE, exactly: the guard is over the JOURNAL rather than one object's
         # memory, so it holds across Adjudicators and sessions -- but it is a
-        # SEQUENTIAL guarantee only. Forced rather than generous: the registry
-        # answers "was this APPROVED", which a terminal denial leaves false, so
-        # an add-only set cannot answer "was this DECIDED". The journal can. A
-        # deferral is deliberately NOT terminal: parking is an invitation to
-        # come back.
+        # SEQUENTIAL guarantee only. A deferral is deliberately NOT terminal:
+        # parking is an invitation to come back.
         #
         # WHAT IT DOES NOT COVER: this is check-then-act and the window is WIDE
         # -- {#admit} folds the journal, TWO model round-trips run, then
@@ -120,17 +112,16 @@ module Lain
         # Which artifact addresses a machine has already SETTLED, read off the
         # journal.
         #
-        # A FOLD rather than a set: the record is the state, so two readers of
-        # one journal agree by construction. RE-WALKED per lookup rather than
-        # indexed once, because the whole question is whether somebody ELSE --
-        # another Adjudicator, another session -- settled this address since we
-        # last looked, which a snapshot cannot answer.
+        # RE-WALKED per lookup rather than indexed once, because the whole
+        # question is whether somebody ELSE -- another Adjudicator, another
+        # session -- settled this address since we last looked, which a snapshot
+        # cannot answer.
         #
-        # {Adjudicator::TERMINAL_POLICY} is the discriminator and the only
-        # honest one available: {Gate}'s registry is add-only, so it answers
-        # "was this APPROVED" and leaves a terminal DENIAL looking exactly like
-        # an artifact nobody judged. A `deferred` record is deliberately NOT
-        # terminal -- parking is an invitation to come back.
+        # {Adjudicator::TERMINAL_POLICY} is the discriminator: a standing says
+        # where a partition stands, not whether a machine ever judged the
+        # address. A `deferred` record is deliberately NOT terminal -- parking
+        # is an invitation to come back. The verdict a refusal names is the
+        # partition's standing as {Signoff} folds it.
         #
         # == The identity is the DIGEST ALONE
         #
@@ -138,9 +129,7 @@ module Lain
         # decision: one address adjudicated in `alpha/epic_plan` refuses the
         # same CONTENT in `beta/research`, permanently, with no override short
         # of editing the journal. Chosen because it fails CLOSED and because it
-        # is the identity {Gate#approved?} already uses -- an approval carries
-        # across partitions, so a partition-scoped refusal could disagree with a
-        # global approval, the exact disagreement {AlreadyDecided} prevents.
+        # is the identity {Gate#approved?} already uses.
         #
         # It stops mattering as submissions arrive pre-qualified:
         # `Submission#digest` addresses `{stage, slug, artifact}`, so the same
@@ -175,31 +164,31 @@ module Lain
           # @raise [AlreadyDecided] naming the address and the verdict it
           #   already carries
           def ensure_undecided!(digest)
-            settled = self[digest]
-            raise AlreadyDecided, refusal(digest, settled) if settled
+            records = Journal.records(@entries, type: SignoffQueue::JOURNAL_TYPE).to_a
+            settled = records.reverse_each.find { |record| terminal?(record, digest) }
+            raise AlreadyDecided, refusal(digest, standing_of(settled, records)) if settled
           end
 
           private
-
-          # The LAST match, not the first. Which record refuses does not matter
-          # -- any terminal one does -- but which the MESSAGE names does: two
-          # conflicting terminal records for one address are reachable through
-          # the concurrent window {AlreadyDecided} documents, and journal order
-          # is time order, so the last written is the one that stands.
-          def [](digest)
-            Journal.records(@entries, type: SignoffQueue::JOURNAL_TYPE)
-                   .select { |record| terminal?(record, digest) }
-                   .to_a.last
-          end
 
           def terminal?(record, digest)
             record["policy"].to_s == TERMINAL_POLICY && record["artifact_digest"].to_s == digest.to_s
           end
 
-          def refusal(digest, settled)
-            "artifact #{digest} already has a terminal adjudication (verdict: #{settled["verdict"]}) -- " \
-              "Gate's approval registry is add-only, so a second verdict would leave it disagreeing " \
-              "with the journal"
+          # Two conflicting terminal records for one address are reachable through
+          # the concurrent window {AlreadyDecided} documents, so the one named is
+          # the one that stands in the newest adjudicated partition.
+          def standing_of(settled, records)
+            partition = SignoffQueue::Partition.new(epic_slug: settled["epic_slug"], stage: settled["stage"],
+                                                    issue_id: settled["issue_id"])
+            standing = Signoff.from_journal(records).standing(partition)
+            standing if standing&.digest == settled["artifact_digest"].to_s
+          end
+
+          def refusal(digest, standing)
+            verdict = standing ? GateDecision.word(standing.verdict) : "superseded"
+            "artifact #{digest} already has a terminal adjudication (verdict: #{verdict}) -- a second " \
+              "verdict would re-run a decision the journal already holds"
           end
         end
 

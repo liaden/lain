@@ -405,9 +405,12 @@ RSpec.describe Lain::Epic::Gate::Policy do
       expect(decide(described_class::HandsOff.new(queue:), stage: "research", epic_slug: "alpha")).to be(true)
     end
 
-    it "opens once the earlier partition is drained" do
+    it "opens once a sign-off of the parked research drains the earlier partition" do
       park_research
-      queue.drain(artifact_digest: "blake3:research", epic_slug: "alpha", stage: "research")
+      signoff = Lain::Epic::GateDecision.new(artifact_digest: "blake3:research", epic_slug: "alpha",
+                                             stage: "research", verdict: Lain::Approval::Verdict::Approve.new,
+                                             answered_by: "human", policy: "signoff", latency: 1.0)
+      queue.apply(signoff.to_journal)
 
       expect(decide(described_class::HandsOff.new(queue:), stage: "epic_plan", epic_slug: "alpha")).to be(true)
     end

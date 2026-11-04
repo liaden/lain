@@ -40,26 +40,27 @@ RSpec.describe "Lain::Epic::Gate.from_journal" do
     it "still forwards an explicitly given timeout:, the same as a plain .new would" do
       rebuilt = Lain::Epic::Gate.from_journal([], journal:, timeout: 0.01, clock:)
 
-      expect { Sync { rebuilt.call(artifact("x"), asker: silent_asker, stage: "s", epic_slug: "e") } }
+      expect { Sync { rebuilt.call(artifact("x"), asker: silent_asker, stage: "research", epic_slug: "e") } }
         .not_to raise_error
       expect(JSON.parse(journal_io.string.lines.last))
         .to include("verdict" => "deny", "answered_by" => "timeout", "latency" => 0.01)
     end
   end
 
-  # Confirmed good by the panel -- add-only means no order of the same records
-  # can disagree, so this is left exactly as found (do not churn it).
-  describe "fold-order independence -- add-only means any order agrees" do
-    it "agrees on approve-then-deny and deny-then-approve of ONE digest" do
+  # The registry is the partition's standing, so the newest settling verdict
+  # wins and the order of the records is the answer.
+  describe "the newest decision of a partition stands" do
+    it "revokes on approve-then-deny and approves on deny-then-approve of ONE digest" do
       forward = [decision(digest: "d", approved: true), decision(digest: "d", approved: false)]
 
-      expect(rebuild(forward).approved?("d")).to be(true)
+      expect(rebuild(forward).approved?("d")).to be(false)
       expect(rebuild(forward.reverse).approved?("d")).to be(true)
     end
 
-    it "is idempotent under duplicate approvals and associative under any permutation" do
+    it "is idempotent under duplicate approvals, and partitions never answer for each other" do
       records = [decision(digest: "a", approved: true), decision(digest: "a", approved: true),
-                 decision(digest: "b", approved: false), decision(digest: "c", approved: true)]
+                 decision(digest: "b", approved: false, "stage" => "research"),
+                 decision(digest: "c", approved: true, "epic_slug" => "other-epic")]
 
       results = records.permutation.map { |order| rebuild(order).to_a.sort }
 
@@ -69,8 +70,8 @@ RSpec.describe "Lain::Epic::Gate.from_journal" do
     it "agrees with the incremental live path -- fold == replayed #call" do
       Sync do
         live = gate
-        live.call(artifact("d"), asker: asker(true), stage: "s", epic_slug: "e")
-        live.call(artifact("d"), asker: asker(false), stage: "s", epic_slug: "e")
+        live.call(artifact("d"), asker: asker(true), stage: "research", epic_slug: "e")
+        live.call(artifact("d"), asker: asker(false), stage: "research", epic_slug: "e")
         expect(rebuild(journal_io.string.lines).to_a).to eq(live.to_a)
       end
     end
@@ -82,8 +83,8 @@ RSpec.describe "Lain::Epic::Gate.from_journal" do
   # needed the publicity (#call registers directly; nothing folds one live
   # decision at a time here). Both are fixed together: the fold moved private
   # (reached only from .from_journal, via #absorb) and gained
-  # Contracts::RegistryEntry, the same TRUNCATION CANARY reasoning
-  # SignoffQueue::Contracts::Decision already applies to this wire shape.
+  # the TRUNCATION CANARY: Epic::Signoff, which the registry now steps every
+  # record through, refuses a record it cannot read rather than skipping it.
   describe "the fold is private and guards the two fields it reads" do
     it "has no public #apply a live Gate could be tricked into registering an unjournaled approval through" do
       expect(gate).not_to respond_to(:apply)
@@ -152,9 +153,9 @@ RSpec.describe "Lain::Epic::Gate.from_journal" do
   # Confirmed good -- a rebuilt Gate behaves exactly like a normal one.
   describe "a rebuilt Gate behaves as a normal Gate" do
     it "still journals its own future verdicts, and #each/#ensure_approved! work" do
-      rebuilt = rebuild([decision(digest: "old", approved: true)])
+      rebuilt = rebuild([decision(digest: "old", approved: true, "stage" => "epic_plan")])
 
-      Sync { rebuilt.call(artifact("new"), asker: asker(true), stage: "s", epic_slug: "e") }
+      Sync { rebuilt.call(artifact("new"), asker: asker(true), stage: "research", epic_slug: "e") }
 
       expect(rebuilt.to_a.sort).to eq(%w[new old])
       expect(rebuilt.ensure_approved!(artifact("old"))).to eq("old")
@@ -165,7 +166,7 @@ RSpec.describe "Lain::Epic::Gate.from_journal" do
     it "still raises NoReactor outside a reactor" do
       rebuilt = rebuild([])
 
-      expect { rebuilt.call(artifact("x"), asker: asker(true), stage: "s", epic_slug: "e") }
+      expect { rebuilt.call(artifact("x"), asker: asker(true), stage: "research", epic_slug: "e") }
         .to raise_error(Lain::Epic::Gate::NoReactor)
     end
 

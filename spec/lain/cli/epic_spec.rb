@@ -963,6 +963,25 @@ RSpec.describe Lain::CLI::Epic do
         .to raise_error(Lain::CLI::Epic::GatedIssue, /"b".*approved.*issue_plan/m)
     end
 
+    # Scenario: held_gate reads the newest decision
+    it "does not refuse to merge an issue whose issue_plan approval a later deny revoked" do
+      write_epic("alpha", chain)
+      session("gates.ndjson", gate_decision(stage: "issue_plan", issue_id: "b", approved: true),
+              gate_decision(stage: "issue_plan", issue_id: "b", approved: false, policy: "interactive"))
+
+      expect { command.merge("a", "b", "alpha", as: "ab") }.not_to raise_error
+    end
+
+    it "does not refuse an issue whose only gate decision is a hold" do
+      write_epic("alpha", chain)
+      held = Lain::Epic::GateDecision.new(artifact_digest: "blake3:#{"a" * 64}", epic_slug: "alpha",
+                                          stage: "issue_plan", verdict: Lain::Approval::Verdict::Hold.new,
+                                          answered_by: "human", policy: "interactive", latency: 1.0, issue_id: "b")
+      session("gates.ndjson", held)
+
+      expect { command.merge("a", "b", "alpha", as: "ab") }.not_to raise_error
+    end
+
     it "does not refuse add, which removes no issue, even while another issue holds a parked gate" do
       write_epic("alpha", chain)
       session("gates.ndjson", gate_decision(stage: "implementation", issue_id: "a", approved: false))

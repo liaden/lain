@@ -37,10 +37,6 @@ module Lain
         include RefusedBeforeActing
       end
 
-      class Ambiguous < Error
-        include RefusedBeforeActing
-      end
-
       class AlreadyOnBranch < Error
         include RefusedBeforeActing
       end
@@ -178,12 +174,11 @@ module Lain
         raise MisplacedTests, misplaced(issue_id, sha, refused) unless refused.empty?
       end
 
-      # One commit per issue: two approved ones would leave the choice of
-      # which work lands to whichever the listing happened to name first.
+      # One commit per issue: the issue's standing approves at most one, so
+      # several anchors of that commit are the only way approved holds more than one.
       def approved_commit(issue_id, candidates)
         approved = candidates.select { |sha, _| approved?(issue_id, sha) }.group_by(&:first)
         raise Epic::Gate::NotApproved, missing_approval(issue_id, candidates) if approved.empty?
-        raise Ambiguous, ambiguous(issue_id, approved.keys) unless approved.one?
 
         sha, found = approved.first
         [sha, found.filter_map(&:last).first]
@@ -309,11 +304,6 @@ module Lain
 
       def attempt_pattern(stem) = /\A#{Regexp.escape(stem.delete_suffix("1"))}(\d+)-\h+\z/
 
-      def ambiguous(issue_id, shas)
-        "issue #{issue_id}'s implementation gate approved #{shas.size} different commits (#{shas.join(", ")}); " \
-          "land the one meant with its full object name"
-      end
-
       def never_merged(issue_id, sha)
         "#{@base.name} does not hold issue #{issue_id}'s approved commit #{sha}, so there is no merge to resume -- " \
           "land it with `#{Lain::Epic::Remedy.land(issue_id, @epic_slug)}`"
@@ -355,83 +345,67 @@ module Lain
       # commit as issue b's too. The decision record names its issue, and a
       # decision naming none approves no issue's landing.
       #
-      # A decision whose verdict cannot be read is refused, not read as a
-      # denial: "not approved" sends a human to approve a commit their journal
-      # may already hold a decision on.
-      #
-      # Which commit is held is {Epic::SignoffQueue#held}'s rule, read rather
-      # than restated, so landing and the sign-off queue never disagree. A hold
-      # is otherwise no verdict here: it neither refuses a commit nor
-      # withdraws an approval the commit already carries.
+      # Every answer is {Epic::SignoffQueue}'s, read rather than restated, so
+      # landing and the sign-off queue never disagree. Approved and denied are
+      # the issue's standing, so only the newest settled commit is either: an
+      # older approved commit is withdrawn once a newer one is approved. A hold
+      # neither refuses a commit nor withdraws an approval it already carries.
       class Approvals
+        STAGE = "implementation"
+        private_constant :STAGE
+
         # @param entries [Enumerable<Hash, String>] journal records or lines
         # @raise [Epic::SignoffQueue::UnreadableRecord] naming a decision
         #   whose verdict cannot be read
         def self.from(entries)
           records = Journal.records(entries, type: Epic::SignoffQueue::JOURNAL_TYPE).to_a
-          decided = records.map { |decision| [decision, readable!(decision)] }
-                           .select { |decision, _| implementation?(decision) }
-          new(decided.reject { |_, verdict| verdict.held? }
-                     .to_h { |decision, verdict| [key(decision), state(decision, verdict)] },
-              held: held(records, decided))
+          slugs = records.filter_map { |record| record["epic_slug"].to_s if record["stage"] == STAGE }.uniq
+          new(Epic::SignoffQueue.from_journal(records), slugs:)
         end
 
-        def self.implementation?(decision)
-          decision["stage"] == "implementation" && !decision["issue_id"].to_s.empty?
-        end
-        private_class_method :implementation?
-
-        def self.key(decision) = [decision["issue_id"], decision["artifact_digest"]]
-        private_class_method :key
-
-        def self.held(records, decided)
-          queue = Epic::SignoffQueue.from_journal(records)
-          decided.map { |decision, _| decision["epic_slug"] }.uniq
-                 .flat_map { |slug| queue.held(slug, "implementation") }
-                 .to_set { |item| [item.issue_id, item.artifact_digest] }
-        end
-        private_class_method :held
-
-        def self.state(decision, verdict)
-          return :approved if verdict.approved?
-
-          decision["policy"].to_s == Epic::SignoffQueue::DEFERRED_POLICY ? :parked : :denied
-        end
-        private_class_method :state
-
-        def self.readable!(decision)
-          Epic::GateDecision.verdict_in(decision)
-        rescue ArgumentError => e
-          address = decision.values_at("epic_slug", "stage", "issue_id").compact.join("/")
-          raise Epic::SignoffQueue::UnreadableRecord,
-                "the #{Epic::SignoffQueue::JOURNAL_TYPE} record for #{decision["artifact_digest"].inspect} in " \
-                "#{address.inspect} cannot be read (#{e.message}) -- repair the line or move its session file " \
-                "aside; nothing landed"
-        end
-        private_class_method :readable!
-
-        # @param verdicts [Hash{Array, String, String => Symbol}] the newest
-        #   verdict per issue and digest, the rule {Epic::SignoffQueue#approved?} reads by
-        # @param held [Set<Array(String, String)>] issue and digest pairs {Epic::SignoffQueue#held} lists
-        def initialize(verdicts, held: Set.new)
-          @verdicts = verdicts.freeze
-          @held = held.freeze
+        # @param queue [Epic::SignoffQueue] the sign-off queue folded from the decisions
+        # @param slugs [Array<String>] the epics that decided an implementation
+        def initialize(queue, slugs:)
+          @queue = queue
+          @slugs = slugs.freeze
           freeze
         end
 
-        def approved?(digest, issue_id) = verdict(digest, issue_id) == :approved
+        # A digest parked again after its verdict waits for sign-off, so it is neither approved nor denied.
+        def approved?(digest, issue_id) = settled?(:approved?, digest, issue_id)
 
-        def denied?(digest, issue_id) = verdict(digest, issue_id) == :denied && !held?(digest, issue_id)
+        def denied?(digest, issue_id) = settled?(:denied?, digest, issue_id) && !held?(digest, issue_id)
 
         # Not approved, and not refused either: {Epic::SignoffQueue} holds it for a human.
-        def parked?(digest, issue_id) = verdict(digest, issue_id) == :parked
+        def parked?(digest, issue_id) = listed?(:parked, digest, issue_id)
 
         # The human asked the work to wait: neither approved nor refused.
-        def held?(digest, issue_id) = @held.include?([issue_id.to_s, digest.to_s])
+        def held?(digest, issue_id) = listed?(:held, digest, issue_id)
 
         private
 
-        def verdict(digest, issue_id) = @verdicts[[issue_id.to_s, digest.to_s]]
+        # The issue's standing when it is over this digest, nil otherwise.
+        def standing(digest, issue_id)
+          return if blank?(issue_id)
+
+          @slugs.filter_map { |slug| @queue.standing(slug, STAGE, issue_id: issue_id.to_s) }
+                .find { |standing| standing.digest == digest.to_s }
+        end
+
+        def settled?(verdict, digest, issue_id)
+          (standing(digest, issue_id)&.verdict&.public_send(verdict) && !parked?(digest, issue_id)) || false
+        end
+
+        def listed?(list, digest, issue_id)
+          return false if blank?(issue_id)
+
+          @slugs.any? do |slug|
+            @queue.public_send(list, slug, STAGE, issue_id: issue_id.to_s)
+                  .any? { |item| item.issue_id == issue_id.to_s && item.artifact_digest == digest.to_s }
+          end
+        end
+
+        def blank?(issue_id) = issue_id.to_s.empty?
       end
 
       # A re-sync's commit, handed to the queue only when it would itself be
