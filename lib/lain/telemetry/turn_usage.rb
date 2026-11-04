@@ -10,6 +10,7 @@ module Lain
         attribute :stop_reason
         attribute :usage, :lain_canonical
         attribute :spawn, default: nil
+        attribute :requester, default: nil
         validates :digest, presence: { message: "must name the committed turn, got nil" }
         validates :stop_reason, presence: { message: "must name why the model stopped, got nil" }
       end
@@ -34,15 +35,27 @@ module Lain
     # the run's own. A reader pairing a payment with the parent's request must
     # skip a child's, which can bill the parent's own model. The key is left out
     # of the run's own record, so its bytes are what they always were.
-    TurnUsage = Data.define(:digest, :model, :stop_reason, :usage, :spawn) do
+    #
+    # `requester` names who paid when it was not the agent, as on
+    # {RequestSent}: the judge's round trip is a payment, keyed by the request
+    # digest since it commits no turn, and never the chat's own.
+    TurnUsage = Data.define(:digest, :model, :stop_reason, :usage, :spawn, :requester) do
       include Journalable
 
-      def initialize(digest:, model:, stop_reason:, usage:, spawn: nil)
+      def initialize(digest:, model:, stop_reason:, usage:, spawn: nil, requester: nil)
         super(**Carriers::TurnUsage.settle!(digest:, model: model&.to_s, stop_reason: stop_reason&.to_sym, usage:,
-                                            spawn: spawn&.then { -_1.to_s }))
+                                            spawn: spawn&.then { -_1.to_s }, requester: requester&.then { -_1.to_s }))
       end
 
-      def to_journal = spawn ? super : super.except("spawn")
+      # A record with no requester predates the field and was the agent's.
+      def self.agent?(record) = RequestSent.agent?(record)
+
+      def agent? = self.class.agent?("requester" => requester)
+
+      def to_journal
+        journaled = spawn ? super : super.except("spawn")
+        requester ? journaled : journaled.except("requester")
+      end
     end
   end
 end

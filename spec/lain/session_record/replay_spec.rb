@@ -218,9 +218,9 @@ RSpec.describe Lain::SessionRecord::Replay do
   end
 
   describe "the requests a session has sent" do
-    def turn_usage(digest, spawn: nil)
+    def turn_usage(digest, spawn: nil, requester: nil)
       Lain::Telemetry::TurnUsage.new(digest:, model: "claude-opus-4-8", stop_reason: :end_turn,
-                                     usage: { "input_tokens" => 10 }, spawn:)
+                                     usage: { "input_tokens" => 10 }, spawn:, requester:)
     end
 
     it "counts each of the session's own turn_usage records on resume, and no spawned child's" do
@@ -228,6 +228,13 @@ RSpec.describe Lain::SessionRecord::Replay do
         .each { |record| journal << record }
 
       expect(described_class.new(journal_io.string.each_line).session(on: empty_chain).requests_sent).to eq(2)
+    end
+
+    it "counts no judge's payment as the session's request" do
+      [turn_usage("blake3:one"), turn_usage("blake3:judged", requester: :auto_approver)]
+        .each { |record| journal << record }
+
+      expect(described_class.new(journal_io.string.each_line).session(on: empty_chain).requests_sent).to eq(1)
     end
   end
 

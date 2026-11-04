@@ -36,6 +36,19 @@ RSpec.describe Lain::Role::Catalog do
     end
   end
 
+  # The judge reads nothing for itself: lain hands it every fact in one request.
+  describe "the auto approver" do
+    let(:role) { described_class.fetch(:auto_approver) }
+
+    it "stays in the catalog holding no tools, unattended and sealed" do
+      expect([role.only, role.unattended, role.sealed]).to eq([[], true, true])
+    end
+
+    it "keeps its prompt among the ones a project cannot rewrite" do
+      expect(described_class.approval_roles).to include(:auto_approver)
+    end
+  end
+
   describe "the researcher" do
     it "searches the tree beside reading and fetching" do
       expect(described_class.fetch(:researcher).only).to include(:grep, :glob, :read_file, :list_files)

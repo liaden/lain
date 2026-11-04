@@ -81,6 +81,9 @@ module Lain
       # @return [Boolean]
       def write?(path) = writes.held?(path)
 
+      # @return [Array<String>] every directory {#read?} holds, sorted, each as written and where it lands
+      def readable = DIRS.flat_map { spellings.fetch(_1) }.uniq.sort
+
       # @param path [String] an absolute landing
       # @return [Boolean]
       def exec?(path) = execs.exec?(path)

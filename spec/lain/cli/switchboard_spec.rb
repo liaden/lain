@@ -1420,10 +1420,12 @@ RSpec.describe Lain::CLI::Switchboard do
   describe "the facts the judge is told, over the production entry" do
     let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
     let(:prompts) { [] }
-    let(:spawn) do
+    let(:judge_provider) do
       Struct.new(:prompts) do
-        def never_parking = self
-        def call(_role, _mode, prompt) = prompts.push(prompt).then { Lain::Tool::Result.ok("deny") }
+        def complete(request, **)
+          prompts << request.messages.sole.fetch("content")
+          Lain::Response.new(content: [{ "type" => "text", "text" => "deny" }], stop_reason: :end_turn)
+        end
       end.new(prompts)
     end
 
@@ -1451,7 +1453,9 @@ RSpec.describe Lain::CLI::Switchboard do
       resolver ||= Lain::Shell::Executable::Resolver.new(root:, fresh:)
       Lain::CLI::Wiring::BoardBuild.for(
         chronicle:, options: { approval: "auto" }, model: "m", toolset: base, project:,
-        paths: Lain::Paths.new(env: { "HOME" => home }), judge: Lain::Approval::Judge.new(role_spawn: spawn),
+        paths: Lain::Paths.new(env: { "HOME" => home }),
+        judge: Lain::Approval::Judge.new(provider: judge_provider, model: "m",
+                                         slots: Lain::Prompt::Slots.new(fills: {})),
         verdict: Lain::CLI::Wiring::BoardBuild.shell_verdict(project:),
         arms: Lain::CLI::Arms.from(confine: "classes", judge_facts:),
         resolver:, request:,

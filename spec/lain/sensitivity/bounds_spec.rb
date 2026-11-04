@@ -153,6 +153,12 @@ RSpec.describe Lain::Sensitivity::Bounds do
     expect(paths.map { described_class::NONE.read?(_1) || described_class::NONE.write?(_1) }).to all(be(false))
   end
 
+  it "lists every directory it lets the agent read, each where it really lands too" do
+    bounds = described_class.of(reads: at("a"), writes: at("d")).with_child(at("to_c").first)
+
+    expect(bounds.readable).to eq([*at("a", "c", "d", "to_c")].sort)
+  end
+
   it "is deeply frozen" do
     expect(Ractor.shareable?(drawn | described_class::NONE)).to be(true)
   end

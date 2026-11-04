@@ -812,6 +812,22 @@ RSpec.describe Lain::StatusFeed do
     end
   end
 
+  # The judge's round trip is journaled as a payment, but its prompt is not the chat's context.
+  describe "the judge's payment" do
+    it "adds to the run's spend once and moves neither the window reading nor the cache deadline" do
+      feed = described_class.new(path:)
+      judged = Lain::Telemetry::TurnUsage.new(digest: "blake3:request", model: "claude-opus-4-8",
+                                              stop_reason: :end_turn, requester: :auto_approver,
+                                              usage: Lain::Usage.new(input_tokens: 500_000,
+                                                                     cache_read_input_tokens: 9).to_h)
+
+      feed << judged
+      described_class::ChildPayments.new(feed) << judged
+
+      expect(published.values_at("run_tokens", "occupancy", "cache_deadline")).to eq([500_009, nil, nil])
+    end
+  end
+
   describe "the derivation refusal streak" do
     it "starts at zero, because nothing has refused yet" do
       feed = described_class.new(path:)

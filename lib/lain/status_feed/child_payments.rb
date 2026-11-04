@@ -2,11 +2,12 @@
 
 module Lain
   class StatusFeed
-    # A session journal observer handing a spawned child's payments to the
-    # feed. The tee writes through that journal too, so every record the feed
-    # already folds passes here as well, and only the child's are taken.
+    # A session journal observer handing the feed every payment that is not the
+    # chat's own turn: a spawned child's, and the judge's. The tee writes through
+    # that journal too, so every record the feed already folds passes here as
+    # well, and only those are taken.
     class ChildPayments
-      # @param feed [#child_paid]
+      # @param feed [#paid_aside]
       def initialize(feed)
         @feed = feed
       end
@@ -14,7 +15,7 @@ module Lain
       # @param entry [Object] any record the journal wrote
       # @return [self]
       def <<(entry)
-        @feed.child_paid(entry) if entry.is_a?(Telemetry::TurnUsage) && entry.spawn
+        @feed.paid_aside(entry) if entry.is_a?(Telemetry::TurnUsage) && (entry.spawn || !entry.agent?)
         self
       end
     end

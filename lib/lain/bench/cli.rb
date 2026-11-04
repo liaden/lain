@@ -786,7 +786,7 @@ module Lain
       # the zero is not a measurement.
       def unmeasured?(records)
         records.any? { |record| record["type"] == "truncated_stream" } &&
-          records.select { |record| record["type"] == "turn_usage" && !record.key?("spawn") }
+          records.select { _1["type"] == "turn_usage" && !_1.key?("spawn") && Telemetry::TurnUsage.agent?(_1) }
                  .all? { |record| record["usage"].to_h.values.grep(Numeric).all?(&:zero?) }
       end
 

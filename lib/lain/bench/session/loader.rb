@@ -272,7 +272,7 @@ module Lain
 
         # A spawned child may run another model on purpose, so only the agent's own calls say what served the run.
         def served_models
-          agent_usage = of_type("turn_usage").reject { |record| record.key?("spawn") }
+          agent_usage = of_type("turn_usage").select { !_1.key?("spawn") && Telemetry::TurnUsage.agent?(_1) }
           agent_usage.filter_map { |record| record["model"] }.uniq.sort
         end
 

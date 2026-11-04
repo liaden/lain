@@ -212,7 +212,7 @@ module Lain
         def observe(record)
           case record["type"]
           when "request_sent" then @pending = record if Telemetry::RequestSent.agent?(record)
-          when "turn_usage" then pair(record) if record["spawn"].nil?
+          when "turn_usage" then pair(record) if record["spawn"].nil? && Telemetry::TurnUsage.agent?(record)
           when "capability_degraded" then @capabilities << record["capability"]
           end
         end

@@ -8,22 +8,25 @@ require "tmpdir"
 
 # Support kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
 module JudgedSpecSupport
-  # A {Skill::RoleSpawn} stand-in: counts every spawn and answers each through
-  # the injected block.
-  class ScriptedRoleSpawn
-    attr_reader :calls
+  # A provider stand-in: records the question each request asks and answers
+  # it with the text the injected block returns. A raise is a failed round trip.
+  class ScriptedProvider
+    attr_reader :prompts
 
-    def initialize(calls = [], &answer)
+    def initialize(&answer)
       @answer = answer
-      @calls = calls
+      @prompts = []
     end
 
-    def never_parking = self.class.new(@calls, &@answer)
-
-    def call(role, context_mode, prompt)
-      @calls << { role:, context_mode:, prompt: }
-      @answer.call(prompt)
+    def complete(request, **)
+      prompt = request.messages.sole.fetch("content")
+      @prompts << prompt
+      Lain::Response.new(content: [{ "type" => "text", "text" => @answer.call(prompt) }], stop_reason: :end_turn)
     end
+  end
+
+  def self.judge(provider, **)
+    Lain::Approval::Judge.new(provider:, model: "judge-model", slots: Lain::Prompt::Slots.new(fills: {}), **)
   end
 
   # A context the way {Middleware::WithholdAutomaticOutput} hands one over: a
@@ -48,12 +51,12 @@ RSpec.describe Lain::Approval::Judged do
                                    automatic_approval_barred: false)
   end
 
-  def spawn_answering(text = nil, &answer)
-    JudgedSpecSupport::ScriptedRoleSpawn.new(&answer || ->(_) { Lain::Tool::Result.ok(text) })
+  def answering(text = nil, &answer)
+    JudgedSpecSupport::ScriptedProvider.new(&answer || ->(_) { text })
   end
 
-  def rung(spawn, asking: Lain::Approval::Escalation::Surfaces.new(queue), timeout: 30, under: policy, **rest)
-    described_class.new(judge: Lain::Approval::Judge.new(role_spawn: spawn, timeout:), policy: under, asking:,
+  def rung(scripted, asking: Lain::Approval::Escalation::Surfaces.new(queue), timeout: 30, under: policy, **rest)
+    described_class.new(judge: JudgedSpecSupport.judge(scripted, timeout:), policy: under, asking:,
                         journal:, **rest)
   end
 
@@ -82,24 +85,24 @@ RSpec.describe Lain::Approval::Judged do
   end
 
   it "names itself auto" do
-    expect(rung(spawn_answering("approve")).name).to eq("auto")
+    expect(rung(answering("approve")).name).to eq("auto")
   end
 
   it "applies a clear approve with automatic authority and parks nothing" do
-    ruling = ruled(rung(spawn_answering("approve")), bash)
+    ruling = ruled(rung(answering("approve")), bash)
 
     expect([ruling.verdict, ruling.authority, ruling.rung]).to eq([:allow, :automatic, "auto"])
     expect(queue.to_a).to be_empty
   end
 
   it "applies a judge deny, not final" do
-    ruling = ruled(rung(spawn_answering("deny")), bash)
+    ruling = ruled(rung(answering("deny")), bash)
 
     expect([ruling.verdict, ruling.final?]).to eq([:deny, false])
   end
 
   it "parks an unsure call for the human, journaling that the judge deferred" do
-    ruling = ruled(rung(spawn_answering("defer")), bash) do |pending|
+    ruling = ruled(rung(answering("defer")), bash) do |pending|
       pending.approve(surface: "human_spec", authority: :human)
     end
 
@@ -109,7 +112,7 @@ RSpec.describe Lain::Approval::Judged do
   end
 
   it "names the requester on the record of a deferral" do
-    ruled(rung(spawn_answering("defer")), bash, within: context.with(requester: "researcher")) do |pending|
+    ruled(rung(answering("defer")), bash, within: context.with(requester: "researcher")) do |pending|
       pending.approve(surface: "human_spec")
     end
 
@@ -119,16 +122,16 @@ RSpec.describe Lain::Approval::Judged do
   it "names the main agent on the record of a deferral when the context names nobody" do
     nameless = Data.define(:worker_env).new(worker_env: context.worker_env)
 
-    ruled(rung(spawn_answering("defer")), bash, within: nameless) { |pending| pending.approve(surface: "human_spec") }
+    ruled(rung(answering("defer")), bash, within: nameless) { |pending| pending.approve(surface: "human_spec") }
 
     expect(escalations.sole).to include("reason" => "deferred", "requester" => "agent")
   end
 
   describe "the request the judge is told" do
     def prompt_under(request, within: context)
-      spawn = spawn_answering("defer")
-      ruled(rung(spawn, request:), bash, within:) { |pending| pending.approve(surface: "human_spec") }
-      spawn.calls.sole[:prompt]
+      scripted = answering("defer")
+      ruled(rung(scripted, request:), bash, within:) { |pending| pending.approve(surface: "human_spec") }
+      scripted.prompts.sole
     end
 
     it "tells the judge the human's last line as the user's request" do
@@ -177,9 +180,9 @@ RSpec.describe Lain::Approval::Judged do
         Lain::Compaction::Derivation.new(strategy:, keep_last: 3).derive(history)
       end
 
-      def judging(spawn)
+      def judging(scripted)
         allow(Lain::CLI::Wiring::BoardBuild).to receive(:for).and_wrap_original do |original, **kwargs|
-          original.call(**kwargs, judge: Lain::Approval::Judge.new(role_spawn: spawn, timeout: 5))
+          original.call(**kwargs, judge: JudgedSpecSupport.judge(scripted, timeout: 5))
         end
       end
 
@@ -219,23 +222,22 @@ RSpec.describe Lain::Approval::Judged do
       end
 
       it "tells the judge the line the human typed, never the recap the model was shown" do
-        spawn = spawn_answering("deny")
-        judging(spawn)
+        scripted = answering("deny")
+        judging(scripted)
 
         Dir.mktmpdir("lain-judged-recap") { |dir| run_typing("list the files", File.realpath(dir)) }
 
         expect(Lain::Canonical.dump(mock.requests.first.messages)).to include(recap_text)
-        expect(spawn.calls.sole[:context_mode]).to eq(:fresh)
-        expect(spawn.calls.sole[:prompt].lines.map(&:chomp)).to include('the user\'s request: "list the files"')
-        expect(spawn.calls.sole[:prompt]).not_to include("delete prod")
+        expect(scripted.prompts.sole.lines.map(&:chomp)).to include('the user\'s request: "list the files"')
+        expect(scripted.prompts.sole).not_to include("delete prod")
       end
     end
 
     it "tells the judge no request by default" do
-      spawn = spawn_answering("defer")
-      ruled(rung(spawn), bash) { |pending| pending.approve(surface: "human_spec") }
+      scripted = answering("defer")
+      ruled(rung(scripted), bash) { |pending| pending.approve(surface: "human_spec") }
 
-      expect(spawn.calls.sole[:prompt]).not_to include("the user's request", "model-written")
+      expect(scripted.prompts.sole).not_to include("the user's request", "model-written")
     end
   end
 
@@ -243,21 +245,21 @@ RSpec.describe Lain::Approval::Judged do
     let(:told) { [] }
 
     it "tells the display which call the judge approved" do
-      ruled(rung(spawn_answering("approve"), display: told), bash("git log --oneline -5"))
+      ruled(rung(answering("approve"), display: told), bash("git log --oneline -5"))
 
       expect(told).to eq([Lain::Telemetry::JudgeRuled.new(call: 'bash({"command" => "git log --oneline -5"})',
                                                           verdict: "approved")])
     end
 
     it "tells the display which call the judge denied" do
-      ruled(rung(spawn_answering("deny"), display: told), bash("ls -la /home/u"))
+      ruled(rung(answering("deny"), display: told), bash("ls -la /home/u"))
 
       expect(told).to eq([Lain::Telemetry::JudgeRuled.new(call: 'bash({"command" => "ls -la /home/u"})',
                                                           verdict: "denied")])
     end
 
     it "tells the model the judge refused the call and a human can still approve it" do
-      ruling = ruled(rung(spawn_answering("deny")), bash("ls -la /home/u"))
+      ruling = ruled(rung(answering("deny")), bash("ls -la /home/u"))
 
       expect(ruling.said).to eq("the judge refused this call; that is a model's answer, not a human's, and a " \
                                 "human can still approve it by switching approval to ask, so tell the user what " \
@@ -265,7 +267,7 @@ RSpec.describe Lain::Approval::Judged do
     end
 
     it "tells the parked row why the judge did not look at an opaque command" do
-      ruled(rung(spawn_answering("approve")), bash("cd $D && cat notes.txt")) do |pending|
+      ruled(rung(answering("approve")), bash("cd $D && cat notes.txt")) do |pending|
         expect(pending.notes).to eq(["the judge did not look: its paths cannot be named"])
         pending.deny(surface: "human_spec")
       end
@@ -275,42 +277,42 @@ RSpec.describe Lain::Approval::Judged do
     end
 
     it "tells the parked row why the judge did not look at a path it may not weigh" do
-      ruled(rung(spawn_answering("approve")), call("read_file", { "path" => ".env" })) do |pending|
+      ruled(rung(answering("approve")), call("read_file", { "path" => ".env" })) do |pending|
         expect(pending.notes).to eq(["the judge did not look: .env is not a path it may weigh"])
         pending.deny(surface: "human_spec")
       end
     end
 
     it "tells the parked row why the judge did not look at a call barred from automatic approval" do
-      ruled(rung(spawn_answering("approve")), bash, within: context.with(automatic_approval_barred: true)) do |pending|
+      ruled(rung(answering("approve")), bash, within: context.with(automatic_approval_barred: true)) do |pending|
         expect(pending.notes).to eq(["the judge did not look: this command is barred from automatic approval"])
         pending.deny(surface: "human_spec")
       end
     end
 
     it "marks the parked call as one the judge deferred" do
-      ruled(rung(spawn_answering("defer")), bash) do |pending|
+      ruled(rung(answering("defer")), bash) do |pending|
         expect(pending.reasons.map(&:to_s)).to eq([described_class::DEFERRAL_NOTE])
         pending.approve(surface: "human_spec")
       end
     end
 
     it "keeps the requester and directory of the call it marks" do
-      ruled(rung(spawn_answering("defer")), bash) do |pending|
+      ruled(rung(answering("defer")), bash) do |pending|
         expect([pending.requester, pending.cwd]).to eq(["main", root])
         pending.approve(surface: "human_spec")
       end
     end
 
     it "does not mark a call the judge faulted on" do
-      ruled(rung(spawn_answering { Lain::Tool::Result.error("approve") }), bash) do |pending|
+      ruled(rung(answering { raise(IOError, "approve") }), bash) do |pending|
         expect(pending.reasons.map(&:own?)).not_to include(true)
         pending.deny(surface: "human_spec")
       end
     end
 
     it "does not mark a call it never judged" do
-      ruled(rung(spawn_answering("approve")), bash("cat ~/.ssh/id_rsa")) do |pending|
+      ruled(rung(answering("approve")), bash("cat ~/.ssh/id_rsa")) do |pending|
         expect(pending.reasons.map(&:own?)).not_to include(true)
         pending.deny(surface: "human_spec")
       end
@@ -327,7 +329,7 @@ RSpec.describe Lain::Approval::Judged do
   end
 
   it "parks after the bound when the judge hangs, journaling a fault" do
-    hung = spawn_answering { sleep 5 }
+    hung = answering { sleep 5 }
 
     outcome = ruled(rung(hung, timeout: 0.05), bash) { |pending| pending.deny(surface: "human_spec") }
 
@@ -339,9 +341,9 @@ RSpec.describe Lain::Approval::Judged do
   # The fault travels beside the asking rung's answer, so that answer is the
   # surface's own and the ladder's edge decides what a fault suppresses.
   it "hands a judge fault up in the outcome, leaving the asking rung's ruling as it was" do
-    spawn = spawn_answering { raise IOError, "provider down" }
+    scripted = answering { raise IOError, "provider down" }
 
-    outcome = ruled(rung(spawn), bash) { |pending| pending.approve(surface: "tty", authority: :human) }
+    outcome = ruled(rung(scripted), bash) { |pending| pending.approve(surface: "tty", authority: :human) }
 
     expect(outcome).to be_a(Lain::Approval::Ladder::Outcome)
     expect([outcome.decision.verdict, outcome.decision.fault?, outcome.faults.map(&:rung)])
@@ -349,7 +351,7 @@ RSpec.describe Lain::Approval::Judged do
   end
 
   it "tells the parked row the judge could not be asked, without the exception text" do
-    hung = spawn_answering { sleep 5 }
+    hung = answering { sleep 5 }
 
     ruled(rung(hung, timeout: 0.05), bash) do |pending|
       expect(pending.notes).to eq(["the judge could not be asked (it timed out or failed)"])
@@ -359,32 +361,32 @@ RSpec.describe Lain::Approval::Judged do
     expect(escalations.sole["note"]).to be_nil
   end
 
-  it "parks a judge's error result as a fault" do
-    spawn = spawn_answering { Lain::Tool::Result.error("approve") }
+  it "parks a failed round trip as a fault" do
+    scripted = answering { raise(IOError, "approve") }
 
-    ruled(rung(spawn), bash) { |pending| pending.deny(surface: "human_spec") }
+    ruled(rung(scripted), bash) { |pending| pending.deny(surface: "human_spec") }
 
     expect(escalations.sole).to include("reason" => "fault", "faulted" => true)
   end
 
   it "journals what made the judge fault" do
-    spawn = spawn_answering { raise IOError, "provider down" }
+    scripted = answering { raise IOError, "provider down" }
 
-    ruled(rung(spawn), bash) { |pending| pending.deny(surface: "human_spec") }
+    ruled(rung(scripted), bash) { |pending| pending.deny(surface: "human_spec") }
 
     expect(escalations.sole).to include("reason" => "fault", "error" => "IOError: provider down")
   end
 
-  it "journals an error result as what made the judge fault" do
-    spawn = spawn_answering { Lain::Tool::Result.error("cannot restrict to absent tools: grep") }
+  it "journals a failed round trip's message as what made the judge fault" do
+    scripted = answering { raise(IOError, "cannot restrict to absent tools: grep") }
 
-    ruled(rung(spawn), bash) { |pending| pending.deny(surface: "human_spec") }
+    ruled(rung(scripted), bash) { |pending| pending.deny(surface: "human_spec") }
 
     expect(escalations.sole["error"]).to include("cannot restrict to absent tools: grep")
   end
 
   it "does not let an automatic surface's allow stand over a judge fault" do
-    ladder = Lain::Approval::Escalation.new([rung(spawn_answering { raise IOError, "down" })], journal:)
+    ladder = Lain::Approval::Escalation.new([rung(answering { raise IOError, "down" })], journal:)
 
     ruling = Sync do |task|
       settled = task.async { ladder.rule(bash, context) }
@@ -396,18 +398,32 @@ RSpec.describe Lain::Approval::Judged do
   end
 
   it "hands the judge the requester the context names" do
-    spawn = spawn_answering("approve")
+    scripted = answering("approve")
 
-    ruled(rung(spawn), bash, within: context.with(requester: "researcher-7"))
+    ruled(rung(scripted), bash, within: context.with(requester: "researcher-7"))
 
-    expect(spawn.calls.sole[:prompt]).to include("researcher-7")
+    expect(scripted.prompts.sole).to include("researcher-7")
   end
 
   describe "what the judge is told about where the call runs" do
     def prompt_for(effect, within: context)
-      spawn = spawn_answering("approve")
-      ruled(rung(spawn), effect, within:)
-      spawn.calls.sole[:prompt].lines.map(&:strip)
+      scripted = answering("approve")
+      ruled(rung(scripted), effect, within:)
+      scripted.prompts.sole.lines.map(&:strip)
+    end
+
+    it "names the read roots of the requester's own bounds" do
+      bounds = Lain::Sensitivity::Bounds.of(reads: ["/state/epics/demo"], writes: ["/state/leases/r1"])
+      bounded = context.with(worker_env: Lain::WorkerEnv.new(cwd: "/state/leases/r1", env: {}, bounds:))
+
+      expect(prompt_for(bash("ls"), within: bounded))
+        .to include('read roots: "/state/epics/demo", "/state/leases/r1"')
+    end
+
+    it "names each path the call names with how lain classified it" do
+      readme = "#{root}/README.md"
+
+      expect(prompt_for(bash("cat #{readme}"))).to include("named paths: #{readme.inspect} (ordinary)")
     end
 
     it "names a leased child's own tree as the project root, the human's checkout, and the requester" do
@@ -512,21 +528,21 @@ RSpec.describe Lain::Approval::Judged do
       related = Lain::Sensitivity::Rules.new(related: ["#{home}/notes"])
       under = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root, root:, rules: related),
                                             home:, root:)
-      spawn = spawn_answering("approve")
+      scripted = answering("approve")
 
-      settled(rung(spawn, under:), bash("ls ~/notes"))
+      settled(rung(scripted, under:), bash("ls ~/notes"))
 
-      expect(spawn.calls.sole[:prompt]).to include("outside the project root: none")
+      expect(scripted.prompts.sole).to include("outside the project root: none")
     end
 
     it "shows the project root itself as not outside when the root is spelled with a trailing slash" do
       slashed = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root, root: "#{root}/"),
                                               home:, root: "#{root}/")
-      spawn = spawn_answering("approve")
+      scripted = answering("approve")
 
-      settled(rung(spawn, under: slashed), bash("ls #{root}"))
+      settled(rung(scripted, under: slashed), bash("ls #{root}"))
 
-      expect(spawn.calls.sole[:prompt]).to include("outside the project root: none")
+      expect(scripted.prompts.sole).to include("outside the project root: none")
     end
 
     it "shows a path inside the project as not outside" do
@@ -565,9 +581,9 @@ RSpec.describe Lain::Approval::Judged do
     end
 
     def prompt_under(effect, **rest)
-      spawn = spawn_answering("approve")
-      ruled(rung(spawn, **rest), effect)
-      spawn.calls.sole[:prompt]
+      scripted = answering("approve")
+      ruled(rung(scripted, **rest), effect)
+      scripted.prompts.sole
     end
 
     it "asks for a bash call's facts at the directory it runs in, and tells the judge them" do
@@ -610,7 +626,7 @@ RSpec.describe Lain::Approval::Judged do
     end
 
     def answered(verdict, *stages)
-      settled(rung(spawn_answering(verdict), facts: told(*stages)), bash)
+      settled(rung(answering(verdict), facts: told(*stages)), bash)
     end
 
     def makefile(fresh: false)
@@ -627,7 +643,7 @@ RSpec.describe Lain::Approval::Judged do
 
     def parked(*stages, within: context)
       pending = nil
-      ruling = ruled(rung(spawn_answering("approve"), facts: told(*stages)), bash, within:) do |parked|
+      ruling = ruled(rung(answering("approve"), facts: told(*stages)), bash, within:) do |parked|
         pending = parked
         Lain::Frontend::ApprovalPolicy.new(output: asked_human, input: StringIO.new("n\n")).decide(parked)
       end
@@ -692,7 +708,7 @@ RSpec.describe Lain::Approval::Judged do
         facts = Lain::Approval::Judge::Facts::Resolving.new(verdict: Lain::Shell::Verdict.new, stages:)
         effect = bash("./bin/cat README.md", "cwd" => project)
 
-        ruling = settled(rung(spawn_answering("approve"), facts:), effect)
+        ruling = settled(rung(answering("approve"), facts:), effect)
 
         expect([ruling.verdict, ruling.rung]).to eq([:deny, "surfaces"])
         expect(escalations.sole).to include("rung" => "auto", "verdict" => "abstain", "reason" => "bar",
@@ -703,47 +719,47 @@ RSpec.describe Lain::Approval::Judged do
 
   describe "tier 0" do
     it "never asks the judge about a read on a credential-named path, and parks it" do
-      spawn = spawn_answering("approve")
+      scripted = answering("approve")
 
-      ruling = ruled(rung(spawn), call("read_file", { "path" => ".env" })) do |pending|
+      ruling = ruled(rung(scripted), call("read_file", { "path" => ".env" })) do |pending|
         pending.deny(surface: "human_spec")
       end
 
-      expect(spawn.calls).to be_empty
+      expect(scripted.prompts).to be_empty
       expect(ruling.rung).to eq("surfaces")
       expect(escalations.sole).to include("rung" => "auto", "verdict" => "abstain", "reason" => "unjudgeable",
                                           "tool" => "read_file")
     end
 
     it "never asks the judge about a write on a protected path or a command run in a named secret directory" do
-      spawn = spawn_answering("approve")
+      scripted = answering("approve")
       effects = [call("write_file", { "path" => ".lain/config.rb", "content" => "x" }), bash("ls", "cwd" => "secrets")]
 
       parked = effects.map do |effect|
         tool = nil
-        ruled(rung(spawn), effect) do |pending|
+        ruled(rung(scripted), effect) do |pending|
           tool = pending.tool.to_s
           pending.deny(surface: "human_spec")
         end
         tool
       end
 
-      expect(spawn.calls).to be_empty
+      expect(scripted.prompts).to be_empty
       expect(parked).to eq(%w[write_file bash])
       expect(escalations.map { _1["reason"] }).to eq(%w[unjudgeable unjudgeable])
     end
 
     describe "a bash command" do
       def parked_unjudged(command, under: policy, **rest)
-        spawn = spawn_answering("approve")
-        ruling = ruled(rung(spawn, under:), bash(command, **rest)) { |pending| pending.deny(surface: "human_spec") }
-        [ruling.rung, spawn.calls.size, escalations.last&.slice("rung", "reason", "tool")]
+        scripted = answering("approve")
+        ruling = ruled(rung(scripted, under:), bash(command, **rest)) { |pending| pending.deny(surface: "human_spec") }
+        [ruling.rung, scripted.prompts.size, escalations.last&.slice("rung", "reason", "tool")]
       end
 
       def judged?(command, under: policy)
-        spawn = spawn_answering("approve")
-        settled(rung(spawn, under:), bash(command))
-        spawn.calls.size == 1
+        scripted = answering("approve")
+        settled(rung(scripted, under:), bash(command))
+        scripted.prompts.size == 1
       end
 
       it "never asks the judge about a read of a credential, and parks it" do
@@ -758,11 +774,11 @@ RSpec.describe Lain::Approval::Judged do
       end
 
       it "never asks the judge about a named secret the user's request asked for" do
-        spawn = spawn_answering("approve")
+        scripted = answering("approve")
         asked = Lain::Approval::Judge::Request.new(text: "print .env", model_written: false)
-        settled(rung(spawn, request: ->(_context) { asked }), bash("cat .env"))
+        settled(rung(scripted, request: ->(_context) { asked }), bash("cat .env"))
 
-        expect(spawn.calls).to be_empty
+        expect(scripted.prompts).to be_empty
       end
 
       it "never asks the judge about a command whose paths it cannot name" do
@@ -784,9 +800,9 @@ RSpec.describe Lain::Approval::Judged do
 
       it "judges a command keyed by symbol, and parks one with no readable command rather than faulting" do
         asked = [{ command: "ls src" }, nil, "ls src", { "command" => %w[ls src] }].map do |input|
-          spawn = spawn_answering("approve")
-          ruling = settled(rung(spawn), call("bash", input))
-          [ruling.verdict, spawn.calls.size]
+          scripted = answering("approve")
+          ruling = settled(rung(scripted), call("bash", input))
+          [ruling.verdict, scripted.prompts.size]
         end
 
         expect(asked).to eq([[:allow, 1], [:deny, 0], [:deny, 0], [:deny, 0]])
@@ -819,20 +835,20 @@ RSpec.describe Lain::Approval::Judged do
       end
 
       it "still asks the judge about an ordinary command" do
-        spawn = spawn_answering("approve")
+        scripted = answering("approve")
 
-        ruling = ruled(rung(spawn), bash("git log --oneline -5"))
+        ruling = ruled(rung(scripted), bash("git log --oneline -5"))
 
-        expect([ruling.verdict, spawn.calls.size]).to eq([:allow, 1])
+        expect([ruling.verdict, scripted.prompts.size]).to eq([:allow, 1])
       end
     end
 
     it "judges a call whose path is ordinary" do
-      spawn = spawn_answering("approve")
+      scripted = answering("approve")
 
-      ruling = ruled(rung(spawn), call("write_file", { "path" => "lib/a.rb", "content" => "x" }))
+      ruling = ruled(rung(scripted), call("write_file", { "path" => "lib/a.rb", "content" => "x" }))
 
-      expect([ruling.verdict, spawn.calls.size]).to eq([:allow, 1])
+      expect([ruling.verdict, scripted.prompts.size]).to eq([:allow, 1])
     end
 
     describe "through the policy's file facts" do
@@ -844,22 +860,22 @@ RSpec.describe Lain::Approval::Judged do
 
       it "weighs a glob's matches as the facts list them, with nothing on disk" do
         allow(facts).to receive(:glob).and_return([".env"])
-        spawn = spawn_answering("approve")
+        scripted = answering("approve")
 
-        settled(rung(spawn), bash("cat *env"), within: context)
+        settled(rung(scripted), bash("cat *env"), within: context)
 
-        expect(spawn.calls).to be_empty
+        expect(scripted.prompts).to be_empty
       end
 
       it "names the git store where the facts say a walked .git is a directory, with nothing on disk" do
         allow(facts).to receive(:directory?).and_call_original
         allow(facts).to receive(:directory?).with("#{root}/.git").and_return(true)
         allow(facts).to receive(:each_child) { |directory, &each| each.call(".git") if directory == root }
-        spawn = spawn_answering("approve")
+        scripted = answering("approve")
 
-        settled(rung(spawn), bash("grep -r needle ."), within: context)
+        settled(rung(scripted), bash("grep -r needle ."), within: context)
 
-        expect(spawn.calls).to be_empty
+        expect(scripted.prompts).to be_empty
       end
     end
 
@@ -875,9 +891,9 @@ RSpec.describe Lain::Approval::Judged do
       let(:root) { File.join(home, "project") }
 
       def asked_about(effect, within)
-        spawn = spawn_answering("approve")
-        settled(rung(spawn), effect, within:)
-        spawn.calls.size
+        scripted = answering("approve")
+        settled(rung(scripted), effect, within:)
+        scripted.prompts.size
       end
 
       it "never asks the judge about an ordinary name that links to a credential" do
@@ -922,7 +938,7 @@ RSpec.describe Lain::Approval::Judged do
           FileUtils.mkdir_p(many)
           (described_class::Reach::MATCHES + 1).times { File.write(File.join(many, "f#{_1}.txt"), "") }
 
-          ruled(rung(spawn_answering("approve")), bash("cat many/*.txt")) do |pending|
+          ruled(rung(answering("approve")), bash("cat many/*.txt")) do |pending|
             expect(pending.notes).to eq(["the judge did not look: it reaches more files than the judge weighs"])
             pending.deny(surface: "human_spec")
           end
@@ -1017,27 +1033,27 @@ RSpec.describe Lain::Approval::Judged do
         end
 
         it "hands git log -p down without asking, naming the object store, though .git/config is not gated" do
-          spawn = spawn_answering("approve")
+          scripted = answering("approve")
           notes = nil
-          ruled(rung(spawn, under: ungated), bash("git log -p")) do |pending|
+          ruled(rung(scripted, under: ungated), bash("git log -p")) do |pending|
             notes = pending.notes
             pending.deny(surface: "human_spec")
           end
 
-          expect([spawn.calls.size, notes]).to eq([0, [store]])
+          expect([scripted.prompts.size, notes]).to eq([0, [store]])
         end
 
         it "still asks the judge about a short log that prints no bodies" do
-          spawn = spawn_answering("approve")
+          scripted = answering("approve")
 
-          ruling = ruled(rung(spawn, under: ungated), bash("git log --oneline -5"))
+          ruling = ruled(rung(scripted, under: ungated), bash("git log --oneline -5"))
 
-          expect([ruling.verdict, spawn.calls.size]).to eq([:allow, 1])
+          expect([ruling.verdict, scripted.prompts.size]).to eq([:allow, 1])
         end
 
         it "names the git store for git show under the default policy, not an unweighable .git/config" do
           notes = nil
-          ruled(rung(spawn_answering("approve")), bash("git show HEAD~1")) do |pending|
+          ruled(rung(answering("approve")), bash("git show HEAD~1")) do |pending|
             notes = pending.notes
             pending.deny(surface: "human_spec")
           end
@@ -1047,7 +1063,7 @@ RSpec.describe Lain::Approval::Judged do
 
         it "names the git store for grep -r over a real .git directory" do
           notes = nil
-          ruled(rung(spawn_answering("approve"), under: ungated), bash("grep -r x .")) do |pending|
+          ruled(rung(answering("approve"), under: ungated), bash("grep -r x .")) do |pending|
             notes = pending.notes
             pending.deny(surface: "human_spec")
           end
@@ -1063,7 +1079,7 @@ RSpec.describe Lain::Approval::Judged do
         it "hands git log -p and git show down naming the store in a linked worktree, where .git is a pointer" do
           link_worktree
           notes = ["git log -p", "git show HEAD~1"].map do |command|
-            ruled(rung(spawn_answering("approve"), under: ungated), bash(command)) do |pending|
+            ruled(rung(answering("approve"), under: ungated), bash(command)) do |pending|
               @last = pending.notes
               pending.deny(surface: "human_spec")
             end
@@ -1076,7 +1092,7 @@ RSpec.describe Lain::Approval::Judged do
         it "hands down a git whose program word is spelled by path or quoted, in a linked worktree" do
           link_worktree
           notes = ["/usr/bin/git log -p", "'git' log -p", '"git" log -p'].map do |command|
-            ruled(rung(spawn_answering("approve"), under: ungated), bash(command)) do |pending|
+            ruled(rung(answering("approve"), under: ungated), bash(command)) do |pending|
               @last = pending.notes
               pending.deny(surface: "human_spec")
             end
@@ -1089,9 +1105,9 @@ RSpec.describe Lain::Approval::Judged do
         it "judges a search that merely mentions git, in a linked worktree" do
           link_worktree
           asked = ["echo git && grep -r x .", "grep -r git ."].map do |command|
-            spawn = spawn_answering("approve")
-            ruled(rung(spawn, under: ungated), bash(command))
-            spawn.calls.size
+            scripted = answering("approve")
+            ruled(rung(scripted, under: ungated), bash(command))
+            scripted.prompts.size
           end
 
           expect(asked).to eq([1, 1])
@@ -1099,17 +1115,17 @@ RSpec.describe Lain::Approval::Judged do
 
         it "still asks the judge about grep -r in a linked worktree, which finds no store there" do
           link_worktree
-          spawn = spawn_answering("approve")
+          scripted = answering("approve")
 
-          ruling = ruled(rung(spawn, under: ungated), bash("grep -r x ."))
+          ruling = ruled(rung(scripted, under: ungated), bash("grep -r x ."))
 
-          expect([ruling.verdict, spawn.calls.size]).to eq([:allow, 1])
+          expect([ruling.verdict, scripted.prompts.size]).to eq([:allow, 1])
         end
 
         def unattended(command)
-          spawn = spawn_answering("approve")
-          ruling = ruled(rung(spawn, asking: described_class::Unattended.new), bash(command))
-          [ruling.verdict, spawn.calls.size, escalations.last&.fetch("note", nil)]
+          scripted = answering("approve")
+          ruling = ruled(rung(scripted, asking: described_class::Unattended.new), bash(command))
+          [ruling.verdict, scripted.prompts.size, escalations.last&.fetch("note", nil)]
         end
 
         it "unattended, asks the judge about a checkout-local add and commit, which name .git but not the store" do
@@ -1194,7 +1210,7 @@ RSpec.describe Lain::Approval::Judged do
     def as(requester) = context.with(requester:)
 
     it "applies a judge deny under off, exactly as with no arm given" do
-      ruling = ruled(rung(spawn_answering("deny"), denials: under(:off)), bash)
+      ruling = ruled(rung(answering("deny"), denials: under(:off)), bash)
 
       expect([ruling.verdict, ruling.rung, ruling.reason]).to eq([:deny, "auto", described_class::DENIED])
       expect(queue.to_a).to be_empty
@@ -1202,7 +1218,7 @@ RSpec.describe Lain::Approval::Judged do
 
     describe "escalate_only" do
       it "parks a judge deny for a human, telling them the judge would have refused it" do
-        ruling = ruled(rung(spawn_answering("deny"), denials: under(:escalate_only)), bash) do |pending|
+        ruling = ruled(rung(answering("deny"), denials: under(:escalate_only)), bash) do |pending|
           expect(pending.reasons.map(&:to_s)).to eq([described_class::WOULD_DENY_NOTE])
           pending.approve(surface: "human_spec", authority: :human)
         end
@@ -1212,7 +1228,7 @@ RSpec.describe Lain::Approval::Judged do
       end
 
       it "journals its own ruling as an abstention whose reason names the judge's deny" do
-        ruled(rung(spawn_answering("deny"), denials: under(:escalate_only)), bash) do |pending|
+        ruled(rung(answering("deny"), denials: under(:escalate_only)), bash) do |pending|
           pending.deny(surface: "human_spec")
         end
 
@@ -1223,7 +1239,7 @@ RSpec.describe Lain::Approval::Judged do
 
       it "still tells the display the judge denied the call" do
         told = []
-        escalating = rung(spawn_answering("deny"), denials: under(:escalate_only), display: told)
+        escalating = rung(answering("deny"), denials: under(:escalate_only), display: told)
         ruled(escalating, bash("ls -la /home/u")) { |pending| pending.deny(surface: "human_spec") }
 
         expect(told).to eq([Lain::Telemetry::JudgeRuled.new(call: 'bash({"command" => "ls -la /home/u"})',
@@ -1231,8 +1247,8 @@ RSpec.describe Lain::Approval::Judged do
       end
 
       it "refuses it through the unattended rung as a plain deny when nobody is attached" do
-        ruling = ruled(rung(spawn_answering("deny"), denials: under(:escalate_only),
-                                                     asking: described_class::Unattended.new), bash)
+        ruling = ruled(rung(answering("deny"), denials: under(:escalate_only),
+                                               asking: described_class::Unattended.new), bash)
 
         expect([ruling.verdict, ruling.reason]).to eq([:deny, described_class::Unattended::BECAUSE])
       end
@@ -1242,15 +1258,15 @@ RSpec.describe Lain::Approval::Judged do
       let(:breaker) { under(:breaker) }
 
       it "stops asking the judge for a requester it denied 3 times in a row, and parks the 4th call" do
-        spawn = spawn_answering("deny")
-        3.times { ruled(rung(spawn, denials: breaker), bash) }
+        scripted = answering("deny")
+        3.times { ruled(rung(scripted, denials: breaker), bash) }
 
-        ruling = ruled(rung(spawn, denials: breaker), bash) do |pending|
+        ruling = ruled(rung(scripted, denials: breaker), bash) do |pending|
           expect(pending.reasons.map(&:to_s)).to eq([described_class::BROKEN_NOTE])
           pending.deny(surface: "human_spec", authority: :human)
         end
 
-        expect([spawn.calls.size, ruling.rung]).to eq([3, "surfaces"])
+        expect([scripted.prompts.size, ruling.rung]).to eq([3, "surfaces"])
         expect(escalations.last).to include("rung" => "auto", "verdict" => "abstain",
                                             "reason" => described_class::BROKEN)
         expect(journal_records(journal_io, "judge_breaker_tripped").sole)
@@ -1258,9 +1274,9 @@ RSpec.describe Lain::Approval::Judged do
       end
 
       it "keeps the reason the judge did not look on a tripped requester's call it would never have judged" do
-        3.times { ruled(rung(spawn_answering("deny"), denials: breaker), bash) }
+        3.times { ruled(rung(answering("deny"), denials: breaker), bash) }
 
-        ruled(rung(spawn_answering("deny"), denials: breaker), call("read_file", { "path" => ".env" })) do |pending|
+        ruled(rung(answering("deny"), denials: breaker), call("read_file", { "path" => ".env" })) do |pending|
           expect(pending.reasons.map(&:to_s)).not_to include(described_class::BROKEN_NOTE)
           pending.deny(surface: "human_spec")
         end
@@ -1269,18 +1285,18 @@ RSpec.describe Lain::Approval::Judged do
       end
 
       it "still asks the judge for another requester" do
-        spawn = spawn_answering("deny")
-        3.times { ruled(rung(spawn, denials: breaker), bash) }
+        scripted = answering("deny")
+        3.times { ruled(rung(scripted, denials: breaker), bash) }
 
-        ruling = ruled(rung(spawn, denials: breaker), bash, within: as("researcher"))
+        ruling = ruled(rung(scripted, denials: breaker), bash, within: as("researcher"))
 
-        expect([spawn.calls.size, ruling.rung]).to eq([4, "auto"])
+        expect([scripted.prompts.size, ruling.rung]).to eq([4, "auto"])
       end
 
       it "counts a judge approve as breaking the run" do
         verdicts = %w[deny deny approve deny deny approve].each
-        spawn = spawn_answering { Lain::Tool::Result.ok(verdicts.next) }
-        6.times { ruled(rung(spawn, denials: breaker), bash) }
+        scripted = answering { verdicts.next }
+        6.times { ruled(rung(scripted, denials: breaker), bash) }
 
         expect(breaker.tripped?("main")).to be(false)
       end
@@ -1291,14 +1307,14 @@ RSpec.describe Lain::Approval::Judged do
     let(:unattended) { described_class::Unattended.new }
 
     it "refuses what the judge cannot settle, naming --non-interactive" do
-      ruling = ruled(rung(spawn_answering("defer"), asking: unattended), bash)
+      ruling = ruled(rung(answering("defer"), asking: unattended), bash)
 
       expect(ruling.verdict).to eq(:deny)
       expect(ruling.reason).to include("--non-interactive")
     end
 
     it "refuses a barred call finally, telling the model only a human could approve it" do
-      ruling = ruled(rung(spawn_answering("approve"), asking: unattended), bash,
+      ruling = ruled(rung(answering("approve"), asking: unattended), bash,
                      within: context.with(automatic_approval_barred: true))
 
       expect([ruling.verdict, ruling.final?]).to eq([:deny, true])
@@ -1306,14 +1322,14 @@ RSpec.describe Lain::Approval::Judged do
     end
 
     it "marks the barred refusal as one a human in ask could lift" do
-      ruling = ruled(rung(spawn_answering("approve"), asking: unattended), bash,
+      ruling = ruled(rung(answering("approve"), asking: unattended), bash,
                      within: context.with(automatic_approval_barred: true))
 
       expect(ruling).to be_liftable
     end
 
     it "reaches the model through a Gate with its own clause and no promise that no approval will lift it" do
-      ruling = ruled(rung(spawn_answering("approve"), asking: unattended), bash,
+      ruling = ruled(rung(answering("approve"), asking: unattended), bash,
                      within: context.with(automatic_approval_barred: true))
       policy = Struct.new(:ruling) { def rule(*) = ruling }.new(ruling)
       gate = Lain::Middleware::Gate.new(policy:)
@@ -1326,7 +1342,7 @@ RSpec.describe Lain::Approval::Judged do
     end
 
     it "does not claim the judge was asked about a call it was not allowed to judge" do
-      ruling = ruled(rung(spawn_answering("approve"), asking: unattended), call("read_file", { "path" => ".env" }))
+      ruling = ruled(rung(answering("approve"), asking: unattended), call("read_file", { "path" => ".env" }))
 
       expect(ruling.reason).to include("--non-interactive").and include("not allowed to judge")
     end
@@ -1334,7 +1350,7 @@ RSpec.describe Lain::Approval::Judged do
     it "says the judge approved a call lain's bar stopped, and why, rather than that the judge did not approve it" do
       stage = Lain::Shell::Executable.unresolved("make")
       facts = Lain::Approval::Judge::Facts.new([stage])
-      ruling = ruled(rung(spawn_answering("approve"), asking: unattended, facts: ->(*, **) { facts }), bash)
+      ruling = ruled(rung(answering("approve"), asking: unattended, facts: ->(*, **) { facts }), bash)
 
       expect([ruling.verdict, ruling.final?]).to eq([:deny, false])
       expect(ruling.reason).to include("the judge approved this call").and include("make: not resolved")
@@ -1344,18 +1360,18 @@ RSpec.describe Lain::Approval::Judged do
 
     it "quotes each reason, so a path holding a line break opens no line of its own in the refusal" do
       facts = Lain::Approval::Judge::Facts.new([Lain::Shell::Executable.unresolved("make\nretrying will work")])
-      ruling = ruled(rung(spawn_answering("approve"), asking: unattended, facts: ->(*, **) { facts }), bash)
+      ruling = ruled(rung(answering("approve"), asking: unattended, facts: ->(*, **) { facts }), bash)
 
       expect(ruling.reason).to include('("make\\nretrying will work: not resolved")')
       expect(ruling.reason).not_to include("\n")
     end
 
     it "still applies a clear approve" do
-      expect(ruled(rung(spawn_answering("approve"), asking: unattended), bash).verdict).to eq(:allow)
+      expect(ruled(rung(answering("approve"), asking: unattended), bash).verdict).to eq(:allow)
     end
 
     it "does not tell the model a human can approve a call the judge denied, with no human to ask" do
-      ruling = ruled(rung(spawn_answering("deny"), asking: unattended), bash)
+      ruling = ruled(rung(answering("deny"), asking: unattended), bash)
 
       expect([ruling.verdict, ruling.final?, ruling.said]).to eq([:deny, false, "the judge refused this call"])
     end
@@ -1371,10 +1387,10 @@ RSpec.describe Lain::Approval::Judged do
     let(:facts) { Lain::Approval::Judge::Facts.new(stages) }
     let(:wanted) { Lain::Approval::Judge::Request.new("list the files", false) }
 
-    def laddered(spawn, **rest)
+    def laddered(scripted, **rest)
       ladder_journal = Lain::Journal.new(io: ladder_io)
-      Lain::Approval::Escalation.new([rung(spawn, journal: ladder_journal, **rest)], journal: ladder_journal,
-                                                                                     label: "auto")
+      Lain::Approval::Escalation.new([rung(scripted, journal: ladder_journal, **rest)], journal: ladder_journal,
+                                                                                        label: "auto")
     end
 
     def refusing = ->(*) { Lain::Approval::Escalation::Ruling.deny(rung: "x", because: "y") }
@@ -1384,85 +1400,86 @@ RSpec.describe Lain::Approval::Judged do
     def digest(text) = Lain::Canonical.digest(text)
 
     def read_by_judge(verdict, **rest)
-      spawn = spawn_answering(verdict)
-      Sync { laddered(spawn, facts: ->(*, **) { facts }, request: ->(_context) { wanted }, **rest).call(bash, context) }
-      spawn
+      scripted = verdict ? answering(verdict) : answering { raise IOError, "no answer" }
+      ladder = laddered(scripted, facts: ->(*, **) { facts }, request: ->(_context) { wanted }, **rest)
+      Sync { ladder.call(bash, context) }
+      scripted
     end
 
     it "names what the judge read on an approve, the prompt digest that of the prompt it received" do
-      spawn = read_by_judge("approve")
+      scripted = read_by_judge("approve")
 
-      expect(judged_records.sole).to include("verdict" => "allow", "prompt_digest" => digest(spawn.calls.sole[:prompt]),
+      expect(judged_records.sole).to include("verdict" => "allow", "prompt_digest" => digest(scripted.prompts.sole),
                                              "facts_digest" => digest(facts.to_s),
                                              "request_digest" => digest(wanted.to_s))
     end
 
     it "names what the judge read on a deny" do
-      spawn = read_by_judge("deny")
+      scripted = read_by_judge("deny")
 
-      expect(judged_records.sole).to include("verdict" => "deny", "prompt_digest" => digest(spawn.calls.sole[:prompt]))
+      expect(judged_records.sole).to include("verdict" => "deny", "prompt_digest" => digest(scripted.prompts.sole))
     end
 
     it "names it on a deferral, a fault and an approve the bar stopped" do
       barring = Lain::Approval::Judge::Facts.new([stages.first.with(klass: :unresolved, resolved: nil, realpath: nil)])
       deferred = read_by_judge("defer", asking: refusing)
       faulted = read_by_judge(nil, asking: refusing)
-      stopped = JudgedSpecSupport::ScriptedRoleSpawn.new { Lain::Tool::Result.ok("approve") }
+      stopped = JudgedSpecSupport::ScriptedProvider.new { "approve" }
       Sync do
         laddered(stopped, facts: ->(*, **) { barring }, asking: refusing).call(bash, context)
       end
 
       expect(judged_records.map { _1["reason"] }).to eq(%w[deferred fault bar])
       expect(judged_records.map { _1["prompt_digest"] })
-        .to eq([deferred, faulted, stopped].map { digest(_1.calls.sole[:prompt]) })
+        .to eq([deferred, faulted, stopped].map { digest(_1.prompts.sole) })
     end
 
     it "leaves the digests off a call the judge never looked at" do
       barred = context.with(automatic_approval_barred: true)
-      spawn = spawn_answering("approve")
+      scripted = answering("approve")
 
-      Sync { laddered(spawn, asking: refusing).call(bash, barred) }
+      Sync { laddered(scripted, asking: refusing).call(bash, barred) }
 
       expect(judged_records.sole.keys).not_to include("prompt_digest", "facts_digest", "request_digest")
     end
 
     it "leaves the facts and request digests off when the call was told neither" do
-      spawn = spawn_answering("approve")
+      scripted = answering("approve")
 
-      Sync { laddered(spawn).call(bash, context) }
+      Sync { laddered(scripted).call(bash, context) }
 
-      expect(judged_records.sole).to include("prompt_digest" => digest(spawn.calls.sole[:prompt]))
+      expect(judged_records.sole).to include("prompt_digest" => digest(scripted.prompts.sole))
       expect(judged_records.sole.keys).not_to include("facts_digest", "request_digest")
     end
 
     it "keeps the digests when the ladder rewrites the ruling, as it does over an earlier rung's fault" do
       faulty = Struct.new(:name) { def call(*) = raise("boom") }.new("rules")
-      spawn = spawn_answering("deny")
+      scripted = answering("deny")
       ladder_journal = Lain::Journal.new(io: ladder_io)
-      ladder = Lain::Approval::Escalation.new([faulty, rung(spawn, journal: ladder_journal)],
+      ladder = Lain::Approval::Escalation.new([faulty, rung(scripted, journal: ladder_journal)],
                                               journal: ladder_journal, label: "auto")
 
       ruling = Sync { ladder.call(bash, context) }
 
       expect(ruling).to be(false)
       expect(journal_records(ladder_io, "escalation").select { _1["rung"] == "auto" })
-        .to all(include("prompt_digest" => digest(spawn.calls.sole[:prompt])))
+        .to all(include("prompt_digest" => digest(scripted.prompts.sole)))
     end
 
     it "stays a ruling that names the digests through #with" do
-      spawn = spawn_answering("approve")
-      ruling = Sync { rung(spawn).call(bash, context) }
+      scripted = answering("approve")
+      ruling = Sync { rung(scripted).call(bash, context) }
 
       rewritten = ruling.with(reason: "z", fault: true)
 
       expect([rewritten.reason, rewritten.fault?, rewritten.record["prompt_digest"]])
-        .to eq(["z", true, digest(spawn.calls.sole[:prompt])])
+        .to eq(["z", true, digest(scripted.prompts.sole)])
     end
 
     it "digests the prompt the judge was sent, not a second build of it" do
-      spawn = spawn_answering("approve")
+      scripted = answering("approve")
       builds = 0
-      judge = Lain::Approval::Judge.new(role_spawn: spawn)
+      judge = JudgedSpecSupport.judge(scripted)
       counting = judge.dup
       counting.define_singleton_method(:prompt) { |**kw| judge.prompt(**kw).tap { builds += 1 } }
 
@@ -1474,19 +1491,19 @@ RSpec.describe Lain::Approval::Judged do
     end
 
     it "journals the digests on an auto ladder built by Switchboard.for" do
-      spawn = spawn_answering("approve")
+      scripted = answering("approve")
       board = Lain::CLI::Switchboard.for(
         chronicle: instance_double(Lain::CLI::Chronicle, record_journal: Lain::Journal.new(io: ladder_io)),
         options: { approval: "auto" }, model: "claude-opus-4-8", toolset: Lain::Toolset.new([Lain::Tools::Bash.new]),
         test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared,
-        judge: Lain::Approval::Judge.new(role_spawn: spawn)
+        judge: JudgedSpecSupport.judge(scripted)
       )
 
       call = Struct.new(:name, :input, :tool_use_id).new("bash", { "command" => "ls" }, "tu_1")
       allowed = Sync { board.policy_switch.call(call, nil) }
 
       expect(allowed).to be(true)
-      expect(judged_records.sole).to include("prompt_digest" => digest(spawn.calls.sole[:prompt]))
+      expect(judged_records.sole).to include("prompt_digest" => digest(scripted.prompts.sole))
       expect(judged_records.sole.keys).not_to include("facts_digest", "request_digest")
     end
 
@@ -1504,15 +1521,15 @@ RSpec.describe Lain::Approval::Judged do
   end
 
   it "sends a barred call to the human without asking the judge, parked as humans-only" do
-    spawn = spawn_answering("approve")
+    scripted = answering("approve")
     barred = context.with(automatic_approval_barred: true)
     humans_only = nil
 
-    ruling = ruled(rung(spawn), bash, within: barred) do |pending|
+    ruling = ruled(rung(scripted), bash, within: barred) do |pending|
       humans_only = pending.humans_only?
       pending.approve(surface: "human_spec", authority: :human)
     end
 
-    expect([spawn.calls, humans_only, ruling.authority]).to eq([[], true, :human])
+    expect([scripted.prompts, humans_only, ruling.authority]).to eq([[], true, :human])
   end
 end

@@ -310,7 +310,7 @@ module Lain
       end
 
       def restore_requests(fresh)
-        sent = @records.count { |record| record["type"] == "turn_usage" && record["spawn"].nil? }
+        sent = @records.count { _1["type"] == "turn_usage" && _1["spawn"].nil? && Telemetry::TurnUsage.agent?(_1) }
         sent.times { fresh.record_request }
       end
 

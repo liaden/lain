@@ -41,10 +41,11 @@ module Lain
         Role.new(name: :evidence_researcher, only: %i[read_file list_files glob grep web_fetch web_search],
                  max_iterations: 60, unattended: true, sealed: true),
         Role.new(name: :court_clerk, only: %i[read_file list_files memory_read memory_write]),
-        # {Approval::Judge}'s role. Unattended because the gate waits on its
-        # answer with the judged call still unparked: a question of its own
-        # would hold that call until the judge's bound lapsed.
-        Role.new(name: :auto_approver, only: %i[read_file list_files glob grep], unattended: true, sealed: true),
+        # {Approval::Judge}'s role, asked in one request with no tools: lain
+        # puts what it needs in the question, so it spends no round trip on a
+        # read. Kept here rather than dropped so its prompt stays sealed, and
+        # unattended because the gate waits on its answer with the call unparked.
+        Role.new(name: :auto_approver, only: [], unattended: true, sealed: true),
         # {Epic::Gate::Adjudicator}'s sibling of `auto_approver`, judging an
         # ARTIFACT rather than one waiting tool call. Two roles because reusing
         # auto_approver.md would tell the model a tool call is pending on every

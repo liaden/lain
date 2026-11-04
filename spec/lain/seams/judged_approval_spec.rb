@@ -98,7 +98,18 @@ RSpec.describe "auto approval asks the judge before a human", :seam do
     denied_after_judging
 
     expect(Dir.pwd).not_to eq(@cwd)
-    expect(provider.requests[1].system.last["text"]).to end_with("Working directory: #{@cwd}")
+    expect(provider.requests[1].messages.sole["content"]).to include("working directory: #{@cwd.inspect}")
+  end
+
+  it "asks the judge in one request with no tools, and records its request and payment in the session file" do
+    denied_after_judging
+
+    judged = provider.requests[1]
+    expect([provider.requests.size, judged.tools]).to eq([3, []])
+    expect(journal_records(journal_io, "request_sent").select { _1["requester"] == "auto_approver" }
+             .map { _1["digest"] }).to eq([judged.digest])
+    expect(journal_records(journal_io, "turn_usage").select { _1["requester"] == "auto_approver" }
+             .map { _1["digest"] }).to eq([judged.digest])
   end
 
   context "when the command reads a credential" do

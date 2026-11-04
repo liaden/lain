@@ -97,6 +97,29 @@ RSpec.describe Lain::Telemetry::TurnUsage do
     end
   end
 
+  describe "the requester" do
+    let(:judged) do
+      described_class.new(digest: "blake3:req", model: "m", stop_reason: :end_turn, usage: {},
+                          requester: :auto_approver)
+    end
+
+    it "names who paid when it was not the agent, and leaves the key out for the agent's own" do
+      expect([judged.to_journal["requester"], event.requester, event.to_journal.key?("requester")])
+        .to eq(["auto_approver", nil, false])
+      expect(judged).to be_deeply_frozen
+    end
+
+    it "reads a record with no requester, or the agent's, as the agent's own" do
+      records = [event, judged, event.with(requester: "agent")].map { JSON.parse(JSON.generate(_1.to_journal)) }
+
+      expect(records.map { described_class.agent?(_1) }).to eq([true, false, true])
+    end
+
+    it "answers the same of the record itself" do
+      expect([event.agent?, judged.agent?]).to eq([true, false])
+    end
+  end
+
   describe "interning and refusals" do
     def fresh(**extra)
       described_class.new(digest: +"blake3:abc", model: +"m", stop_reason: :end_turn, usage: {}, spawn: +"s", **extra)

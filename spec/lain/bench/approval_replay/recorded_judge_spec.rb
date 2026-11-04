@@ -37,6 +37,17 @@ RSpec.describe Lain::Bench::ApprovalReplay::RecordedJudge do
     expect(judge.state).to eq("drifted")
   end
 
+  it "asks today's question, with the read roots and named paths the live judge is given" do
+    asked = Lain::Approval::Judge.new(provider: Object.new, model: "m", slots: Lain::Prompt::Slots.new(fills: {}))
+
+    expect(prompt).to eq(asked.prompt(tool: "bash", input: { "command" => "make" }, place:))
+      .and include("read roots: none", "named paths: none")
+  end
+
+  it "never sends a request" do
+    expect { described_class::NoModel.complete(:request) }.to raise_error(Lain::Error, /asks no model/)
+  end
+
   it "defers a call the session's judge left no ruling on, and says so" do
     call = Lain::Bench::ApprovalReplay::Call.new(session: "s", tool: "bash", input: {}, tool_use_id: "tu_1")
 

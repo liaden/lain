@@ -5,8 +5,8 @@ require "tmpdir"
 
 # A role skill's child, as the judge sees it: a real {Lain::Skill::RoleSpawn}
 # over a real tool-guard builder, gated by a real {Lain::Approval::Judged}
-# asking a real {Lain::Approval::Judge}. Only the judge's own spawn is canned,
-# so the prompt it is handed is the one the judge child would read.
+# asking a real {Lain::Approval::Judge}. Only the judge's provider is canned,
+# so the prompt it is handed is the one the judge's model would read.
 RSpec.describe "a role skill's child names its role to the judge", :seam do
   around do |example|
     Dir.mktmpdir do |root|
@@ -19,14 +19,12 @@ RSpec.describe "a role skill's child names its role to the judge", :seam do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
   let(:prompts) { [] }
-  let(:judge_spawn) do
+  let(:judge_provider) do
     seen = prompts
     Class.new do
-      define_method(:never_parking) { self }
-
-      define_method(:call) do |_role, _mode, prompt|
-        seen << prompt
-        Lain::Tool::Result.ok("defer")
+      define_method(:complete) do |request, **|
+        seen << request.messages.sole.fetch("content")
+        Lain::Response.new(content: [{ "type" => "text", "text" => "defer" }], stop_reason: :end_turn)
       end
     end.new
   end
@@ -34,8 +32,8 @@ RSpec.describe "a role skill's child names its role to the judge", :seam do
     classifier = Lain::Sensitivity.new(home: @root, cwd: @root, root: @root)
     sensitivity = Lain::Sensitivity::Policy.new(sensitivity: classifier, home: @root, root: @root)
     refusing = ->(_effect, _context) { Lain::Approval::Escalation::Ruling.deny(rung: "spec", because: "no", final: true) }
-    Lain::Approval::Judged.new(judge: Lain::Approval::Judge.new(role_spawn: judge_spawn, timeout: 10),
-                               policy: sensitivity, asking: refusing, journal:)
+    judge = Lain::Approval::Judge.new(provider: judge_provider, model: "m", slots: @slots, timeout: 10)
+    Lain::Approval::Judged.new(judge:, policy: sensitivity, asking: refusing, journal:)
   end
   let(:union) do
     Lain::Toolset.new([Lain::Tools::ReadFile.new, Lain::Tools::ListFiles.new, Lain::Tools::Glob.new,

@@ -351,7 +351,7 @@ RSpec.describe Lain::Bench::ApprovalReplay do
     let(:rows) { rows_of(auto, arm(:auto)) }
 
     it "answers each call with the judge's recorded verdict, asking no model" do
-      expect(described_class::RecordedJudge::NoModel).not_to receive(:call)
+      expect(described_class::RecordedJudge::NoModel).not_to receive(:complete)
 
       expect(ruled(rows)).to eq("tu_1" => %w[auto allow], "tu_2" => %w[auto deny], "tu_3" => %w[surfaces allow],
                                 "tu_4" => %w[auto allow])

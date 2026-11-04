@@ -9,11 +9,9 @@ module Lain
       # differs from today's, the verdict was given to a different question: the answer still
       # replays, and the call is reported as drifted.
       class RecordedJudge
-        # The role spawn behind the prompt builder: the replay reads a prompt and never sends one.
+        # The provider behind the prompt builder: the replay reads a prompt and never sends one.
         module NoModel
-          def self.never_parking = self
-
-          def self.call(*) = raise(Error, "an approval replay asks no model")
+          def self.complete(*) = raise(Error, "an approval replay asks no model")
         end
 
         VERDICTS = { "allow" => :approve, "deny" => :deny }.freeze
@@ -23,7 +21,7 @@ module Lain
         attr_reader :state
 
         def initialize
-          @prompter = Approval::Judge.new(role_spawn: NoModel)
+          @prompter = Approval::Judge.new(provider: NoModel, model: "replay", slots: Prompt::Slots.new(fills: {}))
           @call = nil
           @state = nil
         end

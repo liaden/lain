@@ -195,14 +195,14 @@ RSpec.describe "A spawned child's read outside its scope", :seam do
     expect(result_of("tu_parent")).to include("zettelkasten")
   end
 
-  it "refuses an auto_approver child's read outside, and parks nothing" do
+  it "refuses an unattended gate adjudicator child's read outside, and parks nothing" do
     script.push(calls("tu_child", "read_file", { "path" => "/etc/hosts" }), text_response("child done"))
     wiring, = wired
     seen = []
 
     Sync do |task|
       surface = answering(task, wiring, seen)
-      task.with_timeout(30) { wiring.role_spawn.never_parking.call(:auto_approver, :fresh, "judge") }
+      task.with_timeout(30) { wiring.role_spawn.never_parking.call(:gate_adjudicator, :fresh, "judge") }
     ensure
       surface&.stop
     end

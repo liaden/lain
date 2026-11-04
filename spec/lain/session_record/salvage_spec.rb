@@ -129,6 +129,15 @@ RSpec.describe Lain::SessionRecord::Salvage do
       expect(outcome).to be_recovered
     end
 
+    it "is not settled by the judge's payment journaled after it" do
+      digest = spool(canned)
+      judged = turn_usage("blake3:judged").merge("requester" => "auto_approver")
+
+      outcome = described_class.new(entries: [request_sent(digest), judged], frames:, timeline:).call
+
+      expect(outcome).to be_recovered
+    end
+
     # The recovered turn's spend is the whole reason this class exists, and it
     # was the third hand-written copy of the same four-key decode. One decoder
     # now, so a key cannot drift only on the path nobody was watching.

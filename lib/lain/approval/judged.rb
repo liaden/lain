@@ -370,7 +370,14 @@ module Lain
         Judge::Place.new(root:, cwd:, requester: requester_of(context),
                          outside: outside(effect, context, cwd),
                          facts: facts_for(effect, context), request: @request.call(context),
-                         human_checkout: (@policy.root unless root == @policy.root))
+                         human_checkout: (@policy.root unless root == @policy.root),
+                         read_roots: read_roots(context), classified: classified(effect, context, cwd))
+      end
+
+      def read_roots(context) = held_to(context).bounds.readable
+
+      def classified(effect, context, cwd)
+        named_paths(effect, context, cwd).map(&:first).uniq.to_h { [_1, verdict_on(_1, context)] }
       end
 
       # A leased child or a plan-scope spike works in its own checkout, so the

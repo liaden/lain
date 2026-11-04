@@ -90,14 +90,15 @@ module Lain
   #   and queue depth, no bucket over time). The HUD labels it `run:` rather
   #   than `usage:` so the label cannot be read as the quota.
   #
-  #   SPAWNED CHILDREN'S SPEND IS IN IT: a run's total is its cost. The
-  #   field's contract is that it EQUALS what the session file's `turn_usage`
-  #   records add up to, and nothing more. A one-shot child's record never
-  #   rides the tee; it reaches {#child_paid} from the session journal through
-  #   {ChildPayments}, and moves nothing but this sum, since its window and its
-  #   cache are the child's. An actor child's payments are not journaled, so
-  #   once an actor is in the subtree this is LESS than `Accounting#spent`,
-  #   which settles the actor's spend all the same.
+  #   SPAWNED CHILDREN'S AND THE JUDGE'S SPEND IS IN IT: a run's total is its
+  #   cost. The field's contract is that it EQUALS what the session file's
+  #   `turn_usage` records add up to, and nothing more. Neither a one-shot
+  #   child's record nor the judge's rides the tee; each reaches {#paid_aside}
+  #   from the session journal through {ChildPayments}, and moves nothing but
+  #   this sum, since the window and cache it paid for are not the chat's. An
+  #   actor child's payments are not journaled, so once an actor is in the
+  #   subtree this is LESS than `Accounting#spent`, which settles the actor's
+  #   spend all the same.
   #
   #   ORACLE SPEND IS NOT IN IT, deliberately: no `turn_usage` record carries
   #   it. {#turn_usage?} holds that argument and what a `#usage` duck once cost.
@@ -263,11 +264,12 @@ module Lain
     # @return [self] the duck {Agent::Instrumentation} carries as `transition_listener:`
     def transition_listener = self
 
-    # A spawned child's payment: added to `run_tokens` and nothing else.
+    # A payment made beside the chat's own turns, a spawned child's or the
+    # judge's: added to `run_tokens` and nothing else.
     #
-    # @param event [Telemetry::TurnUsage] a record naming its spawn
+    # @param event [Telemetry::TurnUsage] a record naming its spawn or a requester other than the agent
     # @return [self]
-    def child_paid(event)
+    def paid_aside(event)
       @run_tokens = @run_tokens.to_i + JournaledUsage.new(event.usage.to_h).total_tokens
       publish_if_changed
       self
@@ -356,7 +358,7 @@ module Lain
     # is a growing namespace, so a two-method duck silently readmits the next
     # record carrying both fields, with every spec here still green. `is_a?`
     # makes that impossible rather than unlikely.
-    def turn_usage?(event) = event.is_a?(Telemetry::TurnUsage)
+    def turn_usage?(event) = event.is_a?(Telemetry::TurnUsage) && event.agent?
 
     # The two carriers that name a turn's CONSUMING EDGES, gathered so `#<<` reads
     # as one question and shaped like {Frontend::Neovim::InboxView#consume}: one

@@ -3,15 +3,27 @@
 module Lain
   module CLI
     class Wiring
-      # What `auto` approval asks first, built at the first judged call: the
-      # spawn seam it asks through is the toolset build's discovery, and
-      # `build_agent`'s spec seam reaches the board with no build behind it.
+      # What `auto` approval asks first, built at the first judged call, so a
+      # chat that never judges never builds the judge's provider.
       class JudgeSource
-        # @param role_spawn [#call] answers the run's role-spawn seam
+        # @param backend [Backend]
+        # @param journal [#<<] the session file and never the tee, since a live
+        #   view would read the judge's payment as the chat's turn
+        # @param config [Config] whose judge timeout bounds the judge
+        # @return [JudgeSource]
+        def self.for(backend, journal:, config:)
+          new(provider: -> { backend.provider(requester: Approval::Judge::ROLE) }, model: backend.context.model,
+              slots: backend.slots, journal:, timeout: config.judge_timeout)
+        end
+
+        # @param provider [#call] builds the provider the judge asks through
+        # @param model [String]
+        # @param slots [Prompt::Slots] what the judge's sealed prompt renders from
+        # @param journal [#<<] the session file, where the judge's request and payment are recorded
         # @param timeout [Numeric] seconds the judge may take
-        def initialize(role_spawn, timeout: Config::DEFAULT_JUDGE_TIMEOUT)
-          @role_spawn = role_spawn
-          @timeout = timeout
+        def initialize(provider:, model:, slots:, journal:, timeout: Config::DEFAULT_JUDGE_TIMEOUT)
+          @provider = provider
+          @built = { model:, slots:, journal:, timeout: }
         end
 
         # A judge that cannot be built is a fault like any other the judge has,
@@ -21,7 +33,7 @@ module Lain
         # @yieldparam why [String] what went wrong, when the judge faults
         # @return [Symbol] the judge's verdict, or `:fault`
         def call(**question, &on_fault)
-          @judge ||= Approval::Judge.new(role_spawn: @role_spawn.call, timeout: @timeout)
+          @judge ||= Approval::Judge.new(provider: @provider.call, **@built)
           @judge.call(**question, &on_fault)
         rescue StandardError => e
           on_fault&.call("#{e.class}: #{e.message}")

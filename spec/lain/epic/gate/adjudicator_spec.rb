@@ -772,7 +772,7 @@ RSpec.describe Lain::Epic::Gate::Adjudicator do
       role = Lain::Role::Catalog.fetch(described_class::ROLE)
 
       expect(role.name).to eq(:gate_adjudicator)
-      expect(role.only).to eq(Lain::Role::Catalog.fetch(:auto_approver).only)
+      expect(role.only).to eq(%i[read_file list_files glob grep])
     end
 
     it "ships its own persona -- reusing the tool-call one would misdescribe every spawn" do

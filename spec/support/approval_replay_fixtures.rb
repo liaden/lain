@@ -214,7 +214,8 @@ module ApprovalReplayFixtures
   class Judge
     def initialize(script)
       @script = script
-      @prompter = Lain::Approval::Judge.new(role_spawn: Lain::Bench::ApprovalReplay::RecordedJudge::NoModel)
+      @prompter = Lain::Approval::Judge.new(provider: Lain::Bench::ApprovalReplay::RecordedJudge::NoModel,
+                                            model: "replay", slots: Lain::Prompt::Slots.new(fills: {}))
     end
 
     def prompt(tool:, input:, place:)

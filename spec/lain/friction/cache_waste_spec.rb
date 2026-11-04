@@ -375,6 +375,15 @@ RSpec.describe Lain::Friction::CacheWaste do
       expect(paired.calls.map { |call| call.usage.cache_creation_input_tokens }).to eq([9_000])
     end
 
+    it "never pairs the judge's usage on the parent's own model with the parent's request" do
+      judged = turn_usage(model: "claude-opus-4-8", creation: 500_000).merge("requester" => "auto_approver")
+      paired = described_class.from_journal(
+        [request_sent([[0, "blake3:a"]]), judged, turn_usage(model: "claude-opus-4-8", creation: 9_000)]
+      )
+
+      expect(paired.calls.map { |call| call.usage.cache_creation_input_tokens }).to eq([9_000])
+    end
+
     # Containment, not equality: the two fields legitimately differ in
     # specificity (a request may name the alias where the usage reports the
     # resolved snapshot).

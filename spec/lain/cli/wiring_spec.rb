@@ -806,12 +806,10 @@ RSpec.describe Lain::CLI::Wiring do
         end
 
         it "applies a judge approve of an image program under --judge-facts facts, parking nothing" do
-          approving = Struct.new(:prompts) do
-            def never_parking = self
-            def call(_role, _mode, _prompt) = Lain::Tool::Result.ok("approve")
-          end.new([])
+          approving = Lain::Provider::Mock.new(responses: [text_response("approve")])
           allow(Lain::CLI::Wiring::BoardBuild).to receive(:for).and_wrap_original do |original, **kwargs|
-            original.call(**kwargs, judge: Lain::Approval::Judge.new(role_spawn: approving))
+            original.call(**kwargs, judge: Lain::Approval::Judge.new(provider: approving, model: "m",
+                                                                     slots: Lain::Prompt::Slots.new(fills: {})))
           end
           judged = described_class.new(options: { grace: 5, approval: "auto", confine: "off", exec: "docker",
                                                   judge_facts: "facts" },

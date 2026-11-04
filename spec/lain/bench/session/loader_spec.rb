@@ -560,6 +560,13 @@ RSpec.describe Lain::Bench::Session::Loader do
       expect(described_class.new(lines).recording.served_models).to eq(%w[claude-haiku-4-5 claude-opus-4-8])
     end
 
+    it "leaves the judge's model out of the models that served the run" do
+      lines = entries.to_a
+      usage_line = JSON.parse(lines.find { |line| line.include?('"turn_usage"') })
+      lines << "#{JSON.generate(usage_line.merge("model" => "qwen3:4b", "requester" => "auto_approver"))}\n"
+      expect(described_class.new(lines).recording.served_models).to eq(%w[claude-opus-4-8])
+    end
+
     it "carries the time its header line was stamped, and nil for a header with no ts" do
       records = entries.map { |line| JSON.parse(line) }
       with_header_ts = lambda do |ts|
