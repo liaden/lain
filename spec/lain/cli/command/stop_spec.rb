@@ -194,6 +194,63 @@ RSpec.describe Lain::CLI::Command::Stop do
     end
   end
 
+  # An /implement-epic run carries its issues on a supervisor of its own, so
+  # the chat's fleet never names them: the epic driver is asked separately.
+  describe "with an epic run in flight" do
+    def driver(stopped, halted: true)
+      halt = Lain::CLI::EpicDriver::Run::Halt.new(halted:, issues: stopped)
+      instance_double(Lain::CLI::EpicDriver::Factory, stop: halt)
+    end
+
+    it "stops the driver's issues and names each on a line of its own" do
+      epic = driver(%w[cargo-workspace lockfile-scan])
+
+      answer = command.call("", env(epic_driver: epic))
+
+      expect(epic).to have_received(:stop)
+      expect(answer.lines.grep(/cargo-workspace/).size).to eq(1)
+      expect(answer.lines.grep(/lockfile-scan/).size).to eq(1)
+      expect(answer.lines.size).to eq(2)
+    end
+
+    it "never says nothing was running when only epic issues were" do
+      answer = command.call("", env(epic_driver: driver(%w[cargo-workspace])))
+
+      expect(answer).not_to eq(described_class::NOTHING_RUNNING)
+      expect(answer).not_to include("no ask")
+    end
+
+    it "names the fleet's agents beside the epic's issues" do
+      actor = instance_double(Lain::Tools::Subagent::Actor, stop: nil)
+      worker = instance_double(Lain::Supervisor::Registration, role: "coder", worker_id: "coder-1", actor:)
+      supervisor = instance_double(Lain::Supervisor, live: [worker])
+
+      answer = command.call("", env(supervisor:, epic_driver: driver(%w[cargo-workspace])))
+
+      expect(actor).to have_received(:stop)
+      expect(answer).to include("coder-1").and include("cargo-workspace")
+    end
+
+    # Halted during a fold, an audit or a landing, a run carries no issue to
+    # name, yet it did stop.
+    it "says the epic run stopped when the stop halted it naming no issue" do
+      answer = command.call("", env(epic_driver: driver([])))
+
+      expect(answer).to eq(described_class::EPIC_HALTED)
+      expect(answer).to include("stopped the epic run")
+    end
+
+    it "says nothing is running when no epic run is in flight" do
+      expect(command.call("", env(epic_driver: driver([], halted: false)))).to eq(described_class::NOTHING_RUNNING)
+    end
+
+    it "asks a chat in no epic, whose driver stops nothing and names nothing" do
+      expect(Lain::CLI::EpicDriver::Factory::Unmounted.stop).to eq(Lain::CLI::EpicDriver::Run::Halt.none)
+      expect(command.call("", env(epic_driver: Lain::CLI::EpicDriver::Factory::Unmounted)))
+        .to eq(described_class::NOTHING_RUNNING)
+    end
+  end
+
   describe "with a real supervisor tracking a one-shot" do
     it "stops the task, lets its completion run, and names it" do
       completed = []

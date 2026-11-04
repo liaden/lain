@@ -27,27 +27,45 @@ module Lain
       # honest: `Supervisor#stop` would farewell every non-retired row,
       # reaping a `:failed` one through the handoff and releasing a `:stopped`
       # one's lease, neither ever mentioned.
+      #
+      # An `/implement-epic` run carries its issues on a supervisor of its own,
+      # which {Supervisor#live} never names, so the epic driver is asked too.
       class Stop
         NOTHING_RUNNING = "no ask is running -- /stop at the prompt it parks on, or s at a countdown"
+
+        EPIC_HALTED = "stopped the epic run"
+
+        USAGE = "/stop -- stop the ask in flight (at its prompt, or s at the countdown), an epic run's issues, " \
+                "or the fleet if idle"
 
         def initialize = freeze
 
         def name = "stop"
 
-        def usage = "/stop -- stop the ask in flight (at its prompt, or s at the countdown), or the fleet if idle"
+        def usage = USAGE
 
         # A stop held until the run ends stops nothing.
         def disposition = :control
 
         def call(_args, env)
           live = env.supervisor.live
-          return NOTHING_RUNNING if live.empty?
+          halt = env.epic_driver.stop
+          return NOTHING_RUNNING if live.empty? && !halt.halted
 
           live.each { |worker| worker.actor.stop }
-          "no ask was running, but stopped #{names(live)}"
+          [*fleet(live), *epic(halt)].join("\n")
         end
 
         private
+
+        def fleet(live) = live.empty? ? [] : ["no ask was running, but stopped #{names(live)}"]
+
+        def epic(halt)
+          return [] unless halt.halted
+          return [EPIC_HALTED] if halt.issues.empty?
+
+          halt.issues.map { |issue| "stopped epic issue #{sanitized(issue)}" }
+        end
 
         def names(live) = live.map { |worker| label(worker) }.join(", ")
 

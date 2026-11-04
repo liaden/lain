@@ -49,10 +49,11 @@ end
 class RunSpecActors
   Launch = Data.define(:actor, :worker_id, :branch, :tests)
 
-  def initialize(supervisor, live, refusals: {})
+  def initialize(supervisor, live, refusals: {}, actor: RunSpecActor)
     @supervisor = supervisor
     @live = live
     @refusals = refusals
+    @actor = actor
     @launched = []
     @concurrency = []
   end
@@ -65,7 +66,7 @@ class RunSpecActors
     @launched << [issue_id, attempt]
     @live[:now] += 1
     @concurrency << @live[:now]
-    actor = RunSpecActor.new(issue_id)
+    actor = @actor.new(issue_id)
     @supervisor.adopt(RunSpecSupervisor::Row.new(actor:))
     Launch.new(actor:, worker_id: "issue.demo.#{issue_id}.#{attempt}", branch: "lain/issue/demo/#{issue_id}",
                tests: Lain::CLI::EpicDriver::IssueTests::Red.new(record: nil, run: nil, sha: "red-#{issue_id}"))
@@ -125,6 +126,44 @@ class RunSpecRefusingLanding
   def initialize(error) = @error = error
 
   def call(issue_id, sha:, ref:) = raise(@error) # rubocop:disable Lint/UnusedMethodArgument
+end
+
+# An actor still mid-turn: it settles only once something stops it.
+class RunSpecWorkingActor
+  def initialize(id)
+    @id = id
+    @stopped = false
+  end
+
+  attr_reader :id
+
+  def stop = @stopped = true
+
+  def stopped? = @stopped
+end
+
+# A supervisor whose retirement awaits the actor's turn, as the real one does,
+# and anchors it as it stood once a stop ends that turn. `retiring` says a
+# retirement is waiting, which is when a human's stop arrives mid-turn.
+class RunSpecMidTurnSupervisor < RunSpecSupervisor
+  def retire(row)
+    @retiring = true
+    awaited(row.actor)
+    super
+  end
+
+  def retiring? = @retiring == true
+
+  private
+
+  def awaited(actor)
+    500.times do
+      return if actor.stopped?
+
+      sleep 0.01
+    end
+    raise "#{actor.id} was never stopped"
+  end
 end
 
 # The epic's loop, over doubled collaborators: fold the epic, launch an issue
@@ -800,6 +839,262 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
 
       expect(asker).not_to be_pending
       expect { Sync { asker.ask("the next run's first gate?") } }.not_to raise_error
+    end
+  end
+
+  # A human's /stop reaches the issues the run carries, not only the gap
+  # between them: each actor is stopped where it stands, its checkout anchored
+  # and released by its retirement, and nothing it did is put before a gate.
+  describe "a stop by the human" do
+    def mid_turn_run(ids, reports:, width: 1, gate: RunSpecGate.new, retiring: RunSpecMidTurnSupervisor,
+                     subjects: plans, landing: nil, on_fold: -> {})
+      statuses = ids.to_h { |id| [id, "in_flight"] }
+      live = { now: 0 }
+      supervisor = retiring.new(reports, live)
+      actors = RunSpecActors.new(supervisor, live, actor: RunSpecWorkingActor)
+      landing ||= RunSpecLanding.new(statuses)
+      folds = progress_over(ids.map { |id| issue(id) }, statuses)
+      progress = -> { on_fold.call.then { folds.call } }
+      run = described_class.new(slug: "demo", progress:, plans: subjects, actors:, supervisor:, gate:, landing:,
+                                width:, red_only: described_class::Identical)
+      [run, actors, landing, supervisor]
+    end
+
+    # The stop lands once a retirement is waiting on an actor's turn, which is
+    # what "mid-turn" is from the loop's side.
+    def stopped_when(run, ready)
+      named = nil
+      result = Sync do |task|
+        task.async do
+          500.times { sleep 0.01 unless ready.call }
+          named = run.stop
+        end
+        run.call
+      end
+      [result, named]
+    end
+
+    def reason_for(result, id) = result.reported.find { |entry| entry.issue_id == id }&.reason.to_s
+
+    def actor_of(supervisor, id) = supervisor.find { |row| row.actor.id == id }.actor
+
+    it "stops the issue's actor mid-turn and reports it unsettled, stopped by the human, where it anchored" do
+      run, _actors, landing, supervisor = mid_turn_run(%w[a], reports: { "a" => anchored("sha-a") })
+
+      result, named = stopped_when(run, -> { supervisor.retiring? })
+
+      expect(named).to eq(described_class::Halt.new(halted: true, issues: ["a"]))
+      expect(actor_of(supervisor, "a")).to be_stopped
+      expect(reason_for(result, "a")).to include("stopped by the human").and include("sha-a")
+      expect(result.stopped).to include("stopped by the human")
+      expect(landing.landed).to be_empty
+    end
+
+    # The next run's attempt is the first whose anchor is absent, so it cuts
+    # afresh: the human has to be told where the stopped work is kept.
+    it "names the ref the stopped work is kept on, and that the next run starts a fresh attempt" do
+      run, _actors, _landing, supervisor = mid_turn_run(%w[a], reports: { "a" => anchored("sha-a") })
+
+      result, = stopped_when(run, -> { supervisor.retiring? })
+
+      expect(reason_for(result, "a")).to include("refs/lain/worker/sha-a").and include("fresh attempt")
+    end
+
+    it "says the human stopped the run when the stop lands in a launch that is then refused" do
+      run = nil
+      subjects = lambda do |id|
+        run.stop
+        raise Lain::Error, "the plan for #{id} is not approved" if id == "a"
+
+        plans.call(id)
+      end
+      run, actors = mid_turn_run(%w[a b], reports: {}, subjects:)
+
+      result = run.call
+
+      expect(result.stopped).to include("stopped by the human")
+      expect(actors.launched).to be_empty
+    end
+
+    it "says the human stopped the run when the stop lands while nothing is carried" do
+      run = nil
+      stopped = false
+      on_fold = lambda do
+        run.stop unless stopped
+        stopped = true
+      end
+      run, actors = mid_turn_run(%w[a], reports: {}, on_fold:)
+
+      result = run.call
+
+      expect(result.stopped).to include("stopped by the human")
+      expect(actors.launched).to be_empty
+    end
+
+    it "answers a halt naming no issue when the stop lands while nothing is carried" do
+      run = nil
+      named = nil
+      on_fold = -> { named ||= run.stop }
+      run, = mid_turn_run(%w[a], reports: {}, on_fold:)
+
+      run.call
+
+      expect(named).to eq(described_class::Halt.new(halted: true, issues: []))
+    end
+
+    # A landing already under way is past what a stop can end, so the stop
+    # must not claim it.
+    it "names no issue whose landing has begun, and that issue lands" do
+      run = nil
+      named = nil
+      statuses = { "a" => "in_flight" }
+      queue = RunSpecLanding.new(statuses)
+      landing = lambda do |issue_id, sha:, ref:|
+        named = run.stop
+        queue.call(issue_id, sha:, ref:)
+      end
+      run, = mid_turn_run(%w[a], reports: { "a" => anchored("sha-a") }, retiring: RunSpecSupervisor, landing:)
+
+      result = run.call
+
+      expect(named).to eq(described_class::Halt.new(halted: true, issues: []))
+      expect(result.landed.map(&:issue_id)).to eq(["a"])
+    end
+
+    # The gate journals its decision as it answers, so the run cannot say
+    # the issue went ungated.
+    it "says a gate asked before the stop was abandoned, rather than that none opened" do
+      run = nil
+      gate = lambda do |_issue_id, **|
+        run.stop
+        true
+      end
+      run, = mid_turn_run(%w[a], reports: { "a" => anchored("sha-a") }, gate:, retiring: RunSpecSupervisor)
+
+      result = run.call
+
+      expect(reason_for(result, "a")).to include("abandoned").and include("sha-a")
+      expect(reason_for(result, "a")).not_to include("ungated")
+      expect(result.landed).to be_empty
+    end
+
+    # Stopped before its first commit, an actor anchors only the red step's:
+    # that is the human's stop, not an actor that found nothing to do.
+    it "reports an actor stopped before it committed as stopped by the human, not as idle" do
+      run, _actors, _landing, supervisor = mid_turn_run(%w[a], reports: { "a" => anchored("red-a") })
+
+      result, = stopped_when(run, -> { supervisor.retiring? })
+
+      expect(reason_for(result, "a")).to include("stopped by the human")
+    end
+
+    it "opens no implementation gate for a stopped issue" do
+      gate = RunSpecGate.new
+      run, _actors, _landing, supervisor = mid_turn_run(%w[a], reports: { "a" => anchored("sha-a") }, gate:)
+
+      stopped_when(run, -> { supervisor.retiring? })
+
+      expect(gate.asked).to be_empty
+    end
+
+    it "ends a gate wait already under way, and reports that issue as stopped by the human" do
+      gate = RunSpecGate.new(delay: 30)
+      reports = { "a" => anchored("sha-a") }
+      run, _actors, landing = mid_turn_run(%w[a], reports:, gate:, retiring: RunSpecSupervisor)
+
+      result, named = stopped_when(run, -> { gate.asked.any? })
+
+      expect(named).to eq(described_class::Halt.new(halted: true, issues: ["a"]))
+      expect(reason_for(result, "a")).to include("stopped by the human")
+      expect(landing.landed).to be_empty
+    end
+
+    # Retirement is what anchors a checkout and releases its lease, so every
+    # issue the stop reached is retired -- where an interrupt between issues
+    # strands its live ones unretired.
+    it "retires every issue it stopped, so each lease is released, and launches nothing further" do
+      reports = %w[a b c].to_h { |id| [id, anchored("sha-#{id}")] }
+      run, actors, _landing, supervisor = mid_turn_run(%w[a b c], reports:, width: 2)
+
+      result, named = stopped_when(run, -> { supervisor.retiring? })
+
+      expect(named.issues).to contain_exactly("a", "b")
+      expect(supervisor.retired).to contain_exactly("a", "b")
+      expect(actors.launched.map(&:first)).to eq(%w[a b])
+      expect(%w[a b].map { |id| reason_for(result, id) }).to all(include("stopped by the human"))
+    end
+
+    it "ends the gate's own wait rather than letting it answer" do
+      answered = []
+      gate = lambda do |issue_id, **|
+        sleep 30
+        answered << issue_id
+      end
+      run, = mid_turn_run(%w[a], reports: { "a" => anchored("sha-a") }, gate:, retiring: RunSpecSupervisor)
+      waiting = false
+      allow(gate).to receive(:call).and_wrap_original do |original, *args, **options|
+        waiting = true
+        original.call(*args, **options)
+      end
+
+      stopped_when(run, -> { waiting })
+
+      expect(answered).to be_empty
+    end
+
+    it "reports an issue stopped while its tip's suite ran as stopped by the human" do
+      testing = false
+      statuses = { "a" => "in_flight" }
+      live = { now: 0 }
+      supervisor = RunSpecSupervisor.new({ "a" => anchored("sha-a") }, live)
+      tip_tests = lambda do |_issue_id, _sha|
+        testing = true
+        sleep 30
+      end
+      run = described_class.new(slug: "demo", progress: progress_over([issue("a")], statuses), plans:,
+                                actors: RunSpecActors.new(supervisor, live, actor: RunSpecWorkingActor), supervisor:,
+                                gate: RunSpecGate.new, landing: RunSpecLanding.new(statuses), width: 1,
+                                red_only: described_class::Identical, tip_tests:)
+
+      result, = stopped_when(run, -> { testing })
+
+      expect(reason_for(result, "a")).to include("stopped by the human")
+    end
+
+    it "stops an issue still launching once its launch returns, names it, and launches no other" do
+      reports = %w[a b].to_h { |id| [id, anchored("sha-#{id}")] }
+      run, actors, _landing, supervisor = mid_turn_run(%w[a b], reports:, width: 2)
+      named = nil
+      allow(actors).to receive(:call).and_wrap_original do |original, *args, **options|
+        original.call(*args, **options).tap { named = run.stop }
+      end
+
+      result = Sync { run.call }
+
+      expect(named).to eq(described_class::Halt.new(halted: true, issues: ["a"]))
+      expect(actors.launched.map(&:first)).to eq(["a"])
+      expect(actor_of(supervisor, "a")).to be_stopped
+      expect(reason_for(result, "a")).to include("stopped by the human")
+    end
+
+    it "names nothing on a second stop while the first is still being settled" do
+      run, _actors, _landing, supervisor = mid_turn_run(%w[a], reports: { "a" => anchored("sha-a") })
+      second = nil
+
+      Sync do |task|
+        task.async do
+          500.times { sleep 0.01 unless supervisor.retiring? }
+          run.stop
+          second = run.stop
+        end
+        run.call
+      end
+
+      expect(second).to eq(described_class::Halt.none)
+    end
+
+    it "names nothing when no run is in flight" do
+      expect(described_class::Idle.stop).to eq(described_class::Halt.none)
     end
   end
 

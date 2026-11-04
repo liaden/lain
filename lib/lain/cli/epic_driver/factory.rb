@@ -116,6 +116,10 @@ module Lain
 
           def self.attempts = refuse
 
+          # The one member that does not refuse: /stop asks every chat, and a
+          # chat in no epic has nothing to stop.
+          def self.stop = Run::Halt.none
+
           # A chat that is in no epic was asked to drive one. A {Lain::Error}, so
           # the Repl renders it loudly rather than as a backtrace.
           def self.refuse = raise(Error, UNMOUNTED)
@@ -458,6 +462,7 @@ module Lain
           # -- the required seven above are the object's shape, and these are the
           # seams a bench or a spec lends.
           @optional = { asker:, config:, interrupt:, actors:, grading:, endpoint:, ladder: }
+          @in_flight = Run::Idle
         end
 
         def mounted? = true
@@ -531,7 +536,7 @@ module Lain
               layout = self.layout
               fleet = supervisor(layout).run(task)
               begin
-                loop_over(fleet, checkout, layout, width:, budget:).call.with(discarded:)
+                flying(loop_over(fleet, checkout, layout, width:, budget:)).with(discarded:)
               ensure
                 fleet.stop
               end
@@ -539,7 +544,17 @@ module Lain
           end
         end
 
+        # @return [Run::Halt] what the stop did to the run in flight
+        def stop = @in_flight.stop
+
         private
+
+        def flying(run)
+          @in_flight = run
+          run.call
+        ensure
+          @in_flight = Run::Idle
+        end
 
         def holding(checkout)
           yield checkout
@@ -761,6 +776,19 @@ module Lain
 
         UNSETTLED = "the run stopped while its actor was still working, so this issue was left where it stood"
 
+        HALTED = "the run was stopped by the human, so the loop launched nothing further"
+
+        HUMAN_STOPPED = "stopped by the human mid-issue, so it was left unsettled and ungated: its work is kept " \
+                        "on %<ref>s at %<sha>s, its checkout released, and the next run starts a fresh attempt " \
+                        "rather than resuming it"
+
+        HUMAN_ABANDONED = "stopped by the human after its gate was asked at %<sha>s, so that gate was abandoned " \
+                          "and nothing landed: its work is kept on %<ref>s, its checkout released, and the next " \
+                          "run starts a fresh attempt rather than resuming it"
+
+        HUMAN_STOPPED_BARE = "stopped by the human mid-issue, so it was left unsettled and ungated with nothing " \
+                             "anchored"
+
         TESTS_STOPPED = "the run stopped while the suite was testing this issue's commit, so it was left " \
                         "ungated and unlanded"
 
@@ -929,6 +957,21 @@ module Lain
           def self.call(_issue_id, _sha) = nil
         end
 
+        # What a human's stop did to a run: whether it halted one, and the
+        # issues it ended. A run halted while it carried no issue names none,
+        # yet it did stop, which an empty list alone could not say.
+        Halt = Data.define(:halted, :issues) do
+          def initialize(halted:, issues:) = super(halted:, issues: issues.map { |id| -id.to_s }.freeze)
+
+          # @return [Halt] a stop that found no run to halt
+          def self.none = new(halted: false, issues: [])
+        end
+
+        # The run in flight's Null, for a driver between runs: nothing to stop.
+        module Idle
+          def self.stop = Halt.none
+        end
+
         # One issue's work, from the launch that started it to the retirement
         # that ends it.
         Live = Data.define(:issue_id, :launch)
@@ -1043,7 +1086,9 @@ module Lain
           @attempts = attempts || ->(_issue_id) { 1 }
           @grading = grading
           @red_only = red_only
-          @asking = Asking.new(gate:, interrupt:)
+          @live = []
+          @halted = false
+          @asking = Asking.new(gate:, interrupt: -> { @halted || interrupt.call })
         end
 
         # A session journal that cannot be read ends the whole run, wherever it
@@ -1067,7 +1112,22 @@ module Lain
           unreadable(e)
         end
 
+        # Each actor is stopped by hand, never through `Supervisor#stop`, which
+        # would release the leases before retirement anchors what they committed.
+        #
+        # @return [Halt] the issues it stopped; {Halt.none} on a second call
+        def stop
+          return Halt.none if @halted
+
+          @halted = true
+          stopping = carried
+          stopping.each { |entry| entry.launch.actor.stop }
+          Halt.new(halted: true, issues: [*stopping.map(&:issue_id), *@launching])
+        end
+
         private
+
+        def carried = [@settling, *@live].compact
 
         # Fold, run any ready QA checkpoint, report what cannot run, fill the
         # width, settle one, fold again. An empty fill means nothing is startable:
@@ -1080,13 +1140,14 @@ module Lain
         # a pass sends the loop straight back to the fold.
         def drive
           @stopped = stop_reason
-          return strand unless @stopped.nil?
+          return halt unless @stopped.nil?
 
           folded = @progress.call
           return drive if run_checkpoints(folded).any?(&:passed)
 
           unplanned(folded).each { |issue| @reported << Reported.new(issue_id: issue.id, reason: UNPLANNED) }
           fill(folded)
+          return drive if @halted
           return if @live.empty?
 
           settle_one
@@ -1094,6 +1155,8 @@ module Lain
         end
 
         def stop_reason
+          return HALTED if @halted
+
           budget = @bounds.budget
           return format(BUDGET_SPENT, budget:) if budget && @landed.size >= budget
           return INTERRUPTED if @bounds.interrupt.call
@@ -1117,12 +1180,21 @@ module Lain
           @live = []
         end
 
+        def halt = @halted ? settle_rest : strand
+
+        # Retirement is what anchors a stopped actor's checkout and releases
+        # its lease, so a human's stop retires what it reached rather than
+        # stranding it.
+        def settle_rest
+          settle_one until @live.empty?
+        end
+
         # A refused launch takes no room, so each startable issue is offered in
         # turn while the width has any. Iterating one pass rather than
         # re-entering per refusal keeps an epic of many broken plans at one
         # frame.
         def fill(folded)
-          startable(folded).each { |issue| launch(issue) if room? }
+          startable(folded).each { |issue| launch(issue) if room? && !@halted }
         end
 
         def room? = @live.size < @bounds.width
@@ -1220,14 +1292,18 @@ module Lain
         # read after it meets the same damage, so it goes to {#call} to end the
         # run, rather than being reported once per issue.
         def launch(issue)
+          @launching = issue.id
           subject = @plans.call(issue.id)
           launched = @actors.call(issue.id, subject: subject.subject, level: subject.level,
                                             acceptance: subject.acceptance, attempt: @attempts.call(issue.id))
           @live << Live.new(issue_id: issue.id, launch: launched)
+          launched.actor.stop if @halted
         rescue JournalUnreadable
           raise
         rescue StandardError => e
           @reported << Reported.new(issue_id: issue.id, reason: e.message)
+        ensure
+          @launching = nil
         end
 
         # Await the oldest live actor, retire it, and put what it anchored
@@ -1250,13 +1326,15 @@ module Lain
         # landed. A journal that cannot be read is reported against the issue
         # too, then goes on to {#call}: the next issue's gate reads the same one.
         def settle_one
-          entry = @live.shift
+          entry = @settling = @live.shift
           row = row_of(entry)
           @grading.call(entry.issue_id, row)
           judge(entry, @supervisor.retire(row))
         rescue StandardError => e
           reported(entry, "#{UNCARRIED}: #{e.class}: #{e.message}") if untouched?(entry.issue_id)
           raise if e.is_a?(JournalUnreadable)
+        ensure
+          @settling = nil
         end
 
         def row_of(entry) = @supervisor.find { |row| row.actor.equal?(entry.launch.actor) }
@@ -1269,6 +1347,7 @@ module Lain
         # submitting the red step's own commit: failing tests are not an
         # implementation.
         def judge(entry, report)
+          return halted(entry, report) if @halted
           return reported(entry, unkept(report)) if report.sha.nil?
           return reported(entry, format(NO_WORK, sha: report.sha)) if
             entry.launch.tests.unworked?(report.sha, judge: @red_only)
@@ -1281,13 +1360,20 @@ module Lain
         # reaches its gate has a sha worth testing.
         def gated(entry, report)
           tests = tested(entry, report)
+          return halted(entry, report) if @halted
           return reported(entry, TESTS_STOPPED) if tests == Asking::STOPPED
 
           opened = @asking.call(entry.issue_id, sha: report.sha, tests:)
+          return reported(entry, format(HUMAN_ABANDONED, sha: report.sha, ref: report.ref)) if @halted
           return reported(entry, UNSETTLED) if opened == Asking::STOPPED
           return reported(entry, format(GATE_PARKED, sha: report.sha)) unless opened
 
           land(entry, report)
+        end
+
+        def halted(entry, report)
+          reason = report.sha.nil? ? HUMAN_STOPPED_BARE : format(HUMAN_STOPPED, sha: report.sha, ref: report.ref)
+          reported(entry, reason)
         end
 
         def tested(entry, report) = @asking.watching { @tip_tests.call(entry.issue_id, report.sha) }
@@ -1298,6 +1384,8 @@ module Lain
         # queue says whether the work reached the branch, and a conflict that
         # still stands is work waiting on its ref, not work that landed.
         def land(entry, report)
+          # A landing under way is past what a stop can end, so a stop must not claim it.
+          @settling = nil
           moved = Array(@landing.call(entry.issue_id, sha: report.sha, ref: report.ref))
           return @landed << Landed.new(issue_id: entry.issue_id, sha: report.sha) if moved.all?(&:done)
 

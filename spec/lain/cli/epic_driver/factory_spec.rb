@@ -18,6 +18,30 @@ class FactorySpecActor
   def address = "factory-spec"
 end
 
+# An actor still mid-turn: its turn settles only once something stops it.
+class FactorySpecWorkingActor < FactorySpecActor
+  def initialize(worker_env)
+    super
+    @stopped = false
+  end
+
+  def settle
+    1000.times do
+      return self if @stopped
+
+      sleep 0.01
+    end
+    raise "the actor was never stopped"
+  end
+
+  def stopped? = @stopped
+
+  def stop
+    @stopped = true
+    self
+  end
+end
+
 # The chat's asker, answering every question at once with the words given and
 # keeping each question it was asked.
 class FactorySpecAsker
@@ -58,7 +82,8 @@ end
 class FactorySpecActors
   Launch = Data.define(:actor, :worker_id, :branch, :tests)
 
-  def initialize(fleet, log, repo, files: {}, idle: [], manual: [], slug: "demo")
+  def initialize(fleet, log, repo, files: {}, idle: [], manual: [], slug: "demo", actor: FactorySpecActor)
+    @actor = actor
     @manual = manual
     @slug = slug
     @fleet = fleet
@@ -78,7 +103,7 @@ class FactorySpecActors
       red = acceptance(worker_env.cwd, issue_id)
       commit(worker_env.cwd, "work for #{issue_id}", "#{issue_id}.txt" => "work for #{issue_id}\n", **@files) unless
         @idle.include?(issue_id)
-      FactorySpecActor.new(worker_env)
+      @actor.new(worker_env)
     end
     Launch.new(actor:, worker_id: "issue.#{@slug}.#{issue_id}.#{attempt}", branch: "lain/issue/#{@slug}/#{issue_id}",
                tests: red)
@@ -1297,6 +1322,55 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
 
       expect { first.cut }.to raise_error(Lain::Error, /landing checkout/)
       expect(lock_of(landing_checkout)).to include("lain-lease pid=#{sleepers.last} ")
+    end
+  end
+
+  # A human's /stop reaches the run in flight on the epic's own supervisor,
+  # which the chat's fleet never names.
+  describe "a stop by the human mid-issue" do
+    def anchor_of(issue_id) = Lain::Isolation::Worktree::Handback::Naming.new("issue.demo.#{issue_id}.1").ref
+
+    it "stops the actor mid-turn, anchors its work, opens no gate, and releases its lease" do
+      write_epic([issue("a")])
+      approve_plan("a")
+      git(repo, "switch", "-q", "main")
+      actors = ->(fleet) { FactorySpecActors.new(fleet, log, repo, actor: FactorySpecWorkingActor) }
+      factory = factory_over(mount, actors:, record: chronicle)
+      named = nil
+
+      result = Sync do |task|
+        task.async do
+          1000.times { sleep 0.01 unless log.any? { |row| row.first == :leased } }
+          sleep 0.2
+          named = factory.stop
+        end
+        factory.run(width: 1)
+      end
+
+      anchored = git(repo, "rev-parse", anchor_of("a"))
+      expect(named).to eq(Lain::CLI::EpicDriver::Run::Halt.new(halted: true, issues: ["a"]))
+      expect(git(repo, "ls-tree", "--name-only", anchored).split("\n")).to include("a.txt")
+      expect(result.reported.map(&:reason).join).to include("stopped by the human").and include(anchored)
+      expect(result.landed).to be_empty
+      expect(git(repo, "worktree", "list")).not_to include("issue.demo.a")
+      expect(factory.stop).to eq(Lain::CLI::EpicDriver::Run::Halt.none)
+    end
+
+    # A run that raised leaves issues in its loop; a /stop after it must not
+    # name them as though they were still running.
+    it "names nothing once a run has raised out of the driver" do
+      write_epic([issue("a"), issue("b")])
+      %w[a b].each { |id| approve_plan(id) }
+      git(repo, "switch", "-q", "main")
+      torn = Lain::Epic::SignoffQueue::UnreadableRecord.new("the gate_decision record cannot be read")
+      actors = lambda do |fleet|
+        scripted_actors = FactorySpecActors.new(fleet, log, repo)
+        ->(issue_id, **options) { issue_id == "b" ? raise(torn) : scripted_actors.call(issue_id, **options) }
+      end
+      factory = factory_over(mount, actors:, record: chronicle)
+
+      expect { factory.run(width: 2) }.to raise_error(Lain::JournalUnreadable)
+      expect(factory.stop).to eq(Lain::CLI::EpicDriver::Run::Halt.none)
     end
   end
 end
