@@ -1132,11 +1132,40 @@ RSpec.describe Lain::Tools::Subagent do
         .to raise_error(Lain::Budget::Exceeded) { |error| expect(error.message).not_to include("resume") }
     end
 
-    it "refuses iterations without a resume, and a prompt-less call that resumes nothing" do
-      expect { tool.call({ "prompt" => "go", "iterations" => 3 }, invocation) }
-        .to raise_error(Lain::Tool::InvalidInput, /iterations/i)
+    it "refuses a prompt-less call that resumes nothing" do
       expect { tool.call({}, invocation) }.to raise_error(Lain::Tool::InvalidInput, /prompt/i)
       expect(provider.requests).to be_empty
+    end
+  end
+
+  describe "the iterations a spawn asks for" do
+    def rounds(count)
+      Array.new(count) { |i| tool_response(["e#{i}", "echo", { "text" => "e#{i}" }]) }
+    end
+
+    def spawner(ceiling, **)
+      build_subagent(provider: mock(*rounds(4), text_response("done")),
+                     budget: Lain::Budget.ceilings(iterations: ceiling), announces_as: "researcher", **)
+    end
+
+    it "runs under the iterations it asks for when the role allows more" do
+      expect { spawner(3).call({ "prompt" => "go", "iterations" => 1 }, invocation) }
+        .to raise_error(Lain::Budget::Exceeded, /ceiling is 1/)
+    end
+
+    it "is held to the role's own ceiling, however many iterations it asks for" do
+      expect { spawner(2).call({ "prompt" => "go", "iterations" => 400 }, invocation) }
+        .to raise_error(Lain::Budget::Exceeded, /ceiling is 2/)
+    end
+
+    it "refuses a non-positive iterations" do
+      expect { spawner(2).call({ "prompt" => "go", "iterations" => 0 }, invocation) }
+        .to raise_error(Lain::Tool::InvalidInput, /iterations/i)
+    end
+
+    it "refuses iterations on an actor-mode call rather than dropping it" do
+      expect { spawner(2, mode: :actor).call({ "prompt" => "go", "iterations" => 5 }, invocation) }
+        .to raise_error(Lain::Tool::InvalidInput, /iterations applies only to a one-shot spawn/)
     end
   end
 

@@ -64,9 +64,9 @@ module Lain
 
         field :resume, :string, description: "The label a stopped subagent was given. It carries on from where it " \
                                              "stopped, so pass no prompt, name or extends."
-        field :iterations, :integer, description: "With resume: how many more iterations the subagent may run."
+        field :iterations, :integer, description: "How many iterations the subagent may run, or how many more on a " \
+                                                  "resume. The role's own ceiling bounds it. Not for actors."
         validates :prompt, presence: true, unless: :resuming?
-        validates :iterations, absence: { message: "applies only to a resume" }, unless: :resuming?
         validates :iterations, numericality: { only_integer: true, greater_than: 0 }, allow_nil: true
 
         def resuming? = !resume.nil?
@@ -285,7 +285,7 @@ module Lain
       def perform(input, _invocation)
         return resumed(input) if input.resuming?
 
-        admitted(builder_for(input.name)) { |builder| dispatched(input, builder) }
+        admitted(builder_for(input.name), spawn_budget(input)) { |builder| dispatched(input, builder) }
       end
 
       private
@@ -302,7 +302,7 @@ module Lain
       def resumed(input)
         stopped = resumable(input)
         lease = relet(stopped)
-        admitted(stopped.builder, budget.with(iterations: resume_ceiling(input.iterations))) do |builder|
+        admitted(stopped.builder, spawn_budget(input)) do |builder|
           @stops.take(stopped.label)
           resuming(stopped, lease, builder)
         end
@@ -326,8 +326,8 @@ module Lain
         end
       end
 
-      # A resume is a fresh run of the same role, so the role's ceiling bounds it as it bounds a spawn.
-      def resume_ceiling(asked) = [asked, budget.iterations].compact.min
+      # The role's ceiling bounds what a spawn or a resume asks for, since a resume is a fresh run of the same role.
+      def spawn_budget(input) = budget.with(iterations: [input.iterations, budget.iterations].compact.min)
 
       def relet(stopped)
         stopped.relet
@@ -340,6 +340,7 @@ module Lain
       # address -- its :spawn digest, the stable name a caller tells it by.
       def adopt_actor(input)
         invalid!("a name applies only to a one-shot spawn") if input.name
+        invalid!("iterations applies only to a one-shot spawn") if input.iterations
         return actor_refused unless supervisor.running?
 
         prompt = input.prompt
