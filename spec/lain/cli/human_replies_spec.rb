@@ -558,6 +558,84 @@ RSpec.describe Lain::CLI::HumanReplies do
     end
   end
 
+  # A surface away from the terminal reads what `/inbox` would list, and
+  # answers through the same path.
+  describe "#waiting and #answer" do
+    it "lists a queued arrival without taking it from the queue" do
+      Sync do
+        item = announced(ask_human, "q1?")
+
+        expect(replies.waiting.map(&:digest)).to eq([item.digest])
+        expect(questions.size).to eq(1)
+      end
+    end
+
+    it "lists an item /inbox already showed, once" do
+      Sync do
+        item = listed(ask_human, "q1?")
+        announced(other_asker, "q2?")
+
+        expect(replies.waiting.map(&:question)).to eq([item.question, "q2?"])
+      end
+    end
+
+    it "lists a set that arrived twice once" do
+      Sync do
+        item = announced(ask_human, "q1?")
+        questions.enqueue(item)
+
+        expect(replies.waiting.map(&:digest)).to eq([item.digest])
+      end
+    end
+
+    it "answers false for a set nothing holds" do
+      expect(replies.answer("late", "blake3:#{"0" * 64}")).to be(false)
+    end
+
+    it "answers false for a withdrawn ask, printing nothing at the desk and retiring its line" do
+      Sync do
+        pending = ask_human.ask("q1?")
+        item = replies.waiting.first
+        ask_human.withdraw(pending)
+        output.truncate(0)
+
+        expect(replies.answer("late", item.digest)).to be(false)
+        expect(output.string).to eq("")
+      end
+    end
+
+    it "lists no question whose ask was withdrawn" do
+      Sync do
+        ask_human.withdraw(ask_human.ask("q1?"))
+
+        expect(replies.waiting).to be_empty
+      end
+    end
+
+    it "answers the asker and retires the item, so /inbox lists nothing after" do
+      Sync do
+        item = announced_text(ask_human, "q1?")
+        allow(conductor).to receive(:read_reply).and_return("")
+        replies.drain_at_prompt
+
+        expect(replies.answer("go left", item.digest)).to be(true)
+        expect([ask_human.last_answer.body["answer"], replies.waiting]).to eq(["go left", []])
+        replies.drain_at_prompt
+      end
+
+      expect(output.string).to include("no questions pending")
+    end
+
+    it "answers false for a set already answered" do
+      Sync do
+        item = announced(ask_human, "q1?")
+        replies.answer("first", item.digest)
+
+        expect(replies.answer("second", item.digest)).to be(false)
+      end
+    end
+  end
+
   # The arrival note is the FIRST thing a human sees, and the item carries its
   # own attribution -- so a two-agent fleet's arrivals are told apart before the
   # drain is ever opened, not only once it is.

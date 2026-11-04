@@ -260,6 +260,27 @@ module Lain
         answer
       end
 
+      # What `/inbox` would list, read for a surface away from the terminal:
+      # the listed items and the queued arrivals, the queue left as it was so
+      # the surfaces here still announce each one.
+      #
+      # @return [Array<InboxItem>] oldest first, one per set still awaited
+      def waiting = [*@inbox, *@queued.on_any].select { @ask_human.awaiting?(_1.digest) }.uniq(&:digest)
+
+      # An answer from such a surface, through the one answer path, so the item
+      # is retired wherever it is listed. A set that died first is retired in
+      # silence: the human who answered it is not at this terminal to read why.
+      #
+      # @param text [String]
+      # @param digest [String] the set it answers
+      # @return [Boolean] whether this answer reached the set first
+      def answer(text, digest)
+        deliver(text, digest)
+      rescue Lain::Tools::AskHuman::NoPendingQuestion
+        settled(digest)
+        false
+      end
+
       # A line the human typed in the chat that was neither a command nor an
       # answer, waiting to be dispatched at `you>`. The input rail holds it
       # ({Frontend::Intake#hold}), through the conductor that reads from it,
@@ -392,6 +413,7 @@ module Lain
         handed = true
         settled(digest, open, queued)
         echo(answer) if delivered
+        !delivered.nil?
       ensure
         open&.each { |read| handed ? read.settle : read.release }
       end
@@ -987,13 +1009,17 @@ module Lain
         # gate's seat is -- which holds nothing for an answer to retire.
         module NOTHING
           def self.on(_digest) = [].freeze
+          def self.on_any = [].freeze
           def self.withdraw(_items) = nil
         end
 
         def initialize(questions) = @questions = questions
 
         # The items queued for `digest` at this instant, left where they are.
-        def on(digest) = rotated { true }.select { |item| item.digest == digest }
+        def on(digest) = on_any.select { |item| item.digest == digest }
+
+        # Read by rotating because Async::Queue cannot be indexed.
+        def on_any = rotated { true }
 
         def withdraw(items)
           rotated { |item| items.none? { |gone| gone.equal?(item) } } unless items.empty?
