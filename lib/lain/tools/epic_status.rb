@@ -16,6 +16,9 @@ module Lain
       class Input < Tool::Input
         field :slug, :string,
               description: "The epic's slug: #{Epic::Home::NAME_RULE}. Omit it when the project has one epic."
+        field :readiness, :boolean,
+              description: "Also check that every issue's Subject and Level place under the project's test layout. " \
+                           "Defaults to false."
       end
 
       input_model Input
@@ -36,12 +39,23 @@ module Lain
       protected
 
       def perform(input, _invocation)
-        Tool::Result.ok(bounded(@homes.epics.status(input.slug)))
+        Tool::Result.ok(bounded(report(input)))
       rescue Lain::Error, SystemCallError => e
         Tool::Result.error(e.message)
       end
 
       private
+
+      def report(input)
+        status = @homes.epics.status(input.slug)
+        input.readiness ? "#{status}\n\n#{readiness(input.slug)}" : status
+      end
+
+      def readiness(slug)
+        resolved = @homes.epics.resolve_slug(slug, remedy: CLI::Epic::BY_SLUG)
+        layout = Lain::Config.test_layout(root: @homes.root)
+        Epic::Readiness.of(@homes.for(resolved).read_epic, layout).to_s
+      end
 
       def bounded(report) = BOUND.admits?(report.bytesize) ? report : BOUND.fit(report.lines(chomp: true)).join("\n")
     end

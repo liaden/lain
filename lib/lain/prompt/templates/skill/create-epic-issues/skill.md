@@ -162,6 +162,15 @@ reads as no answer, and nothing advanced. A `--btw` chat cannot submit at all.
 `lain epic queue` and `lain epic approve DIGEST` / `lain epic deny DIGEST`; `epic_status`
 shows where the epic currently stands.
 
+## Phase 5 — Check the tests can be placed
+
+Last, call `epic_status` with `slug` the epic's slug and `readiness` true. Its report names every
+issue whose `Subject:` and `Level:` the project's test layout cannot place, with the layout's
+reason, and when the project declares no `tests` line it proposes the one to add. Then quote the
+readiness lines to the user verbatim. If anything is unplaceable, fix the `Subject:` with
+`epic_write`, or tell the user which `tests` line to add to `.lain/config.rb`, before the
+implementation starts.
+
 ## Where the epic goes after you
 
 Writing the issues up is the last authoring step. What follows is not yours to drive, and knowing

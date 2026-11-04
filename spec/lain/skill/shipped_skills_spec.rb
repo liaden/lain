@@ -820,6 +820,17 @@ RSpec.describe "shipped skills" do
       end
     end
 
+    it "closes create-epic-issues on a readiness check, after the gate phase and before the hand-off" do
+      with_empty_project do |renderer|
+        text = renderer.render("create-epic-issues")
+        phase = text[/^## Phase 5 .*?(?=^## )/m]
+
+        expect(phase).to include("`epic_status`", "`readiness`", "quote")
+        expect(text.index("## Phase 4 ")).to be < text.index("## Phase 5 ")
+        expect(text.index("## Phase 5 ")).to be < text.index("## Where the epic goes after you")
+      end
+    end
+
     it "has create-epic-issues review each wave with epic_review before it submits, and quote the verdict" do
       with_empty_project do |renderer|
         phase = renderer.render("create-epic-issues")[/^## Phase 4 .*?(?=^## )/m]

@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "stringio"
 require "tmpdir"
 
@@ -88,5 +89,40 @@ RSpec.describe Lain::Tools::EpicStatus do
     expect(result.content.bytesize).to be <= described_class::BOUND.limit
     expect(result.content).to include("truncated to", "epic_show")
     expect(result.content).to start_with("line 0 ")
+  end
+
+  describe "readiness" do
+    let(:cargo_config) { "tests preset: :cargo, source_roots: [\"src\"]\n" }
+    let(:issues_md) do
+      "# Frugirl\n\n### [ ] `deps` pin deps\n\nSubject: Cargo.toml\nLevel: unit\n"
+    end
+
+    def write_config(text)
+      FileUtils.mkdir_p(File.join(@dir, ".lain"))
+      File.write(File.join(@dir, ".lain", "config.rb"), text)
+      trust_project(@dir)
+    end
+
+    it "appends the readiness report to the status when asked" do
+      write_config(cargo_config)
+      home.epic.write(issues_md)
+
+      result = run(slug: "frugirl-mvp", readiness: true)
+
+      expect(result).not_to be_error
+      expect(result.content).to include("deps", "unplaceable", "Cargo.toml")
+    end
+
+    it "names the tests line to add when the project declares no layout" do
+      home.epic.write(issues_md.sub("Cargo.toml", "src/lib.rs"))
+
+      expect(run(slug: "frugirl-mvp", readiness: true).content).to include("tests preset: :cargo")
+    end
+
+    it "leaves the status alone when readiness is not asked" do
+      home.epic.write(issues_md)
+
+      expect(run(slug: "frugirl-mvp").content).not_to include("unplaceable")
+    end
   end
 end
