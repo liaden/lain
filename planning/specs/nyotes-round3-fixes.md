@@ -2622,3 +2622,18 @@ The comment at `redact_secret_reads.rb:113-125` calls this the last fail-open in
 19:09 T43 review 2 (high): APPROVE-WITH-FIXES, 3 mechanical (trailer names read_file; cap+binary specs kill 2 survivors; reflow 2 comments); no third review
 - T44 landed b93101f2 (attempt 1)
 19:12 T44 landed b93101f2
+19:17 T43 review 2 fixes done (962/0; dead .scrub removed, binary pin kept). hot-path-bench owed: 3 records + check in worktree under the gate
+19:22 T43 hot-path-bench --check FAIL: wire_ready 17.7-17.9 vs ceiling 17.1 (3 of 3), all else under. Main's last logs (f6ee7c9c, 11-02) 16.7-16.95. Running alternating main/T43 control. T42 fix round done (0 of 20000 slips at 20/side); second review started.
+19:27 T43 control: main e73fd762 wire_ready 17.8-18.1, T43 17.8-17.9 alternating at load ~2.5: base drift, not T43 -> FU-5. Landing T43 attempt 1
+19:28 T42 review 2 APPROVE (new adversarial shapes all flagged; 435/0). Queued to land after T43.
+19:28 T9 review 2 APPROVE (7 back-outs red, 2071/0, tmux re-drive). 2 optional nits skipped. Lands after T43 (shared redact_secret_reads.rb).
+- T43 landed c292473b (attempt 1)
+19:30 T43 landed c292473b
+19:32 T9 escalation.rb conflicted with T43 (surface block vs postponed line); merged by hand on main's version (postponed ruling also carries surface:); land.sh learned T<id>.whole for hand-merged paths. T9 msg corrected: the breaker counts a postpone (plan line 107).
+19:32 Landing T42 then T9 (chained).
+19:32 T8 stop: policy.rb Adjudicated#decide builds wave Outcome with old keywords; policy.rb joins. Accepted: instruction names the comma; wave grammar drops "deny c: x; d: y" inheritance. Agent ran pkill -f once (brief forbids).
+19:32 T24 wiring round done (2/2 red; 493+386+296 green; countdown_for moved to RailCountdown.where). High review queued until landings finish. Gap: stopped researcher not restored after restart.
+- T42 landed 73f4132e (attempt 1)
+- T9 landed 020cbabe (attempt 1)
+19:37 T42 landed 73f4132e; T9 landed 020cbabe
+19:37 T15, T12, T10 started (cut at 020cbabe); T24 high review started
