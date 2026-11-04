@@ -2905,3 +2905,71 @@ The comment at `redact_secret_reads.rb:113-125` calls this the last fail-open in
 - T60 landed 41f60380 (attempt 3)
 - 07:54 T60 landed 41f60380 (attempt 3). Worktree removed.
 - 07:54 Plan edits applied: T53 (gates via EpicQueue, no postponed item, 3 items), T30 (subagent.rb in Files, watching not turned).
+- 07:58 T53 R1 done (agenda + Gates, 15 examples, 14 mutants red). Ruled R2: widen to human_replies.rb (waiting, reply) and spec a real-HumanReplies example; gate time never nil; measure a poll on a nyotes copy.
+- 07:59 T38 R2 done (8123 green, 11 back-outs red, FALSE_TOOLS, 16 KiB line-cut bound; bounds.rb deviation accepted). Review spawned medium. FU-21 agent spawned for lain-remote.
+- 08:00 FU-21 done: lain-remote a93f485 (devices file, pin 41f60380; 30 tests green with REQUIRE_RELAY).
+- 08:05 T30 review REQUEST-CHANGES: numerator counted turns not iterations (reads 25/25 at ~12 iterations); usage unread; fill lags (published before accounting). Ruled R2: publish iterations; drop usage; publish after accounting; pin 3 survivors.
+- 08:05 T33 review REQUEST-CHANGES: Signoff drops the stale-deny-keeps-newer-approval rule (ab359c02). Ruled: keep the rule; Signoff must agree with SignoffQueue on every (partition, digest) pair with combine lawful; pin contracts; from_journal; raise on raw input.
+- 08:07 T38 review APPROVE-WITH-FIXES: slug unpinned, truncation notice lacks the path, CLI remedy reaches the model, small pins. R3 sent; coordinator verifies after (medium).
+- 08:12 T53 R2 done (real HumanReplies; answer(text, digest); gate time from the wait record or the earliest decision; poll 0.47 to 0.66 s over 574 MB). Review spawned high. NOTE: the user's live nyotes now holds 41 old records, up from 40: a running pre-T48 lain still writes the old shape. Tell the user to restart lain before running rewrite-verdicts.
+- 08:12 T26 done (14 back-outs red, real drive stopped mid-turn, anchor on refs/lain/worker/...). Asked to land the drive example in factory_spec, then review. Owed doc: docs/commands.md /stop epic case.
+- 08:14 T26 R2 done (drive example in factory_spec, red then green, 65/0). Review spawned high.
+- 08:14 T38 R3 verified by coordinator (361 card examples, lint clean). Landing 1.
+- 08:16 T30 R2 done (iterations via accounted_by, usage dropped, fill current, new progress_spec, Chain payments). Second review sent (substantive blocker).
+- 08:19 T38 landing 1 red: 18 e2e failures, all Cassette::Stale (tools gained epic_show, epic_status) in 7 cassettes. Card's own change; sent back to re-record with local ollama.
+- 08:19 T33 R2 done (moves replayed in combine; 0/500 disagree; 459 real pairs agree). Second review sent.
+- 08:24 T30 second review APPROVE-WITH-FIXES; coordinator pinned the iterations fold (red with it removed, green restored) and added the WHY on Payments. Landing 1.
+- 08:25 T38 R4 done: 7 e2e cassettes re-recorded, replay green; todos_drain now 2 requests (model answered differently), assertions unchanged. Cassettes added to T38.paths; lands after T30. FU-23: ollama-tier cassette ollama_run_tool_loop.yml lists epic tools, stale, not re-recorded.
+- 08:25 T53 review APPROVE-WITH-FIXES, 1 substantive (an old gate record blinds the whole agenda). High risk: fix round then another review. Wave id re-mints after each per-issue answer: T55 re-reads after each answer.
+- 08:28 T33 second review APPROVE-WITH-FIXES: 5000 random sessions agree with SignoffQueue, but a mutant dropping settle's supersede removal survives and diverges (park v2, approve v3, approve v2, deny v2). Fix round 2 (4 items) then a third review. T49 note: Signoff earns its place only if T49 deletes SignoffQueue's @approved and @superseded; until then the settle rule lives twice.
+- 08:30 T30 landing 1 red: 33114 examples, 1 failure, actor_spec "journals its progress under its role, a row per turn" got turns [1,2,2,3,...]: paid rows repeat turns. Caused by the card (spec outside paths). Sent back. Main checkout restored clean.
+- 08:31 T38 landing 2 started (cassettes in paths).
+- 08:34 T26 review REQUEST-CHANGES: blocker, a stop while no issue is live strands startable issues silently (P1, P3); a stop during land is named as stopped while the result says landed; "ungated" is wrong after the gate call. 8 items sent back; another review after.
+- T38 landed 19621052 (attempt 2)
+- 08:36 T38 landed 19621052.
+- 08:37 T47 started (cut at 19621052); T39 waits for a memory slot.
+- 08:38 T30 R3: actor_spec selects rows with a head (iteration rows repeat turns by design). Landing 2.
+- T30 landed 412df682 (attempt 2)
+- 08:46 T30 landed 412df682.
+- 08:46 T39 started (cut at 412df682).
+- 08:47 T33 R3 done (Park/Settle moves, 3 pinning examples); third review sent to the same reviewer.
+- 08:47 T26 R2 done (8 items, P1-P4 as specs). Ruling: a stop names an in-progress launch (it ends it either way). Second review sent to the same reviewer.
+- 08:48 T19 fourth review APPROVE-WITH-FIXES: no leak left; R8 cost is only mixed git+walk commands (fails closed). 1 mechanical test (driver-check rescue) sent; lands after. FU-24: Named does not recognise /usr/lib/git-core/git-show as git (judged, value redacted; predates T19).
+- 08:52 T47 done; widened to wiring.rb + its spec (the card's criterion is the rendered workspace; the line would not reach the Request otherwise). R2 sent.
+- 08:53 T53 R2 done (8 items); second review sent to the same reviewer, told to re-prove all back-outs serially (implementer's first pass overlapped).
+- 08:54 T39 done (Readiness.of(graph, layout), no mount); tool schema change stales the 7 e2e cassettes again: R2 re-record sent before review.
+- 08:54 T26 second review APPROVE-WITH-FIXES: all back-outs red; ruling on in-progress launch checked (reply and result agree). 1 item: a stop with no issue named replies "no ask is running" though the run halted; sent R3, lands after.
+- 08:54 T19 R9 done (driver-rescue example via empty PATH, red with rescue out). Landing 1.
+- 08:54 T33 third review APPROVE-WITH-FIXES: all r2 survivors die; 1 seed-dependent survivor (settle drops parked) gets a fixed example (R4), lands after.
+- 08:59 T19 landing 1 red: 33188 examples, 1 failure, the card's own new wiring_spec example "lets a git log reach the judge when the sandbox wraps bash under --confine workspace" (judge not asked). Green alone and under both candidate seeds on main+T19 (nr3-T19m). Card-caused flake, sent back (R10).
+- 08:59 T33 R4 done; landing 1.
+- 09:17 T33 landing 1 red: 33158 examples, 2 failures, both on the known-flake list (repeat): "Lain::Tool::Offload keeps a sibling fiber running while the work holds its thread" (0.312 vs < 0.3, seed 56381) and "Lain::Tools::Subagent async fan-out ... gathers every result into ONE user message in tool_use order, however the children finish". Both green alone at load 2. T33 adds only unreferenced files. Repeats become FU-25 (offload tick-gap share) and FU-26 (subagent fan-out order); landing 2.
+- 09:17 T26 R3 done (Run::Halt, EPIC_HALTED reply); lands after T33. T47 R2 done (Wiring#shown passes epic_mount.workspace); review after T33 lands.
+- 09:17 T53 second review APPROVE-WITH-FIXES: all back-outs red; old-record catch misses SignoffQueue::UnreadableRecord (catch Lain::JournalUnreadable); answer to the error item raises, stable approve-first order, exact comment. R3 sent; the same reviewer verifies after.
+- 09:17 T39 R2: request bodies byte-identical (cassettes record tool names only), so the re-record was not needed; cassettes stay out of T39's paths. Review after T33 lands.
+- 09:18 T19 R10: cause was pre-commit's GIT_DIR/GIT_INDEX_FILE reaching OwnHistory through the chat's env snapshot (production right; spec assumed no git env). Reproduced with both exported; wiring_spec examples now run outside_a_git_hook. Lands after T33.
+- T33 landed 588ae79a (attempt 2)
+- 09:20 T33 landed 588ae79a.
+- 09:24 T19 landing 2 red: 33213 examples, 1 failure, read_file_spec "an offset of one with no limit allocates like a whole read" (30434 vs < 21666, seed 17987). Not a known flake. Green alone and 3/3 on base with that seed: card's to explain (hypothesis: a thread left by the driver check allocating during the count). Sent R11.
+- 09:25 T26 landing 1.
+- T26 landed b5263374 (attempt 1)
+- 09:28 T26 landed b5263374.
+- 09:29 T39 and T47 reviews started. T49 waits on T11 (which waits on T19).
+- 09:32 T19 R11: read_file allocation red not reproduced in 3 tries (card specs + read_file in 1 process, defined order and seed 17987); T19 leaves no thread or child. Likely: HistoryLiterals#prime threads (board_build.rb:247, gateway.rb:95, predate T19) still pumping git during the process-wide allocation count. Recorded by name for docs/toolchain-traps.md at close-out; FU-27: allocation spec counts process-wide allocations, and the priming thread outlives its board. Landing 3.
+- 09:33 T53 R3 done (JournalUnreadable catch, ArgumentError on the error item, partition order, exact comment); third verify sent to the same reviewer.
+- 09:33 T47 review APPROVE-WITH-FIXES: cache-stable, tool names read from held tools; the session header's reminders miss the epic line (bench replay loses it). R3 sent, bounded to wiring.rb + 1 file.
+- 09:34 T39 review APPROVE-WITH-FIXES: no-mount OK; HEAD cassettes replay green (re-record dropped); proposed source_roots for a root manifest leaves the issue unplaceable (substantive); skill check moves to shipped_skills_spec; PRESETS reuse. R3 sent.
+- T19 landed fd7a0830 (attempt 3)
+- 09:36 T19 landed fd7a0830 (attempt 3).
+- 09:36 T11 and T21 started (cut at fd7a0830).
+- 09:37 T47 R3: header fix lands via chronicle.start workspace:, but wiring.rb hit ClassLength/AbcSize; ruling: Wiring::Header#fields returns workspace: (header.rb joins), no limit raise.
+- 09:38 T53 third review APPROVE. Landing 1. Notes for T55: answer raises ArgumentError for a bad answer and for the unreadable-gate item; show the phone the message, not a generic error; re-read after each per-issue answer (wave id re-mints). Note for T54: the message carries a session journal path; the masked view should cover it.
+- 09:41 T39 R3 done: proposal covers only placeable issues (a root manifest gets "needs a Subject under a source root", no line); skill check in shipped_skills_spec; PRESETS reused. Plan deviation: the card's Cargo.toml scenario now names the issue instead of proposing a line. Lands after T53.
+- 09:43 T47 R3 done: Header#fields carries workspace:, no limit raise. Lands after T39.
+- T53 landed 2e697cdd (attempt 1)
+- 09:46 T53 landed 2e697cdd. T39 landing 1.
+- T39 landed ed6227f4 (attempt 1)
+- 09:50 T39 landed ed6227f4. T54 started (cut at ed6227f4).
+- 09:50 T47 landing 1.
+- T47 landed 560ec608 (attempt 1)
+- 09:53 T47 landed 560ec608.
