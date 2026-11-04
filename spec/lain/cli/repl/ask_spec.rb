@@ -222,8 +222,8 @@ RSpec.describe Lain::CLI::Repl::Ask do
     let(:agent) do
       submitter = Lain::CLI::EpicSubmit.in_chat(chronicle:, root: @dir, paths:, config:, asker: ask_human,
                                                 role_spawn: nil)
-      Lain::Agent.new(provider:, toolset: Lain::Toolset.new([Lain::Tools::EpicSubmit.new(submitter:)]),
-                      context: real_context)
+      tool = Lain::Tools::EpicSubmit.new(submitter:, reviews: -> { [] })
+      Lain::Agent.new(provider:, toolset: Lain::Toolset.new([tool]), context: real_context)
     end
 
     def records(type) = Lain::Journal.records(File.foreach(chronicle.journal_path), type:).to_a

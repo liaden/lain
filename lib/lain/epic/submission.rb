@@ -402,7 +402,7 @@ module Lain
         # nothing loses its deduplication.
         super(**Contracts::Submission.settle!(stage:, slug:, content_digest:, fact:),
               issue_id: issue_id && -issue_id.to_s, criteria_digest: criteria_digest && -criteria_digest.to_s,
-              changeset: changeset && -changeset.to_s, review: review && -review.to_s,
+              changeset: changeset && -changeset.to_s, review:,
               manual_commands: manual_commands&.map { |command| -command.to_s }&.freeze)
       end
 
@@ -417,7 +417,8 @@ module Lain
 
       # The one rendering {Epic::Gate#call} asks through the artifact duck:
       # the stage, the slug, and the one concrete fact that distinguishes this
-      # submission from another at the same stage.
+      # submission from another at the same stage, then the review the agent
+      # named, if it named one.
       def gate_question
         # `slug.inspect` rather than plain interpolation: {Gate::Policy} and
         # {Gate::Adjudicator} journal this question straight into NDJSON, so a
@@ -426,36 +427,14 @@ module Lain
         # `-"..."` rather than a plain literal: a shareable Submission must not
         # be the one thing on it that hands back a mutable String, or a caller
         # mutating the return value would read as this record's state changing.
-        -["Approve the #{stage} stage for #{slug.inspect}? (#{fact})", (Submission::ReviewQuote.line(review) if review),
-          GateReply::INSTRUCTION].compact.join(" ")
+        head = "Approve the #{stage} stage for #{slug.inspect}? (#{fact})"
+        return -"#{head} #{GateReply::INSTRUCTION}" unless review
+
+        -[head, *review.gate_lines([self]), GateReply::INSTRUCTION].join("\n")
       end
     end
 
     class Submission
-      # The agent's quote of a review is evidence for the human and nothing a
-      # reply is read against, so it is bounded and kept on one quoted line.
-      module ReviewQuote
-        BYTES = 600
-
-        LABEL = "Review verdict (quoted by the agent):"
-
-        # Whitespace collapses first so a newline cannot start a line of its own
-        # (a wave's reply grammar opens clauses at a line start), and `inspect`
-        # quotes what is left so it reads as a quotation, not as the question.
-        #
-        # @param review [String]
-        # @return [String] the label and the quoted, clamped text, on one line
-        def self.line(review)
-          quoted = review.to_s.split.join(" ").inspect[1..-2]
-          shown = quoted.bytesize > BYTES ? "#{whole_escapes(quoted.byteslice(0, BYTES).scrub(""))}..." : quoted
-          "#{LABEL} \"#{shown}\""
-        end
-
-        # A cut can land inside an escape such as `\u0000`, which would read as a
-        # different character, so a trailing partial escape is dropped.
-        def self.whole_escapes(text) = text.sub(/\\(?:u\h{0,3}|x\h?)?\z/, "")
-      end
-
       # One wave's issue plans put to the human as one question. Each issue is
       # still decided under its own {Submission}, so the wave adds a question
       # and a reading of the reply, and no gate identity of its own.
@@ -471,8 +450,7 @@ module Lain
       # their approval stands, so a clause naming one is told so, not called a typo.
       Wave = Data.define(:slug, :number, :submissions, :standing, :review) do
         def initialize(slug:, number:, submissions:, standing: [], review: nil)
-          super(slug:, number:, submissions:, standing: standing.map { -_1.to_s }.freeze,
-                review: review && -review.to_s)
+          super(slug:, number:, submissions:, standing: standing.map { -_1.to_s }.freeze, review:)
         end
 
         def stage = "issue_plan"
@@ -482,8 +460,8 @@ module Lain
         def gate_question
           count = Submission.issue_count(submissions.size)
           -["Approve the #{stage} stage for #{slug.inspect}, wave #{number} (#{count})?",
-            (Submission::ReviewQuote.line(review) if review),
-            *submissions.map { |submission| "  #{submission.fact}" }, GateReply::WAVE_INSTRUCTION].compact.join("\n")
+            *review&.gate_lines(submissions),
+            *submissions.map { |submission| "  #{submission.fact}" }, GateReply::WAVE_INSTRUCTION].join("\n")
         end
 
         # @param said [Gate::Said] what the human wrote

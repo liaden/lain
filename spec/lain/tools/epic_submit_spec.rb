@@ -38,7 +38,8 @@ RSpec.describe Lain::Tools::EpicSubmit do
   let(:submitter) do
     Lain::CLI::EpicSubmit.in_chat(chronicle:, root: @dir, paths:, config:, asker: ask_human, role_spawn: nil)
   end
-  let(:tool) { described_class.new(submitter:) }
+  let(:homes) { Lain::CLI::EpicMount::Homes.new(journal: chronicle.record_journal, root: @dir, paths:, config:) }
+  let(:tool) { described_class.new(submitter:, reviews: -> { homes.review_results }) }
 
   def home = Lain::Epic::Home.resolve(config:, paths:, root: @dir, slug: "frugirl-mvp")
 
@@ -67,15 +68,134 @@ RSpec.describe Lain::Tools::EpicSubmit do
       .to eq([%w[research approve interactive]])
   end
 
-  it "puts the agent's quoted review into the question the human is asked" do
-    Sync do |task|
-      call = task.async do
-        tool.call({ "stage" => "research", "slug" => "frugirl-mvp", "review" => "VERDICT: approve" }, invocation)
+  describe "a review named by its id" do
+    let(:gates) { every_stage("hands_off").merge("epic_plan" => "interactive") }
+    let(:findings) do
+      "## cluster 1 of 1 -- epic\nfiles: epic.md\n\nMUST-FIX:\n- none\nMINOR:\n- epic.md: name the store\n" \
+        "VERDICT: approve\n"
+    end
+
+    def epic(*ids)
+      home.write_epic(Lain::Epic::Graph.new(issues: ids.map { Lain::Epic::Issue.new(id: _1, title: _1) }))
+    end
+
+    def review!(**input)
+      reviewer = Lain::Tools::EpicReview.new(homes:, critique: ->(**) { findings })
+      Sync do
+        reviewer.call({ "stage" => "epic_plan", "slug" => "frugirl-mvp" }.merge(input.transform_keys(&:to_s)),
+                      invocation)
       end
-      task.yield until ask_human.pending?
-      expect(drawn.join("\n").delete("\n ")).to include("Reviewverdict(quotedbytheagent):", "VERDICT:approve")
-      ask_human.reply("deny", ask_human.last_question.digest)
-      call.wait
+      Lain::Journal.records(File.foreach(chronicle.journal_path), type: "epic_reviewed").to_a.last.fetch("id")
+    end
+
+    # The question as the inbox draws it, wrapped, so compared with its spaces taken out.
+    def asked(review, **input)
+      Sync do |task|
+        call = task.async do
+          tool.call(
+            { "stage" => "epic_plan", "slug" => "frugirl-mvp",
+              "review" => review }.merge(input.transform_keys(&:to_s)), invocation
+          )
+        end
+        task.yield until ask_human.pending?
+        drawn.join.delete("\n ").tap { ask_human.reply("deny", ask_human.last_question.digest) }
+      ensure
+        call&.wait
+      end
+    end
+
+    def short(stage_epic)
+      Lain::Canonical.abbreviate(Lain::Epic::Submission.epic_plan(graph: stage_epic, slug: "x")
+                                                                             .content_digest, scheme: false)
+    end
+
+    before { submit(stage: "research", slug: "frugirl-mvp") }
+
+    # Scenario: a stale verdict says so
+    it "marks a verdict read before an edit as stale against the digest the gate signs" do
+      epic("a")
+      round_nine = home.read_epic
+      id = review!
+      epic("a", "b")
+
+      question = asked(id)
+
+      expect(question).to include(id, "reviewed#{short(round_nine)},gating#{short(home.read_epic)}:stale")
+    end
+
+    it "shows a review of the gated digest as current, with its minor count" do
+      epic("a")
+      id = review!
+
+      expect(asked(id)).to include("reviewed#{short(home.read_epic)}:current", "1minor")
+    end
+
+    # Scenario: submit takes a review id
+    it "refuses free text, naming epic_review's id" do
+      expect { submit(stage: "epic_plan", slug: "frugirl-mvp", review: "VERDICT: approve") }
+        .to raise_error(Lain::Tool::InvalidInput, /epic_review/)
+    end
+
+    it "refuses an id no review was journaled under, and asks nothing" do
+      epic("a")
+
+      result = submit(stage: "epic_plan", slug: "frugirl-mvp", review: "review-0123456789ab")
+
+      expect(result).to be_error
+      expect(result.content).to include("review-0123456789ab", "epic_review")
+      expect(this_sessions_decisions.map { _1["stage"] }).to eq(["research"])
+    end
+
+    it "refuses a review of another epic" do
+      epic("a")
+      id = review!
+
+      result = submit(stage: "epic_plan", slug: "other-epic", review: id)
+
+      expect(result).to be_error
+      expect(result.content).to include(id, "frugirl-mvp", "other-epic")
+    end
+
+    context "when the issue plans are reviewed and gated" do
+      let(:gates) { every_stage("hands_off").merge("issue_plan" => "interactive") }
+
+      before do
+        issues = [Lain::Epic::Issue.new(id: "a", title: "a", blocks: %w[b c]),
+                  Lain::Epic::Issue.new(id: "b", title: "b"), Lain::Epic::Issue.new(id: "c", title: "c")]
+        home.write_epic(Lain::Epic::Graph.new(issues:))
+        %w[a b c].each { |id| home.issue(id).write("prose for #{id}\n") }
+        submit(stage: "epic_plan", slug: "frugirl-mvp")
+      end
+
+      # Through the real epic_review and the real submitter, so the digest each builds for a plan must agree.
+      it "shows a lone issue's review as current" do
+        id = review!(stage: "issue_plan", wave: 1)
+
+        question = asked(id, stage: "issue_plan", issue: "a")
+
+        expect(question).to include(id, "a:reviewed").and include(":current")
+        expect(question).not_to include("stale")
+      end
+
+      it "shows a wave's review as current for each issue" do
+        id = review!(stage: "issue_plan", wave: 2)
+
+        question = asked(id, stage: "issue_plan", wave: 2)
+
+        expect(question).to include(id, "b:reviewed", "c:reviewed")
+        expect(question.scan(":current").size).to eq(2)
+        expect(question).not_to include("stale")
+      end
+    end
+
+    it "refuses a review of another stage" do
+      epic("a")
+      id = review!
+
+      result = submit(stage: "research", slug: "frugirl-mvp", review: id)
+
+      expect(result).to be_error
+      expect(result.content).to include(id, "epic_plan", "research")
     end
   end
 

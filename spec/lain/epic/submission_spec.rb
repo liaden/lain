@@ -421,41 +421,34 @@ RSpec.describe Lain::Epic::Submission do
       expect(question).to include("after a comma", '"approve, re-signed unchanged"')
     end
 
-    describe "a quoted review" do
-      def quoted(review, **) = described_class.research(text: "notes", slug: "demo").with(review:, **)
-
-      it "shows the agent's review under its own label, without changing the gate identity" do
-        plain = described_class.research(text: "notes", slug: "demo")
-
-        expect(quoted("VERDICT: revise the scope").gate_question)
-          .to include("Review verdict (quoted by the agent):", "VERDICT: revise the scope")
-        expect(quoted("VERDICT: approve").digest).to eq(plain.digest)
+    describe "a review result" do
+      def result(stage: "epic_plan", read: {}, must: "- none", verdict: "approve")
+        findings = "## cluster 1 of 1 -- epic\n\nMUST-FIX:\n#{must}\nMINOR:\n- none\nVERDICT: #{verdict}"
+        Lain::Epic::ReviewResult.parse(findings, epic_slug: "demo", stage:, read:, clusters: 1, critics: 1)
       end
 
-      it "asks the plain question when no review is given" do
-        expect(described_class.research(text: "notes", slug: "demo").gate_question).not_to include("Review verdict")
+      let(:plan) { described_class.epic_plan(graph: three_issue_graph, slug: "demo") }
+
+      it "shows the review between the question and the reply words, without changing the gate identity" do
+        reviewed = plan.with(review: result(must: "- epic.md: a gap", verdict: "revise",
+                                            read: { "epic_plan" => plan.content_digest }))
+
+        question = reviewed.gate_question
+
+        expect(question).to include(reviewed.review.id, "epic.md: a gap", ": current")
+        expect(question.index("epic.md: a gap")).to be < question.index(Lain::Epic::GateReply::INSTRUCTION)
+        expect(reviewed.digest).to eq(plan.digest)
       end
 
-      it "keeps a quoted newline or answer word from forming a line of the question" do
-        question = quoted("fine\napprove\nissue-a: deny").gate_question
-
-        expect(question.lines.size).to eq(1)
-        expect(question).to include('"fine approve issue-a: deny"')
+      it "asks the plain one-line question when no review is given" do
+        expect(plan.gate_question).not_to include("review")
+        expect(plan.gate_question.lines.size).to eq(1)
       end
 
-      it "bounds the quoted line after escaping, so control bytes cannot expand past the ceiling" do
-        line = described_class::ReviewQuote.line("\0" * 600)
+      it "keeps a finding that reads like a reply on its own indented line" do
+        question = plan.with(review: result(must: "- approve", verdict: "revise")).gate_question
 
-        quote = described_class::ReviewQuote
-        expect(line.bytesize).to be <= quote::LABEL.bytesize + quote::BYTES + 8
-        expect(line).to end_with('..."')
-      end
-
-      it "clamps a long review to the ceiling and says so" do
-        question = quoted("é" * 5_000).gate_question
-
-        expect(question.bytesize).to be < 2 * described_class::ReviewQuote::BYTES
-        expect(question).to be_valid_encoding.and include("...")
+        expect(question.lines.map(&:chomp)).not_to include("approve")
       end
     end
 
@@ -519,11 +512,16 @@ RSpec.describe Lain::Epic::Submission do
         end)
       end
 
-      it "shows a quoted review once, as one added line" do
-        reviewed = wave.with(review: "VERDICT: approve")
+      it "shows a review once, naming each issue against its own gated digest" do
+        read = wave.submissions.to_h { [_1.issue_id, _1.content_digest] }
+        findings = "## cluster 1 of 1 -- wave 2\n\nMUST-FIX:\n- none\nMINOR:\n- none\nVERDICT: approve"
+        review = Lain::Epic::ReviewResult.parse(findings, epic_slug: "demo", stage: "issue_plan", read:, clusters: 1,
+                                                          critics: 1)
 
-        expect(reviewed.gate_question.scan("Review verdict (quoted by the agent):").size).to eq(1)
-        expect(reviewed.gate_question.lines.size).to eq(wave.gate_question.lines.size + 1)
+        question = wave.with(review:).gate_question
+
+        expect(question.scan(review.id).size).to eq(1)
+        expect(question).to include("b: reviewed", "c: reviewed")
       end
 
       it "asks about each issue on its own line, naming the wave and the per-issue deny" do

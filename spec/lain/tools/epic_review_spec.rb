@@ -9,21 +9,28 @@ class EpicReviewSpecSpawn
 
   attr_reader :prompts
 
-  def initialize = @prompts = []
+  # @param reply [#call, nil] `(child number, model) -> String`, each child's findings
+  def initialize(reply: nil)
+    @prompts = []
+    @reply = reply || ->(child, model) { "VERDICT for child #{child} (#{model.class})" }
+  end
 
   def seam = Seam.new(-> { Lain::Context.new(model: "critic-model", max_tokens: 512) }, Lain::Provider::Mock.new)
 
-  def within(_worker_env) = Lent.new(@prompts)
+  def within(_worker_env) = Lent.new(@prompts, @reply)
 
   def never_parking = self
 
   # One lent spawn.
   class Lent
-    def initialize(prompts) = @prompts = prompts
+    def initialize(prompts, reply)
+      @prompts = prompts
+      @reply = reply
+    end
 
     def call(_role, _mode, prompt, model: nil)
       @prompts << prompt
-      Lain::Tool::Result.ok("VERDICT for child #{@prompts.size} (#{model.class})")
+      Lain::Tool::Result.ok(@reply.call(@prompts.size, model))
     end
   end
 end
@@ -37,13 +44,15 @@ RSpec.describe Lain::Tools::EpicReview, :seam do
   end
 
   def invoke(**args)
-    described_class.new(homes:, critique:).call(args.transform_keys(&:to_s),
-                                                Lain::Tool::Invocation.new(context: Lain::Session::Null.instance))
+    described_class.new(homes:, critique:, critics:).call(args.transform_keys(&:to_s),
+                                                          Lain::Tool::Invocation.new(context: Lain::Session::Null.instance))
   end
 
-  def critique
+  def critique = real_critique
+
+  def real_critique
     lambda do |subject:, instructions:|
-      Lain::Review::Critique.new(subject:, spawn:, window:, journal: [], slots: @slots, instructions:,
+      Lain::Review::Critique.new(subject:, spawn:, window:, journal: [], slots: @slots, instructions:, critics:,
                                  checkouts: Lain::Review::Critique::Documents::ReadRoots.new(root: subject.root,
                                                                                              worker_env:)).call
     end
@@ -55,8 +64,10 @@ RSpec.describe Lain::Tools::EpicReview, :seam do
   end
 
   let(:spawn) { EpicReviewSpecSpawn.new }
+  let(:critics) { 1 }
   let(:worker_env) { Lain::WorkerEnv.new(cwd: Dir.pwd, env: { "LANG" => "C" }) }
   let(:homes) { instance_double(Lain::CLI::EpicMount::Homes) }
+  let(:journal) { [] }
 
   around do |example|
     Dir.mktmpdir("lain-epic-review") do |made|
@@ -77,6 +88,8 @@ RSpec.describe Lain::Tools::EpicReview, :seam do
     File.write(File.join(@home_path, "research.md"), "RESEARCH-CONTEXT\n")
     %w[a1 b2 b3 c4].each { File.write(File.join(@home_path, "issues", "#{_1}.md"), "BODY-#{_1}\n") }
     allow(homes).to receive(:for).with("nyotes").and_return(home)
+    allow(homes).to receive(:journal).and_return(journal)
+    @home = home
   end
 
   def shown(prompt) = %w[a1 b2 b3 c4].select { prompt.include?("BODY-#{_1}\n") }
@@ -218,5 +231,110 @@ RSpec.describe Lain::Tools::EpicReview, :seam do
 
   it "names itself epic_review" do
     expect(described_class.new(homes:, critique:).name).to eq("epic_review")
+  end
+
+  describe "the review it journals" do
+    let(:findings) do
+      "## cluster 1 of 1 -- epic\nfiles: epic.md\n\nProse.\n\n" \
+        "MUST-FIX:\n- epic.md: a gap\nMINOR:\n- none\nVERDICT: revise\n"
+    end
+
+    def critique = ->(**) { findings }
+
+    def gated_plan(id)
+      Lain::Epic::Submission.issue_plan(view: Lain::Epic::IssueView.read(@home, id), slug: "nyotes", issue_id: id)
+    end
+
+    it "binds an epic_plan review to the digest its gate would sign" do
+      invoke(stage: "epic_plan", slug: "nyotes")
+
+      expect(journal.map(&:read)).to eq([{ "epic_plan" => Lain::Epic::Submission.epic_plan(graph: @home.read_epic,
+                                                                                           slug: "nyotes")
+                                                                                .content_digest }])
+    end
+
+    it "binds an issue_plan review to each reviewed issue's gated digest" do
+      invoke(stage: "issue_plan", slug: "nyotes", wave: 2)
+
+      expect(journal.first.read).to eq(%w[b2 b3].to_h { [_1, gated_plan(_1).content_digest] })
+    end
+
+    it "reads the closing block, and ends its result with the id epic_submit takes" do
+      text = invoke(stage: "epic_plan", slug: "nyotes").text
+
+      expect(journal.first).to have_attributes(epic_slug: "nyotes", stage: "epic_plan", verdict: "revise",
+                                               must_fix: ["epic.md: a gap"])
+      expect(text).to include("MUST-FIX:")
+      expect(text.lines.last).to include(journal.first.id, "`review`")
+    end
+
+    describe "over the real critique's merged findings" do
+      let(:spawn) do
+        EpicReviewSpecSpawn.new(reply: lambda { |child, _model|
+          "MUST-FIX:\n- none\nMINOR:\n- note #{child}\nVERDICT: approve"
+        })
+      end
+
+      def critique = real_critique
+
+      # The parser splits on the cluster and critic headings the real critique writes.
+      it "reads one closing block from each wave's reviewer" do
+        invoke(stage: "issue_plan", slug: "nyotes")
+
+        expect(journal.first).to have_attributes(verdict: "approve", minor: ["note 1", "note 2", "note 3"])
+      end
+
+      # Neither side names a count, so both run on Critique's one default.
+      it "reads a critique built with its default critics, through the tool's own default" do
+        defaulted = lambda do |subject:, instructions:|
+          Lain::Review::Critique.new(subject:, spawn:, window:, journal: [], slots: @slots, instructions:,
+                                     checkouts: Lain::Review::Critique::Documents::ReadRoots.new(
+                                       root: subject.root, worker_env:
+                                     )).call
+        end
+
+        described_class.new(homes:, critique: defaulted)
+                       .call({ "stage" => "issue_plan", "slug" => "nyotes" },
+                             Lain::Tool::Invocation.new(context: Lain::Session::Null.instance))
+
+        expect(journal.first.verdict).to eq("approve")
+        expect(spawn.prompts.size).to eq(3 * Lain::Review::Critique::DEFAULT_CRITICS)
+      end
+
+      context "when 2 critics read each wave" do
+        let(:critics) { 2 }
+
+        it "reads one closing block from each critic" do
+          invoke(stage: "issue_plan", slug: "nyotes", wave: 2)
+
+          expect(journal.first).to have_attributes(verdict: "approve", minor: ["note 1", "note 2"])
+        end
+
+        it "reads nothing when the tool was told 1 critic ran" do
+          described_class.new(homes:, critique:, critics: 1)
+                         .call({ "stage" => "issue_plan", "slug" => "nyotes", "wave" => 2 },
+                               Lain::Tool::Invocation.new(context: Lain::Session::Null.instance))
+
+          expect(journal.first.verdict).to eq("unparsed")
+        end
+      end
+    end
+
+    it "journals nothing when the critique refused" do
+      invoke(stage: "issue_plan", slug: "nyotes", wave: 9)
+
+      expect(journal).to be_empty
+    end
+  end
+
+  # The prompt asks for the block the parser reads, so the two cannot drift.
+  it "asks reviewers for a closing block its own example of which parses" do
+    example = described_class::INSTRUCTIONS[/^MUST-FIX:\n.*?^VERDICT: \w+$/m]
+    result = Lain::Epic::ReviewResult.parse("## cluster 1 of 1 -- epic\n\n#{example}", epic_slug: "nyotes",
+                                                                                       stage: "epic_plan", read: {},
+                                                                                       clusters: 1, critics: 1)
+
+    expect(result.verdict).not_to eq("unparsed")
+    expect(result.must_fix + result.minor).not_to be_empty
   end
 end

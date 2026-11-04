@@ -10,11 +10,10 @@ require "tmpdir"
 # "Every" is meant literally -- the roster below is derived from the catalog
 # rather than listed, so this spec cannot fall behind the directory it guards.
 RSpec.describe "shipped skills" do
-  # The sentences that make the human's gate question show the review: the
-  # verdict line travels in epic_submit's `review` field, so deleting one turns
-  # a spec red.
-  def quote_per_wave = "pass that wave's verdict line, verbatim, as `review` on the `epic_submit` call for the wave"
-  def quote_once = "pass its verdict line, verbatim, as `review` on the `epic_submit` call"
+  # The sentences that make the human's gate question show the review: its
+  # id travels in epic_submit's `review` field, so deleting one turns a spec red.
+  def quote_per_wave = "pass the review id epic_review returned for that wave as `review` on the `epic_submit` call"
+  def quote_once = "pass the review id epic_review returned as `review` on the `epic_submit` call"
 
   # The roster is DERIVED from the shipped tree, never written down. The catalog
   # is a directory scan ({Skill::Catalog.read_dir}), so a hand-maintained list
@@ -831,7 +830,7 @@ RSpec.describe "shipped skills" do
       end
     end
 
-    it "has create-epic-issues review each wave with epic_review before it submits, and quote the verdict" do
+    it "has create-epic-issues review each wave with epic_review before it submits, and pass the review id" do
       with_empty_project do |renderer|
         phase = renderer.render("create-epic-issues")[/^## Phase 4 .*?(?=^## )/m]
 
@@ -841,7 +840,7 @@ RSpec.describe "shipped skills" do
       end
     end
 
-    it "has plan-epic review the graph with epic_review before it submits, and quote the verdict" do
+    it "has plan-epic review the graph with epic_review before it submits, and pass the review id" do
       with_empty_project do |renderer|
         phase = renderer.render("plan-epic")[/^## Phase 6 .*?(?=^## |\z)/m]
 

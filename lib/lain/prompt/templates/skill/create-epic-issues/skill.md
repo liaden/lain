@@ -100,8 +100,9 @@ not hold.
 
 Review before you gate. For each wave, call `epic_review` with `stage` `issue_plan`, `slug` the epic's
 slug and `wave` the wave's number: fresh read-only reviewers read that wave's issue files beside
-`epic.md` and return findings ending in a verdict. Fix what they raise, then pass that wave's verdict line,
-verbatim, as `review` on the `epic_submit` call for the wave: the human's question shows it as your quote.
+`epic.md` and return findings ending in a verdict and a review id. Fix what they raise, then pass the review
+id epic_review returned for that wave as `review` on the `epic_submit` call for the wave: the human's question
+shows that review, marked stale if a file changed after it was read.
 
 Before you call `epic_submit`, tell the user that the gate waits <%= gate_window %> seconds for an answer
 and that a reply of `deny: <reason>` sends the reason back to you.

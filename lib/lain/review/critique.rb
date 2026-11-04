@@ -116,6 +116,9 @@ module Lain
       # must not typo into a bill.
       MAX_CRITICS = 5
 
+      # How many critics read each chunk unless the caller names a count; epic_review parses for the same.
+      DEFAULT_CRITICS = 1
+
       BAD_CRITICS = "/critique refused before spawning anything: critics must be a whole number from 1 to " \
                     "%<max>d, got %<critics>s"
 
@@ -158,7 +161,7 @@ module Lain
       # @param model [String, nil] a model to read the diff on in place of the
       #   run's own; chunks are then sized to ITS window
       def initialize(subject:, spawn:, window:, checkouts:, journal:, slots:, instructions:, role: nil,
-                     critics: 1, model: nil)
+                     critics: DEFAULT_CRITICS, model: nil)
         @subject = subject
         @spawn = subject.spawned(spawn)
         @window = window

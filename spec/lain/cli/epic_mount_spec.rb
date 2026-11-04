@@ -124,6 +124,43 @@ RSpec.describe Lain::CLI::EpicMount do
       expect(unmounted.map(&:name)).to eq(%w[epic_write epic_graph epic_status epic_show epic_review epic_submit])
     end
 
+    describe "a review handed from epic_review to epic_submit" do
+      let(:journal) { Lain::Journal.open(paths:, root: @dir) }
+      let(:reviewing) do
+        Class.new do
+          attr_reader :reviews
+
+          def submit(stage, _slug = nil, review: nil, **)
+            (@reviews ||= []) << review
+            Lain::Tool::Result.ok("approved #{stage}")
+          end
+        end.new
+      end
+
+      after { journal.close }
+
+      def handed(mount, minor)
+        critique = ->(**) { "## cluster 1 of 1 -- epic\n\nMUST-FIX:\n- none\nMINOR:\n- #{minor}\nVERDICT: approve\n" }
+        tools = mount.tools(submitter: reviewing, critique:).to_h { [_1.name, _1] }
+        said = Sync { tools.fetch("epic_review").call({ "stage" => "epic_plan", "slug" => "alpha" }, invocation) }
+        id = said.text[/review-\h+/]
+        Sync do
+          tools.fetch("epic_submit").call({ "stage" => "epic_plan", "slug" => "alpha", "review" => id }, invocation)
+        end
+        [id, reviewing.reviews.last]
+      end
+
+      it "journals the review in the chat's record and resolves its id, mounted or not" do
+        create_epic("alpha")
+
+        { "mounted" => mount_for, "unmounted" => mount_for(options: { epic: "nope" }) }.each do |minor, mount|
+          id, review = handed(mount, minor)
+
+          expect(review).to have_attributes(id:, epic_slug: "alpha", verdict: "approve", minor: [minor])
+        end
+      end
+    end
+
     it "tells the chat its epic slug, its home path and the epic tools, so it never guesses the path" do
       create_epic("alpha")
 

@@ -55,7 +55,7 @@ module Lain
         # @return [Array<Lain::Tool>]
         def tools(submitter:, critique: nil)
           [@epic_write, @epic_graph, @epic_status, @epic_show, *EpicMount.review_tool(homes, critique),
-           Lain::Tools::EpicSubmit.new(submitter:)]
+           EpicMount.submit_tool(homes, submitter)]
         end
 
         def mounted? = false
@@ -99,6 +99,17 @@ module Lain
 
         # @return [String] the project root a path is shown relative to
         attr_reader :root
+
+        # @return [#<<] the chat's session journal, where an epic_review round lands
+        attr_reader :journal
+
+        # Every session's, read per call, so a review from an earlier chat or a
+        # moment ago is found by its id.
+        #
+        # @return [SessionJournals] the journaled {Lain::Epic::ReviewResult} records
+        def review_results
+          SessionJournals.of(@paths, @root, types: [Lain::Epic::ReviewResult::JOURNAL_TYPE])
+        end
 
         # The epic verbs, journaling into the chat's own session record.
         #
@@ -224,6 +235,16 @@ module Lain
         critique ? [Lain::Tools::EpicReview.new(homes:, critique:)] : []
       end
 
+      # The journals are asked for at call time, so a review id is looked up in
+      # what every session has written by then.
+      #
+      # @param homes [Homes] whose journals a review id is looked up in
+      # @param submitter [#submit] the chat's in-process gate submitter
+      # @return [Lain::Tools::EpicSubmit]
+      def self.submit_tool(homes, submitter)
+        Lain::Tools::EpicSubmit.new(submitter:, reviews: -> { homes.review_results })
+      end
+
       private_class_method :mount, :worth_saying?, :unwired
 
       attr_reader :slug, :review, :notes
@@ -285,7 +306,7 @@ module Lain
       # @return [Array<Lain::Tool>]
       def tools(submitter:, critique: nil)
         [*(@tools ||= [request_review, epic_write, epic_graph, epic_status, epic_show]),
-         *EpicMount.review_tool(homes, critique), Lain::Tools::EpicSubmit.new(submitter:)]
+         *EpicMount.review_tool(homes, critique), EpicMount.submit_tool(homes, submitter)]
       end
 
       def mounted? = true

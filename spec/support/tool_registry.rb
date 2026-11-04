@@ -126,7 +126,7 @@ module ToolRegistry
     # Construction-only, as request_review: nothing here calls #perform.
     "epic_write" => -> { Lain::Tools::EpicWrite.new(homes: nil) },
     "epic_graph" => -> { Lain::Tools::EpicGraph.new(epics: nil) },
-    "epic_submit" => -> { Lain::Tools::EpicSubmit.new(submitter: nil) },
+    "epic_submit" => -> { Lain::Tools::EpicSubmit.new(submitter: nil, reviews: nil) },
     "epic_status" => -> { Lain::Tools::EpicStatus.new(homes: nil) },
     "epic_show" => -> { Lain::Tools::EpicShow.new(homes: nil) },
     "epic_review" => -> { Lain::Tools::EpicReview.new(homes: nil, critique: nil) },

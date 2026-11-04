@@ -156,8 +156,9 @@ write `epic.md` again.
 ## Phase 6 — Request the epic_plan gate
 
 Review before you gate: call `epic_review` with `stage` `epic_plan` and the epic's `slug`. A fresh
-read-only reviewer reads `epic.md` beside the research and returns findings ending in a verdict. Fix what
-it raises, then pass its verdict line, verbatim, as `review` on the `epic_submit` call: the human's question shows it as your quote.
+read-only reviewer reads `epic.md` beside the research and returns findings ending in a verdict and a review
+id. Fix what it raises, then pass the review id epic_review returned as `review` on the `epic_submit` call: the
+human's question shows that review, marked stale if `epic.md` changed after it was read.
 
 Before you call `epic_submit`, tell the user that the gate waits <%= gate_window %> seconds for an answer
 and that a reply of `deny: <reason>` sends the reason back to you.
