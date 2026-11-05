@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+# Defines LainCLI (and Thor) without starting it; the flags are parsed by the real command.
+load File.expand_path("../../../../exe/lain", __dir__)
+
 RSpec.describe Lain::CLI::Wiring::JudgeSource do
   let(:question) { { tool: "bash", input: { "command" => "rm -rf build" }, place: } }
   let(:place) { Lain::Approval::Judge::Place.new(root: "/p", cwd: "/p", requester: "main", outside: []) }
@@ -63,5 +66,37 @@ RSpec.describe Lain::CLI::Wiring::JudgeSource do
     expect([verdict, provider.requests.size, provider.requests.sole.tools]).to eq([:approve, 1, []])
     expect(journal.map { _1.to_journal.values_at("type", "requester") })
       .to eq([%w[request_sent auto_approver], %w[turn_usage auto_approver]])
+  end
+
+  describe ".for" do
+    def parse(*argv) = Thor::Options.new(LainCLI.commands.fetch("chat").options).parse(argv)
+
+    def judge_model(backend)
+      model = nil
+      allow(Lain::Approval::Judge).to receive(:new) { |**built| (model = built[:model]) && judge }
+      described_class.for(backend, journal:, config: instance_double(Lain::Config, judge_timeout: 30))
+                     .call(**question)
+      model
+    end
+
+    def contextless_backend(argv)
+      Lain::CLI::Backend.new(parse(*argv), root: Dir.pwd).tap do |backend|
+        allow(backend).to receive(:provider).and_return(provider)
+        allow(backend).to receive(:context).and_raise("a whole Context was built just to read a model name")
+      end
+    end
+
+    [
+      ["the default anthropic model", %w[--provider anthropic]],
+      ["an explicit anthropic model", %w[--provider anthropic --model claude-opus-4-6]],
+      ["the default ollama model", %w[--provider ollama]],
+      ["an explicit ollama model", %w[--provider ollama --model qwen3-coder:30b]]
+    ].each do |kind, argv|
+      it "gives the judge the chat's model for #{kind} without building a Context" do
+        chat_model = Lain::CLI::Backend.new(parse(*argv), root: Dir.pwd).context.model
+
+        expect(judge_model(contextless_backend(argv))).to eq(chat_model)
+      end
+    end
   end
 end

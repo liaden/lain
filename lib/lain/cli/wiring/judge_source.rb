@@ -12,7 +12,7 @@ module Lain
         # @param config [Config] whose judge timeout bounds the judge
         # @return [JudgeSource]
         def self.for(backend, journal:, config:)
-          new(provider: -> { backend.provider(requester: Approval::Judge::ROLE) }, model: backend.context.model,
+          new(provider: -> { backend.provider(requester: Approval::Judge::ROLE) }, model: backend.model,
               slots: backend.slots, journal:, timeout: config.judge_timeout)
         end
 

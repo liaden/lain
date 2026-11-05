@@ -918,7 +918,7 @@ module Lain
       # every path in every real chat and the whole axis was dark.
       def switchboard(backend, toolset)
         @switchboard ||= BoardBuild.for(chronicle:, judge: JudgeSource.for(backend, journal: durable_journal, config:),
-                                        model: backend.context.model, middleware: backend.middleware, display: @channel,
+                                        model: backend.model, middleware: backend.middleware, display: @channel,
                                         options:, resolver: exec_resolver, worker_env: chat_env, stops: observers.stops,
                                         toolset:, project:, verdict:, config:, paths: @paths, arms:, **chat_reads)
       end

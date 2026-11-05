@@ -597,6 +597,27 @@ RSpec.describe Lain::CLI::Wiring do
       expect(seen).to match([armed.arms, armed.arms]).and(satisfy { |pair| pair.first.equal?(pair.last) })
     end
 
+    it "builds the board with the backend's model without building a Context for it" do
+      contexts_built = nil
+      allow(backend).to receive(:context).and_wrap_original do |original, **kwargs|
+        contexts_built += 1 if contexts_built
+        original.call(**kwargs)
+      end
+      allow(Lain::CLI::Wiring::JudgeSource).to receive(:for).and_wrap_original do |original, *args, **kwargs|
+        contexts_built = 0
+        original.call(*args, **kwargs)
+      end
+      seen = nil
+      allow(Lain::CLI::Wiring::BoardBuild).to receive(:for).and_wrap_original do |original, **kwargs|
+        seen = [contexts_built, kwargs[:model]]
+        original.call(**kwargs)
+      end
+
+      wire_agent
+
+      expect(seen).to eq([0, backend.model])
+    end
+
     # The board reads what the Repl hears, so both must hold the one Heard, and a
     # --prompt seed must reach it through the run's own path.
     it "hands the board and the Repl one Heard, which hears the --prompt seed" do

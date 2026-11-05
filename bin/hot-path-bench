@@ -28,6 +28,11 @@ module HotPathBench
   CHILD_TIMEOUT = 1800
   PASSED_THROUGH = %w[PATH HOME TMPDIR LD_LIBRARY_PATH LANG BUNDLE_GEMFILE GEM_HOME GEM_PATH RUBYLIB].freeze
   NOISY = 0.10
+  # Without these glibc trims the heap top after the large chained journal line is freed and the next record
+  # refaults about 2 MB, so the row flips between 0.8 and 1.3 ms on which repetitions are the majority;
+  # measured with this exact string, both trees settle at 0.78 to 0.94 ms.
+  MALLOC_TUNABLES = "glibc.malloc.mmap_threshold=33554432:glibc.malloc.trim_threshold=268435456:" \
+                    "glibc.malloc.top_pad=67108864"
 
   # Milliseconds. Seed each from 3 quiet-box logs at 1.25x the largest of the 3 medians, rounded up;
   # a nil is a row nobody has budgeted yet, and `--check` fails on it. Lowering one is free; raising one
@@ -113,7 +118,7 @@ module HotPathBench
   end
 
   def child_rows(padding)
-    env = ENV.slice(*PASSED_THROUGH).merge("AB_PAD" => "x" * padding)
+    env = ENV.slice(*PASSED_THROUGH).merge("AB_PAD" => "x" * padding, "GLIBC_TUNABLES" => MALLOC_TUNABLES)
     out, err, status = Open3.capture3("timeout", CHILD_TIMEOUT.to_s, "nice", "-n", "19", "ionice", "-c3",
                                       "env", "-i", *env.map { |name, value| "#{name}=#{value}" },
                                       RbConfig.ruby, __FILE__, "--measure")
