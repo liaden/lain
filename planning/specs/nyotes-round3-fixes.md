@@ -1,6 +1,6 @@
 # nyotes round 3 fixes: one verdict, one bounds, durable run state, a phone
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby, rust (T50 to T52 and T58 to T59)
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson); Rust cards add Raph Levien, Andrew Gallant, Frank McSherry, Ashley Williams
@@ -3137,3 +3137,20 @@ Other:
 - FU-20: T50's lobby size and pre-hello ceiling are unpinned by tests.
 - FU-23: the ollama-tier cassette ollama_run_tool_loop.yml lists epic tools and is stale.
 - FU-41: docs/commands.md lacks the think, review and budget config verbs.
+- 19:09 Integration: 1 pspec 33640 examples, 0 failures, 15 pending, 2:01 at load 4 (start 32433). 2 rubocop and comment-census pass; zeitwerk-census fails on 1 new reference (Lain::Epic::GateDecision from planning_view.rb; base passes) -> close-out fix Tzw started; spec-census assertions 202 and lib_reach 61, both already over at base (199, 58) -> FU-47 for the +3 and +3. 3 Rust and core tier pass. 4 hot-path-bench fails on logs recorded 01:22 today, before most landings (journal_chained 2 of 3, wire_ready FU-5); re-record after the last landing. 5 replay, old table against HEAD's over 461 recorded bash calls: 2 parks removed, 0 admitted against a recorded deny, 0 of 28 hazards. CLAUDE.md suite figure 95c238e7.
+- Tzw landed 03949dfb (attempt 1)
+- 19:18 GateDecision move landed 03949dfb (zeitwerk-census green at 4 seeds).
+- 19:27 Hot-path on the final tree (03949dfb), 3 logs at load 1.7 to 2.3: journal_chained_1000000 over in 3 of 3 (1.13 to 1.43), wire_ready over in 3 of 3 (18.0 to 18.8). Alternated against base 0cbc7664: base holds both (0.81 and 16.9 to 17.2), so FU-5's 'drift on main' reading was wrong. Controlled bisect started (opus, env -i plus padding sweep per the profiling rule).
+- 19:54 Bisect: wire_ready real (+1.06 ms, allocations 10787 to 11766; JudgeSource.for renders a whole Context for the model name, about 0.74 ms; smaller costs in 4243c082, b3d82f89, b2237ddf, 005621ae). journal_chained noise (glibc trims and refaults the heap; same 1.36 ms in both trees alone). Close-out fix Thp started: JudgeSource reads the model directly; the bench's measuring child stops glibc trimming.
+- 20:03 Thp R0: JudgeSource reads backend.model (4 reds first, 11/0), bench stops glibc trimming in its measuring child; journal_chained 0.76 to 0.81, wire_ready 17.46 to 17.83 (over 17.1). Widened to wiring.rb's switchboard, which builds a Context for the model name too.
+- Thp landing 1 red: 33645 examples, 1 failure, 'Lain::CLI::Gateway refuses to start over a symlink at its token file's path, naming the path' (seed 13238): the final check connected where ECONNREFUSED was expected. The spec opens and closes a TCPServer to pick a port, so another worker can bind it before the check. 3 of 3 green alone with the seed on the card. First sighting: recorded by name; FU-48, hold the port (or check the gateway's own listener) instead of probing a released one. Relanding.
+- Thp landed 3dc089f8 (attempt 2)
+- 20:17 Hot-path fixes landed 3dc089f8 (attempt 2). After it: journal_chained 0.79 to 0.82 (bimodality gone), wire_ready 16.88, 17.17, 18.19 against 17.1, about 0.5 ms of round 3 feature growth left: ceiling decision goes to the user.
+
+Follow-up corrections and additions at close-out:
+- FU-5 corrected: wire_ready was not drift on main. The run's base 0cbc7664 holds it; round 3 added about 1 ms. The main cause (a whole Context rendered for the model name, twice per wire) is fixed in 3dc089f8. About 0.5 ms of feature growth remains, spread over 4243c082 (Config.budget re-read on each Backend#ceilings call), b3d82f89, b2237ddf and 005621ae (Bounds, ExecRules, Roots). Either trim those or re-seed the ceiling from 3 quiet logs in its own commit; the user decides.
+- FU-47: spec-census grew by 3 assertions (202 > 184) and 3 lib_reach entries (61 > 49) in this run, on top of a base already over both (199, 58).
+- FU-48: gateway_spec's symlink example probes a port it released; hold the port, or ask the gateway whether it listened.
+- journal_chained_1000000's bimodality was glibc heap trimming in the bench; fixed in the bench's measuring child (3dc089f8).
+
+Close-out state: every card landed (T35a 144f03ca, T34 af223048, T57 bc10ea48, T56 cd2afc9f, T35b 76989261, T37 97b4f5af), plus docs 5ec7dbe9 and bb087983, CLAUDE.md 95c238e7, the GateDecision move 03949dfb and the hot-path fix 3dc089f8. Integration: pspec 33640 examples, 0 failures; rubocop, comment-census and zeitwerk-census pass; Rust and the core tier pass; replay admits nothing recorded as denied; hot-path passes but for wire_ready (decision above). Owed by the user: the 2 manual passes (integration checks 6 and 7), ROADMAP.md item 74 (inside the user's uncommitted edits), a restart of every lain in nyotes before lain epic rewrite-verdicts, and the FU-30 UX decision.
