@@ -67,7 +67,7 @@ module GateDecisionFoldDiscipline
   # the name. Any other file reading one, a gate_decision reader above included,
   # is folding a verdict outside Signoff.
   VERDICT_FIELDS = {
-    "lain/epic/gate.rb" => "GateDecision.verdict_in parses the journaled word, where a record becomes a verdict",
+    "lain/epic/gate_decision.rb" => "verdict_in parses the journaled word: where a record becomes a verdict",
     "lain/cli/gate_verdict_rewrite.rb" => "finds records written before verdicts",
     "lain/cli/session_journals.rb" => "finds records written before verdicts",
     "lain/bench/approval_replay.rb" => "an approval_decision record's verdict",
