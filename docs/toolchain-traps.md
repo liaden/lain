@@ -567,6 +567,9 @@ Unproven; counting only the example's own thread would settle it.
     checker scans`; `the deletion map booting without a capability still loads with disclosure_sweep and
     everything it forces removed`; and a repeat, `two cockpits on one machine leaves the second cockpit's
     editor answering after the first stops`.
+  - `Lain::CLI::Gateway refuses to start over a symlink at its token file's path, naming the path` (seed
+    13238): its last check connected where it expected a refusal. The spec opens and closes a server to
+    pick a free port, so another worker can bind that port before the check. 3 of 3 green alone.
   Several of these wait on a wall-clock bound a loaded box starves, which the 2026-10-27 ruling forbids
   new specs to carry, so they stay cards to rewrite rather than flakes to budget a retry for.
 
