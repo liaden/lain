@@ -38,7 +38,7 @@ module CommentCensus
   # enforcement is false on landing. Rust is deliberately absent -- `///` and
   # `//!` there are doc ATTRIBUTES under `#![deny(missing_docs)]`, so deleting
   # one is a denied lint and orphaning one is a compile error.
-  SCAN_PATHS = ["lib/", "spec/", "lib/lain/frontend/neovim/runtime/*.lua"].freeze
+  SCAN_PATHS = ["lib/", "spec/", "tools/", "lib/lain/frontend/neovim/runtime/*.lua"].freeze
 
   EXTENSIONS = { ".rb" => :ruby, ".lua" => :lua }.freeze
 
