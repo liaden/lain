@@ -1,6 +1,6 @@
 # Test selection: run what a change can reach, the full suite every 16th commit
 
-status: in-progress
+status: abandoned
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson
@@ -1252,3 +1252,51 @@ After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]
 - 15:54 T1 landed c09a1264 (hook log /home/tara/tmp/lain/claude-1000/-home-tara-dev-lain/ce3ab0b8-f809-43b7-a04d-62afaf9ad894/scratchpad/hook-T1-155216.log)
 - 15:55 T1 landed c09a1264; cleaned up; T2 cut
 - 15:55 T2 started (opus). Checkpoint: landed T19 T12 T11 T17 T6 T7 T10 T14 T1 (9 of 19); in flight T2; next T3 T4 stacked on T2, then T5.
+- 16:21 T2 handed back; stop condition (1.3x) fired on a 60-file serial proxy (1.32x). Main session measured full rake pspec in the T2 worktree: plain 111s/112s, recorded 178s/177s = 1.59x (12 raw files, 1,272 spec lines, 8.8 MB). workspace_profile_spec.rb:61 red in plain worktree runs too (worktree artifact). T2 sent to attribute the cost by mode before any ruling.
+- 16:37 main moved outside this plan: f0f4ccec and 2d47036c (cargo approval, docs) from another session; no plan files touched.
+- 16:37 T3 started (opus), stacked on a T2 snapshot fef4e77e
+- 16:37 T4 started (sonnet), stacked on a T2 snapshot 872c92f2
+- 16:37 T5 started (sonnet), cut from main at 2d47036c; builds from T2's card NDJSON shape, not its code
+- 16:43 another session's final-bench.sh holds tmp/gate.lock exclusive; T2 T3 T4 T5 runs queue behind it
+- 16:47 T5 handed back (14 examples); review medium started
+- 16:48 T4 handed back (6 examples; rust specs 1.21x recorded); review medium started
+- 16:50 T5 review APPROVE-WITH-FIXES (substantive small: skip prune when git fails; vanished-file race). Fix round sent; second review follows. Map size estimate under 10 MB.
+- 16:52 T5 fix round done (18 examples); second review started
+- 16:52 T8 T9 T13 started (opus), stacked on a T5 snapshot (0baf4f7f, 638b3496)
+- 16:54 T5 second review APPROVE; landing ahead of T2 (no code reference to T2)
+- 17:00 T5 landing refused at the staged-list check: the other session's close-out (6b7ebf95) had re-staged user work (.gitmodules, references/repos/cliffcompaction, references/repos/pi); the failure path's git reset unstaged it. Kept unstaged for this run. RE-STAGE AT CLOSE-OUT: git add .gitmodules references/repos/cliffcompaction references/repos/pi. land.sh now refuses when anything is pre-staged.
+- 17:01 T9 handed back (9 examples; 200-tree walk 0.02s); review high queued behind the T5 landing
+- 17:04 T5 landed 1c72b8f8 (hook log /home/tara/tmp/lain/claude-1000/-home-tara-dev-lain/ce3ab0b8-f809-43b7-a04d-62afaf9ad894/scratchpad/hook-T5-170211.log)
+- 17:05 T5 landed 1c72b8f8 (retry). T16 started (sonnet), stacked on a T9 snapshot. T9 review high started.
+- 17:06 T13 handed back (12 examples; adds repo: keyword); sent back to close its 2 named gaps before review
+- 17:07 T8 handed back (14 examples); sent back to close 2 named gaps (deleted spec selected, e2e filter untested) before review
+- 17:08 T13 gaps closed (14 examples). T16 handed back (9 examples); main session wrote bin/test-map into its worktree; .pre-commit cargo-test wiring deferred to T15. Reviews started: T16 low, T13 high.
+- 17:09 T8 gaps closed (14+2 examples); review high started
+- 17:09 T4 review REQUEST-CHANGES: split -I lib misses lain_child (blocker, real specs), loose lain match, dead exec wrappers, 6 surviving mutants, fence fixture ENOENT, duplicated helper, Ext lock cost. Fix round sent; second review follows.
+- 17:10 T3 handed back (5 examples; 5,319 examples green recorded); review high started
+- 17:11 T16 review APPROVE-WITH-FIXES (unpinned guards, toolchain files, empty repo). Fix round sent; second review follows. T15 note: replace Crates::Commands with the shared runner and stream cargo test.
+- 17:11 T9 high review APPROVE-WITH-FIXES (renames uncounted, mixed commit unpinned, anchor walk duplicated with MapStore, map parsed for a presence check). Scope change: T9 adds tools/test_map/anchor.rb and edits landed map_store.rb + spec. Second review follows. T15 note: no-commit repo should be :full.
+- 17:13 T16 fix round done (14 examples); second review started
+- 17:14 T16 second review APPROVE (1 nit left); waits for T9 to land, since crates.rb requires cadence.rb. Its land list must include bin/test-map.
+- 17:15 T13 high review REQUEST-CHANGES: Map.build given the record dir, not its raw/ (every real run Incomplete; spec double shared the wrong layout); ANSI count miss; 5 surviving mutants. Fix round sent; second review follows.
+- 17:16 T4 fix round done (39 examples; rust specs 1.20x recorded); second review started
+- 17:19 T8 high review REQUEST-CHANGES: binary first line crashes the selector (37 tracked files), lain_child filter untestable, rule 1 clauses unpinned, :full has no reason; and a landed T6 defect (namespace openings counted as definitions, so dependents of most lib files are about 1,430). Rulings: T6 defect goes to a new fix card T6b off main; rule 3 unchanged (uncovered lib .rb runs full, because boot-time registration is invisible to the constant index). T8 fix round sent.
+- 17:20 T6b started (sonnet), cut from main at 12b14cb3 (main moved: 907fdf1a, 12b14cb3 from other sessions)
+- 17:21 T13 fix round done (21 examples; 28 mutants killed; real runner 8 scenarios green); second review started
+- 17:22 T3 high review REQUEST-CHANGES: YAML.load_file unrecorded under bootsnap (blocker), ~ expansion changes exceptions, sockets recorded, dotfiles lost, 8 surviving mutants. Ruling: boot and before(:suite) reads stay unrecorded, documented as a blind spot in T18 (the one real case reads Ruby under spec/, which is full anyway). Fix round sent. T18 blind-spot list adds: boot/suite reads, IO.copy_stream, Dir.new/open iteration, Prism.lex_file.
+- 17:25 T6b first pass (200 dependents for dag/factory.rb) excluded sibling no-path constants; sent back: exclude only strict enclosing namespaces of the path constant
+- 17:26 T8 fix round done (32+2 examples; 4,364 paths clean); second review started
+- 17:27 T6b revised (enclosing namespaces only; dag/factory.rb 200 dependents); review medium started
+- 17:27 T13 second review APPROVE-WITH-FIXES (mechanical: pin the re-run dry run's argv and env, outside-only example). Ruling: pspec child keeps the hook's GIT_INDEX_FILE as today.
+- 17:30 T9 fix round done (cadence 17, anchor 5, map_store 10; 28 mutants killed); second review started. T15 notes: corrupt anchor map (for_tree nil) means full; no-commit repo means full.
+- 17:30 T8 second review APPROVE-WITH-FIXES (mechanical: pin rules 4-6 branches, split the catch-all full reason); main session verifies
+- 17:31 T13 last fixes done (21 examples; uniq mutant accepted as near-equivalent); landing
+- 17:32 T6b review APPROVE-WITH-FIXES (mechanical: 2 pins, drop the growth ceiling). Box load reached 26 during reviews.
+- 17:32 Box overloaded (load 32, 2 GB free): another session's commit hook running a full suite outside our gate, plus T2's 12-worker measurements and reviewers. Killing T2's run by pid was denied by the permission classifier; asked T2 to stop and report. Plan: re-measure the deciding T2 cases under the exclusive gate.
+- 17:33 T6b fixes done (25 examples); lands after T13
+- 17:34 T2 cost breakdown (277 files, load 2.5-4): plain 62.6s; lines 1.07x; methods 1.11x; both 1.19x; both+snapshots 1.35x; methods+snapshots 1.18x; full recorder 1.32x. Snapshots ~215 ms each under 12 workers (all ~2,560 covered files rebuilt). Ruling: methods only, empty lines key, keep load-time attribution; main session measures the full recorded pspec under the exclusive gate. T2 may edit landed spec/test_map_preload.rb (Coverage.start).
+- 17:49 T2 methods-only measured under the exclusive gate: plain 113s/112s, recorded 165s/163s = 1.46x (map 5.0 MB). Still over 1.3x; snapshot cost dominates. Asked the user.
+- 17:56 User ruling: unwind this plan's work. All agents stopped. Stopping the queued T13 landing killed its hook mid-run; the user's unstaged edits were restored at once from ~/.cache/pre-commit/patch1794350973-2221292, and T13's half-staged files removed.
+- 17:56 Saved: branch test-selection (main at 6cb68057 with all 10 landed commits, plus the landed hand-backs under planning/handbacks/), and test-selection-T2, -T3, -T4, -T6b, -T8, -T9, -T13, -T16 (each unlanded card's worktree snapshot plus its hand-back; stacked cards include their parent).
+- 17:56 Unwound: 2b019ac3 reverts the 10 code commits in 1 commit; hook green.
+- State at unwind: landed T19 T12 T11 T17 T6 T7 T10 T14 T1 T5; approved unlanded T6b T13 T16; in review or fixes T3 T4 T8 T9; T2 blocked on cost (1.46x methods-only under the gate); T15 T18 not started.
