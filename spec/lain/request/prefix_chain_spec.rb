@@ -127,6 +127,48 @@ RSpec.describe Lain::Request::PrefixChain do
     expect(described_class::NONE).to be_deeply_frozen
   end
 
+  describe "#roll" do
+    let(:history) { Array.new(10) { |i| message("m#{i}", **(i == 4 ? { "cache" => true } : {})) } }
+
+    def rolled(memo, over = history)
+      memo.roll(over, memo.seed("claude-opus-4-8", tools, nil))
+    end
+
+    def stepped(memo, over = history)
+      seed = memo.seed("claude-opus-4-8", tools, nil)
+      over.each_with_index.inject([seed.state, seed.markers.dup]) do |(state, markers), (each, index)|
+        entry = memo.entry(index, each, state)
+        [entry.state, markers + entry.markers.map { |path, key, value| [["messages", index, *path], key, value] }]
+      end
+    end
+
+    it "rolls NONE to the state and markers entry by entry gives, with a marked message mid-history" do
+      state, markers = rolled(described_class::NONE)
+
+      expect([state, markers]).to eq(stepped(described_class.new))
+      expect(markers.map(&:first)).to eq([["messages", 4, "content", 0]])
+    end
+
+    it "rolls a fresh chain to the same answer as NONE" do
+      expect(rolled(described_class.new)).to eq(rolled(described_class::NONE))
+    end
+
+    it "keeps the memo of a chain that rolled" do
+      memo = described_class.new
+      rolled(memo)
+
+      expect(digests_during { rolled(memo) }).to eq(0)
+    end
+
+    it "builds an entry only for the marked messages with NONE" do
+      seed = described_class::NONE.seed("claude-opus-4-8", tools, nil)
+      allow(described_class::Entry).to receive(:new).and_call_original
+      described_class::NONE.roll(history, seed)
+
+      expect(described_class::Entry).to have_received(:new).once
+    end
+  end
+
   describe "a message rebuilt from bytes" do
     def rebuilt(message) = Lain::Canonical.normalize(JSON.parse(JSON.generate(message)))
 

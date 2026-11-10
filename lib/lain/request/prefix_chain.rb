@@ -72,6 +72,12 @@ module Lain
 
         # @return [Entry] the state after `message`
         def rolled(message, previous) = Entry.rolled(message, previous)
+
+        # @return [Array] `markers`, grown by the entry's markers at their wire paths
+        def collect(markers, entry, index)
+          entry.markers.each { |path, key, value| markers << [["messages", index, *path], key, value] }
+          markers
+        end
       end
 
       # Its nil `previous` matches no walk's, so every message restated from it is digested.
@@ -83,6 +89,24 @@ module Lain
         def seed(...) = PrefixChain.seeded(...)
 
         def entry(_index, message, previous) = PrefixChain.rolled(message, previous)
+
+        # Only a marked message needs an Entry, for its markers; the rest are digested bare.
+        #
+        # @return [Array(String, Array)] the rolled state and the markers
+        def roll(messages, seed)
+          state = seed.state
+          markers = seed.markers.dup
+          messages.each_with_index do |message, index|
+            if Request.marked?(message)
+              entry = Entry.rolled(message, state)
+              state = entry.state
+              PrefixChain.collect(markers, entry, index)
+            else
+              state = Entry.digested(message, state)
+            end
+          end
+          [state, markers]
+        end
       end
 
       NONE = None.new.freeze
@@ -103,6 +127,20 @@ module Lain
           @entries.clear unless @seed&.state == fresh.state
           @seed = fresh
         end
+      end
+
+      # @return [Array(String, Array)] the rolled state and the markers
+      def roll(messages, seed)
+        state = seed.state
+        markers = seed.markers.dup
+        # A local rather than `inject`: its destructured pair is an allocation per
+        # message, a third of a warm 10,000-message walk.
+        messages.each_with_index do |message, index|
+          entry = entry(index, message, state)
+          state = entry.state
+          PrefixChain.collect(markers, entry, index)
+        end
+        [state, markers]
       end
 
       # @param index [Integer] the message's position

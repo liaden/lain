@@ -80,18 +80,10 @@ module Lain
     # @return [String]
     attr_reader :digest
 
-    # @return [String] see {#digest}, walked through a chain answering `#seed` and `#entry`
+    # @return [String] see {#digest}, walked through a chain answering `#seed` and `#roll`
     def self.digest_through(chain, model:, system:, tools:, messages:, max_tokens:, reasoning:, effort:)
       seed = chain.seed(model, tools, system)
-      markers = seed.markers.dup
-      state = seed.state
-      # A local rather than `inject`: its destructured pair is an allocation per
-      # message, a third of a warm 10,000-message walk.
-      messages.each_with_index do |message, index|
-        entry = chain.entry(index, message, state)
-        state = entry.state
-        entry.markers.each { |path, key, value| markers << [["messages", index, *path], key, value] }
-      end
+      state, markers = chain.roll(messages, seed)
       # Every part is canonical already, so dumping it again through Canonical would only re-walk it.
       Canonical.digest_bytes(JSON.generate([state, max_tokens, reasoning, effort, markers]))
     end
@@ -167,7 +159,7 @@ module Lain
     # its own {PrefixChain}, so each walk digests only the messages it has not
     # seen; the result is the same either way.
     #
-    # @param chain [#seed, #entry] the states of an earlier walk; {PrefixChain::NONE} remembers nothing
+    # @param chain [#seed, #roll] the states of an earlier walk; {PrefixChain::NONE} remembers nothing
     def prefix_digests(chain: PrefixChain::NONE)
       cuts = marked_cuts
       cuts.empty? ? [] : rolled_entries(cuts.to_h, chain)
