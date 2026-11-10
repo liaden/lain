@@ -68,6 +68,10 @@ RSpec.describe "approving and denying a parked call in a real cockpit", :e2e do
       input: cockpit.capture(:input), input_height: cockpit.input_height }
   end
 
+  it "hands the cockpit the locked Bundler version, so exe/lain boots once instead of restarting" do
+    expect(E2E::Sandbox.create.env).to include("BUNDLER_VERSION" => Bundler::VERSION)
+  end
+
   context "when the human approves the call" do
     once(:journey) { journey_for("cockpit_approve", :approve) }
 

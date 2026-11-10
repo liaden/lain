@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "bundler"
 require "concurrent/array"
 require "fileutils"
 require "tmpdir"
@@ -66,7 +67,7 @@ module E2E
     end
 
     def env
-      inherited = ENV.to_h.slice(*BUNDLER_VARIABLES)
+      inherited = ENV.to_h.slice(*BUNDLER_VARIABLES).merge("BUNDLER_VERSION" => Bundler::VERSION)
       inherited.merge(
         "PATH" => ENV.fetch("PATH"), "LANG" => "C.UTF-8", "TERM" => "xterm", "HOME" => home,
         "TMPDIR" => tmp, "XDG_STATE_HOME" => dir.join("state").to_s, "XDG_CONFIG_HOME" => dir.join("config").to_s,
