@@ -997,6 +997,17 @@ Unproven; counting only the example's own thread would settle it.
   endpoint that refuses connections` (each green alone) and `Lain::Ext::Bm25 on another thread ...
   lets the calling thread keep running while it works` (not re-run alone).
 
+  Added 2026-11-10, from the herdr-attention run's first landing hook, at load 29 to 33 on 16 cores
+  with memory pressure stalling 29% of the window. Each passed alone at load 1.2 and 3 of 3 with its
+  worker's seed on the base commit, on a card that adds 2 files nothing references:
+  `Lain::Tools::Subagent a one-shot child that does not finish when the ceiling stops a child that had
+  read files and written notes keeps the ceiling message and the last text block when the lists are
+  huge` (STUCK at 30.5 s, 11.2 s of CPU, inside `ChildEnv#environment`); and 2 repeats, each now a
+  follow-up card: `two cockpits on one machine leaves the second cockpit's editor answering after the
+  first stops` (STARVED, 6% of a core) and `Lain::CLI::EpicSubmit Ctrl-C through the real CLI exits 130,
+  with the fail-closed decision already journaled` (timed out waiting for the gate's prompt; the screen
+  held only a RubyGems plugin load warning, gem-ctags_plugin.rb).
+
   A live demonstration of why this list is by NAME rather than by line: `buffers_spec.rb:329` was
   recorded by line in an earlier chunk, and one card in this one moved that same example to `:417`
   by adding 88 lines above it.
