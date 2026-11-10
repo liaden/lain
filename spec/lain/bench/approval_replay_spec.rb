@@ -550,6 +550,31 @@ RSpec.describe Lain::Bench::ApprovalReplay do
         expect(described_class.today.admits?(read)).to be(true)
       end
     end
+
+    # A candidate table is scored against today's, so one that leaves cargo out must not count its probe as a change.
+    it "admits cargo --version from a candidate table with no cargo entry, as today's table does" do
+      Dir.mktmpdir("lain-term-arm") do |dir|
+        place = Lain::Bench::ApprovalReplay::Place.new(cwd: dir, root: dir, home: dir)
+        probe = Lain::Bench::ApprovalReplay::Call.new(session: "s", tool: "bash", place:, tool_use_id: "t",
+                                                      input: { "command" => "cargo --version" })
+        candidate = described_class.new(Lain::Approval::ComposedTerm::PROGRAMS.except("cargo"))
+
+        expect([described_class.today.admits?(probe), candidate.admits?(probe)]).to eq([true, true])
+      end
+    end
+
+    # The crate predicate asks the candidate's own cargo entry what a stage runs, so an entry that cannot say
+    # leaves every cargo stage to the judge rather than being judged by today's.
+    it "judges a candidate's cargo stage by the candidate's own cargo entry" do
+      Dir.mktmpdir("lain-term-arm") do |dir|
+        place = Lain::Bench::ApprovalReplay::Place.new(cwd: dir, root: dir, home: dir)
+        build = Lain::Bench::ApprovalReplay::Call.new(session: "s", tool: "bash", place:, tool_use_id: "t",
+                                                      input: { "command" => "cargo build" })
+        open_cargo = Lain::Approval::ComposedTerm::PROGRAMS.merge("cargo" => Lain::Approval::ComposedTerm::Flags.new)
+
+        expect(described_class.new(open_cargo).admits?(build)).to be(false)
+      end
+    end
   end
 
   describe ".composed_term" do
@@ -575,6 +600,10 @@ RSpec.describe Lain::Bench::ApprovalReplay do
     end
 
     # The git entries ask git what a status or ls-files would print, which no record holds.
+    it "says that the cargo entry reads manifests and configs from the live disk" do
+      expect(terms(today).report).to match(/^cargo reads live: .*manifests.*configs.*cargo home$/)
+    end
+
     it "says that git runs live for the git entries" do
       expect(terms(today).report).to match(/^git runs live: .*status.*ls-files.*$/)
     end
@@ -584,7 +613,7 @@ RSpec.describe Lain::Bench::ApprovalReplay do
 
       expect(report.lines.grep(/^  [^ ].*: /).map { _1[/^  ([^:]+):/, 1] })
         .to include("sort --compress-program", "grep --exclude-from")
-      expect(report).to match(/^hazards admitted: \d+ of 37$/)
+      expect(report).to match(/^hazards admitted: \d+ of 41$/)
     end
 
     it "keeps a hazard out of the list when the candidate's flags refuse it" do

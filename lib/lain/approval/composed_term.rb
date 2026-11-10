@@ -39,7 +39,8 @@ module Lain
     # 12. THE CLASS PREDICATE, when the rule is built with `classes:`: every
     #     stage's program, every wrapper around it and every file it runs
     #     resolves to a system file, or a user file unchanged this lineage and
-    #     shadowing nothing on PATH, with no PATH or env anomaly.
+    #     shadowing nothing on PATH, with no PATH or env anomaly. An admitted
+    #     cargo run's build files inside the root are the project's own.
     # 13. THE OPERAND PREDICATE: an `rg` searches only files it is named, each
     #     a regular file, since with none or a directory it walks a tree. It
     #     reads the slots by position, which holds only because `rg`'s table
@@ -50,6 +51,8 @@ module Lain
     #     own config names a program, includes another file or moves the tree.
     # 16. THE GIT NAME PREDICATE: every file name and every file's bytes a
     #     `git` stage prints classifies ordinary, as an `ls` entry must.
+    # 17. THE CRATE PREDICATE: every manifest, workspace and config a `cargo`
+    #     run loads lies inside the root, but for the user's own quiet config.
     #
     # Predicate 2 has one widening: where the verdict ABSTAINS rather than
     # denies, {Shell::Reading} reads the string itself, accepting only leading `cd`s
@@ -743,8 +746,230 @@ module Lain
       end
       private_constant :Printed
 
+      # cargo's check, clippy, build and test pinned to the lockfile, and a fmt
+      # that only checks. Every option is matched whole against its
+      # subcommand's own table, so a `--config`, a `-Z` or a `-C` in any
+      # spelling is refused, and so is any option before the subcommand. A
+      # toolchain is a channel or a version, never a path.
+      class Pinned
+        TOOLCHAIN = /\A\+(?:stable|beta|nightly|\d+\.\d+(?:\.\d+)?)(?:-\d{4}-\d{2}-\d{2})?\z/
+        NAME = /\A\w[\w.:@+-]*\z/
+        FEATURES = %r{\A\w[\w.,:/+-]*\z}
+        OPERAND = /\A[^-]/
+        PINS = %w[--locked --offline --frozen].freeze
+        MANIFEST_PATH = "--manifest-path"
+        COMMON = (PINS + %w[--workspace --all --all-targets --all-features --no-default-features --lib --bins
+                            --tests --benches --examples --release --quiet -q --verbose -v -vv --keep-going]).freeze
+        SELECTING = { "-p" => NAME, "--package" => NAME, MANIFEST_PATH => OPERAND }.freeze
+        BUILDING = SELECTING.merge(
+          "--exclude" => NAME, "--bin" => NAME, "--test" => NAME, "--example" => NAME, "--bench" => NAME,
+          "--profile" => NAME, "--target" => NAME, "-j" => NAME, "--jobs" => NAME, "--message-format" => NAME,
+          "--color" => NAME, "-F" => FEATURES, "--features" => FEATURES
+        ).freeze
+        # The root predicate reads a glued `--manifest-path=/tmp/x` as one
+        # relative word inside the root, so the path must be a word of its own.
+        SEPARATE = [MANIFEST_PATH].freeze
+
+        # After `--`, clippy hands rustc its words, so only a lint level and a lint name.
+        class Lints
+          LEVEL = %w[-D -W -A -F --deny --warn --allow --forbid].freeze
+          LINT = /\A[a-z][\w-]*(?:::[\w-]+)?\z/
+          ATTACHED = /\A-[DWAF][a-z][\w-]*(?:::[\w-]+)?\z/
+
+          def admits?(tail)
+            words = Array(tail).dup
+            until words.empty?
+              word = words.shift
+              return false unless word.match?(ATTACHED) || (LEVEL.include?(word) && words.shift.to_s.match?(LINT))
+            end
+            true
+          end
+        end
+
+        # After `--`, test hands the test binaries their words: filters, and the
+        # options that neither open nor write a file.
+        class Filters
+          KNOWN = %w[--nocapture --no-capture --include-ignored --ignored --exact --quiet -q --show-output --list --skip
+                     --test-threads].freeze
+          THREADS = /\A--test-threads=\d+\z/
+
+          def admits?(tail) = Array(tail).all? { KNOWN.include?(_1) || _1.match?(THREADS) || _1.match?(NAME) }
+        end
+
+        # check and build pass on no words, and fmt's would reach rustfmt, which can write.
+        class Untailed
+          def admits?(tail) = tail.nil?
+        end
+
+        Policy = Data.define(:switches, :valued, :required, :positional, :tail)
+
+        POLICIES = {
+          "check" => Policy.new(COMMON, BUILDING, PINS, false, Untailed.new),
+          "build" => Policy.new(COMMON, BUILDING, PINS, false, Untailed.new),
+          "clippy" => Policy.new([*COMMON, "--no-deps"], BUILDING, PINS, false, Lints.new),
+          "test" => Policy.new([*COMMON, "--no-run", "--no-fail-fast", "--doc"], BUILDING, PINS, true, Filters.new),
+          "fmt" => Policy.new(%w[--check --all --quiet -q --verbose -v], SELECTING.merge("--message-format" => NAME),
+                              %w[--check], false, Untailed.new)
+        }.freeze
+
+        def admits?(arguments) = words(arguments) == [VERSION] || !run(arguments).nil?
+
+        # @param arguments [Array<String>] the stage's argv after `cargo`
+        # @return [String, nil] the subcommand an admitted stage runs; nil for `--version` or a refusal
+        def run(arguments)
+          subcommand, *rest = words(arguments)
+          policy = POLICIES[subcommand]
+          subcommand if policy && held?(policy, rest)
+        end
+
+        # @param arguments [Array<String>] an admitted stage's argv after `cargo`
+        # @return [Array<String>] each manifest it names
+        def manifests(arguments)
+          options = arguments.take_while { _1 != LONG }
+          options.each_cons(2).select { |option, _| option == MANIFEST_PATH }.map(&:last)
+        end
+
+        private
+
+        def words(arguments) = arguments.first.to_s.match?(TOOLCHAIN) ? arguments.drop(1) : arguments
+
+        def held?(policy, words)
+          options = words.take_while { _1 != LONG }
+          tail = words.drop(options.size + 1) if options.size < words.size
+          options.intersect?(policy.required) && known?(policy, options.dup) && policy.tail.admits?(tail)
+        end
+
+        def known?(policy, words)
+          until words.empty?
+            word = words.shift
+            return false unless known_word?(policy, word, words)
+          end
+          true
+        end
+
+        def known_word?(policy, word, rest)
+          name, value = word.split("=", 2)
+          pattern = policy.valued[name]
+          return policy.switches.include?(word) || (policy.positional && word.match?(NAME)) unless pattern
+          return rest.shift.to_s.match?(pattern) if value.nil?
+
+          !SEPARATE.include?(name) && value.match?(pattern)
+        end
+      end
+      private_constant :Pinned
+
+      # The files an admitted cargo run loads that its words do not name: the
+      # manifest `--manifest-path` names or the first Cargo.toml above the cwd,
+      # every Cargo.toml above that (a workspace), any workspace a manifest
+      # names, and every .cargo/config.toml from the cwd up to `/`. Each must
+      # lie inside the root, so what runs is what the project's own files say.
+      # The one exception is the user's config in cargo's home, trusted only
+      # while it names nothing that runs. A config that includes another, in
+      # either place, is refused rather than followed, since cargo loads the
+      # array form with no flag. fmt and clippy are external
+      # subcommands, which a config alias replaces, so neither runs beside one.
+      # The keys are matched as text, never parsed, so a file that quotes a key
+      # or escapes a character (TOML reads `"fmt"` and `f\u006dt` as `fmt`) is
+      # refused whole: a refusal only costs the judge's opinion.
+      class Crate
+        MANIFEST = "Cargo.toml"
+        CONFIGS = %w[.cargo/config.toml .cargo/config].freeze
+        HOME_CONFIGS = %w[config.toml config].freeze
+        EXTERNAL = %w[fmt clippy].freeze
+        KEY = ->(names) { /(?:^|[\s.{,\[])["']?(?:#{names})["']?\s*[=\].]/ }
+        RUNS = KEY.call("alias|rustc|rustdoc|rustc-wrapper|rustc-workspace-wrapper|runner|linker|rustflags|" \
+                        "rustdocflags|include|env|credential-provider|global-credential-providers")
+        ALIASED = KEY.call("fmt|clippy")
+        INCLUDES = KEY.call("include")
+        WORKSPACE = /(?:^|[\s.{,])workspace\s*=\s*(["'])(.*?)\1/
+        # A quoted key segment (a value is never followed by `=` or `.`), a
+        # table header holding a quote, or a unicode escape anywhere.
+        UNPLAIN = /(?:^|[{,.])[ \t]*(["'])[^"'\n]*\1[ \t]*[=.]|^[ \t]*\[[^\n\]]*["']|\\[uU]/
+        # A config or manifest larger than this is refused rather than half-read.
+        BOUND = 64 * 1024
+
+        # @param env [Hash{String=>String}]
+        # @return [String] where cargo keeps the user's own config
+        def self.home(env) = env.fetch("CARGO_HOME") { File.join(env.fetch("HOME", ""), ".cargo") }
+
+        # @param arguments [Array<String>] the stage's argv after `cargo`
+        # @param confinement [#contains?, #landing_of] where the call's words land
+        # @param home [String] cargo's home
+        # @param entry [#run, #manifests] the rule's cargo entry, {Pinned} in production
+        def initialize(arguments, confinement, home, entry)
+          @arguments = arguments
+          @confinement = confinement
+          @home = home
+          @entry = entry
+        end
+
+        def held?
+          subcommand = @entry.run(@arguments)
+          subcommand.nil? || (manifests_held? && configs_held?(subcommand))
+        end
+
+        private
+
+        def manifests_held?
+          named = @entry.manifests(@arguments).map { @confinement.landing_of(_1) }
+          start = named.empty? ? cwd : File.dirname(named.first)
+          found = named + ascent(start, [MANIFEST])
+          named.size <= 1 && found.any? && found.all? { inside?(_1) && plain?(_1) && workspace_inside?(_1) }
+        end
+
+        def workspace_inside?(manifest)
+          text(manifest).scan(WORKSPACE).all? do |_, value|
+            !value.empty? && !value.include?("\\") && inside?(File.expand_path(value, File.dirname(manifest)))
+          end
+        end
+
+        def configs_held?(subcommand)
+          own = own_configs
+          project = ascent(cwd, CONFIGS).map { File.realpath(_1) } - own
+          project.all? { inside?(_1) } && (project + own).all? { self_contained?(_1) } &&
+            own.none? { text(_1).match?(RUNS) } && unaliased?(subcommand, project + own)
+        end
+
+        def own_configs = HOME_CONFIGS.map { File.join(@home, _1) }.select { present?(_1) }.map { File.realpath(_1) }
+
+        def self_contained?(path) = plain?(path) && !text(path).match?(INCLUDES)
+
+        def unaliased?(subcommand, configs)
+          !EXTERNAL.include?(subcommand) || configs.none? { text(_1).match?(ALIASED) }
+        end
+
+        def ascent(start, names)
+          Pathname.new(start).ascend.flat_map { |directory| names.map { directory.join(_1).to_s } }
+                  .select { present?(_1) }
+        end
+
+        def plain?(path) = !text(path).match?(UNPLAIN)
+
+        def cwd = @confinement.landing_of(CURRENT)
+
+        def inside?(path) = @confinement.contains?(path)
+
+        def present?(path) = File.exist?(path) || File.symlink?(path)
+
+        # Only a regular file is read, so a FIFO cannot hold the ladder.
+        def text(path)
+          raise ArgumentError, "#{path} is not a regular file" unless File.file?(path)
+
+          File.read(path, BOUND + 1).tap { raise ArgumentError, "#{path} is too large" if _1.bytesize > BOUND }
+        end
+      end
+      private_constant :Crate
+
       # THE ALLOWLIST, derived from what each program does with the argv it is
       # GIVEN: reads only, writes nothing, fetches nothing, executes nothing.
+      #
+      # `cargo` is the one exception. It runs code the project controls: build
+      # scripts, proc macros, tests, and what the project's .cargo/config.toml
+      # names (a rustc wrapper, a runner, a linker, an alias). It writes the
+      # target dir, and `Cargo.lock` under `--offline`, and may fetch what the
+      # lockfile pins. A `rust-toolchain` file is still refused: its `path` key
+      # swaps the cargo binary itself, the one program the class predicate
+      # vouched for, where a config's wrapper runs under a binary already vouched.
       #
       # NOT `Shell::Pipeline::STDIN_SAFE`, which answers "safe under
       # attacker-chosen STDIN" and is applied to the stages AFTER the first.
@@ -853,7 +1078,8 @@ module Lain
         # judged. A redirect or substitution never reaches here as a term.
         # `printf -v` assigns a shell variable in bash.
         "echo" => Flags.new,
-        "printf" => Both.new(Flags.new(short: %w[v]), Narrow.new)
+        "printf" => Both.new(Flags.new(short: %w[v]), Narrow.new),
+        "cargo" => Pinned.new
       }.freeze
 
       # Programs whose stage is approved only as exactly `[name, "--version"]`.
@@ -875,6 +1101,9 @@ module Lain
       # Answers {Flags#admits?}, so the flags predicate stays one lookup.
       class VersionProbe
         def admits?(arguments) = arguments == [VERSION]
+
+        # Runs no subcommand, so the crate predicate has nothing to load.
+        def run(_arguments) = nil
       end
       private_constant :VersionProbe
 
@@ -891,6 +1120,8 @@ module Lain
       SEARCHER = "rg"
       FINDER = "find"
       GIT = "git"
+      CARGO = "cargo"
+      OWNS_NOTHING = ->(_path) { false }
       # The most entries a `find` may reach before this rule stops walking and
       # leaves it to the judge: each is classified, on every judged call.
       WALK_BOUND = 1000
@@ -925,8 +1156,10 @@ module Lain
       #   baseline, approves by name as before it existed
       # @param git [#names, #trees?, #hooked?] what git says a stage would print, for predicate 16
       # @param facts [#file?, #exist?, #symlink?] the disk predicate 16 reads
-      def initialize(sensitivity:, classes: false, git: Listing, facts: FileFacts::LIVE)
+      # @param cargo_home [String] where cargo keeps the user's own config, for predicate 17
+      def initialize(sensitivity:, classes: false, git: Listing, facts: FileFacts::LIVE, cargo_home: Crate.home(ENV))
         super()
+        @cargo_home = cargo_home
         @sensitivity = sensitivity
         @classes = classes
         @git = git
@@ -958,8 +1191,9 @@ module Lain
         return nil unless term && explainable?(call, term, cwd)
 
         stages = executables(call, term, cwd)
-        suspect = stages.flat_map(&:programs).find { !trusted?(_1) } if stages
-        suspect && describe_binary(suspect)
+        programs = stages&.zip(owners(term, cwd))&.flat_map { |stage, own| stage.programs.map { [_1, own] } }
+        suspect = programs&.find { !trusted?(*_1) }
+        suspect && describe_binary(*suspect)
       end
 
       private
@@ -996,7 +1230,7 @@ module Lain
         ordinary_words?(term, cwd) && unaliased?(term) && confined?(term, cwd) &&
           plain_content?(term, cwd) && resolved_words?(term, cwd) &&
           unpinned?(term, cwd) && unrevealing?(term, cwd) && searched_files?(term, cwd) &&
-          walkable?(term, cwd) && quiet_repository?(term, cwd) && git_named?(term, cwd)
+          walkable?(term, cwd) && quiet_repository?(term, cwd) && git_named?(term, cwd) && crate_held?(term, cwd)
       end
 
       def explainable?(call, term, cwd) = flags_ok_where_listed?(term) && vouched?(call, term, cwd)
@@ -1285,6 +1519,13 @@ module Lain
         end
       end
 
+      # The crate predicate: what an admitted cargo run loads lies inside the root.
+      def crate_held?(term, cwd)
+        held_where?(term, cwd, CARGO) do |arguments, confinement, _|
+          Crate.new(arguments, confinement, @cargo_home, flags_for(CARGO))
+        end
+      end
+
       def programs(term) = term.programs
 
       # One resolution answers both the predicate and the reason, so the reason
@@ -1294,7 +1535,8 @@ module Lain
         return programs(term) unless @classes
 
         stages = executables(call, term, cwd)
-        stages.map { |stage| "#{stage.name} at #{stage.resolved} (#{stage.klass})" } if stages.all? { trusted?(_1) }
+        owned = stages.zip(owners(term, cwd))
+        stages.map { |stage| "#{stage.name} at #{stage.resolved} (#{stage.klass})" } if owned.all? { trusted?(*_1) }
       rescue StandardError
         nil
       end
@@ -1303,13 +1545,15 @@ module Lain
         call.memo(self) { @sensitivity.executables(term, cwd) }
       end
 
-      def describe_binary(binary)
+      def describe_binary(binary, own)
         return "#{binary.name} did not resolve to a file" if binary.klass == :unresolved
 
         ["#{binary.name} resolved to #{binary.resolved} (#{binary.klass})",
          ("shadowing #{binary.shadowed.join(", ")}" if binary.shadowed.any?),
          ("written this session" if binary.fresh),
-         *unexplained_anomalies(binary).map { "with a #{_1.to_s.tr("_", " ")}" }].compact.join(", ")
+         *unexplained_anomalies(binary).map { "with a #{_1.to_s.tr("_", " ")}" },
+         *untrusted_runs(binary, own).map { "runs #{_1.path} (#{_1.klass}#{", written this session" if _1.fresh})" }]
+          .compact.join(", ")
       end
 
       # A project binary already says it is on a project PATH entry.
@@ -1317,11 +1561,23 @@ module Lain
         binary.klass == :project ? binary.anomalies - [:project_path_entry] : binary.anomalies
       end
 
-      def trusted?(stage)
+      def trusted?(stage, own = OWNS_NOTHING)
         trusted_class?(stage.klass, stage.fresh) && stage.anomalies.empty? && !user_shadowing?(stage) &&
-          stage.wrappers.all? { |wrapper| trusted?(wrapper) } &&
-          stage.run_files.all? { |file| trusted_class?(file.klass, file.fresh) }
+          stage.wrappers.all? { |wrapper| trusted?(wrapper) } && untrusted_runs(stage, own).empty?
       end
+
+      def untrusted_runs(stage, own)
+        stage.run_files.reject { |file| trusted_class?(file.klass, file.fresh) || own.call(file.path) }
+      end
+
+      # An admitted cargo run exists to execute the project's build files, so
+      # those inside the root are its own; every other stage owns none.
+      def owners(term, cwd)
+        confinement = @sensitivity.confinement(cwd)
+        term.stages.map { |stage| admitted_cargo?(stage) ? ->(path) { confinement.contains?(path) } : OWNS_NOTHING }
+      end
+
+      def admitted_cargo?(stage) = stage.program == CARGO && flags_for(CARGO).admits?(stage.argv.drop(1))
 
       # A user file is one this process could have swapped, so it is trusted
       # only while nothing in this lineage has changed it.

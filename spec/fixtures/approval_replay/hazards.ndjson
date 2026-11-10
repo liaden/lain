@@ -35,3 +35,7 @@
 {"hazard":"git diff runs an external program","command":"git diff --ext-diff"}
 {"hazard":"git branch deletes","command":"git branch -D main"}
 {"hazard":"git status of another repository","command":"git --git-dir=/tmp/x status"}
+{"hazard":"cargo fmt writes","command":"cargo fmt"}
+{"hazard":"cargo config override runs a program","command":"cargo --config build.rustc=id build --locked"}
+{"hazard":"cargo unstable flag","command":"cargo -Z unstable-options test --locked"}
+{"hazard":"cargo manifest outside the root","command":"cargo test --locked --manifest-path /tmp/x/Cargo.toml"}

@@ -112,6 +112,8 @@ module Lain
       #
       # Its git entries ask the live git what a status or ls-files would print, whether a rev peels to a
       # tree and whether a hook would run, in the place each call names; no record holds those answers.
+      # Its cargo entry reads the manifests and configs a stage would load from the live disk, and the user's
+      # own config from the replaying user's cargo home, which no record holds either.
       #
       # It scores a table SAFER than it would run, in 4 places, so a clean result is no licence to widen:
       # the content predicate is replaced by root containment (a file closed to other users, a secret

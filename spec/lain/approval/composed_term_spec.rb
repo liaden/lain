@@ -3,6 +3,7 @@
 require "fileutils"
 require "json"
 require "open3"
+require "timeout"
 require "tmpdir"
 
 module ComposedTermSpecSupport
@@ -1348,8 +1349,8 @@ RSpec.describe Lain::Approval::ComposedTerm do
   # execvp would find it. Freshness is by ctime against the lineage's start.
   describe "ruled by the resolved class" do
     # By default the lineage starts in the future, so no file reads as fresh.
-    def classed_rule(root, home, path:, classes: true, since: Time.now + 3600)
-      described_class.new(sensitivity: classifiers(root, home, path:, since:), classes:)
+    def classed_rule(root, home, path:, classes: true, since: Time.now + 3600, **cargo)
+      described_class.new(sensitivity: classifiers(root, home, path:, since:), classes:, **cargo)
     end
 
     def classifiers(root, home, path:, since: Time.now + 3600)
@@ -1461,6 +1462,17 @@ RSpec.describe Lain::Approval::ComposedTerm do
 
           expect(note_for(rule, "cat README.md", root)).to include("cat resolved to #{bin}/cat (user)")
             .and include("written this session")
+        end
+      end
+
+      it "names the run file that stopped it, not only the binary" do
+        in_tree do |root, home|
+          outside = on_disk(File.join(File.dirname(root), "out"), "Cargo.toml", "[package]\nname = \"x\"\n")
+          File.symlink(outside, File.join(root, "Cargo.toml"))
+          bin = File.dirname(on_disk(File.join(home, "bin"), "cargo", "#!/bin/sh\n", mode: 0o755))
+          rule = classed_rule(root, home, path: bin)
+
+          expect(note_for(rule, "cargo --version", root)).to include("runs #{root}/Cargo.toml (project)")
         end
       end
 
@@ -1576,22 +1588,40 @@ RSpec.describe Lain::Approval::ComposedTerm do
       end
     end
 
-    it "leaves a build tool whose run file is the project's to the judge" do
+    # cargo's --version is held to the same run files as its check: the
+    # project's own, inside the root, wherever the call runs from.
+    it "approves cargo --version over the project's own run files, in the root or a crate below it" do
       in_tree do |root, home|
         on_disk(root, "Cargo.toml", "[package]\nname = \"demo\"\n")
+        on_disk(root, "crate/Cargo.toml", "[package]\nname = \"inner\"\n")
+        bin = File.dirname(on_disk(File.join(home, "bin"), "cargo", "#!/bin/sh\n", mode: 0o755))
+        rule = classed_rule(root, home, path: bin)
+
+        expect([root, "crate"].map { rule.decide(call_of("cargo --version", cwd: _1)) }).to all(be_allow)
+      end
+    end
+
+    it "leaves cargo to the judge when its run file links out of the root" do
+      in_tree do |root, home|
+        outside = on_disk(File.join(File.dirname(root), "out"), "Cargo.toml", "[package]\nname = \"x\"\n")
+        File.symlink(outside, File.join(root, "Cargo.toml"))
         bin = File.dirname(on_disk(File.join(home, "bin"), "cargo", "#!/bin/sh\n", mode: 0o755))
 
         expect(classed_rule(root, home, path: bin).decide(call_of("cargo --version", cwd: root))).to be_nil
       end
     end
 
-    it "leaves a build tool to the judge when the directory the call runs in holds its run file" do
+    # The project's own build files are what an admitted cargo run is for;
+    # the cargo binary itself is still classed.
+    it "approves a locked cargo check over the project's own build files, and still classes cargo" do
       in_tree do |root, home|
-        on_disk(root, "crate/Cargo.toml", "[package]\nname = \"demo\"\n")
-        bin = File.dirname(on_disk(File.join(home, "bin"), "cargo", "#!/bin/sh\n", mode: 0o755))
+        %w[Cargo.toml Cargo.lock build.rs .cargo/config.toml].each { on_disk(root, _1, "\n") }
+        user = File.dirname(on_disk(File.join(home, "bin"), "cargo", "#!/bin/sh\n", mode: 0o755))
+        planted = File.dirname(on_disk(File.join(root, "bin"), "cargo", "#!/bin/sh\n", mode: 0o755))
+        rule = ->(bin) { classed_rule(root, home, path: bin, cargo_home: File.join(home, ".cargo")) }
 
-        expect(classed_rule(root, home, path: bin).decide(call_of("cargo --version", cwd: "crate"))).to be_nil
-        expect(classed_rule(root, home, path: bin).decide(call_of("cargo --version", cwd: root))).to be_allow
+        expect(rule.call(user).decide(call_of("cargo check --locked", cwd: root))).to be_allow
+        expect(rule.call(planted).decide(call_of("cargo check --locked", cwd: root))).to be_nil
       end
     end
 
@@ -2173,6 +2203,339 @@ RSpec.describe Lain::Approval::ComposedTerm do
         expect(build.call(git: listing.new(["lib/a.rb"])).decide(call_of("git status", cwd: root))).to be_allow
         expect(build.call(git: listing.new([".env"])).decide(call_of("git status", cwd: root))).to be_nil
         expect(build.call(facts: nothing).decide(call_of("git show HEAD:lib/a.rb", cwd: root))).to be_nil
+      end
+    end
+  end
+
+  describe "cargo" do
+    # cargo reads its own home's config, so each example names one it owns.
+    around do |example|
+      Dir.mktmpdir("lain-cargo-home") do |dir|
+        @cargo_home = dir
+        example.run
+      end
+    end
+
+    attr_reader :cargo_home
+
+    def rule_for(home, session_cwd, cargo_home: self.cargo_home, **rest)
+      described_class.new(sensitivity: factory_for(home, session_cwd, **rest), cargo_home:)
+    end
+
+    def in_crate
+      in_tree do |root, home|
+        on_disk(root, "Cargo.toml", "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n")
+        on_disk(root, "Cargo.lock", "version = 4\n")
+        on_disk(root, "src/lib.rs", "pub fn demo() {}\n")
+        yield root, home
+      end
+    end
+
+    def decisions(root, home, commands)
+      rule = rule_for(home, root)
+      commands.map { rule.decide(call_of(_1, cwd: root)) }
+    end
+
+    it "approves a locked clippy run with merged stderr" do
+      in_crate do |root, home|
+        command = "cargo clippy --locked --workspace --all-targets -- -D warnings 2>&1 | tail -2"
+
+        expect(rule_for(home, root).decide(call_of(command, cwd: root))).to be_allow
+      end
+    end
+
+    it "approves fmt --check, and check, clippy, build and test pinned to the lockfile" do
+      in_crate do |root, home|
+        commands = ["cargo fmt --check", "cargo fmt --all --check", "cargo check --offline", "cargo build --frozen",
+                    "cargo test --locked", "cargo +stable build --locked --release", "cargo +1.85.0 check --locked",
+                    "cargo test --locked demo -- --nocapture", "cargo test --locked --workspace -- --test-threads=1",
+                    "cargo clippy --locked --all-targets --all-features -- -D warnings -W clippy::pedantic",
+                    "cargo build --locked -p demo --features serde/derive", "cargo build --locked --features=a,b",
+                    "cargo check --locked --manifest-path Cargo.toml", "cargo --version"]
+        expect_allowed_by_the_verdict(*commands)
+
+        expect(decisions(root, home, commands)).to all(be_allow)
+      end
+    end
+
+    it "leaves an unlocked run and a writing fmt to the judge" do
+      in_crate do |root, home|
+        commands = ["cargo build", "cargo test", "cargo clippy -- -D warnings", "cargo fmt", "cargo fmt --all",
+                    "cargo build --locked=false", "cargo fmt --check -- --emit files"]
+        expect_allowed_by_the_verdict(*commands)
+
+        expect(decisions(root, home, commands)).to eq([nil] * commands.size)
+      end
+    end
+
+    # Each names a program, a file or a toolchain from the command line, and
+    # none is code the project's own files control.
+    it "refuses a config override, an unstable flag, a toolchain path and a manifest outside the root" do
+      in_crate do |root, home|
+        commands = [
+          "cargo --config build.rustc=id build --locked", "cargo build --locked --config build.rustc=id",
+          "cargo build --locked --config=build.rustc=id", "cargo build --locked --conf build.rustc=id",
+          "cargo +stable --config build.rustc=id build --locked",
+          "cargo -Z unstable-options test --locked", "cargo test --locked -Zunstable-options",
+          "cargo test --locked -Z unstable-options", "cargo -C /tmp build --locked", "cargo build --locked -C /tmp",
+          "cargo test --locked --manifest-path /tmp/x/Cargo.toml",
+          "cargo test --locked --manifest-path=/tmp/x/Cargo.toml", "cargo test --locked --manifest-path ../Cargo.toml",
+          "cargo +/tmp/tc build --locked", "cargo +../tc build --locked", "cargo +stable/x build --locked",
+          "cargo build --locked --target-dir /tmp/t", "cargo build --locked --target-dir=/tmp/t",
+          "cargo build --locked --target=/tmp/x.json", "cargo build --locked -p /tmp/x",
+          "cargo build --locked --manifest-path -x"
+        ]
+        expect_allowed_by_the_verdict(*commands)
+
+        expect(decisions(root, home, commands)).to eq([nil] * commands.size)
+      end
+    end
+
+    # The words after `--` go to rustc under clippy and to the test binaries
+    # under test, and either can be told to open, write or run something.
+    it "refuses a tail that is not a lint level or a test filter" do
+      in_crate do |root, home|
+        commands = ["cargo clippy --locked -- -C linker=id", "cargo clippy --locked -- --extern x=/tmp/y",
+                    "cargo clippy --locked -- -L /tmp", "cargo clippy --locked -- -D warnings -o out",
+                    "cargo test --locked -- --logfile=/tmp/x", "cargo test --locked -- --logfile x",
+                    "cargo test --locked -- -Z unstable-options", "cargo build --locked -- x",
+                    "cargo check --locked -- -D warnings", "cargo clippy --locked -- -D @args",
+                    "cargo clippy --locked -- -Zself-profile"]
+        expect_allowed_by_the_verdict(*commands)
+
+        expect(decisions(root, home, commands)).to eq([nil] * commands.size)
+      end
+    end
+
+    it "refuses a subcommand that writes, installs, runs or fetches unpinned" do
+      in_crate do |root, home|
+        commands = ["cargo clippy --locked --fix", "cargo run --locked", "cargo install --locked demo",
+                    "cargo update", "cargo publish --locked", "cargo fetch --locked", "cargo --locked build",
+                    "cargo build --locked --timings", "cargo test --locked --no-run --bin"]
+        expect_allowed_by_the_verdict(*commands)
+
+        expect(decisions(root, home, commands)).to eq([nil] * commands.size)
+      end
+    end
+
+    # A program named in the environment is no word of the stage, so the
+    # reading refuses the prefix rather than this table.
+    it "refuses an environment prefix" do
+      in_crate do |root, home|
+        commands = ["RUSTC_WRAPPER=id cargo build --locked", "env RUSTC_WRAPPER=id cargo build --locked"]
+
+        expect(decisions(root, home, commands)).to eq([nil] * commands.size)
+      end
+    end
+
+    # cargo-fmt takes none of the build options, and only test takes a filter.
+    it "refuses an option or an operand its subcommand does not take" do
+      in_crate do |root, home|
+        commands = ["cargo fmt --check --features a", "cargo fmt --check -j 4", "cargo fmt --check --target t",
+                    "cargo build --locked demo", "cargo check --locked demo"]
+        expect_allowed_by_the_verdict(*commands)
+
+        expect(decisions(root, home, commands)).to eq([nil] * commands.size)
+      end
+    end
+
+    # cargo loads the first Cargo.toml above the cwd, then any workspace above
+    # that, and every .cargo/config.toml from the cwd up to /.
+    describe "the files cargo loads from above the root" do
+      def above(root) = File.dirname(root)
+
+      it "refuses a root holding no manifest under one that has a manifest" do
+        in_tree do |root, home|
+          on_disk(above(root), "Cargo.toml", "[package]\nname = \"outer\"\n")
+          on_disk(above(root), "build.rs", "fn main() {}\n")
+
+          expect(decisions(root, home, ["cargo build --locked", "cargo check --locked"])).to eq([nil, nil])
+        end
+      end
+
+      it "refuses a crate that is a member of a workspace above the root" do
+        in_crate do |root, home|
+          on_disk(above(root), "Cargo.toml", "[workspace]\nmembers = [\"repo\", \"other\"]\n")
+          on_disk(above(root), "other/build.rs", "fn main() {}\n")
+
+          expect(decisions(root, home, ["cargo build --locked --workspace", "cargo test --locked"])).to eq([nil, nil])
+        end
+      end
+
+      it "refuses a config above the root, which can name a rustc wrapper" do
+        in_crate do |root, home|
+          on_disk(above(root), ".cargo/config.toml", "[build]\nrustc-wrapper = \"/tmp/wrap.sh\"\n")
+
+          expect(decisions(root, home, ["cargo check --locked", "cargo fmt --check"])).to eq([nil, nil])
+        end
+      end
+
+      it "refuses a manifest named outside the root, or one whose workspace key points out of it" do
+        in_crate do |root, home|
+          on_disk(above(root), "elsewhere/Cargo.toml", "[package]\nname = \"x\"\n")
+          on_disk(root, "sub/Cargo.toml", "[package]\nname = \"sub\"\nworkspace = \"../..\"\n")
+
+          expect(decisions(root, home, ["cargo build --locked --manifest-path ../elsewhere/Cargo.toml",
+                                        "cargo build --locked --manifest-path sub/Cargo.toml"])).to eq([nil, nil])
+        end
+      end
+
+      it "approves a project config, and the user's own that runs nothing" do
+        in_crate do |root, home|
+          on_disk(root, ".cargo/config.toml", "[build]\nrustc-wrapper = \"sccache\"\n")
+          on_disk(cargo_home, "config.toml", "[net]\nretry = 3\n")
+
+          expect(decisions(root, home, ["cargo check --locked", "cargo fmt --check"])).to all(be_allow)
+        end
+      end
+
+      it "refuses when the user's own config names something that runs" do
+        in_crate do |root, home|
+          configs = ["[build]\nrustc-wrapper = \"sccache\"\n", "[alias]\nb = \"build\"\n",
+                     "[target.x86_64-unknown-linux-gnu]\nlinker = \"clang\"\n",
+                     "[target.x86_64-unknown-linux-gnu]\nrunner = \"valgrind\"\n", "build.rustflags = [\"-Cx\"]\n"]
+
+          answers = configs.map do |config|
+            on_disk(cargo_home, "config.toml", config)
+            rule_for(home, root).decide(call_of("cargo check --locked", cwd: root))
+          end
+          expect(answers).to eq([nil] * configs.size)
+        end
+      end
+    end
+
+    # TOML reads a quoted key as the bare one and `\u` as any character, so a
+    # file spelling a key either way is left to the judge rather than parsed.
+    describe "a manifest or config whose keys are quoted or escaped" do
+      def quoted_aliases
+        ["\"fmt\" = [\"run\", \"--\"]\n\"clippy\" = [\"run\", \"--\"]\n",
+         "'fmt' = [\"run\", \"--\"]\n'clippy' = [\"run\", \"--\"]\n",
+         "alias.\"fmt\" = [\"run\"]\nalias.\"clippy\" = [\"run\"]\n",
+         "\"alias\".fmt = [\"run\"]\n\"alias\".clippy = [\"run\"]\n",
+         "[alias]\nf\\u006dt = [\"run\"]\ncl\\u0069ppy = [\"run\"]\n"]
+      end
+
+      it "refuses fmt and clippy under an alias spelled with a quoted or escaped key" do
+        in_crate do |root, home|
+          answers = quoted_aliases.map do |config|
+            on_disk(root, ".cargo/config.toml", config.start_with?("[") ? config : "[alias]\n#{config}")
+            decisions(root, home, ["cargo fmt --check", "cargo clippy --locked -- -D warnings"])
+          end
+
+          expect(answers).to eq([[nil, nil]] * quoted_aliases.size)
+        end
+      end
+
+      it "refuses a manifest whose workspace key is quoted, and one holding an escape" do
+        in_crate do |root, home|
+          manifests = ["[package]\nname = \"demo\"\n\"workspace\" = \"../../w\"\n",
+                       "[package]\nname = \"demo\"\n'workspace' = \"../../w\"\n",
+                       "[\"package\"]\nname = \"demo\"\n",
+                       "[package]\nname = \"d\\u0065mo\"\n"]
+
+          answers = manifests.map do |manifest|
+            on_disk(root, "Cargo.toml", manifest)
+            rule_for(home, root).decide(call_of("cargo build --locked --workspace", cwd: root))
+          end
+
+          expect(answers).to eq([nil] * manifests.size)
+        end
+      end
+
+      it "still approves a manifest whose quotes are all values" do
+        in_crate do |root, home|
+          on_disk(root, "Cargo.toml", "[package]\nname = \"demo\"\nauthors = [\"a <a@b>\", \"c\"]\n\n" \
+                                      "[dependencies]\nx = { version = \"=2.3.2\", features = [\"a\", \"b\"] }\n")
+
+          expect(rule_for(home, root).decide(call_of("cargo build --locked", cwd: root))).to be_allow
+        end
+      end
+    end
+
+    it "refuses a user config that sets the environment or a credential program" do
+      in_crate do |root, home|
+        configs = ["[env]\nLD_PRELOAD = \"/tmp/evil.so\"\n", "[registry]\ncredential-provider = \"x\"\n",
+                   "[registry]\nglobal-credential-providers = [\"x\"]\n"]
+
+        answers = configs.map do |config|
+          on_disk(cargo_home, "config.toml", config)
+          rule_for(home, root).decide(call_of("cargo check --locked", cwd: root))
+        end
+        expect(answers).to eq([nil] * configs.size)
+      end
+    end
+
+    # Only a regular file is read, so a FIFO cannot hold the ladder open.
+    it "refuses a manifest or a config that is a FIFO, without blocking" do
+      in_crate do |root, home|
+        File.delete(File.join(root, "Cargo.toml"))
+        File.mkfifo(File.join(root, "Cargo.toml"))
+        manifest = Timeout.timeout(5) { rule_for(home, root).decide(call_of("cargo build --locked", cwd: root)) }
+
+        File.delete(File.join(root, "Cargo.toml"))
+        on_disk(root, "Cargo.toml", "[package]\nname = \"demo\"\n")
+        FileUtils.mkdir_p(File.join(root, ".cargo"))
+        File.mkfifo(File.join(root, ".cargo", "config.toml"))
+        config = Timeout.timeout(5) { rule_for(home, root).decide(call_of("cargo build --locked", cwd: root)) }
+
+        expect([manifest, config]).to eq([nil, nil])
+      end
+    end
+
+    it "refuses a config past the bound it reads" do
+      in_crate do |root, home|
+        on_disk(root, ".cargo/config.toml", "#{"# padding\n" * 7000}[net]\nretry = 3\n")
+
+        expect(rule_for(home, root).decide(call_of("cargo check --locked", cwd: root))).to be_nil
+      end
+    end
+
+    # The usual layout: the project under HOME, so the ascent reaches the
+    # user's own config, which is judged as the user's and not as an outsider's.
+    it "approves a project under the home whose cargo home holds a quiet config" do
+      in_tree do |_root, home|
+        project = File.join(home, "proj")
+        on_disk(project, "Cargo.toml", "[package]\nname = \"demo\"\n")
+        on_disk(File.join(home, ".cargo"), "config.toml", "[net]\nretry = 3\n")
+        rule = rule_for(home, project, cargo_home: File.join(home, ".cargo"))
+
+        expect(rule.decide(call_of("cargo check --locked", cwd: project))).to be_allow
+      end
+    end
+
+    # cargo loads a config's array-form `include` with no flag, so a config
+    # naming another is left to the judge rather than followed.
+    it "refuses a config that includes another, inside the root or out of it" do
+      in_crate do |root, home|
+        outside = on_disk(File.join(File.dirname(root), "out"), "extra.toml", "[alias]\nfmt = [\"run\"]\n")
+        on_disk(root, ".cargo/extra.toml", "[alias]\nfmt = [\"run\", \"--offline\", \"--\"]\n")
+        includes = ["include = [{ path = \"extra.toml\" }]\n", "include = [{ path = \"#{outside}\" }]\n"]
+
+        answers = includes.map do |config|
+          on_disk(root, ".cargo/config.toml", config)
+          decisions(root, home, ["cargo fmt --check", "cargo check --locked"])
+        end
+        expect(answers).to eq([[nil, nil]] * includes.size)
+      end
+    end
+
+    # fmt and clippy are external subcommands, so an alias replaces them where
+    # cargo ignores one for check, build and test.
+    it "refuses fmt and clippy when a config cargo reads aliases them" do
+      in_crate do |root, home|
+        on_disk(root, ".cargo/config.toml", "[alias]\nfmt = [\"run\", \"--offline\", \"--\"]\n" \
+                                            "clippy = [\"run\", \"--offline\", \"--\"]\n")
+
+        expect(decisions(root, home, ["cargo fmt --check", "cargo clippy --locked -- -D warnings"])).to eq([nil, nil])
+        expect(rule_for(home, root).decide(call_of("cargo check --locked", cwd: root))).to be_allow
+      end
+    end
+
+    it "refuses a locked build under a pinned toolchain" do
+      in_crate do |root, home|
+        on_disk(root, "rust-toolchain.toml", "[toolchain]\npath = \"/proc/self/cwd/tc\"\n")
+
+        expect(rule_for(home, root).decide(call_of("cargo build --locked", cwd: root))).to be_nil
       end
     end
   end

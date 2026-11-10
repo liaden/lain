@@ -117,7 +117,9 @@ module Lain
              "regions, oversize, FIFOs), classes:, project program exclusions; Landing reads the live disk for " \
              "unrecorded paths",
              "git runs live: what a git status or ls-files prints, whether a rev peels to a tree and whether " \
-             "a hook would run are asked of git in each call's place"]
+             "a hook would run are asked of git in each call's place",
+             "cargo reads live: the manifests and configs a cargo stage loads are read from the live disk, and " \
+             "the user's own config from the replaying user's cargo home"]
           end
 
           def parks(admitted)
