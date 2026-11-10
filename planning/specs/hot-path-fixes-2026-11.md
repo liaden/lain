@@ -1,6 +1,6 @@
 # Hot-path fixes from the 2026-11 profiling round
 
-status: draft (panel-reviewed 2026-11-09, REQUEST-CHANGES folded in)
+status: in-progress (panel-reviewed 2026-11-09, REQUEST-CHANGES folded in)
 commit-mode: orchestrator-commits
 language: ruby, rust (cards R2 only)
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson); Rust seats for R2 (Raph Levien, Andrew Gallant)
@@ -1414,3 +1414,14 @@ Spec file: none can fail on prose; the check is `grep -n` for each stale phrase 
 7. Manual pass the user owes: `lain up` in this checkout and in a Python checkout with a `.venv`, 1 auto-mode session with cargo and git work, and a review of a 30-file branch.
 
 ## Execution log
+- Run started 2026-11-09. Base main at e44eb582 (the plan commit over the plan's base 04f2cfad; only ROADMAP.md and this plan changed between them, so Grounding holds).
+- Start state: 84 worktrees and branches from earlier plans (card/T*, BD, EXT, FLK, HARNESS, TIM, nyotes/implement-readiness at ~/w/ir); left alone. Snapshots in the scratchpad (start-status.txt, start-worktrees.txt, start-branches.txt, start-submodules.txt).
+- Pre-staged user work unstaged for the run. Re-stage at close-out: git add .gitmodules references/repos/cliffcompaction references/repos/pi
+- Hook: pre-commit hygiene hooks, shellcheck, cargo fmt/clippy/test (rust files), cargo deny (Cargo/deny files), `bundle exec rake compile check` (rubocop whole repo + pspec, about 121s), yard-lint --staged, bin/lint-gherkin-docs (planning/specs), bin/lint-commit-msg (commit-msg), bin/lint-price-freshness. Example count: the hook log's first pass or tmp/parallel_runtime_rspec.log.
+- Agent checks on own paths: bundle exec rubocop <paths>; bundle exec yard-lint <ruby paths>; cargo fmt --check, cargo clippy --all-targets -- -D warnings, cargo test (Rust cards, own CARGO_TARGET_DIR).
+- Ratchet specs: bundle exec rspec spec/*_spec.rb (top-level scanners: output discipline, zeitwerk, lain_spec membership, value object shareability, git scrub discipline, refusal width, and the rest), plus spec/lain/rust/binding_coverage_spec.rb for R2.
+- Build outputs a worktree needs: lib/lain/lain.so, target/release/lain-fence, tmp/parallel_runtime_rspec.log.
+- Locks: tmp/gate.lock and tmp/suite.lock (repo tmp/). Test-runner pattern for wait-quiet: 'rspec|parallel_rspec|cargo test|rake (pspec|check)'.
+- Worktree prefix: tmp/worktrees/hpf-<id>, branch card/hpf-<id>. Each worktree TMPDIR=$HOME/tmp/lain/hpf-<id>.
+- Memory 15 GB: at most 5 agents at once, landing counted as 1.
+- No path needs user approval. Orchestrator rulings while the user is away are marked "ruling" here for review.
