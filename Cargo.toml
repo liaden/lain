@@ -4,4 +4,7 @@
 
 [workspace]
 members = ["./ext/lain", "./crates/lain-core", "./crates/lain-fence", "./crates/lain-wire"]
+# The phone app is a workspace of its own, so Dioxus and WebKitGTK stay out of this lockfile, this
+# deny config, and what rust-analyzer loads for lain.
+exclude = ["./apps/lain-remote"]
 resolver = "2"

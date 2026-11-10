@@ -1,0 +1,23 @@
+edition = "2024"
+style_edition = "2024"
+max_width = 120
+tab_spaces = 2
+
+# Idiomatic shorthands
+use_field_init_shorthand = true
+use_try_shorthand = true
+
+# Consistent line endings
+newline_style = "Unix"
+
+# Scale heuristics to match the 120-char line budget.
+# Defaults (set for max_width=100) are too conservative at 120.
+fn_call_width = 80        # was 60 — keeps short calls on one line
+chain_width = 80          # was 60 — keeps short method chains on one line
+struct_lit_width = 50     # was 18 — keeps compact struct literals on one line
+struct_variant_width = 50 # was 35 — matches struct_lit_width for consistency
+
+# Keep `if cond { x } else { y }` and `let x = … else { … }` on one line up to this width.
+# Defaults (50) were expanding short functional-style expressions unnecessarily.
+single_line_if_else_max_width = 80
+single_line_let_else_max_width = 80

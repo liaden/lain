@@ -1,0 +1,10 @@
+[application]
+name = "lain-remote"
+default_platform = "desktop"
+
+[web.app]
+title = "lain"
+
+[android]
+package_name = "com.lain.app"
+app_name = "lain"

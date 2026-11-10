@@ -161,9 +161,10 @@ jobs:
         run: bundle exec rake compile
       # `ruby-checks` would run the suite a second time; rubocop, its other
       # half, runs on its own below.
+      # The remote-* hooks need WebKitGTK; the remote-app job runs them on a runner that has it.
       - uses: pre-commit/action@v3.0.1
         env:
-          SKIP: ruby-checks
+          SKIP: ruby-checks,remote-fmt,remote-clippy,remote-test,remote-deny
       # A failed hook above must not hide rubocop's own verdict.
       - name: RuboCop
         if: ${{ !cancelled() }}
@@ -174,6 +175,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       mutants: ${{ steps.diff.outputs.mutants }}
+      remote: ${{ steps.diff.outputs.remote }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -183,14 +185,59 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
-          # A new branch or a force push has no usable base; sweep rather than skip.
-          if ! changed=$(git diff --name-only "$BASE" "$GITHUB_SHA" 2>/dev/null); then
-            echo "mutants=true" >> "$GITHUB_OUTPUT"
-          elif grep -Eq '^(ext/lain/|Rakefile$)' <<< "$changed"; then
-            echo "mutants=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "mutants=false" >> "$GITHUB_OUTPUT"
-          fi
+          # A new branch or a force push has no usable base; run everything rather than skip.
+          touched() {
+            if [ -z "${changed+set}" ] || grep -Eq "$2" <<< "$changed"; then
+              echo "$1=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "$1=false" >> "$GITHUB_OUTPUT"
+            fi
+          }
+          changed=$(git diff --name-only "$BASE" "$GITHUB_SHA" 2>/dev/null) || unset changed
+          touched mutants '^(ext/lain/|Rakefile$)'
+          touched remote '^(apps/lain-remote/|crates/lain-(wire|core)/|Cargo\.(toml|lock)$|\.github/workflows/main\.yml$)'
+
+  remote-app:
+    # Dioxus and WebKitGTK are a long cold build, so it runs only when the app, the wire or the relay changed.
+    if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.remote == 'true' }}
+    needs: changes
+    runs-on: ubuntu-latest
+    name: lain-remote
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Ruby & Rust
+        id: toolchain
+        uses: oxidize-rb/actions/setup-ruby-and-rust@v1
+        with:
+          ruby-version: '4.0.6'
+          cargo-cache: false
+          rubygems: '4.0.3'
+      - name: Install the WebKitGTK and xdo headers dioxus-desktop links
+        run: sudo apt-get update -q && sudo apt-get install -y -q libwebkit2gtk-4.1-dev libxdo-dev
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/debug/
+            apps/lain-remote/target/
+          key: remote-${{ runner.os }}-${{ steps.toolchain.outputs.cache-key }}-${{ hashFiles('Cargo.lock', 'apps/lain-remote/Cargo.lock') }}
+          restore-keys: remote-${{ runner.os }}-${{ steps.toolchain.outputs.cache-key }}-
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+      - name: Run the app's hooks
+        run: |
+          for hook in remote-fmt remote-clippy remote-test remote-deny; do
+            pipx run pre-commit run --all-files "$hook"
+          done
 
   mutants:
     # 13 minutes, so it runs only when ext/lain/ (the baseline included) or the Rakefile changed.

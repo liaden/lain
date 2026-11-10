@@ -52,6 +52,42 @@ repos:
         types: [rust]
         pass_filenames: false
 
+      # The phone app is a workspace of its own, so the cargo hooks above never see it.
+      # These name its manifest, and run when it or the wire it speaks changes.
+      - id: remote-fmt
+        name: cargo fmt (lain-remote)
+        entry: cargo fmt --manifest-path apps/lain-remote/Cargo.toml -- --check
+        language: system
+        pass_filenames: false
+        files: ^apps/lain-remote/
+
+      - id: remote-clippy
+        name: cargo clippy (lain-remote)
+        entry: cargo clippy --manifest-path apps/lain-remote/Cargo.toml --all-targets -- -D warnings
+        language: system
+        pass_filenames: false
+        files: ^(apps/lain-remote/|crates/lain-wire/)
+
+      # A missing relay binary skips these tests green, so the hook builds it and turns a skip into a failure.
+      - id: remote-test
+        name: cargo test (lain-remote)
+        entry: >-
+          env LAIN_REMOTE_REQUIRE_RELAY=1 sh -c
+          'cargo build -q -p lain-core && cargo test --manifest-path apps/lain-remote/Cargo.toml'
+        language: system
+        pass_filenames: false
+        files: ^(apps/lain-remote/|crates/lain-(wire|core)/|Cargo\.(toml|lock)$)
+
+      # Its own deny config, for the reason the cargo-deny hook below gives for stripping git's variables.
+      - id: remote-deny
+        name: cargo deny (lain-remote)
+        entry: >-
+          env -u GIT_DIR -u GIT_INDEX_FILE -u GIT_WORK_TREE
+          cargo deny --manifest-path apps/lain-remote/Cargo.toml check --config apps/lain-remote/deny.toml
+        language: system
+        pass_filenames: false
+        files: ^(apps/lain-remote/(Cargo\.(toml|lock)|deny\.toml)|deny\.toml)$
+
       # cargo-deny refreshes its advisory-db by shelling out to `git -C <db> reset
       # --hard`. In a linked git worktree, `git commit` exports GIT_DIR/GIT_INDEX_FILE
       # into the hook environment, and those OVERRIDE `-C`, so the reset silently
@@ -77,6 +113,8 @@ repos:
         entry: bundle exec rake compile check
         language: system
         types_or: [ruby, rust]
+        # The phone app's Rust never reaches Ruby; its own hooks above check it.
+        exclude: ^apps/
         pass_filenames: false
 
       # The doc defects RuboCop cannot reach, because they are properties of the

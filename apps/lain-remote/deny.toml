@@ -1,0 +1,79 @@
+# The root deny.toml, copied: 1 cargo-deny run checks 1 workspace against 1 config, and this app is
+# a workspace of its own. Only [advisories] differs. Keep [licenses], [bans] and [sources] in step with the root.
+
+[graph]
+targets = []
+
+[advisories]
+version = 2
+# 3 unmaintained crates that Dioxus reaches, none with a CVE: paste via its image decoder and
+# proc-macro-error via gtk-rs 0.18, both compile-time macros, and fxhash via wry's HTML selectors.
+ignore = [
+    { id = "RUSTSEC-2025-0057", reason = "fxhash: unmaintained, via wry's selectors" },
+    { id = "RUSTSEC-2024-0436", reason = "paste: unmaintained, compile time only, via dioxus-desktop's image" },
+    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error: unmaintained, compile time only, via gtk-rs 0.18" },
+]
+
+[licenses]
+version = 2
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "NCSA",
+    "CC0-1.0",
+    "Zlib",
+    "MPL-2.0",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+# No crate in this workspace may own, drive, or interrogate a terminal.
+#
+# Ruby owns the stream. `NO_COLOR`, `FORCE_COLOR`, `isatty` and `TERM` are read
+# on the Ruby side and the resolved answer is passed across the FFI boundary as
+# an argument, which is what keeps `Lain::Ext::Prompt`'s renderer the pure
+# `(format, vars, color) -> String` that the prompt-cache purity rule wants. A
+# crate that opens /dev/tty, installs a raw-mode guard, or reads the environment
+# to decide color breaks that from inside a `.so` we cannot see into -- and
+# `skim` 5.6.1 demonstrates the failure mode, hard-depending on `crossterm`
+# (`use-dev-tty`) and installing a `#[global_allocator]` from its LIBRARY crate.
+# `anstyle` (style value types, zero deps, no env access) is the sanctioned
+# substitute for the whole class.
+#
+# This list is workspace-wide and therefore also binds `crates/lain-core`. That
+# is deliberate: the daemon is the isolation boundary and has even less business
+# holding a tty. `onig_sys` is here for a different reason -- it is a C
+# dependency that arrives transitively via `syntect`'s default `regex-onig`
+# feature, and `regex-fancy` is the pure-Rust alternative we would take instead.
+#
+# `nu-ansi-term` is the one entry that is not itself a terminal-owner: it is
+# style value types, much like the sanctioned `anstyle`. It is here because a
+# ban list cannot express a FEATURE ban, and `ansi = ["fmt", "nu-ansi-term"]` is
+# the only edge that pulls it. Enabling that feature is what makes
+# `tracing-subscriber`'s fmt layer default its colour decision to
+# `env::var("NO_COLOR")` (`fmt_layer.rs:743`) -- the environment read this whole
+# list exists to keep out of the process Ruby does not own. Banning the crate
+# therefore bans the feature by proxy: a `default-features = true` regression in
+# `crates/lain-core/Cargo.toml` fails `cargo deny` instead of silently re-arming it.
+deny = [
+    { crate = "crossterm", reason = "owns the terminal; Ruby does" },
+    { crate = "termion", reason = "owns the terminal; Ruby does" },
+    { crate = "termwiz", reason = "owns the terminal; Ruby does" },
+    { crate = "console", reason = "reads the environment to decide color; color is a resolved argument" },
+    { crate = "termcolor", reason = "reads the environment to decide color; use anstyle" },
+    { crate = "terminal_size", reason = "interrogates the tty; Ruby measures its own stream" },
+    { crate = "onig_sys", reason = "C oniguruma; prefer the pure-Rust regex-fancy path" },
+    { crate = "nu-ansi-term", reason = "arrives only via tracing-subscriber's `ansi` default feature; colour is a resolved argument" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
