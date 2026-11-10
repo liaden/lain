@@ -811,8 +811,8 @@ reader they raced no longer exists there. The plain `--no-nvim` chat keeps its i
 guards; the last part of this section drives it.
 
 **Run this section under `--approval ask`.** A launched chat is `auto`, where the judge may answer
-the call before any surface sees it. Force a gated call that no rule approves — `echo hello` is
-enough, since `echo` is not on `ComposedTerm`'s allowlist (`shell-terms.md` §4). **`ls -la` no
+the call before any surface sees it. Force a gated call that no rule approves — `cargo build` is
+enough, since `cargo` is on `ComposedTerm`'s allowlist for `--version` alone (`shell-terms.md` §4). **`ls -la` no
 longer parks:** `ls` joined the shell rule's allowlist, so in the project root it runs with no
 surface asked, and every transcript below that parks `ls -la` is a record from before that change.
 Compare the surfaces:
@@ -891,7 +891,7 @@ pass. With the layer down, an arrival must write no BEL and run no `tmux` comman
 `subagent` calls in one message, but **`bash` is an unsafe tool, and the runner treats each
 unsafe call as a barrier that runs alone** (`agent/tool_runner.rb`, `ToolRunner#run`). So three
 parallel `bash` calls park ONE AT A TIME, and three rows at once is unreachable with `bash`
-(round 22). Ask for `echo one`, `echo two` and `echo three` as three calls in one message and check what is
+(round 22). Ask for `cargo build`, `cargo test` and `cargo check` as three calls in one message and check what is
 reachable: one arrival line and one row in `lain://approval`, and answering it releases the next,
 in wire order. Three rows at once needs gated calls that are all parallel-safe, so name that
 vehicle before claiming the shape. **Queued approvals are announced**: each call parked behind
@@ -950,7 +950,7 @@ gave the model nothing to read. Make the wait short so each check is quick: writ
 `.lain/config.rb` (since round 3 the default is `silence: :hold`, where every `auto-denies` and `denied` below reads
 `postpones` and `postponed` instead; see the hold paragraph after the table), run `lain trust --yes`, relaunch. (`approval timeout:` takes a number of seconds above 0;
 `0`, a negative number and a non-number refuse at load. Without the line the window is 300 seconds, and
-the displayed figure is `5:00`.) Park `echo hello` and read each surface:
+the displayed figure is `5:00`.) Park `cargo build` and read each surface:
 
 | surface | what it says |
 |---|---|

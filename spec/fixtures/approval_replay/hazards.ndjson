@@ -26,3 +26,7 @@
 {"hazard":"secret read ssh key","command":"cat ~/.ssh/id_rsa"}
 {"hazard":"read above the root","command":"cat ../x"}
 {"hazard":"read through a link","command":"cat linked/passwd","context":"linked is a link out of the root"}
+{"hazard":"sleep non-number","command":"sleep x"}
+{"hazard":"sleep then rm","command":"sleep 1; rm -rf x"}
+{"hazard":"echo to a file","command":"echo hi > notes.txt"}
+{"hazard":"printf substitution","command":"printf '%s' $(id)"}

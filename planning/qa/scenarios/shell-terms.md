@@ -374,9 +374,9 @@ disqualifying flag, no aliasing segment, confined to the project root, and — a
 ```
 you> /ruby Lain::Approval::ComposedTerm::PROGRAMS.keys
 ```
-→ 18 programs: `cat head tail wc nl grep sort cut tr rev` plus `ls`, `pwd` and `which` (round 26), `lain` (only `epic status` and `epic show`), and, since round 3, `rg`, `git`, `find` and `sed`. The last four are read-only by option table (below). `echo` is not on it. `ls`, `pwd` and `which` still answer to their own listing predicates, and `VERSION_PROBES` is `rustc cargo rustup dx adb go gcc clang cmake`.
+→ 23 programs: `cat head tail wc nl grep sort cut tr rev` plus `ls`, `pwd` and `which` (round 26), `lain` (only `epic status` and `epic show`), since round 3 `rg`, `git`, `find` and `sed`, and the inert `sleep` (one number of at most 3 digits), `true`, `false`, `echo` and `printf` (`printf -v` refused). The `rg`, `git`, `find` and `sed` entries are read-only by option table (below). `ls`, `pwd` and `which` still answer to their own listing predicates, and `VERSION_PROBES` is `rustc cargo rustup dx adb go gcc clang cmake`.
 
-`echo` reaches `allow` at the verdict (§1) and is not auto-approved. The same predicates approve `ls`, `pwd` and `which`,
+`echo hello` reaches `allow` at the verdict (§1) and is auto-approved when it has no redirect. The same predicates approve `ls`, `pwd` and `which`,
 and `rustc`, `cargo`, `rustup`, `dx`, `adb`, `go`, `gcc`, `clang` and `cmake` with exactly `--version`,
 are approved when every word is ordinary and under the root (`Approval::ComposedTerm::VERSION_PROBES`). A
 rustup proxy is refused beside a `rust-toolchain` file, and an `ls` that would list a name `list_files` withholds
@@ -438,7 +438,7 @@ what a round should check rather than the outcome:
 
 | command | which predicate refuses it |
 |---|---|
-| `echo hello` | not on `PROGRAMS` |
+| `echo hi > notes.txt`, `sleep x`, `sleep infinity`, `printf -v x hi` | a redirect leaves no term; `sleep` takes one plain number; `-v` is a disqualified `printf` flag |
 | `ls -la` in a directory holding a withheld name (`.env`), `ls -R` | the listing predicate, and `-R` is a disqualified flag |
 | `rustc --version` beside a `rust-toolchain.toml`, `ruby --version` | the toolchain predicate; an interpreter is no probe |
 | `/tmp/evil/cat README.md` | argv0 carries a `/`. The allowlist compares **whole** and never basenames — the exact opposite of §2's exclusion set, and the asymmetry is deliberate (`composed_term.rb:80-86`) |

@@ -106,6 +106,56 @@ RSpec.describe Lain::Approval::ComposedTerm do
     end
   end
 
+  describe "an inert utility" do
+    def approved?(root, home, command) = rule_for(home, root).decide(call_of(command, cwd: root))&.allow? || false
+
+    it "approves sleep with one numeric operand, true and false" do
+      in_tree do |root, home|
+        commands = ["sleep 13", "sleep 0.5", "true", "false", "sleep 1 && echo done"]
+        expect_allowed_by_the_verdict(*commands)
+
+        expect(commands.map { approved?(root, home, _1) }).to all(be(true))
+      end
+    end
+
+    it "approves echo and printf over literal words" do
+      in_tree do |root, home|
+        on_disk(root, "README.md", "# A project\n")
+        commands = ["echo hi", "echo -n 'a b'", "printf '%s' hi", "echo a && echo b", "cat README.md && echo done"]
+
+        expect(commands.map { approved?(root, home, _1) }).to all(be(true))
+      end
+    end
+
+    it "refuses a sleep that is not exactly one finite number" do
+      in_tree do |root, home|
+        commands = ["sleep x", "sleep infinity", "sleep 1 2", "sleep", "sleep 1d", "sleep -1", "sleep 99999"]
+        expect_allowed_by_the_verdict(*commands)
+
+        expect(commands.map { approved?(root, home, _1) }).to all(be(false))
+      end
+    end
+
+    it "refuses a printf whose field width or precision would amplify its output" do
+      in_tree do |root, home|
+        wide = ["printf '%1000000000s' x", "printf '%.5000d' 1", "printf '%-0004000s' x",
+                "printf '%*s' 1000000000 x", "printf '%.*s' 1000000000 x"]
+
+        expect(wide.map { approved?(root, home, _1) }).to all(be(false))
+        expect(approved?(root, home, "printf '%999s|%.3f' x 1")).to be(true)
+      end
+    end
+
+    it "refuses what writes, expands or reads beyond its words" do
+      in_tree do |root, home|
+        commands = ["echo hi > notes.txt", "printf '%s' $(id)", "sleep 1; rm -rf x", "printf -v x hi",
+                    "echo /etc/hostname", "echo .env"]
+
+        expect(commands.map { approved?(root, home, _1) }).to all(be(false))
+      end
+    end
+  end
+
   describe "a word the session's classifier denies" do
     # THE BLOCKER THIS RULE IS BUILT AROUND. `Triage::Command#literal`
     # partitions denied words on a path-like shape and DOWNGRADES a bare one
@@ -1265,8 +1315,8 @@ RSpec.describe Lain::Approval::ComposedTerm do
       in_tree do |root, home|
         rule = rule_for(home, root)
 
-        expect(rule.decide(call_of("echo a && echo b", cwd: root))).to be_nil
-        expect(rule.decide(call_of("echo 'a b' && echo c", cwd: root))).to be_nil
+        expect(rule.decide(call_of("echo a > out.txt", cwd: root))).to be_nil
+        expect(rule.decide(call_of("echo $HOME && echo c", cwd: root))).to be_nil
       end
     end
 

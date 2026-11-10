@@ -1058,6 +1058,17 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       end
     end
 
+    it "settles sleep by the rules rung under auto, never asking the judge" do
+      in_tree do |root, home|
+        asked = []
+        board = board_over(root, home, options: { approval: "auto" }, judge: ->(**) { asked.push(:judge) && :deny })
+
+        expect(board.policy_switch.call(bash_of("sleep 1", "cwd" => root), nil)).to be(true)
+        expect(rulings.last).to include("rung" => "rules", "verdict" => "allow", "rule" => "composed_term")
+        expect(asked).to eq([])
+      end
+    end
+
     it "approves a read-only probe with nobody asked, sequences included" do
       in_tree do |root, home|
         board = board_over(root, home)

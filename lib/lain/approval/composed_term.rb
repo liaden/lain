@@ -366,6 +366,15 @@ module Lain
 
       VERSION = "--version"
 
+      # `sleep` with one plain number of at most 3 digits, which keeps `infinity`,
+      # `1d` and exponents out; the bash tool's timeout is what bounds a long wait.
+      class Pause
+        NUMBER = /\A\d{1,3}(\.\d+)?\z/
+
+        def admits?(arguments) = arguments.one? && arguments.first.match?(NUMBER)
+      end
+      private_constant :Pause
+
       UNLISTED = Unlisted.new.freeze
       private_constant :UNLISTED
 
@@ -474,6 +483,15 @@ module Lain
         def admits?(arguments) = arguments.none? { @refused.include?(_1) || _1.match?(LEADING) }
       end
       private_constant :Primaries
+
+      # A printf format whose width or precision runs to 4 digits or more, or is taken from an argument by `*`, can
+      # print gigabytes from a few bytes of command.
+      class Narrow
+        AMPLIFYING = /%[^a-zA-Z%]*(?:\d{4}|\*)/
+
+        def admits?(arguments) = arguments.none? { _1.match?(AMPLIFYING) }
+      end
+      private_constant :Narrow
 
       # `sed -n` with scripts that only print lines, by number, range or
       # pattern: nothing that writes, reads another file, runs or substitutes.
@@ -633,7 +651,15 @@ module Lain
         # so is following a link.
         "find" => Primaries.new(%w[-exec -execdir -ok -okdir -delete -fprint -fprint0 -fprintf -fls
                                    -files0-from -follow]),
-        "sed" => Prints.new
+        "sed" => Prints.new,
+        "sleep" => Pause.new,
+        "true" => Flags.new,
+        "false" => Flags.new,
+        # Print exactly their words, which the other predicates have already
+        # judged. A redirect or substitution never reaches here as a term.
+        # `printf -v` assigns a shell variable in bash.
+        "echo" => Flags.new,
+        "printf" => Both.new(Flags.new(short: %w[v]), Narrow.new)
       }.freeze
 
       # Programs whose stage is approved only as exactly `[name, "--version"]`.

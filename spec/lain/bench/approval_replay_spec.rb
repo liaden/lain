@@ -555,7 +555,7 @@ RSpec.describe Lain::Bench::ApprovalReplay do
 
       expect(report.lines.grep(/^  [^ ].*: /).map { _1[/^  ([^:]+):/, 1] })
         .to include("sort --compress-program", "grep --exclude-from")
-      expect(report).to match(/^hazards admitted: \d+ of 28$/)
+      expect(report).to match(/^hazards admitted: \d+ of 32$/)
     end
 
     it "keeps a hazard out of the list when the candidate's flags refuse it" do
