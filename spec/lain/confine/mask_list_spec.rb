@@ -169,6 +169,25 @@ RSpec.describe Lain::Confine::MaskList do
     expect(paths).to match_array(%w[tmp/.env vendor/.env sub/node_modules/.env].map { File.join(root, _1) })
   end
 
+  it "masks nothing in an ignored Python environment at any depth, and still masks the root's .env and tmp/.env" do
+    write(".gitignore", ".venv/\n__pycache__/\n")
+    FileUtils.mkdir_p(%w[.venv/lib/x sub/venv/lib sub/__pycache__ tmp].map { File.join(root, _1) })
+    %w[.venv/.env .venv/lib/x/.env sub/venv/.env sub/__pycache__/.env .env tmp/.env].each { write(_1) }
+    listed = git("ls-files", "-z", "-co", "--", ".", *described_class::EXCLUDES).stdout.split("\0")
+
+    expect([paths, listed.grep(/venv|__pycache__/)])
+      .to eq([%w[.env tmp/.env].map { File.join(root, _1) }, []])
+  end
+
+  it "lists and masks neither .venv nor venv when they are links" do
+    elsewhere = File.join(@base, "elsewhere").tap { FileUtils.mkdir_p(_1) }
+    File.write(File.join(elsewhere, ".env"), "x\n")
+    %w[.venv venv].each { File.symlink(elsewhere, File.join(root, _1)) }
+    listed = git("ls-files", "-z", "-co", "--", ".", *described_class::EXCLUDES).stdout.split("\0")
+
+    expect([paths, listed]).to eq([[], []])
+  end
+
   it "masks what judge masks over this checkout's listing, the files in its submodules included" do
     checkout = File.expand_path("../../..", __dir__)
     home = File.join(@base, "home")

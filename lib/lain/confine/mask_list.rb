@@ -10,7 +10,9 @@ module Lain
     # identity since it was classified, is classified. A swap keeps the name,
     # so the listing alone cannot see a plain file become a link to a secret.
     #
-    # Not covered: files below the top level of a tmp, vendor, target or
+    # Not covered: anything in or under a `.venv`, `venv`, `__pycache__`, `.tox`,
+    # `.mypy_cache` or `.pytest_cache` directory at any depth, the directory
+    # itself included. Nor files below the top level of a tmp, vendor, target or
     # node_modules directory at any depth, whether reached by name or through
     # a link, and a nested repo there included. Their own top-level files are
     # listed. Nor what lies beneath a link out of the root. A 2,000-level tree
@@ -26,7 +28,10 @@ module Lain
     class MaskList
       # Large and ignored by design; `/*/**` prunes below the directory's top level only.
       PRUNED = %w[tmp vendor target node_modules].freeze
-      EXCLUDES = PRUNED.map { ":(exclude,glob)**/#{_1}/*/**" }.freeze
+      # Tooling directories that hold no project secret and run to tens of thousands of files.
+      PRUNED_WHOLE = %w[.venv venv __pycache__ .tox .mypy_cache .pytest_cache].freeze
+      EXCLUDES = (PRUNED.map { ":(exclude,glob)**/#{_1}/*/**" } +
+                  PRUNED_WHOLE.flat_map { [":(exclude,glob)**/#{_1}/**", ":(exclude,glob)**/#{_1}"] }).freeze
       PRUNES = PRUNED.map { ":(glob)**/#{_1}/*/**" }.freeze
       TIMEOUT = 10
       PRUNED_REASON = :pruned
