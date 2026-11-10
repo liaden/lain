@@ -1425,3 +1425,76 @@ Spec file: none can fail on prose; the check is `grep -n` for each stale phrase 
 - Worktree prefix: tmp/worktrees/hpf-<id>, branch card/hpf-<id>. Each worktree TMPDIR=$HOME/tmp/lain/hpf-<id>.
 - Memory 15 GB: at most 5 agents at once, landing counted as 1.
 - No path needs user approval. Orchestrator rulings while the user is away are marked "ruling" here for review.
+- U1 started 21:23, cut at b38a16c2
+- J1 started 21:23, cut at b38a16c2
+- R1 started 21:23, cut at b38a16c2
+- U4 started 21:23, cut at b38a16c2
+- A1 started 21:23, cut at b38a16c2
+- 21:24 A1 handed back (32/1 red, 1198/0 green). Low review started.
+- 21:26 A1 low review APPROVE (mutant red). Landing attempt 1.
+- 21:27 U1 handed back (67/2 red, 1232/0 green). Medium review queued behind the A1 landing.
+- 21:34 A1 landing 1 red (land/A1-1.hook.keep): 20 failures, all starvation (load 149, zram swap 4G full, memory PSI avg300 31%; watchdog STARVED). Running them alone in the A1 worktree.
+- 21:38 A1 flake check: 20 of 20 green alone in the worktree, 3 of 3 on base. Starvation event, not the card; names kept in land/A1-1.failed (workspace_profile_spec "passes the fence crate's tests" is a repeat of a listed starvation flake). Landing attempt 2.
+- R1 handed back (15/7 red, 354/0 green; 120 records over 24 shapes; spike texts re-sampled, frozen in the file). Medium review queued behind the A1 landing.
+- J1 handed back (15/4 red, 3201/0 green). Stop condition fired on 2 changed refusal examples (cat a; cat b and cat a 2>/dev/null). Ruling: accepted, the card's own acceptance requires both to read; the reviewer checks every other command in those examples still refuses. dash is not installed and /bin/sh is bash, so the dash parity never ran; noted for the manual pass. High review (opus) queued.
+- A1 landed 0559ae29 (attempt 2)
+- 21:41 A1 landed 0559ae29 (attempt 2; 1247 of 1252 runtime files). Cleanup done.
+- 21:42 Reviews started: U1 medium, R1 medium, J1 high (opus). A2 started, cut at 0559ae29.
+- 21:43 U1 medium review APPROVE-WITH-FIXES, mechanical: symlinked .venv unpinned (bare-name exclude mutant survives), 2 nits. Fixes sent; no second review.
+- 21:44 R1 medium review APPROVE-WITH-FIXES, mechanical: FILES-covers-manifest unpinned, 1 comment, 1 count. Fixes sent; no second review.
+- 21:44 A2 handed back (54/1 red on allocations, 1020 to 18 objects; 468/0 + agent_spec 234/0 green). Low review started.
+- 21:45 A2 low review APPROVE (back-out red). Landing attempt 1.
+- 21:45 R1 fixes done (16/1 red on the manifest spec, 355/0 green). Lands after A2.
+- 21:45 U1 fixes done (67/1 red on the symlink example, 1232/0 green). Lands after R1.
+- 21:46 U4 handed back (241/6 red, 724/0 + 4 cockpit e2e 18/0 green). Stop condition fired: 3 OS tasks at the fork site on the gc-day launch (GcSchedule's Process.detach waiter). Ruling: accepted, the waiter only reaps the gc child in the parent and the child leaves by exit!; the reviewer verifies. Wiring applied in worktree: .rubocop.yml ThreadSafety/DirChdir excludes exe/lain, with the reason. High review (opus) queued behind the A2 landing.
+- A2 landed 06fb4d6f (attempt 1)
+- 21:48 A2 landed 06fb4d6f (attempt 1). Cleanup done. Landing R1 then U1.
+- R1 landed d138d932 (attempt 1)
+- U1 landed b928ba2d (attempt 1)
+- 21:54 R1 landed d138d932, U1 landed b928ba2d (attempt 1 each). Cleanup done.
+- 21:55 U2, R2, A4 started, cut at b928ba2d (R2 gets a copy of target/debug and leave to make its named wiring edits in the worktree, handed back as diffs: ruling, the crate cannot build without them).
+- 21:58 R2 stopped before code: fancy-regex adds bit-set 0.8 beside ast-grep-core's 0.11. Ruling: accept the duplicate (deny.toml multiple-versions = warn; user chose fancy-regex; PCRE2 is C, a patch is a fork). Skip entry only if cargo deny fails. Corpus check moves to regions_spec (corpus carries no regex sources); netrc space as  . Continued.
+- 21:59 A4 handed back (24/4 red, 741/0 green). Medium review started.
+- 22:00 J1 high review REQUEST-CHANGES: seam stub interleaves (8/25 red, blocker, mechanical); redirect rule duplicated from Verdict (substantive); 2 stale docs; 2-redirect stage unpinned; 6 nits. Real journals: 57 to 166 of 455 commands read, none narrowed; replay admits 4 to 5. Scope change: verdict.rb, verdict_spec, composed_term.rb:52-55 comment, ARCHITECTURE.md:758-759 join J1. Fix round sent; second review follows.
+- 22:01 A4 medium review APPROVE (6 mutants red; Request.new 200 messages 1.9 to 1.75 ms, digest identical). Landing attempt 1.
+- 22:12 A4 landing 1 red (land/A4-1.hook.keep): 1 failure, e2e fork_resume_spec "records a child question the human answered" STARVED at load 27 (30s watchdog). Green alone in the worktree and 3 of 3 on base. Recorded, landing attempt 2.
+- 22:13 J1 fix round done (seam 4/25 red to 0/25; refactor green 187/0 before and after; 3861/0 over 77 files). Second review queued behind the A4 landing.
+- 22:19 A4 landing 2 red (land/A4-2.hook.keep): 23 failures, all STARVED at load 80-100; memory PSI avg300 21%, zram full; a rust-analyzer this session's LSP started holds 1.3 GB (kill denied by the classifier; R2 told to stop using LSP). Flake check running.
+- 22:23 A4 flake check 2: 23 of 23 green alone in the worktree and 3 of 3 on base. Repeat by name: workspace_profile_spec "passes the fence crate's tests, none of them skipped" (A1 landing 1 too, and listed before): follow-up card FU-1. Ruling: landings run LAIN_SPEC_WORKERS=10 while memory is short (zram full, PSI 20%); fewer workers than the user's 12, so more desktop slack, never more load. Landing attempt 3.
+- 22:23 U4 high review APPROVE-WITH-FIXES: no-new-Ruby example cannot fail (substantive); interrupted parent orphans the child; pump copied from Shell::Out (substantive, extract); forked check reuses the parent's Config memo so a cwd-reading config.rb refuses wrongly (substantive); fork-path cwd refusal unpinned; 5 nits. Ruling stand verified. Scope change: shell/out.rb and spec join U4 (config.rb only if needed). Fix round sent; second review follows. Follow-up FU-2: lain up by a relative path gives panes that die with 127.
+- 22:23 R2 handed back (compile and 3 load errors red; cargo 354 pass, 646/0 + 355/0 green; first compile 6.3 ms; 1 MB dense text 14 ms boundary vs 41.5 ms regex; cargo deny warns only). Departures: no direct regex dep, magnus bytes feature, extended mode removed in translation. Main applied .rubocop.yml ClassInstanceVariable exclude for rust_shapes.rb and backed out MUTANT_FILES (no baseline row; follow-up FU-3: run the regions mutant sweep at a quiet time and add both together). High review queued behind the A4 landing. Note for R3: shapes with no named groups report numbered groups as "1", "2".
+- A4 landed 63e74e5f (attempt 1)
+- 22:28 U2 handed back (72/1 red, 1245/0 green; warm restated 20.4 to 7.5 ms, lstats per ask 3,362 to 0). Ruling: add ctime to the directory stamp (touch -d can reset mtime inside the sandbox, not ctime), stat seam accepted for the racy example, pin nested-repo link re-resolution; File.stat parents and the 10 ms / 2 s tick accepted. Sent back before review.
+- 22:28 A4 landed 63e74e5f (attempt 3, 10 workers). Cleanup done. G7 started, cut at 63e74e5f. J1 second review and R2 high review started.
+- 22:33 U4 fix round done (9/5 red; refactor 281 to 286 green, out_spec unchanged; 892/0 over 39 files incl. cockpit e2e). Shell::Out::Bounded shared; Config.forget! in the child. Second review started. hot-path-bench --check owed before landing (bash-call path).
+- 22:35 U2 rulings done (74/2 red; 1248/0 green; 4 mutants killed; 2 examples pin existing code, mutant-proved). High review (opus) started.
+- 22:36 J1 review 2 APPROVE-WITH-FIXES (all 10 fixed, every back-out red, 0 Verdict differences over 479 commands); 3 mechanical nits sent; main verifies.
+- 22:36 G7 handed back (7/7 red, 2309/0 green; sibling -Z parser). Medium review started.
+- 22:39 G7 medium review APPROVE-WITH-FIXES: GithubPr delegation untested and non-blob nil unpinned (substantive, small), fallback untested, 4 mechanical. Rulings: drop the per-pair fallback (cat-file -Z needs git 2.43+; fail loudly), drop .uniq, raise on a record-count mismatch. Fix round sent; second review follows. 188-file real branch: 0 mismatches against git show.
+- 22:43 G7 fix round done (4 and 7 red before code, 2/3/5 red by mutant; 2314/0 green). Second review started.
+- 22:43 R2 high review APPROVE-WITH-FIXES, no blockers: GVL release untested; repeated-name renaming does no work (substantive, delete); .rev() unpinned; 2 stale comments; 2 silent translation gaps (}+, empty match); 4 surviving translation mutants. Real data 61 MB + references + 20 journals: 0 differences, Rust 1.07 s vs Ruby 18.4 s. Departures accepted. Fix round sent (empty-matching shapes refused at translation); second review follows.
+- 22:44 J1 nits done (94/1 red; 3863/0 green; seam 0/25); main verified the parse.rb diff. Landing attempt 1.
+- 22:44 G7 review 2 APPROVE-WITH-FIXES (every back-out red); 1 nit: main dropped the unverified git version from the comment (my ruling had named 2.43 without checking). Lands after J1.
+- J1 landed d12488d5 (attempt 1)
+- 23:02 J1 landed d12488d5 (attempt 1). Cleanup done. Landing G7.
+- 23:04 U4 review 2 APPROVE-WITH-FIXES (every back-out red): a self-TERM in the child reads as a refusal (re-raise the signal), 2 nits; mechanical, sent; main verifies. Hot rows U4 vs main within spread (bash_true 0.87-0.99, request 1.00-1.05) at load 10-12. Incident: a reviewer mutant orphan held tmp/suite.lock for about 23 min and stalled J1's landing; it killed them. hot-path-bench --check still owed before landing.
+- G7 landed 8666ccd8 (attempt 1)
+- 23:08 G7 landed 8666ccd8 (attempt 1). Cleanup done. J2 and A3 started, cut at 8666ccd8.
+- 23:11 U2 high review REQUEST-CHANGES: BLOCKER, a reused Beneath leaf loses a walk it gave up to a vanished claimer, so a confined agent reads a gated secret in 3 commands through real bwrap (old code refused). Plus 4 unpinned paths (6 mutants survive), mutable Leaf/Stamps in State, stale class doc, 6 nits. 8 other sandbox attacks green. Warm restated 20.2 to 9.5 ms, 0 lstats. Fix round sent (keep given-up walks on the Leaf); second review follows.
+- 23:18 U4 hot-path-bench: worktree --check fails wire_ready at 17.04-17.16 against 17.1; main at the same load (2.2-3, above the ceiling's under-2 rule) reads wire_ready 17.05-17.11 and fails request_100000 instead. U4's bash_true rows equal main's. Ruling: no regression from U4; land. Logs land/U4-bench.txt, land/main-bench.txt.
+- 23:18 A3 handed back (115/3 red, 2789/0 green; key order unchanged). Medium review started; reviewer to explain the 1 error outside examples when both spec groups run in 1 command.
+- 23:18 J2 handed back (276/3 red, 2325/1 green; replay admits 0 of 32 hazards, 0 against a recorded deny). Scope change: spec/lain/bench/approval_replay_spec.rb:558 hazard count 28 to 32, applied by main in the worktree. Medium review started.
+- 23:18 U4 round 3 done (signal re-raise red first; 893/0 incl. cockpit e2e). Main verified the diff. Landing attempt 1.
+- 23:19 R2 fix round done (each red recorded; cargo 355 pass, 268/0 + sensitivity 1036/0 + 355/0). Second review started.
+- U4 landed 55324f1b (attempt 1)
+- 23:22 U4 landed 55324f1b (attempt 1). Cleanup done. U6 started (opus), cut at 55324f1b.
+- 23:25 J2 medium review APPROVE-WITH-FIXES: stale cockpit-surfaces QA scenarios park echo; hand-back replay compared the table with itself (reviewer's true replay: 9 parks removed, 0 against a recorded deny, 1 of 46 hazards admitted, a no-op); 3 nits. Scope: cockpit-surfaces.md joins J2. Ruling: refuse printf widths of 4+ digits. Fixes sent; main verifies.
+- 23:28 A3 medium review APPROVE-WITH-FIXES: key-identity example cannot fail (String keys intern either way), pin allocations instead; stringly allocates an Enumerator per record. The 1 error outside examples did not reproduce on worktree or main. Fixes sent; main verifies the test-only diff.
+- 23:28 J2 fixes done (690/0). Main's diff check found printf '%*s' N x still amplifies (width from an argument); 1 more item sent.
+- 23:28 R2 review 2 APPROVE-WITH-FIXES (every named mutant red; 100k fuzz and real data 0 differences): a no-group-0 match dropped silently (ruled: report the shape as limited so Ruby covers it), spec runtime halved, 1 comment. Sent; main verifies.
+- 23:28 U2 fix round done (blocker red first, 81/1; bwrap drive now Permission denied; 1267/0 green; Leaf and Stamps deeply frozen through a Gathering builder; warm restated 9.5 ms, 0 lstats). Second review started.
+- 23:29 J2 '*' width item done (149/1 red, 504/0). Landing attempt 1.
+- J2 landed ffd91279 (attempt 1)
+- 23:34 J2 landed ffd91279 (attempt 1). Cleanup done. A3 fixes done (28/1 and 88/1 red against mutants; 116/0). J3 (opus) and J6 (opus) started, cut at ffd91279. Landing A3.
+- A3 landed 48106c8c (attempt 1)
+- 23:38 A3 landed 48106c8c (attempt 1). Cleanup done. Landed so far: A1 A2 R1 U1 A4 J1 G7 U4 J2 A3. In flight: U2 (review 2), R2 (fixes after review 2), U6, J3, J6.
