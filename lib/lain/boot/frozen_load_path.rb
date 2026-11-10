@@ -16,6 +16,9 @@ module Lain
       # replayed into the environment it was recorded from.
       KEYED_ENV = /\A(?:BUNDLE_|BUNDLER_|GEM_|RUBY|PATH\z|MANPATH\z|HOME\z|RB_USER_INSTALL\z)/
 
+      # noatime mounts make write time the only age there is; a live entry deleted once costs one record.
+      STALE_AFTER = 30 * 24 * 60 * 60
+
       class << self
         # @param gemfile [String] the Gemfile `bundler/setup` would resolve
         # @param cache_dir [String] where the replay files live
@@ -26,6 +29,7 @@ module Lain
           return true if !defined?(::Bundler) && replay(cache)
 
           record(cache)
+          prune(cache_dir)
           false
         end
 
@@ -83,6 +87,17 @@ module Lain
           return unless require "bundler/setup"
 
           write_atomically(cache, replay_script(before, ENV.to_h))
+        end
+
+        # A replay racing the delete either already holds the file or fails to load it and records again.
+        def prune(cache_dir)
+          cutoff = Time.now - STALE_AFTER
+          Dir.glob(["*.rb", "*.rb.*"], base: cache_dir).each do |name|
+            path = File.join(cache_dir, name)
+            FileUtils.rm_f(path) if File.mtime(path) < cutoff
+          rescue SystemCallError
+            nil
+          end
         end
 
         def replay_script(before, after)

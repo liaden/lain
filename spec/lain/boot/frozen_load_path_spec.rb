@@ -167,6 +167,56 @@ RSpec.describe Lain::Boot::FrozenLoadPath, :seam do
     end
   end
 
+  def stale_file(name, days_old)
+    FileUtils.mkdir_p(cache_dir)
+    File.join(cache_dir, name).tap do |path|
+      File.write(path, "")
+      aged = Time.now - (days_old * 86_400)
+      File.utime(aged, aged, path)
+    end
+  end
+
+  it "deletes entries written over 30 days ago when it records a new one" do
+    old = [stale_file("old-1.rb", 31), stale_file("old-2.rb", 31)]
+    recent = stale_file("recent.rb", 0)
+
+    launch
+
+    expect([old.map { File.exist?(_1) }, File.exist?(recent), cached_files.size]).to eq([[false, false], true, 2])
+  end
+
+  it "deletes scratch files a killed writer left behind once they are over 30 days old" do
+    old = stale_file("abc.rb.123", 31)
+    recent = stale_file("def.rb.456", 0)
+
+    launch
+
+    expect([File.exist?(old), File.exist?(recent)]).to eq([false, true])
+  end
+
+  it "skips a file that vanishes mid-prune and still prunes the rest" do
+    gone = stale_file("gone.rb", 31)
+    old = stale_file("old.rb", 31)
+    allow(File).to receive(:mtime).and_wrap_original do |original, path|
+      raise Errno::ENOENT, path if path == gone
+
+      original.call(path)
+    end
+
+    described_class.send(:prune, cache_dir)
+
+    expect(File.exist?(old)).to be(false)
+  end
+
+  it "neither deletes nor touches a file when it replays a hit" do
+    launch
+    old = stale_file("old.rb", 31)
+    entry = cached_files.reject { _1 == old }.first
+    mtimes = [old, entry].map { File.mtime(_1) }
+
+    expect([launch[:hit], File.exist?(old), [old, entry].map { File.mtime(_1) }]).to eq([true, true, mtimes])
+  end
+
   it "still launches through Bundler when the cache cannot be written" do
     blocker = File.join(root, "blocker")
     File.write(blocker, "")
