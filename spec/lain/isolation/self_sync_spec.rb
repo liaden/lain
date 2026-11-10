@@ -474,6 +474,42 @@ RSpec.describe Lain::Isolation::SelfSync, :seam do
     end
   end
 
+  describe "reading the rebase state" do
+    let(:argvs) { [] }
+    let(:counting) do
+      lambda do |*argv, **opts|
+        argvs << argv
+        Lain::Shell::Out.new(*argv, **opts)
+      end
+    end
+    let(:rebase_reads) { argvs.select { |argv| argv.include?("--git-path") } }
+    let(:watched) { described_class::Tree.new(tree, shell_out_factory: counting) }
+
+    before do
+      commit(tree, "README", "worker\n")
+      commit(@repo, "README", "tip\n")
+    end
+
+    it "sees a rebase-merge in progress with 1 rev-parse --git-path call" do
+      shell(tree, "rebase", base.tip, env: { "GIT_EDITOR" => "true" })
+
+      expect(watched).to be_rebasing
+      expect(rebase_reads.size).to eq(1)
+    end
+
+    it "sees a rebase-apply in progress with 1 rev-parse --git-path call" do
+      shell(tree, "rebase", "--apply", base.tip, env: { "GIT_EDITOR" => "true" })
+
+      expect(watched).to be_rebasing
+      expect(rebase_reads.size).to eq(1)
+    end
+
+    it "sees no rebase with 1 rev-parse --git-path call" do
+      expect(watched).not_to be_rebasing
+      expect(rebase_reads.size).to eq(1)
+    end
+  end
+
   # The sync journals nothing of its own: what it did rides the handback
   # record, so the one record a reader opens says a rebase ran.
   describe "the result" do

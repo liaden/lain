@@ -351,9 +351,8 @@ module Lain
         # Git keeps a stopped rebase's state in one of two directories of this
         # worktree's own git dir.
         def rebasing?
-          %w[rebase-merge rebase-apply].any? do |state|
-            File.directory?(run!("rev-parse", "--path-format=absolute", "--git-path", state))
-          end
+          asked = %w[rebase-merge rebase-apply].flat_map { |state| ["--git-path", state] }
+          run!("rev-parse", "--path-format=absolute", *asked).split("\n").any? { |path| File.directory?(path) }
         end
 
         # @return [Array<String>] the paths a stopped rebase left unmerged
