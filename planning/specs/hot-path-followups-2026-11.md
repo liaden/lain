@@ -447,7 +447,8 @@ comment or keyword that names the Ruby scanner), `spec/lain/sensitivity/regions_
 other spec that names `RubyScanner` (grep the spec tree)
 **Reuse:** the parity M3 measured: its review's run of both scanners over the frozen corpus and
 1,000 random strings
-**Shared-file wiring:** none
+**Shared-file wiring:** `docs/rust-bindings.md`: drop "Ruby stays the oracle in
+specs." from the bounded-worst-case paragraph
 **Reachable from:** `Regions.detect`
 
 Decided here, by the user's ruling: parity measured once is enough. After M3 no production path
@@ -1108,3 +1109,5 @@ Spec file: none can fail on prose; the main session greps for "578", "Ruby scann
 - M2 landed 5418f414 (attempt 1)
 - 10:28 M2 cleaned up. M3 started (opus, rust-implementer), worktree hfu-M3 cut at 5418f414 with a copy of tmp/x86_64-linux
 - 10:34 User ruling: delete the Ruby scanner once parity is measured; git history is the archive. Added card M5 (after M3, before D1). M3 unchanged: its parity run is the one measurement.
+- 10:54 M3 handed back: no stop fired (0 limited on corpus plus 5,000 random, 6 of 25 multi-line, bench rows unchanged, corpus byte-identical so no MANIFEST diff). Applied docs/rust-bindings.md wiring; ruby_scanner comment left for M5. Surprises sent to review: stack overflow goes to over-mask; openai shape quadratic on 1 long line (7.9 s at 400 KB, predates); credential_scan rows time Ruby. High review (opus) started.
+- 10:54 M5 card gains the docs/rust-bindings.md wiring: drop the Ruby-oracle sentence.
