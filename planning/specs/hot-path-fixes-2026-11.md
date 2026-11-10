@@ -1498,3 +1498,128 @@ Spec file: none can fail on prose; the check is `grep -n` for each stale phrase 
 - 23:34 J2 landed ffd91279 (attempt 1). Cleanup done. A3 fixes done (28/1 and 88/1 red against mutants; 116/0). J3 (opus) and J6 (opus) started, cut at ffd91279. Landing A3.
 - A3 landed 48106c8c (attempt 1)
 - 23:38 A3 landed 48106c8c (attempt 1). Cleanup done. Landed so far: A1 A2 R1 U1 A4 J1 G7 U4 J2 A3. In flight: U2 (review 2), R2 (fixes after review 2), U6, J3, J6.
+- 23:40 R2 review 2 fixes done (no-group-0 reports limited; regions_spec 15.5 to 3.5 s with GVL mutants still red; cargo 355, 87/0, 355/0). Main verified. Landing attempt 1.
+- 23:46 R2 landing 1 red (land/R2-1.hook.keep): 2 failures, workspace_profile_spec "passes one spec file with the example count an unconfined run reports" STARVED at load 49 (listed flake, repeat), plain_chat_prompt_guards "Ctrl-C at an idle you> ends the chat over an empty line" (you> never shown). Flake check.
+- 23:49 R2 flake check: 2 of 2 green alone in the worktree and 3 of 3 on base. workspace_profile_spec "passes one spec file with the example count an unconfined run reports" is a repeat (listed 2026-11-02, round 3 FU-1): follow-up card FU-4 here. plain_chat_prompt_guards "Ctrl-C at an idle you> ends the chat over an empty line" recorded, first sighting. Landing attempt 2.
+- 23:50 U2 review 2 APPROVE-WITH-FIXES (blocker fixed through bwrap; 7 ceded-walk attacks green; 18 of 20 mutants killed): leaf-identity check unpinned (a retargeted listed link), 3 nits. Mechanical, sent; main verifies.
+- 23:50 U6 stopped on scope: exe/lain reads LAIN_LOAD_PATH_CACHE and child_boot points spec children at a temp dir, which reds 2 LAIN_ name lists. Ruling: lib/lain/cli/pane_command.rb and spec/endpoint_env_isolation_spec.rb join U6; main applied .rubocop.yml Naming/PredicateMethod AllowedMethods += setup in the worktree (the card's interface returns a Boolean from setup). Red runs weak (child_boot example written after the code; unit red by setting the file aside): the high reviewer must back each out.
+- 23:50 J6 handed back (memo spec load error + 487/14 red; 494/0, 3853/0 + 1250/0 green; dropping the memo at any of 3 hand-offs reds a board example). wiring.rb unchanged (BoardBuild builds the memo from config). High review queued behind the R2 landing.
+- R2 landed 4b453bd9 (attempt 2)
+- 23:54 R2 landed 4b453bd9 (attempt 2). Cleanup done. R3 started (opus), cut at 4b453bd9. J6 high review started.
+- 23:55 U6 scope files done (899/0; zeitwerk-census 0). High review (opus) started; reds are weak, reviewer backs out each change.
+- 23:58 U2 review 2 fixes done (both reds against mutants; 1277/0). hot-path-bench in the worktree: bash_true rows equal main's; --check fails request_1000000 (U2 does not touch it; main failed request_100000 earlier at the same load). Landing attempt 1.
+- 23:59 J3 handed back (159/6 red, 2933/0 green twice; replay 1 park removed, 0 against a deny, 1 of 37 hazards admitted, cleared by the hazard-corpus spec; closed a gap where today's table approved git log --dd). High review queued behind the U2 landing.
+- U2 landed 88addc1e (attempt 1)
+- 00:02 U2 landed 88addc1e (attempt 1). Cleanup done. U3 started, cut at 88addc1e. J3 high review started.
+- 00:05 U3 handed back (24/2 red, 1832/0 green; row mask_list_warm about 4 ms at load 4.3, unseeded). Low review started. Its ceiling is seeded at close-out (integration check 3), in its own commit.
+- 00:05 U3 low review APPROVE (2 optional nits; row shipped as mask_list_warm). Landing attempt 1.
+- 00:06 J6 high review APPROVE-WITH-FIXES (real chat probe green; 16-thread memo stress 0 lost): 4 Place fields unpinned in the key (build from place.to_h), breaker order unpinned, replay memo unguarded (the named sessions record no prompt_digest, so the replay never exercises it), 2 nits. Fixes sent; main verifies. Follow-up FU-5 for the user: a remembered approval shows no transcript line, so it reads like a rule approval.
+- U3 landed f80de3dc (attempt 1)
+- 00:09 U3 landed f80de3dc (attempt 1). Cleanup done. U5 started, cut at f80de3dc.
+- 00:10 R3 handed back (570/382 red on missing scanners plus a fallback mutant; 3567/0 green; Regions.detect 1 MB 225 to 29 ms, 7.8x, same regions; credential_scan rows unchanged, they do not call detect). High review (opus) started.
+- 00:12 J6 fixes done (each new example red against its mutant; 1135/0). approval_replay_spec joined J6 (J3 also edits it; the later landing applies 3-way). Landing attempt 1.
+- J6 landed 7b93a744 (attempt 1)
+- 00:15 J6 landed 7b93a744 (attempt 1). Cleanup done. S1 started, cut at 7b93a744.
+- 00:16 U5 handed back (26 red on unknown keywords; 248/0 + e2e 253/0 + 467/0). Low review started.
+- 00:17 U5 low review APPROVE (PATH probe: dir, non-exec, empty, relative all right; 1 comment-wrap nit skipped). Landing attempt 1.
+- 00:20 J3 high review REQUEST-CHANGES: 3 BLOCKERs print .env bytes through a rule-approved git (printf | git log/diff --stdin; git diff <blob id> -- ordinary; rev:path split at the wrong colon with a decoy file); Listing copies Gitlinks; Printed reads disk and runs git outside the factory (replay not offline); 5 unpinned guards; a post-index-change hook runs under git status; probe uses -uall so status parks in the main checkout. Scope: repository.rb and replay header join J3. Fix round sent; second review follows. Follow-up FU-6 (masking layer, outside the card): output masking left STRIPE_KEY=sk_live_... in plain text over a leaked .env patch.
+- 00:21 U5 landing 1 red (land/U5-1.hook.keep): suite_load_spec "SuiteLoad::Group#stop returns as soon as a group that exits on TERM has ended" took 0.44 s against a 0.15 s wall-clock bound at load 12. Green alone and 3 of 3 on base. Recorded; a wall-clock threshold in a spec goes against the 2026-10-27 ruling: follow-up FU-7. Landing attempt 2.
+- 00:23 U6 high review APPROVE-WITH-FIXES (real launches: hit skips Bundler, child ENV equal key by key; warm help 816 to 684 ms): empty or cut cache file breaks every launch; 3 unpinned guards; panes still load bundler through the replayed RUBYOPT (ruled into this card); 7 nits. Follow-up FU-8: nothing prunes the load-path cache (about 54 KB per worktree, lock or PATH). Fix round sent; second review follows.
+- U5 landed 61afa9d8 (attempt 2)
+- 00:24 U5 landed 61afa9d8 (attempt 2). Cleanup done. S7 started, cut at 61afa9d8.
+- 00:25 S1 stopped: toolset_build_spec "primes the mask list it built when told to" asserts priming. Ruling: it is a :primes example; toolset_build_spec joins S1; implementer sweeps every spec naming prime/MaskList/HistoryLiterals by path before review.
+- 00:28 S7 handed back (both files share their built value once per file; hot_paths_spec 2.21 to 1.66 s; 406/0). Low review started.
+- 00:28 S1 done (3 examples tagged :primes; 82 files 4982/0). Medium review started.
+- 00:29 S7 low review APPROVE. Landing attempt 1.
+- 00:44 S7 landing 1 red (land/S7-1.hook.keep): 21 failures, 20 STARVED at load 100 to 155; the R3 reviewer's corpus probe ran 17 min outside the lock at 1.2 GB beside the suite, plus a cargo build of lain-fence, while zram was full. Told the reviewer to run every probe under the lock in bounded runs. Not the card. Re-landing once the probe ends.
+- 01:16 S7 landing 2 never committed: wait-quiet timed out after 1800 s (agent and reviewer runs kept matching). Landing attempt 3.
+- S7 landed be9280e1 (attempt 3)
+- 01:19 S7 landed be9280e1 (attempt 3). Cleanup done.
+- 01:19 G1 started, cut at be9280e1.
+- 01:20 U6 fix round done (40/8 red before code; 4 items red by back-out; 952/0; real lain up: warm round's panes load no Bundler). Second review started.
+- 01:20 S1 medium review APPROVE-WITH-FIXES (git execs 181 to 29; 3 of 4 mutants red): unbounded join; join unguarded (substantive, a spec); ivar coupling; header. Fixes sent; main verifies.
+- 01:22 J3 fix round done (3 blockers refused; 171/8 red; 2946/0 over 60 files; git status --short approves in the main checkout; replay 1 park removed, 0 against a deny). Outer class at its 306-line limit. Second review started.
+- 01:22 S1 fixes done (each red first or by back-out; 800/0). Main verified. Landing attempt 1.
+- 01:23 G1 handed back (60/1 red; 1342/0 incl. slow factory_spec). Medium review queued behind the S1 landing.
+- S1 landed b9493873 (attempt 1)
+- 01:40 S1 landed b9493873 (attempt 1). Cleanup done. G1 medium review started. G2 started, cut at b9493873.
+- 01:42 G1 medium review APPROVE (3 mutants red; packed-refs-only pair pinned). Landing attempt 1.
+- 01:43 G2 handed back (32/2 red; 1096/0). Low review queued behind the G1 landing.
+- 01:44 J3 review 2 REQUEST-CHANGES: new BLOCKER from the fix round (untracked-mode words passed to ls-files, where -u means --unmerged, printed a conflicted .env); 3 mutants unpinned incl. the fail-closed hook path; 3 nits. Ruling: the class at 306/306 has 2 responsibilities; extraction becomes card J3b (refactor-only, own commit, after J3, before J4), no limit raise. Fix round 2 sent; a third review follows (policy).
+- G1 landed 97dc3c51 (attempt 1)
+- 01:46 G1 landed 97dc3c51 (attempt 1). Cleanup done. G2 low review started. G3 started, cut at 97dc3c51.
+- 01:47 G2 low review APPROVE. Landing attempt 1.
+- G2 landed 174d9acb (attempt 1)
+- 01:50 G2 landed 174d9acb (attempt 1). Cleanup done. G4 started, cut at 174d9acb.
+- 01:53 J3 fix round 2 done (175/3 red; 4 mutants killed; 2950/0). Third review started (last under policy).
+- 01:53 G3 handed back (31/1 red + load error; 493/0 + e2e 3/0; memo key adds the .git kind after an inode was reused). Medium review started.
+- 01:55 G3 medium review APPROVE-WITH-FIXES: a linked worktree recreated for another repo reuses the .git inode and reads the old common dir (2 of 3 probe runs); a subdir root's memo is never invalidated; ftype and the Drain once-read unpinned; Mutex held across git. Rulings: key a .git file on its gitdir line, a .git dir on dev/ino/ctime; no memo without a .git of its own. Fixes sent; second review follows.
+- 01:56 U6 review 2 APPROVE (every named back-out red; real lain up: warm-round panes load no Bundler, 1 miss per distinct launch environment, key stable after). 2 small items sent before landing (strip bundler -r only beside a Gemfile; spec block order); main verifies.
+- 01:57 G4 stopped: the new moved: keyword breaks the RetireAnchor duck in supervisor_spec (8 red). Ruling: supervisor_spec joins G4 (1 line); the :dirty-without-rebase-attempt deviation accepted as the safe side.
+- 01:58 J3 review 3 APPROVE (every blocker from both rounds refused; 22 of 24 mutants killed, 2 equivalent; replay 1 park removed, 0 against a deny; git status --short approves in the main checkout in 62 ms). Landing attempt 1.
+- 02:00 G3 fix round done (3 red first; 1340/0, 1 pending). Deviation: .git directory keyed on .git/config's ctime (the lock writes into .git). Second review started.
+- J3 landed c61ce71e (attempt 1)
+- 02:02 J3 landed c61ce71e (attempt 1). Cleanup done. J3b (new card, refactor-only extraction of ls/find policies) started with J3's implementer, cut at c61ce71e.
+- 02:02 G4 done (13/1 red; 505/0; duck takes **). Medium review started.
+- 02:03 G3 review 2 APPROVE (reuse probe 0 of 5 stale; config-ctime deviation accepted after 20 recreate attacks; pending example not this card's). Landing attempt 1.
+- G3 landed 4271db1c (attempt 1)
+- 02:08 G3 landed 4271db1c (attempt 1). Cleanup done. G5 started, cut at 4271db1c.
+- 02:08 U6 round 5 done (preamble example red first; both pane back-outs red on a copy; 632/0). Landing attempt 1; zeitwerk-census at close-out.
+- 02:09 U6 landing 1 stopped at the path check (untracked directories listed, not files); main checkout restored clean. Paths rebuilt with --untracked-files=all. Landing attempt 2.
+- 02:09 R3 high review APPROVE-WITH-FIXES, no blocker (0 differences over 813 MB of real files; real chat masked via Rust; every mutant red; 7.7x). Stale cost comments in redact/egress (now 7x off) and rust_shapes' cold-compile race join R3; 3 nits. Fixes sent; main verifies. Follow-up FU-9 for the user: UTF-16 text yields 0 regions under both scanners, so an AWS key in a UTF-16LE file is not masked (here and on main).
+- 02:10 G4 medium review REQUEST-CHANGES: BLOCKER data loss, a leftover mid-rebase with retries 0 reads :disabled with attempts and reuses the stale HEAD, so the worker's commit is never anchored. Ruling: moved? true whenever attempts are non-empty. Fix sent; second review follows.
+- 02:10 J3b handed back (class 306 to 264 lines; 2966/0 before and after; replays byte-identical). Medium review by J3's reviewer started.
+- U6 landed b521a9c8 (attempt 2)
+- 02:13 U6 landed b521a9c8 (attempt 2). Cleanup done. S6 started, cut at b521a9c8.
+- 02:14 G5 handed back (1/1 red, 6 to 2 listings; 460/0). Low review started.
+- 02:15 G4 fix done (new spec red first: nothing_to_do where declined+commit expected; 513/0). Second review started.
+- 02:15 G5 low review APPROVE-WITH-FIXES: the batch snapshot lets a branch checked out mid-batch be deleted (update-ref -d checks only the tip). Ruling: 1 fresh listing before the reap phase, skip anything it shows checked out, with a red-first example; 2 nits. Fixes sent; main verifies.
+- 02:16 G4 review 2 REQUEST-CHANGES: WorkerChecks can commit a fix after standing's read, recorded under checks, so the fix commit goes unanchored. Ruling: reuse only on a positive whitelist (no sync or checks attempts, benign outcomes). Fix sent; third review follows.
+- 02:19 R3 fixes done (8 compiles to 1 red first; 3999/0 over 103 files); hot-path-bench --check passes in the R3 worktree (exit 0). J3b medium review APPROVE (100 decisions and both replays byte-identical; 25 of 26 mutants killed, 1 fails safe; rg left in place confirmed). Landing R3 then J3b.
+- 02:19 G4 fix 2 done (whitelist; new checks-commit spec red first; 515/0). S6 handed back (strace: 4 lain up execs to 2 after U6; 1/1 red; 406/0). G4 third review and S6 low review queued behind the R3/J3b landings.
+- 02:20 G5 fixes done (late-checkout example red first; 526/0). Main verified. Lands after R3 and J3b.
+- R3 landed 262e7fb6 (attempt 1)
+- J3b landed f158f4c8 (attempt 1)
+- 02:27 R3 landed 262e7fb6, J3b landed f158f4c8 (attempt 1 each). Cleanup done. J4 (opus) and G6 started, cut at f158f4c8. G4 third review and S6 low review started. Landing G5.
+- G5 landed b4a12a95 (attempt 1)
+- 02:31 G5 landed b4a12a95 (attempt 1). Cleanup done.
+- 02:31 S8 started, cut at b4a12a95.
+- 02:32 G4 review 3 APPROVE-WITH-FIXES (every probe case green incl. checks fix; both mutants red); main moved the 2 constants above the Standing docstring (yard-lint clean). Landing attempt 1.
+- 02:32 G6 handed back (14/1 red; 542/0). Medium review queued behind the G4 landing.
+- G4 landed 7f6613ad (attempt 1)
+- 02:35 G4 landed 7f6613ad (attempt 1). Cleanup done. G6 medium review started. A5 started, cut at 7f6613ad.
+- 02:35 S6 low review APPROVE-WITH-FIXES: plain rspec raises NameError (require bundler); explain 2 execs vs the once-per-up criterion; 1 nit. Sent; main verifies.
+- 02:37 S6 fixes done (NameError red first; 2 execs = 2 lain up processes, no restart left; 362/0). Landing attempt 1.
+- 02:37 S8 handed back (3/2 red; 359/0; hooks Kernel spawn/system too, not backticks; per-worker stderr). Low review queued behind the S6 landing.
+- 02:38 G6 medium review APPROVE-WITH-FIXES (seal CAS still reads fresh; 4-process race probe matches HEAD's outcome classes): the vanished-tree example is static, make it hit the real window. Sent; main verifies.
+- S6 landed 23a1ccce (attempt 1)
+- 02:41 S6 landed 23a1ccce (attempt 1). Cleanup done. S8 low review started. S10 started, cut at 23a1ccce.
+- 02:43 S10 handed back (1 red: private method spawn; 357/0). Low review started.
+- 02:44 S8 low review APPROVE-WITH-FIXES: backticks, popen and Kernel.spawn uncounted (6 of 9 styles); ruled to count them; 2 nits. Sent; main verifies.
+- 02:45 J4 handed back (243/2 red; 2598/0 over 58 files; class 266/306; replay 0 parks removed because no recorded cargo call uses --locked). High review (opus) started. Follow-up FU-10 for the user: J4 saves judge time only if agents add --locked; whether to tell them to is the user's call.
+- 02:45 S10 low review APPROVE. Landing attempt 1.
+- 02:45 G6 fix done (vanishing-registration example red on an unguarded copy; 542/0). Lands after S10.
+- 02:52 S10 landing 1 red (land/S10-1.hook.keep): journal_discriminators_spec "answers for every includer, including the ones no generic dummy constructs" (143 unique against 145), not starvation. Green alone and 3 of 3 on base. A repeat of a listed flake (2026-10-28, toolchain-traps): follow-up card FU-11. Landing attempt 2.
+- 02:52 S8 back-out proof done (3-styles example red on a copy). A5 handed back (396/1 red; 6484/0). Landing S10, G6, S8 in sequence; A5 low review after.
+- S10 landed 1f1b6ced (attempt 2)
+- G6 landed 610a2216 (attempt 1)
+- 03:02 S10 landed 1f1b6ced (attempt 2), G6 landed 610a2216 (attempt 1). Cleanup done.
+- 03:04 S8 landing 1 red (land/S8-1.hook.keep): 9 failures under load 31 to 52 (4 STARVED, the rest tmux/nvim/e2e waits); 9 of 9 green alone and 3 of 3 on base. workspace_profile_spec fence-crate example is a repeat (FU-1). Landing attempt 2.
+- S8 landed 97da862e (attempt 2)
+- 03:07 S8 landed 97da862e (attempt 2). Cleanup done. A5 low review started. S2, S3, S4 started, cut at 97da862e.
+- 03:08 A5 low review APPROVE (mutant red). Landing attempt 1.
+- 03:08 S2 handed back (refactor, no red possible; 82/0 same count; 361/0). Low review queued behind the A5 landing.
+- A5 landed 06a19672 (attempt 1)
+- 03:11 A5 landed 06a19672 (attempt 1). Cleanup done. S2 low review started.
+- 03:12 S2 low review APPROVE (3.15 to 2.18 s). Landing attempt 1.
+- S2 landed 79b1adbe (attempt 1)
+- 03:15 S2 landed 79b1adbe (attempt 1). Cleanup done.
+- 03:16 S3 handed back (1/1 red, 6 spawns to 1; 182/0; fast-import needs --force for re-anchored refs). Medium review started.
+- 03:17 S4 handed back (51/2 red; 362/0; adds a subprocess dry-run probe per file). Low review started.
+- 03:19 J4 high review REQUEST-CHANGES: BLOCKER the class predicate (default confine workspace) refuses cargo's run files, so the entry never approves in production (real chat: judge 11 s); BLOCKER no check of which manifest/workspace/config cargo loads (outer build.rs, workspace sibling, ancestor rustc-wrapper ran). Rulings: trust in-root run files for an admitted cargo stage; require manifest, workspace and every config cargo reads inside the root (CARGO_HOME config trusted only without alias/wrapper/runner/linker/rustflags); refuse alias.fmt/alias.clippy; 3 surviving mutants; 5 nits. Scope: run_files.rb and approval_replay.rb join. Fix round sent; second review follows.
+- 03:19 S3 medium review APPROVE-WITH-FIXES (commits match the old helper's tree/parent/message; --force needed; scrub holds; timing gain within noise): 1 stale comment, commit time from the parent. Sent; main verifies.
+- 03:20 S4 low review APPROVE-WITH-FIXES (sweep cost now charged to each file's first example; probes worth ~3 s each; eager-load mutants red): extract the duplicated probe. Sent; main verifies.
+- 03:21 S3 fixes done (time is now, not parent+1: reading the parent costs a second spawn; accepted). Landing attempt 1.
+- S3 landed d9cf5750 (attempt 1)
+- 03:24 S3 landed d9cf5750 (attempt 1). Cleanup done.
+- 03:24 Checkpoint: 33 cards landed (A1 A2 R1 U1 A4 J1 G7 U4 J2 A3 R2 U2 U3 J6 U5 S7 S1 G1 G2 J3 G3 J3b U6 R3 G5 G4 S10 G6 S8 A5 S2 S3 S6). In flight: J4 (fix round after high review), S4 (1 mechanical fix). Left: S9 (after J4 and S4), D1, close-out.
