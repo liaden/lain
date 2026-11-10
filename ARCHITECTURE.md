@@ -756,8 +756,9 @@ that prints lines. `git` is admitted for `log`, `diff --stat` and `rev-parse` wi
 refused, and a `git` stage also refuses when the repository's own config (read from the files, with
 the config of every submodule the index names) names a program, includes another file or moves the
 tree. `Shell::Reading` holds the read-only word rules, and where the shell verdict abstains it
-reads the string itself, accepting only leading `cd`s, plain quoting, `|` and `&&`, so such a
-command still reaches the predicates. What a bare name resolves to is a separate question, below.
+reads the string itself, accepting only leading `cd`s, plain quoting, `2>&1` or a `/dev/null` discard
+after a stage, and `|`, `&&` and `;` (refused after a `cd`), so such a command still reaches the
+predicates. What a bare name resolves to is a separate question, below.
 
 Shift+Tab (`Switchboard#cycle_approval`) flips `ask` and `auto` through `mode_switch`, from the
 chat's own prompt (only at its prompts; a key typed ahead mid-run is dropped) or the `lain input`

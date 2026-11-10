@@ -555,6 +555,17 @@ RSpec.describe Lain::Shell::Parse do
       expect(stage.redirects.sole.byte_range.end).to be <= stage.byte_range.end
     end
 
+    it "refuses to place redirects with no block to accept them, redirect or not" do
+      expect(["ls", "ls 2>/dev/null"].map { |command| raises_without_block?(result_for(command)) }).to eq([true, true])
+    end
+
+    def raises_without_block?(result)
+      result.redirects_placed?
+      false
+    rescue ArgumentError
+      true
+    end
+
     it "reports no redirects for a command without one" do
       result = result_for("ls -la")
       expect(result.redirects).to be_empty

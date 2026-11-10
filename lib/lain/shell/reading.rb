@@ -4,8 +4,9 @@ module Lain
   module Shell
     # What a command the verdict leaves to a shell means, read only where a
     # shell could not read it another way: plain words, single quotes, double
-    # quotes holding nothing a shell interprets, joined by `|` and `&&`, after
-    # any number of `cd`s to one literal directory each. Inside double quotes
+    # quotes holding nothing a shell interprets, each stage followed only by
+    # `2>&1` or a /dev/null discard, joined by `|`, `&&` and `;`, after any
+    # number of `cd`s to one literal directory each. Inside double quotes
     # a backslash before anything but `$`, a backquote, `"`, `\` or a newline
     # is kept as written, so grep's `\|` reads as bash passes it.
     #
@@ -13,7 +14,11 @@ module Lain
     # term here still hands the backend the model's string: the call runs
     # through `sh -c`, so this refuses anything a shell would read otherwise.
     class Reading
-      KINDS = %w[program list pipeline command command_name word number concatenation raw_string string].freeze
+      KINDS = %w[program list pipeline command command_name word number concatenation raw_string string
+                 file_redirect redirected_statement].freeze
+      # Spelled out whole: `&>` is bash's, and a dash `sh` reads `cmd &>/dev/null`
+      # as "background cmd, then truncate /dev/null".
+      REDIRECTS = ["2>&1", "2>#{File::NULL}", ">#{File::NULL}"].freeze
       SPAN = /'([^'\0]*)'|"((?:[^"$`\\!\0]|\\[^"$`\\!\0\n])*)"|([^'"\\$`{}*?\[\]!\0\s]+)/
       WORD = /\A(?:#{SPAN})+\z/
       # bash expands a tilde at a word's start, and after `=` or `:` in a word
@@ -21,6 +26,7 @@ module Lain
       TILDE = /(?:\A|[=:])~/
       PIPE = "|"
       AND = "&&"
+      THEN = ";"
       CD = "cd"
       DASH = "-"
       SEPARATOR = "/"
@@ -38,8 +44,9 @@ module Lain
 
       def self.literal?(result)
         result.covered? && !result.broken? && (result.kinds - KINDS).empty? &&
-          result.separators.all? { [PIPE, AND].include?(_1.text) } &&
-          result.stages.size == result.separators.size + 1
+          result.separators.all? { [PIPE, AND, THEN].include?(_1.text) } &&
+          result.stages.size == result.separators.size + 1 &&
+          result.redirects_placed? { |redirect, _| REDIRECTS.include?(redirect.text) }
       end
 
       def self.joins(result) = result.separators.sort_by { _1.byte_range.begin }.map(&:text)
@@ -61,13 +68,16 @@ module Lain
         @moves = argvs.take_while { _1.first == CD }
         @stages = argvs.drop(@moves.size).zip([nil, *joins.drop(@moves.size)])
         @leading = joins.first(@moves.size)
+        @joins = joins
         @cwd = cwd
       end
 
-      # A `cd` past the leading ones is a builtin no argv can run.
+      # A `cd` past the leading ones is a builtin no argv can run. {#moved}
+      # applies a move to every stage, while `sh` runs a stage after `;` in the
+      # original cwd when the `cd` failed, so a move refuses `;` anywhere.
       def read
         [term, moved] if @stages.any? && @moves.all? { cd?(_1) } && @leading.all?(AND) &&
-                         @stages.none? { |argv, _| argv.first == CD }
+                         @stages.none? { |argv, _| argv.first == CD } && (@moves.empty? || @joins.none?(THEN))
       end
 
       private
@@ -75,7 +85,7 @@ module Lain
       def cd?(argv) = argv.size == 2 && !argv.last.start_with?(DASH)
 
       def term
-        pipelines = @stages.slice_before { |_, join| join == AND }.map do |group|
+        pipelines = @stages.slice_before { |_, join| [AND, THEN].include?(join) }.map do |group|
           Term::Pipeline.new(stages: group.map { |argv, _| Term::Stage.new(argv:, discards: []) })
         end
         Term.new(pipelines:)

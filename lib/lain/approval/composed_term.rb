@@ -51,7 +51,8 @@ module Lain
     #
     # Predicate 2 has one widening: where the verdict ABSTAINS rather than
     # denies, {Shell::Reading} reads the string itself, accepting only leading `cd`s
-    # bound by `&&`, plain quoting, `|` and `&&`, and the term it builds is
+    # bound by `&&`, plain quoting, `2>&1` or a /dev/null discard after a stage,
+    # and `|`, `&&` and `;` (no `;` after a `cd`), and the term it builds is
     # judged by every predicate. Such a command still runs through `sh -c`, so
     # the reading refuses anything a shell would read differently.
     #

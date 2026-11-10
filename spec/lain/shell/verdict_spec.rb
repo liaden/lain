@@ -604,7 +604,8 @@ RSpec.describe Lain::Shell::Verdict do
 
     def judging(**overrides)
       shape = { broken?: false, covered?: true, stages: [stage].freeze, kinds: %w[command command_name word].freeze,
-                separators: [].freeze, redirects: [].freeze, uncovered: [].freeze, breakages: [].freeze }
+                separators: [].freeze, redirects: [].freeze, uncovered: [].freeze, breakages: [].freeze,
+                redirects_placed?: true }
       result = instance_double(Lain::Shell::Parse::Result, **shape, **overrides)
       described_class.new(parse: instance_double(Lain::Shell::Parse, call: result))
     end
@@ -857,6 +858,10 @@ RSpec.describe Lain::Shell::Verdict do
     # the runner cannot hand Open3, which owns that descriptor.
     it "abstains on stdout discarded before a pipe" do
       expect(decide("cat a >/dev/null | wc -l")).to be_abstain
+    end
+
+    it "allows stdout discarded by the last stage of a pipe" do
+      expect(decide("ls | cat >/dev/null")).to be_allow
     end
   end
 

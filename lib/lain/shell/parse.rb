@@ -72,6 +72,9 @@ module Lain
       # uncovered byte rather than as a silently accepted separator.
       OPERATORS = ["|", "||", "&&", ";", "&"].freeze
 
+      SPACING = /\A[ \t]+\z/
+      private_constant :SPACING
+
       COMMAND = "command"
       SEPARATOR = "separator"
       REDIRECT = "file_redirect"
@@ -128,6 +131,34 @@ module Lain
         # accounted for nothing, so a broken Result is never covered, and there
         # is no state in which a refusal reads as a vacuous success.
         def covered? = breakages.empty? && uncovered.empty?
+
+        # Every redirect belongs to a stage and sits after what precedes it with
+        # only spaces or tabs between. Touching, `0>` is a descriptor to bash
+        # and the word `0` to the grammar; across a newline, bash runs it as a
+        # command of its own; and a leading redirect has no gap after its stage.
+        #
+        # @yield [redirect, index] required, so a forgotten block fails on every
+        #   command rather than only on the first one carrying a redirect
+        # @yieldparam redirect [Redirect] each placed one
+        # @yieldparam index [Integer] the index of the stage that owns it
+        # @yieldreturn [Boolean] whether the caller accepts that redirect
+        # @return [Boolean]
+        # @raise [ArgumentError] when no block is given
+        def redirects_placed?(&accept)
+          raise ArgumentError, "redirects_placed? needs a block that accepts each redirect" unless accept
+
+          stages.sum { _1.redirects.size } == redirects.size &&
+            stages.each_with_index.all? { |stage, index| stage_placed?(stage, index, &accept) }
+        end
+
+        private
+
+        def stage_placed?(stage, index)
+          afters = [stage.byte_range.end, *stage.redirects.map { _1.byte_range.end }]
+          stage.redirects.zip(afters).all? { |redirect, after| spaced?(after, redirect) && yield(redirect, index) }
+        end
+
+        def spaced?(after, redirect) = SPACING.match?(source.byteslice(after...redirect.byte_range.begin))
       end
 
       # Interpolation returns a MUTABLE String even under a frozen_string_literal

@@ -68,8 +68,6 @@ module Lain
       # sent to /dev/null after its stage; otherwise they abstain as kinds.
       REDIRECT_KINDS = %w[file_redirect redirected_statement].freeze
 
-      SPACING = /\A[ \t]+\z/
-
       # The redirects a term carries, by descriptor and operator, and the
       # streams each one sends to /dev/null. `2>&1`, `>>` and `1>` stay out:
       # a duplication is not a discard, and the rest are spellings nobody asked
@@ -328,28 +326,16 @@ module Lain
         end
 
         def discards_only?
-          owned = @result.stages.sum { |stage| stage.redirects.size }
-          owned == @result.redirects.size &&
-            @result.stages.each_with_index.all? { |stage, index| stage_discards_only?(stage, index) }
+          @result.redirects_placed? { |redirect, index| discard?(redirect) && !stdout_into_pipe?(redirect, index) }
         end
 
-        # Each redirect must sit after what precedes it with only spaces or tabs
-        # between. Touching, `0>` is a descriptor to bash and the word `0` to
-        # the grammar; across a newline, bash runs it as a command of its own;
-        # and a leading redirect has no gap after its stage at all.
-        def stage_discards_only?(stage, index)
-          afters = [stage.byte_range.end, *stage.redirects.map { |redirect| redirect.byte_range.end }]
-          piped = piped?(stage, @result.stages[index + 1])
-          stage.redirects.zip(afters).all? do |redirect, after|
-            discard?(redirect) && spaced?(after, redirect) && !(piped && Verdict.discarded(redirect).include?(:stdout))
-          end
+        def stdout_into_pipe?(redirect, index)
+          piped?(@result.stages[index], @result.stages[index + 1]) && Verdict.discarded(redirect).include?(:stdout)
         end
 
         def discard?(redirect)
           !Verdict.discarded(redirect).empty? && redirect.target == File::NULL && redirect.extra_words.empty?
         end
-
-        def spaced?(after, redirect) = SPACING.match?(@result.source.byteslice(after...redirect.byte_range.begin))
 
         # Open3 owns the descriptor between two stages, so a stdout discard
         # there is a term no runner here can express.
