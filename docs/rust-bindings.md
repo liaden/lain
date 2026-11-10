@@ -32,6 +32,9 @@ Before binding, all five must hold. If any fails, keep it in Ruby.
    long line without reaching a limit, a known gap. The speedup is why it moved now; bounded
    backtracking is what admits it. Ruby stays the oracle in specs.
 3. **It is hot per-turn**, not per-session. Per-session work is never worth a boundary.
+   Parser parity with the consumer admits a binding that is neither asymptotically better nor
+   hot per turn, by ruling 2026-11-10: lain reads a Cargo manifest with the `toml` crate cargo
+   uses, so a file cargo reads one way is never read another way.
 4. **The boundary is crossed in batches, not per element.** Conversion cost dominates almost
    every naive binding; a per-node FFI call in a DAG walk loses to plain Ruby. One walk is the
    exception: the block form of `Ext::Timeline#ancestors` crosses per node because its callers

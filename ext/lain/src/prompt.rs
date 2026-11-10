@@ -47,6 +47,7 @@
 //! `cargo test` without an embedded Ruby VM. The FFI surface is the `ffi`
 //! submodule at the bottom, and it holds no logic beyond value conversion.
 
+use crate::toml_table::Setting;
 use anstyle::{Ansi256Color, AnsiColor, Color, Effects, RgbColor, Style};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
@@ -206,27 +207,6 @@ pub enum ConfigError {
 // Config
 // ---------------------------------------------------------------------------
 
-/// A scalar or container read out of the `[settings]` table.
-///
-/// `toml::Value` is re-projected onto this owned enum rather than stored
-/// directly, so no `toml` type is reachable from the shareable handle and the
-/// interior-mutability audit stops at this module's own code.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Setting {
-    /// A TOML string.
-    Str(String),
-    /// A TOML integer.
-    Int(i64),
-    /// A TOML float.
-    Float(f64),
-    /// A TOML boolean.
-    Bool(bool),
-    /// A TOML array.
-    List(Vec<Setting>),
-    /// A TOML table, key-ordered.
-    Table(BTreeMap<String, Setting>),
-}
-
 /// A loaded prompt config: the compiled `format`, plus whatever the optional
 /// `[settings]` table carried for the Ruby side to interpret.
 #[derive(Debug, Clone, PartialEq)]
@@ -261,29 +241,6 @@ impl Config {
             .map(|(key, value)| (key, Setting::from_toml(value)))
             .collect();
         Ok(Config { format, settings })
-    }
-}
-
-impl Setting {
-    /// Project a `toml::Value` onto the owned enum. Datetimes have no Ruby
-    /// counterpart worth inventing here, so they arrive as their TOML text.
-    fn from_toml(value: toml::Value) -> Setting {
-        match value {
-            toml::Value::String(s) => Setting::Str(s),
-            toml::Value::Integer(i) => Setting::Int(i),
-            toml::Value::Float(f) => Setting::Float(f),
-            toml::Value::Boolean(b) => Setting::Bool(b),
-            toml::Value::Datetime(d) => Setting::Str(d.to_string()),
-            toml::Value::Array(items) => {
-                Setting::List(items.into_iter().map(Setting::from_toml).collect())
-            }
-            toml::Value::Table(table) => Setting::Table(
-                table
-                    .into_iter()
-                    .map(|(key, value)| (key, Setting::from_toml(value)))
-                    .collect(),
-            ),
-        }
     }
 }
 
@@ -1397,6 +1354,7 @@ mod tests {
 pub mod ffi {
     use super::{Config, ConfigError, Format, Setting, StyleError, Vars, display_width};
     use crate::ffi::{frozen_str, lookup_error};
+    use crate::toml_table::ffi::table_to_ruby;
     // The one string-boundary policy, shared with `fuzzy`, `astgrep` and
     // `treesitter`. `compile`, `from_toml`, `width`, and every key and value of
     // `render`'s Hash come through it, so this binding still has exactly one
@@ -1523,38 +1481,6 @@ pub mod ffi {
             vars.insert(name, bound);
         }
         Ok(vars)
-    }
-
-    /// Rebuild the `[settings]` table as a deeply frozen Ruby Hash, on demand.
-    /// Built per call rather than cached, exactly as `Turn#content` is, so the
-    /// handle never holds a Ruby reference -- which is what keeps it trivially
-    /// shareable.
-    fn table_to_ruby(ruby: &Ruby, table: &BTreeMap<String, Setting>) -> Result<Value, Error> {
-        let hash = ruby.hash_new();
-        table.iter().try_for_each(|(key, value)| {
-            hash.aset(frozen_str(ruby, key), setting_to_ruby(ruby, value)?)
-        })?;
-        hash.freeze();
-        Ok(hash.as_value())
-    }
-
-    fn setting_to_ruby(ruby: &Ruby, setting: &Setting) -> Result<Value, Error> {
-        Ok(match setting {
-            Setting::Str(text) => frozen_str(ruby, text),
-            Setting::Int(n) => ruby.integer_from_i64(*n).as_value(),
-            Setting::Float(f) => ruby.float_from_f64(*f).as_value(),
-            Setting::Bool(true) => ruby.qtrue().as_value(),
-            Setting::Bool(false) => ruby.qfalse().as_value(),
-            Setting::List(items) => {
-                let array = ruby.ary_new_capa(items.len());
-                items
-                    .iter()
-                    .try_for_each(|item| array.push(setting_to_ruby(ruby, item)?))?;
-                array.freeze();
-                array.as_value()
-            }
-            Setting::Table(table) => table_to_ruby(ruby, table)?,
-        })
     }
 
     // Each pure error type's `Display` IS the Ruby-visible message; there is no

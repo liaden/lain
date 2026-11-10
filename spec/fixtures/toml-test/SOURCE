@@ -1,0 +1,5 @@
+Vendored from https://github.com/toml-lang/toml-test at commit
+96fd088448ec0f4d9f061c730ed7854399c46faf (MIT, see LICENSE).
+
+The valid and invalid cases listed in tests/files-toml-1.1.0, with each valid
+case's expected JSON beside it. Not edited: the toml crate must agree with them.

@@ -15,11 +15,12 @@ repos:
       # A .patch file's whitespace is load-bearing: a blank context line in a diff is a
       # single trailing space, and stripping it corrupts the patch's applicability. A
       # .msgpack fixture is bytes that often look like text, and a fixer's newline breaks
-      # the round-trip test that compares them.
+      # the round-trip test that compares them. A toml-test case's missing newline or trailing
+      # space is the input it tests.
       - id: end-of-file-fixer
-        exclude: '\.(patch|msgpack)$'
+        exclude: '\.(patch|msgpack)$|^spec/fixtures/toml-test/'
       - id: trailing-whitespace
-        exclude: '\.(patch|msgpack)$'
+        exclude: '\.(patch|msgpack)$|^spec/fixtures/toml-test/'
 
   - repo: local
     hooks:

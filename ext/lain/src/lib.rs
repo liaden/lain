@@ -55,6 +55,7 @@ mod read_text;
 mod regions;
 #[cfg(test)]
 mod test_sources;
+mod toml_table;
 mod treesitter;
 
 /// The lowercase-hex BLAKE3 digest of `bytes`.
@@ -2780,6 +2781,9 @@ mod ffi {
 
         // Every secret shape in 1 compiled set, so a file is scanned in 1 crossing.
         crate::regions::ffi::define(ruby, ext, lain_error)?;
+
+        // A generic TOML parse, by the parser cargo reads a manifest with.
+        crate::toml_table::ffi::define(ruby, ext, lain_error)?;
 
         // Stateless structural search: no wrapped handle, so `AstGrep` is a bare
         // class with two singleton methods and one named error. `BadPattern`

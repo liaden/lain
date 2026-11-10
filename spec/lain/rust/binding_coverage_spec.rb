@@ -78,3 +78,16 @@ RSpec.describe Lain::Ext::Regions, "binding coverage" do
     expect([scan.matches, scan.over_masked]).to eq([[[0, 3, 23, {}]], []])
   end
 end
+
+RSpec.describe Lain::Ext::Toml, "binding coverage" do
+  it "calls every function the toml binding binds" do
+    expect(described_class.singleton_methods(false)).to contain_exactly(:parse)
+  end
+
+  it "answers .parse as bound" do
+    parsed = described_class.parse("a = 1\n[b]\nc = [true]\n")
+
+    expect(parsed).to eq({ "a" => 1, "b" => { "c" => [true] } })
+    expect(Ractor.shareable?(parsed)).to be(true)
+  end
+end

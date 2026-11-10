@@ -133,7 +133,7 @@ task :compile do
   end
 end
 
-MUTANT_FILES = %w[canonical event digest dag graph nogvl bm25].map { |f| "ext/lain/src/#{f}.rs" }.freeze
+MUTANT_FILES = %w[canonical event digest dag graph nogvl bm25 toml_table].map { |f| "ext/lain/src/#{f}.rs" }.freeze
 # cargo-mutants exits 2 for a missed mutant and 3 for a timeout; the outcomes file, not the status, decides.
 MUTANT_EXITS = [0, 2, 3].freeze
 # A timeout means the tests did not pass on the mutant, but its count moves with load, so it scores as killed.

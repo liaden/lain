@@ -14,7 +14,7 @@ require "fileutils"
 module ConformanceCorpus
   DIR = File.expand_path("../../ext/lain/corpus", __dir__)
   MANIFEST = File.join(DIR, "MANIFEST.json")
-  FILES = %w[canonical event_digest dag store errors regions].freeze
+  FILES = %w[canonical event_digest dag store errors regions toml].freeze
 
   ABOUT = "A regression oracle, not a discovery one: the canonical vectors record what the Ruby implementation " \
           "answered at the commit named here, so a change in either implementation shows up as a mismatch. " \
@@ -432,5 +432,26 @@ module ConformanceCorpus
     ].map { |shape, label, text| [shape, label, text.b] }.freeze
   end
 
-  VECTORS = { "canonical" => CanonicalVectors, "regions" => RegionVectors }.freeze
+  # toml-test's vendored cases, in path order. The oracle is the expected JSON beside each valid case, so
+  # regenerating reads the fixtures and no Ruby parser answers anything.
+  module TomlVectors
+    ROOT = File.expand_path("../fixtures/toml-test", __dir__)
+
+    module_function
+
+    def inputs(_draw) = names.map { |name| { "case" => name, "text" => Tagged.encode(source(name)) } }
+
+    def names = Dir.glob("{valid,invalid}/**/*.toml", base: ROOT).sort
+
+    def source(name) = File.read(File.join(ROOT, name), encoding: Encoding::UTF_8)
+
+    def derive(input)
+      name = input.fetch("case")
+      return { "refused" => true } if name.start_with?("invalid/")
+
+      { "expected" => JSON.parse(source(name.sub(/\.toml\z/, ".json"))) }
+    end
+  end
+
+  VECTORS = { "canonical" => CanonicalVectors, "regions" => RegionVectors, "toml" => TomlVectors }.freeze
 end

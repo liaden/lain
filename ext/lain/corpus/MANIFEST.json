@@ -29,6 +29,10 @@
     "regions.ndjson": {
       "blake3": "blake3:7c6996c8ebbc72ecb865438f487411e3574dfd658cacd3d0686196d9008afd31",
       "records": 122
+    },
+    "toml.ndjson": {
+      "blake3": "blake3:a13d350d552b5ad70e76bf7c30f7acaba05d3047f03b929f197ed229841cebca",
+      "records": 720
     }
   },
   "ruby_oracle_retired": {
