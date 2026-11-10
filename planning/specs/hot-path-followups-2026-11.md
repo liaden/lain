@@ -984,3 +984,84 @@ Spec file: none can fail on prose; the main session greps for "578", "Ruby scann
 - Worktree prefix: tmp/worktrees/hfu-<id>, branch card/hfu-<id>. Each worktree TMPDIR=$HOME/tmp/lain/hfu-<id>.
 - Memory 15 GB, swap full at start: at most 4 agents at once, landing counted as 1. Landings run LAIN_SPEC_WORKERS=10 (ruling carried from the last run while swap is full).
 - No path needs user approval.
+- 07:37 M1 C1 U1 U2 started, cut at faa2a26d
+- 07:40 U2 handed back (103/2 red, 756/0 green). Low review started.
+- 07:41 U2 low review APPROVE-WITH-FIXES, mechanical: up.rb:617 duplicates the expand rule; ChatPreflight.spawning to call PaneCommand.launcher. Scope: up.rb joins U2. Sent; no second review.
+- 07:42 U2 fix done (713/0); main verified the up.rb diff. Landing attempt 1.
+- U2 landed a2db5a1d (attempt 1)
+- 07:46 U2 landed a2db5a1d (attempt 1; 1253 of 1258 runtime files). Cleanup done.
+- 07:46 R1 started, cut at a2db5a1d
+- 07:47 R1 stopped: fixture auto.ndjson has every ts at epoch, so no judge wait; Call lacks the command for the parser split. Ruling: spec builds its own journal with distinct ts (like approval_replay_spec:465), fixture untouched; Call carries the command and the J1 parser classifies it. Continued.
+- 07:47 C1 stopped on Permission denied: string-arm commands (any 2>&1 | tail) carry the stages only as grants and Profiles#reader never reads grants, so rustup never reaches placed. Red 348/141 (mostly the new builds: keyword). Ruling: fix in C1, reader takes string-arm exec files from the admitted grants through placed; seam adds cargo --version 2>&1 | head -1; git example uses an admitted git read; fixed-name crate dir. Continued.
+- 07:48 U1 handed back (193/7 red, 2761/0 green; 4 unexplained failures in 1 combined run, not recurring). Low review started.
+- 07:50 U1 low review APPROVE-WITH-FIXES, 3 mechanical nits (stale doc, stale title, seam title asserted no judge count). 3 runs incl. 2 random seeds 193/0; 4-failure run not reproduced, no order dependence found. Sent; main verifies.
+- 07:52 R1 handed back (5/4 red, 682/0 green; real probe 122 judged, 27 no longer judged, 27.5 s of 1046.4 s, no rules file; parser share 0 as the parser abstains on quotes). Medium review started, told to check both claims.
+- 07:53 M1 handed back (763/20 red, 4439/2 green, the 2 the MANIFEST digest). Real-data gate 0 gained, 0 lost (15 journals exist, not 20). Departures: write refusal tested through memory_write (RefuseSecretWrites guards only memory and improvement writes); _KEY hint needs a letter-and-digit value. Main applied the MANIFEST wiring in the worktree (corpus spec 16/0). High review (opus) started.
+- 07:53 U1 fixes done (555/0; seam judge count pinned, memo-off mutant red); main verified. Landing attempt 1.
+- U1 landed 41b7766c (attempt 1)
+- 07:57 U1 landed 41b7766c (attempt 1; 1253 of 1258 runtime files). Cleanup done.
+- 07:57 S2 started, cut at 41b7766c
+- 07:57 M1 high review (opus) started.
+- 07:58 S2 handed back (3/2 red incl. the flake reproduced, 40/0 + 362/0 green). Low review started.
+- 07:59 S2 low review APPROVE (filter mutant red 3/2; 2 optional nits not taken). Landing attempt 1.
+- S2 landed 948004be (attempt 1)
+- 08:03 S2 landed 948004be (attempt 1). Cleanup done.
+- 08:03 S1 started, cut at 948004be
+- 08:04 C1 handed back (348/141 then 351/5 red; 605/0 card, 4557/0 over 74 files, 362/0 ratchet). Reader on the string arm takes admitted grants; 1 profiles_spec example rewritten; seam reader example uses cat Cargo.toml (no git read admitted under the seam's classes); VersionProbe regression found and fixed. Ruling: seam not added to slow_files (1.5 s). High review (opus) started.
+- 08:04 R1 medium review REQUEST-CHANGES: share asks Shell::Verdict (abstains on quotes) not Shell::Reading, so 0 by construction; total omits ComposedTerm (TermArm.today admits 15 more, 54.3 s); 2 unpinned branches, 2 judge_wait mutants survive, 3 nits. Nyotes config matches no-rules. Ruling: share by Shell::Reading; ComposedTerm admissions counted via TermArm.today on their own line. Fix round sent; second review follows.
+- 08:07 R1 fix round done (11/8 red; 688/0; real replay: rules 27/27.5 s, composed term 15/54.3 s, total 42/81.8 s, Reading-only share 5/4.1 s). Second review (same reviewer) started.
+- 08:09 R1 review 2 APPROVE-WITH-FIXES (every back-out red but 1; no double count; Place.current examples green with a cut PATH and empty HOME; replay 27+15+80=122). 1 mechanical: example for a call neither parser reads. Sent; main verifies.
+- 08:10 R1 last fix done (75/1 red against the mutant; 614/0); main verified. Landing attempt 1.
+- 08:13 M1 high review REQUEST-CHANGES: BLOCKER, the diff mark brings dotenv's name-hint false positives into every diff line (600 real git show patches: 133 gained, 0 credentials; real Bash git show 0 to 7 masked lines); stop condition fired, the gate never ran over diff text. _KEY hint lets in 4 real gem constants; 2 unpinned marks, a case-rule example that cannot fail, 5 nits. Departures upheld (write_file is refused nowhere, as for a GitHub token today). Ruling: anchor ^(?:[+-]{1,2}(?=[A-Za-z_])|[ 	]*) on the assignment shapes and suffixed password; _KEY hint only glued; gate extended to diff history. Fix round sent; second review follows.
+- 08:30 Incident: an orphaned sh (trap '' TERM loop, ppid 1, cwd hfu-S1, fd 3 on suite.lock) from S1's spec runs held suite.lock about 26 min and stalled R1's landing; killed by pid 1734386. S1 told to leave no TERM-ignoring child alive after any example.
+- R1 landed b331b30f (attempt 1)
+- 08:33 R1 landed b331b30f (attempt 1). Cleanup done.
+- 08:33 G1 started, cut at b331b30f
+- 08:34 S1 handed back (2/2 red, 384/0 green; reap in an ensure, no survivors by /proc cwd). Low review started, told to probe the leak.
+- 08:35 User asked to start every ready card: S3 S4 C4 B1 started, cut at b331b30f; 8 agents on the box (memory 9 GB free, PSI 0). B1 records under both locks exclusive, 1 record per hold.
+- 08:35 S1 low review APPROVE (KILL and grace mutants red; reap backed out leaves no orphan in the copy, so the leak was most likely the red run's ArgumentError before stop existed; no live orphans now). Landing attempt 1.
+- 08:36 C4 handed back (68/1 red, 101/0 + 362/0 green; dev digest re-pinned in slots_spec). Low review started.
+- 08:38 C4 low review APPROVE-WITH-FIXES, 1 mechanical: the line overclaims (ComposedTerm admits only check, build, clippy, test). Reword sent; no second review. No other digest pin; red confirmed in a copy.
+- 08:39 S4 handed back (14/1 red, 376/0 green; replay rescues ScriptError so a pruned file re-records). Low review started.
+- S1 landed 13d4c114 (attempt 1)
+- 08:42 S1 landed 13d4c114 (attempt 1). Cleanup done.
+- 08:43 G1 handed back (load-error red, 41/0 + 1531/0 + 362/0 green; real rate: epics dir holds no journals, the 1 session journal with handbacks folds 4 of 4 reused). Low review started.
+- 08:43 C4 fix done (68/0, 101/0, 362/0); main verified. Landing attempt 1.
+- 08:43 S4 low review APPROVE-WITH-FIXES (race probe: 25 real launchers against a deleter, all exit 0): misplaced constant, re-derived dir, per-file ENOENT guard, prune *.rb.* scratch files too. Sent as mechanical; main verifies.
+- C4 landed f7890b70 (attempt 1)
+- 08:46 C4 landed f7890b70 (attempt 1). Cleanup done.
+- 08:47 S4 fixes done (16/2 red, 378/0); main verified the diff. Landing attempt 1.
+- 08:49 M1 fix round done (429/8 red before lib; 4450/0 green; history 600 patches 3 gained incl. 1 reason rename, 1 lost as that rename; key lines, tree, references, journals 0/0). regions.ndjson unchanged from the applied MANIFEST. Second review (same reviewer) started.
+- S4 landed ba69381a (attempt 1)
+- 08:50 B1 stopped on its load condition (load 3.7-11.5 for 15 min with 8 agents; 0 usable samples, no files changed). Parked with both worktrees (hfu-B1, hfu-B1-base at a345b7e5); resumed when at most 2 other agents run, sampling inside both locks after the load decays under 2.
+- 08:51 S4 landed ba69381a (attempt 1). Cleanup done.
+- 08:51 G1 low review APPROVE-WITH-FIXES, 1 mechanical: string-keyed checks example cannot fail (nil outcome whitelisted); add a failed-outcome string-keyed case. Shared predicate confirmed, no whitelist copied. Sent; main verifies.
+- 08:52 S3 handed back (9/9 red, 375/0 green; starved = low CPU share and (high load or memory PSI >= 20%); budgets 120 s and 180 s chosen by the implementer). Low review started.
+- 08:52 C1 high review APPROVE-WITH-FIXES, all mechanical: mask filter in read_programs unpinned (M7 survives), stale docstring, read_only? misnamed, 1 retitle, 6 nits. 11 of 12 mutants red; reader grants nothing beyond placed stages (real bwrap). Found outside the card: with classes on, ComposedTerm admits no git read in any real chat (.git/config and .git/hooks/*.sample count as project files), so every git read goes to the judge; --confine reader admits a cargo check that cannot pass (no index); long TMPDIR paths withheld as entropy. Fixes sent; main verifies.
+- 08:53 G1 fix done (42/2 red against the mutant, 42/0, 362/0); main verified. Landing attempt 1.
+- 08:53 S3 low review APPROVE-WITH-FIXES: memory pressure read once as avg10 at strike while CPU share covers the window (substantive); budgets 120/180 hold a hung worker 3 min; per-example budget can lower LAIN_SPEC_BUDGET; 3 nits. Ruling: memory stall % from the total= delta over the window, memory alone with CPU available stays not starved (card wording off); budgets 60; max with the operator budget. Fix round sent; reviewer re-checks the substantive item narrowly.
+- G1 landed a02431ea (attempt 1)
+- 09:01 G1 landed a02431ea (attempt 1; 1254 of 1259 runtime files). Cleanup done.
+- 09:02 S3 fix round done (red was a hang: the supervisor thread died on the missing reader; 11/0 and 377/0 green). Narrow re-check by the same reviewer, including that a supervisor exception cannot hang a run.
+- 09:02 C1 fixes done (M7 example red first; 968/0 incl. 5 seam examples). Seam base made a fixed $TMPDIR/cr, which collides across runs sharing a TMPDIR: sent back for a short unique mktmpdir. Narrow re-check by the C1 reviewer follows (diff over 20 lines).
+- 09:03 M1 review 2 APPROVE-WITH-FIXES (every round-1 back-out red but 2; real git show 0/0/0 masked lines like base; real .env diff masks all 6 values, base leaks all 6; history 3 gained 1 lost; gems, tree, references 0/0). 1 mechanical: KEY_VALUE unpinned; 3 nits. Sent; main verifies.
+- 09:03 S3 re-check APPROVE-WITH-FIXES: delta and max() mutants red cleanly; a strike exception kills the memoised supervisor so nothing is ever struck again (probe). Fallback to a minimal Stuck sent; main verifies.
+- 09:05 S3 supervisor fix done (1/1 red, 378/0); main verified strike_safely. Landing attempt 1.
+- 09:07 M1 round-2 fixes done (430/1 red on the KEY_VALUE pin; 4451/0; regions.ndjson unchanged since the applied MANIFEST). Main verified. Landing queued behind S3.
+- S3 landed 1e3072c3 (attempt 1)
+- 09:10 S3 landed 1e3072c3 (attempt 1; 1255 of 1260 runtime files). Cleanup deferred until no hook runs.
+- M1 landed 5f938eb8 (attempt 1)
+- 09:13 M1 landed 5f938eb8 (attempt 1). M1 and S3 cleanup done; M1's gate probes kept in the scratchpad m1-probes/.
+- 09:13 M2 started (opus), cut at 5f938eb8
+- 09:15 C1 re-check APPROVE (all 10 items; 13 mutants red incl. M7). Landing attempt 1.
+- C1 landed 221ac8fe (attempt 1)
+- 09:18 C1 landed 221ac8fe (attempt 1). Cleanup done; probes kept in c1-probes/.
+- 09:18 B1 resumed (1 other agent on the box); samples wait inside both locks for load under 2, bounded 3 min per hold.
+- 09:20 B1 stopped on a real drift: request_100000 base a345b7e5 0.694 ms vs HEAD 0.939 ms (5 interleaved each, load 1.81-1.96, every HEAD run slower), over the 0.821 ceiling. Ruling: test the 3 request.rb suspects against their parents, then bisect lib/ext if needed; detached worktrees allowed; no ceiling change.
+- 09:24 B1 suspects clear (request.rb commits flat); bisect over lib/ext named 073ba740 (epic gate Verdict, no request-path code), evidence soft: bimodal row, same commit read 0.81 then 1.05. Ruling, by the standing layout-control rule: env -i plus a 0-2048 padding sweep with an equal-path HEAD control and instructions:u, for a345b7e5/HEAD and c56daf46/073ba740; re-seed only if layout.
+- 09:26 B1 layout sweep: c56daf46 vs 073ba740 is layout (gap flips, instructions flat 11.2M vs 11.0M), so the bisect was false; a345b7e5 vs HEAD is real by instructions (4.2M to 11.0M per rep, 2.6x, already at c56daf46), time inside the HEAD-vs-HEAD control at 2 of 5 paddings. No ceiling change. Instruction-count bisect of a345b7e5..c56daf46 sent.
+- 09:29 B1 instruction bisect: the 2.6x was a probe artifact (whole request_rows incl. the guarded 1 MB row added at bf959175); row-only per-rep instructions a345b7e5 4.00M, c56daf46 3.69M, HEAD 5.98M, creeping across 28 commits with no step; perf record dominated by boot, subtraction good to about 1M. No ceiling change. Taken to the user.
+- 09:30 User ruled on B1: re-seed at 1.25x the largest of 3 fresh HEAD medians, in its own commit naming the creep; follow-up to profile the timed block in-process (what grew from 3.7M to 6.0M per rep).
+- B1 re-seed handed back 09:33: medians 0.793, 0.936, 0.813 ms at loads 1.68, 1.96, 1.72; ceiling 0.821 to 1.17; landing attempt 1 started
+- B1 landed a070c57d (attempt 1)
+- Checkpoint 09:42: landed U2, U1, S2, R1, S1, C4, S4, G1, S3, M1, C1, B1; M2 in flight; M3, M4, C2, C3, Q1, D1 wait on it
