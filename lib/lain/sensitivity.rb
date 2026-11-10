@@ -120,6 +120,11 @@ module Lain
         super
       end
 
+      # Every pair, built once, so classifying a path allocates no carrier.
+      TABLE = Ractor.make_shareable(
+        LEVELS.to_h { |level| [level, REASONS.to_h { |reason| [reason, new(level:, reason:)] }] }
+      )
+
       # Comparable's `==` would ask {#<=>}, which raises on a pair no rank
       # names; equality stays Data's, field by field.
       define_method(:==, ::Data.instance_method(:==))
@@ -285,7 +290,7 @@ module Lain
         gated.samples(anchors).any? { |sample| lifter.matches?(sample, anchors) }
       end
 
-      def verdict = Verdict.new(level:, reason:)
+      def verdict = Verdict::TABLE.fetch(level).fetch(reason)
 
       # A segment rule reads 1 name anywhere, and an anchored rule its path,
       # which a directory on or below it reaches whole and an ancestor of it

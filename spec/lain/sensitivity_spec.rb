@@ -1801,6 +1801,23 @@ RSpec.describe Lain::Sensitivity do
     end
   end
 
+  describe "classifying many paths" do
+    let(:paths) do
+      %w[/srv/project/a.rb /home/tester/.ssh/id_rsa /srv/project/.env /etc/shadow /srv/project/Cargo.lock
+         /home/tester/.aws/credentials /srv/project/lib/x.rb /proc/1/environ]
+    end
+
+    it "builds no carrier and answers what it answered before" do
+      before = paths.map { classify(_1) }
+      allow(Lain::Sensitivity::Verdict).to receive(:new).and_call_original
+
+      after = Array.new(125) { paths.map { classify(_1) } }.flatten(1)
+
+      expect(Lain::Sensitivity::Verdict).not_to have_received(:new)
+      expect(after).to eq(before * 125)
+    end
+  end
+
   describe "shape" do
     # `be_frozen` on the instance is SHALLOW and passed while `@home` held a
     # mutable String out of `Pathname#to_s`. `Ractor.shareable?` is the
