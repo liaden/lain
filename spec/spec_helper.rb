@@ -1,8 +1,5 @@
 # frozen_string_literal: true
 
-# Ahead of bootsnap, because coverage sees only what loads after it starts.
-require_relative "test_map_preload"
-
 # Bootsnap first: everything below -- lain and the whole gem graph it pulls
 # in -- loads through its iseq cache. See spec/bootsnap_setup.rb.
 require_relative "bootsnap_setup"

@@ -149,7 +149,7 @@ one is allowed to cite. `bin/comment-census` measures all three and is the workl
   archive afterwards. **What replaces a citation is the reason in words** — never delete the
   surrounding sentence to lose a number, and a comment that only ever said "F31" was
   carrying no reason at all, so that one goes whole.
-  - **Scope**, and exactly what the checker scans: `lib/`, `spec/`, `tools/`, `lib/lain/frontend/neovim/runtime/*.lua`.
+  - **Scope**, and exactly what the checker scans: `lib/`, `spec/`, `lib/lain/frontend/neovim/runtime/*.lua`.
   - **Not Rust.** `///` and `//!` under `ext/lain` and `crates/` are doc *attributes* held up
     by `#![deny(missing_docs)]`: deleting one is a denied lint and orphaning one is a compile
     error. A rule wider than its enforcement is false on landing, so this one stops at Ruby

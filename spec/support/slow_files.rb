@@ -49,7 +49,6 @@ module SlowFiles
     spec/lain/suite_load_spec.rb
     spec/lain/tools/bash_spec.rb
     spec/repo_as_fixture_spec.rb
-    spec/tools/test_map/attribution_spec.rb
   ].freeze
 
   def self.enabled? = ENV["LAIN_SLOW"] == "1"

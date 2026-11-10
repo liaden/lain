@@ -355,23 +355,6 @@ RSpec.describe CommentCensus do
       expect(documented).to eq(described_class::SCAN_PATHS)
     end
 
-    it "includes tools/ in both the documented and the scanned scope" do
-      expect(described_class.documented_scope(claude_md)).to include("tools/")
-      expect(described_class::SCAN_PATHS).to include("tools/")
-    end
-
-    it "reports a ticket reference in a file under tools/" do
-      Dir.mktmpdir("census-tools") do |dir|
-        FileUtils.mkdir_p(File.join(dir, "tools/test_map"))
-        File.write(File.join(dir, "tools/test_map/cited.rb"),
-                   "# frozen_string_literal: true\n\n# Waits on T15.\nX = 1\n")
-
-        stdout, = run_cli("--check-tickets", dir: Pathname.new(dir))
-
-        expect(stdout).to include("tools/test_map/cited.rb")
-      end
-    end
-
     it "names Rust nowhere in that scope, because a doc attribute cannot be deleted" do
       expect(described_class::SCAN_PATHS.grep(%r{\A(ext|crates)/})).to be_empty
       expect(described_class.scan_files(repo_root).grep(/\.rs\z/)).to be_empty
