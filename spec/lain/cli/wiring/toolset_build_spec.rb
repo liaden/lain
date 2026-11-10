@@ -1292,7 +1292,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       expect(profiles.instance_variable_get(:@masks).instance_variable_get(:@priming)).to be_nil
     end
 
-    it "primes the mask list it built when told to" do
+    it "primes the mask list it built when told to", :primes do
       build = build_with(options, arms: reader, probe:, fence:)
       masks = bash_exec(build.build(recorder,
                                     ask_human:)).instance_variable_get(:@profiles).instance_variable_get(:@masks)

@@ -178,7 +178,7 @@ RSpec.describe Lain::Confine::Sandbox do
   end
 
   describe "#prime" do
-    it "starts the mask classification of a sandbox it built" do
+    it "starts the mask classification of a sandbox it built", :primes do
       sandbox.wrap(inner, requirer: "Spec")
       sandbox.prime
 

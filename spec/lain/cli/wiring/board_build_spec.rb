@@ -254,6 +254,24 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       end
     end
 
+    it "starts no priming thread for a board built without :primes" do
+      in_tree do |root, home|
+        allow(Thread).to receive(:new).and_call_original
+        board_for(root, home)
+
+        expect(Thread).not_to have_received(:new)
+      end
+    end
+
+    it "primes the history in the background for an example tagged :primes", :primes do
+      in_tree do |root, home|
+        allow(Thread).to receive(:new).and_call_original
+        board_for(root, home)
+
+        expect(Thread).to have_received(:new).once
+      end
+    end
+
     it "hands the board the judge it is given, so auto approves what the judge approves" do
       in_tree do |root, home|
         judge = ->(**) { :approve }
@@ -1813,5 +1831,45 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
         expect(board.sensitivity.read_roots.first).to start_with(File.join(state, "lain", "answers"))
       end
     end
+  end
+end
+
+RSpec.configure do |config|
+  config.append_after(:each, :joins_primes) do
+    leaked = @primed_threads.select(&:alive?)
+    raise "#{leaked.size} priming thread(s) outlived the example" if leaked.any?
+  end
+end
+
+RSpec.describe QuietPriming do
+  let(:ledger) { described_class::Ledger.new(timeout: 0.2) }
+
+  it "ends the priming thread of a :primes example before the example is over", :joins_primes, :primes do
+    primer = Class.new do
+      def prime
+        @priming = Thread.new { sleep 0.05 }
+        self
+      end
+    end
+    primer.prepend(described_class::Prime)
+    @primed_threads = [primer.new.prime.instance_variable_get(:@priming)]
+
+    expect(@primed_threads.size).to eq(1)
+  end
+
+  it "kills a priming thread that outlives its bound and names the example" do
+    hung = Thread.new { sleep }
+    ledger.started(hung)
+
+    expect { ledger.join_started("hung example") }.to raise_error(/hung example/)
+    expect(hung.join(1)).to be(hung)
+  end
+
+  it "fails loudly when a primed object no longer holds its priming thread" do
+    renamed = Class.new { def prime = self }
+    renamed.prepend(described_class::Prime)
+    described_class::LEDGER.allowed = true
+
+    expect { renamed.new.prime }.to raise_error(/@priming/)
   end
 end

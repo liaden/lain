@@ -402,7 +402,7 @@ RSpec.describe Lain::Confine::MaskList do
       expect(list.masks).to eq(other.masks)
     end
 
-    it "surfaces a failure in the background classification at masks" do
+    it "surfaces a failure in the background classification at masks", :primes do
       calls = 0
       started = Queue.new
       broken = described_class.new(root:, policy: lambda {
