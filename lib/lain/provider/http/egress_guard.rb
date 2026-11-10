@@ -198,7 +198,7 @@ module Lain
 
         # The digests of the texts already sent through this provider, so the
         # region detector reads only what a request adds: every request resends
-        # the history, and detection costs about 90 ms a MB. Least recently sent
+        # the history, and detection costs about 30 ms a MB (measured 2026-11-10). Least recently sent
         # goes first past {BOUND} texts, a message or the system prompt and
         # tools each; a chat longer than that detects its oldest again.
         class Sent

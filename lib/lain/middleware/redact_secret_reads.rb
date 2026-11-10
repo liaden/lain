@@ -53,12 +53,12 @@ module Lain
     #
     # == Detection is not size-capped, deliberately
     #
-    # {Sensitivity::Regions} costs ~0.22ms/KB, linearly, with no blowup on
+    # {Sensitivity::Regions} costs about 30 ms a MB (measured 2026-11-10), linearly, with no blowup on
     # adversarial input, and hands the cap decision to whichever arm holds the
     # bytes. This one declines: a cap has two shapes and both are worse than the
     # cost -- scan a prefix and the tail ships unmasked, a leak the size of the
     # file; refuse the read outright and a legitimate large file becomes
-    # unreadable with no move. A megabyte costs ~0.2s once, before anything parks.
+    # unreadable with no move. A megabyte costs about 30 ms once, before anything parks.
     # If a cap is ever taken it must come back through `complete: false`, or every
     # read past it forgets its releases and re-prompts forever.
     #
@@ -98,7 +98,7 @@ module Lain
                        "a value a file holds is shown once a human approves a command that names the file, " \
                        "or once read_file releases it."
 
-      # Regions detection costs about 0.2s a megabyte, paid on every human-approved
+      # Regions detection costs about 30 ms a megabyte (measured 2026-11-10), paid on every human-approved
       # command for each file it names, so a larger file is not read to release.
       RELEASE_SCAN_CAP = 1024 * 1024
 

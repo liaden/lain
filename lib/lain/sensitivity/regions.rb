@@ -175,6 +175,9 @@ module Lain
       # span both shapes reach is named by the one that says more.
       PATTERNS = CONTENT_SHAPES.keys.each_with_index.to_h.freeze
 
+      # The shapes that name their secret's span, so only that group is masked.
+      VALUED = CONTENT_SHAPES.select { _2.names.include?("value") }.keys.freeze
+
       class << self
         # A BOM defeats every line-anchored shape on line 1 -- `^` anchors before
         # it and a BOM is not `[ \t]` -- so it is skipped for the scan and added
@@ -191,18 +194,22 @@ module Lain
         #   shape and every other pattern still find it
         # @param hinted [Boolean] true when the content is a value a hinting name
         #   holds whole, so no token in it is excused for its digest shape
+        # @param scanner [#scan] what finds each shape's raw matches
         # @return [Array<Region>] frozen, ascending by offset, no two overlapping
-        def detect(content, checksums: false, hinted: false)
+        def detect(content, checksums: false, hinted: false, scanner: RustScanner.default)
           bytes = content.b
           skip = bytes.start_with?(BOM) ? BOM.bytesize : 0
           scanned = skip.zero? ? bytes : bytes.byteslice(skip..)
+
+          matches_by_shape = group_by_shape(scanner, scanned)
 
           # `:rank` makes the sort key TOTAL. No output depends on it -- equal
           # starts always overlap, so they merge, and `coalesced` picks the name
           # by rank anyway -- but `sort_by` is not stable, and without it the
           # fold's intermediate order is arbitrary. Deliberately unpinnable: no
           # mutant can kill it, which is the honest reason there is no spec.
-          merge(candidates(scanned, checksums, hinted).sort_by { [_1[:start], _1[:rank]] }, bytes, skip)
+          sorted = candidates(scanned, matches_by_shape, checksums, hinted).sort_by { [_1[:start], _1[:rank]] }
+          merge(sorted, bytes, skip)
         end
 
         # @param text [String]
@@ -280,42 +287,48 @@ module Lain
                      reason: candidate[:reason], detector: candidate[:detector])
         end
 
-        def candidates(scanned, checksums, hinted)
-          public, disguised = matches(scanned, PEM_PUBLIC).partition { |block| PublicKey.pem?(block[1], block[2]) }
-          fields = checksums ? checksum_spans(scanned) : []
+        def group_by_shape(scanner, scanned)
+          scanner.scan(scanned).each_with_object(Hash.new { |by_shape, name| by_shape[name] = [] }) do |row, by_shape|
+            name, start, finish, groups = row
+            by_shape[name] << Match.new(scanned, start, finish, groups)
+          end
+        end
 
-          outside(pattern_candidates(scanned, fields) + outside(entropy_candidates(scanned, hinted), fields),
-                  public_spans(scanned, public)) +
+        def candidates(scanned, matches_by_shape, checksums, hinted)
+          public, disguised = matches_by_shape["PEM_PUBLIC"].partition { PublicKey.pem?(_1[1], _1[2]) }
+          fields = checksums ? checksum_spans(matches_by_shape) : []
+          entropy = outside(entropy_candidates(scanned, matches_by_shape, hinted), fields)
+
+          outside(pattern_candidates(matches_by_shape, fields) + entropy, public_spans(matches_by_shape, public)) +
             disguised.map { span(_1.begin(0), _1[0], DISGUISED_KEY, :pattern) }
         end
 
-        def checksum_spans(scanned)
-          [CHECKSUM_FIELD, INTEGRITY_FIELD].flat_map { matches(scanned, _1) }.map { _1.begin(:value)..._1.end(:value) }
+        def checksum_spans(matches_by_shape)
+          %w[CHECKSUM_FIELD INTEGRITY_FIELD].flat_map { matches_by_shape[_1] }
+                                            .map { _1.begin(:value)..._1.end(:value) }
         end
 
         def outside(candidates, spans)
           candidates.reject { |candidate| spans.any? { _1.cover?(candidate[:start]...candidate[:finish]) } }
         end
 
-        def public_spans(scanned, blocks) = openssh_spans(scanned) + blocks.map { _1.begin(0)..._1.end(0) }
-
-        def openssh_spans(scanned)
-          matches(scanned, OPENSSH_PUBLIC).select { |key| PublicKey.openssh?(key[1], key[2]) }
-                                          .map { _1.begin(1)..._1.end(2) }
+        def public_spans(matches_by_shape, blocks)
+          openssh_spans(matches_by_shape) + blocks.map { _1.begin(0)..._1.end(0) }
         end
 
-        def pattern_candidates(scanned, fields)
-          CONTENT_SHAPES.flat_map do |name, shape|
-            matches(scanned, shape).filter_map { |match| pattern_candidate(name, match, fields) }
+        def openssh_spans(matches_by_shape)
+          matches_by_shape["OPENSSH_PUBLIC"].select { |key| PublicKey.openssh?(key[1], key[2]) }
+                                            .map { _1.begin(1)..._1.end(2) }
+        end
+
+        def pattern_candidates(matches_by_shape, fields)
+          CONTENT_SHAPES.each_key.flat_map do |name|
+            matches_by_shape[name].filter_map { |match| pattern_candidate(name, match, fields) }
           end
         end
 
-        # `String#to_enum(:scan)` is what exposes `Regexp.last_match` per
-        # iteration; `scan` alone yields text without offsets.
-        def matches(scanned, shape) = scanned.to_enum(:scan, shape).map { Regexp.last_match }
-
         def pattern_candidate(name, match, fields)
-          return value_group_span(match, name) if match.names.include?("value")
+          return value_group_span(match, name) if VALUED.include?(name)
 
           assignment = ASSIGNMENT.match(match[0])
           return span(match.begin(0), match[0], name, :pattern) unless assignment
@@ -363,9 +376,9 @@ module Lain
           token.bytesize >= CredentialPatterns::SUBSTANCE_LENGTH && token.match?(ALPHANUMERIC_RUN)
         end
 
-        def entropy_candidates(scanned, hinted)
-          matches(scanned, TOKEN).select { secret_shaped?(_1[0], hinted: hinted || digest_hinted?(scanned, _1)) }
-                                 .map { span(_1.begin(0), _1[0], ENTROPY_REASON, :entropy) }
+        def entropy_candidates(scanned, matches_by_shape, hinted)
+          matches_by_shape["TOKEN"].select { secret_shaped?(_1[0], hinted: hinted || digest_hinted?(scanned, _1)) }
+                                   .map { span(_1.begin(0), _1[0], ENTROPY_REASON, :entropy) }
         end
 
         # The key changes the answer only for a digest-width token, and finding it costs a walk.
@@ -399,6 +412,37 @@ module Lain
 
         def issuer_fixed?(token) = ISSUER_FIXED.any? { token.match?(_1) }
       end
+
+      # 1 scanner row, read through the part of `MatchData` the steps above use. A group that took
+      # no part reads as nil, as it does on a `MatchData`.
+      class Match
+        # @param scanned [String] the bytes the row's offsets index
+        # @param start [Integer]
+        # @param finish [Integer]
+        # @param groups [Hash{String => Array(Integer, Integer)}]
+        def initialize(scanned, start, finish, groups)
+          @scanned = scanned
+          @whole = [start, finish]
+          @groups = groups
+        end
+
+        # @param key [Integer, String, Symbol] 0 for the whole match, else a group's name or number
+        # @return [String, nil]
+        def [](key) = (range = span(key)) && @scanned.byteslice(range[0]...range[1])
+
+        # @param key [Integer, String, Symbol]
+        # @return [Integer, nil]
+        def begin(key) = span(key)&.first
+
+        # @param key [Integer, String, Symbol]
+        # @return [Integer, nil]
+        def end(key) = span(key)&.last
+
+        private
+
+        def span(key) = key.equal?(0) ? @whole : @groups[key.to_s]
+      end
+      private_constant :Match
 
       # Whether bytes that look like a public key ARE one, parsed exactly. The
       # exemption above unmasks whatever it covers, so a label or a type word

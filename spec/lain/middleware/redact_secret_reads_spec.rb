@@ -133,6 +133,23 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
 
   def parks = journal_records(journal_io, "awaiting_human")
 
+  shared_context "with a chat's guard stack" do
+    let(:chronicle) do
+      instance_double(Lain::CLI::Chronicle, record_journal: queue_journal,
+                                            instrumentation: Lain::Agent::Instrumentation.new(journal: queue_journal))
+    end
+    let(:toolset) { Lain::Toolset.new([Lain::Tools::ReadFile.new]) }
+
+    def board
+      paths = Lain::Paths.new(env: { "HOME" => dir, "XDG_STATE_HOME" => File.join(dir, "state") })
+      project = Lain::Project.new(root: dir, cwd: dir, kind: :project, detected_by: :git)
+      Lain::CLI::Wiring::BoardBuild.for(
+        chronicle:, options: {}, judge: Lain::CLI::Switchboard::DEFERRING, model: "m", toolset:, project:, paths:,
+        verdict: Lain::CLI::Wiring::BoardBuild.shell_verdict(project:)
+      ).bind_session(session)
+    end
+  end
+
   describe "masking what nobody has released" do
     it "removes the region's bytes and stands a placeholder in their place" do
       path = write("notes.txt", one_secret)
@@ -1230,20 +1247,7 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
     end
 
     describe "through a chat's guard stack" do
-      let(:chronicle) do
-        instance_double(Lain::CLI::Chronicle, record_journal: queue_journal,
-                                              instrumentation: Lain::Agent::Instrumentation.new(journal: queue_journal))
-      end
-      let(:toolset) { Lain::Toolset.new([Lain::Tools::ReadFile.new]) }
-
-      def board
-        paths = Lain::Paths.new(env: { "HOME" => dir, "XDG_STATE_HOME" => File.join(dir, "state") })
-        project = Lain::Project.new(root: dir, cwd: dir, kind: :project, detected_by: :git)
-        Lain::CLI::Wiring::BoardBuild.for(
-          chronicle:, options: {}, judge: Lain::CLI::Switchboard::DEFERRING, model: "m", toolset:, project:, paths:,
-          verdict: Lain::CLI::Wiring::BoardBuild.shell_verdict(project:)
-        ).bind_session(session)
-      end
+      include_context "with a chat's guard stack"
 
       it "reads a Gemfile.lock's checksums unmasked" do
         body = File.read(File.expand_path("../../../Gemfile.lock", __dir__))
@@ -1261,6 +1265,27 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
         expect(result.content).to include(body.lines.grep(/sha256=/).first.strip)
         expect(result.content).not_to include("redacted")
       end
+    end
+  end
+
+  describe "a read through a chat's guard stack" do
+    include_context "with a chat's guard stack"
+
+    let(:aws_key) { "AKIAZ7QW3RT5YU8IOP2L" }
+
+    it "masks an AWS key, found by the Rust scanner over the read's bytes" do
+      scanner = Lain::Sensitivity::Regions::RustScanner.default
+      allow(scanner).to receive(:scan).and_call_original
+      path = write("notes.txt", "deploy with #{aws_key} today\n")
+      layers = Lain::CLI::ToolGuard.stack(chronicle, board).to_a
+
+      result = Sync do |task|
+        task.with_timeout(10) { dispatch_call("read_file", { "path" => path }, toolset:, layers:, context: session) }
+      end
+
+      expect(result.content).not_to include(aws_key)
+      expect(result.content).to include("<redacted:1>")
+      expect(scanner).to have_received(:scan).with(a_string_including(aws_key)).at_least(:once)
     end
   end
 

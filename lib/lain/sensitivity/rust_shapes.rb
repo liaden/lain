@@ -17,13 +17,18 @@ module Lain
       SHAPES = Regions::CONTENT_SHAPES.merge(
         %w[TOKEN PEM_PUBLIC OPENSSH_PUBLIC CHECKSUM_FIELD INTEGRITY_FIELD].to_h { [_1, Regions.const_get(_1)] }
       ).freeze
+      NAMES = SHAPES.keys.freeze
+
+      # Every detect reads the set, so threads can meet a cold one together; each would compile its own.
+      COMPILING = Mutex.new
+      private_constant :COMPILING
 
       class << self
         # @return [Ext::Regions::Set] every one of {SHAPES}, indexed as {names} lists them
-        def compiled = @compiled ||= compile(SHAPES)
+        def compiled = @compiled || COMPILING.synchronize { @compiled ||= compile(SHAPES) }
 
         # @return [Array<String>] the shape names, at the indexes a scan reports
-        def names = SHAPES.keys
+        def names = NAMES
 
         # @param shapes [Hash{String => Regexp}]
         # @return [Ext::Regions::Set]

@@ -97,4 +97,22 @@ RSpec.describe Lain::Sensitivity::RustShapes do
     expect(status).to be_success, err
     expect(out.lines(chomp: true)).to eq(%w[0 1 true])
   end
+
+  # The child slows the binding's compile, so every thread reaches a cold set inside one compile's window.
+  it "compiles once when threads race on the first use" do
+    script = <<~RUBY
+      require "lain"
+      calls = Queue.new
+      Lain::Ext::Regions.singleton_class.prepend(Module.new { define_method(:compile) { |shapes| calls << 1; sleep 0.1; super(shapes) } })
+      gate = Queue.new
+      threads = Array.new(8) { Thread.new { gate.pop; Lain::Sensitivity::RustShapes.compiled } }
+      8.times { gate << :go }
+      sets = threads.map(&:value)
+      puts calls.size, sets.uniq(&:object_id).size
+    RUBY
+    out, err, status = Open3.capture3(RbConfig.ruby, "-I", File.expand_path("../../../lib", __dir__), "-e", script)
+
+    expect(status).to be_success, err
+    expect(out.lines(chomp: true)).to eq(%w[1 1])
+  end
 end

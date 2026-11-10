@@ -3,7 +3,12 @@
 require "openssl"
 
 RSpec.describe Lain::Sensitivity::Regions do
-  def detect(content) = described_class.detect(content)
+  # Every example also holds the default Rust scanner to Ruby's own pass per shape, the oracle it replaced.
+  def detect(content, **options)
+    described_class.detect(content, **options).tap do |found|
+      expect(described_class.detect(content, **options, scanner: described_class::RubyScanner.new)).to eq(found)
+    end
+  end
 
   def digests(content) = detect(content).map(&:digest)
 
@@ -1119,7 +1124,7 @@ RSpec.describe Lain::Sensitivity::Regions do
   end
 
   describe ".detect with checksums" do
-    def checksummed(content) = described_class.detect(content, checksums: true)
+    def checksummed(content) = detect(content, checksums: true)
 
     def hex(seed, bytes) = OpenSSL::Digest.hexdigest("SHA256", seed)[0, bytes * 2]
     def base64(seed, bytes) = [OpenSSL::Digest.digest("SHA512", seed)[0, bytes]].pack("m0")
@@ -1311,6 +1316,44 @@ RSpec.describe Lain::Sensitivity::Regions do
 
     it "still masks a 50-hex run, which no checksum is" do
       expect(checksummed("value #{hex("fifty", 32)[0, 50]}\n")).not_to be_empty
+    end
+  end
+
+  describe ".detect by scanner" do
+    def corpus_texts
+      path = File.expand_path("../../../ext/lain/corpus/regions.ndjson", __dir__)
+      File.foreach(path).map { [JSON.parse(_1).dig("input", "bytes")].pack("H*") }
+    end
+
+    it "finds over the frozen corpus what the Ruby scanner finds" do
+      ruby = described_class::RubyScanner.new
+      found = corpus_texts.product([false, true]).map do |text, checksums|
+        [described_class.detect(text, checksums:), described_class.detect(text, checksums:, scanner: ruby)]
+      end
+
+      expect(found.size).to be > 100
+      expect(found.map(&:first)).to eq(found.map(&:last))
+      expect(found.map(&:first).flatten).not_to be_empty
+    end
+
+    it "builds no Ruby scanner when the Rust scan finishes every shape" do
+      allow(described_class::RubyScanner).to receive(:new).and_call_original
+
+      described_class::RustScanner.default.scan("API_KEY=#{secret}\n".b)
+
+      expect(described_class::RubyScanner).not_to have_received(:new)
+    end
+
+    # PEM_PUBLIC's backreference runs on fancy-regex's backtracking engine, and an unclosed block over a
+    # mebibyte of base64 exhausts it; the disguised block before it is found only by that shape.
+    it "still finds a shape's regions when the Rust scan reports that shape over its backtrack limit" do
+      disguised = "-----BEGIN PUBLIC KEY-----\nbm90IGEga2V5IGF0IGFsbA==\n-----END PUBLIC KEY-----\n"
+      text = "#{disguised}-----BEGIN PUBLIC KEY-----\n#{"A" * 1_100_000}-----END RSA PUBLIC KEY-----\n"
+      shapes = Lain::Sensitivity::RustShapes
+
+      expect(shapes.compiled.scan(text.b).limited).to eq([shapes.names.index("PEM_PUBLIC")])
+      expect(described_class.detect(text).map { [_1.bytes, _1.reason] })
+        .to eq([[disguised.chomp, "pem private key block"]])
     end
   end
 
