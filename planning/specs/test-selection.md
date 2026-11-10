@@ -1,6 +1,6 @@
 # Test selection: run what a change can reach, the full suite every 16th commit
 
-status: draft
+status: in-progress
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson
@@ -1181,3 +1181,55 @@ After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]
 7. `pre-commit run --all-files` and `bundle exec rubocop` clean; `bin/comment-census --check-tickets` clean.
 
 ## Execution log
+
+- 14:53 Run start. Base main at ac06bf1f. Code unchanged since grounding sha 2410db2e (only planning/ moved). Nothing staged; no user work unstaged; 85 stale worktrees from earlier plans left alone. Worktree prefix: tmp/worktrees/tsel-T<id>, branch card/tsel-T<id>.
+- Hooks: ruby-checks = rake compile check (~121s pspec + rubocop) on staged .rb/.rs outside apps/, crates/lain-core/; yard-lint --staged on ruby; gherkin-docs on planning/specs/*.md; cargo fmt/clippy/test on .rs; lint-commit-msg at commit-msg. Agent checks per path: bundle exec rubocop <paths>; bundle exec yard-lint <path>; bin/lint-commit-msg <msgfile>. Suite cannot share the box. Example count: hook log summary line, cross-check tmp/parallel_runtime_rspec.log. User approval: none beyond auto mode.
+- Build outputs for fresh worktree: lib/lain/lain.so, target/release/lain-fence, tmp/parallel_runtime_rspec.log. Without lain.so nothing loads.
+- Ratchets: spec/git_fixture_scrub_discipline_spec.rb spec/repo_as_fixture_spec.rb spec/fixture_discipline_spec.rb spec/error_taxonomy_discipline_spec.rb spec/declarative_inclusion_discipline_spec.rb spec/value_object_shareability_spec.rb spec/zeitwerk_spec.rb spec/lain_spec.rb spec/output_discipline_spec.rb spec/lain/comment_census_spec.rb spec/rakefile_spec.rb spec/seam_report_spec.rb spec/suite_profile_spec.rb
+- Test-runner pattern for wait-quiet: 'mise/installs/ruby/[0-9.]*/bin/(parallel_rspec|rspec)|[p]re[-_]commit (hook-impl|run)|cargo (test|build|clippy)'
+- 14:53 T19 T1 T6 T11 T12 cut at ac06bf1f
+- 14:54 T1 started (opus, ruby-implementer; may add spec_helper preload line in its worktree)
+- 14:54 T19 started (sonnet)
+- 14:54 T6 started (sonnet; git reader injectable until T19 lands)
+- 14:54 T11 started (sonnet)
+- 14:54 T12 started (sonnet)
+- Held: T17 (ready, waiting on memory headroom). Agent ids in agents.txt.
+- 14:56 T19 handed back (stop condition cleared: copied all 17 keys per the card); review low started
+- 14:56 T12 handed back; review low started
+- 14:56 T17 started (sonnet)
+- 14:56 T11 handed back (stop condition exercised: 182 = 182); review low started
+- 14:57 T6 handed back; stop condition (3s) cleared on evidence: 2.52s standalone at load 2, 3.2s once inside rspec under load. Pending: switch its git reader to TestMap::Git after T19 lands.
+- 14:57 T11 review APPROVE-WITH-FIXES (mechanical: pin >= with an over-count spec, extract total_in); same implementer applying
+- 15:00 T19 landed 2fb62d23 (hook log /home/tara/tmp/lain/claude-1000/-home-tara-dev-lain/ce3ab0b8-f809-43b7-a04d-62afaf9ad894/scratchpad/hook-T19-145731.log)
+- 15:01 T19 cleaned up; tsel-T6 fast-forwarded to 2fb62d23
+- 15:01 T12 review APPROVE (1 nit on shell quoting of FILES, left)
+- 15:01 T17 handed back; review queued until T12 landing ends
+- 15:01 T11 fixes verified by main session (diff under 20 lines); queued to land after T12
+- 15:04 T12 landed 22265d9e (hook log /home/tara/tmp/lain/claude-1000/-home-tara-dev-lain/ce3ab0b8-f809-43b7-a04d-62afaf9ad894/scratchpad/hook-T12-150127.log)
+- 15:04 T12 cleaned up; T7 T10 cut at 22265d9e
+- 15:05 T7 started (sonnet)
+- 15:05 T10 started (sonnet)
+- 15:05 T11 landing started
+- 15:05 T6 fix round done (uses TestMap::Git); review medium queued until T11 landing ends
+- 15:05 T1 handed back; review high (opus) queued until T11 landing ends
+- 15:08 T11 landed f393a032 (hook log /home/tara/tmp/lain/claude-1000/-home-tara-dev-lain/ce3ab0b8-f809-43b7-a04d-62afaf9ad894/scratchpad/hook-T11-150536.log)
+- 15:08 T11 landed f393a032; cleaned up
+- 15:08 reviews started: T1 high (opus), T6 medium, T17 low
+- 15:09 T7 handed back; review medium started
+- 15:09 T17 review APPROVE-WITH-FIXES (mechanical: delete the empty-tools example, which cannot fail)
+- 15:11 T6 review REQUEST-CHANGES: missing require (green only beside git_spec), rescue swallows bad tree, dead paths, 3 missed definition shapes, 5 surviving mutants, 1 WHAT comment. Fix round sent; second review follows.
+- 15:11 T10 handed back; review medium started
+- 15:13 T17 landed 4d500463 (hook log /home/tara/tmp/lain/claude-1000/-home-tara-dev-lain/ce3ab0b8-f809-43b7-a04d-62afaf9ad894/scratchpad/hook-T17-151114.log)
+- 15:14 T17 landed 4d500463; cleaned up
+- 15:14 T7 review APPROVE-WITH-FIXES with 1 substantive item (quoted paths crash). Scope change: T7 may edit landed tools/test_map/git.rb + git_spec.rb to return UTF-8 (C locale crash). Second review follows.
+- 15:15 T6 fix round done (18 examples alone); second review by same reviewer started
+- 15:16 T7 fix round done (15 examples); second review by same reviewer started
+- 15:17 T10 review REQUEST-CHANGES: require lain in step makes a detached bisect blame the wrong commit. Ruling: bisect.rb loads no lain; flock SuiteLock's path directly, pinned by a spec. 8 items sent; second review follows.
+- 15:18 T6 second review APPROVE; landing
+- 15:18 T7 second review APPROVE-WITH-FIXES (1 mechanical: pin the literal pathspec); main session verifies
+- 15:26 T6 landed a75ab704 (hook log /home/tara/tmp/lain/claude-1000/-home-tara-dev-lain/ce3ab0b8-f809-43b7-a04d-62afaf9ad894/scratchpad/hook-T6-152328.log)
+- 15:27 T1 review REQUEST-CHANGES: nested group run wipes attribution (blocker), boundaries untested, before(:suite) gap, last interval never closed. Ruling: a :suite sentinel interval that T2 folds into the boot record; after(:suite) yields (last, nil). Scope add: attribution_spec in slow_files.rb. T2 brief must say: fold :suite into boot, flush on the nil boundary.
+- 15:30 T7 landed e51939dc (hook log /home/tara/tmp/lain/claude-1000/-home-tara-dev-lain/ce3ab0b8-f809-43b7-a04d-62afaf9ad894/scratchpad/hook-T7-152731.log)
+- 15:30 T6 landed a75ab704; T7 landed e51939dc; both cleaned up
+- 15:30 T14 cut at e51939dc
+- 15:31 T14 started (sonnet). Checkpoint: landed T19 T12 T11 T17 T6 T7; in flight T1 (fix round), T10 (fix round), T14.
