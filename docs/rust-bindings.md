@@ -30,7 +30,7 @@ Before binding, all five must hold. If any fails, keep it in Ruby.
    fancy-regex's limits (`Scan#over_masked`) instead of under-masking. 2 shapes found so far, the
    openai-style api key and the credential literal assignment, still scan in quadratic time on 1
    long line without reaching a limit, a known gap. The speedup is why it moved now; bounded
-   backtracking is what admits it. Ruby stays the oracle in specs.
+   backtracking is what admits it.
 3. **It is hot per-turn**, not per-session. Per-session work is never worth a boundary.
    Parser parity with the consumer admits a binding that is neither asymptotically better nor
    hot per turn, by ruling 2026-11-10: lain reads a Cargo manifest with the `toml` crate cargo

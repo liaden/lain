@@ -206,13 +206,12 @@ module Lain
         #   shape and every other pattern still find it
         # @param hinted [Boolean] true when the content is a value a hinting name
         #   holds whole, so no token in it is excused for its digest shape
-        # @param scanner [#scan] what finds each shape's raw matches
         # @return [Array<Region>] frozen, ascending by offset, no two overlapping
-        def detect(content, checksums: false, hinted: false, scanner: RustScanner.default)
+        def detect(content, checksums: false, hinted: false)
           bytes = content.b
           view = View.of(bytes)
-          found = mapped(view, scan(view.text, scanner, checksums, hinted))
-          found += scan(bytes, scanner, checksums, hinted) if view.utf16?
+          found = mapped(view, scan(view.text, checksums, hinted))
+          found += scan(bytes, checksums, hinted) if view.utf16?
 
           # `:rank` makes the sort key TOTAL. No output depends on it -- equal
           # starts always overlap, so they merge, and `coalesced` picks the name
@@ -261,8 +260,8 @@ module Lain
         private
 
         # The ruling is "over-mask the span, never under-mask", so no gate or exemption may shrink one.
-        def scan(scanned, scanner, checksums, hinted)
-          over_masked, rows = scanner.scan(scanned).partition { _1[4] }
+        def scan(scanned, checksums, hinted)
+          over_masked, rows = RustScanner.default.scan(scanned).partition { _1[4] }
           candidates(scanned, group_by_shape(rows, scanned), checksums, hinted) + over_masked.map { over_mask(*_1) }
         end
 

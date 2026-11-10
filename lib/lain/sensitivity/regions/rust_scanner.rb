@@ -14,7 +14,7 @@ module Lain
 
         # @param bytes [String] BINARY
         # @return [Array<Array(String, Integer, Integer, Hash{String => Array(Integer, Integer)})>]
-        #   rows as {RubyScanner#scan} returns them, then 1 row for each over-masked span, with no
+        #   rows of [shape name, start, finish, groups], then 1 row for each over-masked span, with no
         #   groups and a 5th element, true
         def scan(bytes)
           scan = RustShapes.compiled.scan(bytes)
