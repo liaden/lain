@@ -294,6 +294,12 @@ module Lain
         #   carries no such path
         def file_at(revision, path) = local.file_at(revision, path)
 
+        # {#file_at} for many sides, delegated for the same reason.
+        #
+        # @param requests [Array<Array(String, String)>] `[revision, path]` pairs
+        # @return [Hash{Array, String, String => String, nil}]
+        def files_at(requests) = local.files_at(requests)
+
         # {LocalBranch#checked_out?}, through this object's own `git` rather than
         # delegated to `#local`: building that is what fetches, and a reviewer
         # whose checkout is not the pull request's head -- the ordinary case --

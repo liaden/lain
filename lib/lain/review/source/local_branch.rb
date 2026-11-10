@@ -60,6 +60,11 @@ module Lain
         # {PINS} as argv, for the callers that spell git themselves.
         CONFIG_PINS = PINS.flat_map { |pin| ["-c", pin] }.freeze
 
+        # A `cat-file --batch` header for an object it found; a missing name
+        # reads `<name> missing` and matches nothing.
+        FOUND = /\A\h+ (?<type>\w+) (?<size>\d+)\z/n
+        private_constant :FOUND
+
         # @param base [String] the ref the changeset is reviewed against; the
         #   MERGE BASE of this and `head` becomes {#base_ref}
         # @param head [String] the ref under review
@@ -118,6 +123,26 @@ module Lain
           Shell::Out.ok?(shell) ? shell.stdout.b.freeze : nil
         end
 
+        # {#file_at} for many sides through 1 `cat-file --batch -Z`, so a review
+        # of N files costs 1 process instead of 2N. NUL framing is what lets a
+        # name holding a newline be asked and answered; a missing name or a
+        # non-blob (a directory, a submodule) answers nil. A failed batch raises
+        # (an older git without `-Z`), never a per-file retry.
+        #
+        # @param requests [Array<Array(String, String)>] `[revision, path]` pairs
+        # @return [Hash{Array, String, String => String, nil}] each pair's binary bytes
+        def files_at(requests)
+          return {} if requests.empty?
+
+          shell = @git.run!("cat-file", "--batch", "-Z", error: Error,
+                                                         input: requests.map { |rev, path| "#{rev}:#{path}\0" }.join)
+          answers = blobs(shell.stdout.b)
+          raise Error, "git cat-file answered #{answers.size} records for #{requests.size} requests" unless
+            answers.size == requests.size
+
+          requests.zip(answers).to_h
+        end
+
         # The port's fifth message, answered by the source that never asks
         # anyone: the objects are in the local database and nothing fell back to
         # them.
@@ -139,6 +164,22 @@ module Lain
         end
 
         private
+
+        # One record per request, in order: `<sha> <type> <size>` NUL, the
+        # bytes, NUL; or `<name> missing` NUL. {HistoryLiterals}' batch parser
+        # splits headers on newlines, which a -Z header does not end with.
+        def blobs(output)
+          offset = 0
+          answers = []
+          while offset < output.bytesize
+            stop = output.index("\0", offset)
+            found = FOUND.match(output.byteslice(offset...stop))
+            size = found ? found[:size].to_i : 0
+            answers << (found && found[:type] == "blob" ? output.byteslice(stop + 1, size).freeze : nil)
+            offset = stop + 1 + (found ? size + 1 : 0)
+          end
+          answers
+        end
 
         # `--diff-merges=first-parent` is what stops a merge from silently losing
         # data: by default `git log --numstat` reports NOTHING for a merge, so a

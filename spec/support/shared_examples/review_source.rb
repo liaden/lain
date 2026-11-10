@@ -454,6 +454,19 @@ RSpec.shared_examples "a diff-bearing review changeset source" do |config|
 
   it_behaves_like "a review changeset source", config
 
+  describe "#files_at" do
+    let(:wanted) do
+      sides = changeset_source.files.flat_map do |file|
+        [[changeset_source.base_ref, file.old_path], [changeset_source.head_ref, file.new_path]]
+      end
+      sides.select(&:last) + [[changeset_source.head_ref, "no/such/file.rb"]]
+    end
+
+    it "answers every requested side exactly as #file_at does one at a time" do
+      expect(changeset_source.files_at(wanted)).to eq(wanted.to_h { |pair| [pair, changeset_source.file_at(*pair)] })
+    end
+  end
+
   # Having a diff IS having two revisions, so a diff source presents both sides
   # of {Lain::Review::SIDES} whatever its files happen to be. An added file is a
   # file with an EMPTY old side, never a round with no old side -- the whole

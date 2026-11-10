@@ -389,6 +389,16 @@ RSpec.describe Lain::Review::Source::GithubPr, :seam do
       expect(fetch_call).to be_nil
     end
 
+    it "reads a review's files in 1 cat-file over the object database" do
+      source = build
+      source.diff
+      calls.clear
+
+      source.files
+
+      expect(git_calls.count { |argv| argv.include?("cat-file") }).to eq(1)
+    end
+
     it "reports where the diff came from, so a caller can journal it" do
       origin = build.diff_origin
       expect(origin.origin).to eq("object_database")

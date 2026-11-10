@@ -338,6 +338,137 @@ RSpec.describe Lain::Review::Source::LocalBranch, :seam do
     end
   end
 
+  describe "#files_at" do
+    def spawned_by(factory_calls)
+      factory = lambda { |*argv, **options|
+        factory_calls << argv
+        Lain::Shell::Out.new(*argv, **options)
+      }
+      described_class.new(base: "base", repo_root: @repo, shell_out_factory: factory)
+    end
+
+    # A cat-file whose answer is replaced after it ran, every other command real.
+    def tampered_cat_file(calls, **answers)
+      tampered = Class.new(SimpleDelegator) do
+        answers.each { |name, value| define_method(name) { value } }
+      end
+      lambda { |*argv, **options|
+        calls << argv
+        real = Lain::Shell::Out.new(*argv, **options)
+        argv.include?("cat-file") ? tampered.new(real) : real
+      }
+    end
+
+    def recording_cat_file(asked)
+      lambda { |*argv, **options|
+        asked << options[:input].to_s if argv.include?("cat-file")
+        Lain::Shell::Out.new(*argv, **options)
+      }
+    end
+
+    it "reads every side of a 30 file review with 1 cat-file that agrees with git show" do
+      files = (1..30).to_h { |n| ["many_f#{n}.rb", "body #{n}\n" * n] }
+      commit("thirty files", files)
+      calls = []
+      reading = spawned_by(calls)
+      pairs = files.keys.map { |path| [reading.head_ref, path] }
+      calls.clear
+
+      answered = reading.files_at(pairs)
+
+      expect(calls.count { |argv| argv.include?("cat-file") }).to eq(1)
+      expect(calls.size).to eq(1)
+      expect(answered).to eq(pairs.to_h { |pair| [pair, reading.file_at(*pair)] })
+    end
+
+    it "keeps added, deleted, empty and non-UTF-8 sides apart" do
+      commit("sides", "added.rb" => "new\n", "empty.rb" => "", "latin.txt" => "caf\xE9\n".b)
+      run_git("rm", "-q", "shared.rb")
+      run_git("commit", "-q", "-m", "delete shared")
+      moved = described_class.new(base: "base", repo_root: @repo)
+      base = moved.base_ref
+      head = moved.head_ref
+
+      answered = moved.files_at([[base, "added.rb"], [head, "shared.rb"], [head, "empty.rb"], [head, "latin.txt"],
+                                 [head, "added.rb"]])
+
+      expect(answered[[base, "added.rb"]]).to be_nil
+      expect(answered[[head, "shared.rb"]]).to be_nil
+      expect(answered[[head, "empty.rb"]]).to eq("")
+      expect(answered[[head, "latin.txt"]]).to eq("caf\xE9\n".b)
+      expect(answered[[head, "latin.txt"]].encoding).to eq(Encoding::BINARY)
+      expect(answered[[head, "added.rb"]]).to eq("new\n")
+    end
+
+    it "answers nil for a name holding a newline, for a directory, and runs nothing for no request" do
+      calls = []
+      reading = spawned_by(calls)
+      calls.clear
+
+      expect(reading.files_at([[reading.head_ref, "no\nsuch"], [reading.head_ref, "."]]).values).to eq([nil, nil])
+      expect(reading.files_at([])).to eq({})
+      expect(calls.size).to eq(1)
+    end
+
+    it "answers nil for a real directory and for a gitlink" do
+      FileUtils.mkdir_p(File.join(@repo, "dir"))
+      commit("a directory", "dir/inner.rb" => "x\n")
+      run_git("update-index", "--add", "--cacheinfo", "160000,#{head},sub")
+      run_git("commit", "-q", "-m", "a gitlink")
+      reading = described_class.new(base: "base", repo_root: @repo)
+
+      answered = reading.files_at([[reading.head_ref, "dir"], [reading.head_ref, "sub"],
+                                   [reading.head_ref, "dir/inner.rb"]])
+
+      expect(answered.values).to eq([nil, nil, "x\n"])
+    end
+
+    it "raises, running no per-file fallback, when the batch itself fails" do
+      calls = []
+      reading = described_class.new(base: "base", repo_root: @repo,
+                                    shell_out_factory: tampered_cat_file(calls, exitstatus: 129))
+      calls.clear
+
+      expect { reading.files_at([[reading.head_ref, "shared.rb"]]) }.to raise_error(Lain::Error)
+      expect(calls.size).to eq(1)
+    end
+
+    it "raises when git answers fewer records than were asked" do
+      reading = described_class.new(base: "base", repo_root: @repo,
+                                    shell_out_factory: tampered_cat_file([], stdout: "".b))
+
+      expect { reading.files_at([[reading.head_ref, "shared.rb"], [reading.head_ref, "long.rb"]]) }
+        .to raise_error(Lain::Error)
+    end
+
+    it "asks for no side of a binary or mode-only file, whose hunks are empty" do
+      add_binary
+      File.chmod(0o755, File.join(@repo, "long.rb"))
+      run_git("commit", "-q", "-am", "mode only")
+      asked = []
+      reading = described_class.new(base: "base", repo_root: @repo, shell_out_factory: recording_cat_file(asked))
+
+      files = reading.files
+
+      expect(files.map(&:path)).to include("blob.bin", "long.rb", "shared.rb")
+      expect(asked.join).to include("shared.rb")
+      expect(asked.join).not_to include("blob.bin")
+      expect(asked.join).not_to include("long.rb")
+    end
+
+    it "reads a review's files in 1 cat-file" do
+      calls = []
+      reading = spawned_by(calls)
+      reading.diff
+      calls.clear
+
+      reading.files
+
+      expect(calls.count { |argv| argv.include?("cat-file") }).to eq(1)
+      expect(calls.none? { |argv| argv.include?("show") }).to be(true)
+    end
+  end
+
   # One line of `#file_at`'s answer, cut by `Anchor.lines`' rule: what a note's
   # evidence is read from.
   describe "#line_at" do

@@ -264,7 +264,20 @@ module Lain
         # released.
         #
         # @return [Array<ChangedFile>] in the diff's own (path-sorted) order
-        def files = @files ||= Parser.new(diff).files.map { |file| masked(file) }.freeze
+        def files
+          @files ||= begin
+            parsed = Parser.new(diff).files
+            sides = files_at(parsed.flat_map { |file| side_requests(file) })
+            parsed.map { |file| masked(file, sides) }.freeze
+          end
+        end
+
+        # Every side a set of files needs, asked at once so a source that can
+        # answer in 1 read does; this default is the one-by-one fallback.
+        #
+        # @param requests [Array<Array(String, String)>] `[revision, path]` pairs
+        # @return [Hash{Array, String, String => String, nil}] each pair's bytes, nil where absent
+        def files_at(requests) = requests.to_h { |request| [request, file_at(*request)] }
 
         # Both, and HERE for {#files}' reason: having a diff IS having two
         # revisions. It does not move with the files -- a diff whose only file is
@@ -325,23 +338,31 @@ module Lain
 
         private
 
-        # Only the working tree's own bytes may reconcile: the ledger is keyed by
-        # the path on disk, so reconciling against any other revision's bytes
-        # forgets a release made on what the human is looking at.
-        def masked(file)
+        def side_requests(file)
+          return [] if file.hunks.empty?
+
+          [[base_ref, file.old_path], [head_ref, file.new_path]].select(&:last)
+        end
+
+        def masked(file, sides)
           return file if file.hunks.empty?
 
-          mask = MaskedHunks.new(old: side(base_ref, file.old_path, file.path, reconcile: false),
-                                 new: side(head_ref, file.new_path, file.path, reconcile: reconciles?(file.new_path)))
+          mask = MaskedHunks.new(old: side(base_ref, file.old_path, file.path, sides, reconcile: false),
+                                 new: side(head_ref, file.new_path, file.path, sides,
+                                           reconcile: reconciles?(file.new_path)))
           ChangedFile.new(**file.to_h, hunks: file.hunks.map { |hunk| mask.call(hunk) })
         end
 
+        # Only the working tree's own bytes may reconcile: the ledger is keyed by
+        # the path on disk, so reconciling against any other revision's bytes
+        # forgets a release made on what the human is looking at.
+        #
         # The release check first: with nothing released a reconcile changes
         # nothing, and asking git whether the path is checked out costs 2 spawns.
         def reconciles?(path) = !path.nil? && projection.released?(ledger_path(path)) && checked_out?(path)
 
-        def side(revision, path, identity, reconcile:)
-          bytes = path && file_at(revision, path)
+        def side(revision, path, identity, sides, reconcile:)
+          bytes = path && sides.fetch([revision, path])
           unread = ->(texts) { sheet(identity, "#{texts.join("\n")}\n", reconcile: false) }
           MaskedHunks::Side.new(sheet: bytes && sheet(path, bytes, reconcile:), unread:)
         end
