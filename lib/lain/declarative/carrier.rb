@@ -147,7 +147,7 @@ module Lain
       # @return [Hash{Symbol => Object}] frozen
       # @raise [UnsettleableAttribute] if an attribute holds something uncopyable
       def settled
-        attributes.each_with_object({}) { |(name, value), acc| acc[name.to_sym] = Copy.new(name).of(value) }.freeze
+        attributes.each_with_object({}) { |(name, value), acc| acc[name.to_sym] = Copy.of(name, value) }.freeze
       end
 
       # One attribute's value, deeply frozen -- or the refusal naming what could
@@ -167,6 +167,14 @@ module Lain
       # has to report, and the containers currently OPEN on the path, which is
       # how a cycle is told from mere sharing.
       class Copy
+        # Skips building a walker for a value that needs no copy, which is most of them.
+        #
+        # @param attribute [String]
+        # @param value [Object]
+        # @return [Object] value itself when Ractor-shareable, else a deep frozen copy
+        # @raise [UnsettleableAttribute]
+        def self.of(attribute, value) = Ractor.shareable?(value) ? value : new(attribute).of(value)
+
         # @param attribute [String] name of the attribute being settled
         def initialize(attribute)
           @attribute = attribute

@@ -103,6 +103,15 @@ RSpec.describe Lain::Declarative::Carrier do
       expect(settling.new(homes: already).settled[:homes]).to be(already)
     end
 
+    it "builds no copier for a value that is already shareable" do
+      settling = carrier { attribute :name }
+      frozen = "x"
+      allow(Lain::Declarative::Carrier::Copy).to receive(:new).and_call_original
+
+      expect(settling.new(name: frozen).settled[:name]).to be(frozen)
+      expect(Lain::Declarative::Carrier::Copy).not_to have_received(:new)
+    end
+
     it "freezes the hash it returns, so the settled set cannot be edited after the fact" do
       settling = carrier { attribute :name }
 
