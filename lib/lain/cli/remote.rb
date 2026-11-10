@@ -14,7 +14,7 @@ module Lain
       UNKNOWN_VERB = "lain remote knows #{VERBS.join(" and ")}, not %<verb>p".freeze
       NO_NAME = "lain remote %<verb>s needs a device name"
       NO_TAILNET = "none, this host has no #{TAILNET_INTERFACE} address, and the relay serves only the tailnet".freeze
-      ONCE = "Enter both in the lain-remote app's settings. The token is not shown again."
+      ONCE = "Enter both in the settings of the lain app on the phone. The token is not shown again."
       REVOKED = "revoked %<name>s; the relay closes its connection when it rereads the file"
 
       # @param verb [String] pair or revoke

@@ -2,12 +2,13 @@
 
 **What it exercises:** `lain remote pair` and `lain remote revoke` (`CLI::Remote`, `Remote::Devices`), the `remote` config verb
 (`relay:` and `ntfy:`), the `relay` tmux window `lain up` opens (`CLI::Up::Relay`), `lain-core relay`, `Approval::RemoteSurface`
-over `Remote::Agenda` and its masked `View`, and `Remote::Ntfy`.
+over `Remote::Agenda` and its masked `View`, `Remote::Ntfy`, and the phone app in `apps/lain-remote` (§6 on the desktop,
+§7 on an emulated Android device).
 
 **Status:** written 2026-11-04 from the code at HEAD (`5d769e5f`: `cli/remote.rb`, `remote/devices.rb`, `remote/agenda.rb`,
 `remote/ntfy.rb`, `approval/remote_surface.rb`, `cli/up.rb` `class Relay`, `config/builder.rb`, `crates/lain-core/src/relay.rs`).
-Nothing here has been driven, and no phone app is needed: drive the relay's own socket and TCP port with a stand-in client, or
-with the lain-remote app if one is paired. Every "Expect" is a prediction read off the code, so a mismatch is either a defect or a
+Nothing here has been driven. §0 to §5 need no phone app: drive the relay's own socket and TCP port with a stand-in client, or
+with the app. §6 and §7 were added on 2026-11-10, when the app moved into this repo. Every "Expect" is a prediction read off the code, so a mismatch is either a defect or a
 stale line in this file, and the round says which.
 
 **The question it answers:** can a human answer what waits on them from a paired phone, with exactly the authority they have at
@@ -18,7 +19,8 @@ the phone ever see a byte the desk would have masked?
 
 **Needs:** `../bench.md` up, tmux, a built `lain-core` (`bundle exec rake core:build`), Landlock in the kernel (the relay refuses to
 run unconfined), and for the real-network half a `tailscale0` interface. Without one, listen on loopback, which the relay allows.
-A stand-in ntfy topic: `nc -l` or a one-route HTTP server on loopback. Read `../method.md` first, build the sandbox with
+A stand-in ntfy topic: `nc -l` or a one-route HTTP server on loopback. §6 needs `tailscaled` up and logged in, and
+WebKitGTK (`cargo build -p lain-remote`); §7 needs what its own Needs line says. Read `../method.md` first, build the sandbox with
 `.claude/skills/manual-qa/scripts/qa-sandbox.sh`, and start each Bash call that touches files with `: "${QA:?}"`.
 
 ---
@@ -114,7 +116,7 @@ fixed at the desk`.
 Set `remote ntfy: "http://127.0.0.1:<port>/qa-topic"` beside `relay:` and run the stand-in topic server. Park a call and leave it.
 
 - Before 60 s: nothing is sent. Answer a second parked call within the minute: nothing is ever sent for it.
-- At 60 s the server receives exactly 1 POST: body `Open lain-remote to answer.`, a `Title` of `lain approval waiting on <requester>`
+- At 60 s the server receives exactly 1 POST: body `Open lain to answer.`, a `Title` of `lain approval waiting on <requester>`
   (`gate question` or `question` for those kinds), and an `Actions` header `view, Open, lain-remote://item/<id>`. No input text, no
   token, no path, no relay address anywhere in it. A requester with non-ASCII bytes reads `?` in the title.
 - It is not sent again while the same chat runs, even if the server answered 500 (a refusal is recorded once, not retried).
@@ -124,8 +126,70 @@ Set `remote ntfy: "http://127.0.0.1:<port>/qa-topic"` beside `relay:` and run th
 - Point `ntfy:` at a dead port: the chat is not stalled (the post is bounded at 5 s and runs off the sweep), and one fault record
   is written, not one per sweep.
 
+## 6: The desktop app, over the tailnet only *(cheap)*
+
+The phone's path, driven from the desk: the relay listens only on this host's tailnet address, so the app cannot take a
+loopback shortcut.
+
+```bash
+TS=$(tailscale ip -4)
+cargo build -p lain-remote
+```
+
+Set `remote relay: "$TS:7820"` (the address itself, not `$TS`), run `lain remote pair qa-desktop`, and start `lain up`. Expect
+the `relay:` line of the pair to read `$TS:7820`, and `ss -ltn 'sport = :7820'` to show 1 listener, on `$TS`, and none on
+`127.0.0.1` or `0.0.0.0`.
+
+Run the app with a throwaway settings file, so the round never writes the real one:
+
+```bash
+LAIN_REMOTE_CONFIG="$QA/remote-settings" target/debug/lain-remote
+```
+
+1. **Loopback is refused.** With no settings saved, the app opens on Settings. Enter `127.0.0.1:7820` and the token. Expect the
+   status line to read `reconnecting: ` and a connect error, repeated every 3 s, and no agenda. `nc -zv 127.0.0.1 7820` is refused
+   too.
+2. **The tailnet address works.** Enter `$TS:7820` and leave the token blank. Expect the token field's hint to read
+   `a token is saved; leave blank to keep it`, the status line to clear, and `$QA/remote-settings` at mode 0600 holding the
+   address. The token must not appear in the window, on the terminal or in the app's stderr.
+3. **The 3 items of §3, answered from the app.** The agenda lists them newest first with kind, requester and age. Approve the parked
+   call, pick an option on the question, and deny the gate with a note. Expect what §3 expects from each, with `remote:qa-desktop`
+   in the journal. Then answer an item at the desk while it is open in the app: expect `That item is no longer waiting.`.
+4. **A blank text answer is not sent.** Pick Text on a question with nothing typed: expect no answer to leave the app. A Deny
+   with an empty note is sent, carrying no note.
+5. **Revoke and restart.** `lain remote revoke qa-desktop` while the app is connected: expect `reconnecting: ` within about a
+   second, and never the agenda again. Pair again, enter the new token, then kill the `relay` window's process: expect
+   `reconnecting: `, and the agenda back on its own once `lain up` is restarted.
+6. **Wrong looks like:** an agenda while the address is `127.0.0.1`, a listener on loopback, or the token anywhere on screen.
+
+**What this does not prove.** Linux routes a packet for one of the host's own addresses through loopback, so this host reaching
+`$TS` never enters WireGuard. Record `ip route get $TS` in the round. The expected output is `local $TS dev lo ...`, and while it
+reads that, §6 proves only the bind and the address the phone will use. A real tailnet crossing needs a second node, which is §7 or
+a real phone.
+
+## 7: An emulated Android device on the tailnet *(not yet driven; setup first)*
+
+**Needs:** `dx` (the Dioxus 0.7 CLI), the Android SDK and NDK, and 1 of the 2 below. Neither has been set up on this box, and
+whether Tailscale's VPN service runs inside Waydroid has not been checked.
+
+- **Waydroid.** It runs Android in a container on this kernel, which already has binder support, and needs no KVM. Its Android
+  has its own network, so the Tailscale app inside it is a separate tailnet node. Build for `x86_64-linux-android`.
+- **The Android Emulator.** It needs `/dev/kvm`. The `kvm_amd` module ships with the kernel and is not loaded, and if
+  `sudo modprobe kvm_amd` fails, SVM is probably off in the BIOS. Use an x86_64 system image with Google Play, so the
+  Tailscale app installs from the store.
+
+Then:
+
+1. Install Tailscale inside the device and log it in. Expect `tailscale status` on this host to list it.
+2. `dx build --platform android` from `apps/lain-remote`, then `adb install` the APK. Expect the launcher label to read `lain`.
+3. Pair a new device, `lain remote pair qa-android`, and enter `$TS:7820` and the token in the app on the device.
+4. Expect `tailscale ping <device>` from this host to answer, and the relay's peer in `ss -tn 'sport = :7820'` to be the
+   device's tailnet address, not `$TS`. That is the tailnet crossing that §6 cannot show.
+5. Repeat §6 steps 3 to 5 from the device. Then repeat §5 with `ntfy:` pointing at a topic the device subscribes to: nothing on
+   Android handles the notice's `lain-remote://item/<id>` link yet (known gap), so record what tapping Open does.
+
 ## What this scenario does not cover
 
-The lain-remote app itself, and `tailscale` ACLs. 2 gaps are known and recorded in the plan, and a round that finds them files
+A real phone, and `tailscale` ACLs. 2 gaps are known and recorded in the plan, and a round that finds them files
 them as known: no "already answered" signal reaches a phone that loses a race, only the journal's `remote_answer_lost`; and the
 mask's known gaps show through the phone view (a value in base64 or reversed, under 6 bytes, or split across 2 fields).

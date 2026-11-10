@@ -133,7 +133,7 @@ fn App() -> Element {
   };
 
   rsx! {
-    h1 { "Lain Remote" }
+    h1 { "lain" }
     button { onclick: move |_| screen.set(Screen::Settings), "Settings" }
     p { "{status}" }
     {shown}

@@ -2248,7 +2248,7 @@ XDG path relative, which put machine state back inside the user's repository)
 
     Last, stream P (added by the user): lain-core grown into a tailnet relay, 1 agenda of everything waiting on a human,
     paired and revocable phones, an ntfy buzz that opens the app, and a sideloaded Dioxus app in
-    `~/dev/lain-remote`.
+    `apps/lain-remote`.
 
 ## Map of the documents
 

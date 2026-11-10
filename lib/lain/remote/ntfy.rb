@@ -7,7 +7,7 @@ require "uri"
 module Lain
   module Remote
     # Announces a waiting item on an ntfy topic, so the phone buzzes and its one
-    # action opens the lain-remote app, where every answer is given. The relay
+    # action opens the phone app, where every answer is given. The relay
     # grows no HTTP surface for this: the notice carries a title and a link and
     # nothing else, so neither the item's text nor the relay's token can reach
     # a topic that is, to ntfy, a shared name.
@@ -44,7 +44,7 @@ module Lain
       # @raise [Refused] when the server turns the notice away
       # @raise [Timeout::Error, SystemCallError] when the server is slow or not there
       def notify(item)
-        response = http.post(@uri.request_uri, "Open lain-remote to answer.", headers(item))
+        response = http.post(@uri.request_uri, "Open lain to answer.", headers(item))
         raise Refused, "ntfy answered #{response.code}" unless response.is_a?(Net::HTTPSuccess)
       end
 

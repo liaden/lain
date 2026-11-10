@@ -241,7 +241,7 @@ lain remote revoke my-phone    # stop admitting it
 `lain remote pair NAME` adds a device to the devices file under `$XDG_STATE_HOME/lain/remote/` and
 prints `paired NAME`, the `token:` and the `relay:` address (this host's `tailscale0` address on
 port 7820, or `none` when the host has no such address). Enter the token and address in the
-lain-remote app's settings. The token is not shown again. `lain remote revoke NAME` removes the
+settings of the phone app (`apps/lain-remote`, labelled `lain` on the phone). The token is not shown again. `lain remote revoke NAME` removes the
 device. The relay rereads the file on its own, so neither verb restarts it, and a revoked device's
 connection closes at that reread. Any other verb, or a missing `NAME`, is refused by name. The
 phone surface itself is switched on by the [`remote` config verb](#remote).
@@ -1385,7 +1385,7 @@ tests preset: :rspec
   [`lain remote pair`](#lain-remote). `ntfy:` is an `http` or `https` topic URL, such as
   `"https://ntfy.sh/my-lain-topic"`; anything else is refused. An item that waits 60 seconds
   unanswered sends 1 notice to the topic, a title naming the kind and the requester plus an Open
-  action into the lain-remote app, and no item text, token or path. An item answered first never
+  action into the phone app, and no item text, token or path. An item answered first never
   buzzes. A chat announces each item once, so an item still waiting after the chat restarts (an
   epic gate held across it, say) is announced again as a reminder. The topic is a shared name to
   ntfy, which is why nothing else rides on the notice.

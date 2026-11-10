@@ -199,7 +199,7 @@ Only the main session edits these. Cards hand back a 1-line diff.
 - **A `Verdict` with `Abstain`.** Abstain is the identity of `Ladder#+`. Folding it into `Verdict` would give the join 2 bottoms.
 - **Package-relative mirrored levels for rspec and pytest monorepos.** No trial needs them. T2 only corrects the branch's claim that it generalizes.
 - **Answer from the ntfy notification.** An approve needs the context the app shows, and a Deny button would need an HTTP surface on the relay. The notification carries Open only (T56, user ruling 2026-11-03).
-- **The app inside this Cargo workspace.** Dioxus pulls a banned crate, and the app needs the Android toolchain. It gets its own repo (T58).
+- **The app inside this Cargo workspace.** Dioxus pulls a banned crate, and the app needs the Android toolchain. It gets its own repo (T58). Reversed on 2026-11-10: Dioxus 0.7.10 pulls no banned crate, so the app moved to `apps/lain-remote`, outside `default-members`.
 
 ## Open decisions
 
@@ -2040,7 +2040,7 @@ The user pulled the remote surface into this plan on 2026-11-03 ("we will see fe
 - **The relay is lain-core,** per the 2026-10-17 ruling. It gets a frame ceiling and an auth deadline (T50), then a `relay` subcommand bound to a tailnet address (T52). Ruby dials it over a Unix socket, and the phone dials it over the tailnet.
 - **Push in both directions is long-poll methods,** so the request and response contract does not change.
 - **The phone answers at the asking rung,** like the terminal, with authority `:human` and surface `"remote"`. The August research's rung model (`AutoSurface`, `Notify`, `Risk`, `alters_outcome?`) was deleted (`b24b2e62`, `c40ab419`, `46582847`).
-- **The app lives in its own repo,** `~/dev/lain-remote`, as belle-curves and pitchcraft do. Dioxus pulls `nu-ansi-term`, which `deny.toml` bans workspace-wide. Only `lain-wire` is shared, as a git dependency pinned to a commit.
+- **The app lives in its own repo,** `~/dev/lain-remote`, as belle-curves and pitchcraft do. Dioxus pulls `nu-ansi-term`, which `deny.toml` bans workspace-wide. Only `lain-wire` is shared, as a git dependency pinned to a commit. Reversed on 2026-11-10: `cargo deny` over Dioxus 0.7.10 finds no banned crate, so the app is `apps/lain-remote` in this workspace and `lain-wire` is a path dependency.
 - **An ntfy notification carries only "Open"**, a deep link into the app. Every answer is given in the app, and the notification never carries input text or a token.
 
 Cards T50 to T57 are Rust or Ruby in this repo. T58 and T59 run in `~/dev/lain-remote`, and their commits land there.
@@ -2501,7 +2501,7 @@ The comment at `redact_secret_reads.rb:113-125` calls this the last fail-open in
    - `lain usage <session>` prints the orchestrator's and the judge's tokens.
 7. Manual phone pass, owed by the user:
    - Install `dx`, the Android SDK and NDK, and run an ntfy server on the tailnet.
-   - Build and sideload the APK from `~/dev/lain-remote` (`dx build --platform android --release`).
+   - Build and sideload the APK from `apps/lain-remote` (`dx build --platform android --release`).
    - Set `remote relay:` and `remote ntfy:`.
    - Answer a parked call, a wave gate and an ask_human question from the phone, away from the desk.
    - Time buzz to verdict (Open decisions).
