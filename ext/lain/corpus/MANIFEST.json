@@ -25,6 +25,10 @@
     "errors.ndjson": {
       "blake3": "blake3:b3c10bc2f657c52081ecd21e14808521176b8e1e29f2a6785d28e8ef1992548f",
       "records": 400
+    },
+    "regions.ndjson": {
+      "blake3": "blake3:16fd6f12fb9489a6844e258ffcc9d87ea60547d786846d89be402cc8ce2bc6e5",
+      "records": 120
     }
   },
   "ruby_oracle_retired": {

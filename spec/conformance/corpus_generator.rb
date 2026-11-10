@@ -14,7 +14,7 @@ require "fileutils"
 module ConformanceCorpus
   DIR = File.expand_path("../../ext/lain/corpus", __dir__)
   MANIFEST = File.join(DIR, "MANIFEST.json")
-  FILES = %w[canonical event_digest dag store errors].freeze
+  FILES = %w[canonical event_digest dag store errors regions].freeze
 
   ABOUT = "A regression oracle, not a discovery one: the canonical vectors record what the Ruby implementation " \
           "answered at the commit named here, so a change in either implementation shows up as a mismatch. " \
@@ -322,5 +322,113 @@ module ConformanceCorpus
     end
   end
 
-  VECTORS = { "canonical" => CanonicalVectors }.freeze
+  # The spike-labelled inputs are carried through the file, so regenerating never reads the tree. A BOM is
+  # skipped for the scan and added back to every offset, as Regions.detect does.
+  module RegionVectors
+    module_function
+
+    def shapes
+      regions = Lain::Sensitivity::Regions
+      regions::CONTENT_SHAPES.merge(%w[TOKEN PEM_PUBLIC OPENSSH_PUBLIC CHECKSUM_FIELD INTEGRITY_FIELD]
+                                      .to_h { [_1, regions.const_get(_1)] })
+    end
+
+    def inputs(_draw) = (WRITTEN + carried).map { |shape, label, bytes| entry(shape, label, bytes) }
+
+    def entry(shape, label, bytes) = { "shape" => shape, "label" => label, "bytes" => bytes.b.unpack1("H*") }
+
+    def carried
+      return [] unless File.exist?(ConformanceCorpus.path("regions"))
+
+      spikes = ConformanceCorpus.records("regions").map { |record, _| record.fetch("input") }
+                                .select { |input| input.fetch("label").match?(SPIKE_LABEL) }
+      spikes.map { |input| [input.fetch("shape"), input.fetch("label"), [input.fetch("bytes")].pack("H*")] }
+    end
+
+    def derive(input)
+      bytes = [input.fetch("bytes")].pack("H*")
+      skip = bytes.start_with?(BOM) ? BOM.bytesize : 0
+      shape = shapes.fetch(input.fetch("shape"))
+      { "skip" => skip, "matches" => matches(shape, bytes.byteslice(skip..), skip) }
+    end
+
+    def matches(shape, scanned, skip)
+      found = scanned.to_enum(:scan, shape).map { Regexp.last_match }
+      found.map { |match| ["0", *shape.names.uniq].to_h { |name| [name, range(match, name, skip)] } }
+    end
+
+    def range(match, name, skip)
+      group = name == "0" ? 0 : name
+      match.begin(group) && [match.begin(group) + skip, match.end(group) + skip]
+    end
+
+    SPIKE_LABEL = /\Aspike /
+    BOM = Lain::Sensitivity::Regions::BOM
+    B64 = "Zq8vLm2xK9" * 8
+    HEX = "a3f9c1d70b" * 7
+    private_constant :B64, :HEX
+
+    # Values are generated, never a credential anyone holds. A near-miss is text that looks like its
+    # shape and must not match it.
+    WRITTEN = [
+      ["openai-style api key", "positive", "key = sk-#{B64[0, 24]}\n"],
+      ["openai-style api key", "near_miss", "ask-someone-to-help-with-this-quickly\n"],
+      ["aws access key id", "positive", "id = AKIA#{"ABCDEFGH" * 2}\n"],
+      ["aws access key id", "near_miss", "id = AKIAABC123\n"],
+      ["pem private key block", "positive",
+       "-----BEGIN RSA PRIVATE KEY-----\n#{B64[0, 64]}\n-----END RSA PRIVATE KEY-----\nafter\n"],
+      ["pem private key block", "near_miss",
+       "-----BEGIN PUBLIC KEY-----\n#{B64[0, 64]}\n-----END PUBLIC KEY-----\n"],
+      ["github token", "positive", "token ghp_#{("AbCd1234" * 5)[0, 36]} end\n"],
+      ["github token", "near_miss", "token ghp_short end\n"],
+      ["credential assignment", "positive", %(api_key = "#{B64[0, 12]}"\n)],
+      ["credential assignment", "near_miss", "the token is unset\n"],
+      ["dotenv assignment", "positive", "export DB_HOST=db.internal\n"],
+      ["dotenv assignment", "near_miss", "a line of prose with no equals sign\n"],
+      ["toml assignment", "positive", %(name = "lain"\n)],
+      ["toml assignment", "near_miss", "name = bare\n"],
+      ["yaml assignment", "positive", "adapter: postgresql\n"],
+      ["yaml assignment", "near_miss", "adapter:\n  - postgresql\n"],
+      ["netrc password", "positive", "machine example.com login lain password #{B64[0, 8]}\n"],
+      ["netrc password", "netrc password first", "machine example.com password s3cretpw login lain\n"],
+      ["netrc password", "near_miss", "default password reset\n"],
+      ["pgpass entry", "positive", "db.internal:5432:lain:lain:#{B64[0, 10]}\n"],
+      ["pgpass entry", "near_miss", "12:34:56:78:90\n"],
+      ["htpasswd hash", "positive", "lain:$apr1$abcdefgh$#{B64[0, 22]}\n"],
+      ["htpasswd hash", "near_miss", "lain:plaintext\n"],
+      ["msmtprc password", "positive", "password #{B64[0, 10]}\n"],
+      ["msmtprc password", "near_miss", "password required now\n"],
+      ["quoted password key", "positive", %({"db_password": "#{B64[0, 10]}"}\n)],
+      ["quoted password key", "near_miss", %({"db_password": "short"}\n)],
+      ["url credentials", "positive", "postgres://lain:#{B64[0, 10]}@db.internal/app\n"],
+      ["url credentials", "near_miss", "https://example.com:8080/path\n"],
+      ["bearer header", "positive", "Authorization: Bearer abc123def456ghi\n"],
+      ["bearer header", "near_miss", "Authorization: Bearer onlyletters\n"],
+      ["suffixed password key", "positive", "db_password: #{B64[0, 10]}\n"],
+      ["suffixed password key", "near_miss", "password: #{B64[0, 10]}\n"],
+      ["mysql password flag", "positive", "mysql -u root -p#{B64[0, 10]} app\n"],
+      ["mysql password flag", "near_miss", "mysql -u root app\n"],
+      ["credential literal assignment", "positive", %(secret = "#{B64[0, 10]}"\n)],
+      ["credential literal assignment", "near_miss", "secret = ENV['LAIN_SECRET']\n"],
+      ["password variable assignment", "positive", "PGPASSWORD=#{B64[0, 10]} psql\n"],
+      ["password variable assignment", "quoted", %(PGPASSWORD="#{B64[0, 10]}" psql\n)],
+      ["password variable assignment", "near_miss", "OLDPWD=/home/lain\n"],
+      ["TOKEN", "positive", "tok = #{B64[0, 30]}==\n"],
+      ["TOKEN", "near_miss", "short-token\n"],
+      ["PEM_PUBLIC", "positive", "-----BEGIN PUBLIC KEY-----\r\n#{B64[0, 40]}\r\n-----END PUBLIC KEY-----\n"],
+      ["PEM_PUBLIC", "near_miss", "-----BEGIN PUBLIC KEY-----\n#{B64[0, 40]}\n-----END RSA PUBLIC KEY-----\n"],
+      ["OPENSSH_PUBLIC", "positive", "ssh-ed25519 AAAAC3#{B64[0, 40]} lain@host\n"],
+      ["OPENSSH_PUBLIC", "near_miss", "ssh-ed25519 notbase64key\n"],
+      ["CHECKSUM_FIELD", "positive", %(checksum = "#{HEX[0, 64]}"\n)],
+      ["CHECKSUM_FIELD", "near_miss", %(token = "#{HEX[0, 64]}"\n)],
+      ["INTEGRITY_FIELD", "positive", "  integrity sha1-#{B64[0, 27]}=\n"],
+      ["INTEGRITY_FIELD", "near_miss", "  integrity sha1-short=\n"],
+      ["dotenv assignment", "bom", "#{BOM}API_KEY=#{B64[0, 12]}\n"],
+      ["dotenv assignment", "invalid_utf8", "note = \xff\xfe\nAPI_KEY=#{B64[0, 12]}\n"],
+      ["dotenv assignment", "utf16",
+       "\xFF\xFE".b + "API_KEY=x".encode(Encoding::UTF_16LE).b + "\nAPI_KEY=#{B64[0, 12]}\n".b]
+    ].map { |shape, label, text| [shape, label, text.b] }.freeze
+  end
+
+  VECTORS = { "canonical" => CanonicalVectors, "regions" => RegionVectors }.freeze
 end

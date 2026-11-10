@@ -41,6 +41,10 @@ RSpec.describe ConformanceCorpus do
     expect(described_class.tampered(described_class::DIR)).to be_empty
   end
 
+  it "generates every file its manifest names" do
+    expect(described_class::FILES.map { "#{_1}.ndjson" }).to match_array(described_class.recorded.fetch("files").keys)
+  end
+
   it "records the commit at which the dag, store, event and errors vectors stopped re-deriving from Ruby" do
     retired = described_class.recorded.fetch("ruby_oracle_retired")
     expect(retired.fetch("sha")).to match(/\A\h{40}\z/)
@@ -89,5 +93,63 @@ RSpec.describe ConformanceCorpus do
       end
     end
     expect(wrong).to be_empty
+  end
+
+  describe "the regions vectors" do
+    let(:records) { described_class.records("regions").map(&:first) }
+    let(:shapes) { described_class::RegionVectors.shapes }
+
+    def of_kind(group, kind) = group.select { |record| record.dig("input", "label") == kind }
+
+    def labelled(label) = records.select { _1.dig("input", "label") == label }
+
+    it "covers the 19 content shapes and the 5 other shapes Regions scans" do
+      expect(shapes.keys).to include(*Lain::Sensitivity::Regions::CONTENT_SHAPES.keys)
+      expect(shapes.keys).to include("TOKEN", "PEM_PUBLIC", "OPENSSH_PUBLIC", "CHECKSUM_FIELD", "INTEGRITY_FIELD")
+      expect(shapes.size).to eq(24)
+    end
+
+    it "gives every shape a positive the Ruby regex matches and a near-miss it does not" do
+      by_shape = records.group_by { _1.dig("input", "shape") }
+      expect(by_shape.keys).to include(*shapes.keys)
+      shapes.each_key do |name|
+        positives = of_kind(by_shape.fetch(name), "positive")
+        misses = of_kind(by_shape.fetch(name), "near_miss")
+        expect(positives).not_to be_empty, name
+        expect(misses).not_to be_empty, name
+        expect(positives.map { _1.dig("output", "matches") }).to all(be_any), name
+        expect(misses.map { _1.dig("output", "matches") }).to all(be_empty), name
+      end
+    end
+
+    it "reproduces every recorded range from the Ruby regex" do
+      expect(described_class.underived("regions")).to be_empty
+    end
+
+    it "regenerates byte for byte" do
+      regenerated = described_class.in_utf8 { described_class.vectors("regions", described_class.recorded_seed) }
+      expect(regenerated).to eq(described_class.read(described_class.path("regions")))
+    end
+
+    it "records group 0 and every named group, and the last repeated group that took part for netrc" do
+      password_first = records.find { _1.dig("input", "label") == "netrc password first" }
+      text = [password_first.dig("input", "bytes")].pack("H*")
+      match = password_first.dig("output", "matches").first
+      expect(match.keys).to contain_exactly("0", "value")
+      expect(text.byteslice(*match.fetch("value").then { |from, to| [from, to - from] })).to eq("s3cretpw")
+    end
+
+    it "keeps a BOM text, invalid UTF-8 and UTF-16, offsets indexing the bytes handed over" do
+      bom, bad, wide = %w[bom invalid_utf8 utf16].map { labelled(_1).first }
+      expect([bom, bad, wide]).to all(be_truthy)
+      expect(bom.dig("output", "skip")).to eq(3)
+      expect([bad.dig("input", "bytes")].pack("H*").dup.force_encoding(Encoding::UTF_8)).not_to be_valid_encoding
+      expect([wide.dig("input", "bytes")].pack("H*").start_with?("\xFF\xFE".b)).to be(true)
+    end
+
+    it "carries matches from both spike corpora" do
+      expect(labelled("spike lib and docs")).not_to be_empty
+      expect(labelled("spike specs and fixtures")).not_to be_empty
+    end
   end
 end
