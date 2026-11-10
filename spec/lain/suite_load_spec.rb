@@ -64,20 +64,35 @@ RSpec.describe "bin/suite-load and bin/suite-redrate" do
   describe "SuiteLoad::Group#stop" do
     before { load suite_load }
 
-    def stop_time(command)
+    def stop_signals(command, **)
       group = SuiteLoad::Group.spawn({}, "sh", "-c", command)
       sleep 0.2
-      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-      group.stop
-      Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+      sent = []
+      allow(Process).to receive(:kill).and_wrap_original do |original, name, *rest|
+        sent << name
+        original.call(name, *rest)
+      end
+      group.stop(**)
+      sent.reject { |name| name == 0 }
+    ensure
+      reap(group)
     end
 
-    it "returns as soon as a group that exits on TERM has ended" do
-      expect(stop_time("exec sleep 30")).to be < 0.15
+    # An orphaned TERM-ignoring group would hold the suite lock's fd open.
+    def reap(group)
+      pid = group.instance_variable_get(:@pid)
+      Process.kill("KILL", -pid)
+      Process.wait(pid)
+    rescue Errno::ESRCH, Errno::ECHILD
+      nil
     end
 
-    it "still kills a group that ignores TERM after the grace" do
-      expect(stop_time("trap '' TERM; while :; do sleep 1; done")).to be_between(0.2, 1.0)
+    it "sends only TERM to a group that exits on TERM, without waiting out the grace" do
+      expect(stop_signals("exec sleep 30", grace: 60)).to eq(["TERM"])
+    end
+
+    it "sends TERM then KILL to a group that ignores TERM" do
+      expect(stop_signals("trap '' TERM; while :; do sleep 1; done", grace: 0.2)).to eq(%w[TERM KILL])
     end
   end
 

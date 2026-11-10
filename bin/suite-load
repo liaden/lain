@@ -87,9 +87,8 @@ module SuiteLoad
       true
     end
 
-    def stop
-      await_end(0.2) if signal("TERM")
-      signal("KILL")
+    def stop(grace: 0.2)
+      signal("KILL") unless signal("TERM") && ended_within?(grace)
       Process.wait(@pid)
     rescue Errno::ECHILD
       nil
@@ -97,9 +96,14 @@ module SuiteLoad
 
     private
 
-    def await_end(grace)
+    def ended_within?(grace)
       deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + grace
-      sleep 0.01 until (exited? && !signal(0)) || Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+      sleep 0.01 until ended? || Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+      ended?
+    end
+
+    def ended?
+      exited? && !signal(0)
     end
 
     # False once no process is left in the group.
