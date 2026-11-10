@@ -25,12 +25,30 @@ RSpec::Core::RakeTask.new(:spec)
 # transfers. What replaced it is beside `spec_workers` below.
 desc "Run the spec suite in parallel"
 task :pspec do
-  runtime_log = "tmp/parallel_runtime_rspec.log"
+  logger = "--format ParallelTests::RSpec::RuntimeLogger --out tmp/parallel_runtime_rspec.log"
+  run_parallel_rspec(parallel_rspec_command("spec", options: logger))
+end
+
+namespace :suite do
+  # No RuntimeLogger formatter: a subset must not overwrite the log that packs the whole suite.
+  desc "Run the spec files named in FILES (newline or space separated), packed by the runtime log"
+  task :files do
+    files = ENV.fetch("FILES", "").split
+    raise "suite:files needs FILES naming at least one spec file" if files.empty?
+
+    run_parallel_rspec(parallel_rspec_command(files.join(" ")))
+  end
+end
+
+def parallel_rspec_command(target, options: nil)
   # A partial log (CI restores one) must not raise; missing files weigh the average known runtime.
-  group_by = File.exist?(runtime_log) ? "--group-by runtime --allowed-missing 100 " : ""
-  command = "bundle exec parallel_rspec spec -n #{spec_workers} #{group_by}--test-options " \
-            "'--format progress --format ParallelTests::RSpec::RuntimeLogger --out #{runtime_log}'"
-  # Two suites at once share TMPDIR and give false reds, so a second run waits for the first.
+  group_by = File.exist?("tmp/parallel_runtime_rspec.log") ? "--group-by runtime --allowed-missing 100 " : ""
+  test_options = ["--format progress", options].compact.join(" ")
+  "bundle exec parallel_rspec #{target} -n #{spec_workers} #{group_by}--test-options '#{test_options}'"
+end
+
+# Two suites at once share TMPDIR and give false reds, so a second run waits for the first.
+def run_parallel_rspec(command)
   require "lain"
   Lain::Isolation::SuiteLock.holding(paths: Lain::Paths.new, notice: ->(text) { warn text }) do
     sh({ "LAIN_SLOW" => "1" }, command)
