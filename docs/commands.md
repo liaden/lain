@@ -882,8 +882,32 @@ only when every word of it is ordinary and under the project root. That now incl
   name, so `ruby --version` waits for a decision like any other command.
 * `a && b` runs as a sequence **without a shell**, each side checked on its own. A shell builtin
   such as `cd` abstains, so a sequence holding one is left to the ladder whole.
-* A redirect to `/dev/null` (`2>/dev/null`, `>/dev/null`) is understood and does not make a
-  command unparseable. Any other redirect still does.
+* A redirect after a stage is read only as `2>&1`, `2>/dev/null` or `>/dev/null`, and does not make a
+  command unparseable. Any other redirect still does, and so does `&>`: `sh` that is dash (Docker's
+  `sh -c`) reads `cmd &>/dev/null` as "run in the background, then truncate".
+* `a ; b` is read as pipelines that must each be approvable. A line with a leading `cd` and any
+  `;` goes to the ladder whole: when the `cd` fails, `sh` runs the later pipeline in the original
+  directory, so the move cannot be applied to it.
+* `sleep` with 1 plain number of up to 3 digits (decimals allowed; never `infinity`, `1d` or an
+  exponent), `true` and `false`, and `echo` and `printf` over literal words with no redirect or
+  substitution. `printf` refuses `-v`, and any format whose width or precision is 4 digits or comes
+  from an argument.
+* `git status`, `ls-files` and a listing-only `branch`, each held to what an `ls` of the same tree
+  may print. `git show`, `log -p` and `diff` only when every rev peels to a tree and every path they
+  print classifies as ordinary; a `show <rev>` with no path, or a `log -p` with no pathspec, goes to
+  the judge. These stay with the judge in every form: a global option (`-c`, `-C`, `--git-dir`),
+  `--stdin`, `--output`, `--ext-diff` and textconv, a repository config or a `post-index-change`
+  hook that runs a program, and a `rev:path` with more than 1 colon. Output masking still covers
+  every result, whoever approved the call.
+* `cargo check`, `clippy`, `build` and `test` pinned with `--locked`, `--offline` or `--frozen`,
+  and `cargo fmt --check`. Every option is matched whole against a table for its subcommand, so a
+  `--config`, a `-Z` or a `-C` is refused, as is any option before the subcommand; a toolchain is a
+  channel or a version (`+nightly`, `+1.85`), never a path. After `--`, `clippy` takes only lint
+  levels and lint names, and `test` takes only filters and options that neither open nor write a
+  file. The call is approved only when every manifest and `.cargo/config.toml` cargo would load lies
+  inside the project root, is plain text, names no workspace outside it, neither aliases `fmt` or
+  `clippy` nor includes another config, and no `rust-toolchain` file is in the working directory or above it. Your own cargo
+  home config counts only when it sets nothing that runs. Anything else goes to the judge.
 
 #### Cycling approval from the keyboard
 

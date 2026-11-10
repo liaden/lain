@@ -131,8 +131,11 @@ that moved most, from the runtime logs of the two trees:
 
 The slowest file is now `seams/plain_chat_prompt_guards_spec.rb` at 29.4s, then
 `e2e/stop_while_busy_spec.rb` at 20.3s and `cli/epic_driver/factory_spec.rb` at 17.9s. The last
-is CPU-bound in the subject: about 3,600 git commands over 57 examples from about 40 call sites,
-roughly 1 per example each, so there is no hot spot to cut.
+is CPU-bound in the subject: its git commands come from the factory's own flow, which read the
+same refs, HEADs and worktree lists again and again. The profile that ranked it predates the
+isolation changes that ask each repository's common dir once per process, list worktrees once per
+gc batch and read a worker's HEAD once when nothing moved it, so its count and its share of
+subject time are due a fresh profile before anyone calls it finished.
 
 ## The wall is a MAX, not a sum
 
@@ -171,13 +174,14 @@ that ratio decides what to do. Measure it -- attributing each subprocess to the 
   subprocesses helps everyone who runs `lain`, and the spec gets faster for free.
   `isolation/worktree_handback_spec.rb` spends **796 of its 1163 spawns inside the subject** --
   about 11 `git` invocations per example -- and `Review::Source::LocalBranch` spends ~4 per
-  changeset, three of them in the constructor (two `rev-parse --verify`, one `merge-base`). At
+  changeset, 2 of them in the constructor (1 `rev-parse --verify`, 1 `merge-base`). At
   ~5ms a spawn that is latency a user feels on every review.
 
   So "this file is as fast as its subject allows" is the right answer to *"should I shard the spec
   file?"* -- it is **not** the place to stop. It is a pointer at the application. Note the design
-  tension before batching, though: `LocalBranch` resolves base and head separately so each refusal
-  can name its own role, and one `rev-parse` for both would trade that for a spawn.
+  tension before batching, though: `LocalBranch` resolves the head with `rev-parse` and the base
+  only through `merge-base`, paying a second `rev-parse` when that fails, so each refusal can name
+  its own role; one `rev-parse` for both would trade that for a spawn on every success.
 
 **Do not shard a spec to game the packer.** One spec file per code file at the mirrored path is
 how a reader finds the spec for a subject without searching, and carving it up trades that for
@@ -356,7 +360,18 @@ avoids at the top of the file.
 | `bin/runtime-census [--record\|--check]` | no | which spec files grew past their ceilings over the last 3 recorded pspec runtime logs (each must name every ceilinged file), and whether a `LAIN_SLOW=1` dry run still reaches the example floor |
 | `LAIN_SEAM_REPORT=1 bundle exec rake pspec` | no | which spec files run real git in an example tagged neither `:seam` nor `:e2e`, one `seam-report: <file> <count>` line per file per worker on stderr, which may follow progress dots on the same line, so grep without a line-start anchor; report only, it never changes a result |
 
-A result from any of them is one sample. Before calling a change faster, repeat both sides,
+**Keeping `--tag '~seam'` free of git.** The 56 spec files that ran real git are tagged `:seam`
+group by group or example by example (a file-level tag only where every example runs git, or every
+example builds its repository from one `SeedRepo` key, since the first user of a key pays the
+git), so `bundle exec rspec --tag '~seam'` over them runs no git. `spec/support/running_harness.rb`
+fills the process-wide harness provenance memo (`SessionRecord::Provenance.running_harness`)
+before the suite, because that memo is filled by git on first use and would otherwise land in
+whichever unit example recorded a session first, naming a different file by seed. To find a file
+that has slipped, run `LAIN_SEAM_REPORT=1 bundle exec rspec --tag '~seam'`: any untagged file that
+runs git gets a `seam-report:` line. After the tagging, 1364 examples across the 56 files carry
+`:seam`; 264 of them run no git (a probe on 1 seed), a follow-up to untag or double.
+
+A result from any of the tools above is one sample. Before calling a change faster, repeat both sides,
 interleaved, with the environment size varied between runs (Mytkowicz et al., "Producing Wrong
 Data Without Doing Anything Obviously Wrong!", ASPLOS 09): the size of the environment alone moves
 stack alignment enough to reverse a small difference.

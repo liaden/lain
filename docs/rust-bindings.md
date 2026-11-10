@@ -24,6 +24,11 @@ Before binding, all five must hold. If any fails, keep it in Ruby.
    confinement. Data structures are the original case, not the only one.
 2. **Ruby's object model makes it asymptotically worse.** A persistent map with structural
    sharing forks in O(1); `Hash#dup` is O(n). That gap is the argument. "Rust is faster" is not.
+   A bounded worst case also counts, by ruling 2026-11-09: the secret-region scan
+   (`Lain::Ext::Regions`) runs in linear time on a shape that needs no backtracking and surfaces
+   a shape that exhausts fancy-regex's backtrack limit by name (`Scan#limited`) instead of
+   under-masking. The speedup is why it moved now; the bounded worst case is what admits it. Ruby
+   stays the oracle in specs.
 3. **It is hot per-turn**, not per-session. Per-session work is never worth a boundary.
 4. **The boundary is crossed in batches, not per element.** Conversion cost dominates almost
    every naive binding; a per-node FFI call in a DAG walk loses to plain Ruby. One walk is the

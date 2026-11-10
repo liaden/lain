@@ -300,7 +300,7 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   executable, keeps whatever argv-zero its parent had. Without the rename the run collects and
   executes nothing and still exits 0: a third way (alongside the two above) that a red suite reads
   green, from a runner that never got as far as loading a single example. The fix goes deeper than
-  the file list, though: `CLI::Up::PreFlight` expands a relative executable to an absolute path,
+  the file list, though: `CLI::Up::ChatPreflight` expands a relative executable to an absolute path,
   while `up_spec`'s spy compares the raw `$PROGRAM_NAME` -- so renaming the process to a bare
   `rspec` (needed for the file-loading trick above) broke that comparison and produced 10 examples
   failing in every run, from the rename itself rather than from the suite. A runner built this way
@@ -921,6 +921,73 @@ Unproven; counting only the example's own thread would settle it.
   a newcomer's empty prime replacing a running lain's rendered views is one of the three harms
   runtime.lua's head measured. Both halves are pinned by
   `spec/lain/frontend/neovim/runtime_spec.rb`'s "one lain per editor".
+
+  Added 2026-11-10, from the landing hooks of the hot-path run. 8 hooks went red and every card
+  landed on a retry with no change. Their logs list 82 failed examples, 74 of them distinct by name.
+  The names below passed alone (the cards' own alone runs), except where noted. Of the 80 distinct
+  failure reports, 57 carry the watchdog's `STARVED` line, in 6 of the 8 logs. That line prints the
+  box's 1-minute load average, 27.2 to 140.8 against 16 cores, and the red process had used 14% or
+  less of one core across 30.1 to 71.5 s of wall time. For those, the cause is starvation and not
+  the example, so treat a `STARVED` red as unattributable until the box is quiet.
+
+  Repeats of entries above, red again in this run:
+  `A project's own tests inside the workspace profile passes the fence crate's tests, none of them
+  skipped` (4 hooks) and `... passes one spec file with the example count an unconfined run
+  reports` (2 hooks, one of them also red for the first). Both spawn a nested cargo or rspec. They
+  took 36 to 220 s against a 30 s watchdog budget in the red hooks and 9 to 12 s in the green ones,
+  and every red log that shows a load line shows `STARVED` at load 31 to 104. This is the 3rd
+  landing window in a row (2026-11-02, 2026-11-04, now) where the pair reddened, so it is a
+  follow-up card, not a name to budget a retry for.
+  `the review records' journal discriminators answers for every includer, including the ones no
+  generic dummy constructs` read `Expected 143 to eq 145` in 1 hook with no `STARVED` line; the
+  2026-10-28 entry saw 136 against 138, also 2 short. Green alone 3 of 3 on the base commit and
+  once on the card's tree. Cause not found; it counts the classes the worker process has loaded, so
+  suspect what an earlier example in that worker defined.
+  Also repeats: `Lain::Bench::CLI#arms_report` (2 examples, the 2026-10-28 name), `the deletion map
+  booting without a capability` (4 examples) and `a chat fed by an input pane completes a skill
+  named in the chat's context frame when Tab is pressed in the pane` (both 2026-11-04 names), each
+  `STARVED`.
+
+  New by name, no `STARVED` line:
+  `bin/suite-load and bin/suite-redrate SuiteLoad::Group#stop returns as soon as a group that exits
+  on TERM has ended` read 0.44 s against its 0.15 s wall-clock bound at load 12. It took 0.21 s
+  alone, 3 of 3 on the base commit and once on the card's tree. The bound is a wall-clock threshold
+  of the kind the 2026-10-27 ruling forbids, so it is a card to rewrite. The same file's `suite-load
+  leaves no loop or run process after TERM from a start that ignored it` went red in another hook
+  (not re-run alone).
+
+  Red once. Most carry a `STARVED` line; these do not: 3 of the 4 `StdinPump` examples, 3 of the 7
+  `Up` examples, 1 of the 2 `Exec::Local`, the `ApprovalView` `an item longer than one line`, and
+  7 of the 8 plain chat prompt examples.
+  `Lain::Frontend::StdinPump` over a real terminal (4 examples); `Lain::Frontend::LineEditor#read
+  on a real terminal` (7); `plain_chat_prompt_guards_spec.rb` (8: the Ctrl-C at a [y/N] pair,
+  `prose typed at a [y/N]`, `/approve typed while the watcher's [y/N]`, `an arrow key typed before
+  a prompt`, `Ctrl-C at an idle you> ends the chat over an empty line` and the 2 parked-call
+  ordering examples); `Lain::CLI::Up against a real tmux server`
+  (7); `seams/input_pane_socket_spec.rb` (4); `seams/tool_text_boundary_spec.rb` (3);
+  `seams/approval_cycle_key_spec.rb` (1); `Lain::Frontend::Neovim` `a long note grown in a pane`
+  (2), `ApprovalView` (2: `an item longer than one line` and `the fold surface, in a real editor`)
+  and `the refusal rail's width`; `capability degradation on the chat path` (2);
+  `Lain::Error taxonomy the ratchet` (2); `Lain::Review::Source::LocalBranch#files_at` (2);
+  `Lain::CLI::Wiring the journal routing discipline` (2); `Lain::Exec::Local` (2);
+  `Lain::CLI::Command::Survey the survey banner's commands, against a real editor`;
+  `Lain::CLI::EpicDriver::IssueActor fences the embedded issue`; `Lain::CLI::EpicDriver::Factory
+  ... gates work squashed into the red commit`; `Lain::CLI::Wiring::ToolsetBuild a judge-approved
+  write ... runs it in the workspace profile`; `git fixtures in spec/ pass an environment to every
+  git they spawn`; `forking and resuming a session whose subagent asked the human a question
+  records a child question the human answered`; `RuntimeCensus the command line --check exits 0
+  when all is within bounds`; `Lain::Grader::Journaling#grade returns the Grade unchanged`;
+  `Lain::Grader::MutationReinsertion ... a helper the agent added under spec/support`;
+  `Lain::Isolation::MergeCoordinator.main_root`; `SuiteProfile the hooks under
+  spec/support/suite_profile`; `test-only Nulls are named nowhere in lib/ or exe/`;
+  `bin/workspace-run reports a sealed toolchain file`; `A related directory inside the reader
+  sandbox refuses a read under a related directory that is not a repository`;
+  `Lain::Review::Source::Diffed#files over a real branch`.
+  Red once with no `STARVED` line: `Lain::Sensitivity::Policy#mask_paths against #judge ... does 1
+  realpath per directory`, `Lain::TestLayout::Guard ... holds over lain's own spec tree`, `lain nvim
+  plugin ... honors a state_path override`, `a plain chat against a faulty upstream names an
+  endpoint that refuses connections` (each green alone) and `Lain::Ext::Bm25 on another thread ...
+  lets the calling thread keep running while it works` (not re-run alone).
 
   A live demonstration of why this list is by NAME rather than by line: `buffers_spec.rb:329` was
   recorded by line in an earlier chunk, and one card in this one moved that same example to `:417`

@@ -163,8 +163,9 @@ was worth removing.
   files, 38 examples, about 82s serial; `rake pspec` 21,642 examples at a 61 to 66s wall.
 - **Rust hot paths.** `[built]` `planning/specs/rust-hot-paths.md` (2026-10-20 to 2026-10-21): message
   adoption and an Agent-owned prefix-chain memo (a chat turn at 10,000 turns 169 ms to 27 ms), 3
-  binding fixes, `wiring_spec.rb` off the real checkout, a cheaper mask listing that also masks what a
-  nested repo or a sensitive-named link hides, YJIT tried and left off, and the GVL released with early
+  binding fixes, `wiring_spec.rb` off the real checkout, a mask listing that also masks what a
+  nested repo or a sensitive-named link hides (since the 2026-11 hot-path fixes, a
+  directory's names are classified again only when its mtime or ctime changes), YJIT tried and left off, and the GVL released with early
   cancel around ast_search, TreeSitter, Bm25 and Fuzzy through 1 helper, held for small calls. Next:
   path encoding, since the suite under a non-ASCII TMPDIR is red (211 examples, red before this plan).
 
