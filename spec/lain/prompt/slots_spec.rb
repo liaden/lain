@@ -289,7 +289,7 @@ RSpec.describe Lain::Prompt::Slots do
     let(:shipped_role_digests) do
       {
         "court_clerk" => "blake3:4879b45773658d7cac5285a0bffc53ee79e7249d461df494fb8a579d3e00ed50",
-        "dev" => "blake3:d07a3b13c813c36c6ce8ecd5034893c8b39ca6b2df6c2004a1125f8039a6b9ed",
+        "dev" => "blake3:9784c16ac856f2e54741fc117c2c11c0f255a663a2bdac49a2b221087fd1eff0",
         "researcher" => "blake3:40c275efa4534b2057f9af8e4d2bc59cfd34657a712f1c5b8ba316aca5833bd3",
         "reviewer_dba" => "blake3:fc9c90ceceeab6c7d82c2bea4fd828155dedd03eccbd5c23acf591ec2026f56e",
         "reviewer_security" => "blake3:ecb3aa0b4bc3c5edbc7441139277e9d56ea12eede714c2950c76e265a1edecd3",
@@ -312,6 +312,14 @@ RSpec.describe Lain::Prompt::Slots do
         text = described_class.load(root:).render_role("researcher").squish
 
         expect(text).to include("final answer short", "file in your working directory")
+      end
+    end
+
+    it "tells the developer a cargo call with --locked is approved without waiting for the judge" do
+      with_project do |root|
+        text = described_class.load(root:).render_role("dev").squish
+
+        expect(text).to include("--locked", "without waiting for the judge")
       end
     end
 
