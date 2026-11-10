@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "json"
 require "open3"
 
 # Ruby's secret shapes, translated into the Rust dialect and compiled into one Rust set on first use.
@@ -65,12 +66,50 @@ RSpec.describe Lain::Sensitivity::RustShapes do
     "a \\K keep" => /a\Kb/,
     "a subexpression call" => /(?<x>a)\g<x>/,
     "a backreference to a repeated name" => /(?<v>a)|(?<v>b)\k<v>/,
-    "a possessive interval" => /a{1,2}+b/,
-    "a shape that matches the empty string" => /x*/
+    "a possessive interval" => /a{1,2}+b/
   }.each do |feature, regexp|
     it "refuses #{feature} by the shape's name" do
       expect { described_class.compile({ "odd shape" => regexp }) }
         .to raise_error(described_class::Untranslatable, /odd shape/)
+    end
+  end
+
+  # fancy-regex skips an empty match right after a non-empty one, where Onigmo reports it, and an empty
+  # match masks nothing.
+  it "scans a shape that matches the empty string by the non-empty matches Onigmo finds" do
+    non_empty = ->(matches) { matches.reject { |_, start, finish, _| start == finish } }
+    found = ["axxbx", "abc", "xx\nx", ""].map do |text|
+      [non_empty.call(rust_matches(/x*/, text)), non_empty.call(ruby_matches(/x*/, text))]
+    end
+
+    expect(found.map(&:first)).to eq(found.map(&:last))
+    expect(found.flat_map(&:first)).not_to be_empty
+  end
+
+  describe "the single-line flags" do
+    def corpus_texts
+      path = File.expand_path("../../../ext/lain/corpus/regions.ndjson", __dir__)
+      File.foreach(path).map { [JSON.parse(_1).dig("input", "bytes")].pack("H*") }
+    end
+
+    # Every corpus text with a newline put before each of its bytes, so a shape that can match across
+    # one is given the chance to.
+    def two_line_probes
+      corpus_texts.flat_map { |text| (0...text.bytesize).map { "#{text.byteslice(0, _1)}\n#{text.byteslice(_1..)}".b } }
+    end
+
+    def crossing(probes)
+      probes.each_with_object(Set.new) do |probe, names|
+        described_class.compiled.scan(probe).matches.each do |index, start, finish, _|
+          names << described_class.names[index] if probe.byteslice(start...finish).include?("\n")
+        end
+      end
+    end
+
+    it "flags exactly the shapes no match of which ever crosses a newline" do
+      multi_line = described_class.names.reject { described_class.single_line?(_1) }
+
+      expect(crossing(two_line_probes)).to match_array(multi_line)
     end
   end
 

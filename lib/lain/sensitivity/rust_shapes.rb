@@ -18,6 +18,10 @@ module Lain
         %w[TOKEN PEM_PUBLIC OPENSSH_PUBLIC CHECKSUM_FIELD INTEGRITY_FIELD].to_h { [_1, Regions.const_get(_1)] }
       ).freeze
       NAMES = SHAPES.keys.freeze
+      # The shapes no match of which can cross a newline, so a line one cannot finish is over-masked
+      # alone. A shape left off over-masks to the end of the text instead: the safe side.
+      SINGLE_LINE = (NAMES - ["pem private key block", "credential assignment", "toml assignment",
+                              "quoted password key", "credential literal assignment", "PEM_PUBLIC"]).freeze
 
       # Every detect reads the set, so threads can meet a cold one together; each would compile its own.
       COMPILING = Mutex.new
@@ -30,11 +34,17 @@ module Lain
         # @return [Array<String>] the shape names, at the indexes a scan reports
         def names = NAMES
 
+        # @param name [String]
+        # @return [Boolean] whether no match of the shape can cross a newline
+        def single_line?(name) = SINGLE_LINE.include?(name)
+
         # @param shapes [Hash{String => Regexp}]
         # @return [Ext::Regions::Set]
         # @raise [Untranslatable] naming the first shape that uses a feature the translation lacks
         def compile(shapes)
-          Ext::Regions.compile(shapes.map { |name, regexp| [name, Translation.new(name, regexp).source] })
+          Ext::Regions.compile(shapes.map do |name, regexp|
+            [name, Translation.new(name, regexp).source, single_line?(name)]
+          end)
         end
       end
 
@@ -62,9 +72,6 @@ module Lain
         # @return [String]
         # @raise [Untranslatable]
         def source
-          # fancy-regex skips an empty match right after a non-empty one, where Ruby reports it. This
-          # catches only a shape that matches empty on its own, not one that does so only in context.
-          refuse("a pattern that matches the empty string") if @regexp.match?("")
           @scanner = StringScanner.new(@regexp.source)
           @names = Hash.new(0)
           @backrefs = []

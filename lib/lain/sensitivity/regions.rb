@@ -49,6 +49,11 @@ module Lain
       # triage rather than reading like a matched credential.
       ENTROPY_REASON = "high-entropy token"
 
+      # Not "the backtrack limit": the usual cause is fancy-regex's fixed backtracking stack.
+      OVER_MASKED_REASON = "over-masked: %s could not be scanned to the end"
+      # Below every shape's rank, so a region it reaches is named for the over-mask.
+      OVER_MASKED_RANK = -1
+
       NAME_HINT = /pass|(?-i:_PWD)|secret|token|api[_-]?key|credential|auth|private|signature|session/i
 
       ALPHANUMERIC_RUN = /[A-Za-z0-9]/
@@ -255,8 +260,15 @@ module Lain
 
         private
 
+        # The ruling is "over-mask the span, never under-mask", so no gate or exemption may shrink one.
         def scan(scanned, scanner, checksums, hinted)
-          candidates(scanned, group_by_shape(scanner, scanned), checksums, hinted)
+          over_masked, rows = scanner.scan(scanned).partition { _1[4] }
+          candidates(scanned, group_by_shape(rows, scanned), checksums, hinted) + over_masked.map { over_mask(*_1) }
+        end
+
+        def over_mask(name, start, finish, *)
+          { start:, finish:, reason: format(OVER_MASKED_REASON, name), detector: :pattern,
+            rank: OVER_MASKED_RANK, over_masked_by: name }
         end
 
         def mapped(view, found)
@@ -321,11 +333,12 @@ module Lain
         def region_at(candidate, bytes)
           start = candidate[:start]
           Region.new(start:, bytes: bytes.byteslice(start, candidate[:finish] - start),
-                     reason: candidate[:reason], detector: candidate[:detector])
+                     reason: candidate[:reason], detector: candidate[:detector],
+                     over_masked_by: candidate[:over_masked_by])
         end
 
-        def group_by_shape(scanner, scanned)
-          scanner.scan(scanned).each_with_object(Hash.new { |by_shape, name| by_shape[name] = [] }) do |row, by_shape|
+        def group_by_shape(rows, scanned)
+          rows.each_with_object(Hash.new { |by_shape, name| by_shape[name] = [] }) do |row, by_shape|
             name, start, finish, groups = row
             by_shape[name] << Match.new(scanned, start, finish, groups)
           end
@@ -596,7 +609,7 @@ module Lain
       end
       private_constant :NearestKey
 
-      Region = Data.define(:start, :bytes, :reason, :detector, :digest)
+      Region = Data.define(:start, :bytes, :reason, :detector, :digest, :over_masked_by)
 
       # One sensitive span, and the digest that is its identity.
       #
@@ -630,13 +643,15 @@ module Lain
           Canonical.digest_bytes("#{SCHEME} #{bytes.bytesize}\0".b + bytes)
         end
 
-        def initialize(start:, bytes:, reason:, detector:)
+        # A region a scan could not finish is masked whole, and its `over_masked_by` names the shape;
+        # for a region a match or the entropy detector found it is nil.
+        def initialize(start:, bytes:, reason:, detector:, over_masked_by: nil)
           raise ArgumentError, "unknown detector #{detector.inspect}: expected #{DETECTORS.inspect}" \
             unless DETECTORS.include?(detector)
 
           content = -bytes.b
           super(start: Integer(start), bytes: content, reason: -reason.to_str, detector:,
-                digest: Region.address(content))
+                digest: Region.address(content), over_masked_by: over_masked_by&.then { -_1.to_str })
         end
 
         def length = bytes.bytesize

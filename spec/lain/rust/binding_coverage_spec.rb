@@ -64,17 +64,17 @@ RSpec.describe Lain::Ext::Timeline, "binding coverage" do
 end
 
 RSpec.describe Lain::Ext::Regions, "binding coverage" do
-  let(:set) { described_class.compile([%w[aws AKIA[0-9A-Z]{16}]]) }
+  let(:set) { described_class.compile([["aws", "AKIA[0-9A-Z]{16}", false]]) }
   let(:scan) { set.scan("id AKIAABCDEFGHABCDEFGH") }
 
   it "calls every function and method the regions binding binds" do
     expect(described_class.singleton_methods(false)).to contain_exactly(:compile)
     expect(described_class::Set.instance_methods(false)).to contain_exactly(:scan)
-    expect(described_class::Scan.instance_methods(false)).to contain_exactly(:matches, :limited)
+    expect(described_class::Scan.instance_methods(false)).to contain_exactly(:matches, :over_masked)
   end
 
-  it "answers .compile, #scan, #matches and #limited as bound" do
+  it "answers .compile, #scan, #matches and #over_masked as bound" do
     expect([set.class, scan.class]).to eq([described_class::Set, described_class::Scan])
-    expect([scan.matches, scan.limited]).to eq([[[0, 3, 23, {}]], []])
+    expect([scan.matches, scan.over_masked]).to eq([[[0, 3, 23, {}]], []])
   end
 end

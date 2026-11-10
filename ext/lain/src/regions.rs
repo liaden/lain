@@ -11,9 +11,12 @@
 //! reports the name's range the way Ruby's `MatchData#begin(name)` does: the
 //! last group of that name that took part.
 //!
-//! A shape that exhausts fancy-regex's backtrack limit loses all its matches
-//! and is named in [`Scan::limited`], so the caller can rescan it another way;
-//! a partial list would under-mask without saying so.
+//! A shape fancy-regex cannot finish, over its backtrack limit or its stack,
+//! is retried at a higher limit. What the retry still cannot finish is
+//! reported in [`Scan::over_masked`], since a partial list would under-mask
+//! without saying so: a single-line shape line by line, each line it cannot
+//! finish whole; any other shape from the end of its last finished match to
+//! the end of the text.
 
 use crate::nogvl::{Cancel, Halted, Threshold};
 use fancy_regex::{BytesMode, Captures, Regex, RegexBuilder};
@@ -26,6 +29,24 @@ pub const HOLD_BELOW: Threshold = Threshold::new(512 * 1024);
 
 /// Matches found between reads of the stop request.
 const MATCHES_PER_CHECK: usize = 64;
+
+/// The backtracking budgets a shape is scanned under: once at `first`, and
+/// again at `retry` when it cannot finish.
+#[derive(Debug, Clone, Copy)]
+struct Limits {
+    first: usize,
+    retry: usize,
+}
+
+impl Limits {
+    /// fancy-regex's own default first. The retry is 10 times it: a 1.2 MB
+    /// run of near misses for `quoted password key` needs more than the
+    /// default and finishes well inside this.
+    const DEFAULT: Self = Self {
+        first: 1_000_000,
+        retry: 10_000_000,
+    };
+}
 
 /// A shape that does not compile, named, so the caller can tell which.
 #[derive(Debug, thiserror::Error)]
@@ -52,12 +73,20 @@ pub struct Hit {
     pub groups: Vec<GroupSpan>,
 }
 
+/// A span a shape could not finish scanning, so it is masked whole.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OverMask {
+    pub shape: usize,
+    pub start: usize,
+    pub end: usize,
+}
+
 /// Every shape's matches over 1 text, shape by shape in order, each shape's in
-/// text order, and the shapes that hit their backtrack limit.
+/// text order, and the spans the shapes could not finish.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Scan {
     pub matches: Vec<Hit>,
-    pub limited: Vec<usize>,
+    pub over_masked: Vec<OverMask>,
 }
 
 /// A reported name and the capture indexes that carry it, ascending.
@@ -70,7 +99,14 @@ struct Group {
 #[derive(Debug)]
 struct Shape {
     regex: Regex,
+    retry: Regex,
+    single_line: bool,
     groups: Vec<Group>,
+}
+
+struct Run {
+    hits: Vec<Hit>,
+    finished: bool,
 }
 
 /// The compiled shapes, in the order they were given.
@@ -80,16 +116,25 @@ pub struct Set {
 }
 
 impl Set {
-    /// Compiles every `(name, source)` pair, refusing at the first that fails.
+    /// Compiles every `(name, source, single_line)` shape, refusing at the
+    /// first that fails. `single_line` says no match of the shape can cross a
+    /// newline, so it may be retried line by line.
     ///
     /// # Errors
     ///
     /// [`CompileError`] naming the first shape fancy-regex refuses.
-    pub fn compile(shapes: &[(String, String)]) -> Result<Self, CompileError> {
+    pub fn compile(shapes: &[(String, String, bool)]) -> Result<Self, CompileError> {
+        Self::compile_with(shapes, Limits::DEFAULT)
+    }
+
+    fn compile_with(
+        shapes: &[(String, String, bool)],
+        limits: Limits,
+    ) -> Result<Self, CompileError> {
         let shapes = shapes
             .iter()
-            .map(|(name, source)| {
-                Shape::compile(source).map_err(|reason| CompileError {
+            .map(|(name, source, single_line)| {
+                Shape::compile(source, *single_line, limits).map_err(|reason| CompileError {
                     name: name.clone(),
                     reason,
                 })
@@ -113,9 +158,13 @@ impl Set {
         let mut scan = Scan::default();
         for (index, shape) in self.shapes.iter().enumerate() {
             cancel.check()?;
-            match shape.hits(index, bytes, cancel)? {
-                Some(hits) => scan.matches.extend(hits),
-                None => scan.limited.push(index),
+            let first = shape.run(&shape.regex, index, bytes, 0, cancel)?;
+            if first.finished {
+                scan.matches.extend(first.hits);
+            } else if shape.single_line {
+                shape.retry_by_line(index, bytes, cancel, &mut scan)?;
+            } else {
+                shape.retry_to_end(index, bytes, cancel, &mut scan)?;
             }
         }
         Ok(scan)
@@ -123,42 +172,99 @@ impl Set {
 }
 
 impl Shape {
-    fn compile(source: &str) -> Result<Self, String> {
-        let regex = RegexBuilder::new(source)
-            .bytes_mode(BytesMode::Ascii)
-            .seek(true)
-            .build()
-            .map_err(|err| err.to_string())?;
+    fn compile(source: &str, single_line: bool, limits: Limits) -> Result<Self, String> {
+        let build = |limit: usize| {
+            RegexBuilder::new(source)
+                .bytes_mode(BytesMode::Ascii)
+                .seek(true)
+                .backtrack_limit(limit)
+                .build()
+                .map_err(|err| err.to_string())
+        };
+        let regex = build(limits.first)?;
+        let retry = build(limits.retry)?;
         let groups = groups_of(&regex);
-        Ok(Self { regex, groups })
+        Ok(Self {
+            regex,
+            retry,
+            single_line,
+            groups,
+        })
     }
 
-    /// `None` when the shape ran out of backtracking, or reported a match with
-    /// no group 0, so no partial list escapes and the caller rescans it.
-    fn hits(
+    /// A line's matches are kept only when its scan finishes, since the line
+    /// is masked whole otherwise.
+    fn retry_by_line(
         &self,
         shape: usize,
         bytes: &[u8],
         cancel: &Cancel<'_>,
-    ) -> Result<Option<Vec<Hit>>, Halted> {
+        scan: &mut Scan,
+    ) -> Result<(), Halted> {
+        let mut start = 0;
+        for line in bytes.split(|&byte| byte == b'\n') {
+            cancel.check()?;
+            let run = self.run(&self.retry, shape, line, start, cancel)?;
+            if run.finished {
+                scan.matches.extend(run.hits);
+            } else {
+                scan.over_mask(shape, start, start + line.len());
+            }
+            start += line.len() + 1;
+        }
+        Ok(())
+    }
+
+    fn retry_to_end(
+        &self,
+        shape: usize,
+        bytes: &[u8],
+        cancel: &Cancel<'_>,
+        scan: &mut Scan,
+    ) -> Result<(), Halted> {
+        let run = self.run(&self.retry, shape, bytes, 0, cancel)?;
+        let finished_to = run.hits.last().map_or(0, |hit| hit.end);
+        scan.matches.extend(run.hits);
+        if !run.finished {
+            scan.over_mask(shape, finished_to, bytes.len());
+        }
+        Ok(())
+    }
+
+    /// `at` places a line's matches in the whole text, so a retry by line
+    /// reports the offsets a whole-text scan would.
+    fn run(
+        &self,
+        regex: &Regex,
+        shape: usize,
+        bytes: &[u8],
+        at: usize,
+        cancel: &Cancel<'_>,
+    ) -> Result<Run, Halted> {
         let mut hits = Vec::new();
-        for (seen, found) in self.regex.captures_iter(bytes).enumerate() {
+        for (seen, found) in regex.captures_iter(bytes).enumerate() {
             if Cancel::due(seen, MATCHES_PER_CHECK) {
                 cancel.check()?;
             }
-            let Ok(captures) = found else {
-                return Ok(None);
-            };
-            let Some(hit) = self.hit(shape, &captures) else {
-                return Ok(None);
+            let Some(hit) = found
+                .ok()
+                .and_then(|captures| self.hit(shape, &captures, at))
+            else {
+                return Ok(Run {
+                    hits,
+                    finished: false,
+                });
             };
             hits.push(hit);
         }
-        Ok(Some(hits))
+        Ok(Run {
+            hits,
+            finished: true,
+        })
     }
 
     /// `None` for a match with no group 0, which fancy-regex never reports.
-    fn hit(&self, shape: usize, captures: &Captures<'_, [u8]>) -> Option<Hit> {
+    fn hit(&self, shape: usize, captures: &Captures<'_, [u8]>, at: usize) -> Option<Hit> {
         let whole = captures.get(0)?;
         let groups = self
             .groups
@@ -172,17 +278,23 @@ impl Shape {
                     .find_map(|&index| captures.get(index))
                     .map(|span| GroupSpan {
                         group,
-                        start: span.start(),
-                        end: span.end(),
+                        start: at + span.start(),
+                        end: at + span.end(),
                     })
             })
             .collect();
         Some(Hit {
             shape,
-            start: whole.start(),
-            end: whole.end(),
+            start: at + whole.start(),
+            end: at + whole.end(),
             groups,
         })
+    }
+}
+
+impl Scan {
+    fn over_mask(&mut self, shape: usize, start: usize, end: usize) {
+        self.over_masked.push(OverMask { shape, start, end });
     }
 }
 
@@ -222,7 +334,7 @@ fn groups_of(regex: &Regex) -> Vec<Group> {
 /// when asked, so the regex work and the result building can be timed apart.
 #[cfg(not(test))]
 pub mod ffi {
-    use super::{HOLD_BELOW, Hit, Scan as Found, Set as Shapes};
+    use super::{HOLD_BELOW, Hit, OverMask, Scan as Found, Set as Shapes};
     use crate::ffi::{frozen_str, int, lookup_error};
     use crate::nogvl::{Cancel, without_gvl_when};
     use crate::read_bytes::read_bytes;
@@ -258,26 +370,28 @@ pub mod ffi {
 
     impl DataTypeFunctions for Scan {}
 
-    /// `Lain::Ext::Regions.compile([[name, source], ...])` -> a frozen `Set`.
-    /// Every entry is checked to be 2 Strings before any is read, so a
-    /// refusal holds no Rust state and no Symbol's `to_s` runs.
+    /// `Lain::Ext::Regions.compile([[name, source, single_line], ...])` -> a
+    /// frozen `Set`. The flag is true or false. Every entry is checked before
+    /// any is read, so a refusal holds no Rust state and no Symbol's `to_s`
+    /// runs.
     fn compile(ruby: &Ruby, shapes: RArray) -> Result<Obj<Set>, Error> {
         let entries = shapes
             .into_iter()
             .enumerate()
-            .map(|(index, entry)| pair(ruby, index, entry))
+            .map(|(index, entry)| shape_entry(ruby, index, entry))
             .collect::<Result<Vec<_>, Error>>()?;
-        let pairs = entries
+        let sources = entries
             .into_iter()
-            .map(|(name, source)| {
+            .map(|(name, source, single_line)| {
                 Ok((
                     read_text(ruby, name.as_value(), || "shape name".to_string())?,
                     read_text(ruby, source.as_value(), || "shape source".to_string())?,
+                    single_line,
                 ))
             })
             .collect::<Result<Vec<_>, Error>>()?;
-        let compiled = Shapes::compile(&pairs);
-        drop(pairs);
+        let compiled = Shapes::compile(&sources);
+        drop(sources);
         let inner = compiled.map_err(|err| {
             lookup_error(ruby, &["Lain", "Ext", "Regions", "BadShape"], move || {
                 err.to_string()
@@ -290,20 +404,36 @@ pub mod ffi {
         Ok(set)
     }
 
-    fn pair(ruby: &Ruby, index: usize, entry: Value) -> Result<(RString, RString), Error> {
-        let strings = RArray::from_value(entry)
-            .filter(|pair| pair.len() == 2)
-            .and_then(|pair| {
-                let name = RString::from_value(pair.entry::<Value>(0).ok()?)?;
-                let source = RString::from_value(pair.entry::<Value>(1).ok()?)?;
-                Some((name, source))
-            });
-        strings.ok_or_else(|| {
+    fn shape_entry(
+        ruby: &Ruby,
+        index: usize,
+        entry: Value,
+    ) -> Result<(RString, RString, bool), Error> {
+        let refused = |what: &str| {
             Error::new(
                 ruby.exception_type_error(),
-                format!("shape {index} must be an Array of 2 Strings, a name and a source"),
+                format!("shape {index} must be {what}"),
             )
-        })
+        };
+        let array = RArray::from_value(entry)
+            .filter(|array| array.len() == 3)
+            .ok_or_else(|| refused("an Array of a name, a source and a single-line flag"))?;
+        let (name, source) = name_and_source(array)
+            .ok_or_else(|| refused("an Array of 2 Strings, a name and a source"))?;
+        let flag = array.entry::<Value>(2)?;
+        if flag.is_kind_of(ruby.class_true_class()) {
+            Ok((name, source, true))
+        } else if flag.is_kind_of(ruby.class_false_class()) {
+            Ok((name, source, false))
+        } else {
+            Err(refused("given its single-line flag as true or false"))
+        }
+    }
+
+    fn name_and_source(array: RArray) -> Option<(RString, RString)> {
+        let name = RString::from_value(array.entry::<Value>(0).ok()?)?;
+        let source = RString::from_value(array.entry::<Value>(1).ok()?)?;
+        Some((name, source))
     }
 
     impl Set {
@@ -337,13 +467,29 @@ pub mod ffi {
             Ok(out)
         }
 
-        /// `#limited` -> the frozen indexes of the shapes that hit their limit.
-        fn limited(ruby: &Ruby, rb_self: &Scan) -> RArray {
-            let out =
-                ruby.ary_from_iter(rb_self.found.limited.iter().map(|&index| int(ruby, index)));
+        /// `#over_masked` -> frozen `[shape_index, start, end]` rows, 1 for each
+        /// span a shape could not finish.
+        fn over_masked(ruby: &Ruby, rb_self: &Scan) -> RArray {
+            let out = ruby.ary_from_iter(
+                rb_self
+                    .found
+                    .over_masked
+                    .iter()
+                    .map(|span| over_masked_row(ruby, span)),
+            );
             out.freeze();
             out
         }
+    }
+
+    fn over_masked_row(ruby: &Ruby, span: &OverMask) -> RArray {
+        let row = ruby.ary_from_iter([
+            int(ruby, span.shape),
+            int(ruby, span.start),
+            int(ruby, span.end),
+        ]);
+        row.freeze();
+        row
     }
 
     fn row(ruby: &Ruby, set: &Shapes, hit: &Hit) -> Result<RArray, Error> {
@@ -382,7 +528,7 @@ pub mod ffi {
         let scan = regions.define_class("Scan", ruby.class_object())?;
         scan.undef_default_alloc_func();
         scan.define_method("matches", method!(Scan::matches, 0))?;
-        scan.define_method("limited", method!(Scan::limited, 0))?;
+        scan.define_method("over_masked", method!(Scan::over_masked, 0))?;
         Ok(())
     }
 }
@@ -395,11 +541,26 @@ mod tests {
     type Seen = Vec<(usize, usize, usize, Vec<(String, usize, usize)>)>;
 
     fn set(shapes: &[(&str, &str)]) -> Set {
-        let owned: Vec<(String, String)> = shapes
+        let lined: Vec<(&str, &str, bool)> = shapes
             .iter()
-            .map(|(name, source)| (name.to_string(), source.to_string()))
+            .map(|&(name, source)| (name, source, false))
             .collect();
-        Set::compile(&owned).expect("shapes compile")
+        set_with(&lined, Limits::DEFAULT)
+    }
+
+    fn set_with(shapes: &[(&str, &str, bool)], limits: Limits) -> Set {
+        let owned: Vec<(String, String, bool)> = shapes
+            .iter()
+            .map(|&(name, source, single_line)| (name.to_string(), source.to_string(), single_line))
+            .collect();
+        Set::compile_with(&owned, limits).expect("shapes compile")
+    }
+
+    fn masked(scan: &Scan) -> Vec<(usize, usize, usize)> {
+        scan.over_masked
+            .iter()
+            .map(|span| (span.shape, span.start, span.end))
+            .collect()
     }
 
     fn seen(set: &Set, scan: &Scan) -> Seen {
@@ -422,6 +583,13 @@ mod tests {
             .collect()
     }
 
+    fn spans(set: &Set, scan: &Scan) -> Vec<(usize, usize, usize)> {
+        seen(set, scan)
+            .into_iter()
+            .map(|(shape, start, end, _)| (shape, start, end))
+            .collect()
+    }
+
     fn scan(set: &Set, bytes: &[u8]) -> Scan {
         set.scan_until(bytes, &Cancel::never())
             .expect("never halted")
@@ -436,7 +604,7 @@ mod tests {
             seen(&set, &found),
             vec![(0, 4, 24, vec![]), (1, 0, 3, vec![]), (1, 25, 28, vec![])]
         );
-        assert!(found.limited.is_empty());
+        assert!(found.over_masked.is_empty());
     }
 
     #[test]
@@ -513,20 +681,108 @@ mod tests {
     }
 
     #[test]
-    fn a_shape_over_its_backtrack_limit_is_limited_and_the_others_still_match() {
-        let set = set(&[("runaway", r"^(a|aa)+\1c"), ("aws", "AKIA[0-9A-Z]{16}")]);
-        let text = [b"a".repeat(60), b" AKIAABCDEFGHABCDEFGH".to_vec()].concat();
+    fn a_shape_the_first_limit_cannot_finish_is_retried_at_the_higher_one() {
+        let limits = Limits {
+            first: 2,
+            retry: 1_000_000,
+        };
+        let set = set_with(&[("runaway", r"(a|aa)+\1c", false)], limits);
+        let found = scan(&set, b"aaaaaaaaaa aaac");
+
+        assert!(found.over_masked.is_empty(), "{:?}", found.over_masked);
+        assert_eq!(
+            seen(&set, &found),
+            vec![(0, 11, 15, vec![("1".to_string(), 12, 13)])]
+        );
+    }
+
+    /// Only a start-of-text anchor keeps fancy-regex from failing this
+    /// runaway fast, so the line it cannot finish comes first.
+    #[test]
+    fn a_single_line_shape_over_its_limit_is_over_masked_on_that_line_alone() {
+        let set = set_with(
+            &[
+                ("runaway", r"^(a|aa)+\1c", true),
+                ("aws", "AKIA[0-9A-Z]{16}", false),
+            ],
+            Limits::DEFAULT,
+        );
+        let text = [b"a".repeat(60), b"\nAKIAABCDEFGHABCDEFGH\naac\n".to_vec()].concat();
         let found = scan(&set, &text);
 
-        assert_eq!(found.limited, vec![0]);
-        assert_eq!(seen(&set, &found), vec![(1, 61, 81, vec![])]);
+        assert_eq!(masked(&found), vec![(0, 0, 60)]);
+        assert_eq!(spans(&set, &found), vec![(0, 82, 85), (1, 61, 81)]);
+    }
+
+    #[test]
+    fn a_multi_line_shape_over_its_limit_is_over_masked_from_its_last_match_to_the_end() {
+        let pem =
+            r"(?m)-----BEGIN ((?:RSA )?PUBLIC KEY)-----\r?\n([A-Za-z0-9+/=\r\n]+)-----END \1-----";
+        let set = set(&[("pem", pem), ("aws", "AKIA[0-9A-Z]{16}")]);
+        let closed = b"-----BEGIN PUBLIC KEY-----\nQUJD\n-----END PUBLIC KEY-----".to_vec();
+        let text = [
+            closed.clone(),
+            b"\n-----BEGIN PUBLIC KEY-----\n".to_vec(),
+            b"A".repeat(1_100_000),
+            b"-----END RSA PUBLIC KEY-----\nAKIAABCDEFGHABCDEFGH".to_vec(),
+        ]
+        .concat();
+        let found = scan(&set, &text);
+        let aws = text.len() - 20;
+
+        assert_eq!(masked(&found), vec![(0, closed.len(), text.len())]);
+        assert_eq!(
+            spans(&set, &found),
+            vec![(0, 0, closed.len()), (1, aws, text.len())]
+        );
+    }
+
+    #[test]
+    fn a_multi_line_shape_with_no_finished_match_is_over_masked_from_the_start() {
+        let set = set(&[("runaway", r"^(a|aa)+\1c")]);
+        let text = b"a".repeat(60);
+
+        assert_eq!(masked(&scan(&set, &text)), vec![(0, 0, 60)]);
+    }
+
+    /// Each line outruns the first limit and finishes inside the retry with no
+    /// match, so nothing inside a line reads the stop request. It is raised
+    /// halfway through a 1-line scan, which only a read between lines can see.
+    #[test]
+    fn a_retry_by_line_reads_the_stop_request_before_every_line() {
+        let shape = [("runaway", r"^(a|aa)+\1c", true)];
+        let tight = Limits {
+            first: 100_000,
+            retry: 100_000,
+        };
+        let set = set_with(&shape, Limits::DEFAULT);
+        let line = b"a".repeat(28);
+        assert_eq!(
+            masked(&scan(&set_with(&shape, tight), &line)),
+            vec![(0, 0, 28)]
+        );
+        let started = std::time::Instant::now();
+        assert_eq!(scan(&set, &line), Scan::default());
+        let one_line = started.elapsed();
+        let text = vec![line; 63].join(&b'\n');
+        let flag = std::sync::atomic::AtomicBool::new(false);
+
+        let halted = std::thread::scope(|threads| {
+            threads.spawn(|| {
+                std::thread::sleep(one_line.mul_f64(0.5));
+                flag.store(true, std::sync::atomic::Ordering::Relaxed);
+            });
+            set.scan_until(&text, &Cancel::watching(&flag)).is_err()
+        });
+
+        assert!(halted, "the retry ran every line after the stop request");
     }
 
     #[test]
     fn a_shape_that_does_not_compile_is_refused_by_name() {
         let shapes = vec![
-            ("fine".to_string(), "a".to_string()),
-            ("broken".to_string(), "(".to_string()),
+            ("fine".to_string(), "a".to_string(), false),
+            ("broken".to_string(), "(".to_string(), true),
         ];
         let Err(refused) = Set::compile(&shapes) else {
             panic!("an unclosed group compiled");
