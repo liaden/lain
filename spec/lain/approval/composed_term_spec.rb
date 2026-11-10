@@ -2388,6 +2388,14 @@ RSpec.describe Lain::Approval::ComposedTerm do
         end
       end
 
+      it "refuses an inert config above the root" do
+        in_crate do |root, home|
+          on_disk(above(root), ".cargo/config.toml", "[net]\nretry = 3\n")
+
+          expect(decisions(root, home, ["cargo check --locked"])).to eq([nil])
+        end
+      end
+
       it "refuses a manifest named outside the root, or one whose workspace key points out of it" do
         in_crate do |root, home|
           on_disk(above(root), "elsewhere/Cargo.toml", "[package]\nname = \"x\"\n")
@@ -2423,14 +2431,14 @@ RSpec.describe Lain::Approval::ComposedTerm do
     end
 
     # TOML reads a quoted key as the bare one and `\u` as any character, so a
-    # file spelling a key either way is left to the judge rather than parsed.
+    # key is judged by the name cargo's own parser reads, however it is spelled.
     describe "a manifest or config whose keys are quoted or escaped" do
       def quoted_aliases
         ["\"fmt\" = [\"run\", \"--\"]\n\"clippy\" = [\"run\", \"--\"]\n",
          "'fmt' = [\"run\", \"--\"]\n'clippy' = [\"run\", \"--\"]\n",
          "alias.\"fmt\" = [\"run\"]\nalias.\"clippy\" = [\"run\"]\n",
          "\"alias\".fmt = [\"run\"]\n\"alias\".clippy = [\"run\"]\n",
-         "[alias]\nf\\u006dt = [\"run\"]\ncl\\u0069ppy = [\"run\"]\n"]
+         "[alias]\n\"f\\u006dt\" = [\"run\"]\n\"cl\\u0069ppy\" = [\"run\"]\n"]
       end
 
       it "refuses fmt and clippy under an alias spelled with a quoted or escaped key" do
@@ -2444,7 +2452,7 @@ RSpec.describe Lain::Approval::ComposedTerm do
         end
       end
 
-      it "refuses a manifest whose workspace key is quoted, and one holding an escape" do
+      it "refuses a manifest whose workspace key is quoted, and approves a quoted header or an escaped value" do
         in_crate do |root, home|
           manifests = ["[package]\nname = \"demo\"\n\"workspace\" = \"../../w\"\n",
                        "[package]\nname = \"demo\"\n'workspace' = \"../../w\"\n",
@@ -2453,10 +2461,10 @@ RSpec.describe Lain::Approval::ComposedTerm do
 
           answers = manifests.map do |manifest|
             on_disk(root, "Cargo.toml", manifest)
-            rule_for(home, root).decide(call_of("cargo build --locked --workspace", cwd: root))
+            rule_for(home, root).decide(call_of("cargo build --locked --workspace", cwd: root))&.verdict
           end
 
-          expect(answers).to eq([nil] * manifests.size)
+          expect(answers).to eq([nil, nil, :allow, :allow])
         end
       end
 
@@ -2466,6 +2474,532 @@ RSpec.describe Lain::Approval::ComposedTerm do
                                       "[dependencies]\nx = { version = \"=2.3.2\", features = [\"a\", \"b\"] }\n")
 
           expect(rule_for(home, root).decide(call_of("cargo build --locked", cwd: root))).to be_allow
+        end
+      end
+    end
+
+    # A key counts at any depth of the parsed tree, as cargo reads it, however it is spelled.
+    describe "a manifest or config read as parsed TOML" do
+      def check(root, home) = rule_for(home, root).decide(call_of("cargo check --locked", cwd: root))
+
+      it "approves a workspace root whose fields are inherited" do
+        in_crate do |root, home|
+          on_disk(root, "Cargo.toml", "[workspace]\nmembers = []\n\n[workspace.package]\nversion = \"0.1.0\"\n\n" \
+                                      "[package]\nname = \"demo\"\nversion.workspace = true\n" \
+                                      "edition = { workspace = true }\n")
+
+          expect(check(root, home)).to be_allow
+        end
+      end
+
+      it "approves a quoted table header" do
+        in_crate do |root, home|
+          on_disk(root, "Cargo.toml", "[package]\nname = \"demo\"\n\n[target.'cfg(unix)'.dependencies]\n" \
+                                      "libc = \"0.2\"\n\n[dependencies.\"foo\"]\nversion = \"1\"\n")
+
+          expect(check(root, home)).to be_allow
+        end
+      end
+
+      it "refuses fmt and clippy aliased plain, quoted, escaped, dotted or as an inline table" do
+        in_crate do |root, home|
+          configs = ["[alias]\nfmt = [\"run\"]\nclippy = [\"run\"]\n",
+                     "[alias]\n\"fmt\" = [\"run\"]\n'clippy' = [\"run\"]\n",
+                     "[alias]\n\"f\\u006dt\" = [\"run\"]\n\"cl\\u0069ppy\" = [\"run\"]\n",
+                     "alias.fmt = [\"run\"]\n\"alias\".'clippy' = [\"run\"]\n",
+                     "alias = { fmt = [\"run\"], \"clippy\" = [\"run\"] }\n",
+                     "[target.x86_64-unknown-linux-gnu.alias]\nfmt = [\"run\"]\nclippy = [\"run\"]\n"]
+
+          answers = configs.map do |config|
+            on_disk(root, ".cargo/config.toml", config)
+            decisions(root, home, ["cargo fmt --check", "cargo clippy --locked -- -D warnings"])
+          end
+
+          expect(answers).to eq([[nil, nil]] * configs.size)
+        end
+      end
+
+      it "refuses a workspace key pointing out of the root, however it is spelled" do
+        in_crate do |root, home|
+          manifests = ["[package]\nname = \"demo\"\nworkspace = \"../..\"\n",
+                       "[package]\nname = \"demo\"\n\"workspace\" = \"../..\"\n",
+                       "[package]\nname = \"demo\"\n\"work\\u0073pace\" = \"../..\"\n",
+                       "package.name = \"demo\"\npackage.workspace = \"../..\"\n",
+                       "package = { name = \"demo\", 'workspace' = \"../..\" }\n"]
+
+          answers = manifests.map do |manifest|
+            on_disk(root, "Cargo.toml", manifest)
+            check(root, home)
+          end
+
+          expect(answers).to eq([nil] * manifests.size)
+        end
+      end
+
+      it "refuses an include in the project's config or the user's own" do
+        in_crate do |root, home|
+          on_disk(root, ".cargo/extra.toml", "[net]\nretry = 3\n")
+          include = "include = [{ path = \"extra.toml\" }]\n"
+
+          on_disk(root, ".cargo/config.toml", include)
+          project = check(root, home)
+          on_disk(root, ".cargo/config.toml", "[net]\nretry = 3\n")
+          on_disk(cargo_home, "config.toml", include)
+
+          expect([project, check(root, home)]).to eq([nil, nil])
+        end
+      end
+
+      it "refuses every key the user's own config can run something by, however spelled or nested" do
+        in_crate do |root, home|
+          keys = %w[alias rustc rustdoc rustc-wrapper rustc-workspace-wrapper runner linker rustflags rustdocflags
+                    include env credential-provider global-credential-providers]
+          spellings = keys.flat_map do |key|
+            ["[build]\n#{key} = \"x\"\n", "[build]\n\"#{key}\" = \"x\"\n", "build.#{key} = \"x\"\n",
+             "[target.x86_64-unknown-linux-gnu]\n#{key} = \"x\"\n", "[[build]]\n#{key} = \"x\"\n"]
+          end
+
+          answers = spellings.map do |config|
+            on_disk(cargo_home, "config.toml", config)
+            check(root, home)
+          end
+
+          expect(answers).to eq([nil] * spellings.size)
+        end
+      end
+
+      it "refuses a manifest that does not parse" do
+        in_crate do |root, home|
+          on_disk(root, "Cargo.toml", "[package]\nname = \"demo\"\nname = \"again\"\n")
+
+          expect(check(root, home)).to be_nil
+        end
+      end
+    end
+
+    # A path dependency, a build script, a target's source and a workspace
+    # member are all code cargo builds and runs, so each must lie inside the root.
+    describe "the paths a manifest names" do
+      def check(root, home) = rule_for(home, root).decide(call_of("cargo check --locked", cwd: root))
+
+      def package = "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n"
+
+      def answers_for(root, home, manifests)
+        manifests.map do |manifest|
+          on_disk(root, "Cargo.toml", manifest)
+          check(root, home)
+        end
+      end
+
+      it "refuses a path dependency outside the root, inline, under a quoted header or in a target table" do
+        in_crate do |root, home|
+          manifests = ["#{package}\n[dependencies]\nevil = { path = \"../evil\" }\n",
+                       "#{package}\n[dependencies.\"evil\"]\npath = \"../evil\"\n",
+                       "#{package}\n[target.'cfg(unix)'.build-dependencies]\nevil = { path = \"../evil\" }\n",
+                       "#{package}\n[workspace.dependencies]\nevil = { path = \"../evil\" }\n"]
+
+          expect(answers_for(root, home, manifests)).to eq([nil] * manifests.size)
+        end
+      end
+
+      it "refuses a build script, a patch, a replacement or a target source outside the root" do
+        in_crate do |root, home|
+          manifests = ["#{package}build = \"../evil/build.rs\"\n",
+                       "#{package}\n[patch.crates-io]\nserde = { path = \"../evil\" }\n",
+                       "#{package}\n[replace]\n\"serde:1.0.0\" = { path = \"../evil\" }\n",
+                       "#{package}\n[lib]\npath = \"../evil/lib.rs\"\n",
+                       "#{package}\n[[bin]]\nname = \"x\"\npath = \"../evil/main.rs\"\n"]
+
+          expect(answers_for(root, home, manifests)).to eq([nil] * manifests.size)
+        end
+      end
+
+      it "refuses a workspace member outside the root, by name or by a glob that climbs out" do
+        in_crate do |root, home|
+          manifests = ["#{package}\n[workspace]\nmembers = [\"../evil\"]\n",
+                       "#{package}\n[workspace]\nmembers = [\"crates/*/../../../*\"]\n",
+                       "#{package}\n[workspace]\nmembers = [\"../*\"]\n"]
+
+          expect(answers_for(root, home, manifests)).to eq([nil] * manifests.size)
+        end
+      end
+
+      it "refuses a path that is not a string" do
+        in_crate do |root, home|
+          manifests = ["#{package}\n[lib]\npath = [\"../evil/lib.rs\"]\n",
+                       "#{package}\n[workspace]\nmembers = \"../evil\"\n"]
+
+          expect(answers_for(root, home, manifests)).to eq([nil] * manifests.size)
+        end
+      end
+
+      it "refuses a path dependency inside the root whose own manifest names one outside it" do
+        in_crate do |root, home|
+          on_disk(root, "inner/Cargo.toml",
+                  "[package]\nname = \"inner\"\n\n[dependencies]\nevil = { path = \"../../evil\" }\n")
+
+          expect(answers_for(root, home, ["#{package}\n[dependencies]\ninner = { path = \"inner\" }\n"])).to eq([nil])
+        end
+      end
+
+      it "approves path dependencies, members, a build script and a target source inside the root" do
+        in_crate do |root, home|
+          on_disk(root, "crates/a/Cargo.toml", "[package]\nname = \"a\"\n\n[dependencies]\nb = { path = \"../b\" }\n")
+          on_disk(root, "crates/b/Cargo.toml", "[package]\nname = \"b\"\nbuild = false\n")
+          manifest = "#{package}build = \"build.rs\"\n\n[lib]\npath = \"src/lib.rs\"\n\n[workspace]\n" \
+                     "members = [\"crates/*\"]\n\n[dependencies]\na = { path = \"crates/a\" }\n"
+
+          expect(answers_for(root, home, [manifest])).to all(be_allow)
+        end
+      end
+
+      it "refuses a build script list naming one outside the root, or holding anything but a path" do
+        in_crate do |root, home|
+          manifests = ["#{package}build = [\"build.rs\", \"../evil/build.rs\"]\n",
+                       "#{package}build = [\"build.rs\", 3]\n"]
+
+          expect(answers_for(root, home, manifests)).to eq([nil] * manifests.size)
+        end
+      end
+
+      # cargo clones a `file:` or schemeless git source and reads a local index
+      # off disk, so either names code outside the root with no network.
+      it "refuses a git source or a registry index read from local disk" do
+        in_crate do |root, home|
+          manifests = ["#{package}\n[dependencies]\nevil = { git = \"file:///tmp/evilgit\" }\n",
+                       "#{package}\n[dependencies]\nevil = { git = \"/tmp/evilgit\" }\n",
+                       "#{package}\n[dependencies]\nevil = { git = \"../evilgit\" }\n",
+                       "#{package}\n[dependencies]\nevil = { version = \"1\", registry-index = \"file:///tmp/idx\" }\n"]
+
+          expect(answers_for(root, home, manifests)).to eq([nil] * manifests.size)
+        end
+      end
+
+      it "approves a git source or a registry index fetched over the network" do
+        in_crate do |root, home|
+          manifests = ["#{package}\n[dependencies]\na = { git = \"https://example.com/a.git\" }\n" \
+                       "b = { git = \"ssh://git@example.com/b.git\" }\nc = { git = \"git://example.com/c.git\" }\n" \
+                       "d = { version = \"1\", registry-index = \"sparse+https://example.com/index/\" }\n"]
+
+          expect(answers_for(root, home, manifests)).to all(be_allow)
+        end
+      end
+
+      it "refuses a chain of path dependencies longer than the walk reads, without exhausting the stack" do
+        in_crate do |root, home|
+          depth = 5000
+          depth.times do |n|
+            on_disk(root, "c#{n}/Cargo.toml",
+                    "[package]\nname = \"c#{n}\"\n\n[dependencies]\nc#{n + 1} = { path = \"../c#{n + 1}\" }\n")
+          end
+          on_disk(root, "c#{depth}/Cargo.toml", "[package]\nname = \"c#{depth}\"\n")
+
+          expect(answers_for(root, home, ["#{package}\n[dependencies]\nc0 = { path = \"c0\" }\n"])).to eq([nil])
+        end
+      end
+
+      it "approves path dependencies that name each other in a cycle" do
+        in_crate do |root, home|
+          on_disk(root, "a/Cargo.toml", "[package]\nname = \"a\"\n\n[dependencies]\nb = { path = \"../b\" }\n")
+          on_disk(root, "b/Cargo.toml", "[package]\nname = \"b\"\n\n[dependencies]\na = { path = \"../a\" }\n")
+
+          expect(answers_for(root, home, ["#{package}\n[dependencies]\na = { path = \"a\" }\n"])).to all(be_allow)
+        end
+      end
+
+      it "refuses a member a glob finds, hidden or not, whose manifest names a path outside the root" do
+        in_crate do |root, home|
+          answers = %w[a .m].map do |member|
+            FileUtils.rm_rf(File.join(root, "crates"))
+            on_disk(root, "crates/#{member}/Cargo.toml",
+                    "[package]\nname = \"m\"\n\n[dependencies]\nevil = { path = \"../../../evil\" }\n")
+            answers_for(root, home, ["#{package}\n[workspace]\nmembers = [\"crates/*\"]\n"]).first
+          end
+
+          expect(answers).to eq([nil, nil])
+        end
+      end
+
+      # A recursive glob walks a whole tree before cargo would build a thing.
+      it "refuses a recursive member glob" do
+        in_crate do |root, home|
+          manifests = ["#{package}\n[workspace]\nmembers = [\"crates/**\"]\n",
+                       "#{package}\n[workspace]\nmembers = [\"**/*\"]\n"]
+
+          expect(answers_for(root, home, manifests)).to eq([nil] * manifests.size)
+        end
+      end
+
+      it "refuses a member glob that reads more entries than its bound, matching or not" do
+        in_crate do |root, home|
+          FileUtils.mkdir_p(Array.new(2049) { File.join(root, "crates", "c#{_1}") })
+          manifests = ["#{package}\n[workspace]\nmembers = [\"crates/*\"]\n",
+                       "#{package}\n[workspace]\nmembers = [\"crates/*/nomatch\"]\n"]
+
+          expect(answers_for(root, home, manifests)).to eq([nil] * manifests.size)
+        end
+      end
+
+      it "refuses a member glob that is absolute, or whose literal prefix leads out of the root" do
+        in_crate do |root, home|
+          on_disk(File.dirname(root), "outside/m/Cargo.toml", "[package]\nname = \"m\"\n")
+          File.symlink(File.join(File.dirname(root), "outside"), File.join(root, "link"))
+          FileUtils.mkdir_p(File.join(File.dirname(root), "empty"))
+          File.symlink(File.join(File.dirname(root), "empty"), File.join(root, "empty"))
+          manifests = ["#{package}\n[workspace]\nmembers = [\"#{root}/crates/*\"]\n",
+                       "#{package}\n[workspace]\nmembers = [\"link/*\"]\n",
+                       "#{package}\n[workspace]\nmembers = [\"empty/*\"]\n"]
+
+          expect(answers_for(root, home, manifests)).to eq([nil] * manifests.size)
+        end
+      end
+
+      # A `..` after a glob climbs out of whatever the glob matched, a symlink
+      # included, which a lexical check reads as staying put. cargo reads a
+      # brace literally, so a directory so named is walked, not expanded.
+      it "refuses a member glob that climbs after matching, and walks a brace as a literal name" do
+        in_crate do |root, home|
+          on_disk(File.dirname(root), "outside/sub/.keep", "")
+          on_disk(File.dirname(root), "outside/m/Cargo.toml", "[package]\nname = \"m\"\nbuild = \"../../evil.rs\"\n")
+          on_disk(root, "crates/m/Cargo.toml", "[package]\nname = \"m\"\n")
+          on_disk(root, "crates/{a,m}/x/Cargo.toml", "[package]\nname = \"x\"\nbuild = \"../../../../evil.rs\"\n")
+          File.symlink(File.join(File.dirname(root), "outside/sub"), File.join(root, "crates/link"))
+          manifests = ["#{package}\n[workspace]\nmembers = [\"crates/*/../m\"]\n",
+                       "#{package}\n[workspace]\nmembers = [\"crates/{a,m}/*\"]\n"]
+
+          expect(answers_for(root, home, manifests)).to eq([nil] * manifests.size)
+        end
+      end
+
+      it "spends one entry budget across every manifest a call walks" do
+        in_crate do |root, home|
+          FileUtils.mkdir_p(Array.new(800) { File.join(root, "crates", "c#{_1}") })
+          %w[c0 c1].each do |name|
+            on_disk(root, "crates/#{name}/Cargo.toml",
+                    "[package]\nname = \"#{name}\"\n\n[workspace]\nmembers = [\"../*\"]\n")
+          end
+
+          expect(answers_for(root, home, ["#{package}\n[workspace]\nmembers = [\"crates/*\"]\n"])).to eq([nil])
+        end
+      end
+
+      it "refuses a call whose manifests together hold more bytes than it reads" do
+        in_crate do |root, home|
+          padding = "# #{"x" * 77}\n" * 750
+          75.times do |n|
+            on_disk(root, "c#{n}/Cargo.toml",
+                    "[package]\nname = \"c#{n}\"\n#{padding}\n" \
+                    "[dependencies]\nc#{n + 1} = { path = \"../c#{n + 1}\" }\n")
+          end
+          on_disk(root, "c75/Cargo.toml", "[package]\nname = \"c75\"\n")
+
+          expect(answers_for(root, home, ["#{package}\n[dependencies]\nc0 = { path = \"c0\" }\n"])).to eq([nil])
+        end
+      end
+
+      # cargo reads `~` as a directory name, not as anyone's home.
+      it "reads a path starting with ~ as a name inside the root" do
+        in_crate do |root, home|
+          on_disk(root, "~/inner/Cargo.toml", "[package]\nname = \"inner\"\n")
+
+          manifest = "#{package}\n[dependencies]\ninner = { path = \"~/inner\" }\n"
+
+          expect(answers_for(root, home, [manifest])).to all(be_allow)
+        end
+      end
+    end
+
+    # A project config may hold only keys known to be inert, so a key this rule
+    # has never read, a source, a patch, a target dir or a credential program,
+    # is the judge's to weigh rather than a path to chase.
+    describe "a project config's allowlist" do
+      def check(root, home, command = "cargo check --locked")
+        rule_for(home, root).decide(call_of(command, cwd: root))
+      end
+
+      def answers_for(root, home, configs)
+        configs.map do |config|
+          on_disk(root, ".cargo/config.toml", config)
+          check(root, home)
+        end
+      end
+
+      it "approves the inert tables and keys real crates hold" do
+        in_crate do |root, home|
+          configs = ["[alias]\nb = \"build\"\nxtask = \"run -p xtask --\"\n",
+                     "[term]\nverbose = true\ncolor = \"always\"\n",
+                     "[net]\nretry = 3\ngit-fetch-with-cli = true\noffline = true\n",
+                     "[http]\ntimeout = 30\nlow-speed-limit = 10\n",
+                     "[build]\njobs = 4\nincremental = false\ntarget = \"wasm32-unknown-unknown\"\n",
+                     "[build]\ntarget = [\"x86_64-unknown-linux-musl\", \"wasm32-wasip1\"]\n",
+                     "[cargo-new]\nvcs = \"none\"\n", "[future-incompat-report]\nfrequency = \"never\"\n"]
+
+          expect(answers_for(root, home, configs)).to all(be_allow)
+        end
+      end
+
+      it "approves a bare program, plain arguments and the flag shapes real crates use" do
+        in_crate do |root, home|
+          configs = ["[build]\nrustc-wrapper = \"sccache\"\nrustc-workspace-wrapper = \"sccache\"\n",
+                     "[target.x86_64-unknown-linux-gnu]\nlinker = \"clang\"\n" \
+                     "rustflags = [\"-C\", \"link-arg=-fuse-ld=mold\"]\n",
+                     "[target.'cfg(all())']\nrunner = \"wasmtime run --wasm-features all --dir .\"\n",
+                     "[target.wasm32-unknown-unknown]\nrunner = [\"wasm-bindgen-test-runner\"]\n" \
+                     "rustflags = ['--cfg', 'getrandom_backend=\"wasm_js\"']\n",
+                     "[build]\nrustflags = \"-C target-cpu=native\"\nrustdocflags = [\"--cfg\", \"docsrs\"]\n",
+                     "[build]\nrustflags = [\"-Dunsafe_code\", \"-Wclippy::all\", \"-A\", \"dead_code\", " \
+                     "\"-Fwarnings\", " \
+                     "\"--cfg=web_sys_unstable_apis\"]\n",
+                     "[build]\nrustflags = [\"-C\", \"target-feature=+crt-static,-x\", " \
+                     "\"-Cforce-frame-pointers=true\", " \
+                     "\"-Copt-level=3\", \"-C\", \"debuginfo=2\", \"-C\", \"link-dead-code=on\"]\n"]
+
+          expect(answers_for(root, home, configs)).to all(be_allow)
+        end
+      end
+
+      # Each holds no slash, yet names the root's parent or a file in the
+      # directory cargo runs the child in, or unlocks a flag that can.
+      it "refuses the slash-free routes out of the root" do
+        in_crate do |root, home|
+          configs = ["[env]\nLD_LIBRARY_PATH = { value = \"..\", force = true }\nLD_PRELOAD = \"libevil.so\"\n",
+                     "[build]\nrustflags = [\"-Clink-arg=-L..\", " \
+                     "\"-Clink-arg=-Wl,--push-state,--no-as-needed,-levil,--pop-state\", " \
+                     "\"-Clink-arg=-Wl,-rpath,..\"]\n",
+                     "[target.'cfg(all())']\nrunner = [\"env\", \"LD_LIBRARY_PATH=..\", \"LD_PRELOAD=libevil.so\"]\n",
+                     "[build]\nrustflags = [\"-Zcodegen-backend=libevil.so\"]\n",
+                     "[env]\nRUSTC_BOOTSTRAP = { value = \"1\", force = true }\n",
+                     "[build]\nrustflags = [\"-Cincremental=..\"]\n",
+                     "[env]\nRUST_TARGET_PATH = \"..\"\n" \
+                     "[build]\ntarget = \"evil\"\nrustflags = [\"-Zunstable-options\"]\n"]
+
+          expect(answers_for(root, home, configs)).to eq([nil] * configs.size)
+        end
+      end
+
+      it "refuses a flag outside the known shapes, or one cut short" do
+        in_crate do |root, home|
+          flags = ["\"-Zthreads=0\"", "\"-L\", \"native\"", "\"-lfoo\"", "\"-Clink-arg=-lgcc\"", "\"-Clink-args=-x\"",
+                   "\"-Cprofile-generate=x\"", "\"-C\", \"incremental=x\"", "\"-Clink-arg=-fuse-ld=..\"",
+                   "\"-C\"", "\"-D\"", "\"-D\", \"-Wx\"", "\"--cfg\", \"a=b\"", "\"-Cprefer-dynamic\""]
+          configs = flags.map { "[build]\nrustflags = [#{_1}]\n" }
+
+          expect(answers_for(root, home, configs)).to eq([nil] * configs.size)
+        end
+      end
+
+      it "refuses a runner argument with an equals sign, dots, a library flag or shell text" do
+        in_crate do |root, home|
+          runners = ["[\"wasmtime\", \"--dir\", \"..\"]", "[\"wasmtime\", \"--dir\", \"...\"]",
+                     "\"valgrind --log-file=x\"", "[\"sh\", \"-c\", \"cd;evil\"]", "[\"wasmtime\", \"-Lx\"]",
+                     "[\"wasmtime\", \"-Zx\"]", "[\"..\"]", "[\"$HOME\"]"]
+          configs = runners.map { "[target.'cfg(all())']\nrunner = #{_1}\n" }
+
+          expect(answers_for(root, home, configs)).to eq([nil] * configs.size)
+        end
+      end
+
+      it "refuses any environment table" do
+        in_crate do |root, home|
+          configs = ["[env]\nRUST_LOG = \"debug\"\n", "[env]\nX = { value = \"1\", force = true }\n"]
+
+          expect(answers_for(root, home, configs)).to eq([nil] * configs.size)
+        end
+      end
+
+      it "refuses a key it does not know, at any table" do
+        in_crate do |root, home|
+          configs = ["[build]\ntarget-dir = \"t\"\n", "[build]\nbuild-dir = \"b\"\n", "[build]\nrustc = \"rustc\"\n",
+                     "[build]\nrustdoc = \"rustdoc\"\n", "[http]\ncainfo = \"c.pem\"\n", "[http]\nproxy = \"p:1\"\n",
+                     "[registries.loop]\nindex = \"sparse+http://127.0.0.1:1/\"\ncredential-provider = [\"prov\"]\n",
+                     "[registry]\nglobal-credential-providers = [\"prov\"]\n", "[credential-alias]\nx = [\"prov\"]\n",
+                     "[profile.dev]\ncodegen-backend = \"cranelift\"\n", "[doc]\nbrowser = \"firefox\"\n",
+                     "[unstable]\nbuild-std = [\"core\"]\n", "[source.crates-io]\nreplace-with = \"v\"\n",
+                     "[patch.crates-io]\nitoa = { path = \"patched/itoa\" }\n", "paths = [\"x\"]\n",
+                     "[target.x86_64-unknown-linux-gnu.foo]\nrustc-link-lib = [\"m\"]\n",
+                     "[target.x86_64-unknown-linux-gnu]\nar = \"ar\"\n", "[net]\nssh = { known-hosts = [] }\n"]
+
+          expect(answers_for(root, home, configs)).to eq([nil] * configs.size)
+        end
+      end
+
+      # A slash makes a word a path, which a symlink inside the root or the
+      # directory cargo runs the child in can carry anywhere; an `@` reads a file.
+      it "refuses a program, a flag or an argument holding a slash or reading a file" do
+        in_crate do |root, home|
+          configs = ["[build]\nrustc-wrapper = \"tools/wrap.sh\"\n", "[build]\nrustc-wrapper = \"/tmp/wrap.sh\"\n",
+                     "[target.x86_64-unknown-linux-gnu]\nlinker = \"lnk/run.sh\"\n",
+                     "[target.'cfg(all())']\nrunner = [\"valgrind\", \"--log-file=out/v.log\"]\n",
+                     "[target.'cfg(all())']\nrunner = \"valgrind @args\"\n",
+                     "[build]\nrustflags = [\"-Clinker=lnk/run.sh\"]\n", "[build]\nrustflags = \"-L vendor/lib\"\n",
+                     "[build]\nrustflags = [\"@flags.txt\"]\n", "[build]\nrustdocflags = [\"--sysroot=s/x\"]\n",
+                     "[target.x86_64-unknown-linux-gnu]\nrustflags = [\"-C\", \"linker=../run.sh\"]\n",
+                     "[target.'cfg(all())']\nrunner = [3]\n", "[build]\nrustflags = [\"-C\", 3]\n"]
+
+          expect(answers_for(root, home, configs)).to eq([nil] * configs.size)
+        end
+      end
+
+      it "refuses a target that names a file rather than a triple" do
+        in_crate do |root, home|
+          configs = ["[build]\ntarget = \"t.json\"\n", "[build]\ntarget = \"specs/t.json\"\n",
+                     "[build]\ntarget = [\"x86_64-unknown-linux-gnu\", \"t.json\"]\n"]
+
+          expect(answers_for(root, home, configs)).to eq([nil] * configs.size)
+        end
+      end
+
+      # `relative` makes even a bare value a path under the config's directory.
+      it "refuses an environment value holding a slash, read relative to the config, or not text" do
+        in_crate do |root, home|
+          configs = ["[env]\nLD_PRELOAD = \"lnk/p.so\"\n", "[env]\nLD_PRELOAD = \"/tmp/p.so\"\n",
+                     "[env]\nLD_PRELOAD = { value = \"p.so\", relative = true }\n",
+                     "[env]\nX = { value = 3 }\n", "[env]\nX = { value = \"1\", other = true }\n", "env = 3\n"]
+
+          expect(answers_for(root, home, configs)).to eq([nil] * configs.size)
+        end
+      end
+
+      it "holds a config below the root's own, read from a deeper cwd, to the same list" do
+        in_crate do |root, home|
+          on_disk(root, "src/.cargo/config.toml", "[build]\nrustflags = [\"-Clinker=../run.sh\"]\n")
+
+          expect(rule_for(home, root).decide(call_of("cargo check --locked", cwd: File.join(root, "src")))).to be_nil
+        end
+      end
+    end
+
+    describe "a manifest's unstable features and flags" do
+      def check(root, home) = rule_for(home, root).decide(call_of("cargo check --locked", cwd: root))
+
+      def package = "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n"
+
+      # None of the crates on this box name one, and each can load code or
+      # change how the build reads its files.
+      it "refuses any cargo feature" do
+        in_crate do |root, home|
+          manifests = ["cargo-features = [\"codegen-backend\"]\n#{package}\n[profile.dev]\n" \
+                       "codegen-backend = \"cranelift\"\n",
+                       "cargo-features = [\"profile-rustflags\"]\n#{package}\n[profile.dev]\n" \
+                       "rustflags = [\"-Dwarnings\"]\n",
+                       "cargo-features = []\n#{package}"]
+          answers = manifests.map do |manifest|
+            on_disk(root, "Cargo.toml", manifest)
+            check(root, home)&.verdict
+          end
+
+          expect(answers).to eq([nil, nil, :allow])
+        end
+      end
+
+      it "refuses flags at any depth that hold a slash or read a file, and approves plain ones" do
+        in_crate do |root, home|
+          answers = ["[\"-Clinker=x/run.sh\"]", "[\"@args\"]", "\"-L vendor/lib\"", "[\"-Dwarnings\"]"].map do |flags|
+            on_disk(root, "Cargo.toml", "#{package}\n[profile.dev]\nrustflags = #{flags}\n")
+            check(root, home)&.verdict
+          end
+
+          expect(answers).to eq([nil, nil, nil, :allow])
         end
       end
     end

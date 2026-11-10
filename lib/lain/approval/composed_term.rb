@@ -51,8 +51,12 @@ module Lain
     #     own config names a program, includes another file or moves the tree.
     # 16. THE GIT NAME PREDICATE: every file name and every file's bytes a
     #     `git` stage prints classifies ordinary, as an `ls` entry must.
-    # 17. THE CRATE PREDICATE: every manifest, workspace and config a `cargo`
-    #     run loads lies inside the root, but for the user's own quiet config.
+    # 17. THE CRATE PREDICATE: every manifest a `cargo` run loads, and every
+    #     path it names, lies inside the root; every project config lies inside
+    #     it and holds only keys and value shapes known to name no file and no
+    #     program but a bare one; the user's own config names nothing that runs.
+    #     What the project's source pulls in, and any file a permitted value
+    #     reads by its own convention, is the workspace sandbox's to hold.
     #
     # Predicate 2 has one widening: where the verdict ABSTAINS rather than
     # denies, {Shell::Reading} reads the string itself, accepting only leading `cd`s
@@ -863,33 +867,170 @@ module Lain
 
       # The files an admitted cargo run loads that its words do not name: the
       # manifest `--manifest-path` names or the first Cargo.toml above the cwd,
-      # every Cargo.toml above that (a workspace), any workspace a manifest
-      # names, and every .cargo/config.toml from the cwd up to `/`. Each must
-      # lie inside the root, so what runs is what the project's own files say.
-      # The one exception is the user's config in cargo's home, trusted only
-      # while it names nothing that runs. A config that includes another, in
-      # either place, is refused rather than followed, since cargo loads the
-      # array form with no flag. fmt and clippy are external
-      # subcommands, which a config alias replaces, so neither runs beside one.
-      # The keys are matched as text, never parsed, so a file that quotes a key
-      # or escapes a character (TOML reads `"fmt"` and `f\u006dt` as `fmt`) is
-      # refused whole: a refusal only costs the judge's opinion.
+      # every Cargo.toml above that, and every .cargo/config.toml from the cwd
+      # up to `/`. A manifest's paths, and the manifests they name in turn, must
+      # lie inside the root; a local git source or index, an unstable feature and
+      # a flag outside {Inert}'s shapes are refused. A project config must lie
+      # inside the root and hold only what {Inert} lists. The user's own config
+      # is trusted while it names nothing that runs. Code the project's source
+      # pulls in, and any file a permitted value reads by its own convention,
+      # such as a linker's search path, is the workspace sandbox's to hold.
+      # Keys are read from the tree cargo's TOML parser builds, at any depth, so
+      # a quoted or escaped key counts under its real name, and a file that does
+      # not parse is refused.
       class Crate
         MANIFEST = "Cargo.toml"
         CONFIGS = %w[.cargo/config.toml .cargo/config].freeze
         HOME_CONFIGS = %w[config.toml config].freeze
         EXTERNAL = %w[fmt clippy].freeze
-        KEY = ->(names) { /(?:^|[\s.{,\[])["']?(?:#{names})["']?\s*[=\].]/ }
-        RUNS = KEY.call("alias|rustc|rustdoc|rustc-wrapper|rustc-workspace-wrapper|runner|linker|rustflags|" \
-                        "rustdocflags|include|env|credential-provider|global-credential-providers")
-        ALIASED = KEY.call("fmt|clippy")
-        INCLUDES = KEY.call("include")
-        WORKSPACE = /(?:^|[\s.{,])workspace\s*=\s*(["'])(.*?)\1/
-        # A quoted key segment (a value is never followed by `=` or `.`), a
-        # table header holding a quote, or a unicode escape anywhere.
-        UNPLAIN = /(?:^|[{,.])[ \t]*(["'])[^"'\n]*\1[ \t]*[=.]|^[ \t]*\[[^\n\]]*["']|\\[uU]/
+        RUNS = %w[alias rustc rustdoc rustc-wrapper rustc-workspace-wrapper runner linker rustflags rustdocflags
+                  env credential-provider global-credential-providers].freeze
+        ALIASED = %w[fmt clippy].freeze
+        INCLUDES = %w[include].freeze
+        # Any `path` at any depth, so a dependency, a patch, a replacement and a
+        # target's source are covered without naming their tables. `build` and
+        # `workspace` name no file as `false`, `true` or a table.
+        PATHS = { "path" => :one, "build" => :named, "workspace" => :named, "members" => :list }.freeze
+        LOCATORS = %w[git registry-index].freeze
+        # cargo fetches from these over the network; any other git source or
+        # index, `file:` or schemeless, it reads off local disk.
+        REMOTE = %r{\A(?:sparse\+)?(?:https?|ssh|git)://}
+        # Empty: no crate on this box names one, and each can load code or
+        # change how the build reads its files.
+        CARGO_FEATURES = [].freeze
+        GLOB = /[*?\[]/
+        # Every directory entry the member globs of one call read counts against
+        # this, matched or not, and the call is refused past it; the largest
+        # real workspaces hold a few hundred members.
+        WALK_BOUND = 2048
+        # The largest workspace on this box walks 36 manifests. This leaves a
+        # monorepo's path dependencies room, while a chain past it is refused
+        # before its walk costs seconds.
+        MANIFEST_BOUND = 4096
         # A config or manifest larger than this is refused rather than half-read.
         BOUND = 64 * 1024
+        # What one call may read across every manifest and config, about 190
+        # times the largest workspace on this box (22 KB), so a call over many
+        # padded manifests is refused before parsing them costs seconds.
+        BYTES_BOUND = 4 * 1024 * 1024
+
+        # What a project config may hold. A value is allowed only in a shape real
+        # crates use that names no file: even a word with no `/` can name the
+        # root's parent (`..`) or a file in the directory cargo runs the child
+        # in, so a path cannot be told by its characters.
+        module Inert
+          TARGET = { "runner" => :program, "linker" => :program, "rustflags" => :flags,
+                     "rustdocflags" => :flags }.freeze
+          SCHEMA = {
+            "alias" => :any, "term" => :any, "cargo-new" => :any, "future-incompat-report" => :any,
+            "net" => { "retry" => :any, "git-fetch-with-cli" => :any, "offline" => :any }.freeze,
+            "http" => { "timeout" => :any, "low-speed-limit" => :any }.freeze,
+            "build" => { "jobs" => :any, "incremental" => :any, "target" => :triples, "rustflags" => :flags,
+                         "rustdocflags" => :flags, "rustc-wrapper" => :program,
+                         "rustc-workspace-wrapper" => :program }.freeze,
+            "target" => :targets
+          }.freeze
+          # A `.json` target is a spec file cargo reads from the cwd.
+          TRIPLE = /\A[\w.-]+(?<!\.json)\z/
+          # A lint level, a cfg, a codegen option that names no file, and a
+          # linker chosen by name: every flag the configs on this box hold.
+          FLAGS = [
+            /\A-[DWAF][A-Za-z_][\w:-]*\z/,
+            /\A--cfg=\w+(?:="[\w.+ -]*")?\z/,
+            /\A-C(?:target-cpu|target-feature|force-frame-pointers|link-dead-code|opt-level|debuginfo)=[\w.,+-]*\z/,
+            /\A-Clink-arg=-fuse-ld=[a-z][\w-]*\z/
+          ].freeze
+          # A flag whose value may come as the next word.
+          SEPARATE = { "-D" => "-D", "-W" => "-W", "-A" => "-A", "-F" => "-F", "-C" => "-C",
+                       "--cfg" => "--cfg=" }.freeze
+          PROGRAM = /\A[A-Za-z0-9_][\w.+-]*\z/
+          # A plain word or flag, or `.` alone: never `=`, and never a word that
+          # starts with a dot, so never `..`.
+          ARGUMENT = /\A(?:\.|-{0,2}[A-Za-z0-9_][\w.+,:-]*)\z/
+          # A library search, a library, or an unstable flag.
+          LIBRARY_FLAG = /\A-[LlZ]/
+
+          # @param node [Object] a parsed config, or a value inside one
+          # @param rule [Hash, Symbol] what the node may hold
+          # @return [Boolean]
+          def self.allows?(node, rule = SCHEMA)
+            case rule
+            when :any then true
+            when Hash then node.is_a?(Hash) && node.all? { |key, value| rule.key?(key) && allows?(value, rule[key]) }
+            when :flags then flags?(node)
+            when :program then program?(node)
+            when :triples then Array(node).all? { _1.is_a?(String) && _1.match?(TRIPLE) }
+            else node.is_a?(Hash) && node.values.all? { allows?(_1, TARGET) }
+            end
+          end
+
+          # @param value [Object] flags, as a string or a list
+          # @return [Boolean] whether every flag takes a known shape
+          def self.flags?(value)
+            words = words(value)
+            !words.nil? && joined(words).all? { |word| FLAGS.any? { word.match?(_1) } }
+          end
+
+          # @param value [Object] a program and its arguments, as a string or a list
+          # @return [Boolean] whether the program is a bare name and each argument plain
+          def self.program?(value)
+            name, *arguments = words(value)
+            name.is_a?(String) && name.match?(PROGRAM) && !name.include?("..") &&
+              arguments.all? { _1.match?(ARGUMENT) && !_1.match?(LIBRARY_FLAG) }
+          end
+
+          # @param value [Object]
+          # @return [Array<String>, nil] the words, or nil for anything but text
+          def self.words(value)
+            words = value.is_a?(String) ? value.split : value
+            words if words.is_a?(Array) && words.all?(String)
+          end
+
+          # @param words [Array<String>]
+          # @return [Array<String>] each flag joined to a value given as the next word
+          def self.joined(words)
+            words.each_with_object([]) do |word, flags|
+              SEPARATE.key?(flags.last) ? flags[-1] = SEPARATE[flags.last] + word : flags << word
+            end
+          end
+        end
+
+        # Walks a member glob a segment at a time, as cargo's glob does: a
+        # segment matches one name, a leading dot included, and a brace is
+        # literal. Every entry read is spent from one budget for the call.
+        class Glob
+          # @param bound [Integer] the entries this walk may read
+          def initialize(bound)
+            @left = bound
+          end
+
+          # @param prefix [String] the directory the glob's literal part names
+          # @param segments [Array<String>] the rest of the glob
+          # @return [Array<String>] every path it matches
+          # @raise [ArgumentError] once the walk reads past its bound
+          def matches(prefix, segments)
+            segments.inject([prefix]) do |found, segment|
+              segment.match?(GLOB) ? found.flat_map { children(_1, segment) } : found.map { File.join(_1, segment) }
+            end
+          end
+
+          private
+
+          def children(directory, segment)
+            return [] unless File.directory?(directory)
+
+            matched = Dir.each_child(directory).select do |name|
+              spend
+              File.fnmatch?(segment, name, File::FNM_DOTMATCH)
+            end
+            matched.map { File.join(directory, _1) }
+          end
+
+          def spend
+            @left -= 1
+            raise ArgumentError, "a member glob reads more than its bound" if @left.negative?
+          end
+        end
 
         # @param env [Hash{String=>String}]
         # @return [String] where cargo keeps the user's own config
@@ -904,6 +1045,9 @@ module Lain
           @confinement = confinement
           @home = home
           @entry = entry
+          @trees = Hash.new { |trees, file| trees[file] = Ext::Toml.parse(text(file)) }
+          @glob = Glob.new(WALK_BOUND)
+          @bytes = BYTES_BOUND
         end
 
         def held?
@@ -917,28 +1061,120 @@ module Lain
           named = @entry.manifests(@arguments).map { @confinement.landing_of(_1) }
           start = named.empty? ? cwd : File.dirname(named.first)
           found = named + ascent(start, [MANIFEST])
-          named.size <= 1 && found.any? && found.all? { inside?(_1) && plain?(_1) && workspace_inside?(_1) }
+          named.size <= 1 && found.any? && walked_inside?(found)
         end
 
-        def workspace_inside?(manifest)
-          text(manifest).scan(WORKSPACE).all? do |_, value|
-            !value.empty? && !value.include?("\\") && inside?(File.expand_path(value, File.dirname(manifest)))
+        # cargo reads the manifest at every path a manifest names. A worklist,
+        # not recursion, so a deep chain cannot exhaust the stack, and each path
+        # is checked once, so crates that all name each other cost one look per
+        # path, not one per pair.
+        def walked_inside?(manifests)
+          pending = manifests.uniq
+          seen = pending.to_set { File.dirname(_1) }
+          walked = 0
+          until pending.empty?
+            raise ArgumentError, "walks more than #{MANIFEST_BOUND} manifests" if (walked += 1) > MANIFEST_BOUND
+
+            manifest = pending.shift
+            fresh = loads(manifest).reject { seen.include?(_1) }
+            return false unless inside?(manifest) && fresh.all? { inside?(_1) }
+
+            seen.merge(fresh)
+            pending.concat(manifests_in(fresh))
+          end
+          true
+        end
+
+        def manifests_in(directories) = directories.map { File.join(_1, MANIFEST) }.select { File.file?(_1) }
+
+        def loads(manifest)
+          base = File.dirname(manifest)
+          pairs(tree(manifest)).flat_map { |key, value| written(key, value).flat_map { expand(_1, base, key) } }.uniq
+        end
+
+        def written(key, value)
+          raise ArgumentError, "#{key} = #{value} is refused" if refused?(key, value)
+
+          case PATHS[key]
+          when :one then [string(value)]
+          when :list then list(value)
+          when :named then value.is_a?(Array) ? list(value) : [value].grep(String)
+          else []
           end
         end
+
+        def refused?(key, value)
+          case key
+          when *LOCATORS then value.is_a?(String) && !value.match?(REMOTE)
+          when "cargo-features" then !(value.is_a?(Array) && (value - CARGO_FEATURES).empty?)
+          when "rustflags" then !Inert.flags?(value)
+          else false
+          end
+        end
+
+        def list(value)
+          raise ArgumentError, "#{value} is not a list" unless value.is_a?(Array)
+
+          value.map { string(_1) }
+        end
+
+        def string(value) = value.is_a?(String) ? value : raise(ArgumentError, "#{value.inspect} is not a path")
+
+        def expand(written, base, key)
+          key == "members" && written.match?(GLOB) ? globbed(written, base) : [resolve(written, base)]
+        end
+
+        # cargo reads `~` as a name, and expand_path would look a user up.
+        def resolve(written, base) = File.expand_path(written.start_with?("~") ? "./#{written}" : written, base)
+
+        # A member glob is walked only from a literal prefix that lies inside the
+        # root once its symlinks resolve, and never past a `..`, which a lexical
+        # check cannot place after a match, or a `**`, which walks a whole tree.
+        def globbed(written, base)
+          segments = written.split("/")
+          literal = segments.take_while { !_1.match?(GLOB) }
+          rest = segments.drop(literal.size)
+          raise ArgumentError, "#{written} is not a plain glob" unless plain_glob?(written, rest)
+
+          prefix = resolve(literal.join("/"), base)
+          return [] unless File.directory?(prefix)
+          raise ArgumentError, "#{written} leads out of the root" unless inside?(File.realpath(prefix))
+
+          @glob.matches(prefix, rest)
+        end
+
+        def plain_glob?(written, rest) = !written.start_with?("/") && rest.none? { _1 == ".." || _1.include?("**") }
 
         def configs_held?(subcommand)
           own = own_configs
           project = ascent(cwd, CONFIGS).map { File.realpath(_1) } - own
-          project.all? { inside?(_1) } && (project + own).all? { self_contained?(_1) } &&
-            own.none? { text(_1).match?(RUNS) } && unaliased?(subcommand, project + own)
+          project.all? { inside?(_1) && Inert.allows?(tree(_1)) } && own.all? { self_contained?(_1) } &&
+            own.none? { names?(_1, RUNS) } && unaliased?(subcommand, project + own)
         end
 
         def own_configs = HOME_CONFIGS.map { File.join(@home, _1) }.select { present?(_1) }.map { File.realpath(_1) }
 
-        def self_contained?(path) = plain?(path) && !text(path).match?(INCLUDES)
+        def self_contained?(path) = !names?(path, INCLUDES)
 
         def unaliased?(subcommand, configs)
-          !EXTERNAL.include?(subcommand) || configs.none? { text(_1).match?(ALIASED) }
+          !EXTERNAL.include?(subcommand) || configs.none? { names?(_1, ALIASED) }
+        end
+
+        # A key counts at any depth, so the walk need not know where cargo
+        # looks; a key cargo would ignore only costs a refusal.
+        def names?(path, keys) = pairs(tree(path)).any? { |key, _| keys.include?(key) }
+
+        def pairs(node, &)
+          return enum_for(__method__, node) unless block_given?
+
+          case node
+          when Hash
+            node.each do |key, value|
+              yield key, value
+              pairs(value, &)
+            end
+          when Array then node.each { pairs(_1, &) }
+          end
         end
 
         def ascent(start, names)
@@ -946,19 +1182,24 @@ module Lain
                   .select { present?(_1) }
         end
 
-        def plain?(path) = !text(path).match?(UNPLAIN)
-
         def cwd = @confinement.landing_of(CURRENT)
 
         def inside?(path) = @confinement.contains?(path)
 
         def present?(path) = File.exist?(path) || File.symlink?(path)
 
+        # cargo's own parser, so a key reads here as cargo reads it; one that
+        # does not parse raises, and the predicate abstains.
+        def tree(path) = @trees[path]
+
         # Only a regular file is read, so a FIFO cannot hold the ladder.
         def text(path)
           raise ArgumentError, "#{path} is not a regular file" unless File.file?(path)
 
-          File.read(path, BOUND + 1).tap { raise ArgumentError, "#{path} is too large" if _1.bytesize > BOUND }
+          File.read(path, BOUND + 1).tap do |body|
+            raise ArgumentError, "#{path} is too large" if body.bytesize > BOUND
+            raise ArgumentError, "the call reads more than #{BYTES_BOUND} bytes" if (@bytes -= body.bytesize).negative?
+          end
         end
       end
       private_constant :Crate
