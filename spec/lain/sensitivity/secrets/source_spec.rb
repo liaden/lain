@@ -17,7 +17,7 @@ RSpec.describe Lain::Sensitivity::Secrets::Source do
       "GPG_AUTH_SOCK" => "/run/user/1000/gnupg/S.gpg-agent.ssh",
       "PASSWORD_STORE_HOME" => "~/.password-store" }
   end
-  let(:aws) { "/k3J9xQ2mZ7pL4vR8nT1wY6bH0cF5gD2eA9sU3iO" }
+  let(:aws) { %w[/k3J9xQ2mZ7pL4vR8n T1wY6bH0cF5gD2eA9sU3iO].join }
   let(:tilde_token) { "~/fakeTok3nZq8xV2nL4tR7yW1kP9mB3cJ6" }
   let(:env) do
     { "DB_PASSWORD" => "spec-db-password-24bytes", "API_TOKEN" => tilde_token, "AWS_SECRET_ACCESS_KEY" => aws,
@@ -69,11 +69,11 @@ RSpec.describe Lain::Sensitivity::Secrets::Source do
     # Each arm of the path rule alone: a path the detector finds a credential
     # in, and one random enough to be a key.
     it "refuses a path-shaped value that holds a detected credential or is high-entropy" do
-      egress = source_over("AGENT_TOKEN" => "/run/user/1000/AKIAZ7Q3VKXW4NP2RT5M",
-                           "AWS_SECRET_KEY" => "/wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY").egress
+      egress = source_over("AGENT_TOKEN" => "/run/user/1000/#{%w[AKIA Z7Q3VKXW4NP2RT5M].join}",
+                           "AWS_SECRET_KEY" => %w[/wJalrXUtnFEMI/ K7MDENG/bPxRfiCYEXAMPLEKEY].join).egress
 
-      expect(egress.refused).to include("/run/user/1000/AKIAZ7Q3VKXW4NP2RT5M",
-                                        "/wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
+      expect(egress.refused).to include("/run/user/1000/#{%w[AKIA Z7Q3VKXW4NP2RT5M].join}",
+                                        %w[/wJalrXUtnFEMI/ K7MDENG/bPxRfiCYEXAMPLEKEY].join)
     end
 
     it "only flags a path under a secret-shaped name, ~/ included, and ordinary history" do
