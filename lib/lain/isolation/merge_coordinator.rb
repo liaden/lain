@@ -44,13 +44,8 @@ module Lain
         end
 
         def self.common_dir(root, shell_out_factory)
-          shell = Checkout.of(root, shell_out_factory:).run("rev-parse", "--path-format=absolute", "--git-common-dir")
-          unless Shell::Out.ok?(shell)
-            raise Error,
-                  "#{root} is in no git repository, so it has no merge coordinator home"
-          end
-
-          shell.stdout.strip
+          GitHome.common_dir(root, shell_out_factory:) ||
+            raise(Error, "#{root} is in no git repository, so it has no merge coordinator home")
         end
 
         def self.key(branch) = File.basename(Worktree::Handback::Naming.new(branch).ref)

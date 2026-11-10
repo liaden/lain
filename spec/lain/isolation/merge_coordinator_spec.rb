@@ -183,3 +183,14 @@ RSpec.describe Lain::Isolation::MergeCoordinator, ".main_root", :seam do
     end
   end
 end
+
+RSpec.describe Lain::Isolation::MergeCoordinator::Home, ".for outside a repository", :seam do
+  it "refuses in its own words" do
+    Dir.mktmpdir("lain-coordinator-nowhere") do |dir|
+      nowhere = File.realpath(dir)
+
+      expect { described_class.for(repo_root: nowhere, branch: "main") }
+        .to raise_error(Lain::Error, "#{nowhere} is in no git repository, so it has no merge coordinator home")
+    end
+  end
+end

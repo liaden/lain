@@ -129,4 +129,16 @@ RSpec.describe Lain::Isolation::ParentLock, :seam do
     expect(outside.path).to be_nil
     expect(outside.hold { :ran }).to eq(:ran)
   end
+
+  it "asks the common dir once for 3 lock takes in one process" do
+    asked = []
+    counting = lambda do |*argv, **options|
+      asked << argv
+      Lain::Shell::Out.new(*argv, **options)
+    end
+
+    3.times { described_class.for(repo_root: @repo, shell_out_factory: counting).hold { nil } }
+
+    expect(asked.count { |argv| argv.include?("--git-common-dir") }).to eq(1)
+  end
 end

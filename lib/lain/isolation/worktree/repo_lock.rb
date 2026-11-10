@@ -28,10 +28,11 @@ module Lain
         private_constant :LOCKS
 
         # @param repo_root [String] any checkout of the repository
+        # @param shell_out_factory [#call] builds the subprocess that finds the common git dir
         # @return [RepoLock] the one lock for that repository, however spelled
-        def self.for(repo_root)
+        def self.for(repo_root, shell_out_factory: Shell::Out.public_method(:new))
           key = canonical(repo_root)
-          LOCKS.compute_if_absent(key) { new(key) }
+          LOCKS.compute_if_absent(key) { new(key, shell_out_factory:) }
         end
 
         def self.canonical(path)
@@ -41,8 +42,9 @@ module Lain
         end
         private_class_method :canonical, :new
 
-        def initialize(repo_root)
+        def initialize(repo_root, shell_out_factory: Shell::Out.public_method(:new))
           @repo_root = repo_root
+          @shell_out_factory = shell_out_factory
           @monitor = Monitor.new
         end
 
@@ -74,8 +76,8 @@ module Lain
         # nil when git cannot say, which leaves the in-process lock to carry on.
         def lock_file
           @lock_file ||= begin
-            shell = Checkout.of(@repo_root).run("rev-parse", "--git-common-dir")
-            File.join(File.expand_path(shell.stdout.strip, @repo_root), FILE) if Shell::Out.ok?(shell)
+            common = GitHome.common_dir(@repo_root, shell_out_factory: @shell_out_factory)
+            File.join(common, FILE) if common
           end
         end
       end

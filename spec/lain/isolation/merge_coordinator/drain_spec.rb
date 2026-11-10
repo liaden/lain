@@ -588,4 +588,16 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Drain, :seam do
       expect(workers.map { |each| on_branch?(each.sha) }).to all(be(true))
     end
   end
+
+  it "reads the main worktree once while building" do
+    listed = []
+    counting = lambda do |*argv, **options|
+      listed << argv if argv.include?("worktree") && argv.include?("list")
+      Lain::Shell::Out.new(*argv, **options)
+    end
+
+    described_class.for(repo_root: @repo, branch: "main", paths:, shell_out_factory: counting)
+
+    expect(listed.size).to eq(1)
+  end
 end

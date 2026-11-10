@@ -62,8 +62,8 @@ module Lain
       # nil for a directory in no repository: there is no checkout there to
       # merge into, so nothing across processes to keep out of it.
       def self.located(root, shell_out_factory)
-        shell = Checkout.of(root, shell_out_factory:).run("rev-parse", "--path-format=absolute", "--git-common-dir")
-        Shell::Out.ok?(shell) ? File.join(shell.stdout.strip, NAME) : nil
+        common = GitHome.common_dir(root, shell_out_factory:)
+        common && File.join(common, NAME)
       end
       private_class_method :located
 
