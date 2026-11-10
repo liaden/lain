@@ -201,6 +201,16 @@ module Lain
     end
     private_class_method :built, :user, :judged, :evaluated
 
+    # Drops every memoised evaluation, for a forked child whose cwd and environment are not
+    # the ones the memo was built in. A lock another thread held at the fork is abandoned by
+    # Ruby in the child, so this cannot wait on it.
+    #
+    # @return [nil]
+    def self.forget!
+      @lock.synchronize { @built.clear }
+      nil
+    end
+
     NOT_A_FILE = "%<path>s is not a regular file, so %<whose>s config cannot be read"
     private_constant :NOT_A_FILE
 

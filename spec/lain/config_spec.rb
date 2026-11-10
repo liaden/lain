@@ -515,6 +515,21 @@ RSpec.describe Lain::Config do
       end
     end
 
+    # A forked child's cwd and environment are not the ones its parent's memo was built in.
+    it "evaluates the file afresh once the memo is forgotten" do
+      Dir.mktmpdir do |root|
+        write_config(root, "#{unique}raise \"flagged\" if ENV[\"LAIN_CONFIG_SPEC_FLAG\"]\n")
+        with_env("LAIN_CONFIG_SPEC_FLAG" => "1") do
+          expect { described_class.load(root:) }.to raise_error(Lain::Config::Refusal, /flagged/)
+        end
+        expect { described_class.load(root:) }.to raise_error(Lain::Config::Refusal, /flagged/)
+
+        described_class.forget!
+
+        expect(described_class.load(root:)).to be_a(described_class)
+      end
+    end
+
     # The restricting tables would be dropped in silence if this read as an
     # absent file.
     it "refuses a config.rb that is not a regular file" do

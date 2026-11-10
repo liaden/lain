@@ -566,7 +566,9 @@ module Lain
       # read. Chat's flags are declared in `exe/lain` and validated by chat, so
       # the check has to be chat's too -- reproducing the refusals here would be
       # a second copy of an existing surface. {ChatLaunch::PREFLIGHT_ENV} makes
-      # that child a check rather than a chat.
+      # that child a check rather than a chat. `exe/lain` forks it from the
+      # process that has already loaded lain, which saves a whole boot; the
+      # child is spawned only where the host cannot fork.
       #
       # It will NOT refuse when it could not RUN: a check that cannot answer
       # must not close the cockpit, so that degrades to a warning. And it runs
@@ -578,9 +580,10 @@ module Lain
       # deliberately exclude ANTHROPIC_API_KEY. So the missing-key refusal can
       # differ between the two, in both directions.
       class ChatPreflight
-        # Bounded because `lain up` must not hang on a check, and generous
-        # against a cold bootsnap cache (~3.6s to load lain) plus `--num-ctx`'s
-        # own 2s probe.
+        # Bounded because `lain up` must not hang on a check. A forked check
+        # boots nothing, so the margin is for the spawned fallback, which loads
+        # lain afresh (~3.6s against a cold bootsnap cache), plus `--num-ctx`'s
+        # own 2s probe on either path.
         #
         # It is not the whole wait: Shell::Out::GRACE (3.0s) separates TERM
         # from KILL, so the overshoot is ADDITIVE rather than proportional.
@@ -602,18 +605,30 @@ module Lain
         # deliver.
         FRAME = /\A\s*(from\s+)?\S+:\d+:in\s+('[^']*'|`[^']*'|\S+)(:[ \t]*)?/
 
+        # The check as a spawned `lain chat`, for a host that cannot fork.
+        #
         # @param shell_out_factory [#call] `Shell::Out.new`, or a double
-        # @param cwd [String] where the chat pane will run, so a project-shaped
-        #   refusal (`--root`, `--cwd`, a skill that will not load) is decided
-        #   against the directory `lain up PATH` named rather than the shell's
         # @param executable [String] the launching binary, read live for
         #   {PaneCommand}'s reason -- it is whatever actually got us here.
         #   Expanded when it names a path, since `cwd:` would otherwise
         #   resolve a relative one against the wrong directory
-        def initialize(shell_out_factory:, cwd:, executable: $PROGRAM_NAME)
-          @shell_out_factory = shell_out_factory
+        # @return [#call] a runner for {#initialize}
+        def self.spawning(shell_out_factory, executable: $PROGRAM_NAME)
+          binary = executable.include?(File::SEPARATOR) ? File.expand_path(executable) : executable
+          lambda do |args, cwd:, environment:, timeout:|
+            shell_out_factory.call(binary, "chat", *args, cwd:, environment:, timeout:).tap(&:run_command)
+          end
+        end
+
+        # @param run [#call] `(args, cwd:, environment:, timeout:)` to a finished
+        #   answer with `stdout`, `stderr` and `exitstatus`; it raises
+        #   `Shell::Out::Timeout` when chat does not finish in time
+        # @param cwd [String] where the chat pane will run, so a project-shaped
+        #   refusal (`--root`, `--cwd`, a skill that will not load) is decided
+        #   against the directory `lain up PATH` named rather than the shell's
+        def initialize(run:, cwd:)
+          @run = run
           @cwd = cwd
-          @executable = executable.include?(File::SEPARATOR) ? File.expand_path(executable) : executable
         end
 
         # @param chat_args [Array<String>] the exe's `-- ARGS` capture, passed
@@ -622,17 +637,16 @@ module Lain
         # @return [Array<String>] warnings; empty when chat accepted the argv
         # @raise [ChatRefused] when chat refused it
         def call(chat_args)
-          answer = @shell_out_factory.call(@executable, "chat", *chat_args,
-                                           cwd: @cwd, timeout: TIMEOUT,
-                                           environment: { ChatLaunch::PREFLIGHT_ENV => "1" })
-          answer.run_command
+          answer = @run.call(chat_args, cwd: @cwd, timeout: TIMEOUT, environment: { ChatLaunch::PREFLIGHT_ENV => "1" })
           return [] if Shell::Out.ok?(answer)
           # No status at all is a SIGNALLED child: neither a refusal nor an
           # acceptance, so it degrades rather than guessing.
           return [unchecked("`lain chat` was killed before it could answer")] if answer.exitstatus.nil?
 
           raise ChatRefused, refusal(answer)
-        rescue Errno::ENOENT, Shell::Out::Timeout => e
+        rescue Shell::Out::Timeout => e
+          [unchecked("the check did not finish: #{e.message}")]
+        rescue Errno::ENOENT => e
           [unchecked(e.message)]
         end
 
@@ -1256,6 +1270,7 @@ module Lain
       # @param options [Hash] `up`'s parsed flags; {Flags} is where they are read
       # @param chat_args [Array<String>] the flags after `--`, forwarded to `chat` verbatim
       # @param path [String, nil] the PATH argument: the project directory to open
+      # @param preflight_run [#call, nil] the exe's forking pre-flight; nil keeps the spawned one
       # @option options [String] :session tmux session name
       # @option options [String, nil] :socket tmux socket (-L), default socket when nil
       # @option options [Boolean] :nvim open the nvim + chat cockpit
@@ -1264,8 +1279,9 @@ module Lain
       # @raise [Workdir::NotADirectory]
       # @raise [Workdir::MissingParent]
       # @raise [Flags::SocketWithoutCockpit]
-      def self.from_options(options, chat_args:, path: nil)
-        new(chat_args:, **Flags.new(options).to_h, **Workdir.option(path, create: options[:create]))
+      def self.from_options(options, chat_args:, path: nil, preflight_run: nil)
+        new(chat_args:, **Flags.new(options).to_h, **Workdir.option(path, create: options[:create]),
+            **{ preflight_run: }.compact)
       end
 
       # Adopts `pane_id` as its own session's input pane. The session is asked
@@ -1341,7 +1357,8 @@ module Lain
                      status_interval: Hud::DEFAULT_INTERVAL,
                      nvim: nil, paths: Paths.new,
                      shell_out_factory: Shell::Out.public_method(:new),
-                     chat_preflight: ChatPreflight.new(shell_out_factory:, cwd:),
+                     preflight_run: ChatPreflight.spawning(shell_out_factory),
+                     chat_preflight: ChatPreflight.new(run: preflight_run, cwd:),
                      gc_schedule: GcSchedule.for(cwd:, paths:),
                      relay: Relay.for(cwd:, paths:))
         @session = session

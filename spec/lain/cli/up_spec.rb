@@ -375,8 +375,8 @@ RSpec.describe Lain::CLI::Up do
     # pane's SHELL does with the scrub is pinned separately, against a real `sh`.)
     it "creates for real, with a real pre-flight, even when LAIN_PREFLIGHT is exported", :seam do
       write_state(cache_deadline: nil, fleet: [], inbox_count: 0)
-      real_preflight = Lain::CLI::Up::ChatPreflight.new(shell_out_factory: Lain::Shell::Out.public_method(:new),
-                                                        cwd: @state_dir, executable: lain_exe)
+      spawned = Lain::CLI::Up::ChatPreflight.spawning(Lain::Shell::Out.public_method(:new), executable: lain_exe)
+      real_preflight = Lain::CLI::Up::ChatPreflight.new(run: spawned, cwd: @state_dir)
 
       chat_args = ["--provider", "ollama", "--no-journal"]
 
@@ -1356,8 +1356,8 @@ RSpec.describe Lain::CLI::Up do
         FileUtils.mkdir_p(File.join(root, ".git"))
         with_env("XDG_STATE_HOME" => File.join(root, "state"), "HOME" => File.join(root, "home")) do
           write_config(root, "\nraise \"boom\"\n")
-          real = Lain::CLI::Up::ChatPreflight.new(shell_out_factory: Lain::Shell::Out.public_method(:new),
-                                                  cwd: root, executable: lain_exe)
+          spawned = Lain::CLI::Up::ChatPreflight.spawning(Lain::Shell::Out.public_method(:new), executable: lain_exe)
+          real = Lain::CLI::Up::ChatPreflight.new(run: spawned, cwd: root)
 
           expect { real.call(["--epic", "demo", "--provider", "ollama", "--no-journal"]) }
             .to raise_error(Lain::CLI::Up::ChatRefused, /config\.rb:2/)
@@ -1506,6 +1506,180 @@ RSpec.describe Lain::CLI::Up do
 
       expect(report.warnings.join).to include("killed before it could answer")
       expect(calls.flatten).to include("new-session")
+    end
+
+    # What `exe/lain up` wires in: chat run in a fork of the process that has
+    # already loaded lain, so the check costs no second boot.
+    describe "forked from the loaded process" do
+      before { skip "this host cannot fork" unless Process.respond_to?(:fork) }
+
+      let(:forked) { LainCLI::ChatPreflightFork.wiring.fetch(:preflight_run) }
+      let(:calls) { [] }
+      let(:tmux_spy) do
+        lambda do |*args|
+          calls << args
+          FakeShellOut.new(args[1] == "has-session" ? 1 : 0, "")
+        end
+      end
+
+      def up_with(preflight, chat_args: [])
+        described_class.new(session: "lain", state_path:, chat_args:, shell_out_factory: tmux_spy,
+                            chat_preflight: preflight)
+      end
+
+      it "refuses a bad chat flag in the words `lain chat` prints, before any tmux session", :seam do
+        _, printed, = Open3.capture3(lain_exe, "chat", "--nosuchflag")
+        preflight = Lain::CLI::Up::ChatPreflight.new(run: forked, cwd: Dir.pwd)
+
+        up = up_with(preflight, chat_args: ["--nosuchflag"])
+
+        expect { up.call }.to raise_error(Lain::CLI::Up::ChatRefused) do |refusal|
+          expect(printed).not_to be_empty
+          expect(refusal.message).to eq(printed.strip)
+        end
+        expect(calls.flatten).not_to include("new-session")
+      end
+
+      # The marker is written by a wrapper that exists only in this loaded
+      # image, so a chat that booted afresh could not write it; the at_exit
+      # marker proves the child left by `exit!`.
+      it "answers from a fork, booting no Ruby and running none of this process's at_exit hooks", :seam do
+        Dir.mktmpdir("lain-up-fork") do |dir|
+          answered_in = File.join(dir, "preflight-pid")
+          marker = File.join(dir, "at-exit-ran")
+          parent = Process.pid
+          at_exit { File.write(marker, "") if Process.pid != parent && File.directory?(dir) }
+          allow(Lain::CLI::ChatLaunch).to receive(:new).and_wrap_original do |new, *args, **keywords|
+            new.call(*args, **keywords).tap do |launch|
+              allow(launch).to receive(:preflight).and_wrap_original do |preflight, &notice|
+                File.write(answered_in, Process.pid.to_s)
+                preflight.call(&notice)
+              end
+            end
+          end
+
+          preflight_mode = { Lain::CLI::ChatLaunch::PREFLIGHT_ENV => "1" }
+          answer = forked.call(%w[--provider ollama --no-journal], cwd: dir, timeout: 15, environment: preflight_mode)
+
+          expect(answer.exitstatus).to eq(0)
+          expect(answer.stdout + answer.stderr).to include("pre-flight only")
+          answered_by = File.read(answered_in)
+          expect(answered_by).to match(/\A\d+\z/)
+          expect(answered_by).not_to eq(parent.to_s)
+          expect(File).not_to exist(marker)
+        end
+      end
+
+      it "kills a check that does not finish in time, and opens the cockpit with a warning saying so" do
+        stub_const("Lain::CLI::Up::ChatPreflight::TIMEOUT", 0.5)
+        Dir.mktmpdir("lain-up-hang") do |dir|
+          pid_file = File.join(dir, "pid")
+          unwound = File.join(dir, "unwound")
+          hangs = LainCLI::ChatPreflightFork.new(starter: lambda do |_args|
+            File.write(pid_file, Process.pid.to_s)
+            sleep 60
+          ensure
+            File.write(unwound, "")
+          end)
+
+          report = up_with(Lain::CLI::Up::ChatPreflight.new(run: hangs, cwd: dir)).call
+
+          expect(report.warnings.join).to include("did not finish")
+          expect(calls.flatten).to include("new-session")
+          expect { Process.kill(0, Integer(File.read(pid_file))) }.to raise_error(Errno::ESRCH)
+          expect(File).to exist(unwound) # TERM unwound the child; a KILL would not have
+        end
+      end
+
+      it "kills and reaps the check when lain up is interrupted part way" do
+        Dir.mktmpdir("lain-up-interrupt") do |dir|
+          pid_file = File.join(dir, "pid")
+          hangs = LainCLI::ChatPreflightFork.new(starter: lambda do |_args|
+            File.write("#{pid_file}.part", Process.pid.to_s)
+            File.rename("#{pid_file}.part", pid_file)
+            sleep 60
+          end)
+          check = Thread.new { hangs.call([], cwd: dir, environment: {}, timeout: 60) }
+          check.report_on_exception = false
+          started = wait_until(timeout: 10, reason: "the check to start") do
+            File.exist?(pid_file) && File.read(pid_file)
+          end
+          child = Integer(started)
+
+          check.raise(Interrupt)
+
+          expect { check.join }.to raise_error(Interrupt)
+          expect { Process.kill(0, child) }.to raise_error(Errno::ESRCH)
+        ensure
+          leftover(child)
+        end
+      end
+
+      def leftover(pid)
+        return unless pid
+
+        Process.kill("KILL", pid)
+        Process.wait(pid)
+      rescue Errno::ESRCH, Errno::ECHILD
+        nil
+      end
+
+      it "reports a check that a signal ended as killed, not as a refusal" do
+        Dir.mktmpdir("lain-up-signalled") do |dir|
+          terms_itself = LainCLI::ChatPreflightFork.new(starter: lambda do |_args|
+            Process.kill("TERM", Process.pid)
+            sleep 10
+          end)
+
+          warnings = Lain::CLI::Up::ChatPreflight.new(run: terms_itself, cwd: dir).call([])
+
+          expect(warnings.join).to include("killed before it could answer")
+        end
+      end
+
+      it "relays an error outside StandardError in its own words" do
+        Dir.mktmpdir("lain-up-crash") do |dir|
+          crash = ->(_args) { raise LoadError, "cannot load such file -- nowhere" }
+          crashes = LainCLI::ChatPreflightFork.new(starter: crash)
+
+          answer = crashes.call([], cwd: dir, environment: {}, timeout: 10)
+
+          expect(answer.exitstatus).to eq(1)
+          expect(answer.stderr).to include("cannot load such file -- nowhere")
+        end
+      end
+
+      it "refuses in the config's own words when the project's config.rb will not load", :seam do
+        Dir.mktmpdir("lain-up-config") do |dir|
+          root = File.realpath(dir)
+          FileUtils.mkdir_p(File.join(root, ".git"))
+          with_env("XDG_STATE_HOME" => File.join(root, "state"), "HOME" => File.join(root, "home")) do
+            write_config(root, "\nraise \"boom\"\n")
+            check = Lain::CLI::Up::ChatPreflight.new(run: forked, cwd: root)
+
+            expect { check.call(["--epic", "demo", "--provider", "ollama", "--no-journal"]) }
+              .to raise_error(Lain::CLI::Up::ChatRefused, /config\.rb:2/)
+          end
+        end
+      end
+
+      # This process may have evaluated the same config.rb already, from another
+      # directory and another environment; the pane's chat will evaluate it afresh.
+      it "evaluates the project's config afresh in the pane's directory, as the spawned check does", :seam do
+        Dir.mktmpdir("lain-up-cwd-config") do |dir|
+          root = File.realpath(dir)
+          FileUtils.mkdir_p(File.join(root, ".git"))
+          with_env("XDG_STATE_HOME" => File.join(root, "state"), "HOME" => File.join(root, "home")) do
+            write_config(root, "raise \"evaluated in \#{Dir.pwd}\" unless Dir.pwd == #{root.dump}\n")
+            expect { Lain::Config.load(root:) }.to raise_error(Lain::Config::Refusal, /evaluated in/)
+            spawned = Lain::CLI::Up::ChatPreflight.spawning(Lain::Shell::Out.public_method(:new), executable: lain_exe)
+            args = %w[--provider ollama --no-journal]
+
+            expect(Lain::CLI::Up::ChatPreflight.new(run: spawned, cwd: root).call(args)).to eq([])
+            expect(Lain::CLI::Up::ChatPreflight.new(run: forked, cwd: root).call(args)).to eq([])
+          end
+        end
+      end
     end
   end
 
@@ -2766,6 +2940,11 @@ RSpec.describe Lain::CLI::Up, "opening a PATH" do
     end
   end
 
+  it "takes the pre-flight runner from the exe, and none of Up's other collaborators" do
+    expect { described_class.from_options(up_options, chat_args: [], shell_out_factory: ->(*) {}) }
+      .to raise_error(ArgumentError, /shell_out_factory/)
+  end
+
   it "refuses --nvim-socket together with --no-nvim, naming both rather than dropping one" do
     expect { described_class.from_options(up_options(nvim: false, nvim_socket: "/x.sock"), chat_args: []) }
       .to raise_error(Lain::CLI::Up::Flags::SocketWithoutCockpit, /--no-nvim.*--nvim-socket/m)
@@ -2875,15 +3054,21 @@ RSpec.describe LainCLI, "naming a project on the command line" do
     # with a single failure. `debug: true` makes Thor re-raise instead.
     def run_up(argv, debug: true)
       seen = nil
-      allow(Lain::CLI::Up).to receive(:from_options) do |options, chat_args:, path:|
+      allow(Lain::CLI::Up).to receive(:from_options) do |options, chat_args:, path:, **wiring|
         seen = { path:, chat_args:, session: options[:session], nvim: options[:nvim],
-                 nvim_socket: options[:nvim_socket] }
+                 nvim_socket: options[:nvim_socket], **wiring }
         instance_double(Lain::CLI::Up, launch_plan: Lain::CLI::Up::LaunchPlan.new(messages: [], argv: %w[tmux]))
       end
       allow(Kernel).to receive(:exec)
 
       described_class.start(argv, debug:)
       seen
+    end
+
+    it "hands Up the forking pre-flight, so chat is checked without a second boot" do
+      skip "this host cannot fork" unless Process.respond_to?(:fork)
+
+      expect(run_up(%w[up /tmp])[:preflight_run]).to be_a(LainCLI::ChatPreflightFork)
     end
 
     it "binds a lone positional to PATH" do

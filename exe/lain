@@ -1696,6 +1696,110 @@ class LainCLI < Thor
     render { journal_pass(Lain::CLI::Improve.from_options(options, selector:, profile: ModelFlags.profile(options))) }
   end
 
+  # `lain up`'s chat pre-flight, run in a fork of this already-loaded process
+  # rather than a second boot. It lives here because the child must name
+  # LainCLI and own fds 1 and 2, and lib/ does neither.
+  class ChatPreflightFork
+    Answer = Data.define(:stdout, :stderr, :exitstatus)
+
+    # Every exception a spawned Ruby prints before exiting 1. SystemExit carries chat's own
+    # status, and a SignalException ends the child as it would end a spawned one. An
+    # Exception subclass defined outside core is not caught: it exits 1 with no message.
+    CRASHES = [StandardError, ScriptError, NoMemoryError, SecurityError, SystemStackError].freeze
+
+    # @return [Hash] the keywords Up takes; empty where fork is missing, so Up spawns instead
+    def self.wiring
+      return {} unless Process.respond_to?(:fork)
+
+      { preflight_run: new(starter: ->(args) { LainCLI.start(["chat", *args]) }) }
+    end
+
+    # @param starter [#call] runs chat with the given argv in the child
+    def initialize(starter:)
+      @starter = starter
+    end
+
+    # @return [Answer]
+    # @raise [Errno::ENOENT] when cwd is missing, which is a check that could not run
+    # @raise [Lain::Shell::Out::Timeout] after the child was killed
+    def call(args, cwd:, environment:, timeout:)
+      raise Errno::ENOENT, cwd unless File.directory?(cwd)
+
+      pipes = Lain::Shell::Out::Pipes.new
+      answer = Answer.new(stdout: +"", stderr: +"", exitstatus: nil)
+      bounded = Lain::Shell::Out::Bounded.new(timeout:, clock: Lain::RunClock::MONOTONIC,
+                                              command: ["lain", "chat", *args])
+      status = bounded.call(pipes.readers(answer.stdout, answer.stderr)) { forked(args, cwd:, environment:, pipes:) }
+      answer.with(exitstatus: status)
+    ensure
+      pipes&.close
+    end
+
+    private
+
+    def forked(args, cwd:, environment:, pipes:)
+      pid = fork { child(args, cwd:, environment:, **pipes.redirection) }
+      pipes.close_writes
+      lead(pid)
+      pid
+    end
+
+    # Set from both sides, so a stop that races the child's own setpgid still finds the group.
+    def lead(pid)
+      Process.setpgid(pid, pid)
+    rescue SystemCallError
+      nil
+    end
+
+    # Leaves by `exit!` whatever happens, so no at_exit hook of the parent runs
+    # here and the fork never returns into the parent's code. Interrupts are
+    # let in again because the fork happened while the parent deferred them,
+    # and a TERM must still stop a hung check. A signal ends it by that signal,
+    # so the parent reads a killed check rather than a refusal.
+    def child(args, **pane)
+      status = 1
+      begin
+        stand_in_pane(**pane)
+        status = Thread.handle_interrupt(Object => :immediate) { chat_status(args) }
+      rescue SignalException => e
+        signalled = e.signo
+      ensure
+        $stdout.flush
+        $stderr.flush
+        die_by(signalled) if signalled
+        exit!(status)
+      end
+    end
+
+    def stand_in_pane(cwd:, environment:, out:, err:)
+      Process.setpgid(0, 0)
+      $stdin.reopen(File::NULL)
+      $stdout.reopen(out)
+      $stderr.reopen(err)
+      Dir.chdir(cwd)
+      ENV.update(environment)
+      Lain::Config.forget!
+    end
+
+    # SYSTEM_DEFAULT, the kernel's action; Ruby's own "DEFAULT" for TERM raises again.
+    def die_by(signo)
+      Signal.trap(signo, "SYSTEM_DEFAULT")
+      Process.kill(signo, Process.pid)
+    rescue ArgumentError
+      nil
+    end
+
+    def chat_status(args)
+      @starter.call(args)
+      0
+    rescue SystemExit => e
+      e.status
+    rescue *CRASHES => e
+      $stderr.write(e.full_message(highlight: false))
+      1
+    end
+  end
+
   desc "up [PATH] [-- CHAT_FLAGS...]",
        "Create/attach the lain tmux session in PATH (editor | chat transcript over an input pane, + status HUD)"
   method_option :session, type: :string, default: Lain::CLI::Up::DEFAULT_SESSION, desc: "tmux session name"
@@ -1718,7 +1822,7 @@ class LainCLI < Thor
     # attached tmux client" -- Up#attach_command turns that into the right
     # verb (switch-client vs. attach); see its doc comment for why the
     # branch has to happen before exec, and the cross-server known gap.
-    plan = Lain::CLI::Up.from_options(options, **up_argv(path, chat_args))
+    plan = Lain::CLI::Up.from_options(options, **up_argv(path, chat_args), **ChatPreflightFork.wiring)
                         .launch_plan(nested: ENV.key?("TMUX"))
     plan.messages.each { |line| say(line) }
     # exec REPLACES this process, so nothing after this line ever runs --

@@ -414,10 +414,12 @@ ThreadSafety/NewThread:
 
 # `rake pspec` forks one process per core (parallel_tests), so a spec's Dir.chdir is
 # process-local and not the cross-thread hazard this cop assumes. It stays ON for
-# lib/, where a chdir would be exactly that hazard.
+# lib/, where a chdir would be exactly that hazard. exe/lain's only chdir runs in the
+# chat pre-flight's forked child, which has 1 thread and leaves by exit!.
 ThreadSafety/DirChdir:
   Exclude:
     - "spec/**/*"
+    - "exe/lain"
 
 # --- Doubles: the four ducks that cannot be verified -----------------------
 #

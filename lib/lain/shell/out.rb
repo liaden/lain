@@ -131,6 +131,97 @@ module Lain
         def finish = @io.close
       end
 
+      # A started child under a bound: its streams pumped until a deadline, then
+      # reaped. On any early exit, a Timeout or a killed thread alike, its group
+      # is killed and reaped instead, or an orphan would hold the pipes about to
+      # be closed. An `ensure`, because a killed thread runs ensure blocks and no
+      # rescue, and the start defers interrupts, so no kill can land between the
+      # child existing and this object holding its pid. {Out} starts its child
+      # by spawning; `lain up`'s pre-flight by forking.
+      class Bounded
+        # @param timeout [Numeric] seconds before the child's process group is TERMed, then KILLed
+        # @param clock [#call] the monotonic source the bound is measured against
+        # @param command [Array<String>] what the child runs, for the timeout's message
+        def initialize(timeout:, clock:, command:)
+          @timeout = timeout
+          @clock = clock
+          @command = command
+        end
+
+        # @param buffers [Hash{IO=>String}] each read end the child writes to, keyed to the buffer it fills
+        # @param feed [Feed, Unfed] the child's stdin, written as it becomes writable
+        # @param on_start [#call] given the pid once, after the start and before the wait
+        # @yieldreturn [Integer] the started child's pid, which leads its own process group
+        # @return [Integer, nil] the exit status, nil when a signal killed the child
+        # @raise [Timeout] when the child outlives its bound
+        def call(buffers, feed: Unfed, on_start: ->(_pid) {})
+          pid = nil
+          Thread.handle_interrupt(Object => :never) { pid = yield }
+          on_start.call(pid)
+          pump(buffers, feed)
+          status = reap(pid)
+          pid = nil
+          status
+        ensure
+          terminate(pid) if pid
+        end
+
+        private
+
+        def pump(buffers, feed)
+          deadline = clock + @timeout
+          open = buffers.keys
+          open = transfer(open, buffers, feed, deadline) until open.empty? && feed.closed?
+        end
+
+        def transfer(open, buffers, feed, deadline)
+          readable, writable = ready(open, feed.writers, deadline)
+          feed.write unless writable.empty?
+          open - readable.select { |io| read_chunk(io, buffers.fetch(io)).nil? }
+        end
+
+        def ready(open, writers, deadline)
+          remaining = deadline - clock
+          selected = remaining.positive? ? IO.select(open, writers, nil, remaining) : nil
+          raise Timeout, "timed out after #{@timeout}s: #{@command.join(" ")}" if selected.nil?
+
+          selected
+        end
+
+        # `readpartial` answers ASCII-8BIT, and an empty buffer adopts the encoding
+        # of the first thing appended to it -- which keeps a binary payload
+        # byte-identical to what the child wrote.
+        def read_chunk(io, buffer)
+          chunk = io.readpartial(CHUNK)
+          buffer << chunk
+          chunk
+        rescue EOFError
+          nil
+        end
+
+        def terminate(pid)
+          group = ProcessGroup.new(clock: @clock, grace: GRACE, poll: POLL)
+          group.terminate(pid, reaper: -> { reap_exited(pid) })
+          reap(pid)
+        end
+
+        # A zombie leader keeps its group listed as alive, so it is collected
+        # before the group is asked about.
+        def reap_exited(pid)
+          Process.waitpid(pid, Process::WNOHANG)
+        rescue Errno::ECHILD
+          nil
+        end
+
+        def reap(pid)
+          Process.waitpid2(pid).last.exitstatus
+        rescue Errno::ECHILD
+          nil # a timeout already reaped it
+        end
+
+        def clock = @clock.call
+      end
+
       # A module function so the `run_command` fakes that only answer
       # `exitstatus` keep working. Not `.zero?`: a signalled child has a nil status.
       #
@@ -177,29 +268,19 @@ module Lain
       end
 
       # Run it and wait. Raises whatever `Process.spawn` raises -- `Errno::ENOENT`
-      # for a program that is not there.
-      #
-      # The kill happens HERE and not at the caller: any early exit, a Timeout or
-      # a killed thread alike, would otherwise leave an orphan holding the pipes
-      # about to be closed. An `ensure`, because a killed thread runs ensure
-      # blocks and no rescue, and the spawn defers interrupts, so no kill can
-      # land between the child existing and this method holding its pid.
+      # for a program that is not there. {Bounded} owns the wait and the kill.
       #
       # @param on_spawn [#call] given the child's pid, which is also its
       #   process group id, once, after the spawn and before the wait
       # @return [self] so `run_command.stdout` chains
       # @raise [Timeout] when the child outlives its bound
       def run_command(on_spawn: ->(_pid) {})
-        pid = nil
         pipes = Pipes.new
         feed = Feed.for(@input)
-        Thread.handle_interrupt(Object => :never) { pid = spawn(pipes, feed) }
-        on_spawn.call(pid)
-        @exitstatus = collect(pid, pipes.readers(@stdout, @stderr), feed)
-        pid = nil
+        bounded = Bounded.new(timeout: @timeout, clock: @clock, command: @argv)
+        @exitstatus = bounded.call(pipes.readers(@stdout, @stderr), feed:, on_start: on_spawn) { spawn(pipes, feed) }
         self
       ensure
-        terminate(pid) if pid
         pipes&.close
         feed&.close
       end
@@ -222,64 +303,6 @@ module Lain
       # `[program, argv0]` rather than a bare String: see the class comment on
       # why a one-word command would otherwise be re-split or shelled out.
       def command = [[@argv.first, @argv.first], *@argv.drop(1)]
-
-      def collect(pid, buffers, feed)
-        pump(buffers, feed)
-        reap(pid)
-      end
-
-      def pump(buffers, feed)
-        deadline = clock + @timeout
-        open = buffers.keys
-        open = transfer(open, buffers, feed, deadline) until open.empty? && feed.closed?
-      end
-
-      def transfer(open, buffers, feed, deadline)
-        readable, writable = ready(open, feed.writers, deadline)
-        feed.write unless writable.empty?
-        open - readable.select { |io| read_chunk(io, buffers.fetch(io)).nil? }
-      end
-
-      def ready(open, writers, deadline)
-        remaining = deadline - clock
-        selected = remaining.positive? ? IO.select(open, writers, nil, remaining) : nil
-        raise Timeout, "timed out after #{@timeout}s: #{@argv.join(" ")}" if selected.nil?
-
-        selected
-      end
-
-      # `readpartial` answers ASCII-8BIT, and an empty buffer adopts the encoding
-      # of the first thing appended to it -- which keeps a binary payload
-      # byte-identical to what the child wrote.
-      def read_chunk(io, buffer)
-        chunk = io.readpartial(CHUNK)
-        buffer << chunk
-        chunk
-      rescue EOFError
-        nil
-      end
-
-      def terminate(pid)
-        group = ProcessGroup.new(clock: @clock, grace: GRACE, poll: POLL)
-        group.terminate(pid, reaper: -> { reap_exited(pid) })
-        reap(pid)
-      end
-
-      # A zombie leader keeps its group listed as alive, so it is collected
-      # before the group is asked about.
-      def reap_exited(pid)
-        Process.waitpid(pid, Process::WNOHANG)
-      rescue Errno::ECHILD
-        nil
-      end
-
-      def reap(pid)
-        Process.waitpid2(pid).last.exitstatus
-      rescue Errno::ECHILD
-        nil # a timeout already reaped it
-      end
-
-      def clock = @clock.call
     end
   end
 end
