@@ -1,6 +1,6 @@
 # Agent states, herdr, park and resume
 
-status: draft
+status: in-progress
 commit-mode: orchestrator-commits
 language: ruby
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson)
@@ -1458,3 +1458,14 @@ Spec file: none; review checks the list above.
 6. The `manual-qa` skill runs the scenarios T22 wrote.
 
 ## Execution log
+- Run started 2026-11-10. Base main at f7477d8b. Grounding was at 2d47036c; the commits between touch only test_map tooling, specs for it, and the comment census, none of the card files, so Grounding holds.
+- Start state: 84 worktrees and branches from earlier plans (card/T*, BD, EXT, FLK, HARNESS, TIM, nyotes/implement-readiness at ~/w/ir); left alone. Snapshots in the scratchpad (start-status.txt, start-worktrees.txt, start-branches.txt, start-submodules.txt, prestaged-index.txt).
+- Pre-staged user work unstaged for the run. Re-stage at close-out: git update-index --add --index-info < prestaged-index.txt (.gitmodules, references/repos/cliffcompaction, references/repos/pi).
+- Hook: pre-commit hygiene hooks, shellcheck, cargo fmt/clippy/test (rust files), cargo deny, `bundle exec rake compile check` (rubocop whole repo + pspec, about 121s), yard-lint --staged, bin/lint-gherkin-docs (planning/specs), bin/lint-commit-msg (commit-msg, subject at most 72), bin/lint-price-freshness. Example count: the hook log's first pass or tmp/parallel_runtime_rspec.log. The suite cannot run beside other tests.
+- Agent checks on own paths: bundle exec rubocop <paths>; bundle exec yard-lint <ruby paths>; shellcheck on shell files; bin/comment-census --check-tickets.
+- Ratchet specs: bundle exec rspec spec/*_spec.rb (34 top-level scanners), plus spec/lain/telemetry/round_trip_spec.rb, spec/lain/review/journal_discriminators_spec.rb, spec/lain/rust/binding_coverage_spec.rb, spec/lain/comment_census_spec.rb.
+- Build outputs a worktree needs: lib/lain/lain.so (17:53 today), target/release/lain-fence, tmp/parallel_runtime_rspec.log.
+- Locks: tmp/gate.lock and tmp/suite.lock (repo tmp/). Test-runner pattern for wait-quiet: 'rspec|parallel_rspec|cargo (test|build|clippy)|rake (pspec|check)|tmp/probes/'.
+- Worktree prefix: tmp/worktrees/herdr-T<id>, branch card/herdr-T<id>. Each worktree TMPDIR=$HOME/tmp/lain/herdr-T<id>.
+- Memory 15 GB: at most 4 agents at once, landing counted as 1.
+- No path needs user approval. The user's ~/.config/herdr is read-only to every card.
