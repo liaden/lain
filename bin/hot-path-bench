@@ -54,7 +54,8 @@ module HotPathBench
     "mask_first_output" => 0.263,
     "wire_ready" => 17.1,
     "credential_scan_assignment" => 37.7,
-    "credential_scan_gated" => 63.7
+    "credential_scan_gated" => 63.7,
+    "mask_list_warm" => 4.45
   }.freeze
 
   SCAN_SIZE = 100_000
