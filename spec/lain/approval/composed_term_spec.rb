@@ -2258,6 +2258,24 @@ RSpec.describe Lain::Approval::ComposedTerm do
       end
     end
 
+    it "says an approved check, build, clippy or test builds, in a pipeline too" do
+      in_crate do |root, home|
+        commands = ["cargo check --locked", "cargo build --frozen", "cargo +stable clippy --locked -- -D warnings",
+                    "cargo test --locked 2>&1 | tail -5", "cargo --version && cargo check --offline"]
+
+        expect(decisions(root, home, commands).map(&:builds)).to all(be(true))
+      end
+    end
+
+    it "says an approved version probe, fmt --check or git read builds nothing" do
+      in_crate do |root, home|
+        decided = decisions(root, home, ["cargo --version", "cargo fmt --check", "ls | head -1"])
+
+        expect(decided).to all(be_allow)
+        expect(decided.map(&:builds)).to all(be(false))
+      end
+    end
+
     it "leaves an unlocked run and a writing fmt to the judge" do
       in_crate do |root, home|
         commands = ["cargo build", "cargo test", "cargo clippy -- -D warnings", "cargo fmt", "cargo fmt --all",

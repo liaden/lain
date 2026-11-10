@@ -8,7 +8,9 @@ module Lain
   module Confine
     # Chooses the {Profile} a call runs under. The ruling decides, never the
     # resolution: an approval by {Approval::ComposedTerm} rested on the call
-    # only reading, so it runs under the reader profile. With the workspace
+    # only reading, so it runs under the reader profile. One that builds writes
+    # its target dir, so with the workspace switch on it runs under the workspace
+    # profile, and with the switch off it stays on the reader. With the workspace
     # switch on, an automatic allow by the judge, a rule or bypass runs under the
     # workspace profile, since no person saw the command. Any other allow is
     # traced and not confined: a human's, and a surface's, whose machine
@@ -111,17 +113,20 @@ module Lain
       # @raise [Profile::HomeTmpdir] when the TMPDIR a workspace call would write is home or holds it
       def for(request)
         ruling = request.ruling
-        return reader(request) if read_only?(ruling)
         return workspace(request) if workspace?(ruling)
+        return reader(request) if composed?(ruling)
 
         traceable? ? Profile::TRACED : Profile::NONE
       end
 
       private
 
-      def read_only?(ruling) = ruling.allow? && ruling.rule == Approval::ComposedTerm.rule_name
+      def composed?(ruling) = ruling.allow? && ruling.rule == Approval::ComposedTerm.rule_name
 
-      def workspace?(ruling) = @workspace && ruling.allow? && !ruling.human? && WORKSPACE_RUNGS.include?(ruling.rung)
+      def workspace?(ruling)
+        @workspace && ruling.allow? && !ruling.human? && WORKSPACE_RUNGS.include?(ruling.rung) &&
+          (ruling.builds? || !composed?(ruling))
+      end
 
       def traceable? = @probe.supports?(:trace)
 
@@ -131,7 +136,7 @@ module Lain
         related = @classifier.related
         profile = Profile.reader(root:, home: @home, masks: [*masks, *related.masks.map(&:path)].uniq,
                                  related: [*related.roots, *related.reads],
-                                 exec_files: exec_files(placed(request.executables)),
+                                 exec_files: exec_files(programs(request, masks, fresh_gates: true)),
                                  trace: traceable?)
         granted(profile.with(read_dirs: [*profile.read_dirs, *git_configs(root)]))
       end
@@ -160,7 +165,7 @@ module Lain
 
       def programmed(ported, request, root)
         masks = mask_paths(root)
-        programs = programs(request, masks)
+        programs = programs(request, masks, fresh_gates: false)
         ported.with(masks:, exec_files: exec_files(programs),
                     exec_dirs: [*ported.exec_dirs, *install_bins(programs)].uniq,
                     read_dirs: [*ported.read_dirs, *git_configs(root)].uniq)
@@ -256,9 +261,13 @@ module Lain
 
       # A parsed guess under a mask is dropped where a resolved stage there
       # refuses the call, since the guess may name a program the shell never runs.
-      def programs(request, masks)
-        [*placed(request.executables, fresh_gates: false),
-         *placed(request.grants, fresh_gates: false).reject { masked?(_1.realpath, masks) }]
+      # On the string arm the one executable is the unresolved command, so a
+      # reader runs what the grants name: Bash's own parse, which agrees with the
+      # stages ComposedTerm read because its reading admits only literal commands.
+      # A term-arm call carries no grants.
+      def programs(request, masks, fresh_gates:)
+        [*placed(request.executables, fresh_gates:),
+         *placed(request.grants, fresh_gates:).reject { masked?(_1.realpath, masks) }]
       end
 
       # A program the call resolved to outside /usr may run, unless the project

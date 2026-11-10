@@ -72,7 +72,7 @@ module Lain
       # ABSENCE of a Decision, so only two live here.
       VERDICTS = %i[allow deny].freeze
 
-      Decision = Data.define(:verdict, :rule, :tool, :gated, :reason)
+      Decision = Data.define(:verdict, :rule, :tool, :gated, :reason, :builds)
 
       # What a rule decided, and everything a journal needs to say who decided
       # it. Deeply frozen: strings are interned, `gated` is coerced to a strict
@@ -98,10 +98,12 @@ module Lain
                                  } }
         end
 
-        def initialize(verdict:, rule:, tool:, gated:, reason:)
+        # `builds` says an allow runs a build, which writes its project and so cannot run read-only.
+        def initialize(verdict:, rule:, tool:, gated:, reason:, builds: false)
           self.class.check!(verdict:)
 
-          super(verdict:, rule: -rule.to_s, tool: -tool.to_s, gated: gated == true, reason: -reason.to_s)
+          super(verdict:, rule: -rule.to_s, tool: -tool.to_s, gated: gated == true, reason: -reason.to_s,
+                builds: builds == true)
         end
 
         def allow? = verdict == :allow
@@ -289,13 +291,13 @@ module Lain
 
       protected
 
-      def allow(call, because:) = decide_that(:allow, call, because)
+      def allow(call, because:, builds: false) = decide_that(:allow, call, because, builds:)
       def deny(call, because:) = decide_that(:deny, call, because)
 
       private
 
-      def decide_that(verdict, call, reason)
-        Decision.new(verdict:, rule: name, tool: call.tool_name, gated: call.gated?, reason:)
+      def decide_that(verdict, call, reason, builds: false)
+        Decision.new(verdict:, rule: name, tool: call.tool_name, gated: call.gated?, reason:, builds:)
       end
     end
   end

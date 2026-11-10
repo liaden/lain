@@ -89,7 +89,7 @@ module Lain
       # Deeply frozen -- strings interned, `fault` coerced to a strict Boolean --
       # so `Ractor.shareable?` holds and the record is safe to share.
       Ruling = Data.define(:verdict, :rung, :reason, :fault, :authority, :final, :told, :said, :rule, :note, :liftable,
-                           :surface)
+                           :surface, :builds)
 
       class Ruling
         # Reopened rather than written in the `Data.define` block: a constant
@@ -150,8 +150,11 @@ module Lain
         # `surface` names who answered, as the queue's decision does, so a
         # release journaled from this ruling says which human said yes; a
         # ruling no surface made names its rung.
+        #
+        # `builds` carries a rule's word that its allow runs a build, which the sandbox reads to choose a
+        # profile that can write.
         def initialize(verdict:, rung:, reason:, fault: false, authority: :automatic, final: false, told: nil,
-                       said: nil, rule: nil, note: nil, liftable: false, surface: nil)
+                       said: nil, rule: nil, note: nil, liftable: false, surface: nil, builds: false)
           unless VERDICTS.include?(verdict)
             raise Error, "unknown verdict #{verdict.inspect}; expected one of #{VERDICTS.inspect}"
           end
@@ -161,7 +164,8 @@ module Lain
 
           super(verdict:, rung: -rung.to_s, reason: -reason.to_s, fault: fault == true, authority:,
                 final: final == true, told: -(told || reason).to_s, said: spoken(said), rule: spoken(rule),
-                note: spoken(note), liftable: liftable == true, surface: -(surface || rung).to_s)
+                note: spoken(note), liftable: liftable == true, surface: -(surface || rung).to_s,
+                builds: builds == true)
         end
 
         def allow? = verdict == :allow
@@ -174,6 +178,7 @@ module Lain
         def human? = authority == :human
         def final? = final
         def liftable? = liftable
+        def builds? = builds
 
         def record
           { "verdict" => verdict.to_s, "rung" => rung, "reason" => reason,
@@ -542,7 +547,8 @@ module Lain
           return Ruling.fault(rung: NAME, because: broke(outcome.faults.first)) if outcome.faulted? && !outcome.allow?
           return Ruling.abstain(rung: NAME, because: NO_OPINION, note: outcome.why_not) unless outcome.decided?
 
-          Ruling.allow(rung: NAME, because: attributed(outcome.decision), rule: outcome.decision.rule)
+          Ruling.allow(rung: NAME, because: attributed(outcome.decision), rule: outcome.decision.rule,
+                       builds: outcome.decision.builds)
         end
 
         # The model is told the rule's own reason: the journal's attribution

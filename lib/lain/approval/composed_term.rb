@@ -801,16 +801,19 @@ module Lain
           def admits?(tail) = tail.nil?
         end
 
-        Policy = Data.define(:switches, :valued, :required, :positional, :tail)
+        # `builds` marks a subcommand that compiles, so writes the target dir and cannot run read-only.
+        Policy = Data.define(:switches, :valued, :required, :positional, :tail, :builds)
 
         POLICIES = {
-          "check" => Policy.new(COMMON, BUILDING, PINS, false, Untailed.new),
-          "build" => Policy.new(COMMON, BUILDING, PINS, false, Untailed.new),
-          "clippy" => Policy.new([*COMMON, "--no-deps"], BUILDING, PINS, false, Lints.new),
-          "test" => Policy.new([*COMMON, "--no-run", "--no-fail-fast", "--doc"], BUILDING, PINS, true, Filters.new),
+          "check" => Policy.new(COMMON, BUILDING, PINS, false, Untailed.new, true),
+          "build" => Policy.new(COMMON, BUILDING, PINS, false, Untailed.new, true),
+          "clippy" => Policy.new([*COMMON, "--no-deps"], BUILDING, PINS, false, Lints.new, true),
+          "test" => Policy.new([*COMMON, "--no-run", "--no-fail-fast", "--doc"], BUILDING, PINS, true, Filters.new,
+                               true),
           "fmt" => Policy.new(%w[--check --all --quiet -q --verbose -v], SELECTING.merge("--message-format" => NAME),
-                              %w[--check], false, Untailed.new)
+                              %w[--check], false, Untailed.new, false)
         }.freeze
+        BUILDING_RUNS = POLICIES.select { _2.builds }.keys.freeze
 
         def admits?(arguments) = words(arguments) == [VERSION] || !run(arguments).nil?
 
@@ -1180,7 +1183,7 @@ module Lain
         return nil unless term && approvable?(call, term, cwd)
 
         names = vouched_names(call, term, cwd)
-        names && allow(call, because: format(APPROVED, programs: names.join(", ")))
+        names && allow(call, because: format(APPROVED, programs: names.join(", ")), builds: builds?(term))
       end
 
       # @param call [Rule::Call]
@@ -1575,6 +1578,14 @@ module Lain
       def owners(term, cwd)
         confinement = @sensitivity.confinement(cwd)
         term.stages.map { |stage| admitted_cargo?(stage) ? ->(path) { confinement.contains?(path) } : OWNS_NOTHING }
+      end
+
+      # Asked through `#run`, because a candidate table with no cargo entry hands back the version probe, which
+      # answers nothing else.
+      def builds?(term)
+        term.stages.any? do |stage|
+          stage.program == CARGO && Pinned::BUILDING_RUNS.include?(flags_for(CARGO).run(stage.argv.drop(1)))
+        end
       end
 
       def admitted_cargo?(stage) = stage.program == CARGO && flags_for(CARGO).admits?(stage.argv.drop(1))

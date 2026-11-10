@@ -26,15 +26,17 @@ RSpec.describe Lain::Confine::Profiles do
   let(:masks) { Struct.new(:masks).new(masked) }
   let(:profiles) { described_class.new(masks:, probe:, home:, root:) }
 
-  def ruling(rung, rule: nil, authority: :automatic)
-    Lain::Approval::Escalation::Ruling.allow(rung:, because: "approved", rule:, authority:)
+  def ruling(rung, rule: nil, authority: :automatic, builds: false)
+    Lain::Approval::Escalation::Ruling.allow(rung:, because: "approved", rule:, authority:, builds:)
   end
 
   def request(ruling, executables: [], root: self.root, grants: [])
     Lain::Confine::Request.new(ruling:, executables:, cwd: root, root:, tool_use_id: "toolu_1", grants:)
   end
 
-  def composed(executables: []) = request(ruling("rules", rule: "composed_term"), executables:)
+  def composed(executables: [], builds: false)
+    request(ruling("rules", rule: "composed_term", builds:), executables:)
+  end
 
   def executable(name, realpath, klass)
     Lain::Shell::Executable.new(name:, resolved: realpath, realpath:, chain: [], shadowed: [], anomalies: [],
@@ -100,6 +102,10 @@ RSpec.describe Lain::Confine::Profiles do
       expect(Lain::Confine::MaskList::Related::NONE.reads).to eq([])
     end
 
+    it "keeps a ComposedTerm approval of a build in the reader profile while the workspace switch is off", :seam do
+      expect(profiles.for(composed(builds: true)).name).to eq(:reader)
+    end
+
     it "traces a judge's approval without confining it" do
       expect(profiles.for(request(ruling("judge")))).to eq(Lain::Confine::Profile::TRACED)
     end
@@ -123,6 +129,35 @@ RSpec.describe Lain::Confine::Profiles do
                      executable("head", "/usr/bin/head", :system)]
 
       expect(profiles.for(composed(executables:)).exec_files).to eq([grep])
+    end
+
+    it "lets a reader on the string arm run what the parsed stages name, through the same placement test", :seam do
+      cargo = File.join(home, ".cargo/bin/rustup")
+      shell = Lain::Shell::Executable.unresolved("cargo --version 2>&1 | head -1")
+      fresh = executable("rg", File.join(home, ".local/bin/rg"), :user).with(fresh: true)
+      shadowing = executable("cat", File.join(home, "bin/cat"), :user).with(shadowed: ["/usr/bin/cat"])
+      grants = [executable("cargo", cargo, :user), executable("head", "/usr/bin/head", :system),
+                executable("tool", File.join(root, "bin/tool"), :project), fresh, shadowing]
+      ruled = request(ruling("rules", rule: "composed_term"), executables: [shell], grants:)
+
+      expect(profiles.for(ruled).exec_files).to eq([cargo])
+    end
+
+    it "drops a string-arm reader grant that lies under a mask, rather than refusing the call", :seam do
+      hidden = File.join(home, ".local/bin")
+      masked << mask(hidden)
+      cargo = File.join(home, ".cargo/bin/rustup")
+      shell = Lain::Shell::Executable.unresolved("tool | cargo --version")
+      grants = [executable("tool", File.join(hidden, "tool"), :user), executable("cargo", cargo, :user)]
+
+      expect(profiles.for(request(ruling("rules", rule: "composed_term"), executables: [shell], grants:)).exec_files)
+        .to eq([cargo])
+    end
+
+    it "grants a reader on the string arm nothing when no parsed stage names a program", :seam do
+      shell = Lain::Shell::Executable.unresolved("cargo --version 2>&1 | head -1")
+
+      expect(profiles.for(request(ruling("rules", rule: "composed_term"), executables: [shell])).exec_files).to eq([])
     end
 
     it "lets a reader run the wrappers that run a program", :seam do
@@ -243,6 +278,13 @@ RSpec.describe Lain::Confine::Profiles do
 
       it "keeps a ComposedTerm approval in the reader profile", :seam do
         expect(profiles.for(composed).name).to eq(:reader)
+      end
+
+      it "runs a ComposedTerm approval of a build under the workspace profile, which writes the project", :seam do
+        profile = profiles.for(composed(builds: true))
+
+        expect(profile.name).to eq(:workspace)
+        expect(profile.write_dirs).to include(root)
       end
 
       it "traces a call that carries no ruling" do
@@ -576,11 +618,14 @@ RSpec.describe Lain::Confine::Profiles do
           expect(profiles.for(request(ruling("auto"), grants:)).exec_files).to eq([tool])
         end
 
-        it "hands a reader call none of its grants, since the reader runs only what the term resolved" do
+        it "hands a reader call the grants its own placement test keeps, refusing one written this lineage" do
           tool = script(File.join(@base, "outside"), "lain-t5-tool")
           grants = resolved(%w[lain-t5-tool], path: File.dirname(tool))
+          fresh = Class.new { define_method(:fresh?) { |path| path == tool } }.new
+          written = resolved(%w[lain-t5-tool], path: File.dirname(tool), fresh:)
 
-          expect(profiles.for(request(ruling("rules", rule: "composed_term"), grants:)).exec_files).to eq([])
+          expect([grants, written].map { profiles.for(request(ruling("rules", rule: "composed_term"), grants: _1)) }
+            .map(&:exec_files)).to eq([[tool], []])
         end
       end
 
@@ -873,7 +918,17 @@ RSpec.describe Lain::Confine::Profiles do
           expect(profiles.for(request).name).to eq(:workspace)
         end
 
-        it "never grants a human's approval or a ComposedTerm one" do
+        it "grants a ComposedTerm approval of a cargo build the ports a judge's gets" do
+          built = Lain::Confine::Request.new(ruling: ruling("rules", rule: "composed_term", builds: true),
+                                             executables: [cargo], argv: [%w[cargo build --locked]], cwd: root, root:,
+                                             tool_use_id: "toolu_1")
+          judged = profile_of(%w[cargo build --locked], cargo, rung: Lain::Approval::Judged::NAME)
+
+          expect([judged, profiles.for(built)].map { [_1.name, _1.connect_ports, _1.unix_dirs] }.uniq)
+            .to eq([[:grant, [443], ["/run/systemd/resolve"]]])
+        end
+
+        it "never grants a human's approval or a ComposedTerm read" do
           human = Lain::Confine::Request.new(ruling: ruling("auto", authority: :human), executables: [git],
                                              argv: [%w[git fetch]], cwd: root, root:, tool_use_id: "toolu_1")
           composed_call = Lain::Confine::Request.new(ruling: ruling("rules", rule: "composed_term"),
