@@ -2171,6 +2171,21 @@ XDG path relative, which put machine state back inside the user's repository)
    driver reads the newest decision and gc keeps unlanded anchors; rulings: a role's iteration ceiling is its own and
    checkout scope escalates an outside write. The suite half rests on test-prof, stackprof, a GC hook and rbspy: child
    boots (bootsnap in `exe/lain`), Reline's unanswered cursor query and fixed windows, plus `bin/suite-profile`. 45 cards.
+68. **Planned (2026-10-23)**: `planning/specs/october-adoption.md`, 88 cards, adopts this item's findings. Source: `planning/hn-agent-landscape-2026-10-23.md`, the seventh HN scan
+   (items 91 to 112), the MemPalace and smolagents submodule deltas, and a re-check of every earlier HN item against
+   the tree. Since item 60: the dollar, width and depth ceilings, the delegation law, masked bash output and most Pi
+   items landed; items 60 and 87 went stale. Still open, and sharpened by the new scan: item 64's 5.5 price rows
+   (`bin/lint-price-freshness` starts failing commits on 2026-11-16), `Compare`'s missing interval, the header's
+   missing harness digest and served model, and an uncalibrated 0-to-1 judge scale. New: a measured attack on
+   compaction summaries (a forged approval survives 87% to 100% where a harness flattens the transcript), and Lain
+   sends its summary back as `user` with no spec planting one; effort and tool-list changes as cache-break causes the
+   meter cannot name; and MemPalace's own benchmark puts AAAK 12 points under raw text, against line 501's plan to
+   adopt it as `Manifest`.
+69. **Planned (2026-10-27)**: `planning/specs/simplify-16-october-patterns.md`, 47 cards in 3 waves, fixes the 10 repeated
+   shapes `planning/simplification-impact-research-2026-10.md` measured across item 68's 107 commits: gate facts read
+   from the Policy by every Landing caller, profile lists derived from members, 67 telemetry records on `settle!` under a
+   golden line each, 1 digest helper; then bench scaffolding, arm predicates, the Null rule and `Backend#attach`; then
+   graders, the small helpers and verified deletions. No gem or crate.
 70. **Planned (2026-10-28)**: `planning/specs/ux-first-dogfood.md`, 69 cards in 5 groups: the QA round 28 discharge
    (`planning/qa-findings-round28-2026-10-28.md`: a sourced memory item resumes, a string-arm allow grants the parsed
    programs, a release reaches the egress guard, lockfiles read without a prompt, a crash is journaled as one), then the
@@ -2188,6 +2203,14 @@ XDG path relative, which put machine state back inside the user's repository)
    Merkle shape measured slower and is rejected), 7 round trips held; then 1 escaper, 1 PATH search, `ProcessGroup`
    and `AtomicFile` in the chores, `Checkout.of` at 55 sites, and the small cleanups. No compatibility owed, sessions
    included (user ruling 2026-10-29).
+72. **Planned (2026-10-31, panel-reviewed)**: `planning/specs/nyotes-trial-fixes.md`, 23 cards in 3 streams from
+   `planning/nyotes-trial-findings-research-2026-10.md`: wave 1 (an epic gate bounded by `approval timeout:` that hears a
+   denial's reason, an unsummarizable handback spilled to a file, children told their answer ceiling, the judge's clock
+   paused while it queues, research-epic sized to the provider's width, neutral conventions defaults), then cargo epics
+   (a stdout-reading cargo adapter, a missing-item compile error as red, a new subject's `mod` line, an inline default
+   level, a `tests` timeout, and an epic-shaped `implement-issue` skill for the issue actor), then the cheaper cockpit
+   findings (the HUD alone in the input pane, labelled fleet rows, pane titles, a full-width status bar, approval and
+   question splits that keep the cursor, Tab completion of commands and skills in both prompts).
 73. **Planned (2026-11-01, panel-reviewed)**: `planning/specs/nyotes-round2-fixes.md`, 48 cards in 5 waves from
    `planning/nyotes-round2-research-2026-11.md`: the implementer handed the issue it was approved on (the issue file
    becomes a projection of the issue, the graph and the authored prose, and `plans/` goes); one read-roots value per
@@ -2195,7 +2218,26 @@ XDG path relative, which put machine state back inside the user's repository)
    stopped and named; issue gates one per wave; a turn-ending `hold`; one window placement policy and a planning tab;
    plan-scaled iteration ceilings; over-ceiling output spilled after the withhold decision; compaction gated on the
    saving it pays for.
+74. **Planned (2026-11-03, reviewed 3 times)**: `planning/specs/nyotes-round3-fixes.md`, 60 cards in 8 streams
+    from `planning/nyotes-round3-sweep-research-2026-11.md`. First, the `nyotes/implement-readiness` branch lands with
+    its durability fixes (an `Acceptance` value, one package rule). Then 1 value per repeated decision:
+    - `Approval::Verdict` and 1 reply grammar, with silence holding by default and a held call postponed by a liftable deny.
+    - `Sensitivity::Bounds` per agent, read by the policy, the gate, the scope and the sandbox, with named exec rules
+      for build output.
+    - A journaled stopped child that resumes in its own worktree, and the skill's allowance kept on the run.
+    - A digest-keyed `Epic::Signoff` projection, and review results bound to the digests they read.
+    - Every child metered, actors included.
 
+    Time and tokens:
+    - A tool-less, 1-request judge.
+    - `ComposedTerm` widened behind a replay against recorded verdicts and a hazard corpus.
+    - A review context pack with a round cap.
+    - Compaction tuned to a provider that caches nothing.
+    - `lain usage` by command and role.
+
+    Last, stream P (added by the user): lain-core grown into a tailnet relay, 1 agenda of everything waiting on a human,
+    paired and revocable phones, an ntfy buzz that opens the app, and a sideloaded Dioxus app in
+    `~/dev/lain-remote`.
 
 ## Map of the documents
 
@@ -2215,6 +2257,7 @@ XDG path relative, which put machine state back inside the user's repository)
 - **Grounding sources:** `references/` — `INDEX.md`, `SCOPE.md`, `memory-and-retrieval.md`,
   `oss-inspiration.md`, `prompt-caching-mechanics.md`, `firecracker-microvm-isolation.md`,
   26 papers in `papers/rst/`, reference impls in `repos/`, and the recurring HN scans
-  (`hn-agent-landscape-2026-07.md` … `-2026-10-16.md`), reconciled against this plan in
-  `planning/hn-agent-landscape-2026-08.md` and `planning/hn-agent-landscape-2026-10.md`.
+  (`hn-agent-landscape-2026-07.md` … `-2026-10-23.md`), reconciled against this plan in
+  `planning/hn-agent-landscape-2026-08.md`, `planning/hn-agent-landscape-2026-10.md` and
+  `planning/hn-agent-landscape-2026-10-23.md`.
 - **Origin brainstorm:** `TODO.md` — the raw idea list this ROADMAP reconciles.
