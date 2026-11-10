@@ -12,6 +12,7 @@ RSpec.describe Lain::CredentialPatterns do
       "aws access key id" => /AKIA[0-9A-Z]{16}/,
       "pem private key block" => /-----BEGIN(?: [A-Z]+)? PRIVATE KEY-----(?:.*?-----END [A-Z ]*PRIVATE KEY-----|.*)/m,
       "github token" => /(?<![\w-])(?:gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,})(?![\w-])/,
+      "stripe key" => /(?<![\w-])(?:[sr]k_(?:live|test)|whsec)_[A-Za-z0-9]{8,}/,
       "credential assignment" => Regexp.new(
         "(?<![A-Za-z0-9])(?:password|passwd|secret|api[_-]?key|token)(?:[_-](?:access[_-])?key(?:[_-]base)?)?" \
         '(?>\s*)(?:=>|:=|[:=])(?>\s*)' \

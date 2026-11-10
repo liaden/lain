@@ -6,6 +6,8 @@
 {"input":{"shape":"pem private key block","label":"near_miss","bytes":"2d2d2d2d2d424547494e205055424c4943204b45592d2d2d2d2d0a5a7138764c6d32784b395a7138764c6d32784b395a7138764c6d32784b395a7138764c6d32784b395a7138764c6d32784b395a7138764c6d32784b395a7138760a2d2d2d2d2d454e44205055424c4943204b45592d2d2d2d2d0a"},"output":{"skip":0,"matches":[]}}
 {"input":{"shape":"github token","label":"positive","bytes":"746f6b656e206768705f41624364313233344162436431323334416243643132333441624364313233344162436420656e640a"},"output":{"skip":0,"matches":[{"0":[6,46]}]}}
 {"input":{"shape":"github token","label":"near_miss","bytes":"746f6b656e206768705f73686f727420656e640a"},"output":{"skip":0,"matches":[]}}
+{"input":{"shape":"stripe key","label":"positive","bytes":"6b6579203d20736b5f6c6976655f5a7138764c6d32784b395a7138764c6d32784b395a7138760a"},"output":{"skip":0,"matches":[{"0":[6,38]}]}}
+{"input":{"shape":"stripe key","label":"near_miss","bytes":"6b6579203d20706b5f6c6976655f5a7138764c6d32784b395a7138764c6d32784b395a7138760a"},"output":{"skip":0,"matches":[]}}
 {"input":{"shape":"credential assignment","label":"positive","bytes":"6170695f6b6579203d20225a7138764c6d32784b395a71220a"},"output":{"skip":0,"matches":[{"0":[0,24]}]}}
 {"input":{"shape":"credential assignment","label":"near_miss","bytes":"74686520746f6b656e20697320756e7365740a"},"output":{"skip":0,"matches":[]}}
 {"input":{"shape":"dotenv assignment","label":"positive","bytes":"6578706f72742044425f484f53543d64622e696e7465726e616c0a"},"output":{"skip":0,"matches":[{"0":[0,26]}]}}

@@ -93,7 +93,8 @@ RSpec.describe Lain::Middleware::RefuseSecretWrites do
       "sk-#{"a" * 20}" => "openai-style api key",
       "AKIA#{"A" * 16}" => "aws access key id",
       "-----BEGIN RSA PRIVATE KEY-----\nMIIB...\n-----END RSA PRIVATE KEY-----" => "pem private key block",
-      "password: hunter2" => "credential assignment"
+      "password: hunter2" => "credential assignment",
+      "the deploy key is #{%w[sk_live_ Zx9Qw8Lm2P].join}" => "stripe key"
     }.each do |sample, pattern_name|
       it "names #{pattern_name.inspect} for a refused body shaped like it" do
         _env, called = run(tool_call(input: { "id" => "x", "description" => "y", "body" => sample }))

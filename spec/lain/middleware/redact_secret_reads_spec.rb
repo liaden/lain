@@ -1747,6 +1747,21 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       expect(journal.grep(Lain::Telemetry::CommandRedacted)).to be_empty
     end
 
+    it "masks a Stripe key a git patch adds, low entropy as it is" do
+      patch = <<~PATCH
+        diff --git a/.env b/.env
+        --- a/.env
+        +++ b/.env
+        @@ -1 +1,2 @@
+         DATABASE_HOST=db.internal
+        +STRIPE_KEY=#{%w[sk_live_ aaaabbbbccccddddeeeeffff].join}
+      PATCH
+      result = bash(tool: ->(_input, _invocation) { Lain::Tool::Result.ok(patch) })
+
+      expect(result.content).to include("+STRIPE_KEY=<redacted:1>\n")
+      expect(result.content).not_to include("sk_live_")
+    end
+
     it "counts every region in the trailer" do
       result = bash("echo #{token}; echo #{token.reverse}")
 

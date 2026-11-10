@@ -69,6 +69,10 @@ module Lain
       )\z/ix
       SECRET_NAMING = Regexp.union(SECRET_WORDS, SECRET_NOUN_LAST)
       HINTING_NAME = Regexp.union(NAME_HINT, SECRET_NOUN_LAST)
+      # A bare `key` would hint `primary_key` and `sort_key`, so only the upper-case
+      # suffix an environment variable carries hints, and only over a value mixing letters and digits.
+      KEY_SUFFIX = /\A[A-Z][A-Z0-9_]*[A-Z0-9]_KEY\z/
+      KEY_VALUE = %r{\A(?=[^0-9]*[0-9])(?=[^A-Za-z]*[A-Za-z])[A-Za-z0-9+/=_.-]+\z}
 
       # A bare token's key is sought only this far back, so a long line stays linear.
       KEY_WINDOW = 96
@@ -87,7 +91,8 @@ module Lain
       # one run swallow `API_KEY=` along with the secret, which then merged the
       # name back into the region the value-only rule exists to exclude.
       TOKEN = %r{[A-Za-z0-9+/_-]{20,}={0,2}}
-      ASSIGNMENT = /\A[ \t]*(?:export[ \t]+)?([A-Za-z_][A-Za-z0-9_-]*)[ \t]*[:=][ \t]*(\S.*)\z/m
+      ASSIGNMENT = /\A#{CredentialPatterns::LINE_LEAD}(?:export[ \t]+)?(?<key>[A-Za-z_][A-Za-z0-9_-]*)
+                    (?<separator>[ \t]*[:=][ \t]*)(?<value>\S.*)\z/mx
       # Public-key material is public by definition, and its base64 blob is
       # exactly the run the entropy detector exists to find -- so every `.pub`,
       # known_hosts and authorized_keys file reported a region, `read_file`
@@ -146,7 +151,8 @@ module Lain
       # (`db_password: is stored in vault`), where a false hit here costs one
       # release decision rather than a refused write.
       PASSWORD_SHAPES = {
-        "suffixed password key" => /^[ \t]*[\w-]*[_-](?:password|passwd)[ \t]*:[ \t]+["']?(?<value>[^\s"']+)/i,
+        "suffixed password key" =>
+          /^#{CredentialPatterns::LINE_LEAD}[\w-]*[_-](?:password|passwd)[ \t]*:[ \t]+["']?(?<value>[^\s"']+)/i,
         "mysql password flag" => /\b(?:mysql|mysqldump|mysqladmin|mariadb)\b[^\n]*?[ \t]-p(?<value>[^\s-]\S*)/
       }.freeze
 
@@ -332,10 +338,10 @@ module Lain
 
           assignment = ASSIGNMENT.match(match[0])
           return span(match.begin(0), match[0], name, :pattern) unless assignment
-          return nil if reference?(assignment[2])
+          return nil if reference?(assignment[:value])
 
           candidate = value_span(match, assignment, name)
-          candidate if qualifies?(name, assignment[1], assignment[2], outside([candidate], fields).any?)
+          candidate if qualifies?(name, assignment, outside([candidate], fields).any?)
         end
 
         def value_group_span(match, name)
@@ -353,19 +359,27 @@ module Lain
         # destroy the quoting that made the file parse, and a quoted and an
         # unquoted copy of one secret would address differently.
         def value_span(match, assignment, name)
-          value = assignment[2]
+          value = assignment[:value]
           emitted = unquote(value)
-          within = match[0].byteindex(value, assignment[1].bytesize) + value.byteindex(emitted)
+          within = match[0].byteindex(value, assignment[:key].bytesize) + value.byteindex(emitted)
 
           span(match.begin(0) + within, emitted, name, :pattern)
         end
 
         # `shaped` is false for a value inside a checksum field, which its shape alone no longer qualifies.
-        def qualifies?(name, key, value, shaped)
+        def qualifies?(name, assignment, shaped)
+          key, value = assignment.values_at(:key, :value)
           value_shaped = shaped && secret_shaped?(value)
           return value_shaped if VALUE_GATED_ONLY.include?(name)
 
-          (key.match?(NAME_HINT) && substantial?(value) && !ordinary?(key, value)) || value_shaped
+          (hinted?(assignment) && substantial?(value) && !ordinary?(key, value)) || value_shaped
+        end
+
+        # The `_KEY` hint needs a glued `=`, as a shell needs it and a Ruby constant is not written.
+        def hinted?(assignment)
+          key, separator, value = assignment.values_at(:key, :separator, :value)
+
+          key.match?(NAME_HINT) || (key.match?(KEY_SUFFIX) && separator == "=" && unquote(value).match?(KEY_VALUE))
         end
 
         def ordinary?(key, value) = !key.match?(SECRET_NAMING) && unquote(value).match?(ORDINARY_VALUE)

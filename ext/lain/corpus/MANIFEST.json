@@ -27,8 +27,8 @@
       "records": 400
     },
     "regions.ndjson": {
-      "blake3": "blake3:16fd6f12fb9489a6844e258ffcc9d87ea60547d786846d89be402cc8ce2bc6e5",
-      "records": 120
+      "blake3": "blake3:7c6996c8ebbc72ecb865438f487411e3574dfd658cacd3d0686196d9008afd31",
+      "records": 122
     }
   },
   "ruby_oracle_retired": {

@@ -765,6 +765,70 @@ RSpec.describe Lain::Sensitivity::Regions do
       end
     end
 
+    # A `.env` read through `git diff` puts a `+` or `-` before every line, and
+    # the line-anchored shapes are the only ones that reach a short value.
+    context "when an assignment sits on a diff line" do
+      ["SESSION_ID=abc12345xyz", "AUTH=hunter2hunter2", "db_password: hunter2pass",
+       %(db-session = "hunter2pass"), "config: kJ8fQ2mZ4vX7pL0aB3nR6yT9uW1cE5dG8hK2jM4qS7vY0zA3"]
+        .product(%w[+ - ++]).each do |line, mark|
+        it "finds the same region in #{"#{mark}#{line}".inspect} as without the #{mark}" do
+          plain = detect("#{line}\n").map { [_1.bytes, _1.reason] }
+
+          expect(plain).not_to be_empty
+          expect(detect("#{mark}#{line}\n").map { [_1.bytes, _1.reason] }).to eq(plain)
+        end
+      end
+
+      # An indented `.env` line in a diff is missed too: indented after a mark, the line is code.
+      %w[+ -].each do |mark|
+        it "leaves an indented line of code after a #{mark} alone" do
+          expect(detect("#{mark}      forked_session = fork_of(parent)\n")).to be_empty
+        end
+      end
+    end
+
+    # Each prefix is joined to its value here, so no vendor-shaped literal sits in the tree.
+    context "when a Stripe key has a short value" do
+      %w[sk_live_ sk_test_ rk_live_ rk_test_ whsec_].each do |prefix|
+        it "finds #{prefix} by its issuer shape" do
+          key = "#{prefix}Zx9Qw8Lm2P"
+
+          expect(detect("deploy with #{key} today\n"))
+            .to contain_exactly(have_attributes(bytes: key, reason: "stripe key"))
+        end
+      end
+
+      it "does not find a prefix run into a longer word" do
+        expect(detect("bookmark_test_Zx9Qw8Lm2P and ask_live_Zx9Qw8Lm2P\n")).to be_empty
+      end
+
+      it "does not find a value shorter than 8 characters" do
+        expect(detect("deploy with #{%w[sk_live_ Zx9Qw8L].join} today\n")).to be_empty
+      end
+    end
+
+    context "when a name ends in _KEY" do
+      it "masks a short value under an upper-case name" do
+        expect(detect("STRIPE_KEY=Zx9Qw8Lm2Pq\n").map(&:bytes)).to eq(["Zx9Qw8Lm2Pq"])
+      end
+
+      it "leaves a lower-case name alone" do
+        expect(detect("sort_key=Zx9Qw8Lm2Pq\n")).to be_empty
+      end
+
+      it "leaves a glued value of letters alone" do
+        expect(detect("SIGNING_KEY=default_signer\n")).to be_empty
+      end
+
+      it "leaves a constant assigned with spaces alone" do
+        expect(detect(%(CACHE_KEY = "lain_cache_v2"\nRUBY2_KEYWORDS_KEY = "_aj_ruby2_keywords"\n))).to be_empty
+      end
+
+      it "leaves a constant naming a plain word alone" do
+        expect(detect(%(  HEADER_KEY = "writer"\n  ENV_KEY = "LAIN_PROVIDER_CONCURRENCY"\n))).to be_empty
+      end
+    end
+
     # Quotes belong to the file's syntax, not to the secret. Including them would
     # split one secret across two digests -- quoted and unquoted differ, so the
     # digest cache misses -- and, decisively, masking a span that carries its own

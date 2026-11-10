@@ -119,11 +119,15 @@ module Lain
     # Text that ends before an END is covered to its end, since a bounded read
     # or a window can cut a block off; the write side still refuses on the
     # header alone.
+    #
+    # A Stripe value is found by its prefix alone, since a short or dull one
+    # never reaches the entropy detector; the publishable `pk_` key is public.
     ISSUED = unreserved(
       "openai-style api key" => /(?<![\w-])sk-[A-Za-z0-9_-]{16,}/,
       "aws access key id" => /AKIA[0-9A-Z]{16}/,
       "pem private key block" => /-----BEGIN(?: [A-Z]+)? PRIVATE KEY-----(?:.*?-----END [A-Z ]*PRIVATE KEY-----|.*)/m,
       "github token" => /(?<![\w-])(?:gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,})(?![\w-])/,
+      "stripe key" => /(?<![\w-])(?:[sr]k_(?:live|test)|whsec)_[A-Za-z0-9]{8,}/,
       "credential assignment" => /#{ASSIGNED_NAME}#{SEPARATOR}(?:#{QUOTED_LITERAL}|#{BARE_LITERAL})/i
     )
 
@@ -152,6 +156,13 @@ module Lain
 
     WRITE = unreserved(ISSUED.merge(NAMED_SHAPES, SHELL_VARIABLE))
 
+    # Where an assignment line starts: its indent, or the `+` or `-` (`++` in a
+    # merge's combined diff) `git diff` puts before a line. A mark is taken only
+    # with the name right after it, because an indented line in a diff is code,
+    # whose `session = build(x)` would be masked on every changed line; an
+    # indented `.env` line inside a diff is the accepted miss.
+    LINE_LEAD = '(?:[+-]{1,2}|[ \t]*)'
+
     # Name-agnostic on purpose, and the reason these stay off the write side:
     # WRITE's assignment shape sees only a credential word holding a literal, and
     # gating these on a name vocabulary would reproduce that narrowness over the
@@ -170,9 +181,9 @@ module Lain
     # so no prose is refused over it. A consumer that cannot tolerate the rate
     # narrows at ITS end -- by file type, say -- not by widening a name here.
     ASSIGNMENTS = unreserved(
-      "dotenv assignment" => /^[ \t]*(?:export[ \t]+)?[A-Za-z_][A-Za-z0-9_]*[ \t]*=[ \t]*\S+/,
-      "toml assignment" => /^[ \t]*[A-Za-z_][A-Za-z0-9_-]*[ \t]*=[ \t]*(?:"[^"]*"|'[^']*')/,
-      "yaml assignment" => /^[ \t]*[A-Za-z_][A-Za-z0-9_-]*:[ \t]+\S+/
+      "dotenv assignment" => /^#{LINE_LEAD}(?:export[ \t]+)?[A-Za-z_][A-Za-z0-9_]*[ \t]*=[ \t]*\S+/,
+      "toml assignment" => /^#{LINE_LEAD}[A-Za-z_][A-Za-z0-9_-]*[ \t]*=[ \t]*(?:"[^"]*"|'[^']*')/,
+      "yaml assignment" => /^#{LINE_LEAD}[A-Za-z_][A-Za-z0-9_-]*:[ \t]+\S+/
     )
 
     # Credential files whose lines carry no `=` or `: ` for the assignment shapes

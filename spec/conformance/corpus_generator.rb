@@ -381,6 +381,8 @@ module ConformanceCorpus
        "-----BEGIN PUBLIC KEY-----\n#{B64[0, 64]}\n-----END PUBLIC KEY-----\n"],
       ["github token", "positive", "token ghp_#{("AbCd1234" * 5)[0, 36]} end\n"],
       ["github token", "near_miss", "token ghp_short end\n"],
+      ["stripe key", "positive", "key = sk_live_#{B64[0, 24]}\n"],
+      ["stripe key", "near_miss", "key = pk_live_#{B64[0, 24]}\n"],
       ["credential assignment", "positive", %(api_key = "#{B64[0, 12]}"\n)],
       ["credential assignment", "near_miss", "the token is unset\n"],
       ["dotenv assignment", "positive", "export DB_HOST=db.internal\n"],

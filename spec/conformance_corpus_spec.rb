@@ -103,10 +103,10 @@ RSpec.describe ConformanceCorpus do
 
     def labelled(label) = records.select { _1.dig("input", "label") == label }
 
-    it "covers the 19 content shapes and the 5 other shapes Regions scans" do
+    it "covers the 20 content shapes and the 5 other shapes Regions scans" do
       expect(shapes.keys).to include(*Lain::Sensitivity::Regions::CONTENT_SHAPES.keys)
       expect(shapes.keys).to include("TOKEN", "PEM_PUBLIC", "OPENSSH_PUBLIC", "CHECKSUM_FIELD", "INTEGRITY_FIELD")
-      expect(shapes.size).to eq(24)
+      expect(shapes.size).to eq(25)
     end
 
     it "gives every shape a positive the Ruby regex matches and a near-miss it does not" do
