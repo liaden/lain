@@ -428,7 +428,7 @@ Unproven; counting only the example's own thread would settle it.
   Added later on 2026-10-28, from landing suites beside 2 reviewers running specs (load 26) and later
   ones beside working agents, each green alone and with its failing seed 3 of 3 on the base and on the
   card: `the review records' journal discriminators answers for every includer, including the ones no
-  generic dummy constructs` (136 unique against 138 includers); `Lain::Bench::CLI#arms_report under
+  generic dummy constructs` (136 unique against 138 includers; fixed 2026-11-10, see below); `Lain::Bench::CLI#arms_report under
   --confine reader with --confine workspace hands every arm's tools a sandbox with the workspace
   switch on, and says so in the report` (watchdog STUCK inside `Confine::MaskList`'s walk); all 4
   examples of `two cockpits on one machine` (a `you>` line never held in the input pane within 15s,
@@ -533,7 +533,7 @@ Unproven; counting only the example's own thread would settle it.
   promptly` raised ENOENT reading `/proc/self/task/<tid>/children` while a thread exited; it reddened in 2
   landings, so it is also a follow-up card. `A project's own tests inside the workspace profile passes one
   spec file with the example count an unconfined run reports` hit its 30s watchdog (0.4s CPU, 30.4s wall)
-  at load 23 on 16 cores.
+  at load 23 on 16 cores (fixed 2026-11-10, see below).
 
   Added 2026-11-04, from the nyotes round 3 landing suites, run at loads of 17 to 52 on 16 cores
   with other suites and a game beside them. Each went red once in a landing suite and passed alone
@@ -543,7 +543,7 @@ Unproven; counting only the example's own thread would settle it.
     with no Ruby or runtime change).
   - Repeats of the entries above: `a project's own tests inside the workspace profile passes one spec
     file with the example count an unconfined run reports` (STARVED at its 30s watchdog at load 28.3 and
-    again at 24.5, so 2 more reds) and the same group's `passes the fence crate's tests, none of them
+    again at 24.5, so 2 more reds; fixed 2026-11-10, see below) and the same group's `passes the fence crate's tests, none of them
     skipped`; all 4 examples of `two cockpits on one machine` (STUCK at load 21.5); `Lain::Tool::Offload
     keeps a sibling fiber running while the work never gives up the lock between threads` (tick gap
     0.302 against a 0.3 bound, seed 33746) and `... while the work holds its thread` (0.312 against 0.3,
@@ -943,11 +943,14 @@ Unproven; counting only the example's own thread would settle it.
   and every red log that shows a load line shows `STARVED` at load 31 to 104. This is the 3rd
   landing window in a row (2026-11-02, 2026-11-04, now) where the pair reddened, so it is a
   follow-up card, not a name to budget a retry for.
+  Fixed 2026-11-10: both carry `starvable:` metadata, so an overrun on a starved box ends pending
+  with the `STARVED` line, and on a quiet box it is still the `STUCK` raise.
   `the review records' journal discriminators answers for every includer, including the ones no
   generic dummy constructs` read `Expected 143 to eq 145` in 1 hook with no `STARVED` line; the
   2026-10-28 entry saw 136 against 138, also 2 short. Green alone 3 of 3 on the base commit and
-  once on the card's tree. Cause not found; it counts the classes the worker process has loaded, so
-  suspect what an earlier example in that worker defined.
+  once on the card's tree. Fixed 2026-11-10: a class `stub_const` left in `ObjectSpace` kept its
+  name and its discriminator until GC ran, so the sweep saw 2 records under 1 name. The spec now
+  counts only classes a constant names. The 2026-10-28 entry for this example is the same flake.
   Also repeats: `Lain::Bench::CLI#arms_report` (2 examples, the 2026-10-28 name), `the deletion map
   booting without a capability` (4 examples) and `a chat fed by an input pane completes a skill
   named in the chat's context frame when Tab is pressed in the pane` (both 2026-11-04 names), each

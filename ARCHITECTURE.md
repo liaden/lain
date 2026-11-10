@@ -1335,8 +1335,31 @@ that path. The payload and signature are unaffected. Joining `.`-separated runs 
 was measured and NOT taken: on its own it makes a JWT report ZERO regions, since the base64
 shape test does not admit `.` either, and fixing that widens what counts as base64 everywhere.
 
-Detection costs ~0.27ms/KB on ordinary source, linear, with no adversarial blowup (a 1MB base64
-line is 578ms). So it runs per read without a budget under a few hundred KB.
+All the credential shapes are scanned in Rust (`Lain::Ext::Regions`, reached through
+`Sensitivity::Regions::RustScanner`), at about 20 ms per MB over this repository's tracked files
+(`ext/lain/src/regions.rs`, measured 2026-11-09, and 20.2 ms per MB again on 2026-11-10). There is
+no Ruby scanner to fall back on.
+
+Rust's regex engine (fancy-regex) bounds its backtracking, so a shape can fail to finish. It is
+retried at 10 times the limit; what the retry still cannot finish is reported as a span, and the
+span is **over-masked**: the single-line shapes mask the lines they could not finish, any other
+shape masks from its last finished match to the end of the text. The reason is that a partial
+list would under-mask without saying so. An over-masked region is named for the shape
+(`over-masked: <shape> could not be scanned to the end`) and can be released like any other.
+2 shapes, the openai-style api key and the credential literal assignment, still scan in
+quadratic time on 1 long line without reaching a limit.
+
+Each `bash`, `read_file`, `grep` and `memory_read` result that held an over-masked region
+journals 1 `over_masked` record per shape, naming the tool, the shape and the count of spans,
+never bytes; a region the human released is left out, and `Journal::Projection::Redactions`
+counts the records. A tool result is capped at 16 KiB (`Tool::Bounds::RESULT_BYTES`) before it is
+masked, so a result rarely reaches a limit. The live display, which masks whole output streams up
+to about 1 MiB, is where an over-mask can show in practice.
+
+Detection reads text through a view. A file in UTF-16 (with a BOM) is read as the text it spells,
+its offsets map back to the original bytes, and its raw bytes are scanned too, so ASCII beside the
+UTF-16 text is found. A placeholder is spelled in the same encoding, and a span that splits a
+2-byte character masks all of it.
 
 ### The release ledger
 

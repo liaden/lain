@@ -287,8 +287,8 @@ floor. Lower a ceiling when a speedup lands; raising one goes in its own commit,
 no ceiling or was skipped. Run `--check` before landing a change to one of those paths. Seed or
 raise a ceiling only from 3 logs recorded at a load under 2, after `rake compile` (the reader row
 needs a built `lain-fence` and Landlock, or it is skipped); lowering one is free, raising one is
-its own commit, saying why. The request rows time the HTTP transport with a fixed payload, not an
-encoder, so an encoder regression does not show there.
+its own commit, saying why. The request_N rows time Request.new, Canonical.dump and 1 loopback HTTP
+post of an N-byte body; request_guarded_N times only a post through the egress guard.
 
 ## Committing
 

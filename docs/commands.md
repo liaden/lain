@@ -908,6 +908,9 @@ only when every word of it is ordinary and under the project root. That now incl
   inside the project root, is plain text, names no workspace outside it, neither aliases `fmt` or
   `clippy` nor includes another config, and no `rust-toolchain` file is in the working directory or above it. Your own cargo
   home config counts only when it sets nothing that runs. Anything else goes to the judge.
+  `check`, `clippy`, `build` and `test` write the target directory, so a rule-approved one runs
+  under the workspace sandbox profile when the workspace switch is on, and under the reader
+  profile (where the build cannot write `target/`) when it is off. `fmt --check` stays on the reader.
 
 #### Cycling approval from the keyboard
 
@@ -1351,7 +1354,8 @@ tests preset: :rspec
   `judge_memo:` is `true` (the default) or `false`, and anything else is refused by name. While it
   is on, a call the `auto` judge approved is approved again without asking the judge when the
   same tool, input, requester, cwd, path classifications and facts come back in the same session;
-  the record's reason is "the judge approved this exact call earlier this session". A deny, a
+  the record's reason is "the judge approved this exact call earlier this session", and the
+  transcript shows a dim line, `the judge approved this earlier: tool(input)`. A deny, a
   deferral or a judge fault is never remembered, so such a call asks the judge again.
 * `isolation`, `tests`: documented below.
 * `sensitivity`: `denied:`, `gated:` and `exempt:`, each a list of path globs, and `related:`, a
